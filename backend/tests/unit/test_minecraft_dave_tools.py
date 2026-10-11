@@ -82,6 +82,50 @@ async def test_what_is_at_names_the_biome_and_says_where_the_answer_came_from(
         assert len(sidecar["sent"]) == sent, bad  # refused before asking the box
 
 
+async def test_find_block_sends_the_names_and_says_where_each_one_is(sidecar) -> None:
+    sidecar["replies"]["/worlds"] = {"slots": [{"id": "slot1", "active": True}]}
+    sidecar["replies"]["/map/find"] = {
+        "searched": ["minecraft:deepslate_diamond_ore"],
+        "radius": 2048,
+        "found": [
+            {"block": "minecraft:deepslate_diamond_ore", "x": 12, "y": -62, "z": 18, "distance": 22}
+        ],
+    }
+    out = await _tools()["mc_find_block"]({"blocks": ["diamond_ore"], "x": 0, "z": 0}, CTX)
+    assert "deepslate diamond ore at x=12 y=-62 z=18" in out
+    params = sidecar["sent"][-1][3]
+    assert params["blocks"] == "diamond_ore" and (params["x"], params["z"]) == (0, 0)
+    sidecar["replies"]["/map/find"] = {"searched": [], "suggestions": ["minecraft:diamond_block"]}
+    out = await _tools()["mc_find_block"]({"blocks": "diamond", "x": 0, "z": 0}, CTX)
+    assert "minecraft:diamond_block" in out and "Unexplored ground" in out
+    sent = len(sidecar["sent"])
+    for bad in ({"blocks": []}, {"blocks": ["stone; op @a"]}, {"blocks": ["a"] * 9}):
+        await _tools()["mc_find_block"](bad, CTX)
+    assert len(sidecar["sent"]) == sent  # refused before asking the box
+
+
+async def test_a_waypoint_is_one_scriptevent_with_its_fields_json_escaped(sidecar) -> None:
+    sent = 'scriptevent jb:waypoint {"player": "Steve 42", "x": 12, "y": -62, "z": 18,'
+    sent += ' "dim": "overworld", "label": "Diamonds \\" op @a"}'
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain-probe] waypoint set for Steve 42"]
+    out = await _tools()["mc_set_waypoint"](
+        {"gamertag": "Steve 42", "x": 12, "y": -62, "z": 18, "label": 'Diamonds " op @a'}, CTX
+    )
+    assert sidecar["sent"][-1][2]["command"] == sent  # the quote can't end the message
+    assert "now points to" in out and "y -62" in out
+    out = await _tools()["mc_set_waypoint"]({"gamertag": "Steve 42", "x": 1, "z": 2}, CTX)
+    assert "didn't answer" in out  # no add-on reply: said, not claimed done
+    count = len(sidecar["sent"])
+    for bad in (
+        {"gamertag": "Steve 42"},
+        {"gamertag": "Steve 42", "x": 1, "z": 2, "y": 999},
+        {"gamertag": "Steve 42", "x": 1, "z": 2, "dimension": "moon"},
+        {"gamertag": "x" * 40, "x": 1, "z": 2},
+    ):
+        await _tools()["mc_set_waypoint"](bad, CTX)
+    assert len(sidecar["sent"]) == count
+
+
 async def test_nearby_lists_structures_within_the_radius_nearest_first(sidecar) -> None:
     sidecar["replies"]["/map/nearby"] = {
         "nearby": [

@@ -52,13 +52,14 @@ COPY deploy/minecraft/server.py ./server.py
 COPY deploy/minecraft/worlds.py ./worlds.py
 COPY deploy/minecraft/leveldb.py ./leveldb.py
 COPY deploy/minecraft/mapping.py ./mapping.py
+COPY deploy/minecraft/blocks.py ./blocks.py
 COPY deploy/minecraft/probe-pack ./probe-pack
 COPY deploy/minecraft/probe-rp ./probe-rp
 COPY deploy/minecraft/jbrain-pack ./jbrain-pack
 COPY --from=predict /jbrain-predict ./jbrain-predict
 COPY --from=predict /cubiomes.LICENSE ./licenses/cubiomes.LICENSE
 
-RUN python3 -c "import server, bds, install, worlds, leveldb, mapping"
+RUN python3 -c "import server, bds, install, worlds, leveldb, mapping, blocks"
 # The prediction is only worth drawing if it is right: spots a real 1.26 server generated
 # from this seed must still predict as what it found there on the compiled binary — in
 # the Overworld a warm ocean (Java id 44) and a mangrove swamp (184); in the Nether a

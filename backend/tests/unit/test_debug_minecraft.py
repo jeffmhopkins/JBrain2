@@ -262,3 +262,21 @@ async def test_the_debug_point_and_nearby_pass_their_coordinates_through(sidecar
     await mc.minecraft_map_nearby(req, SETTINGS, PRINCIPAL, x=1, z=2, dim="nether")
     assert dict(seen[0].url.params) == {"slot": "slot2", "dim": "overworld", "x": "5", "z": "-6"}
     assert dict(seen[1].url.params) == {"dim": "nether", "x": "1", "z": "2"}
+
+
+async def test_the_debug_block_finder_passes_its_search_through(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/map/find"] = httpx.Response(200, json={"found": []})
+    req = _request(FakeSupervisor([]))
+    await mc.minecraft_map_find(
+        req, SETTINGS, PRINCIPAL, x=1, z=2, blocks="diamond_ore", dim="nether", limit=3
+    )
+    assert dict(seen[0].url.params) == {
+        "slot": "slot1",
+        "dim": "nether",
+        "x": "1",
+        "z": "2",
+        "blocks": "diamond_ore",
+        "limit": "3",
+        "radius": "2048",
+    }

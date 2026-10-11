@@ -142,20 +142,85 @@ def _log(path: Path) -> Iterator[tuple[bytes, int, bytes | None]]:
             return  # a truncated batch
 
 
+def _sources(db: Path) -> list[Path]:
+    return sorted(db.glob("*.ldb")) + sorted(db.glob("*.sst")) + sorted(db.glob("*.log"))
+
+
+def entries(db: Path, wanted=None) -> Iterator[tuple[bytes, int, bytes | None]]:
+    """Every (key, sequence, value or None for a deletion) in the database that
+    `wanted(key)` accepts, in no particular order — for a caller that reduces as it goes
+    rather than holding every value at once."""
+    for path in _sources(db):
+        found = _log(path) if path.suffix == ".log" else _table(path)
+        try:
+            for key, seq, value in found:
+                if wanted is None or wanted(key):
+                    yield key, seq, value
+        except FileNotFoundError:
+            continue  # compacted away while we read; the next read picks it up
+
+
 def read_db(db: Path, wanted=None) -> dict[bytes, bytes]:
     """Every live key in the database (or only those `wanted(key)` accepts), newest
     write winning and deletions removing the key."""
     best: dict[bytes, tuple[int, bytes | None]] = {}
-    sources = sorted(db.glob("*.ldb")) + sorted(db.glob("*.sst")) + sorted(db.glob("*.log"))
-    for path in sources:
-        entries = _log(path) if path.suffix == ".log" else _table(path)
+    for key, seq, value in entries(db, wanted):
+        have = best.get(key)
+        if have is None or seq > have[0]:
+            best[key] = (seq, value)
+    return {k: v for k, (_, v) in best.items() if v is not None}
+
+
+def _table_keys(path: Path, keys: list[bytes]) -> Iterator[tuple[bytes, int, bytes | None]]:
+    """Only the data blocks of one table that can hold `keys` (sorted): the index block
+    names each data block's last key, so a lookup decompresses one block, not the table."""
+    raw = path.read_bytes()
+    if len(raw) < _FOOTER:
+        return
+    footer = raw[-_FOOTER:]
+    (magic,) = struct.unpack_from("<Q", footer, 40)
+    if magic != _TABLE_MAGIC:
+        raise ValueError(f"{path.name} is not a LevelDB table")
+    pos = 0
+    _meta_off, pos = _varint(footer, pos)
+    _meta_size, pos = _varint(footer, pos)
+    index_off, pos = _varint(footer, pos)
+    index_size, pos = _varint(footer, pos)
+    want = set(keys)
+    remaining = sorted(want)
+    for last_key, handle in _block_entries(_block(raw, index_off, index_size)):
+        if not remaining:
+            return
+        # Data block i holds keys up to its separator; LevelDB orders user keys bytewise.
+        here = [k for k in remaining if k <= last_key[:-8]]
+        if not here:
+            continue
+        remaining = remaining[len(here) :]
+        off, p = _varint(handle, 0)
+        size, _ = _varint(handle, p)
+        for ikey, value in _block_entries(_block(raw, off, size)):
+            user = ikey[:-8]
+            if user in want:
+                (trailer,) = struct.unpack_from("<Q", ikey, len(ikey) - 8)
+                yield user, trailer >> 8, (value if trailer & 0xFF == _PUT else None)
+
+
+def read_keys(db: Path, keys: set[bytes]) -> dict[bytes, bytes]:
+    """The live values of just these keys, reading only the table blocks that can hold
+    them (and the log, which has no index)."""
+    ordered = sorted(keys)
+    best: dict[bytes, tuple[int, bytes | None]] = {}
+    for path in _sources(db):
         try:
-            for key, seq, value in entries:
-                if wanted is not None and not wanted(key):
-                    continue
+            found = (
+                ((k, s, v) for k, s, v in _log(path) if k in keys)
+                if path.suffix == ".log"
+                else _table_keys(path, ordered)
+            )
+            for key, seq, value in found:
                 have = best.get(key)
                 if have is None or seq > have[0]:
                     best[key] = (seq, value)
         except FileNotFoundError:
-            continue  # compacted away while we read; the next render picks it up
+            continue
     return {k: v for k, (_, v) in best.items() if v is not None}

@@ -1463,3 +1463,32 @@ def test_nearby_asks_the_running_server_for_each_structure_kind() -> None:
         ("bastion_remnant", 50),
         ("fortress", 693),
     ]
+
+
+def test_find_brings_an_ores_deepslate_twin_and_suggests_names() -> None:
+    _make_world("world")
+    rig = _world_rig()
+    asked: list[tuple] = []
+
+    class Index:
+        def refresh(self) -> None:
+            pass
+
+        def names(self, dim: int) -> set[str]:
+            return {"minecraft:deepslate_diamond_ore", "minecraft:diamond_block"}
+
+        def find(self, dim, x, z, wanted, limit, radius):
+            asked.append((dim, x, z, wanted, limit, radius))
+            return [
+                {"block": "minecraft:deepslate_diamond_ore", "x": 1, "y": -50, "z": 2}
+            ], 9
+
+    rig._block_index["world"] = Index()
+    got = rig.map_find("slot1", "overworld", 0, 0, ["diamond_ore"], 3, 500)
+    assert asked[-1][3] == {"minecraft:deepslate_diamond_ore"}  # what the world holds
+    assert got["not_in_explored_ground"] == ["minecraft:diamond_ore"]
+    assert got["found"][0]["y"] == -50 and got["explored_chunks_in_range"] == 9
+    none = rig.map_find("slot1", "overworld", 0, 0, ["diamond"], 3, 500)
+    assert none["searched"] == [] and "minecraft:diamond_block" in none["suggestions"]
+    with pytest.raises(ValueError):
+        rig.map_find("slot1", "overworld", 0, 0, ["stone; op @a"], 3, 500)

@@ -960,6 +960,21 @@ compass that Dave sets.
 - **No target yet:** `Ask Dave where to go: /jb:dave …`.
 - Putting the item away clears the actionbar. Nothing shows for anyone else.
 
+**Waypoints, first cut (shipped 2026-10-11, owner: "a tool to set the tricorder waypoint
+destination per user").** Dave's `mc_set_waypoint(x, z, y?, dimension?, label?,
+gamertag?, clear?)` sends `scriptevent jb:waypoint {json}` over the console (the JSON is
+`json.dumps`-escaped, so a label can't end the command). The home-test kit's script
+stores it as a **world** dynamic property keyed by gamertag — saved with the world and
+settable while the player is offline — and the held tricorder shows
+`↗ <label> · 412 blocks · y -58` (the y when given), `You're here` within 3 blocks,
+`<label> is in the Nether` from another dimension, and world spawn when none is set.
+The script answers with a `[jbrain-probe] waypoint set/cleared/refused` line, which the
+tool reads back: no answer means the kit isn't in the loaded world, and the tool says so
+rather than claiming it worked. Checked on a local 1.26 server: set (a gamertag with a
+space), a refused bad dimension, cleared. Still to come from the design below: the
+per-xuid player property, the named and retired "<Player>'s Tricorder", keepOnDeath, and
+Dave handing one over.
+
 **How it's built** (on M5's bridge, using M6's `guide_me` tool):
 - Dave's `guide_me(player, target)` sends `scriptevent jb:target <xuid> <json>` with
   the label, dimension and x/y/z. The pack stores it as a **dynamic property on the
@@ -1553,6 +1568,18 @@ screen's "Maps" section (M8) reuses the same component.
     height at a spot (explored ground, else the satellite's survey), and one for the
     nearest structure of every kind around a spot (the server's own `locate`, swept
     over Bedrock's structure ids checked on 1.26).
+  - `mc_find_block` (owner, 2026-10-11: "can you point me to the nearest diamond"): the
+    nearest blocks of any kind in **explored** ground, with exact x, y, z
+    (`deploy/minecraft/blocks.py`). It reads each section's palette from its
+    `SubChunkPrefix` record (tag 47; version 9, little-endian NBT palette, 4096 packed
+    x,z,y indices), keeps only which block names each section holds — names, not
+    blocks, so a big world's index stays small — and decodes positions only in the
+    sections that hold a wanted block, nearest chunk first, reading just those records
+    through each table's index (`leveldb.read_keys`). An ore name brings its deepslate
+    twin. Checked on a real 1.26 world: the game's own `testforblock` confirmed every
+    find it was asked about (two diamond ores, a spawner, a chest), and the block above
+    a find reads as what it really is. Unexplored ground can't be searched — ore
+    placement doesn't exist until the game generates the chunk.
   - **The whole server** (owner, 2026-10-11: "expose ALL raw server tools to Dave, so
     he has everything needed"; `agent/minecraftadmin.py`). Reads run at once:
     `mc_server_log`, `mc_worlds` (slots, or one slot's rules), `mc_backups`,
