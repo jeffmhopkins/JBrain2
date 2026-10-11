@@ -164,6 +164,38 @@ async def summary(maker: async_sessionmaker[AsyncSession]) -> list[dict[str, Any
     ]
 
 
+LATEST_SQL = text(
+    """
+    SELECT DISTINCT ON (xuid) xuid, gamertag, dim, x, y, z, extract(epoch FROM at) AS at
+      FROM app.mc_player_track
+     WHERE world = :world
+     ORDER BY xuid, at DESC
+    """
+)
+
+
+async def latest_positions(
+    maker: async_sessionmaker[AsyncSession], world: str
+) -> list[dict[str, Any]]:
+    """Each player's newest sample in one world folder: where they are now if they are
+    on (a sample is kept only once they move, so standing still keeps the last one), or
+    where they logged off."""
+    async with scoped_session(maker, _OWNER) as s:
+        rows = (await s.execute(LATEST_SQL, {"world": world})).mappings().all()
+    return [
+        {
+            "xuid": r["xuid"],
+            "gamertag": r["gamertag"],
+            "dim": r["dim"],
+            "x": float(r["x"]),
+            "y": float(r["y"]),
+            "z": float(r["z"]),
+            "at": float(r["at"]),
+        }
+        for r in rows
+    ]
+
+
 async def run_track_drain(drain: TrackDrain, *, interval: float = POLL_SECONDS) -> None:
     """Forever: drain, wait, repeat. Outlives every server restart."""
     while True:

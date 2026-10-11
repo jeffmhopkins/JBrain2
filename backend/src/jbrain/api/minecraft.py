@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
 from jbrain.api.deps import SettingsDep, owner_only
-from jbrain.minecraft import changelog, sessions
+from jbrain.minecraft import changelog, sessions, travel
 from jbrain.minecraft import client as mc
 
 router = APIRouter(prefix="/minecraft", dependencies=[Depends(owner_only)])
@@ -420,6 +420,8 @@ async def set_world_rules(
 
 # --- the map (MINECRAFT_BEDROCK_PLAN.md §M8) ----------------------------------------
 _DIM = r"^(overworld|nether|the_end)$"
+# A block coordinate inside the world border.
+_COORD = 30_000_000
 
 
 @router.get("/map/info")
@@ -446,3 +448,72 @@ async def map_tile(
     Cached briefly: a tile changes only as the world is explored."""
     png = await mc.image(settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot})
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+
+
+@router.get("/map/point")
+async def map_point(
+    settings: SettingsDep,
+    x: Annotated[int, Query(ge=-_COORD, le=_COORD)],
+    z: Annotated[int, Query(ge=-_COORD, le=_COORD)],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=_DIM)] = "overworld",
+) -> dict[str, Any]:
+    """What a tapped spot is: its biome and surface y, and whether that is explored ground
+    or the satellite's survey (the seed's prediction, y an estimate)."""
+    params = {"slot": slot, "dim": dim, "x": x, "z": z}
+    return await mc.call(settings, "GET", "/map/point", params=params)
+
+
+@router.get("/map/players")
+async def map_players(
+    request: Request,
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+) -> dict[str, Any]:
+    """Each player's latest position in one world, from the travel log, and whether they
+    are on it right now. Only the loaded, running world has anyone on; any other world
+    shows where each player last was."""
+    view = await mc.call(settings, "GET", "/worlds")
+    rec = next((s for s in view.get("slots") or [] if s.get("id") == slot), None)
+    if rec is None or not rec.get("exists"):
+        raise HTTPException(status_code=404, detail=f"{slot} has no world yet")
+    online: set[str] = set()
+    running = False
+    if rec.get("active"):
+        try:
+            status = await mc.call(settings, "GET", "/status")
+        except HTTPException:
+            status = {}
+        running = status.get("state") == "running"
+        if running:
+            online = {
+                sessions.player_key(str(p.get("xuid", "")), str(p.get("name", "")))
+                for p in status.get("players") or []
+            }
+    players = await travel.latest_positions(_maker(request), str(rec["folder"]))
+    for p in players:
+        p["online"] = p["xuid"] in online
+    return {"slot": slot, "world": rec["folder"], "live": running, "players": players}
+
+
+@router.get("/map/structures")
+async def map_structures(
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=_DIM)] = "overworld",
+) -> dict[str, Any]:
+    """The world's saved structure sweep in one dimension (the server's own `locate`, so
+    exact), with the sweep's state. Answers while the server is stopped; a stale sweep of
+    the loaded, running world refreshes itself in the background."""
+    params = {"slot": slot, "dim": dim}
+    return await mc.call(settings, "GET", "/map/structures", params=params)
+
+
+@router.post("/map/structures/sweep", status_code=202)
+async def sweep_structures(
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+) -> dict[str, Any]:
+    """Search the loaded world for structures again, now. A 409 when it isn't the loaded,
+    running world: `locate` asks the server, so only that world can answer."""
+    return await mc.call(settings, "POST", "/map/structures/sweep", json={"slot": slot})

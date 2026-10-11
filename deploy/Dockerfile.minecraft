@@ -54,6 +54,7 @@ COPY deploy/minecraft/leveldb.py ./leveldb.py
 COPY deploy/minecraft/mapping.py ./mapping.py
 COPY deploy/minecraft/blocks.py ./blocks.py
 COPY deploy/minecraft/structures.py ./structures.py
+COPY deploy/minecraft/structure_sweep.py ./structure_sweep.py
 COPY deploy/minecraft/probe-pack ./probe-pack
 COPY deploy/minecraft/probe-rp ./probe-rp
 COPY deploy/minecraft/jbrain-pack ./jbrain-pack
@@ -65,7 +66,7 @@ RUN python3 structures.py build wreck wreck-pack
 COPY --from=predict /jbrain-predict ./jbrain-predict
 COPY --from=predict /cubiomes.LICENSE ./licenses/cubiomes.LICENSE
 
-RUN python3 -c "import server, bds, install, worlds, leveldb, mapping, blocks, structures"
+RUN python3 -c "import server, bds, install, worlds, leveldb, mapping, blocks, structures, structure_sweep"
 # The prediction is only worth drawing if it is right: spots a real 1.26 server generated
 # from this seed must still predict as what it found there on the compiled binary — in
 # the Overworld a warm ocean (Java id 44) and a mangrove swamp (184); in the Nether a

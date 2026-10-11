@@ -517,6 +517,97 @@ export interface MinecraftWorlds {
   slots: MinecraftSlot[];
 }
 
+// ---- the world map (MINECRAFT_BEDROCK_PLAN §M8) ----
+
+export type MinecraftDim = "overworld" | "nether" | "the_end";
+
+export interface MinecraftExtent {
+  min_x: number;
+  max_x: number;
+  min_z: number;
+  max_z: number;
+  chunks: number;
+}
+
+/** GET /map/info: the explored (generated) extent in one dimension, or null where nobody
+ *  has been, and whether ground beyond it is drawn from the seed (the satellite survey). */
+export interface MinecraftMapInfo {
+  slot: string;
+  dimension: MinecraftDim;
+  extent: MinecraftExtent | null;
+  tile_blocks: number;
+  max_zoom: number;
+  layers: string[];
+  predicted: boolean;
+}
+
+/** GET /map/point: one column. `survey` is the seed's prediction, its y an estimate. */
+export interface MinecraftMapPoint {
+  x: number;
+  z: number;
+  dimension: MinecraftDim;
+  source: "explored" | "survey" | "unknown";
+  biome?: string;
+  biome_id?: string;
+  y?: number;
+}
+
+/** One player's newest travel-log sample in the world (GET /map/players). */
+export interface MinecraftMapPlayer {
+  xuid: string;
+  gamertag: string;
+  dim: MinecraftDim;
+  x: number;
+  y: number;
+  z: number;
+  at: number;
+  online: boolean;
+}
+
+export interface MinecraftMapPlayers {
+  slot: string;
+  world: string;
+  /** The world is loaded and the server running: online players' positions are live. */
+  live: boolean;
+  players: MinecraftMapPlayer[];
+}
+
+export interface MinecraftStructure {
+  structure: string;
+  x: number;
+  z: number;
+}
+
+export interface MinecraftSweep {
+  state: "idle" | "running" | "done" | "failed";
+  done?: number;
+  total?: number;
+  found?: number;
+  error?: string;
+}
+
+/** GET /map/structures: the world's saved sweep (the server's own `locate`) in one
+ *  dimension. `stale` says why it no longer covers the world, or null. */
+export interface MinecraftMapStructures {
+  slot: string;
+  dimension: MinecraftDim;
+  structures: MinecraftStructure[];
+  swept_at: number | null;
+  stale: string | null;
+  sweep: MinecraftSweep;
+}
+
+/** A biome-map tile: built by the client, never authored by a model (DESIGN "minecraft_map"). */
+export function minecraftTileUrl(
+  slot: string,
+  dim: MinecraftDim,
+  zoom: number,
+  tx: number,
+  tz: number,
+): string {
+  return `/api/minecraft/map/tile/${dim}/${zoom}/${tx}/${tz}.png?slot=${encodeURIComponent(slot)}`;
+}
+
 /** PATCH /worlds/{slot}: the slot, plus when a change takes effect. */
 export type MinecraftSlotUpdated = MinecraftSlot & { applies?: "next restart" | "next load" };
 
@@ -4730,6 +4821,48 @@ export const api = {
       throw new ApiError(502, "Unexpected response from the Minecraft worlds list.");
     }
     return body;
+  },
+
+  // ---- the world map (§M8)
+
+  async minecraftMapInfo(slot: string, dim: MinecraftDim): Promise<MinecraftMapInfo> {
+    const q = new URLSearchParams({ slot, dim });
+    const response = await request(`/api/minecraft/map/info?${q}`);
+    return (await response.json()) as MinecraftMapInfo;
+  },
+
+  async minecraftMapPoint(
+    slot: string,
+    dim: MinecraftDim,
+    x: number,
+    z: number,
+  ): Promise<MinecraftMapPoint> {
+    const q = new URLSearchParams({ slot, dim, x: String(x), z: String(z) });
+    const response = await request(`/api/minecraft/map/point?${q}`);
+    return (await response.json()) as MinecraftMapPoint;
+  },
+
+  async minecraftMapPlayers(slot: string): Promise<MinecraftMapPlayers> {
+    const response = await request(`/api/minecraft/map/players?slot=${encodeURIComponent(slot)}`);
+    const body = (await response.json()) as MinecraftMapPlayers;
+    if (!body || !Array.isArray(body.players)) {
+      throw new ApiError(502, "Unexpected response from the Minecraft map's players.");
+    }
+    return body;
+  },
+
+  async minecraftMapStructures(slot: string, dim: MinecraftDim): Promise<MinecraftMapStructures> {
+    const q = new URLSearchParams({ slot, dim });
+    const response = await request(`/api/minecraft/map/structures?${q}`);
+    return (await response.json()) as MinecraftMapStructures;
+  },
+
+  async minecraftMapSweep(slot: string): Promise<MinecraftSweep> {
+    const response = await request(
+      `/api/minecraft/map/structures/sweep?slot=${encodeURIComponent(slot)}`,
+      { method: "POST" },
+    );
+    return (await response.json()) as MinecraftSweep;
   },
 
   async minecraftNewSeed(): Promise<string> {

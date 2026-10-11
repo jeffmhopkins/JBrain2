@@ -17,6 +17,7 @@ import struct
 import subprocess
 import sys
 import textwrap
+import time
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -90,6 +91,7 @@ def _data_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(server, "SLOTS", data / "slots.json")
     monkeypatch.setattr(server, "SNAPSHOT_INDEX", data / "snapshot-index.json")
     monkeypatch.setattr(server, "UPLOAD_DIR", data / "uploads")
+    monkeypatch.setattr(server, "STRUCTURE_DIR", data / "structures")
 
 
 FAKE_BDS = textwrap.dedent(
@@ -1566,3 +1568,101 @@ def test_an_installed_test_kit_is_refreshed_on_every_start(
     assert stale.read_text() != "// an older image's kit"  # the image's copy again
     rp = json.loads((world / "world_resource_packs.json").read_text())
     assert [p["pack_id"] for p in rp] == [PROBE_RP_ID]  # listed once, not appended
+
+
+def _locating_console(asked: list[str]):
+    """A console whose `locate` answers depend on where it is asked from: a village
+    per 1000-block cell (so a sweep finds several), one fortress, no End city."""
+
+    def command(c: str, **_k: Any) -> list[str]:
+        asked.append(c)
+        words = c.split()
+        x, z, kind = int(words[4]), int(words[6]), words[-1]
+        if kind == "village":
+            vx, vz = round(x / 1000) * 1000 + 40, round(z / 1000) * 1000 - 8
+            return [
+                f"[x INFO] The nearest minecraft:village is at block {vx}, (y?), {vz}"
+            ]
+        if kind == "fortress":
+            return [
+                "[x INFO] The nearest minecraft:fortress is at block -656, (y?), -224"
+            ]
+        return ["[x ERROR] Could not find any structure of that type nearby"]
+
+    return command
+
+
+def _wait_swept(rig) -> dict:
+    for _ in range(200):
+        view = rig.sweep_view()
+        if view["state"] != "running":
+            return view
+        time.sleep(0.02)
+    raise AssertionError("the sweep never finished")
+
+
+def test_a_structure_sweep_is_saved_and_answers_with_the_server_stopped() -> None:
+    _make_world("world")
+    rig = _world_rig(running=True)
+    asked: list[str] = []
+    rig.bds.command = _locating_console(asked)  # type: ignore[attr-defined]
+    started = rig.sweep_structures("slot1")
+    assert started["state"] in ("running", "done") and started["total"] > 0
+    done = _wait_swept(rig)
+    assert done["state"] == "done"
+    assert (
+        asked[0]
+        == "execute in overworld positioned 0 64 0 run locate structure village"
+    )
+    assert any(c.startswith("execute in the_end positioned") for c in asked)
+
+    rig.bds.running = False
+    over = rig.map_structures("slot1", "overworld")
+    villages = {
+        (s["x"], s["z"]) for s in over["structures"] if s["structure"] == "village"
+    }
+    assert (40, -8) in villages and len(villages) > 1  # one per cell, each kept once
+    assert over["stale"] is None and over["swept_at"]
+    nether = rig.map_structures("slot1", "nether")["structures"]
+    assert nether == [{"structure": "fortress", "x": -656, "z": -224}]
+    assert rig.map_structures("slot1", "the_end")["structures"] == []
+    with pytest.raises(RuntimeError):
+        rig.sweep_structures("slot1")  # a stopped server can't be asked
+
+
+def test_only_the_loaded_world_is_swept_and_a_new_seed_forgets_the_old_sweep() -> None:
+    _make_world("world")
+    _make_world("slot2")
+    rig = _world_rig(running=True)
+    with pytest.raises(RuntimeError):
+        rig.sweep_structures("slot2")
+    with pytest.raises(ValueError):
+        rig.map_structures("slot1", "aether")
+    rig.bds.command = _locating_console([])  # type: ignore[attr-defined]
+    rig.sweep_structures("slot1")
+    assert _wait_swept(rig)["state"] == "done"
+    rig.bds.running = False
+    rig._map_seed["world"] = "a different seed"  # a reset to a new seed, say
+    got = rig.map_structures("slot1", "overworld")
+    assert got["structures"] == [] and got["stale"] == "the world changed"
+
+
+def test_a_stale_sweep_restarts_itself_when_viewed_and_a_failure_backs_off() -> None:
+    _make_world("world")
+    rig = _world_rig(running=True)
+
+    def broken(c: str, **_k: Any) -> list[str]:
+        raise server.bds.ConsoleError("the server is not running")
+
+    rig.bds.command = broken  # type: ignore[attr-defined]
+    first = rig.map_structures("slot1", "overworld")
+    assert first["stale"] == "never searched"
+    failed = _wait_swept(rig)
+    assert failed["state"] == "failed" and "not running" in failed["error"]
+    asked: list[str] = []
+    rig.bds.command = _locating_console(asked)  # type: ignore[attr-defined]
+    rig.map_structures("slot1", "overworld")
+    assert asked == []  # a fresh failure isn't retried on every view
+    rig._sweep["failed_at"] = time.time() - server.SWEEP_RETRY_S - 1
+    rig.map_structures("slot1", "overworld")
+    assert _wait_swept(rig)["state"] == "done" and asked

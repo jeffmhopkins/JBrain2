@@ -115,6 +115,16 @@
 
   --shadow-card: none;
 
+  /* Map-only tokens (the Minecraft map; DESIGN.md "Minecraft map"). The void, the
+     explored-by veil, the glyph halo and the glyph ink are part of the PICTURE, so they stay
+     dark (ink light) in both themes; only the label plate follows the theme. */
+  --map-void: #141518;
+  --map-fog: #0b0c0e;
+  --map-halo: rgba(8, 9, 11, 0.9);
+  --map-plate: rgba(23, 24, 27, 0.9);
+  --map-ink: #f2f2f2;
+  --map-ink-on: #0e0f11;
+
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   /* Predicate paths in the analysis surfaces render monospace. */
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -145,6 +155,9 @@
   --warn-text: color-mix(in srgb, var(--amber) 50%, var(--text));
   --danger-text: color-mix(in srgb, var(--rose) 54%, var(--text));
   --steel-text: color-mix(in srgb, var(--steel) 52%, var(--text));
+  --map-void: #1e2024;
+  --map-halo: rgba(8, 9, 11, 0.85);
+  --map-plate: rgba(255, 255, 255, 0.92);
 }
 
 /* Dark variant with brighter hairlines. Inherits every dark neutral from

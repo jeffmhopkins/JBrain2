@@ -162,6 +162,26 @@ async def test_deaths_and_joins_land_on_the_timeline(maker, sidecar) -> None:
     assert rows[1].x == 1.5 and rows[1].detail == {"cause": "fall", "killer": ""}
 
 
+async def test_the_map_gets_each_players_newest_sample_in_one_world(maker, sidecar) -> None:
+    sidecar.sample(T0, 8.0, 8.0)
+    sidecar.sample(T0 + 30, 40.0, -12.0)
+    sidecar.sample(T0 + 60, 900.0, 900.0, world="slot2")  # another world's trail
+    await _drain(maker)
+    got = await travel.latest_positions(maker, "world")
+    assert got == [
+        {
+            "xuid": "111",
+            "gamertag": "Steve42",
+            "dim": "overworld",
+            "x": 40.0,
+            "y": 64.0,
+            "z": -12.0,
+            "at": T0 + 30,
+        }
+    ]
+    assert await travel.latest_positions(maker, "slot9") == []
+
+
 async def test_a_replaced_world_forgets_its_history_for_good(maker, sidecar) -> None:
     sidecar.sample(T0, 8.0, 8.0, world="slot2")
     sidecar.sample(T0, 8.0, 8.0, world="world")  # another world keeps its history

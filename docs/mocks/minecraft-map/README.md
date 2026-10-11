@@ -536,8 +536,9 @@ These need the owner's sign-off, and a DESIGN extension in the implementing PR:
 ## Assumptions still to confirm in M8
 
 - **Structures index.** The overlay assumes the sidecar keeps the results of a `locate` sweep per
-  world, so the markers draw even while the server is stopped. Today `/map/nearby` answers
-  nearest-of-each-kind from a point, and only while BDS runs.
+  world, so the markers draw even while the server is stopped. **Built in viewer wave 1**
+  (2026-10-11): the sidecar saves a grid sweep per world folder and refreshes it when stale
+  (plan §M8, *Viewer, wave 1*).
 - **Fair play.** Survey-only structures are an answer *beyond the explored edge*, which the plan
   gates by fair play for players. The owner's PWA sees everything; the chat card's Structures
   chip should follow the asker's tier.
