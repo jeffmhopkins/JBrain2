@@ -947,9 +947,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "agent-jmolt-observer-v1",
             "09e2ace3e0f8c85a92608ff017118e069b8f9729d8c9e13cb820d6f3dabcfa40",
         ),
+        # v8: `mc_show_map`, the map card in the app chat (§P3), and that it isn't in game.
         "minecraft_dave": (
-            "agent-minecraft-dave-v7",
-            "5df2dc57bc10f454a8e9d77f719a355ba7e6525ed0871d6f49d3d01940ce8267",
+            "agent-minecraft-dave-v8",
+            "64f4191c0e841b18591a0b7376dc2326c655ccc9811ecc198e9dfa93baf70ede",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —
@@ -1083,6 +1084,8 @@ def test_in_game_dave_is_the_player_tier_and_only_ever_narrower() -> None:
         "mc_worlds",
         "mc_backups",
         "mc_player",
+        # The map card needs the app's screen (§P3); the game has none.
+        "mc_show_map",
     }
     assert not tools & held_back
     assert {"mc_place_save", "mc_places", "mc_set_waypoint", "mc_goals"} <= tools

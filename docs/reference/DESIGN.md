@@ -2298,7 +2298,9 @@ only the Leaflet layers via the map glue, never model-facing text or a view
 caption), a GPS gap is never bridged (the trail splits into separate polylines),
 and derived `place_card` stats are owner-gated. The data still comes from an
 RLS-scoped, full-owner-gated tool call. No other domain gets a tile view without
-its own decision.
+its own decision; the one such decision so far is Minecraft's (`minecraft_map` below,
+approved with the Minecraft map's GUI gate): its card's tiles come only from the on-box
+`/api/minecraft/map/tile` route, built by the component, never from a model-authored URL.
 
 ### `generated_image` tool-view (settled in a three-way GUI review — reference mock: `docs/mocks/genimage-c-edit-aware.html`)
 
@@ -2533,6 +2535,68 @@ Open-Meteo, never the owner's precise fix (`ctx.here`); the surge query fires on
 an in-coverage US point. Map geometry is projected on-box, so the most an inversion of
 the `you` pin against the public track coordinates can recover is that city centre.
 Owner-facing chat artifact; never a note, never RAG-indexed.
+
+### `minecraft_map` tool-view (binding mock: `docs/mocks/minecraft-map/a-full-bleed.html`, state *Chat card*; plan `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §P3)
+
+Minecraft_Dave's map card: a live, pinchable piece of the box's Minecraft map inline in a
+chat reply, from the PWA-only tool `mc_show_map`. It is the same map component as the full
+screen (see "The Minecraft map" below) — the tiles, markers, labels and scale bar come from
+one shared renderer (`frontend/src/screens/minecraftMapDraw.ts`) — at chat-card size.
+
+**The tile carve-out (owner-approved with the map's GUI gate, 2026-10-11).** The Agent tool
+views refuse map tiles except the location domain's on-box proxy, and no other domain gets a
+tile view without its own decision. This is that decision for Minecraft: the card is a
+registered view, the model fills **only data slots**, and it authors **no URL**. The
+component builds every tile request itself from the on-box route
+(`/api/minecraft/map/tile/{dim}/{zoom}/{x}/{z}.png?slot=`) and its overlays from the owner's
+own `/api/minecraft/map/*` and `/api/minecraft/timeline` routes. A URL-shaped field in a
+payload is never read. The plan's catalog had `minecraft_map` returning an image artifact;
+this live component replaces that.
+
+- **Slots** (`{slot, world, loaded, dim, center:{x, z}, zoom, overlays:{trails, deaths,
+  structures, players}, focus:({kind, label, x, y, z, at, cause, killer}|null),
+  overworld:({x, z}|null), trail:({player, gamertag, from, to}|null)}`):
+  - `slot` is `slot1`–`slot9`, or nothing renders but *This map can't be shown*;
+  - `dim` is a closed enum (`overworld | nether | the_end`), and `focus.kind` another
+    (`death | player | place | structure | spot`) that the component maps to its own glyph;
+  - coordinates are clamped to the world's ±30,000,000 and `zoom` to the tile route's −3…4
+    (−3 is 8 px per block, 0 one per block, 4 one per chunk);
+  - labels are cut to 40 characters and rendered as text;
+  - unknown overlay names are dropped.
+
+  The tool checks and clamps the same slots before the box is asked anything, so a bad slot
+  never reaches the view.
+- **Defaults the tool resolves:** the loaded world; for `death` with no coordinates the chat
+  player's newest death in that world's travel log; for `player` where they were last seen;
+  for `place` the saved place by name. With no focus, the centre is the player's last spot in
+  the dimension, else world spawn. Overlays default to the player's trail, deaths and
+  structures.
+- **Layout** (tokens only; the frame drops the generic tool-view padding):
+  - a header: the map glyph, *Castle Hill · Nether* and *Biomes*, with a 44-px **expand**
+    button;
+  - a 220-px map: the biome tiles, explored over the survey, the trail, deaths, located
+    structures (clustered under 40 px), the focus on top with its label, and the scale bar
+    with **N↑**;
+  - the honest status line (*Loading the map…*, then the full map's words: *Live · N on ·
+    Up to a minute behind the world*, *Server stopped*, *{world} isn't loaded*, *Box
+    unreachable*);
+  - what it shows: icon, title (*BlockyFox burned in lava*), when and where, *X · Y · Z* with
+    **Copy X Z**, and in the Nether *Overworld side: X ×8 · Z ×8*;
+  - overlay chips **Trail · Deaths · Structures · Players** (36 px, with a 44-px hit area);
+  - a one-line legend: *Explored · Satellite survey*, then the glyphs shown.
+- **Gestures** (C's chat-card rule, kept for A): **one finger scrolls the chat**
+  (`touch-action: pan-y` on the map), **two fingers pinch** the card, ctrl+wheel (a trackpad
+  pinch) zooms, and a plain wheel scrolls the chat. A tap on a structure or death shows its
+  coordinates in the card, a tap on a cluster zooms in, and a tap anywhere else (or
+  **expand**) opens the full Minecraft map on the card's slot, dimension and zoom, with the
+  focus marked and its point read. Back from there returns to the Minecraft screen, then the
+  chat.
+- **Fair play:** the card is owner-only (the tool is never offered in game, and refuses a door
+  turn), so its Structures follow the owner's tier and show everything the server located. A
+  player-facing map is the share link of plan §M8, not this card.
+- **Sizes:** the map box is the map component's (`.mc-map-card`, under the `.mc-map*`
+  absolute-size exemption); the card's words, chips and buttons (`.tv-mc-*`) use the type
+  tokens and scale with the text size.
 
 ### `chart` & `lab_chart` tool-views (settled in a three-way GUI review — reference mock: `docs/mocks/chat-charts/c-tabbed-card.html`; build plan `docs/archive/CHAT_CHARTS_PLAN.md`)
 
@@ -3483,11 +3547,14 @@ round's record in `docs/mocks/minecraft-map/README.md`. A won because it is the 
 whose worst case (a 320 × 568 phone with the timeline open) still leaves a usable map, and it
 keeps every modal on the shared shells. **Wave 1 (shipped) is the live view; wave 2 (shipped)
 is the timeline** — Days navigation, replay, trails, deaths, the world spawn and *Explored by*.
-The chat card comes with P3.
+**Wave 3 (shipped) is the chat card**, Minecraft_Dave's `minecraft_map` tool-view (above), which
+opens this screen on its spot.
 
-- **Two ways in.** A **Map** row on the Minecraft screen under Worlds & backups (*{world} ·
-  BlockyFox and Mira_P on the map*, or *nobody on right now*), and a **Map** row on each world's
-  page, which opens that world. The map is a pushed page in the Minecraft screen's layer
+- **Three ways in.** A **Map** row on the Minecraft screen under Worlds & backups (*{world} ·
+  BlockyFox and Mira_P on the map*, or *nobody on right now*), a **Map** row on each world's
+  page, which opens that world, and a tap on a chat's `minecraft_map` card, which opens the
+  Minecraft screen with the map pushed on the card's world, dimension, spot and zoom (the spot
+  marked). The map is a pushed page in the Minecraft screen's layer
   stack: Back, the platform Back gesture, and focus return work like the Worlds pages, but a
   vertical drag pans instead of dismissing.
 - **The map** fills the phone: the box's 256-px biome tiles

@@ -339,6 +339,7 @@ OPTIONAL_MINECRAFT_TOOLS = frozenset(
         "mc_what_is_at",
         "mc_nearby",
         "mc_find_block",
+        "mc_show_map",
         "mc_set_waypoint",
         "mc_place_save",
         "mc_places",

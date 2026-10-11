@@ -70,6 +70,22 @@ describe("ToolView registry", () => {
     expect(isKnownView("evil_widget")).toBe(false);
   });
 
+  it("minecraft_map is registered, and a payload it can't trust renders no map", () => {
+    expect(isKnownView("minecraft_map")).toBe(true);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const { container, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "minecraft_map",
+          data: { slot: "javascript:alert(1)", url: "https://evil.example/tile.png" },
+        })}
+      />,
+    );
+    expect(getByText("This map can't be shown.")).toBeInTheDocument();
+    expect(container.querySelector("canvas, img, a, iframe")).toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("renders a stat_block from data-only slots", () => {
     const { getByText } = render(
       <ToolView

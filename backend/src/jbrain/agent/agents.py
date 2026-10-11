@@ -405,6 +405,7 @@ MINECRAFT_DAVE_TOOLS = WEB_TOOLS | frozenset(
         "mc_what_is_at",
         "mc_nearby",
         "mc_find_block",
+        "mc_show_map",
         "mc_set_waypoint",
         "mc_place_save",
         "mc_places",
@@ -431,8 +432,9 @@ MINECRAFT_DAVE_TOOLS = WEB_TOOLS | frozenset(
 # "One persona, two ways in": the player tier). Named, not subtracted, so a tool added to
 # the owner's set later stays out of the game until someone decides it belongs here. Held
 # back: the web (any player could have the box fetch pages, with children playing), every
-# admin tool and the server's raw log and config, and `mc_player` — in game the session's
-# player is whoever the server says typed the command, never a name anyone passes.
+# admin tool and the server's raw log and config, `mc_player` — in game the session's
+# player is whoever the server says typed the command, never a name anyone passes — and
+# `mc_show_map`, whose card needs the app's screen (§P3).
 MINECRAFT_DAVE_INGAME_TOOLS = frozenset(
     {
         *MATH_TOOLS,

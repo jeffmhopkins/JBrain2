@@ -122,6 +122,29 @@ describe("the Minecraft map", () => {
     expect(await screen.findByText(/^Copied X Z:/)).toBeInTheDocument();
   });
 
+  it("a chat's map card opens it on the card's spot, marked, in the card's dimension", async () => {
+    const consumed = vi.fn();
+    render(
+      <MinecraftScreen
+        openMap={{ slot: "slot2", dim: "nether", x: 41, z: -58, zoom: -1, mark: true }}
+        onOpenMapConsumed={consumed}
+      />,
+    );
+    await screen.findByRole("application");
+    expect(consumed).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("radio", { name: "Nether" })).toHaveAttribute("aria-checked", "true");
+    // The marked spot asks the box what's there, like a tap would.
+    await waitFor(() => expect(calls("/api/minecraft/map/point").length).toBeGreaterThan(0));
+    const asked = new URL(calls("/api/minecraft/map/point")[0] ?? "", "http://box").searchParams;
+    expect([asked.get("slot"), asked.get("dim"), asked.get("x"), asked.get("z")]).toEqual([
+      "slot2",
+      "nether",
+      "41",
+      "-58",
+    ]);
+    expect(await screen.findByText("X 328 · Z -464")).toBeInTheDocument();
+  });
+
   it("the survey's y is an estimate: ~Y in the line, none in the coordinates", async () => {
     point = (x, z) => ({
       x,

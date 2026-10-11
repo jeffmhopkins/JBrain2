@@ -12,6 +12,7 @@ import {
   overworldSide,
   panBy,
   scaleBar,
+  scaleOfZoom,
   slotLine,
   spotText,
   statusLine,
@@ -246,5 +247,15 @@ describe("words", () => {
       "Castle Hill · BlockyFox and Mira_P on the map",
     );
     expect(entryLine("Castle Hill", [])).toBe("Castle Hill · nobody on right now");
+  });
+});
+
+describe("scaleOfZoom", () => {
+  it("reads a chat card's tile-route zoom as px per block, inside the map's range", () => {
+    expect(scaleOfZoom(0)).toBe(1);
+    expect(scaleOfZoom(-1)).toBe(2);
+    expect(scaleOfZoom(4)).toBe(S_MIN);
+    expect(scaleOfZoom(-3)).toBe(S_MAX);
+    expect(scaleOfZoom(-9)).toBe(S_MAX);
   });
 });

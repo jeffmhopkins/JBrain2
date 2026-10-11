@@ -178,6 +178,7 @@ _AUTHORS_BRIEF = {
     "mc_locate",
     "mc_nearby",
     "mc_find_block",
+    "mc_show_map",
     "mc_set_waypoint",
     "mc_place_save",
     "mc_places",
