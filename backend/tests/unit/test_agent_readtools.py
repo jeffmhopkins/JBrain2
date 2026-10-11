@@ -1797,6 +1797,36 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "fb73ca4de48cc34de7aac044500dde5b02f663b270dfce4d043637930a5023fe",
         ),
+        "mc_backups.tool": (
+            "mc_backups",
+            1,
+            "9aec2fdc6646675396757483a6ce227d9c57cf7be10f3dcacf1590f84f119adf",
+        ),
+        "mc_command.tool": (
+            "mc_command",
+            1,
+            "f2ab12cc7ce29afaf174c55b09de2c73ca320173e5622b74a948398aa9141745",
+        ),
+        "mc_server_action.tool": (
+            "mc_server_action",
+            1,
+            "36a65811ed32c2b4782fd7f2883bd50b20cde583109cda52e110d00458e9d570",
+        ),
+        "mc_server_config.tool": (
+            "mc_server_config",
+            1,
+            "e53bf0ce9ad1b54174c192f3475870b313ef1e9eaec0f44fb564f50947c930c8",
+        ),
+        "mc_server_log.tool": (
+            "mc_server_log",
+            1,
+            "7f60c5171feb68db75053a8f5b69b4dac8aaba13217b440d6c530a3cd48c0c33",
+        ),
+        "mc_worlds.tool": (
+            "mc_worlds",
+            1,
+            "0e6a2cb56231f5f9efccc0bb507fad175ded0e73d4b36d7c32456c14efcbe420",
+        ),
         "mc_log.tool": (
             "mc_log",
             1,

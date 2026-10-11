@@ -1387,7 +1387,7 @@ is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
 | World index (after **M4**) | `mc_find_container`, `mc_find_villager`, `mc_find_block`, `mc_describe_area`, `mc_biome_at`, `mc_build_changes`, `mc_whats_new` | Snapshot index |
 | Live (after **M5**) | `mc_nearest_entity`, `mc_where_is`, `mc_player_context`, `mc_where_did_i_die`, `mc_inventory` | Behavior-pack bridge |
 | Maps (with **M8**) | `minecraft_map(center, radius, layers, overlays, slot?)`: terrain, biome, height, explored, changes, slice@Y; overlays for players, waypoints, structures, deaths | Renderer in the sidecar; returns an image artifact rendered **inline in the chat** |
-| Admin (owner) | `mc_backup_now`, `mc_set_time`, `mc_set_weather`, `mc_announce` | Console allowlist; staged as Proposals per ASSISTANT.md's write policy, never silent |
+| Admin (owner) | `mc_command` (any console command) and `mc_server_action` (every server action) — superseded the four planned admin tools, 2026-10-11 | Look-only commands run at once; everything else is staged as a `minecraft` Proposal the owner approves, never silent |
 | Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
 | Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
 | Memory, **per player**, self-managed | `mc_memory_read`, plus **line-level edits only**: `mc_memory_add(text)`, `mc_memory_replace(line, text)`, `mc_memory_remove(line)`. There is no whole-document write. | `app.mc_player_memory` (one row per line, with history); see "Memory: self-managed, never overwritten" below |
@@ -1495,14 +1495,28 @@ screen's "Maps" section (M8) reuses the same component.
     height at a spot (explored ground, else the satellite's survey), and one for the
     nearest structure of every kind around a spot (the server's own `locate`, swept
     over Bedrock's structure ids checked on 1.26).
+  - **The whole server** (owner, 2026-10-11: "expose ALL raw server tools to Dave, so
+    he has everything needed"; `agent/minecraftadmin.py`). Reads run at once:
+    `mc_server_log`, `mc_worlds` (slots, or one slot's rules), `mc_backups`,
+    `mc_server_config` (server.properties, the allowlist, versions), and `mc_command`
+    for a console command that only looks. **Everything else is a Proposal** of the new
+    `minecraft` kind (migration 0227) that the owner approves inline in the chat: any
+    other console command (`mc_command`), and every server action (`mc_server_action`:
+    start/stop/restart, backup, load/create/update/reset/restore a world, rules,
+    pin/delete backups, the allowlist, server.properties, auto-update, the update).
+    A staged action stores the exact sidecar call, built from input the owner API's own
+    models validate, and the executor re-checks the route against an allowlist at
+    enact; a server refusal holds the leaf instead of reporting it done. This replaces
+    the earlier plan's four admin tools (`mc_backup_now`, `mc_set_time`,
+    `mc_set_weather`, `mc_announce`): every one is now a case of these two.
   - `mc_goals`, `mc_goal_create`, `mc_goal_update`, `mc_log`, `mc_log_read`
   - `mc_memory_read`, `mc_memory_add`, `mc_memory_replace`, `mc_memory_remove`
 - **Migration 0226:** `mc_goals`, `mc_goal_log`, `mc_player_memory`, `mc_chat_player`,
   owner-only, with isolation tests.
 - **Moved to a follow-up PR:**
   - the player sheet's Goals list, which needs a small owner API over the goal tables;
-  - the admin tools as Proposals (`mc_backup_now`, `mc_set_time`, `mc_set_weather`,
-    `mc_announce`), which need Proposal executors.
+  - the admin tools as Proposals — shipped 2026-10-11 as the whole-server reach above
+    (`mc_command`, `mc_server_action` and four reads, migration 0227).
 - **Local model:** there is no per-persona route. Minecraft_Dave runs where `agent.turn`
   does, which on the box is `local:qwen3.8-flash-next` (checked 2026-10-10).
 
@@ -1515,7 +1529,8 @@ screen's "Maps" section (M8) reuses the same component.
   - **Goals, the progress log and player memory**: their tables (with RLS tests), the
     tools, and the Goals list in the player sheet.
   - Web search and fetch.
-  - The admin tools as Proposals.
+  - The admin tools as Proposals (shipped 2026-10-11: every server capability, see
+    above).
   - Persona tests: the allowlist is closed, there's no KB access, and world text is
     fenced.
 - **P2 — grows with M4/M5.** The index and live tools join the allowlist as each wave

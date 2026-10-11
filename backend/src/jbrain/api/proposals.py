@@ -177,6 +177,7 @@ async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str
         get_job_queue(request),
         get_analysis_repo(request),
         cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker),
+        request.app.state.settings,
     )
     ctx = ctx_for(principal)
     try:
