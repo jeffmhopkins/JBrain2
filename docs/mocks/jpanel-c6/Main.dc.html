@@ -234,6 +234,18 @@ body{margin:0}
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <label for="jp-bright" style="font-size: 22px; font-weight: 600;">Brightness</label>
+                <span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;">{{brightLabel}}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px; color: #9A9DA3;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle></svg>
+                <input id="jp-bright" type="range" min="10" max="100" step="5" value="{{bright}}" onInput="{{setBright}}" onChange="{{setBright}}" style="flex-grow: 1; height: 44px; margin: 0; accent-color: #7FA7C9; cursor: pointer;">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9"></path></svg>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">10% is the floor, so the screen can never be set to look switched off.</span>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
                 <span style="font-size: 22px; font-weight: 600;">Touch screen</span>
                 <span style="font-size: 18px; font-weight: 600; color: #9A9DA3;">{{calibWhen}}</span>
               </div>
@@ -290,6 +302,8 @@ body{margin:0}
           </div>
         </sc-if>
 
+        <div style="position: absolute; inset: 0; background: #000000; opacity: {{veil}}; pointer-events: none;"></div>
+
         <sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
           <div style="position: absolute; left: 40px; right: 40px; bottom: 78px; display: flex; justify-content: center;">
             <span style="background: #1E2024; border: 1px solid #26282C; border-radius: 22px; padding: 12px 20px; font-size: 20px; font-weight: 600; text-align: center;">{{toast}}</span>
@@ -332,7 +346,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', wifi: 'connected', tts: true, speaking: null };
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', wifi: 'connected', tts: true, speaking: null, bright: 80 };
     if (start === 'home-p2') s.page = 1;
     if (start === 'jerv' || start === 'elora' || start === 'lydian' || start === 'minecraft') s.screen = start;
     if (start === 'settings') s.screen = 'settings';
@@ -663,6 +677,10 @@ class Component extends DCLogic {
       power: this.powerView(this.props.power || 'charging'),
       toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
       ttsOn: s.tts ? 'true' : 'false',
+      bright: s.bright,
+      brightLabel: s.bright + '%',
+      veil: Math.round((1 - s.bright / 100) * 0.8 * 100) / 100,
+      setBright: (e) => { const v = Number(e.target.value); if (v >= 10 && v <= 100) this.put({ bright: v }); },
       tts: {
         track: s.tts ? 'rgba(143,188,154,0.22)' : '#1E2024',
         border: s.tts ? 'transparent' : '#3A3D42',
@@ -721,7 +739,8 @@ class Component extends DCLogic {
         this.sx = e.clientX;
         this.drag = null;
         const el = this.scroller();
-        if (el && e.pointerType === 'mouse') this.drag = { el: el, y: e.clientY, top: el.scrollTop, moved: false };
+        const onControl = e.target && e.target.tagName === 'INPUT';
+        if (el && e.pointerType === 'mouse' && !onControl) this.drag = { el: el, y: e.clientY, top: el.scrollTop, moved: false };
         this.swiped = false;
         const b = this.base(this.state);
         if (b.off) { this.put({ off: false }); return; }
