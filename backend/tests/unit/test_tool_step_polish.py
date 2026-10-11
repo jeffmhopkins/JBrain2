@@ -176,6 +176,8 @@ _AUTHORS_BRIEF = {
     "mc_goal_update",
     "mc_goals",
     "mc_locate",
+    "mc_nearby",
+    "mc_what_is_at",
     "mc_log",
     "mc_log_read",
     "mc_memory_add",

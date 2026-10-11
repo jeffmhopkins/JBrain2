@@ -1784,8 +1784,18 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "mc_locate.tool": (
             "mc_locate",
+            2,
+            "3c6a3df49a97dfbc5f36501ac7e42257585b3af449934b5617d72de1a8792e4b",
+        ),
+        "mc_nearby.tool": (
+            "mc_nearby",
             1,
-            "2420d9b3089e4de74d17b028a5688c11fc3e337ed72298f77ed820c95872d553",
+            "43eab953cbc85a6cae673a36db3d82a94bc965f639ea7cae4996bb209c175e08",
+        ),
+        "mc_what_is_at.tool": (
+            "mc_what_is_at",
+            1,
+            "fb73ca4de48cc34de7aac044500dde5b02f663b270dfce4d043637930a5023fe",
         ),
         "mc_log.tool": (
             "mc_log",

@@ -336,6 +336,8 @@ OPTIONAL_MINECRAFT_TOOLS = frozenset(
         "mc_play_history",
         "mc_world_info",
         "mc_locate",
+        "mc_what_is_at",
+        "mc_nearby",
         "mc_goals",
         "mc_goal_create",
         "mc_goal_update",

@@ -209,6 +209,8 @@ const STEP_LABELS: Record<string, string> = {
   mc_play_history: "Checked play history",
   mc_world_info: "Checked the world",
   mc_locate: "Searched for the nearest",
+  mc_what_is_at: "Looked at a spot",
+  mc_nearby: "Checked what's nearby",
   mc_goals: "Read the goals",
   mc_goal_create: "Added a goal",
   mc_goal_update: "Updated a goal",
@@ -347,6 +349,9 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   mc_player: ["gamertag"],
   // The Bedrock id ("mansion", "cherry_grove") is what "the nearest one" was.
   mc_locate: ["id"],
+  // A spot is its coordinates; "around me" (none given) shows nothing.
+  mc_what_is_at: ["x", "z"],
+  mc_nearby: ["x", "z"],
   mc_goals: ["status"],
   mc_goal_create: ["title"],
   mc_goal_update: ["status", "title"],

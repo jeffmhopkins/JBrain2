@@ -1398,3 +1398,57 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     assert (
         rig.map_tile("slot1", "overworld", 0, 0, 0) is png
     )  # cached until files change
+
+
+def test_a_point_is_explored_ground_the_survey_or_unknown() -> None:
+    mapping = sys.modules.get("mapping") or __import__("mapping")
+    _make_world("world")
+    rig = _world_rig()
+    assert rig.map_point("slot1", "overworld", 5, 5)["source"] == "unknown"
+    with pytest.raises(ValueError):
+        rig.map_point("slot1", "aether", 0, 0)
+
+    class Survey:
+        def grid(self, seed: str, dim: int, x: int, z: int, n: int, step: int):
+            assert (seed, dim, n, step) == ("42", 0, 1, 1)
+            return {(x, z): (130, 192)}
+
+    rig._predictor = Survey()
+    rig._map_seed["world"] = "42"
+    got = rig.map_point("slot1", "overworld", 100, -7)
+    assert (got["source"], got["biome"], got["biome_id"]) == (
+        "survey",
+        "Cherry Grove",
+        "minecraft:cherry_grove",
+    )
+    assert got["y"] == 130 + mapping.floor_of(0) - 1  # the top block, not the air above
+
+
+def test_nearby_asks_the_running_server_for_each_structure_kind() -> None:
+    rig = _world_rig()
+    with pytest.raises(RuntimeError):
+        rig.map_nearby("overworld", 0, 0)  # a stopped server has no world to search
+    rig.bds.running = True
+    asked: list[str] = []
+
+    def command(c: str, **_k: Any) -> list[str]:
+        asked.append(c)
+        if c.endswith("structure fortress"):
+            return [
+                "[x INFO] The nearest minecraft:fortress is at block -656, (y?), -224"
+            ]
+        if c.endswith("structure bastion_remnant"):
+            return [
+                "[x] The nearest minecraft:bastion_remnant is at block 30, (y?), 40"
+            ]
+        return ["[x ERROR] Could not find any structure of that type nearby"]
+
+    rig.bds.command = command  # type: ignore[attr-defined]
+    got = rig.map_nearby("nether", 0, 0)
+    assert all(
+        c.startswith("execute in nether positioned 0 64 0 run locate") for c in asked
+    )
+    assert [(n["structure"], n["distance"]) for n in got["nearby"]] == [
+        ("bastion_remnant", 50),
+        ("fortress", 693),
+    ]

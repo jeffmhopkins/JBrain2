@@ -250,3 +250,15 @@ async def test_the_debug_map_serves_a_picture_not_the_world(sidecar) -> None:
     assert resp.body == b"\x89PNG" and resp.media_type == "image/png"
     await mc.minecraft_map_info(req, SETTINGS, PRINCIPAL, slot="slot1", dim="overworld")
     assert [r.url.path for r in seen] == ["/map/tile/the_end/0/1/1.png", "/map/info"]
+
+
+async def test_the_debug_point_and_nearby_pass_their_coordinates_through(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/map/point"] = httpx.Response(200, json={"source": "survey", "biome": "Plains"})
+    replies["/map/nearby"] = httpx.Response(200, json={"nearby": []})
+    req = _request(FakeSupervisor([]))
+    got = await mc.minecraft_map_point(req, SETTINGS, PRINCIPAL, x=5, z=-6, slot="slot2")
+    assert got["biome"] == "Plains"
+    await mc.minecraft_map_nearby(req, SETTINGS, PRINCIPAL, x=1, z=2, dim="nether")
+    assert dict(seen[0].url.params) == {"slot": "slot2", "dim": "overworld", "x": "5", "z": "-6"}
+    assert dict(seen[1].url.params) == {"dim": "nether", "x": "1", "z": "2"}
