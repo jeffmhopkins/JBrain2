@@ -47,6 +47,7 @@ import {
   stateInfo,
   updateRunning,
 } from "../minecraft";
+import type { MapIntent } from "../minecraftMapNav";
 import { slotName } from "../minecraftWorlds";
 import { useForeground } from "../visibility";
 import { DaveSection } from "./MinecraftDave";
@@ -96,9 +97,14 @@ const initial = (tag: string) => (tag[0] ?? "?").toUpperCase();
 
 export function MinecraftScreen({
   onOpenSession,
+  openMap,
+  onOpenMapConsumed,
 }: {
   /** Opens a chat the screen just started (Ask Minecraft_Dave) on the chat surface. */
   onOpenSession?: (sessionId: string, agent: string) => void;
+  /** A chat's map card asked for the full map on its spot: pushed once, then consumed. */
+  openMap?: MapIntent | null;
+  onOpenMapConsumed?: () => void;
 } = {}) {
   const foreground = useForeground();
   const [status, setStatus] = useState<MinecraftStatus | null>(null);
@@ -276,6 +282,17 @@ export function MinecraftScreen({
     if (mainRef.current) mainRef.current.inert = worlds.pages.length > 0;
   }, [worlds.pages.length]);
   useEffect(() => setLocalBusy(busyNow), [busyNow]);
+
+  // A chat's map card opens the map page straight away, on the card's spot.
+  // `push` is a fresh function every render, so the intent itself is what's remembered.
+  const pushPage = worlds.push;
+  const opened = useRef<MapIntent | null>(null);
+  useEffect(() => {
+    if (!openMap || opened.current === openMap) return;
+    opened.current = openMap;
+    pushPage({ kind: "map", slot: openMap.slot, at: openMap });
+    onOpenMapConsumed?.();
+  }, [openMap, onOpenMapConsumed, pushPage]);
 
   function ask(kind: ConfirmKind) {
     setActionError(null);
@@ -523,7 +540,7 @@ export function MinecraftScreen({
         ) : p.kind === "world" ? (
           <WorldLayer key={`world-${p.slot}`} slot={p.slot} />
         ) : p.kind === "map" ? (
-          <MapLayer key="map" slot={p.slot} />
+          <MapLayer key="map" slot={p.slot} at={p.at} />
         ) : (
           <RulesLayer key={`rules-${p.slot}`} slot={p.slot} />
         ),

@@ -8,6 +8,7 @@ import { PresenceToast } from "./components/PresenceToast";
 import { TopBar } from "./components/TopBar";
 import { setEngineNavigator, useEnginePolling } from "./engineState";
 import { closeHomeBackLayer, useHomeBackDepth } from "./homeBack";
+import { type MapIntent, setMapOpener } from "./minecraftMapNav";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
@@ -129,6 +130,9 @@ export function App() {
   // Minecraft is reached from the launcher AND from Ops' shortcut row; opened from Ops, its
   // back returns to Ops rather than home (the binding mock's "back to where you came from").
   const [minecraftFromOps, setMinecraftFromOps] = useState(false);
+  // A chat's map card asked for the full map: Minecraft opens and pushes it on that spot.
+  const [minecraftMap, setMinecraftMap] = useState<MapIntent | null>(null);
+  const clearMinecraftMap = useCallback(() => setMinecraftMap(null), []);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The launcher's arrange mode is its own back layer, as on an Android home screen.
@@ -574,6 +578,18 @@ export function App() {
     return () => setEngineNavigator(null);
   }, []);
 
+  // A Minecraft_Dave map card opens the full map over the chat; Back climbs to the
+  // Minecraft screen, then back to the chat (the card closes to what was under it).
+  useEffect(() => {
+    setMapOpener((intent) => {
+      setMinecraftFromOps(false);
+      setLauncherOpen(false);
+      setMinecraftMap(intent);
+      setCard("minecraft");
+    });
+    return () => setMapOpener(null);
+  }, []);
+
   if (session.status === "loading") {
     return <main className="centered muted">Loading…</main>;
   }
@@ -658,6 +674,8 @@ export function App() {
             {card === "data" && <DataScreen />}
             {card === "minecraft" && (
               <MinecraftScreen
+                openMap={minecraftMap}
+                onOpenMapConsumed={clearMinecraftMap}
                 onOpenSession={(sessionId, agent) => {
                   // Reveal the chat (not the launcher) and leave a return marker, so the
                   // back gesture climbs back to Minecraft — the Tasks handoff's shape.

@@ -27,9 +27,17 @@ globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserv
 // all, so every pointer gesture in the app reads NaN coordinates under test and any
 // travel/slop check passes for the wrong reason. MouseEvent already implements the
 // coordinates these gestures use; this is the same class under the name the pointer
-// events are dispatched with.
-globalThis.PointerEvent =
-  class PointerEventShim extends MouseEvent {} as unknown as typeof PointerEvent;
+// events are dispatched with. It also keeps `pointerId` and `pointerType`, so a two-finger
+// gesture is two pointers under test, as it is on a phone.
+globalThis.PointerEvent = class PointerEventShim extends MouseEvent {
+  pointerId: number;
+  pointerType: string;
+  constructor(type: string, init: PointerEventInit = {}) {
+    super(type, init);
+    this.pointerId = init.pointerId ?? 1;
+    this.pointerType = init.pointerType ?? "";
+  }
+} as unknown as typeof PointerEvent;
 
 afterEach(() => {
   cleanup();

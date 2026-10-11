@@ -50,6 +50,7 @@ import {
   toggleLiveItem,
 } from "./liveList";
 import { type InlineMapHandle, type TrailLegData, renderPlace, renderTrail } from "./locationMap";
+import { MinecraftMapCard } from "./minecraftMapCard";
 
 export interface ViewProps {
   data: Record<string, unknown>;
@@ -3963,6 +3964,9 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   server_metrics: ServerMetrics,
   weather_card: WeatherCard,
   hurricane_card: HurricaneCard,
+  // Minecraft_Dave's map card: data slots only, tiles built by the card from the on-box
+  // route (DESIGN "`minecraft_map` tool-view" — the owner-approved tile carve-out).
+  minecraft_map: MinecraftMapCard,
   subagent_synthesis: SubagentSynthesis,
   deep_research_report: DeepResearchReport,
   deepest_run: DeepestRun,

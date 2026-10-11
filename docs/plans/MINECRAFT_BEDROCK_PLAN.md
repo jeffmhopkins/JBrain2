@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2✅ SW3✅ SW4◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -908,7 +908,30 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
   draws the world spawn and says beds aren't recorded. A pack event on a bed or respawn
   anchor being set, kept per player, would close it. **Saved places** (`mc_places`) are kept
   but not drawn yet; the overlay stays *later*.
-- **Next (P3):** the chat card.
+- **Next:** beds, saved places on the map, and the player share link.
+
+**Viewer, wave 3 — the chat card, P3 (shipped 2026-10-11).** Minecraft_Dave's `minecraft_map`
+tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
+- **Tool:** `mc_show_map(focus?, label?, x?, z?, dimension?, slot?, zoom?, show?)`
+  (`backend/src/jbrain/agent/minecraftmap.py`), Minecraft_Dave's, PWA only. It checks and
+  clamps every slot before the box is asked anything, resolves the loaded world, and fills
+  `focus: death` from the chat player's newest death in that world's travel log (placed at
+  the last sample before it when the pack gave no position), `player` from their last
+  sample, `place` from their saved places. It returns the data-only view and a fenced text
+  summary with the coordinates and, in the Nether, the Overworld side (×8). The view holds
+  no URL: the card builds its own tile requests from the on-box route — the carve-out
+  approved with the GUI gate, written into DESIGN.
+- **Card:** `frontend/src/agent/views/minecraftMapCard.tsx`, drawn by the full map's own
+  renderer, factored out into `frontend/src/screens/minecraftMapDraw.ts`. It has a 220-px
+  map with the trail, deaths, structures, the focus and the scale bar, the honest status
+  line, the focus with Copy X Z, overlay chips and a legend. One finger scrolls the chat and
+  two pinch. A tap opens the full map on the card's spot: `MapLayer`'s new `at` (slot,
+  dimension, centre, zoom, marked spot), reached through `minecraftMapNav.ts`.
+- **Not done:** jerv's own map tool (§3b, "show me the map of the Minecraft world"). jerv
+  reads the owner's notes, and the persona firewall keeps player-authored world text
+  (gamertags, world and place names) away from a KB-reading agent, so it needs its own
+  decision; the card itself is ready for it. The card's *Places* chip from the mock waits on
+  saved places being drawn on the map.
 
 **Renderer, first layer (shipped 2026-10-10).**
 - **Reader:** `deploy/minecraft/leveldb.py` is a stdlib reader for Mojang's LevelDB
@@ -1060,7 +1083,9 @@ biomes.**
 - **Where maps appear**:
   - The owner sees them in a **Maps** screen in the PWA, with pan and zoom over tiles,
     layer toggles, and pins for slot and snapshot.
-  - Owner-side jerv gets a `minecraft_map` tool that returns the image into chat.
+  - Owner-side jerv gets a `minecraft_map` tool that returns the image into chat. (Built
+    instead as Minecraft_Dave's live `minecraft_map` card, viewer wave 3 above; jerv's own
+    is still open.)
   - The assistant gets them through `POST /debug/minecraft/probe {name: "map"}`.
 - **Players can't be shown an image in Bedrock chat.** So Dave answers "map of here" with a
   **short-lived share link** (for example 24 h) to that one PNG, served over HTTPS through the
@@ -1922,8 +1947,10 @@ screen's "Maps" section (M8) reuses the same component.
   lands, one tool per PR, with tool-step-polish entries. With M5 the same goal, log and
   memory tools reach **Dave in game** at player tier (`/jb:dave goals|log|help with …`),
   scoped to the asker's own xuid. `auto` log entries come from add-on events.
-- **P3 — maps.** M8's renderer, the `minecraft_map` tool, and the map tool-view (GUI
-  gate), also embedded on the Minecraft screen.
+- **P3 — maps ✅ (2026-10-11, viewer wave 3 in §M8).** M8's renderer, the `minecraft_map`
+  tool, and the map tool-view (GUI gate), also embedded on the Minecraft screen. Built as
+  the tool `mc_show_map` and the live `minecraft_map` card, not an image (the GUI gate's
+  carve-out); the Minecraft screen's way in is its **Map** row (wave 1).
 
 **Decided (owner, 2026-10-10):**
 - **No approvals** for goals, log or memory writes, **provided the session has a defined
@@ -1935,6 +1962,10 @@ screen's "Maps" section (M8) reuses the same component.
 log and memory tools reach players in game at player tier, scoped to the asker's xuid —
 plus saved places (`mc_place_save`, `mc_places`, `mc_place_remove`; `mc_set_waypoint`'s
 `place`), prompt `agent-minecraft-dave-v7`.
+
+**P3 (2026-10-11):** `mc_show_map` and the `minecraft_map` card in Minecraft_Dave's chat
+(§M8, *Viewer, wave 3*), prompt `agent-minecraft-dave-v8`. Not in game: the in-game tier
+leaves it out by name and the handler refuses a door turn.
 
 **Pending:** the owner's gamertag, which is entered on the Minecraft screen. Until it's set,
 new Minecraft_Dave chats have no player and ask whose chat it is.

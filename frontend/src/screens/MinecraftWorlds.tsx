@@ -57,6 +57,7 @@ import {
   XIcon,
 } from "../components/icons";
 import { clockOf, plural, shortDate } from "../minecraft";
+import type { MapIntent } from "../minecraftMapNav";
 import {
   DIFFICULTIES,
   GAMEMODES,
@@ -104,7 +105,8 @@ export type Page =
   | { kind: "worlds" }
   | { kind: "world"; slot: string }
   | { kind: "rules"; slot: string }
-  | { kind: "map"; slot?: string };
+  /** `at`: opened from a chat's map card, on that card's spot. */
+  | { kind: "map"; slot?: string; at?: MapIntent };
 
 export type WorldModal =
   | { kind: "newWorld"; slot: string }

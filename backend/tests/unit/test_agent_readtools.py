@@ -1823,6 +1823,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "bde3de8951d40facacd6525a23243d968d739892b14d199977a969dd37cd4a8a",
         ),
+        # The map card (§P3): data slots only, the app builds every tile request.
+        "mc_show_map.tool": (
+            "mc_show_map",
+            1,
+            "cac3b45d09773eabc252a20fe32fbe37ff1fea4eebe64866801c8168115477b7",
+        ),
         "mc_backups.tool": (
             "mc_backups",
             1,

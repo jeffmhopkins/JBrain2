@@ -33616,3 +33616,244 @@ button.wf-sigpill {
     animation: none;
   }
 }
+
+/* minecraft_map — Minecraft_Dave's map card in a chat (DESIGN "`minecraft_map` tool-view",
+   binding mock docs/mocks/minecraft-map/a-full-bleed.html "Chat card"). The canvas box is the
+   map component's (`.mc-map*`, absolute by the approved exemption); the card's words, chips and
+   buttons use the type tokens and scale with the text size. One finger scrolls the chat:
+   `pan-y` leaves vertical drags to the page and hands two-finger pinches to the card. */
+.fb-shell .tool-view:has(.tv-mc) {
+  padding: 0;
+  overflow: hidden;
+}
+.tv-mc {
+  display: flex;
+  flex-direction: column;
+}
+.tv-mc-head {
+  display: flex;
+  align-items: center;
+  gap: calc(8px * var(--font-scale));
+  min-height: 44px;
+  padding: calc(2px * var(--font-scale)) 0 calc(2px * var(--font-scale))
+    calc(12px * var(--font-scale));
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.tv-mc-head > svg {
+  flex: none;
+}
+.tv-mc-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tv-mc-title b {
+  color: var(--text);
+  font-weight: 500;
+}
+.tv-mc-expand {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.tv-mc-expand:focus-visible,
+.tv-mc-copy:focus-visible,
+.tv-mc-chip:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: 2px;
+}
+.mc-map-card {
+  position: relative;
+  height: 220px;
+  overflow: hidden;
+  background: var(--map-void);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: zoom-in;
+}
+.tv-mc-foot {
+  display: flex;
+  flex-direction: column;
+  gap: calc(10px * var(--font-scale));
+  padding: calc(10px * var(--font-scale)) calc(12px * var(--font-scale));
+}
+.tv-mc-status {
+  display: flex;
+  align-items: baseline;
+  gap: calc(8px * var(--font-scale));
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.4;
+}
+.tv-mc-status .mc-dot {
+  width: 8px;
+  height: 8px;
+  transform: translateY(-1px);
+}
+.tv-mc-status b {
+  color: var(--text);
+  font-weight: 500;
+}
+.tv-mc-det {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--font-scale));
+}
+.tv-mc-det-h {
+  display: flex;
+  align-items: flex-start;
+  gap: calc(10px * var(--font-scale));
+}
+.tv-mc-det-ic {
+  width: calc(36px * var(--font-scale));
+  height: calc(36px * var(--font-scale));
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+.tv-mc-det-ic.death {
+  background: var(--rose-tint);
+  border-color: transparent;
+  color: var(--danger-text);
+}
+.tv-mc-det-ic.st {
+  background: var(--amber-tint);
+  border-color: transparent;
+  color: var(--warn-text);
+}
+.tv-mc-det-tx {
+  flex: 1;
+  min-width: 0;
+}
+.tv-mc-det-t {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.tv-mc-det-s {
+  margin-top: calc(2px * var(--font-scale));
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.tv-mc-coord {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: calc(8px * var(--font-scale));
+}
+.tv-mc-xyz {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.tv-mc-xyz b,
+.tv-mc-alt b {
+  color: var(--text);
+  font-weight: 500;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.tv-mc-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px * var(--font-scale));
+  min-height: 44px;
+  padding: 0 calc(14px * var(--font-scale));
+  border: 1px solid var(--steel);
+  border-radius: var(--r-pill);
+  background: var(--steel-tint);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  cursor: pointer;
+}
+.tv-mc-alt {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.tv-mc-copied {
+  font-size: var(--fs-micro);
+  color: var(--ok-text);
+}
+.tv-mc-tog {
+  display: flex;
+  flex-wrap: wrap;
+  /* Absolute: it clears the chips' 44px hit areas, which do not scale either. */
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.tv-mc-chip {
+  position: relative;
+  min-height: 36px;
+  min-width: 44px;
+  padding: 0 calc(12px * var(--font-scale));
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  cursor: pointer;
+}
+/* The pill reads at 36px; its hit area reaches the 44px floor. */
+.tv-mc-chip::after {
+  content: "";
+  position: absolute;
+  inset: -4px -2px;
+}
+.tv-mc-chip[aria-pressed="true"] {
+  background: var(--steel-tint);
+  border-color: var(--steel);
+  color: var(--text);
+}
+.tv-mc-lg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px * var(--font-scale)) calc(12px * var(--font-scale));
+}
+.tv-mc-lg-i {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(6px * var(--font-scale));
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.tv-mc-lg-i i {
+  display: inline-block;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.tv-mc-lg-i.death svg {
+  color: var(--danger-text);
+}
+.tv-mc-empty {
+  padding: calc(12px * var(--font-scale));
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}

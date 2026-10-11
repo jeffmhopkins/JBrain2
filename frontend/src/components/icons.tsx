@@ -643,6 +643,13 @@ export const MapIcon = (p: IconProps) => (
   </Icon>
 );
 
+// Expand to full screen: the chat map card opening the full map.
+export const ExpandIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
+  </Icon>
+);
+
 // "Show everyone": a target, the map's re-centre.
 export const LocateIcon = (p: IconProps) => (
   <Icon {...p}>

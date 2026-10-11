@@ -541,7 +541,9 @@ These need the owner's sign-off, and a DESIGN extension in the implementing PR:
   (plan §M8, *Viewer, wave 1*).
 - **Fair play.** Survey-only structures are an answer *beyond the explored edge*, which the plan
   gates by fair play for players. The owner's PWA sees everything; the chat card's Structures
-  chip should follow the asker's tier.
+  chip should follow the asker's tier. **Settled in viewer wave 3** (2026-10-11): the card's
+  tool is PWA-only and never offered in game, so its asker is always the owner and the chip
+  shows every located structure (DESIGN.md "`minecraft_map` tool-view").
 - **The offline cache** is per device: the tiles last viewed. How much to keep is open.
 - **Copy X Z** copies `X Z` as two numbers. Markers know Y (structures don't), so *Copy X Y Z*
   for markers is a cheap later addition for `/tp`.

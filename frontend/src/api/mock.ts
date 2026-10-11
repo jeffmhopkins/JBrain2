@@ -1136,6 +1136,86 @@ const NOTE_TRANSCRIPT = [
   },
 ];
 
+// ===== Minecraft_Dave's map card (P3) =====
+// The map GUI gate's chat fixture (docs/mocks/minecraft-map/README.md "Dave's chat"): BlockyFox
+// asks where he died yesterday, and Dave answers with the `minecraft_map` card on the Nether
+// lava death beside the fortress. The death comes from the map fixtures' own travel log, so
+// the card's skull, its trail and the full map it opens all agree.
+const DAVE_SESSION = {
+  id: "dave-where-did-i-die",
+  title: "where did I die yesterday?",
+  status: "active",
+  agent: "minecraft_dave",
+  domain_scopes: [],
+  subject_ids: [],
+  created_at: daysAgo(0, 14, 30),
+  last_active_at: daysAgo(0, 14, 31),
+  turn_count: 1,
+};
+
+async function daveTranscript() {
+  const m = await import("../minecraftMapFixtures");
+  const death = m
+    .fixtureLog()
+    .events.filter((e) => e.kind === "death" && e.gamertag === "BlockyFox" && e.dim === "nether")
+    .pop();
+  const at = Math.round(death?.at ?? Date.now() / 1000 - 86_400);
+  const [x, z] = [death?.x ?? 41, death?.z ?? -58];
+  const when = new Date(at * 1000).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return [
+    { role: "user", content: "where did I die yesterday?", tools: [], attachments: [] },
+    {
+      role: "assistant",
+      content: [
+        `Yesterday at **${when}** you burned in lava in the Nether, just west of the fortress,`,
+        `at **X ${x} · Z ${z}** — the Overworld side of that is **X ${x * 8} · Z ${z * 8}**.`,
+        "The portal home is at **X -5 · Z 5**. Keep to the netherrack path — the lava lake",
+        "is right beside it.",
+      ].join(" "),
+      tools: [
+        {
+          id: "mc0",
+          name: "mc_show_map",
+          ok: true,
+          args: { focus: "death" },
+          result_brief: "death · Nether",
+          sources: [],
+          text_offset: 0,
+          view: {
+            view: "minecraft_map",
+            surface: "inline",
+            refs: [],
+            data: {
+              slot: "slot2",
+              world: "Castle Hill",
+              loaded: true,
+              dim: "nether",
+              center: { x, z },
+              zoom: -1,
+              overlays: { trails: true, deaths: true, structures: true, players: false },
+              focus: {
+                kind: "death",
+                label: "BlockyFox died here",
+                x,
+                y: death?.y ?? 33,
+                z,
+                at,
+                cause: "lava",
+                killer: null,
+              },
+              overworld: { x: x * 8, z: z * 8 },
+              trail: { player: "2535411", gamertag: "BlockyFox", from: at - 7200, to: at + 120 },
+            },
+          },
+        },
+      ],
+    },
+  ];
+}
+
 // ===== Phase 6 fixture: the wiki reader's Priya Nair article =====
 // The example mock (docs/mocks/wiki-reader-example-priya.html) verbatim: lead,
 // type-guided sections with nested subsections, a bulleted list, two tables, and
@@ -4316,7 +4396,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
   // in mock mode draws the Thought chip, the Worked block, the step rows and the question
   // block, not an empty box. Every other note answers null, which is the ordinary state of
   // a note the box has not read yet.
-  if (path === "/api/sessions" && method === "GET") return json([NOTE_SESSION]);
+  if (path === "/api/sessions" && method === "GET") return json([DAVE_SESSION, NOTE_SESSION]);
   if (path === "/api/proposals" && method === "GET") return json([]);
   const noteThreadPath = path.match(/^\/api\/notes\/([^/]+)\/thread$/);
   if (noteThreadPath && method === "GET") {
@@ -4329,6 +4409,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
   const transcriptPath = path.match(/^\/api\/sessions\/([^/]+)\/transcript$/);
   if (transcriptPath && method === "GET") {
+    if (decodeURIComponent(transcriptPath[1] ?? "") === DAVE_SESSION.id) {
+      return json(await daveTranscript());
+    }
     return json(
       decodeURIComponent(transcriptPath[1] ?? "") === NOTE_SESSION.id ? NOTE_TRANSCRIPT : [],
     );

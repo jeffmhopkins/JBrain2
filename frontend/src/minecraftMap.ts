@@ -56,6 +56,10 @@ export interface Frame {
 export const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 export const clampScale = (s: number) => clamp(s, S_MIN, S_MAX);
 
+/** The view scale (px per block) for a tile-route zoom: 0 is 1 px per block, 4 one per
+ *  chunk, -3 eight per block. A chat card's zoom slot is in these terms. */
+export const scaleOfZoom = (zoom: number) => clampScale(2 ** -zoom);
+
 /** The visible map is what the panel leaves; centring aims at its middle, a little below the
  *  floating top row. */
 function middle(f: Frame): [number, number] {
