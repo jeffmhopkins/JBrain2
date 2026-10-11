@@ -178,6 +178,7 @@ async def test_the_owners_three_phrases(maker, sidecar) -> None:
 async def test_saving_again_moves_and_remove_forgets(maker, sidecar) -> None:
     owner = await _owner(maker)
     ctx = await _chat(maker, owner)
+    assert ctx.agent_session_id is not None
     tools = _tools(maker)
     with asking(ctx.agent_session_id, _asker(Spot(1, 64, 2, "overworld"))):
         await tools["mc_place_save"]({"name": "base"}, ctx)
@@ -200,6 +201,7 @@ async def test_a_place_is_only_ever_where_the_player_stands(maker, sidecar) -> N
     may go to, so it must be somewhere the player has stood."""
     owner = await _owner(maker)
     ctx = await _chat(maker, owner)
+    assert ctx.agent_session_id is not None
     tools = _tools(maker)
     with asking(ctx.agent_session_id, _asker(Spot(5, 64, 6, "overworld"))):
         out = await tools["mc_place_save"](
@@ -267,6 +269,7 @@ async def test_places_kept_by_name_move_to_the_xuid(maker, sidecar) -> None:
 async def test_a_non_owner_sees_no_places_and_cannot_write_one(maker, sidecar, ctx_name) -> None:
     owner = await _owner(maker)
     ctx = await _chat(maker, owner)
+    assert ctx.agent_session_id is not None
     with asking(ctx.agent_session_id, _asker(Spot(1, 64, 2, "overworld"))):
         assert "Saved" in await _tools(maker)["mc_place_save"]({"name": "base"}, ctx)
     other = {"EVERY_SCOPE": EVERY_SCOPE, "UNSCOPED": UNSCOPED}[ctx_name]
