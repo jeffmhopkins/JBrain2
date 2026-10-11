@@ -337,6 +337,12 @@ fi
 # firmware.yml rebuilds and fails the PR when dist/ is not byte-for-byte what the source
 # produces, so this is caught, but it is caught in CI rather than here.
 #
+# firmware-c6's app framework also runs on the host with no ESP-IDF at all: its pure-C suite
+# (`make -C firmware-c6/host test`) needs only a C compiler, and the LVGL sim
+# (`firmware-c6/sim/render.sh <out-dir>`) only cmake and a C compiler — it fetches its pinned
+# LVGL release at configure time. Both already exist in this container, so nothing is
+# installed here for them.
+#
 # Mentioned here per the dev-setup single-source-of-truth rule (CLAUDE.md rule #8).
 
 # --- Panel flasher / `endpoint` sidecar (opt-in, NOT bootstrapped here) ---
