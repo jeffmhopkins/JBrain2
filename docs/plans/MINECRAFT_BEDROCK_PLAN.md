@@ -1298,15 +1298,15 @@ It costs **one Power Pack** from their inventory. With none, Dave says so, and o
 the tricorder (M9) instead. **Canon (DW1):** it also needs their own Tricorder anywhere on
 them, which in game it always is, since Dave is only reachable through one.
 
-**"Known" means a coordinate that has been pinned down, not a guess.** These count:
-- **Saved places:** `waypoint_save` ("Dave, remember this as *home*"), set while standing
-  there or confirmed in conversation with Dave ("the village at 410, -1220 — save it as
-  *market*").
-- **Places a player has stood:** their bed or spawn, and the waypoints others have shared
-  with them.
-- **A located structure or biome** (`locate`) counts only after Dave has stated the
-  coordinate and the player has confirmed it ("yes, that one"). That is the "solidify"
-  step. Until then it's tricorder-only.
+**Only the player's own saved places (canon, owner 2026-10-11).** A transport goes only to
+a place the asker has saved with `mc_place_save` (`app.mc_places`), such as "home" or
+"tree farm". It never goes to a bed, a located structure, a coordinate said in chat, or
+another player's place. To go somewhere new, the player saves it first. ~~The earlier
+list of other "known" places (beds, shared waypoints, confirmed `locate` results)~~ is
+superseded.
+- **Open (owner):** `mc_place_save` also takes typed coordinates, so a player could save a
+  place they've never been to and transport there. Should a transport target only places
+  saved while standing there?
 
 **The flow (in game):**
 1. "Dave, take me to *market*." Dave names the place, the distance and dimension, and the
