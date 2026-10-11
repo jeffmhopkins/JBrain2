@@ -3705,6 +3705,29 @@ opens this screen on its spot.
   scale with the text-size setting (see "Theming"); the panel, the Sheet and their words use
   the type tokens. The pulse stops under `prefers-reduced-motion` and while the tab is hidden.
 
+### The Minecraft map share (owner, 2026-10-11 — mock reviewed in chat; plan §M20)
+
+A view-only map for someone without a login, at `/mc/s/{token}`.
+
+- **Share this map** is a `.mc-map-fab` (link glyph) at the right end of the top row, the
+  owner's map only. It opens a Sheet *Share the map*: a note saying what the link gives away
+  (*every player's live position, travel history and timeline … until you revoke it*), a
+  fieldset **Open the map on** of 56px player rows (radio, gamertag, *online now* or *last
+  seen …*, an ok dot when on; the checked row takes the steel tint), and **Create link**
+  (`mc-btn-primary`). Made, it shows the link in a read-only monospace field with **Copy
+  link** (*Copied* once done) and, where `navigator.share` exists, **Send…**. Below, **Active
+  links**: one row per live link (gamertag; world · *opened N times* or *not opened yet* ·
+  *last …*) with a `mc-btn-danger` **Revoke**.
+- **The shared map** is the owner's map page with the owner's chrome taken away: no back
+  button (a **View only** chip — eye glyph, `--warn-text`, amber being the system's
+  read-only colour — takes its place), the world name as plain text instead of the picker,
+  no Share fab, no *Search again*. It opens on the shared player at a close zoom, selected,
+  in their dimension.
+- **An ended link** (revoked, or the world gone) is a centred page: an amber-tinted eye
+  disc, *This map link was turned off*, one line on asking for a new link, and the
+  wordmark. An unreachable box says *The map isn't answering* instead — never that the link
+  ended.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

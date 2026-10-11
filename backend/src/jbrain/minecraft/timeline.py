@@ -257,9 +257,11 @@ async def timeline(
     players: Sequence[str] = (),
     include: frozenset[str] = frozenset({"trails", "events", "sessions"}),
     dim: str = "overworld",
+    ctx: SessionContext = _OWNER,
 ) -> dict[str, Any]:
     """Everything the map's timeline draws for one world folder over [start, end]
-    (epoch seconds): see the module docstring for the shape and its bounds."""
+    (epoch seconds): see the module docstring for the shape and its bounds. A map share
+    reads it under its own pinned `ctx`."""
     _span_ok(start, end)
     if dim not in DIMS:
         raise ValueError("dimension must be overworld, nether or the_end")
@@ -273,7 +275,7 @@ async def timeline(
         "to": end,
         "now": datetime.now(UTC).timestamp(),
     }
-    async with scoped_session(maker, _OWNER) as s:
+    async with scoped_session(maker, ctx) as s:
         if "trails" in include or "events" in include:
             trails, events, cut = await _trails_and_events(s, rng, who)
             if "trails" in include:

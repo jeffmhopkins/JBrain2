@@ -32563,6 +32563,161 @@ button.wf-sigpill {
   color: var(--text-2);
 }
 
+/* The map share (DESIGN.md "Minecraft map share"): the owner's Share sheet, and the
+   view-only chrome a /mc/s/{token} visitor gets in place of the back button. Amber is the
+   system's read-only colour. */
+span.mc-map-world {
+  cursor: default;
+}
+
+.mc-map-viewonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--warn-text);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mc-share {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mc-share-head {
+  padding: 0;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.mc-share-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.mc-share-pick legend {
+  margin-bottom: 8px;
+}
+
+.mc-share-player,
+.mc-share-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+}
+
+.mc-share-player {
+  cursor: pointer;
+}
+
+.mc-share-player:has(input:checked) {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+}
+
+.mc-share-player input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--steel);
+}
+
+.mc-share-player .mc-navtx,
+.mc-share-link .mc-navtx {
+  flex: 1;
+  min-width: 0;
+}
+
+.mc-share-ready,
+.mc-share-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mc-share-url {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--fs-micro);
+}
+
+.mc-share-problem {
+  color: var(--danger-text);
+}
+
+.mc-share-msg {
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.mc-share-msg h1 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 500;
+}
+
+.mc-share-msg .mc-note {
+  max-width: 320px;
+}
+
+.mc-share-msg-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--amber-tint);
+  color: var(--warn-text);
+}
+
+.mc-share-mark {
+  margin-top: 24px;
+  font-size: var(--fs-title);
+  font-weight: 700;
+}
+
+.mc-share-mark span {
+  color: var(--steel);
+}
+
 .mc-map-tabs {
   margin-left: auto;
   flex: none;

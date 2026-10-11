@@ -716,6 +716,77 @@ export function minecraftTileUrl(
   return `/api/minecraft/map/tile/${dim}/${zoom}/${tx}/${tz}.png?slot=${encodeURIComponent(slot)}&layer=${layer}`;
 }
 
+/** A map share link: a no-login view of one world's map, opened on one player, until
+ *  revoked. The token itself is shown only once, at mint. */
+export interface MinecraftMapShare {
+  id: string;
+  slot: string;
+  xuid: string;
+  gamertag: string;
+  created_at: number;
+  last_viewed_at: number | null;
+  view_count: number;
+}
+
+export interface MinecraftMapShareToken extends MinecraftMapShare {
+  token: string;
+}
+
+/** What a shared map opens with (GET /api/mc-share/{token}). */
+export interface MinecraftShareView {
+  slot: string;
+  name: string | null;
+  active: boolean;
+  last_played: number | null;
+  focus: { xuid: string; gamertag: string };
+}
+
+/** A shared map's tile: the token, never a slot, picks the world. */
+export function mcShareTileUrl(
+  token: string,
+  dim: MinecraftDim,
+  zoom: number,
+  tx: number,
+  tz: number,
+  layer: "surface" | "biomes" = "surface",
+): string {
+  return `${mcShareBase(token)}/map/tile/${dim}/${zoom}/${tx}/${tz}.png?layer=${layer}`;
+}
+
+function mcShareBase(token: string): string {
+  return `/api/mc-share/${encodeURIComponent(token)}`;
+}
+
+type TimelineOpts = {
+  include?: MinecraftTimelinePart[];
+  players?: string[];
+  dim?: MinecraftDim;
+};
+
+function timelineQuery(from: number, to: number, opts: TimelineOpts): URLSearchParams {
+  const q = new URLSearchParams({ from: String(Math.floor(from)), to: String(Math.ceil(to)) });
+  if (opts.include) q.set("include", opts.include.join(","));
+  if (opts.players?.length) q.set("players", opts.players.join(","));
+  if (opts.dim) q.set("dim", opts.dim);
+  return q;
+}
+
+async function timelineBody(response: Response): Promise<MinecraftTimeline> {
+  const body = (await response.json()) as MinecraftTimeline;
+  if (!body || typeof body.from !== "number") {
+    throw new ApiError(502, "Unexpected response from the Minecraft timeline.");
+  }
+  return body;
+}
+
+async function playersBody(response: Response): Promise<MinecraftMapPlayers> {
+  const body = (await response.json()) as MinecraftMapPlayers;
+  if (!body || !Array.isArray(body.players)) {
+    throw new ApiError(502, "Unexpected response from the Minecraft map's players.");
+  }
+  return body;
+}
+
 /** PATCH /worlds/{slot}: the slot, plus when a change takes effect. */
 export type MinecraftSlotUpdated = MinecraftSlot & { applies?: "next restart" | "next load" };
 
@@ -4975,12 +5046,9 @@ export const api = {
   },
 
   async minecraftMapPlayers(slot: string): Promise<MinecraftMapPlayers> {
-    const response = await request(`/api/minecraft/map/players?slot=${encodeURIComponent(slot)}`);
-    const body = (await response.json()) as MinecraftMapPlayers;
-    if (!body || !Array.isArray(body.players)) {
-      throw new ApiError(502, "Unexpected response from the Minecraft map's players.");
-    }
-    return body;
+    return playersBody(
+      await request(`/api/minecraft/map/players?slot=${encodeURIComponent(slot)}`),
+    );
   },
 
   async minecraftMapStructures(slot: string, dim: MinecraftDim): Promise<MinecraftMapStructures> {
@@ -5001,26 +5069,66 @@ export const api = {
     slot: string,
     from: number,
     to: number,
-    opts: {
-      include?: MinecraftTimelinePart[];
-      players?: string[];
-      dim?: MinecraftDim;
-    } = {},
+    opts: TimelineOpts = {},
   ): Promise<MinecraftTimeline> {
-    const q = new URLSearchParams({
-      slot,
-      from: String(Math.floor(from)),
-      to: String(Math.ceil(to)),
+    const q = timelineQuery(from, to, opts);
+    q.set("slot", slot);
+    return timelineBody(await request(`/api/minecraft/timeline?${q}`));
+  },
+
+  async minecraftMapShares(): Promise<MinecraftMapShare[]> {
+    return (await request("/api/minecraft/shares")).json();
+  },
+
+  async minecraftMintMapShare(slot: string, xuid: string): Promise<MinecraftMapShareToken> {
+    const response = await request("/api/minecraft/shares", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot, xuid }),
     });
-    if (opts.include) q.set("include", opts.include.join(","));
-    if (opts.players?.length) q.set("players", opts.players.join(","));
-    if (opts.dim) q.set("dim", opts.dim);
-    const response = await request(`/api/minecraft/timeline?${q}`);
-    const body = (await response.json()) as MinecraftTimeline;
-    if (!body || typeof body.from !== "number") {
-      throw new ApiError(502, "Unexpected response from the Minecraft timeline.");
-    }
-    return body;
+    return response.json();
+  },
+
+  async minecraftRevokeMapShare(id: string): Promise<void> {
+    await request(`/api/minecraft/shares/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // The public map share: every read is keyed by the token, which picks the world.
+  async mcShareView(token: string): Promise<MinecraftShareView> {
+    return (await request(mcShareBase(token))).json();
+  },
+
+  async mcShareMapInfo(token: string, dim: MinecraftDim): Promise<MinecraftMapInfo> {
+    return (await request(`${mcShareBase(token)}/map/info?${new URLSearchParams({ dim })}`)).json();
+  },
+
+  async mcShareMapPoint(
+    token: string,
+    dim: MinecraftDim,
+    x: number,
+    z: number,
+  ): Promise<MinecraftMapPoint> {
+    const q = new URLSearchParams({ dim, x: String(x), z: String(z) });
+    return (await request(`${mcShareBase(token)}/map/point?${q}`)).json();
+  },
+
+  async mcShareMapPlayers(token: string): Promise<MinecraftMapPlayers> {
+    return playersBody(await request(`${mcShareBase(token)}/map/players`));
+  },
+
+  async mcShareMapStructures(token: string, dim: MinecraftDim): Promise<MinecraftMapStructures> {
+    const q = new URLSearchParams({ dim });
+    return (await request(`${mcShareBase(token)}/map/structures?${q}`)).json();
+  },
+
+  async mcShareTimeline(
+    token: string,
+    from: number,
+    to: number,
+    opts: TimelineOpts = {},
+  ): Promise<MinecraftTimeline> {
+    const q = timelineQuery(from, to, opts);
+    return timelineBody(await request(`${mcShareBase(token)}/timeline?${q}`));
   },
 
   async minecraftNewSeed(): Promise<string> {

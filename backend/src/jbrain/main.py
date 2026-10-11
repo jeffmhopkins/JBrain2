@@ -106,6 +106,7 @@ from jbrain.api import (
     llm_internal,
     locations,
     member,
+    minecraft_share,
     mqtt,
     notes,
     notifications,
@@ -1411,6 +1412,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.research_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
         # Per-IP bound on the unauthenticated jlaunch results-share reads (api/jlaunch_share.py).
         app.state.jlaunch_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
+        # Per-IP bounds on the unauthenticated map-share reads (api/minecraft_share.py):
+        # the viewer polls players and the live log, and a pan pulls a screenful of tiles.
+        app.state.mc_share_rate_limiter = TokenBucket(capacity=60, refill_per_sec=2.0)
+        app.state.mc_share_tile_rate_limiter = TokenBucket(capacity=400, refill_per_sec=20.0)
         # The Automations operator surface: projects the live trigger/schedule/
         # pipeline config + the run log into the "when -> do" cards, and the action
         # registry into the Catalog. `seeded_names` is the subset mirrored into
@@ -1858,6 +1863,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jlaunch.router, prefix="/api")
     app.include_router(jlaunch_terminal.router, prefix="/api")
     app.include_router(jlaunch_share.router, prefix="/api")
+    # The public map-share reads (token-in-path, rate-limited, noindex, read-only).
+    app.include_router(minecraft_share.router, prefix="/api")
     app.include_router(external_llm.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(pet_api.router, prefix="/api")

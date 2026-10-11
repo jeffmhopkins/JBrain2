@@ -175,12 +175,12 @@ LATEST_SQL = text(
 
 
 async def latest_positions(
-    maker: async_sessionmaker[AsyncSession], world: str
+    maker: async_sessionmaker[AsyncSession], world: str, ctx: SessionContext = _OWNER
 ) -> list[dict[str, Any]]:
     """Each player's newest sample in one world folder: where they are now if they are
     on (a sample is kept only once they move, so standing still keeps the last one), or
-    where they logged off."""
-    async with scoped_session(maker, _OWNER) as s:
+    where they logged off. A map share reads it under its own pinned `ctx`."""
+    async with scoped_session(maker, ctx) as s:
         rows = (await s.execute(LATEST_SQL, {"world": world})).mappings().all()
     return [
         {
