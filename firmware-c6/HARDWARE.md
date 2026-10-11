@@ -8,6 +8,27 @@ one is, its mark changes here in the same PR.
 
 Research date: 2026-10-11. Downloaded code was read only. Nothing was built or run.
 
+## Measured on the board (0.0.3 probe, 2026-10-11)
+
+These override anything below that disagrees.
+
+- **I2C bus** (SDA 8, SCL 7) answers at exactly `0x18` ES8311, `0x34` AXP2101, `0x40` ES7210,
+  `0x51` PCF85063, `0x5A` touch, `0x6B` QMI8658. Confirmed.
+- **AXP2101 as it powers up**, before any firmware writes it: chip id `0x4A`; DCDC1-4 on
+  (`0x80=0x0F`), DCDC1 3.3 V (`0x82=0x12`); every ALDO/BLDO/DLDO1 enabled (`0x90=0xFF`) and
+  DLDO2 (`0x91=0x01`); ALDO1-3 3.3 V (`0x1C`), **ALDO4 1.8 V** (`0x0D` — settles §1's
+  conflict), BLDO1 1.2 V, BLDO2 2.8 V. So the LCD reset pull-up (ALDO3) and the speaker
+  amplifier enable (ALDO2) are both **on from power-up**: the amp is live before any codec is
+  configured, and a reset of the panel is ALDO3 off→on. Status `0x00=0x20` / `0x01=0x15`:
+  on USB, no battery fitted, not charging.
+- **Buttons, seen from the front, left → right: BOOT (GPIO9), PWR, KEY (GPIO10)** — the
+  silkscreen order mirrored, as §4 suspected. BOOT and KEY idle high and read low while
+  pressed (~0.4-0.5 s taps seen). Confirmed.
+- **PWR on GPIO18 did not move**: idle 0, and a tap left it at 0 with no internal pull set.
+  §4's 10 kΩ pull-up (R11) is either not fitted or the inverter is wired otherwise; the next
+  image enables GPIO18's internal pull-up and also polls the AXP2101's PEK press flags
+  (`0x48`-`0x4A`) so the reliable source is chosen by measurement. Unconfirmed until then.
+
 ## Sources and short names
 
 | Short name | What it is | Where it is (paths are inside a clone of that source, not this repo) |
