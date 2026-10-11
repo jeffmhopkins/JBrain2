@@ -456,6 +456,18 @@ async def set_power_pack(
     return await mc.call(settings, "POST", f"/worlds/{slot}/power-pack", json=body.model_dump())
 
 
+@router.put("/worlds/{slot}/power-pack-transport")
+async def set_power_pack_transport(
+    slot: Annotated[str, Path(pattern=_SLOT)], body: PowerPackIn, settings: SettingsDep
+) -> dict[str, Any]:
+    """The world's "Power Pack teleport" switch (plan §M10, transport on request), on by
+    default. Off, the jbrain pack refuses every trip Dave offers in that world. Applies at
+    once to the loaded world, else on its next load."""
+    return await mc.call(
+        settings, "POST", f"/worlds/{slot}/power-pack-transport", json=body.model_dump()
+    )
+
+
 # --- the map (MINECRAFT_BEDROCK_PLAN.md §M8) ----------------------------------------
 _DIM = r"^(overworld|nether|the_end)$"
 # The map's base layers: explored ground in its real block colours, or the biome atlas.

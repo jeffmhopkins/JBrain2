@@ -12,27 +12,28 @@ from jbrain.minecraft import guide
 
 def test_the_guide_is_pinned_to_its_version() -> None:
     """The entries are prompt material: a wording change bumps the version with it."""
-    assert guide.VERSION == "agent-minecraft-dave-guide-v1"
+    assert guide.VERSION == "agent-minecraft-dave-guide-v2"
     body = guide._PROMPT.body  # noqa: SLF001 — the pin is on the file's exact text
     assert hashlib.sha256(body.encode()).hexdigest() == (
-        "025e5b1de4cb25f1b89ae9d503df108eb60010aec234e9f3871c274692c9e299"
+        "7c04a61b9255ddfd256c1c9d7acaa0ff80b3bd7b6c845c908556805d2fb95834"
     )
 
 
 def test_only_built_items_have_entries() -> None:
-    """The Tricorder and the Power Pack are built; its keep-your-things use is built (a
-    per-world switch); transport, the No-Spawn Beacon, wormholes and the Replicator are
-    not, so the guide never describes them."""
+    """The Tricorder and the Power Pack are built; its two uses, keeping your things and
+    transport, are built (each a per-world switch); the No-Spawn Beacon, wormholes and
+    the Replicator are not, so the guide never describes them."""
     assert set(guide.ENTRIES) == {
         "intro_game",
         "intro_owner",
         "tricorder",
         "power_pack",
         "power_pack_keep",
+        "power_pack_transport",
         "power_pack_unused",
     }
     whole = "\n".join(guide.ENTRIES.values()).lower()
-    for unbuilt in ("replicator", "wormhole", "no-spawn", "echo shard", "chorus", "transport"):
+    for unbuilt in ("replicator", "wormhole", "no-spawn", "echo shard", "chorus"):
         assert unbuilt not in whole, unbuilt
     # The canon's recipe and rules, as the lore page says them.
     assert "eight Ender Pearls in a ring around one Blaze Powder" in guide.ENTRIES["power_pack"]

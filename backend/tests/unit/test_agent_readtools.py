@@ -1796,6 +1796,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "24962528ead4bd2793c17ef132fe5559b2e02c870de178464068e2448cba5e1d",
         ),
+        # Transport on request (§M10): the one acting tool, in game only, the asker only.
+        "mc_transport.tool": (
+            "mc_transport",
+            1,
+            "7081110983693064ea6333a44beafa55126753965e4b496fdf7bee79a06871d3",
+        ),
         "mc_places.tool": (
             "mc_places",
             1,

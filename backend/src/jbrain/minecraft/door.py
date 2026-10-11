@@ -331,21 +331,21 @@ class DaveDoor:
             await self._sessions.touch(owner, session_id)
         return answered.reply
 
-    async def keep_switch(self, world: str) -> bool:
-        """Whether this world's "Power Pack keeps inventory" switch is on. Unreadable is
-        off, so the guide never describes a use the world might not have."""
+    async def world_switches(self, world: str) -> tuple[bool, bool]:
+        """This world's Power Pack switches: "keeps inventory" and "teleport". Unreadable
+        is both off, so the guide never describes a use the world might not have."""
         try:
             got = await mc.call(self._settings, "GET", "/worlds")
         except HTTPException:
-            return False
-        return any(
-            s.get("folder") == world and s.get("power_pack_keep") is True
-            for s in got.get("slots", [])
-        )
+            return False, False
+        slot = next((s for s in got.get("slots", []) if s.get("folder") == world), {})
+        return slot.get("power_pack_keep") is True, slot.get("power_pack_transport") is True
 
     async def item_guide(self, asker: Asker) -> str:
-        keep = "power_pack_uses" in asker.known and await self.keep_switch(asker.world)
-        return guide.for_player(asker.known, keep_switch=keep)
+        if "power_pack_uses" not in asker.known:
+            return guide.for_player(asker.known, keep_switch=False)
+        keep, transport = await self.world_switches(asker.world)
+        return guide.for_player(asker.known, keep_switch=keep, transport_switch=transport)
 
     async def run_turn(self, q: Question) -> str:
         pid = await self._owner_principal_id()
@@ -355,6 +355,10 @@ class DaveDoor:
         session_id = await self.session_for(owner, q.asker)
         intro = await chat_intro(self._maker, None, owner, session_id)
         profile = narrow_for_ingame(agent_for(MINECRAFT_DAVE_AGENT))
+        if "power_pack_uses" not in q.asker.known:
+            # Transport is a Power Pack use: until the asker has made one, the tool and its
+            # description aren't offered, so nothing in the turn names the pack (§M19).
+            profile = replace(profile, tools=(profile.tools or frozenset()) - {"mc_transport"})
         items = await self.item_guide(q.asker)
         profile = replace(profile, prompt=f"{profile.prompt}\n\n{items}\n\n{intro}")
         conversation = [

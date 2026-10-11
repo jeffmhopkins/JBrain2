@@ -1432,6 +1432,64 @@ keep-inventory charm, so players choose how to spend them.
 - A cross-dimension trip to a dimension never visited is refused.
 - Choosing No on the form costs nothing.
 
+**Shipped (wave mc-transport, 2026-10-11): transport on request, without its PWA toggle.**
+- **The tool.** `mc_transport {place}` (`agent/minecrafttransport.py`), Minecraft_Dave's
+  one acting tool. It works only on an in-game turn, only for the asker, and only to a
+  place in their own `app.mc_places` for the loaded world, never a bed, a structure,
+  coordinates or someone else's place. It's offered only once the asker has unlocked
+  `power_pack_uses`: before that the door leaves it out of the turn, so its description
+  can't name the pack (§M19).
+- **The pack decides.** The tool sends `scriptevent jb:transport {id, player, label, x, y,
+  z, dim, visited}`, where `visited` is the dimensions the travel log has seen the player
+  in, in this world. The pack's own `transport.js` (pure rules in `transport_rules.js`)
+  also keeps `jb:visited:<id>` once a second. It refuses, spending nothing, when:
+  - the switch is off;
+  - the player has no own Tricorder, or no Power Pack (inventory, armor or off-hand);
+  - the place has no y;
+  - the place is in a dimension they've never been in;
+  - they're offline, or a form is already open for them.
+- **The form.** Otherwise a `@minecraft/server-ui` `MessageFormData` asks Yes or No.
+  - That's server-ui **2.0.0**, stable beside `@minecraft/server` 2.0.0. The manifest
+    declares it, so no experiment is needed.
+  - The text is the plan's own: `Market — 1,239 blocks, Overworld. Use 1 Power Pack? (you
+    have 3)`, with no distance for another dimension.
+  - A busy player (chat still open) is asked again each second.
+  - The offer lapses after 45 s.
+- **On Yes.** The pack loads the landing with a temporary `tickingarea` (up to about 5 s),
+  then refuses ground that never loads and lava at the feet or head. It checks the switch,
+  the Tricorder and the pack again, calls `tryTeleport` with `checkForBlocks`, and only if
+  that lands burns one pack, smallest stack first. The enderman-teleport sound and portal
+  particles play at both ends.
+- **Every step is one console line,** `transport <id> <outcome> {json}`. The tool reads the
+  offer back at once, then reads `/logs` for up to 50 s for how it ended: moved, declined,
+  expired, blocked, unloaded or refused.
+- **The trip log.** A trip, or a landing that stopped one, goes in the player's progress
+  log (`app.mc_goal_log`, source `auto`): from, to, and the pack spent or kept.
+- **The switch.** "Power Pack teleport" is the slot's `power_pack_transport`, on by
+  default. It travels in the same `jb:config` line as `power_pack_keep`, and an older
+  record reads as on. It's set by `PUT /api/minecraft/worlds/{slot}/power-pack-transport`
+  (owner) or `PUT /api/debug/minecraft/worlds/{slot}/power-pack-transport`. **Next: the
+  PWA toggle, through its own GUI gate.**
+- **Dave's words.** The guide has a `power_pack_transport` entry (guide v2), shown only
+  where the switch is on. It reveals that saved places are transport beacons, the
+  first-Power-Pack beat's canon. The persona (`agent-minecraft-dave-v12`) says "transport
+  beacon" only once that entry is there. M18's fast path still leaves "take me to …" to
+  the model.
+
+Not built:
+- The form's line and the tool's replies aren't on the lore page's signed-off list yet.
+- The Power Pack's item lore ("Keeps your things, or takes you somewhere") is still
+  missing, so M10 isn't complete.
+
+**Box checks:**
+- The form shows over the game on the Xbox and Windows, and Yes is `selection` 0.
+- `tryTeleport` with `checkForBlocks` refuses a built-over spot.
+- The `tickingarea` preload reaches a far place, and leaves no ticking area behind.
+- The portal particle id draws.
+- One pack is gone after a trip and none after No.
+- A Nether place before and after the player's first Nether visit.
+- The trip line in their progress log.
+
 ### M11 — Trans-dimensional chests (owner idea, 2026-10-10; details open)
 
 **The idea.** An expanded ender chest. A **trans-dimensional chest** can be **dyed a

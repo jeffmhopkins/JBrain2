@@ -253,6 +253,24 @@ async def minecraft_power_pack(
     return await _sidecar(settings, "POST", f"/worlds/{slot}/power-pack", json={"on": body.on})
 
 
+@router.put("/worlds/{slot}/power-pack-transport")
+async def minecraft_power_pack_transport(
+    slot: Annotated[str, Path(pattern=_SLOT)],
+    body: PowerPackIn,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+) -> dict[str, Any]:
+    """The world's "Power Pack teleport" switch (§M10), on by default — beside the
+    keep-inventory switch for the same reason: until the PWA has its toggle, this is how
+    the owner, with no terminal, turns transport on request off or on. It changes no
+    rule and nothing in the world; off, the pack refuses every trip."""
+    request.state.debug_detail = f"minecraft power pack transport {slot} on={body.on}"
+    return await _sidecar(
+        settings, "POST", f"/worlds/{slot}/power-pack-transport", json={"on": body.on}
+    )
+
+
 class TestWorldIn(BaseModel):
     seed: str = Field(min_length=1, max_length=64)
     name: str | None = Field(default=None, max_length=40)
