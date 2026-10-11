@@ -108,7 +108,7 @@ async def test_find_block_sends_the_names_and_says_where_each_one_is(sidecar) ->
 async def test_a_waypoint_is_one_scriptevent_with_its_fields_json_escaped(sidecar) -> None:
     sent = 'scriptevent jb:waypoint {"player": "Steve 42", "x": 12, "y": -62, "z": 18,'
     sent += ' "dim": "overworld", "label": "Diamonds \\" op @a"}'
-    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain-probe] waypoint set for Steve 42"]
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain] waypoint set for Steve 42"]
     out = await _tools()["mc_set_waypoint"](
         {"gamertag": "Steve 42", "x": 12, "y": -62, "z": 18, "label": 'Diamonds " op @a'}, CTX
     )
@@ -247,7 +247,7 @@ async def test_in_game_searches_start_where_the_asker_stands(sidecar) -> None:
 async def test_in_game_a_waypoint_says_which_way_to_go(sidecar) -> None:
     sent = 'scriptevent jb:waypoint {"player": "Steve 42", "x": 40, "y": null, "z": -108,'
     sent += ' "dim": "nether", "label": "Fortress"}'
-    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain-probe] waypoint set for Steve 42"]
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain] waypoint set for Steve 42"]
     with asking("s1", ASKER):
         out = await _tools()["mc_set_waypoint"](
             {"gamertag": "steve 42", "x": 40, "z": -108, "label": "Fortress"}, DOOR

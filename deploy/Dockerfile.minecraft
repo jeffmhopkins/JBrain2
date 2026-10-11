@@ -56,7 +56,7 @@ COPY deploy/minecraft/blocks.py ./blocks.py
 COPY deploy/minecraft/structures.py ./structures.py
 COPY deploy/minecraft/structure_sweep.py ./structure_sweep.py
 COPY deploy/minecraft/probe-pack ./probe-pack
-COPY deploy/minecraft/probe-rp ./probe-rp
+COPY deploy/minecraft/jbrain-rp ./jbrain-rp
 COPY deploy/minecraft/jbrain-pack ./jbrain-pack
 # The spawn wreck (§SW1): its builds become .mcstructure files inside its pack here, so
 # the repo carries compact block lists rather than megabytes of generated binaries.

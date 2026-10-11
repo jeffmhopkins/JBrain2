@@ -210,7 +210,8 @@ async def minecraft_probe_pack(
 
 # Read-only views of the world slots and the travel log (§3a, M2/M3, T1), so setting up
 # and debugging them doesn't need the owner's phone. Changing the owner's worlds stays
-# owner-only; the token can only make, reset and empty its own test worlds (§SW4).
+# owner-only; the token can only make, reset and empty its own test worlds (§SW4), and
+# flip the Power Pack switch (below) until the PWA has it.
 _SLOT = r"^slot\d+$"
 
 
@@ -229,6 +230,27 @@ async def minecraft_world_rules(
 ) -> dict[str, Any]:
     request.state.debug_detail = f"minecraft rules {slot}"
     return await _sidecar(settings, "GET", f"/worlds/{slot}/rules")
+
+
+class PowerPackIn(BaseModel):
+    on: bool
+
+
+@router.put("/worlds/{slot}/power-pack")
+async def minecraft_power_pack(
+    slot: Annotated[str, Path(pattern=_SLOT)],
+    body: PowerPackIn,
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+) -> dict[str, Any]:
+    """The world's "Power Pack keeps inventory" switch (§M10) — the one owner-world
+    setting this token may change, because until the PWA has its toggle this is how the
+    owner, with no terminal, turns it on or off. It changes a game rule, never the
+    world's contents, and off puts keepInventory back to the owner's choice (or
+    vanilla's off)."""
+    request.state.debug_detail = f"minecraft power pack {slot} on={body.on}"
+    return await _sidecar(settings, "POST", f"/worlds/{slot}/power-pack", json={"on": body.on})
 
 
 class TestWorldIn(BaseModel):

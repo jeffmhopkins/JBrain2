@@ -1,9 +1,12 @@
-// The box's own behavior pack (docs/plans/MINECRAFT_BEDROCK_PLAN.md §T1, §M5): the
-// deaths and respawns BDS never prints, and the in-game door to Dave (`/jb:dave …`), as
-// one JSON line each on the console, which the wrapper turns into events. Stable
-// @minecraft/server only.
+// The box's own behavior pack (docs/plans/MINECRAFT_BEDROCK_PLAN.md §T1, §M5, §M9, §M10,
+// §DW1): the deaths and respawns BDS never prints and the in-game door to Dave
+// (`/jb:dave …`), as one JSON line each on the console, which the wrapper turns into
+// events; and the crew's items, the Tricorder and the Power Pack, with the rules the
+// canon gives them. Stable @minecraft/server only. The rules themselves are in rules.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
-  CustomCommandStatus } from "@minecraft/server";
+  CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
+import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, parseConfig,
+  parseWaypoint, slotFate, trackerLine, tricorderStatus, xpToDrop } from "./rules.js";
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",
@@ -12,6 +15,12 @@ const DIMENSIONS = {
 };
 
 const emit = (ev) => console.log(`[jbrain] ${JSON.stringify(ev)}`);
+// A plain line, never a JSON event: the wrapper's event parser only takes `[jbrain] {…}`,
+// and Dave's mc_set_waypoint reads these replies off the console.
+const say = (msg) => console.log(`[jbrain] ${msg}`);
+
+const DAVE = "§b[Dave]§r ";
+const STATIC = "§7§o";
 
 const where = (entity) => {
   const { x, y, z } = entity.location;
@@ -21,6 +30,209 @@ const where = (entity) => {
     y: Math.round(y * 10) / 10,
     z: Math.round(z * 10) / 10,
   };
+};
+
+// --- the crew's items -------------------------------------------------------------------
+// World properties: each owner's current Tricorder serial, the waypoint per gamertag (set
+// by Dave while the player may be offline), and the wrapper's Power Pack switch.
+const serialKey = (id) => `jb:tricorder:${id}`;
+const waypointKey = (name) => `jb:waypoint:${name.toLowerCase()}`;
+const KEEP_SWITCH = "jb:power_pack_keep";
+// A player property: packs left after a burn, told on the respawn that follows.
+const BURNT = "jb:burnt";
+const EQUIPMENT = [EquipmentSlot.Head, EquipmentSlot.Chest, EquipmentSlot.Legs,
+  EquipmentSlot.Feet, EquipmentSlot.Offhand];
+
+const waypointOf = (name) => {
+  const raw = world.getDynamicProperty(waypointKey(name));
+  if (typeof raw !== "string") return undefined;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+};
+
+const currentSerial = (id) => world.getDynamicProperty(serialKey(id));
+
+const statusOf = (item, player) =>
+  tricorderStatus(
+    { owner: item.getDynamicProperty("jb:owner"), serial: item.getDynamicProperty("jb:serial") },
+    player.id,
+    currentSerial(player.id),
+  );
+
+// Every stack the player carries — inventory, armor, off-hand — with a way to write it
+// back. A shulker box's contents are not "on" them, as the rule says.
+const carried = (player) => {
+  const out = [];
+  const inv = player.getComponent("minecraft:inventory")?.container;
+  if (inv) {
+    for (let i = 0; i < inv.size; i++) {
+      const item = inv.getItem(i);
+      if (item) out.push({ item, put: (v) => inv.setItem(i, v) });
+    }
+  }
+  const eq = player.getComponent("minecraft:equippable");
+  if (eq) {
+    for (const slot of EQUIPMENT) {
+      const item = eq.getEquipment(slot);
+      if (item) out.push({ item, put: (v) => eq.setEquipment(slot, v) });
+    }
+  }
+  return out;
+};
+
+// "own" when the player carries their own current Tricorder, "foreign" when they carry
+// only someone else's (or a retired one), "none" when they carry none at all.
+const tricorderOn = (player) => {
+  let found = "none";
+  for (const { item } of carried(player)) {
+    if (item.typeId !== TRICORDER) continue;
+    if (statusOf(item, player) === "own") return "own";
+    found = "foreign";
+  }
+  return found;
+};
+
+// A retired copy reads as one and lets go: unlocked and no longer kept on death, so its
+// holder can be rid of it.
+const retire = (item, put) => {
+  item.setLore([LINES.retired]);
+  item.lockMode = ItemLockMode.none;
+  item.keepOnDeath = false;
+  put(item);
+};
+
+// Bound to its owner (DW1): locked in their inventory, kept through a death, named for
+// them, and carrying their id and a serial that a newer copy outdates.
+const makeTricorder = (player, serial) => {
+  const item = new ItemStack(TRICORDER, 1);
+  item.nameTag = `${player.name}'s Tricorder`;
+  item.setLore([LORE]);
+  item.lockMode = ItemLockMode.inventory;
+  item.keepOnDeath = true;
+  item.setDynamicProperty("jb:owner", player.id);
+  item.setDynamicProperty("jb:serial", serial);
+  return item;
+};
+
+const beam = (player) => {
+  const serial = (Number(currentSerial(player.id)) || 0) + 1;
+  world.setDynamicProperty(serialKey(player.id), serial);
+  const item = makeTricorder(player, serial);
+  const inv = player.getComponent("minecraft:inventory")?.container;
+  if (!inv) return;
+  for (const c of carried(player)) {
+    if (c.item.typeId === TRICORDER && c.item.getDynamicProperty("jb:owner") === player.id) {
+      retire(c.item, c.put);
+    }
+  }
+  if (inv.addItem(item) === undefined) return;
+  // A full inventory: the selected slot's stack makes room, at the player's feet.
+  const slot = player.selectedSlotIndex;
+  const displaced = inv.getItem(slot);
+  if (displaced) player.dimension.spawnItem(displaced, player.location);
+  inv.setItem(slot, item);
+};
+
+// DW1's welcome (not in this wave): a player's first-ever waking in this world. For now
+// the Tricorder arrives quietly; the welcome sequence replaces this function.
+const firstWaking = (player) => {
+  beam(player);
+};
+
+const onWaking = (player) => {
+  const left = player.getDynamicProperty(BURNT);
+  if (typeof left === "number") {
+    player.setDynamicProperty(BURNT, undefined);
+    player.sendMessage(`§7${LINES.burnt(left)}`);
+    player.playSound("random.fizz");
+  }
+  if (currentSerial(player.id) === undefined) {
+    firstWaking(player);
+    return;
+  }
+  if (tricorderOn(player) === "own") return;
+  beam(player);
+  player.sendMessage(DAVE + LINES.rebeamed);
+};
+
+// --- deaths: the travel log, and the Power Pack charm -----------------------------------
+
+// Where each player last stood on solid ground, for a void death's drops.
+const lastSafe = new Map();
+
+const isVanishing = (item) => {
+  try {
+    return Boolean(item.getComponent("minecraft:enchantable")?.hasEnchantment("vanishing"));
+  } catch {
+    return false;
+  }
+};
+
+const switchOn = () => world.getDynamicProperty(KEEP_SWITCH) === true;
+
+const keepRule = () => {
+  try {
+    return world.gameRules.keepInventory !== false;
+  } catch {
+    return true; // unreadable: assume the wrapper's rule held, the fail-safe direction
+  }
+};
+
+const burnOne = (packs) => {
+  const pick = packToBurn(packs.map((p, i) => ({ i, amount: p.item.amount })));
+  const { item, put } = packs[pick.i];
+  if (item.amount > 1) {
+    item.amount -= 1;
+    put(item);
+  } else {
+    put(undefined);
+  }
+};
+
+const dropAll = (player) => {
+  const dim = player.dimension;
+  const spot = dropSpot(
+    { ...player.location, dim: dim.id },
+    dim.heightRange.min,
+    lastSafe.get(player.id),
+  );
+  const loc = { x: spot.x, y: spot.y, z: spot.z };
+  for (const { item, put } of carried(player)) {
+    const fate = slotFate({ keepOnDeath: item.keepOnDeath, vanishing: isVanishing(item) });
+    if (fate === "stay") continue;
+    if (fate === "drop") dim.spawnItem(item, loc);
+    put(undefined);
+  }
+  const xp = xpToDrop(player.level);
+  player.resetLevel();
+  for (let i = 0; i < xp; i++) dim.spawnEntity("minecraft:xp_orb", loc);
+  const at = [spot.x, spot.y, spot.z].map(Math.round).join(" ");
+  say(`power pack: ${player.name} dropped their things at ${at} (${DIMENSIONS[spot.dim] ?? spot.dim})`);
+};
+
+const charm = (player) => {
+  if (!switchOn() || !keepRule()) return; // vanilla: the game does the dropping
+  const stacks = carried(player);
+  const packs = stacks.filter((s) => s.item.typeId === POWER_PACK);
+  const plan = deathPlan({
+    switchOn: true,
+    keepRule: true,
+    hasPack: packs.length > 0,
+    hasOwnTricorder: stacks.some(
+      (s) => s.item.typeId === TRICORDER && statusOf(s.item, player) === "own",
+    ),
+  });
+  if (plan === "keep") {
+    const before = packs.reduce((n, p) => n + p.item.amount, 0);
+    burnOne(packs);
+    player.setDynamicProperty(BURNT, before - 1);
+    say(`power pack: ${player.name} kept their things; ${before - 1} left`);
+  } else if (plan === "drop") {
+    dropAll(player);
+  }
 };
 
 world.afterEvents.entityDie.subscribe(
@@ -40,14 +252,92 @@ world.afterEvents.entityDie.subscribe(
       cause: ev.damageSource.cause,
       killer: ev.damageSource.damagingEntity?.typeId ?? null,
     });
+    try {
+      charm(player);
+    } catch (e) {
+      // keepInventory is on, so a fault here leaves them keeping everything (§M10).
+      say(`power pack failed for ${player.name}: ${e}`);
+    }
   },
   { entityTypes: ["minecraft:player"] },
 );
 
 world.afterEvents.playerSpawn.subscribe((ev) => {
-  if (ev.initialSpawn) return; // a log-in, which the join event already records
-  emit({ ev: "respawn", name: ev.player.name, ...where(ev.player) });
+  const player = ev.player;
+  if (!ev.initialSpawn) emit({ ev: "respawn", name: player.name, ...where(player) });
+  // A tick on, so the joining player's inventory is there to read and write.
+  system.run(() => {
+    try {
+      onWaking(player);
+    } catch (e) {
+      say(`waking failed for ${player.name}: ${e}`);
+    }
+  });
 });
+
+// --- scriptevents from the wrapper and from Dave's tools --------------------------------
+
+system.afterEvents.scriptEventReceive.subscribe((ev) => {
+  if (ev.id === "jb:waypoint") {
+    try {
+      const wp = parseWaypoint(ev.message);
+      if (wp.clear) {
+        world.setDynamicProperty(waypointKey(wp.player), undefined);
+        say(`waypoint cleared for ${wp.player}`);
+      } else {
+        world.setDynamicProperty(waypointKey(wp.player), JSON.stringify(wp.record));
+        const r = wp.record;
+        say(`waypoint set for ${wp.player}: ${r.label} at ${r.x} ${r.z} (${r.dim})`);
+      }
+    } catch (e) {
+      say(`waypoint refused: ${e}`);
+    }
+  } else if (ev.id === "jb:config") {
+    try {
+      const cfg = parseConfig(ev.message);
+      if ("power_pack_keep" in cfg) world.setDynamicProperty(KEEP_SWITCH, cfg.power_pack_keep);
+      say(`config power_pack_keep=${switchOn()}`);
+    } catch (e) {
+      say(`config refused: ${e}`);
+    }
+  }
+});
+
+// --- the Tricorder's arrow, about four times a second -----------------------------------
+
+system.runInterval(() => {
+  for (const player of world.getAllPlayers()) {
+    try {
+      if (player.isOnGround && player.location.y >= player.dimension.heightRange.min) {
+        lastSafe.set(player.id, { ...player.location, dim: player.dimension.id });
+      }
+      const inv = player.getComponent("minecraft:inventory")?.container;
+      const slot = player.selectedSlotIndex;
+      const held = inv?.getItem(slot);
+      if (held?.typeId !== TRICORDER) continue;
+      const status = statusOf(held, player);
+      if (status === "own") {
+        player.onScreenDisplay.setActionBar(
+          trackerLine(
+            waypointOf(player.name),
+            { dim: player.dimension.id, x: player.location.x, z: player.location.z },
+            player.getViewDirection(),
+            world.getDefaultSpawnLocation(),
+          ),
+        );
+      } else if (status === "foreign") {
+        player.onScreenDisplay.setActionBar(STATIC + LINES.notTuned);
+      } else {
+        if (held.lockMode !== ItemLockMode.none) retire(held, (v) => inv.setItem(slot, v));
+        player.onScreenDisplay.setActionBar(LINES.retired);
+      }
+    } catch {
+      // One player's unreadable state (mid-join, mid-dimension change) skips a frame.
+    }
+  }
+}, 5);
+
+// --- /jb:dave, the in-game door ---------------------------------------------------------
 
 // The backend caps a question at this; cutting it here keeps one console line short.
 const QUESTION_MAX = 256;
@@ -72,6 +362,12 @@ const bedOf = (player) => {
 };
 
 const askDave = (player, text) => {
+  // No Tricorder, no Dave (DW1): the question never reaches the backend, so no AI turn.
+  const tricorder = tricorderOn(player);
+  if (tricorder !== "own") {
+    player.sendMessage(STATIC + (tricorder === "none" ? LINES.noSignal : LINES.notTuned));
+    return;
+  }
   let spawn = null;
   try {
     spawn = bedOf(player);
@@ -107,8 +403,8 @@ system.beforeEvents.startup.subscribe((ev) => {
           message: 'Ask Dave something, like: /jb:dave point me home (use "quotes" for commas or numbers)',
         };
       }
-      // A command callback runs read-only; reading the spawn point and messaging the
-      // player wait for the next tick.
+      // A command callback runs read-only; reading the inventory and the spawn point and
+      // messaging the player wait for the next tick.
       system.run(() => askDave(player, text));
       return { status: CustomCommandStatus.Success };
     },

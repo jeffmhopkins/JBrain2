@@ -17,6 +17,7 @@ import struct
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -52,30 +53,11 @@ JBRAIN_PACK_ID = json.loads(
 )["header"]["uuid"]
 
 
-PROBE_RP_ID = json.loads((DEPLOY / "minecraft/probe-rp/manifest.json").read_text())[
+JBRAIN_RP_ID = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())[
     "header"
 ]["uuid"]
-
-
-def test_the_home_test_items_point_at_icons_the_pack_ships() -> None:
-    """A custom item names an icon key; the probe resource pack must define it, and the
-    texture file must exist, or the item shows as a missing-texture square tonight."""
-    mc_dir = DEPLOY / "minecraft"
-    atlas = json.loads((mc_dir / "probe-rp/textures/item_texture.json").read_text())
-    for item in ("power_pack", "tricorder"):
-        spec = json.loads((mc_dir / f"probe-pack/items/{item}.json").read_text())
-        icon = spec["minecraft:item"]["components"]["minecraft:icon"]
-        path = atlas["texture_data"][icon]["textures"]
-        assert (mc_dir / "probe-rp" / f"{path}.png").read_bytes()[
-            :8
-        ] == b"\x89PNG\r\n\x1a\n"
-    recipe = json.loads((mc_dir / "probe-pack/recipes/power_pack.json").read_text())
-    shaped = recipe["minecraft:recipe_shaped"]
-    assert shaped["pattern"] == ["EEE", "EEE", "EEE"]
-    assert shaped["key"]["E"]["item"] == "minecraft:ender_eye"
-    assert shaped["result"]["item"] == "jbrain:power_pack"
-    deps = json.loads((mc_dir / "probe-pack/manifest.json").read_text())["dependencies"]
-    assert {"uuid": PROBE_RP_ID, "version": [1, 0, 0]} in deps
+# The home-test kit's resource pack, retired when its icons moved to the jbrain one.
+OLD_PROBE_RP_ID = "26d6c250-8ead-4bb8-9dd0-d3805e61d61e"
 
 
 @pytest.fixture(autouse=True)
@@ -535,22 +517,16 @@ def test_the_probe_pack_is_listed_in_the_world_and_removable(
     assert (world / "behavior_packs" / "jbrain_probe" / "scripts" / "main.js").exists()
     assert rig.bds.calls == ["stop", "start"]
 
-    # The home-test kit: its resource pack is listed for the server to push, clients
-    # must take it, and content errors reach the console — only while it's installed.
+    # The kit has no resource pack of its own any more: the jbrain one is the only one.
     rp = json.loads((world / "world_resource_packs.json").read_text())
-    assert [p["pack_id"] for p in rp] == [PROBE_RP_ID]
-    assert (
-        world / "resource_packs" / "jbrain_probe" / "textures" / "item_texture.json"
-    ).exists()
-    assert rig.overrides()["texturepacks-required"] == "true"
-    assert rig.overrides()["content-log-console-output-enabled"] == "true"
+    assert [p["pack_id"] for p in rp] == [JBRAIN_RP_ID]
 
     rig.probe_pack(False)
     listed = json.loads((world / "world_behavior_packs.json").read_text())
     assert [p["pack_id"] for p in listed] == [JBRAIN_PACK_ID]
     assert not (world / "behavior_packs" / "jbrain_probe").exists()
-    assert json.loads((world / "world_resource_packs.json").read_text()) == []
-    assert "texturepacks-required" not in rig.overrides()
+    rp = json.loads((world / "world_resource_packs.json").read_text())
+    assert [p["pack_id"] for p in rp] == [JBRAIN_RP_ID]  # the box's own stays
 
 
 def test_a_new_version_that_will_not_start_is_rolled_back_with_the_world(
@@ -988,10 +964,15 @@ def test_a_loaded_world_gets_its_saved_rules_once_it_is_up(
     rig.create_slot("slot2", {"rules": {"keepInventory": True, "doFireTick": False}})
     rig.load_slot("slot2")
     for _ in range(50):
-        if len(sent) == 2:
+        if len(sent) == 3:
             break
         _t.sleep(0.02)
-    assert sorted(sent) == ["gamerule doFireTick false", "gamerule keepInventory true"]
+    assert sent == [
+        "gamerule doFireTick false",
+        "gamerule keepInventory true",
+        # The jbrain pack's copy of the switch, last.
+        'scriptevent jb:config {"power_pack_keep": false}',
+    ]
 
 
 def test_a_manual_seed_is_any_text_on_one_line() -> None:
@@ -1114,10 +1095,11 @@ def test_players_get_a_chat_warning_before_the_server_stops_under_them(
     sent: list[str] = []
     rig.bds.command = lambda c, **k: sent.append(c) or []  # type: ignore[attr-defined]
     rig.server_action("restart")
-    assert sent == []  # nobody on: no message
+    assert not [c for c in sent if c.startswith("say ")]  # nobody on: no message
     rig.bds.players = {"Steve": {}}
     rig.server_action("stop")
-    assert sent and sent[0].startswith("say ") and "stops in" in sent[0]
+    says = [c for c in sent if c.startswith("say ")]
+    assert says and "stops in" in says[0]
 
 
 def test_a_running_job_and_its_phase_show_in_status(
@@ -1154,10 +1136,13 @@ def test_saved_rules_come_back_on_a_plain_start_too(
     assert sent == []  # stopped: saved, pending
     rig.server_action("start")
     for _ in range(50):
-        if sent:
+        if len(sent) == 2:
             break
         _t.sleep(0.02)
-    assert sent == ["gamerule doFireTick false"]
+    assert sent == [
+        "gamerule doFireTick false",
+        'scriptevent jb:config {"power_pack_keep": false}',
+    ]
 
 
 def test_a_download_is_recorded_on_the_backup_and_the_world() -> None:
@@ -1576,7 +1561,148 @@ def test_an_installed_test_kit_is_refreshed_on_every_start(
     rig._start()
     assert stale.read_text() != "// an older image's kit"  # the image's copy again
     rp = json.loads((world / "world_resource_packs.json").read_text())
-    assert [p["pack_id"] for p in rp] == [PROBE_RP_ID]  # listed once, not appended
+    assert [p["pack_id"] for p in rp] == [JBRAIN_RP_ID]  # listed once, not appended
+
+
+def test_every_world_gets_the_jbrain_resource_pack_and_clients_must_take_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """§3c rule 2: the items' icons go into every world the box loads, beside the
+    behavior pack, and BDS pushes them on join; the kit's old copy comes out."""
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    rig = server.Rig(env={})
+    rig.bds = _FakeBds()  # type: ignore[assignment]
+    world = tmp_path / "server" / "worlds" / "world"
+    old = world / "resource_packs" / "jbrain_probe"
+    old.mkdir(parents=True)
+    (world / "world_resource_packs.json").write_text(
+        json.dumps([{"pack_id": OLD_PROBE_RP_ID, "version": [1, 0, 0]}])
+    )
+    monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
+    rig._start()
+    rp = json.loads((world / "world_resource_packs.json").read_text())
+    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": [1, 0, 0]}]
+    assert not old.exists()
+    icons = world / "resource_packs" / "jbrain" / "textures" / "items"
+    assert sorted(p.name for p in icons.iterdir()) == [
+        "power_pack.png",
+        "tricorder.png",
+    ]
+    assert rig.properties()["texturepacks-required"] == "true"
+    rig._start()  # a second start replaces, never duplicates
+    assert len(json.loads((world / "world_resource_packs.json").read_text())) == 1
+
+
+def _running_rig(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    rig = server.Rig(env={})
+    fake = _FakeBds()
+    fake.state = "running"  # type: ignore[attr-defined]
+    sent: list[str] = []
+
+    def command(c: str, **_k: Any) -> list[str]:
+        sent.append(c)
+        return []
+
+    fake.command = command  # type: ignore[method-assign]
+    rig.bds = fake  # type: ignore[assignment]
+    (tmp_path / "server" / "worlds" / "world").mkdir(parents=True)
+    return rig, sent
+
+
+def test_the_power_pack_switch_is_off_by_default_and_applies_live(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, sent = _running_rig(monkeypatch, tmp_path)
+    assert rig.slots.get("slot1")["power_pack_keep"] is False  # a vanilla world
+    out = rig.set_power_pack("slot1", True)
+    assert out["power_pack_keep"] is True and out["applies"] == "now"
+    assert sent == [
+        "gamerule keepInventory true",
+        'scriptevent jb:config {"power_pack_keep": true}',
+    ]
+    sent.clear()
+    out = rig.set_power_pack("slot1", False)
+    # Off hands the rule back (the owner's choice, or vanilla's off), saved for later.
+    assert sent == [
+        "gamerule keepInventory false",
+        'scriptevent jb:config {"power_pack_keep": false}',
+    ]
+    assert rig.slots.get("slot1")["rules"] == {"keepInventory": False}
+    with pytest.raises(ValueError):
+        rig.set_power_pack("slot1", "yes")
+
+
+def test_an_owners_saved_keep_inventory_survives_the_charm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, sent = _running_rig(monkeypatch, tmp_path)
+    rig.slots.update("slot2", rules={"keepInventory": True, "pvp": False})
+    out = rig.set_power_pack("slot2", True)
+    assert out["applies"] == "next load" and sent == []  # not the loaded world
+    rig.set_power_pack("slot2", False)
+    assert rig.slots.get("slot2")["rules"] == {"keepInventory": True, "pvp": False}
+
+
+def test_keep_inventory_is_managed_by_the_charm_while_it_is_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The rules editor can't contradict the switch: keepInventory reads as managed,
+    shows on, and a change to it is refused; other rules still change."""
+    rig, _sent = _running_rig(monkeypatch, tmp_path)
+    rig.set_power_pack("slot2", True)
+    view = rig.rules_view("slot2")
+    assert view["managed"] == {"keepInventory": True}
+    assert view["rules"]["keepInventory"] is True
+    assert "keepInventory" in view["pending"]  # not loaded: applies on its next load
+    with pytest.raises(ValueError, match="managed by the Power Pack charm"):
+        rig.set_rules("slot2", {"keepInventory": False})
+    rig.set_rules("slot2", {"pvp": False})
+    rig.set_power_pack("slot2", False)
+    assert rig.rules_view("slot2")["managed"] == {}
+    rig.set_rules("slot2", {"keepInventory": True})
+
+
+def test_every_start_tells_the_pack_the_switch_after_the_rules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, sent = _running_rig(monkeypatch, tmp_path)
+    started: list[threading.Thread] = []
+    real = threading.Thread
+
+    def thread(*a: Any, **k: Any) -> threading.Thread:
+        t = real(*a, **k)
+        started.append(t)
+        return t
+
+    monkeypatch.setattr(server.threading, "Thread", thread)
+    rig.slots.update("slot1", rules={"pvp": False})
+    rig._apply_rules_when_up("world")
+    started[-1].join(5)
+    assert sent == [
+        "gamerule pvp false",
+        'scriptevent jb:config {"power_pack_keep": false}',
+    ]
+    sent.clear()
+    rig.slots.update("slot1", power_pack_keep=True)
+    rig._apply_rules_when_up("world")
+    started[-1].join(5)
+    assert sent == [
+        "gamerule pvp false",
+        "gamerule keepInventory true",
+        'scriptevent jb:config {"power_pack_keep": true}',
+    ]
+
+
+def test_an_imported_world_starts_with_the_switch_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, _sent = _running_rig(monkeypatch, tmp_path)
+    rig.slots.update("slot2", power_pack_keep=True)
+    rig._adopt("slot2", power_pack_keep=False)
+    assert rig.slots.get("slot2")["power_pack_keep"] is False
+    with pytest.raises(ValueError):
+        rig.slots.update("slot2", power_pack_keep="on")
 
 
 def _locating_console(asked: list[str]):
@@ -1675,3 +1801,31 @@ def test_a_stale_sweep_restarts_itself_when_viewed_and_a_failure_backs_off() -> 
     rig._sweep["failed_at"] = time.time() - server.SWEEP_RETRY_S - 1
     rig.map_structures("slot1", "overworld")
     assert _wait_swept(rig)["state"] == "done" and asked
+
+
+def test_the_power_pack_switch_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    import urllib.error
+    import urllib.request
+
+    httpd, _get = _serve(monkeypatch, "s3cret")
+
+    def post(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{httpd.server_port}/worlds/slot2/power-pack",
+            data=json.dumps(body).encode(),
+            headers={"Authorization": "Bearer s3cret"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return resp.status, json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    try:
+        code, got = post({"on": True})
+        assert code == 200 and got["power_pack_keep"] is True
+        assert got["applies"] == "next load"
+        assert post({"on": "yes"})[0] == 400
+        assert post({})[0] == 400
+    finally:
+        httpd.shutdown()

@@ -86,23 +86,21 @@ RESTART_KEYS = {
     "server-name": "Dedicated Server",
     "view-distance": "32",
 }
-# The probe behavior pack (M0 item 5), bundled in the image — nothing uploaded.
+# The probe behavior pack (M0 item 5), bundled in the image — nothing uploaded. It only
+# logs now: the items it once carried live in the jbrain pack.
 PROBE_PACK_SRC = Path(__file__).resolve().parent / "probe-pack"
 PROBE_PACK_DIR = "jbrain_probe"
-# Its resource pack (the home-test kit: custom-item icons), which BDS pushes to every
-# client on join — so the test also proves a pack needs no install on Xbox or Windows.
-PROBE_RP_SRC = Path(__file__).resolve().parent / "probe-rp"
-# While the kit is installed: clients must take the pack (a client that declines can't
-# join half-working), and BDS prints content errors (a bad item or recipe file) to the
-# console, so a broken item shows up in the log rather than as a silently missing item.
-PROBE_PROPERTIES = {
-    "texturepacks-required": "true",
-    "content-log-console-output-enabled": "true",
-}
+# The kit's old resource pack, retired when its icons moved to the jbrain one: taken out
+# of any world that still lists it, so a world never pushes two packs drawing one item.
+RETIRED_RESOURCE_PACKS = (("jbrain_probe", "26d6c250-8ead-4bb8-9dd0-d3805e61d61e"),)
 # The box's own behavior pack, installed into whichever world loads (§T1: deaths and
-# respawns, which BDS never prints).
+# respawns, which BDS never prints; §M9/§M10/§DW1: the Tricorder and the Power Pack).
 JBRAIN_PACK_SRC = Path(__file__).resolve().parent / "jbrain-pack"
 JBRAIN_PACK_DIR = "jbrain"
+# Its resource pack (§3c rule 2): the items' icons, installed beside it in every world.
+# BDS pushes a world's resource packs to each client on join, and
+# `texturepacks-required` (install.env_overrides) makes taking it a condition of joining.
+JBRAIN_RP_SRC = Path(__file__).resolve().parent / "jbrain-rp"
 # The spawn wreck's pack (§SW1): installed only into a world the box generated itself,
 # armed when it was created; its structures are built into it at image build.
 WRECK_PACK_SRC = Path(__file__).resolve().parent / "wreck-pack"
@@ -308,6 +306,9 @@ class Rig:
         self._install_wreck()
         try:
             self.install_pack(JBRAIN_PACK_SRC, JBRAIN_PACK_DIR, True)
+            self.install_pack(JBRAIN_RP_SRC, JBRAIN_PACK_DIR, True, kind="resource")
+            for dir_name, pack_id in RETIRED_RESOURCE_PACKS:
+                self.remove_pack(dir_name, pack_id, kind="resource")
         except OSError as exc:
             # The travel log loses deaths, but the server itself must still start.
             print(f"[minecraft] jbrain pack not installed: {exc}", flush=True)
@@ -317,7 +318,6 @@ class Rig:
         if (self.world_dir() / "behavior_packs" / PROBE_PACK_DIR).is_dir():
             try:
                 self.install_pack(PROBE_PACK_SRC, PROBE_PACK_DIR, True)
-                self.install_pack(PROBE_RP_SRC, PROBE_PACK_DIR, True, kind="resource")
             except OSError as exc:
                 print(f"[minecraft] test kit not refreshed: {exc}", flush=True)
         self.bds.start()
@@ -865,6 +865,7 @@ class Rig:
                     rules={},
                     wreck=None,  # the owner's own world: never touched
                     test=False,
+                    power_pack_keep=False,
                 )
 
             self._restart_around(folder, work, "A world is being imported here")
@@ -933,6 +934,7 @@ class Rig:
             # Another world's backup: the slot becomes that world, so its old seed and
             # settings no longer describe it. Rules come with the source's choices.
             fields["rules"] = dict(src.get("rules") or {})
+            fields["power_pack_keep"] = bool(src.get("power_pack_keep"))
             if not rec["exists"]:
                 when = time.strftime("%b %-d", time.localtime(path.stat().st_mtime))
                 fields["name"] = f"{src.get('name') or source} ({when})"
@@ -1016,7 +1018,7 @@ class Rig:
             if parsed:
                 known = parsed
                 self.slots.update(slot_id, rules_known=parsed)
-        desired = dict(rec.get("rules") or {})
+        desired = effective_rules(rec)
         pending = (
             [] if live else sorted(k for k, v in desired.items() if known.get(k) != v)
         )
@@ -1026,6 +1028,9 @@ class Rig:
             "rules": {**known, **desired} if not live else known,
             "defaults": worlds.DEFAULT_RULES,
             "pending": pending,
+            # Rules a box feature holds, by who holds them: the editor shows these as
+            # managed rather than as a free switch, and a change to one is refused.
+            "managed": managed_rules(rec),
         }
 
     def set_rules(self, slot_id: str, changes: dict[str, Any]) -> dict[str, Any]:
@@ -1038,6 +1043,11 @@ class Rig:
     def _set_rules(self, slot_id: str, changes: dict[str, Any]) -> None:
         rec = self.slots.get(slot_id)
         known = dict(rec.get("rules_known") or worlds.DEFAULT_RULES)
+        held = sorted(set(changes) & set(managed_rules(rec)))
+        if held:
+            raise ValueError(
+                f"{', '.join(held)} is managed by the Power Pack charm while it is on"
+            )
         clean = worlds.check_rules(changes, known)
         self.slots.update(slot_id, rules={**dict(rec.get("rules") or {}), **clean})
         live = rec["folder"] == self.active_folder() and self.bds.state == "running"
@@ -1049,22 +1059,42 @@ class Rig:
 
     def _apply_rules_when_up(self, folder: str) -> None:
         """After a world loads, re-apply its saved rules once the server reports
-        "Server started." — in the background, so a load doesn't wait on it."""
+        "Server started." — in the background, so a load doesn't wait on it — and tell
+        the jbrain pack the world's settings, which it keeps in the world itself."""
         rec = self.slots.by_folder(folder)
-        rules = dict((rec or {}).get("rules") or {})
-        if not rules:
-            return
+        commands = [worlds.rule_command(k, v) for k, v in effective_rules(rec).items()]
+        commands.append(pack_config(rec))
 
         def apply() -> None:
             if not self.bds.wait_running(START_TIMEOUT_S):
                 return
-            for key, value in rules.items():
+            for command in commands:
                 try:
-                    self.bds.command(worlds.rule_command(key, value), wait_s=1.0)
+                    self.bds.command(command, wait_s=1.0)
                 except bds.ConsoleError:
                     return
 
         threading.Thread(target=apply, daemon=True).start()
+
+    def set_power_pack(self, slot_id: str, on: Any) -> dict[str, Any]:
+        """The world's "Power Pack keeps inventory" switch (§M10). Saved on the slot and
+        applied at every start; on the loaded, running world also at once: the rule,
+        then the pack's own copy of the switch. Turning it off hands keepInventory back
+        to the owner's saved choice, or vanilla's off, saved so a later load agrees."""
+        if not isinstance(on, bool):
+            raise ValueError("`on` is true or false")
+        with self._locked():
+            rec = self.slots.get(slot_id)
+            rules = dict(rec.get("rules") or {})
+            if not on:
+                rules.setdefault("keepInventory", False)
+            rec = self.slots.update(slot_id, power_pack_keep=on, rules=rules)
+            live = rec["folder"] == self.active_folder() and self.bds.state == "running"
+            if live:
+                keep = effective_rules(rec)["keepInventory"]
+                self.bds.command(worlds.rule_command("keepInventory", keep))
+                self.bds.command(pack_config(rec))
+        return {**rec, "applies": "now" if live else "next load"}
 
     def install_pack(
         self,
@@ -1085,6 +1115,21 @@ class Rig:
             world.mkdir(parents=True, exist_ok=True)
         if not world.is_dir():
             return pack_id  # a world BDS hasn't generated yet: next start installs it
+        self.remove_pack(dir_name, pack_id, kind)
+        if install_it:
+            shutil.copytree(src, world / f"{kind}_packs" / dir_name)
+            listing = world / f"world_{kind}_packs.json"
+            packs = json.loads(listing.read_text())
+            packs.append({"pack_id": pack_id, "version": manifest["header"]["version"]})
+            listing.write_text(json.dumps(packs, indent=2))
+        return pack_id
+
+    def remove_pack(self, dir_name: str, pack_id: str, kind: str = "behavior") -> None:
+        """Take a pack out of the loaded world: its folder and its listing entry. The
+        listing is written even when the pack wasn't there, so an install can append."""
+        world = self.world_dir()
+        if not world.is_dir():
+            return
         dest = world / f"{kind}_packs" / dir_name
         listing = world / f"world_{kind}_packs.json"
         try:
@@ -1094,11 +1139,7 @@ class Rig:
         packs = [p for p in packs if p.get("pack_id") != pack_id]
         if dest.exists():
             shutil.rmtree(dest)
-        if install_it:
-            shutil.copytree(src, dest)
-            packs.append({"pack_id": pack_id, "version": manifest["header"]["version"]})
         listing.write_text(json.dumps(packs, indent=2))
-        return pack_id
 
     def _phase_of(self, rec: dict[str, Any]) -> str | None:
         # A phase from before the slot's world was (re)made is the old world's build.
@@ -1553,10 +1594,6 @@ class Rig:
         restart the server so it loads. M0 item 5: does a stable-API pack load with no
         experiments, and does its `console.log` reach this console?"""
         pack_id = self.install_pack(PROBE_PACK_SRC, PROBE_PACK_DIR, install_it)
-        self.install_pack(PROBE_RP_SRC, PROBE_PACK_DIR, install_it, kind="resource")
-        self.set_overrides(
-            {k: (v if install_it else None) for k, v in PROBE_PROPERTIES.items()}
-        )
         if not self._life.acquire(blocking=False):
             raise RuntimeError(f"busy: {self._busy or 'another action'}")
         self.maintenance = True
@@ -1572,6 +1609,26 @@ class Rig:
     def shutdown(self) -> None:
         self.stopping = True
         self.bds.stop()
+
+
+def effective_rules(rec: dict[str, Any] | None) -> dict[str, bool | int | str]:
+    """The rules a world runs with: the owner's saved choices, with what a box feature
+    holds on top — the Power Pack charm keeps keepInventory on (§M10's fail-safe
+    direction: if the pack ever fails, everyone keeps their things)."""
+    rules = dict((rec or {}).get("rules") or {})
+    rules.update(managed_rules(rec))
+    return rules
+
+
+def managed_rules(rec: dict[str, Any] | None) -> dict[str, bool | int | str]:
+    return {"keepInventory": True} if (rec or {}).get("power_pack_keep") else {}
+
+
+def pack_config(rec: dict[str, Any] | None) -> str:
+    """The console line that tells the jbrain pack the world's settings. JSON-escaped
+    by json.dumps, one line, as every scriptevent the wrapper sends."""
+    cfg = {"power_pack_keep": bool((rec or {}).get("power_pack_keep"))}
+    return f"scriptevent jb:config {json.dumps(cfg)}"
 
 
 def lan_ip() -> str | None:
@@ -1869,6 +1926,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, rig.set_settings(body))
             elif self.path == "/map/structures/sweep":
                 self._send(202, rig.sweep_structures(str(body.get("slot") or "")))
+            elif m := _WORLD_POWER_PACK.match(self.path):
+                self._send(200, rig.set_power_pack(m.group(1), body.get("on")))
             elif self.path == "/probe-pack":
                 self._send(200, rig.probe_pack(bool(body.get("install", True))))
             else:
@@ -1946,6 +2005,7 @@ _SNAP_FILE = re.compile(r"^/snapshots/([^/]+\.mcworld)/file$")
 _SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
 _WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
 _WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
+_WORLD_POWER_PACK = re.compile(r"^/worlds/(slot\d+)/power-pack$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 _BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
 _MAP_TILE = re.compile(r"^/map/tile/(overworld|nether|the_end)/(\d)/(-?\d+)/(-?\d+)\.png$")

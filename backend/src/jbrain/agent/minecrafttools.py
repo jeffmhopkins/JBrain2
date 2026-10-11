@@ -827,8 +827,9 @@ def build_minecraft_handlers(
             return f"The tricorder add-on refused it: {fence(reply)}"
         if "waypoint set" not in reply and "waypoint cleared" not in reply:
             return (
-                "The server took the command, but the tricorder add-on didn't answer — it is"
-                " part of the home-test kit, which may not be installed in this world."
+                "The server took the command, but the tricorder add-on didn't answer — the"
+                " box's own jbrain pack may not have loaded in this world (check the server"
+                " log for its `[jbrain]` lines)."
             )
         if clear or target is None:
             return ToolOutput(

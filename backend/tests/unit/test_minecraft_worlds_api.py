@@ -341,3 +341,31 @@ def test_the_timeline_reads_the_slots_world_with_its_range_and_filters(
         assert client.get(f"/api/minecraft/timeline?{query}").status_code == 422, bad
     assert client.get("/api/minecraft/timeline?slot=slot2&from=x&to=1").status_code == 422
     assert client.get("/api/minecraft/timeline?slot=slot2&to=1").status_code == 422
+
+
+def test_the_power_pack_switch_reaches_the_box_and_is_checked_first(client, sidecar) -> None:
+    seen, replies = sidecar
+    replies["/worlds/slot2/power-pack"] = httpx.Response(
+        200, json={"id": "slot2", "power_pack_keep": True, "applies": "next load"}
+    )
+    resp = client.put("/api/minecraft/worlds/slot2/power-pack", json={"on": True})
+    assert resp.status_code == 200 and resp.json()["power_pack_keep"] is True
+    sent = seen[-1]
+    assert (sent.method, sent.url.path) == ("POST", "/worlds/slot2/power-pack")
+    assert json.loads(sent.content) == {"on": True}
+    count = len(seen)
+    assert client.put("/api/minecraft/worlds/slot2/power-pack", json={}).status_code == 422
+    assert client.put("/api/minecraft/worlds/../power-pack", json={"on": True}).status_code in (
+        404,
+        422,
+    )
+    assert len(seen) == count  # refused before the box
+
+
+def test_a_rule_the_charm_holds_is_refused_with_the_boxs_reason(client, sidecar) -> None:
+    _, replies = sidecar
+    replies["/worlds/slot2/rules"] = httpx.Response(
+        400, json={"detail": "keepInventory is managed by the Power Pack charm while it is on"}
+    )
+    resp = client.put("/api/minecraft/worlds/slot2/rules", json={"set": {"keepInventory": False}})
+    assert resp.status_code == 400 and "Power Pack charm" in resp.json()["detail"]
