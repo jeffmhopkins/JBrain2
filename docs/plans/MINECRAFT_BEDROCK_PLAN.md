@@ -1499,6 +1499,8 @@ saved places.
 - **One-way.** A gate leads to its saved place and nothing comes back through it. A return
   trip needs a second gate (a second seed and frame) at the other end, which is the point:
   it doubles the cost.
+- **Anyone may step through** (owner, 2026-10-11): a gate is shared infrastructure. Opening
+  and re-aiming stay the planter's, to their own saved places.
 - **Re-aimable.** Standing **within 4 blocks of the gate**, the player asks Dave to point
   it at another of their saved places. Each re-aim costs **one Power Pack**.
 - **The cost** is the seed's craft, plus the frame's diamonds, plus a Power Pack per
@@ -1544,7 +1546,6 @@ Opening and re-aiming are Dave tools on the M10 path: a `scriptevent` the pack c
 and the pack's answer read back, as `mc_set_waypoint` does.
 
 **Open (owner):**
-- **Who may step through:** anyone (shared infrastructure) or only the planter.
 - **Mining the core** to get the seed back, so a gate can be moved.
 - **Whether mobs and items travel** (later option).
 - **Lore:** the story and Dave's lines for planting, opening and re-aiming belong on the
@@ -1692,7 +1693,8 @@ world-wide).
   column from the world's floor to its ceiling. That is 48×48 blocks, so a base across a
   chunk border is covered. Overlapping beacons are fine.
 - **No Dave to switch it on:** crafted and placed, it works at once. Breaking it switches it
-  off.
+  off. **Anyone can break it, like any other block** (owner, 2026-10-11), and it drops
+  itself.
 - **What it removes:** hostile and neutral mobs, and wild passive mobs nobody has
   interacted with (below).
 - **Recipe (mid game):** a **Power Pack surrounded by 8 echo shards** on a crafting table,
@@ -1735,7 +1737,6 @@ endermen, piglins, wild cows and sheep, and the rest.
 mob farm needs to be outside the 3×3.
 
 **Open (owner):**
-- **Who may break it:** anyone, or only whoever placed it.
 - **The Warden:** removed, or left alone like the bosses.
 - **Lore:** the beacon's story and Dave's first-time line belong on the Bleepbloop_City
   lore page; its icon joins the item set (`docs/mocks/minecraft-items/`).
