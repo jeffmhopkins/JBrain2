@@ -180,7 +180,10 @@ describe("MinecraftScreen", () => {
     expect(await screen.findByText("stopped")).toBeInTheDocument();
     // The container keeps running, so join details and auto-update stay readable.
     expect(screen.getByText("192.168.1.40")).toBeInTheDocument();
-    expect(screen.getByRole("switch")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("switch", { name: /Update automatically/ })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
     expect(screen.getByText("The server is stopped.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Stop" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Start server" }));

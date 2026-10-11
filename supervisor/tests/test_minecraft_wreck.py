@@ -328,6 +328,27 @@ def test_a_reset_rearms_but_an_import_or_restore_never_does(tmp_path: Path) -> N
     assert rig.restore_snapshot(snap["name"], "slot1")["wreck"] is None
 
 
+def test_a_reset_takes_the_owners_choice_over_the_default() -> None:
+    _make_world("slot2")
+    rig = _rig()
+    rig.slots.update("slot2", seed="777", wreck="done")
+    assert rig.reset_slot("slot2", "same_seed", wreck=False)["wreck"] is None
+    rig.set_settings({"spawn_wreck": False})
+    assert rig.reset_slot("slot2", "same_seed")["wreck"] is None
+    assert rig.reset_slot("slot2", "new_seed", wreck=True)["wreck"] == "armed"
+    body = {"mode": "same_seed", "wreck": False}
+    assert server.Handler._world_action(rig, "slot2", "reset", body)["wreck"] is None
+
+
+def test_the_default_is_saved_at_once_and_reported_in_status(tmp_path: Path) -> None:
+    rig = _rig()
+    rig.bds = bds.Bds(tmp_path)
+    assert rig.status()["spawn_wreck"] is True
+    assert rig.set_settings({"spawn_wreck": False})["spawn_wreck"] is False
+    assert rig.status()["spawn_wreck"] is False
+    assert rig.settings()["auto_update"] is False  # the other settings are left alone
+
+
 def test_the_pack_reaches_an_armed_world_before_bds_generates_it() -> None:
     rig = _rig()
     rig.create_slot("slot2", {"name": "New"})
@@ -375,6 +396,58 @@ def test_the_wrecks_done_event_marks_only_its_own_armed_world(tmp_path: Path) ->
     assert rig.slots.get("slot3")["wreck"] is None  # never armed: stays that way
     (ev,) = [e for e in real.events_after(0) if e.get("phase") == "loaded"]
     assert ev["kind"] == "wreck" and ev["world"] == "slot2"
+
+
+def test_a_done_with_a_cause_is_a_world_passed_over(tmp_path: Path) -> None:
+    rig = _rig()
+    real = bds.Bds(tmp_path)
+    rig.bds = real
+    rig.slots.update("slot2", wreck="armed")
+    real.world = "slot2"
+    real._record(
+        '[Scripting] [jbrain] {"ev":"wreck","phase":"done","cause":"not a new world"}'
+    )
+    rig.note_wreck()
+    assert rig.slots.get("slot2")["wreck"] == "skipped"
+
+
+def test_an_armed_worlds_build_phase_reaches_its_slot(tmp_path: Path) -> None:
+    rig = _rig()
+    real = bds.Bds(tmp_path)
+    rig.bds = real
+
+    def phase() -> Any:
+        (rec,) = [s for s in rig.worlds_view()["slots"] if s["id"] == "slot2"]
+        return rec["wreck_phase"]
+
+    rig.create_slot("slot2", {"name": "New"})
+    assert phase() is None
+    real.world = "slot2"
+    real._record('[Scripting] [jbrain] {"ev":"wreck","phase":"pod"}')
+    rig.note_wreck()
+    assert phase() == "pod"
+    real._record('[Scripting] [jbrain] {"ev":"wreck","phase":"failed","cause":"x"}')
+    rig.note_wreck()
+    assert phase() == "failed"
+    real._record('[Scripting] [jbrain] {"ev":"wreck","phase":"done"}')
+    rig.note_wreck()
+    assert phase() is None  # built: nothing in progress
+
+
+def test_a_phase_from_before_a_reset_is_the_old_worlds(tmp_path: Path) -> None:
+    _make_world("slot2")
+    rig = _rig()
+    real = bds.Bds(tmp_path)
+    rig.bds = real
+    rig.slots.update("slot2", seed="9", wreck="armed", created_at=1.0)
+    real.world = "slot2"
+    real._record('[Scripting] [jbrain] {"ev":"wreck","phase":"ship"}')
+    rig.note_wreck()
+    (rec,) = [s for s in rig.worlds_view()["slots"] if s["id"] == "slot2"]
+    assert rec["wreck_phase"] == "ship"
+    rig.reset_slot("slot2", "same_seed")
+    (rec,) = [s for s in rig.worlds_view()["slots"] if s["id"] == "slot2"]
+    assert rec["wreck"] == "armed" and rec["wreck_phase"] is None
 
 
 def test_a_done_from_before_a_reset_is_the_old_worlds(tmp_path: Path) -> None:

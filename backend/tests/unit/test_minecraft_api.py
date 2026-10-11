@@ -97,6 +97,7 @@ async def test_the_server_view_matches_the_contract(fake) -> None:
     )
     assert s["lan_ip"] == "192.168.1.20" and s["players"][0]["joined_at"] == 100.0
     assert s["job"] is None and s["pending_restart"] == []
+    assert s["spawn_wreck"] is True  # a box that doesn't say is on, the default
 
 
 async def test_a_running_world_job_is_passed_through(fake) -> None:
@@ -166,6 +167,21 @@ async def test_settings_pass_auto_update_through(fake) -> None:
     await api.put_settings(api.SettingsIn(auto_update=True), SETTINGS)
     assert fake["calls"][-1][:2] == ("POST", "/settings")
     assert fake["calls"][-1][2]["json"] == {"auto_update": True}
+
+
+async def test_settings_send_only_what_changed(fake) -> None:
+    # Each switch saves alone: an unsent setting must not reach the box as a reset.
+    await api.put_settings(api.SettingsIn(spawn_wreck=False), SETTINGS)
+    assert fake["calls"][-1][2]["json"] == {"spawn_wreck": False}
+
+
+async def test_a_worlds_crash_site_choice_reaches_the_box(fake) -> None:
+    await api.create_world("slot2", api.WorldIn(name="A", wreck=False), SETTINGS)
+    assert fake["calls"][-1][2]["json"]["wreck"] is False
+    await api.reset_world("slot2", api.ResetIn(mode="same_seed", wreck=True), SETTINGS)
+    assert fake["calls"][-1][2]["json"]["wreck"] is True
+    await api.reset_world("slot2", api.ResetIn(mode="empty"), SETTINGS)
+    assert fake["calls"][-1][2]["json"]["wreck"] is None  # the box's default
 
 
 async def test_players_take_who_is_online_from_the_live_server(

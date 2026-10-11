@@ -2,10 +2,11 @@
 
 > **Status:** Plan · **Last verified:** 2026-10-11
 >
-> Decision: **pending (owner)**. Three variants are below. The chosen one becomes the binding spec
-> for SW3's frontend, and its reasoning lands in `docs/reference/DESIGN.md` ("Minecraft server
-> screen") in the implementing PR.
-> Behaviour source: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §"SW1–SW3 — Spawn wreck", and the
+> Decision: **A — a switch in the sheet (owner, 2026-10-11)**. `a-switch-in-sheet.html` is the
+> binding spec for SW3's frontend, built in `MinecraftWorldSheets.tsx`, `MinecraftWorlds.tsx` and
+> `MinecraftServerSettings.tsx`; the reasoning is in `docs/reference/DESIGN.md` ("Minecraft server
+> screen" → "Crash site at spawn"). B and C are kept as the rivals.
+> Behaviour source: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §"SW1–SW4 — Spawn wreck", and the
 > sidecar behaviour SW1 and SW2 shipped ("Verified facts" below).
 
 These are three interactive mocks of how the owner controls the **crash site**: an escape pod
@@ -188,18 +189,17 @@ happen.
 7. **The build reports phases** `loaded`, `pod`, `ship`, `done` and `failed`. A failure is
    retried 30 s later, and it gives up after three tries.
 
-## Assumptions still open
+## How the open assumptions were settled (SW3)
 
-- **A and B need a reset override.** Their reset sheets take a choice. Today the sidecar re-arms
-  a reset only by the setting, so these need a `wreck` override on reset, as create has. C needs
-  nothing new.
-- **`done` shows as *built*.** It also covers an SW1-era world that was passed over. The slot
-  doesn't tell the two apart.
-- **The build's phase reaches the PWA** with the slot (or `/status`), so every device sees it.
-- **Turning `spawn_wreck` off leaves an armed world armed**, since arming happens at create or
-  reset.
-- **Not covered:**
-  - a build that gave up after three tries, which the plan doesn't say how to show;
-  - the debug route;
-  - the plan's SW3 line about a "re-arm action". The owner's facts rule out adding one to a
-    played world, so a reset with a seed is the only way back to a crash site.
+- **The reset override** shipped: a reset takes `wreck: true | false`, as create does.
+- **A world passed over is `skipped`, not `done`.** The pack's `done` with a cause (an SW1-era
+  world, or a build that gave up after three tries) marks the slot `skipped`, shown as *not
+  built*, so *built* means built.
+- **The build's phase reaches the PWA with the slot** (`wreck_phase`), so every device sees it.
+  It shows as *building* only while that world is loaded and the server is up; a stopped build
+  reads *on its way*. The box doesn't report the retry countdown, so *failed* reads *didn't
+  finish — trying again*, with no seconds.
+- **Turning `spawn_wreck` off leaves an armed world armed**, and the toast says so.
+- **No new debug route.** The debug API's `GET /minecraft/worlds` and `GET /minecraft` already
+  pass the slot's `wreck` and `wreck_phase`, and `spawn_wreck`, through.
+- **No re-arm action.** A reset with a seed is the only way back to a crash site.

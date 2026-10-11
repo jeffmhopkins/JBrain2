@@ -88,6 +88,9 @@ import {
   slotNumber,
   whenOf,
   worldBlocked,
+  wreckFactText,
+  wreckLaterText,
+  wreckRowText,
 } from "../minecraftWorlds";
 
 /** One save per settled stepper: the value moves at once, the PUT goes out when tapping or
@@ -106,7 +109,13 @@ export type WorldModal =
   | { kind: "importOver"; slot: string; file: File }
   | { kind: "rename"; slot: string }
   | { kind: "reset"; slot: string }
-  | { kind: "resetConfirm"; slot: string; mode: MinecraftResetMode; seed?: string }
+  | {
+      kind: "resetConfirm";
+      slot: string;
+      mode: MinecraftResetMode;
+      seed?: string;
+      wreck?: boolean;
+    }
   | { kind: "load"; slot: string }
   | { kind: "backupNow"; slot: string }
   | { kind: "backup"; name: string; slot: string }
@@ -152,6 +161,7 @@ export function useWorlds({
   serverUp,
   running,
   online,
+  spawnWreck,
   job,
   lastJob,
   pendingRestart,
@@ -165,6 +175,8 @@ export function useWorlds({
   serverUp: boolean;
   running: boolean;
   online: string[];
+  /** The server's crash-site default, which the New-world and Reset sheets start from. */
+  spawnWreck: boolean;
   job: MinecraftJob | null;
   lastJob: MinecraftLastJob | null;
   pendingRestart: string[];
@@ -384,7 +396,7 @@ export function useWorlds({
         })
       ) {
         toast(
-          `${body.name} is in slot ${slotNumber(slot)} — it's generated the first time you load it`,
+          `${body.name} is in slot ${slotNumber(slot)} — it's generated${body.wreck ? ", crash site and all," : ""} the first time you load it`,
         );
       }
     },
@@ -431,13 +443,13 @@ export function useWorlds({
       } else if (key === "cheats") toast(`Saved — cheats ${value ? "on" : "off"} ${when}`);
       else toast(`Saved — difficulty changes ${when}`);
     },
-    async reset(slot: string, mode: MinecraftResetMode, seed?: string) {
+    async reset(slot: string, mode: MinecraftResetMode, seed?: string, wreck?: boolean) {
       const t = slotOf(slot);
       const name = t ? slotName(t) : "It";
       await longOp({
         what: "resetting a world",
         verb: `reset ${name}`,
-        send: () => api.minecraftResetWorld(slot, mode, seed),
+        send: () => api.minecraftResetWorld(slot, mode, seed, wreck),
         done: () => {
           toast(
             mode === "empty"
@@ -606,6 +618,7 @@ export function useWorlds({
     reload,
     running,
     online,
+    spawnWreck,
     job,
     nowMs,
     toast,
@@ -915,6 +928,7 @@ function WorldRow({ s }: { s: MinecraftSlot }) {
           {s.last_backup ? `last backup ${whenOf(s.last_backup, w.nowMs)}` : "no backups yet"} ·{" "}
           {s.last_download ? `downloaded ${shortDate(s.last_download)}` : "never downloaded"}
         </span>
+        <span className="mc-wmeta">Crash site: {wreckRowText(s, w.running)}</span>
       </span>
       <ChevronRightIcon size={18} />
     </button>
@@ -1323,6 +1337,8 @@ export function WorldLayer({ slot }: { slot: string }) {
         <dl className="mc-facts-dl">
           <dt>Origin</dt>
           <dd>{originText(s)}</dd>
+          <dt>Crash site</dt>
+          <dd>{wreckFactText(s, w.running)}</dd>
           <dt>Seed</dt>
           <dd>
             {s.seed ? (
@@ -1364,6 +1380,7 @@ export function WorldLayer({ slot }: { slot: string }) {
               : "none yet"}
           </dd>
         </dl>
+        {wreckLaterText(s, w.running) && <p className="mc-note">{wreckLaterText(s, w.running)}</p>}
         {!s.active && (
           <>
             <button

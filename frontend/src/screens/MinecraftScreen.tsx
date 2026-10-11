@@ -47,6 +47,7 @@ import {
   stateInfo,
   updateRunning,
 } from "../minecraft";
+import { slotName } from "../minecraftWorlds";
 import { useForeground } from "../visibility";
 import { DaveSection } from "./MinecraftDave";
 import { AllowlistSection, ServerSettingsSection } from "./MinecraftServerSettings";
@@ -257,6 +258,7 @@ export function MinecraftScreen({
     serverUp: installed && server !== null,
     running: state === "running",
     online: state === "running" ? (server?.players ?? []).map((p) => p.name) : [],
+    spawnWreck: server?.spawn_wreck ?? true,
     job,
     lastJob: server?.last_job ?? null,
     pendingRestart: server?.pending_restart ?? [],
@@ -468,6 +470,8 @@ export function MinecraftScreen({
                   onError={setActionError}
                   pendingRestart={server.pending_restart ?? []}
                   refreshStatus={() => void loadStatus()}
+                  spawnWreck={server.spawn_wreck ?? true}
+                  armed={worlds.slots.filter((s) => s.wreck === "armed").map(slotName)}
                 />
                 <AllowlistSection
                   running={state === "running"}

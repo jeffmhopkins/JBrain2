@@ -53,6 +53,7 @@ import {
   slotName,
   slotNumber,
   whenOf,
+  wreckSwitchText,
 } from "../minecraftWorlds";
 import { RulesEditor, Seg, type WorldModal, useW } from "./MinecraftWorlds";
 
@@ -176,6 +177,31 @@ function useRolledSeed(): [string | null, () => void, boolean] {
 
 // ---- new world ----
 
+/** The crash site at spawn, laid out as Cheats is: it starts at the server's default, and
+ *  says so when this world differs from it. */
+function WreckSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  const w = useW();
+  return (
+    <div className="mc-sw-row">
+      <span className="mc-sw-l">
+        <b>Crash site at spawn</b>
+        <br />
+        {wreckSwitchText(on, w.spawnWreck)}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label="Crash site at spawn"
+        className={`mc-switch${on ? " on" : ""}`}
+        onClick={() => onChange(!on)}
+      >
+        <span className="mc-knob" />
+      </button>
+    </div>
+  );
+}
+
 function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
   const w = useW();
   const [name, setName] = useState("");
@@ -185,6 +211,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
   const [gamemode, setGamemode] = useState<string>("survival");
   const [difficulty, setDifficulty] = useState<string>("normal");
   const [cheats, setCheats] = useState(false);
+  const [wreck, setWreck] = useState(w.spawnWreck);
   const [rules, setRules] = useState<Record<string, MinecraftRuleValue>>({});
   const values = { ...DEFAULT_RULES, ...rules };
   const changed = Object.keys(rules).length;
@@ -256,6 +283,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
             <span className="mc-knob" />
           </button>
         </div>
+        <WreckSwitch on={wreck} onChange={setWreck} />
         <details className="mc-rules-new">
           <summary>
             <span>World rules</span>
@@ -298,6 +326,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
                 gamemode,
                 difficulty,
                 cheats,
+                wreck,
                 ...(changed ? { rules } : {}),
               });
             }}
@@ -439,7 +468,8 @@ function ImportSheet({
         )}
         <p className="mc-note">
           <b>Settings come from the world file</b> — its game mode, difficulty, cheats, seed and
-          rules.{t && !isEmptySlot(t) ? ` ${slotName(t)}'s current settings aren't kept.` : ""}
+          rules. No crash site is added.
+          {t && !isEmptySlot(t) ? ` ${slotName(t)}'s current settings aren't kept.` : ""}
         </p>
         <p className="mc-note">
           Checked before anything is written: it must hold a level.dat and be under 1 GB. A bad file
@@ -521,6 +551,7 @@ function ResetSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
   const [mode, setMode] = useState<SeedMode>("random");
   const [rolled, reroll, rollFailed] = useRolledSeed();
   const [typed, setTyped] = useState("");
+  const [wreck, setWreck] = useState(w.spawnWreck);
   if (!s) return null;
   const seed = how === "new_seed" ? seedFor(mode, rolled, typed) : null;
   const ready = how !== "new_seed" || mode === "random" || seed !== null;
@@ -564,6 +595,12 @@ function ResetSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
             hint="Or enter one — leave it to chance and this number is used."
           />
         )}
+        {how !== "empty" && (
+          <>
+            <WreckSwitch on={wreck} onChange={setWreck} />
+            {wreck && <p className="mc-note">Built on its first start after the reset.</p>}
+          </>
+        )}
         {s.active && w.running && (
           <p className="mc-note">
             It&apos;s loaded, so the server stops, resets it and starts again
@@ -587,6 +624,7 @@ function ResetSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
                 slot,
                 mode: how,
                 ...(seed ? { seed } : {}),
+                ...(how === "empty" ? {} : { wreck }),
               })
             }
           >
@@ -602,11 +640,13 @@ function ResetDialog({
   slot,
   mode,
   seed,
+  wreck,
   onClose,
 }: {
   slot: string;
   mode: MinecraftResetMode;
   seed: string | undefined;
+  wreck: boolean | undefined;
   onClose: () => void;
 }) {
   const w = useW();
@@ -624,7 +664,7 @@ function ResetDialog({
       onCancel={onClose}
       onConfirm={() => {
         onClose();
-        void w.actions.reset(slot, mode, seed);
+        void w.actions.reset(slot, mode, seed, wreck);
       }}
       extra={
         <div className="mc-fld mc-dlg-fld">
@@ -876,7 +916,9 @@ export function WorldModals() {
     case "reset":
       return <ResetSheet slot={m.slot} onClose={close} />;
     case "resetConfirm":
-      return <ResetDialog slot={m.slot} mode={m.mode} seed={m.seed} onClose={close} />;
+      return (
+        <ResetDialog slot={m.slot} mode={m.mode} seed={m.seed} wreck={m.wreck} onClose={close} />
+      );
     case "backupNow":
       return <BackupNowSheet slot={m.slot} onClose={close} />;
     case "backup":

@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2✅ SW3◻️
+> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a◻️ M9◻️ M10◻️ M11◻️ M12◻️ M13◻️ M14◻️ R1◻️ P1✅ P2◻️ P3◻️ SW1✅ SW2✅ SW3✅ SW4◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1452,7 +1452,7 @@ piece is worn.
 damage on Bedrock; a custom wearable with an attachable shows on the Xbox; and the
 effect refresh doesn't flicker.
 
-### SW1–SW3 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
+### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
 **What the owner asked for:** every **new** world starts at a crash site. An escape pod
 lies in a small crater at spawn, its parachute dragged out behind it. Overhead hangs the
@@ -1559,13 +1559,35 @@ lands on a world that was played before it shipped.
     block for block.
   - The supervisor's pytest runs both suites.
 
-**SW3 — operate and prove it.** Until it ships, the default-on `spawn_wreck` setting
-has no PWA or debug-API switch, which is a known rule #10 gap; SW3 closes it.
-- the PWA switch at world creation, with a re-arm action (GUI gate: three mocks first),
-  plus a debug route
-- a biome sweep on the box: worlds created through the debug API from seeds whose spawn
-  `mapping.Predictor` puts in each biome, each checked from the world index (pod present,
-  not floating or buried, hatch reachable, canopy on the ground)
+**SW3 — operate it from the PWA ✅.** It closed the rule #10 gap: the default-on
+`spawn_wreck` setting had no switch. The GUI gate's three mocks are in
+`docs/mocks/minecraft-wreck/`, and the owner chose **A, a switch in the sheet**
+(`DESIGN.md` "Crash site at spawn"):
+- **New world and Reset.** These sheets carry a **Crash site at spawn** switch, which
+  starts at the default. A reset takes a `wreck` override, as create does. *Empty*
+  carries no switch.
+- **Server settings.** It carries **Crash site by default**, which saves at once with no
+  restart. Turning it off leaves a world already armed as it is, and the toast names that
+  world.
+- **Each world says where its crash site stands,** on its row and on its page: *on its
+  way*, *building* (with its phase), *didn't finish — trying again*, *built*, *not built*
+  or *off*. The sidecar keeps each world's latest build phase (`wreck_phase`) and ignores
+  a phase from before the world was made. A pack `done` that carries a cause is recorded
+  as **`skipped`**, not `done`.
+- **There is no re-arm action.** A played world can't get a crash site, because it
+  would land on what's built there. A reset with a seed is the way back.
+- **No new debug route.** The debug API's `GET /minecraft/worlds` and `GET /minecraft`
+  already return the new fields.
+
+**SW4 — prove it in every biome, on the box.** This needs the owner's debug token, and a
+debug-API way to make test worlds. Today, changing worlds is owner-only in the PWA, so
+either that boundary moves or the owner makes the worlds. It is a biome sweep: worlds made
+from seeds whose spawn `mapping.Predictor` puts in each biome. Each one is checked from the
+world index:
+- the pod is present;
+- it is neither floating nor buried;
+- its hatch is reachable;
+- its canopy is on the ground.
 
 **Box-only checks** (can't be proven off the box):
 - BDS honours a pack pre-written into an ungenerated world's folder.
