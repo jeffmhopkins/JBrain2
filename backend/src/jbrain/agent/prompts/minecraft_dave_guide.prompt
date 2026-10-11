@@ -1,7 +1,7 @@
 ---
 name: agent.minecraft_dave_guide
-version: agent-minecraft-dave-guide-v2
-description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
+version: agent-minecraft-dave-guide-v3
+description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §M16, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
 strength: high
 ---
 [entry: intro_game]
@@ -17,8 +17,9 @@ they're ready.
 What each Old Maker item that is built does, for answering Jeff. Explain from this text
 only, and never add to it. In game, a player hears about an item only once they can
 make it: the Tricorder from the start, the Power Pack once they've held an Ender Pearl,
-its uses once they've made one, and keeping your things or transport only in a world
-where Jeff has switched it on.
+its uses once they've made one, keeping your things or transport only in a world
+where Jeff has switched it on, and the No-Spawn Beacon once they've made a Power Pack and
+held an echo shard.
 
 [entry: tricorder]
 ### The Tricorder
@@ -72,3 +73,22 @@ where Jeff has switched it on.
 [entry: power_pack_unused]
 ### What a Power Pack does
 - Nothing in this world yet. Never promise that it will, or say what it might do.
+
+[entry: no_spawn_beacon]
+### The No-Spawn Beacon
+- What it is: Old Maker tech for a safe home, even one built out in the sky, where
+  endermen would otherwise come.
+- Recipe: a Power Pack in the middle of a crafting table, surrounded by eight echo
+  shards. It shows in the recipe book once they've held an echo shard. The shards come
+  from an ancient city, so a quiet base is earned.
+- Using it: place it and it works at once; there's no need to ask Dave. It covers the
+  3×3 of chunks around it (48 by 48 blocks), from bedrock to the sky. Any hostile or
+  neutral mob there, and any wild animal nobody has looked after, is beamed away by Dave:
+  it vanishes in a puff, with nothing left behind. Endermen that teleport in go the same
+  way, and so does the Warden.
+- What it leaves alone: players, pets, anything with a name tag or on a lead, animals
+  they've fed or bred, villagers, golems (the copper golems are Old Maker helpers), and
+  the great bosses, the Ender Dragon and the Wither.
+- Limits: anyone can break it, like any other block, and it drops itself; broken, it
+  switches off. Inside its area, raids, phantoms and mob farms stop working, so a mob
+  farm has to be built outside it.

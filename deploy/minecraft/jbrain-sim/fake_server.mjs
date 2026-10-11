@@ -152,8 +152,14 @@ export const world = {
   afterEvents: {
     entityDie: { subscribe: (fn) => subs.die.push(fn) },
     playerSpawn: { subscribe: (fn) => subs.spawn.push(fn) },
+    // The No-Spawn Beacon's (beacon.test.mjs drives it with its own stand-in).
+    entitySpawn: { subscribe: () => {} },
+    playerInteractWithEntity: { subscribe: () => {} },
+    playerPlaceBlock: { subscribe: () => {} },
+    playerBreakBlock: { subscribe: () => {} },
   },
   getDynamicProperty: (k) => props.get(k),
+  getDynamicPropertyIds: () => [...props.keys()],
   setDynamicProperty: (k, v) => (v === undefined ? props.delete(k) : props.set(k, v)),
   getAllPlayers: () => [...players],
   getDefaultSpawnLocation: () => ({ x: 0, y: 64, z: 0 }),
