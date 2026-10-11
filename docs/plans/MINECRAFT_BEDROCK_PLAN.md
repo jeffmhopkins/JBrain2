@@ -1703,6 +1703,14 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   none of. Warnings now go out as log lines. Each pod step logs how many of its block
   writes landed, and the first reason one didn't. The simulator fails a build whose
   writes don't land, or whose crater, parachute or details write nothing.
+- The next run named it: every failed edit was *no block there (chunk not loaded?)*.
+  The pack set its ticking area up while planning, then removed and re-added it to
+  build. On the box a removed area's chunks unload a tick later, so the load check
+  passed on chunks about to go. The structures were already down, but the edits fell
+  on nothing. Now an area the run already has is kept. After any real removal, the old
+  chunks are waited out (2 s) before the load check. In the simulator, a removed area's
+  chunks now last one tick, and a new area has none ready on the tick it's added, so
+  the old code fails there exactly as it did on the box.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
