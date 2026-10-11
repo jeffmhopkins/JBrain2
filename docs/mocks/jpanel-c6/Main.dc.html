@@ -636,12 +636,27 @@ class Component extends DCLogic {
     return Object.assign({ id: this.noteSeq, urgent: false }, k);
   }
 
+  nightWindow(s) {
+    const f = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+    return f(s.night.from) + '–' + f(s.night.to);
+  }
+
+  inNight(s) {
+    const d = new Date();
+    const nowM = d.getHours() * 60 + d.getMinutes();
+    const n = s.night;
+    return n.from > n.to ? (nowM >= n.from || nowM < n.to) : (nowM >= n.from && nowM < n.to);
+  }
+
   // The tweak stands in for the box: picking a kind "sends" one, as POST /panel/notify would.
+  // A refusal never reaches the glass — the box answers the sender — so the mock shows the
+  // sender's answer as a toast rather than anything the panel itself would draw.
   maybeIncoming(prevProps) {
     const kind = this.props.incoming;
     if (!kind || kind === 'none' || (prevProps && prevProps.incoming === kind)) return;
     const b = this.base(this.state);
-    if (!b.notif.allow) { this.say('Blocked: notifications are off in Settings'); return; }
+    if (!b.notif.allow) { this.say('Sender got 409 not_accepting'); return; }
+    if (b.notif.quiet && this.inNight(b)) { this.say('Sender got 409 quiet_hours, until ' + this.nightWindow(b).split('–')[1]); return; }
     const n = this.sample(kind);
     this.put((c) => ({ notes: c.notes.concat([n]), off: false }));
   }
@@ -905,7 +920,7 @@ class Component extends DCLogic {
           }))
         };
       })(),
-      notifRows: [['allow', 'Allow messages from the box'], ['sound', 'Chime when one arrives'], ['quiet', 'Silent during night hours']].map(([key, label]) => {
+      notifRows: [['allow', 'Accept messages from the box'], ['quiet', 'Refuse during night hours'], ['sound', 'Chime when one arrives']].map(([key, label]) => {
         const v = s.notif[key];
         const live = key === 'allow' || s.notif.allow;
         return {
@@ -917,9 +932,11 @@ class Component extends DCLogic {
           toggle: () => { if (!this.swiped && live) this.put((b) => ({ notif: Object.assign({}, b.notif, { [key]: !b.notif[key] }) })); }
         };
       }),
-      notifNote: s.notif.allow
-        ? 'Jerv, Ops and workflows can pop up a message here, and ask a question you answer with a tap. Urgent ones always chime.'
-        : 'Off: the box is told this panel is not taking messages, so the sender knows to try elsewhere.',
+      notifNote: !s.notif.allow
+        ? 'Off: every message is refused at the box. The sender is told this panel is not accepting messages.'
+        : s.notif.quiet
+          ? 'Refused ' + this.nightWindow(s) + ' — the sender is told quiet hours, and until when. Same hours as the night clock.'
+          : 'Jerv, Ops and workflows can pop up a message here and ask a question you answer with a tap.',
       ring: s.ring ? Object.assign(this.hm(s.ring.h, s.ring.m), { label: s.ring.label || 'Alarm' }) : { hm: '', ampm: '', label: '' },
       snooze: () => this.snooze(),
       stopAlarm: () => { this.put({ ring: null }); this.say('Alarm stopped'); },

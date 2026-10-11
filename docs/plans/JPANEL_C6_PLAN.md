@@ -112,7 +112,7 @@ an isolation test pins both, CLAUDE.md #3):
 | `source` | shown as the sender: "Jerv", "Ops", a workflow's name |
 | `title`, `body` | short; the panel shows ~3 lines of body |
 | `choices` | 0-4 labels; empty means a plain notice with OK |
-| `urgent` | chimes even during night hours |
+| `urgent` | chimes even when the panel's chime is off; does NOT bypass a refusal |
 | `expires_at` | a question nobody answered in time is `expired`, not hanging forever |
 | `state`, `answer`, `answered_at` | `queued` → `shown` → `answered` / `dismissed` / `expired` |
 
@@ -122,8 +122,28 @@ an isolation test pins both, CLAUDE.md #3):
   scheduled run can ask "run the cleanup now?" and act on the tap.
 - The panel learns of one on the settings poll it already makes every 3 s (the same path that
   carries the twins' message count), so no new connection and no new latency budget.
-- A panel with notifications switched off answers the send with `refused`, so a sender knows
-  to try another route (a PWA push) rather than wait on a question nobody will see.
+
+**The panel decides, and the box refuses at send time.** The owner: *"I could disable it from
+the device … so if I don't want it bothering me I can turn it off, or not be on during
+bedtime. It would reject it and return the API response that the device is not online or not
+accepting push."* So a refused message is never stored and never queued for later — it does
+not exist, and the sender is told why at once, while it can still choose another route:
+
+| answer | when |
+|---|---|
+| `202 {id, state: "queued"}` | accepted; poll `GET …/{id}` (or `?wait=`) for `shown` / `answered` |
+| `409 {reason: "not_accepting"}` | the owner switched messages off on the panel |
+| `409 {reason: "quiet_hours", until: "06:30"}` | inside the panel's quiet hours (the night-clock hours) |
+| `503 {reason: "offline", last_seen_s}` | the panel has not polled for 30 s — it could not show it anyway |
+
+The box can answer instantly because the panel REPORTS its accept switch, its quiet-hours
+switch and its window on the 3 s settings poll; the box keeps the last report beside the
+panel's `last_seen` and decides from that, never from a guess. The panel is the source of
+truth — a setting changed on the glass reaches the box within one poll — and the PWA can show
+it but not override it, which is the point: "don't bother me" set at the panel has to hold.
+The window is evaluated in the panel's own timezone, reported with it. A message accepted a
+moment before quiet hours begin is still shown (silently): the refusal is at the door, not a
+recall.
 
 **The panel side** is one more service (`svc_notice`) and a shell overlay, not an app: it has
 to appear over whatever app is open, the way an alarm does. It wakes the screen, chimes unless

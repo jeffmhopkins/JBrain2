@@ -53,5 +53,7 @@ panel, the others import it at a fixed `start` state).
 - **Push messages from the box:** a full-screen pop-up over any app (an alarm outranks it):
   sender, title, short body, and either OK or up to four answer buttons whose tap goes back
   to the sender. Queues as "1 of N"; BOOT dismisses without answering. Settings → Notifications:
-  allow (off = the box is told `refused`), chime, silent during night hours (urgent always
-  chimes). Box side: `../../plans/JPANEL_C6_PLAN.md` §2.
+  **Accept messages from the box** and **Refuse during night hours** — the panel decides, and
+  the box turns a send away at once (`409 not_accepting` / `409 quiet_hours` with `until`, or
+  `503 offline`), so nothing is held to pop up later — plus a chime switch. Box side:
+  `../../plans/JPANEL_C6_PLAN.md` §2.
