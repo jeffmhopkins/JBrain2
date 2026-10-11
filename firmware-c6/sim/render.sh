@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds the sim and renders every mock board's state to <out>/<state>.png, plus a debug
-# snapshot of a short session (<out>/session.json). Then the two checks CI relies on: every
-# app opens and closes back to the same widget and timer count, and the snapshot carries no
-# provisioning secret.
+# snapshot of a short session (<out>/session.json). Then the checks CI relies on: every app
+# opens and closes back to the same widget and timer count, a scripted finger meets the shell's
+# touch rules, and the snapshot carries no provisioning secret.
 #
 #   firmware-c6/sim/render.sh [out-dir] [build-dir]
 #
@@ -29,6 +29,7 @@ done
 "$sim" --state session --snapshot "$out/session.json" >/dev/null
 
 "$sim" --lifecycle
+"$sim" --touch
 
 # The fake provisioning holds a password, a device key and a CA shaped like the real ones
 # (svc_settings_fake.h). None may reach a snapshot, whatever a describer or a log line did.

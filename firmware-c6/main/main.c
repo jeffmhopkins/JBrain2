@@ -3,7 +3,7 @@
  *
  * 0.0.4 is the first image that drives the screen: the AXP2101 (svc_power), the buttons
  * (svc_buttons), the CO5300 under LVGL (svc_display) and the shell with every app over fake
- * services (ui_task.c). ALL OF IT STARTS AFTER THE ROLLBACK GATE, and the boot after a panic or a
+ * services (ui_task.c). 0.0.6 adds the CST9220 (svc_touch). ALL OF IT STARTS AFTER THE ROLLBACK GATE, and the boot after a panic or a
  * watchdog leaves the display off (disp_guard.c), so no fault in the new code can stop this
  * loop reaching the box and taking the image that fixes it (README "What 0.0.4 adds").
  */
@@ -30,6 +30,7 @@
 #include "svc_buttons.h"
 #include "svc_display_drv.h"
 #include "svc_power_drv.h"
+#include "svc_touch.h"
 #include "ui_task.h"
 
 static const char *TAG = "jpanel-c6";
@@ -112,10 +113,10 @@ static bool report(const cfg_t *cfg)
     /* Bounded on its own, so however long a service's tokens grow the body still fits and the
        report still goes: a truncated note is a smaller loss than no heartbeat. Static, as is
        the body, because this task then runs a TLS handshake on the same 8 KB stack. */
-    static char note[720], part[200];
+    static char note[720], part[256];
     size_t used = 0;
     void (*const parts[])(char *, size_t) = {svc_display_note, ui_task_note, svc_power_note,
-                                             svc_buttons_note};
+                                             svc_buttons_note, svc_touch_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -193,7 +194,10 @@ static void start_panel(void)
     const esp_err_t pmu = svc_power_start(may_start, svc_buttons_pek);
     if (pmu != ESP_OK) ESP_LOGE(TAG, "PMIC: %s", esp_err_to_name(pmu));
     svc_buttons_start(ui_task_button, xTaskGetCurrentTaskHandle());
-    if (may_start) ui_task_start(xTaskGetCurrentTaskHandle());
+    if (!may_start) return;
+    ui_task_start(xTaskGetCurrentTaskHandle());
+    /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
+    svc_touch_start();
 }
 
 void app_main(void)

@@ -6,6 +6,7 @@
  *   jpanel-sim --state NAME --png out.png [--snapshot out.json]
  *   jpanel-sim --list
  *   jpanel-sim --lifecycle      every app opens and closes back to the same widget/timer count
+ *   jpanel-sim --touch          a scripted finger through the shell's real pointer path
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@
 #include "svc_alarms_fake.h"
 #include "svc_audio_fake.h"
 #include "svc_box_fake.h"
+#include "svc_display.h"
 #include "svc_display_fake.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
@@ -360,6 +362,104 @@ static int lifecycle(void)
     return bad;
 }
 
+/* ---- a finger: samples queued the way svc_touch queues them, read by the shell's pointer ---- */
+
+static struct {
+    int16_t x, y;
+    bool pressed;
+} s_fq[32];
+static unsigned s_fq_head, s_fq_n;
+
+static bool finger_feed(int16_t *x, int16_t *y, bool *pressed)
+{
+    if (s_fq_head == s_fq_n) return false;
+    *x = s_fq[s_fq_head].x;
+    *y = s_fq[s_fq_head].y;
+    *pressed = s_fq[s_fq_head].pressed;
+    s_fq_head++;
+    return true;
+}
+
+static void finger(int x, int y, bool pressed)
+{
+    if (s_fq_head == s_fq_n) s_fq_head = s_fq_n = 0;
+    s_fq[s_fq_n].x = (int16_t)x;
+    s_fq[s_fq_n].y = (int16_t)y;
+    s_fq[s_fq_n].pressed = pressed;
+    s_fq_n++;
+}
+
+static int s_touch_bad;
+
+static void expect(bool ok, const char *what)
+{
+    printf("%s %s\n", ok ? "ok  " : "FAIL", what);
+    if (!ok) s_touch_bad = 1;
+}
+
+static bool on_page(int page)
+{
+    char want[16];
+    snprintf(want, sizeof want, "\"page\":%d", page);
+    return strstr(run("{\"cmd\":\"snapshot\"}"), want) != NULL;
+}
+
+/* Every rule a real finger meets that the debug pointer's fixed stroke never did. The first
+ * tile's centre is (134, 126). */
+static int touch_checks(void)
+{
+    shell_set_pointer(finger_feed);
+    step(200);
+
+    finger(134, 126, true);
+    finger(134, 126, false);
+    step(100);
+    expect(shell_open_app() && !strcmp(shell_open_app()->id, "jerv"),
+           "a press and its release inside one read period still open the tile");
+    run("{\"cmd\":\"home\"}");
+
+    run("{\"cmd\":\"inject\",\"event\":\"pwr\"}");
+    expect(svc_display_dark(), "PWR darkens");
+    finger(134, 126, true);
+    step(600);
+    expect(!svc_display_dark(), "a finger on the dark screen wakes it while still down");
+    finger(134, 126, false);
+    step(100);
+    expect(!shell_open_app(), "and opens nothing, however long it stayed");
+
+    finger(134, 126, true);
+    step(60);
+    finger(174, 126, true);
+    step(60);
+    finger(174, 126, false);
+    step(100);
+    expect(!shell_open_app() && on_page(0), "a 40 px drag from a tile is neither a tap nor a swipe");
+
+    finger(134, 126, true);
+    step(60);
+    finger(134, 300, true);
+    finger(214, 300, false);
+    step(100);
+    expect(!shell_open_app() && on_page(0), "a mostly-vertical drag turns no page");
+
+    finger(400, 240, true);
+    step(60);
+    finger(200, 240, true);
+    finger(200, 240, false);
+    step(100);
+    expect(!shell_open_app() && on_page(1), "a swipe left from a tile turns the page and opens nothing");
+    run("{\"cmd\":\"home\"}");
+
+    finger(134, 126, true);
+    step(100);
+    push_info();
+    step(100);
+    finger(134, 126, false);
+    step(100);
+    expect(!shell_open_app(), "a notice that appears under a finger takes its release");
+    return s_touch_bad;
+}
+
 int main(int argc, char **argv)
 {
     const char *state = NULL, *png = NULL, *snap = NULL, *only = NULL;
@@ -372,6 +472,10 @@ int main(int argc, char **argv)
             boot(NULL);
             return lifecycle();
         }
+        if (!strcmp(argv[i], "--touch")) {
+            boot(NULL);
+            return touch_checks();
+        }
         if (i + 1 >= argc) break;
         if (!strcmp(argv[i], "--state")) state = argv[++i];
         else if (!strcmp(argv[i], "--png")) png = argv[++i];
@@ -379,7 +483,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--only")) only = argv[++i];
     }
     if (!state) {
-        fprintf(stderr, "usage: jpanel-sim --state NAME [--png F] [--snapshot F] [--only APP] | --list | --lifecycle\n");
+        fprintf(stderr, "usage: jpanel-sim --state NAME [--png F] [--snapshot F] [--only APP] | --list | --lifecycle | --touch\n");
         return 2;
     }
     boot(only);

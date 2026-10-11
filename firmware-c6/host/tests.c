@@ -26,6 +26,7 @@
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
 #include "thread_model.h"
+#include "tp_logic.h"
 #include "ui_pin.h"
 #include "ui_theme.h"
 
@@ -748,6 +749,133 @@ static void test_the_pmic_registers_decode_as_the_probe_read_them(void)
     CHECK(axp_field(0x15, 0x1F, 9) == 0x09 && axp_field(0xE5, 0x1F, 9) == 0xE9, "a field write keeps the bits outside its mask");
 }
 
+/* ---- touch ---- */
+
+/* A report as the CST9220 sends one: point 0 at raw axes (a, b). */
+static void report(uint8_t d[TP_REPORT_LEN], uint8_t status, uint8_t points, uint16_t a, uint16_t b)
+{
+    memset(d, 0, TP_REPORT_LEN);
+    d[0] = (uint8_t)(0x10 | status);
+    d[1] = (uint8_t)(a >> 4);
+    d[2] = (uint8_t)(b >> 4);
+    d[3] = (uint8_t)(((a & 0x0F) << 4) | (b & 0x0F));
+    d[5] = points;
+    d[6] = TP_ACK;
+}
+
+static void test_a_touch_report_needs_the_ack_byte_and_a_pressed_point(void)
+{
+    uint8_t d[TP_REPORT_LEN];
+    report(d, 0x06, 1, 0x123, 0x0AB);
+    tp_report_t r = tp_decode(d);
+    CHECK(r.kind == TP_DOWN, "status 6 with one point is a finger");
+    CHECK(r.raw_a == 0x123 && r.raw_b == 0x0AB, "each axis is 8 high bits and a nibble of byte 3");
+    d[5] = 0x81;
+    CHECK(tp_decode(d).kind == TP_DOWN, "the point count's top bit is not part of it");
+    d[6] = 0xAA;
+    CHECK(tp_decode(d).kind == TP_NOACK, "without 0xAB in byte 6 it is not a report at all");
+    report(d, 0x06, 0, 10, 10);
+    CHECK(tp_decode(d).kind == TP_UP, "no points is a lifted finger");
+    report(d, 0x07, 1, 10, 10);
+    CHECK(tp_decode(d).kind == TP_UP, "a point not in status 6 is not pressed");
+    memset(d, 0, sizeof d);
+    CHECK(tp_decode(d).kind == TP_NOACK, "an all-zero read is not a release");
+}
+
+static void test_raw_axes_map_to_the_glass_swapped_and_mirrored(void)
+{
+    int16_t x, y;
+    tp_map(0, 0, &x, &y);
+    CHECK(x == 0 && y == 479, "raw (0,0) is the bottom-left corner");
+    tp_map(479, 479, &x, &y);
+    CHECK(x == 479 && y == 0, "raw (479,479) is the top-right corner");
+    tp_map(479, 0, &x, &y);
+    CHECK(x == 0 && y == 0, "rawA is the inverted y axis");
+    tp_map(0, 479, &x, &y);
+    CHECK(x == 479 && y == 479, "rawB is x");
+    tp_map(100, 300, &x, &y);
+    CHECK(x == 300 && y == 379, "display x = rawB, y = 479 - rawA");
+    tp_map(480, 4095, &x, &y);
+    CHECK(x == 479 && y == 0, "a reading past the edge lands on the edge, not the far side");
+}
+
+static void test_a_stroke_survives_a_quiet_poll_but_not_three(void)
+{
+    tp_track_t t = {0};
+    const tp_report_t down = {TP_DOWN, 100, 300}, moved = {TP_DOWN, 100, 310},
+                      up = {TP_UP, 0, 0}, quiet = {TP_NOACK, 0, 0};
+    CHECK(tp_track(&t, &quiet) == TP_EV_NONE, "silence with no finger is nothing");
+    CHECK(tp_track(&t, &down) == TP_EV_DOWN && t.x == 300 && t.y == 379, "a press, mapped");
+    CHECK(tp_track(&t, &down) == TP_EV_NONE, "a finger that did not move is not a move");
+    CHECK(tp_track(&t, &moved) == TP_EV_MOVE && t.x == 310, "a moved one is");
+    CHECK(tp_track(&t, &quiet) == TP_EV_NONE && tp_track(&t, NULL) == TP_EV_NONE,
+          "a missing ack and a failed read each hold the stroke");
+    CHECK(tp_track(&t, &down) == TP_EV_MOVE, "and the finger carries on where it is");
+    for (int i = 1; i < TP_HOLD_POLLS; i++) CHECK(tp_track(&t, NULL) == TP_EV_NONE, "held");
+    CHECK(tp_track(&t, NULL) == TP_EV_UP && !t.down, "but enough quiet polls lift it");
+    CHECK(tp_track(&t, &down) == TP_EV_DOWN, "the next touch is a new press");
+    CHECK(tp_track(&t, &up) == TP_EV_UP && t.x == 300, "a release report lifts it at once, where it was");
+    CHECK(tp_track(&t, &up) == TP_EV_NONE, "and is reported once");
+}
+
+static void test_the_touch_ring_keeps_every_edge_and_coalesces_moves(void)
+{
+    tp_ring_t q = {0};
+    tp_sample_t s = {1, 1, TP_EV_DOWN, 10}, out;
+    tp_ring_push(&q, &s);
+    for (int i = 2; i < 30; i++) {
+        s = (tp_sample_t){(int16_t)i, 1, TP_EV_MOVE, (uint32_t)(10 + i)};
+        tp_ring_push(&q, &s);
+    }
+    s = (tp_sample_t){29, 1, TP_EV_UP, 50};
+    tp_ring_push(&q, &s);
+    CHECK(q.count == 3 && q.dropped == 0, "a long drag is a press, one move and a release");
+    CHECK(tp_ring_pop(&q, &out) && out.ev == TP_EV_DOWN && out.x == 1, "the press first");
+    CHECK(tp_ring_pop(&q, &out) && out.ev == TP_EV_MOVE && out.x == 29, "then the latest position");
+    CHECK(tp_ring_pop(&q, &out) && out.ev == TP_EV_UP, "then the release");
+    CHECK(!tp_ring_pop(&q, &out), "then nothing");
+    for (int i = 0; i < TP_RING + 2; i++) {
+        s = (tp_sample_t){(int16_t)i, 0, i % 2 ? TP_EV_UP : TP_EV_DOWN, (uint32_t)i};
+        tp_ring_push(&q, &s);
+    }
+    CHECK(q.count == TP_RING && q.dropped == 2, "a full ring drops the oldest, and counts it");
+    CHECK(tp_ring_pop(&q, &out) && out.x == 2, "keeping the newest");
+}
+
+static void test_a_tap_a_swipe_and_a_drag_are_told_apart(void)
+{
+    CHECK(sh_stroke(0, 0) == SH_STROKE_TAP, "a still finger taps");
+    CHECK(sh_stroke(SH_TAP_SLOP - 1, -(SH_TAP_SLOP - 1)) == SH_STROKE_TAP, "a wobble inside the slop taps");
+    CHECK(sh_stroke(SH_TAP_SLOP, 0) == SH_STROKE_DRAG, "past it, it no longer taps");
+    CHECK(sh_stroke(-SH_SWIPE_PX, 10) == SH_STROKE_SWIPE, "sixty px sideways swipes");
+    CHECK(sh_stroke(SH_SWIPE_PX - 1, 0) == SH_STROKE_DRAG, "a short swipe opens nothing");
+    CHECK(sh_stroke(80, 120) == SH_STROKE_DRAG, "a mostly-vertical drag turns no page");
+    CHECK(sh_stroke(0, 200) == SH_STROKE_DRAG, "a scroll is a drag");
+}
+
+static void test_a_finger_on_a_dark_screen_buys_the_screen_and_nothing_else(void)
+{
+    sh_gate_t g = {0};
+    bool wake;
+    CHECK(!sh_gate(&g, true, true, &wake) && wake, "the press wakes and reaches nothing");
+    CHECK(!sh_gate(&g, true, false, &wake) && !wake, "lit now, the same stroke's moves still reach nothing");
+    CHECK(!sh_gate(&g, false, false, &wake) && !wake, "nor its release");
+    CHECK(sh_gate(&g, true, false, &wake) && !wake, "the next touch on the lit screen is a touch");
+    CHECK(sh_gate(&g, true, true, &wake) && !wake, "a stroke that started lit is not cut by going dark");
+    CHECK(!sh_gate(&g, false, true, &wake) && !wake, "and its release goes where its press went");
+    sh_state_t st = {0};
+    sh_facts_t f = home();
+    f.dark = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_TOUCH).first == SH_ACT_WAKE, "the queued wake wakes");
+    f.dark = false;
+    CHECK(sh_route_button(&st, &f, SH_BTN_TOUCH).first == SH_ACT_NONE,
+          "and does not darken a screen PWR already lit");
+    f = in_app();
+    st.key_owner = SH_KEY_APP;
+    sh_route_button(&st, &f, SH_BTN_TOUCH);
+    CHECK(st.key_owner == SH_KEY_APP, "it leaves a KEY hold where it was");
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -787,6 +915,12 @@ int main(void)
     test_a_button_needs_three_steady_samples();
     test_one_pwr_press_seen_two_ways_toggles_once();
     test_the_pmic_registers_decode_as_the_probe_read_them();
+    test_a_touch_report_needs_the_ack_byte_and_a_pressed_point();
+    test_raw_axes_map_to_the_glass_swapped_and_mirrored();
+    test_a_stroke_survives_a_quiet_poll_but_not_three();
+    test_the_touch_ring_keeps_every_edge_and_coalesces_moves();
+    test_a_tap_a_swipe_and_a_drag_are_told_apart();
+    test_a_finger_on_a_dark_screen_buys_the_screen_and_nothing_else();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

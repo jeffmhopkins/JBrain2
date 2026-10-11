@@ -28,6 +28,7 @@
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
+#include "svc_touch.h"
 
 static const char *TAG = "ui";
 
@@ -69,6 +70,17 @@ static void stop(const char *why)
     for (;;) vTaskDelay(portMAX_DELAY);
 }
 
+/* LVGL's pointer read, on this task: the touch service's queue, one sample at a time. */
+static bool touch_feed(int16_t *x, int16_t *y, bool *pressed)
+{
+    tp_sample_t s;
+    if (!svc_touch_next(&s)) return false;
+    *x = s.x;
+    *y = s.y;
+    *pressed = s.ev != TP_EV_UP;
+    return true;
+}
+
 static void ui_loop(void *arg)
 {
     (void)arg;
@@ -90,6 +102,7 @@ static void ui_loop(void *arg)
     svc_alarms_init();
     svc_notice_init();
     char err[96];
+    shell_set_pointer(touch_feed);
     if (!apps_register(NULL) || !shell_start(err, sizeof err)) stop("shell");
     s_running = true;
     ESP_LOGI(TAG, "shell up");

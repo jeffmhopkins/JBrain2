@@ -15,6 +15,7 @@
 /* Buttons share the event queue with the services' events so their order is kept; PWR is
  * the shell's alone and never reaches an app. */
 #define SH_EV_PWR ((app_event_type_t)APP_EV__COUNT)
+#define SH_EV_TOUCH ((app_event_type_t)(APP_EV__COUNT + 1))
 #define APPS_MAX 8
 #define RECENT 8
 
@@ -27,7 +28,8 @@ static sh_evq_t s_q;
 static sh_state_t s_st;
 static uint8_t s_page;
 static app_t *s_open;
-static lv_obj_t *s_home, *s_app_root, *s_notice, *s_waker;
+static lv_obj_t *s_home, *s_app_root, *s_notice;
+static lv_indev_t *s_indev;
 static uint32_t s_notice_id;
 static uint8_t s_notice_n;
 static bool s_started;
@@ -40,7 +42,7 @@ static unsigned s_recent_n;
 
 static const char *const EV_NAMES[] = {"key_down", "key_up", "boot", "net_up", "net_down",
                                        "msg_arrived", "alarm_due", "notice_arrived",
-                                       "tick_minute", "wake", "pwr"};
+                                       "tick_minute", "wake", "pwr", "touch_wake"};
 
 static void host_home(void);
 static void host_toast(const char *t);
@@ -88,12 +90,14 @@ static sh_facts_t facts(void)
 
 /* ---- home ---- */
 
-static bool s_swiped;
+/* What the last stroke on home was, decided at its release; LVGL sends RELEASED before CLICKED,
+ * so a tile asks this rather than opening on any release that landed on it. */
+static sh_stroke_t s_stroke;
 static lv_point_t s_down;
 
 static void tile_clicked(lv_event_t *e)
 {
-    if (s_swiped) return;
+    if (s_stroke != SH_STROKE_TAP) return;
     app_t *a = lv_event_get_user_data(e);
     shell_open(a->id);
 }
@@ -108,12 +112,13 @@ static void home_input(lv_event_t *e)
     lv_indev_get_point(in, &p);
     if (lv_event_get_code(e) == LV_EVENT_PRESSED) {
         s_down = p;
-        s_swiped = false;
+        s_stroke = SH_STROKE_TAP;
         return;
     }
+    s_stroke = sh_stroke(p.x - s_down.x, p.y - s_down.y);
+    if (s_stroke != SH_STROKE_SWIPE) return;
     uint8_t next = sh_swipe(s_page, p.x - s_down.x, s_pages);
     if (next != s_page) {
-        s_swiped = true;
         s_page = next;
         build_home();
     }
@@ -214,7 +219,7 @@ static void host_toast(const char *t)
     ui_toast(t, 2200);
 }
 
-/* ---- overlays: the notice, and the waker over a dark screen ---- */
+/* ---- overlays: the notice (a dark screen has none; sh_gate holds its presses) ---- */
 
 static void notice_choice(lv_event_t *e)
 {
@@ -280,32 +285,25 @@ static void build_notice(const notice_t *n, uint8_t count)
     s_notice_n = count;
 }
 
-static void waker_pressed(lv_event_t *e)
-{
-    (void)e;
-    shell_button(SH_BTN_PWR);
-}
-
 /* One decision draws the overlay and arms its hit area together: what is on the glass is what
- * a press reaches (the twins' notice was once painted in one rectangle and armed in another). */
+ * a press reaches (the twins' notice was once painted in one rectangle and armed in another).
+ * A notice that appears under a finger ends that finger's stroke: its release would otherwise
+ * click the tile it started on, opening an app behind the notice. A dark screen needs no
+ * overlay; the pointer's gate (sh_gate) keeps every press from reaching anything. */
 static void sync_overlays(void)
 {
     sh_facts_t f = facts();
     notice_t n;
     if (sh_top_overlay(&s_st, &f) == SH_OV_NOTICE && svc_notice_head(&n)) {
-        if (n.id != s_notice_id || f.notices != s_notice_n) build_notice(&n, f.notices);
+        if (n.id != s_notice_id || f.notices != s_notice_n) {
+            build_notice(&n, f.notices);
+            if (s_indev && lv_indev_get_state(s_indev) == LV_INDEV_STATE_PRESSED) {
+                lv_indev_reset(s_indev, NULL);
+                lv_indev_wait_release(s_indev);
+            }
+        }
     } else {
         drop_notice();
-    }
-    if (f.dark && !s_waker) {
-        s_waker = lv_obj_create(lv_layer_sys());
-        lv_obj_remove_style_all(s_waker);
-        lv_obj_set_size(s_waker, UI_W, UI_H);
-        lv_obj_add_flag(s_waker, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(s_waker, waker_pressed, LV_EVENT_PRESSED, NULL);
-    } else if (!f.dark && s_waker) {
-        lv_obj_delete(s_waker);
-        s_waker = NULL;
     }
 }
 
@@ -389,6 +387,7 @@ void shell_pump(void)
         case APP_EV_KEY_UP: handle_button(SH_BTN_KEY_UP, ev.type); break;
         case APP_EV_BOOT: handle_button(SH_BTN_BOOT, ev.type); break;
         case SH_EV_PWR: handle_button(SH_BTN_PWR, ev.type); break;
+        case SH_EV_TOUCH: handle_button(SH_BTN_TOUCH, ev.type); break;
         default: handle_event(&ev); break;
         }
         sync_overlays();
@@ -403,12 +402,13 @@ void shell_post(const app_event_t *ev)
 
 void shell_button(sh_button_t b)
 {
-    static const app_event_type_t MAP[] = {APP_EV_KEY_DOWN, APP_EV_KEY_UP, APP_EV_BOOT, SH_EV_PWR};
+    static const app_event_type_t MAP[] = {APP_EV_KEY_DOWN, APP_EV_KEY_UP, APP_EV_BOOT, SH_EV_PWR,
+                                           SH_EV_TOUCH};
     app_event_t ev = {.type = MAP[b], .at_ms = svc_rtc_uptime_ms()};
     sh_evq_push(&s_q, &ev);
 }
 
-/* ---- the virtual pointer ---- */
+/* ---- the pointer: the virtual one, or a finger ---- */
 
 static struct {
     int x, y, dx;
@@ -417,19 +417,46 @@ static struct {
 
 #define DRAG_STEPS 6
 
+static shell_pointer_fn s_pointer;
+static struct {
+    int16_t x, y;
+    bool pressed;
+} s_finger;
+static sh_gate_t s_gate;
+
+/* A debug command's synthetic stroke wins while it runs; otherwise the finger's state, one
+ * queued sample per read with LVGL asked to read again while more wait, so a press and its
+ * release that both landed inside one read period are each seen. */
+static void pointer_sample(lv_indev_data_t *d)
+{
+    if (s_touch.step >= 0) {
+        int s = s_touch.step++;
+        int moved = s < 2 ? 0 : s_touch.dx * (s - 1 > DRAG_STEPS ? DRAG_STEPS : s - 1) / DRAG_STEPS;
+        d->point.x = s_touch.x + moved;
+        d->point.y = s_touch.y;
+        d->state = s < DRAG_STEPS + 3 ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+        if (d->state == LV_INDEV_STATE_RELEASED) s_touch.step = -1;
+        return;
+    }
+    if (s_pointer) d->continue_reading = s_pointer(&s_finger.x, &s_finger.y, &s_finger.pressed);
+    d->point.x = s_finger.x;
+    d->point.y = s_finger.y;
+    d->state = s_finger.pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
 static void touch_read(lv_indev_t *in, lv_indev_data_t *d)
 {
     (void)in;
-    if (s_touch.step < 0) {
+    pointer_sample(d);
+    bool wake;
+    if (!sh_gate(&s_gate, d->state == LV_INDEV_STATE_PRESSED, svc_display_dark(), &wake))
         d->state = LV_INDEV_STATE_RELEASED;
-        return;
-    }
-    int s = s_touch.step++;
-    int moved = s < 2 ? 0 : s_touch.dx * (s - 1 > DRAG_STEPS ? DRAG_STEPS : s - 1) / DRAG_STEPS;
-    d->point.x = s_touch.x + moved;
-    d->point.y = s_touch.y;
-    d->state = s < DRAG_STEPS + 3 ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
-    if (d->state == LV_INDEV_STATE_RELEASED) s_touch.step = -1;
+    if (wake) shell_button(SH_BTN_TOUCH);
+}
+
+void shell_set_pointer(shell_pointer_fn fn)
+{
+    s_pointer = fn;
 }
 
 void shell_touch(int x, int y, int dx)
@@ -555,9 +582,10 @@ bool shell_start(char *err, size_t err_len)
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(UI_C_BG), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-    lv_indev_t *in = lv_indev_create();
-    lv_indev_set_type(in, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(in, touch_read);
+    s_indev = lv_indev_create();
+    lv_indev_set_type(s_indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(s_indev, touch_read);
+    lv_indev_set_scroll_limit(s_indev, SH_TAP_SLOP);
     svc_debug_register("shell", describe, NULL);
     dbg_cmd_bind("open", cmd_open);
     dbg_cmd_bind("home", cmd_home);
