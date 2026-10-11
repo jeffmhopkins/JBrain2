@@ -266,6 +266,29 @@ esp_err_t svc_power_lcd_reset(void)
     return e;
 }
 
+esp_err_t svc_power_i2c_attach(uint8_t addr, uint32_t scl_hz, svc_power_i2c_t *out)
+{
+    if (!s_bus || !s_lock) return ESP_ERR_INVALID_STATE;
+    const i2c_device_config_t dc = {.dev_addr_length = I2C_ADDR_BIT_LEN_7,
+                                    .device_address = addr,
+                                    .scl_speed_hz = scl_hz};
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const esp_err_t e = i2c_master_bus_add_device(s_bus, &dc, out);
+    xSemaphoreGive(s_lock);
+    return e;
+}
+
+esp_err_t svc_power_i2c_xfer(svc_power_i2c_t dev, const uint8_t *tx, size_t tx_len, uint8_t *rx,
+                             size_t rx_len, int timeout_ms)
+{
+    if (timeout_ms > I2C_TIMEOUT_MS) timeout_ms = I2C_TIMEOUT_MS;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const esp_err_t e = rx_len ? i2c_master_transmit_receive(dev, tx, tx_len, rx, rx_len, timeout_ms)
+                               : i2c_master_transmit(dev, tx, tx_len, timeout_ms);
+    xSemaphoreGive(s_lock);
+    return e;
+}
+
 void svc_power_info(power_info_t *out)
 {
     portENTER_CRITICAL(&s_mux);

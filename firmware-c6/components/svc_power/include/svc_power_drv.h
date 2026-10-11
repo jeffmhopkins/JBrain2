@@ -5,6 +5,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "esp_err.h"
 
@@ -20,6 +21,20 @@ esp_err_t svc_power_start(bool configure, svc_power_pek_fn on_pek);
 /* The panel's reset: its RESET pin is pulled up to ALDO3 (HARDWARE.md §1), so ALDO3 off for
  * 100 ms, then on, then 100 ms to settle. Blocks ~200 ms. The only rail this service switches. */
 esp_err_t svc_power_lcd_reset(void);
+
+/* The bus's other chips borrow it through these two calls, never through a handle of their own:
+ * the lock that keeps a PMIC read-modify-write whole lives here, and a borrower that held the
+ * bus handle could forget to take it. A transfer holds the lock for one transaction, bounded by
+ * its timeout (capped at 50 ms), so a chip that stops answering costs the PMIC's poll that much
+ * and no more; its errors are the borrower's to count, never this service's `i2c_err`. */
+typedef struct i2c_master_dev_t *svc_power_i2c_t;
+
+/* After svc_power_start succeeded; ESP_ERR_INVALID_STATE before. */
+esp_err_t svc_power_i2c_attach(uint8_t addr, uint32_t scl_hz, svc_power_i2c_t *out);
+
+/* Writes `tx`, then, when `rx_len` is non-zero, reads `rx` after a repeated start. */
+esp_err_t svc_power_i2c_xfer(svc_power_i2c_t dev, const uint8_t *tx, size_t tx_len, uint8_t *rx,
+                             size_t rx_len, int timeout_ms);
 
 /* `pmu=… bat=… vbus=… chg=… pek=… axp=reg:val,…` — telemetry-safe tokens. */
 void svc_power_note(char *out, size_t len);
