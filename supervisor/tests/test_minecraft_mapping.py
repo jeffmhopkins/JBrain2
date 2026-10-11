@@ -259,10 +259,9 @@ def test_unvisited_ground_is_predicted_and_the_real_world_drawn_over_it(
         image = mapping.tile(index, 0, zoom, 0, 0, predictor, "123")
         rows = _decode_png(image)
         assert tuple(rows[0][0:4]) == (*mapping.BIOME_COLORS[1], 255)  # the real chunk
-        assert tuple(rows[200][800:804]) == (
-            *mapping.BIOME_COLORS[191],
-            255,
-        )  # predicted
+        # Predicted ground is drawn, but as the survey: dimmer than explored ground.
+        survey = rows[200][800:804]
+        assert survey[3] == 255 and 0 < sum(survey[:3]) < sum(mapping.BIOME_COLORS[191])
     # No seed (a level.dat that doesn't say) or no binary: real chunks only.
     assert _decode_png(mapping.tile(index, 0, 0, 0, 0, predictor, None))[200][803] == 0
     broken = mapping.Predictor(tmp_path / "missing")

@@ -413,6 +413,25 @@ class Predictor:
         return grid
 
 
+# Predicted ground reads as the satellite's survey, explored ground as the real thing
+# (owner: show explored vs unexplored, but keep the unexplored panable): the prediction
+# is drawn half-desaturated and dimmed, the real chunks in full colour over it.
+SURVEY_SATURATION = 0.5
+SURVEY_BRIGHTNESS = 0.65
+
+
+def _as_survey(rows: list[bytearray]) -> list[bytearray]:
+    for row in rows:
+        for o in range(0, len(row), 4):
+            if row[o + 3]:
+                r, g, b = row[o], row[o + 1], row[o + 2]
+                grey = (r * 30 + g * 59 + b * 11) / 100
+                for c in range(3):
+                    v = grey + (row[o + c] - grey) * SURVEY_SATURATION
+                    row[o + c] = int(v * SURVEY_BRIGHTNESS)
+    return rows
+
+
 def _over(base: list[bytearray], top: list[bytearray]) -> list[bytearray]:
     """`top`'s drawn pixels over `base`: the real world wins wherever it exists."""
     for brow, trow in zip(base, top):
@@ -433,7 +452,8 @@ def tile(
 ) -> bytes:
     """One 256×256 PNG tile. Zoom 0 is one pixel per block; zoom k is one pixel per 2^k
     blocks, down to one pixel per chunk. Tile (0, 0) at any zoom starts at block (0, 0).
-    With a predictor and the world's seed, ground nobody has been to is drawn too."""
+    With a predictor and the world's seed, ground nobody has been to is drawn too, as
+    the survey (dimmed) beneath the explored ground."""
     span = CHUNKS_PER_TILE << zoom
     cx0, cz0 = tx * span, tz * span
     step = 1 << zoom
@@ -446,7 +466,8 @@ def tile(
     predicted = predictor.grid(seed, dim, cx0 * 16, cz0 * 16, TILE, step)
     if not predicted:
         return png(real)
-    return png(_over(render_sampled(predicted, cx0 * 16, cz0 * 16, TILE, step), real))
+    survey = _as_survey(render_sampled(predicted, cx0 * 16, cz0 * 16, TILE, step))
+    return png(_over(survey, real))
 
 
 def floor_of(dim: int) -> int:

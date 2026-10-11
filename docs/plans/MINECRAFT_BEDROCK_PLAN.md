@@ -801,7 +801,13 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
   same noise as Java for the same seed, so `jbrain-predict` (`deploy/minecraft/predict/`,
   built against cubiomes, MIT, at a pinned commit in the image's build stage) predicts
   the Overworld's surface from the seed in `level.dat`, and the real chunks are drawn
-  over it. Checked against a 1.26 server generating the same seed:
+  over it. **Explored vs unexplored stays visible** (owner, same day): predicted ground
+  is drawn as the satellite's *survey* — half-desaturated, at 65% brightness — and
+  explored ground in full colour, so the whole world pans but what anyone has actually
+  seen stands out. **Lore:** the server's AI connection comes from an AI satellite in
+  orbit; the survey is its view. Minecraft_Dave can speak from that later.
+
+  Checked against a 1.26 server generating the same seed:
   - biomes match at **97%** of 4,311 real columns, and every miss sits on a border
     between two biomes;
   - heights are off by a median of about 2.5 blocks (90% of points within 9, trees
@@ -813,7 +819,8 @@ the log starts as soon as it's cheap to (right after M2/M3). M8 draws it.
 
   **The Nether did not match** (3 of 4 spots wrong), so only the Overworld is predicted:
   ungenerated Nether and End ground stays transparent. `map/info` says which
-  (`predicted`).
+  (`predicted`). Predicting them is being researched (a Bedrock-specific Nether
+  generator, the End's parity with Java, or the server's own `locate biome`).
 
   **Structures can't come from cubiomes**: Bedrock places them differently from Java.
   The server's own `locate structure` does it exactly instead. It is instant, read-only
