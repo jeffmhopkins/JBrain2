@@ -1380,6 +1380,17 @@ def test_a_reset_or_import_marks_the_old_trail_as_gone(
     assert (ev["kind"], ev["world"], real.world) == ("world_replaced", "slot3", "world")
 
 
+def test_every_dimension_is_predicted_once_the_seed_is_known(tmp_path: Path) -> None:
+    mapping = sys.modules.get("mapping") or __import__("mapping")
+    _make_world("world", CASTLE)
+    rig = _world_rig()
+    binary = tmp_path / "jbrain-predict"
+    binary.write_text("")
+    rig._predictor = mapping.Predictor(binary)
+    for dim in ("overworld", "nether", "the_end"):
+        assert rig.map_info("slot1", dim)["predicted"] is True
+
+
 def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     mapping = sys.modules.get("mapping") or __import__("mapping")
     _make_world("world")
