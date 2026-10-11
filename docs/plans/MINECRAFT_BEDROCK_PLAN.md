@@ -1694,6 +1694,15 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   is now in game ticks (`system.currentTick`).
 - The simulator now runs 50 job steps a tick and loads chunks by the tick, so the old
   code fails there too.
+- With that fixed, the pod, its supports and the mothership came down whole in plains,
+  forest, jungle, desert and snowy plains, in about 16 s each. But **none of the
+  script's own block edits landed**: no tree clearing, crater, parachute or hatch
+  apron. In the jungle the hatch opens onto a grass block. The structure placements
+  stuck, and an edit from the console in the same place stuck too. The pack logged
+  nothing, because its warnings went to `console.warn`, which the box's console showed
+  none of. Warnings now go out as log lines. Each pod step logs how many of its block
+  writes landed, and the first reason one didn't. The simulator fails a build whose
+  writes don't land, or whose crater, parachute or details write nothing.
 
 ### P1–P3 — the owner's Minecraft agent: a persona you select, with maps in the chat
 
