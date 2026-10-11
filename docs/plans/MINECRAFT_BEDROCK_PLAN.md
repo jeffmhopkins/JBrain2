@@ -1163,9 +1163,9 @@ Dave handing one over.
   and again at a respawn without one. It can't be crafted.
 - **It's personal (owner, 2026-10-10).** It is named **"<Player>'s Tricorder"** (e.g.
   "Steve42's Tricorder") and points to **its owner's** target, whoever holds it, so a
-  sibling can carry it to lead the way. **Canon (DW1):** only its owner reaches Dave
-  through it; anyone else gets static. Whether a sibling still sees the owner's arrow is
-  open (owner). The owner's id is an item dynamic property (the
+  sibling can carry it to lead the way. **Superseded by the canon (DW1):** a Tricorder
+  only works for its owner. Anyone else holding it gets static, with no arrow and no
+  Dave. The owner's id is an item dynamic property (the
   item doesn't stack, so it can hold one).
   - Each player has one at a time. A replacement from Dave retires the old one, which
     then reads "This tricorder is retired".
@@ -1285,6 +1285,12 @@ safety net (owner, 2026-10-10).
 - Nine eyes in the crafting table make one Power Pack; eight make nothing.
 
 #### Teleport to a known place, one Power Pack per trip (owner, 2026-10-10)
+
+**Canon (owner, 2026-10-11): this is endgame transport on request.** Dave transports
+the asker when they ask, as long as they have their own Tricorder and a Power Pack. It's
+the one acting tool the AI holds; everything else it does stays read-only. The pack
+makes the move, only for the asker, after checking the Tricorder and pack, and uses up
+one pack. The story and words are on the lore page. It isn't part of M10's first build.
 
 **The rule.** A player who has settled a place with Dave can ask to be **teleported there**.
 It costs **one Power Pack** from their inventory. With none, Dave says so, and offers
@@ -1775,6 +1781,8 @@ for the owner's sign-off on the lore page, and DW1 isn't built until they're sig
   which in a crash-site world is the pod's hatch.
 
 **Rules, as the pack enforces them:**
+- **Only its owner's.** The 5-tick arrow loop shows nothing for a Tricorder whose owner
+  xuid isn't the holder's, just a static actionbar line.
 - **No Tricorder, no Dave.** The `/jb:dave` handler looks for **the asker's own**
   Tricorder anywhere in their inventory before the question reaches the backend. That's
   the item's owner xuid, an item dynamic property, as M9 planned. Without one, a fixed
@@ -1817,9 +1825,7 @@ canon: who Dave is, the crew, the Tricorder, the transporter.
 - When the canon changes, the prompt is updated to match, in the same PR as any code it
   affects.
 
-**Open (owner):**
-- Sign-off on Dave's draft lines (on the lore page).
-- Whether a sibling holding someone else's Tricorder still sees its owner's arrow.
+**Open (owner):** sign-off on Dave's draft lines (on the lore page).
 
 **Tests.** The pack's beat bookkeeping and the Tricorder checks get node tests against
 the fake server, as the wreck pack's do. The prompt change gets a prompt test.
