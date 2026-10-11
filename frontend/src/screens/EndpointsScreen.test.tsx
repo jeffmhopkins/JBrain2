@@ -243,4 +243,88 @@ describe("EndpointsScreen", () => {
     expect(await screen.findByRole("button", { name: "Erase and flash" })).toBeTruthy();
     expect(screen.getByText(/hold BOOT/)).toBeTruthy();
   });
+
+  describe("with more than one kind of board", () => {
+    const BOARDS = [
+      {
+        id: "s3-amoled-18",
+        label: "ESP32-S3 Touch AMOLED 1.8 (jpet)",
+        chip: "esp32s3",
+        version: "0.3.40",
+        ready: true,
+      },
+      {
+        id: "c6-amoled-216",
+        label: "ESP32-C6 Touch AMOLED 2.16 (jpanel)",
+        chip: "esp32c6",
+        version: "0.0.1",
+        ready: true,
+      },
+    ];
+    const withBoards = (boards: unknown[]) =>
+      mock([PANEL], (path) => (path === "/api/endpoint/boards" ? json(boards) : null));
+
+    async function fillNetwork() {
+      fireEvent.change(await screen.findByLabelText(/Network name/), {
+        target: { value: "house" },
+      });
+    }
+
+    it("chooses no board for the owner — both enumerate as the same USB device", async () => {
+      fetchMock.mockImplementation(withBoards(BOARDS));
+      render(<EndpointsScreen onClose={vi.fn()} />);
+      const c6 = (await screen.findByRole("radio", { name: /ESP32-C6/ })) as HTMLInputElement;
+      const s3 = screen.getByRole("radio", { name: /ESP32-S3 Touch/ }) as HTMLInputElement;
+      expect(c6.checked).toBe(false);
+      expect(s3.checked).toBe(false);
+      await fillNetwork();
+      const button = screen.getByRole("button", { name: "Flash panel" }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(screen.getByText(/Pick which board it is/)).toBeTruthy();
+    });
+
+    it("sends the chosen board with the flash and names its firmware", async () => {
+      fetchMock.mockImplementation(withBoards(BOARDS));
+      render(<EndpointsScreen onClose={vi.fn()} />);
+      fireEvent.click(await screen.findByRole("radio", { name: /ESP32-C6/ }));
+      await fillNetwork();
+      expect(screen.getByText(/firmware 0\.0\.1, already on the box/)).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Flash panel" }));
+      await waitFor(() => {
+        const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/endpoint/flash"));
+        expect(JSON.parse(String((call?.[1] as RequestInit)?.body)).board).toBe("c6-amoled-216");
+      });
+    });
+
+    it("will not flash a board whose firmware is not on the box", async () => {
+      const notReady = [BOARDS[0], { ...BOARDS[1], version: null, ready: false }];
+      fetchMock.mockImplementation(withBoards(notReady));
+      render(<EndpointsScreen onClose={vi.fn()} />);
+      const c6 = (await screen.findByRole("radio", { name: /ESP32-C6/ })) as HTMLInputElement;
+      expect(c6.disabled).toBe(true);
+      expect(screen.getByText(/No firmware for this board on the box yet/)).toBeTruthy();
+    });
+
+    it("nudges the owner's own C6 panel toward a display, without changing the role itself", async () => {
+      fetchMock.mockImplementation(withBoards(BOARDS));
+      render(<EndpointsScreen onClose={vi.fn()} />);
+      fireEvent.click(await screen.findByRole("radio", { name: /ESP32-C6/ }));
+      expect(await screen.findByText(/it should be/)).toBeTruthy();
+      expect((screen.getByRole("radio", { name: /A pet/ }) as HTMLInputElement).checked).toBe(true);
+      fireEvent.click(screen.getByRole("radio", { name: /A display/ }));
+      await waitFor(() => expect(screen.queryByText(/it should be/)).toBeNull());
+    });
+
+    it("sends no board at all on a box that predates the board list", async () => {
+      fetchMock.mockImplementation(mock([PANEL]));
+      render(<EndpointsScreen onClose={vi.fn()} />);
+      await fillNetwork();
+      expect(screen.queryByRole("radio", { name: /ESP32-C6/ })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Flash panel" }));
+      await waitFor(() => {
+        const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/endpoint/flash"));
+        expect(JSON.parse(String((call?.[1] as RequestInit)?.body))).not.toHaveProperty("board");
+      });
+    });
+  });
 });

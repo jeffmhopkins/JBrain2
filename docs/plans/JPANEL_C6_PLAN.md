@@ -97,7 +97,7 @@ the mock it was approved from, so a drift from `../mocks/jpanel-c6/` is visible 
 | Wave | What | Done when |
 |---|---|---|
 | **C0** 🟡 | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Code landed 2026-10-11; open until C1 proves it on hardware. |
-| **C1** | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards`); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
+| **C1** | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
 | **C2** | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
 | **C3** | The apps, each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C4** | Minecraft. | Parked until scoped. |
