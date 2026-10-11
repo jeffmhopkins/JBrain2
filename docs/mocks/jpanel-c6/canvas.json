@@ -1,0 +1,107 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-11T16:30:00Z"
+  },
+  "title": "Jeff's jpanel UI",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 720,
+      "h": 720,
+      "title": "Live panel \u2014 press and hold KEY to talk",
+      "is_interactive": true
+    },
+    "Home.dc.html": {
+      "x": 0,
+      "y": 1063,
+      "w": 720,
+      "h": 720,
+      "title": "1 \u00b7 Home"
+    },
+    "Jerv.dc.html": {
+      "x": 800,
+      "y": 1063,
+      "w": 720,
+      "h": 720,
+      "title": "2 \u00b7 Jerv conversation"
+    },
+    "RecJerv.dc.html": {
+      "x": 1600,
+      "y": 1063,
+      "w": 720,
+      "h": 720,
+      "title": "3 \u00b7 Holding KEY \u2014 talking to Jerv"
+    },
+    "Elora.dc.html": {
+      "x": 0,
+      "y": 1903,
+      "w": 720,
+      "h": 720,
+      "title": "4 \u00b7 Elora thread (unplayed message)"
+    },
+    "RecElora.dc.html": {
+      "x": 800,
+      "y": 1903,
+      "w": 720,
+      "h": 720,
+      "title": "5 \u00b7 Holding KEY \u2014 message to Elora"
+    },
+    "Minecraft.dc.html": {
+      "x": 1600,
+      "y": 1903,
+      "w": 720,
+      "h": 720,
+      "title": "6 \u00b7 Minecraft (not built yet)"
+    },
+    "Settings.dc.html": {
+      "x": 0,
+      "y": 2743,
+      "w": 720,
+      "h": 720,
+      "title": "7 \u00b7 Settings (page 2)"
+    },
+    "Updating.dc.html": {
+      "x": 800,
+      "y": 2743,
+      "w": 720,
+      "h": 720,
+      "title": "8 \u00b7 Update now \u2014 downloading"
+    },
+    "Calib.dc.html": {
+      "x": 1600,
+      "y": 2743,
+      "w": 720,
+      "h": 720,
+      "title": "9 \u00b7 Calibrating the touch screen"
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "Home.dc.html",
+    "Jerv.dc.html",
+    "RecJerv.dc.html",
+    "Elora.dc.html",
+    "RecElora.dc.html",
+    "Minecraft.dc.html",
+    "Settings.dc.html",
+    "Updating.dc.html",
+    "Calib.dc.html"
+  ],
+  "notes": {
+    "states": {
+      "x": 0,
+      "y": 800,
+      "text": "Screens to lock down",
+      "kind": "title1",
+      "maxW": 2320
+    }
+  },
+  "designSystems": []
+}
