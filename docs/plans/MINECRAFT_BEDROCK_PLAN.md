@@ -1348,9 +1348,10 @@ done by a script on the world's first load:
   - **Fallback:** if the pack doesn't report itself loaded on that first start, the
     wrapper restarts once to install it.
 - **Once per world.** The script records progress in world dynamic properties and
-  emits `wreck` events (`loaded`, `pod`, `ship`, `done`). The wrapper marks the slot
-  `done` on the last one. A build interrupted mid-way resumes; a finished one never
-  repeats.
+  emits `wreck` events (`loaded`, `pod`, `ship`, `done`). The in-world record is
+  the guard against a second build. The wrapper marking the slot `done` (which takes
+  the pack out at the next start) is housekeeping, because a `done` can go unread. A
+  build interrupted mid-way resumes; a finished one never repeats.
 
 **The pod adapts to the ground it lands on.** Only the hull is a stored structure. The
 script builds the rest column by column:

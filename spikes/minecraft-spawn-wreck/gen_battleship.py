@@ -512,6 +512,7 @@ for x in range(61, 100):
         put(x, 8, -9, "shroomlight")
         put(x, 8, -5, "shroomlight")
 for x in range(62, 100, 9):
+    put(x, 4, -11, "moss_block")  # farmland under a bush would turn to dirt
     put(x, 5, -11, "oak_leaves")
     put(x, 6, -11, "oak_leaves")
 INTERIOR_SHOTS["in_garden"] = ((61.5, 6.62, -7.0), (99, 5.2, -7.5), 16)

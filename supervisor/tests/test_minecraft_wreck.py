@@ -191,20 +191,16 @@ def test_every_bed_has_its_other_half() -> None:
 
 
 def test_the_mothership_cannot_burn_or_blow_up() -> None:
-    """Fire spreads to flammable blocks within a few blocks (further up), and TNT goes
-    off from it: every fire kept sits on netherrack with neither anywhere near."""
+    """Fire lights air beside it (±1, from one below to four above), and that air
+    catches from its own neighbours; TNT goes off from it. Every fire kept sits on
+    netherrack with nothing flammable in that reach and no TNT anywhere near."""
     cells = _cells(_data("mothership"))
     flammable = {
-        "coal_block",
-        "oak_planks",
-        "barrel",
-        "bookshelf",
-        "tnt",
-        "hay_block",
-        "oak_leaves",
-        "crafting_table",
-        "bed",
-    }
+        "coal_block", "oak_planks", "barrel", "bookshelf", "tnt", "hay_block",
+        "oak_leaves", "oak_log", "crafting_table", "smithing_table", "bed",
+        "white_wool", "orange_wool", "white_carpet", "orange_carpet", "red_carpet",
+    }  # fmt: skip
+    assert "red_carpet" in cells.values()  # the set covers what the ship really holds
     tnt = [p for p, b in cells.items() if b == "tnt"]
     fires = [p for p, b in cells.items() if b == "fire"]
     assert tnt and fires
@@ -212,9 +208,30 @@ def test_the_mothership_cannot_burn_or_blow_up() -> None:
         assert cells[(x, y - 1, z)] == "netherrack"
         for dx in range(-2, 3):
             for dz in range(-2, 3):
-                for dy in range(0, 5):
-                    assert cells.get((x + dx, y + dy, z + dz)) not in flammable
+                for dy in range(-2, 6):
+                    if (dx, dy, dz) != (0, -1, 0):
+                        near = cells.get((x + dx, y + dy, z + dz))
+                        assert near not in flammable
         assert all(max(abs(x - a), abs(y - b), abs(z - c)) > 12 for a, b, c in tnt)
+
+
+def test_the_ship_hangs_where_it_was_signed_off_over_the_pod() -> None:
+    """Block coordinates are relative to each build's corner, so a build's world corner
+    is origin + offset: the ship's sits ~100 above the pod's, as in the renders."""
+    pod, ship = _data("pod")["meta"], _data("mothership")["meta"]
+    corner = [o + d for o, d in zip(ship["origin"], ship["offset"], strict=True)]
+    assert corner == [-106, 164, -95]
+    assert corner[1] - pod["origin"][1] == 104
+
+
+def test_lamps_in_a_row_lie_along_it() -> None:
+    d = _data("mothership")
+    axes = {
+        p["states"]["pillar_axis"]
+        for p in d["palette"]
+        if p["name"] == "minecraft:ochre_froglight"
+    }
+    assert axes > {"y"}  # console strips are horizontal, not all upright
 
 
 def test_build_writes_the_pod_the_ship_tiles_and_the_scripts_data(
@@ -350,6 +367,61 @@ def test_the_wrecks_done_event_marks_only_its_own_armed_world(tmp_path: Path) ->
     assert rig.slots.get("slot3")["wreck"] is None  # never armed: stays that way
     (ev,) = [e for e in real.events_after(0) if e.get("phase") == "loaded"]
     assert ev["kind"] == "wreck" and ev["world"] == "slot2"
+
+
+def test_a_done_from_before_a_reset_is_the_old_worlds(tmp_path: Path) -> None:
+    """The pack reports done, the owner resets that slot before the tracker reads it:
+    the new, armed world must stay armed."""
+    _make_world("slot2")
+    rig = _rig()
+    real = bds.Bds(tmp_path)
+    rig.bds = real
+    rig.slots.update("slot2", seed="9", wreck="armed")
+    real.world = "slot2"
+    real._record('[Scripting] [jbrain] {"ev":"wreck","phase":"done"}')
+    rig.reset_slot("slot2", "same_seed")  # notes world_replaced, re-arms
+    rig.note_wreck()
+    assert rig.slots.get("slot2")["wreck"] == "armed"
+
+
+def test_loading_an_empty_slot_generates_an_armed_world(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_world("world")
+    rig = _rig()
+    monkeypatch.setattr(rig, "snapshot", lambda label, **kw: {"name": label})
+    monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
+    rig.load_slot("slot3")
+    assert rig.slots.get("slot3")["wreck"] == "armed"
+    rig.set_settings({"spawn_wreck": False})
+    rig.load_slot("slot4")
+    assert rig.slots.get("slot4")["wreck"] is None
+
+
+def test_restoring_another_worlds_backup_disarms_the_slot() -> None:
+    _make_world("world")
+    rig = _rig()
+    snap = rig.snapshot("manual", folder="world")
+    rig.create_slot("slot2", {"name": "Fresh"})
+    assert rig.slots.get("slot2")["wreck"] == "armed"
+    assert rig.restore_snapshot(snap["name"], "slot2")["wreck"] is None
+
+
+def test_start_installs_the_wreck_before_the_boxs_own_pack(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rig = _rig()
+    rig.create_slot("slot2", {"name": "New"})
+    rig._apply_slot(rig.slots.get("slot2"))
+    monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
+    rig._start()
+    world = server.SERVER_DIR / "worlds" / "slot2"
+    listed = {
+        p["pack_id"]
+        for p in json.loads((world / "world_behavior_packs.json").read_text())
+    }
+    jbrain = json.loads((MC / "jbrain-pack/manifest.json").read_text())["header"]
+    assert listed == {WRECK_PACK_ID, jbrain["uuid"]}  # both reach the first session
 
 
 def test_the_wreck_pack_is_its_own_pack_on_stable_scripting() -> None:

@@ -282,12 +282,14 @@ class Rig:
         self.write_properties()
         self._applied = dict(self.properties())
         self.bds.world = self.active_folder()
+        # The wreck first: for an armed new world it makes the folder, so the box's own
+        # pack reaches that world's first session too.
+        self._install_wreck()
         try:
             self.install_pack(JBRAIN_PACK_SRC, JBRAIN_PACK_DIR, True)
         except OSError as exc:
             # The travel log loses deaths, but the server itself must still start.
             print(f"[minecraft] jbrain pack not installed: {exc}", flush=True)
-        self._install_wreck()
         self.bds.start()
         self._apply_rules_when_up(self.active_folder())
 
@@ -1059,12 +1061,25 @@ class Rig:
 
     def note_wreck(self) -> None:
         """A world whose pack reports the wreck built is marked done, so the pack comes
-        out at its next start and the build can never run twice."""
-        for e in self.bds.events_after(self._wreck_seen):
-            self._wreck_seen = e["id"]
+        out at its next start. This is housekeeping, not the guard against a second
+        build: a "done" can go unread (the wrapper restarting first), and the pack's own
+        record in the world is what stops it building twice."""
+        events = self.bds.events_after(self._wreck_seen)
+        if not events:
+            return
+        self._wreck_seen = events[-1]["id"]
+        # A "done" from before that folder was reset is the old world's, not the new
+        # (armed) one's.
+        replaced = {
+            str(e.get("world")): e["id"] for e in events if e["kind"] == "world_replaced"
+        }
+        for e in events:
             if e["kind"] != "wreck" or e.get("phase") != "done":
                 continue
-            rec = self.slots.by_folder(str(e.get("world") or ""))
+            folder = str(e.get("world") or "")
+            if e["id"] < replaced.get(folder, -1):
+                continue
+            rec = self.slots.by_folder(folder)
             if rec and rec.get("wreck") == "armed":
                 self.slots.update(rec["id"], wreck="done")
 
@@ -1585,9 +1600,12 @@ def main() -> None:
         while not rig.stopping:
             try:
                 rig.sample_positions()
-                rig.note_wreck()
             except Exception as exc:  # noqa: BLE001 — the log must never stop the server
                 print(f"[track] {type(exc).__name__}: {exc}", flush=True)
+            try:
+                rig.note_wreck()
+            except Exception as exc:  # noqa: BLE001 — nor may the wreck's bookkeeping
+                print(f"[wreck] {type(exc).__name__}: {exc}", flush=True)
             time.sleep(TRACK_S)
 
     threading.Thread(target=_tracker, daemon=True).start()

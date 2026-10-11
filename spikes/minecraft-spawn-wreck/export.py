@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 FLAMMABLE = {
     "coal_block", "oak_planks", "barrel", "bookshelf", "tnt", "hay_block", "oak_leaves",
     "oak_log", "crafting_table", "white_wool", "orange_wool", "white_carpet",
-    "orange_carpet", "red_carpet", "bed_head", "bed_feet",
+    "orange_carpet", "red_carpet", "bed_head", "bed_feet", "smithing_table",
 }
 # facing_direction: 2 north, 3 south, 4 west, 5 east. A ladder faces away from its wall.
 LADDER_FACING = {"s": 2, "n": 3, "e": 4, "w": 5}
@@ -58,13 +58,16 @@ def bedrock(name: str, pos: tuple[int, int, int], blocks: dict) -> tuple[str, di
                     "occupied_bit": False,
                 }
         raise ValueError(f"a {name} at {pos} has no other half")
+    original = name
     name = RENAME.get(name, name)
     states: dict[str, Any] = {}
     if name in ("polished_basalt", "ochre_froglight", "oak_log", "hay_block"):
+        # Lie along a run of the same block (a turret barrel, a console strip), unless it
+        # also has one above or below; neighbours are looked up by the design's name.
         axis = "y"
         for a, (dx, dz) in (("x", (1, 0)), ("z", (0, 1))):
-            if blocks.get((x + dx, y, z + dz)) == name or blocks.get((x - dx, y, z - dz)) == name:
-                if blocks.get((x, y + 1, z)) != name and blocks.get((x, y - 1, z)) != name:
+            if blocks.get((x + dx, y, z + dz)) == original or blocks.get((x - dx, y, z - dz)) == original:
+                if blocks.get((x, y + 1, z)) != original and blocks.get((x, y - 1, z)) != original:
                     axis = a
         states["pillar_axis"] = axis
         if name == "hay_block":
@@ -102,7 +105,8 @@ def safe_fires(blocks: dict[tuple[int, int, int], str]) -> int:
             blocks.get((x + dx, y + dy, z + dz)) in FLAMMABLE
             for dx in range(-2, 3)
             for dz in range(-2, 3)
-            for dy in range(-1, 5)
+            # Fire lights air at ±1 and -1..+4, which catches from its own neighbours.
+            for dy in range(-2, 6)
             if (dx, dy, dz) != (0, -1, 0)
         )
         below = blocks.get((x, y - 1, z))
@@ -140,6 +144,8 @@ def pack(blocks: dict[tuple[int, int, int], str], air: set, meta: dict) -> dict:
 def check(palette: list[dict], mojang: Path) -> None:
     data = json.loads(mojang.read_text())
     props = {p["name"]: {v["value"] for v in p["values"]} for p in data["block_properties"]}
+    kinds = {p["name"]: p["type"] for p in data["block_properties"]}
+    py_type = {"bool": bool, "int": int, "string": str}
     known = {b["name"]: [p["name"] for p in b.get("properties", [])] for b in data["data_items"]}
     for entry in palette:
         name, states = entry["name"], entry["states"]
@@ -148,6 +154,9 @@ def check(palette: list[dict], mojang: Path) -> None:
         if sorted(states) != sorted(known[name]):
             raise ValueError(f"{name}: states {sorted(states)} but the game has {sorted(known[name])}")
         for key, value in states.items():
+            # True == 1 in Python: the type decides byte vs int in the file, so check it.
+            if type(value) is not py_type[kinds[key]]:
+                raise ValueError(f"{name}: {key}={value!r} should be a {kinds[key]}")
             if value not in props[key]:
                 raise ValueError(f"{name}: {key}={value!r} is not one of {sorted(props[key], key=str)}")
 
@@ -189,7 +198,8 @@ def main() -> None:
     ship_blocks = dict(ship["blocks"])
     fires = safe_fires(ship_blocks)
     ship_meta = {
-        # Where the ship sat over the pod in the signed-off scene: local + this = world.
+        # Where the ship sat over the pod in the signed-off scene. Block coordinates are
+        # relative to the build's corner, so world = local + origin + offset.
         "offset": [int(ship["SX"]), int(ship["ALT"]), int(ship["SZ"])],
         "barrels": sorted([list(p) for p, b in ship_blocks.items() if b == "barrel"]),
         "fires_dropped": fires,

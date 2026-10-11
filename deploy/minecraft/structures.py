@@ -154,6 +154,9 @@ def mcstructure(
     entities: dict[str, Nbt] = {}
     local: list[dict[str, Nbt]] = []
     for x, y, z, i in blocks:
+        if not (0 <= x < sx and 0 <= y < sy and 0 <= z < sz):
+            # An index past a row's end would land the block somewhere else entirely.
+            raise ValueError(f"block ({x}, {y}, {z}) is outside a {size} structure")
         if i not in used:
             used[i] = len(local)
             entry = palette[i]
