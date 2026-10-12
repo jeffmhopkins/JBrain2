@@ -130,9 +130,11 @@ first, then the fix, then the package's full gate set (`CLAUDE.md` #11).
 **S1.3 Same-site request forgery (F2).**
 - (a) A **pure ASGI middleware** covering both `http` and `websocket` scopes (*rev:*
   `@app.middleware("http")` never sees WS). For any request carrying the session cookie: if
-  `Sec-Fetch-Site` is `same-site` or `cross-site`, reject — except a `GET`/`HEAD` with
-  `Sec-Fetch-Mode: navigate` (*rev:* closes side-effecting GETs such as `/settings/gmail/connect`,
-  `/brain/tts`, favicon/geocode fetches, while external links into the PWA still open it). If
+  `Sec-Fetch-Site` is `same-site`, reject unconditionally; if `cross-site`, reject except a
+  `GET`/`HEAD` with `Sec-Fetch-Mode: navigate` to an explicit allow-list of callback routes
+  (the Gmail OAuth callback) (*rev, rev 2:* closes side-effecting GETs such as
+  `/settings/gmail/connect` and `/brain/tts`, including via a popup from the preview; the api
+  serves no HTML, so external links into the PWA hit Caddy's static shell, not `/api`). If
   `Sec-Fetch-Site` is absent and `Origin` is present: Origin host[:port] must equal the
   request `Host` (scheme ignored — behind the tunnel the api sees http; default ports
   normalised); `Origin: null` with a cookie is rejected. No cookie, or neither header
@@ -143,7 +145,11 @@ first, then the fix, then the package's full gate set (`CLAUDE.md` #11).
   `__Host-jbrain_session` (Secure, Path=/, no Domain — a subdomain cannot shadow it). Migration
   is silent: a request authenticated by the legacy `jbrain_session` gets the same token
   re-issued as `__Host-jbrain_session` and the legacy cookie deleted; once the `__Host-`
-  cookie is present the legacy name is ignored. No device has to log in again. When
+  cookie is present the legacy name is ignored. No device has to log in again. *(rev 2)* The
+  migration runs only for an `owner`/`device_key` principal and only when exactly one legacy
+  value is in the raw Cookie header (a tossed parent-domain cookie can't be promoted); the
+  legacy name has a sunset setting; one helper sets *and deletes* both names, with
+  `Secure; Path=/` on the `__Host-` deletion (browsers ignore it otherwise). When
   `secure_cookies` is off (dev/tests) the legacy name stays. Every cookie reader
   (`deps.py`, `live.py`, `jcode_terminal.py`, `jlaunch_terminal.py`, Android's
   `DashboardActivity` injection) reads through one helper.
@@ -170,17 +176,30 @@ FullBrainSurface sources); the backend drops a non-http(s) `online_url` at proje
 
 **S2.1 jcode: per-session users, no root, no control token (F5, F6, F15, N1).** Owner
 decision D1: **per-session unprivileged uids**.
-- Each session gets its own uid/gid from a pool (recorded with the session, stable across
-  ctl restarts); checkout `/work/<sid>` and home `/work/.home/<sid>` are created owned by it,
-  mode 0700. The forked child does `setgroups([])`, `setgid`, `setuid` before exec; the pty
-  slave is `fchown`ed to it.
+- Each session gets its own uid/gid from a pool; checkout `/work/<sid>` and home
+  `/work/.home/<sid>` are pre-created owned by it, mode 0700; `/work` and `/work/.home` are
+  root 0711. The forked child does `setgroups([])`, `setgid`, `setuid` before exec; the pty
+  slave is `fchown`ed to it. Sessions are in-memory and do not survive a ctl restart (today's
+  behaviour, unchanged), so *(rev 2)* on ctl start, before any uid is handed out, every
+  `/work/*` and `/work/.home/*` tree that is not a live session is removed — an orphan owned by
+  a recycled uid must never become readable by a new session.
 - **All git operations run as the session uid** (clone, checkout, reset, clean) — never as
   root inside a session-controlled tree (*rev:* hooks/fsmonitor/filters). No
   `safe.directory` escape hatch.
-- The ctl never writes into a session tree as root after creation; `AGENTS.md` is written as
-  the uid (or with `O_NOFOLLOW`); ownership changes use `lchown` (*rev:* symlink attacks).
-- **Existing sessions** are migrated once on ctl start, off the event loop: assign a uid,
-  `lchown` the tree recursively (no symlink following).
+- Every git call runs with the session's `user`/`group`, `extra_groups=[]`, `HOME=<session
+  home>` and a minimal env (*rev 2:* an inherited `HOME=/root` fails as non-root).
+- The ctl never writes into a session tree as root after creation; ownership changes use
+  `lchown` (*rev:* symlink attacks). `/work/AGENTS.md` (and `CLAUDE.md`) are written by the ctl
+  as root 0644 at startup and the profile.d writer is removed (*rev 2:* a non-root shell can't
+  write `/work`, and a writable `/work` would let one session rewrite another agent's
+  instructions).
+- Stop/delete kill the session's processes by uid, not just by cwd.
+- *Residual, recorded (rev 2):* sessions still share one network namespace, so a recipient
+  of session A can `curl localhost:<B's port>` to read B's dev server while both are live. The
+  ctl closes the related port-squatting trick by proxying a preview only when the socket
+  listening on the session's port belongs to the session's uid (`/proc/net/tcp` inode → uid);
+  blocking loopback itself needs a per-session netns, which `JCODE_SESSION_ISOLATION_PLAN`
+  parked.
 - The env handed to `spawn_shell` drops `JCODE_TOKEN` and the ctl-only settings by explicit
   name (`JCODE_TOKEN`, `JCODE_DEBUG_ACCESS_ENABLED`, `JCODE_LOG_LEVEL`, …) before the
   per-session overrides; it keeps `JCODE_WORKSPACE_ROOT`, `JCODE_TOOLS_BIN`,
@@ -190,11 +209,12 @@ decision D1: **per-session unprivileged uids**.
 - Caddy 404s `/api/jcode/llm/*` on the app sites (in-container callers use `http://api:8000`).
 - `hmac.compare_digest` for every secret compared with `!=` (grep: jcode_llm, gmail state, …).
 - *Keeps working:* create/clone/reset/stop/restart/delete; the agent's model, web tools and
-  OCR; `jcode-grok upgrade`, `npm -g` into home, `pip --user`; previews on 5173-5199; the
-  terminal for owner and share recipient; existing sessions after upgrade. *Lost by design:*
+  OCR (`AGENTS.md` still lists them); `jcode-grok upgrade`, `npm -g` into home, `pip --user`;
+  previews on 5173-5199; the terminal for owner and share recipient. *Lost by design:*
   `apt-get` and writes outside the session's own tree.
-- *Tests:* child env lacks `JCODE_TOKEN`; uid/gid drop; 0700 trees; git runs as the uid;
-  migration of a root-owned tree; Caddyfile block; topology test.
+- *Tests:* child env lacks `JCODE_TOKEN`; uid/gid drop; 0700 trees; git runs as the uid with
+  the session HOME; orphan trees removed at start; preview refused when a foreign uid owns the
+  port; Caddyfile block; topology test.
 
 **S2.2 Authenticate `/internal/*` (F7).**
 - Per-caller secrets, scoped by route: the wall's token opens `/internal/pet*` only;
@@ -203,8 +223,11 @@ decision D1: **per-session unprivileged uids**.
 - **Distribution without a lag** (*rev:* `update-inner.sh` keeps executing the *old* script
   after its own `git reset`, so a mint added there only lands on the *second* update). The api
   generates the secrets on first start into a small named volume (`internal_secrets`, mode
-  0600 files), the wall mounts it read-only and reads its token per request, and mosquitto's
-  entrypoint waits for its file and renders `auth_opt_http_user_agent` into the conf. Same
+  0600 files created with `O_EXCL`; the Dockerfile pre-creates the mount point owned by the
+  api's uid so the empty volume inherits it), the wall (root) mounts it read-only and reads
+  its token per request, and mosquitto's entrypoint (root, before mosquitto drops privileges)
+  waits for its file and renders the read-only-mounted conf plus `auth_opt_http_user_agent`
+  into `/tmp`, then runs `mosquitto -c` on that. Same
   update that ships the code ships the secrets; nothing in `.env`.
 - The worker's regen call keeps its HMAC bearer (unchanged).
 - No rate limit on `/internal/mqtt-auth` (*rev:* one peer → one bucket would lock every phone
@@ -242,15 +265,18 @@ decision D1: **per-session unprivileged uids**.
   redirect to a private address refused.
 
 **S2.4 jcode egress fence (N2).** Owner decision D3: **fence it**. jcode moves to a new
-`internal: true` network (`jcode_fenced`) shared with `api` and `egress`; its
-`HTTP(S)_PROXY` defaults to `http://egress:3128`, `NO_PROXY=api,localhost,127.0.0.1`. Squid
+`internal: true` network (`jcode_fenced`) shared with `api` and `egress`; its proxy env
+defaults to `http://egress:3128` in both cases (`HTTP(S)_PROXY` and `http(s)_proxy` — curl
+ignores the uppercase `HTTP_PROXY`), `NO_PROXY`/`no_proxy=api,localhost,127.0.0.1`, and
+`NODE_USE_ENV_PROXY=1` (Node's fetch ignores proxy env otherwise). Squid has no source ACL, so
+the new networks are served, and its compose/private denies stop it bridging networks. Squid
 gives git/npm/pip public https and http on 80/443 and refuses the LAN, the host, metadata and
 compose names. The old `jcode` network keeps only what still needs it (nothing, after N1 —
 then it is dropped from compose). *Lost by design:* git over ssh and non-80/443 outbound from
 sessions. *Keeps working:* clone over https, npm/pip installs, grok's model and web tools (via
 `api`), previews (served by the ctl via the api, not by outbound). *Tests:* topology; env
-defaults; squid ACL test cases for the LAN/host ranges. *On-box gate:* clone + `npm install`
-in a session.
+defaults; squid ACL test cases for the LAN/host ranges. *On-box gate:* clone + `npm install` +
+`curl https://…` + a Node `fetch` in a session.
 
 ### S3 — device, session and token hygiene ◻️
 
@@ -258,8 +284,13 @@ in a session.
 ~30 s tick (the receive wait gets a timeout so idle sockets are re-checked) and closes 4401
 when the session/principal is revoked or expired. Used by the live map (also clears its
 `viewer_may_see` cache each tick) and the jcode and jlaunch terminals. Revoking a jcode share
-also has the ctl kill processes the share's terminals started (by session uid, which S2.1
-makes possible) and **rotates the session's preview slug**. *Keeps working:* owner and member
+closes the share's sockets at once and **rotates the session's preview slug**. Its processes
+are not killed: the owner and recipient type into the same reattached shell, so the share's
+processes can't be told from the owner's, and killing the session's would kill the owner's
+work (*rev 2*). *Residual, recorded:* anything a revoked recipient planted in the session
+(`~/.bashrc`, `.git/hooks`, npm lifecycle scripts) still runs, confined to that session's uid
+and the fenced egress, when the owner later uses the session; the existing Reset/Delete
+clear it. *Keeps working:* owner and member
 live maps, owner terminals, a share's terminal while the share is live. *Tests:* revoke
 mid-stream closes; group removal stops that subject; slug rotates on revoke.
 
@@ -287,8 +318,9 @@ redeem; in-flight code survives the migration.
 
 **S3.4 Client IP and audit (F13, F14).** Caddy always overwrites `X-Real-IP` with its peer
 (`{remote_host}`); the api trusts `X-Real-IP` only when the TCP peer is the proxy container,
-and uses `Cf-Connecting-IP` only when that peer is cloudflared (a docker-bridge address), else
-`X-Real-IP` — so a LAN client can't spoof `Cf-Connecting-IP` through the published port in
+and uses `Cf-Connecting-IP` only when `X-Real-IP` equals the resolved address of the
+`cloudflared` service (*rev 2:* a bridge-range test also matches the docker gateway that
+published-port and hairpin connections arrive from), else `X-Real-IP` — so a LAN client can't spoof `Cf-Connecting-IP` through the published port in
 either mode. The panel tunnel forwards `cf-connecting-ip` too. All limiters and `nudge` use
 the helper. `/member/positions` audits only when `viewer_may_see(viewer, target)` and target ≠
 viewer. *Tests:* helper matrix (direct, tunnel, LAN-spoof, sandbox peer); audit written for a
