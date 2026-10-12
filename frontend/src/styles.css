@@ -30723,6 +30723,7 @@ button.wf-sigpill {
 
 @media (prefers-reduced-motion: reduce) {
   .mc-spin,
+  .mc-switch.busy .mc-knob,
   .mc-meter i,
   .mc-steps li.now .mc-step-dot {
     animation: none;
@@ -32156,6 +32157,24 @@ button.wf-sigpill {
 
 .mc-keep-err {
   margin-bottom: 0;
+}
+
+.mc-keep-help b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Mid-write the knob is the in-progress spinner (amber), as the mock's applying state. */
+.mc-switch.busy .mc-knob {
+  background: transparent;
+  border: 2px solid var(--warn);
+  border-top-color: transparent;
+  animation: mc-spin 0.9s linear infinite;
+}
+
+/* Worlds list glance: an off Power Pack teleport is the one fact that differs from usual. */
+.mc-wmeta-off {
+  color: var(--text);
 }
 
 .mc-keep-help {

@@ -109,6 +109,15 @@ describe("toolStep", () => {
     expect(toolStep(tool({ name: "search", args: { limit: 8 } })).inline).toBeUndefined();
   });
 
+  it("names the block a Tricorder scan is set to, and nothing for a stop", () => {
+    const set = toolStep(tool({ name: "mc_tricorder_scan", args: { block: "diamond_ore" } }));
+    expect(set.label).toBe("Set the tricorder's scan");
+    expect(set.inline).toBe("diamond_ore");
+    expect(
+      toolStep(tool({ name: "mc_tricorder_scan", args: { stop: true } })).inline,
+    ).toBeUndefined();
+  });
+
   it("joins an umbrella tool's action with its target (the jmolt_observe polish)", () => {
     expect(toolStep(tool({ name: "jmolt_observe", args: { action: "sessions" } })).inline).toBe(
       "sessions",
@@ -193,6 +202,20 @@ describe("the note-conversation write tools", () => {
         tool({ name: "merge_entities", args: { entity_a: "Dana Whitfield", entity_b: "Dana W" } }),
       ).inline,
     ).toBe("Dana Whitfield · Dana W");
+  });
+
+  it("labels a goal count and shows what a counted goal collects", () => {
+    const progress = toolStep(tool({ name: "mc_goal_progress", args: { goal: 3 } }));
+    expect(progress.label).toBe("Counted toward a goal");
+    expect(progress.inline).toBeUndefined();
+    expect(
+      toolStep(
+        tool({
+          name: "mc_goal_create",
+          args: { title: "Get 23 iron blocks", item: "iron_block", count: 23 },
+        }),
+      ).inline,
+    ).toBe("Get 23 iron blocks · iron_block");
   });
 
   it("names a BATCHED argument elementwise, capped with a +N", () => {

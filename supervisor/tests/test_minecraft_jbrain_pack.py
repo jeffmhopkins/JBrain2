@@ -129,7 +129,12 @@ def _node_root(tmp_path: Path) -> Path:
                 }
             )
         )
-    for test in ("pack.test.mjs", "transport.test.mjs", "welcome.test.mjs"):
+    for test in (
+        "pack.test.mjs",
+        "transport.test.mjs",
+        "welcome.test.mjs",
+        "scan.test.mjs",
+    ):
         shutil.copy(MC / "jbrain-sim" / test, root / test)
     return root
 
@@ -163,6 +168,16 @@ def test_transport_on_request_follows_the_rules(tmp_path: Path) -> None:
     one console line the tool reads."""
     root = _node_root(tmp_path)
     _node_test(root / "transport.test.mjs", cwd=root)
+
+
+def test_the_tricorders_live_scan(tmp_path: Path) -> None:
+    """scan.js against the fakes (§M25): the nearest matching block by 3D distance
+    within 16 blocks, an ore's deepslate twin, the none-nearby line, one scan every
+    10 s, a mined target looked past, stop pointing back at the waypoint, a new
+    waypoint replacing the scan, kept across a rejoin, unknown blocks refused, and
+    players scanned on frames of their own."""
+    root = _node_root(tmp_path)
+    _node_test(root / "scan.test.mjs", cwd=root)
 
 
 def test_daves_welcome_and_first_time_beats(tmp_path: Path) -> None:

@@ -6,14 +6,15 @@
 // Dave's welcome and first-time beats are welcome.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, itemsLines,
-  packLoreStale, packToBurn, parseConfig, parseFind, parseItems, parseKnown, parseWaypoint,
+import { LINES, LORE, POWER_PACK, TRICORDER, carryLine, deathPlan, dropSpot, findLine, itemsLines,
+  packLoreStale, packToBurn, parseCarry, parseConfig, parseFind, parseItems, parseKnown, parseWaypoint,
   slotFate, trackerLine, tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
 import { initBeacon } from "./beacon.js";
 import { initWelcome } from "./welcome.js";
+import { initScan } from "./scan.js";
 import { isHello } from "./welcome_rules.js";
 
 initBeacon(world, system);
@@ -169,6 +170,7 @@ const ownSlot = (player) => {
 const dave = (player, text) => player.sendMessage(DAVE + text);
 
 const story = initWelcome({ beam, ownSlot, tricorderOn, say, dave });
+const scan = initScan({ say });
 
 const onWaking = (player, initialSpawn) => {
   const left = player.getDynamicProperty(BURNT);
@@ -181,6 +183,7 @@ const onWaking = (player, initialSpawn) => {
   // The welcome hands over the Tricorder itself, at its 5 s mark.
   if (initialSpawn && story.needsWelcome(player)) {
     story.welcome(player);
+    story.rejoined(player);
     return;
   }
   if (!story.inWelcome(player)) {
@@ -192,7 +195,8 @@ const onWaking = (player, initialSpawn) => {
       dave(player, LINES.rebeamed);
     }
   }
-  if (!initialSpawn) story.firstDeath(player, savedByPack);
+  if (initialSpawn) story.rejoined(player);
+  else story.firstDeath(player, savedByPack);
 };
 
 // --- the item guide's unlocks (§M19) ----------------------------------------------------
@@ -200,23 +204,37 @@ const onWaking = (player, initialSpawn) => {
 // Bedrock never merges two stacks already in separate slots, so a crafted pack lored
 // where it landed would sit apart from the lored stack for good (#1694): it tops up any
 // lored stack with room, and only what doesn't fit stays in its own slot. Folded by hand,
-// not re-added, so a pack with nowhere to merge never jumps to another slot.
-const fold = (inv, slot, item) => {
-  let left = item.amount;
+// not re-added, so a pack with nowhere to merge never jumps to another slot. The source
+// slot is written first and each top-up after it: a write that throws (a player mid-leave,
+// a stale look) can then only leave packs out of the source, and those are put back
+// unless that write fails too — a failure never makes a pack (#1698). They go back as they
+// were (`was`, before the lore), so the next look folds them in again.
+const fold = (inv, slot, item, was) => {
+  const whole = item.amount;
+  const tops = [];
+  let left = whole;
   for (let j = 0; j < inv.size && left > 0; j++) {
     const other = j === slot ? undefined : inv.getItem(j);
     if (!other?.isStackableWith(item)) continue;
     const n = Math.min(other.maxAmount - other.amount, left);
     if (n <= 0) continue;
     other.amount += n;
-    // The top-up is written first: a failure between the two writes doubles a pack
-    // rather than losing one.
-    inv.setItem(j, other);
+    tops.push({ j, other, n });
     left -= n;
   }
-  if (left === 0) return inv.setItem(slot, undefined);
   item.amount = left;
-  inv.setItem(slot, item);
+  inv.setItem(slot, left === 0 ? undefined : item);
+  let moved = 0;
+  try {
+    for (const { j, other, n } of tops) {
+      inv.setItem(j, other);
+      moved += n;
+    }
+  } catch (e) {
+    was.amount = whole - moved;
+    inv.setItem(slot, was);
+    throw e;
+  }
 };
 
 // What the player has unlocked, after a look at what they carry now; written back only
@@ -227,8 +245,9 @@ const learn = (player) => {
   const stacks = carried(player);
   for (const { item, put, inv, slot } of stacks) {
     if (!packLoreStale(item.typeId, item.getLore())) continue;
+    const was = item.clone();
     item.setLore([LINES.powerPackLore]);
-    if (inv) fold(inv, slot, item);
+    if (inv) fold(inv, slot, item, was);
     else put(item);
   }
   const held = stacks.map((c) => c.item.typeId);
@@ -367,17 +386,22 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id === "jb:waypoint") {
     try {
       const wp = parseWaypoint(ev.message);
+      // A new heading replaces a live scan (§M25). The track drain's clear on arrival
+      // sends no end_scan: reaching the old waypoint mustn't end a scan on its own.
+      const ended = (!wp.clear || wp.endScan) && scan.end(wp.player) ? "; scan ended" : "";
       if (wp.clear) {
         world.setDynamicProperty(waypointKey(wp.player), undefined);
-        say(`waypoint cleared for ${wp.player}`);
+        say(`waypoint cleared for ${wp.player}${ended}`);
       } else {
         world.setDynamicProperty(waypointKey(wp.player), JSON.stringify(wp.record));
         const r = wp.record;
-        say(`waypoint set for ${wp.player}: ${r.label} at ${r.x} ${r.z} (${r.dim})`);
+        say(`waypoint set for ${wp.player}: ${r.label} at ${r.x} ${r.z} (${r.dim})${ended}`);
       }
     } catch (e) {
       say(`waypoint refused: ${e}`);
     }
+  } else if (ev.id === "jb:scan") {
+    scan.onEvent(ev.message);
   } else if (ev.id === "jb:find") {
     // Dave's nearest-mob search: only the game knows where mobs are, and only near players.
     try {
@@ -426,6 +450,23 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     } catch (e) {
       say(`items refused: ${e}`);
     }
+  } else if (ev.id === "jb:carry") {
+    // What the asker carries toward a goal (§M24): their own inventory, armor and
+    // off-hand, nobody else's — Dave only ever sends the asker's own name.
+    try {
+      const q = parseCarry(ev.message);
+      const who = q.player.toLowerCase();
+      const p = world.getAllPlayers().find((pl) => pl.name.toLowerCase() === who);
+      if (!p) {
+        say(`carry refused: ${q.player} isn't online`);
+        return;
+      }
+      const stacks = carried(p).map(({ item }) => ({ typeId: item.typeId, amount: item.amount }));
+      const here = { dim: p.dimension.id, x: p.location.x, y: p.location.y, z: p.location.z };
+      say(carryLine(q, p.name, here, stacks));
+    } catch (e) {
+      say(`carry refused: ${e}`);
+    }
   } else if (ev.id === "jb:config") {
     try {
       const cfg = parseConfig(ev.message);
@@ -440,7 +481,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 initTransport({ carried, tricorderOn, say });
 initWormholes({ onPlanted: (player) => story.firstWormhole(player) });
 
-// --- the Tricorder's arrow, about four times a second -----------------------------------
+// --- the Tricorder's arrow, about four times a second, and its live scan (§M25) ---------
 
 // Unlocks are looked for once a second, not every frame: the whole inventory is read.
 const LEARN_EVERY = 4;
@@ -448,6 +489,12 @@ let frame = 0;
 
 system.runInterval(() => {
   frame = (frame + 1) % LEARN_EVERY;
+  // Before the arrows, so a scan's find shows on the frame it was made.
+  try {
+    scan.step();
+  } catch (e) {
+    say(`scan step failed: ${e}`);
+  }
   for (const player of world.getAllPlayers()) {
     try {
       if (player.isOnGround && player.location.y >= player.dimension.heightRange.min) {
@@ -461,12 +508,13 @@ system.runInterval(() => {
       const status = statusOf(held, player);
       if (status === "own") {
         player.onScreenDisplay.setActionBar(
-          trackerLine(
-            waypointOf(player.name),
-            { dim: player.dimension.id, x: player.location.x, z: player.location.z },
-            player.getViewDirection(),
-            world.getDefaultSpawnLocation(),
-          ),
+          scan.line(player) ??
+            trackerLine(
+              waypointOf(player.name),
+              { dim: player.dimension.id, x: player.location.x, z: player.location.z },
+              player.getViewDirection(),
+              world.getDefaultSpawnLocation(),
+            ),
         );
       } else if (status === "foreign") {
         player.onScreenDisplay.setActionBar(STATIC + LINES.notTuned);

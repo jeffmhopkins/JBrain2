@@ -316,6 +316,41 @@ def test_each_dimension_has_its_own_and_radius_and_limit_hold(tmp_path: Path) ->
     assert matched == 2 and len(found) == 1 and totals == {"minecraft:quartz": 3}
 
 
+def test_a_stock_count_counts_each_container_once_toward_its_nearest_point(
+    tmp_path: Path,
+) -> None:
+    home = block_entity("Chest", 10, 64, 0, [item("minecraft:iron_block", 12)])
+    # Within reach of both points, nearer the farm: counted once, for the farm.
+    between = block_entity("Barrel", 70, 64, 0, [item("minecraft:iron_block", 3)])
+    far = block_entity("Chest", 500, 64, 0, [item("minecraft:iron_block", 40)])
+    other = block_entity("Chest", 12, 64, 2, [item("minecraft:dirt", 64)])
+    nether = block_entity("Chest", 0, 40, 0, [item("minecraft:iron_block", 9)])
+    path = tmp_path / "db"
+    path.mkdir()
+    write_log(
+        path / "000006.log",
+        10,
+        [
+            (be_key(0, 0), home),
+            (be_key(4, 0), between),
+            (be_key(31, 0), far),
+            (be_key(0, 1), other),
+            (be_key(0, 0, 1), nether),
+        ],
+    )
+    index = containers.ContainerIndex(path)
+    index.refresh()
+    wanted = {"minecraft:iron_block"}
+    per, held_in, totals = index.stock(0, [(0, 0), (90, 0)], wanted, 48)
+    assert per == [{"minecraft:iron_block": 12}, {"minecraft:iron_block": 3}]
+    assert held_in == [1, 1] and totals == {"minecraft:iron_block": 15}
+    # A tie goes to the first point named; nothing in range is all zero.
+    per, held_in, _ = index.stock(0, [(40, 0), (100, 0)], wanted, 30)
+    assert held_in == [2, 0] and per[0] == {"minecraft:iron_block": 15}
+    assert index.stock(0, [(5000, 0)], wanted, 48) == ([{}], [0], {})
+    assert index.stock(1, [(0, 0)], wanted, 48)[2] == {"minecraft:iron_block": 9}
+
+
 def test_the_index_rereads_only_when_the_files_change(tmp_path: Path) -> None:
     clock = [0.0]
     db = _world(

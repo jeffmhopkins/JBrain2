@@ -239,6 +239,42 @@ def test_a_cached_slot_holding_another_world_answers_gone_without_the_sidecar(fa
     assert _worlds_read(fake) == 1 and len(fake["images"]) == 1
 
 
+def test_a_stale_links_tiles_read_the_sidecar_once_per_ttl(fake) -> None:
+    # The slot now holds another world: the first tile learns it, the burst after it is
+    # answered from the cache, and the next read waits for the TTL (#1698).
+    fake["worlds"] = {"slots": [{**WORLDS["slots"][1], "folder": "castle-reset-2"}]}
+    client = _client()
+    tile = "/api/mc-share/good/map/tile/overworld/0/{}/0.png"
+    for x in range(5):
+        assert client.get(tile.format(x)).status_code == 404
+    assert _worlds_read(fake) == 1
+    fake["now"] += minecraft_share.FOLDER_TTL
+    assert client.get(tile.format(0)).status_code == 404
+    assert _worlds_read(fake) == 2
+
+    # An emptied slot is cached as gone the same way.
+    fake["worlds"] = {"slots": []}
+    fake["now"] += minecraft_share.FOLDER_TTL
+    for x in range(3):
+        assert client.get(tile.format(x)).status_code == 404
+    assert _worlds_read(fake) == 3 and fake["images"] == []
+
+
+@pytest.mark.parametrize("path", ["", "/map/tile/overworld/0/0/0.png"])
+def test_a_slot_record_without_a_folder_is_a_sidecar_fault_not_a_gone_world(
+    fake, path: str
+) -> None:
+    # The folder is the sidecar's contract: a record without one is a broken sidecar,
+    # answered 502 and never cached, rather than read as "None" and called gone (#1698).
+    fake["worlds"] = {"slots": [{k: v for k, v in WORLDS["slots"][1].items() if k != "folder"}]}
+    client = _client()
+    for _ in range(2):
+        resp = client.get(f"/api/mc-share/good{path}")
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "the sidecar's record of slot2 has no folder"
+    assert _worlds_read(fake) == 2 and fake["images"] == []
+
+
 def test_the_sidecar_reads_are_pinned_to_the_links_slot(fake) -> None:
     client = _client()
     # A visitor-supplied slot is not a parameter of these routes; it is ignored.

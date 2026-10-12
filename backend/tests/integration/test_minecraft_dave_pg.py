@@ -9,7 +9,10 @@ The contract, case by case (docs/plans/MINECRAFT_BEDROCK_PLAN.md §P1):
   removal needs the line's exact text, and the caps refuse before writing;
 - a player's data written by name moves onto their xuid once the server has seen them;
 - the chat intro carries the player's memory and open goals, fenced as data;
-- nobody but the owner can read or write any of the four tables.
+- nobody but the owner can read or write any of the four tables;
+- a goal may count an item (0237): the pair is all-or-nothing and range-checked in the
+  table too, goals written before it read as they did, and progress counts the chests
+  near the player's saved places as stored.
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.minecraft import client as mc
 from tests.conftest import docker_available
 from tests.integration.test_rls import UNSCOPED, database_url  # noqa: F401
 
@@ -42,7 +46,14 @@ EVERY_SCOPE = SessionContext(
     principal_kind="capability_token",
     domain_scopes=("general", "health", "finance", "location"),
 )
-TABLES = ("mc_chat_player", "mc_goal_log", "mc_goals", "mc_player_memory", "mc_player_sessions")
+TABLES = (
+    "mc_chat_player",
+    "mc_goal_log",
+    "mc_goals",
+    "mc_player_memory",
+    "mc_player_sessions",
+    "mc_places",
+)
 
 
 class FakeSettings:
@@ -240,7 +251,8 @@ async def test_a_non_owner_sees_nothing_and_cannot_write(maker, ctx_name, table)
     async with scoped_session(maker, other) as s:
         assert (await s.execute(text(f"SELECT count(*) FROM app.{table}"))).scalar() == 0
     inserts = {
-        "mc_goals": "INSERT INTO app.mc_goals (xuid, gamertag, title) VALUES ('x', 'x', 't')",
+        "mc_goals": "INSERT INTO app.mc_goals (xuid, gamertag, title, item, item_count)"
+        " VALUES ('x', 'x', 't', 'iron_block', 23)",
         "mc_goal_log": "INSERT INTO app.mc_goal_log (xuid, gamertag, text, source)"
         " VALUES ('x', 'x', 't', 'owner')",
         "mc_player_memory": "INSERT INTO app.mc_player_memory (xuid, seq, text, source)"
@@ -394,3 +406,86 @@ async def test_play_history_lists_this_players_sessions(maker) -> None:
     assert "days must be" in await _tools(maker, "Player5")["mc_play_history"](
         {"days": "lots"}, ctx
     )
+
+
+async def test_a_goal_counts_an_item_and_old_goals_read_as_before(maker) -> None:
+    owner = await _owner(maker)
+    ctx = await _chat(maker, owner)
+    tools = _tools(maker, "Steve42")
+    # A goal from before 0237: no item, no count.
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.mc_goals (xuid, gamertag, title, created_at)"
+                " VALUES ('name:steve42', 'Steve42', 'Old beacon', now() - interval '1 day')"
+            )
+        )
+    await tools["mc_goal_create"](
+        {"title": "Get 23 iron blocks", "item": "iron block", "count": 23}, ctx
+    )
+    listed = await tools["mc_goals"]({}, ctx)
+    assert "1. [open] Old beacon\n" in listed
+    assert "2. [open] Get 23 iron blocks (iron_block ×23)" in listed
+    await tools["mc_goal_update"]({"goal": 2, "count": 30}, ctx)
+    assert "(iron_block ×30)" in await tools["mc_goals"]({}, ctx)
+    # The old goal can start counting, given both.
+    assert "needs both" in await tools["mc_goal_update"]({"goal": 1, "count": 3}, ctx)
+    await tools["mc_goal_update"]({"goal": 1, "item": "beacon", "count": 1}, ctx)
+    assert "Old beacon (beacon ×1)" in await tools["mc_goals"]({}, ctx)
+    async with scoped_session(maker, owner) as s:
+        assert "1. Old beacon (beacon ×1)" in await mt.player_context(s, "name:steve42")
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        "'iron_block', NULL",
+        "NULL, 23",
+        "'iron_block', 0",
+        "'iron_block', 100001",
+        "'Iron Block!', 3",
+    ],
+)
+async def test_the_table_refuses_a_half_or_bad_count(maker, values) -> None:
+    owner = await _owner(maker)
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, owner) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.mc_goals (xuid, gamertag, title, item, item_count)"
+                    f" VALUES ('x', 'x', 't', {values})"
+                )
+            )
+
+
+async def test_progress_counts_the_chests_near_saved_places(maker, monkeypatch) -> None:
+    owner = await _owner(maker)
+    ctx = await _chat(maker, owner)
+    tools = _tools(maker, "Steve42")
+    await tools["mc_goal_create"](
+        {"title": "Get 23 iron blocks", "item": "iron_block", "count": 23}, ctx
+    )
+    async with scoped_session(maker, owner) as s:
+        for name, x, world in (("home", 20, "slot2"), ("elsewhere", 900, "slot9")):
+            await s.execute(
+                text(
+                    "INSERT INTO app.mc_places (xuid, gamertag, world, name, x, y, z, dim)"
+                    " VALUES ('name:steve42', 'Steve42', :w, :n, :x, 64, 0, 'overworld')"
+                ),
+                {"w": world, "n": name, "x": x},
+            )
+    asked: list[dict[str, Any]] = []
+
+    async def call(_cfg: Any, method: str, path: str, **kw: Any) -> dict[str, Any]:
+        if path == "/worlds":
+            return {"active": "slot2", "slots": [{"id": "slot2", "active": True}]}
+        if path == "/map/stock":
+            asked.append(kw["params"])
+            return {"centres": [{"totals": {"minecraft:iron_block": 12}}], "age_s": 0}
+        return {"lines": []}
+
+    monkeypatch.setattr(mc, "call", call)
+    out = await tools["mc_goal_progress"]({}, ctx)
+    assert "12 of 23 — 11 to go" in out and "12 in chests near home" in out
+    # Only the loaded world's places.
+    assert [p["centres"] for p in asked] == ["20,0"]
