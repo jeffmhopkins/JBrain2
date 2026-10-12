@@ -54,13 +54,19 @@ p.hearing(false);
 check(until(() => p.state().sending, 6000), 'the hush sends it');
 check(until(() => events.slice(before).some((e) => e.includes('cue SENT')), 20000), 'and SENT sounds');
 
-// The menu: hold on the pet, pick the sister, nobody there.
-p.set(4, 404);
+// The menu: hold on the pet, pick the sister, nobody there. 409 is what the box answers when there
+// is no single other panel (`jpanel.py`), and the only status the firmware reads as NOBODY.
+p.set(4, 409);
 p.touch(0, W / 2, H / 2);
 p.advance(900);
 p.touch(2, W / 2, H / 2);
-p.advance(80);
+p.advance(800);
 check(p.state().mode === 'GRID', 'a hold on the pet opens who?');
+const sent = events.length;
+tap(W / 4, H / 4); // the sister's cell
+check(until(() => p.state().mode === 'RECORD', 2000), 'the sister cell opens a recording');
+check(until(() => events.slice(sent).some((e) => / say nobody to send to/.test(e)), 20000),
+  'and a 409 comes back as NOBODY, not as a failed send');
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);

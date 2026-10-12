@@ -606,7 +606,7 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 1: g_latency_ms = (uint32_t)value; break;
     case 2: g_upload_bps = (uint32_t)value; break;
     case 3: g_transcribe_ms = (uint32_t)value; break;
-    case 4: /* the next SEND's status: 200, 404 (nobody to send to), 500 */
+    case 4: /* the next SEND's status: 200, 409 (nobody to send to: the box's "no single other panel"), 500 */
         g_nsend_status = 1;
         g_send_at = 0;
         g_send_status[0] = value;
