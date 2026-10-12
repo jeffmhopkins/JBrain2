@@ -2601,11 +2601,20 @@ on every waking with the "nearly lost you" line, retiring older copies. A player
 first-ever waking in a world gets theirs quietly: `firstWaking()` in the pack's
 `main.js` is the hook the welcome sequence replaces. Dave's lines are one constants
 block, `LINES` in `jbrain-pack/scripts/rules.js`, copied verbatim from the lore page.
-Not built: the welcome and the first-time beats, `/jb:dave hello`, and the prompt's
-story section. Until it is, the model answers `hello`; once the welcome's lines exist,
+Not built: the welcome and the first-time beats, and `/dave hello`. Until they are, the model answers `hello`; once the welcome's lines exist,
 M18's fast path (`minecraft/fastpath.py`) is where `hello` belongs. The first-time beats'
 record can sit beside M19's unlocks (`jb:known:<id>`), which are recorded at the same
 moments.
+
+**Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)
+carries a story section copied from the lore page's canon: Dave, the Old Makers, the
+ship and the crew, death as the transporter, their ruins and the tie-ins (both promoted
+to canon by the owner, 2026-10-12). Why the Old Makers vanished is sealed: Dave says so
+in the canon's words and never guesses. The ores table and "three ways it knows the
+world" stay proposals and are left out. It rides the persona, so the app and the game
+both have it; the items stay gated by the guide (§M19). The guide (`v7`) now says a
+Tricorder can't be lost and drops the "someone else's" static, which stays only as the
+pack's safety net.
 
 Every line the pack uses is signed off on the lore page (owner, 2026-10-11), including
 "This tricorder is retired" (§M9) and "Your Power Pack burnt out…" (§M10).
