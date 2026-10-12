@@ -6,9 +6,9 @@
 // Dave's welcome and first-time beats are welcome.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, packToBurn,
-  parseConfig, parseFind, parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus,
-  unlocksFrom, xpToDrop } from "./rules.js";
+import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, packLoreStale,
+  packToBurn, parseConfig, parseFind, parseKnown, parseWaypoint, slotFate, trackerLine,
+  tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
@@ -198,10 +198,17 @@ const onWaking = (player, initialSpawn) => {
 // --- the item guide's unlocks (§M19) ----------------------------------------------------
 
 // What the player has unlocked, after a look at what they carry now; written back only
-// when something new was unlocked.
+// when something new was unlocked. The same look lores their Power Packs (§M10): a
+// crafted one comes without, and only a stack written back keeps it.
 const learn = (player) => {
   const before = parseKnown(world.getDynamicProperty(knownKey(player.id)));
-  const held = carried(player).map((c) => c.item.typeId);
+  const stacks = carried(player);
+  for (const { item, put } of stacks) {
+    if (!packLoreStale(item.typeId, item.getLore())) continue;
+    item.setLore([LINES.powerPackLore]);
+    put(item);
+  }
+  const held = stacks.map((c) => c.item.typeId);
   const after = unlocksFrom(before, held);
   if (after.join() !== [...before].sort().join()) {
     world.setDynamicProperty(knownKey(player.id), JSON.stringify(after));

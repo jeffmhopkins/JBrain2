@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12 (box side built, panel side next)** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -54,8 +54,8 @@ panel, the others import it at a fixed `start` state).
 - **Firmware shape:** each of these screens is its own app module over a shared UI kit —
   `../../plans/JPANEL_C6_PLAN.md` §1.
 - **Push messages from the box:** a full-screen pop-up over any app (an alarm outranks it):
-  sender, title, short body, and either OK or up to four answer buttons whose tap goes back
-  to the sender. Queues as "1 of N"; BOOT dismisses without answering. Settings → Notifications:
+  sender, title, short body, and up to four answer buttons whose tap goes back to the sender
+  (a plain notice has none since 2026-10-12: a tap anywhere hides it). Queues as "1 of N"; BOOT dismisses without answering. Settings → Notifications:
   **Accept messages from the box** and **Refuse during night hours** — the panel decides, and
   the box turns a send away at once (`409 not_accepting` / `409 quiet_hours` with `until`, or
   `503 offline`), so nothing is held to pop up later — plus a chime switch. Box side:
@@ -139,3 +139,24 @@ panel, the others import it at a fixed `start` state).
   half of the mock's card is a later wave. On the panel the ringing screen's second button stays
   **Stop**, as drawn. The sim's `ringing`, `ringing-dark`, `ringing-over-notice`, `alarm-snoozed`,
   `alarm-test` and `clock-alarms` states are the panel's pictures, from the box's own JSON.
+- **A notice can be a whole picture** (owner, 2026-10-12: *"I want to be able to send a whole
+  picture as a notification. This way some push notifications can draw their own banner or
+  picture or whatever and show that."*): the sender sends a PNG, JPEG or WebP and the box fits
+  and encodes it for the panel. With nothing else to say it fills the glass (NotifyPicture,
+  board 18) under a small sender chip and the hide hint; with words or answers it is a banner
+  across the top, up to half the glass, over the usual card (NotifyBanner, board 19). The
+  pictures in the boards are drawn by the "sender" to show the idea; the panel draws whatever
+  pixels arrive.
+- **A notice can carry a sound of eight seconds or less** (owner, 2026-10-12: *"allow the push
+  notification to have a short 8 second or less audio clip to play if it wants to."*): a clip
+  from the sender, or words the box speaks in the PWA's read-aloud voice. It plays once as the
+  notice appears; the card shows a speaker row with the clip's progress and time (NotifyAudio,
+  board 20). Never over an alarm; it stops when the notice hides.
+- **Hidden by a tap or by time** (owner, 2026-10-12: *"these notifications could be pressed to
+  hide or time out to hide."*): a plain notice or a picture hides on a tap anywhere; a question
+  only by an answer or BOOT, so a stray tap never throws one away. A notice the sender gave a
+  timeout shows a thin line along the bottom edge draining to the left, and the hint counts the
+  seconds ("Tap to hide · hides in 18 s"); when it runs out the notice hides itself and the
+  sender reads `expired`. Without a timeout it waits for the tap. The live panel's *Send a test
+  message* tweak sends a picture, a banner question and one with a sound. Box side and wire
+  format: `../../plans/JPANEL_C6_PLAN.md` §2.

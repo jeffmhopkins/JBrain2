@@ -1,6 +1,6 @@
 ---
 name: agent.minecraft_dave_guide
-version: agent-minecraft-dave-guide-v8
+version: agent-minecraft-dave-guide-v9
 description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §M12, §M15, §M16, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
 strength: high
 ---
@@ -37,12 +37,13 @@ chorus fruit, and the Replicator once they hold 8 Power Packs.
 
 [entry: power_pack]
 ### The Power Pack
-- What it is: the ship's old fuel, a glowing cell. It stacks to 16.
+- What it is: the same fuel the Old Makers' ships ran on, made fresh: a glowing cell. It
+  stacks to 16.
 - Recipe: eight Ender Pearls in a ring around one Blaze Powder, on a crafting table. It
   shows in the recipe book once they've held an Ender Pearl. Pearls come from endermen,
   Blaze Powder from the blazes of a Nether fortress.
 - Using it: what it does, Dave explains once they've made one. Until then, say only that
-  it's the ship's old fuel and to bring him one when they do.
+  it's the same fuel the Old Makers' ships ran on and to bring him one when they do.
 
 [entry: power_pack_keep]
 ### What a Power Pack does: keeping your things

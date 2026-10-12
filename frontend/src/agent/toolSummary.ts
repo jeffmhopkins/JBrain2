@@ -165,6 +165,7 @@ const STEP_LABELS: Record<string, string> = {
   home_status: "Checked home status",
   device_status: "Checked device status",
   query_server_metrics: "Checked server metrics",
+  panel_notify: "Posted to your panel",
   // Weather
   weather: "Checked the weather",
   weather_history: "Checked past weather",
@@ -341,6 +342,7 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   save_place: ["name"],
   geocode_reverse: ["latitude", "longitude"],
   query_server_metrics: ["range"],
+  panel_notify: ["title"],
   weather: ["location"],
   weather_history: ["location", "start_date"],
   hurricane: ["location"],
