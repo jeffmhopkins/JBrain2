@@ -661,13 +661,14 @@ static bool report(const cfg_t *cfg)
                       (unsigned)jp.wd_engine, (unsigned)jp.wd_arbiter, (unsigned)jp.wd_disarmed);
     }
     /* HOW SMOOTH IT WAS, as the free-text `note` the box already stores: frames drawn since the
-       last report, their average and worst draw+blit, and the average and worst gap between
-       them. 40 ms is the 25 fps the animation is tuned for (0.4.3). */
+       last report, their average and worst drawing and blit times, and the average and worst gap
+       between them. 40 ms is the 25 fps the animation is tuned for (0.4.3; split in 0.4.4). */
     if (w > 0 && w < (int)sizeof(body) - 96) {
-        unsigned fn = 0, wa = 0, wm = 0, ga = 0, gm = 0;
-        display_frame_stats(&fn, &wa, &wm, &ga, &gm);
+        display_frame_stats_t f;
+        display_frame_stats(&f);
         w += snprintf(body + w, sizeof(body) - (size_t)w,
-                      ",\"note\":\"frames=%u work=%u/%u gap=%u/%u\"", fn, wa, wm, ga, gm);
+                      ",\"note\":\"frames=%u draw=%u/%u blit=%u/%u gap=%u/%u\"", f.frames,
+                      f.draw_avg, f.draw_max, f.blit_avg, f.blit_max, f.gap_avg, f.gap_max);
     }
     /* The NAMES, not just the count. A number says the panel is deaf to something; a name
        says to what, and only the name can be acted on. */

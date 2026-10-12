@@ -4333,11 +4333,84 @@ static void test_the_font_glyphs_are_distinct(void)
     free(seen);
 }
 
+/* ── 0.4.4: the row-run disc and limb against the per-pixel loops they replaced ──────────────── */
+
+static void ref_px(uint16_t *fb, int x, int y, uint16_t c)
+{
+    if (x >= 0 && x < FACE_W && y >= 0 && y < FACE_H) fb[y * FACE_W + x] = c;
+}
+
+static void ref_fill_circle(uint16_t *fb, int cx, int cy, int r, uint16_t c)
+{
+    for (int j = -r; j <= r; j++)
+        for (int i = -r; i <= r; i++)
+            if (i * i + j * j <= r * r) ref_px(fb, cx + i, cy + j, c);
+}
+
+static void ref_draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uint16_t c)
+{
+    const float a = deg * (float)M_PI / 180.0f;
+    const float ex = -sinf(a), ey = cosf(a);
+    for (int i = 0; i <= len; i++) {
+        ref_fill_circle(fb, x + (int)lrintf(ex * (float)i), y + (int)lrintf(ey * (float)i), w / 2, c);
+    }
+    ref_fill_circle(fb, x + (int)lrintf(ex * (float)len), y + (int)lrintf(ey * (float)len),
+                    (int)(w * 0.62f), c);
+}
+
+/* Same pixels, every one: a sweep of radii and positions for the disc, and of angle, length,
+   width and position for the limb, including limbs that leave the glass on every side. The
+   background is a pattern, so a pixel written that should not be is caught as surely as one
+   missed. */
+static void test_row_runs_match_the_pixel_loops(void)
+{
+    static uint16_t a[FACE_W * FACE_H], b[FACE_W * FACE_H];
+    int bad = 0, cases = 0;
+    for (int r = 0; r <= 70; r += (r < 12 ? 1 : 7)) {
+        for (int k = 0; k < 9; k++) {
+            const int cx = (int[]){0, 5, 183, 367, 380, -20, 200, 100, 300}[k];
+            const int cy = (int[]){0, 447, 224, 3, 460, 100, -30, 440, 10}[k];
+            for (size_t p = 0; p < FACE_W * FACE_H; p++) a[p] = b[p] = (uint16_t)(p * 2654435761u);
+            ref_fill_circle(a, cx, cy, r, 0xBEEF);
+            face_fill_circle(b, cx, cy, r, 0xBEEF);
+            cases++;
+            if (memcmp(a, b, sizeof(a)) != 0) bad++;
+        }
+    }
+    uint32_t seed = 12345;
+    for (int n = 0; n < 1500; n++) {
+        seed = seed * 1103515245u + 12345u;
+        const float deg = (float)(seed % 3600) / 10.0f - 180.0f;
+        seed = seed * 1103515245u + 12345u;
+        const int len = (int)(seed % 220) - 4; /* a few negative, as the clip may produce */
+        seed = seed * 1103515245u + 12345u;
+        const int w = (int)(seed % 40);
+        seed = seed * 1103515245u + 12345u;
+        const int x = (int)(seed % (FACE_W + 120)) - 60;
+        seed = seed * 1103515245u + 12345u;
+        const int y = (int)(seed % (FACE_H + 120)) - 60;
+        for (size_t p = 0; p < FACE_W * FACE_H; p++) a[p] = b[p] = (uint16_t)(p * 40503u + n);
+        ref_draw_limb(a, x, y, deg, len, w, 0x1234);
+        face_draw_limb(b, x, y, deg, len, w, 0x1234);
+        cases++;
+        if (memcmp(a, b, sizeof(a)) != 0) {
+            if (bad < 5) {
+                fprintf(stderr, "limb differs: x=%d y=%d deg=%.1f len=%d w=%d\n", x, y,
+                        (double)deg, len, w);
+            }
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "the row-run disc and limb draw exactly the pixels the per-pixel loops did");
+    CHECK(cases > 1500, "over the whole sweep");
+}
+
 int main(void)
 {
     fb = malloc((size_t)FACE_W * FACE_H * sizeof(uint16_t));
     CHECK(fb != NULL, "framebuffer allocated");
 
+    test_row_runs_match_the_pixel_loops();
     test_emotion_mirror();
     test_emotion_asymmetry();
     test_emotion_distinct();

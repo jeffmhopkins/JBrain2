@@ -35,11 +35,14 @@ const char *display_screen(void);
 /* The face task's smallest observed stack headroom, in words. Reported in telemetry so a
    near-overflow shows up as a shrinking number rather than as a panic. */
 int display_stack_free(void);
-/* Frames drawn since the last call, each one's draw+blit time and the gap between them (ms), for
-   the report's `note`. Reading resets the window. Called from the telemetry task; the counters are
-   plain words, so a read that races a frame is off by one frame, never torn into nonsense. */
-void display_frame_stats(unsigned *frames, unsigned *work_avg, unsigned *work_max,
-                         unsigned *gap_avg, unsigned *gap_max);
+/* Frames drawn since the last call, and per frame the drawing time, the blit time and the gap to
+   the previous frame (ms, average and worst), for the report's `note`. Reading resets the window.
+   Called from the telemetry task; the counters are plain words, so a read that races a frame is
+   off by one frame, never torn into nonsense. */
+typedef struct {
+    unsigned frames, draw_avg, draw_max, blit_avg, blit_max, gap_avg, gap_max;
+} display_frame_stats_t;
+void display_frame_stats(display_frame_stats_t *out);
 
 /* The render loop stage reached just before the last restart, or -1 on a cold boot.
    1 loop top, 2 touch, 3 beep, 4 stack probe, 5 IMU, 6 face_draw, 7 label, 8 flip,

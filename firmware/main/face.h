@@ -126,3 +126,9 @@ void face_set_fit(float scale, int origin_y);
 /* A rest state: happy, open-eyed, idle limbs, no figure transform. The caller starts here and
    tweens away from it, so nothing has to enumerate seventeen floats to get a first frame. */
 void face_rest(face_state_t *st);
+
+/* The two primitives most of a frame is made of, public so `host/tests.c` can hold each against
+   the per-pixel loop it replaced (0.4.4): a filled disc, and a limb (a round-capped stroke of
+   `len` px at `deg` with a ball on the end). Same pixels, written as one run per row. */
+void face_fill_circle(uint16_t *fb, int cx, int cy, int r, uint16_t c);
+void face_draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uint16_t c);
