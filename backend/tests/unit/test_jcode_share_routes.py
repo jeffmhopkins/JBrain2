@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
+from jbrain.jcode.client import FakeJcodeClient, JcodeError
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
 
@@ -145,3 +146,32 @@ def test_owner_redeeming_their_own_link_is_not_downgraded(
     assert redeemed.status_code == 200 and redeemed.json()["session_id"] == "sess-a"
     # Still owner: an owner-only route (mint another share) still works.
     assert owner.post("/api/jcode/sessions/sess-a/share", json={}).status_code == 201
+
+
+def test_revoking_a_share_rotates_the_sessions_preview_slug(
+    app_repo: tuple[FastAPI, FakeAuthRepo],
+) -> None:
+    # A preview URL the recipient kept must stop resolving once the share is revoked.
+    app, repo = app_repo
+    jc = FakeJcodeClient()
+    app.state.jcode_client = jc
+    owner = _owner(app, repo)
+    share_id = owner.post("/api/jcode/sessions/sess-a/share", json={"ttl_hours": 6}).json()["id"]
+    assert jc.rotated == []
+    assert owner.delete(f"/api/jcode/sessions/sess-a/shares/{share_id}").status_code == 204
+    assert jc.rotated == ["sess-a"]
+
+
+def test_a_failed_slug_rotation_does_not_undo_the_revoke(
+    app_repo: tuple[FastAPI, FakeAuthRepo],
+) -> None:
+    class _Down(FakeJcodeClient):
+        async def preview_rotate(self, sid: str) -> None:
+            raise JcodeError("jcode control server error: unreachable")
+
+    app, repo = app_repo
+    app.state.jcode_client = _Down()
+    owner = _owner(app, repo)
+    share_id = owner.post("/api/jcode/sessions/sess-a/share", json={"ttl_hours": 6}).json()["id"]
+    assert owner.delete(f"/api/jcode/sessions/sess-a/shares/{share_id}").status_code == 204
+    assert owner.get("/api/jcode/sessions/sess-a/shares").json() == []

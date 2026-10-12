@@ -23,6 +23,7 @@ from fastapi import APIRouter, WebSocket
 
 from jbrain.api.live import origin_allowed
 from jbrain.api.session_cookie import session_token
+from jbrain.api.ws_reauth import SocketAuth, run_until_revoked
 from jbrain.auth import service
 from jbrain.config import Settings
 
@@ -96,9 +97,7 @@ async def upstream_to_browser(upstream: AsyncIterable[Any], browser: _BrowserWS)
             await browser.send_text(message)
 
 
-async def _bridge(  # pragma: no cover - the live WS pump is exercised at deploy
-    browser: WebSocket, upstream: Any
-) -> None:
+async def _bridge(browser: WebSocket, upstream: Any) -> None:
     import asyncio
 
     pumps = {
@@ -114,9 +113,7 @@ async def _bridge(  # pragma: no cover - the live WS pump is exercised at deploy
         task.result()  # surface a real error (not a normal disconnect) to the caller
 
 
-async def _proxy(  # pragma: no cover - opens the upstream socket, deploy-only
-    browser: WebSocket, settings: Settings, sid: str
-) -> None:
+async def _proxy(browser: WebSocket, settings: Settings, sid: str) -> None:
     headers = {"Authorization": f"Bearer {settings.jcode_token}"}
     try:
         async with websockets.connect(
@@ -134,9 +131,11 @@ async def _proxy(  # pragma: no cover - opens the upstream socket, deploy-only
 
 @router.websocket("/jcode/sessions/{sid}/terminal")
 async def jcode_terminal(websocket: WebSocket, sid: str) -> None:
-    """Bridge the owner's xterm to the sandbox shell. Closes 4403 on a disallowed
-    Origin, 4401 for a non-owner / absent cookie, 4404 when code mode is off or the id
-    is malformed — all before the upstream socket is opened."""
+    """Bridge the owner's (or the session's share recipient's) xterm to the sandbox shell.
+    Closes 4403 on a disallowed Origin, 4401 for a non-owner / absent cookie, 4404 when
+    code mode is off or the id is malformed — all before the upstream socket is opened —
+    and 4401 once the session is revoked or lapses (a revoked share's terminal ends; the
+    shell itself lives on, since the owner types into the same one)."""
     settings = cast(Settings, websocket.app.state.settings)
     if not origin_allowed(websocket, settings):
         await websocket.close(code=4403)
@@ -149,4 +148,6 @@ async def jcode_terminal(websocket: WebSocket, sid: str) -> None:
         await websocket.close(code=4404)
         return
     await websocket.accept()
-    await _proxy(websocket, settings, sid)
+    await run_until_revoked(
+        websocket, SocketAuth(websocket, principal), _proxy(websocket, settings, sid)
+    )

@@ -109,6 +109,14 @@ basemap tiles, the intake stepper, its own jcode session). The route-matrix test
 (`backend/tests/unit/test_route_auth_matrix.py`) presents every non-owner kind to
 every route and fails on any (route, kind) pair not on its allow-list.
 
+A WebSocket authenticates on its handshake, so the long-lived ones (the live location
+feed, the jcode and jlaunch terminals) also re-resolve their handshake session every
+~30 s (`api/ws_reauth.py`), idle or not, and close 4401 once it is revoked or lapses.
+The live feed re-asks `viewer_may_see` after each re-check, so a member taken out of a
+family group stops receiving that subject's fixes. Revoking a jcode share closes its
+open terminals at once and rotates the session's preview URL; the session's processes
+keep running, since the owner shares that shell.
+
 The rare **public** surface (a report share link, `/api/research-share`) is not
 an exception to this — it is another RLS scope. A share visitor runs under an
 empty-scope, non-owner context pinned to one share-link id; a row-scoped policy
