@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** Scheduled · **Last verified:** 2026-10-12 · **Waves:** W1◻️ W2◻️ W3◻️ F0◻️ F1◻️ F2◻️ F3◻️ F4◻️ P1◻️
+> **Status:** Scheduled · **Last verified:** 2026-10-12 · **Waves:** FW◻️ (firmware 0.4.0, §15) W1◻️ W2◻️ W3◻️ P1◻️
 
 Voice post between the twins' panels and the owner's PWA works on the happy path. It fails on
 the paths a four-year-old actually takes: pressing again while it loads, walking away
@@ -373,6 +373,8 @@ is missing.
 ---
 
 ## 6a. Baseline (F0): 0.3.39 does not boot
+
+*F0's content ships inside 0.4.0 (§15); it is no longer a release of its own.*
 
 **The incident, confirmed by the panel's console over USB.** A panel updated 0.3.38 → 0.3.39
 aborts 3–4 s into every boot; no panel has run 0.3.39 successfully. Every boot logs:
@@ -928,6 +930,8 @@ On firing:
   and shown by the debug API. `test_jp_keys_from_main_c_validate_against_telemetry_in` reads the
   `jp` keys from `main.c`'s format string and validates a worst-case `jp` built from them against
   `TelemetryIn`, so the shape is pinned on both sides.
+
+*Superseded by §15: 0.4.0 has no wrapper layer. The table is kept as the map of every old call and what replaces it.*
 
 **F2 changes no intended behaviour.** The old `display.c` and `talk.c` calls become wrappers:
 
@@ -1736,6 +1740,8 @@ so they are exempt from the GUI gate.
 
 ## 10. Host foundations (F1, behaviour-preserving)
 
+*In 0.4.0 (§15) these foundations are built as part of the rewrite, not as a behaviour-preserving wave; the retargets below land in 0.4.0.*
+
 1. `link_types.h`, `jpanel_types.h`, and `wsp_wait_step`/`link_left` in `wsproto.c`.
 2. `stream.c` with `stream_tick`, extracted **as is** (including today's 64,000-sample ring). `audio.c` keeps only I/O, and
    `check_no_logic_in_audio` is added.
@@ -2021,6 +2027,8 @@ CLAUDE.md #5 requires. `DEBUG_ACCESS.md`'s `whoami` row is rewritten with the fu
 the per-file coverage lines for each as evidence.
 
 ## 12. Waves
+
+*The firmware rows (F0–F4) and their order are superseded by §15: they ship as one release, 0.4.0, before W1–W3 and P1. The gates below still apply to it.*
 
 Each wave is one PR. Each package runs its **whole** gate set, from its own directory (CLAUDE.md
 #11):
@@ -2377,6 +2385,74 @@ pre-merge count; a clear releases blobs; merge applies the window.
   - backend gates spell out the integration suite and coverage;
   - the 31-character buffer pin;
   - the tunnel's 404 wording.
+
+---
+
+## 15. Execution: the 0.4.0 rewrite
+
+**Owner decision.** No stopgap: F0–F4 ship as one firmware release, **0.4.0**, an almost complete
+rewrite of the panel's interaction and voice-post code. The twins stay on their S3 panels. This
+section supersedes the firmware sequencing of §6a (F0 as a release), §10 (F1 as a
+behaviour-preserving wave), §12 (the F rows and their order) and §7.7's F2 wrapper table: there is
+no wrapper layer, because `panel_sm.c` replaces `ui.c` and `display.c`'s duplicated logic
+directly. Every design rule in §6a–§10 still holds.
+
+- **Order:** 0.4.0 first; the backend waves W1–W3 and the PWA's P1 follow it.
+- **0.4.0 against today's box.** It must work fully against the box as it is today, degrading
+  exactly as §6 says — for example, a stop acknowledges when the head has no `X-Jpanel-Delivery`,
+  and "new" means a count rise when `/waiting` carries no ids — and pick up each new box feature
+  when it appears.
+- **F0's content is part of 0.4.0:** the persistent socket off (`LINK_PERSISTENT_SOCKET 0`), the
+  `idf.py size` gate, `int_min`, `speech_ok`, and a measured `SPEECH_MIN_INTERNAL`.
+
+**The interfaces are written** and compile with `-Werror` on the host (`make -C firmware/host
+test`) and with the ESP32-S3 toolchain:
+
+| Header | Contract |
+|---|---|
+| `link_types.h` | `link_req_t`/`link_res_t` moved out of `link.h`, plus `deadline_ms`, `upload_mode`, `head_budget_ms`, `on_progress`, `cancelled`, `timed_out`. `deadline_ms == 0` keeps the legacy `timeout_ms`, so callers migrate one by one. |
+| `link.h` | Includes `link_types.h`; `LINK_PERSISTENT_SOCKET 0`. |
+| `jpanel_types.h` | Commands (`jp_cmd_t`), the snapshot (`jp_view_t`), outcomes, waiting entries with ids, flat `jp_stats_t`, `jp_seq_ge`, `jp_due`, the expiry and margin constants. |
+| `stream.h` | The shared audio state (`stream_t`) with a single writer per word; cue slots, silence, reply, stop word, pause, lease; render-side `stream_facts`; producer and arbiter calls; `stream_tick`. |
+| `jpanel_core.h` | `jpanel_io_t` (request, queue, clock, `/waiting` parser, SHA-256, yield hooks); `jpanel_core_init`/`_step`/`_poll_soon`/`_snapshot`/`_stats`. |
+| `panel_sm.h` | `sm_in_t`, effects (`sm_fx_t`), `sm_out_t`, `sm_view_t`, `sm_t`, `sm_step` and the pure queries `sm_target`, `sm_face`, `sm_busy`, `sm_check`. |
+
+`firmware/host/iface_check.c` compiles them until the implementations land; it is then deleted.
+
+**Modules and owners** — one agent each, working in parallel against the headers:
+
+| Agent | Files | Tests to port or add |
+|---|---|---|
+| **A — link** | `link.c` (deadlines and `on_progress` in every wait; `cancelled`; the socket off, starting in the HTTPS fallback); `wsproto.c/h` (`wsp_wait_step`, `link_left`); the callers' migration in `ota.c` (3 sites), `talk.c`, `jpanel.c`'s io | `tests.c` wsproto group plus `wsp_wait_step` and `link_left`; backend `test_the_firmware_builds_exactly_that_base`, `test_the_firmware_spells_the_same_route_and_frame` kept green |
+| **B — audio** | new `stream.c`; `audio.c` cut to I/O, ALC, levels, `speech_feed`, calling `stream_tick`; `cue.c/h` (`CUE_BUSY`, `CUE_NOBODY` placeholders); `check_no_logic_in_audio`; `CAPTURE_MAX_MS`/`PLAY_BUF_MS` deleted from `audio.c` | new `run_stream_tests`: `test_stop_while_paused_drains`, `test_cursor_writers`, `test_outcome_waits_out_reply`, `test_standby_silences_then_sounds_its_own_stop`, `test_exit_during_pet_reply_silences_it_then_sounds_stop`, `test_slot_seqlock_never_pairs_seq_with_other_samples`, `test_heard_then_oops_both_sound`, `test_press_never_cuts_outcome`, `test_refusal_coalesced_and_expires_from_eligibility`, `test_no_codec_never_arms_arbiter_watchdog`; `tests.c` `test_cue_busy_distinct`; backend retargets: `test_a_cue_does_not_shorten_a_recording` → `stream.c`, the two `CAPTURE_MAX_MS` readers → `stream.h` |
+| **C — engine** | new `jpanel_core.c`; `jpanel.c` cut to the task, queue, cJSON, mbedTLS and the real io (`jpanel_post` and `jpanel_snapshot` for render); `jpanel.h` trimmed (its `JPANEL_QUEUE_MAX` copy deleted) | new `run_jpanel_tests` with a scripted box in two modes (**today's box** and the new contract): every engine test in §9 A1, A2, A3 (F2 half), A4, A5 (engine half), A6 (engine half), A7–A9; §7.5's tests; `test_old_box_positional_fetch_still_acks_header_id`; `test_send_outcome_survives_concurrent_chain`; `test_claim_near_expiry_never_trips_unclaimed_backstop`; backend retargets of every census row that reads `jpanel.c`/`jpanel.h` |
+| **D — machine** | new `panel_sm.c`; `ui.c`, `ui.h`, `host/ui_tests.c` **deleted**; `ui.h`'s timing constants move, with their comments, to `panel_sm.h` | new `host/sm_tests.c` (`run_sm_tests`): all 51 Appendix A tests with the stated U/R dispositions; every test named in §8.2, §8.5 and §9 B1–B10; `test_storm` |
+| **E — integration** | `display.c` cut to sampling, the executor and drawing `sm_view_t` (its `s_pending`, `s_repeat_until`, `s_talk`, `s_sendto_until`, `s_paused_since`, `s_pend_reply_to` and tap-order logic deleted); `main.c` (the `jp` object after `pmu_history`, `speech_ok`, the update-first order, watchdogs and the RTC cap, the internal-RAM floor); `talk.c` (lease 2, the reply slot, waiting on `reply_done`); `ota.c`'s `ota_running`; `check_no_logic_in_display`; `CMakeLists.txt` `SRCS` and the host Makefile; `firmware.yml`'s `idf.py size` step with the DRAM baseline; `version.txt` 0.4.0 and `dist/` | `jpanel_tests` end to end (`sm_step` against the real `jpanel_core` and `stream.c`, including `test_selection_held_while_stop_outcome_pending`); `test_update_check_precedes_task_starts`; backend: `TelemetryIn.jp` and `speech_ok`, `test_jp_keys_from_main_c_validate_against_telemetry_in`, `test_the_model_declares_all_of_them` and `test_the_panel_s_whole_payload_fits_the_buffer_it_is_built_in` retargeted, and the §10 census rows that read `display.c`, `ui.h` and `ui.c` |
+| **F — visuals (F4)** | the overlay, pips, pulse, glyphs and hush ring; the `CUE_NOBODY`/`CUE_SENT`/`CUE_BUSY` contours | The GUI gate first: three interactive mocks in `docs/mocks/jpanel-panel-messaging/`, approved by the owner. If they are not approved when E is done, 0.4.0 ships the placeholders and F becomes 0.4.1. |
+
+**Integration order**
+
+1. A, B, C and D in parallel, each against the headers with its own host suite green. A's work is
+   device-only and is checked by the ESP-IDF build. A header change goes through E.
+2. **Measure before setting the floor.** E derives `S`, `T` and `P` (§6a) from 0.3.38's recorded
+   boots (the `mem: pre-speech`/`post-speech` console lines and the reported `int_free`/`int_min`
+   history, through the debug API) and from the incident log. It sets
+   `SPEECH_MIN_INTERNAL = S + T + P`, writing the arithmetic into §6a, below the pre-speech free.
+3. E wires the executor, runs the end-to-end `jpanel_tests`, the ESP-IDF build, the size gate,
+   and every package's gates (§12).
+4. An adversarial review of the whole diff.
+5. Hardware: after the owner merges, the first reports' `int_min` and `speech_ok`, read through
+   the debug API, must clear the floor; a panel that does not is handled by a fixed image at a
+   higher version.
+
+**Deleted:**
+- `ui.c`, `ui.h` and `host/ui_tests.c`;
+- `display.c`'s duplicated interaction state;
+- `jpanel.c`'s `s_state`, `s_run`, `s_stopped`, `s_fetching`, `s_in_*` and its own poll logic
+  (into the core);
+- `audio.c`'s `s_play`, ring and cue mixing (into `stream.c`);
+- `host/iface_check.c`;
+- the F2 characterisation tests (`test_f2_*`), which only guarded the wrapper layer.
 
 ---
 
