@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; the steps list, the steady spinner and KEY-outside-starts-new in 0.0.14; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12 (box side built, panel side next)** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; the steps list, the steady spinner and KEY-outside-starts-new in 0.0.14; the conversation switcher (New and Recent conversations) approved 2026-10-12 and built in 0.0.15; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12 (box side built, panel side next)** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -96,7 +96,9 @@ panel, the others import it at a fixed `start` state).
 - **Clear chat by a long press** (owner, 2026-10-12: *"find a way to clear the chat. Maybe a long
   press in a chat window pulls up a menu?"*): a finger held still (600 ms, within the tap's 20 px
   slop, so a scroll never does it) anywhere in a conversation — Jerv's, Dave's, Quorra's or
-  Tamsin's — opens a small card over a dimmed screen: **Clear chat** (rose) and **Cancel**. Clear
+  Tamsin's — opens a small card over a dimmed screen: **Clear chat** (rose) and **Cancel**. (Since
+  0.0.15 that is the people's threads only: Jerv's and Dave's offer New and Recent conversations,
+  below.) Clear
   takes two taps within 3 s, the Wi-Fi Disconnect pattern ("Tap again to clear"). BOOT, a tap on
   the dim, or KEY closes it, and KEY then records nothing. Clearing empties that thread on the
   panel; for Jerv or Dave the next talk also starts a fresh conversation on the box (the old one
@@ -113,7 +115,8 @@ panel, the others import it at a fixed `start` state).
   with its own history: Jerv's and Dave's never share a screen or a message. **Compass** is a
   "Work in progress" page. BOOT climbs one level. KEY outside Dave's thread is still Jerv's.
   Built in firmware 0.0.11; there is no mock board for these, the sim's `minecraft`, `dave`,
-  `dave-reply`, `compass`, `chat-menu` and `chat-menu-armed` states are their pictures.
+  `dave-reply`, `compass`, `quorra-menu` and `quorra-menu-armed` states are their pictures (0.0.11's
+  `chat-menu` states, renamed when Jerv's long press became New and Recent).
 - **The Clock opens its alarms on a two-second hold** (owner, 2026-10-12: *"when we're on clock
   and we press the screen and it pulls up the clock menu, I think that needs to be a long press,
   maybe 2 seconds or more"*): a plain tap on the face does nothing; a finger held still for 2 s
@@ -161,6 +164,31 @@ panel, the others import it at a fixed `start` state).
   half of the mock's card is a later wave. On the panel the ringing screen's second button stays
   **Stop**, as drawn. The sim's `ringing`, `ringing-dark`, `ringing-over-notice`, `alarm-snoozed`,
   `alarm-test` and `clock-alarms` states are the panel's pictures, from the box's own JSON.
+- **New conversation and Recent conversations** (owner, 2026-10-12: *"On long press of the Jerv
+  [conversation] where it makes you able to clear a conversation, it should also have another
+  button so that you can click it and view recent conversations to re-change what conversation
+  we're actually in … change the clear conversation to new session."*). **Approved by the owner on
+  2026-10-12** as drawn: `ConvoMenu`, `ConvoRecent`, `ConvoLoading`, `ConvoEmpty`, `ConvoSwitched`,
+  `ConvoNew` and `DaveRecent`. In Jerv's or Dave's thread the long press opens "This conversation"
+  / "<Agent> · <title>" with **New conversation** (the agent's colour, one tap, no confirm — the
+  old one stays in Recent and the app; on a conversation already new and empty it does nothing
+  and says so), **Recent conversations ›** and **Cancel**. Recent lists the agent's last ten
+  conversations from the panel (microphone) and the app (phone): title, time, last line ("You: "
+  before his own), the current one barred, tinted and chipped "Current"; tapping one says
+  "Opening…" and switches the thread to its last exchanges. KEY in Recent closes it and talks in
+  the current conversation. He approved without answering the board's four questions, so their
+  defaults are what is built:
+  1. the conversation's title always shows under "Jerv" / "Dave" in the header; a new one reads
+     "Desk panel" until the box has a title for it;
+  2. after a switch, the chip "Earlier messages are in the app", not "Load earlier";
+  3. Dave's Recent is his panel and PWA conversations only, not the in-game Minecraft chats, for
+     now;
+  4. conversations started by KEY from outside a thread are in Recent like any other.
+
+  Built in firmware 0.0.15; the sim's `jerv-menu`, `jerv-recent`, `jerv-recent-loading`,
+  `jerv-recent-empty`, `jerv-switched`, `jerv-new`, `dave-menu` and `dave-recent` states are the
+  boards drawn by the firmware. Box side: `../../plans/JPANEL_C6_PLAN.md` §1 "Switching
+  conversations".
 - **A notice can be a whole picture** (owner, 2026-10-12: *"I want to be able to send a whole
   picture as a notification. This way some push notifications can draw their own banner or
   picture or whatever and show that."*): the sender sends a PNG, JPEG or WebP and the box fits

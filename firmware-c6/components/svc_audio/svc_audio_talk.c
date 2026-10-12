@@ -72,6 +72,12 @@ bool svc_audio_fresh_pending(const char *agent)
     return tk_agent_from(agent, &a) && s_fresh[a];
 }
 
+void svc_audio_continue(const char *agent)
+{
+    tk_agent_t a;
+    if (tk_agent_from(agent, &a)) s_fresh[a] = false;
+}
+
 static void lock(void)
 {
     talk_port_lock();

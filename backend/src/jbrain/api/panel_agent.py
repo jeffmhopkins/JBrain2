@@ -35,7 +35,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.agents import MINECRAFT_DAVE_AGENT
-from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.session import PANEL_PLACEHOLDER_TITLE, AgentSessionRepo
 from jbrain.api.brain import apply_pronunciation
 from jbrain.api.deps import DebugDep, OwnerDep, PanelDep
 from jbrain.api.notes import ctx_for
@@ -53,7 +53,8 @@ router = APIRouter(prefix="/endpoint", tags=["endpoint"])
 PanelAgent = Literal["jerv", "dave"]
 AGENT_IDS: dict[PanelAgent, str] = {"jerv": "jerv", "dave": MINECRAFT_DAVE_AGENT}
 SPOKEN_NAMES: dict[PanelAgent, str] = {"jerv": "Jerv", "dave": "Dave"}
-THREAD_TITLE = "Desk panel"
+#: A placeholder, not a name: Jerv titles the chat in its first turn (`session.is_unnamed`).
+THREAD_TITLE = PANEL_PLACEHOLDER_TITLE
 
 #: How long the panel's request waits for the turn. The firmware waits 130 s for the box's
 #: answer (`ANSWER_LIMIT_MS`, 0.0.11); transcription and speech come out of the rest. A turn
@@ -155,7 +156,9 @@ async def panel_thread(
         if found is not None:
             await _rehome(maker, owner, str(found))
             return str(found)
-    made = await sessions.create(owner, domain_scopes=[], title=THREAD_TITLE, agent=agent_id)
+    made = await sessions.create(
+        owner, domain_scopes=[], title=THREAD_TITLE, agent=agent_id, origin="panel"
+    )
     async with scoped_session(maker, owner) as s:
         await s.execute(
             text(
