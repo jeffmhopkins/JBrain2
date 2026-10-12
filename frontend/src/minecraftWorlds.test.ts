@@ -48,6 +48,11 @@ import {
   rulesNote,
   seedFor,
   settingsLine,
+  transportBusyText,
+  transportFailText,
+  transportMeaning,
+  transportOn,
+  transportSavedToast,
   worldBlocked,
 } from "./minecraftWorlds";
 
@@ -84,7 +89,9 @@ describe("game rules: live or pending", () => {
   });
 
   it("settings say the same thing", () => {
-    expect(settingsLine(castle, true)).toMatch(/^Loaded and running — difficulty changes live/);
+    expect(settingsLine(castle, true)).toBe(
+      "Loaded and running — difficulty and Power\u00a0Pack teleport change live; game mode and cheats apply at the next restart.",
+    );
     expect(settingsLine(castle, false)).toMatch(/applied when the server starts/);
     expect(settingsLine(creative, true)).toMatch(/when Creative test next loads/);
   });
@@ -406,6 +413,48 @@ describe("keep inventory: Off · On · Power Pack", () => {
     );
     expect(keepSavedToast("off", "pack", sky, false)).toBe(
       "Saved — Power Pack off, keep inventory Off from Skyblock run's next load",
+    );
+  });
+});
+
+describe("Power Pack teleport", () => {
+  it("reads on unless the slot says off", () => {
+    expect(transportOn(castle)).toBe(true);
+    expect(transportOn({ ...castle, power_pack_transport: true })).toBe(true);
+    expect(transportOn({ ...castle, power_pack_transport: false })).toBe(false);
+  });
+
+  it("says what each side means, with their own saved places and no lone Pack", () => {
+    expect(transportMeaning(true)).toBe(
+      "on — players can ask Dave to take them to their own saved places; each trip burns a Power\u00a0Pack.",
+    );
+    expect(transportMeaning(false)).toMatch(/^off — Dave won't teleport anyone in this world\./);
+    expect(transportBusyText(false)).toBe("Turning Power\u00a0Pack teleport off…");
+  });
+
+  it("the toast says live, at the start, or at the next load from the slot", () => {
+    expect(transportSavedToast(false, castle, true)).toBe("Applied live — teleport off");
+    expect(transportSavedToast(false, castle, false)).toBe(
+      "Saved — teleport off when the server starts",
+    );
+    expect(transportSavedToast(true, skyblock, false)).toBe(
+      "Saved — teleport on from Skyblock run's next load",
+    );
+  });
+
+  it("says nothing changed only when refused and the re-read agrees", () => {
+    const why = "the server is restoring a backup";
+    expect(transportFailText({ to: false, now: true, refused: true, reason: why })).toBe(
+      `Couldn't turn Power\u00a0Pack teleport off — ${why}. Nothing changed; it's still on.`,
+    );
+    const lost = transportFailText({ to: false, now: true, refused: false, reason: why });
+    expect(lost).not.toMatch(/Nothing changed/);
+    expect(lost).toMatch(/It still reads on\. The server may still be working on it\.$/);
+    expect(transportFailText({ to: false, now: false, refused: false, reason: why })).toMatch(
+      /^Power\u00a0Pack teleport reads off now, but the server reported a problem/,
+    );
+    expect(transportFailText({ to: true, now: null, refused: true, reason: why })).toMatch(
+      /Couldn't read it back\./,
     );
   });
 });

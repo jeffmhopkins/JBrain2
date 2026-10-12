@@ -161,3 +161,23 @@ async def test_the_debug_switch_passes_through_and_is_recorded(sidecar) -> None:
     assert out["power_pack_transport"] is True
     assert seen[-1].url.path == "/worlds/slot2/power-pack-transport"
     assert req.state.debug_detail == "minecraft power pack transport slot2 on=True"
+
+
+def test_a_new_world_takes_the_switch_and_leaves_it_to_the_box_when_unset(
+    client,  # noqa: F811
+    sidecar,  # noqa: F811
+) -> None:
+    seen, _replies = sidecar
+    resp = client.post(
+        "/api/minecraft/worlds/slot3/create", json={"name": "Quiet", "power_pack_transport": False}
+    )
+    assert resp.status_code == 200
+    assert json.loads(seen[-1].content) == {"name": "Quiet", "power_pack_transport": False}
+    client.post("/api/minecraft/worlds/slot3/create", json={"name": "Usual"})
+    assert "power_pack_transport" not in json.loads(seen[-1].content)
+    count = len(seen)
+    bad = client.post("/api/minecraft/worlds/slot3/create", json={"power_pack_transport": "maybe"})
+    assert bad.status_code == 422 and len(seen) == count
+    # A rename or setting change never carries it: the switch has its own route.
+    client.patch("/api/minecraft/worlds/slot3", json={"power_pack_transport": False})
+    assert "power_pack_transport" not in json.loads(seen[-1].content)

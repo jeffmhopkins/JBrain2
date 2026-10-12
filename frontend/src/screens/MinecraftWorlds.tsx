@@ -71,6 +71,7 @@ import {
   RESTART_KEY,
   RULES,
   type RuleDef,
+  TRANSPORT_HELP,
   backupShort,
   backupTitle,
   cap,
@@ -101,6 +102,11 @@ import {
   settingsLine,
   slotName,
   slotNumber,
+  transportBusyText,
+  transportFailText,
+  transportMeaning,
+  transportOn,
+  transportSavedToast,
   whenOf,
   worldBlocked,
   wreckFactText,
@@ -149,6 +155,8 @@ export interface Upload {
 }
 
 type SettingKey = "gamemode" | "difficulty" | "cheats";
+/** What can wait for a start or load: the settings, and Power Pack teleport. */
+type PendKey = SettingKey | "transport";
 
 /** A reason as a clause, so it can sit mid-sentence. */
 const clause = (text: string) => text.trim().replace(/[.\s]+$/, "");
@@ -158,6 +166,17 @@ function message(err: unknown): string {
 }
 
 const isAbort = (err: unknown) => err instanceof DOMException && err.name === "AbortError";
+
+function withPend(
+  p: Record<string, PendKey[]>,
+  slot: string,
+  key: PendKey,
+  on: boolean,
+): Record<string, PendKey[]> {
+  const had = p[slot] ?? [];
+  if (had.includes(key) === on) return p;
+  return { ...p, [slot]: on ? [...had, key] : had.filter((k) => k !== key) };
+}
 
 /** A long operation this device is waiting on: its outcome arrives as a newer
  *  `server.last_job` once `server.job` clears. `since` is the last outcome seen before it was
@@ -221,7 +240,9 @@ export function useWorlds({
   // Changes saved to a world that isn't loaded wait for its next load. The box records
   // nothing for those, so this device remembers its own; restart-bound ones come from
   // `pendingRestart`, which every device shares.
-  const [nextLoad, setNextLoad] = useState<Record<string, SettingKey[]>>({});
+  // Power Pack teleport isn't a server property, so `pendingRestart` never names it: a
+  // change saved to the stopped, loaded world waits here too, until the server starts.
+  const [nextLoad, setNextLoad] = useState<Record<string, PendKey[]>>({});
   const [rev, setRev] = useState(0);
   const follow = useRef<Follow | null>(null);
   const lastJobRef = useRef(lastJob);
@@ -291,6 +312,9 @@ export function useWorlds({
   useEffect(() => {
     if (activeId) setNextLoad((p) => (p[activeId]?.length ? { ...p, [activeId]: [] } : p));
   }, [activeId]);
+  useEffect(() => {
+    if (running && activeId) setNextLoad((p) => withPend(p, activeId, "transport", false));
+  }, [running, activeId]);
 
   // Focus goes back to the row that pushed a page once that page is popped (and the page
   // beneath stops being inert).
@@ -312,11 +336,12 @@ export function useWorlds({
     (upload ? "Wait — a world is uploading from this device." : "") ||
     (inFlight ? `Wait — the server is ${inFlight}.` : "");
 
-  function pendingFor(s: MinecraftSlot): SettingKey[] {
+  function pendingFor(s: MinecraftSlot): PendKey[] {
     if (!s.active) return nextLoad[s.id] ?? [];
-    return (Object.keys(RESTART_KEY) as SettingKey[]).filter((k) =>
+    const restart: PendKey[] = (Object.keys(RESTART_KEY) as SettingKey[]).filter((k) =>
       pendingRestart.includes(RESTART_KEY[k]),
     );
+    return nextLoad[s.id]?.includes("transport") ? [...restart, "transport"] : restart;
   }
 
   async function run(verb: string, fn: () => Promise<void>): Promise<boolean> {
@@ -460,6 +485,27 @@ export function useWorlds({
         );
       } else if (key === "cheats") toast(`Saved — cheats ${value ? "on" : "off"} ${when}`);
       else toast(`Saved — difficulty changes ${when}`);
+    },
+    /** Power Pack teleport: the switch's own route. Answers the rose line on a failure, worded
+     *  from the slot as re-read (keep inventory's rule), or null once it has landed. */
+    async transport(slot: string, on: boolean): Promise<string | null> {
+      const t = slotOf(slot);
+      if (!t) return null;
+      try {
+        const live = (await api.minecraftSetTransport(slot, on)).applies === "now";
+        setNextLoad((p) => withPend(p, slot, "transport", !live));
+        toast(transportSavedToast(on, t, live));
+        return null;
+      } catch (err) {
+        const refused = err instanceof ApiError && isRefusal(err.status);
+        const reason = refused ? refusalReason(err.message) : "the server didn't answer";
+        const fresh = await api.minecraftWorlds().catch(() => null);
+        if (fresh) setWorlds(fresh);
+        const now = fresh?.slots.find((x) => x.id === slot);
+        return transportFailText({ to: on, now: now ? transportOn(now) : null, refused, reason });
+      } finally {
+        void reload();
+      }
     },
     async reset(slot: string, mode: MinecraftResetMode, seed?: string, wreck?: boolean) {
       const t = slotOf(slot);
@@ -940,6 +986,13 @@ function WorldRow({ s }: { s: MinecraftSlot }) {
         <span className="mc-wmeta">
           {cap(s.gamemode)} · {cap(s.difficulty)} ·{" "}
           <span className="mc-num">{s.exists ? fmtBytes(s.bytes) : "not generated"}</span>
+          {/* Off only: the default is on, so a normal world's glance doesn't grow. */}
+          {!transportOn(s) && (
+            <>
+              {" "}
+              · <span className="mc-wmeta-off">teleport off</span>
+            </>
+          )}
         </span>
         <span className="mc-wmeta">{playedText(s, w.running, w.online.length, w.nowMs)}</span>
         <span className="mc-wmeta">
@@ -1219,7 +1272,72 @@ function Settings({ s }: { s: MinecraftSlot }) {
           <span className="mc-knob" />
         </button>
       </div>
+      <TransportRow s={s} pending={pend.includes("transport")} />
     </div>
+  );
+}
+
+/** Power Pack teleport, built as Cheats is, with a fixed help box under it: unlike Cheats a
+ *  flip can apply live, so the mode is explained before anyone flips it. One write at a time;
+ *  the switch shows what the slot reports, never what was attempted. */
+function TransportRow({ s, pending }: { s: MinecraftSlot; pending: boolean }) {
+  const w = useW();
+  const [busy, setBusy] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const on = transportOn(s);
+  async function flip() {
+    if (busy !== null) return;
+    const to = !on;
+    setError(null);
+    setBusy(to);
+    setError(await w.actions.transport(s.id, to));
+    setBusy(null);
+  }
+  return (
+    <>
+      <div className="mc-sw-row">
+        <span className="mc-sw-l">
+          <b>Power&nbsp;Pack teleport</b> <Pend on={pending && busy === null} />
+          <br />
+          {busy !== null ? (
+            <output className="mc-keep-now">
+              <Spin />
+              {transportBusyText(busy)}
+            </output>
+          ) : (
+            transportMeaning(on)
+          )}
+        </span>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-busy={busy !== null}
+          aria-label={`Power Pack teleport in ${slotName(s)}`}
+          className={`mc-switch${on || busy !== null ? " on" : ""}${busy !== null ? " busy" : ""}`}
+          onClick={() => void flip()}
+        >
+          <span className="mc-knob" />
+        </button>
+      </div>
+      {error && (
+        <div className="mc-errline mc-keep-err" role="alert">
+          <AlertTriangleIcon size={16} />
+          <span>{error}</span>
+          <button
+            type="button"
+            className="mc-icon-btn"
+            aria-label="Dismiss"
+            onClick={() => setError(null)}
+          >
+            <XIcon size={18} />
+          </button>
+        </div>
+      )}
+      <p className="mc-keep-help">
+        <b>Power&nbsp;Pack teleport:</b> {TRANSPORT_HELP}
+      </p>
+    </>
   );
 }
 
