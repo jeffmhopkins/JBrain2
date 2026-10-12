@@ -1419,11 +1419,11 @@ def test_a_dave_question_carries_the_askers_unlocks_bounded(tmp_path: Path) -> N
 
 
 def test_only_the_jbrain_pack_registers_the_dave_command() -> None:
-    """Both packs can be in one world, and two registrations of `jb:dave` collide."""
+    """Both packs can share a world, and two registrations of one command collide."""
     mc_dir = DEPLOY / "minecraft"
     door = (mc_dir / "jbrain-pack/scripts/main.js").read_text()
     probe = (mc_dir / "probe-pack/scripts/main.js").read_text()
-    assert 'name: "jb:dave"' in door and "getSpawnPoint" in door
+    assert '"jb:dave", "jb:d", "jb:ai"' in door and "getSpawnPoint" in door
     assert "registerCommand" not in probe
     # The engine refuses the whole command past eight parameters (BDS 1.26.52), which
     # would leave players with no door at all.

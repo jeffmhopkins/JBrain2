@@ -70,7 +70,7 @@ def build_minecraft_replicator_handlers(config: Any) -> dict[str, ToolHandler]:
         if asker is None:
             return ToolOutput(
                 "Programming a Replicator happens in game only: the player holds it, carries"
-                " 8 full stacks of what it should make, and asks with /jb:dave.",
+                " 8 full stacks of what it should make, and asks with /dave.",
                 result_brief="in game only",
             )
         target = item_id(arguments.get("target"))
