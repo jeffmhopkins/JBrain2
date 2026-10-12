@@ -31,13 +31,12 @@ RLS gates it independently (docs/reference/ANALYSIS.md "Mixed-domain notes [spli
 import uuid
 from datetime import datetime
 from typing import Any
-from urllib.parse import urlsplit
 
 from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jbrain.appointments.service import STATUSES
+from jbrain.appointments.service import STATUSES, web_join_url
 from jbrain.models.analysis import Entity, Fact, TemporalToken
 from jbrain.models.appointments import Appointment, AppointmentLocation
 
@@ -181,19 +180,6 @@ def _coerce_mode(value: str | None) -> str | None:
         return None
     key = value.strip().lower().replace("-", "_").replace(" ", "_")
     return _MODE_ALIASES.get(key, key) or None
-
-
-def _web_url(value: str | None) -> str | None:
-    """The join link only when it is an absolute http(s) URL. It is extracted from
-    email/note text, so it is attacker-influenceable, and the PWA renders it as an
-    href: a `javascript:`/`data:` value would run in the app's origin. Dropping it
-    here keeps every reader of the row safe, not just the one screen that checks."""
-    if value is None:
-        return None
-    parsed = urlsplit(value)
-    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
-        return None
-    return value
 
 
 def _format_address(value: Any) -> str | None:
@@ -401,7 +387,7 @@ def _row_facets(facets: dict[str, list[Fact]], names: dict[uuid.UUID, str]) -> d
     return {
         "organizer": _ref_label(organizer[0], names) if organizer else None,
         "attendance_mode": _coerce_mode(_text_value(_first_value(facets, _ATTENDANCE_MODE))),
-        "online_url": _web_url(_text_value(_first_value(facets, _ONLINE_URL))),
+        "online_url": web_join_url(_text_value(_first_value(facets, _ONLINE_URL))),
         "description": _text_value(_first_value(facets, _DESCRIPTION)),
         "appointment_type": _text_value(
             _first_value(facets, _APPOINTMENT_TYPE) or _first_value(facets, _TYPE)

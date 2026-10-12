@@ -9,11 +9,25 @@ the read tools / ICS feed read it. `AppointmentSpec` is the projector's input,
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from jbrain.db.session import SessionContext
 
 # The appointment.yaml Lifecycle.status enum (mirrored by the DB CHECK).
 STATUSES = frozenset(("tentative", "confirmed", "cancelled", "occurred"))
+
+
+def web_join_url(value: str | None) -> str | None:
+    """The join link only when it is an absolute http(s) URL. It is extracted from
+    email/note text, so it is attacker-influenceable, and the PWA renders it as an
+    href: a `javascript:`/`data:` value would run in the app's origin. The projection drops it
+    at write and the ICS feed re-checks rows written before this check existed."""
+    if value is None:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
+        return None
+    return value
 
 
 class UnknownDomain(Exception):

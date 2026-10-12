@@ -51,6 +51,7 @@ import type { MapIntent } from "../minecraftMapNav";
 import { slotName } from "../minecraftWorlds";
 import { useForeground } from "../visibility";
 import { DaveSection } from "./MinecraftDave";
+import { safeHref } from "../safeHref";
 import { MapEntry, MapLayer } from "./MinecraftMap";
 import { AllowlistSection, ServerSettingsSection } from "./MinecraftServerSettings";
 import { WorldModals } from "./MinecraftWorldSheets";
@@ -843,6 +844,8 @@ function updateStatusText(update: MinecraftUpdate, fromStopped: boolean): string
 
 function Changelog({ version, latest }: { version: MinecraftVersion; latest: string }) {
   const notes = version.notes;
+  // The URL comes from Mojang's help-centre API, so it is gated like any third-party link.
+  const notesHref = safeHref(notes?.url);
   if (!notes) {
     return (
       <p className="mc-note">
@@ -880,9 +883,11 @@ function Changelog({ version, latest }: { version: MinecraftVersion; latest: str
           </ul>
         )}
       </div>
-      <a className="mc-link" href={notes.url} target="_blank" rel="noopener noreferrer">
-        Release notes <ExternalLinkIcon size={14} />
-      </a>
+      {notesHref && (
+        <a className="mc-link" href={notesHref} target="_blank" rel="noopener noreferrer">
+          Release notes <ExternalLinkIcon size={14} />
+        </a>
+      )}
     </>
   );
 }
@@ -1060,8 +1065,13 @@ function UpdateSection({
             <span className="badge ok mc-badge">up to date</span>
           )}
         </div>
-        {version?.notes && (
-          <a className="mc-link" href={version.notes.url} target="_blank" rel="noopener noreferrer">
+        {version?.notes && safeHref(version.notes.url) && (
+          <a
+            className="mc-link"
+            href={safeHref(version.notes.url)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
             Release notes for {version.notes.version} <ExternalLinkIcon size={14} />
           </a>
         )}
