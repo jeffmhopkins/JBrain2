@@ -19,8 +19,8 @@ static int16_t on_glass(uint16_t v)
 
 void tp_map(uint16_t raw_a, uint16_t raw_b, int16_t *x, int16_t *y)
 {
-    *x = on_glass(raw_b);
-    *y = (int16_t)(TP_SIDE - 1 - on_glass(raw_a));
+    *x = (int16_t)(TP_SIDE - 1 - on_glass(raw_b));
+    *y = on_glass(raw_a);
 }
 
 tp_ev_t tp_track(tp_track_t *t, const tp_report_t *r)

@@ -32,6 +32,12 @@ These override anything below that disagrees.
 - **Runtime brightness works (0.0.4, seen by the owner):** `0x51` sent framed as
   `(0x02<<24)|(0x51<<8)`, between frames, from the one task that owns the panel io, dims the
   glass. This is the write the twins' S3 panels silently discard; on this board it takes.
+- **Touch mapping (0.0.6 → 0.0.7, measured):** the owner's four corner taps came back in the
+  opposite corners under §3's vendor mapping (`x = rawB, y = 479 − rawA`). The mapping that
+  lands them is **display_x = 479 − rawB, display_y = rawA** — the vendor's, turned 180°, because
+  this firmware draws the panel the other way up from their demos. Taps landed 45-78 px in from
+  the true corners: finger placement plus edge compression, which calibration will address.
+  Supersedes §3 "Orientation vs display" and step 4 below.
 - **Display timings (0.0.4):** first full 480×480 frame 71 ms over QSPI at 40 MHz through one
   480×40 strip; later partial frames ~32 ms. Free internal heap with the UI up: ~156 KB,
   minimum ~120 KB.
