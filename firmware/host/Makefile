@@ -31,11 +31,12 @@ HDR = $(wildcard ../main/*.h)
 # time against a fake clock. Sequential, not parallel: a suite whose failure output interleaves with
 # another's is a suite nobody reads.
 .PHONY: test clean check_no_logic_in_audio
-test: run_tests run_ui_tests run_link_tests run_stream_tests check_no_logic_in_audio
+test: run_tests run_ui_tests run_link_tests run_stream_tests run_jpanel_tests check_no_logic_in_audio
 	./run_tests
 	./run_ui_tests
 	./run_link_tests
 	./run_stream_tests
+	./run_jpanel_tests
 
 run_tests: tests.c $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
@@ -63,5 +64,12 @@ check_no_logic_in_audio:
 		echo "audio.c: the lines above belong in stream.c (check_no_logic_in_audio)"; exit 1; \
 	else echo "check_no_logic_in_audio: OK"; fi
 
+# THE ENGINE AGAINST A SCRIPTED BOX (plan §10). Its own source list, not SRC: the fake arbiter
+# stands in for `stream.c`, and both would define the same symbols. The end-to-end suite links the
+# real one. -pthread for the seqlock's concurrent-reader test.
+JPANEL_SRC = ../main/jpanel_core.c ../main/reach.c fake_stream.c
+run_jpanel_tests: jpanel_tests.c $(JPANEL_SRC) fake_stream.h $(HDR)
+	$(CC) $(CFLAGS) -pthread -o $@ $(filter-out %.h,$^) $(LDLIBS)
+
 clean:
-	rm -f run_tests run_ui_tests run_link_tests run_stream_tests
+	rm -f run_tests run_ui_tests run_link_tests run_stream_tests run_jpanel_tests

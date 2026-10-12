@@ -1,6 +1,6 @@
 # The firmware's host suite
 
-Four binaries and a gate, all run by `make -C firmware/host test`. Nothing here needs hardware,
+Five binaries and a gate, all run by `make -C firmware/host test`. Nothing here needs hardware,
 an ESP-IDF toolchain, or a network.
 
 | binary | source | what it is for |
@@ -9,6 +9,7 @@ an ESP-IDF toolchain, or a network.
 | `run_ui_tests` | `ui_tests.c` | **The interaction state machine** (`main/ui.c`), driven one frame at a time: a press, a clock advanced, an overlay arbitrated, a peripheral call recorded. ~440 checks. |
 | `run_link_tests` | `link_tests.c` | **`link.c`'s deadline arithmetic** (`main/wsproto.c`): time left across the clock wrap, the wait step, the open's per-phase split, PROGRESS-mode deadlines, the body's stall bound. `link.c` only runs on a panel, so these helpers are what CI holds its clamping to. |
 | `run_stream_tests` | `stream_tests.c` | **The speaker's arbiter** (`main/stream.c`), one 40 ms tick at a time against a fake clock: what reaches the codec when cues, the pet's reply, a silence, a stop and a streamed message meet, and what render may know about it. Built with `STREAM_TEST_HOOKS`, so the seqlock test can stop render half-way through a slot write. |
+| `run_jpanel_tests` | `jpanel_tests.c` | **The voice-post engine** (`main/jpanel_core.c`) against a scripted box in two modes — today's 0.3.39 contract (positional `/next`, no ids, no delivery header, no `/returned`) and the W3 contract — with a fake clock, a fake arbiter (`fake_stream.c`, built from `stream.h`'s contract) and a fake link that enforces deadlines the way `link.c` does. Every 40 ms of fake time it checks the UI backstops and the watchdog's condition against the published snapshot. |
 
 `check_no_logic_in_audio` greps `main/audio.c` for anything but codec I/O — ring arithmetic, cue
 rendering, slot writes, a field of the speaker state — because a decision made on the audio task

@@ -12,8 +12,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* The same number as `JPANEL_QUEUE_MAX` in `jpanel.h` and in the backend; the backend test that
-   pins them reads `jpanel.h` until the engine agent retargets it here and deletes that copy. */
+/* The same number as `JPANEL_QUEUE_MAX` in `backend/src/jbrain/api/jpanel.py`: a contract written
+   down twice, pinned by `test_the_queue_cap_is_the_same_number_on_both_sides`. */
 #define JPANEL_QUEUE_MAX 8
 #define JP_ID_MAX 48   /* a uuid and its NUL, with room */
 #define JP_NAME_MAX 32 /* the panel's name field; the box cuts names to fit (plan §6) */
