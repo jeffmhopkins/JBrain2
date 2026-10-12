@@ -876,6 +876,155 @@ scripts/debug-connect.sh panel-cmd c6 snapshot                        # shell.me
 6. After a talk, the snapshot's `audio.stack_free` (want ≥ 2 KB), `mic_peak_l`/`r` (want well under
    32,767), and telemetry's `int_min`.
 
+## What 0.0.12 adds: the turn on the panel, the whole answer, the Clock's hold, Jerv's icon
+
+The owner's first agent talks on 0.0.11 (2026-10-12): *"when I ask it to do something like find
+the high tide near Port St John Florida, it sat there for a while. Just saying transcribing and
+then said 'Still working on that. The answer will be in the app.' … I want better updates for tool
+use and such to come through the panel and not to have it direct me to my app."* Then: longer
+replies read past 30 s, the first quarter second of a reply sometimes clipped, the Clock's alarms
+on a long press, and Jerv in the PWA's own icon. Plan §1 has each decision, dated.
+
+### On the glass
+
+- **"Transcribing…" becomes the question as soon as the box has it**, not when the answer comes.
+- **A live status line under it** while the agent works: a small spinner and dim words —
+  "Thinking…", "Searching the web: high tide Port St John FL…", "Reading a web page: tides…",
+  "Writing the answer…" — the PWA's own step labels, in the present, one line per tool the agent
+  starts. The answer replaces it. (The mock's status row is italic; the image has no italic face,
+  so it is the dim colour and a smaller size.)
+- **The whole answer**: the box sends up to 1,000 bytes and the thread keeps an agent's newest
+  answer whole; older answers keep a bubble's 255 bytes. A longer answer is cut on a word with
+  "…" on the glass and still spoken in full.
+- **Read in full**: the speech is the whole answer, sentence by sentence, up to 5 minutes. **KEY
+  or BOOT stops it at once.** Read-aloud off: words only, nothing synthesised.
+- **No "the answer will be in the app"** for a slow turn: the box follows it for up to 5 minutes
+  with progress flowing; only past that does the panel say it is still going ("…the answer will
+  be in our Desk panel chat"). A staged change or a question says WHAT waits — "Jerv wants to
+  change your calendar. Confirm it in the app." — the one case that still points at the app.
+- **KEY while Jerv is still working** starts no new talk: the toast "Still working on the last
+  one". **BOOT while he works leaves the thread** as BOOT always does; the turn goes on, and its
+  answer lands in the thread (and is spoken) wherever the glass is — the main task holds the
+  connection whatever the UI shows. Clear chat while he works lets the connection go (the box
+  finishes the turn into its chat).
+- **The first word is never clipped**: the speaker starts the same way every time (below).
+- **The Clock opens its alarms on a two-second hold**, not a tap. After 0.3 s a thin ring fills
+  around the finger over the rest of the hold — the night colour on the night clock, steel by day.
+  Lifting early or moving the finger cancels quietly. A tap on a dark screen still wakes it.
+- **Jerv wears the PWA's icon** — the neuron mark of `frontend/public/favicon.svg` — on the home
+  tile and in his header, and the PWA's blue `#7FA7C9` replaces the purple everywhere Jerv's colour
+  is used ("Speaking…", Listen, his tint).
+
+### The protocol: JT2
+
+`POST /endpoint/converse?persona=jerv|dave&voice=true|false&jt=2[&new_thread=true]`
+(`tk_converse_path`). `jt=2` asks for the turn as a stream (backend `api/panel_stream.py`); a
+panel that does not send it (0.0.11) gets JT1 unchanged, and the twins' pet path never streams.
+The box sends its headers as soon as the upload ends, then `JT2` and records until the body ends:
+
+| Type | Name | Payload |
+| --- | --- | --- |
+| `0x01` | HEARD | UTF-8: what the box heard, as soon as Whisper has it |
+| `0x02` | STATUS | UTF-8, ≤ 60 bytes: what the agent is doing now |
+| `0x03` | ALIVE | empty: nothing new — at least every 8 s while the agent or the synthesis is quiet |
+| `0x04` | ANSWER | flags (bit 0 speech follows, bit 1 the text was cut) + UTF-8, ≤ 1,000 bytes |
+| `0x05` | PCM | 16 kHz mono s16le, ≤ 4,096 bytes a record |
+| `0x06` | END | code (0 answered, 1 nothing heard, 2 failed) + UTF-8 why |
+
+Every record is `type u8 | length u16 LE | payload`. **The reader** (`tk_stream_feed`,
+`talk_core.c`, host-tested) is incremental and bounded: it keeps one text record at a time (1 KB,
+cut on a character with "…" past it), hands speech on in the slices it arrived in — never holding
+a whole response — skips a type it does not know by its length, and refuses a record longer than
+4,096 bytes or a body that does not start `JT2`, cleanly (the talk says why).
+
+**Timeouts.** The headers within 30 s of the upload's end (the box sends them at once). Then
+**"no byte for 45 s"** is the only idle limit (`IDLE_MS`; the box's keep-alives come every 8 s),
+not a total: the box caps the agent at 5 minutes and the speech at 5 minutes of audio, and the
+panel's backstop is 12 minutes. 0.0.11's `ANSWER_LIMIT_MS` (130 s) is gone.
+
+**The speech is paced by the speaker.** The box synthesises a sentence (then groups of up to 400
+characters) while the panel plays the one before, and sends it as PCM records; the main task
+writes them into the 16 KB ring at the speaker's pace, so TCP's backpressure is the flow control
+and neither side holds more than a sentence or two. A sentence the box is still synthesising when
+the ring runs dry is **a pause, never a stutter**: the speaker re-arms its start gate (below) and
+waits for 150 ms of the next one; an underrun is counted once per pause (`under:` in `audio=`).
+KEY or BOOT ends the read: the ring stops taking speech, the connection is let go, and the box
+(Starlette's disconnect) cancels the synthesis ahead of it; the agent's turn is a separate task the
+stream only follows, so it is never touched.
+
+### The first word: why it was clipped, and the fix
+
+`speak()` opened the ES8311, turned the NS4150B's rail (ALDO2) on and, once 4 KB was queued,
+wrote the first sample — the amplifier's start-up and the DAC's unmute ramp ate the start. It
+was "sometimes" because 0.0.11's frame carried the speech right behind the words: when the speech
+was already in the ring as the audio task opened the speaker, the first word played within
+milliseconds of the amp; when it trickled in, the wait for 4 KB happened to give the amp time.
+Now the start is the same every time (`tk_spk_may_start`, host-tested): the speaker opens, the amp
+goes on, **silence is written until the amp has had 200 ms** (`TK_SPK_SETTLE_MS`) **and 150 ms of
+speech is queued** (or the stream has ended); playback ends with 120 ms of silence so the DMA's last
+buffers reach the speaker before the amp goes off. The debug `play_tone` takes the same settle and
+tail. The snapshot's `audio` section reports the last reply's start: **`spk_settle_ms`** (amp on to
+the first sample — want ≥ 200) and **`spk_start_fill`** (bytes queued then — want ≥ 4,800).
+
+### The pieces
+
+| Piece | What it is |
+| --- | --- |
+| `talk_core.c` | The JT2 reader (`tk_stream_*`), `tk_fit` (a copy cut on a character), the speaker's start gate. The JT1 frame reader is gone (the box always serves JT2 to a panel that asks). |
+| `main/talk_link.c` | The stream, record by record: transcript and status into the talk's state, the answer, speech into the ring, END; the 45 s idle limit; the connection let go on a stop. |
+| `svc_audio_talk.c` | What was heard and the status line, each with a change count so the UI redraws exactly when one moved; `svc_audio_status` (the line for a thread), `svc_audio_speaking`; the answer copied straight into the thread's whole-answer slot. |
+| `esp/svc_audio_es.c` | The gated start, the pause on an underrun, the tail; `spk_settle_ms`, `spk_start_fill`. |
+| `svc_messages` | `MSG_LONG_TEXT` (1 KB): one whole answer per agent thread beside its bubbles; `svc_messages_text`. |
+| `convo` | The status row under the waiting question; a reader at the end stays at the end. |
+| `shell_core.c` | `SH_ACT_STILL_WORKING`: KEY while an agent works. `speaking` decides when KEY/BOOT stop; BOOT while only thinking is BOOT. |
+| `ui_kit` | `ui_hold.c` — the one long-press rule (the conversation menu at 600 ms, the Clock face at 2 s; `sh_long_press` is a thin wrapper); `ui_hold_ring`; `ui_status_row`; the Jerv mark (`ui_jerv_mark.c`, A8 masks at 52 and 23 px, generated by `tools/gen_jerv_mark.py` from the PWA's SVG — checked in, so clean builds stay byte-identical, and CI checks it against the SVG). |
+| `app_clock` | The face's hold (`CLOCK_HOLD_MS` 2,000) and its ring; snapshot `holds`, `hold_fill`. |
+
+### The memory budget
+
+Static DIRAM (from the two ELFs, `.dram0.data` + `.dram0.bss`): 141,168 → 144,952 B, **+3,784 B**:
+the two agent threads' whole answers (2 × 1,028), the answer buffer the main task fills (+768:
+255 → 1 KB), the stream reader's text record (+~500 over JT1's frame reader), the status line and
+the transcript's UI copy (moved off the UI task's stack). No heap is added per talk (the ring is
+0.0.10's 16 KB); the status row's spinner, the hold ring and a 1 KB answer label come out of LVGL's
+own static 64 KB pool. So expect **`int_min` ≈ 70 KB before talks** (0.0.11 read ≈ 74 KB on the
+glass) and **≈ 52–54 KB after a talk** (0.0.10's talk dipped to 56.6 KB). If it reads under
+~45 KB, the first lever is still 0.0.10's (2): an 8 KB talk ring.
+
+### Debugging it
+
+- The snapshot's `audio` gains `status` (while an agent works), `spk_settle_ms`,
+  `spk_start_fill`; `shell` gains `speaking` and `keys.still_working`; `messages` gains each agent
+  thread's `long_id` / `long_bytes`; the Clock's `app` section gains `holds` and `hold_fill`.
+- The device log: `stream: N records (S status, K skipped)` and `reply: amp on N ms before the
+  first sample, N B queued` after each talk.
+- The box logs one `endpoint.converse` line per JT2 turn with `jt=2`, `statuses`, `tools`,
+  `agent_ms`, `answer_bytes`, `cut`, `speech_bytes`, `groups`, `tts_ms`, and `cut_off` when the
+  panel went away mid-answer.
+
+```sh
+scripts/debug-connect.sh panel-cmd c6 snapshot          # audio.spk_settle_ms, spk_start_fill
+scripts/debug-connect.sh panel-cmd c6 open --arg app=clock
+scripts/debug-connect.sh panel-cmd c6 inject --arg event=hold --arg x=240 --arg y=240 --arg value=2200
+scripts/debug-connect.sh panel-shot c6 alarms.png        # the alarms list, after the hold
+```
+
+### What to check on the glass
+
+1. Ask Jerv "find the high tide near Port St John, Florida". Your words replace "Transcribing…"
+   within a few seconds; a status line names each step ("Searching the web: …"); the answer
+   arrives on the panel and is read in full. The PWA's Jerv list shows the "Desk panel" chat.
+2. Ask for something long ("tell me about the tides in the Indian River lagoon"): the voice runs
+   past 30 s, pausing between sentences at most; KEY stops it at once.
+3. While Jerv works, press KEY: "Still working on the last one", nothing records. Press BOOT: home;
+   the answer is spoken when it lands, and is in the thread.
+4. After a talk: `audio.spk_settle_ms` ≥ 200 and `spk_start_fill` ≥ 4,800, and the first word
+   is whole; `play_tone` starts cleanly.
+5. The Clock: a tap does nothing; hold two seconds — the ring fills, the alarms open. At night
+   the ring is the night colour.
+6. Home: the Jerv tile shows the PWA's mark in its blue.
+7. Telemetry's `int_min` before and after a talk (above).
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -894,10 +1043,10 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **`GET {api}/endpoint/debug/next?board=c6-amoled-216`** and **`POST
   {api}/endpoint/debug/{id}`** (since 0.0.9) are the debug relay's pickup and answer ("What
   0.0.9 adds"). The only routes that are the C6's own; the S3 panels never call them.
-- **`POST {api}/endpoint/converse?persona=jerv|dave&voice=…[&new_thread=true]`** (since 0.0.10;
-  Dave and `new_thread` since 0.0.11) is a talk to Jerv or Dave: the S3s' conversation route with
-  the persona and the reply frame added ("What 0.0.10 adds", The protocol; "What 0.0.11 adds").
-  Uploaded chunked, as it is recorded; the answer is waited for up to 130 s.
+- **`POST {api}/endpoint/converse?persona=jerv|dave&voice=…&jt=2[&new_thread=true]`** (since
+  0.0.10; Dave and `new_thread` since 0.0.11, `jt=2` since 0.0.12) is a talk to Jerv or Dave: the
+  S3s' conversation route with the persona added, answered as the JT2 stream ("What 0.0.12 adds",
+  The protocol). Uploaded chunked, as it is recorded; read until no byte has come for 45 s.
 - **`GET {api}/endpoint/siblings`** (since 0.0.11) is the twins' panels' ids and names, for the
   two message threads ("What 0.0.11 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it

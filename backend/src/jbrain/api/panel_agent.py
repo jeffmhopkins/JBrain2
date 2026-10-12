@@ -39,11 +39,11 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.api.brain import apply_pronunciation
 from jbrain.api.deps import DebugDep, OwnerDep, PanelDep
 from jbrain.api.notes import ctx_for
+from jbrain.auth.owner import owner_principal_id
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, panel_context, scoped_session
 from jbrain.models.note_conversation import AWAITING_OWNER
 from jbrain.settings_store import SqlSettingsStore
-from jbrain.tasks.scheduler import _owner_principal_id
 
 log = structlog.get_logger()
 
@@ -71,7 +71,16 @@ REPLY_BYTES = 240
 VOICE_PREFIX = "(By voice from my desk panel: answer in a sentence or two, plain words.) "
 
 STILL_WORKING = "Still working on that. The answer will be in the app."
+#: JT2's cap on following a turn with progress flowing. Past it the panel is told the turn is
+#: still going (it finishes into the "Desk panel" chat regardless); the deepest research runs
+#: hours, and five minutes is long past anything a person stands at a panel for.
+AGENT_STREAM_CAP_S = 300.0
+STILL_WORKING_STREAM = (
+    "This is taking a while, so I'll keep at it. The answer will be in our Desk panel chat."
+)
 BUSY = "I'm still on your last question. Its answer will be in the app."
+#: JT2: the panel is still connected to that turn's answer only if it is the one waiting.
+BUSY_STREAM = "I'm still on your last question. Ask me again once it's answered."
 FAILED = "Sorry, I couldn't finish that just now. Try me again?"
 ASKED = " I've put a question for you in the app."
 STAGED = " It's waiting for your OK in the app."
@@ -142,6 +151,7 @@ async def panel_thread(
                 )
             ).scalar_one_or_none()
         if found is not None:
+            await _rehome(maker, owner, str(found))
             return str(found)
     made = await sessions.create(owner, domain_scopes=[], title=THREAD_TITLE, agent=agent_id)
     async with scoped_session(maker, owner) as s:
@@ -159,6 +169,48 @@ async def panel_thread(
         await s.commit()
     log.info("panel_agent.thread_started", agent=agent_id, session=str(made.id), fresh=fresh)
     return str(made.id)
+
+
+async def _rehome(maker: async_sessionmaker[AsyncSession], owner: SessionContext, sid: str) -> None:
+    """File a panel thread under the owner principal his PWA uses, if it is not already.
+
+    0.0.11's turns resolved the owner as `WHERE kind='owner' LIMIT 1` and so, on a box whose
+    owner key had been rotated, filed the "Desk panel" thread under the old, revoked principal
+    (2026-10-12). Migration 0234 moved the threads that existed then; this keeps any thread
+    where it belongs on every turn after a later rotation too. Its Proposals move with it, so a
+    change Jerv staged from the panel is reviewed as the owner who will approve it. One UPDATE
+    that matches nothing in the normal case."""
+    async with scoped_session(maker, owner) as s:
+        moved = len(
+            (
+                await s.execute(
+                    text(
+                        """
+                        UPDATE app.agent_sessions SET principal_id = CAST(:pid AS uuid)
+                        WHERE (id = CAST(:sid AS uuid) OR parent_session_id = CAST(:sid AS uuid))
+                          AND principal_id <> CAST(:pid AS uuid)
+                        RETURNING id
+                        """
+                    ),
+                    {"pid": owner.principal_id, "sid": sid},
+                )
+            ).all()
+        )
+        if moved:
+            await s.execute(
+                text(
+                    """
+                    UPDATE app.proposals SET principal_id = CAST(:pid AS uuid)
+                    WHERE session_id IN (
+                        SELECT id FROM app.agent_sessions
+                        WHERE id = CAST(:sid AS uuid) OR parent_session_id = CAST(:sid AS uuid)
+                    ) AND principal_id <> CAST(:pid AS uuid)
+                    """
+                ),
+                {"pid": owner.principal_id, "sid": sid},
+            )
+            log.info("panel_agent.thread_rehomed", session=sid, sessions=moved)
+        await s.commit()
 
 
 # ---- the words -----------------------------------------------------------------------------
@@ -259,21 +311,41 @@ def tts_params(voice: Voice | None, words: str) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class Answer:
-    words: str  # condensed, plain: shown and spoken
+    words: str  # JT1: condensed to REPLY_BYTES, plain — shown and spoken
     stop_reason: str
     session_id: str
     waited_ms: int
+    #: JT2: the whole answer as plain prose, with what waits for the owner said in words. The
+    #: panel shows what fits (`screen_text`) and speaks all of it.
+    full: str = ""
 
 
-async def run_turn(
+@dataclass
+class Started:
+    """A turn handed to the PWA's `/chat`: who it runs as, where it lands, and the live turn to
+    follow — or, when there is nothing to follow (the thread is busy, the turn never started),
+    the answer to give at once."""
+
+    owner_ctx: SessionContext
+    session_id: str
+    t0: float
+    live: Any = None
+    early: Answer | None = None
+
+    def answer(self, words: str, stop: str, full: str = "") -> Answer:
+        waited = int((asyncio.get_running_loop().time() - self.t0) * 1000)
+        return Answer(words, stop, self.session_id, waited, full or words)
+
+
+async def start_turn(
     request: Request, principal: PrincipalInfo, agent: PanelAgent, heard: str, *, fresh: bool
-) -> tuple[Answer, SessionContext]:
-    """One spoken turn through the PWA's `/chat` handler, as the owner, in this panel's thread.
-    Never raises for the agent's own failure: the panel always has something to say."""
+) -> Started:
+    """Start one spoken turn through the PWA's `/chat` handler, as the owner — the principal his
+    PWA logins use (`auth.owner`) — in this panel's thread. Returns without waiting for it."""
     from jbrain.api import agent as agent_api  # the chat module imports half the app
 
     maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
-    owner_id = await _owner_principal_id(maker)
+    owner_id = await owner_principal_id(maker)
     if owner_id is None:
         raise HTTPException(status_code=503, detail="no owner on this box")
     owner = PrincipalInfo(id=owner_id, kind="owner", label="owner (desk panel)")
@@ -282,12 +354,7 @@ async def run_turn(
     session_id = await panel_thread(
         maker, sessions, owner_ctx, principal.subject_id, agent, fresh=fresh
     )
-    loop = asyncio.get_running_loop()
-    started = loop.time()
-
-    def answer(words: str, stop: str) -> Answer:
-        return Answer(words, stop, session_id, int((loop.time() - started) * 1000))
-
+    started = Started(owner_ctx, session_id, asyncio.get_running_loop().time())
     try:
         resp = await agent_api.chat(
             request,
@@ -296,19 +363,21 @@ async def run_turn(
         )
     except HTTPException as exc:
         if exc.status_code in (409, 429):
-            return answer(BUSY, "busy"), owner_ctx
+            started.early = started.answer(BUSY, "busy", BUSY_STREAM)
+            return started
         raise
     live = request.app.state.live_turns.get(resp.headers.get("X-Run-Id", ""))
     if live is None or live.task is None:
-        return answer(FAILED, "error"), owner_ctx
-    try:
-        # Shielded: the panel giving up waiting must never cancel the owner's turn.
-        await asyncio.wait_for(asyncio.shield(live.task), timeout=AGENT_WAIT_S)
-    except TimeoutError:
-        return answer(STILL_WORKING, "still_running"), owner_ctx
-    except Exception as exc:  # noqa: BLE001 — the turn's own failure is already recorded
-        log.warning("panel_agent.turn_failed", error=repr(exc))
-    acc = live.acc
+        started.early = started.answer(FAILED, "error")
+    else:
+        started.live = live
+    return started
+
+
+def settle(started: Started, agent: PanelAgent) -> Answer:
+    """The answer of a turn that has finished (or failed): JT1's condensed words and JT2's whole
+    prose, each with what waits for the owner."""
+    acc = started.live.acc if started.live is not None else None
     stop = acc.stop_reason if acc is not None else "error"
     prose = speakable(acc.answer_text) if acc is not None else ""
     suffix = ""
@@ -317,8 +386,82 @@ async def run_turn(
     elif acc is not None and any("proposal" in step for step in acc.tool_steps()):
         suffix = STAGED
     if not prose and not suffix:
-        return answer(FAILED, stop), owner_ctx
-    return answer(condensed(prose, suffix) if prose else suffix.strip(), stop), owner_ctx
+        return started.answer(FAILED, stop)
+    words = condensed(prose, suffix) if prose else suffix.strip()
+    waits = waiting(acc, agent) if acc is not None else ""
+    return started.answer(words, stop, " ".join(x for x in (prose, waits) if x))
+
+
+async def run_turn(
+    request: Request, principal: PrincipalInfo, agent: PanelAgent, heard: str, *, fresh: bool
+) -> tuple[Answer, SessionContext]:
+    """JT1's whole turn: started, waited on for `AGENT_WAIT_S`, settled. Never raises for the
+    agent's own failure: the panel always has something to say."""
+    started = await start_turn(request, principal, agent, heard, fresh=fresh)
+    if started.early is not None:
+        return started.early, started.owner_ctx
+    try:
+        # Shielded: the panel giving up waiting must never cancel the owner's turn.
+        await asyncio.wait_for(asyncio.shield(started.live.task), timeout=AGENT_WAIT_S)
+    except TimeoutError:
+        return started.answer(STILL_WORKING, "still_running"), started.owner_ctx
+    except Exception as exc:  # noqa: BLE001 — the turn's own failure is already recorded
+        log.warning("panel_agent.turn_failed", error=repr(exc))
+    return settle(started, agent), started.owner_ctx
+
+
+# ---- what waits for the owner, in words (JT2) ---------------------------------------------
+
+#: What a staged Proposal of each kind would do, for "Jerv wants to … — confirm it in the app".
+_PROPOSAL_VERBS: dict[str, str] = {
+    "appointment": "change your calendar",
+    "merge": "merge two entries",
+    "correction": "file a correction",
+    "knowledge": "save a place",
+    "owner-prefs": "save a standing instruction",
+    "minecraft": "change the Minecraft server",
+    "intake-link": "make an intake link",
+    "remove-research-report": "remove a research report",
+    "remove-library-video": "remove a saved video",
+}
+_QUESTION_CHARS = 140
+
+
+def waiting(acc: Any, agent: PanelAgent) -> str:
+    """What the turn left waiting for the owner, said plainly — the one case the panel still
+    points at the app, because nothing is ever approved or answered from it. "" for nothing."""
+    name = SPOKEN_NAMES[agent]
+    steps = acc.tool_steps()
+    if acc.stop_reason == AWAITING_OWNER:
+        for step in steps:
+            questions = (step.get("args") or {}).get("questions") or []
+            first = questions[0] if questions and isinstance(questions[0], dict) else {}
+            asked = str(first.get("question") or "").strip()
+            if asked:
+                if len(asked) > _QUESTION_CHARS:
+                    asked = asked[:_QUESTION_CHARS].rsplit(" ", 1)[0] + "…"
+                return f"{name} asks: {asked} Answer it in the app."
+        return f"{name} has a question for you. Answer it in the app."
+    for step in steps:
+        proposal = step.get("proposal")
+        if proposal:
+            kind = str(proposal.get("kind") or "") if isinstance(proposal, dict) else ""
+            verb = _PROPOSAL_VERBS.get(kind, "make a change")
+            return f"{name} wants to {verb}. Confirm it in the app."
+    return ""
+
+
+def screen_text(full: str, limit: int) -> tuple[str, bool]:
+    """`full` as the panel can keep it: whole when it fits `limit` UTF-8 bytes, else cut on a
+    word with "…" (the speech still says all of it). Returns (text, was_cut)."""
+    raw = full.encode("utf-8")
+    if len(raw) <= limit:
+        return full, False
+    room = limit - len("…".encode())
+    head = raw[: max(room, 0)].decode("utf-8", "ignore")
+    if " " in head:
+        head = head.rsplit(" ", 1)[0]
+    return head.rstrip(" ,;:") + "…", True
 
 
 # ---- the owner's switch, and the panel's siblings --------------------------------------------

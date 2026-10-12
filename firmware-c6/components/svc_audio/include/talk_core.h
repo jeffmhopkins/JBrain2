@@ -69,7 +69,8 @@ typedef enum { TK_AGENT_JERV, TK_AGENT_DAVE, TK_AGENT__COUNT } tk_agent_t;
 const char *tk_agent_id(tk_agent_t a);
 /* The agent a thread id names. False for anything else (a person's thread). */
 bool tk_agent_from(const char *id, tk_agent_t *out);
-/* `/endpoint/converse?persona=<id>&voice=<v>`, and `&new_thread=true` after Clear chat. */
+/* `/endpoint/converse?persona=<id>&voice=<v>&jt=2` (the JT2 stream, 0.0.12), and
+ * `&new_thread=true` after Clear chat. */
 void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t cap);
 
 typedef struct {
@@ -134,26 +135,75 @@ void talk_mono(const int16_t *lr, size_t frames, int16_t *out, uint16_t *peak_l,
 /* The ring's pulse, 0-100, from a chunk's peak: ~6 dB a step over the top 60 dB. */
 uint8_t talk_level(uint16_t peak);
 
-/* ---- the reply frame (backend `jerv_frame`) ----
- * "JT1", a flags byte (bit 0: speech follows), then heard and reply as little-endian u16
- * lengths and UTF-8, then the speech to the end of the body. Read as it arrives: the words are
- * kept, cut at a character boundary to what a bubble holds, and the speech is handed on. */
-#define TF_FLAG_AUDIO 0x01
+/* ---- the reply stream (backend `panel_stream`, JT2) ----
+ * "JT2", then records until the body ends: a type byte, a little-endian u16 length, and that
+ * many bytes. HEARD and STATUS are UTF-8; ANSWER is a flags byte then UTF-8; PCM is the speech;
+ * END is a code byte then UTF-8; ALIVE is empty. Read as it arrives and never held whole: a text
+ * record is kept (cut on a character, with an ellipsis, past TS_TEXT_CAP), a PCM record is handed
+ * on in the slices it arrived in, a type this panel does not know is skipped by its length, and a
+ * length past TS_MAX_RECORD ends the stream as unreadable. */
+#define TS_HEARD 0x01
+#define TS_STATUS 0x02
+#define TS_ALIVE 0x03
+#define TS_ANSWER 0x04
+#define TS_PCM 0x05
+#define TS_END 0x06
+#define TS_ANSWER_SPEECH 0x01 /* the answer's speech follows */
+#define TS_ANSWER_CUT 0x02    /* the box cut the text to fit; the speech says all of it */
+#define TS_END_OK 0
+#define TS_END_NOTHING 1
+#define TS_END_FAILED 2
+#define TS_MAX_RECORD 4096
+#define TS_TEXT_CAP MSG_LONG_TEXT
+
+typedef enum {
+    TS_EV_NONE,   /* the bytes so far finish no record */
+    TS_EV_HEARD,  /* `text`: what the box heard */
+    TS_EV_STATUS, /* `text`: what the agent is doing */
+    TS_EV_ALIVE,
+    TS_EV_ANSWER, /* `text`, and `flags` */
+    TS_EV_PCM,    /* `*pcm`, `*pcm_n`: a slice of speech, pointing into the bytes fed */
+    TS_EV_END,    /* `flags` is the code, `text` why */
+    TS_EV_BAD,    /* not a JT2 stream, or a record longer than TS_MAX_RECORD */
+} tk_stream_ev_t;
+
 typedef struct {
     uint8_t st;
+    uint8_t type;
+    uint8_t lo;
     uint8_t flags;
-    uint16_t need, seen;
-    uint8_t len_lo;
-    char heard[sizeof(((msg_t *)0)->text)];
-    char reply[sizeof(((msg_t *)0)->text)];
-    uint16_t heard_n, reply_n;
-} tk_frame_t;
+    uint16_t len, seen;
+    uint16_t text_n;
+    uint32_t records, skipped;
+    char text[TS_TEXT_CAP];
+} tk_stream_t;
 
-void tk_frame_init(tk_frame_t *f);
-/* How many of `n` bytes belonged to the frame's head; the rest, once tk_frame_done, are speech. */
-size_t tk_frame_feed(tk_frame_t *f, const uint8_t *b, size_t n);
-bool tk_frame_done(const tk_frame_t *f);
-bool tk_frame_bad(const tk_frame_t *f);
+void tk_stream_init(tk_stream_t *s);
+/* Consumes bytes of `b` up to and including the one that finishes a record (or a PCM slice), and
+ * returns how many: call again with the rest. `*ev` says what finished. After END the rest is
+ * consumed and ignored; after BAD nothing more is. */
+size_t tk_stream_feed(tk_stream_t *s, const uint8_t *b, size_t n, tk_stream_ev_t *ev,
+                      const uint8_t **pcm, size_t *pcm_n);
+bool tk_stream_done(const tk_stream_t *s);
+bool tk_stream_bad(const tk_stream_t *s);
+
+/* `src` into `dst`, cut on a character with an ellipsis when it does not fit, never in the middle
+ * of a letter. A bubble's text and the status line both pass through this. */
+void tk_fit(char *dst, size_t cap, const char *src);
+
+/* ---- the reply's voice, started the same way every time ----
+ * The speaker's first word was sometimes lost (owner, 2026-10-12: "the first quarter second … is
+ * cut off"): the amplifier rail and the DAC were switched on in the same breath as the first
+ * sample was written. Now the audio task opens the codec, turns the amp on and writes silence,
+ * and the speech starts only once the amp has had TK_SPK_SETTLE_MS AND the ring holds
+ * TK_SPK_START_BYTES (or nothing more is coming). An underrun mid-reply — the box still
+ * synthesising the next sentence — re-arms the fill half: a pause between sentences, never a
+ * stutter. Playback ends with TK_SPK_TAIL_MS of silence so the DMA's last buffers reach the
+ * speaker before the amp goes off. */
+#define TK_SPK_SETTLE_MS 200
+#define TK_SPK_START_BYTES 4800 /* 150 ms */
+#define TK_SPK_TAIL_MS 120
+bool tk_spk_may_start(uint32_t since_amp_ms, uint32_t queued, bool more);
 
 /* ---- the conversation's bubbles ---- */
 /* What the conversation shows for a hold to a person this panel could not send: a voice bubble

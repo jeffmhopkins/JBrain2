@@ -18,6 +18,8 @@ static void fill_list(convo_t *c)
     /* A redraw (a transcript filled in, "Speaking…" gone) keeps the reader where they were:
        emptied, the page would clamp its scroll to the top and stay there. */
     const int32_t y = lv_obj_get_scroll_y(c->list);
+    /* A reader at the end stays at the end as the status line comes and goes. */
+    const bool at_end = lv_obj_get_scroll_bottom(c->list) <= 8;
     lv_obj_clean(c->list);
     const bool tts = svc_settings_get(SET_TTS) != 0;
     const bool can_speak = svc_audio_can_speak();
@@ -29,14 +31,20 @@ static void fill_list(convo_t *c)
         char dur[8];
         snprintf(dur, sizeof dur, "0:%02u", m.dur_s % 60);
         const uint32_t speaking = svc_audio_playing();
-        ui_bubble_t b = {.mine = m.mine, .voice = m.voice, .pending = m.pending, .text = m.text,
+        ui_bubble_t b = {.mine = m.mine, .voice = m.voice, .pending = m.pending,
+                         .text = svc_messages_text(who, &m),
                          .dur = dur, .status = m.status, .speaking = speaking && m.id == speaking,
                          .listen = can_speak && convo_shows_listen(&m, tts, speaking),
                          .tag = m.id};
         ui_bubble(c->list, &b, c->cfg->accent, listen, NULL);
     }
     if (!n) ui_label_wrap(c->list, c->cfg->empty, 18, UI_C_MUTED);
-    if (ui_pin_should(&c->pin, n ? m.id : 0)) {
+    /* What the agent is doing while the answer is on its way (JT2): under the question, where the
+       answer will land, redrawn with each step. */
+    char status[64];
+    const bool working = svc_audio_status(who, status, sizeof status);
+    if (working) ui_status_row(c->list, status, c->cfg->accent);
+    if (ui_pin_should(&c->pin, n ? m.id : 0) || (working && at_end)) {
         ui_page_pin_bottom(c->list);
     } else {
         lv_obj_update_layout(c->list);

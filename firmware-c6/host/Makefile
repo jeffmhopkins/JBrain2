@@ -12,7 +12,7 @@ CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror $(INC)
 SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/shell/shell_core.c $(C)/shell/shell_evq.c \
       $(C)/app_clock/clock_model.c $(C)/app_settings/settings_model.c \
-      $(C)/app_thread/thread_model.c $(C)/convo/convo_model.c $(C)/ui_kit/ui_pin.c \
+      $(C)/app_thread/thread_model.c $(C)/convo/convo_model.c $(C)/ui_kit/ui_pin.c $(C)/ui_kit/ui_hold.c \
       $(C)/svc_siblings/sib_logic.c $(C)/svc_siblings/svc_siblings.c \
       $(C)/svc_siblings/sib_port_fake.c \
       $(C)/svc_notice/notice_policy.c $(C)/svc_notice/svc_notice_fake.c \

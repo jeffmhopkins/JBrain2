@@ -22,7 +22,15 @@ typedef struct {
 #define SVC_MESSAGES_THREAD_1 "thread1"
 #define SVC_MESSAGES_THREAD_2 "thread2"
 
+/* An agent's newest answer, whole (0.0.12): the box sends up to 1000 bytes (backend
+ * `panel_stream.TEXT_BYTES`), and each agent thread keeps that one answer at this size beside
+ * its bubbles' 255. Older answers keep their bubble's 255, cut with an ellipsis. */
+#define MSG_LONG_TEXT 1024
+
 uint16_t svc_messages_count(const char *principal);
+/* What to show for `m` in `principal`'s thread: its whole text when it is the answer the thread
+ * keeps long, else m->text. Valid until that thread next changes. */
+const char *svc_messages_text(const char *principal, const msg_t *m);
 /* Clear chat: empties that thread on this panel only — nothing on the box is deleted. False for
  * a thread that does not exist. Raises MSG_ARRIVED so an open view redraws. */
 bool svc_messages_clear(const char *principal);

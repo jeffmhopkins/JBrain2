@@ -218,6 +218,11 @@ jobs:
           python3 firmware-c6/tools/check_app_deps.py --self-test
           python3 firmware-c6/tools/check_app_deps.py
 
+      # Jerv's glyph is the PWA's own mark, rasterised from frontend/public/favicon.svg into a
+      # checked-in C file (no generation in the build, so clean builds stay byte-identical).
+      - name: The Jerv mark matches the PWA's icon
+        run: python3 firmware-c6/tools/gen_jerv_mark.py --check
+
       # The framework against real LVGL, headless: every mock board's state rendered through
       # the debug screenshot path, every app opened and closed back to the same widget and
       # timer count, and a debug snapshot checked for provisioning secrets. The PNGs are

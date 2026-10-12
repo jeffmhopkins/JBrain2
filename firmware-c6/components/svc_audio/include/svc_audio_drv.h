@@ -38,7 +38,10 @@ bool talk_net_claim(bool *voice, tk_agent_t *agent, bool *fresh);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);
-void talk_net_reply(const char *heard, const char *reply, bool audio_follows);
+/* JT2, as each record lands: what the box heard, what the agent is doing, then the answer. */
+void talk_net_heard(const char *heard);
+void talk_net_status(const char *status);
+void talk_net_reply(const char *reply, bool audio_follows);
 void talk_net_nothing(void);
 void talk_net_fail(const char *why);
 /* The reply's speech into the ring: how much fit. Zero once the speech is no longer wanted. */

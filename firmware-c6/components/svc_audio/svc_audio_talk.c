@@ -26,9 +26,15 @@ static tk_t s_tk;
 static tk_ring_t s_ring;
 static uint8_t *s_ring_mem;
 static tk_stats_t s_st;
-/* The reply's words: written by the main task under the lock, read by the UI after REPLY. */
+/* The reply as it streams in (JT2): written by the main task under the lock, read by the UI task.
+ * What was heard and the status line each carry a count that grows with every change, so the UI
+ * redraws exactly when one moved; the answer is read once, on REPLY. */
 static char s_heard[sizeof(((msg_t *)0)->text)];
-static char s_reply[sizeof(((msg_t *)0)->text)];
+static char s_status[64];
+static char s_reply[MSG_LONG_TEXT];
+static uint32_t s_heard_seq, s_status_seq;
+/* UI task's own: the counts it last drew. */
+static uint32_t s_heard_drawn, s_status_drawn;
 static uint32_t s_next_id = 1000;
 /* UI task's own. */
 static bool s_holding;
@@ -99,6 +105,8 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
     if (b == TK_BEGIN_OK) {
         tk_set_agent(&s_tk, agent, s_fresh[agent]);
         tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+        s_heard[0] = s_status[0] = '\0';
+        s_heard_seq = s_status_seq = 0;
     }
     unlock();
     if (b == TK_BEGIN_STOPPED) {
@@ -189,6 +197,24 @@ bool svc_audio_replying(void)
     return r;
 }
 
+bool svc_audio_speaking(void)
+{
+    lock();
+    const bool r = s_tk.phase == TK_PLAY;
+    unlock();
+    return r;
+}
+
+bool svc_audio_status(const char *thread, char *out, size_t cap)
+{
+    if (!thread || strcmp(thread, THREAD) || s_holding) return false;
+    lock();
+    const bool on = s_tk.phase == TK_SEND && !s_tk.abort && s_heard_seq;
+    if (on) tk_fit(out, cap, s_status[0] ? s_status : "Thinking…");
+    unlock();
+    return on;
+}
+
 static void refresh_thread(void)
 {
     app_event_t ev = {.type = APP_EV_MSG_ARRIVED};
@@ -259,26 +285,40 @@ void svc_audio_service(void)
 {
     if (s_holding) return;
     char why[40];
+    static char heard[sizeof s_heard];
     lock();
     const tk_res_t res = tk_take(&s_tk, why, sizeof why);
     const uint32_t id = s_tk.msg_id;
     const bool playing = s_tk.phase == TK_PLAY;
     const bool quiet = tk_quiet(&s_tk);
-    char heard[sizeof s_heard], reply[sizeof s_reply];
-    if (res == TK_RES_REPLY) {
-        memcpy(heard, s_heard, sizeof heard);
-        memcpy(reply, s_reply, sizeof reply);
-    }
+    const bool heard_moved = s_heard_seq != s_heard_drawn;
+    const bool status_moved = s_status_seq != s_status_drawn;
+    s_heard_drawn = s_heard_seq;
+    s_status_drawn = s_status_seq;
+    if (heard_moved || res == TK_RES_REPLY) memcpy(heard, s_heard, sizeof heard);
+    /* The whole answer goes straight from the main task's buffer to the thread's: 1 KB is not
+       copied through this task's stack. */
+    if (res == TK_RES_REPLY) svc_messages_fake_long(THREAD, id + 1, s_reply);
     unlock();
     msg_t m;
     const bool have = svc_messages_find(THREAD, id, &m);
+    /* What was heard replaces "Transcribing…" the moment the box has it (JT2), long before the
+       answer; the status line under it redraws with each step the agent takes. */
+    if (heard_moved && have && heard[0] && res != TK_RES_REPLY) {
+        talk_bubble_heard(&m, heard);
+        svc_messages_fake_add(THREAD, &m);
+    } else if (status_moved && res == TK_RES_NONE) {
+        refresh_thread();
+    }
     switch (res) {
     case TK_RES_REPLY:
-        if (have) {
+        if (have && heard[0]) {
             talk_bubble_heard(&m, heard);
             svc_messages_fake_add(THREAD, &m);
         }
-        talk_bubble_reply(id + 1, reply, &m);
+        lock();
+        talk_bubble_reply(id + 1, s_reply, &m);
+        unlock();
         svc_messages_fake_add(THREAD, &m);
         s_speaking = playing ? id + 1 : 0;
         /* The box answered, so it has started the new conversation this asked for. */
@@ -347,11 +387,28 @@ uint32_t talk_net_take(void *dst, uint32_t cap)
     return tk_ring_read(&s_ring, dst, cap);
 }
 
-void talk_net_reply(const char *heard, const char *reply, bool audio_follows)
+void talk_net_heard(const char *heard)
 {
     lock();
-    tk_copy(s_heard, sizeof s_heard, heard);
-    tk_copy(s_reply, sizeof s_reply, reply);
+    tk_fit(s_heard, sizeof s_heard, heard);
+    s_status[0] = '\0';
+    s_heard_seq++;
+    unlock();
+}
+
+void talk_net_status(const char *status)
+{
+    lock();
+    tk_fit(s_status, sizeof s_status, status);
+    s_status_seq++;
+    unlock();
+}
+
+void talk_net_reply(const char *reply, bool audio_follows)
+{
+    lock();
+    tk_fit(s_reply, sizeof s_reply, reply);
+    s_status[0] = '\0';
     s_st.replies++;
     tk_net_reply(&s_tk, audio_follows);
     /* The recording is all sent and the microphone is off: the ring is the reply's now. */
@@ -490,6 +547,8 @@ static void describe(void *ctx, dbg_json_t *w)
     const tk_stats_t st = s_st;
     const tk_t t = s_tk;
     const uint32_t queued = tk_ring_used(&s_ring);
+    char status[sizeof s_status];
+    memcpy(status, s_status, sizeof status);
     unlock();
     dbg_json_str(w, "state", talk_port_state());
     dbg_json_str(w, "phase", PHASE[t.phase]);
@@ -499,6 +558,7 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_bool(w, "spk_on", t.spk_on);
     dbg_json_bool(w, "net_busy", t.net_busy);
     dbg_json_int(w, "speaking", s_speaking);
+    if (t.phase == TK_SEND && status[0]) dbg_json_str(w, "status", status);
     dbg_json_int(w, "ring", s_ring_mem ? RING_BYTES : 0);
     dbg_json_int(w, "queued", queued);
     dbg_json_int(w, "talks", st.talks);

@@ -9,13 +9,14 @@
 #include <stdint.h>
 
 #include "app_event.h"
+#include "ui_hold.h"
 
 #define SH_SLOTS_PER_PAGE 4
 #define SH_PAGES_MAX 4
 #define SH_SWIPE_PX 60
 /* How far a finger may wander and still be a tap: ~1.6 mm on this glass. LVGL's scroll start is
  * set to the same number, so "a tap" and "not yet a scroll" are one decision. */
-#define SH_TAP_SLOP 20
+#define SH_TAP_SLOP UI_HOLD_SLOP
 
 /* SH_BTN_TOUCH is a finger landing on a dark screen (sh_gate), queued like a button so it keeps
  * its place among them. SH_BTN_BOOT is a short press (it arrives on release); SH_BTN_BOOT_LONG a
@@ -46,7 +47,8 @@ typedef enum {
     SH_ACT_WAKE,
     SH_ACT_DARK,
     SH_ACT_OPEN_CLOCK,     /* BOOT held: the clock app, over home or any app */
-    SH_ACT_STOP_REPLY,     /* KEY or BOOT while Jerv thinks or speaks: drop the reply */
+    SH_ACT_STOP_REPLY,     /* KEY or BOOT while Jerv speaks: the voice stops */
+    SH_ACT_STILL_WORKING,  /* KEY while Jerv is still working on the last one: say so, record nothing */
     SH_ACT_CLOSE_MENU,     /* KEY or BOOT over the conversation menu: close it, nothing else */
 } sh_act_t;
 
@@ -65,6 +67,7 @@ typedef struct {
     bool talking;      /* the shell's own talk to Jerv is up */
     bool clock_open;   /* the open app is the clock */
     bool replying;     /* Jerv is thinking about, or speaking, an answer */
+    bool speaking;     /* ... speaking it */
     bool menu_open;    /* the conversation menu (long press) is up */
 } sh_facts_t;
 
@@ -121,13 +124,10 @@ bool sh_gate(sh_gate_t *g, bool pressed, bool dark, bool *wake);
  *
  * A finger held still on a conversation for SH_LONG_PRESS_MS opens a small menu: Clear chat,
  * Cancel. "Still" is the tap's own slop, so a scroll — which moves past it first — never opens
- * it, and a long press is decided while the finger is still down, once. */
+ * it, and a long press is decided while the finger is still down, once. The rule itself is
+ * ui_hold's (ui_kit), which the Clock face's two-second hold uses too. */
 #define SH_LONG_PRESS_MS 600
-typedef struct {
-    bool down, done;
-    int x0, y0;
-    uint32_t t0;
-} sh_lp_t;
+typedef ui_hold_t sh_lp_t;
 /* Every pointer sample: true exactly once per stroke, on the sample that crosses the threshold
  * with the finger still within SH_TAP_SLOP of where it landed. */
 bool sh_long_press(sh_lp_t *lp, bool pressed, int x, int y, uint32_t now_ms);

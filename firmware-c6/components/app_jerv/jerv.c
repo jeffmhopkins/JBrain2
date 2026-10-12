@@ -3,7 +3,7 @@
 #include "app_jerv.h"
 #include "convo.h"
 
-static const ui_icon_t ICON = {UI_GLYPH_STAR, 0};
+static const ui_icon_t ICON = {UI_GLYPH_JERV, 0};
 static const convo_config_t CFG = {
     .thread = "jerv",
     .title = "Jerv",

@@ -340,6 +340,15 @@ static void text_only(void)
 /* What the box answers to the sim's talks: a question the owner might ask his desk. */
 #define HEARD "What's the weather like tomorrow?"
 #define REPLIED "Sunny and 18 degrees in the morning, with rain after six in the evening."
+#define TIDE_HEARD "Find the high tide near Port St John, Florida"
+#define TIDE_STATUS "Searching the web: high tide Port St John FL…"
+#define TIDE_LONG                                                                                  \
+    "High tide at Port St John is at 4:12 pm today, at 3.1 feet, and the next one is at 4:38 am "  \
+    "tomorrow. Low tide falls between them, at 10:27 pm, at 0.4 feet. The Indian River there is "  \
+    "a lagoon, so the swing is small and the times run about two hours behind the ocean beaches " \
+    "at Cocoa. If you are launching a boat, the hour either side of high water is the easiest. "  \
+    "The station I read is Port Canaveral's, adjusted for the river; a strong east wind can "      \
+    "hold water in the lagoon and push the high a little later and a little higher than this."
 
 static void session(void)
 {
@@ -364,10 +373,17 @@ typedef struct {
 #define WAIT(ms) "wait " #ms
 /* A finger held still on the conversation: the long press that opens its menu. */
 #define HOLD(x, y) "{\"cmd\":\"inject\",\"event\":\"hold\",\"x\":" #x ",\"y\":" #y ",\"value\":800}"
+/* ... for `ms`: the Clock face's two-second hold (owner, 2026-10-12). */
+#define HOLD_MS(x, y, ms) "{\"cmd\":\"inject\",\"event\":\"hold\",\"x\":" #x ",\"y\":" #y ",\"value\":" #ms "}"
 /* Not a debug command: the sim taps whatever says this, as a finger would. */
 #define TAP_LABEL(t) "tap " t
 /* Not a debug command: the fake box answers the hold in flight. */
 #define REPLY "reply"
+/* Not a debug command: the fake box streams the transcript and a status line (JT2), no answer
+ * yet. */
+#define PROGRESS "progress"
+/* Not a debug command: the fake box answers with a long answer, more than a bubble's 255 bytes. */
+#define REPLY_LONG "reply long"
 
 /* Mock boards 1-17 (docs/mocks/jpanel-c6/canvas.json), by the live panel's `start` names. */
 static const state_t STATES[] = {
@@ -402,8 +418,14 @@ static const state_t STATES[] = {
     {"clock", NULL, {OPEN("clock")}},
     {"clock-night", night, {OPEN("clock")}},
     {"clock-badge", night_badge, {OPEN("clock")}},
-    {"clock-alarms", NULL, {OPEN("clock"), TAP(240, 240), WAIT(300)}},
-    {"clock-alarms-end", NULL, {OPEN("clock"), TAP(240, 240), WAIT(800), SCROLL_END}},
+    /* The face opens its alarms on a two-second hold, not a tap (owner, 2026-10-12). */
+    {"clock-alarms", NULL, {OPEN("clock"), HOLD_MS(240, 240, 2100), WAIT(2400)}},
+    {"clock-alarms-end", NULL, {OPEN("clock"), HOLD_MS(240, 240, 2100), WAIT(2900), SCROLL_END}},
+    /* Mid-hold: the ring filling, steel by day and the night colour at night. */
+    {"clock-hold", NULL, {OPEN("clock"), HOLD_MS(240, 240, 3000), WAIT(1200)}},
+    {"clock-hold-night", night, {OPEN("clock"), HOLD_MS(240, 240, 3000), WAIT(1200)}},
+    /* A tap on the face: nothing. */
+    {"clock-tap", NULL, {OPEN("clock"), TAP(240, 240), WAIT(300)}},
     {"ringing", ring, {WAIT(100)}},
     {"notify-info", push_info, {WAIT(100)}},
     {"notify-question", push_question, {WAIT(100)}},
@@ -413,6 +435,11 @@ static const state_t STATES[] = {
     {"jerv-after-key", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300)}},
     /* The box answers: the transcript, Jerv's words, and "Speaking…" while its voice plays. */
     {"jerv-reply", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY}},
+    /* JT2 (0.0.12): the transcript the moment the box has it, and the live status line under it. */
+    {"jerv-working", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), PROGRESS}},
+    {"dave-working", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), PROGRESS}},
+    /* A long answer kept whole on the glass, past a bubble's 255 bytes. */
+    {"jerv-long", text_only, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY_LONG, SCROLL_END}},
     /* The same with "Read replies aloud" off: words only. */
     {"jerv-reply-text", text_only, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY}},
     /* BOOT held from inside an app: the clock face (owner, 2026-10-12). */
@@ -464,6 +491,18 @@ static int render(const char *name, const char *png, const char *snap)
         }
         if (!strcmp(st->cmds[i], REPLY)) {
             svc_audio_fake_reply(HEARD, REPLIED, svc_settings_get(SET_TTS) != 0);
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], REPLY_LONG)) {
+            svc_audio_fake_reply(TIDE_HEARD, TIDE_LONG, svc_settings_get(SET_TTS) != 0);
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], PROGRESS)) {
+            svc_audio_fake_progress(TIDE_HEARD, "Thinking…");
+            step(100);
+            svc_audio_fake_progress(NULL, TIDE_STATUS);
             step(300);
             continue;
         }
@@ -681,6 +720,44 @@ static int touch_checks(void)
     run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
     step(100);
 
+    /* The face opens its alarms on a two-second hold, never a tap (owner, 2026-10-12). */
+    run(OPEN("clock"));
+    step(100);
+    finger(240, 240, true);
+    finger(240, 240, false);
+    step(400);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"view\":\"face\"") != NULL, "a tap on the face does nothing");
+    finger(240, 240, true);
+    step(1900);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"view\":\"face\"") != NULL &&
+               strstr(run("{\"cmd\":\"snapshot\"}"), "\"hold_fill\":0") == NULL,
+           "1.9 s held: still the face, with the ring filling");
+    finger(240, 240, false);
+    step(400);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"view\":\"face\"") != NULL &&
+               strstr(run("{\"cmd\":\"snapshot\"}"), "\"hold_fill\":0") != NULL,
+           "let go early, it cancels quietly");
+    finger(240, 240, true);
+    step(60);
+    finger(300, 240, true);
+    step(2400);
+    finger(300, 240, false);
+    step(400);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"view\":\"face\"") != NULL, "a drag never opens it");
+    finger(240, 240, true);
+    step(2200);
+    finger(240, 240, false);
+    step(400);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"view\":\"alarms\"") != NULL,
+           "two seconds held still opens the alarms list");
+    run("{\"cmd\":\"inject\",\"event\":\"pwr\"}");
+    finger(240, 240, true);
+    finger(240, 240, false);
+    step(300);
+    expect(!svc_display_dark(), "a tap still wakes a dark screen");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+
     /* KEY outside a conversation is Jerv's, wherever the panel is. */
     run(OPEN("settings"));
     run(KEY_DOWN);
@@ -702,10 +779,25 @@ static int touch_checks(void)
     svc_messages_get("jerv", (uint16_t)(svc_messages_count("jerv") - 1), &last);
     expect(svc_messages_count("jerv") == before + 1 && last.pending,
            "where the hold waits for its transcript, never a made-up one");
+    svc_audio_fake_progress(HEARD, "Checking the weather…");
+    step(100);
+    unsigned waiting = svc_messages_count("jerv");
+    run(KEY_DOWN);
+    step(300);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"talking\":false") != NULL && svc_audio_replying(),
+           "KEY while Jerv is still working starts no new talk and leaves his turn alone");
+    run(KEY_UP);
+    step(100);
+    expect(svc_messages_count("jerv") == waiting, "and its release sends nothing");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+    expect(!shell_open_app() && svc_audio_replying(), "BOOT leaves the thread; the turn goes on");
     svc_audio_fake_reply(HEARD, REPLIED, true);
     step(100);
     expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"replying\":true") != NULL,
            "the reply arrives and Jerv speaks it");
+    run(OPEN("jerv"));
+    step(100);
     unsigned answered = svc_messages_count("jerv");
     run(KEY_DOWN);
     step(300);

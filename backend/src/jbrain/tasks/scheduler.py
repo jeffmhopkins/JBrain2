@@ -6,7 +6,7 @@ gated like the live-feed task — not the workflow worker. Each tick claims due
 tasks (advancing their `next_run_at` under the lock so a re-entrant tick can't
 double-fire), then runs each one via the `TaskRunner` outside the lock.
 
-The tick resolves the single owner principal once to build the owner context the
+The tick resolves the owner principal (`auth.owner`) once to build the owner context the
 runner needs (sessions/runs are owner-only). A fresh box with no owner is a no-op.
 """
 
@@ -14,10 +14,10 @@ import asyncio
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.auth.owner import owner_principal_id
+from jbrain.db.session import SessionContext
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.tasks.repo import TaskRepo
 from jbrain.tasks.runner import TaskRunner
@@ -28,23 +28,14 @@ log = structlog.get_logger()
 # review), so the tick need not be tighter than the smallest meaningful slot.
 TICK_INTERVAL_SECONDS = 60.0
 
-# A system owner context to read owner-only tables across all tasks. Owner identity
-# (not a principal id) is what `is_owner()` checks; per-task runs use the task's own
-# principal id (the runner creates the session under it).
-_SYSTEM_OWNER = SessionContext(principal_kind="owner")
-
 
 async def _owner_principal_id(maker: async_sessionmaker[AsyncSession]) -> str | None:
-    """The owner principal's id, AS A STRING — which the annotation always claimed and
-    the body did not deliver: `app.principals.id` is a `uuid` column, so asyncpg hands
-    back a `uuid.UUID`, and a `SessionContext` built from one dies in `scoped_session`'s
-    `set_config` ("expected str, got UUID"). `tasks_tick` wrapped it defensively at its
-    own call site; every caller that trusted the signature — `note_converse`'s owner
-    resolver among them — did not."""
-    async with scoped_session(maker, _SYSTEM_OWNER) as session:
-        sql = text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1")
-        found = (await session.execute(sql)).scalar()
-        return None if found is None else str(found)
+    """The owner principal the PWA's logins use, as a string (`auth.owner`). It was
+    `WHERE kind='owner' LIMIT 1` — unordered, so on a box whose owner key had been rotated it
+    usually returned the oldest, REVOKED row, and every headless "act as the owner" caller
+    (the plan continuations, the note conversation, Minecraft_Dave's door, the deepest push
+    leg, the desk panel) filed its work under a principal the PWA no longer logs in as."""
+    return await owner_principal_id(maker)
 
 
 async def tasks_tick(

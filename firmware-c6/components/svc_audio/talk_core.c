@@ -83,7 +83,7 @@ bool tk_agent_from(const char *id, tk_agent_t *out)
 
 void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t cap)
 {
-    snprintf(out, cap, "/endpoint/converse?persona=%s&voice=%s%s", tk_agent_id(a),
+    snprintf(out, cap, "/endpoint/converse?persona=%s&voice=%s&jt=2%s", tk_agent_id(a),
              voice ? "true" : "false", fresh ? "&new_thread=true" : "");
 }
 
@@ -267,19 +267,19 @@ uint8_t talk_level(uint16_t peak)
     return bits <= 5 ? 0 : (uint8_t)((bits - 5) * 10);
 }
 
-/* ---- the reply frame ---- */
+/* ---- the reply stream ---- */
 
-enum { TF_MAGIC, TF_FLAGS, TF_HLEN, TF_HEARD, TF_RLEN, TF_REPLY, TF_DONE, TF_BAD };
+enum { TS_MAGIC, TS_TYPE, TS_LEN0, TS_LEN1, TS_FLAG, TS_TEXT, TS_BODY_PCM, TS_SKIP, TS_DONE, TS_BAD };
 
-static const char MAGIC[3] = {'J', 'T', '1'};
+static const char MAGIC[3] = {'J', 'T', '2'};
 
-void tk_frame_init(tk_frame_t *f)
+void tk_stream_init(tk_stream_t *s)
 {
-    memset(f, 0, sizeof *f);
+    memset(s, 0, sizeof *s);
 }
 
-/* `s` holds `n` bytes of what may be longer; cut it on a character with an ellipsis when it
- * was, so a bubble never shows half a letter. */
+/* `s` holds `n` bytes of what may have been longer; cut it on a character with an ellipsis when
+ * it was, so nothing shows half a letter. */
 static void finish_text(char *s, uint16_t n, size_t cap, bool cut)
 {
     static const char ELL[] = "…";
@@ -293,64 +293,154 @@ static void finish_text(char *s, uint16_t n, size_t cap, bool cut)
     s[n] = '\0';
 }
 
-size_t tk_frame_feed(tk_frame_t *f, const uint8_t *b, size_t n)
+void tk_fit(char *dst, size_t cap, const char *src)
 {
+    if (!cap) return;
+    const size_t n = strnlen(src, cap);
+    if (n < cap) {
+        memcpy(dst, src, n + 1);
+        return;
+    }
+    memcpy(dst, src, cap - 1);
+    finish_text(dst, (uint16_t)(cap - 1), cap, true);
+}
+
+static bool has_flag(uint8_t type)
+{
+    return type == TS_ANSWER || type == TS_END;
+}
+
+/* The record just finished: what it was. */
+static tk_stream_ev_t finished(tk_stream_t *s)
+{
+    s->records++;
+    const uint16_t body = (uint16_t)(s->len - (has_flag(s->type) && s->len ? 1 : 0));
+    finish_text(s->text, s->text_n, sizeof s->text, body > s->text_n);
+    s->st = s->type == TS_END ? TS_DONE : TS_TYPE;
+    switch (s->type) {
+    case TS_HEARD: return TS_EV_HEARD;
+    case TS_STATUS: return TS_EV_STATUS;
+    case TS_ANSWER: return TS_EV_ANSWER;
+    case TS_END: return TS_EV_END;
+    default: return TS_EV_ALIVE;
+    }
+}
+
+size_t tk_stream_feed(tk_stream_t *s, const uint8_t *b, size_t n, tk_stream_ev_t *ev,
+                      const uint8_t **pcm, size_t *pcm_n)
+{
+    *ev = TS_EV_NONE;
+    *pcm = NULL;
+    *pcm_n = 0;
+    if (s->st == TS_DONE) return n;
     size_t i = 0;
-    while (i < n && f->st != TF_DONE && f->st != TF_BAD) {
+    while (i < n && s->st != TS_BAD) {
+        /* A speech slice and a skipped record move in runs: never a byte at a time. */
+        if (s->st == TS_BODY_PCM || s->st == TS_SKIP) {
+            size_t k = (size_t)(s->len - s->seen);
+            if (k > n - i) k = n - i;
+            const bool speech = s->st == TS_BODY_PCM;
+            const uint8_t *at = b + i;
+            i += k;
+            s->seen = (uint16_t)(s->seen + k);
+            if (s->seen == s->len) {
+                s->st = TS_TYPE;
+                s->records++;
+            }
+            if (speech && k) {
+                *pcm = at;
+                *pcm_n = k;
+                *ev = TS_EV_PCM;
+                return i;
+            }
+            continue;
+        }
         const uint8_t c = b[i++];
-        switch (f->st) {
-        case TF_MAGIC:
-            if (c != (uint8_t)MAGIC[f->seen]) {
-                f->st = TF_BAD;
+        switch (s->st) {
+        case TS_MAGIC:
+            if (c != (uint8_t)MAGIC[s->seen]) {
+                s->st = TS_BAD;
+                *ev = TS_EV_BAD;
+                return i;
+            }
+            if (++s->seen == sizeof MAGIC) s->st = TS_TYPE;
+            break;
+        case TS_TYPE:
+            s->type = c;
+            s->st = TS_LEN0;
+            break;
+        case TS_LEN0:
+            s->lo = c;
+            s->st = TS_LEN1;
+            break;
+        case TS_LEN1:
+            s->len = (uint16_t)(s->lo | (c << 8));
+            s->seen = 0;
+            s->text_n = 0;
+            s->flags = 0;
+            if (s->len > TS_MAX_RECORD) {
+                s->st = TS_BAD;
+                *ev = TS_EV_BAD;
+                return i;
+            }
+            switch (s->type) {
+            case TS_HEARD:
+            case TS_STATUS: s->st = TS_TEXT; break;
+            case TS_ANSWER:
+            case TS_END: s->st = TS_FLAG; break;
+            case TS_ALIVE: s->st = TS_TEXT; break;
+            case TS_PCM: s->st = TS_BODY_PCM; break;
+            default:
+                s->st = TS_SKIP;
+                s->skipped++;
                 break;
             }
-            if (++f->seen == sizeof MAGIC) f->st = TF_FLAGS;
-            break;
-        case TF_FLAGS:
-            f->flags = c;
-            f->seen = 0;
-            f->st = TF_HLEN;
-            break;
-        case TF_HLEN:
-        case TF_RLEN:
-            if (f->seen++ == 0) {
-                f->len_lo = c;
-                break;
+            if (!s->len && s->st != TS_SKIP && s->st != TS_BODY_PCM) {
+                *ev = finished(s);
+                return i;
             }
-            f->need = (uint16_t)(f->len_lo | (c << 8));
-            f->seen = 0;
-            f->st = f->st == TF_HLEN ? TF_HEARD : TF_REPLY;
+            if (!s->len) {
+                s->st = TS_TYPE;
+                s->records++;
+            }
             break;
-        case TF_HEARD:
-        case TF_REPLY: {
-            char *dst = f->st == TF_HEARD ? f->heard : f->reply;
-            uint16_t *have = f->st == TF_HEARD ? &f->heard_n : &f->reply_n;
-            if (*have < sizeof f->heard - 1) dst[(*have)++] = (char)c;
-            f->seen++;
+        case TS_FLAG:
+            s->flags = c;
+            s->st = TS_TEXT;
+            if (++s->seen == s->len) {
+                *ev = finished(s);
+                return i;
+            }
             break;
-        }
+        case TS_TEXT:
+            if (s->text_n < sizeof s->text - 1) s->text[s->text_n++] = (char)c;
+            if (++s->seen == s->len) {
+                *ev = finished(s);
+                return i;
+            }
+            break;
         default: break;
-        }
-        /* A text field ends by count, an empty one at once. */
-        if ((f->st == TF_HEARD || f->st == TF_REPLY) && f->seen == f->need) {
-            const bool heard = f->st == TF_HEARD;
-            finish_text(heard ? f->heard : f->reply, heard ? f->heard_n : f->reply_n,
-                        sizeof f->heard, f->need > (heard ? f->heard_n : f->reply_n));
-            f->seen = 0;
-            f->st = heard ? TF_RLEN : TF_DONE;
         }
     }
     return i;
 }
 
-bool tk_frame_done(const tk_frame_t *f)
+bool tk_stream_done(const tk_stream_t *s)
 {
-    return f->st == TF_DONE;
+    return s->st == TS_DONE;
 }
 
-bool tk_frame_bad(const tk_frame_t *f)
+bool tk_stream_bad(const tk_stream_t *s)
 {
-    return f->st == TF_BAD;
+    return s->st == TS_BAD;
+}
+
+/* ---- the voice's start ---- */
+
+bool tk_spk_may_start(uint32_t since_amp_ms, uint32_t queued, bool more)
+{
+    if (since_amp_ms < TK_SPK_SETTLE_MS) return false;
+    return queued >= TK_SPK_START_BYTES || !more;
 }
 
 /* ---- bubbles ---- */
@@ -369,7 +459,7 @@ void talk_bubble_sent(uint32_t id, uint32_t held_ms, msg_t *out)
 void talk_bubble_heard(msg_t *m, const char *heard)
 {
     m->pending = false;
-    snprintf(m->text, sizeof m->text, "%s", heard);
+    tk_fit(m->text, sizeof m->text, heard);
     m->status[0] = '\0';
 }
 
@@ -385,7 +475,7 @@ void talk_bubble_reply(uint32_t id, const char *reply, msg_t *out)
     memset(out, 0, sizeof *out);
     out->id = id;
     out->played = true;
-    snprintf(out->text, sizeof out->text, "%s", reply);
+    tk_fit(out->text, sizeof out->text, reply);
 }
 
 /* ---- telemetry ---- */

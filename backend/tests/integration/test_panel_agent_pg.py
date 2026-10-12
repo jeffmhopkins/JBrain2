@@ -137,8 +137,9 @@ def box(
         agent: str,
         voice: bool,
         fresh: bool,
+        jt: int = 1,
     ) -> Any:
-        turns.append({"device": principal.id, "agent": agent, "fresh": fresh})
+        turns.append({"device": principal.id, "agent": agent, "fresh": fresh, "jt": jt})
         return endpoint_api.Response(status_code=200, content=b"agent")
 
     monkeypatch.setattr(endpoint_api.WhisperCppClient, "transcribe", heard)
@@ -173,18 +174,28 @@ def test_a_display_the_owner_has_not_switched_on_keeps_the_persona(box: Box) -> 
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/x-jpanel-turn"
     assert box.turns == [], "no agent turn without the owner's switch"
+    # 0.0.12 asks for JT2: the persona's answer comes as the same records, still no agent.
+    streamed = box.talk("Jeff", "persona=jerv&jt=2")
+    assert streamed.status_code == 200 and streamed.content.startswith(b"JT2")
+    assert b"Persona answer." in streamed.content
+    assert box.turns == []
 
 
 def test_the_owner_s_switch_opens_the_real_agent_for_his_display(box: Box) -> None:
     assert _owner_put(box, "Jeff", True).json() == {"agent_access": True}
     assert box.talk("Jeff").content == b"agent"
     assert box.talk("Jeff", "persona=dave&new_thread=true").content == b"agent"
-    assert [(t["agent"], t["fresh"]) for t in box.turns] == [("jerv", False), ("dave", True)]
+    assert box.talk("Jeff", "persona=jerv&jt=2").content == b"agent"
+    assert [(t["agent"], t["fresh"], t["jt"]) for t in box.turns] == [
+        ("jerv", False, 1),
+        ("dave", True, 1),
+        ("jerv", False, 2),
+    ]
     assert {t["device"] for t in box.turns} == {box.devices["Jeff"]}
 
     assert _owner_put(box, "Jeff", False).json() == {"agent_access": False}
     box.talk("Jeff")
-    assert len(box.turns) == 2, "switched off, the next talk is the persona again"
+    assert len(box.turns) == 3, "switched off, the next talk is the persona again"
 
 
 def test_a_twin_s_panel_never_reaches_the_agent_whatever_it_asks(box: Box) -> None:
@@ -195,8 +206,17 @@ def test_a_twin_s_panel_never_reaches_the_agent_whatever_it_asks(box: Box) -> No
         " SELECT subject_id, true FROM app.principals WHERE id = CAST(:d AS uuid)",
         d=box.devices["Quorra"],
     )
-    for query in ("persona=jerv", "persona=jerv&new_thread=true", "persona=pet"):
+    for query in (
+        "persona=jerv",
+        "persona=jerv&new_thread=true",
+        "persona=jerv&jt=2",
+        "persona=pet",
+        "persona=pet&jt=2",
+    ):
         assert box.talk("Quorra", query).content != b"agent"
+    assert not box.talk("Quorra", "persona=pet&jt=2").content.startswith(b"JT2"), (
+        "the pet path never streams"
+    )
     assert box.talk("Quorra", "persona=dave").status_code == 403
     assert box.turns == []
 

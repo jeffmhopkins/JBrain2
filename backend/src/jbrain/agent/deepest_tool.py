@@ -17,7 +17,6 @@ from types import ModuleType
 from typing import Any
 
 import structlog
-from sqlalchemy import text
 
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.deepest_lane import DeepestRunLane
@@ -31,14 +30,10 @@ from jbrain.agent.deepest_run import (
 )
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.tree import MAX_DEPTH
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.auth.owner import owner_principal_id
 from jbrain.external import research_run_state as rrs
 
 log = structlog.get_logger()
-
-# A system owner-context used ONLY to resolve the sole owner's principal id for a headless
-# resume sweep (mirrors tasks/scheduler.py) — it reads no domain data.
-_SYSTEM_OWNER = SessionContext(principal_kind="owner")
 
 
 def _refuse(reason: str) -> str:
@@ -46,15 +41,10 @@ def _refuse(reason: str) -> str:
 
 
 async def _owner_principal_id(maker: Any) -> str | None:
-    """The single owner's principal id, for a headless background resume (no request to carry
-    identity). None when no owner exists yet — the sweep then no-ops."""
-    async with scoped_session(maker, _SYSTEM_OWNER) as session:
-        row = (
-            await session.execute(
-                text("SELECT id FROM app.principals WHERE kind = 'owner' LIMIT 1")
-            )
-        ).first()
-        return str(row[0]) if row is not None else None
+    """The owner's principal id for a headless background resume (no request to carry
+    identity): the one the PWA's logins use (`auth.owner`). None when no owner exists yet —
+    the sweep then no-ops."""
+    return await owner_principal_id(maker)
 
 
 class DeepestKickoffService:

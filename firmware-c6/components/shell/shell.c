@@ -43,6 +43,7 @@ static bool s_started;
 static ui_talk_t s_talk;
 static struct {
     uint32_t jerv, app, snooze, sent, too_short, cancelled, failed, stopped;
+    uint32_t busy; /* KEY while an agent was still working: snapshot only, not the note */
 } s_keys;
 
 static struct {
@@ -110,6 +111,7 @@ static sh_facts_t facts(void)
     f.talking = ui_talk_up(&s_talk);
     f.clock_open = s_open && !strcmp(s_open->id, s_clock_app);
     f.replying = svc_audio_replying();
+    f.speaking = svc_audio_speaking();
     f.menu_open = s_menu.state == SH_MENU_OPEN;
     return f;
 }
@@ -546,6 +548,10 @@ static void act(sh_act_t a)
     case SH_ACT_STOP_REPLY:
         if (svc_audio_stop_reply()) s_keys.stopped++;
         break;
+    case SH_ACT_STILL_WORKING:
+        s_keys.busy++;
+        ui_toast(TALK_STILL_WORKING, 2200);
+        break;
     case SH_ACT_WAKE: set_dark(false); break;
     case SH_ACT_DARK:
         talk_end(false);
@@ -748,6 +754,7 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_str(w, "key_owner", OWNER[s_st.key_owner]);
     dbg_json_bool(w, "talking", f.talking);
     dbg_json_bool(w, "replying", f.replying);
+    dbg_json_bool(w, "speaking", f.speaking);
     dbg_json_bool(w, "notices_held", f.notices_held);
     dbg_json_str(w, "menu", !f.menu_open                                 ? "closed"
                             : sh_menu_armed(&s_menu, svc_rtc_uptime_ms()) ? "armed"
@@ -763,6 +770,7 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "cancelled", s_keys.cancelled);
     dbg_json_int(w, "failed", s_keys.failed);
     dbg_json_int(w, "stopped", s_keys.stopped);
+    dbg_json_int(w, "still_working", s_keys.busy);
     dbg_json_obj_end(w);
     dbg_json_int(w, "queue_depth", s_q.count);
     dbg_json_int(w, "queue_dropped", s_q.dropped);

@@ -2,6 +2,10 @@
  * snooze. Pure C, host-tested. Everything is 24-hour, on the glass and in the PWA. */
 #pragma once
 
+/* A finger held still this long on the face opens the alarms list; a tap does nothing (owner,
+ * 2026-10-12: "that needs to be a long press, maybe 2 seconds or more"). */
+#define CLOCK_HOLD_MS 2000
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

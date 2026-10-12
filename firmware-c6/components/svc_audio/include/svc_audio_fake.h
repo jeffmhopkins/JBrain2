@@ -18,3 +18,6 @@ void svc_audio_fake_reply(const char *heard, const char *reply, bool speaking);
 /* The converse path the device would have POSTed for the last claimed talk (tk_converse_path):
  * who it was with, voice or text, and whether Clear chat asked for a new conversation. */
 const char *svc_audio_fake_last_path(void);
+/* The box's transcript and a status line for the hold in flight, as JT2 streams them before the
+ * answer: the sim's "transcript + status line" state. */
+void svc_audio_fake_progress(const char *heard, const char *status);
