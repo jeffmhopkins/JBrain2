@@ -1600,7 +1600,7 @@ class TestReplyCeiling:
 
         lead = const("display.c", "LISTEN_LEAD_MS")
         hush = const("display.c", "LISTEN_HUSH_MS")
-        cap = const("audio.c", "CAPTURE_MAX_MS")
+        cap = const("stream.h", "CAPTURE_MAX_MS")
         assert hush >= 1500, "a four-year-old pauses mid-sentence for longer than an adult"
         # Four seconds of actual sentence left over, which is a long one at this age.
         assert cap - lead - hush >= 4000, (lead, hush, cap)
@@ -1631,7 +1631,7 @@ class TestReplyCeiling:
             assert m is not None, f"{name} not found in {path}"
             return int(m.group(1))
 
-        cap = const("audio.c", "CAPTURE_MAX_MS")
+        cap = const("stream.h", "CAPTURE_MAX_MS")
         wait = const("display.c", "TALK_TIMEOUT_MS")
         http = const("talk.c", "TALK_HTTP_TIMEOUT_MS")
 

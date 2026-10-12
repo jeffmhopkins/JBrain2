@@ -391,30 +391,43 @@ class TestTheVolumeCeilingWasTheBugReport:
         same SPI or whatever?"*
 
         Not a shared bus — the codec routes its DAC into its ADC by design, so the panel genuinely
-        hears its own cues, and `s_deaf` exists to stop it answering its own beep. The defect was
-        that the deaf path `continue`d past the capture copy, so those samples were not silenced
-        but DELETED and the ends spliced. `s_deaf` is re-armed on every written chunk, so a 300 ms
-        cue cost the cue plus `DEAF_CHUNKS` — about 540 ms — out of the middle of a recording,
-        with the join inaudible. A child saying "I went to the park today" through a cue came back
-        shorter than she spoke, and the transcript read as though she had said the shorter thing.
+        hears its own cues, and the deaf window exists to stop it answering its own beep. The
+        defect was that the deaf path `continue`d past the capture copy, so those samples were not
+        silenced but DELETED and the ends spliced. The window is re-armed on every written chunk,
+        so a 300 ms cue cost the cue plus the deaf tail — about 540 ms — out of the middle of a
+        recording, with the join inaudible. A child saying "I went to the park today" through a
+        cue came back shorter than she spoke, and the transcript read as though she had said the
+        shorter thing.
 
         A gap sounds like a gap and transcribes as a pause. What was said during the cue is lost
-        either way; inventing a sentence she never said is the part that is fixable."""
+        either way; inventing a sentence she never said is the part that is fixable.
+
+        Two halves since 0.4.0: `stream.c` decides deafness and must answer SILENCE (never NONE)
+        for a deaf chunk, and `audio.c` must write that silence into an open recording."""
         import pathlib
         import re
 
-        audio = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "audio.c"
-        ).read_text(encoding="utf-8")
-        deaf = re.search(r"if \(s_deaf > 0\) \{(.+?)\n            \}", audio, re.S)
-        assert deaf, "the self-deafening block moved; re-pin this test"
-        body = deaf.group(1)
-        assert "s_cap_on" in body and "memset" in body, (
-            "the deaf branch no longer writes silence into the capture buffer, so a cue during a "
-            "recording deletes that span instead of silencing it and the message comes back "
-            "shorter than the child spoke"
+        main = pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main"
+        stream = (main / "stream.c").read_text(encoding="utf-8")
+        deaf = re.search(r"if \(s->deaf > 0\) \{(.+?)\n    \}", stream, re.S)
+        assert deaf, "the self-deafening block moved in stream.c; re-pin this test"
+        assert "STREAM_CAPTURE_SILENCE" in deaf.group(1), (
+            "a deaf chunk no longer reaches the capture as silence, so a cue during a recording "
+            "deletes that span and the message comes back shorter than the child spoke"
         )
-        assert "s_cap_used +=" in body, "the capture cursor is not advanced, so nothing is kept"
+        audio = (main / "audio.c").read_text(encoding="utf-8")
+        branch = re.search(
+            r"if \(t\.capture == STREAM_CAPTURE_SILENCE\) \{(.+?)\n        \}", audio, re.S
+        )
+        assert branch, "audio.c's deaf branch moved; re-pin this test"
+        assert "capture_keep(s_chunk, true)" in branch.group(1), (
+            "the deaf branch no longer writes silence into the capture buffer"
+        )
+        start = audio.index("static void capture_keep(")
+        keep = audio[start : audio.index("\n}\n", start)]
+        assert "memset" in keep and "s_cap_used +=" in keep, (
+            "capture_keep no longer writes silence and advances the cursor, so nothing is kept"
+        )
 
     def test_every_talk_failure_the_firmware_can_hit_carries_a_name(self) -> None:
         """THE RED DASH THE OWNER SAW, AND WHY IT SAID NOTHING. `talk.c` had six ways to fail and

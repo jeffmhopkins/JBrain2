@@ -2749,6 +2749,29 @@ static void test_no_two_cues_are_the_same_sound(void)
     }
 }
 
+static void test_cue_busy_distinct(void)
+{
+    /* A refusal used to borrow CUE_STOP, so a child whose press was refused heard the panel say
+       she had cancelled. CUE_BUSY must be its own sound — apart from the stop, the apology and
+       a plain tap on the same measures `test_no_two_cues_are_the_same_sound` uses — and it must
+       not move, since a refusal is neither an ending nor a question. */
+    int16_t a[CUE_MAX_SAMPLES], b[CUE_MAX_SAMPLES];
+    const int n = cue_fill(CUE_BUSY, a);
+    const cue_t near[] = {CUE_STOP, CUE_OOPS, CUE_BLIP, CUE_NOBODY};
+    for (unsigned k = 0; k < sizeof(near) / sizeof(near[0]); k++) {
+        const int m = cue_fill(near[k], b);
+        const float ra = cue_rate(a, n / 16, n / 2), rb = cue_rate(b, m / 16, m / 2);
+        const float rr = ra > rb ? ra / rb : rb / ra;
+        const float la = cue_low_share(a, n, 500.0f), lb = cue_low_share(b, m, 500.0f);
+        const float dl = la > lb ? la - lb : lb - la;
+        CHECK(rr > 1.06f || dl > 0.08f || abs(n - m) > CUE_RATE / 40,
+              "a refusal does not sound like a stop, an apology, a tap or nobody-there");
+    }
+    const float early = cue_rate(a, n / 16, n / 4);
+    const float late = cue_rate(a, (n * 5) / 8, (n * 7) / 8);
+    CHECK(late > early * 0.9f && late < early * 1.1f, "a refusal holds its pitch");
+}
+
 static void test_every_action_has_its_own_voice(void)
 {
     /* The sound follows the ACTION, not the tap — which is why poking the head coos without
@@ -4415,6 +4438,7 @@ int main(void)
     test_an_apology_sits_low_where_roughness_is_felt();
     test_the_body_noises_are_the_lowest_things_here();
     test_no_two_cues_are_the_same_sound();
+    test_cue_busy_distinct();
     test_the_five_farts_are_five_different_farts();
     test_every_action_has_its_own_voice();
     test_the_gain_is_the_only_loudness_control();
