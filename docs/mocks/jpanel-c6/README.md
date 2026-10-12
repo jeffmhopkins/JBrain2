@@ -70,3 +70,7 @@ panel, the others import it at a fixed `start` state).
   seconds (the first turns the button rose: "Tap again to disconnect"). Order is now Brightness, Battery,
   Notifications, Jerv, Firmware, Touch screen, Wi-Fi — brightness first because it is the
   one reached for most (owner, 2026-10-11).
+- **Auto-rotate** (owner, 2026-10-11): the square glass turns its content in 90° steps to keep
+  "down" down, from the QMI8658's gravity vector. A switch under Brightness ("Auto-rotate",
+  on by default; off = locked upright). The live panel's **tilt** tweak turns the device to
+  show it. Firmware rules: plan §2b.

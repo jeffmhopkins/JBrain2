@@ -15,6 +15,7 @@ body{margin:0}
 </style>
 </helmet>
 <div style="width: 720px; height: 720px; position: relative; overflow: hidden; background: #E4E4E0; font-family: 'Montserrat', sans-serif; color: #1A1B1E;">
+<div style="position: absolute; inset: 0; transform: rotate({{tiltDeg}}deg); transform-origin: 360px 395px; transition: transform 300ms ease;">
 
   <div style="position: absolute; left: 423px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
     <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">KEY</span>
@@ -35,7 +36,7 @@ body{margin:0}
 
   <div style="position: absolute; left: 77px; top: 112px; width: 566px; height: 566px; border-radius: 72px; background: #F4F4F2; box-shadow: 0 1px 0 #FFFFFF inset, 0 18px 40px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.12);">
     <div style="position: absolute; left: 17px; top: 17px; width: 532px; height: 532px; border-radius: 60px; background: #050505;">
-      <div onPointerDown="{{screenDown}}" onPointerMove="{{screenMove}}" onPointerUp="{{screenUp}}" style="position: absolute; left: 26px; top: 26px; width: 480px; height: 480px; border-radius: 44px; overflow: hidden; background: #000000; color: #E6E7E9; user-select: none; touch-action: pan-y;">
+      <div onPointerDown="{{screenDown}}" onPointerMove="{{screenMove}}" onPointerUp="{{screenUp}}" style="transform: rotate({{screenDeg}}deg); transition: transform 250ms ease 150ms; position: absolute; left: 26px; top: 26px; width: 480px; height: 480px; border-radius: 44px; overflow: hidden; background: #000000; color: #E6E7E9; user-select: none; touch-action: pan-y;">
 
         <sc-if value="{{isHome0}}" hint-placeholder-val="{{true}}">
           <div style="position: absolute; left: 36px; top: 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; width: 408px;">
@@ -259,6 +260,15 @@ body{margin:0}
                 <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9"></path></svg>
               </div>
               <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">10% is the floor, so the screen can never be set to look switched off.</span>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; border-top: 1px solid #26282C;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: 20px; font-weight: 500;">Auto-rotate</span>
+                  <span style="font-size: 16px; font-weight: 500; color: #9A9DA3;">{{rot.note}}</span>
+                </div>
+                <button role="switch" aria-checked="{{rot.checked}}" aria-label="Auto-rotate" onClick="{{toggleRotate}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{rot.border}}; background: {{rot.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{rot.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{rot.knob}};"></span>
+                </button>
+              </div>
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
@@ -428,8 +438,9 @@ body{margin:0}
     </div>
   </div>
 </div>
+</div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -461,7 +472,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, autoRotate: true, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
       alarms: [
         { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
@@ -881,6 +892,20 @@ class Component extends DCLogic {
       power: this.powerView(this.props.power || 'charging'),
       toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
       ttsOn: s.tts ? 'true' : 'false',
+      tiltDeg: { upright: 0, 'turned left': -90, 'upside down': 180, 'turned right': 90 }[this.props.tilt || 'upright'],
+      // The firmware turns content only once gravity is ~20° past the 45° boundary and has held
+      // there ~0.5 s, and keeps the last orientation while the panel lies flat; the mock just
+      // follows the tweak.
+      screenDeg: s.autoRotate ? -({ upright: 0, 'turned left': -90, 'upside down': 180, 'turned right': 90 }[this.props.tilt || 'upright']) : 0,
+      rot: {
+        checked: s.autoRotate ? 'true' : 'false',
+        note: s.autoRotate ? 'Follows which way is down' : 'Locked upright',
+        track: s.autoRotate ? 'rgba(143,188,154,0.22)' : '#1E2024',
+        border: s.autoRotate ? 'transparent' : '#3A3D42',
+        knob: s.autoRotate ? '#8FBC9A' : '#9A9DA3',
+        knobX: s.autoRotate ? 34 : 5
+      },
+      toggleRotate: () => { if (!this.swiped) this.put((b) => ({ autoRotate: !b.autoRotate })); },
       clockRef: (el) => { this.clockEl = el; },
       openClock: () => { if (!this.swiped) this.put({ screen: 'clock', clockView: 'face', playing: null }); },
       isClock: isPage && s.screen === 'clock' && s.clockView === 'alarms' && !s.ring,
