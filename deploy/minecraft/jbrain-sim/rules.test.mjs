@@ -128,3 +128,12 @@ test("a mob search answers in the hit shape the backend reads, or says none", ()
   );
   assert.equal(r.findLine(q, "Steve", here, undefined), "find none: no minecraft:cow within 256 blocks of Steve");
 });
+
+test("a Power Pack's lore is stale unless it is exactly the one current line", () => {
+  assert.equal(r.packLoreStale(r.POWER_PACK, []), true);
+  assert.equal(r.packLoreStale(r.POWER_PACK, ["an older wording"]), true);
+  assert.equal(r.packLoreStale(r.POWER_PACK, [r.LINES.powerPackLore, "x"]), true);
+  assert.equal(r.packLoreStale(r.POWER_PACK, [r.LINES.powerPackLore]), false);
+  assert.equal(r.packLoreStale(r.TRICORDER, []), false);
+  assert.equal(r.packLoreStale("minecraft:ender_pearl", []), false);
+});

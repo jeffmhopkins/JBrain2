@@ -4,8 +4,11 @@
 
 // Dave's words, copied verbatim from the canon: Bleepbloop_City `notes/lore.md`, "Dave's
 // lines". The lore page is the source: a line changes there first, then here.
-// - Signed off by the owner (2026-10-11): every line here.
+// - Signed off by the owner: every line here (2026-10-11; powerPackLore 2026-10-12, the
+//   item's lore: the technology that fuelled the Old Makers' ships, made now, not
+//   salvaged). A rewording is one line: older lore is rewritten on the next look.
 export const LINES = {
+  powerPackLore: "The same fuel the Old Makers' ships ran on.",
   noSignal: "…kssht… no signal…",
   notTuned: "…static… that one isn't tuned to you.",
   rebeamed:
@@ -38,7 +41,7 @@ export const LINES = {
     "The transporter can only carry you, not your things. They're where you fell. Go and get them before they're gone.",
   ],
   firstEnderPearl:
-    "…is that an Ender Pearl? The Old Makers ran on those. Ring eight of them around a Blaze Powder on a crafting table and you'll have a Power Pack, the ship's old fuel. Bring me one when you do.",
+    "…is that an Ender Pearl? The Old Makers ran on those. Ring eight of them around a Blaze Powder on a crafting table and you'll have a Power Pack, the same fuel our ships ran on. Bring me one when you do.",
   firstPowerPack: {
     keep: "A Power Pack! Keep it with your Tricorder. Next time you fall, it can hold a field around everything you carry, and I can bring it all home with you. It burns the pack, though.",
     transport:
@@ -52,6 +55,13 @@ export const LINES = {
 export const TRICORDER = "jbrain:tricorder";
 export const POWER_PACK = "jbrain:power_pack";
 export const LORE = "Points where Dave says";
+
+// A crafted Power Pack carries no lore (a recipe can't set one), so the pack writes it on
+// every stack a player carries. Any lore other than exactly the current line is stale, so
+// an old wording is replaced too. Bedrock stacks only identical lore, so every pack gets
+// the same single line: lored stacks merge with each other again.
+export const packLoreStale = (typeId, lore) =>
+  typeId === POWER_PACK && (lore.length !== 1 || lore[0] !== LINES.powerPackLore);
 
 const DIMS = { overworld: "minecraft:overworld", nether: "minecraft:nether", the_end: "minecraft:the_end" };
 const DIM_NAMES = { overworld: "the Overworld", nether: "the Nether", the_end: "the End" };
