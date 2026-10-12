@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.3, §15) W1◻️ W2◻️ W3◻️ P1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.4, §15) W1◻️ W2◻️ W3◻️ P1◻️
 >
 > **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
 > until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs
@@ -2522,6 +2522,11 @@ in flight. Two faults the owner saw within the hour:
 - *The animation was choppy.* With the socket off, every request was a fresh TLS handshake, and
   the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
   requests, turned on only after speech has started (`firmware/README.md`).
+
+**0.4.4, a cheaper frame.** On 0.4.3 Lydian's panel drew 13.5 frames a second at 68 ms of work each,
+untouched. The idle redraw was every frame counting the state machine's per-frame
+`MUTE_COMMANDS`, and the limbs were stamped a disc per pixel. Both are fixed (the limbs pixel for
+pixel, checked on the host against the old loops), and the report's `note` splits draw from blit.
 
 **0.4.3, the frame rate.** Lydian's panel ran 0.4.2 for three hours with 7 handshakes, the
 kept connection working and the internal low-water unchanged at 18,208 B. A cold review of the

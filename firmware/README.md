@@ -471,6 +471,21 @@ Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls b
 
 ## One connection to the box, not one per request (0.3.39)
 
+**0.4.4 makes each frame cheaper.** Lydian's panel on 0.4.3 reported 68 ms of work per frame (about
+14 fps) and 13.5 frames a second with nobody touching it.
+- **The idle redraw.** The render loop asked for a frame whenever the state machine emitted any
+  effect, and since 0.4.0 it emits `MUTE_COMMANDS` on every frame, so every pass was a redraw.
+  That effect no longer counts, so an idle pet is drawn at the 200 ms floor again and speech gets
+  the processor and PSRAM back.
+- **Limbs as one run per row.** `face_draw_limb` used to stamp a full disc at every pixel of a limb
+  (about 6 writes per lit pixel, and the limbs are most of the ostrich). It now gathers each row's
+  extent and writes it once, then draws the end ball as its own disc. Discs everywhere are drawn
+  as row runs too. `host/tests.c` keeps the old per-pixel loops and checks 1,500 random limbs and a
+  disc sweep against them, pixel for pixel. The limb routine borrows about 2 KB of the render
+  task's stack while it runs.
+- **The report's `note`** now splits the frame: `frames=N draw=avg/max blit=avg/max gap=avg/max`
+  (ms), so the next step can aim at whichever is bigger.
+
 **0.4.3 makes the animation run at the speed it was tuned for.** A cold review of the render
 path found four things, all confirmed against the code:
 - The loop slept a fixed 40 ms *after* each frame, so while animating a frame took draw + blit + 40 ms
@@ -484,9 +499,6 @@ path found four things, all confirmed against the code:
   budget is unchanged. The CPU runs at 240 MHz, as esp-sr recommends for the S3.
 - The report's `note` carries `frames=N work=avg/max gap=avg/max` (ms), so the real frame rate
   is readable through the debug API. A `gap` near 40 is 25 fps.
-
-Not done yet, and next if `work` stays above ~40 ms: the limb rasteriser stamps a whole circle per
-pixel of limb (about 6x overdraw), which a row-span fill can replace pixel-for-pixel.
 
 **0.4.2 keeps one HTTPS connection between requests** (`link_keep_alive`). 0.4.0's
 one-session-per-request meant a full TLS handshake every 3 s for the settings poll alone, and the
