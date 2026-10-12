@@ -135,6 +135,8 @@ def test_the_owner_s_input_is_checked(box: Box) -> None:
         {**WORK, "days": 128},
         {**WORK, "label": "x" * 25},
         {**WORK, "label": "Café"},
+        {**WORK, "label": 'say "hi"'},
+        {**WORK, "label": "back\\slash"},
         {**WORK, "sound": "siren"},
     ):
         assert box.owner("POST", box.alarms_url(), json=bad).status_code == 422, bad
@@ -147,6 +149,18 @@ def test_the_ninth_alarm_is_refused(box: Box) -> None:
         assert box.owner("POST", box.alarms_url(), json={**WORK, "at": m}).status_code == 201
     r = box.owner("POST", box.alarms_url(), json=WORK)
     assert r.status_code == 409 and "8" in r.json()["detail"]
+
+
+def test_an_add_that_raced_past_the_count_is_still_409(
+    box: Box, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The route's count is only the early answer; when a concurrent add slips past it, the
+    trigger (which counts under the subject's lock) refuses, and the owner still gets a 409."""
+    for m in range(8):
+        box.owner("POST", box.alarms_url(), json={**WORK, "at": m})
+    monkeypatch.setattr(panel_alarms, "ALARMS_MAX", 9)
+    r = box.owner("POST", box.alarms_url(), json=WORK)
+    assert r.status_code == 409, r.text
 
 
 def test_a_pet_panel_has_no_alarms_and_a_stranger_id_is_404(box: Box) -> None:
@@ -167,14 +181,17 @@ def test_the_desk_panel_reads_its_alarms_and_polls_cheaply(box: Box) -> None:
     assert body["alarms"] == [{"id": aid, **WORK}]
     tag = body["etag"]
     seen = box.owner("GET", box.alarms_url()).json()
-    assert seen["panel_etag"] == tag == seen["etag"] and seen["panel_seen_s"] >= 0, (
-        "the PWA can say 'On the panel' only once the panel has fetched this version"
+    assert seen["panel_etag"] == "" and seen["panel_seen_s"] >= 0, (
+        "a fetch is not a store: the panel holds nothing until it says so"
     )
-    # Compact and unescaped: the panel reads it into a 1 KB buffer.
     assert b'"label":"Work"' in got.content
 
     again = box.panel("Jeff", "GET", f"/api/endpoint/alarms?etag={tag}")
     assert again.status_code == 304 and again.content == b""
+    seen = box.owner("GET", box.alarms_url()).json()
+    assert seen["panel_etag"] == tag == seen["etag"], (
+        "the PWA says 'On the panel' once the panel asks with this version"
+    )
     assert again.headers["etag"] == f'"{tag}"'
     by_header = box.panel(
         "Jeff", "GET", "/api/endpoint/alarms", headers={"If-None-Match": f'W/"{tag}"'}
@@ -184,6 +201,26 @@ def test_the_desk_panel_reads_its_alarms_and_polls_cheaply(box: Box) -> None:
     box.owner("PUT", f"{box.alarms_url()}/{aid}", json={**WORK, "label": "Gym"})
     moved = box.panel("Jeff", "GET", f"/api/endpoint/alarms?etag={tag}")
     assert moved.status_code == 200 and moved.json()["etag"] != tag
+
+
+def test_a_list_the_panel_fetched_but_never_applied_is_not_on_the_panel(box: Box) -> None:
+    """The firmware moves its etag only once a fetched list is stored. A 200 it dropped (a
+    truncated read, a list it refused) leaves it asking with the old tag, and the PWA must keep
+    saying "waiting" rather than "On the panel"."""
+    box.owner("POST", box.alarms_url(), json=WORK)
+    old = box.panel("Jeff", "GET", "/api/endpoint/alarms").json()["etag"]
+    box.panel("Jeff", "GET", f"/api/endpoint/alarms?etag={old}")
+    box.owner("POST", box.alarms_url(), json={**WORK, "at": 500})
+    new = ""
+    for _ in range(2):
+        served = box.panel("Jeff", "GET", f"/api/endpoint/alarms?etag={old}")
+        new = served.json()["etag"]
+        assert served.status_code == 200 and new != old
+        seen = box.owner("GET", box.alarms_url()).json()
+        assert seen["panel_etag"] == old != seen["etag"]
+    box.panel("Jeff", "GET", f"/api/endpoint/alarms?etag={new}")
+    seen = box.owner("GET", box.alarms_url()).json()
+    assert seen["panel_etag"] == seen["etag"]
 
 
 def test_the_desk_panel_switches_its_alarm_and_nothing_else(box: Box) -> None:
@@ -249,3 +286,6 @@ def test_if_none_match_reads_like_http() -> None:
     assert panel_alarms._matches("abc", "abc")
     assert not panel_alarms._matches("abc", None)
     assert not panel_alarms._matches("abc", '"abd"')
+    assert panel_alarms._sent("abc", 'W/"zzz"') == "abc"
+    assert panel_alarms._sent(None, 'W/"zzz", "abc"') == "zzz"
+    assert panel_alarms._sent(None, None) == ""

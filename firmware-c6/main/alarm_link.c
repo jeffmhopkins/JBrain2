@@ -10,8 +10,10 @@ static const char *TAG = "alarms";
 
 #define ALARM_TIMEOUT_MS 8000
 
-/* Eight alarms of a 24-byte ASCII label are ~700 bytes of the box's compact JSON. */
-static char s_body[1024];
+/* The box's longest answer, its terminator, and one byte more: a read that fills the buffer is
+ * taken as cut off, so a full-size answer must leave that byte free. */
+static char s_body[ALARM_JSON_MAX + 2];
+_Static_assert(sizeof s_body - 1 > ALARM_JSON_MAX, "the box's longest alarms answer must fit");
 
 static void send_switches(void)
 {

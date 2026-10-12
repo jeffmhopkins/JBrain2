@@ -3616,8 +3616,10 @@ export const ALARM_SOUNDS: AlarmSound[] = ["chime", "beeps", "rise"];
 /** The panel's own limits (`ALARM_MAX`, `ALARM_LABEL_BYTES`); the box enforces both. */
 export const ALARMS_MAX = 8;
 export const ALARM_LABEL_MAX = 24;
-/** What the panel's font draws. The box refuses anything else, so it is said while typing. */
-export const ALARM_LABEL_CHARS = /^[ -~]*$/;
+/** What the panel's font draws, less `"` and `\`: JSON escapes those, and the panel's fetch
+ *  buffer is sized for eight full labels with nothing escaped. The box refuses anything else,
+ *  so it is said while typing. */
+export const ALARM_LABEL_CHARS = /^[ !#-[\]-~]*$/;
 
 /** One alarm as the owner sets it. `at` is minutes past midnight in the PANEL's zone; `days`
  *  is the panel's own mask, bit 0 Monday … bit 6 Sunday, and 0 rings once then switches off. */

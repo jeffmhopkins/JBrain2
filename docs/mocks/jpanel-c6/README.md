@@ -152,8 +152,10 @@ panel, the others import it at a fixed `start` state).
   Chime / Beeps / Rise picker below the label (the mock has none; the brief asked for a small fixed
   set), and the list's second line names it. **Delete takes two taps** within 3 s ("Tap again to
   delete"), Revoke's pattern; the mock deletes on one. **"On the panel" is earned**: the mock flips
-  to it after 1.5 s, the PWA only once the box has seen the panel fetch that version ("Sending to
-  panel…" until then, re-checked every 10 s). **The time field is the phone's own** — `<input
+  to it after 1.5 s, the PWA only once the panel asks the box with that version, which it does
+  only after storing it ("Sending to panel…" until then, re-checked every 10 s). **No `"` or `\`
+  in a label** (the panel's fetch buffer is sized for labels with nothing to escape). **The time
+  field is the phone's own** — `<input
   type="time">` shows 12-hour on a phone set to 12-hour; the list, the panel and the box are 24-hour.
   **The night-clock hours are not in the PWA yet** (still the panel's default 21:30–06:30); that
   half of the mock's card is a later wave. On the panel the ringing screen's second button stays

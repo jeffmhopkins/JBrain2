@@ -3,7 +3,8 @@
 // THE PWA IS WHERE ALARMS ARE MADE (owner decision, mocks README): time, repeat days, label and
 // sound are set here; the panel only switches them on and off. The panel keeps its own copy and
 // rings from its own clock, so what this screen owes the owner is an honest answer to "has the
-// panel got it yet?" — "On the panel" only once the box has seen the panel fetch this version.
+// panel got it yet?" — "On the panel" only once the panel asks the box with this version, which
+// it does only after storing it.
 
 import { useCallback, useEffect, useState } from "react";
 
@@ -281,7 +282,8 @@ export function PanelAlarms({ deviceId }: { deviceId: string }) {
             </label>
             {!labelOk && (
               <p className="jp-unit-error">
-                Letters, digits and plain punctuation only — the panel cannot draw the rest.
+                Letters, digits and plain punctuation, but no " or \ — the panel cannot take the
+                rest.
               </p>
             )}
             <fieldset className="jp-alarm-sounds">

@@ -120,7 +120,7 @@ describe("the desk panel's alarms", () => {
     expect(screen.getByText("Sending to panel…")).toBeInTheDocument();
   });
 
-  it("says 'On the panel' once the panel has fetched the new version", async () => {
+  it("says 'On the panel' once the panel asks with the new version", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     render(<PanelAlarms deviceId="panel-desk" />);
     fireEvent.click(await screen.findByRole("switch", { name: "Alarm 06:45, on" }));
@@ -191,9 +191,15 @@ describe("the desk panel's alarms", () => {
   it("refuses a label the panel cannot draw before it is sent", async () => {
     render(<PanelAlarms deviceId="panel-desk" />);
     fireEvent.click(await screen.findByRole("button", { name: "Edit alarm 06:45" }));
-    fireEvent.change(screen.getByLabelText("Label (optional)"), { target: { value: "Café" } });
-    expect(screen.getByText(/the panel cannot draw the rest/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    const label = screen.getByLabelText("Label (optional)");
+    for (const bad of ["Café", 'say "hi"', "back\\slash"]) {
+      fireEvent.change(label, { target: { value: bad } });
+      expect(screen.getByText(/the panel cannot take the rest/)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    }
+    fireEvent.change(label, { target: { value: "Gym [7am] #1 ~ok!" } });
+    expect(screen.queryByText(/the panel cannot take the rest/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   });
 
   it("stops offering Add at eight", async () => {

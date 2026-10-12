@@ -10,7 +10,9 @@ something it asks at ring time.
 - **`minute`** is the time of day in the PANEL's zone (the panel computes daylight saving
   itself; the box never converts). **`days`** is the firmware's own mask: bit 0 Monday … bit 6
   Sunday, 0 = once — the panel switches a one-off off after it rings.
-- **At most eight** per panel (`ALARM_MAX` on the panel), held by a trigger as well as the route.
+- **At most eight** per panel (`ALARM_MAX` on the panel), held by a trigger that takes a
+  per-subject advisory lock before it counts, so concurrent inserts cannot both pass; the
+  route's own count is only the friendly early answer.
 
 RLS — three answers, and the third is the one a policy alone cannot give:
 
@@ -50,9 +52,12 @@ def upgrade() -> None:
             minute smallint NOT NULL CHECK (minute BETWEEN 0 AND 1439),
             days smallint NOT NULL DEFAULT 0 CHECK (days BETWEEN 0 AND 127),
             enabled boolean NOT NULL DEFAULT true,
-            -- What the panel can draw: printable ASCII, 24 at most (the route says so first).
+            -- What the panel can draw: printable ASCII, 24 at most (the route says so first),
+            -- and never a double quote or a backslash: JSON escapes those, and the panel's
+            -- fetch buffer is sized for eight full labels with nothing escaped.
             label text NOT NULL DEFAULT ''
-                CHECK (octet_length(label) <= 24 AND label ~ '^[ -~]*$'),
+                CHECK (octet_length(label) <= 24 AND label ~ '^[ -~]*$'
+                       AND position(chr(34) IN label) = 0 AND position(chr(92) IN label) = 0),
             sound text NOT NULL DEFAULT 'chime' CHECK (sound IN ('chime', 'beeps', 'rise')),
             created_at timestamptz NOT NULL DEFAULT now(),
             updated_at timestamptz NOT NULL DEFAULT now()
@@ -67,6 +72,11 @@ def upgrade() -> None:
         LANGUAGE plpgsql AS $$
         BEGIN
             IF TG_OP = 'INSERT' THEN
+                -- Serialize this panel's inserts before counting: without it two concurrent
+                -- inserts each count seven and both land. Keyed on the subject, so other
+                -- panels never wait; released at commit.
+                PERFORM pg_advisory_xact_lock(
+                    hashtextextended('endpoint_panel_alarm:' || NEW.subject_id::text, 0));
                 IF (SELECT count(*) FROM app.endpoint_panel_alarm
                     WHERE subject_id = NEW.subject_id) >= 8 THEN
                     RAISE EXCEPTION 'a panel holds at most 8 alarms'
