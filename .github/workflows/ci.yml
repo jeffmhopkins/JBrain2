@@ -429,6 +429,14 @@ jobs:
         run: uv run pyright
       - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
         run: uv run pytest
+      # The privilege drop (setuid, 0700 trees, git as the session uid, kill-by-uid, the
+      # token-free shell env, closed inherited fds) is only exercised as root; the runner
+      # isn't, so those tests skip above. Run them again under sudo so CI covers them.
+      - if: needs.changes.outputs.jcode == 'true' || needs.changes.outputs.full == 'true'
+        run: >-
+          sudo -E env "PATH=$PATH" "$(command -v uv)" run --no-sync pytest
+          tests/test_sandbox.py tests/test_workspace.py tests/test_terminal.py
+          tests/test_sessions.py -p no:cacheprovider
 
   # The jlaunch control server (job launcher for long one-shot computations) — same
   # shape as jcode: a Python service whose unit tests run against fakes and a trivial

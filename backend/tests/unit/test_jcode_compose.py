@@ -7,6 +7,7 @@ must ALSO join `jcode_fenced` — otherwise it can't resolve/reach the control s
 every /api/jcode/* create 502s. This regression-guards exactly that wiring, which was missing
 from the original Wave J2 compose."""
 
+import re
 from pathlib import Path
 
 import yaml
@@ -38,6 +39,18 @@ def test_jcode_is_isolated_on_its_fenced_network_only() -> None:
 def test_jcode_sessions_cannot_regain_privileges() -> None:
     # Session shells are unprivileged uids; no setuid/file-capability binary may lift one.
     assert "no-new-privileges:true" in _spec()["services"]["jcode"]["security_opt"]
+
+
+def test_jcode_pids_limit_covers_every_session_at_its_cap() -> None:
+    # Per-uid RLIMIT_NPROC bounds one session; the container's pids_limit must hold all
+    # of them at once plus the root server's own threads and git runs.
+    ctl = Path(__file__).resolve().parents[3] / "jcode" / "src" / "jcode_ctl"
+    nproc_m = re.search(r"^SESSION_NPROC = (\d+)", (ctl / "sandbox.py").read_text(), re.M)
+    max_m = re.search(r"max_sessions: int = (\d+)", (ctl / "config.py").read_text())
+    limit_m = re.search(r"\$\{JCODE_PIDS_LIMIT:-(\d+)\}", _COMPOSE.read_text())
+    assert nproc_m and max_m and limit_m
+    sessions = int(max_m.group(1)) * int(nproc_m.group(1))
+    assert int(limit_m.group(1)) >= sessions + 256
 
 
 def test_jcode_reaps_orphaned_session_processes() -> None:

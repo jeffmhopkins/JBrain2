@@ -753,10 +753,12 @@ services:
     depends_on: [egress]
     networks: [jcode_fenced]
     # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
-    # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
+    # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs. It
+    # must exceed every session at its own RLIMIT_NPROC (max_sessions × SESSION_NPROC in
+    # jcode_ctl) plus the root server's headroom, or two busy sessions starve the rest.
     mem_limit: ${JCODE_MEM_LIMIT:-4g}
     cpus: ${JCODE_CPUS:-2.0}
-    pids_limit: ${JCODE_PIDS_LIMIT:-512}
+    pids_limit: ${JCODE_PIDS_LIMIT:-2560}
 
   # The job launcher (docs/plans/JLAUNCH_PLAN.md): runs a registered long-running one-shot
   # computation (the Erdos-Straus census is the first spec) as a supervised job with a live
