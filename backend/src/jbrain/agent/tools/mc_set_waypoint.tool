@@ -1,6 +1,6 @@
 ---
 name: mc_set_waypoint
-version: 3
+version: 4
 permission: web
 params:
   type: object
@@ -29,11 +29,12 @@ params:
       description: Whose Tricorder to set; leave it out for this chat's player.
     clear:
       type: boolean
-      description: Clear the waypoint instead, pointing the Tricorder back at spawn.
+      description: Clear the waypoint instead, pointing the Tricorder back at spawn (this ends a scan too).
   required: []
 ---
 Point a player's Tricorder at a destination: coordinates, or one of their saved places.
 While they hold it, its screen line shows an arrow toward the place, its label and how far
 it is (and the y, if given), or which dimension it's in when they're elsewhere. Each
 player has their own waypoint, kept with the world, and it can be set while they're
-offline. The Tricorder comes with the box's own jbrain pack, in every world it loads.
+offline. Setting or clearing it ends a live scan (mc_tricorder_scan). The Tricorder comes
+with the box's own jbrain pack, in every world it loads.

@@ -62,12 +62,17 @@ A wave is a set of tasks that can run mostly in parallel. For each wave:
 
 ## Post-merge review issues
 
-The owner runs a **separate reviewer agent** (owner, 2026-10-12). Its only job is to
-review **merged** PRs for bugs, and it files what it finds as **GitHub issues**. Its
+The owner runs a **separate reviewer agent** (owner, 2026-10-12). It reviews **open**
+PRs and leaves its findings as a **comment on the PR**; anything still open when the PR
+merges (or found after) it files as a **GitHub issue**. Its
 issues say which PR introduced the bug ("Introduced in #N" or "Found while reviewing
 merged PR #N"), with the files and lines, a repro and a suggested fix.
 
-So every working session owns the issues filed against **its own** PRs:
+So every working session owns the findings on **its own** PRs:
+- **Before merging, read the PR's comments and reviews, not just CI.** A finding there is
+  fixed in that PR, and the thread is answered, before it merges. The reviewer may not
+  have finished by the time CI is green; that's fine: don't hold the merge for it (the
+  post-merge checks below catch what lands after).
 - **Check the open issues periodically, not once:** at the start of a session, about
   **10 and 40 minutes after every merge of your own PR**, and before you report a stretch
   of work as done. Measured 2026-10-12 over eight issues, the reviewer filed 40 s to
