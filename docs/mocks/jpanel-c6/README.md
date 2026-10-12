@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -13,7 +13,7 @@ panel, the others import it at a fixed `start` state).
 
 ## What was decided
 
-- **Home, page 1:** Jerv top-left, Minecraft top-right (dimmed, "Soon" — not built), Quorra
+- **Home, page 1:** Jerv top-left, Minecraft top-right (since 0.0.11 a menu of Dave and Compass), Quorra
   bottom-left, Tamsin bottom-right. Unplayed messages ride the tile as an amber count.
 - **Home, page 2 (swipe left):** Clock, then Settings. Kept off page 1 because it is rarely used and the
   four main tiles already fill the glass.
@@ -83,3 +83,24 @@ panel, the others import it at a fixed `start` state).
   held. A short press keeps home / back but now acts on release, so a long press is never also
   a back. Already on the Clock it does nothing; over the talk ring or a ringing alarm it is
   plain BOOT (cancel, stop). Built in firmware 0.0.9.
+- **Clear chat by a long press** (owner, 2026-10-12: *"find a way to clear the chat. Maybe a long
+  press in a chat window pulls up a menu?"*): a finger held still (600 ms, within the tap's 20 px
+  slop, so a scroll never does it) anywhere in a conversation — Jerv's, Dave's, Quorra's or
+  Tamsin's — opens a small card over a dimmed screen: **Clear chat** (rose) and **Cancel**. Clear
+  takes two taps within 3 s, the Wi-Fi Disconnect pattern ("Tap again to clear"). BOOT, a tap on
+  the dim, or KEY closes it, and KEY then records nothing. Clearing empties that thread on the
+  panel; for Jerv or Dave the next talk also starts a fresh conversation on the box (the old one
+  stays in the PWA). One shell decision for every conversation, not a copy per app. Built in
+  firmware 0.0.11.
+- **The threads carry the panels' real names** (owner, 2026-10-12: *"it should pull the panel
+  name from the panel config"*): Quorra and Tamsin are placeholders here and in the sim only.
+  On the glass each thread is bound to a sibling panel's device id and shows the name the owner
+  gave it on the box, its tile letter from that name and its colour from it too; before the box
+  has ever answered it is "Panel 1" / "Panel 2". Built in firmware 0.0.11.
+- **Minecraft is a menu: Dave and Compass** (owner, 2026-10-12): the Minecraft tile opens a
+  second level with two tiles. **Dave** is a conversation exactly like Jerv's — the same view,
+  hold KEY inside it to talk to Dave, spoken replies, the long-press menu — but its own instance
+  with its own history: Jerv's and Dave's never share a screen or a message. **Compass** is a
+  "Work in progress" page. BOOT climbs one level. KEY outside Dave's thread is still Jerv's.
+  Built in firmware 0.0.11; there is no mock board for these, the sim's `minecraft`, `dave`,
+  `dave-reply`, `compass`, `chat-menu` and `chat-menu-armed` states are their pictures.

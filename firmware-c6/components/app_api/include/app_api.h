@@ -40,6 +40,11 @@ struct app {
     /* Optional. True while the open app's screen must not be covered by an arriving notice: the
      * clock face, where it waits as a corner badge until tapped (plan §2). */
     bool (*holds_notices)(app_t *self);
+    /* Optional, together. Whether the screen now showing is a conversation that a long press may
+     * offer to clear (owner, 2026-10-12), and the clear itself: that conversation's history on
+     * this panel, and for an agent a fresh conversation on the box. Called only while open. */
+    bool (*can_clear)(app_t *self);
+    void (*clear)(app_t *self);
 
     /* Set by shell_register(); never by the app. */
     const app_host_t *host;

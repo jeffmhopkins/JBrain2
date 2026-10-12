@@ -134,6 +134,8 @@ function box(
     settingsPut?: (sent: Record<string, unknown>) => Response;
     chats?: unknown[];
     clearChats?: (path: string) => Response;
+    agent?: (path: string) => Response;
+    agentPut?: (path: string, init?: RequestInit) => Response;
   } = {},
 ) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -172,6 +174,12 @@ function box(
           : json({ pet_name: "Pip", form: "robot" });
       }
       return json(opts.appearance ?? { pet_name: "", form: "ostrich" });
+    }
+    if (/^\/api\/endpoint\/panels\/[^/]+\/agent$/.test(path)) {
+      if (method === "PUT") {
+        return opts.agentPut ? opts.agentPut(path, init) : json(JSON.parse(String(init?.body)));
+      }
+      return opts.agent ? opts.agent(path) : json({ agent_access: false });
     }
     if (path === "/api/endpoint/settings") {
       if (method === "PUT") {
@@ -1335,5 +1343,74 @@ describe("the pet's half of the conversation", () => {
     // screen would be the one lie this surface must not tell.
     fetchMock.mockImplementation(async () => new Response("nope", { status: 500 }));
     expect(screen.getByText("why is the sky blue")).toBeTruthy();
+  });
+});
+
+describe("the desk panel's reach into the real agents", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function openPanels(): Promise<void> {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+    await screen.findByText("the other one");
+  }
+
+  it("offers the switch on the display only, reads it, and saves a flip", async () => {
+    /* A pet panel never gets the agents — the box refuses it too — so the switch is drawn once,
+       on the owner's own display, and opens on the box's answer rather than a default. */
+    const asked: string[] = [];
+    const sent: unknown[] = [];
+    fetchMock.mockImplementation(
+      box({
+        agent: (path) => {
+          asked.push(path);
+          return json({ agent_access: false });
+        },
+        agentPut: (path, init) => {
+          sent.push([path, JSON.parse(String(init?.body))]);
+          return json({ agent_access: true });
+        },
+      }),
+    );
+    await openPanels();
+    const toggle = await screen.findByRole("checkbox", { name: "Talks to the full Jerv and Dave" });
+    expect(
+      screen.getAllByRole("checkbox", { name: "Talks to the full Jerv and Dave" }),
+    ).toHaveLength(1);
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    expect(asked).toEqual(["/api/endpoint/panels/panel-desk/agent"]);
+    expect(toggle).not.toBeChecked();
+    fireEvent.click(toggle);
+    await waitFor(() => expect(toggle).toBeChecked());
+    expect(sent).toEqual([["/api/endpoint/panels/panel-desk/agent", { agent_access: true }]]);
+  });
+
+  it("says so when the box cannot be read or refuses the change", async () => {
+    fetchMock.mockImplementation(box({ agent: () => json({ detail: "nope" }, 500) }));
+    await openPanels();
+    expect(
+      await screen.findByText("Could not read whether this panel reaches Jerv."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the switch where it was when a save fails", async () => {
+    fetchMock.mockImplementation(
+      box({ agentPut: () => json({ detail: "only a display panel can reach the agents" }, 409) }),
+    );
+    await openPanels();
+    const toggle = await screen.findByRole("checkbox", { name: "Talks to the full Jerv and Dave" });
+    await waitFor(() => expect(toggle).not.toBeDisabled());
+    fireEvent.click(toggle);
+    expect(await screen.findByText(/only a display panel|Could not change it/)).toBeInTheDocument();
+    expect(toggle).not.toBeChecked();
   });
 });

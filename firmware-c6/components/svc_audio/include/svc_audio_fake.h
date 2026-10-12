@@ -15,3 +15,6 @@
 /* The box's answer to the hold in flight, as the device's network side would deliver it:
  * `speaking` keeps the reply's "Speaking…" up as though its voice were playing. */
 void svc_audio_fake_reply(const char *heard, const char *reply, bool speaking);
+/* The converse path the device would have POSTed for the last claimed talk (tk_converse_path):
+ * who it was with, voice or text, and whether Clear chat asked for a new conversation. */
+const char *svc_audio_fake_last_path(void);

@@ -20,8 +20,11 @@ static const char *TAG = "talk";
 /* The recording's own cap is the ring's 1:00 (TALK_MAX_MS); this backstops a release that never
    came. */
 #define HOLD_LIMIT_MS (TALK_MAX_MS + 5000)
-/* Whisper, the model and the speech, on a shared box: the S3s wait 55 s (firmware/main/talk.c). */
-#define ANSWER_LIMIT_MS 60000
+/* Whisper, the agent and the speech. Since 0.0.11 the box runs the owner's real Jerv or Dave,
+   whose tool-using turns are far longer than 0.0.10's spoken persona: the box gives the agent
+   100 s, then answers "still working" and lets the turn finish into the thread, so 130 s here
+   covers that, transcription and the speech. */
+#define ANSWER_LIMIT_MS 130000
 /* Slices, so a hold dropped on the glass is let go within one. */
 #define WAIT_SLICE_MS 500
 #define READ_SLICE_MS 250
@@ -110,10 +113,11 @@ static const char *read_reply(uint32_t sent_at, uint32_t *down, uint32_t *reply_
     return words ? NULL : "the reply was cut off";
 }
 
-static const char *exchange(bool voice, uint32_t *up, uint32_t *down, uint32_t *reply_ms)
+static const char *exchange(tk_agent_t agent, bool voice, bool fresh, uint32_t *up,
+                            uint32_t *down, uint32_t *reply_ms)
 {
-    char path[64];
-    snprintf(path, sizeof path, "/endpoint/converse?persona=jerv&voice=%s", voice ? "true" : "false");
+    char path[96];
+    tk_converse_path(agent, voice, fresh, path, sizeof path);
     if (!box_http_stream_open(path, "application/octet-stream", SEND_TIMEOUT_MS, true))
         return "the box did not answer";
     const char *why = upload(up);
@@ -144,7 +148,7 @@ static const char *exchange(bool voice, uint32_t *up, uint32_t *down, uint32_t *
         talk_net_nothing();
         whole = true;
     } else if (status == -2) {
-        why = "Jerv took too long";
+        why = "no answer in time";
     } else if (status == -1) {
         why = "the box did not answer";
     } else if (status != 0) {
@@ -161,8 +165,9 @@ static const char *exchange(bool voice, uint32_t *up, uint32_t *down, uint32_t *
 
 bool talk_link_run(void)
 {
-    bool voice;
-    if (!talk_net_claim(&voice)) return false;
+    bool voice, fresh;
+    tk_agent_t agent;
+    if (!talk_net_claim(&voice, &agent, &fresh)) return false;
     /* Power save holds a TCP ACK a beacon at the access point; a 32 KB/s upload behind that
        stalls into the ring's half second (the screenshot's lesson, dbg_link.c). */
     wifi_ps_type_t ps = WIFI_PS_MIN_MODEM;
@@ -170,13 +175,14 @@ bool talk_link_run(void)
     if (had) esp_wifi_set_ps(WIFI_PS_NONE);
     const uint32_t t0 = now_ms();
     uint32_t up = 0, down = 0, reply_ms = 0;
-    const char *why = exchange(voice, &up, &down, &reply_ms);
+    const char *why = exchange(agent, voice, fresh, &up, &down, &reply_ms);
     if (had) esp_wifi_set_ps(ps);
     if (why) {
         ESP_LOGW(TAG, "not answered: %s", why);
         talk_net_fail(why);
     }
-    ESP_LOGI(TAG, "up %lu B, down %lu B, reply in %lu ms, %lu ms in all", (unsigned long)up,
+    ESP_LOGI(TAG, "%s%s: up %lu B, down %lu B, reply in %lu ms, %lu ms in all",
+             tk_agent_id(agent), fresh ? " (new chat)" : "", (unsigned long)up,
              (unsigned long)down, (unsigned long)reply_ms, (unsigned long)(now_ms() - t0));
     talk_net_end(up, down, reply_ms);
     return true;

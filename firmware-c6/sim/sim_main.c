@@ -29,6 +29,7 @@
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
+#include "svc_siblings_drv.h"
 
 #define W UI_W
 #define H UI_H
@@ -81,6 +82,7 @@ static void step(uint32_t ms)
         s_ms += 10;
         svc_rtc_fake_advance_ms(10);
         svc_audio_service();
+        svc_siblings_service();
         shell_pump();
         lv_timer_handler();
     }
@@ -185,6 +187,7 @@ static void boot(const char *only)
     svc_net_init();
     svc_box_init();
     svc_messages_init();
+    svc_siblings_init();
     svc_audio_init();
     svc_alarms_init();
     svc_notice_init();
@@ -202,6 +205,75 @@ static void boot(const char *only)
         exit(2);
     }
     step(100);
+}
+
+/* The box's own answer to `GET /endpoint/siblings`, through the panel's own path (svc_siblings_
+ * offer, then the UI task's service) — placeholder names, as every fixture uses. */
+static const char SIBLINGS[] =
+    "{\"siblings\":[{\"device_id\":\"0b8e5f7a-1111-4c2d-9e3f-5a6b7c8d9e01\",\"name\":\"Quorra\"},"
+    "{\"device_id\":\"0b8e5f7a-2222-4c2d-9e3f-5a6b7c8d9e02\",\"name\":\"Tamsin\"}]}";
+static bool s_no_names;
+
+/* The mock's sample conversations. The image ships none: they are the sim's, added the way the
+ * services add any message. */
+static void fixtures(void)
+{
+    if (!s_no_names) {
+        svc_siblings_offer(SIBLINGS, sizeof SIBLINGS - 1);
+        step(20);
+    }
+    static const struct {
+        const char *thread;
+        msg_t m;
+    } SAMPLES[] = {
+        {"jerv", {1, true, true, true, false, 3, "Add milk to the shopping list.", ""}},
+        {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", ""}},
+        {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", ""}},
+        {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", ""}},
+        {SVC_MESSAGES_THREAD_1, {3, true, true, true, false, 4, "Have a good day at school!", "Played"}},
+        {SVC_MESSAGES_THREAD_1, {4, false, true, false, false, 5, "Daddy, when are you coming home?", ""}},
+        {SVC_MESSAGES_THREAD_2, {5, false, true, true, false, 3, "I made you a drawing.", ""}},
+        {SVC_MESSAGES_THREAD_2, {6, true, true, true, false, 2, "I can't wait to see it!", "Played"}},
+    };
+    for (size_t i = 0; i < sizeof SAMPLES / sizeof *SAMPLES; i++)
+        svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
+    step(20);
+}
+
+static void no_names(void)
+{
+    s_no_names = true;
+}
+
+/* The tapped point of whatever on the top layer or screen says `text`: the sim taps a menu's
+ * button by its words, as a person would, rather than by a coordinate that drifts with layout. */
+static lv_obj_t *labelled(lv_obj_t *o, const char *text)
+{
+    if (lv_obj_check_type(o, &lv_label_class) && !strcmp(lv_label_get_text(o), text)) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *hit = labelled(lv_obj_get_child(o, (int32_t)i), text);
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
+static bool tap_label(const char *text)
+{
+    lv_obj_t *l = labelled(lv_layer_top(), text);
+    if (!l) l = labelled(lv_screen_active(), text);
+    if (!l) return false;
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t a;
+    lv_obj_get_coords(lv_obj_get_parent(l), &a);
+    char cmd[96];
+    snprintf(cmd, sizeof cmd, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}",
+             (int)(a.x1 + a.x2) / 2, (int)(a.y1 + a.y2) / 2);
+    dbg_json_t w;
+    static char out[256];
+    dbg_json_init(&w, out, sizeof out);
+    dbg_cmd_run(cmd, &w);
+    step(500);
+    return true;
 }
 
 static notice_t notice(uint32_t id, const char *src, const char *title, const char *body, int nch,
@@ -272,13 +344,14 @@ static void text_only(void)
 static void session(void)
 {
     msg_t m = {.id = 50, .voice = true, .dur_s = 4, .text = "Can we have pancakes?"};
-    svc_messages_fake_add("tamsin", &m);
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_2, &m);
 }
 
+#define CMDS 8
 typedef struct {
     const char *name;
     void (*setup)(void);
-    const char *cmds[6];
+    const char *cmds[CMDS];
 } state_t;
 
 #define OPEN(a) "{\"cmd\":\"open\",\"app\":\"" a "\"}"
@@ -289,6 +362,10 @@ typedef struct {
 #define KEY_DOWN "{\"cmd\":\"inject\",\"event\":\"key_down\"}"
 #define KEY_UP "{\"cmd\":\"inject\",\"event\":\"key_up\"}"
 #define WAIT(ms) "wait " #ms
+/* A finger held still on the conversation: the long press that opens its menu. */
+#define HOLD(x, y) "{\"cmd\":\"inject\",\"event\":\"hold\",\"x\":" #x ",\"y\":" #y ",\"value\":800}"
+/* Not a debug command: the sim taps whatever says this, as a finger would. */
+#define TAP_LABEL(t) "tap " t
 /* Not a debug command: the fake box answers the hold in flight. */
 #define REPLY "reply"
 
@@ -298,10 +375,24 @@ static const state_t STATES[] = {
     {"home-p2", NULL, {"{\"cmd\":\"inject\",\"event\":\"swipe\",\"x\":400,\"y\":240,\"value\":-200}", WAIT(400)}},
     {"jerv", NULL, {OPEN("jerv")}},
     {"rec-jerv", NULL, {OPEN("jerv"), KEY_DOWN, WAIT(3400)}},
-    {"quorra", NULL, {OPEN("quorra")}},
-    {"rec-quorra", NULL, {OPEN("quorra"), KEY_DOWN, WAIT(4100)}},
-    {"tamsin", NULL, {OPEN("tamsin")}},
+    {"quorra", NULL, {OPEN(SVC_MESSAGES_THREAD_1)}},
+    {"rec-quorra", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(4100)}},
+    {"tamsin", NULL, {OPEN(SVC_MESSAGES_THREAD_2)}},
+    /* Before the box has ever answered (no cache either): neutral names, never compiled-in ones. */
+    {"home-unnamed", no_names, {0}},
+    {"thread-unnamed", no_names, {OPEN(SVC_MESSAGES_THREAD_1)}},
+    /* Minecraft's second level (owner, 2026-10-12): Dave, and Compass. */
     {"minecraft", NULL, {OPEN("minecraft")}},
+    {"dave", NULL, {OPEN("minecraft"), TAP_LABEL("Dave")}},
+    {"rec-dave", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), KEY_DOWN, WAIT(2600)}},
+    {"dave-reply", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY}},
+    {"compass", NULL, {OPEN("minecraft"), TAP_LABEL("Compass")}},
+    /* A long press in a conversation (owner, 2026-10-12): the menu, then Clear armed. */
+    {"chat-menu", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000)}},
+    {"chat-menu-armed", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Clear chat")}},
+    {"chat-cleared", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Clear chat"),
+                            TAP_LABEL("Tap again to clear")}},
+    {"dave-menu", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), HOLD(240, 240), WAIT(1000)}},
     {"settings", NULL, {OPEN("settings")}},
     {"settings-end", NULL, {OPEN("settings"), SCROLL_END}},
     {"settings-usb", no_battery, {OPEN("settings")}},
@@ -327,7 +418,7 @@ static const state_t STATES[] = {
     /* BOOT held from inside an app: the clock face (owner, 2026-10-12). */
     {"boot-long", NULL, {OPEN("settings"), "{\"cmd\":\"inject\",\"event\":\"boot_long\"}", WAIT(300)}},
     /* Not a mock board: a short session whose snapshot shows the debug surface. */
-    {"session", session, {OPEN("quorra"), KEY_DOWN, WAIT(2000), KEY_UP, OPEN("tamsin"), WAIT(100)}},
+    {"session", session, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(2000), KEY_UP, OPEN(SVC_MESSAGES_THREAD_2), WAIT(100)}},
 };
 #define NSTATES (sizeof STATES / sizeof *STATES)
 
@@ -364,8 +455,9 @@ static int render(const char *name, const char *png, const char *snap)
         return 2;
     }
     if (st->setup) st->setup();
+    fixtures();
     step(100);
-    for (int i = 0; i < 6 && st->cmds[i]; i++) {
+    for (int i = 0; i < CMDS && st->cmds[i]; i++) {
         if (!strncmp(st->cmds[i], "wait ", 5)) {
             step((uint32_t)atoi(st->cmds[i] + 5));
             continue;
@@ -373,6 +465,13 @@ static int render(const char *name, const char *png, const char *snap)
         if (!strcmp(st->cmds[i], REPLY)) {
             svc_audio_fake_reply(HEARD, REPLIED, svc_settings_get(SET_TTS) != 0);
             step(300);
+            continue;
+        }
+        if (!strncmp(st->cmds[i], "tap ", 4)) {
+            if (!tap_label(st->cmds[i] + 4)) {
+                fprintf(stderr, "%s: nothing says \"%s\"\n", name, st->cmds[i] + 4);
+                return 1;
+            }
             continue;
         }
         if (!strncmp(st->cmds[i], "scroll ", 7)) {
@@ -418,7 +517,7 @@ static int render(const char *name, const char *png, const char *snap)
  * app's screen exists", checked rather than asserted. */
 static int lifecycle(void)
 {
-    static const char *const IDS[] = {"jerv", "quorra", "tamsin", "minecraft", "clock", "settings"};
+    static const char *const IDS[] = {"jerv", SVC_MESSAGES_THREAD_1, SVC_MESSAGES_THREAD_2, "minecraft", "clock", "settings"};
     int bad = 0;
     step(3000);
     unsigned objs = shell_obj_count(), timers = shell_timer_count();
@@ -438,6 +537,30 @@ static int lifecycle(void)
         unsigned o = shell_obj_count(), t = shell_timer_count();
         printf("%-10s open %4u widgets; closed back to %u widgets (home %u), %u timers (home %u)\n", IDS[i],
                open_objs, o, objs, t, timers);
+        if (o != objs || t != timers) bad = 1;
+    }
+    /* Dave's conversation, a level down, closed mid-hold; and a conversation closed with its
+       menu armed (the menu's lapse timer must go with it). */
+    static const char *const DEEP[][4] = {
+        {OPEN("minecraft"), "tap Dave", KEY_DOWN, NULL},
+        {OPEN("jerv"), HOLD(240, 240), "wait 1000", "tap Clear chat"},
+        {OPEN("minecraft"), "tap Compass", NULL, NULL},
+    };
+    for (size_t i = 0; i < sizeof DEEP / sizeof *DEEP; i++) {
+        for (int k = 0; k < 4 && DEEP[i][k]; k++) {
+            if (!strncmp(DEEP[i][k], "tap ", 4)) tap_label(DEEP[i][k] + 4);
+            else if (!strncmp(DEEP[i][k], "wait ", 5)) step((uint32_t)atoi(DEEP[i][k] + 5));
+            else run(DEEP[i][k]);
+            step(200);
+        }
+        step(800);
+        unsigned open_objs = shell_obj_count();
+        run("{\"cmd\":\"home\"}");
+        run(KEY_UP);
+        step(3000);
+        unsigned o = shell_obj_count(), t = shell_timer_count();
+        printf("%-10s open %4u widgets; closed back to %u widgets (home %u), %u timers (home %u)\n",
+               i == 0 ? "dave" : i == 1 ? "jerv-menu" : "compass", open_objs, o, objs, t, timers);
         if (o != objs || t != timers) bad = 1;
     }
     return bad;
@@ -602,6 +725,106 @@ static int touch_checks(void)
     step(100);
     expect(!shell_open_app() && svc_messages_count("jerv") == answered,
            "a tap during the hold cancels it, and the release sends nothing");
+
+    /* The conversation menu, by a real finger. */
+    run(OPEN("jerv"));
+    step(100);
+    finger(240, 240, true);
+    step(400);
+    expect(!shell_menu_open(), "a finger resting under the threshold opens nothing yet");
+    step(400);
+    expect(shell_menu_open(), "held still past 600 ms, the menu opens while the finger is down");
+    finger(240, 240, false);
+    step(200);
+    expect(shell_menu_open(), "and lifting it presses nothing under it");
+    run(KEY_DOWN);
+    step(200);
+    expect(!shell_menu_open() && strstr(run("{\"cmd\":\"snapshot\"}"), "\"talking\":false"),
+           "KEY closes the menu and records nothing");
+    run(KEY_UP);
+    step(100);
+    expect(svc_messages_count("jerv") == answered, "and its release sends nothing");
+
+    finger(240, 240, true);
+    step(60);
+    finger(240, 320, true);
+    step(900);
+    finger(240, 320, false);
+    step(200);
+    expect(!shell_menu_open(), "a scroll held at its end is not a long press");
+
+    unsigned daves = svc_messages_count("dave");
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    tap_label("Clear chat");
+    expect(shell_menu_open() && svc_messages_count("jerv") == answered,
+           "the first tap on Clear chat only arms it");
+    tap_label("Tap again to clear");
+    expect(!shell_menu_open() && svc_messages_count("jerv") == 0, "the second clears Jerv's thread");
+    expect(svc_messages_count("dave") == daves, "and Dave's is untouched");
+    expect(svc_audio_fresh_pending("jerv") && !svc_audio_fresh_pending("dave"),
+           "Jerv's next talk starts a new conversation on the box; Dave's continues");
+
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+    expect(!shell_menu_open() && shell_open_app() && !strcmp(shell_open_app()->id, "jerv"),
+           "BOOT closes the menu and stays in the conversation");
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    finger(20, 20, true);
+    finger(20, 20, false);
+    step(200);
+    expect(!shell_menu_open(), "a tap outside the menu closes it");
+
+    run(OPEN("settings"));
+    step(100);
+    finger(240, 300, true);
+    step(900);
+    finger(240, 300, false);
+    step(200);
+    expect(!shell_menu_open(), "a long press outside a conversation opens nothing");
+
+    run(OPEN("minecraft"));
+    step(100);
+    finger(240, 240, true);
+    step(900);
+    finger(240, 240, false);
+    step(200);
+    expect(!shell_menu_open(), "nor on the Minecraft menu");
+    tap_label("Dave");
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"view\":\"dave\"") != NULL, "Dave opens a level down");
+    run(KEY_DOWN);
+    step(1500);
+    run(KEY_UP);
+    step(100);
+    expect(strstr(svc_audio_fake_last_path(), "persona=dave") != NULL,
+           "KEY in Dave's thread asks the box for Dave");
+    svc_audio_fake_reply("where is spawn", "Two hundred blocks east.", false);
+    step(100);
+    expect(svc_messages_count("jerv") == 0 && svc_messages_count("dave") == daves + 2,
+           "his answer lands in his thread and not Jerv's");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"view\":\"menu\"") != NULL,
+           "BOOT climbs back to the Minecraft menu");
+    run(KEY_DOWN);
+    step(300);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"talking\":true") != NULL,
+           "KEY on the menu is the shell's talk to Jerv");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    run(KEY_UP);
+    step(100);
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+    expect(!shell_open_app(), "and BOOT on the menu goes home");
     return s_touch_bad;
 }
 
@@ -615,10 +838,12 @@ int main(int argc, char **argv)
         }
         if (!strcmp(argv[i], "--lifecycle")) {
             boot(NULL);
+            fixtures();
             return lifecycle();
         }
         if (!strcmp(argv[i], "--touch")) {
             boot(NULL);
+            fixtures();
             return touch_checks();
         }
         if (i + 1 >= argc) break;

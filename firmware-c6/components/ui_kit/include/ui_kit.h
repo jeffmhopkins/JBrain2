@@ -93,6 +93,10 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
 /* Full-screen black base for everything modal: the talk ring, the push pop-up, the alarm. It
  * takes every press inside it, so nothing under it can be reached while it is drawn. */
 lv_obj_t *ui_overlay(lv_obj_t *parent);
+/* A small menu over a dimmed screen: a card titled `title`, centred, that the caller fills with
+ * buttons. A tap on the dim around it reaches `on_outside`; nothing under it can be reached.
+ * Returns the card; its parent (the dim) is what to delete. */
+lv_obj_t *ui_menu(lv_obj_t *parent, const char *title, lv_event_cb_t on_outside, void *user);
 
 /* The hold-to-talk ring, shared by every app that talks. The app supplies the clock and the
  * level (from svc_audio) and what a tap and the cap mean; the ring owns its timer, and

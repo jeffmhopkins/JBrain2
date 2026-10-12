@@ -50,7 +50,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from starlette.requests import ClientDisconnect
 
-from jbrain.api import nudge, panel_ws
+from jbrain.api import nudge, panel_agent, panel_ws
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
@@ -2236,15 +2236,19 @@ async def _panel_transcribe(settings: Settings, audio: bytes) -> tuple[str, int]
     return (transcript.text or "").strip(), audio_ctx
 
 
-async def _panel_speech(settings: Settings, reply: str, ceiling: int) -> bytes:
+async def _panel_speech(
+    settings: Settings, reply: str, ceiling: int, voice: panel_agent.Voice | None = None
+) -> bytes:
     """`reply` as the panel plays it: 16 kHz mono s16, padding trimmed, cut at `ceiling` bytes
-    with a warning rather than silently. 503 when the box cannot speak."""
+    with a warning rather than silently. 503 when the box cannot speak. `voice` is the PWA
+    read-aloud's voice and effects (the owner's desk panel); None is Kokoro's default, which
+    is what the twins' pets have always spoken in."""
     base = (settings.brain_tts_url or "").rstrip("/")
     if not base:
         raise HTTPException(status_code=503, detail="speech synthesis not configured")
     try:
         async with httpx.AsyncClient(timeout=30.0) as http:
-            resp = await http.get(f"{base}/tts", params={"text": reply[:600]})
+            resp = await http.get(f"{base}/tts", params=panel_agent.tts_params(voice, reply[:600]))
         resp.raise_for_status()
         wav_pcm, wav_rate = _pcm_from_wav(resp.content)
     except (httpx.HTTPError, ValueError) as exc:
@@ -2282,8 +2286,9 @@ async def _panel_speech(settings: Settings, reply: str, ceiling: int) -> bytes:
 # and a device key that could reach it would make a stolen panel worth far more than "one
 # conversation" — the promise `converse` makes. So this is a plain spoken turn with no tools
 # and no data, and the prompt says so, so the model never claims to have set a reminder it
-# could not set. A panel that reaches the real agent is an owner decision (plan §5's open
-# question), not something to slip in with the audio.
+# could not set. The owner has since decided (2026-10-12) that HIS panel reaches the real agent:
+# that is `_agent_turn`, behind `panel_agent.agent_allowed`, and this persona is now what every
+# other caller asking for Jerv gets.
 #
 # `pet.turn`'s model slot, not `agent.turn`'s: a spoken reply wants the cheap, snappy slot the
 # panels already use, and a one-off completion on the agent's slot would evict the agent's
@@ -2423,12 +2428,79 @@ async def _jerv_turn(
     return Response(content=jerv_frame(heard, reply, pcm), media_type="application/x-jpanel-turn")
 
 
+# THE REAL AGENTS, for the one panel the owner allowed (owner decision 2026-10-12; plan §5).
+# `panel_agent` holds the gate, the thread and the voice; this is the audio either side of it.
+# The firmware waits 130 s for an answer (0.0.11); the agent gets `AGENT_WAIT_S` of that and
+# the rest is Whisper and Kokoro.
+async def _agent_turn(
+    principal: PrincipalInfo,
+    request: Request,
+    audio: bytes,
+    started: float,
+    *,
+    agent: panel_agent.PanelAgent,
+    voice: bool,
+    fresh: bool,
+) -> Response:
+    """One spoken turn with the real Jerv or Dave: 204 when nothing was heard, else the same
+    reply frame as the persona's — what was heard, the answer condensed to what the panel
+    keeps, and (unless `voice` is false) that answer spoken in the PWA read-aloud's voice."""
+    if len(audio) > PANEL_JERV_AUDIO_MAX:
+        audio = audio[:PANEL_JERV_AUDIO_MAX]
+    held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+    audio = _trim_to_speech(audio)
+    settings = cast(Settings, request.app.state.settings)
+    stt_started = time.monotonic()
+    heard, audio_ctx = await _panel_transcribe(settings, audio)
+    stt_ms = int((time.monotonic() - stt_started) * 1000)
+    if not heard:
+        log.info("endpoint.converse", persona=agent, agent=True, heard="", stt_ms=stt_ms)
+        return Response(status_code=204)
+
+    answer, owner_ctx = await panel_agent.run_turn(request, principal, agent, heard, fresh=fresh)
+
+    pcm = b""
+    tts_ms = 0
+    if voice:
+        tts_started = time.monotonic()
+        try:
+            spoken_in = await panel_agent.owner_voice(
+                cast(SqlSettingsStore, request.app.state.settings_store), owner_ctx
+            )
+            pcm = await _panel_speech(settings, answer.words, PANEL_JERV_REPLY_MAX, spoken_in)
+        except Exception as exc:  # noqa: BLE001 — the words still go, as on the persona path
+            log.warning("endpoint.converse_agent_tts_error", error=repr(exc))
+            pcm = b""
+        tts_ms = int((time.monotonic() - tts_started) * 1000)
+    log.info(
+        "endpoint.converse",
+        persona=agent,
+        agent=True,
+        session=answer.session_id,
+        fresh=fresh,
+        stop_reason=answer.stop_reason,
+        heard=heard[:120],
+        reply=answer.words[:120],
+        stt_ms=stt_ms,
+        audio_ctx=audio_ctx,
+        held_ms=held_ms,
+        agent_ms=answer.waited_ms,
+        tts_ms=tts_ms,
+        total_ms=int((time.monotonic() - started) * 1000),
+        reply_bytes=len(pcm),
+    )
+    return Response(
+        content=jerv_frame(heard, answer.words, pcm), media_type="application/x-jpanel-turn"
+    )
+
+
 @router.post("/converse")
 async def converse(
     principal: PanelDep,
     request: Request,
-    persona: Literal["pet", "jerv"] = "pet",
+    persona: Literal["pet", "jerv", "dave"] = "pet",
     voice: bool = True,
+    new_thread: bool = False,
 ) -> Response:
     """A child holds the panel, talks, and the panel answers out loud.
 
@@ -2450,6 +2522,13 @@ async def converse(
     Jerv rather than the pet, as the reply frame `jerv_frame` builds — what was heard, what
     Jerv said and, unless `voice=false`, the speech. Without it nothing here changes, so the
     twins' panels never see a difference.
+
+    The panel the owner allowed (`panel_agent.agent_allowed`: a `display` with
+    `agent_access`, both set server-side) gets the REAL agent instead: `persona=jerv` runs the
+    owner's Jerv and `persona=dave` his Minecraft_Dave, each in that panel's own thread, with
+    `new_thread=true` (the panel's Clear chat) starting a fresh one. Any other caller asking for
+    Jerv keeps the tool-less persona above, and asking for Dave is refused: no limited Dave
+    exists to fall back to.
     """
     started = time.monotonic()
     try:
@@ -2462,7 +2541,14 @@ async def converse(
         return Response(status_code=204)
     if not audio:
         raise HTTPException(status_code=400, detail="no audio")
-    if persona == "jerv":
+    if persona != "pet":
+        if await panel_agent.agent_allowed(request.app.state.session_maker, principal):
+            return await _agent_turn(
+                principal, request, audio, started, agent=persona, voice=voice, fresh=new_thread
+            )
+        if persona == "dave":
+            log.warning("endpoint.converse_agent_refused", persona=persona, device=principal.id)
+            raise HTTPException(status_code=403, detail="this panel cannot talk to Dave")
         return await _jerv_turn(principal, request, audio, started, voice)
     if len(audio) > PANEL_AUDIO_MAX:
         audio = audio[:PANEL_AUDIO_MAX]

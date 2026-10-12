@@ -11,6 +11,8 @@ void talk_port_lock(void) {}
 void talk_port_unlock(void) {}
 
 static bool s_net;
+/* What the device would have asked the box for: the converse path of the last claimed talk. */
+static char s_path[96];
 
 /* The audio task and the network in miniature: the codec opens whatever the talk wants at once,
  * and a dropped exchange lets go of the "connection" as the main task would. */
@@ -27,8 +29,15 @@ void talk_port_kick(void)
 
 void talk_port_net(void)
 {
-    bool voice;
-    s_net = talk_net_claim(&voice);
+    bool voice, fresh;
+    tk_agent_t agent;
+    s_net = talk_net_claim(&voice, &agent, &fresh);
+    if (s_net) tk_converse_path(agent, voice, fresh, s_path, sizeof s_path);
+}
+
+const char *svc_audio_fake_last_path(void)
+{
+    return s_path;
 }
 
 const char *talk_port_refusal(void)
