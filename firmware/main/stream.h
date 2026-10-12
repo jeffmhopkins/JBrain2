@@ -27,8 +27,10 @@
 #include "ring.h"
 
 /* The recording's ceiling, here rather than in `audio.c` so the machine and the backend pins read
-   one number: the box sizes `PANEL_AUDIO_MAX` from the same 35 s (A3). */
-#define CAPTURE_MAX_MS 35000
+   one number. UNDER the box's `/send` limit (`jpanel.MAX_MESSAGE_MS`, 30 s on today's box, checked
+   on the raw length): a recording over it is refused with a 413 and lost (A3). Half a second under
+   it, so a full one never sits on the line. W1 may raise both together. */
+#define CAPTURE_MAX_MS 29500
 /* The longest pet reply talk will read; the box's `PANEL_REPLY_MAX` is the same ten seconds. */
 #define PLAY_BUF_MS 10000
 

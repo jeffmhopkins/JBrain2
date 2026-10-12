@@ -1482,6 +1482,23 @@ static void test_a_hold_on_the_pet_opens_the_grid_at_every_free_tap_count(void)
     CHECK(!gesture_reserved(1) && !gesture_reserved(2), "and the low counts are free");
 }
 
+/* The frame a maintenance hold fires, `gesture_poll` has already reset the count; the finger is
+   still down and must not open the grid then, nor on any frame of that press. */
+static void test_a_maintenance_hold_never_opens_the_grid_as_it_fires(void)
+{
+    world_reset();
+    w.gest_taps = GESTURE_TAPS_REBOOT;
+    press_at(CENTRE_X, CENTRE_Y);
+    run_ms(GESTURE_HOLD_MS);
+    w.gest_taps = 0;
+    run_ms(HOLD_TALK_MS + 500);
+    CHECK(w.sm.mode != SM_GRID && !w.out.view.grid, "the firing frame does not open the grid");
+    lift();
+    press_at(CENTRE_X, CENTRE_Y);
+    run_ms(HOLD_TALK_MS + 200);
+    CHECK(w.sm.mode == SM_GRID, "and the next press's hold still does");
+}
+
 static void open_grid(void)
 {
     press_at(CENTRE_X, CENTRE_Y);
@@ -2291,6 +2308,8 @@ static void test_reply_under_heard_min_counts_as_heard(void)
     CHECK(w.out_ms < 3000, "well under the heard threshold");
     tap_at(RIGHT_X, DISC_Y);
     CHECK(fx_index(SM_FX_STOP, 1) >= 0, "REPLY's STOP carries heard");
+    CHECK(fx_index(SM_FX_SILENCE, -1) < 0 && fx_index(SM_FX_STOP, 1) < fx_index(SM_FX_PAUSE, 0),
+          "with no SILENCE to hoist it, the STOP goes before the PAUSE(0)");
     CHECK(w.snap.play.kind == JP_PLAY_STOPPED_HEARD, "so it is acknowledged, not handed back");
 }
 
@@ -3334,6 +3353,25 @@ static void test_calibration_drops_recording_and_keeps_offer(void)
     step();
     CHECK(w.sm.turn.state == SM_TURN_NONE && w.nod == 1 && w.sm.dashes == 0,
           "read on the first frame back: a reply, not a timeout");
+    /* Longer than the turn's own timeout: the turn is still read, not recovered away. */
+    world_reset();
+    ask_pet();
+    w.calibrating = true;
+    run_ms(TALK_TIMEOUT_MS + 5000);
+    CHECK(w.sm.turn.state == SM_TURN_THINKING && w.out.violations == 0,
+          "a long calibration leaves the turn running");
+    w.net = SM_NET_SPOKE;
+    w.calibrating = false;
+    step();
+    CHECK(w.sm.turn.state == SM_TURN_NONE && w.nod == 1 && w.sm.dashes == 0,
+          "and the reply that landed in it is still read");
+    world_reset();
+    ask_pet();
+    w.calibrating = true;
+    run_ms(TALK_TIMEOUT_MS + 5000);
+    w.calibrating = false;
+    step();
+    CHECK(w.sm.dashes == 1 && last_cue() == CUE_OOPS, "while one that never came is a dash");
 }
 
 static void test_deadlines_survive_u32_wrap(void)
@@ -3638,6 +3676,7 @@ int main(void)
     test_a_short_button_press_darkens_blanks_and_mutes();
     test_a_five_second_hold_requests_deep_sleep_exactly_once();
     test_a_hold_on_the_pet_opens_the_grid_at_every_free_tap_count();
+    test_a_maintenance_hold_never_opens_the_grid_as_it_fires();
     test_the_grid_reaches_all_four_people();
     test_the_grid_closes_itself_but_a_stray_finger_does_not();
     test_a_tick_pressed_into_silence_refuses_to_send();

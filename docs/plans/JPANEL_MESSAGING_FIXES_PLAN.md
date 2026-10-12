@@ -217,7 +217,7 @@ the table.
 |---|---|---|---|---|
 | A1 | ✓ | Stop generation; arbiter discard; sink gen check; network cancel | F2 | `test_stop_at_every_interleave_point`, `stream: test_stop_while_paused_drains` |
 | A2 | ✓ | Every command ends by its published deadline (F2, which relies on that alone); the UI backstops on it (F3, §7.5c) | F2, F3 | `test_chain_fetch_failure_returns_to_idle` |
-| A3 | ✓ | Box accepts the cap (+0.5 s); caps pinned | W1, F2 | `test_send_accepts_exactly_the_capture_cap`, `test_capture_caps_pinned` |
+| A3 | ✓ | Firmware caps under the box's limit; box accepts the cap (+0.5 s); caps pinned | FW, W1, F2 | `test_a_full_panel_recording_is_one_the_box_accepts`, `test_send_accepts_exactly_the_capture_cap`, `test_capture_caps_pinned` |
 | A4 | ✓ | Serial engine; ack before the next command; run by id | W3, F2 | `test_lost_ack_is_retried_and_never_replays` |
 | A5 | ✓ | Render leases the capture before posting | F2 | `test_lease_taken_before_post` |
 | A6 | ✓\* | Hand-back (F3) gated on the delivery header; selection over the ordered set `S` (§8.2) | W3, F3 | `test_stop_in_preroll_returns_not_acks`, `sm: test_face_cycles_without_skipping` |
@@ -1589,10 +1589,14 @@ applies it through Ops → Update, and the panels OTA on the differing version.
 
 **A3**
 
-- **W1:** the box accepts `PANEL_AUDIO_MAX` + 0.5 s.
+- **FW (0.4.0):** the firmware caps the recording UNDER today's box's `/send` limit —
+  `CAPTURE_MAX_MS` is 29,500 against `jpanel.MAX_MESSAGE_MS` = 30,000, which the box checks on
+  the raw length — so a full recording is never a 413 on the box in the field.
+  `test_a_full_panel_recording_is_one_the_box_accepts` pins panel cap ≤ box cap.
+- **W1:** the box accepts `PANEL_AUDIO_MAX` + 0.5 s; W1 may then raise both caps together.
 - **F2:** 400 → `EMPTY`, 409 → `NOBODY`, 413 → `FAILED("too-long")`.
 - **Pins:**
-  - `test_capture_caps_pinned`: `PANEL_AUDIO_MAX == CAPTURE_MAX_MS × 32`, and
+  - `test_capture_caps_pinned`: `PANEL_AUDIO_MAX >= CAPTURE_MAX_MS × 32`, and
     `panel_ws.MAX_BODY > PANEL_AUDIO_MAX`;
   - `voiceMessage.MAX_MESSAGE_MS == jpanel.MAX_MESSAGE_MS` (the owner's cap).
 - **Long sends:** `test_35s_send_on_slow_link_survives_transcription`.

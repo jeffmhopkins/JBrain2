@@ -2215,6 +2215,10 @@ static void face_task(void *arg)
             sleep_wake("touch");
             tapped = false;
             down = false;
+            /* The last press's point would otherwise anchor this one: a finger that drags on
+               the next frame would read as a swipe measured from where the previous press was. */
+            s_down_x = -1;
+            s_down_y = -1;
         }
         /* WHERE THE FINGER IS, IN THE SPACE THE TARGETS WERE DRAWN IN. Anything drawn before
            `flip_frame` is in frame order and then reversed, so a touch has to be reversed the same

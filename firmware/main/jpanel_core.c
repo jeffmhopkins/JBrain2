@@ -70,7 +70,9 @@ static _Atomic uint32_t s_snapshot_retries;
 static atomic_bool s_poll_flag;
 static uint32_t s_next_poll;
 static jp_stats_t s_stats;
-static const char *volatile s_err = "";
+/* Its own copy: the reason it was noted from is overwritten by the next outcome. The last byte is
+   only ever written NUL, so the report task, reading it unlocked, always finds an end. */
+static char s_err[JP_REASON_MAX];
 
 /* The claimed PLAY or REPLAY, which a run keeps claimed across messages. */
 static struct {
@@ -153,9 +155,14 @@ static void publish(void)
 
 static void beat(void) { s_v.hb++; }
 
+/* Ends the heard bit's stickiness on every end, not only a classified stream: a REPLY stop that
+   lands on a message the engine cancels unbegun would otherwise stay sticky and turn the next
+   early stop, of a different message, into a heard one that is acked instead of handed back. */
+static void stop_consumed(void) { stream_classified(s_st, stream_stop_word(s_st) >> 1); }
+
 static void fail_note(const char *why)
 {
-    s_err = why;
+    copy(s_err, sizeof(s_err), why);
     s_stats.msg_bad++;
 }
 
@@ -327,6 +334,7 @@ static void end_play(uint32_t seq, const jp_who_t *who, bool replay, jp_play_kin
     s_job.active = false;
     if (kind == JP_PLAY_FAILED || kind == JP_PLAY_SHORT) fail_note(s_v.play.reason);
     publish();
+    stop_consumed();
 }
 
 /* A run whose next id is gone ends on the previous message's outcome, which is already
@@ -339,6 +347,7 @@ static void end_run_on_previous(void)
     s_v.deadline_ms = 0;
     s_job.active = false;
     publish();
+    stop_consumed();
 }
 
 static void end_send(uint32_t seq, jp_send_kind_t kind, const char *reason)
@@ -745,8 +754,9 @@ static void do_poll(void)
                             .on_progress = on_progress,
                             .cancelled = poll_cancelled};
     const link_res_t res = s_io.request(s_io.ctx, &req);
-    if (res.stopped && res.status != 200) {
-        /* Yielded to a command, not failed: ask again once it is done. */
+    if (res.stopped) {
+        /* Yielded to a command, not failed, even after a 200 head: a body cut short by the
+           cancel is not the box sending bad JSON. Ask again once the command is done. */
         atomic_store(&s_poll_flag, true);
     } else if (res.status < 0) {
         why = res.timed_out ? "timeout" : (res.err != NULL && res.err[0] ? res.err : "connect");
@@ -1198,7 +1208,7 @@ void jpanel_core_init(const jpanel_io_t *io)
     s_v.cur.pos = -1;
     s_run_n = 0;
     s_tried_n = 0;
-    s_err = "";
+    s_err[0] = '\0';
     atomic_store(&s_snapshot_retries, 0);
     atomic_store(&s_poll_flag, false);
     s_next_poll = now_ms() + io->poll_first_ms;

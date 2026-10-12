@@ -628,11 +628,18 @@ static link_res_t box_request(void *ctx, const link_req_t *req)
         }
         jp_waiting_t wt;
         build_waiting(&wt);
-        const size_t n = sizeof(wt) < req->cap ? sizeof(wt) : req->cap;
-        memcpy(req->buf, &wt, n);
+        size_t n = sizeof(wt) < req->cap ? sizeof(wt) : req->cap;
         res.status = 200;
-        res.got = n;
         lg->status = 200;
+        /* A 200 head, then a body that stalls after `cut_after` bytes until something gives. */
+        if (o != NULL && o->cut_after >= 0) {
+            if ((size_t)o->cut_after < n) n = (size_t)o->cut_after;
+            w = lwait(req, deadline, 3600000u, cancellable);
+            res.stopped = lg->stopped = w == W_CANCEL;
+            res.timed_out = lg->timed_out = w == W_TIMEOUT;
+        }
+        memcpy(req->buf, &wt, n);
+        res.got = n;
         return res;
     }
     if (strncmp(p, "/jpanel/next", 12) == 0) {
@@ -1088,6 +1095,9 @@ static void test_reply_stop_counts_heard(void)
     drive_done(seq, 20000);
     CHECK(snap().play.kind == JP_PLAY_STOPPED_HEARD, "a REPLY stop counts as heard (§4)");
     CHECK(count_req("/jpanel/played", 0) == 1, "and is acknowledged");
+    /* As `stream.c` keeps it: the bit stays in the word, but the next plain stop no longer
+       carries it. */
+    stream_stop(&g_st, false);
     CHECK((stream_stop_word(&g_st) & 1u) == 0, "classification ends the heard bit's stickiness");
 }
 
@@ -2029,6 +2039,63 @@ static void test_queued_command_cancels_poll(void)
     CHECK(count_req("/jpanel/waiting", 0) > polls, "and the poll ran again afterwards");
 }
 
+/* A command that cancels a poll after its 200 head has cut the body short itself: that is a
+   yield, not the box sending bad JSON, and the poll is asked for again. */
+static void test_poll_cancelled_mid_body_is_a_yield(void)
+{
+    reset(BOX_NEW);
+    add_msg("qp1", "Tamsin", false, 1000);
+    poll_now();
+    add_override((override_t){.route = "/jpanel/waiting", .status = 200, .times = 1, .cut_after = 10});
+    /* No head latency, so the command lands while the body stalls, not before the head. */
+    g_latency_ms = 0;
+    g_poll_play_seq = 0;
+    g_tick = post_during_poll;
+    jpanel_core_poll_soon();
+    const uint32_t t0 = g_now;
+    while (!(g_poll_play_seq != 0 && done(g_poll_play_seq)) && !jp_due(g_now, t0 + 30000)) {
+        jpanel_core_step();
+    }
+    g_tick = NULL;
+    CHECK(g_poll_play_seq != 0 && done(g_poll_play_seq), "mid-body: the PLAY was served");
+    bool cut_mid_body = false;
+    for (int i = 0; i < g_nlog; i++) {
+        if (strcmp(g_log[i].path, "/jpanel/waiting") == 0 && g_log[i].status == 200 &&
+            g_log[i].stopped) {
+            cut_mid_body = true;
+        }
+    }
+    CHECK(cut_mid_body, "mid-body: the command cancelled the poll after its 200 head");
+    int fails = 0;
+    const char *err = "";
+    uint32_t ago = 0;
+    reach_faults(REACH_POLL, &fails, &err, &ago, g_now);
+    CHECK(fails == 0, "mid-body: a cancelled poll body is not a reach failure");
+    const int polls = count_req("/jpanel/waiting", 0);
+    drive(2000);
+    CHECK(count_req("/jpanel/waiting", 0) > polls, "mid-body: and the poll is asked for again");
+}
+
+/* `msg_err` names the last failure, not whatever reason the outcome after it carried. */
+static void test_msg_err_survives_the_next_outcome(void)
+{
+    reset(BOX_NEW);
+    add_msg("e1", "Tamsin", false, 2000);
+    add_msg("e2", "Dad", true, 1000);
+    add_override((override_t){.route = "/jpanel/next", .status = 200, .times = 1, .cut_after = 20000});
+    poll_now();
+    uint32_t seq = post_play("e1", 0);
+    drive_done(seq, 30000);
+    CHECK(snap().play.kind == JP_PLAY_SHORT && strcmp(jpanel_core_err(), "short") == 0,
+          "msg_err: a cut message is noted short");
+    poll_now();
+    seq = post_play("e1", 0);
+    drive_done(seq, 30000);
+    CHECK(snap().play.kind == JP_PLAY_HEARD && snap().play.reason[0] == '\0',
+          "msg_err: the next outcome carries no reason");
+    CHECK(strcmp(jpanel_core_err(), "short") == 0, "msg_err: and the failure's name survives it");
+}
+
 static void test_no_audio_fails_at_once(void)
 {
     reset(BOX_NEW);
@@ -2173,6 +2240,8 @@ int main(void)
     test_cur_seeded_before_request();
     test_no_poll_while_speaker_busy();
     test_queued_command_cancels_poll();
+    test_poll_cancelled_mid_body_is_a_yield();
+    test_msg_err_survives_the_next_outcome();
     test_no_audio_fails_at_once();
     test_deadlines_survive_u32_wrap();
     test_exactly_one_outcome_per_command();

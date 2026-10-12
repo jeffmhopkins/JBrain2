@@ -30,8 +30,8 @@ HDR = $(wildcard ../main/*.h)
 # slowed down by. `run_stream_tests` steps the speaker's arbiter (`stream.c`) one 40 ms tick at a
 # time against a fake clock. Sequential, not parallel: a suite whose failure output interleaves with
 # another's is a suite nobody reads.
-.PHONY: test clean check_no_logic_in_audio check_no_logic_in_display test_update_check_precedes_task_starts
-test: run_tests run_sm_tests run_link_tests run_stream_tests run_jpanel_tests run_e2e_tests check_no_logic_in_audio check_no_logic_in_display test_update_check_precedes_task_starts
+.PHONY: test clean check_no_logic_in_audio check_no_logic_in_display test_update_check_precedes_task_starts test_wake_press_starts_no_swipe test_codec_written_only_by_audio_task
+test: run_tests run_sm_tests run_link_tests run_stream_tests run_jpanel_tests run_e2e_tests check_no_logic_in_audio check_no_logic_in_display test_update_check_precedes_task_starts test_wake_press_starts_no_swipe test_codec_written_only_by_audio_task
 	./run_tests
 	./run_sm_tests
 	./run_link_tests
@@ -88,6 +88,14 @@ check_no_logic_in_display:
 # `app_main` checks for an update before it starts a single task (plan §6a, gate 4).
 test_update_check_precedes_task_starts:
 	@./test_update_check_precedes_task_starts.sh ../main
+
+# A press that wakes a dark screen forgets the last press's point, so it cannot start a swipe.
+test_wake_press_starts_no_swipe:
+	@./test_wake_press_starts_no_swipe.sh ../main
+
+# Only `audio_task` writes the codec's control registers; the setters other tasks call record.
+test_codec_written_only_by_audio_task:
+	@./test_codec_written_only_by_audio_task.sh ../main
 
 clean:
 	rm -f run_tests run_sm_tests run_link_tests run_stream_tests run_jpanel_tests run_e2e_tests

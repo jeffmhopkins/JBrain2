@@ -274,6 +274,21 @@ class TestTheOwnerFacingRoutesAreWhereThePwaLooks:
             "would be truncated on arrival with nothing said about it"
         )
 
+    def test_a_full_panel_recording_is_one_the_box_accepts(self) -> None:
+        """A3: the panel's recording cap must not exceed the box's `/send` cap.
+
+        `/send` refuses anything over `MAX_MESSAGE_BYTES` with a 413, checked on the raw
+        length, and a 413 is final on the panel — so a cap the box does not accept loses every
+        long message a child records. 0.4.0's first cut had 35 s against 30."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "stream.h").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"^#define CAPTURE_MAX_MS (\d+)$", src, re.M)
+        assert m, "firmware/main/stream.h no longer defines CAPTURE_MAX_MS"
+        cap_ms = int(m.group(1))
+        assert cap_ms <= jpanel.MAX_MESSAGE_MS, (cap_ms, jpanel.MAX_MESSAGE_MS)
+        assert jpanel.PANEL_RATE * 2 * cap_ms // 1000 <= jpanel.MAX_MESSAGE_BYTES
+
 
 class TestDadsVoice:
     """THE PREFIX THAT WAS MISSING, AND WHY NOTHING CAUGHT IT.

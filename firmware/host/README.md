@@ -1,6 +1,6 @@
 # The firmware's host suite
 
-Six binaries and three gates, all run by `make -C firmware/host test`. Nothing here needs hardware,
+Six binaries and five gates, all run by `make -C firmware/host test`. Nothing here needs hardware,
 an ESP-IDF toolchain, or a network.
 
 | binary | source | what it is for |
@@ -25,6 +25,11 @@ duplicate passes it; review covers that.
 `test_update_check_precedes_task_starts` pins `app_main`'s order: the update check before speech,
 talk, voice post, the nudge and the watchdogs, so a broken image can always be replaced over the
 air (plan §6a).
+
+`test_wake_press_starts_no_swipe` and `test_codec_written_only_by_audio_task` pin two lines of
+files with no host harness: a touch that wakes a dark screen forgets the last press's point (or a
+drag on the next frame is a swipe measured from it), and only `audio_task` calls the functions
+that write the codec's control registers (`esp_codec_dev` has no lock).
 
 They are separate because they need different things. The first wants to be a tight loop over
 inputs; the second needs a world — cues that hold the speaker for a while, commands that are

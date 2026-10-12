@@ -354,11 +354,35 @@ static void test_e2e_send_holds_the_lease_until_it_ends(void)
     deadlines_held("e2e send");
 }
 
+/* A REPLY stop on a message the engine cancels before it began is never classified, so nothing
+   ended its heard bit's stickiness: the NEXT message, stopped early with a plain stop, read as
+   heard and was acked instead of handed back. Engine and real arbiter only, no machine. */
+static void test_e2e_unclassified_reply_stop_does_not_leak_heard(void)
+{
+    e_reset(BOX_NEW);
+    g_tick = NULL;
+    add_msg("a1", "Tamsin", false, 5000);
+    add_msg("b1", "Dad", true, 5000);
+    poll_now();
+    const uint32_t s1 = post_play("a1", 0);
+    stream_stop(&g_st, true);
+    drive_done(s1, 20000);
+    CHECK(snap().play.kind == JP_PLAY_CANCELLED, "sticky: a REPLY stop before the claim cancels");
+    poll_now();
+    arm_stop(300, false);
+    const uint32_t s2 = post_play("b1", 1);
+    drive_done(s2, 20000);
+    CHECK(snap().play.kind == JP_PLAY_RETURNED, "sticky: the next early stop hands it back");
+    CHECK(count_req("/jpanel/played", 0) == 0 && !g_msgs[1].played,
+          "sticky: and it is never acknowledged as heard");
+}
+
 int main(void)
 {
     test_selection_held_while_stop_outcome_pending();
     test_e2e_heard_message_offers_again_and_reply();
     test_e2e_send_holds_the_lease_until_it_ends();
+    test_e2e_unclassified_reply_stop_does_not_leak_heard();
     if (failures > 0) {
         fprintf(stderr, "e2e: %d of %d checks FAILED\n", failures, checks);
         return 1;

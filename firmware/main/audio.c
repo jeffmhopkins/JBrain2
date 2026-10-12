@@ -115,8 +115,8 @@ static esp_codec_dev_handle_t s_codec;
 /* Kept so the ALC can be read back from the audio task — see `alc_apply()`. */
 static const audio_codec_ctrl_if_t *s_ctrl;
 
-/* THE RECORDING, claimed once at start-up out of the board's 8 MB of PSRAM: 35 s of 16 kHz mono
-   s16 is 1.1 MB, the largest buffer on this panel. Never allocated while recording — a heap
+/* THE RECORDING, claimed once at start-up out of the board's 8 MB of PSRAM: 29.5 s of 16 kHz
+   mono s16 is 944 KB, the largest buffer on this panel. Never allocated while recording — a heap
    request in the middle of a four-year-old talking is a failure with no good outcome. The cap
    (`CAPTURE_MAX_MS`) lives in `stream.h` so the machine and the box's pins read one number. */
 #define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
@@ -352,7 +352,8 @@ const char *audio_alc_state(void)
 
 /* What the box last asked for, so a re-apply after a settings fetch knows which way to go.
    Off until told otherwise, which is the state this panel has always been in. */
-static bool s_alc_want;
+static volatile bool s_alc_want;
+static volatile bool s_alc_pending;
 
 /* ENABLE OR DISABLE THE CODEC'S OWN AGC, and read back what actually happened.
  *
@@ -410,11 +411,13 @@ static void alc_apply(void)
              landed ? "" : "-REFUSED");
 }
 
+/* Records only, like `audio_set_levels`: the caller is the main task, and REG18 is the codec's,
+   which the audio task owns (see there). */
 void audio_set_agc(bool on)
 {
     if (on == s_alc_want) return; /* the box says this every fetch; only a CHANGE costs a write */
     s_alc_want = on;
-    alc_apply();
+    s_alc_pending = true;
 }
 
 /* Internal RAM: the I2S transmit source, filled by `stream_tick`. */
@@ -454,6 +457,10 @@ static void audio_task(void *arg)
         const stream_tick_t t = stream_tick(&s_stream, now_ms(), s_out, AUDIO_CHUNK);
         if (t.n > 0) esp_codec_dev_write(s_codec, s_out, (int)(t.n * sizeof(int16_t)));
         apply_levels();
+        if (s_alc_pending) {
+            s_alc_pending = false;
+            alc_apply();
+        }
 
         /* THE READ IS THE CLOCK. It blocks for exactly one chunk and drains the DMA at the
            rate it fills, so this task needs no delay of its own and cannot fall behind the
@@ -491,19 +498,19 @@ int audio_peak(const int16_t *buf, int samples)
     return peak;
 }
 
-/* ONE TASK OWNS THE CODEC, AND IT IS THE RENDER TASK — the same rule display.c states for
+/* ONE TASK OWNS THE CODEC, AND IT IS THE AUDIO TASK — the same rule display.c states for
  * the panel, and for the same reason. `esp_codec_dev.c` contains no lock of any kind: read,
  * write, set_out_vol and set_in_gain all walk straight into the device struct and the codec's
  * I2C registers. The component's one mutex lives in `audio_codec_data_i2s.c` and serialises
  * the DATA path only, so it does nothing for a control write.
  *
  * `apply_settings()` calls this from the MAIN task, at boot and every three seconds, while
- * the render task sits inside `esp_codec_dev_read` for about 40 ms of every 40 ms frame. On
+ * the audio task sits inside `esp_codec_dev_read` for about 40 ms of every 40 ms frame. On
  * 2026-09-21 the panel panicked in exactly that window: the box logged `GET /settings`
  * answered and then NO telemetry post, which puts the fault between this call and the next
  * two lines of `report()` (ROOM_ENDPOINT_PLAN.md §10.4al).
  *
- * So this records, and the render task applies. */
+ * So this records, and the audio task applies; `audio_set_agc` does the same for REG18. */
 static volatile int s_want_volume = -1;
 static volatile int s_want_gain = -1;
 static volatile bool s_levels_pending;

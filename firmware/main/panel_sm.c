@@ -546,8 +546,9 @@ static void hold_selection(sm_t *sm, const sm_in_t *in)
 
 typedef enum { END_NATURAL, END_FAIL, END_CHILD } play_end_t;
 
-/* Every exit from PLAY emits PAUSE(0); every exit but a natural finish also emits STOP; a stop
-   the child chose cuts whatever sounds first, so its own cue is never dropped behind it. */
+/* Every exit from PLAY emits PAUSE(0); every exit but a natural finish also emits STOP, ahead of
+   the PAUSE(0) so a paused message is never released to sound before the stop lands; a stop the
+   child chose cuts whatever sounds first, so its own cue is never dropped behind it. */
 static void play_end(sm_t *sm, const sm_in_t *in, sm_out_t *out, play_end_t how, cue_t c,
                      bool by_press)
 {
@@ -555,8 +556,8 @@ static void play_end(sm_t *sm, const sm_in_t *in, sm_out_t *out, play_end_t how,
         hold_selection(sm, in);
         fx(out, SM_FX_SILENCE, 0, 0);
     }
-    fx(out, SM_FX_PAUSE, 0, sm->play.pause_stream);
     if (how != END_NATURAL) fx(out, SM_FX_STOP, 0, 0);
+    fx(out, SM_FX_PAUSE, 0, sm->play.pause_stream);
     if (how == END_CHILD) {
         cue(out, c, STREAM_SLOT_PRESS);
         sm->offer.up = false;
@@ -641,8 +642,10 @@ static void press(sm_t *sm, const sm_in_t *in, sm_out_t *out, sm_target_t t)
         (void)sm_face(sm, s, &to); /* I2: the face drawn is the person answered */
         if (in_play) {
             hold_selection(sm, in);
+            /* STOP before PAUSE(0): no SILENCE here hoists it, and a paused message released
+               first sounds again until the stop lands. Heard: answering it is hearing it (§4). */
+            fx(out, SM_FX_STOP, 1, 0);
             fx(out, SM_FX_PAUSE, 0, sm->play.pause_stream);
-            fx(out, SM_FX_STOP, 1, 0); /* answering it counts as hearing it (§4) */
             sm->play.pause_on = false;
             sm->play.seq = JP_SEQ_NONE;
         }
@@ -840,7 +843,13 @@ static void hold_timer(sm_t *sm, const sm_in_t *in, sm_out_t *out)
 {
     if (!sm->down.active || sm->down.held || sm->down.swiped) return;
     if (!jp_due(in->now, sm->down.at + HOLD_TALK_MS)) return;
-    if (sm->down.target != SM_T_PET || gesture_reserved(in->gest_taps)) return;
+    if (sm->down.target != SM_T_PET) return;
+    if (gesture_reserved(in->gest_taps)) {
+        /* The maintenance hold owns the WHOLE press: the frame it fires resets the count to 0,
+           and a finger still down then would open the grid under it. */
+        sm->down.held = true;
+        return;
+    }
     if (!sm->down.on_pet) {
         /* Once per press: a margin that is too wide looks exactly like a menu that stopped
            working unless the log says which it is. */
@@ -1343,7 +1352,10 @@ uint32_t sm_check(const sm_t *sm, const sm_in_t *in)
         break;
     }
     if (sm->play.pause_on && jp_due(now, sm->play.pause_since + AUDIO_PAUSE_MAX_MS)) v |= SM_I6;
-    if (sm->turn.state == SM_TURN_THINKING && jp_due(now, sm->turn.since + TALK_TIMEOUT_MS + 1)) {
+    /* Not while calibrating: the turn runs on to be read on the first frame back, and recovering
+       it here would end it with neither the reply nor the dash. */
+    if (sm->turn.state == SM_TURN_THINKING && !in->calibrating &&
+        jp_due(now, sm->turn.since + TALK_TIMEOUT_MS + 1)) {
         v |= SM_I6;
     }
     return v;
@@ -1355,8 +1367,8 @@ static void recover(sm_t *sm, const sm_in_t *in, sm_out_t *out)
 {
     const bool dropped = sm->capture && sm->mode == SM_RECORD;
     close_capture(sm, out, true);
-    fx(out, SM_FX_PAUSE, 0, sm->play.pause_stream);
     fx(out, SM_FX_STOP, 0, 0);
+    fx(out, SM_FX_PAUSE, 0, sm->play.pause_stream);
     if (dropped) cue(out, CUE_OOPS, STREAM_SLOT_FAIL);
     sm->play.pause_on = false;
     sm->play.seq = JP_SEQ_NONE;
@@ -1384,8 +1396,8 @@ static void calibrate(sm_t *sm, const sm_in_t *in, sm_out_t *out)
     if (sm->cal) return;
     sm->cal = true;
     close_capture(sm, out, true);
-    fx(out, SM_FX_PAUSE, 0, sm->play.pause_stream);
     fx(out, SM_FX_STOP, 0, 0);
+    fx(out, SM_FX_PAUSE, 0, sm->play.pause_stream);
     sm->play.pause_on = false;
     sm->play.seq = JP_SEQ_NONE;
     sm->grid_until = 0;

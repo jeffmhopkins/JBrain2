@@ -31,7 +31,8 @@ void stream_set_arbiter(stream_t *s, bool present) { atomic_store(&s->arbiter, p
 void stream_stop(stream_t *s, bool heard)
 {
     const uint32_t w = atomic_load(&s->stop);
-    atomic_store(&s->stop, (((w >> 1) + 1) << 1) | (w & 1u) | (heard ? 1u : 0u));
+    const bool keep = (w & 1u) && atomic_load(&s->classified_gen) != (w >> 1);
+    atomic_store(&s->stop, ((((w >> 1) + 1u) & 0x7FFFFFFFu) << 1) | ((heard || keep) ? 1u : 0u));
 }
 
 uint32_t stream_silence(stream_t *s)
@@ -140,8 +141,7 @@ uint32_t stream_stop_word(const stream_t *s) { return atomic_load(&s->stop); }
 
 void stream_classified(stream_t *s, uint32_t gen)
 {
-    const uint32_t w = atomic_load(&s->stop);
-    if ((w >> 1) == gen) atomic_store(&s->stop, w & ~1u);
+    atomic_store(&s->classified_gen, gen & 0x7FFFFFFFu);
 }
 
 stream_tick_t stream_tick(stream_t *s, uint32_t now, int16_t *out, size_t chunk)
