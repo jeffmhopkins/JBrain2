@@ -26,6 +26,8 @@ static sh_route_t r(sh_act_t first, sh_act_t fallback)
 
 sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
 {
+    /* Lit by the time it is handled (PWR got there first): nothing left to do. */
+    if (b == SH_BTN_TOUCH) return r(f->dark ? SH_ACT_WAKE : SH_ACT_NONE, SH_ACT_NONE);
     if (b == SH_BTN_PWR) return r(f->dark ? SH_ACT_WAKE : SH_ACT_DARK, SH_ACT_NONE);
 
     if (b == SH_BTN_KEY_UP) {
@@ -89,6 +91,29 @@ uint8_t sh_swipe(uint8_t page, int dx, uint8_t pages)
     if (dx <= -SH_SWIPE_PX && page + 1 < pages) return page + 1;
     if (dx >= SH_SWIPE_PX && page > 0) return page - 1;
     return page;
+}
+
+sh_stroke_t sh_stroke(int dx, int dy)
+{
+    const int ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
+    if (ax < SH_TAP_SLOP && ay < SH_TAP_SLOP) return SH_STROKE_TAP;
+    if (ax >= SH_SWIPE_PX && ax > ay) return SH_STROKE_SWIPE;
+    return SH_STROKE_DRAG;
+}
+
+bool sh_gate(sh_gate_t *g, bool pressed, bool dark, bool *wake)
+{
+    *wake = false;
+    if (!pressed) {
+        g->down = false;
+        return false;
+    }
+    if (!g->down) {
+        g->down = true;
+        g->swallow = dark;
+        *wake = dark;
+    }
+    return !g->swallow;
 }
 
 bool sh_registry_check(const sh_place_t *p, unsigned n, char *err, unsigned err_len)

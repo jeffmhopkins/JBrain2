@@ -6,6 +6,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "app_api.h"
 #include "shell_core.h"
@@ -23,6 +24,12 @@ void shell_button(sh_button_t b);
 /* A synthetic press through a virtual pointer, so a debug command reaches widgets exactly as a
  * finger would. dx != 0 drags that far to the right (negative: left) before lifting. */
 void shell_touch(int x, int y, int dx);
+
+/* A real pointer, polled from LVGL's read on the UI task: true when it produced the next sample
+ * of its queue (and may have more), false to leave the last one standing. Every sample, virtual
+ * or real, passes the dark-screen rule (sh_gate) before LVGL sees it. */
+typedef bool (*shell_pointer_fn)(int16_t *x, int16_t *y, bool *pressed);
+void shell_set_pointer(shell_pointer_fn fn);
 
 /* UI task: drain the queue and act. Call before lv_timer_handler each pass. */
 void shell_pump(void);

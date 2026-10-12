@@ -15,6 +15,7 @@ body{margin:0}
 </style>
 </helmet>
 <div style="width: 720px; height: 720px; position: relative; overflow: hidden; background: #E4E4E0; font-family: 'Montserrat', sans-serif; color: #1A1B1E;">
+<div style="position: absolute; inset: 0; transform: rotate({{tiltDeg}}deg); transform-origin: 360px 395px; transition: transform 300ms ease;">
 
   <div style="position: absolute; left: 423px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
     <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">KEY</span>
@@ -35,7 +36,7 @@ body{margin:0}
 
   <div style="position: absolute; left: 77px; top: 112px; width: 566px; height: 566px; border-radius: 72px; background: #F4F4F2; box-shadow: 0 1px 0 #FFFFFF inset, 0 18px 40px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.12);">
     <div style="position: absolute; left: 17px; top: 17px; width: 532px; height: 532px; border-radius: 60px; background: #050505;">
-      <div onPointerDown="{{screenDown}}" onPointerMove="{{screenMove}}" onPointerUp="{{screenUp}}" style="position: absolute; left: 26px; top: 26px; width: 480px; height: 480px; border-radius: 44px; overflow: hidden; background: #000000; color: #E6E7E9; user-select: none; touch-action: pan-y;">
+      <div onPointerDown="{{screenDown}}" onPointerMove="{{screenMove}}" onPointerUp="{{screenUp}}" style="transform: rotate({{screenDeg}}deg); transition: transform 250ms ease 150ms; position: absolute; left: 26px; top: 26px; width: 480px; height: 480px; border-radius: 44px; overflow: hidden; background: #000000; color: #E6E7E9; user-select: none; touch-action: pan-y;">
 
         <sc-if value="{{isHome0}}" hint-placeholder-val="{{true}}">
           <div style="position: absolute; left: 36px; top: 28px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; width: 408px;">
@@ -188,6 +189,12 @@ body{margin:0}
           <button onClick="{{openAlarms}}" aria-label="{{clock.aria}}" style="position: absolute; inset: 0; border: none; background: #000000; color: #E6E7E9; font-family: inherit; cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;">
             <span style="font-size: 124px; font-weight: 700; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: {{face.color}}; opacity: {{face.opacity}};">{{clock.hm}}</span>
           </button>
+          <sc-if value="{{showDate}}" hint-placeholder-val="{{true}}">
+            <span style="position: absolute; left: 0; right: 0; bottom: 40px; text-align: center; font-size: 24px; font-weight: 600; letter-spacing: 0.02em; color: {{face.color}}; opacity: {{face.dateOpacity}}; pointer-events: none;">{{clock.dayDate}}</span>
+          </sc-if>
+          <sc-if value="{{faceBadge.show}}" hint-placeholder-val="{{false}}">
+            <button onClick="{{faceBadge.open}}" aria-label="{{faceBadge.aria}}" style="position: absolute; top: 26px; right: 30px; height: 44px; min-width: 44px; padding: 0 12px; box-sizing: border-box; border-radius: 22px; border: 1px solid #26282C; background: #0A0A0A; color: {{face.color}}; opacity: {{faceBadge.opacity}}; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; font-size: 18px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{faceBadge.count}}</span></button>
+          </sc-if>
         </sc-if>
 
         <sc-if value="{{isClock}}" hint-placeholder-val="{{false}}">
@@ -212,6 +219,12 @@ body{margin:0}
               </sc-for>
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid #26282C;">
+                <span style="font-size: 20px; font-weight: 500;">Day and date under the time</span>
+                <button role="switch" aria-checked="{{dateSw.checked}}" aria-label="Show day and date under the time" onClick="{{toggleDate}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{dateSw.border}}; background: {{dateSw.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{dateSw.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{dateSw.knob}};"></span>
+                </button>
+              </div>
               <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
                 <div style="display: flex; flex-direction: column; gap: 2px;">
                   <span style="font-size: 22px; font-weight: 600;">Night clock</span>
@@ -237,21 +250,25 @@ body{margin:0}
           <div ref="{{settingsRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 16px 20px 28px; box-sizing: border-box;">
           <div style="display: flex; flex-direction: column; gap: 14px;">
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
-              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                <span style="font-size: 22px; font-weight: 600;">Wi-Fi</span>
-                <span style="font-size: 16px; font-weight: 600; padding: 4px 12px; border-radius: 14px; background: {{wifi.chipBg}}; color: {{wifi.chipColor}};">{{wifi.state}}</span>
+              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
+                <label for="jp-bright" style="font-size: 22px; font-weight: 600;">Brightness</label>
+                <span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;">{{brightLabel}}</span>
               </div>
-              <div style="display: flex; align-items: center; gap: 12px;">
-                <span style="display: flex; align-items: flex-end; gap: 3px; height: 20px;" aria-label="{{wifi.barsLabel}}">
-                  <sc-for list="{{wifi.bars}}" as="bar" hint-placeholder-count="4">
-                    <span style="width: 5px; height: {{bar.h}}px; border-radius: 1.5px; background: {{bar.bg}};"></span>
-                  </sc-for>
-                </span>
-                <span style="font-size: 20px; font-weight: 600; flex-grow: 1;">{{wifi.ssid}}</span>
-                <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{wifi.detail}}</span>
+              <div style="display: flex; align-items: center; gap: 12px; color: #9A9DA3;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle></svg>
+                <input id="jp-bright" type="range" min="10" max="100" step="5" value="{{bright}}" onInput="{{setBright}}" onChange="{{setBright}}" style="flex-grow: 1; height: 44px; margin: 0; accent-color: #7FA7C9; cursor: pointer;">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9"></path></svg>
               </div>
-              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{wifi.note}}</span>
-              <button onClick="{{toggleWifi}}" aria-label="{{wifi.btn}}" style="height: 56px; border-radius: 18px; border: 1px solid {{wifi.btnBorder}}; background: {{wifi.btnBg}}; color: {{wifi.btnColor}}; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">{{wifi.btn}}</button>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">10% is the floor, so the screen can never be set to look switched off.</span>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 12px; border-top: 1px solid #26282C;">
+                <div style="display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: 20px; font-weight: 500;">Auto-rotate</span>
+                  <span style="font-size: 16px; font-weight: 500; color: #9A9DA3;">{{rot.note}}</span>
+                </div>
+                <button role="switch" aria-checked="{{rot.checked}}" aria-label="Auto-rotate" onClick="{{toggleRotate}}" style="position: relative; flex-shrink: 0; width: 68px; height: 40px; border-radius: 20px; border: 1px solid {{rot.border}}; background: {{rot.track}}; cursor: pointer; padding: 0;">
+                  <span style="position: absolute; top: 5px; left: {{rot.knobX}}px; width: 28px; height: 28px; border-radius: 14px; background: {{rot.knob}};"></span>
+                </button>
+              </div>
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
@@ -302,23 +319,28 @@ body{margin:0}
             </div>
             <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
               <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
-                <label for="jp-bright" style="font-size: 22px; font-weight: 600;">Brightness</label>
-                <span style="font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums;">{{brightLabel}}</span>
-              </div>
-              <div style="display: flex; align-items: center; gap: 12px; color: #9A9DA3;">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle></svg>
-                <input id="jp-bright" type="range" min="10" max="100" step="5" value="{{bright}}" onInput="{{setBright}}" onChange="{{setBright}}" style="flex-grow: 1; height: 44px; margin: 0; accent-color: #7FA7C9; cursor: pointer;">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2 L12 4 M12 20 L12 22 M2 12 L4 12 M20 12 L22 12 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9"></path></svg>
-              </div>
-              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">10% is the floor, so the screen can never be set to look switched off.</span>
-            </div>
-            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
-              <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 12px;">
                 <span style="font-size: 22px; font-weight: 600;">Touch screen</span>
                 <span style="font-size: 18px; font-weight: 600; color: #9A9DA3;">{{calibWhen}}</span>
               </div>
               <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; line-height: 1.3;">Taps landing off-target? Tap each cross until it turns green.</span>
               <button onClick="{{startCalib}}" aria-label="Calibrate the touch screen" style="height: 56px; border-radius: 18px; border: none; background: rgba(127,167,201,0.16); color: #7FA7C9; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">Calibrate</button>
+            </div>
+            <div style="background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 16px 18px; display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                <span style="font-size: 22px; font-weight: 600;">Wi-Fi</span>
+                <span style="font-size: 16px; font-weight: 600; padding: 4px 12px; border-radius: 14px; background: {{wifi.chipBg}}; color: {{wifi.chipColor}};">{{wifi.state}}</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 12px;">
+                <span style="display: flex; align-items: flex-end; gap: 3px; height: 20px;" aria-label="{{wifi.barsLabel}}">
+                  <sc-for list="{{wifi.bars}}" as="bar" hint-placeholder-count="4">
+                    <span style="width: 5px; height: {{bar.h}}px; border-radius: 1.5px; background: {{bar.bg}};"></span>
+                  </sc-for>
+                </span>
+                <span style="font-size: 20px; font-weight: 600; flex-grow: 1;">{{wifi.ssid}}</span>
+                <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{wifi.detail}}</span>
+              </div>
+              <span style="font-size: 16px; font-weight: 500; color: #9A9DA3; line-height: 1.35;">{{wifi.note}}</span>
+              <button onClick="{{toggleWifi}}" aria-label="{{wifi.btn}}" style="height: 56px; border-radius: 18px; border: 1px solid {{wifi.btnBorder}}; background: {{wifi.btnBg}}; color: {{wifi.btnColor}}; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">{{wifi.btn}}</button>
             </div>
           </div>
           </div>
@@ -416,8 +438,9 @@ body{margin:0}
     </div>
   </div>
 </div>
+</div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -449,7 +472,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, autoRotate: true, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
       alarms: [
         { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
@@ -464,6 +487,7 @@ class Component extends DCLogic {
     if (start === 'notify-info') s.notes = [this.sample('info')];
     if (start === 'notify-question') s.notes = [this.sample('yes/no question'), this.sample('info')];
     if (start === 'clock-night') { s.screen = 'clock'; s.page = 1; s.forceNight = true; }
+    if (start === 'clock-badge') { s.screen = 'clock'; s.page = 1; s.forceNight = true; s.notes = [this.sample('yes/no question')]; }
     if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
     if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
@@ -527,7 +551,19 @@ class Component extends DCLogic {
   toggleWifi() {
     const s = this.base(this.state);
     if (s.wifi === 'connecting') return;
-    if (s.wifi === 'connected') { this.put({ wifi: 'off' }); return; }
+    if (s.wifi === 'connected') {
+      // Two taps, three seconds apart at most: going offline stops messages, Jerv and updates,
+      // so one brush of a finger must not do it.
+      if (!s.wifiArm) {
+        clearTimeout(this.wifiArmTimer);
+        this.put({ wifiArm: true });
+        this.wifiArmTimer = setTimeout(() => this.put({ wifiArm: false }), 3000);
+        return;
+      }
+      clearTimeout(this.wifiArmTimer);
+      this.put({ wifi: 'off', wifiArm: false });
+      return;
+    }
     this.put({ wifi: 'connecting' });
     setTimeout(() => this.put((b) => (b.wifi === 'connecting' ? { wifi: 'connected' } : {})), 1800);
   }
@@ -852,22 +888,46 @@ class Component extends DCLogic {
       isCalib: on && !!s.calib,
       isRestart: on && s.fw.phase === 'restarting',
       fw: this.fwView(s.fw, s.wifi === 'connected'),
-      wifi: this.wifiView(s.wifi),
+      wifi: Object.assign(this.wifiView(s.wifi), s.wifiArm && s.wifi === 'connected' ? { btn: 'Tap again to disconnect', btnColor: '#CF8A8F', btnBg: 'rgba(207,138,143,0.13)', btnBorder: 'transparent' } : {}),
       power: this.powerView(this.props.power || 'charging'),
       toggleWifi: () => { if (!this.swiped) this.toggleWifi(); },
       ttsOn: s.tts ? 'true' : 'false',
+      tiltDeg: { upright: 0, 'turned left': -90, 'upside down': 180, 'turned right': 90 }[this.props.tilt || 'upright'],
+      // The firmware turns content only once gravity is ~20° past the 45° boundary and has held
+      // there ~0.5 s, and keeps the last orientation while the panel lies flat; the mock just
+      // follows the tweak.
+      screenDeg: s.autoRotate ? -({ upright: 0, 'turned left': -90, 'upside down': 180, 'turned right': 90 }[this.props.tilt || 'upright']) : 0,
+      rot: {
+        checked: s.autoRotate ? 'true' : 'false',
+        note: s.autoRotate ? 'Follows which way is down' : 'Locked upright',
+        track: s.autoRotate ? 'rgba(143,188,154,0.22)' : '#1E2024',
+        border: s.autoRotate ? 'transparent' : '#3A3D42',
+        knob: s.autoRotate ? '#8FBC9A' : '#9A9DA3',
+        knobX: s.autoRotate ? 34 : 5
+      },
+      toggleRotate: () => { if (!this.swiped) this.put((b) => ({ autoRotate: !b.autoRotate })); },
       clockRef: (el) => { this.clockEl = el; },
       openClock: () => { if (!this.swiped) this.put({ screen: 'clock', clockView: 'face', playing: null }); },
       isClock: isPage && s.screen === 'clock' && s.clockView === 'alarms' && !s.ring,
       isClockFace: on && s.screen === 'clock' && s.clockView === 'face' && !s.ring && !s.rec,
       openAlarms: () => this.put({ clockView: 'alarms' }),
+      showDate: !!s.showDate,
+      dateSw: {
+        checked: s.showDate ? 'true' : 'false',
+        track: s.showDate ? 'rgba(143,188,154,0.22)' : '#1E2024',
+        border: s.showDate ? 'transparent' : '#3A3D42',
+        knob: s.showDate ? '#8FBC9A' : '#9A9DA3',
+        knobX: s.showDate ? 34 : 5
+      },
+      toggleDate: () => { if (!this.swiped) this.put((b) => ({ showDate: !b.showDate })); },
       face: (() => {
         const d = new Date();
         const nowM = d.getHours() * 60 + d.getMinutes();
         const n = s.night;
         const inWindow = n.from > n.to ? (nowM >= n.from || nowM < n.to) : (nowM >= n.from && nowM < n.to);
-        if (!(s.forceNight || (n.on && inWindow))) return { color: '#E6E7E9', opacity: 1 };
-        return Object.assign({}, this.nightPalette()[n.color]);
+        if (!(s.forceNight || (n.on && inWindow))) return { color: '#E6E7E9', opacity: 1, dateOpacity: 0.55 };
+        const p = this.nightPalette()[n.color];
+        return { color: p.color, opacity: p.opacity, dateOpacity: Math.round(p.opacity * 0.7 * 100) / 100 };
       })(),
       night: (() => {
         const n = s.night;
@@ -894,12 +954,29 @@ class Component extends DCLogic {
         };
       }),
       isRinging: !!s.ring,
-      hasNote: on && !s.ring && !s.rec && s.notes.length > 0,
+      // On the clock face nothing covers the time: what arrives waits as a corner badge until
+      // it is tapped, so a glance at 3 a.m. always finds the hour (owner, 2026-10-11).
+      hasNote: on && !s.ring && !s.rec && s.notes.length > 0 && (!(s.screen === 'clock' && s.clockView === 'face') || !!s.noteOpen),
+      faceBadge: (() => {
+        const unread = this.unplayed(s.threads.quorra) + this.unplayed(s.threads.tamsin);
+        const n = s.notes.length + unread;
+        return {
+          show: n > 0 && !s.noteOpen,
+          count: n,
+          opacity: s.notes.some((x) => x.urgent) ? 1 : 0.8,
+          aria: n + ' waiting — tap to open',
+          open: () => {
+            if (s.notes.length) { this.put({ noteOpen: true }); return; }
+            const who = this.unplayed(s.threads.quorra) ? 'quorra' : 'tamsin';
+            this.put({ screen: who, clockView: 'face' });
+          }
+        };
+      })(),
       note: (() => {
         const n = s.notes[0];
         if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', accent: '#7FA7C9', aria: '' };
         const answer = (label) => () => {
-          this.put((b) => ({ notes: b.notes.slice(1) }));
+          this.put((b) => ({ notes: b.notes.slice(1), noteOpen: false }));
           this.say(n.choices.length ? 'Sent to ' + n.from + ': ' + label : 'Dismissed');
         };
         const labels = n.choices.length ? n.choices : ['OK'];
@@ -943,7 +1020,8 @@ class Component extends DCLogic {
       clock: (() => {
         const d = new Date();
         const t = this.hm(d.getHours(), d.getMinutes());
-        return { hm: t.hm, ampm: t.ampm, short: t.hm, aria: 'The time is ' + t.hm + '. Tap for alarms.', date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
+        const dayDate = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+        return { hm: t.hm, ampm: t.ampm, short: t.hm, dayDate: dayDate, aria: 'The time is ' + t.hm + '. Tap for alarms.', date: d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' }) };
       })(),
       alarms: s.alarms.slice().sort((x, y) => x.h * 60 + x.m - (y.h * 60 + y.m)).map((al, k, arr) => {
         const t = this.hm(al.h, al.m);
@@ -1027,7 +1105,7 @@ class Component extends DCLogic {
         clearInterval(this.recTimer);
         const b = this.base(this.state);
         if (b.ring) { this.put({ ring: null, off: false }); this.say('Alarm stopped'); return; }
-        if (b.notes.length) { this.put({ notes: b.notes.slice(1) }); this.say('Dismissed — no answer sent'); return; }
+        if (b.notes.length && (b.noteOpen || !(b.screen === 'clock' && b.clockView === 'face'))) { this.put({ notes: b.notes.slice(1), noteOpen: false }); this.say('Dismissed — no answer sent'); return; }
         if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
         this.put({ screen: 'home', page: 0, rec: null, playing: null, off: false });
       },

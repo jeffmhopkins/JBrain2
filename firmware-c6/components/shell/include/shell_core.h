@@ -13,8 +13,13 @@
 #define SH_SLOTS_PER_PAGE 4
 #define SH_PAGES_MAX 4
 #define SH_SWIPE_PX 60
+/* How far a finger may wander and still be a tap: ~1.6 mm on this glass. LVGL's scroll start is
+ * set to the same number, so "a tap" and "not yet a scroll" are one decision. */
+#define SH_TAP_SLOP 20
 
-typedef enum { SH_BTN_KEY_DOWN, SH_BTN_KEY_UP, SH_BTN_BOOT, SH_BTN_PWR } sh_button_t;
+/* SH_BTN_TOUCH is a finger landing on a dark screen (sh_gate), queued like a button so it keeps
+ * its place among them. */
+typedef enum { SH_BTN_KEY_DOWN, SH_BTN_KEY_UP, SH_BTN_BOOT, SH_BTN_PWR, SH_BTN_TOUCH } sh_button_t;
 
 /* In priority order: an alarm outranks a notice, which outranks every app (plan §2). */
 typedef enum { SH_OV_NONE, SH_OV_NOTICE, SH_OV_ALARM } sh_overlay_t;
@@ -70,6 +75,23 @@ unsigned sh_route_event(const sh_facts_t *f, app_event_type_t type);
 
 void sh_tile_pos(uint8_t slot, int *x, int *y);
 uint8_t sh_swipe(uint8_t page, int dx, uint8_t pages);
+
+/* What a finger did, from where it went down to where it came up. A swipe is mostly sideways,
+ * so a scroll attempt on home turns no page; anything between a tap and a swipe does nothing,
+ * so a short swipe never opens the tile it started on. */
+typedef enum { SH_STROKE_TAP, SH_STROKE_SWIPE, SH_STROKE_DRAG } sh_stroke_t;
+sh_stroke_t sh_stroke(int dx, int dy);
+
+/* The dark-screen rule, applied to every pointer sample before LVGL sees it: a stroke that
+ * starts on a dark screen wakes it and reaches nothing — not its press, its moves or its
+ * release — however long the finger stays (the twins' rule: a finger on a dark screen buys the
+ * screen, nothing else). A stroke that started lit is never cut, even if the screen goes dark
+ * under it, so its release reaches what its press did. Returns whether LVGL may see this sample
+ * as pressed; `*wake` is set on the sample that starts a swallowed stroke. */
+typedef struct {
+    bool down, swallow;
+} sh_gate_t;
+bool sh_gate(sh_gate_t *g, bool pressed, bool dark, bool *wake);
 
 typedef struct {
     const char *id;

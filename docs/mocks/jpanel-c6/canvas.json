@@ -130,6 +130,13 @@
       "w": 720,
       "h": 720,
       "title": "16 \u00b7 Push question \u2014 answer goes back (1 of 2)"
+    },
+    "ClockBadge.dc.html": {
+      "x": 2400,
+      "y": 4423,
+      "w": 720,
+      "h": 720,
+      "title": "17 \u00b7 Clock face: a message waits as a corner badge"
     }
   },
   "order": [
@@ -149,7 +156,8 @@
     "PwaAlarms.dc.html",
     "ClockNight.dc.html",
     "NotifyInfo.dc.html",
-    "NotifyQuestion.dc.html"
+    "NotifyQuestion.dc.html",
+    "ClockBadge.dc.html"
   ],
   "notes": {
     "states": {
@@ -157,7 +165,7 @@
       "y": 800,
       "text": "Screens to lock down",
       "kind": "title1",
-      "maxW": 2790
+      "maxW": 3120
     }
   },
   "designSystems": []

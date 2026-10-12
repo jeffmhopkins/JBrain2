@@ -58,3 +58,19 @@ panel, the others import it at a fixed `start` state).
   the box turns a send away at once (`409 not_accepting` / `409 quiet_hours` with `until`, or
   `503 offline`), so nothing is held to pop up later — plus a chime switch. Box side:
   `../../plans/JPANEL_C6_PLAN.md` §2.
+- **The clock face is never covered** (owner, 2026-10-11): while the giant clock is up, a push
+  message or a girl's message does not pop up — it waits as a small badge (bell + count) in
+  the top-right corner, drawn in the night-clock colour at night, and opens only when tapped.
+  An alarm ringing still takes the whole screen (that is the clock doing its job). Board 17.
+- **Day and date under the clock** (owner, 2026-10-11): a small "Sun 11 Oct" near the bottom of
+  the face, in the face's colour at lower opacity (so it dims with the night clock). On by
+  default; a switch on the Clock → alarms page turns it off.
+- **Wi-Fi is the last card in Settings** (owner, 2026-10-11), below everything else, so a scroll
+  or a stray tap near the top cannot reach it; and **Disconnect takes two taps** within three
+  seconds (the first turns the button rose: "Tap again to disconnect"). Order is now Brightness, Battery,
+  Notifications, Jerv, Firmware, Touch screen, Wi-Fi — brightness first because it is the
+  one reached for most (owner, 2026-10-11).
+- **Auto-rotate** (owner, 2026-10-11): the square glass turns its content in 90° steps to keep
+  "down" down, from the QMI8658's gravity vector. A switch under Brightness ("Auto-rotate",
+  on by default; off = locked upright). The live panel's **tilt** tweak turns the device to
+  show it. Firmware rules: plan §2b.

@@ -6,8 +6,9 @@
 > across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
 > half landed first (`components/`, `host/`, `sim/` — "What the framework lays down" under §1);
 > **0.0.4 switches it into the image** with the first real drivers — the AXP2101, the buttons and
-> the CO5300 under LVGL, the shell over fake services — built and in `dist/`, not yet seen on the
-> glass (firmware README "What 0.0.4 adds").
+> the CO5300 under LVGL, the shell over fake services — now running on the glass (firmware README
+> "What 0.0.4 adds"). **0.0.6 adds touch** (the CST9220 and the shell's real-pointer rules), built
+> and in `dist/`, not yet felt on the glass (firmware README "What 0.0.6 adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -195,7 +196,33 @@ recall.
 **The panel side** is one more service (`svc_notice`) and a shell overlay, not an app: it has
 to appear over whatever app is open, the way an alarm does. It wakes the screen, chimes unless
 it is night hours (urgent always chimes), queues ("1 of 2"), and BOOT dismisses without
-answering. An alarm outranks it; it outranks every app.
+answering. An alarm outranks it; it outranks every app **except the clock face**, where it
+waits as a corner badge (bell + count) and opens only on a tap, so the time is never covered
+(owner, 2026-10-11). A girl's message arriving on the clock face does the same.
+
+## 2b. Auto-rotate
+
+The owner: *"auto rotate … you should have hysteresis for which way is down via the
+accelerometer … and a setting where I can turn it on and off."* The glass is 480×480, so all
+four orientations fit with no relayout of the frame — only the content turns.
+
+- **Down comes from gravity in the glass's plane** (QMI8658 X/Y). The orientation changes only
+  when that vector is **≥ 20° past the 45° boundary** into the new quadrant (i.e. within 25° of
+  the new axis) **and stays there ~500 ms**. Between those, the current orientation holds:
+  a panel leaned near 45° never flickers.
+- **Flat means "keep what you have"**: when the in-plane magnitude is under ~0.5 g (lying on
+  a desk, face up), nothing changes. A panel picked up off the desk does not spin to a guess.
+- **Pure, host-tested** (`orient_logic.c`): the quadrant + hysteresis + dwell + flat rule, fed
+  raw counts, the way the twins' S3 `orient.c` was extracted after its first version shipped
+  backwards (`../../firmware/README.md`). Telemetry reports the gravity vector, the chosen
+  orientation and every change, so a wrong axis is visible from the box.
+- **Rendering**: the CO5300 cannot swap axes (HARDWARE.md §2), so rotation is LVGL software
+  rotation in the flush path. 180° is a reversal of the strip; 90°/270° need a second
+  strip-sized buffer (~38 KB) — measured against the ~120 KB heap floor before it ships, with
+  smaller strips if needed. **Touch is mapped through the same rotation**, in the one place
+  that maps it, so a tap lands where it looks.
+- **The buttons stay where they are** — they are physical. Only the content turns.
+- **Setting**: `Auto-rotate`, in the Brightness card, on by default; off locks upright.
 
 ## 3. Waves
 
@@ -203,9 +230,10 @@ answering. An alarm outranks it; it outranks every app.
 |---|---|---|
 | **C0** ✅ | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Proven on the board 2026-10-11. |
 | **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
-| **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **Left:** confirming 0.0.4 on the glass and that 0.0.5 installs over it, touch (CST9220), the RTC, then swipe and tile taps. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
+| **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **0.0.4 on the glass (measured):** home renders, runtime brightness and PWR dark/wake work, KEY and BOOT route as designed. **0.0.6 (built, awaiting the board):** `svc_touch` — the CST9220 polled every 20 ms over `svc_power`'s bus through a locked transfer API (still one owner), raw→display mapping, failure reported as `touch=failed:<step>`; the shell's real-pointer rules host- and sim-tested (tap within 20 px, sideways swipe ≥ 60 px, a stroke on a dark screen wakes and reaches nothing, a notice appearing under a finger ends its stroke). **Left:** confirming 0.0.5 installs and 0.0.6's taps, swipes and corners on the glass, then the RTC. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
 | **C2d** | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. |
 | **C3** | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). | Each app's mock states reproduced on the glass and in `sim/`. |
+| **C2r** | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, LVGL software rotation, touch mapped through it, the Settings switch. After touch is proven on the board. | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
 | **C3b** | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tools, `svc_notice` and the overlay. | Jerv asks a yes/no on the panel and acts on the tap. |
 | **C4** | Minecraft. | Parked until scoped. |
 
