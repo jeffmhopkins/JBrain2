@@ -40,6 +40,7 @@ from jbrain.agent.clock import now_block
 from jbrain.agent.history_replay import transcript_sites
 from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.plantools import format_plan_results
+from jbrain.agent.run_bus import RunBus, announce
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.db.session import SessionContext, scoped_session
@@ -154,6 +155,8 @@ class PlanContinuationRunner:
     # pushes the box past it.
     max_concurrent: int = 4
     notify: NotifyBus | None = None
+    # Announces each step's run to an open PWA chat, which attaches to it live (`run_bus`).
+    runs: RunBus | None = None
     push: PushPoke | None = None
     push_tokens: Callable[[], Awaitable[list[str]]] | None = field(default=None)
     # Persists the continuation turn's context fill onto the AgentSession row, so the PWA's
@@ -249,6 +252,7 @@ class PlanContinuationRunner:
         live = _LiveTurn(session_id=sid)
         active_key = uuid.uuid4().hex
         self.live_turns[active_key] = live
+        run_id: str | None = None
         try:
             # Re-read under the reservation — the plan may have changed between claim and now
             # (owner approved-away, finished the checklist, or set await_owner). Also confirm
@@ -288,6 +292,7 @@ class PlanContinuationRunner:
             # (GET /chat/runs/{run_id}/stream) — both look the turn up by run_id.
             self.live_turns[run_id] = self.live_turns.pop(active_key)
             active_key = run_id
+            announce(self.runs, pid, sid, run_id, "started")
             # The turn's render accumulator, exposed on the broker so the reattach snapshot
             # can seed a reloaded client from the render-so-far; the sink emits each event as
             # a `data:` SSE frame — byte-identical to the /chat drive loop — onto the broker.
@@ -411,7 +416,8 @@ class PlanContinuationRunner:
                 await self._nudge()
         finally:
             live.done = True
-            self.live_turns.pop(active_key, None)
+            if self.live_turns.pop(active_key, None) is not None and run_id == active_key:
+                announce(self.runs, pid, sid, active_key, "ended")
 
     async def _seen_sites(self, owner_ctx: SessionContext, sid: str) -> SeenSites | None:
         """The sites this chat's transcript vouches for, so the step's fetches answer to what

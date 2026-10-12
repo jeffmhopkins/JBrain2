@@ -24,6 +24,7 @@ typedef struct {
 typedef struct {
     const char *principal;
     uint16_t n, cap;
+    uint32_t rev;
     msg_t *m;
     long_t *keep; /* NULL for a person's thread */
 } thread_t;
@@ -32,10 +33,10 @@ static msg_t s_jerv[AGENT_KEEP], s_dave[AGENT_KEEP], s_one[PERSON_KEEP], s_two[P
 static long_t s_jerv_long, s_dave_long;
 
 static thread_t s_t[] = {
-    {"jerv", 0, AGENT_KEEP, s_jerv, &s_jerv_long},
-    {"dave", 0, AGENT_KEEP, s_dave, &s_dave_long},
-    {SVC_MESSAGES_THREAD_1, 0, PERSON_KEEP, s_one, NULL},
-    {SVC_MESSAGES_THREAD_2, 0, PERSON_KEEP, s_two, NULL},
+    {"jerv", 0, AGENT_KEEP, 0, s_jerv, &s_jerv_long},
+    {"dave", 0, AGENT_KEEP, 0, s_dave, &s_dave_long},
+    {SVC_MESSAGES_THREAD_1, 0, PERSON_KEEP, 0, s_one, NULL},
+    {SVC_MESSAGES_THREAD_2, 0, PERSON_KEEP, 0, s_two, NULL},
 };
 #define THREADS (sizeof s_t / sizeof *s_t)
 
@@ -57,6 +58,12 @@ uint16_t svc_messages_count(const char *principal)
     return t ? t->n : 0;
 }
 
+uint32_t svc_messages_rev(const char *principal)
+{
+    thread_t *t = find(principal);
+    return t ? t->rev : 0;
+}
+
 bool svc_messages_find(const char *principal, uint32_t id, msg_t *out)
 {
     thread_t *t = find(principal);
@@ -72,6 +79,7 @@ bool svc_messages_fake_long(const char *principal, uint32_t id, const char *text
 {
     thread_t *t = find(principal);
     if (!t || !t->keep) return false;
+    t->rev++;
     t->keep->id = id;
     const size_t n = strnlen(text, sizeof t->keep->text - 1);
     memcpy(t->keep->text, text, n);
@@ -107,7 +115,10 @@ void svc_messages_mark_played(const char *principal, uint32_t id)
 {
     thread_t *t = find(principal);
     for (uint16_t i = 0; t && i < t->n; i++)
-        if (t->m[i].id == id) t->m[i].played = true;
+        if (t->m[i].id == id && !t->m[i].played) {
+            t->m[i].played = true;
+            t->rev++;
+        }
 }
 
 uint16_t svc_messages_unplayed_total(void)
@@ -140,6 +151,7 @@ bool svc_messages_clear(const char *principal)
     thread_t *t = find(principal);
     if (!t) return false;
     t->n = 0;
+    t->rev++;
     if (t->keep) t->keep->id = 0;
     announce(principal);
     return true;
@@ -149,6 +161,7 @@ void svc_messages_fake_clear(void)
 {
     for (unsigned i = 0; i < THREADS; i++) {
         s_t[i].n = 0;
+        s_t[i].rev++;
         if (s_t[i].keep) s_t[i].keep->id = 0;
     }
 }
@@ -169,6 +182,7 @@ bool svc_messages_fake_add(const char *principal, const msg_t *m)
     thread_t *t = find(principal);
     if (!t) return false;
     *slot_for(t, m->id) = *m;
+    t->rev++;
     announce(principal);
     return true;
 }

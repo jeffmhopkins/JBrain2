@@ -139,4 +139,42 @@ describe("api.chat run id", () => {
     );
     expect(await api.sessionLiveRun("s1")).toBeNull();
   });
+
+  it("sessionLiveRun carries the owner's words that began the turn", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ run_id: "r", snapshot: null, frame_index: 0, question: "How big?" }),
+            { status: 200 },
+          ),
+      ),
+    );
+    expect((await api.sessionLiveRun("s1"))?.question).toBe("How big?");
+  });
+});
+
+describe("api.chatEvents", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("yields each announced run and skips anything else on the stream", async () => {
+    const body = [
+      ": open\n\n",
+      'data: {"type":"run_started","session_id":"s1","run_id":"r1"}\n\n',
+      ": keepalive\n\n",
+      'data: {"type":"something_else","session_id":"s1","run_id":"r1"}\n\n',
+      'data: {"type":"run_ended","session_id":"s1"}\n\n',
+      'data: {"type":"run_ended","session_id":"s1","run_id":"r1"}\n\n',
+    ].join("");
+    const hit = vi.fn(async () => new Response(body, { status: 200 }));
+    vi.stubGlobal("fetch", hit);
+    const seen = [];
+    for await (const ev of api.chatEvents()) seen.push(ev);
+    expect(seen).toEqual([
+      { type: "run_started", session_id: "s1", run_id: "r1" },
+      { type: "run_ended", session_id: "s1", run_id: "r1" },
+    ]);
+    expect(hit).toHaveBeenCalledWith("/api/chat/events", expect.anything());
+  });
 });

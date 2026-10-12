@@ -99,6 +99,16 @@ void svc_audio_fake_progress(const char *heard, const char *status)
     if (status) talk_net_status(status);
 }
 
+void svc_audio_fake_step(uint8_t index, const char *label)
+{
+    talk_net_step_start(index, label);
+}
+
+void svc_audio_fake_step_done(uint8_t index, bool ok)
+{
+    talk_net_step_done(index, ok);
+}
+
 void svc_audio_fake_reply(const char *heard, const char *reply, bool speaking)
 {
     talk_net_heard(heard);

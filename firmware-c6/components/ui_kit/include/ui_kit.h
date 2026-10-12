@@ -122,9 +122,16 @@ void ui_talk_refresh(ui_talk_t *t);
 lv_obj_t *ui_hold_ring(lv_obj_t *parent, int x, int y, uint32_t color);
 void ui_hold_ring_set(lv_obj_t *ring, uint16_t permille);
 
-/* The live status line under a conversation's waiting question ("Searching the web…"): a small
- * spinner and dim words, so it reads as the box working, not as a message. */
-lv_obj_t *ui_status_row(lv_obj_t *parent, const char *text, ui_accent_t accent);
+/* The working spinner: a fixed quarter arc in `color` turning steadily once a second on a faint
+ * ring. Its angle comes from the tick, so a spinner made later is in step with the one it
+ * replaces. ui_is_spinner says whether `o` is one (the sim's check). */
+lv_obj_t *ui_spinner(lv_obj_t *parent, uint32_t color);
+bool ui_is_spinner(lv_obj_t *o);
+/* One line of a conversation's working list under the waiting question: an 18 px slot for a mark
+ * (✓, ✗, or a spinner moved in) and dim words, so it reads as the box working, not a message. */
+lv_obj_t *ui_step_row(lv_obj_t *parent, lv_obj_t **mark, lv_obj_t **text);
+/* A dim line of its own in a conversation: an answer's "2 steps · 58 s". */
+lv_obj_t *ui_note_line(lv_obj_t *parent, const char *text);
 
 /* One toast at a time, on the top layer, above every overlay. */
 void ui_toast(const char *text, uint32_t ms);

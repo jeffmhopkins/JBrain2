@@ -103,6 +103,8 @@ static const char *take(reading_t *r, tk_stream_ev_t ev, const uint8_t *pcm, siz
         r->statuses++;
         talk_net_status(s_stream.text);
         break;
+    case TS_EV_STEP_START: talk_net_step_start(s_stream.flags, s_stream.text); break;
+    case TS_EV_STEP_DONE: talk_net_step_done(s_stream.flags, tk_stream_step_ok(&s_stream)); break;
     case TS_EV_ANSWER:
         if (r->answered) break;
         r->answered = true;

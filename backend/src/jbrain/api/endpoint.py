@@ -2451,6 +2451,7 @@ async def _agent_turn(
     voice: bool,
     fresh: bool,
     jt: int = 1,
+    steps: bool = False,
 ) -> Response:
     """One spoken turn with the real Jerv or Dave: 204 when nothing was heard, else the same
     reply frame as the persona's — what was heard, the answer condensed to what the panel
@@ -2459,7 +2460,7 @@ async def _agent_turn(
         audio = audio[:PANEL_JERV_AUDIO_MAX]
     if jt == 2:
         return _agent_stream(
-            principal, request, audio, started, agent=agent, voice=voice, fresh=fresh
+            principal, request, audio, started, agent=agent, voice=voice, fresh=fresh, steps=steps
         )
     held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
     audio = _trim_to_speech(audio)
@@ -2517,6 +2518,7 @@ def _agent_stream(
     agent: panel_agent.PanelAgent,
     voice: bool,
     fresh: bool,
+    steps: bool = False,
 ) -> StreamingResponse:
     """The same turn as JT2 (`panel_stream`): the transcript the moment Whisper has it, a status
     line for each tool the agent starts, keep-alives, then the whole answer and its speech
@@ -2547,7 +2549,7 @@ def _agent_stream(
         return say
 
     turn = panel_stream.Turn(
-        transcribe=transcribe, start=start, synth=synth, agent=agent, voice=voice
+        transcribe=transcribe, start=start, synth=synth, agent=agent, voice=voice, steps=steps
     )
 
     async def body() -> AsyncIterator[bytes]:
@@ -2586,6 +2588,7 @@ async def converse(
     voice: bool = True,
     new_thread: bool = False,
     jt: int = 1,
+    steps: bool = False,
 ) -> Response:
     """A child holds the panel, talks, and the panel answers out loud.
 
@@ -2617,7 +2620,8 @@ async def converse(
 
     `jt=2` (the desk panel from 0.0.12) asks for the reply as a JT2 stream (`panel_stream`)
     instead of JT1's single frame: progress while the agent works, the whole answer, speech
-    sentence by sentence. The pet path never streams; it ignores `jt`.
+    sentence by sentence. The pet path never streams; it ignores `jt`. `steps=1` (0.0.14) adds
+    a STEP_START/STEP_DONE pair per tool the agent runs, so the panel lists them.
     """
     started = time.monotonic()
     try:
@@ -2641,6 +2645,7 @@ async def converse(
                 voice=voice,
                 fresh=new_thread,
                 jt=jt,
+                steps=steps,
             )
         if persona == "dave":
             log.warning("endpoint.converse_agent_refused", persona=persona, device=principal.id)

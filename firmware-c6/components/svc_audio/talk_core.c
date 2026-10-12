@@ -83,7 +83,7 @@ bool tk_agent_from(const char *id, tk_agent_t *out)
 
 void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t cap)
 {
-    snprintf(out, cap, "/endpoint/converse?persona=%s&voice=%s&jt=2%s", tk_agent_id(a),
+    snprintf(out, cap, "/endpoint/converse?persona=%s&voice=%s&jt=2&steps=1%s", tk_agent_id(a),
              voice ? "true" : "false", fresh ? "&new_thread=true" : "");
 }
 
@@ -305,9 +305,11 @@ void tk_fit(char *dst, size_t cap, const char *src)
     finish_text(dst, (uint16_t)(cap - 1), cap, true);
 }
 
+/* The records whose first payload byte is a number rather than text: ANSWER's and END's flags,
+ * a step's index. */
 static bool has_flag(uint8_t type)
 {
-    return type == TS_ANSWER || type == TS_END;
+    return type == TS_ANSWER || type == TS_END || type == TS_STEP_START || type == TS_STEP_DONE;
 }
 
 /* The record just finished: what it was. */
@@ -322,6 +324,8 @@ static tk_stream_ev_t finished(tk_stream_t *s)
     case TS_STATUS: return TS_EV_STATUS;
     case TS_ANSWER: return TS_EV_ANSWER;
     case TS_END: return TS_EV_END;
+    case TS_STEP_START: return TS_EV_STEP_START;
+    case TS_STEP_DONE: return TS_EV_STEP_DONE;
     default: return TS_EV_ALIVE;
     }
 }
@@ -387,7 +391,9 @@ size_t tk_stream_feed(tk_stream_t *s, const uint8_t *b, size_t n, tk_stream_ev_t
             case TS_HEARD:
             case TS_STATUS: s->st = TS_TEXT; break;
             case TS_ANSWER:
-            case TS_END: s->st = TS_FLAG; break;
+            case TS_END:
+            case TS_STEP_START:
+            case TS_STEP_DONE: s->st = TS_FLAG; break;
             case TS_ALIVE: s->st = TS_TEXT; break;
             case TS_PCM: s->st = TS_BODY_PCM; break;
             default:
@@ -433,6 +439,66 @@ bool tk_stream_done(const tk_stream_t *s)
 bool tk_stream_bad(const tk_stream_t *s)
 {
     return s->st == TS_BAD;
+}
+
+bool tk_stream_step_ok(const tk_stream_t *s)
+{
+    /* The ok byte is the record's text: absent says nothing failed. */
+    return !s->text_n || s->text[0] != 0;
+}
+
+/* ---- the steps ---- */
+
+void tk_steps_init(tk_steps_t *s)
+{
+    memset(s, 0, sizeof *s);
+}
+
+static work_step_t *shown_step(tk_steps_t *s, uint8_t index)
+{
+    for (uint8_t i = 0; i < s->n; i++)
+        if (s->shown[i].index == index) return &s->shown[i];
+    return NULL;
+}
+
+void tk_steps_start(tk_steps_t *s, uint8_t index, const char *label)
+{
+    work_step_t *st = shown_step(s, index);
+    if (!st) {
+        if (index < s->next) return;
+        s->next = (uint16_t)(index + 1);
+        s->total++;
+        if (s->n == WORK_SHOWN) {
+            memmove(s->shown, s->shown + 1, sizeof s->shown[0] * (WORK_SHOWN - 1));
+            s->n--;
+        }
+        st = &s->shown[s->n++];
+        st->index = index;
+        st->state = WORK_RUNNING;
+    }
+    tk_fit(st->label, sizeof st->label, label);
+}
+
+void tk_steps_done(tk_steps_t *s, uint8_t index, bool ok)
+{
+    work_step_t *st = shown_step(s, index);
+    if (st) st->state = ok ? WORK_OK : WORK_FAILED;
+}
+
+uint16_t tk_steps_folded(const tk_steps_t *s)
+{
+    return (uint16_t)(s->total - s->n);
+}
+
+void tk_steps_summary(const tk_steps_t *s, uint32_t ms, char *out, size_t cap)
+{
+    if (!cap) return;
+    out[0] = '\0';
+    if (!s->total) return;
+    char t[16];
+    if (ms < 60000) snprintf(t, sizeof t, "%lu s", (unsigned long)(ms / 1000));
+    else talk_clock(ms, t, sizeof t);
+    snprintf(out, cap, "%u step%s · %s", (unsigned)s->total, s->total == 1 ? "" : "s", t);
 }
 
 /* ---- the voice's start ---- */

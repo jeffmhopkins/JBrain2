@@ -419,6 +419,18 @@ export interface LiveRun {
   /** How long the turn has run so far (ms, server-measured), so a reattached bubble's
    * total-time label counts from the owner's send rather than from the reload. */
   elapsedMs: number;
+  /** What the owner said to begin the turn. The stored transcript holds it only once the turn
+   * ends, so an attach mid-turn shows his bubble from this; absent or "" for a turn he did
+   * not type (a plan step). */
+  question?: string;
+}
+
+/** A turn starting or ending anywhere on the box (GET /api/chat/events): how an open chat
+ * learns of a run it did not start — the desk panel's spoken turn, a plan step. */
+export interface RunAnnouncement {
+  type: "run_started" | "run_ended";
+  session_id: string;
+  run_id: string;
 }
 
 // --- Agent sessions (the capability record; /api/sessions) ---

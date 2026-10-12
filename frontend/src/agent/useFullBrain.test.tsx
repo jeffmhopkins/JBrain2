@@ -5,7 +5,13 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
+import type {
+  AgentSession,
+  ChatEvent,
+  ChatRequest,
+  RunAnnouncement,
+  TranscriptTurn,
+} from "./types";
 import { type FullBrainDeps, modeForAgent, useFullBrain } from "./useFullBrain";
 
 function session(over: Partial<AgentSession> = {}): AgentSession {
@@ -732,5 +738,123 @@ describe("useFullBrain — Minecraft_Dave", () => {
     const fullbrain = renderHook(() => useFullBrain("fullbrain", d));
     await waitFor(() => expect(fullbrain.result.current.agentOptions).toEqual(["curator"]));
     expect(fullbrain.result.current.sessions.map((s) => s.id)).not.toContain("D");
+  });
+});
+
+/** A run-announcement stream the test pushes into, standing in for GET /api/chat/events. */
+function announcements(): {
+  stream: (signal?: AbortSignal) => AsyncGenerator<RunAnnouncement>;
+  push: (ev: RunAnnouncement) => void;
+} {
+  const queue: RunAnnouncement[] = [];
+  let wake: (() => void) | null = null;
+  return {
+    stream: async function* (signal?: AbortSignal) {
+      while (!signal?.aborted) {
+        const next = queue.shift();
+        if (next) {
+          yield next;
+          continue;
+        }
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      }
+    },
+    push: (ev) => {
+      queue.push(ev);
+      wake?.();
+    },
+  };
+}
+
+describe("useFullBrain — a turn started elsewhere shows up live", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("attaches the open chat to a run the desk panel started: his words, then the reply", async () => {
+    // The owner had the chat up while he spoke at the panel, and nothing moved (2026-10-12).
+    // The box announces the run; the open chat attaches to its live stream like a reload does.
+    const events = announcements();
+    let releaseReply: () => void = () => {};
+    const replyGate = new Promise<void>((resolve) => {
+      releaseReply = resolve;
+    });
+    const sessionLiveRun = vi.fn(async () => ({
+      runId: "panel-run",
+      snapshot: null,
+      frameIndex: 0,
+      elapsedMs: 0,
+      question: "How big was the storm?",
+    }));
+    const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "t1", name: "web_search", arguments: { query: "storm" } };
+      await replyGate;
+      yield { type: "text_delta", text: "About 300 miles across." };
+      yield { type: "done", stop_reason: "end_turn" };
+    });
+    const listSessions = vi.fn(async () => [session({ id: "A" })]);
+    const d = deps({ sessionLiveRun, chatResume, listSessions, chatEvents: events.stream });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    expect(sessionLiveRun).not.toHaveBeenCalled();
+
+    act(() => events.push({ type: "run_started", session_id: "A", run_id: "panel-run" }));
+
+    // The owner's words at once, then the working step while the reply is still coming.
+    await waitFor(() => expect(result.current.messages[0]?.text).toBe("How big was the storm?"));
+    expect(result.current.messages[0]?.role).toBe("user");
+    await waitFor(() => expect(result.current.messages.at(-1)?.tools[0]?.name).toBe("web_search"));
+    expect(result.current.messages.at(-1)?.streaming).toBe(true);
+    expect(chatResume).toHaveBeenCalledWith("panel-run", 0, expect.anything());
+
+    releaseReply();
+    await waitFor(() => expect(result.current.messages.at(-1)?.streaming).toBe(false));
+    expect(result.current.messages.at(-1)?.text).toBe("About 300 miles across.");
+  });
+
+  it("refreshes the session list for a run in a chat it has never seen", async () => {
+    const events = announcements();
+    let listed = [session({ id: "A" })];
+    const listSessions = vi.fn(async () => listed);
+    const sessionLiveRun = vi.fn(async () => null);
+    const d = deps({ listSessions, sessionLiveRun, chatEvents: events.stream });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+
+    listed = [session({ id: "A" }), session({ id: "P", title: "Desk panel" })];
+    act(() => events.push({ type: "run_started", session_id: "P", run_id: "r1" }));
+
+    await waitFor(() =>
+      expect(result.current.sessions.map((s) => s.id)).toEqual(expect.arrayContaining(["P"])),
+    );
+    expect(result.current.active?.id).toBe("A");
+    expect(sessionLiveRun).not.toHaveBeenCalled();
+  });
+
+  it("does not attach a second time to a turn it is already streaming", async () => {
+    const events = announcements();
+    let finish: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const chat = vi.fn(async function* (_b: ChatRequest): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "own" };
+      await gate;
+      yield { type: "text_delta", text: "done" };
+      yield { type: "done", stop_reason: "end_turn" };
+    });
+    const sessionLiveRun = vi.fn(async () => null);
+    const d = deps({ chat, sessionLiveRun, chatEvents: events.stream });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    act(() => {
+      void result.current.send("hello");
+    });
+    await waitFor(() => expect(chat).toHaveBeenCalled());
+    act(() => events.push({ type: "run_started", session_id: "A", run_id: "own" }));
+    finish();
+    await waitFor(() => expect(result.current.messages.at(-1)?.streaming).toBe(false));
+    expect(sessionLiveRun).not.toHaveBeenCalled();
   });
 });

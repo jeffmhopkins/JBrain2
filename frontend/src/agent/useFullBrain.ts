@@ -24,6 +24,7 @@ import type {
   ChatRequest,
   LiveRun,
   ProposalSummary,
+  RunAnnouncement,
   SessionCreate,
   TranscriptTurn,
 } from "./types";
@@ -200,6 +201,11 @@ const RECONCILE_TIMEOUT_MS = 3_720_000;
 // session's `last_run_status`, so the once-per-mount reload reattach can't catch it.
 const PLAN_LIVE_POLL_MS = 4000;
 
+// How long a dropped run-announcement stream (GET /api/chat/events) waits before it reconnects.
+// The session list and the open chat are refreshed on every reconnect, so a turn that started
+// or ended while it was down still shows.
+const RUN_EVENTS_RETRY_MS = 5000;
+
 export interface FullBrainDeps {
   listSessions: () => Promise<AgentSession[]>;
   createSession: (body: SessionCreate) => Promise<AgentSession>;
@@ -210,6 +216,10 @@ export interface FullBrainDeps {
    * detached turn to reattach to and seeds its bubble before resuming the live stream. */
   sessionLiveRun: (sessionId: string) => Promise<LiveRun | null>;
   cancelChatRun: (runId: string) => Promise<void>;
+  /** Every turn of the owner's that starts or ends, wherever it was started — how an open chat
+   * attaches to a run it did not start (the desk panel's spoken turn). Optional: a view
+   * without it keeps the poll and visibility refresh alone. */
+  chatEvents?: (signal?: AbortSignal) => AsyncGenerator<RunAnnouncement>;
   listProposals: (sessionId?: string) => Promise<ProposalSummary[]>;
   getTranscript: (sessionId: string) => Promise<TranscriptTurn[]>;
   renameSession: (id: string, title: string) => Promise<void>;
@@ -232,6 +242,7 @@ const LIVE: FullBrainDeps = {
   chatResume: api.chatResume,
   sessionLiveRun: api.sessionLiveRun,
   cancelChatRun: api.cancelChatRun,
+  chatEvents: api.chatEvents,
   listProposals: api.listProposals,
   getTranscript: api.getTranscript,
   renameSession: api.renameSession,
@@ -243,13 +254,25 @@ const LIVE: FullBrainDeps = {
   getChatCapabilities: api.getChatCapabilities,
 };
 
+/** What the desk panel put in front of the owner's spoken words before firmware-c6 0.0.14's box
+ * change (backend `panel_agent.LEGACY_VOICE_PREFIX`, kept equal by a backend test). Those rows
+ * stored it as his message; a turn now says it is spoken out of band and stores only his words,
+ * so the old rows are stripped as they are shown rather than rewritten. */
+export const LEGACY_VOICE_PREFIX =
+  "(By voice from my desk panel: answer in a sentence or two, plain words.) ";
+
+/** A user turn's text as the owner said it: an old desk-panel row loses the prefix above. */
+export function ownerWords(text: string): string {
+  return text.startsWith(LEGACY_VOICE_PREFIX) ? text.slice(LEGACY_VOICE_PREFIX.length) : text;
+}
+
 /** Map a persisted turn back into a transcript message — assistant turns rebuild
  * their tool steps, note sources, and any staged-proposal / resolved-entity chips
  * so the bubble (and its inline entity links) replay in full. */
 export function fromTurn(t: TranscriptTurn): TranscriptMessage {
   return {
     role: t.role,
-    text: t.content,
+    text: t.role === "user" ? ownerWords(t.content) : t.content,
     tools: t.tools.map((tool) => ({
       id: tool.id,
       name: tool.name,
@@ -450,7 +473,7 @@ export function useFullBrain(
   autoStart = false,
 ): FullBrain {
   const { listSessions, createSession, chat, chatResume, cancelChatRun } = deps;
-  const { sessionLiveRun } = deps;
+  const { sessionLiveRun, chatEvents } = deps;
   const { listProposals, getTranscript } = deps;
   const { renameSession, deleteSession, archiveSession, unarchiveSession } = deps;
   const { rescopeSession, uploadChatAttachment, getChatCapabilities } = deps;
@@ -769,6 +792,47 @@ export function useFullBrain(
     reattachedRef.current.add(activeId);
     void reattach(activeId);
   }, [enabled, activeId, active?.last_run_status, busy]);
+
+  // A turn started anywhere else — the desk panel's spoken turn, a plan step, another device —
+  // announces itself (GET /api/chat/events). The open chat attaches to one in its session the
+  // way a reload does (`reattach`: the owner's words, then the live steps and reply), unless
+  // a turn is already streaming into this view (its own send is announced too); every
+  // announcement refreshes the session list, so a new "Desk panel" chat appears without a
+  // pull. The handler is re-read each render so it sees the current chat; the stream itself
+  // stays open across chat switches and reconnects after a drop.
+  const onRunAnnounced = useRef<(ev: RunAnnouncement) => void>(() => {});
+  onRunAnnounced.current = (ev: RunAnnouncement): void => {
+    reloadSessions();
+    if (ev.session_id !== activeId || turnSessionRef.current !== null) return;
+    if (ev.type === "run_started") void reattach(ev.session_id);
+    else reloadTranscript();
+  };
+  const onRunEventsReconnected = useRef<() => void>(() => {});
+  onRunEventsReconnected.current = (): void => {
+    reloadSessions();
+    reloadTranscript();
+  };
+  useEffect(() => {
+    if (!enabled || !chatEvents) return;
+    const controller = new AbortController();
+    let stopped = false;
+    let retry: number | undefined;
+    const run = async (first: boolean): Promise<void> => {
+      if (!first) onRunEventsReconnected.current();
+      try {
+        for await (const ev of chatEvents(controller.signal)) onRunAnnounced.current(ev);
+      } catch {
+        // Dropped or refused: the poll and the visibility refresh still hold until it is back.
+      }
+      if (!stopped) retry = window.setTimeout(() => void run(false), RUN_EVENTS_RETRY_MS);
+    };
+    void run(true);
+    return () => {
+      stopped = true;
+      window.clearTimeout(retry);
+      controller.abort();
+    };
+  }, [enabled, chatEvents]);
 
   // Discover and stream a plan CONTINUATION turn that fires server-side while this chat is
   // open. The reload reattach above catches an already-running turn once per mount; a
@@ -1209,7 +1273,10 @@ export function useFullBrain(
     if (!live) return;
     // A real send started while we were fetching the id — don't stomp its live turn.
     if (turnSessionRef.current !== null) return;
-    const { runId, snapshot, frameIndex, elapsedMs } = live;
+    const { runId, snapshot, frameIndex, elapsedMs, question } = live;
+    // The owner's words lead the in-flight turn: the stored transcript has them only once it
+    // ends, and a turn started elsewhere (the desk panel) has no local bubble for them.
+    const asked = question ? [userMessage(question)] : [];
     turnSessionRef.current = turnSessionId;
     setActiveTurnSessionId(turnSessionId);
     setBusy(true);
@@ -1240,9 +1307,9 @@ export function useFullBrain(
     try {
       const turns = await getTranscript(turnSessionId);
       baseline = turns.length;
-      setSessionMessages(turnSessionId, () => [...turns.map(fromTurn), seed()]);
+      setSessionMessages(turnSessionId, () => [...turns.map(fromTurn), ...asked, seed()]);
     } catch {
-      setSessionMessages(turnSessionId, (ms) => [...ms, seed()]);
+      setSessionMessages(turnSessionId, (ms) => [...ms, ...asked, seed()]);
     }
     void runTurn(
       { session_id: turnSessionId, message: "", history: [] },
