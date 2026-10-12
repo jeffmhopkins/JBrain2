@@ -2645,6 +2645,10 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   player's first planted line, Dave says "…a fold, held open. Stand close and tell me where
   it should lead." Beat `first_wormhole`, through their own Tricorder only; `wormhole.js`
   calls it through `initWormholes({ onPlanted })`.
+- **First Replicator** (owner, 2026-10-12, with the panel signed off): when
+  `replicator.js` records the unlock (8 Power Packs held), Dave says "Eight Power Packs…
+  that's enough to wake a Replicator. …". Beat `first_replicator`, own Tricorder only,
+  through `initReplicator({ onUnlocked })`.
 - **Not here:** the chests' beat; it comes with M11 and lines on the lore page.
 
 **Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)

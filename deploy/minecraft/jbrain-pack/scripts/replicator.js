@@ -261,6 +261,9 @@ const onPlayerInteract = ({ block, player }) => {
 
 const knownKey = (id) => `jb:known:${id}`;
 
+// Dave's first-Replicator beat (welcome.js), set by init.
+let onUnlocked = () => {};
+
 const learnReplicator = () => {
   for (const player of world.getAllPlayers()) {
     try {
@@ -276,13 +279,15 @@ const learnReplicator = () => {
       if (!unlocksReplicator(stacks)) continue;
       // main.js keeps every name it finds here and adds the Tricorder if it's missing.
       world.setDynamicProperty(knownKey(player.id), JSON.stringify([...known, "replicator"].sort()));
+      onUnlocked(player);
     } catch {
       // A player mid-join is looked at again next second.
     }
   }
 };
 
-export const initReplicator = () => {
+export const initReplicator = ({ onUnlocked: unlocked } = {}) => {
+  if (unlocked) onUnlocked = unlocked;
   system.beforeEvents.startup.subscribe((ev) => {
     ev.blockComponentRegistry.registerCustomComponent(REPLICATOR, {
       beforeOnPlayerPlace,

@@ -502,4 +502,4 @@ const registerDave = (registry, name) => {
   );
 };
 
-initReplicator();
+initReplicator({ onUnlocked: (player) => story.firstReplicator(player) });

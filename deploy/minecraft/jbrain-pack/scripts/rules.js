@@ -45,6 +45,8 @@ export const LINES = {
       "And those places you've saved? Each one is a transport beacon. With a pack, I can bring you to any of them. Just ask.",
   },
   firstWormhole: "…a fold, held open. Stand close and tell me where it should lead.",
+  firstReplicator:
+    "Eight Power Packs… that's enough to wake a Replicator. Put a furnace in the middle of them on a crafting table, and I'll teach it to make one thing out of anything.",
 };
 
 export const TRICORDER = "jbrain:tricorder";

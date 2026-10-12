@@ -132,7 +132,7 @@ def test_main_only_starts_the_replicator() -> None:
     """Its logic is its own module; main.js imports it and calls it once."""
     main = (PACK / "scripts" / "main.js").read_text()
     assert 'import { initReplicator } from "./replicator.js";' in main
-    assert main.count("initReplicator()") == 1
+    assert main.count("initReplicator(") == 1
     assert "jb:replicator" not in main
 
 

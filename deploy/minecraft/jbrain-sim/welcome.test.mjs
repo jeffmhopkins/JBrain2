@@ -209,6 +209,21 @@ test("first Ender Pearl: Dave's line the moment the unlock is recorded, once", (
   assert.equal(said(p).length, 1);
 });
 
+test("first Replicator: Dave's line once a player holds 8 Power Packs, once", () => {
+  const p = sim.player("Maker", "-12");
+  wake(p);
+  p.inventory.setItem(4, new ItemStack("jbrain:power_pack", 8));
+  look(); // replicator.js looks once a second
+  assert.ok(said(p).includes(LINES.firstReplicator));
+  assert.ok(beats(p).includes("first_replicator"));
+  const heard = said(p).length;
+  p.inventory.setItem(4, undefined);
+  look();
+  p.inventory.setItem(4, new ItemStack("jbrain:power_pack", 8));
+  look();
+  assert.equal(said(p).length, heard);
+});
+
 for (const [keep, transport, want] of [
   [true, true, [LINES.firstPowerPack.keep, LINES.firstPowerPack.transport]],
   [true, false, [LINES.firstPowerPack.keep]],

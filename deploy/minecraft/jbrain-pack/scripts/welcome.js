@@ -152,6 +152,14 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
     play(player, [{ at: 30, step: "dave", text: LINES.firstWormhole }], (s) => dave(player, s.text), () => {});
   };
 
+  // The first time a player holds 8 Power Packs (§M15's beat, owner 2026-10-12), once
+  // replicator.js records the unlock.
+  const firstReplicator = (player) => {
+    if (has(player, BEAT.firstReplicator) || tricorderOn(player) !== "own") return;
+    record(player, BEAT.firstReplicator);
+    dave(player, LINES.firstReplicator);
+  };
+
   // After the item guide's look at what they carry (main.js's learn): `added` are the
   // unlocks just recorded, `known` all of them, `held` the item ids on them now.
   const onUnlocks = (player, { added, known, held }) => {
@@ -192,5 +200,7 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
     }
   });
 
-  return { needsWelcome, welcome, inWelcome, firstDeath, firstWormhole, onUnlocks, hello };
+  return {
+    needsWelcome, welcome, inWelcome, firstDeath, firstWormhole, firstReplicator, onUnlocks, hello,
+  };
 };
