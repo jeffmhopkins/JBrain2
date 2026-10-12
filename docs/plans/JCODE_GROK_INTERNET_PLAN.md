@@ -28,8 +28,9 @@ The box **already runs SearXNG** (`deploy/docker-compose.yml` `searxng`, plus a
 
 ## 2. The constraint that shapes everything — the network
 
-The jcode sandbox sits on its **own `jcode` network** (`docker-compose.yml`),
-reachable peers by design: **only `local-llm` and `api`**. SearXNG
+The jcode sandbox sits on its **own `jcode_fenced` network** (`docker-compose.yml`,
+`internal: true`), reachable peers by design: **only `api` and the `egress` proxy** —
+all outbound goes through squid (security plan S2.4). SearXNG
 lives on the **`internal`** network and is **unreachable from the
 sandbox**. Widening the sandbox onto `internal` is rejected — it's the whole point
 of the isolation (no `db`, no notes, no blob store).

@@ -25,6 +25,9 @@ that cuts a member off everywhere at once (M7b):
   reaches both routes with its own api-minted token as go-auth's User-Agent and the
   api refuses any other caller, so nothing else on the internal networks can use
   them as a device-key oracle; the token arrives with the update, nothing to set.
+  An update `start`s a profile service it stopped rather than recreating it, so if
+  the broker is enabled, **Rebuild `mqtt` from Ops once after the update that brought
+  the token** — until then the old container presents none and every phone is refused.
 - **History reads → gone.** The member is dropped from the family group
   (`view_scope`), so `viewer_may_see` returns false: no more family-sees-family
   reads in either direction.
