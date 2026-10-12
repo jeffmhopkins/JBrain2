@@ -8,14 +8,16 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Annotated, Literal, cast
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from jbrain.api.deps import PrincipalDep
+from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.search.service import SearchResponse, SearchService, WikiSearchResult
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 
 def get_search_service(request: Request) -> SearchService:

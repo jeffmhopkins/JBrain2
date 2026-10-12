@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useState } from "react";
 import type { AppointmentRef } from "../agent/types";
 import { type AppointmentOut, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
+import { safeHref } from "../safeHref";
 
 // The owner's read-only calendar over the appointments projection: Day / Week /
 // Month / Tasks (docs/mocks/appointments-calendar-views.html). Appointments are
@@ -69,7 +70,8 @@ function toEv(a: AppointmentOut): Ev {
     location: a.location,
     organizer: a.organizer,
     attendanceMode: a.attendance_mode,
-    onlineUrl: a.online_url,
+    // An email/LLM-extracted join link: a non-web scheme becomes no link at all.
+    onlineUrl: safeHref(a.online_url) ?? null,
     description: a.description,
     appointmentType: a.appointment_type,
     recurring: a.recurring,

@@ -11,9 +11,9 @@ Two viewers share one endpoint:
   and its family group — the same `viewer_may_see` firewall the history path
   enforces in RLS, applied per-fix here against the live fan-out.
 
-The handshake is guarded by a strict **Origin allow-list** (CSWSH defense, B8): a
-browser always sends `Origin`, so a cross-site page using a victim's cookie is
-rejected before auth.
+The handshake is guarded by an **Origin check** (CSWSH defense, B8): a browser always
+sends `Origin`, so a cross-site or same-site page riding a victim's cookie is rejected
+before auth — by the allow-list when one is configured, else by Origin == Host.
 """
 
 import asyncio
@@ -23,6 +23,8 @@ from typing import Any, Protocol, cast
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from jbrain.api.same_site import origin_matches_host
+from jbrain.api.session_cookie import session_token
 from jbrain.auth import service
 from jbrain.auth.service import AuthRepo, PrincipalInfo
 from jbrain.config import Settings
@@ -47,15 +49,18 @@ class AuditSink(Protocol):
 
 
 def origin_allowed(websocket: WebSocket, settings: Settings) -> bool:
-    """CSWSH gate: with an allow-list configured, a *present* `Origin` must match;
-    an absent Origin (a native, non-browser client) is allowed, and an empty
-    allow-list disables the check (dev). A browser always sends Origin, so a
-    cross-site page can never ride a victim's cookie onto the feed."""
-    allowed = settings.allowed_ws_origins
-    if not allowed:
-        return True
+    """CSWSH gate. An absent `Origin` (a native, non-browser client) passes. A present one
+    must be on the allow-list when one is configured, else must name the very host the
+    handshake was sent to. Fail closed by default: a same-site page (a jcode preview on a
+    sibling subdomain) gets the victim's cookies attached, and only its Origin gives it
+    away. The Host check ignores the scheme because the tunnel hands the api plain HTTP."""
     origin = websocket.headers.get("origin")
-    return origin is None or origin in allowed
+    if origin is None:
+        return True
+    allowed = settings.allowed_ws_origins
+    if allowed:
+        return origin in allowed
+    return origin_matches_host(origin, websocket.headers.get("host"))
 
 
 async def authenticated_viewer(websocket: WebSocket) -> PrincipalInfo | None:
@@ -63,8 +68,7 @@ async def authenticated_viewer(websocket: WebSocket) -> PrincipalInfo | None:
     member (device-key) — or None for an absent/invalid cookie or any other kind."""
     repo = cast(AuthRepo, websocket.app.state.auth_repo)
     settings = cast(Settings, websocket.app.state.settings)
-    token = websocket.cookies.get(settings.session_cookie, "")
-    principal = await service.authenticate(repo, token)
+    principal = await service.authenticate(repo, session_token(websocket, settings))
     if principal is None or principal.kind not in ("owner", "device_key"):
         return None
     return principal

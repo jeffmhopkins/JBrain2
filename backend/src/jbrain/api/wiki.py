@@ -11,14 +11,14 @@ with the frontend reader/landing; `landing` is declared before `{id}` so the sta
 import uuid
 from typing import Any, cast
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.api.deps import OwnerDep, PrincipalDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, owner_only
 from jbrain.api.images import sniff_path
 from jbrain.api.notes import BlobStoreDep, ctx_for
 from jbrain.db.session import scoped_session
@@ -36,7 +36,9 @@ from jbrain.wiki.talkstore import (
 )
 from jbrain.workflow import events as wf_events
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 
 def get_wiki_read_store(request: Request) -> WikiReadStore:

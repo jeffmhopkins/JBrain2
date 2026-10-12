@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from jbrain.api.deps import AuthRepoDep, PrincipalDep, SettingsDep
+from jbrain.api.session_cookie import delete_session_cookies, session_token, set_session_cookie
 from jbrain.auth import service
 from jbrain.auth.service import InvalidCredentials
 
@@ -24,14 +25,7 @@ async def create_session(
         token = await service.login(repo, body.owner_key, body.device_label)
     except InvalidCredentials:
         raise HTTPException(status_code=401, detail="invalid key") from None
-    response.set_cookie(
-        settings.session_cookie,
-        token,
-        httponly=True,
-        secure=settings.secure_cookies,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 365,
-    )
+    set_session_cookie(response, settings, token, samesite="lax", max_age=60 * 60 * 24 * 365)
 
 
 @router.get("/me")
@@ -46,5 +40,7 @@ async def delete_session(
     repo: AuthRepoDep,
     settings: SettingsDep,
 ) -> None:
-    await service.logout(repo, request.cookies.get(settings.session_cookie, ""))
-    response.delete_cookie(settings.session_cookie)
+    await service.logout(repo, session_token(request, settings))
+    # Both names: a browser mid-migration may hold either, and a stale one left behind
+    # would quietly sign it back in.
+    delete_session_cookies(response, settings)

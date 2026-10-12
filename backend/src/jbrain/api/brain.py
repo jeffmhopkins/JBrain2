@@ -20,15 +20,17 @@ import re
 
 import httpx
 import structlog
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
-from jbrain.api.deps import PrincipalDep
+from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 
 log = structlog.get_logger()
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 # The longest text we forward to a single render — mirrors the tts-stt service's own
 # TTS_CHUNK_CAP; the PWA splits a reply into sentence-sized clips before calling here.

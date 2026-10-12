@@ -32,7 +32,12 @@ static tk_stats_t s_st;
 static char s_heard[sizeof(((msg_t *)0)->text)];
 static char s_status[64];
 static char s_reply[MSG_LONG_TEXT];
+/* The tools the agent ran (JT2 STEP records, 0.0.14): fixed, ~270 bytes, never the heap. Written
+ * by the main task under the lock; the UI copies them out (svc_audio_work). */
+static tk_steps_t s_steps;
 static uint32_t s_heard_seq, s_status_seq;
+/* When the question went (KEY's release): the working line's clock and the answer's summary. */
+static uint32_t s_sent_ms;
 /* UI task's own: the counts it last drew. */
 static uint32_t s_heard_drawn, s_status_drawn;
 static uint32_t s_next_id = 1000;
@@ -51,6 +56,9 @@ static uint32_t s_playing;
 static uint32_t s_next_person_id = 900000;
 /* Clear chat, per agent: the next talk to it asks the box for a new conversation. UI task's. */
 static bool s_fresh[TK_AGENT__COUNT];
+/* The hold in progress was KEY outside its conversation (TALK_TO_NEW_AGENT): sent, it replaces
+ * this panel's view of the thread with the new exchange. UI task's. */
+static bool s_new;
 
 void svc_audio_fresh(const char *agent)
 {
@@ -80,6 +88,7 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
 {
     s_refused = NULL;
     if (s_holding || s_person.on) return false;
+    s_new = false;
     if (kind == TALK_TO_PERSON) {
         s_person.on = true;
         snprintf(s_person.to, sizeof s_person.to, "%s", principal ? principal : "");
@@ -103,10 +112,11 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
     lock();
     const tk_begin_t b = tk_begin(&s_tk, now, voice, s_next_id);
     if (b == TK_BEGIN_OK) {
-        tk_set_agent(&s_tk, agent, s_fresh[agent]);
+        tk_set_agent(&s_tk, agent, s_fresh[agent] || kind == TALK_TO_NEW_AGENT);
         tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
         s_heard[0] = s_status[0] = '\0';
         s_heard_seq = s_status_seq = 0;
+        tk_steps_init(&s_steps);
     }
     unlock();
     if (b == TK_BEGIN_STOPPED) {
@@ -119,6 +129,7 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
         return false;
     }
     s_holding = true;
+    s_new = kind == TALK_TO_NEW_AGENT;
     s_next_id += 2;
     s_st.talks++;
     talk_port_kick();
@@ -158,6 +169,16 @@ talk_outcome_t svc_audio_talk_end(bool send)
     if (o == TALK_FAILED) tk_take(&s_tk, why, sizeof why);
     unlock();
     talk_port_kick();
+    if (o == TALK_SENT || o == TALK_CAPPED) {
+        s_sent_ms = now;
+        /* A new conversation: the box was asked for one at the hold's start, so this panel's
+           view starts over with it too — until the box answers, a later talk keeps asking. */
+        if (s_new) {
+            svc_messages_clear(THREAD);
+            s_fresh[s_tk.agent] = true;
+        }
+    }
+    s_new = false;
     if (o == TALK_SENT || o == TALK_CAPPED || o == TALK_FAILED) {
         msg_t m;
         talk_bubble_sent(id, held, &m);
@@ -205,13 +226,21 @@ bool svc_audio_speaking(void)
     return r;
 }
 
-bool svc_audio_status(const char *thread, char *out, size_t cap)
+bool svc_audio_work(const char *thread, svc_work_t *out)
 {
     if (!thread || strcmp(thread, THREAD) || s_holding) return false;
+    const uint32_t now = svc_rtc_uptime_ms();
     lock();
     const bool on = s_tk.phase == TK_SEND && !s_tk.abort && s_heard_seq;
-    if (on) tk_fit(out, cap, s_status[0] ? s_status : "Thinking…");
+    if (on) {
+        tk_fit(out->phase, sizeof out->phase, s_status[0] ? s_status : "Thinking…");
+        out->n = s_steps.n;
+        memcpy(out->step, s_steps.shown, sizeof out->step);
+        out->folded = tk_steps_folded(&s_steps);
+        out->seq = s_status_seq;
+    }
     unlock();
+    if (on) out->elapsed_ms = now - s_sent_ms;
     return on;
 }
 
@@ -318,6 +347,8 @@ void svc_audio_service(void)
         }
         lock();
         talk_bubble_reply(id + 1, s_reply, &m);
+        /* The steps collapse to one dim line over the answer (the PWA's "Worked · 2 steps"). */
+        tk_steps_summary(&s_steps, svc_rtc_uptime_ms() - s_sent_ms, m.status, sizeof m.status);
         unlock();
         svc_messages_fake_add(THREAD, &m);
         s_speaking = playing ? id + 1 : 0;
@@ -400,6 +431,23 @@ void talk_net_status(const char *status)
 {
     lock();
     tk_fit(s_status, sizeof s_status, status);
+    s_status_seq++;
+    unlock();
+}
+
+/* A step is a change like a status line: the same count moves, so the UI redraws once for it. */
+void talk_net_step_start(uint8_t index, const char *label)
+{
+    lock();
+    tk_steps_start(&s_steps, index, label);
+    s_status_seq++;
+    unlock();
+}
+
+void talk_net_step_done(uint8_t index, bool ok)
+{
+    lock();
+    tk_steps_done(&s_steps, index, ok);
     s_status_seq++;
     unlock();
 }
@@ -559,6 +607,7 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_bool(w, "net_busy", t.net_busy);
     dbg_json_int(w, "speaking", s_speaking);
     if (t.phase == TK_SEND && status[0]) dbg_json_str(w, "status", status);
+    dbg_json_int(w, "steps", s_steps.total);
     dbg_json_int(w, "ring", s_ring_mem ? RING_BYTES : 0);
     dbg_json_int(w, "queued", queued);
     dbg_json_int(w, "talks", st.talks);

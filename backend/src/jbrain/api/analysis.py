@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -25,7 +25,7 @@ from jbrain.analysis.repo import (
     SqlAnalysisRepo,
     UnknownAction,
 )
-from jbrain.api.deps import OwnerDep, PrincipalDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, owner_only
 from jbrain.api.images import MAX_IMAGE_BYTES, sniff_image_type, sniff_path
 from jbrain.api.notes import BlobStoreDep, ctx_for
 from jbrain.db.session import scoped_session
@@ -35,7 +35,9 @@ from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import UnknownDomain
 from jbrain.workflow import events as wf_events
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 
 def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
@@ -292,9 +294,9 @@ async def resolve_review(
     except AlreadyResolved:
         raise HTTPException(status_code=409, detail="review item is not open") from None
     except MergeScopeError as exc:
-        # Unreachable over HTTP today (ctx_for is a full owner), but the guard exists
-        # for a future narrowed surface and a 500 would read as a server fault rather
-        # than the refusal it is.
+        # Unreachable over HTTP today (the router is owner-only, so ctx_for is the owner's
+        # full context), but the guard exists for a future narrowed surface, and a 500
+        # would read as a server fault rather than the refusal it is.
         raise HTTPException(status_code=403, detail=str(exc)) from None
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")

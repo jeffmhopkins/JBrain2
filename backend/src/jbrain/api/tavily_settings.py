@@ -6,16 +6,17 @@ precedence over the JBRAIN_TAVILY_API_KEY env fallback). Mirrors the Gmail-crede
 KEY is a secret NEVER echoed back — the GET reports only whether one is set (stored or via the env
 fallback). `POST /settings/tavily/test` runs the live Tavily tier against a URL (the "Test key"
 button), so the owner verifies a freshly-pasted key from the PWA with no terminal (non-negotiable
-#10). Owner-only via the store's RLS (and the router's owner gate).
+#10). Owner-only by the router's `owner_only` gate. RLS alone is not enough: `/test`
+spends the key through the WebFetcher, which never reads it under the caller's context.
 """
 
 from typing import cast
 
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, ConfigDict
 
-from jbrain.api.deps import PrincipalDep, PrincipalInfo, SettingsDep
+from jbrain.api.deps import PrincipalDep, PrincipalInfo, SettingsDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
@@ -25,7 +26,9 @@ from jbrain.web.tavily_health import HealthState
 
 log = structlog.get_logger()
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 # The URL the "Test key" probe extracts when the owner gives none — a stable, boring public page,
 # so a green test proves the key + connectivity without depending on any particular walled site.

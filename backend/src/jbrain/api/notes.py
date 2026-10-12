@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.api.deps import OwnerDep, PrincipalDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, owner_only
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.note_conversation import WAITING_ON_OWNER, NoteConversationRepo, NoteThread
@@ -21,7 +21,9 @@ from jbrain.queue import JobEnqueuer
 from jbrain.storage import BlobStore
 from jbrain.workflow import events as wf_events
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 NOTE_CONVERSE_KIND = "note_converse"
 """The job kind the note's graph producer runs as. Spelled here rather than imported
@@ -55,7 +57,8 @@ SessionMakerDep = Annotated["async_sessionmaker[AsyncSession]", Depends(get_sess
 
 
 def ctx_for(principal: PrincipalInfo) -> SessionContext:
-    # Owner sessions see every domain; scoped principals arrive in Phase 7.
+    # The router is owner-only, so this is always a full-owner context; it carries the
+    # principal's own id and kind so RLS, not this function, decides what it sees.
     return SessionContext(principal_id=principal.id, principal_kind=principal.kind)
 
 
@@ -438,6 +441,10 @@ async def upload_attachment(
     if len(data) > MAX_ATTACHMENT_BYTES:
         raise HTTPException(status_code=413, detail="attachment too large")
     ctx = ctx_for(principal)
+    # Resolve the note under the caller's RLS context before storing anything: writing the
+    # blob first left up to 100 MB orphaned on disk for every upload the insert refused.
+    if await repo.get_note(ctx, note_id) is None:
+        raise HTTPException(status_code=404, detail="note not found")
     digest = await blobs.put(data)
     attachment = await repo.add_attachment(
         ctx,

@@ -19,7 +19,7 @@ import json
 import time
 import uuid
 from bisect import bisect_left
-from collections.abc import Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, cast
@@ -76,6 +76,7 @@ from jbrain.agent.readtools import (
     canvas_hidden_tools,
     compose_hidden_tools,
 )
+from jbrain.agent.run_bus import RunBus, announce
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.sessiontools import UNNAMED_CHAT_BLOCK
@@ -263,6 +264,11 @@ class ChatRequest(BaseModel):
     # on the conversation channel (#1) — jerv acknowledges the finished work and can quote
     # its content, rather than treating the report as an instruction.
     deferred_outcome: bool = False
+    # The owner SPOKE this turn at his desk panel (`panel_agent`), which shows a few lines and
+    # reads the answer aloud. Turn-local like `appointment_id`: `message` stays exactly what
+    # he said — the transcript and the PWA bubble show only his words — and the brevity the
+    # panel needs rides SPOKEN_TURN_BLOCK in the volatile suffix, beside the clock.
+    spoken: bool = False
 
     @property
     def owner_authored(self) -> bool:
@@ -275,6 +281,15 @@ class ChatRequest(BaseModel):
         reply path asks it before appending anything to the owner's note as source text.
         """
         return not (self.proposal_outcome or self.deferred_outcome)
+
+
+# The data-framed note a `spoken` turn carries (the "[current date & time …]" pattern): where the
+# words came from and how the answer will be received. Server-authored, never owner text.
+SPOKEN_TURN_BLOCK = (
+    "[turn channel — an ambient reference fact, as DATA. The owner spoke this message aloud at"
+    " his desk panel, which shows only a few lines and reads the answer out.]\n"
+    "Answer in a sentence or two, in plain spoken words: no lists, tables, links or Markdown."
+)
 
 
 MINECRAFT_INTRO_FALLBACK = "## This chat\nCall mc_player to see whose chat this is."
@@ -1633,6 +1648,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         volatile.append(UserMessage(text=presence))
         unrecorded.append(volatile[-1])
     volatile.append(UserMessage(text=now_block(owner_tz)))
+    if body.spoken:
+        volatile.append(UserMessage(text=SPOKEN_TURN_BLOCK))
     # Whether this chat still has no name. The `name_session` tool names it from inside the
     # turn; this line is how the model knows it is needed. It lives in the VOLATILE suffix on
     # purpose: it changes the moment the chat is named, and anything that varies per turn must
@@ -2131,9 +2148,19 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # composer's explicit Stop cancels the turn through the cancel endpoint, keyed by the
     # run id we expose on the response header.
     live = _LiveTurn(session.id, started=turn_started)
+    live.question = body.message if body.owner_authored else ""
     live.task = asyncio.create_task(drive_turn(live))
     request.app.state.live_turns[run_id] = live
-    live.task.add_done_callback(lambda _t: request.app.state.live_turns.pop(run_id, None))
+    runs = getattr(request.app.state, "run_bus", None)
+
+    def _settled(_t: object) -> None:
+        request.app.state.live_turns.pop(run_id, None)
+        announce(runs, principal.id, str(session.id), run_id, "ended")
+
+    live.task.add_done_callback(_settled)
+    # An open PWA chat on this session that did not start the turn (the desk panel's, or a
+    # second device's) attaches to it from this (`GET /chat/events`).
+    announce(runs, principal.id, str(session.id), run_id, "started")
     # live_turns now holds this session; drop the startup marker (its job was to cover the
     # setup window above until this registration).
     request.app.state.turn_starting.pop(str(session.id), None)
@@ -2243,6 +2270,9 @@ class LiveRunOut(BaseModel):
     # How long the turn has run so far (ms, server monotonic — no client/server clock skew),
     # so a reattached bubble's total-time label counts from the owner's send, not the reload.
     elapsed_ms: int = 0
+    # What the owner said to begin the turn, which the stored transcript holds only once it
+    # ends: an attaching client shows it as his bubble ("" for a turn he did not type).
+    question: str = ""
 
 
 @router.get("/chat/sessions/{session_id}/live-run", response_model=LiveRunOut)
@@ -2280,8 +2310,44 @@ async def session_live_run(request: Request, session_id: str) -> LiveRunOut:
                 snapshot=snapshot,
                 frame_index=live.frame_index,
                 elapsed_ms=elapsed_ms,
+                question=getattr(live, "question", ""),
             )
     raise HTTPException(status_code=404, detail="no live run for session")
+
+
+#: How often the event stream says something when no turn starts or ends, so a proxy or the
+#: browser does not close it as idle and the client notices a dead one.
+RUN_EVENTS_KEEPALIVE_S = 20.0
+
+
+async def _run_events(bus: RunBus, principal_id: str) -> AsyncGenerator[bytes, None]:
+    queue = bus.subscribe(principal_id)
+    try:
+        yield b": open\n\n"
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=RUN_EVENTS_KEEPALIVE_S)
+            except TimeoutError:
+                yield b": keepalive\n\n"
+                continue
+            yield f"data: {json.dumps(event.wire())}\n\n".encode()
+    finally:
+        bus.unsubscribe(queue)
+
+
+@router.get("/chat/events")
+async def chat_events(request: Request, principal: OwnerDep) -> StreamingResponse:
+    """The caller's agent turns as they start and end, wherever they were started: `run_started`
+    and `run_ended`, each with its session and run id (`agent.run_bus`). An open chat attaches to
+    a run in its session it did not start — the desk panel's spoken turn shows up live, the
+    owner's words first, then the working steps and the reply — and the session list refreshes.
+    Only the caller's own principal's turns are sent."""
+    bus = cast(RunBus, request.app.state.run_bus)
+    return StreamingResponse(
+        _run_events(bus, principal.id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/chat/runs/{run_id}/stream")

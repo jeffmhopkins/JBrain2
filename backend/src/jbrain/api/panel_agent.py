@@ -66,9 +66,11 @@ AGENT_WAIT_S = 100.0
 #: is shown. The full answer is in the thread.
 REPLY_BYTES = 240
 
-# Tells the agent this turn is spoken, so the answer is short and speakable. Recorded with the
-# owner's words in the transcript — honest about where the turn came from.
-VOICE_PREFIX = "(By voice from my desk panel: answer in a sentence or two, plain words.) "
+# What 0.0.11-0.0.13 put in front of the owner's words to ask for a short, speakable answer.
+# It was recorded with them, so the PWA showed it as his message (owner, 2026-10-12). A turn now
+# says it is spoken with `ChatRequest.spoken` (agent.SPOKEN_TURN_BLOCK) and stores only what he
+# said; the PWA strips this from the rows written before (`frontend/src/agent/fromTurn`).
+LEGACY_VOICE_PREFIX = "(By voice from my desk panel: answer in a sentence or two, plain words.) "
 
 STILL_WORKING = "Still working on that. The answer will be in the app."
 #: JT2's cap on following a turn with progress flowing. Past it the panel is told the turn is
@@ -359,7 +361,7 @@ async def start_turn(
         resp = await agent_api.chat(
             request,
             owner,
-            agent_api.ChatRequest(session_id=session_id, message=f"{VOICE_PREFIX}{heard}"),
+            agent_api.ChatRequest(session_id=session_id, message=heard, spoken=True),
         )
     except HTTPException as exc:
         if exc.status_code in (409, 429):

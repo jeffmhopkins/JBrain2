@@ -22,6 +22,7 @@ import websockets
 from fastapi import APIRouter, WebSocket
 
 from jbrain.api.live import origin_allowed
+from jbrain.api.session_cookie import session_token
 from jbrain.auth import service
 from jbrain.config import Settings
 
@@ -54,8 +55,7 @@ async def _cookie_principal(websocket: WebSocket) -> PrincipalInfo | None:
     ALL kinds — the per-session scope check (`_may_access`) decides, not a kind allow-list."""
     repo = cast("AuthRepo", websocket.app.state.auth_repo)
     settings = cast(Settings, websocket.app.state.settings)
-    token = websocket.cookies.get(settings.session_cookie, "")
-    return await service.authenticate(repo, token)
+    return await service.authenticate(repo, session_token(websocket, settings))
 
 
 def _may_access(principal: PrincipalInfo, sid: str) -> bool:

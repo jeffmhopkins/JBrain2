@@ -35,6 +35,7 @@ import { TaskStatus } from "../../components/TaskStatus";
 import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
 import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
+import { safeHref } from "../../safeHref";
 import { DeepestRunCard } from "../DeepResearchProgress";
 import { ReportPlayer, type ReportReadAloud } from "../ReportPlayer";
 import { type CiteTarget, Markdown } from "../markdown";
@@ -2097,7 +2098,7 @@ function HurricaneCard({ data }: ViewProps): ReactNode {
   const distance = wxNum(data.distance_mi);
   const bearing = typeof data.bearing === "string" ? data.bearing : "";
   const alert = data.alert ? (data.alert as Record<string, unknown>) : null;
-  const nhcUrl = typeof data.nhc_url === "string" ? data.nhc_url : "";
+  const nhcUrl = typeof data.nhc_url === "string" ? safeHref(data.nhc_url) : undefined;
   const track: HuTrackPointGeo[] = (Array.isArray(data.track) ? data.track : []).flatMap((p) => {
     const pt = huPoint(p);
     if (!pt) return [];

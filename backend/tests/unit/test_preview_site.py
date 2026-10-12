@@ -88,3 +88,17 @@ def test_conf_fails_closed_on_a_malformed_base_host(tmp_path: Path) -> None:
     # whole proxy — fail closed (no file) instead.
     _run(tmp_path, JBRAIN_JCODE_PREVIEW_BASE_HOST="bad host.example")
     assert not (tmp_path / "preview.caddy").exists()
+
+
+def test_app_sites_refuse_framing_but_the_preview_site_does_not(tmp_path: Path) -> None:
+    # Security plan S1.3 (d): a preview page is same-site with the app, so the app must
+    # refuse to be framed by it. The headers live in the shared (app) snippet, which the
+    # public and LAN sites import; the preview site must stay frameable by the PWA's pane.
+    caddyfile = _CADDYFILE.read_text()
+    snippet = caddyfile[caddyfile.index("(app) {") : caddyfile.index("{$JBRAIN_SITE_ADDR} {")]
+    assert "header Content-Security-Policy \"frame-ancestors 'self'\"" in snippet
+    assert 'header X-Frame-Options "SAMEORIGIN"' in snippet
+    _run(tmp_path, JBRAIN_JCODE_PREVIEW_BASE_HOST="box.example")
+    rendered = (tmp_path / "preview.caddy").read_text()
+    assert "frame-ancestors" not in rendered and "X-Frame-Options" not in rendered
+    assert "import app" not in rendered

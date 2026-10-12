@@ -21,5 +21,8 @@ const char *svc_audio_fake_last_path(void);
 /* The box's transcript and a status line for the hold in flight, as JT2 streams them before the
  * answer: the sim's "transcript + status line" state. */
 void svc_audio_fake_progress(const char *heard, const char *status);
+/* A tool the agent started, and its end, as JT2's STEP records deliver them (0.0.14). */
+void svc_audio_fake_step(uint8_t index, const char *label);
+void svc_audio_fake_step_done(uint8_t index, bool ok);
 /* The alarm sound "playing" (svc_audio_ring), -1 when silent. */
 int svc_audio_fake_ring_sound(void);

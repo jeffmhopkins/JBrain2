@@ -3498,7 +3498,7 @@ Full-repo reproduction:
 | `comfyui_timeout` | `config.py:357` `    comfyui_timeout: float = 1800.0` | `main.py:724` |
 | `jcode_model` | `config.py:444` `    jcode_model: str = "qwen3-coder-next"` | `api/llm_settings.py:538,539`; `api/jcode.py:87` |
 | `jcode_planner_model` | `config.py:452` `    jcode_planner_model: str = "gpt-oss-120b"` | `api/llm_settings.py:533,541`; `api/jcode.py:119` |
-| `jcode_url` | `config.py:441` `    jcode_url: str = ""` | `main.py:808`; `api/jcode_preview.py:107,118,158,192`; `api/jcode_terminal.py:123,148` |
+| `jcode_url` | `config.py:441` `    jcode_url: str = ""` | `main.py:808`; `api/jcode_preview.py:160,172,218,252`; `api/jcode_terminal.py:123,148` |
 | `jcode_enabled` | `config.py:442` `    jcode_enabled: bool = False` | `api/llm_settings.py:536` |
 | `jcode_gateway_token` | `config.py:463` `    jcode_gateway_token: str = ""` | `backend/src/jbrain/api/jcode_llm.py:66` `    token = getattr(request.app.state.settings, "jcode_gateway_token", "") or ""` |
 | `llm_tasks` | `config.py:487` `    llm_tasks: dict[str, str] = {}` | `llm/router.py:851,854` |

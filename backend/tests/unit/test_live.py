@@ -242,11 +242,16 @@ def test_origin_allowed_csrf_gate() -> None:
     )
 
     class _WS:
-        def __init__(self, origin: str | None) -> None:
-            self.headers = {"origin": origin} if origin is not None else {}
+        def __init__(self, origin: str | None, host: str = "brain.example") -> None:
+            self.headers = {"host": host}
+            if origin is not None:
+                self.headers["origin"] = origin
 
-    # No allow-list configured -> any origin permitted (dev).
-    assert origin_allowed(_WS("https://evil.example"), open_settings) is True  # type: ignore[arg-type]
+    # No allow-list configured -> fail closed: a present Origin must name the host the
+    # handshake was sent to, so a sibling-subdomain page (a jcode preview) is refused.
+    assert origin_allowed(_WS("https://brain.example"), open_settings) is True  # type: ignore[arg-type]
+    assert origin_allowed(_WS("https://evil.example"), open_settings) is False  # type: ignore[arg-type]
+    assert origin_allowed(_WS(None), open_settings) is True  # type: ignore[arg-type]
     # Configured: the listed origin passes, a cross-site one is rejected, and an
     # absent Origin (native client) is allowed.
     assert origin_allowed(_WS("https://dash.example"), locked) is True  # type: ignore[arg-type]

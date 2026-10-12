@@ -12,6 +12,13 @@
 (app) {
 	encode zstd gzip
 
+	# No other origin may frame the app: a jcode preview (same site, different origin)
+	# must not be able to overlay a framed owner page and click through it. Only the app
+	# sites import this snippet; the preview wildcard site deliberately does not, so a dev
+	# app can still be framed by the PWA's preview pane.
+	header Content-Security-Policy "frame-ancestors 'self'"
+	header X-Frame-Options "SAMEORIGIN"
+
 	# The host-mode jcode preview is served ONLY on its own <slug>-preview.<host>
 	# subdomain (the preview site below). 404 the internal prefix on every app surface
 	# (public + LAN) so a sandbox-run dev app can never be served on the owner origin.

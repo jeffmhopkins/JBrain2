@@ -13,6 +13,20 @@ talk_outcome_t talk_policy_end(uint32_t held_ms, bool send)
     return TALK_SENT;
 }
 
+void talk_clock(uint32_t ms, char *out, size_t cap)
+{
+    const uint32_t sec = ms / 1000;
+    snprintf(out, cap, "%lu:%02lu", (unsigned long)(sec / 60), (unsigned long)(sec % 60));
+}
+
+talk_route_t talk_key_route(const char *conversation)
+{
+    tk_agent_t a;
+    if (conversation && tk_agent_from(conversation, &a))
+        return (talk_route_t){TALK_TO_AGENT, tk_agent_id(a)};
+    return (talk_route_t){TALK_TO_NEW_AGENT, tk_agent_id(TK_AGENT_JERV)};
+}
+
 bool talk_placeholder(talk_outcome_t o, uint32_t held_ms, uint32_t id, msg_t *out)
 {
     if (o != TALK_SENT && o != TALK_CAPPED) return false;

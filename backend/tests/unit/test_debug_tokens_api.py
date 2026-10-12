@@ -81,7 +81,8 @@ def test_public_base_url_points_handed_off_tokens_at_the_public_host() -> None:
         minted = client.post(
             "/api/settings/debug-tokens",
             json={"label": "x"},
-            headers={"origin": "https://jbrain.local"},
+            # The LAN PWA's own request: Origin and Host agree, as a browser's would.
+            headers={"origin": "https://jbrain.local", "host": "jbrain.local"},
         )
         assert _decode(minted.json()["payload"])["u"] == "https://pub.example.com"
 

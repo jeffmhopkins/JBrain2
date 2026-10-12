@@ -218,7 +218,17 @@ def test_the_turn_runs_as_the_owner_in_the_panel_s_thread(
     principal, body = wired["chats"][0]
     assert (principal.id, principal.kind) == ("owner-1", "owner")
     assert body.session_id == "session-dave"
-    assert body.message == panel_agent.VOICE_PREFIX + "what's next"
+    assert body.message == "what's next", "only what the owner said is his message"
+    assert body.spoken, "the brevity rides the turn's spoken flag, not his words"
+
+
+def test_the_pwa_strips_the_prefix_old_panel_turns_stored() -> None:
+    """Rows from before 0.0.14 hold the prefix in the owner's message; the PWA cuts exactly
+    this string, so the two must never drift apart."""
+    src = (
+        Path(__file__).resolve().parents[3] / "frontend" / "src" / "agent" / "useFullBrain.ts"
+    ).read_text(encoding="utf-8")
+    assert f'"{panel_agent.LEGACY_VOICE_PREFIX}"' in src
 
 
 def test_a_question_for_the_owner_is_pointed_at_the_app(

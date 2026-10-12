@@ -160,8 +160,9 @@ def test_automations_require_owner(client: TestClient) -> None:
 
 def test_non_owner_forbidden(client: TestClient, repo: FakeAuthRepo) -> None:
     # A non-owner principal authenticates but the owner_only dep rejects it (403),
-    # for both the reads and the mutations — the engine config is owner-only.
-    asyncio.run(repo.create_principal("capability_token", "key-h", "agent"))
+    # for both the reads and the mutations — the engine config is owner-only. A family
+    # device is the non-owner kind that can hold a cookie session at all.
+    asyncio.run(repo.create_principal("device_key", "key-h", "agent"))
     principal = repo.principals[-1]
     token = "tok-agent"
     asyncio.run(repo.create_session(principal.id, keys.hash_token(token), "agent"))

@@ -68,6 +68,11 @@ class _LiveTurn:
         # render SO FAR — no dependence on the frame buffer still holding the (possibly
         # evicted) early frames of a long deep-research fan. None until the task attaches it.
         self.acc: TranscriptAccumulator | None = None
+        # The owner's words that began the turn ("" for one he did not type: a plan step, an
+        # outcome report). The transcript records them only when the turn ends, so a client
+        # that attaches mid-turn — a reload, or a PWA watching a turn the desk panel started —
+        # shows his message from this rather than an answer to nothing.
+        self.question = ""
 
     @property
     def frame_index(self) -> int:

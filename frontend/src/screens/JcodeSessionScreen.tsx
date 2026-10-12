@@ -767,6 +767,12 @@ export function JcodeSessionScreen({
                 key={pvNonce}
                 className="jcode-pviframe"
                 title="Dev server preview"
+                // No top-navigation: a dev app must not be able to send this tab
+                // elsewhere. allow-same-origin together with allow-scripts would let a
+                // same-origin frame lift its own sandbox, and is safe ONLY because the
+                // preview is always served from its own <slug>-preview origin, never
+                // this one; it stays so the dev app's own storage and HMR keep working.
+                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock"
                 src={pvNonce === 0 ? preview.url : withReloadNonce(preview.url, pvNonce)}
               />
               <button

@@ -67,8 +67,14 @@ class ExternalSession:
     requests: int
 
 
+# The principal kinds a session cookie may belong to: the owner (login), a member device
+# (/session/mint), a jcode share and an intake link (their redeem routes). The cookie
+# lookup admits no other kind, whatever is in device_sessions.
+SESSION_KINDS = ("owner", "device_key", "jcode_share_link", "intake_link")
+
+
 class AuthRepo(Protocol):
-    async def find_active_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+    async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
 
     async def find_active_device_principal_by_key_hash(
         self, key_hash: str
@@ -138,8 +144,9 @@ class AuthRepo(Protocol):
 
 
 async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:
-    """Exchange an owner key for a device session token."""
-    principal = await repo.find_active_principal_by_key_hash(keys.hash_key(owner_key))
+    """Exchange an owner key for a device session token. Only an owner key: the repo
+    lookup is kind-filtered, so no other credential mints a session through login."""
+    principal = await repo.find_active_owner_by_key_hash(keys.hash_key(owner_key))
     if principal is None:
         raise InvalidCredentials
     token = keys.generate_session_token()

@@ -1,6 +1,6 @@
 import pytest
 
-from jbrain.auth import service
+from jbrain.auth import keys, service
 from tests.unit.fakes import FakeAuthRepo
 
 
@@ -54,3 +54,33 @@ async def test_logout_revokes_session() -> None:
 
 async def test_logout_with_empty_token_is_noop() -> None:
     await service.logout(FakeAuthRepo(), "")
+
+
+@pytest.mark.parametrize("kind", ["device_key", "capability_token", "jcode_share_link"])
+async def test_login_accepts_only_the_owner_key(kind: str) -> None:
+    # The login form mints a session for the owner alone; another key hashed the same way
+    # (a device key is) must not mint one for its own principal.
+    repo = FakeAuthRepo()
+    await repo.create_principal(kind, keys.hash_key("jb1-other"), "other")
+    with pytest.raises(service.InvalidCredentials):
+        await service.login(repo, "jb1-other", "pixel")
+    assert repo.sessions == []
+
+
+@pytest.mark.parametrize("kind", ["capability_token", "external_llm"])
+async def test_a_session_for_a_kind_that_never_holds_one_is_refused(kind: str) -> None:
+    # Such a session can only have been minted by the old unfiltered login; it must not
+    # keep authenticating now that login can't mint it.
+    repo = FakeAuthRepo()
+    await repo.create_principal(kind, "kh", "leftover")
+    await repo.create_session(repo.principals[0].id, keys.hash_token("tok"), "old")
+    assert await service.authenticate(repo, "tok") is None
+
+
+@pytest.mark.parametrize("kind", ["owner", "device_key", "jcode_share_link", "intake_link"])
+async def test_the_session_holding_kinds_still_authenticate(kind: str) -> None:
+    repo = FakeAuthRepo()
+    await repo.create_principal(kind, "kh", "holder")
+    await repo.create_session(repo.principals[0].id, keys.hash_token("tok"), "s")
+    principal = await service.authenticate(repo, "tok")
+    assert principal is not None and principal.kind == kind

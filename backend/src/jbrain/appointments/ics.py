@@ -12,7 +12,7 @@ subscribed calendar removes it on the next refresh.
 from datetime import UTC, datetime
 from typing import Any
 
-from jbrain.appointments.service import AppointmentInfo
+from jbrain.appointments.service import AppointmentInfo, web_join_url
 
 _PRODID = "-//JBrain//Appointments//EN"
 # appointment.yaml Lifecycle → iCalendar STATUS (which has no "occurred").
@@ -102,9 +102,10 @@ def _vevent(appt: AppointmentInfo, *, stamp: str) -> list[str]:
         line = _attendee(attendee)
         if line:
             lines.append(line)
-    if appt.online_url:
+    url = web_join_url(appt.online_url)
+    if url:
         # RFC 7986 CONFERENCE: a join URI a calendar surfaces as a "Join" action.
-        url = appt.online_url.replace("\r", "").replace("\n", "")
+        url = url.replace("\r", "").replace("\n", "")
         lines.append(f"CONFERENCE;VALUE=URI;FEATURE=VIDEO;LABEL=Join:{url}")
     if appt.appointment_type:
         lines.append(f"CATEGORIES:{_escape(appt.appointment_type)}")

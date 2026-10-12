@@ -84,8 +84,8 @@ PWAs cannot do continuous background location; GPS tracking uses the custom
 ## Security model: subjects, principals, domains
 
 - **`subjects`** — who/what data is *about* (me, Dad, Mom, tracked devices).
-- **`principals`** — who can *act*: the owner, scoped capability tokens
-  (intake links), device API keys (OwnTracks).
+- **`principals`** — who can *act*: the owner, device keys (phones, panels),
+  jcode share links, intake links, debug capability tokens and external-LLM keys.
 - **`domains`** — information firewalls (`general`, `health`, `finance`,
   `location`, …). Every note, chunk, fact, entity, wiki article, and
   structured record carries a `domain_id`.
@@ -97,6 +97,17 @@ carry all scopes (everything visible by default); tokens and device keys are
 scoped to (subject, domain). Wiki builds run per-domain, so a health fact can
 never be cited in a general article. Every new table ships with RLS tests
 proving a scoped session cannot see other domains' rows.
+
+RLS protects rows, not the side effects around them (loading a model, spending an
+API key, writing a blob, reading a credential under an owner context), so the HTTP
+layer gates by principal kind as well. Only four kinds ever hold a session cookie —
+`owner` (login, which accepts the owner key alone), `device_key` (`/session/mint`),
+`jcode_share_link` and `intake_link` (their redeem routes) — and the cookie lookup
+admits no other. Owner surfaces are owner-only at the router (`owner_only`); a
+non-owner cookie reaches only the routes built for it (the member dashboard, the
+basemap tiles, the intake stepper, its own jcode session). The route-matrix test
+(`backend/tests/unit/test_route_auth_matrix.py`) presents every non-owner kind to
+every route and fails on any (route, kind) pair not on its allow-list.
 
 The rare **public** surface (a report share link, `/api/research-share`) is not
 an exception to this — it is another RLS scope. A share visitor runs under an

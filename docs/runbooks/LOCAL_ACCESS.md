@@ -1,6 +1,6 @@
 # Local-network access (sign in when the internet is down)
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-10-12
 
 The Cloudflare Tunnel (`docs/runbooks/CLOUDFLARE_TUNNEL.md`) is how you reach JBrain from
 *outside* your house. But it depends on the internet: a power blip that takes the
@@ -17,8 +17,9 @@ Two things block the obvious "just hit the local IP" approach:
 1. **Name + TLS.** Your public hostname resolves through Cloudflare DNS, which is
    unreachable with the WAN down. In tunnel mode Caddy also serves only plain
    **HTTP on :80** (TLS lives at Cloudflare's edge), so there's no local HTTPS.
-2. **The Secure session cookie.** Login sets the session cookie with the `Secure`
-   flag (`backend/src/jbrain/api/auth.py`), and browsers **refuse to store a
+2. **The Secure session cookie.** Login sets the session cookie
+   (`__Host-jbrain_session`) with the `Secure` flag
+   (`backend/src/jbrain/api/session_cookie.py`), and browsers **refuse to store a
    `Secure` cookie over plain HTTP**. So even if you reach the box on the LAN over
    HTTP, the login "succeeds" but the cookie never sticks and you stay logged out.
 

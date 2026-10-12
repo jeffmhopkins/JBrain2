@@ -18,12 +18,13 @@ from jbrain.agent.clock import _CLOCK_FRAME
 from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec, ViewPayload
 from jbrain.agent.identity import _ME_FRAME
 from jbrain.agent.loop import ToolOutput
+from jbrain.agent.run_bus import RunBus, RunEvent
 from jbrain.agent.session import AgentSessionInfo
 from jbrain.agent.sessiontools import UNNAMED_CHAT_BLOCK
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
 from jbrain.agent.transcript_store import TurnRecord
-from jbrain.api.agent import _MAX_CONCURRENT_TURNS, _LiveTurn
+from jbrain.api.agent import _MAX_CONCURRENT_TURNS, SPOKEN_TURN_BLOCK, _LiveTurn
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.llm import FakeLlmClient, LlmClient, LlmRouter, LlmTurn, LlmUsage, TextChunk, ToolCall
@@ -2410,6 +2411,63 @@ def test_an_untitled_chat_is_told_it_has_no_name(
     assert fake.calls == []
 
 
+def test_a_spoken_turn_asks_for_brevity_out_of_band_and_records_only_his_words(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    transcript: FakeTranscript,
+) -> None:
+    """The desk panel's turn (`spoken`): the brevity it needs is an ambient note in the volatile
+    suffix, so the owner's message — the model's current turn, the transcript row and the PWA
+    bubble — is exactly what he said (owner, 2026-10-12)."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "Desk panel", "active", (), (), NOW, NOW))
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
+    client.post(
+        "/api/chat", json={"session_id": "sess-1", "message": "How big was it?", "spoken": True}
+    )
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "typed"})
+
+    texts = [getattr(m, "text", "") for m in fake.stream_calls[0]["messages"]]
+    assert SPOKEN_TURN_BLOCK in texts
+    assert texts.index(SPOKEN_TURN_BLOCK) < len(texts) - 1
+    assert texts[-1] == "How big was it?"
+    assert transcript.recorded[0]["user"] == "How big was it?"
+    typed = [getattr(m, "text", "") for m in fake.stream_calls[1]["messages"]]
+    assert typed[-1] == "typed"
+    assert typed.count(SPOKEN_TURN_BLOCK) <= 1, "a typed turn adds no note of its own"
+
+
+def test_a_turn_announces_its_start_and_end_to_open_chats(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    """A turn started anywhere (the desk panel calls this same handler) is announced on the run
+    bus as it registers and again as it settles, under the principal it runs as, so an open PWA
+    chat on that session attaches to it (GET /chat/events)."""
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "Desk panel", "active", (), (), NOW, NOW))
+    heard: list[RunEvent] = []
+
+    class Recording(RunBus):
+        def publish(self, event: RunEvent) -> None:
+            heard.append(event)
+
+    client.app.state.run_bus = Recording()  # type: ignore[attr-defined]
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    _ = resp.text
+    assert [(e.phase, e.session_id, e.run_id) for e in heard] == [
+        ("started", "sess-1", resp.headers["X-Run-Id"]),
+        ("ended", "sess-1", resp.headers["X-Run-Id"]),
+    ]
+    assert heard[0].principal_id and heard[0].principal_id == heard[1].principal_id
+
+
+def test_the_run_event_stream_is_the_owner_s_alone(client: TestClient) -> None:
+    assert client.get("/api/chat/events").status_code == 401
+
+
 def test_a_named_chat_gets_no_naming_hint(
     client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
 ) -> None:
@@ -4595,3 +4653,19 @@ async def test_presence_and_the_disk_conversation_cache_never_meet() -> None:
         subject_ids=(),
         tools_ran=(),
     )
+
+
+def test_session_live_run_carries_the_owner_s_question(
+    client: TestClient, repo: FakeAuthRepo
+) -> None:
+    """The transcript records a turn's question only when it ends, so a PWA attaching mid-turn
+    (to the desk panel's, or after a reload) shows the owner's words from the live run."""
+    login(client, repo)
+    live = _LiveTurn("sess-1")
+    live.question = "How big was the storm?"
+    client.app.state.live_turns["run-xyz"] = live  # type: ignore[attr-defined]
+    assert client.get("/api/chat/sessions/sess-1/live-run").json()["question"] == (
+        "How big was the storm?"
+    )
+    live.question = ""
+    assert client.get("/api/chat/sessions/sess-1/live-run").json()["question"] == ""

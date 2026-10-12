@@ -364,7 +364,7 @@ static bool host_open(const char *id)
     return shell_open(id);
 }
 
-/* ---- KEY outside a conversation: talk to Jerv ---- */
+/* ---- KEY outside a conversation: a new conversation with Jerv ---- */
 
 static void talk_tapped(void *user)
 {
@@ -379,9 +379,12 @@ static void talk_capped(void *user)
     talk_end(true);
 }
 
+/* Outside any conversation, so a NEW one with Jerv (talk_key_route): its release opens his thread
+ * holding just this exchange, and the box starts a fresh "Desk panel" chat for it. */
 static void talk_begin(void)
 {
-    if (!svc_audio_talk_begin(TALK_TO_AGENT, s_talk_app)) {
+    const talk_route_t route = talk_key_route(NULL);
+    if (!svc_audio_talk_begin(route.kind, route.agent)) {
         const char *why = svc_audio_talk_refused();
         if (why) ui_toast(why, 2600);
         return;

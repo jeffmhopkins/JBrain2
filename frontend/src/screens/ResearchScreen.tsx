@@ -49,6 +49,7 @@ import {
 } from "../components/icons";
 import { UNGROUPED_KEY, loadCollapsed, writeCollapsed } from "../research/collapsed";
 import { researchShareUrl } from "../research/share";
+import { safeHref } from "../safeHref";
 
 export type ResearchKind = "report" | "video";
 type Item = { kind: "report"; row: ReportListItem } | { kind: "video"; row: VideoListItem };
@@ -354,7 +355,8 @@ export function ResearchScreen({ onOpen, onOpenInJerv, undoMs = UNDO_MS }: Resea
 
   function openSource(row: VideoListItem) {
     setMenuFor(null);
-    window.open(row.url, "_blank", "noopener,noreferrer");
+    const href = safeHref(row.url);
+    if (href) window.open(href, "_blank", "noopener,noreferrer");
   }
 
   function toggleChannel(channel: string) {
@@ -1037,7 +1039,7 @@ function ActionSheet({
             <button type="button" className="rl-action" onClick={onCopyTranscript}>
               <ClipIcon size={19} /> Copy transcript
             </button>
-            {item.row.url && (
+            {safeHref(item.row.url) && (
               <button type="button" className="rl-action" onClick={onOpenSource}>
                 <GlobeIcon size={19} /> Open source ↗
               </button>

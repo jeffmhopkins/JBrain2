@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from jbrain.auth.service import CapabilityToken, ExternalSession, PrincipalInfo
+from jbrain.auth.service import SESSION_KINDS, CapabilityToken, ExternalSession, PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import DeviceInfo, DeviceRole, DeviceScope
 from jbrain.llm.engine_effort import EngineEfforts
@@ -47,9 +47,9 @@ class FakeAuthRepo:
     principals: list[FakePrincipal] = field(default_factory=list)
     sessions: list[FakeSession] = field(default_factory=list)
 
-    async def find_active_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+    async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
         for p in self.principals:
-            if p.key_hash == key_hash and not p.revoked:
+            if p.key_hash == key_hash and p.kind == "owner" and not p.revoked:
                 return _info(p)
         return None
 
@@ -74,7 +74,8 @@ class FakeAuthRepo:
             if s.token_hash == token_hash and not s.revoked:
                 for p in self.principals:
                     live = p.expires_at is None or p.expires_at > now
-                    if p.id == s.principal_id and not p.revoked and live:
+                    holder = p.kind in SESSION_KINDS
+                    if p.id == s.principal_id and not p.revoked and live and holder:
                         return _info(p)
         return None
 
