@@ -311,6 +311,7 @@ export const carryLine = (q, who, here, stacks) => {
   const [x, y, z] = [here.x, here.y, here.z].map(Math.floor);
   const each = [...counts].map(([t, n]) => `${t}=${n}`).join(" ");
   return `carry counted for ${who} in ${dim} at x=${x} y=${y} z=${z}: ${each}; shulker boxes=${boxes}`;
+};
 
 // --- the Tricorder's live scan (§M25) ---------------------------------------------------
 // The Tricorder's own short-range sense: while a scan is on, it finds the nearest block of
