@@ -19,6 +19,8 @@ static char *s_auth;
    ride it. Anything less and it is closed: a half-read reply would be read as the next one's. */
 static bool s_live;
 static uint32_t s_hs, s_reuse, s_hs_ms, s_hs_max;
+/* When the kept session last finished a request: a stream rides it only while this is recent. */
+static int64_t s_used_us;
 
 void box_http_init(const cfg_t *cfg)
 {
@@ -124,10 +126,12 @@ static void settle(void)
     const bool whole = esp_http_client_flush_response(s_c, NULL) == ESP_OK &&
                        esp_http_client_is_complete_data_received(s_c);
     esp_http_client_clear_response_buffer(s_c);
-    if (whole && esp_http_client_is_persistent_connection(s_c))
+    if (whole && esp_http_client_is_persistent_connection(s_c)) {
         s_live = true;
-    else
+        s_used_us = esp_timer_get_time();
+    } else {
         drop();
+    }
 }
 
 static int once(const char *path, const char *ctype, const char *body, size_t len, char *out,
@@ -174,12 +178,17 @@ int box_http_call(const char *path, const char *ctype, const char *body, size_t 
     return status;
 }
 
-bool box_http_stream_open(const char *path, const char *ctype, int timeout_ms)
+bool box_http_stream_open(const char *path, const char *ctype, int timeout_ms, bool reuse)
 {
-    drop();
+    if (!reuse || ms_since(s_used_us) > BOX_REUSE_FRESH_MS) drop();
     bool reused;
     if (!aim(path, HTTP_METHOD_POST, ctype, NULL, timeout_ms)) return false;
-    if (open_counted(-1, &reused) != ESP_OK) {
+    esp_err_t err = open_counted(-1, &reused);
+    if (err != ESP_OK && reused) {
+        drop();
+        err = open_counted(-1, &reused);
+    }
+    if (err != ESP_OK) {
         drop();
         return false;
     }
@@ -199,15 +208,47 @@ bool box_http_stream_write(const void *data, size_t n)
     return put(head, (size_t)k) && put(data, n) && put("\r\n", 2);
 }
 
+bool box_http_stream_end(void)
+{
+    if (put("0\r\n\r\n", 5)) return true;
+    drop();
+    return false;
+}
+
 int box_http_stream_finish(void)
 {
-    if (!put("0\r\n\r\n", 5) || esp_http_client_fetch_headers(s_c) < 0) {
+    if (!box_http_stream_end() || esp_http_client_fetch_headers(s_c) < 0) {
         drop();
         return -1;
     }
     const int status = esp_http_client_get_status_code(s_c);
     settle();
     return status;
+}
+
+int box_http_reply_wait(int slice_ms)
+{
+    esp_http_client_set_timeout_ms(s_c, slice_ms);
+    const int64_t r = esp_http_client_fetch_headers(s_c);
+    if (r == -ESP_ERR_HTTP_EAGAIN) return 0;
+    if (r < 0) {
+        drop();
+        return -1;
+    }
+    return esp_http_client_get_status_code(s_c);
+}
+
+int box_http_reply_read(void *buf, size_t cap, int slice_ms)
+{
+    esp_http_client_set_timeout_ms(s_c, slice_ms);
+    const int n = esp_http_client_read(s_c, buf, (int)cap);
+    if (n == -ESP_ERR_HTTP_EAGAIN) return BOX_HTTP_AGAIN;
+    return n < 0 ? -1 : n;
+}
+
+void box_http_reply_done(void)
+{
+    settle();
 }
 
 void box_http_stream_abort(void)

@@ -6,7 +6,8 @@
 #include "svc_messages_fake.h"
 
 #define THREADS 3
-#define PER_THREAD 12
+/* Twelve in 0.0.8; eight once a bubble could hold a reply (256 B of text): the same RAM. */
+#define PER_THREAD 8
 
 typedef struct {
     const char *principal;
@@ -34,6 +35,17 @@ uint16_t svc_messages_count(const char *principal)
 {
     thread_t *t = find(principal);
     return t ? t->n : 0;
+}
+
+bool svc_messages_find(const char *principal, uint32_t id, msg_t *out)
+{
+    thread_t *t = find(principal);
+    for (uint16_t i = 0; t && i < t->n; i++)
+        if (t->m[i].id == id) {
+            *out = t->m[i];
+            return true;
+        }
+    return false;
 }
 
 bool svc_messages_get(const char *principal, uint16_t idx, msg_t *out)
@@ -83,15 +95,22 @@ void svc_messages_fake_clear(void)
     for (int i = 0; i < THREADS; i++) s_t[i].n = 0;
 }
 
-bool svc_messages_fake_add(const char *principal, const msg_t *m)
+static msg_t *slot_for(thread_t *t, uint32_t id)
 {
-    thread_t *t = find(principal);
-    if (!t) return false;
+    for (uint16_t i = 0; i < t->n; i++)
+        if (t->m[i].id == id) return &t->m[i];
     if (t->n == PER_THREAD) {
         memmove(t->m, t->m + 1, sizeof t->m[0] * (PER_THREAD - 1));
         t->n--;
     }
-    t->m[t->n++] = *m;
+    return &t->m[t->n++];
+}
+
+bool svc_messages_fake_add(const char *principal, const msg_t *m)
+{
+    thread_t *t = find(principal);
+    if (!t) return false;
+    *slot_for(t, m->id) = *m;
     app_event_t ev = {.type = APP_EV_MSG_ARRIVED};
     strncpy(ev.u.principal, principal, sizeof ev.u.principal - 1);
     app_events_post(&ev);

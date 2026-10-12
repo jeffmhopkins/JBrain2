@@ -6,6 +6,8 @@
 #include "svc_messages.h"
 
 void svc_messages_init(void);
-/* Appends and raises MSG_ARRIVED for that principal. */
+/* Appends, or replaces the message with the same id where it stands (a voice bubble filled in
+ * with its transcript), and raises MSG_ARRIVED for that principal. The oldest goes when full. */
 bool svc_messages_fake_add(const char *principal, const msg_t *m);
+bool svc_messages_find(const char *principal, uint32_t id, msg_t *out);
 void svc_messages_fake_clear(void);

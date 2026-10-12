@@ -1,0 +1,5 @@
+dependencies:
+  # The ES8311 and ES7210 register drivers and the I2S data path, the release the twins' S3
+  # panels already ship (firmware/dependencies.lock). Exact, so `idf.py update-dependencies`
+  # cannot move it under a dist/ that must rebuild byte for byte.
+  espressif/esp_codec_dev: "==1.6.2"

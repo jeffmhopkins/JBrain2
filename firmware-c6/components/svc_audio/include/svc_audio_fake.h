@@ -1,5 +1,7 @@
-/* The audio service until the ES8311/ES7210 owner task lands (C3): no microphone, so a hold is
- * timed but nothing is recorded. Time comes from svc_rtc's uptime, so the sim advances a
+/* The audio service on the host: the device's talk state (talk_core.c) with no codec and no
+ * box behind it. A hold to Jerv leaves the "Transcribing…" bubble the device leaves; the sim
+ * answers it with svc_audio_fake_reply. A hold to a person is still not sent: the box client
+ * for messages is a later wave. Time comes from svc_rtc's uptime, so the sim advances a
  * recording by advancing the clock. */
 #pragma once
 
@@ -7,12 +9,9 @@
 #include <stdint.h>
 
 #include "svc_audio.h"
+#include "svc_audio_drv.h"
 #include "svc_messages.h"
 
-void svc_audio_init(void);
-
-/* What the conversation shows for a hold this panel could not send: a voice bubble of the
- * length held that says plainly nothing was recorded — never a made-up transcript. False for a
- * hold that is not a message at all (cancelled, or too short). Pure, host-tested. */
-#define TALK_PLACEHOLDER "Not sent: this panel cannot record yet. Voice arrives in a later update."
-bool talk_placeholder(talk_outcome_t o, uint32_t held_ms, uint32_t id, msg_t *out);
+/* The box's answer to the hold in flight, as the device's network side would deliver it:
+ * `speaking` keeps the reply's "Speaking…" up as though its voice were playing. */
+void svc_audio_fake_reply(const char *heard, const char *reply, bool speaking);

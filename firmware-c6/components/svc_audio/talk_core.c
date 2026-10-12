@@ -1,0 +1,372 @@
+#include "talk_core.h"
+
+#include <stdio.h>
+#include <string.h>
+
+/* ---- the ring ---- */
+
+/* The counters cross tasks: a producer's bytes must be in the buffer before its count says so,
+ * and a consumer's before it gives the space back. Acquire/release says exactly that and costs
+ * nothing on a single core. */
+static uint32_t ld(const uint32_t *p)
+{
+    return __atomic_load_n(p, __ATOMIC_ACQUIRE);
+}
+
+static void st(uint32_t *p, uint32_t v)
+{
+    __atomic_store_n(p, v, __ATOMIC_RELEASE);
+}
+
+void tk_ring_init(tk_ring_t *r, uint8_t *buf, uint32_t cap)
+{
+    r->buf = buf;
+    r->cap = buf ? cap : 0;
+    st(&r->head, 0);
+    st(&r->tail, 0);
+}
+
+uint32_t tk_ring_used(const tk_ring_t *r)
+{
+    return ld(&r->head) - ld(&r->tail);
+}
+
+uint32_t tk_ring_free(const tk_ring_t *r)
+{
+    return r->cap - tk_ring_used(r);
+}
+
+uint32_t tk_ring_write(tk_ring_t *r, const void *src, uint32_t n)
+{
+    const uint32_t head = r->head;
+    const uint32_t room = r->cap - (head - ld(&r->tail));
+    if (n > room) n = room;
+    const uint32_t at = r->cap ? head % r->cap : 0;
+    const uint32_t first = n < r->cap - at ? n : r->cap - at;
+    memcpy(r->buf + at, src, first);
+    memcpy(r->buf, (const uint8_t *)src + first, n - first);
+    st(&r->head, head + n);
+    return n;
+}
+
+uint32_t tk_ring_read(tk_ring_t *r, void *dst, uint32_t n)
+{
+    const uint32_t tail = r->tail;
+    const uint32_t have = ld(&r->head) - tail;
+    if (n > have) n = have;
+    const uint32_t at = r->cap ? tail % r->cap : 0;
+    const uint32_t first = n < r->cap - at ? n : r->cap - at;
+    memcpy(dst, r->buf + at, first);
+    memcpy((uint8_t *)dst + first, r->buf, n - first);
+    st(&r->tail, tail + n);
+    return n;
+}
+
+/* ---- the exchange ---- */
+
+void tk_init(tk_t *t)
+{
+    memset(t, 0, sizeof *t);
+}
+
+void tk_copy(char *dst, size_t cap, const char *src)
+{
+    if (!cap) return;
+    const size_t n = strnlen(src, cap - 1);
+    memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+
+tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id)
+{
+    if (t->phase == TK_PLAY) {
+        tk_stop(t);
+        return TK_BEGIN_STOPPED;
+    }
+    /* A dropped exchange still has the radio or the codec until its owner notices (≤ 20 ms on
+     * the codec, one bounded network call on the radio): a new hold waits for both. */
+    if (t->phase != TK_IDLE || t->net_busy || t->mic_on || t->spk_on) return TK_BEGIN_BUSY;
+    t->phase = TK_REC;
+    t->since_ms = now_ms;
+    t->held_ms = 0;
+    t->msg_id = msg_id;
+    t->voice = voice;
+    t->abort = false;
+    t->net_done = false;
+    t->res = TK_RES_NONE;
+    t->why[0] = '\0';
+    return TK_BEGIN_OK;
+}
+
+talk_outcome_t tk_end(tk_t *t, uint32_t now_ms, bool send)
+{
+    if (t->phase != TK_REC) return t->res == TK_RES_FAILED ? TALK_FAILED : TALK_CANCELLED;
+    t->held_ms = now_ms - t->since_ms;
+    const talk_outcome_t o = talk_policy_end(t->held_ms, send);
+    if (o == TALK_SENT || o == TALK_CAPPED) {
+        t->phase = TK_SEND;
+    } else {
+        t->abort = true;
+        t->phase = TK_IDLE;
+    }
+    return o;
+}
+
+bool tk_replying(const tk_t *t)
+{
+    return t->phase == TK_SEND || t->phase == TK_PLAY;
+}
+
+bool tk_stop(tk_t *t)
+{
+    if (!tk_replying(t)) return false;
+    t->abort = true;
+    t->phase = TK_IDLE;
+    t->res = TK_RES_NONE;
+    return true;
+}
+
+tk_res_t tk_take(tk_t *t, char *why, size_t why_len)
+{
+    const tk_res_t r = t->res;
+    if (why) tk_copy(why, why_len, t->why);
+    t->res = TK_RES_NONE;
+    return r;
+}
+
+bool tk_quiet(const tk_t *t)
+{
+    return t->phase == TK_IDLE && !t->net_busy && !t->mic_on && !t->spk_on;
+}
+
+bool tk_net_claim(tk_t *t)
+{
+    if (t->phase != TK_REC || t->net_busy || t->abort) return false;
+    t->net_busy = true;
+    t->net_done = false;
+    return true;
+}
+
+tk_net_t tk_net_next(const tk_t *t)
+{
+    if (t->abort) return TK_NET_ABORT;
+    if (t->phase == TK_REC) return TK_NET_UPLOAD;
+    if (t->phase == TK_SEND) return TK_NET_FINISH;
+    return TK_NET_ABORT;
+}
+
+void tk_net_reply(tk_t *t, bool audio_follows)
+{
+    if (t->abort || t->phase != TK_SEND) return;
+    t->res = TK_RES_REPLY;
+    t->phase = t->voice && audio_follows ? TK_PLAY : TK_IDLE;
+}
+
+void tk_net_nothing(tk_t *t)
+{
+    if (t->abort || t->phase != TK_SEND) return;
+    t->res = TK_RES_NOTHING;
+    t->phase = TK_IDLE;
+}
+
+void tk_net_fail(tk_t *t, const char *why)
+{
+    if (t->abort) return;
+    t->res = TK_RES_FAILED;
+    tk_copy(t->why, sizeof t->why, why);
+    t->phase = TK_IDLE;
+}
+
+bool tk_net_wants_audio(const tk_t *t)
+{
+    return t->phase == TK_PLAY && !t->abort;
+}
+
+void tk_net_end(tk_t *t)
+{
+    t->net_busy = false;
+    t->net_done = true;
+}
+
+tk_audio_t tk_audio_want(const tk_t *t)
+{
+    if (t->abort) return TK_AUDIO_OFF;
+    if (t->phase == TK_REC) return TK_AUDIO_MIC;
+    if (t->phase == TK_PLAY) return TK_AUDIO_SPK;
+    return TK_AUDIO_OFF;
+}
+
+void tk_audio_drained(tk_t *t)
+{
+    if (t->phase != TK_PLAY || !t->net_done) return;
+    t->phase = TK_IDLE;
+    t->res = TK_RES_SPOKEN;
+}
+
+void tk_audio_drop(tk_t *t)
+{
+    if (t->phase == TK_PLAY) t->phase = TK_IDLE;
+}
+
+/* ---- samples ---- */
+
+static uint16_t mag(int16_t v)
+{
+    return v < 0 ? (uint16_t)(-(int32_t)v > 32767 ? 32767 : -(int32_t)v) : (uint16_t)v;
+}
+
+void talk_mono(const int16_t *lr, size_t frames, int16_t *out, uint16_t *peak_l, uint16_t *peak_r)
+{
+    uint16_t pl = 0, pr = 0;
+    for (size_t i = 0; i < frames; i++) {
+        const int16_t l = lr[2 * i], r = lr[2 * i + 1];
+        if (mag(l) > pl) pl = mag(l);
+        if (mag(r) > pr) pr = mag(r);
+        out[i] = (int16_t)(((int32_t)l + r) / 2);
+    }
+    *peak_l = pl;
+    *peak_r = pr;
+}
+
+uint8_t talk_level(uint16_t peak)
+{
+    /* 32 (-60 dBFS) and under is a quiet room; each doubling is ~6 dB, ten steps to full. */
+    unsigned bits = 0;
+    while (peak >> bits) bits++;
+    return bits <= 5 ? 0 : (uint8_t)((bits - 5) * 10);
+}
+
+/* ---- the reply frame ---- */
+
+enum { TF_MAGIC, TF_FLAGS, TF_HLEN, TF_HEARD, TF_RLEN, TF_REPLY, TF_DONE, TF_BAD };
+
+static const char MAGIC[3] = {'J', 'T', '1'};
+
+void tk_frame_init(tk_frame_t *f)
+{
+    memset(f, 0, sizeof *f);
+}
+
+/* `s` holds `n` bytes of what may be longer; cut it on a character with an ellipsis when it
+ * was, so a bubble never shows half a letter. */
+static void finish_text(char *s, uint16_t n, size_t cap, bool cut)
+{
+    static const char ELL[] = "…";
+    if (cut) {
+        size_t keep = n;
+        if (keep > cap - sizeof ELL) keep = cap - sizeof ELL;
+        while (keep && ((unsigned char)s[keep] & 0xC0) == 0x80) keep--;
+        memcpy(s + keep, ELL, sizeof ELL);
+        return;
+    }
+    s[n] = '\0';
+}
+
+size_t tk_frame_feed(tk_frame_t *f, const uint8_t *b, size_t n)
+{
+    size_t i = 0;
+    while (i < n && f->st != TF_DONE && f->st != TF_BAD) {
+        const uint8_t c = b[i++];
+        switch (f->st) {
+        case TF_MAGIC:
+            if (c != (uint8_t)MAGIC[f->seen]) {
+                f->st = TF_BAD;
+                break;
+            }
+            if (++f->seen == sizeof MAGIC) f->st = TF_FLAGS;
+            break;
+        case TF_FLAGS:
+            f->flags = c;
+            f->seen = 0;
+            f->st = TF_HLEN;
+            break;
+        case TF_HLEN:
+        case TF_RLEN:
+            if (f->seen++ == 0) {
+                f->len_lo = c;
+                break;
+            }
+            f->need = (uint16_t)(f->len_lo | (c << 8));
+            f->seen = 0;
+            f->st = f->st == TF_HLEN ? TF_HEARD : TF_REPLY;
+            break;
+        case TF_HEARD:
+        case TF_REPLY: {
+            char *dst = f->st == TF_HEARD ? f->heard : f->reply;
+            uint16_t *have = f->st == TF_HEARD ? &f->heard_n : &f->reply_n;
+            if (*have < sizeof f->heard - 1) dst[(*have)++] = (char)c;
+            f->seen++;
+            break;
+        }
+        default: break;
+        }
+        /* A text field ends by count, an empty one at once. */
+        if ((f->st == TF_HEARD || f->st == TF_REPLY) && f->seen == f->need) {
+            const bool heard = f->st == TF_HEARD;
+            finish_text(heard ? f->heard : f->reply, heard ? f->heard_n : f->reply_n,
+                        sizeof f->heard, f->need > (heard ? f->heard_n : f->reply_n));
+            f->seen = 0;
+            f->st = heard ? TF_RLEN : TF_DONE;
+        }
+    }
+    return i;
+}
+
+bool tk_frame_done(const tk_frame_t *f)
+{
+    return f->st == TF_DONE;
+}
+
+bool tk_frame_bad(const tk_frame_t *f)
+{
+    return f->st == TF_BAD;
+}
+
+/* ---- bubbles ---- */
+
+void talk_bubble_sent(uint32_t id, uint32_t held_ms, msg_t *out)
+{
+    memset(out, 0, sizeof *out);
+    out->id = id;
+    out->mine = true;
+    out->voice = true;
+    out->pending = true;
+    out->dur_s = (uint16_t)((held_ms > TALK_MAX_MS ? TALK_MAX_MS : held_ms) / 1000);
+    snprintf(out->text, sizeof out->text, "%s", TALK_HEARING);
+}
+
+void talk_bubble_heard(msg_t *m, const char *heard)
+{
+    m->pending = false;
+    snprintf(m->text, sizeof m->text, "%s", heard);
+    m->status[0] = '\0';
+}
+
+void talk_bubble_unsent(msg_t *m, const char *why)
+{
+    m->pending = false;
+    snprintf(m->text, sizeof m->text, "%s", why);
+    snprintf(m->status, sizeof m->status, "Not sent");
+}
+
+void talk_bubble_reply(uint32_t id, const char *reply, msg_t *out)
+{
+    memset(out, 0, sizeof *out);
+    out->id = id;
+    out->played = true;
+    snprintf(out->text, sizeof out->text, "%s", reply);
+}
+
+/* ---- telemetry ---- */
+
+void tk_stats_note(const tk_stats_t *s, const char *state, char *out, size_t len)
+{
+    snprintf(out, len,
+             "audio=%s,talks:%lu,sent:%lu,heard:%lu,none:%lu,fail:%lu,stop:%lu,up:%luK,down:%luK,"
+             "ms:%lu/%lu,under:%lu,over:%lu",
+             state, (unsigned long)s->talks, (unsigned long)s->sent, (unsigned long)s->replies,
+             (unsigned long)s->nothing, (unsigned long)s->failed, (unsigned long)s->stopped,
+             (unsigned long)(s->up_bytes / 1024), (unsigned long)(s->down_bytes / 1024),
+             (unsigned long)s->reply_ms, (unsigned long)s->reply_ms_max,
+             (unsigned long)s->underruns, (unsigned long)s->overruns);
+}

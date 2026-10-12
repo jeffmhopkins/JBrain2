@@ -12,7 +12,8 @@ typedef struct {
     bool played;  /* theirs: heard on this panel */
     bool pending; /* transcribing, or awaiting a reply */
     uint16_t dur_s;
-    char text[96];
+    /* A transcript or Jerv's reply; longer is cut at a character with an ellipsis. */
+    char text[256];
     char status[16]; /* mine: "Sending", "Delivered", "Played" */
 } msg_t;
 

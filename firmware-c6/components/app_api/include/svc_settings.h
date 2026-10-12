@@ -18,11 +18,17 @@ typedef enum {
     SET_SHOW_DATE,    /* the day and date under the clock face */
     SET_AUTO_ROTATE,  /* read by the auto-rotate wave (plan §2b); stored now so it survives */
     SET_TZ,           /* index into svc_rtc.h's zone table */
+    SET_VOLUME,       /* the speaker, 10-100: off is "Read replies aloud" off, not a zero */
+    SET_MIC_GAIN,     /* ES7210 PGA in dB, 0-37; no slider, set from the debug `set` command */
     SET__COUNT,
 } setting_t;
 
 #define BRIGHTNESS_FLOOR 10
 #define BRIGHTNESS_MAX 100
+#define VOLUME_FLOOR 10
+#define VOLUME_MAX 100
+/* The ES7210's PGA steps stop at 37.5 dB (esp_codec_dev es7210.c). */
+#define MIC_GAIN_MAX 37
 
 int32_t svc_settings_get(setting_t key);
 void svc_settings_set(setting_t key, int32_t value);

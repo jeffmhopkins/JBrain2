@@ -2,7 +2,7 @@
 #include <string.h>
 
 #include "svc_audio.h"
-#include "svc_audio_fake.h"
+#include "talk_core.h"
 
 talk_outcome_t talk_policy_end(uint32_t held_ms, bool send)
 {

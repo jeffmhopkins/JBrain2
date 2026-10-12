@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "ota.h"
 #include "sdkconfig.h"
+#include "svc_audio_drv.h"
 #include "svc_box.h"
 #include "svc_display_drv.h"
 #include "svc_settings.h"
@@ -278,7 +279,7 @@ static bool send_chunk(chunk_t *c, bool *wrote)
 static int stream_screenshot(const char *path, const dbg_req_t *r)
 {
     if (s_job != JOB_IDLE) return post_failure(path, r, "ui busy", 0);
-    if (!box_http_stream_open(path, "application/octet-stream", BOX_TIMEOUT_MS))
+    if (!box_http_stream_open(path, "application/octet-stream", BOX_TIMEOUT_MS, false))
         return post_failure(path, r, "box unreachable", 0);
     /* After the handshake, whose working memory is freed by now: the chunks never add to its
        peak, the heap's low-water mark. */
@@ -395,6 +396,27 @@ static bool cmd_log_level(const dbg_req_t *r, dbg_json_t *d, char *err, size_t n
     return true;
 }
 
+/* A second of sine through the speaker at the set volume: the owner's ear, asked for from the
+   box, is how the speaker is checked with nobody holding a cable. `value` is the pitch in Hz. */
+static bool cmd_play_tone(const dbg_req_t *r, dbg_json_t *d, char *err, size_t n)
+{
+    const int32_t hz = r->value ? r->value : 880;
+    if (hz < 100 || hz > 4000) {
+        snprintf(err, n, "value is Hz, 100-4000");
+        return false;
+    }
+    const char *why;
+    if (!svc_audio_tone((uint16_t)hz, 1000, &why)) {
+        snprintf(err, n, "%s", why);
+        return false;
+    }
+    dbg_json_int(d, "hz", hz);
+    dbg_json_int(d, "ms", 1000);
+    dbg_json_int(d, "volume", svc_settings_get(SET_VOLUME));
+    dbg_json_str(d, "audio", svc_audio_state());
+    return true;
+}
+
 static bool cmd_reboot(const dbg_req_t *r, dbg_json_t *d, char *err, size_t n)
 {
     (void)r, (void)err, (void)n;
@@ -414,6 +436,7 @@ void dbg_link_start(void)
     dbg_cmd_bind("report_now", cmd_report_now);
     dbg_cmd_bind("log_level", cmd_log_level);
     dbg_cmd_bind("reboot", cmd_reboot);
+    dbg_cmd_bind("play_tone", cmd_play_tone);
 }
 
 dbg_poll_t dbg_link_poll(void)

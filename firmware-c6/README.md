@@ -312,9 +312,10 @@ is `shell_core.c` (`sh_route_button`, `sh_declined`), host-tested; the release g
 press went whatever opened or closed in between, and a notice waits for the hold to end. BOOT,
 PWR, going home or an alarm cancel the hold.
 
-**There is no microphone yet**, so nothing is recorded. On release the panel opens the Jerv
-thread and adds a voice bubble of the length held that says **"Not sent: this panel cannot
-record yet. Voice arrives in a later update."** — never a made-up transcript. A hold under 0.6 s
+**There is no microphone yet** (0.0.10 brings it: "What 0.0.10 adds"), so nothing is recorded.
+On release the panel opens the Jerv thread and adds a voice bubble of the length held that says
+**"Not sent: this panel cannot record yet. Voice arrives in a later update."** — never a made-up
+transcript. A hold under 0.6 s
 is a knock ("Hold KEY the whole time you talk"); a tap cancels ("Cancelled — nothing sent"). The
 sample conversations the sim draws are not loaded on the device: its threads start empty and say
 so.
@@ -540,6 +541,227 @@ scripts/debug-connect.sh panel-cmd c6 inject --arg event=boot_long    # the Cloc
 scripts/debug-connect.sh panel-cmd c6 reboot                          # 409 needs_confirm
 ```
 
+## What 0.0.10 adds: sound, and talking to Jerv
+
+The ES8311 (speaker) and ES7210 (microphones) come up, and KEY really talks to Jerv: hold it
+and speak, let go, and the Jerv thread shows what the box heard and Jerv's answer — spoken
+through the speaker too unless **Read replies aloud** is off. The plan's wave C3 "Jerv
+(streamed hold-to-talk)".
+
+### On the glass
+
+- **Hold KEY** (anywhere outside Quorra's or Tamsin's thread, as 0.0.8 routed it): the rose
+  ring, "Jerv is listening", the timer, and the ring now pulses with the microphone's level.
+  The recording goes up to the box **while KEY is held**.
+- **Let go**: the Jerv thread opens with the hold's voice bubble saying "Transcribing…". When
+  the box answers, the bubble becomes what it heard and Jerv's reply appears beneath it, with
+  "Speaking…" while its voice plays. Nothing the panel shows is made up: a hold the box heard
+  nothing in says "Nothing heard. Hold KEY and speak."; one it could not answer says "Not
+  answered: <why>"; one cut off mid-hold says "Not sent: <why>".
+- **Too short** (under 0.6 s) says "Hold KEY the whole time you talk" and sends nothing; **a
+  tap on the glass or BOOT** while holding cancels ("Cancelled — nothing sent"). Either way the
+  upload is cut off before its end, so the box never answers it.
+- **KEY or BOOT while Jerv is thinking or speaking stops it** (owner, 2026-10-12), in any app,
+  and does nothing else: no new recording starts and the release sends nothing. Stopped while
+  thinking, the bubble says "Stopped before Jerv answered"; stopped while speaking, the words
+  stay and only the voice ends. The next press talks again.
+- **No Wi-Fi** or **no microphone**: KEY says so in a toast instead of recording into nothing.
+- **Settings → Jerv**: "Read replies aloud" as before, and under it a **Speaker volume**
+  slider (10-100 %, saved, heard from the next reply). When a codec did not start the card
+  says so in amber instead — "Sound did not start, so holding KEY cannot record", or "The
+  speaker did not start: replies are text only" — and the panel is otherwise unchanged.
+- The thread keeps the last eight messages in RAM (four exchanges), each up to 255 bytes of
+  text, cut on a character with an ellipsis; a restart forgets them. There is no **Listen**
+  button on a reply yet: speaking a stored reply again needs the box to synthesise text it
+  already sent, which is a later change.
+
+### The protocol: the S3s' route, with Jerv answering
+
+The twins' panels talk on `POST /endpoint/converse`: raw 16 kHz mono s16 up, the reply's
+speech back as raw PCM. This panel reuses it — same route, same device key, same audio
+format, same box-side trim, Whisper and Kokoro — with **one backward-compatible parameter**
+and no change to the S3s (`backend/src/jbrain/api/endpoint.py`, `_jerv_turn`):
+
+`POST /endpoint/converse?persona=jerv&voice=true|false`
+
+Why it had to change at all, each for a reason the S3 protocol cannot meet:
+
+- **Who answers.** The route's prompt is the pet's, written for a four-year-old, and its turns
+  are written to `app.pet_turn` — the parents' diary of what the twins told their pets. With
+  `persona=jerv` the box answers with a short spoken Jerv prompt and writes no diary row. It is
+  **not** the tool-using agent: that runs as the owner over his notes, and a device key that
+  could reach it would make a stolen panel worth far more than the route's promise of "one
+  conversation". This Jerv has no tools and no data and says so when asked for something that
+  needs them (the plan's §5 open question — the panel joining the owner's real Jerv — is still
+  the owner's to decide). It runs on the `pet.turn` model slot, the panels' cheap spoken one,
+  not `agent.turn`'s, where a one-off call would evict the agent's primed prefix.
+- **The words.** The S3s show no text; this panel shows what was heard and what Jerv said. The
+  reply is a frame, `application/x-jpanel-turn`: `JT1`, a flags byte (bit 0: speech follows),
+  the transcript and the reply as little-endian u16 lengths and UTF-8, then the speech as raw
+  PCM to the end of the body (`jerv_frame`; `tk_frame_feed` reads it as it arrives).
+- **Text only.** `voice=false` (Read replies aloud off) skips synthesis on the box and sends no
+  speech, so nothing is downloaded that will not be played. A box whose speech fails sends the
+  words with the flag clear rather than a 503: the answer matters more than the voice.
+- **The upload streams**, so the box takes it chunked (it reads the whole body before
+  transcribing, as for the S3s) and up to 61 s for this persona (the mock's 1:00 cap; the pet's
+  35 s ceiling is unchanged). A hold cancelled on the glass ends as an upload cut off mid-body;
+  the route now answers that with a quiet 204 instead of a `ClientDisconnect` error, for either
+  persona.
+
+Tested in `backend/tests/unit/test_endpoint_api.py` (`TestJervOnTheDeskPanel`): the frame, the
+persona and slot, text-only never synthesising, words without a voice, silence, a dead model,
+the two personas' memories kept apart, a minute-long hold heard whole, a cut-off upload.
+
+### The pieces
+
+| Piece | What it is |
+| --- | --- |
+| `svc_audio` (`esp/svc_audio_es.c`) | The **one owner** of I2S0 and both codecs. Brings up one full-duplex I2S0 (MCLK 19, BCLK 20, WS 22, DOUT 23, DIN 21; STD Philips 16-bit at 16 kHz, MCLK = 256 × fs) and `espressif/esp_codec_dev` 1.6.2's ES8311 (DAC only) and ES7210 (MIC1 + MIC2) drivers — the release the S3s ship, pinned in `dependencies.lock` — over **a control interface of its own that borrows `svc_power`'s bus** (`svc_power_i2c_attach`/`_xfer`, 100 kHz): no second I2C driver, no handle outside the lock. The amplifier is `svc_power_amp` (ALDO2): off once the codecs are up, on only while a reply plays. A codec that does not answer leaves the other working (`mic-only` / `speaker-only`) or neither (`failed:<step>`). |
+| `svc_audio_talk.c` | The talk's one state, shared by the UI task (KEY, BOOT, bubbles), the audio task and the main task, every call under one critical section; the same file runs in the sim and the host suite over `svc_audio_fake.c`'s port, so the bubbles the sim draws are the panel's. |
+| `talk_core.c` | Pure, host-tested: the state machine (record → send → play, knock, cancel, stop, failure mid-hold), the one-producer one-consumer byte ring, the reply frame reader, the two-microphone downmix and the level meter, the bubbles, the `audio=` token. |
+| `main/talk_link.c` | The talk on the box connection: a chunked POST filled from the ring as the microphone fills it, then the reply read in slices — headers in 500 ms slices, the body in 250 ms ones — so a drop on the glass is let go within one, the words handed to the glass the moment they are in, the speech into the ring at the speaker's pace. |
+| `main/box_http.c` | A stream may now ride the kept session (`reuse`) when it carried a request in the last 20 s — a talk cannot wait out a handshake while the microphone fills its ring, and the 3 s pickups keep the session warm; if opening on it fails before a byte of body is sent it is retried fresh. The reply-in-slices calls are new. |
+| `app_jerv`, `shell` | The thread's bubbles, "Speaking…", and a redraw that keeps the reader where they were; `sh_route_button` gives KEY and BOOT over a reply to `SH_ACT_STOP_REPLY` (host-tested); a refused hold says why. |
+| `svc_settings` | Two keys: `volume` (10-100, default 80, Settings slider) and `mic_gain` (0-37 dB, default 30, debug `set` only). |
+
+### The network: who goes first
+
+The main task still owns all HTTPS, one request at a time, over the one kept-alive session.
+**A talk outranks everything else on it**: KEY's hold wakes the update loop, which takes the
+exchange before any manifest check, telemetry or debug pickup, and holds the connection for
+its length. It is bounded — a minute of recording (+5 s backstop), 60 s for the box to answer,
+then the reply's speech at the speaker's pace (the box caps it at 30 s) — and **after every
+talk the loop makes its regular pass**, so a manifest check or heartbeat that fell due runs
+next: an update or a report is at most one talk late, never starved. A debug pickup waits
+like everything else; a request queued during a long talk may pass the box's 60 s pickup
+window and expire, and is simply asked again. Wi-Fi power save is off for
+the talk's length (the screenshot's lesson: an ACK held a beacon at the access point stalls a
+32 KB/s upload into the ring's half second). A press while a request is already in flight
+waits for it (usually ~100 ms on the kept session); the ring holds half a second, and anything
+past it is dropped and counted (`over`), never blocking the microphone. **The UI never waits
+on any of it**: it reads the talk's state and writes bubbles from what the main task left.
+
+### Tasks
+
+| Task | Priority | Stack | Why |
+| --- | --- | --- | --- |
+| `audio` (new) | **1**, the update loop's own | 3.5 KB | It blocks on the I2S DMA for each 20 ms chunk, so it takes its round-robin share and no more; at priority 1 nothing new can starve the loop that takes the next image. Four 20 ms DMA buffers each way give it 80 ms of slack against the UI, the main task's TLS and touch at the same priority. Its high-water mark is in the snapshot (`audio.stack_free`), to be cut from a measurement. |
+
+The UI, main, power, buttons and touch tasks are unchanged; every task is still priority 1.
+
+### The memory budget
+
+0.0.9 on the board: `int_free` ≈ 109 KB steady (the kept TLS session holds ~25 KB of it),
+`int_min` ≈ 102 KB, `int_largest` 90 KB. What 0.0.10 adds, internal RAM throughout (there is
+no PSRAM):
+
+| | Bytes | When |
+| --- | --- | --- |
+| Static DIRAM (measured from the two ELFs: 263,704 against 254,260) | +9,444 | always: two 20 ms sample buffers (1.9 KB), the upload slice (1 KB) and the frame reader (0.5 KB), the conversations' larger bubbles (+2.3 KB: 8 per thread × 256 B text, was 12 × 96), the telemetry note's room for `audio=`, `esp_codec_dev` and the I2S driver |
+| `audio` task stack + TCB | ~3,950 | from boot |
+| I2S DMA: RX 4 × 320 frames × 4 B, TX 4 × 320 × 2 B, + descriptors | ~7,800 | from boot |
+| Codec, data-interface and I2C device objects | ~1,500 (estimate) | from boot |
+| **Idle total** | **~22.7 KB** | |
+| The talk ring | 16,384 | per exchange: allocated at KEY down, freed once nothing touches it |
+| TX DMA reconfigured to stereo while recording (full duplex shares one frame shape) | +2,560 | while recording |
+| **During a talk** | **~41.6 KB** | |
+
+So steady `int_free` should read **~86 KB** (109 − 22.7), and `int_min` **~79 KB** on a boot
+with no talk (0.0.9's handshake peak, 102, less the idle cost). **After a talk expect `int_min`
+≈ 60-67 KB**: ~67 KB when the talk rides the kept session (the normal case), ~60 KB in the
+worst one, a talk that needs a fresh handshake (the kept session's ~25 KB freed, ~32 KB of
+handshake peak, with the talk's buffers held). The OTA path is unaffected by a talk (the two
+never overlap) and pays only the idle 22.7 KB: it closes the kept session first, as before.
+
+**The trade, if the board's numbers are tighter than this.** Three levers, in the order to pull
+them: (1) create the I2S channels and codec objects per exchange instead of at boot — the
+idle cost falls to the stack (~4 KB), giving ~9 KB back to every handshake and OTA, for a few
+milliseconds of codec set-up per talk; (2) a ring of 8 KB instead of 16 (0.25 s of slack
+instead of 0.5) — 8 KB back during a talk; (3) 10 ms DMA buffers instead of 20 — ~4 KB, at the
+cost of a starved audio task losing samples sooner. None is in 0.0.10 because none is needed
+on paper; `int_min` after the first talks says whether one is.
+
+### The safety rules, again
+
+- **Nothing new before the rollback gate.** `svc_audio_start` runs last in `start_panel`,
+  after `ota_confirm_health`, and only on a boot that may start the display: the boot after a
+  fault starts no codec (`audio=off`).
+- **No new task above priority 1** (above).
+- **Every buffer is bounded**: the ring 16 KB (per exchange), two 20 ms chunks, a 1 KB upload
+  slice, bubbles of 255 bytes, a frame reader that keeps at most a bubble of each string, eight
+  messages per thread, the reply's speech at most 30 s (the box's cap) and read at the
+  speaker's pace — nothing holds a whole clip either way.
+- **A codec that fails leaves the panel working**: no sound, KEY says why, Settings says so in
+  amber, the snapshot names the step, telemetry carries `audio=failed:<step>`.
+- **One owner per chip**: the audio task alone calls `esp_codec_dev`; the codecs' registers
+  ride `svc_power`'s bus lock (each transfer ≤ 20 ms); the amp rail is a `svc_power` call.
+- **The PMIC is still read-only on a fault boot**: `svc_power_amp` refuses there, and audio
+  does not start anyway.
+
+### Reading 0.0.10 from the box
+
+The note's cap grew from 1280 to 1408 bytes (the body from 1856 to 2048) for one new token:
+
+| Token | Good | Bad, and what it means |
+| --- | --- | --- |
+| `audio=<state>,talks:N,sent:N,heard:N,none:N,fail:N,stop:N,up:<KB>,down:<KB>,ms:<last>/<max>,under:N,over:N` | `ok`; `heard` close to `sent`; `ms` a few thousand; `under`/`over` 0 or rare | `failed:<step>` — `bus` (no I2C attach), `i2c` (neither codec answered), `i2s`, `i2s-tx`, `i2s-rx`, `data`, `codecs`, `task`. `mic-only:es8311` / `speaker-only:es7210`: one codec is missing. `fail` climbing: read the snapshot's `audio.last_failure`. `none` high: the box hears silence — microphone gain or a dead mic (`mic_peak_l/r`). `over` > 0: the upload fell behind the microphone (radio). `under` > 0: the reply's speech arrived slower than it played. `ms` is from the last upload byte to the reply's words — Whisper, the model and, with read-aloud on, Kokoro. |
+| `key=…,fail:N,stop:N` | — | `fail`: holds the box dropped mid-recording; `stop`: replies stopped with KEY or BOOT. |
+
+The snapshot's `audio` section has the same counters and more: `phase`
+(`idle`/`recording`/`thinking`/`speaking`), `mic_on`/`spk_on`/`net_busy`, `ring`/`queued`,
+`es8311_id`/`es7210_id` (the chips' id registers as read), `amp`, `volume`, `mic_gain_db`
+(what the codecs accepted, -1 before the first talk), `i2c_errors`, `codec_errors`, `tones`,
+`stack_free`, `mic_peak_l`/`mic_peak_r` and `last_failure`.
+
+### What to check on the glass
+
+1. Settings → Jerv shows "Replies are spoken and shown as text." and a Speaker volume slider
+   — not an amber line. (Amber: read `audio=` in telemetry.)
+2. Hold KEY on the home screen and ask something short ("what's two plus two"): the ring
+   pulses as you speak. Let go: the Jerv thread opens with "Transcribing…", then your words
+   and Jerv's answer, spoken.
+3. Ask again and press KEY (or BOOT) while Jerv is speaking: it stops at once, the words stay,
+   and nothing new records.
+4. Turn Read replies aloud off and ask again: the answer arrives as text only, no sound.
+5. Tap KEY quickly: "Hold KEY the whole time you talk". Hold, then tap the glass: "Cancelled —
+   nothing sent".
+6. Move the volume slider and ask again: the reply is louder or quieter.
+
+### Checking it from the box
+
+```sh
+scripts/debug-connect.sh panel-cmd c6 snapshot                         # "audio": state "ok", ids, counters
+scripts/debug-connect.sh panel-cmd c6 play_tone                        # a second of 880 Hz: listen
+scripts/debug-connect.sh panel-cmd c6 play_tone --arg value=440        # another pitch
+scripts/debug-connect.sh panel-cmd c6 set --arg name=volume --arg value=60
+scripts/debug-connect.sh panel-cmd c6 set --arg name=mic_gain --arg value=33
+scripts/debug-connect.sh panel-cmd c6 logs                             # "sound ok (ES8311 id …)", "talk: up … down …"
+scripts/debug-connect.sh panel-shot c6 out.png                         # the Jerv thread after a talk
+```
+
+After a talk the snapshot should show `talks` and `sent` up by one, `replies` (or
+`nothing_heard`) up by one, `up_bytes` ≈ 32 KB per second held, `reply_ms` a few thousand, and
+`mic_peak_l`/`mic_peak_r` both in the thousands (one near zero is a dead microphone; either at
+32767 is clipping — lower `mic_gain`).
+
+### What only the board can settle
+
+Each is reported so it can be settled remotely:
+
+- **That the codecs answer and come up**: `audio=` / snapshot `state`, `es8311_id` /
+  `es7210_id`, `i2c_errors`. The register values are esp_codec_dev's own for these chips and
+  the BSP's pins; they have not been run on this board.
+- **The amp's polarity** (ALDO2 on = enabled, from the schematic and the BSP): `play_tone` with
+  someone listening, and the snapshot's `amp` during it. Silent with `amp: true`, or hiss when
+  idle, means it is the other way round.
+- **Microphone gain** (30 dB): `mic_peak_l`/`mic_peak_r` after a talk, and whether the box
+  heard the words (`heard` against `none`); `set mic_gain` moves it without an image.
+- **Which ES7210 channels carry the two microphones**: both peaks moving with the voice says
+  MIC1/MIC2 are on SDOUT1's two slots as the driver assumes; one flat at zero says otherwise.
+- **Volume** (80): the owner's ear; the slider and `set volume` move it.
+- **The audio task's stack** (3.5 KB): `stack_free` after a talk and a tone.
+- **The memory** (above): `int_free` / `int_min` before and after the first talks.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -558,6 +780,9 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **`GET {api}/endpoint/debug/next?board=c6-amoled-216`** and **`POST
   {api}/endpoint/debug/{id}`** (since 0.0.9) are the debug relay's pickup and answer ("What
   0.0.9 adds"). The only routes that are the C6's own; the S3 panels never call them.
+- **`POST {api}/endpoint/converse?persona=jerv&voice=…`** (since 0.0.10) is a talk to Jerv: the
+  S3s' conversation route with the persona and the reply frame added ("What 0.0.10 adds", The
+  protocol). Uploaded chunked, as it is recorded.
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -618,7 +843,7 @@ waves.
 | IMU interrupts | INT1 GPIO16, INT2 GPIO17 |
 | Touch | TP_RST GPIO11, TP_INT GPIO5 |
 | Display (CO5300, QSPI) | CS GPIO15, SCL GPIO0, D0 GPIO1, D1 GPIO2, D2 GPIO3, D3 GPIO4; LCD reset is the AXP2101's ALDO3 |
-| I2S | MCLK GPIO19, SCLK GPIO20, LRCK GPIO22, ASDOUT GPIO21, DSDIN GPIO23; PA_CTRL appears to be an AXP2101 ALDO rail (**unverified**) |
+| I2S | MCLK GPIO19, SCLK GPIO20, LRCK GPIO22, ASDOUT GPIO21, DSDIN GPIO23 (driven since 0.0.10); the speaker amp's enable is the AXP2101's ALDO2 (schematic + BSP; polarity unverified on the board, `HARDWARE.md` §5) |
 | TF card (SPI) | SCK GPIO0, MOSI GPIO1, MISO GPIO2, CS GPIO6 |
 
 Two constraints the table implies:
@@ -665,8 +890,9 @@ components/
                     (shell_core.c: every decision, no LVGL, host-tested; shell.c: carries it out)
   svc_*/            one per chip or box route; in-memory implementations until each driver lands.
                     svc_power, svc_display, svc_buttons, svc_touch, svc_settings (NVS), svc_rtc
-                    (PCF85063 + the box's clock), svc_net and svc_box are real: the device builds
-                    their esp/ file and pure logic, the sim and host the top-level files
+                    (PCF85063 + the box's clock), svc_net, svc_box and svc_audio (ES8311 + ES7210,
+                    the talk to Jerv) are real: the device builds their esp/ file and pure logic,
+                    the sim and host the top-level files
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
   app_jerv/ app_thread/ app_clock/ app_settings/ app_minecraft/
                     each a descriptor + a pure *_model.c + a view; app_thread is one component
@@ -721,7 +947,9 @@ the debug path. `--only <app>` registers a single app, for working on one with n
 Fonts are LVGL's Montserrat plus the generated clock digits and punctuation fallbacks in
 `components/ui_kit/fonts/` ("What 0.0.8 adds", Fonts). States the mock has no board for:
 `settings-end`, `settings-armed` (the first Disconnect tap), `settings-usb`, `clock-badge`,
-`clock-alarms-end`, `rec-anywhere` (KEY from Settings), `jerv-after-key` and `boot-long` (BOOT held in Settings). Each render also
+`clock-alarms-end`, `rec-anywhere` (KEY from Settings), `jerv-after-key` (the hold waiting for
+its transcript), `jerv-reply` and `jerv-reply-text` (the box's answer, spoken and text-only) and
+`boot-long` (BOOT held in Settings). Each render also
 prints LVGL's pool peak (64-bit pointers; the device's pool is 64 KB with 32-bit ones).
 
 ### Debugging a panel with no cable
@@ -744,7 +972,7 @@ check a snapshot for the fake provisioning's password, device key and CA.
 
 ```sh
 IDF_TARGETS=esp32c6 scripts/firmware-setup.sh     # once — ESP-IDF v5.5.5 + the RISC-V toolchain
-echo 0.0.8 > firmware-c6/version.txt               # bump FIRST: the version is compiled in
+echo 0.0.10 > firmware-c6/version.txt              # bump FIRST: the version is compiled in
 . ~/esp-idf/export.sh && (cd firmware-c6 && idf.py fullclean && idf.py build)
 scripts/firmware-dist.sh firmware-c6               # copies the built set into dist/ — it ships
 ```
@@ -764,6 +992,10 @@ the touch task's 3 KB stack. 0.0.8: app 1.82 MB (+73 KB, 54 KB of it the fonts; 
 free), 243 KB of DIRAM static (+1.4 KB); no new task and no new runtime allocation beyond a
 transient NVS handle, so the measured ~116 KB internal-heap minimum should hold within ~2 KB.
 LVGL's pool peaks at 39 KB in the sim's busiest state (Settings under the talk ring, 64-bit).
+0.0.10: app 1.91 MB (+78 KB, esp_codec_dev and the I2S driver most of it; 55% of the slot
+free), 264 KB of DIRAM static (+9.4 KB); at runtime the audio task (3.5 KB stack) and ~9 KB of
+I2S DMA and codec objects from boot, and the 16 KB talk ring per exchange ("What 0.0.10 adds",
+The memory budget).
 
 ## Recovery
 
