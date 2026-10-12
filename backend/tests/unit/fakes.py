@@ -46,6 +46,8 @@ class FakeSession:
 class FakeAuthRepo:
     principals: list[FakePrincipal] = field(default_factory=list)
     sessions: list[FakeSession] = field(default_factory=list)
+    # Lookups that stamped a session's last_seen_at (a write in the real repo).
+    touches: int = 0
 
     async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
         for p in self.principals:
@@ -68,8 +70,12 @@ class FakeAuthRepo:
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
         self.sessions.append(FakeSession(principal_id, token_hash, label))
 
-    async def find_principal_by_session_token_hash(self, token_hash: str) -> PrincipalInfo | None:
+    async def find_principal_by_session_token_hash(
+        self, token_hash: str, *, touch: bool = True
+    ) -> PrincipalInfo | None:
         now = datetime.now(UTC)
+        if touch:
+            self.touches += 1
         for s in self.sessions:
             if s.token_hash == token_hash and not s.revoked:
                 for p in self.principals:

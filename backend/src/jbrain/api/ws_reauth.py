@@ -18,6 +18,8 @@ import asyncio
 import contextlib
 from typing import TYPE_CHECKING, Any, cast
 
+import structlog
+
 from jbrain.api.session_cookie import session_token
 from jbrain.auth import service
 
@@ -29,8 +31,16 @@ if TYPE_CHECKING:
     from jbrain.auth.service import AuthRepo, PrincipalInfo
     from jbrain.config import Settings
 
+log = structlog.get_logger()
+
 REAUTH_INTERVAL_S = 30.0
 REVOKED_CLOSE_CODE = 4401
+# The server can't tell whether the session is still good: an internal error, not a
+# sign-out, so the PWA doesn't treat it as one.
+UNVERIFIABLE_CLOSE_CODE = 1011
+# Consecutive failed re-checks tolerated before giving up: a DB or pool blip must not
+# end the owner's terminal, but a socket must not outlive its check for long either.
+MAX_CHECK_FAILURES = 3
 
 _REGISTRY_ATTR = "ws_auth_registry"
 # Tests shorten the tick by setting this on app.state.
@@ -73,23 +83,40 @@ class SocketAuth:
 
     async def still_valid(self) -> bool:
         repo = cast("AuthRepo", self._app.state.auth_repo)
-        current = await service.authenticate(repo, self._token)
+        current = await service.authenticate(repo, self._token, touch=False)
         return current is not None and current.id == self.principal.id
 
-    async def revoked(self, on_tick: Callable[[], None] | None = None) -> None:
-        """Return once the session no longer authenticates as this principal. `on_tick`
-        runs after every check that passes, for callers that cache authorization
-        decisions which can change without the session itself being revoked."""
+    async def revoked(self, on_tick: Callable[[], None] | None = None) -> int:
+        """Return the close code once the socket must end: 4401 when the session no
+        longer authenticates as this principal, 1011 after `MAX_CHECK_FAILURES` checks in
+        a row could not be made at all. `on_tick` runs after every check that passes, for
+        callers that cache authorization decisions which can change without the session
+        itself being revoked."""
         self._loop = asyncio.get_running_loop()
         peers = _registry(self._app).setdefault(self.principal.id, set())
         peers.add(self)
+        failures = 0
         try:
             while True:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._woken.wait(), timeout=self.interval)
                 self._woken.clear()
-                if not await self.still_valid():
-                    return
+                try:
+                    valid = await self.still_valid()
+                except Exception as exc:  # noqa: BLE001 - a failed check is retried, not fatal
+                    failures += 1
+                    log.warning(
+                        "ws_reauth.check_failed",
+                        principal_id=self.principal.id,
+                        failures=failures,
+                        error=repr(exc),
+                    )
+                    if failures >= MAX_CHECK_FAILURES:
+                        return UNVERIFIABLE_CLOSE_CODE
+                    continue
+                failures = 0
+                if not valid:
+                    return REVOKED_CLOSE_CODE
                 if on_tick is not None:
                     on_tick()
         finally:
@@ -108,7 +135,8 @@ async def run_until_revoked(
 ) -> None:
     """Run a socket's pump until it ends by itself or its session stops authenticating;
     in the second case the pump is cancelled (closing anything it holds open upstream)
-    and the browser is closed 4401, as a handshake without a valid session would be."""
+    and the browser is closed 4401, as a handshake without a valid session would be (or
+    1011 when the session could not be checked at all, `SocketAuth.revoked`)."""
     pump = asyncio.ensure_future(work)
     watch = asyncio.ensure_future(auth.revoked(on_tick))
     try:
@@ -122,4 +150,4 @@ async def run_until_revoked(
         pump.result()
         return
     with contextlib.suppress(Exception):
-        await websocket.close(code=REVOKED_CLOSE_CODE)
+        await websocket.close(code=watch.result())

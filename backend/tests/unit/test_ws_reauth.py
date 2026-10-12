@@ -297,3 +297,140 @@ def test_the_jlaunch_terminal_closes_on_logout_and_survives_ticks(
         assert ws.receive_text() == "hi"
         asyncio.run(auth_service.logout(repo, token))
         assert _closed_with(ws) == 4401
+
+
+# --- a re-check that cannot be made ---------------------------------------------------
+
+
+class _FlakyRepo(FakeAuthRepo):
+    """Re-checks (`touch=False`) raise while `fail_rechecks` is positive; the handshake's
+    own lookup is never affected."""
+
+    fail_rechecks = 0
+
+    async def find_principal_by_session_token_hash(
+        self, token_hash: str, *, touch: bool = True
+    ) -> Any:
+        if not touch and self.fail_rechecks > 0:
+            self.fail_rechecks -= 1
+            raise ConnectionError("pool timeout")
+        return await super().find_principal_by_session_token_hash(token_hash, touch=touch)
+
+
+def _flaky_owner_terminal(app: FastAPI, client: TestClient, fails: int) -> _FlakyRepo:
+    repo = _FlakyRepo()
+    app.state.auth_repo = repo
+    client.cookies.set(_COOKIE, _owner_token(repo))
+    repo.fail_rechecks = fails
+    return repo
+
+
+def test_a_transient_check_failure_keeps_the_terminal_open(
+    jcode: tuple[FastAPI, TestClient, FakeAuthRepo, _FakeConnect],
+) -> None:
+    app, client, _, _ = jcode
+    repo = _flaky_owner_terminal(app, client, fails=2)
+    with client.websocket_connect("/api/jcode/sessions/sess-a/terminal") as ws:
+        time.sleep(_TICK * 6)
+        assert repo.fail_rechecks == 0  # both failures were spent, and retried past
+        ws.send_bytes(b"still here")
+        assert ws.receive_bytes() == b"still here"
+
+
+def test_persistent_check_failures_close_1011_not_4401(
+    jcode: tuple[FastAPI, TestClient, FakeAuthRepo, _FakeConnect],
+) -> None:
+    app, client, _, _ = jcode
+    _flaky_owner_terminal(app, client, fails=10**6)
+    with client.websocket_connect("/api/jcode/sessions/sess-a/terminal") as ws:
+        assert _closed_with(ws) == 1011
+
+
+def test_a_revoke_after_a_failed_check_still_closes_4401(
+    jcode: tuple[FastAPI, TestClient, FakeAuthRepo, _FakeConnect],
+) -> None:
+    app, client, _, _ = jcode
+    repo = _flaky_owner_terminal(app, client, fails=1)
+    with client.websocket_connect("/api/jcode/sessions/sess-a/terminal") as ws:
+        time.sleep(_TICK * 3)
+        _revoke_principal(repo, repo.principals[0].id)
+        assert _closed_with(ws) == 4401
+
+
+def test_a_recheck_does_not_stamp_last_seen(
+    jcode: tuple[FastAPI, TestClient, FakeAuthRepo, _FakeConnect],
+) -> None:
+    _, client, repo, _ = jcode
+    client.cookies.set(_COOKIE, _owner_token(repo))
+    with client.websocket_connect("/api/jcode/sessions/sess-a/terminal") as ws:
+        ws.send_bytes(b"x")
+        assert ws.receive_bytes() == b"x"
+        before = repo.touches
+        time.sleep(_TICK * 4)
+        assert repo.touches == before
+
+
+def test_a_revoke_by_a_differently_spelled_id_closes_at_once(
+    jcode: tuple[FastAPI, TestClient, FakeAuthRepo, _FakeConnect],
+) -> None:
+    app, client, repo, _ = jcode
+    app.state.ws_reauth_interval_s = 600.0
+    token, share_id = _share_cookie(repo, "sess-a")
+    owner = TestClient(app)
+    owner.cookies.set(_COOKIE, _owner_token(repo))
+    client.cookies.set(_COOKIE, token)
+    with client.websocket_connect("/api/jcode/sessions/sess-a/terminal") as ws:
+        ws.send_bytes(b"x")
+        assert ws.receive_bytes() == b"x"
+        url = f"/api/jcode/sessions/sess-a/shares/{share_id.upper()}"
+        assert owner.delete(url).status_code == 204
+        assert _closed_with(ws) == 4401
+
+
+def test_a_malformed_share_id_is_404(
+    jcode: tuple[FastAPI, TestClient, FakeAuthRepo, _FakeConnect],
+) -> None:
+    app, _, repo, _ = jcode
+    owner = TestClient(app)
+    owner.cookies.set(_COOKIE, _owner_token(repo))
+    assert owner.delete("/api/jcode/sessions/sess-a/shares/not-a-uuid").status_code == 404
+
+
+# --- the bridge itself ---------------------------------------------------------------
+
+
+class _Blocking:
+    """A browser and an upstream that never produce a frame, recording cancellation."""
+
+    def __init__(self) -> None:
+        self.cancelled: list[str] = []
+
+    async def _forever(self, who: str) -> Any:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.append(who)
+            raise
+
+    async def receive(self) -> Any:
+        return await self._forever("browser")
+
+    def __aiter__(self) -> "_Blocking":
+        return self
+
+    async def __anext__(self) -> Any:
+        return await self._forever("upstream")
+
+
+@pytest.mark.parametrize("module", [jcode_terminal, jlaunch_terminal])
+def test_cancelling_the_bridge_cancels_both_pumps(module: Any) -> None:
+    async def scenario() -> list[str]:
+        ends = _Blocking()
+        bridge = asyncio.ensure_future(module._bridge(ends, ends))
+        await asyncio.sleep(0.01)
+        bridge.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge
+        return ends.cancelled
+
+    assert sorted(asyncio.run(scenario())) == ["browser", "upstream"]

@@ -87,7 +87,7 @@ class AuthRepo(Protocol):
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None: ...
 
     async def find_principal_by_session_token_hash(
-        self, token_hash: str
+        self, token_hash: str, *, touch: bool = True
     ) -> PrincipalInfo | None: ...
 
     async def revoke_session(self, token_hash: str) -> None: ...
@@ -154,10 +154,12 @@ async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:
     return token
 
 
-async def authenticate(repo: AuthRepo, token: str) -> PrincipalInfo | None:
+async def authenticate(repo: AuthRepo, token: str, *, touch: bool = True) -> PrincipalInfo | None:
+    """The principal a session token names, or None. `touch=False` skips stamping the
+    session's `last_seen_at` — for re-checks that are not the user's own activity."""
     if not token:
         return None
-    return await repo.find_principal_by_session_token_hash(keys.hash_token(token))
+    return await repo.find_principal_by_session_token_hash(keys.hash_token(token), touch=touch)
 
 
 async def authenticate_device(repo: AuthRepo, key: str) -> PrincipalInfo | None:

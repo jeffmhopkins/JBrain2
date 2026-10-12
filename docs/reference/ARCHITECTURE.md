@@ -111,7 +111,9 @@ every route and fails on any (route, kind) pair not on its allow-list.
 
 A WebSocket authenticates on its handshake, so the long-lived ones (the live location
 feed, the jcode and jlaunch terminals) also re-resolve their handshake session every
-~30 s (`api/ws_reauth.py`), idle or not, and close 4401 once it is revoked or lapses.
+~30 s (`api/ws_reauth.py`), idle or not, without stamping `last_seen_at`, and close
+4401 once it is revoked or lapses (1011 if three checks in a row cannot be made; a single
+failed check, a DB blip, is retried on the next tick).
 The live feed re-asks `viewer_may_see` after each re-check, so a member taken out of a
 family group stops receiving that subject's fixes. Revoking a jcode share closes its
 open terminals at once and rotates the session's preview URL; the session's processes

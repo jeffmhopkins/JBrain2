@@ -89,7 +89,9 @@ class SqlAuthRepo:
                 DeviceSession(principal_id=principal_id, token_hash=token_hash, label=label)
             )
 
-    async def find_principal_by_session_token_hash(self, token_hash: str) -> PrincipalInfo | None:
+    async def find_principal_by_session_token_hash(
+        self, token_hash: str, *, touch: bool = True
+    ) -> PrincipalInfo | None:
         async with scoped_session(self._maker, _LOGIN) as session:
             row = (
                 await session.execute(
@@ -112,11 +114,13 @@ class SqlAuthRepo:
             ).scalar_one_or_none()
             if row is None:
                 return None
-            await session.execute(
-                update(DeviceSession)
-                .where(DeviceSession.token_hash == token_hash)
-                .values(last_seen_at=text("now()"))
-            )
+            # A socket's periodic re-check is not activity, so it must not write.
+            if touch:
+                await session.execute(
+                    update(DeviceSession)
+                    .where(DeviceSession.token_hash == token_hash)
+                    .values(last_seen_at=text("now()"))
+                )
             return _principal_info(row)
 
     async def revoke_session(self, token_hash: str) -> None:

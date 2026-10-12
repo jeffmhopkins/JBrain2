@@ -15,6 +15,7 @@ owner-gated; redeem is intentionally unauthenticated (the secret IS the credenti
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime  # noqa: TC003 - Pydantic needs the runtime symbol
 from typing import cast
 
@@ -117,11 +118,23 @@ async def revoke_share(
 
     The share's open sockets (its terminal) close now, and the session's preview slug is
     rotated so a preview URL the recipient kept stops resolving; the owner's PWA re-reads
-    the preview status after a revoke, so its own pane moves to the new URL.
+    the preview status after a revoke, so its own pane moves to the new URL. The slug is
+    the session's, not the share's, so every OTHER live share of the session gets the new
+    URL too, the next time its browser reads the preview status.
     The session's processes are left running: owner and recipient type into one
     reattached shell, so the recipient's can't be told from the owner's (security plan
-    S3.1)."""
+    S3.1).
+
+    Residual: a failed rotation (the control server unreachable) is logged and the revoke
+    still stands, but the old preview URL stays valid until the session is rotated again,
+    deleted or reaped."""
     _valid_sid(sid)
+    try:
+        # Canonical form, so the socket registry (keyed by principal id) is hit however
+        # the caller spelled the uuid.
+        share_id = str(uuid.UUID(share_id))
+    except ValueError:
+        raise HTTPException(status_code=404, detail="unknown share link") from None
     if not await repo.revoke_jcode_share(share_id, sid):
         raise HTTPException(status_code=404, detail="unknown share link")
     kick(request.app, share_id)

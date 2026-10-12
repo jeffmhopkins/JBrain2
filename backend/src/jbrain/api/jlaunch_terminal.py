@@ -85,11 +85,15 @@ async def _bridge(browser: WebSocket, upstream: Any) -> None:
         asyncio.ensure_future(browser_to_upstream(browser, upstream)),
         asyncio.ensure_future(upstream_to_browser(upstream, browser)),
     }
-    done, pending = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(*pending, return_exceptions=True)
+    try:
+        done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        # Also when the bridge itself is cancelled (a revoked session): no pump may
+        # outlive it, still reading the browser or writing to a closed upstream.
+        for task in pumps:
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(*pumps, return_exceptions=True)
     for task in done:
         task.result()  # surface a real error (not a normal disconnect) to the caller
 
