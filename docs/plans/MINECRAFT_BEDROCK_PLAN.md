@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -692,6 +692,14 @@ should be able to do once we're live").** Not yet tried from a real client.
   per-player rate limits beyond the queue, live `scriptevent jb:q` queries, and the
   owner setting to allow the web in game.
 
+**Remaining (checked against the code, 2026-10-12):** the door itself is built
+(`/dave`, `/d`, `/ai`; the `jbrain` pack, `bds.py`'s `dave` event,
+`jbrain.minecraft.door`), and live lookups ride their own scriptevents (`jb:find` for
+§M22's mobs, `jb:waypoint`, `jb:transport`). Left: the companion's name as a setting,
+per-player rate limits beyond the queue (§M17 limits only deep scans), and the owner
+setting to allow the web in game. A general `jb:q` query channel is not needed while
+each live lookup has its own event.
+
 ### M6 — The companion agent
 
 - A dedicated persona named **Dave** (owner decision, 2026-10-10). The name is changeable in
@@ -727,6 +735,14 @@ should be able to do once we're live").** Not yet tried from a real client.
 - Tests: tool handlers against fixture index rows and a fake bridge, cascade ordering, the
   refusal/scope test (a player asks for notes and gets nothing), and the rate limit. The LLM
   is faked.
+
+**Remaining (checked against the code, 2026-10-12):** the persona is built
+(Minecraft_Dave, P1) with the in-game player tier (`agents.narrow_for_ingame`: no notes,
+wiki or web, scoped to the asker) and the live and worldgen ★ tools (`mc_find_mob`,
+`mc_locate`, `mc_players`, `mc_nearby`, `mc_world_info`, the asker's own position and
+bed). Left: the name as an Ops setting (it is fixed as Dave), the index rung of the
+cascade and `find_container` (both wait on M4's index), per-player rate limits, and the
+measured reply latency against the 5 s target.
 
 ### M7 — Nice-to-haves (each is its own small decision)
 
@@ -1251,6 +1267,12 @@ server) could show Dave's target as a real waypoint marker on screen. It's only 
 switching to once custom waypoints reach the stable script API, which M0b checks. Until
 then the actionbar arrow is the vanilla path.
 
+**Remaining (checked against the code, 2026-10-12):** the item, ownership, the arrow,
+waypoints and saved places are built, and DW1 hands it over in the welcome and re-beams
+it. Left: the arrival chime (the "You're here" text shows, with no sound), the Nether
+pointer aiming at a known portal (waits on M4's index), and the box checks above. A
+separate `guide_me` is not needed: `mc_set_waypoint` is Dave's target.
+
 **Fair play:** the tricorder only points where Dave already said, so it's in the same
 tier as the question that set the target (§3b). Settings that hide structure answers
 also keep it from pointing at them.
@@ -1274,7 +1296,8 @@ Ender stay the End-portal key and nothing else.
 
 **How it's made:**
 - A **custom item `jbrain:power_pack`**:
-  - Name "Power Pack", plus lore ("Keeps your things, or takes you somewhere").
+  - Name "Power Pack", plus lore: *"The same fuel the Old Makers' ships ran on."* (owner,
+    2026-10-12; the earlier draft was "Keeps your things, or takes you somewhere").
   - Max stack 16.
   - **Its own icon**, set A of `docs/mocks/minecraft-items/` (a copper-capped glass cell,
     with a glint), from the server-pushed `jbrain` resource pack (§3c rule 2).
@@ -1353,8 +1376,14 @@ the slot's switch, and leaving Power Pack turns the switch off before any rule w
 it's on, the rule is excluded from every changed count and reset. The New world form offers
 Off · On only. DESIGN.md "Worlds and backups" has the rest.
 
-Not built: the Power Pack's lore (a crafted item gets none from a
-script without a hook; left out rather than faked). Transport shipped later, below.
+**Built (2026-10-12): the Power Pack's lore.** A recipe can't set lore, so the pack's
+once-a-second look at each player's inventory (main.js `learn()`) writes
+`LINES.powerPackLore`, *"The same fuel the Old Makers' ships ran on."* (owner,
+2026-10-12), on every Power Pack they carry that lacks exactly that line, keeping its
+amount and everything else. Every pack gets the same single line (an older wording is
+rewritten too), because Bedrock stacks only identical lore: a fresh craft sits apart
+from a lored stack for at most a second, then matches it. A pack in a chest gets it when
+it's next carried. Transport shipped later, below.
 **Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
 `entityDie`, `spawnItem` keeping enchantments, names and durability, and what one
@@ -1481,10 +1510,12 @@ keep-inventory charm, so players choose how to spend them.
   beacon" only once that entry is there. M18's fast path still leaves "take me to …" to
   the model.
 
-Not built:
-- The form's line and the tool's replies aren't on the lore page's signed-off list yet.
-- The Power Pack's item lore ("Keeps your things, or takes you somewhere") is still
-  missing, so M10 isn't complete.
+**Signed off (owner, 2026-10-12):** the form's Yes/No line and Dave's transport replies.
+**Built (2026-10-12):** the Power Pack's item lore (above).
+
+**Remaining:** only the PWA toggle for "Power Pack teleport" (the switch is built and set
+through the API); it is being designed separately, through its own GUI gate. Then the
+box checks below.
 
 **Box checks:**
 - The form shows over the game on the Xbox and Windows, and Yes is `selection` 0.
@@ -1495,7 +1526,10 @@ Not built:
 - A Nether place before and after the player's first Nether visit.
 - The trip line in their progress log.
 
-### M11 — Trans-dimensional chests (owner idea, 2026-10-10; details open)
+### M11 — Trans-dimensional chests (owner idea, 2026-10-10; details open) ⏸️ On hold
+
+**Status: On hold (owner, 2026-10-12).** Nothing here is scheduled; the design below
+stays as written for when the owner picks it up again.
 
 **The idea.** An expanded ender chest. A **trans-dimensional chest** can be **dyed a
 colour**, and all of one player's chests of the same colour share **one inventory**, in
@@ -1695,7 +1729,10 @@ and the pack's answer read back, as `mc_set_waypoint` does.
 - **Lore:** the story and Dave's lines for planting, opening and re-aiming belong on the
   Bleepbloop_City lore page, as a later-tech beat shown once gates are built.
 
-### M13 — The laser cannon: a beam weapon (owner idea, 2026-10-10; details open)
+### M13 — The laser cannon: a beam weapon (owner idea, 2026-10-10; details open) ⏸️ On hold
+
+**Status: On hold (owner, 2026-10-12).** Nothing here is scheduled; the design below
+stays as written for when the owner picks it up again.
 
 **Yes, it's doable on stable APIs, with nothing for players to install** beyond the join
 download (§3c rule 2). A beam is a **hitscan**: an instant line, not a flying projectile.
@@ -1732,7 +1769,10 @@ download (§3c rule 2). A beam is a **hitscan**: an instant line, not a flying p
    end-game like the gates, or mid-game.
 4. **PvP at all**, even on worlds where `pvp` is on (kids' worlds)?
 
-### M14 — Powered armor: netherite plus a Power Pack (owner idea, 2026-10-10; details open)
+### M14 — Powered armor: netherite plus a Power Pack (owner idea, 2026-10-10; details open) ⏸️ On hold
+
+**Status: On hold (owner, 2026-10-12).** Nothing here is scheduled; the design below
+stays as written for when the owner picks it up again.
 
 **The recipe (owner):** a **netherite armor piece + a Power Pack** gives the **powered**
 piece: powered helmet, chestplate, leggings and boots.
@@ -2977,6 +3017,12 @@ screen's "Maps" section (M8) reuses the same component.
 log and memory tools reach players in game at player tier, scoped to the asker's xuid —
 plus saved places (`mc_place_save`, `mc_places`, `mc_place_remove`; `mc_set_waypoint`'s
 `place`), prompt `agent-minecraft-dave-v7`.
+
+**P2 remaining (checked against the code, 2026-10-12):** goals, the progress log and
+memory reach Dave in game (the door), scoped to the asker's xuid. Left: the index tools
+(they wait on M4), and `auto` log entries from add-on events beyond transport trips
+(the only `auto` writer today is `mc_transport`'s trip log; deaths and crafting write
+none).
 
 **P3 (2026-10-11):** `mc_show_map` and the `minecraft_map` card in Minecraft_Dave's chat
 (§M8, *Viewer, wave 3*), prompt `agent-minecraft-dave-v8`. Not in game: the in-game tier

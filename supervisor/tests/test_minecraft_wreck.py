@@ -51,16 +51,9 @@ WRECK_PACK_ID = json.loads((MC / "wreck-pack/manifest.json").read_text())["heade
 
 
 @pytest.fixture(autouse=True)
-def _data_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    data = tmp_path / "data"
-    monkeypatch.setattr(server, "DATA", data)
-    monkeypatch.setattr(server, "SERVER_DIR", data / "server")
-    monkeypatch.setattr(server, "SNAPSHOT_DIR", data / "snapshots")
-    monkeypatch.setattr(server, "OVERRIDES", data / "properties.json")
-    monkeypatch.setattr(server, "SETTINGS", data / "settings.json")
-    monkeypatch.setattr(server, "SLOTS", data / "slots.json")
-    monkeypatch.setattr(server, "SNAPSHOT_INDEX", data / "snapshot-index.json")
-    monkeypatch.setattr(server, "UPLOAD_DIR", data / "uploads")
+def _no_properties_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The data paths are conftest's (_mc_data_in_tmp); this file only skips
+    # server.properties, which none of its worlds has.
     monkeypatch.setattr(server.install, "apply_properties", lambda p, o: None)
 
 

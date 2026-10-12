@@ -227,6 +227,46 @@ test("the rule off while the switch says on: the game drops, the pack doesn't do
   assert.equal(sim.overworld.spawned.length, 0);
 });
 
+test("every Power Pack carried gets the lore within a second, keeping all else", () => {
+  const p = sim.player("Lored", "-90");
+  wake(p);
+  const crafted = new ItemStack("jbrain:power_pack", 3);
+  crafted.nameTag = "Spare";
+  p.inventory.setItem(4, crafted);
+  const old = new ItemStack("jbrain:power_pack", 1);
+  old.setLore(["an older wording"]);
+  p.getComponent("minecraft:equippable").setEquipment("Offhand", old);
+  p.inventory.setItem(5, new ItemStack("minecraft:ender_pearl", 2));
+  for (let i = 0; i < 4; i++) sim.tick();
+  const pack = p.inventory.slots[4];
+  assert.deepEqual(pack.lore, [LINES.powerPackLore]);
+  assert.equal(pack.amount, 3);
+  assert.equal(pack.nameTag, "Spare");
+  // A stale line is rewritten, so every pack carries the same lore and they stack alike.
+  assert.deepEqual(p.equipment.Offhand.lore, [LINES.powerPackLore]);
+  assert.deepEqual(p.inventory.slots[5].lore, []); // only packs
+  assert.deepEqual(p.inventory.slots.find((s) => s?.typeId === "jbrain:tricorder").lore, [
+    "Points where Dave says",
+  ]);
+});
+
+test("a lored pack is left alone: the look writes nothing back", () => {
+  const p = sim.player("Steady", "-91");
+  wake(p);
+  const lored = new ItemStack("jbrain:power_pack", 2);
+  lored.setLore([LINES.powerPackLore]);
+  p.inventory.setItem(4, lored);
+  let writes = 0;
+  const setItem = p.inventory.setItem.bind(p.inventory);
+  p.inventory.setItem = (i, v) => {
+    writes += 1;
+    setItem(i, v);
+  };
+  for (let i = 0; i < 4; i++) sim.tick();
+  assert.equal(writes, 0);
+  assert.equal(p.inventory.slots[4].amount, 2);
+});
+
 const knownOf = (line) => JSON.parse(line.slice(line.indexOf("{"))).known;
 
 test("each /dave question carries the asker's unlocks, first held and then kept", () => {
