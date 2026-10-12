@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import unquote
@@ -57,12 +58,17 @@ _TIMEOUT = httpx.Timeout(30.0, connect=2.0)
 _DEV_HOSTS = ("127.0.0.1", "[::1]")
 
 
+# Mirrors the api's bound: a path still changing after this many decodes is refused.
+_MAX_DECODE_ROUNDS = 4
+_UNSAFE_CHAR = re.compile(r"[\x00-\x1f\x7f?#\\]")
+
+
 def _has_dot_segment(path: str) -> bool:
     """Defence in depth behind the api's own containment check: the path comes from a
     stranger, and a dot segment (or a backslash some servers read as one) would be
     resolved against the dev server's root rather than kept under it."""
-    for _ in range(4):
-        if "\\" in path or any(
+    for _ in range(_MAX_DECODE_ROUNDS):
+        if _UNSAFE_CHAR.search(path) or any(
             seg.split(";", 1)[0] in (".", "..") for seg in path.split("/")
         ):
             return True

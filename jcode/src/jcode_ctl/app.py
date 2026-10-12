@@ -177,7 +177,9 @@ def create_app(
     def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
         # Compare the WHOLE header in constant time (supervisor-style), so a wrong
         # scheme fails identically to a wrong token. Fail-closed on a missing header.
-        if not authorization or not hmac.compare_digest(authorization, expected_header):
+        if not authorization or not hmac.compare_digest(
+            authorization.encode("latin-1", "replace"), expected_header.encode()
+        ):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     expected_preview_header = f"Bearer {preview_token(settings.token)}"
@@ -186,7 +188,7 @@ def create_app(
         authorization: Annotated[str | None, Header()] = None,
     ) -> None:
         if not authorization or not hmac.compare_digest(
-            authorization, expected_preview_header
+            authorization.encode("latin-1", "replace"), expected_preview_header.encode()
         ):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -316,7 +318,9 @@ def create_app(
         # before any upstream connect; proxy_ws accepts the browser socket only after
         # the dev WS is reached.
         header = websocket.headers.get("authorization", "")
-        if not hmac.compare_digest(header, expected_preview_header):
+        if not hmac.compare_digest(
+            header.encode("latin-1", "replace"), expected_preview_header.encode()
+        ):
             await websocket.close(code=4401)
             return
         sid = host_preview.resolve(slug)
@@ -333,7 +337,9 @@ def create_app(
         # close a WS cleanly, so check the same bearer header here (constant-time) and
         # close 4401 on mismatch — the api forwards the token. 4404 for an unknown id.
         header = websocket.headers.get("authorization", "")
-        if not hmac.compare_digest(header, expected_header):
+        if not hmac.compare_digest(
+            header.encode("latin-1", "replace"), expected_header.encode()
+        ):
             await websocket.close(code=4401)
             return
         session = sessions.get_or_none(sid)

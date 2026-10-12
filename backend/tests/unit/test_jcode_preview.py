@@ -173,6 +173,11 @@ async def _raw_status(client: TestClient, raw_path: bytes) -> int:
         "a%252f..%252fsessions",
         "a%255c..%255csessions",
         "a%00b",
+        # A decoded `?`/`#` would split the upstream URL after the check ran.
+        "..%3F/..%3F/sessions",
+        "..%23/..%23/sessions",
+        "a%09b",
+        "a%0d%0ab",
     ],
 )
 async def test_traversal_is_404_without_contacting_upstream(raw: str) -> None:
@@ -265,7 +270,9 @@ def test_body_at_the_cap_is_forwarded(monkeypatch: pytest.MonkeyPatch) -> None:
     assert seen == [b"x" * 10]
 
 
-@pytest.mark.parametrize("raw", ["%2e%2e/%2e%2e/sessions", "a/%2E%2e/x", "..;/x", "a%5c..%5cx"])
+@pytest.mark.parametrize(
+    "raw", ["%2e%2e/%2e%2e/sessions", "a/%2E%2e/x", "..;/x", "a%5c..%5cx", "..%3F/..%3F/sessions"]
+)
 def test_preview_ws_traversal_closes_before_connecting(
     raw: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:

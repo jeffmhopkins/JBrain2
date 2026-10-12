@@ -82,6 +82,7 @@ _PREVIEW_TOKEN_CONTEXT = b"jcode-preview"
 # The ASGI server already decoded the path once; a `%2f`/`%5c` still present was
 # double-encoded, and a dev server may decode it into a separator we never saw.
 _ENCODED_SEPARATOR = re.compile(r"%(2f|5c)", re.IGNORECASE)
+_UNSAFE_CHAR = re.compile(r"[\x00-\x1f\x7f?#]")
 # Enough rounds for any plausible double-encoding; a path still changing after this is
 # refused rather than trusted.
 _MAX_DECODE_ROUNDS = 4
@@ -96,11 +97,12 @@ def preview_token(jcode_token: str) -> str:
 
 def _path_is_contained(path: str) -> bool:
     """False for any path that could step out of the session's preview prefix: a dot
-    segment (also as `..;`, which some servers treat as `..`), a backslash or NUL, or an
-    encoded separator — checked at every decoding depth, since httpx and the servers
+    segment (also as `..;`, which some servers treat as `..`), a backslash, a control
+    character, a `?`/`#` (decoded, it would split the upstream URL so the server sees a
+    different path from the one checked here), or an encoded separator — checked at every decoding depth, since httpx and the servers
     behind it resolve what this layer forwards. Dotted names (`main.js`, `.vite`) pass."""
     for _ in range(_MAX_DECODE_ROUNDS):
-        if "\\" in path or "\x00" in path or _ENCODED_SEPARATOR.search(path):
+        if "\\" in path or _ENCODED_SEPARATOR.search(path) or _UNSAFE_CHAR.search(path):
             return False
         if any(seg.split(";", 1)[0] in (".", "..") for seg in path.split("/")):
             return False
@@ -167,8 +169,6 @@ async def preview(request: Request, slug: str, path: str = "") -> Response:
         return Response("preview not available", status_code=404)
     if not _path_is_contained(path):
         return Response("preview not available", status_code=404)
-    if int(request.headers.get("content-length") or 0) > _MAX_BODY:
-        return Response("request too large", status_code=413)
     base = settings.jcode_url.rstrip("/")
     target = httpx.URL(f"{base}/preview/{slug}/{path}", query=request.url.query.encode())
     # The real guard: httpx normalises dot segments when it builds the URL, so whatever
