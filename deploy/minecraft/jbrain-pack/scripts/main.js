@@ -6,9 +6,9 @@
 // Dave's welcome and first-time beats are welcome.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, packLoreStale,
-  packToBurn, parseConfig, parseFind, parseKnown, parseWaypoint, slotFate, trackerLine,
-  tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
+import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, itemsLines,
+  packLoreStale, packToBurn, parseConfig, parseFind, parseItems, parseKnown, parseWaypoint,
+  slotFate, trackerLine, tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
@@ -375,6 +375,33 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
       say(findLine(q, p.name, here, mob?.location));
     } catch (e) {
       say(`find refused: ${e}`);
+    }
+  } else if (ev.id === "jb:items") {
+    // Dave's look around for things on the ground (§M23): a death's drops, a dropped
+    // stack. Item entities, like mobs, exist only in the chunks around players.
+    try {
+      const q = parseItems(ev.message);
+      const who = q.player.toLowerCase();
+      const p = world.getAllPlayers().find((pl) => pl.name.toLowerCase() === who);
+      if (!p) {
+        say(`items refused: ${q.player} isn't online`);
+        return;
+      }
+      const stacks = [];
+      for (const e of p.dimension.getEntities({
+        type: "minecraft:item",
+        location: p.location,
+        maxDistance: q.max,
+      })) {
+        const stack = e.getComponent("minecraft:item")?.itemStack;
+        if (stack && q.types.includes(stack.typeId)) {
+          stacks.push({ typeId: stack.typeId, amount: stack.amount, location: e.location });
+        }
+      }
+      const here = { dim: p.dimension.id, x: p.location.x, z: p.location.z };
+      for (const line of itemsLines(q, p.name, here, stacks)) say(line);
+    } catch (e) {
+      say(`items refused: ${e}`);
     }
   } else if (ev.id === "jb:config") {
     try {
