@@ -35,6 +35,13 @@ def hash_key(key: str) -> str:
     return hashlib.sha256(normalize_key(key).encode()).hexdigest()
 
 
+def secrets_equal(presented: str, expected: str) -> bool:
+    """Constant-time equality for two secret strings. Compared as UTF-8 bytes because
+    `hmac.compare_digest` raises on a non-ASCII `str` — a caller-supplied value would
+    otherwise turn a wrong guess into a 500."""
+    return hmac.compare_digest(presented.encode(), expected.encode())
+
+
 def verify_key(key: str, key_hash: str) -> bool:
     return hmac.compare_digest(hash_key(key), key_hash)
 

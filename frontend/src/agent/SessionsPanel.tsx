@@ -8,8 +8,10 @@
 
 import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { Sheet } from "../components/Sheet";
-import { PencilIcon, SearchIcon, TrashIcon } from "../components/icons";
-import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
+import { LinkIcon, PencilIcon, SearchIcon, TrashIcon } from "../components/icons";
+import { getFontScale } from "../fontScale";
+import { type Drag, beginDrag, endDrag, moveDrag } from "../notes/swipe";
+import { ChatShareSheet } from "./ChatShareSheet";
 import type { AgentSession, SessionCreate } from "./types";
 
 // Backend domain codes paired with their calm display labels (DESIGN.md speaks
@@ -205,6 +207,16 @@ interface Props {
   onArchive: (id: string) => void;
   onUnarchive: (id: string) => void;
   onRescope: (id: string, domainScopes: string[]) => void;
+  /** A share link was minted or revoked — refresh the list so the row's link glyph follows. */
+  onSharesChanged?: () => void;
+}
+
+// Five actions (rename · share · scope · archive · delete) at 48px each, scaled with the
+// text-size setting like the buttons themselves, so the row opens exactly as far as the rail
+// is wide at every scale instead of leaving a gap beside it.
+const RAIL_BUTTONS = 5;
+function railWidth(): number {
+  return Math.round((RAIL_BUTTONS * 48 * getFontScale()) / 100);
 }
 
 export function SessionsPanel({
@@ -220,6 +232,7 @@ export function SessionsPanel({
   onArchive,
   onUnarchive,
   onRescope,
+  onSharesChanged,
 }: Props): ReactNode {
   // The new-chat agents in the order they're offered — the first is the default,
   // so Research seeds Jerv and Full Brain seeds Curator.
@@ -233,6 +246,8 @@ export function SessionsPanel({
   const [tab, setTab] = useState<TabId | null>(null);
   // The chat whose scope is being edited (rail "scope" tapped), or null.
   const [rescoping, setRescoping] = useState<AgentSession | null>(null);
+  // The chat whose share links are being managed (rail "share" tapped), or null.
+  const [sharing, setSharing] = useState<AgentSession | null>(null);
   // One swipe rail open at a time (like the home stream).
   const [railId, setRailId] = useState<string | null>(null);
 
@@ -302,6 +317,7 @@ export function SessionsPanel({
         onArchive={onArchive}
         onUnarchive={onUnarchive}
         onEditScope={setRescoping}
+        onShare={setSharing}
         railOpen={railId === s.id}
         onRailChange={(open) => setRailId(open ? s.id : null)}
       />
@@ -409,6 +425,14 @@ export function SessionsPanel({
         />
       )}
 
+      {sharing && (
+        <ChatShareSheet
+          session={sharing}
+          onClose={() => setSharing(null)}
+          onChanged={onSharesChanged}
+        />
+      )}
+
       {rescoping && (
         <ScopeSheet
           sheetTitle="Change scope"
@@ -438,6 +462,7 @@ function SessionRow({
   onArchive,
   onUnarchive,
   onEditScope,
+  onShare,
   railOpen,
   onRailChange,
 }: {
@@ -451,6 +476,7 @@ function SessionRow({
   onArchive: (id: string) => void;
   onUnarchive: (id: string) => void;
   onEditScope: (s: AgentSession) => void;
+  onShare: (s: AgentSession) => void;
   railOpen: boolean;
   onRailChange: (open: boolean) => void;
 }): ReactNode {
@@ -472,7 +498,8 @@ function SessionRow({
   }, [renaming]);
 
   const dragging = drag !== null && drag.axis === "h";
-  const offset = renaming ? 0 : dragging ? drag.offset : railOpen ? -RAIL_WIDTH : 0;
+  const width = railWidth();
+  const offset = renaming ? 0 : dragging ? drag.offset : railOpen ? -width : 0;
 
   // stopPropagation so the row's swipe doesn't reach the shell's panel gestures.
   function onTouchStart(event: TouchEvent): void {
@@ -480,7 +507,7 @@ function SessionRow({
     event.stopPropagation();
     dragged.current = false;
     const t = event.touches[0];
-    if (t) setDrag(beginDrag(t.clientX, t.clientY, railOpen));
+    if (t) setDrag(beginDrag(t.clientX, t.clientY, railOpen, width));
   }
   function onTouchMove(event: TouchEvent): void {
     if (drag === null) return;
@@ -528,7 +555,7 @@ function SessionRow({
   return (
     <div className="session-wrap">
       {!renaming && offset < 0 && (
-        <div className="session-rail rail-4">
+        <div className="session-rail rail-5">
           <button
             type="button"
             className="rail-btn rail-edit"
@@ -539,6 +566,17 @@ function SessionRow({
           >
             <PencilIcon size={18} />
             rename
+          </button>
+          <button
+            type="button"
+            className="rail-btn rail-share"
+            onClick={() => {
+              onRailChange(false);
+              onShare(session);
+            }}
+          >
+            <LinkIcon size={18} />
+            share
           </button>
           <button
             type="button"
@@ -651,6 +689,12 @@ function SessionRow({
                   ) : null}
                   {session.staged_count ? (
                     <span className="stat staged">{session.staged_count} staged</span>
+                  ) : null}
+                  {session.shared ? (
+                    <span className="r-shared" title="Shared by link">
+                      <LinkIcon size={12} />
+                      <span className="fb-sr-only">shared</span>
+                    </span>
                   ) : null}
                   {session.turn_count ? (
                     <span className="r-turns">

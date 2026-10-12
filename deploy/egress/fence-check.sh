@@ -27,6 +27,9 @@ denied=(
   "http://[::ffff:10.0.0.1]/"
   http://2130706433/
   http://example.com:8080/
+  # The host and its published ports, as a code-mode session would try to reach them.
+  http://host.docker.internal/
+  http://172.17.0.1:8800/
 )
 for url in "${denied[@]}"; do
   code=$(curl -s -o /dev/null -w '%{http_code}' -m 15 -x "$PROXY" "$url")
@@ -34,7 +37,8 @@ for url in "${denied[@]}"; do
 done
 
 # CONNECT (https) to an internal target must be refused at the tunnel, not passed through.
-for url in https://169.254.169.254/ https://db/ https://localtest.me/; do
+# Port 22 is ssh's: only 443 tunnels, so ssh-shaped egress from a code-mode session fails too.
+for url in https://169.254.169.254/ https://db/ https://localtest.me/ https://github.com:22/; do
   line=$(curl -sv -o /dev/null -m 15 -x "$PROXY" "$url" 2>&1 | grep -m1 -E '^< HTTP' || true)
   case "$line" in
     *" 403"*) echo "ok   403 CONNECT $url" ;;

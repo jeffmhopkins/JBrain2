@@ -169,6 +169,10 @@ static vocab_t VOCAB[] = {
        forms at all, since a four-year-old will say the one you did not think of. */
     {"wiggle your body", "WgGcL YeR BnDm", VOCAB_ACTION, ACT_SHIMMY},
     {"say hello", "Sd hcLb", VOCAB_ACTION, ACT_WAVE},
+    /* The owner: "in response to a keyword of love you, it should show hearts and coo
+       happily." Both, because a four-year-old says either; neither is a prefix of the other. */
+    {"i love you", "i LcV Yo", VOCAB_ACTION, ACT_LOVE},
+    {"love you", "LcV Yo", VOCAB_ACTION, ACT_LOVE},
     {"bounce around", "BtNS ktND", VOCAB_ACTION, ACT_BOING},
     {"nod your head", "NnD YeR hfD", VOCAB_ACTION, ACT_NOD},
     {"be silly", "Bm SgLm", VOCAB_ACTION, ACT_WIGGLE},

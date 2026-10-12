@@ -192,6 +192,24 @@ def drop_weights_page_cache_except_mapped(models_dir: str, model_id: str) -> flo
     return round(freed_pages * _PAGE_SIZE / _BYTES_PER_GIB, 2)
 
 
+# Where llama-server saves KV-slot files, under the models volume (one folder per catalog id).
+# Mirrors `llama_swap_config.KVSLOT_DIR`; a test pins the two together, since importing that
+# module here would pull the config generator into every weights read.
+KVSLOT_DIR = ".kvslots"
+
+
+def drop_kvslot_page_cache(models_dir: str, model_id: str) -> float | None:
+    """Drop the page cache of `model_id`'s saved KV-slot files (`.kvslots/<id>`), returning GiB
+    released (measured, as `_drop_page_cache`), or None when there is no folder or no measure.
+
+    Those files are WRITTEN, so their pages land in `Cached` like the weights' do: a Flash-Next
+    session that saves and restores 512k-pool prefixes leaves gigabytes there, which
+    `host_metrics.read_memory_gb` counts as used, and nothing under the weights folders drops
+    them. Clean pages only (`POSIX_FADV_DONTNEED`), so a save still in writeback is untouched;
+    the cost of a drop is that the next restore reads its file from disk."""
+    return _drop_page_cache(os.path.join(models_dir, KVSLOT_DIR, model_id), ("",))
+
+
 def drop_ranges(size: int, kept: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """The `[lo, hi)` byte ranges of a `size`-byte file that are NOT in any `kept` range —
     the complement, merged and clipped, in file order. Pure, so the arithmetic that decides

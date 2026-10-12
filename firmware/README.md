@@ -137,6 +137,22 @@ the one thing on it that answers to that channel.
 height, so the robot's hitboxes would put "head" over empty space — a form whose zones were
 not updated would answer every poke from the wrong pool.
 
+## Shaken, he gets dizzy; told he is loved, he coos (0.4.7)
+
+Two actions that answer one thing each, so neither is in a poke pool:
+
+- **Dizzy, from a shake.** `screen_shaken` (pure, host-tested) watches the same per-sample
+  accelerometer difference the sleep timer uses and calls it a shake at four jerks of about a
+  gravity inside 1.5 s, merging samples closer than 90 ms and resting 6 s after. He sits down
+  hard (`figure_pose_t.sit`: the legs splay and `face.c` lowers the body by what that takes off
+  this form's legs, so the feet stay put), shakes his head with the shake dying away, and three
+  stars go round his head. `CUE_DIZZY` is a slow warble sliding down an octave, sounded only
+  when nothing else owns the speaker.
+- **Love, from `i love you` / `love you`.** Five hearts rise beside his head in turn, he sways,
+  and `CUE_LOVE` is the coo twice, the second a third higher.
+
+The bench has a Shake button and an "I love you" voice button.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,
@@ -213,9 +229,20 @@ Static internal RAM (`.data` + `.bss`) is gated in `firmware.yml` against 0.3.39
 ## The robot stays upright, and the meter keeps up
 
 The accelerometer (not the gyroscope — gravity says which way is down, rotation rate does not)
-flips the frame 180° when the panel is inverted. A 180° rotation of a row-major buffer is
-exactly its reversal, so it is one pass and it takes the version label and the meter with it.
-Ninety degrees does not fit a 368×448 panel.
+picks one of four ways up (`orient.c`). Upside down is a 180° flip: a row-major buffer's
+reversal, one pass. On its side the figure is drawn scaled into a 368×368 square, which a
+quarter turn maps onto itself, and `blit_frame_rotated` permutes it onto the glass.
+
+**0.4.6: he slides to the edge of the glass, and his head rights itself.** On its side the glass
+is 448 long and the square 368, and the lean was clamped inside the square, so at full lean the
+ostrich's feathers were cropped 40 px short of the glass (owner: *"cutting off before we even get
+into the left extent of the screen"*). The square now slides into those bands with the lean
+(`orient_window`), up to its edge being the glass's. The blit reads its source and a touch is
+mapped back through the same `orient_panel_to_frame`, so the two cannot disagree. And while the
+body slides downhill, the head turns back toward true up by 0.6 of the panel's angle, eased
+(`orient_upright`, `face_state_t.upright`): the ostrich's head swings about its neck and its
+crest, eyes and beak turn about the head's centre; the robot, with no neck, nods its head over a
+little. The browser bench has a tilt slider for it.
 
 ## One task owns the codec, one owns the panel
 

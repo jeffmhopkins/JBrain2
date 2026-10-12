@@ -343,6 +343,77 @@ static void draw_blush(uint16_t *fb, int cx, int cy, int dx, float scale)
     fill_circle(fb, cx + dx, cy, r, pink);
 }
 
+/* A HEART, by the curve (x^2 + y^2 - 1)^3 <= x^2 y^3 — two lobes and a point, which no pair
+   of discs and a triangle quite manage at 20 px. Per pixel, but over a box this small. */
+static void draw_heart(uint16_t *fb, int cx, int cy, int r, uint16_t c)
+{
+    if (r < 2) return;
+    for (int dy = -r; dy <= (int)(r * 1.25f); dy++) {
+        const int y = cy + dy;
+        if (y < 0 || y >= FACE_H) continue;
+        const float fy = -(float)dy / (float)r + 0.15f;
+        for (int dx = -(int)(r * 1.25f); dx <= (int)(r * 1.25f); dx++) {
+            const float fx = (float)dx / (float)r;
+            const float q = fx * fx + fy * fy - 1.0f;
+            if (q * q * q - fx * fx * fy * fy * fy <= 0.0f) px(fb, cx + dx, y, c);
+        }
+    }
+}
+
+/* A four-point sparkle: two thin diamonds crossed. */
+static void draw_star(uint16_t *fb, int cx, int cy, int r, uint16_t c)
+{
+    if (r < 2) return;
+    const int w = r / 3 > 1 ? r / 3 : 1;
+    for (int dy = -r; dy <= r; dy++) {
+        const int ady = dy < 0 ? -dy : dy;
+        const int tall = w - w * ady / r;        /* the vertical diamond's half-width here */
+        const int wide = r - r * ady / (w + 1);  /* the horizontal one's, inside its height */
+        const int half = tall > wide ? tall : wide;
+        for (int dx = -half; dx <= half; dx++) px(fb, cx + dx, cy + dy, c);
+    }
+}
+
+/* THE ONE-SHOTS THAT LIVE ABOVE THE HEAD, drawn last so nothing paints over them. `cx` is the
+   head's centre, `top` its top edge and `half` its half-width, so each form puts them where its
+   own head is.
+ *
+ * STARS (dizzy): three, round the head on a flat ellipse — the cartoon shorthand a four-year-
+ * old already reads as "shaken up". The far side of the orbit is drawn smaller, which is all
+ * the depth a flat ellipse needs.
+ *
+ * HEARTS (love): five, rising from beside the head in turn, swaying as they go and shrinking
+ * away at the top rather than vanishing. */
+static void draw_overhead(uint16_t *fb, const face_state_t *st, int cx, int top, int half,
+                          float s)
+{
+    const float p = st->fig.extra_p;
+    if (st->fig.extra == EXTRA_STARS) {
+        const uint16_t star = rgb(0xFF, 0xD8, 0x4A);
+        const float in = p < 0.1f ? p / 0.1f : p > 0.88f ? (1.0f - p) / 0.12f : 1.0f;
+        for (int k = 0; k < 3; k++) {
+            const float a = p * 2.0f * (float)M_PI * 4.0f + (float)k * 2.0f * (float)M_PI / 3.0f;
+            const float depth = sinf(a);
+            const int x = cx + (int)lrintf(cosf(a) * ((float)half + 16.0f * s));
+            const int y = top - (int)(10.0f * s) + (int)lrintf(depth * 14.0f * s);
+            draw_star(fb, x, y, (int)lrintf((17.0f + 6.0f * depth) * s * in), star);
+        }
+    } else if (st->fig.extra == EXTRA_HEARTS) {
+        const uint16_t heart = rgb(0xFF, 0x4F, 0x7B);
+        for (int k = 0; k < 5; k++) {
+            const float t = (p - (float)k * 0.13f) / 0.42f; /* this heart's own life, 0..1 */
+            if (t <= 0.0f || t >= 1.0f) continue;
+            const int side = (k % 2) ? 1 : -1;
+            const float grow = t < 0.15f ? t / 0.15f : t > 0.75f ? (1.0f - t) / 0.25f : 1.0f;
+            const float out = ((float)half + 6.0f * s) * (0.75f + 0.1f * (float)k);
+            const int x = cx + side * (int)lrintf(out) +
+                          (int)lrintf(sinf(t * 2.0f * (float)M_PI * 1.5f) * 10.0f * s);
+            const int y = top + (int)lrintf((90.0f - 190.0f * t) * s);
+            draw_heart(fb, x, y, (int)lrintf((15.0f + 4.0f * (float)(k % 3)) * s * grow), heart);
+        }
+    }
+}
+
 /* THE OSTRICH. Every number is transcribed from `docs/mocks/room-endpoint/ostrich-mock.py`,
  * whose helpers mirror the primitives above — so this is a port, not a redesign, in exactly
  * the way `face.c`'s robot was a port of the canvas mock.
@@ -563,6 +634,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
         fill_circle(fb, ox + tilt - hx, hyy, hr, limb);
         fill_circle(fb, ox + tilt + hx, hyy, hr, limb);
     }
+    draw_overhead(fb, st, ox + tilt, hy - SY(HH), SX(HW), s);
 }
 
 static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int ox, int oy,
@@ -584,6 +656,19 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     const int bob = SY(st->rig.bob);
     const int hx = ox + tilt + lean + SX(OS_HEAD_DX);
     const int hy = oy + SY(OS_HEAD_Y) + bob;
+    /* THE HEAD RIGHTING ITSELF (`face_state_t.upright`): `tilt` already carries it to the
+       head as a swing about the neck's root, and the features turn about the head's centre so
+       the face reads as turned, not merely moved. The head's own outline is not turned — it is
+       nearly round, and resampling it is what `rig.h` refuses. */
+    const float ur = st->upright * (float)M_PI / 180.0f;
+    const float usin = sinf(ur), ucos = cosf(ur);
+    /* A feature at (hx + dx, oy + y) upright, turned about the head's centre. Written so that
+       at zero it is EXACTLY the old arithmetic, pixel for pixel. */
+#define HC_Y (OS_HEAD_Y + OS_HEAD_H / 2)
+#define RX(dx, y) (hx + (int)lrintf((float)SX(dx) * ucos - (float)SY((y) - HC_Y) * usin))
+#define RY(dx, y)                                                                          \
+    (oy + SY(y) + bob +                                                                    \
+     (int)lrintf((float)SX(dx) * usin + (float)SY((y) - HC_Y) * (ucos - 1.0f)))
     /* Behind the bird and BELOW the plumes: the robot's anchor hung off the HEAD, so the
        offset that put its cloud by the hips put the ostrich's up at its midriff. */
     if (st->fig.extra == EXTRA_PUFF) draw_puff(fb, ox - SX(100), oy + SY(52), s);
@@ -664,8 +749,9 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
         int len;
     } CREST[] = {{-18.0f, 42}, {0.0f, 50}, {18.0f, 42}};
     for (unsigned i = 0; i < sizeof(CREST) / sizeof(CREST[0]); i++) {
-        draw_limb(fb, hx, oy + SY(-182) + bob, CREST[i].deg + 180.0f + st->rig.crest,
-                  SY(CREST[i].len), SX(9), col);
+        draw_limb(fb, RX(0, -182), RY(0, -182),
+                  CREST[i].deg + 180.0f + st->rig.crest + st->upright, SY(CREST[i].len), SX(9),
+                  col);
     }
 
     fill_round_rect(fb, hx - SX(OS_HEAD_W / 2), hy, SX(OS_HEAD_W), SY(OS_HEAD_H),
@@ -695,15 +781,16 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
             /* Progressive, so the jaw pivots at the hinge instead of sliding down in one
                piece: the further from the joint, the further it travels. */
             const int drop = i >= 1 ? SY(gape * (int)i / 3) : 0;
-            fill_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob + drop,
+            fill_round_rect(fb, RX(0, BEAK[i].y) - SX(BEAK[i].w / 2),
+                            RY(0, BEAK[i].y) + drop,
                             SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), beak);
         }
-        fill_rect(fb, hx - SX(16), oy + SY(-97) + bob, SX(32), SY(2), shade(hex, 0.28f));
+        fill_rect(fb, RX(0, -97) - SX(16), RY(0, -97), SX(32), SY(2), shade(hex, 0.28f));
     }
 
     /* Cheeks, after the head and before the eyes. Outboard of the eyes and inboard of the
        head's edge, which on a 128-wide head leaves exactly this much room. */
-    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, hx, oy + SY(-110) + bob, SX(50), s);
+    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, RX(0, -110), RY(0, -110), SX(50), s);
 
     /* THE ROBOT'S EYES, UNCHANGED. Six emotions already work as lid geometry; a form that
        redrew them would have to re-implement all six.
@@ -711,15 +798,18 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
        draws 46x54 and `draw_eye` draws 52*0.78 x 62*0.78 = 40.6x48.4, so transcribing the
        scalar literally shrank the approved eyes by a ninth. 1.10 reproduces 45.1x52.9 to
        within half a pixel. */
-    const int ey = oy + SY(OS_EYE_Y) + bob;
     if (front) {
-        draw_eye(fb, hx - SX(OS_EYE_X), ey, dark, &st->eyes.l, st->open, st->startle,
-                 s * 1.10f);
-        draw_eye(fb, hx + SX(OS_EYE_X), ey, dark, &st->eyes.r, st->open, st->startle,
-                 s * 1.10f);
+        draw_eye(fb, RX(-OS_EYE_X, OS_EYE_Y), RY(-OS_EYE_X, OS_EYE_Y), dark, &st->eyes.l,
+                 st->open, st->startle, s * 1.10f);
+        draw_eye(fb, RX(OS_EYE_X, OS_EYE_Y), RY(OS_EYE_X, OS_EYE_Y), dark, &st->eyes.r,
+                 st->open, st->startle, s * 1.10f);
     }
 
     if (u > 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
+    draw_overhead(fb, st, hx, hy, SX(OS_HEAD_W / 2), s);
+#undef RX
+#undef RY
+#undef HC_Y
 }
 
 void face_rest(face_state_t *st)
@@ -728,6 +818,7 @@ void face_rest(face_state_t *st)
     st->form = FORM_OSTRICH;
     st->bob = 0;
     st->lean = 0;
+    st->upright = 0.0f;
     st->talk = 0.0f;
     st->open = 1.0f;
     st->startle = 0.0f;
@@ -736,20 +827,38 @@ void face_rest(face_state_t *st)
     rig_figure(ACT_NONE, 0.0f, 1.0f, 0, 0.0f, &st->fig);
 }
 
+/* The neck's root to the head's centre: oy-26 to oy-137 for the ostrich. The robot has no
+   neck, so its head NODS over rather than swinging — a short arm, or a 216 px head slides off
+   its own shoulders. */
+#define OS_UPRIGHT_ARM 111
+#define ROBOT_UPRIGHT_ARM 40
+
+static int upright_dx(face_form_t form, float deg, float s)
+{
+    const float arm = form == FORM_ROBOT ? ROBOT_UPRIGHT_ARM : OS_UPRIGHT_ARM;
+    return (int)lrintf(sinf(deg * (float)M_PI / 180.0f) * arm * s);
+}
+
 void face_draw(uint16_t *fb, int colour, const face_state_t *st)
 {
     /* Everything hangs off these, so one pair of offsets moves the whole figure. See
        ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
     const int ox = OX + (int)lrintf(((float)st->lean + st->fig.ox) * s_fit);
-    const int oy = (s_fit_oy >= 0 ? s_fit_oy : OY) +
-                   (int)lrintf(((float)st->bob + st->fig.oy) * s_fit);
     const float sx = st->fig.sx * s_fit, sy = st->fig.sy * s_fit;
-    /* The head tilt stands in for the web rig's whole-figure rotation — see rig.h. Offsetting
-       the head against the torso is the cue curious and silly actually need, and it costs two
-       adds instead of resampling 165 000 pixels. */
-    const int tilt = (int)lrintf(st->fig.tilt * 1.6f);
+    /* SITTING: the body comes down by what the legs' splay took off their height, so the feet
+       stay on the floor. This form's leg, which is why it is here and not in the rig. */
+    const float leg = st->form == FORM_ROBOT ? (float)LEG_L : (float)OS_LEG_L;
+    const float sit = st->fig.sit * leg * (1.0f - cosf(st->rig.leg_l * (float)M_PI / 180.0f)) * sy;
+    const int oy = (s_fit_oy >= 0 ? s_fit_oy : OY) +
+                   (int)lrintf(((float)st->bob + st->fig.oy) * s_fit + sit);
     /* One scalar for radii and stroke widths, which cannot take independent x and y. */
     const float s = (sx + sy) * 0.5f;
+    /* The head tilt stands in for the web rig's whole-figure rotation — see rig.h. Offsetting
+       the head against the torso is the cue curious and silly actually need, and it costs two
+       adds instead of resampling 165 000 pixels. The righting rides the same channel: a head
+       turned by `upright` about the neck's root has moved sideways by the arm's length times
+       its sine, so the neck shears to it and every feature drawn off the head follows. */
+    const int tilt = (int)lrintf(st->fig.tilt * 1.6f) + upright_dx(st->form, st->upright, s);
     const uint32_t hex = PALETTE[colour % face_colour_count()];
 
     /* Black, not dark grey: on an AMOLED an unlit pixel is OFF, which is why the mock's

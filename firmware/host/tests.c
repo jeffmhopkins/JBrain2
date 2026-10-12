@@ -862,6 +862,193 @@ static void gravity_at(float deg, int *ax, int *ay)
     *ay = (int)lrintf(sinf(r) * 8192.0f);
 }
 
+/* The rotated blit reads its source through `orient_panel_to_frame` and a touch is mapped back
+   through it, so what has to hold is that the mapping IS a quarter turn of the square wherever
+   the square has slid: every glass pixel in the window is exactly one frame pixel, the blit's
+   per-row step is the one it assumes, and the slide is toward the lean. */
+/* A shake is several jerks back and forth inside a second and a half; a bump, a pick-up or a
+   panel set down is one or two. */
+static void test_a_shake_is_several_jerks_not_one_bump(void)
+{
+    shake_t s;
+    memset(&s, 0, sizeof(s));
+    const int J = SHAKE_JERK_COUNTS + 500;
+    /* A knock spread over two samples, then the panel set down a second later. */
+    CHECK(!screen_shaken(&s, J, 1000) && !screen_shaken(&s, J, 1040), "a knock is not a shake");
+    CHECK(!screen_shaken(&s, J, 2100), "nor is setting it down after");
+    /* Ordinary handling below the jerk size, many times a second. */
+    for (uint32_t t = 3000; t < 6000; t += 40) {
+        CHECK(!screen_shaken(&s, SHAKE_JERK_COUNTS - 1, t), "carrying it about is not a shake");
+    }
+    /* Big jerks, but slow: a panel being turned over and back, once a second. */
+    memset(&s, 0, sizeof(s));
+    for (uint32_t t = 10000; t < 16000; t += 1000) {
+        CHECK(!screen_shaken(&s, J, t), "slow big movements are not a shake");
+    }
+    /* A real shake: a jerk every 160 ms. */
+    memset(&s, 0, sizeof(s));
+    int fired = 0;
+    uint32_t t = 20000;
+    for (; t < 20000 + 4 * 160; t += 160) fired += screen_shaken(&s, J, t);
+    CHECK(fired == 1, "four quick jerks are a shake");
+    /* Keep shaking: one dizzy pet, then a rest, then another. */
+    for (; t < 20000 + SHAKE_REST_MS - 200; t += 160) fired += screen_shaken(&s, J, t);
+    CHECK(fired == 1, "shaking on is the same shake while he recovers");
+    for (; t < 20000 + SHAKE_REST_MS + 2000; t += 160) fired += screen_shaken(&s, J, t);
+    CHECK(fired == 2, "and a new one once he has");
+}
+
+/* Dizzy: he sits DOWN, the feet stay put, and stars go round. Love: hearts. */
+static void test_dizzy_sits_down_and_love_shows_hearts(void)
+{
+    const uint16_t star = rgb565(0xFF, 0xD8, 0x4A), heart = rgb565(0xFF, 0x4F, 0x7B);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        rig_for(ACT_NONE, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_NONE, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        int x0, x1, y0, y1;
+        bbox(&x0, &x1, &y0, &y1);
+        const int rest_top = y0, rest_floor = y1;
+        CHECK(count_colour(star) == 0 && count_colour(heart) == 0, "no stars or hearts at rest");
+
+        rig_for(ACT_DIZZY, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_DIZZY, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(star) > 300, "dizzy: stars go round his head");
+        /* The figure's top without the stars: the first row with anything but star yellow. */
+        int top = -1;
+        for (int y = 0; y < FACE_H && top < 0; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                const uint16_t c = fb[y * FACE_W + x];
+                if (c != 0 && c != star) {
+                    top = y;
+                    break;
+                }
+            }
+        }
+        bbox(&x0, &x1, &y0, &y1);
+        CHECK(top > rest_top + 20, "he sits: his head comes down");
+        CHECK(y1 >= rest_floor - 12 && y1 <= rest_floor + 6, "and his feet stay on the floor");
+
+        rig_for(ACT_LOVE, 0.45f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_LOVE, 0.45f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(heart) > 600, "love: hearts float up beside him");
+    }
+}
+
+static void test_the_square_slides_into_the_bands_with_one_mapping(void)
+{
+    static unsigned char seen[FACE_W * FACE_H];
+    for (int q = 1; q <= 3; q += 2) {
+        for (int lean = -FACE_LEAN_MAX_SIDE; lean <= FACE_LEAN_MAX_SIDE; lean += 5) {
+            const int win = orient_window(q, lean, FACE_LEAN_MAX_SIDE);
+            CHECK(win % 2 == 0, "the window starts on an even row, as the controller takes it");
+            CHECK(win >= -ORIENT_WIN_MAX && win <= ORIENT_WIN_MAX, "and never leaves the glass");
+            const int wy = ORIENT_SQ_Y0 + win;
+            memset(seen, 0, sizeof(seen));
+            int fails = 0;
+            for (int px = 0; px < ORIENT_SQ; px++) {
+                for (int py = wy; py < wy + ORIENT_SQ; py++) {
+                    int fx, fy, nx, ny;
+                    orient_panel_to_frame(q, win, px, py, &fx, &fy);
+                    if (fx < 0 || fx >= ORIENT_SQ || fy < ORIENT_SQ_Y0 ||
+                        fy >= ORIENT_SQ_Y0 + ORIENT_SQ || seen[fy * FACE_W + fx]++) {
+                        fails++;
+                        continue;
+                    }
+                    orient_panel_to_frame(q, win, px, py + 1, &nx, &ny);
+                    if (ny != fy || nx - fx != (q == 1 ? -1 : 1)) fails++;
+                }
+            }
+            CHECK(fails == 0, "each glass pixel of the window is one frame pixel of the square");
+        }
+        /* At full lean the square's edge is the glass's: 0 or 448 - 368 = 80 rows down. */
+        const int right = orient_window(q, FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE);
+        const int left = orient_window(q, -FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE);
+        CHECK(right == -left && (right == ORIENT_WIN_MAX || right == -ORIENT_WIN_MAX),
+              "full lean takes the square all the way into the band");
+        /* Toward the lean: the figure's right edge lands further to the viewer's right, which
+           is panel -Y clockwise and +Y anticlockwise. */
+        const int edge_at_rest = q == 1 ? ORIENT_SQ_Y0 : ORIENT_SQ_Y0 + ORIENT_SQ - 1;
+        const int edge_leaned = q == 1 ? ORIENT_SQ_Y0 + right : ORIENT_SQ_Y0 + right + ORIENT_SQ - 1;
+        int fx, fy;
+        orient_panel_to_frame(q, right, 0, edge_leaned, &fx, &fy);
+        CHECK(fx == ORIENT_SQ - 1, "the window's viewer-right edge is the figure's right edge");
+        CHECK(q == 1 ? edge_leaned < edge_at_rest : edge_leaned > edge_at_rest,
+              "and a lean right moves it to the viewer's right");
+    }
+    CHECK(orient_window(0, FACE_LEAN_MAX, FACE_LEAN_MAX) == 0 &&
+              orient_window(2, -FACE_LEAN_MAX, FACE_LEAN_MAX) == 0,
+          "upright and upside down there is no band to slide into");
+    CHECK(orient_window(1, 1000, FACE_LEAN_MAX_SIDE) == -ORIENT_WIN_MAX,
+          "a lean past the limit is clamped, not extrapolated off the glass");
+    int fx, fy;
+    orient_panel_to_frame(0, 40, 17, 29, &fx, &fy);
+    CHECK(fx == 17 && fy == 29, "portrait ignores the window");
+}
+
+/* The head turns back toward true up by a share of the angle the panel is turned. */
+static void test_the_head_rights_itself_against_the_tilt(void)
+{
+    for (int q = 0; q < 4; q++) {
+        /* Gravity this quarter's `down`, then turned 20 degrees right side down. Each quarter's
+           down axis sits at its CENTRE_DEG; right side down is the anticlockwise side of it in
+           atan2(ay, ax), the way upright's -ay is. */
+        static const float CENTRE[4] = {0.0f, 270.0f, 180.0f, 90.0f};
+        int ax, ay, tilt, down;
+        gravity_at(CENTRE[q] - 20.0f, &ax, &ay);
+        orient_axes(q, ax, ay, &tilt, &down);
+        CHECK(tilt > 0 && down > 0, "right side down reads as a positive tilt in every quarter");
+        const float u = orient_upright(tilt, down, 0.6f, 45.0f);
+        CHECK(u < -11.5f && u > -12.5f, "and turns the head back anticlockwise by 0.6 of it");
+        gravity_at(CENTRE[q] + 20.0f, &ax, &ay);
+        orient_axes(q, ax, ay, &tilt, &down);
+        CHECK(orient_upright(tilt, down, 0.6f, 45.0f) > 11.5f, "left side down, clockwise");
+        gravity_at(CENTRE[q], &ax, &ay);
+        orient_axes(q, ax, ay, &tilt, &down);
+        CHECK(fabsf(orient_upright(tilt, down, 0.6f, 45.0f)) < 0.01f, "level, nothing");
+    }
+    CHECK(orient_upright(8000, 10, 0.6f, 45.0f) > -27.01f, "clamped at the quarter's edge");
+    CHECK(orient_upright(100, -8000, 0.6f, 45.0f) < 0.0f, "and sane on a reading past flat");
+
+    /* On the drawing: the head moves toward the righting and the feet do not. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        int x0, x1, y0, y1;
+        bbox(&x0, &x1, &y0, &y1);
+        const int head_rows = y0 + (y1 - y0) / 4, feet_rows = y1 - (y1 - y0) / 4;
+        static uint16_t rest[FACE_W * FACE_H];
+        memcpy(rest, fb, sizeof(rest));
+        float cx[2];
+        for (int k = 0; k < 2; k++) {
+            st.upright = k ? 20.0f : -20.0f;
+            face_draw(fb, 0, &st);
+            double sum = 0, n = 0;
+            for (int y = y0; y < head_rows; y++) {
+                for (int x = 0; x < FACE_W; x++) {
+                    if (fb[y * FACE_W + x]) {
+                        sum += x;
+                        n++;
+                    }
+                }
+            }
+            cx[k] = (float)(sum / n);
+            CHECK(memcmp(fb + feet_rows * FACE_W, rest + feet_rows * FACE_W,
+                         (size_t)(FACE_H - feet_rows) * FACE_W * sizeof(uint16_t)) == 0,
+                  "the feet stay planted while the head rights itself");
+        }
+        CHECK(cx[1] - cx[0] > (f == FORM_ROBOT ? 8.0f : 40.0f),
+              "a clockwise righting carries the head right, anticlockwise left");
+    }
+}
+
 static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
 {
     /* The owner: "the tilt going to 90 and causing an orientation change shouldn't happen right
@@ -2777,17 +2964,14 @@ static void test_every_action_has_its_own_voice(void)
 {
     /* The sound follows the ACTION, not the tap — which is why poking the head coos without
        anything special-casing the head: the head's likeliest action is a blush. If an action
-       fell back to the generic blip, that zone would quietly go back to sounding the same. */
-    const int actions[] = {ACT_WIGGLE, ACT_GIGGLE, ACT_BOING,  ACT_BLUSH, ACT_SNEEZE,
-                           ACT_HICCUP, ACT_NOD,    ACT_JUMP,   ACT_WAVE,  ACT_DANCE,
-                           ACT_BOP,    ACT_SHIMMY, ACT_SLEEP,  ACT_HIDE,  ACT_FART,
-                           ACT_BURP,   ACT_EAT,    ACT_KICK,   ACT_SPIN};
-    const int n = (int)(sizeof(actions) / sizeof(actions[0]));
-    for (int i = 0; i < n; i++) {
-        const cue_t cue = cue_for_action(actions[i]);
+       fell back to the generic blip, that zone would quietly go back to sounding the same.
+       Walked over `ACT_COUNT` rather than listed, so an action added later is held to it too:
+       a hand-kept list stopped at ACT_SPIN while DIZZY and LOVE were added after it. */
+    for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+        const cue_t cue = cue_for_action(a);
         CHECK(cue != CUE_BLIP, "every action has a sound of its own, not the generic blip");
-        for (int j = i + 1; j < n; j++) {
-            CHECK(cue != cue_for_action(actions[j]), "and no two actions share one");
+        for (int b = a + 1; b < ACT_COUNT; b++) {
+            CHECK(cue != cue_for_action(b), "and no two actions share one");
         }
     }
     /* ACT_NONE is not an action and must not claim a voice. */
@@ -4436,6 +4620,10 @@ int main(void)
     test_a_tap_lands_where_the_pixel_it_touched_came_from();
     test_the_zones_follow_the_scaled_figure();
     test_the_lean_limits_are_the_room_that_exists();
+    test_the_square_slides_into_the_bands_with_one_mapping();
+    test_a_shake_is_several_jerks_not_one_bump();
+    test_dizzy_sits_down_and_love_shows_hearts();
+    test_the_head_rights_itself_against_the_tilt();
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();
     test_the_open_mouth_is_the_smile_opening();

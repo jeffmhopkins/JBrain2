@@ -5,11 +5,11 @@ session's workspace and bridges it to the WebSocket — keystrokes/paste in, raw
 terminal bytes out, plus a resize control message. The api proxies this to the
 owner's browser (xterm.js); this server stays internal + token-authed.
 
-Safe by construction: the sandbox is an isolated, throwaway per-session checkout
-on its own network (no host, no notes, no other services), so a shell in it — and
-the ``grok`` CLI the owner runs inside it — can do no more than that isolated
-checkout allows. The child inherits the process env (so ``grok``, git, etc.
-resolve the on-box gateway) plus a real ``TERM``.
+The shell runs as the session's own unprivileged uid (``sandbox.py``), never as the
+root control server, and inherits the server's environment minus the server's own
+settings — above all ``JCODE_TOKEN``, which would otherwise let a shell drive every
+session's control API. What it keeps (the gateway URL and key, the proxies, the grok
+pins) is what ``grok``, git and the helpers need, plus a real ``TERM``.
 """
 
 from __future__ import annotations
@@ -26,8 +26,10 @@ import struct
 import termios
 from typing import TYPE_CHECKING, Any
 
+from .sandbox import SessionUser, drop_privileges
+
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from fastapi import WebSocket
 
@@ -36,6 +38,45 @@ _log = logging.getLogger("jcode_ctl.terminal")
 # A login bash so the sandbox's profile (PATH, the agent's env) is in effect.
 _SHELL: tuple[str, ...] = ("/bin/bash", "-l")
 _READ_BYTES = 65536
+
+
+# The control server's own settings (jcode_ctl.config.Settings, JCODE_-prefixed) that no
+# shell may see. Named explicitly rather than by a JCODE_ prefix because the shell needs
+# others of that prefix (JCODE_WORKSPACE_ROOT, JCODE_GROK_*, JCODE_INTERNET_*,
+# JCODE_TOOLS_BIN); test_terminal checks every Settings field is either here or kept.
+CTL_ONLY_ENV = frozenset(
+    {
+        "JCODE_TOKEN",
+        "JCODE_HOME_ROOT",
+        "JCODE_MODEL",
+        "JCODE_MODEL_BASE_URL",
+        "JCODE_EGRESS_ALLOWLIST",
+        "JCODE_MAX_SESSIONS",
+        "JCODE_SESSION_TTL_SECONDS",
+        "JCODE_REAP_INTERVAL_SECONDS",
+        "JCODE_LOG_LEVEL",
+        "JCODE_DEBUG_ACCESS_ENABLED",
+    }
+)
+CTL_ONLY_ENV_PREFIXES = ("JCODE_PREVIEW_",)
+
+
+def child_env(
+    base: Mapping[str, str], overrides: Mapping[str, str] | None = None
+) -> dict[str, str]:
+    """The shell's environment: ``base`` (the server's) with the server-only settings
+    removed FIRST, then ``TERM`` and the per-session overrides. Matched case-blind,
+    as pydantic-settings reads them."""
+    env = {
+        k: v
+        for k, v in base.items()
+        if k.upper() not in CTL_ONLY_ENV
+        and not k.upper().startswith(CTL_ONLY_ENV_PREFIXES)
+    }
+    env.setdefault("TERM", "xterm-256color")
+    if overrides:
+        env.update(overrides)
+    return env
 
 
 def model_env(model: str, planner: str = "") -> dict[str, str]:
@@ -78,7 +119,7 @@ def home_env(home: str) -> dict[str, str]:
 
     The PATH set here is the base for non-login execs; the interactive ``bash -l``
     re-prepends these dirs via ``/etc/profile.d/jcode-path.sh``, because Debian's
-    ``/etc/profile`` resets root's PATH and would otherwise drop them. ``$HOME`` and
+    ``/etc/profile`` resets PATH and would otherwise drop them. ``$HOME`` and
     the two markers below survive that reset, which is what the snippet reads."""
     tools_bin = f"{home}/.local/bin"
     npm_bin = f"{home}/.npm-global/bin"
@@ -89,6 +130,9 @@ def home_env(home: str) -> dict[str, str]:
         "PATH": path,
         "JCODE_TOOLS_BIN": tools_bin,
         "NPM_CONFIG_PREFIX": f"{home}/.npm-global",
+        # Temp files in the session's own 0700 tree rather than the shared /tmp, where
+        # another session could see their names (and read any created world-readable).
+        "TMPDIR": f"{home}/.tmp",
     }
 
 
@@ -115,25 +159,34 @@ def spawn_shell(
     argv: tuple[str, ...] = _SHELL,
     *,
     env_overrides: dict[str, str] | None = None,
+    user: SessionUser | None = None,
 ) -> tuple[int, int]:
     """Fork ``argv`` under a new PTY in ``cwd`` and return ``(pid, master_fd)``.
 
     The child becomes its own session leader with the slave as its controlling
-    terminal (``pty.fork`` does this), chdirs into the checkout, and execs the
-    shell with the inherited env plus ``TERM`` and any ``env_overrides`` (the
-    session's model pins). The parent drives the master fd.
+    terminal (``pty.fork`` does this), chdirs into the checkout, becomes ``user`` (the
+    session's uid — every real session passes one; ``None`` is for tests that can't
+    setuid), and execs the shell with ``child_env``. The parent drives the master fd.
     """
     pid, master_fd = pty.fork()
     if pid == 0:  # child — replace ourselves with the shell  # pragma: no cover
         try:
+            # Every other session's pty master (and any socket or file the server has
+            # open) was copied into this child by fork. Kept, a session could type into
+            # another session's shell as that session's uid — so only the slave on 0-2
+            # survives, whatever its inheritable flag.
+            os.closerange(3, os.sysconf("SC_OPEN_MAX"))
+            os.umask(0o077)
             os.chdir(cwd)
-            env = dict(os.environ)
-            env.setdefault("TERM", "xterm-256color")
-            if env_overrides:
-                env.update(env_overrides)
+            env = child_env(os.environ, env_overrides)
+            if user is not None:
+                drop_privileges(user, tty_fd=0)
             os.execvpe(argv[0], list(argv), env)
         except Exception:  # exec failed — never fall back into Python in the child
             os._exit(127)
+    # Belt and braces with the child's closerange: no exec'd child of this server (git,
+    # a later shell) can inherit the master by accident either.
+    os.set_inheritable(master_fd, False)
     return pid, master_fd
 
 
@@ -234,9 +287,10 @@ class PtyTerminal:
         cwd: str,
         *,
         env_overrides: dict[str, str] | None = None,
+        user: SessionUser | None = None,
         scrollback: int = _SCROLLBACK_BYTES,
     ) -> None:
-        self.pid, self.fd = spawn_shell(cwd, env_overrides=env_overrides)
+        self.pid, self.fd = spawn_shell(cwd, env_overrides=env_overrides, user=user)
         os.set_blocking(self.fd, False)
         self._loop = asyncio.get_running_loop()
         self._limit = scrollback
@@ -338,12 +392,17 @@ class TerminalRegistry:
         return term
 
     def get_or_create(
-        self, sid: str, cwd: str, *, env_overrides: dict[str, str] | None
+        self,
+        sid: str,
+        cwd: str,
+        *,
+        env_overrides: dict[str, str] | None,
+        user: SessionUser | None = None,
     ) -> tuple[PtyTerminal, bool]:
         term = self.get(sid)
         if term is not None:
             return term, False
-        term = PtyTerminal(cwd, env_overrides=env_overrides)
+        term = PtyTerminal(cwd, env_overrides=env_overrides, user=user)
         self._terms[sid] = term
         return term, True
 
@@ -396,6 +455,7 @@ async def serve_terminal(
     internet_egress: bool = False,
     preview_port: int = 0,
     home: str = "",
+    user: SessionUser | None = None,
     on_open: Callable[[int], None] | None = None,
     on_close: Callable[[int], None] | None = None,
     on_shell_exit: Callable[[int], None] | None = None,
@@ -424,7 +484,9 @@ async def serve_terminal(
     if preview_port:
         overrides.update(preview_env(preview_port))
 
-    term, created = registry.get_or_create(sid, cwd, env_overrides=overrides or None)
+    term, created = registry.get_or_create(
+        sid, cwd, env_overrides=overrides or None, user=user
+    )
     if created:
         if on_open is not None:
             on_open(term.pid)

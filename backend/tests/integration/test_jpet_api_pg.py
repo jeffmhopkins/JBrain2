@@ -26,6 +26,7 @@ from jbrain.config import Settings
 from jbrain.main import create_app
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
+from tests.internal_callers import wall_headers
 
 pytestmark = [
     pytest.mark.integration,
@@ -114,8 +115,10 @@ async def test_pet_api_round_trip(
         # An unknown action is rejected by the request schema.
         assert client.post("/api/pet/command", json={"action": "explode"}).status_code == 422
 
-        # The internal, un-authed read the on-box wall display uses (the pet now exists).
-        internal = client.get("/internal/pet")
+        # The internal read the on-box wall display uses, on the wall's own token (the pet
+        # now exists). The owner's cookie alone does not open it.
+        assert client.get("/internal/pet").status_code == 401
+        internal = client.get("/internal/pet", headers=wall_headers(app))
         assert internal.status_code == 200
         assert set(internal.json()) == PET_FIELDS
 
@@ -124,12 +127,13 @@ async def test_internal_say_drives_the_pet_and_rate_limits(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    # The wall's voice listener posts recognised speech here (un-authed, LAN-only). A known
-    # command acts with NO LLM (the keyword router), and the path is rate-limited so an
-    # unauthenticated LAN caller can't flood the local model.
+    # The wall's voice listener posts recognised speech here (wall token, LAN-facing). A known
+    # command acts with NO LLM (the keyword router), and the path is rate-limited so a LAN
+    # client of the wall can't flood the local model.
     await service.rotate_owner_key(SqlAuthRepo(maker))
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
+        client.headers.update(wall_headers(app))
         said = client.post("/internal/pet/say", json={"text": "dance for me!"})
         assert said.status_code == 200
         assert said.json()["script"], "a recognised say should act without the LLM"
@@ -162,6 +166,7 @@ async def test_scene_swap_and_statue_effects(
     await service.rotate_owner_key(SqlAuthRepo(maker))
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
+        client.headers.update(wall_headers(app))
         # Scene swap — no LLM, and the wire carries the new scene.
         field = client.post("/internal/pet/say", json={"text": "change scene to the field"})
         assert field.status_code == 200 and field.json()["pet_scene"] == "field"

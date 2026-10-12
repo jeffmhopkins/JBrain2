@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict
 from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
+from jbrain.auth.keys import secrets_equal
 from jbrain.config import Settings
 from jbrain.gmail import GmailClientProvider, GmailError
 
@@ -218,7 +219,7 @@ async def gmail_callback(
     expected = await store.get(ctx, _STATE_KEY, "")
     await store.upsert(ctx, _STATE_KEY, "")  # single-use, cleared regardless of outcome
     settings_url = f"{_public_base(request, settings)}/settings"
-    if error or not code or not state or not expected or state != expected:
+    if error or not code or not state or not expected or not secrets_equal(state, expected):
         return RedirectResponse(f"{settings_url}?gmail=error")
     try:
         refresh_token = await get_gmail_provider(request).exchange_code(

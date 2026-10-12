@@ -13,6 +13,7 @@ import {
   type CSSProperties,
   type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -58,6 +59,7 @@ import {
   stripModelCitations,
 } from "./markdown";
 import { REREAD_MARK, REREAD_TURN, noteDomain, unframeNote } from "./noteFrame";
+import { ShareModeContext } from "./shareMode";
 import {
   type AgentStatus,
   agentStatus,
@@ -498,6 +500,7 @@ export function FullBrainSurface({
           onArchive={fb.archive}
           onUnarchive={fb.unarchive}
           onRescope={fb.rescope}
+          onSharesChanged={fb.reloadSessions}
         />
       </aside>
 
@@ -1100,6 +1103,7 @@ function Bubble({
   // EVERY proposal the turn staged, not the first: on the box a turn staged two address
   // corrections, the bubble drew one card ("1 of 1"), and the second sat unseen in
   // `staged` while the agent re-staged a duplicate of it.
+  const shared = useContext(ShareModeContext);
   const staged = [
     ...new Map(
       message.tools.flatMap((t): [string, ProposalRef][] =>
@@ -1107,8 +1111,9 @@ function Bubble({
       ),
     ).values(),
   ];
+  // A shared chat's reader can't open or enact the owner's proposals, so their cards stay off.
   const stagedAffordance =
-    staged.length > 0
+    staged.length > 0 && !shared
       ? staged.map((p) =>
           INLINE_KINDS.has(p.kind) ? (
             <InlineProposal

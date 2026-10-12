@@ -19,10 +19,10 @@ and an `is_agentic` flag on OAuth clients:
 | 2026-11-12 | The flag becomes permanent; changing it means a **new** OAuth client ID. |
 
 The notice exempts apps that use only the REST APIs, and that is how JBrain2 calls
-Gmail. So nothing breaks, and the existing client (project
-`project-b9904618-1eeb-4275-9d5`) was deliberately **left unmarked**. One result: after
-2026-11-12 that client can never call MCP. Any switch starts with a new client, which
-is fine, because the PWA can already swap credentials (see W3).
+Gmail. So nothing breaks, and the existing OAuth client was deliberately **left
+unmarked**. One result: after 2026-11-12 that client can never call MCP. Any switch
+starts with a **second**, agentic client that lives alongside the REST one; W3 gives it
+its own credential slot so the two never overwrite each other.
 
 ## Triggers — when to pick this up
 
@@ -132,11 +132,27 @@ Non-negotiable #10: the owner must be able to do the whole switch from the PWA.
   builds the matching class and rebuilds when the transport changes, like it does for
   a credential change today. Env fallback `JBRAIN_GMAIL_TRANSPORT` for parity, plus a
   pinned `gmail_mcp_url` in `config.py`.
-- Credential swap needs **no new work.** Settings already edits client ID/secret
-  (`PUT /api/settings/gmail`) and runs the OAuth Connect flow
-  (`/settings/gmail/connect` → `/callback`), so the new client is a paste-and-click.
-  `_SCOPE` in `api/gmail_settings.py` becomes transport-aware if W0 found MCP needs a
-  different scope.
+- **One credential slot per transport.** Today the settings store holds a single
+  Gmail credential set (`gmail_client_id` / `gmail_client_secret` /
+  `gmail_refresh_token` in `settings_store.py`). It is written by both
+  `PUT /api/settings/gmail` and the OAuth callback, and `GmailClientProvider.credentials()`
+  reads only that set. Connecting the agentic client there would overwrite the REST
+  client and make rollback impossible, and the two clients must stay separate anyway
+  (Google: agent and non-agent traffic on different clients). So:
+  - The existing keys **become the REST slot unchanged**, with no data migration. A new
+    `gmail_mcp_client_id` / `gmail_mcp_client_secret` / `gmail_mcp_refresh_token` set is
+    the MCP slot. The `JBRAIN_GMAIL_*` env fallback stays REST-only.
+  - `gmail_credentials()` / `set_gmail_credentials()` take a `transport` argument, and
+    `GmailClientProvider` reads the slot for the **selected** transport.
+  - `PUT /api/settings/gmail` and the Connect flow name the slot they write. The
+    single-use OAuth `state` records the slot, so the callback stores the refresh token
+    in the slot that started the flow, never the active one by default. `_SCOPE` becomes
+    per-slot if W0 found MCP needs a different scope.
+  - Settings shows both slots, each with its own Connect button and connected/not
+    status. Switching transport changes only which slot is read, never what is stored.
+  - **Rollback test (required):** connect REST, connect MCP, select MCP, select REST.
+    The REST client is rebuilt from the untouched REST credentials, and connecting MCP
+    left every REST key byte-identical.
 - **Test connection** (`POST /api/settings/gmail/test`) exercises whichever transport
   is selected and reports which one answered.
 - Settings shows the active transport, so "which path is live?" is answerable without
@@ -147,14 +163,16 @@ Non-negotiable #10: the owner must be able to do the whole switch from the PWA.
 1. Owner creates the new agentic OAuth client (Cloud console; the click-path is in
    `docs/archive/EMAIL_ARCHIVIST_PLAN.md`'s OAuth appendix, plus the agentic toggle)
    and registers the PWA callback URL as a redirect URI.
-2. In Settings: paste the new client ID/secret, **Connect Gmail**, set transport to
-   **MCP**, **Test connection**.
+2. In Settings, in the **MCP** slot: paste the new client ID/secret and **Connect**.
+   The REST slot is not touched. Then set transport to **MCP** and **Test connection**.
 3. Soak for about a week: archivist sessions plus at least one scheduled `triage_inbox`
-   run, watching the run log for `GmailError`s. Rollback is the same toggle back to
-   REST, as long as the old credentials still work.
+   run, watching the run log for `GmailError`s. **Rollback is the transport toggle back
+   to REST**, which reads the REST slot that step 2 left intact. It needs no re-Connect,
+   as long as the old client has not been deleted in the Cloud console or its refresh
+   token revoked or expired. Keep the old client until W4 step 4.
 4. **Only if the trigger was REST being shut off:** delete `GmailClient`'s REST
-   transport, the transport toggle, `gmail_api_url`, and the REST-only contract-test
-   leg, in a follow-up PR. Otherwise keep both. REST is the fallback.
+   transport, the transport toggle, the REST credential slot, `gmail_api_url`, and the
+   REST-only contract-test leg, in a follow-up PR; then delete the old OAuth client. Otherwise keep both. REST is the fallback.
 
 Docs travel with each wave: `docs/reference/ASSISTANT.md` (archivist tools),
 `docs/runbooks/` for the owner click-path, and this doc promoted out of `proposed/`

@@ -47,7 +47,7 @@ h2 { font-family: var(--font-display); font-weight: 600; font-size: 13px; text-t
 
 /* The case: 1.8" AMOLED, 368x448, corners hidden by the enclosure (FACE_CASE_CORNER_R = 48). */
 .unit { display: grid; justify-items: center; gap: 10px; }
-.case { background: var(--case); padding: 22px; border-radius: 64px; box-shadow: 0 10px 30px rgba(0,0,0,.25); max-width: 100%; }
+.case { background: var(--case); padding: 22px; border-radius: 64px; box-shadow: 0 10px 30px rgba(0,0,0,.25); max-width: 100%; transition: transform .25s ease-out; }
 .glass { position: relative; width: 368px; max-width: calc(100vw - 32px - 44px); aspect-ratio: 368 / 448; border-radius: 48px; overflow: hidden; background: #000; touch-action: none; cursor: pointer; }
 .glass canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
 .glass.dim canvas#fb { filter: brightness(.45); }
@@ -66,6 +66,7 @@ button.hold[aria-pressed="true"], button.on { background: var(--red); border-col
 button.seg[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
 label { display: flex; gap: 8px; align-items: center; justify-content: space-between; color: var(--muted); font-size: 13px; }
 select, input[type="number"] { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-width: 0; }
+input[type="range"] { flex: 1; min-width: 0; accent-color: var(--ink); }
 input[type="number"] { width: 84px; font-family: var(--font-mono); font-size: 12px; }
 .note { font-size: 12px; color: var(--muted); margin: 0; }
 
@@ -143,6 +144,7 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
           <button id="v-stop">“Stop”</button>
           <button id="v-sister">“Tell my sister”</button>
           <button id="v-dad">“Tell Dad”</button>
+          <button id="v-love">“I love you”</button>
         </div>
         <label>When the microphone opens
           <select id="autotalk"><option value="2500" selected>she talks for 2.5 s</option><option value="6000">she talks for 6 s</option><option value="0">she says nothing</option></select>
@@ -171,8 +173,11 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
         <div class="row">
           <button id="sound">Sound on</button>
           <button id="show-targets" aria-pressed="false">Show touch targets</button>
+          <button id="shake">Shake the panel</button>
         </div>
+        <label>Tilt the panel <input type="range" id="tilt" min="-40" max="40" step="1" value="0"> <output id="tilt-out">0°</output></label>
         <div class="legend" id="legend" hidden></div>
+        <p class="note">Tilt turns the panel right side down: he slides downhill and his head rights itself toward true up. Upright only; on its side the square also slides into the glass's side bands, which the bench does not show.</p>
         <p class="note">10× skips the waits: the notice shrinks to a badge after 15 s, and the again/reply pair stands after 10 s.</p>
       </div>
     </div>
@@ -263,9 +268,17 @@ $('sound').onclick = () => {
 const glass = $('glass');
 const fb = $('fb').getContext('2d');
 const img = fb.createImageData(panel.W, panel.H);
+let tiltDeg = 0, tiltScale = 1;
+// The case is turned (and shrunk to keep its turned outline in its own box) by the tilt slider,
+// so a press is turned back about the glass's centre, which neither moves, before it is scaled
+// to panel pixels.
 function toPanel(ev) {
   const r = glass.getBoundingClientRect();
-  return [Math.round((ev.clientX - r.left) * panel.W / r.width), Math.round((ev.clientY - r.top) * panel.H / r.height)];
+  const dx = ev.clientX - (r.left + r.width / 2), dy = ev.clientY - (r.top + r.height / 2);
+  const a = -tiltDeg * Math.PI / 180, w = glass.offsetWidth, h = glass.offsetHeight;
+  const lx = (dx * Math.cos(a) - dy * Math.sin(a)) / tiltScale;
+  const ly = (dx * Math.sin(a) + dy * Math.cos(a)) / tiltScale;
+  return [Math.round((lx + w / 2) * panel.W / w), Math.round((ly + h / 2) * panel.H / h)];
 }
 let down = false;
 glass.addEventListener('pointerdown', (ev) => {
@@ -320,10 +333,25 @@ $('speech-ok').onchange = (e) => panel.set(KNOB.SPEECH_OK, e.target.checked ? 1 
 $('talk-outcome').onchange = (e) => panel.set(KNOB.TALK_OUTCOME, Number(e.target.value));
 $('autotalk').onchange = (e) => panel.set(KNOB.AUTOTALK_MS, Number(e.target.value));
 $('talk-ms').onchange = (e) => panel.set(KNOB.TALK_MS, Number(e.target.value));
+$('tilt').oninput = (e) => {
+  tiltDeg = Number(e.target.value);
+  $('tilt-out').textContent = `${tiltDeg}°`;
+  const box = document.querySelector('.case'), w = box.offsetWidth, h = box.offsetHeight;
+  const c = Math.abs(Math.cos(tiltDeg * Math.PI / 180)), sn = Math.abs(Math.sin(tiltDeg * Math.PI / 180));
+  tiltScale = Math.min(w / (w * c + h * sn), h / (w * sn + h * c));
+  box.style.transform = `rotate(${tiltDeg}deg) scale(${tiltScale})`;
+  panel.set(KNOB.TILT_DEG, tiltDeg);
+};
 $('v-wake').onclick = () => panel.voice(VOICE.WAKE);
 $('v-stop').onclick = () => panel.voice(VOICE.STOP);
 $('v-sister').onclick = () => panel.voice(VOICE.SEND_SISTER);
 $('v-dad').onclick = () => panel.voice(VOICE.SEND_DAD);
+$('v-love').onclick = () => panel.set(KNOB.PET_ACT, 2);
+$('shake').onclick = () => {
+  const box = document.querySelector('.case');
+  box.animate([{ translate: '0 0' }, { translate: '-14px 0' }, { translate: '14px 0' }, { translate: '-10px 0' }, { translate: '10px 0' }, { translate: '0 0' }], { duration: 450 });
+  panel.set(KNOB.PET_ACT, 1);
+};
 $('boot-short').onclick = () => panel.button(false);
 $('boot-hold').onclick = () => panel.button(true);
 const talking = $('talking');

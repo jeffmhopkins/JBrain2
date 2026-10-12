@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mocks = resolve(here, '../../docs/mocks/jpanel-s3');
-const { createPanel, VOICE } = await import(resolve(mocks, 'panel.js'));
+const { createPanel, VOICE, KNOB } = await import(resolve(mocks, 'panel.js'));
 const wasm = readFileSync(process.argv[2] || resolve(mocks, 'sim.wasm'));
 
 const events = [];
@@ -67,6 +67,22 @@ tap(W / 4, H / 4); // the sister's cell
 check(until(() => p.state().mode === 'RECORD', 2000), 'the sister cell opens a recording');
 check(until(() => events.slice(sent).some((e) => / say nobody to send to/.test(e)), 20000),
   'and a 409 comes back as NOBODY, not as a failed send');
+
+// The tilt slider: he leans and rights his head, and nothing else moves.
+p.set(KNOB.TILT_DEG, 25);
+p.advance(1000);
+p.set(KNOB.TILT_DEG, -25);
+p.advance(1000);
+p.set(KNOB.TILT_DEG, 0);
+
+// Shaken, then told it is loved: each starts its action and sounds its cue.
+const pets = events.length;
+p.set(KNOB.PET_ACT, 1);
+p.advance(3400);
+p.set(KNOB.PET_ACT, 2);
+p.advance(3000);
+check(events.slice(pets).some((e) => e.includes('cue DIZZY')), 'a shake makes him dizzy, and says so');
+check(events.slice(pets).some((e) => e.includes('cue LOVE')), '"I love you" makes him coo');
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);

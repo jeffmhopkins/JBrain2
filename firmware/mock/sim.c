@@ -10,7 +10,8 @@
  * WHAT IS NOT THE FIRMWARE, and so is where the mock can lie: this file's frame (the input
  * sampling and the executor are copies of `display.c`'s, not calls into it), the talk turn (a timer
  * standing in for `talk.c`'s request), the recogniser (the page's buttons stand in for the
- * phrases and the VAD), and the screen's dim/dark stages. Orientation, calibration, the maintenance
+ * phrases and the VAD), the screen's dim/dark stages, and the accelerometer (a tilt slider, upright
+ * only — the lean and the head's righting, not the quarter turns). Calibration, the maintenance
  * gestures, voice actions and colours are not modelled at all.
  *
  * TIME IS THE SCRIPTED BOX'S CLOCK. Everything — the engine's waits, the box's latency, the
@@ -39,6 +40,7 @@ static int16_t mock_voice(bool dad, uint32_t i);
 #include "emotion.h"
 #include "face.h"
 #include "font.h"
+#include "orient.h"
 #include "overlay.h"
 #include "panel_sm.h"
 #include "rig.h"
@@ -108,6 +110,13 @@ static action_t r_action;
 static uint32_t r_action_at;
 static float r_flinch;
 static int r_frame;
+/* The page's tilt slider, in degrees right-side down. Upright only: the bench does not turn. */
+static int r_tilt_deg;
+/* The page's Shake and "I love you" buttons: the action `display.c` starts for a shake and for
+   the phrase, taken on the next frame. */
+static action_t r_pending_act;
+static int r_lean;
+static float r_upright;
 static caption_t r_cap;
 static sm_mode_t r_mode_was;
 static int r_log_seen;
@@ -434,6 +443,19 @@ static void frame(void)
         r_action = ACT_NOD;
         r_action_at = now;
     }
+    if (r_pending_act != ACT_NONE) {
+        r_action = r_pending_act;
+        r_action_at = now;
+        r_pending_act = ACT_NONE;
+        /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
+           is a voice command, and those are deaf while a message plays. */
+        if (s_sm.mode == SM_PET && !facts.speaker_busy) {
+            const cue_t c = cue_for_action((int)r_action);
+            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+            say("cue", "%s (press slot)", cue_name(c));
+        }
+        say("pet", "%s", r_action == ACT_DIZZY ? "shaken: dizzy" : "heard \"i love you\"");
+    }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
 
     /* The screen's stages, simplified: standby is pinned dark, anything else dims and darkens on
@@ -484,7 +506,25 @@ static void frame(void)
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
     rig_for(r_action, p, 1.0f, now, &r_fst.rig);
-    rig_walk(&r_walk, 0.0f, &r_fst.rig);
+    /* `display.c`'s `update_orientation`, upright: the lean and the head's righting from a
+       panel turned `r_tilt_deg`, as the accelerometer (one g = 8192) would report it. The
+       lean's arithmetic is copied; the axes and the righting are `orient.c`'s own. */
+    {
+        const float a = (float)r_tilt_deg * (float)M_PI / 180.0f;
+        int tilt = 0, down = 0;
+        orient_axes(0, (int)lrintf(cosf(a) * 8192.0f), (int)lrintf(-sinf(a) * 8192.0f), &tilt,
+                    &down);
+        int target = tilt * FACE_LEAN_MAX / 2400;
+        if (target > FACE_LEAN_MAX) target = FACE_LEAN_MAX;
+        if (target < -FACE_LEAN_MAX) target = -FACE_LEAN_MAX;
+        const int was = r_lean;
+        r_lean += (target - r_lean) / 4;
+        const float up = orient_upright(tilt, down, ORIENT_UPRIGHT_SHARE, ORIENT_UPRIGHT_MAX_DEG);
+        r_upright += (up - r_upright) / 4.0f;
+        rig_walk(&r_walk, (float)(r_lean - was), &r_fst.rig);
+        r_fst.lean = r_lean;
+        r_fst.upright = r_upright;
+    }
     rig_figure(r_action, p, 1.0f, now, r_fst.eyes.face_ang, &r_fst.fig);
     r_fst.bob = bob_step(r_frame++);
     const uint32_t blink = now % 4200;
@@ -616,6 +656,8 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 7: p_talk_ms = (uint32_t)value; break;
     case 8: g_mode = value ? BOX_NEW : BOX_TODAY; break;
     case 9: p_autotalk_ms = (uint32_t)value; break;
+    case 10: r_tilt_deg = value; break; /* the panel tilted, degrees right-side down */
+    case 11: r_pending_act = value == 1 ? ACT_DIZZY : value == 2 ? ACT_LOVE : ACT_NONE; break;
     }
 }
 

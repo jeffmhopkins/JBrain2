@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.4, §15) W1◻️ W2◻️ W3◻️ P1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.7, §15) W1◻️ W2◻️ W3◻️ P1◻️
 >
 > **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
 > until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs
@@ -2522,6 +2522,15 @@ in flight. Two faults the owner saw within the hour:
 - *The animation was choppy.* With the socket off, every request was a fresh TLS handshake, and
   the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
   requests, turned on only after speech has started (`firmware/README.md`).
+
+**0.4.7, two animations the owner asked for.** Shaking the panel makes the pet sit down dazed
+with stars round his head, and `i love you` / `love you` brings hearts and a double coo
+(`firmware/README.md`).
+
+**0.4.6, from the owner holding the panel on its side.** The pet slides to the glass's edge
+(the 368 square follows the lean into the 40 px bands either side) and its head rights itself
+toward true up while the body leans, at 0.6 of the tilt (`firmware/README.md`). The bench has a
+tilt slider.
 
 **0.4.4, a cheaper frame.** On 0.4.3 Lydian's panel drew 13.5 frames a second at 68 ms of work each,
 untouched. The idle redraw was every frame counting the state machine's per-frame

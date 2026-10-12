@@ -32,6 +32,22 @@ def test_caddy_imports_the_preview_site_and_404s_the_prefix_on_the_app() -> None
     assert "handle /__jcode_preview* {" in caddyfile
 
 
+def test_app_sites_refuse_the_jcode_gateway_bridge() -> None:
+    # /api/jcode/llm/* is the jcode container's own bridge (it calls http://api:8000
+    # directly); its key is readable by every session, so the public and LAN sites must
+    # 404 it rather than proxy it to the api.
+    caddyfile = _CADDYFILE.read_text()
+    start = caddyfile.index("(app) {")
+    app = caddyfile[start : caddyfile.index("\n}\n", start)]
+    block = app[app.index("handle /api/jcode/llm* {") :]
+    assert block.split("}", 1)[0].split("{", 1)[1].strip() == "respond 404"
+    # The rest of /api/* is still proxied by the same snippet.
+    assert "handle /api/* {" in app
+    # Every app site imports the snippet, so the refusal covers them all.
+    assert "import app" in caddyfile
+    assert "import app" in (_DEPLOY / "proxy-lan-conf.sh").read_text()
+
+
 def test_proxy_image_renders_the_preview_site() -> None:
     dockerfile = _DOCKERFILE.read_text()
     assert "proxy-preview-conf.sh" in dockerfile

@@ -8,6 +8,15 @@ def test_owner_key_shape() -> None:
     assert len(keys.normalize_key(key)) == 52
 
 
+def test_secrets_equal_is_bytes_safe() -> None:
+    assert keys.secrets_equal("abc", "abc")
+    assert not keys.secrets_equal("abc", "abd")
+    assert not keys.secrets_equal("", "abc")
+    # hmac.compare_digest raises TypeError on a non-ASCII str; this must just say no.
+    assert not keys.secrets_equal("äbc", "abc")
+    assert keys.secrets_equal("äbc", "äbc")
+
+
 def test_keys_are_unique() -> None:
     assert keys.generate_owner_key() != keys.generate_owner_key()
 

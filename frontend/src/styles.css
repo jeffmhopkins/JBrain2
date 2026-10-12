@@ -34372,3 +34372,314 @@ span.mc-map-world {
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
+
+/* ---- Chat share links (docs/mocks/chat-share, variant B) ---------------------------------
+   The rail's fifth action, the owner's share sheet, and the shell-less public page. Steel is
+   links; the firewall warning is the amber warning tone. */
+.fb-shell .session-rail.rail-5 .rail-btn {
+  width: calc(48px * var(--font-scale));
+}
+.fb-shell .rail-share {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+.fb-shell .r-shared {
+  display: inline-flex;
+  align-items: center;
+  color: var(--steel-text);
+}
+
+.cshare {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 2px 4px;
+}
+.cshare-chat {
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  margin: 0 0 8px;
+}
+.cshare-sub {
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+  margin: 0 0 12px;
+}
+.cshare-warn {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  background: var(--amber-tint);
+  color: var(--warn-text);
+  border-radius: 11px;
+  padding: 10px 12px;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  margin-bottom: 12px;
+}
+.cshare-warn > svg {
+  flex: none;
+  margin-top: 1px;
+}
+.cshare-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 0 5px 0 12px;
+  min-height: 46px;
+  margin-bottom: 8px;
+}
+.cshare-url {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+.cshare-copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  border: none;
+  background: var(--steel-tint);
+  color: var(--steel-text);
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  border-radius: 9px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+.cshare-send,
+.cshare-mint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  border-radius: var(--r-input);
+  padding: 0 12px;
+  cursor: pointer;
+}
+.cshare-mint {
+  background: var(--steel-tint);
+  border-color: transparent;
+  color: var(--steel-text);
+}
+.cshare-mint:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.cshare-mint-armed {
+  background: var(--amber-tint);
+  border-color: var(--amber);
+  color: var(--warn-text);
+}
+.cshare-once {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  margin: 6px 0 4px;
+}
+.cshare-list {
+  margin-top: 14px;
+}
+.cshare-list-h {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 4px;
+}
+.cshare-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 2px;
+  border-top: 1px solid var(--border);
+  color: var(--text-3);
+}
+.cshare-row > svg {
+  flex: none;
+}
+.cshare-usage {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+.cshare-revoke {
+  flex: none;
+  min-height: 32px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--danger-text);
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  border-radius: var(--r-pill);
+  padding: 0 12px;
+  cursor: pointer;
+}
+.cshare-status {
+  min-height: 1.4em;
+  margin: 8px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+}
+
+/* The public page scrolls as one document: the band, the transcript at its full height (its
+   own scroll box unpinned), then the footer. */
+.cs-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+.cs-band {
+  background: var(--steel-tint);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 18px 13px;
+  padding-top: calc(14px + env(safe-area-inset-top, 0px));
+}
+.cs-kick {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--steel-text);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.cs-title {
+  font-size: var(--fs-screen);
+  font-weight: 600;
+  margin: 8px 0 0;
+  text-wrap: balance;
+}
+.cs-who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-top: 5px;
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+}
+.cs-mode {
+  color: var(--warn-text);
+}
+.cs-reload {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.cs-shell.fb-shell {
+  flex: none;
+  overflow: visible;
+}
+.cs-shell .fb-chat {
+  overflow: visible;
+  padding-top: 14px;
+}
+/* A settled chat has no live status; the composer-side status line has nothing to say here. */
+.cs-shell .fb-status {
+  display: none;
+}
+.cs-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 8px 14px calc(22px + env(safe-area-inset-bottom, 0px));
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  line-height: 1.5;
+}
+.cs-foot > svg {
+  flex: none;
+  margin-top: 1px;
+}
+.cs-wordmark {
+  color: var(--text-2);
+  font-weight: 700;
+}
+.cs-wordmark span {
+  color: var(--steel);
+}
+.cs-empty {
+  color: var(--text-3);
+  text-align: center;
+  padding: 60px 20px;
+  font-size: var(--fs-secondary);
+}
+.cs-gone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 24px;
+  text-align: center;
+}
+.cs-gone-disc {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cs-gone-ttl {
+  font-size: var(--fs-title);
+  font-weight: 600;
+  margin: 0;
+}
+.cs-gone-sub {
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  line-height: 1.5;
+  max-width: 280px;
+  margin: 0;
+}
+
+/* A tool view whose media or live state is owner-only, on a shared chat. */
+.tool-view .tv-withheld {
+  margin: 0;
+  padding: calc(12px * var(--font-scale)) calc(14px * var(--font-scale));
+  border: 1px dashed var(--border);
+  border-radius: var(--r-input);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}

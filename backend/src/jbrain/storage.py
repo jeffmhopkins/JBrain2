@@ -6,8 +6,11 @@ can move to S3/MinIO without touching callers.
 """
 
 import asyncio
+import contextlib
 import hashlib
+import os
 import re
+import secrets
 import shutil
 import time
 import uuid
@@ -220,3 +223,77 @@ class FsBackupShelf:
                 await asyncio.to_thread(fh.write, chunk)
         tmp.rename(target)
         return name
+
+
+# A caller name becomes a file name in a directory other containers mount; keep it to a
+# shape that cannot name anything but a sibling token file.
+_SECRET_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+
+
+class InternalSecrets(Protocol):
+    """The per-caller bearers for `/internal/*`, one file per caller.
+
+    The api is the only writer; the callers (the wall, mosquitto) mount the directory
+    read-only and present their own file's contents. See api/internal_auth.py.
+    """
+
+    def ensure(self, name: str) -> None:
+        """Mint `name`'s token if it has none; an existing token is kept."""
+        ...
+
+    def read(self, name: str) -> bytes | None:
+        """The token, or None while it does not exist (yet) or cannot be read."""
+        ...
+
+
+class FsInternalSecrets:
+    def __init__(self, root: str | Path):
+        self._root = Path(root)
+        # A token never changes while this process lives (only this api writes them, and
+        # never rewrites one), so the first successful read is cached. A miss is NOT
+        # cached: the file may appear after start-up and must then be honoured.
+        self._cache: dict[str, bytes] = {}
+
+    def _path(self, name: str) -> Path:
+        if not _SECRET_NAME_RE.fullmatch(name):
+            raise ValueError(f"not an internal caller name: {name!r}")
+        return self._root / f"{name}.token"
+
+    def ensure(self, name: str) -> None:
+        target = self._path(name)
+        if target.exists():
+            return
+        token = secrets.token_hex(32).encode()
+        # The token is written whole into a private O_EXCL temp file, then hard-linked into
+        # place. link() refuses an existing name, so two api processes racing on a fresh
+        # volume both finish with ONE token and neither overwrites the other's (a rename
+        # would let the loser replace a token a caller may already have read), and no
+        # reader ever sees a created-but-still-empty file.
+        tmp = self._root / f".{name}.{secrets.token_hex(8)}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            os.fchmod(fd, 0o600)  # the umask can only narrow it, but say it outright
+            os.write(fd, token)
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            # Another process won the race: its token stands.
+            with contextlib.suppress(FileExistsError):
+                os.link(tmp, target)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            tmp.unlink(missing_ok=True)
+
+    def read(self, name: str) -> bytes | None:
+        cached = self._cache.get(name)
+        if cached is not None:
+            return cached
+        try:
+            data = self._path(name).read_bytes().strip()
+        except OSError:
+            return None
+        if not data:
+            return None
+        self._cache[name] = data
+        return data

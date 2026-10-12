@@ -37,7 +37,10 @@ fetch that resolved to a private/loopback/link-local/reserved address would be a
 read primitive into the box's own services (and the cloud metadata endpoint). We
 resolve the host first and refuse any such target, disable automatic redirects,
 and re-validate every redirect hop's host the same way — so an allowlisted public
-host cannot 30x its way to `db:5432` or `169.254.169.254`. The body is read as a
+host cannot 30x its way to `db:5432` or `169.254.169.254`. The check alone is not the
+guarantee — a name can answer public to it and private to the connect (DNS rebinding) — so
+every direct client dials through `netguard`'s pinned transport, which re-resolves, refuses
+any non-public answer and connects to the address it validated. The body is read as a
 bounded stream, so an oversized response cannot be buffered whole into memory.
 """
 
@@ -54,11 +57,13 @@ from dataclasses import dataclass, replace
 from typing import cast
 from urllib.parse import urldefrag, urljoin, urlparse
 
+import httpcore
 import httpx
 import structlog
 from cachetools import TTLCache
 
 from jbrain.htmltext import extract_page
+from jbrain.web.netguard import is_public_ip, pinned_transport
 from jbrain.web.structured import embedded_data, gatsby_lines, gatsby_page_data_url, is_gatsby
 from jbrain.web.tavily_health import TavilyHealth
 
@@ -878,6 +883,8 @@ class WebFetcher:
         *,
         reader_url: str = "",
         solver_url: str = "",
+        solver_proxy_url: str = "",
+        reader_proxy_url: str = "",
         solver_first_domains: Sequence[str] = (),
         tavily_url: str = "",
         tavily_extract_depth: str = "advanced",
@@ -887,8 +894,12 @@ class WebFetcher:
         tavily_cache_ttl_s: float = _TAVILY_CACHE_TTL_S,
         clock: Callable[[], float] = time.monotonic,
         tavily_health: TavilyHealth | None = None,
+        network_backend: httpcore.AsyncNetworkBackend | None = None,
     ):
         self._transport = transport
+        # The socket layer under the pinned direct-fetch transport (`netguard`); None is the
+        # real one. A test injects a fake to stage DNS rebinding with no network.
+        self._network_backend = network_backend
         # Shared with web_search's Tavily leg: a spent quota or rejected key observed here is
         # the same owner-visible state, and a cooldown skips a call that would fail anyway.
         self._tavily_health = tavily_health
@@ -896,6 +907,8 @@ class WebFetcher:
         # A pinned bot-challenge solver (Byparr / FlareSolverr-compatible) the fetch escalates
         # to when the reader itself returns a challenge interstitial. Empty = tier disabled.
         self._solver_url = solver_url.rstrip("/")
+        self._solver_proxy_url = solver_proxy_url
+        self._reader_proxy_url = reader_proxy_url
         # Domains whose fetches go straight to the solver, skipping the direct+reader legs that
         # only fail on them (a hard bot-wall that 401s the fetch and 429s the reader). Lowercased
         # for a case-insensitive host suffix match.
@@ -926,6 +939,13 @@ class WebFetcher:
             if tavily_cache_ttl_s > 0
             else None
         )
+
+    def _direct_transport(self) -> httpx.AsyncBaseTransport:
+        """A fresh transport for a direct fetch of a model-supplied URL: one that dials only the
+        public address it validated, so DNS rebinding between the host check and the connect
+        cannot land on a private one. The reader/solver/Tavily legs do not use it — their
+        endpoints are pinned, and the reader and solver are on-box by design."""
+        return pinned_transport(self._transport, inner=self._network_backend)
 
     def _prefers_solver(self, url: str) -> bool:
         """Whether `url`'s host is (or is a subdomain of) a configured solver-first domain — so a
@@ -1245,7 +1265,7 @@ class WebFetcher:
         not image bytes)."""
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT, transport=self._direct_transport(), follow_redirects=False
             ) as client:
                 resp = await self._get_following_safe_redirects(client, url)
                 content_type = resp.headers.get("content-type", "")
@@ -1261,7 +1281,7 @@ class WebFetcher:
     ) -> FetchResult:
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT, transport=self._direct_transport(), follow_redirects=False
             ) as client:
                 resp = await self._get_following_safe_redirects(client, url)
                 content_type = resp.headers.get("content-type", "")
@@ -1353,7 +1373,7 @@ class WebFetcher:
         if page_data is not None:
             try:
                 async with httpx.AsyncClient(
-                    timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                    timeout=_TIMEOUT, transport=self._direct_transport(), follow_redirects=False
                 ) as client:
                     resp = await self._get_following_safe_redirects(client, page_data)
                     body, _ = await _read_capped(resp)
@@ -1395,7 +1415,7 @@ class WebFetcher:
         }
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT, transport=self._direct_transport(), follow_redirects=False
             ) as client:
                 resp = await self._send_following_safe_redirects(
                     client, "POST", url, headers=headers, content=payload
@@ -1451,7 +1471,7 @@ class WebFetcher:
         }
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT, transport=self._direct_transport(), follow_redirects=False
             ) as client:
                 resp = await self._send_following_safe_redirects(
                     client, "GET", url, headers=headers
@@ -1494,7 +1514,7 @@ class WebFetcher:
             content = payload
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT, transport=self._direct_transport(), follow_redirects=False
             ) as client:
                 resp = await self._send_following_safe_redirects(
                     client, method, url, headers=headers, content=content
@@ -1531,7 +1551,7 @@ class WebFetcher:
         get-then-submit, minus the JS) — DYNAMIC_PORTAL_FETCH_PLAN.md P2."""
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT, transport=self._direct_transport(), follow_redirects=False
             ) as client:
                 get_resp = await self._send_following_safe_redirects(
                     client, "GET", page_url, headers=BROWSER_HEADERS
@@ -1586,9 +1606,12 @@ class WebFetcher:
             async with httpx.AsyncClient(
                 timeout=_TIMEOUT, transport=self._transport, follow_redirects=True
             ) as client:
-                resp = await client.get(
-                    target, headers={**BROWSER_HEADERS, "X-Respond-With": "markdown"}
-                )
+                headers = {**BROWSER_HEADERS, "X-Respond-With": "markdown"}
+                if self._reader_proxy_url:
+                    # The reader's network has no gateway; this is its per-request proxy knob,
+                    # beside the proxy env compose gives its Chromium.
+                    headers["X-Proxy-Url"] = self._reader_proxy_url
+                resp = await client.get(target, headers=headers)
                 resp.raise_for_status()
                 raw, body_truncated = await _read_capped(resp)
                 text = raw.decode(
@@ -1646,10 +1669,21 @@ class WebFetcher:
         if not self._solver_url:
             return None, _SolverOutcome.UNCONFIGURED
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
-        payload = {"cmd": "request.get", "url": url, "maxTimeout": _SOLVER_MAX_TIMEOUT_MS}
+        payload: dict[str, object] = {
+            "cmd": "request.get",
+            "url": url,
+            "maxTimeout": _SOLVER_MAX_TIMEOUT_MS,
+        }
+        headers: dict[str, str] = {}
+        if self._solver_proxy_url:
+            # byparr's network has no gateway: its browser reaches the page through squid or not
+            # at all. Byparr reads a per-request proxy from `X-Proxy-Server` (its request model
+            # drops a body `proxy`); FlareSolverr proper reads the body field, so send both.
+            headers["X-Proxy-Server"] = self._solver_proxy_url
+            payload["proxy"] = {"url": self._solver_proxy_url}
         try:
             async with httpx.AsyncClient(timeout=_SOLVER_TIMEOUT, transport=self._transport) as c:
-                resp = await c.post(f"{self._solver_url}/v1", json=payload)
+                resp = await c.post(f"{self._solver_url}/v1", json=payload, headers=headers)
                 resp.raise_for_status()
                 body = resp.json()
             solution = body.get("solution") if isinstance(body, dict) else None
@@ -1881,21 +1915,7 @@ def guard_public_host(url: str, *, skip_dns: bool = False) -> None:
             raise WebFetchError("that URL points at a non-public address")
 
 
-def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """Whether an address is a routable public one — the SSRF allow-condition. Maps
-    an IPv4-mapped IPv6 address (::ffff:10.0.0.1) back to its v4 form first so a
-    private target can't hide behind the v6 representation."""
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        ip = mapped
-    return not (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    )
+_is_public = is_public_ip
 
 
 async def _read_capped(resp: httpx.Response, *, max_bytes: int = _MAX_BYTES) -> tuple[bytes, bool]:

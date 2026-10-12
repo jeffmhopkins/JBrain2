@@ -71,6 +71,11 @@ typedef struct {
     face_form_t form; /* which body; the rest of this struct means the same thing for both */
     int bob;        /* vertical offset, px — see the note below; never constant */
     int lean;       /* horizontal offset, px: he slides downhill as the panel tilts */
+    /* Degrees the HEAD turns back toward true up while the panel is tilted, + = clockwise on
+       the glass. The body slides downhill (`lean`); the head rights itself, as a bird's does
+       on a slope. The owner: *"when we angled the head can kind of self-align to point up a
+       little more."* `display.c` sets it from the accelerometer, partial and eased. */
+    float upright;
     float open;     /* eyelids: 1 fully open, 0 shut. Blink, not emotion. */
     float startle;  /* 0 calm, 1 wide-eyed. The poke recoil, on top of whatever face is worn. */
     /* 0 shut, 1 fully open — the mouth while the pet is SPEAKING. The owner: "we should make

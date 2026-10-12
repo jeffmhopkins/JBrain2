@@ -19,7 +19,7 @@ from dataclasses import replace
 import httpx
 import pytest
 
-from jbrain.llm import gpu_guard, local_catalog, local_gateway
+from jbrain.llm import gpu_guard, local_catalog, local_gateway, local_weights
 from jbrain.llm.local_gateway import STATE_READY, LocalGatewayClient
 
 _SRC = pathlib.Path(__file__).resolve().parents[2] / "src" / "jbrain"
@@ -1015,3 +1015,137 @@ def test_every_reservation_ledger_in_src_decides_rather_than_shadows() -> None:
                     bad.append((path.name, node.lineno))
     assert found, "no ReservationLedger constructions found in src/ — did the name change?"
     assert not bad, f"constructions not explicitly shadow=False: {bad}"
+
+
+# --- admission relief: stale page cache must not strand a load (2026-10-12) ---------------
+
+
+def _running_transport(resident: list[str] | None) -> httpx.MockTransport:
+    """`_transport` with an explicit `/running`: `resident` names, or None for a read that
+    fails, so the relief's dependence on knowing the resident set is visible."""
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/running":
+            if resident is None:
+                return httpx.Response(503)
+            return httpx.Response(200, json={"running": [{"model": m} for m in resident]})
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
+
+    return httpx.MockTransport(handler)
+
+
+class _CachedHost:
+    """`/proc/meminfo` as the guard reads it, with `stale_gb` of page cache counted as used
+    until a weights or slot-file drop releases it — the 2026-10-12 box in miniature."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *, stale_gb: float, frees: bool) -> None:
+        self.stale_gb = stale_gb
+        self.dropped: list[str] = []
+        self._frees = frees
+        monkeypatch.setattr(
+            "jbrain.llm.gpu_guard.read_memory_gb", lambda path="/proc/meminfo": self.reading()
+        )
+        monkeypatch.setattr(local_weights, "drop_weights_page_cache", self._drop("weights"))
+        monkeypatch.setattr(local_weights, "drop_kvslot_page_cache", self._drop("slots"))
+        monkeypatch.setattr(
+            local_weights, "drop_weights_page_cache_except_mapped", self._drop("keep-mapped")
+        )
+
+    def reading(self) -> tuple[float, float]:
+        return 124.0, 2.0 + self.stale_gb
+
+    def _drop(self, kind: str) -> Callable[[str, str], float | None]:
+        def drop(_dir: str, model_id: str) -> float | None:
+            self.dropped.append(f"{model_id}:{kind}")
+            if self._frees:
+                self.stale_gb = 0.0
+            return None  # cachestat is blocked in the api container: unmeasured, as live
+
+        return drop
+
+
+@pytest.mark.anyio
+async def test_a_load_refused_only_by_stale_page_cache_drops_it_and_loads(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """MEASURED 2026-10-12: Flash-Next unloaded, then every reload for nine minutes was refused
+    "needs ~87.9 GB but only 86.3 GB is safely available — bound by the host limit (GTT
+    0.1/124.0 GB used ...)" with ~20.6 GiB in `Cached`. Nothing was loaded; the cache was
+    residue, counted as used, and only a global `drop_caches` (an owner-run Update) cleared it.
+    The pre-flight now drops non-resident models' cache, re-reads host memory, then decides."""
+    model = local_catalog.get("gpt-oss-120b")
+    assert model is not None
+    projected = local_catalog.load_footprint_gb(model)
+    # Free pages 1.6 GB short of the projection plus the floor, as on the box.
+    host = _CachedHost(monkeypatch, stale_gb=124.0 - 2.0 - projected - 6.0 + 1.6, frees=True)
+    gateway = LocalGatewayClient(
+        "http://gw",
+        transport=_running_transport([]),
+        gpu_probe=_StubProbe(_mem(0.1)),
+        models_dir=str(tmp_path),
+    )
+    await gateway.load(model.served_model)
+    assert f"{model.id}:weights" in host.dropped  # its own residue, before admission
+    assert f"{model.id}:slots" in host.dropped
+    assert "qwen3.8-flash-next:weights" in host.dropped  # a departed model's whole file too
+    assert host.stale_gb == 0.0
+
+
+@pytest.mark.anyio
+async def test_the_admission_relief_spares_every_resident_model(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resident model's cache may be its working set (Flash-Next serves its engram from it),
+    so the pre-admission sweep leaves it alone — only what nothing is serving goes."""
+    resident = local_catalog.get("qwen3.8-flash-next")
+    assert resident is not None
+    host = _CachedHost(monkeypatch, stale_gb=100.0, frees=False)
+    gateway = LocalGatewayClient(
+        "http://gw",
+        transport=_running_transport([resident.served_model]),
+        gpu_probe=_StubProbe(_mem(0.1)),
+        models_dir=str(tmp_path),
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError, match="bound by the host limit"):
+        await gateway.load("gpt-oss-120b")
+    assert host.dropped, "the refusal ran without trying the drop"
+    # Its first sighting may still get the range-aware drop (`_drop_cache_for_unannounced`,
+    # engram kept); what must never happen is a whole-file or slot-file drop under it.
+    assert f"{resident.id}:weights" not in host.dropped, host.dropped
+    assert f"{resident.id}:slots" not in host.dropped, host.dropped
+
+
+@pytest.mark.anyio
+async def test_a_drop_that_frees_nothing_still_refuses(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The livelock rule holds: page cache is never counted as free. If the drop leaves the
+    box short, the re-check refuses exactly as before — once, not in a loop."""
+    host = _CachedHost(monkeypatch, stale_gb=100.0, frees=False)
+    gateway = LocalGatewayClient(
+        "http://gw",
+        transport=_running_transport([]),
+        gpu_probe=_StubProbe(_mem(0.1)),
+        models_dir=str(tmp_path),
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError, match="refusing to load"):
+        await gateway.load("gpt-oss-120b")
+    assert host.dropped.count("gpt-oss-120b:weights") == 1
+
+
+@pytest.mark.anyio
+async def test_no_admission_relief_when_the_resident_set_is_unknown(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed `/running` read is not an empty box. Sweeping every model then could evict a
+    serving Flash-Next's engram, so the refusal stands untouched."""
+    host = _CachedHost(monkeypatch, stale_gb=100.0, frees=True)
+    gateway = LocalGatewayClient(
+        "http://gw",
+        transport=_running_transport(None),
+        gpu_probe=_StubProbe(_mem(0.1)),
+        models_dir=str(tmp_path),
+    )
+    with pytest.raises(gpu_guard.GpuBudgetError):
+        await gateway.load("gpt-oss-120b")
+    assert host.dropped == []

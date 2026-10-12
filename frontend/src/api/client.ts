@@ -2465,6 +2465,27 @@ export interface ReportDetail {
   created_at: string | null;
 }
 /** A minted share link — the secret is returned ONCE (build the /share/<token> URL from it). */
+/** A chat's live public share link (usage only). */
+export interface ChatShareLink {
+  id: string;
+  created_at: string;
+  last_viewed_at: string | null;
+  view_count: number;
+}
+
+/** A just-minted chat share link: the bearer token is shown this once. */
+export interface MintedChatShare extends ChatShareLink {
+  token: string;
+}
+
+/** What a chat-share visitor reads: the header and every turn as of this load. */
+export interface SharedChat {
+  title: string;
+  agent: string;
+  last_active_at: string;
+  turns: TranscriptTurn[];
+}
+
 export interface MintedShare {
   id: string;
   target_kind: "report" | "group";
@@ -3420,7 +3441,17 @@ export function generatedImageUrl(id: string): string {
  * third-party host (invariant #9). A miss 404s and the chip falls back to a plain
  * initial. `host` is a bare hostname (the component derives it from the source URL). */
 export function faviconUrl(host: string): string {
+  if (faviconSource) return faviconSource(host);
   return `/api/agent/favicon?host=${encodeURIComponent(host)}`;
+}
+
+// The owner route is owner-gated, so a public share page re-points favicons at its own
+// token-gated route. Set once, before the shell-less page renders; null = the owner route.
+let faviconSource: ((host: string) => string) | null = null;
+
+/** Serve citation favicons from somewhere other than the owner route (a share page). */
+export function setFaviconSource(source: ((host: string) => string) | null): void {
+  faviconSource = source;
 }
 
 /** Source ("before") URL for an edit: the original bytes the edit started from,
@@ -5889,6 +5920,32 @@ export const api = {
   async getTranscript(sessionId: string): Promise<TranscriptTurn[]> {
     const response = await request(`/api/sessions/${encodeURIComponent(sessionId)}/transcript`);
     return (await response.json()) as TranscriptTurn[];
+  },
+
+  /** Mint a public read link to a chat. The token is returned ONCE; build the URL with
+   * `chatShareUrl`. */
+  async mintChatShare(sessionId: string): Promise<MintedChatShare> {
+    const path = `/api/sessions/${encodeURIComponent(sessionId)}/shares`;
+    return (await (await request(path, { method: "POST" })).json()) as MintedChatShare;
+  },
+
+  /** A chat's live share links (usage only, never the secret). */
+  async chatShares(sessionId: string): Promise<ChatShareLink[]> {
+    const path = `/api/sessions/${encodeURIComponent(sessionId)}/shares`;
+    return (await (await request(path)).json()) as ChatShareLink[];
+  },
+
+  /** Revoke a chat share link; it stops working at once. */
+  async revokeChatShare(shareId: string): Promise<void> {
+    await request(`/api/sessions/shares/${encodeURIComponent(shareId)}`, { method: "DELETE" });
+  },
+
+  /** PUBLIC: a shared chat as it stands now. 404 (ApiError) when the link is unknown or
+   * revoked. No login — used by the shell-less ChatShareApp. */
+  async chatShareView(token: string): Promise<SharedChat> {
+    return (await (
+      await request(`/api/chat-share/${encodeURIComponent(token)}`)
+    ).json()) as SharedChat;
   },
 
   async renameSession(id: string, title: string): Promise<void> {

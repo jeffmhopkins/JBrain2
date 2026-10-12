@@ -1801,11 +1801,15 @@ footer chip row) didn't scale, so the picker is now:
 - **New chat**, the segments, and the search field (shown once chats pass the
   `SEARCH_THRESHOLD`) pin in a non-scrolling header; only the row list scrolls. Search
   filters the rows and the count pills together.
-- The **swipe-left rail** keeps the home-note paradigm but now carries **four**
-  actions — **rename · scope · archive · delete** (`rail-4`, 48px each across the same
-  `RAIL_WIDTH`). **Re-scope moved onto the rail** (its own sliders glyph) since the
-  tappable scope chip left the row; rename still edits inline, delete still arms a
-  tap-again confirm. C won for the most aggressive vertical density with the
+- The **swipe-left rail** keeps the home-note paradigm but now carries **five**
+  actions — **rename · share · scope · archive · delete** (`rail-5`, 48px each, scaled by
+  the text size; the row opens by the rail's own scaled width, not the note rail's fixed
+  `RAIL_WIDTH`, so no gap shows beside it). **Re-scope moved onto the rail** (its own sliders
+  glyph) since the tappable scope chip left the row; rename still edits inline, delete still
+  arms a tap-again confirm. **Share** (chain link, steel; owner chose B in
+  `docs/mocks/chat-share/`) sits between rename and scope so its steel never touches
+  archive's, opens the share sheet, and a shared chat shows the link glyph before its turn
+  count. C won for the most aggressive vertical density with the
   bucketing the owner asked for; A (tap-to-unfold preview) and B (two-line swatch
   tiles + filter chips) are retained as the record.
 
