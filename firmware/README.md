@@ -471,6 +471,15 @@ Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls b
 
 ## One connection to the box, not one per request (0.3.39)
 
+**0.4.2 keeps one HTTPS connection between requests** (`link_keep_alive`). 0.4.0's
+one-session-per-request meant a full TLS handshake every 3 s for the settings poll alone, and the
+first 0.4.0 panel's animation visibly lost its smoothness to them. The connection is still one at
+a time under the same lock. It is only turned on after the recogniser has started, so boot keeps
+the internal RAM speech needs. A response must be read to its last byte to be kept, a kept
+connection idle for over 60 s is dropped, and a request whose kept connection the box had closed
+is sent again on a fresh one. Telemetry reports `ws: "https-keep"`, with `ws_connects` counting
+handshakes since boot and `ws_drops` counting the stale connections.
+
 **0.4.0 turns the socket off** (`LINK_PERSISTENT_SOCKET 0` in `main/link.h`; plan
 `JPANEL_MESSAGING_FIXES_PLAN.md` §6a). Its ~48 KB of internal RAM is what made 0.3.39 abort at
 boot once speech started, so `link_start` now comes up in the HTTPS fallback described below — one

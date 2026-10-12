@@ -1489,9 +1489,17 @@ void sm_step(sm_t *sm, const sm_in_t *in, sm_out_t *out)
         sm->reply_was = in->audio.reply_busy;
     }
 
-    /* Deaf to commands while the microphone is committed, and in standby. */
+    /* Deaf to commands while the microphone is committed, in standby, and while a message plays.
+       That last one is 0.4.2's: a word the recogniser thinks it heard sounds its cue in the press
+       slot, and a message stream yields the speaker to a cue chunk by chunk, so room noise mistaken
+       for "jump" paused a sister's message mid-sentence. 0.3.39 refused the cue instead; the
+       owner heard the difference on the first afternoon. */
     fx(out, SM_FX_MUTE_COMMANDS,
-       sm->mode == SM_LISTEN || sm->mode == SM_RECORD || sm->standby ? 1 : 0, 0);
+       sm->mode == SM_LISTEN || sm->mode == SM_RECORD || sm->mode == SM_PLAY || sm->standby ||
+               in->audio.stream_live
+           ? 1
+           : 0,
+       0);
 
     uint32_t v = sm_check(sm, in);
     if (v & SM_RECOVERS) {

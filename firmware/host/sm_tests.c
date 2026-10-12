@@ -1272,6 +1272,23 @@ static void test_a_notification_arrives_and_a_tap_plays_it(void)
     CHECK(plays() == 1, "then the message is asked for, exactly once");
 }
 
+/* A message is listened to, not talked over: a word the recogniser hears while it plays would sound
+   a cue, and the stream yields to cues. */
+static void test_commands_are_deaf_while_a_message_plays(void)
+{
+    world_reset();
+    arrive("m1", true);
+    run_ms(400);
+    CHECK(!w.muted, "commands are live while a message only waits");
+    tap_the_notice();
+    run_ms(400);
+    CHECK(w.sm.mode == SM_PLAY && w.muted, "and deaf from the press that plays it");
+    engine_end(JP_PLAY_HEARD);
+    step();
+    run_ms(400);
+    CHECK(w.sm.mode == SM_PET && !w.muted, "and live again once it has ended");
+}
+
 static void test_a_press_does_not_evaporate_behind_its_own_cue(void)
 {
     world_reset();
@@ -3666,6 +3683,7 @@ int main(void)
     test_every_playback_control_answers_the_finger();
     test_the_draw_layers_are_a_list();
     test_a_notification_arrives_and_a_tap_plays_it();
+    test_commands_are_deaf_while_a_message_plays();
     test_a_press_does_not_evaporate_behind_its_own_cue();
     test_a_press_during_the_arrival_cue_plays_the_message();
     test_the_run_controls_appear_from_the_press_not_the_stream();

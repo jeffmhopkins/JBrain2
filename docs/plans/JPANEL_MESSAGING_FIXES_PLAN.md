@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.1, §15) W1◻️ W2◻️ W3◻️ P1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.2, §15) W1◻️ W2◻️ W3◻️ P1◻️
 >
 > **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
 > until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs
@@ -2506,6 +2506,18 @@ E (integration):
   `SENT`/`NOBODY`/`NOT SENT`/`DROPPED`; `CUE_NOBODY` is still sounded as `CUE_OOPS`), in the
   release after 0.4.1. The GUI gate's mocks are now the bench (below): each candidate is drawn by
   `overlay.c` and run in the browser, not drawn a second time in HTML.
+
+**0.4.2, from the first 0.4.0 panel on hardware (2026-10-12).** It updated over the air and
+reported `speech_ok`, every `jp` counter zero, and an internal low-water of 18,208 B with a request
+in flight. Two faults the owner saw within the hour:
+
+- *Messages paused when the room was noisy.* A word the recogniser thought it heard sounded its cue
+  in the press slot, and a message stream yields the speaker to a cue. 0.3.39 had refused the cue.
+  The machine now mutes commands in PLAY and while a stream is live
+  (`test_commands_are_deaf_while_a_message_plays`).
+- *The animation was choppy.* With the socket off, every request was a fresh TLS handshake, and
+  the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
+  requests, turned on only after speech has started (`firmware/README.md`).
 
 **Landed in 0.4.1 (no behaviour change): the bench.** The overlays moved from `display.c` into a
 pure `overlay.c` (`overlay_draw(fb, view, ctx)`), so the host and the browser draw the panel's

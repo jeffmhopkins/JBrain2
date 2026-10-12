@@ -51,6 +51,17 @@ static uint8_t *s_http_tmp; /* one HTTPS read, PSRAM; only the holder of `s_http
 static bool s_suspend_holds_http;
 /* The fallback's traffic, for a socket retry to find a quiet moment in (`wsp_retry_quiet`). */
 static volatile uint32_t s_last_http_ms;
+
+/* The kept HTTPS connection (`link_keep_alive`): the client of the last request that ended
+   cleanly, idle since `s_keep_at`. Only the holder of `s_http_lock` touches these. */
+#define LINK_KEEP_IDLE_MS 60000u /* well inside Caddy's 5 min idle close */
+static volatile bool s_keep_on;
+static esp_http_client_handle_t s_keep;
+static uint32_t s_keep_at;
+static char s_keep_hdr[40]; /* the custom header the kept client still carries, if any */
+static bool s_conn_close;   /* this response said `Connection: close` */
+static unsigned s_handshakes, s_stale;
+static void keep_drop(void);
 static int s_http_waiting; /* touched only through __atomic builtins */
 static void (*s_event_fn)(const char *why);
 
@@ -840,6 +851,10 @@ static link_res_t ws_request(run_t *x)
 static esp_err_t http_event(esp_http_client_event_t *e)
 {
     const link_req_t *r = e->user_data;
+    if (e->event_id == HTTP_EVENT_ON_HEADER && e->header_key != NULL && e->header_value != NULL &&
+        strcasecmp(e->header_key, "Connection") == 0 && strcasecmp(e->header_value, "close") == 0) {
+        s_conn_close = true;
+    }
     if (e->event_id == HTTP_EVENT_ON_HEADER && r != NULL && r->on_header != NULL &&
         e->header_key != NULL && e->header_value != NULL) {
         r->on_header(r->ctx, e->header_key, e->header_value);
@@ -919,30 +934,67 @@ static link_res_t http_request(run_t *x)
         xSemaphoreGive(s_http_lock);
         return res;
     }
-    esp_http_client_config_t hc = {
-        .url = url,
-        .timeout_ms = r->deadline_ms == 0 ? as_timeout(open_left) : link_open_timeout_ms(open_left),
-        .method = strcmp(r->method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET,
-        .event_handler = http_event,
-        .user_data = (void *)r,
-    };
-    if (s_cfg->ca != NULL && s_cfg->ca[0] != '\0') {
-        hc.cert_pem = s_cfg->ca;
+    const int open_ms = r->deadline_ms == 0 ? as_timeout(open_left) : link_open_timeout_ms(open_left);
+    const esp_http_client_method_t method =
+        strcmp(r->method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET;
+    /* A kept connection is reused only while it is young: past that the box may have closed it,
+       and finding out costs a failed request. */
+    if (s_keep != NULL && (!s_keep_on || now_ms() - s_keep_at > LINK_KEEP_IDLE_MS)) keep_drop();
+    esp_http_client_handle_t c = s_keep;
+    const bool reused = c != NULL;
+    s_keep = NULL;
+    if (reused) {
+        esp_http_client_set_url(c, url);
+        esp_http_client_set_method(c, method);
+        esp_http_client_set_timeout_ms(c, open_ms);
+        esp_http_client_set_user_data(c, (void *)r);
+        esp_http_client_delete_header(c, "Content-Type");
+        if (s_keep_hdr[0] != '\0') esp_http_client_delete_header(c, s_keep_hdr);
     } else {
-        hc.crt_bundle_attach = esp_crt_bundle_attach;
+        esp_http_client_config_t hc = {
+            .url = url,
+            .timeout_ms = open_ms,
+            .method = method,
+            .event_handler = http_event,
+            .user_data = (void *)r,
+        };
+        if (s_cfg->ca != NULL && s_cfg->ca[0] != '\0') {
+            hc.cert_pem = s_cfg->ca;
+        } else {
+            hc.crt_bundle_attach = esp_crt_bundle_attach;
+        }
+        c = esp_http_client_init(&hc);
+        if (c == NULL) {
+            res.err = "client-init";
+            xSemaphoreGive(s_http_lock);
+            return res;
+        }
     }
-    esp_http_client_handle_t c = esp_http_client_init(&hc);
-    if (c == NULL) {
-        res.err = "client-init";
-        xSemaphoreGive(s_http_lock);
-        return res;
-    }
+    s_keep_hdr[0] = '\0';
+    s_conn_close = false;
     esp_http_client_set_header(c, "Authorization", auth);
     if (r->content_type != NULL) esp_http_client_set_header(c, "Content-Type", r->content_type);
     if (r->hdr_name != NULL && r->hdr_value != NULL) {
         esp_http_client_set_header(c, r->hdr_name, r->hdr_value);
+        snprintf(s_keep_hdr, sizeof(s_keep_hdr), "%s", r->hdr_name);
     }
     esp_err_t err = esp_http_client_open(c, (int)r->body_len);
+    if (err != ESP_OK && reused) {
+        /* THE BOX CLOSED THE KEPT CONNECTION, and the request line could not be written: nothing
+           reached it, so this is the same request on a fresh session, not a second one. The
+           client closed its transport on the failed write, so `open` connects again. */
+        s_stale++;
+        esp_http_client_close(c);
+        phase(x);
+        if (left(x) > 0) {
+            esp_http_client_set_timeout_ms(c, r->deadline_ms == 0 ? as_timeout(left(x))
+                                                                   : link_open_timeout_ms(left(x)));
+            err = esp_http_client_open(c, (int)r->body_len);
+            if (err == ESP_OK) s_handshakes++;
+        }
+    } else if (err == ESP_OK && !reused) {
+        s_handshakes++;
+    }
     if (err != ESP_OK) {
         http_err(c, err);
         res.timed_out = left(x) == 0;
@@ -1056,15 +1108,37 @@ static link_res_t http_request(run_t *x)
     } else if (!res.stopped && declared > 0 && !esp_http_client_is_complete_data_received(c)) {
         res.cut = true;
     }
+    /* KEPT ONLY WHEN THE RESPONSE WAS READ TO ITS LAST BYTE: anything left on the wire would be
+       read as the next request's head. A stop, a cut, a stall or a box that asked to close all end
+       the session here, as every request did before. */
+    if (s_keep_on && !res.stopped && !res.cut && !s_conn_close &&
+        esp_http_client_is_complete_data_received(c)) {
+        s_keep = c;
+        s_keep_at = now_ms();
+        c = NULL;
+    }
 
 done:
-    esp_http_client_cleanup(c);
+    if (c != NULL) esp_http_client_cleanup(c);
     s_last_http_ms = now_ms();
     xSemaphoreGive(s_http_lock);
     return res;
 }
 
 /* ── the API ────────────────────────────────────────────────────────────────────────────── */
+
+/* Under `s_http_lock`, or before anything else can hold it. */
+static void keep_drop(void)
+{
+    if (s_keep == NULL) return;
+    esp_http_client_cleanup(s_keep);
+    s_keep = NULL;
+}
+
+void link_keep_alive(bool on)
+{
+    s_keep_on = on;
+}
 
 bool link_start(const cfg_t *cfg)
 {
@@ -1145,6 +1219,8 @@ void link_suspend(void)
     /* And no request is mid-session either. Held until `link_resume`; a request already queued
        on the lock sees `s_suspended` within one step and leaves. */
     s_suspend_holds_http = xSemaphoreTake(s_http_lock, pdMS_TO_TICKS(60000)) == pdTRUE;
+    /* The OTA's own session must not sit beside a kept one. */
+    if (s_suspend_holds_http) keep_drop();
     ESP_LOGI(TAG, "suspended — internal free %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 }
 
@@ -1197,15 +1273,16 @@ bool link_live(void)
 
 const char *link_mode(void)
 {
-    return s_started ? "http" : "off";
+    if (!s_started) return "off";
+    return s_keep_on ? "https-keep" : "http";
 }
 
 /* The report's `ws_err` carries the HTTPS path's last failure instead, the only transport there
    is: an empty field would hide the one reason the owner can read through the debug API. */
 void link_stats(unsigned *connects, unsigned *drops, unsigned *events, const char **err)
 {
-    if (connects != NULL) *connects = 0;
-    if (drops != NULL) *drops = 0;
+    if (connects != NULL) *connects = s_handshakes;
+    if (drops != NULL) *drops = s_stale;
     if (events != NULL) *events = 0;
     if (err != NULL) *err = s_http_err;
 }
