@@ -724,14 +724,17 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
         may still succeed. Nothing failed, so nothing was recorded, and the commonest shape of
         "it didn't work" was the one with no evidence.
 
-        Both halves of the firmware raise this dash — `ui.c` is the tested model, `display.c`
-        the shipping mirror — and a counter in only one of them is a counter that reports zero
-        from the panel on the wall."""
-        for name, why in (("ui.c", "in->net == UI_NET_FAILED"), ("display.c", "talk_state() ==")):
+        Both halves of the firmware raise this dash — `panel_sm.c` is the tested machine,
+        `display.c` the shipping mirror until it only executes the machine's effects — and a
+        counter in only one of them is a counter that reports zero from the panel on the wall."""
+        for name, why in (
+            ("panel_sm.c", "in->net == SM_NET_FAILED"),
+            ("display.c", "talk_state() =="),
+        ):
             src = _fw(name)
             assert '"timeout"' in src and '"net"' in src, f"{name} no longer tells them apart"
             assert why in src, f"{name} no longer decides the reason from the live state"
-        assert "st->dashes++" in _fw("ui.c"), "the model stopped counting"
+        assert "sm->dashes++" in _fw("panel_sm.c"), "the machine stopped counting"
         assert "s_dashes++" in _fw("display.c"), "the shipping half stopped counting"
 
     def test_the_route_surfaces_both(self) -> None:

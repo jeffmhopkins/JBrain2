@@ -167,15 +167,14 @@ Run it before every firmware push. It found three real defects the ESP build had
 cleanly — two missing includes that IDF supplied transitively, and a zero-init bug that made the
 variant pool repeat itself on the first pokes after boot (§10.4ao).
 
-**There are two suites now, and the second one drives the interface.** `main/ui.c` is the panel's
-interaction state machine — which overlay is up, and what a finger at (x, y) means given
-everything else that is happening — lifted out of `display.c`'s `face_task()` into a module that
-takes a struct and returns a struct. `run_ui_tests` steps it one frame at a time against a fake
-speaker, a fake message queue and a real framebuffer, so a notification, a press, a five-second
-hold and a deep-sleep request can all be asserted without a panel. That matters because *every*
-fault the owner reported on the evening of 2026-09-28 was an arbitration fault, and arbitration
-was the one part of this firmware with no test at all. `firmware/host/README.md` says how to add a
-scenario, and lists the behaviours the extraction preserved on purpose and believes are wrong.
+**There are two suites, and the second one drives the interface.** `main/panel_sm.c` is the
+panel's one state machine — which mode it is in, what a finger at (x, y) means, what sounds, and
+what is drawn — a module that takes a frame's facts and returns ordered effects and a view.
+`run_sm_tests` steps it one frame at a time against a fake engine, speaker and microphone, so a
+notification, a press, a stop, a reply and a deep-sleep request can all be asserted without a
+panel, and `test_storm` runs it through 300k randomised frames checking its invariants on every
+one. That matters because *every* fault the owner reported on the evening of 2026-09-28 was an
+arbitration fault. `firmware/host/README.md` says how to add a scenario.
 
 ## The robot stays upright, and the meter keeps up
 
