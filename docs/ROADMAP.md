@@ -570,12 +570,12 @@ adversarial threat-model dossiers under `docs/research/jmolt/`. W1 citizenship +
 W2 memory, W3 autonomous writes, W4 observation + integrity.
 
 **Scheduled:** security review fixes (build plan: `docs/plans/SECURITY_REVIEW_FIXES_PLAN.md`, waves
-S1–S4) — a 2026-10-12 whole-codebase review for third-party access found RLS sound but the layers
+S1–S5) — a 2026-10-12 whole-codebase review for third-party access found RLS sound but the layers
 around it open: a preview-proxy path traversal into the jcode control API, same-site request
 forgery from the preview subdomain, owner surfaces admitting any cookie principal, sandbox shells
 that can read the jcode control token, an unauthenticated `/internal` reachable from sandbox
 networks, and an SSRF pivot through the reader/byparr browsers. S1 closes the web holes, S2 the
-sandboxes and internal network, S3 device and token hygiene, S4 latent RLS hardening.
+sandboxes and internal network, S3 device and token hygiene, S4 a cold red-team re-analysis, S5 latent RLS hardening.
 
 **Scheduled:** jmolt hardening (build plan: `docs/plans/JMOLT_HARDENING_PLAN.md`, waves H1–H6) —
 after three live nights, four independent audits over the parts the first round of bugfixes had not

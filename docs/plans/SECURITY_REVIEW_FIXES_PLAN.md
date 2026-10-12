@@ -1,13 +1,13 @@
 # Security review fixes — third-party access hardening
 
-> **Status:** Scheduled · **Last verified:** 2026-10-12 · **Waves:** S1◻️ S2◻️ S3◻️ S4◻️
+> **Status:** Scheduled · **Last verified:** 2026-10-12 · **Waves:** S1◻️ S2◻️ S3◻️ S4◻️ S5◻️
 
 A whole-codebase security review (2026-10-12; six independent reviewers, the serious
 findings re-verified by hand) looked for programming errors and structural mistakes that
 let a **third party** in: a family member's device key, a jcode share-link recipient, an
-intake-link stranger, a panel key, code running in a sandbox container, a web page the
-agent fetches, or an internet attacker. Owner-side threats and the health/finance/location
-domain firewall were out of scope.
+intake-link stranger, an external-LLM key holder, a panel key, a Minecraft player, code in a
+sandbox container, a web page the agent fetches, or an internet attacker. Owner-side
+threats and the health/finance/location domain firewall were out of scope.
 
 The database layer held: the app role cannot bypass RLS, every `app.*` table has RLS, the
 GUCs are transaction-local and bound, and no SQL injection was found. Every hole is in the
@@ -15,220 +15,336 @@ layers around RLS — routes that admit any cookie, side effects that never touc
 a proxy that trusts a path, a sandbox that can read its keeper's token, and network
 "isolation" that isn't.
 
+This plan was itself reviewed by three cold reviewers (adequacy/bypass, regressions,
+completeness) before any build; their findings are folded in below (marked *rev*).
+
 ## The constraint every wave is held to: nothing intended breaks
 
 A fix that closes a hole by removing something the owner uses is not a fix. Every task
-names the legitimate flows it touches and lands tests that prove they still work, beside
-the tests that prove the attack fails. The per-task reviewer is briefed to hunt
-regressions, not only to check the security claim. The flows, and how each authenticates:
+names the legitimate flows it touches and lands tests proving they still work, beside the
+tests proving the attack fails. The per-task reviewer is briefed to hunt regressions, not
+only to check the security claim. Anything that would need a host shell step is a
+regression too (`CLAUDE.md` #10). The flows, and how each authenticates:
 
 | Flow | Caller | Credential | Origin / transport |
 |---|---|---|---|
 | PWA (public host, `jbrain.local`, tunnel) | browser | `jbrain_session` owner cookie, Lax, host-only | same-origin relative fetches; WS from `window.location.host` |
 | Android owner app | WebView on `<base>/` | owner cookie | same-origin |
 | Android member dashboard | WebView on `<base>/dash`; OkHttp | device-key cookie (Strict) via `/api/session/mint`; SSE GET with cookie | same-origin; OkHttp sends no Origin |
+| Member dashboard calls | WebView | `/auth/me`, `/member/*`, `/tiles`, live WS | same-origin |
 | Pairing | Android OkHttp | pairing code, no cookie | — |
 | OwnTracks | phone | HTTP Basic device key | — |
 | MQTT | phones | device key via mosquitto-go-auth → `/internal/mqtt-*` | internal network |
-| Panels (S3/C6) | firmware | `Authorization: Bearer <device_key>`, `/api/endpoint/ws` tunnel | no cookie |
-| jcode share recipient | browser | `jcode_share_link` cookie; `GET /api/jcode/sessions/{sid}`, terminal WS, preview | same-origin |
-| Intake link stranger | browser | `intake_link` cookie; `/api/intake/{redeem,chat,confirm}` | same-origin |
+| Panels (S3/C6) | firmware | `Authorization: Bearer <device_key>`; `/api/endpoint/ws` tunnel | no cookie |
+| jcode share recipient | browser | `jcode_share_link` cookie: redeem, `GET /jcode/sessions/{sid}`, preview GET/POST/DELETE, terminal WS | same-origin |
+| Intake link stranger | browser | `intake_link` cookie: `/intake/{redeem,chat,confirm}` | same-origin |
 | research / jlaunch / mc share pages | browser | token in path, no cookie, GET only | — |
-| jcode preview | browser iframe in the PWA + direct tab | slug in host (`<slug>-preview.<host>`), no cookie forwarded | separate origin, same site |
-| jcode agent + helpers | in-container | `GROK_API_KEY` bearer → `http://api:8000/api/jcode/llm/v1` | jcode network |
-| Wall display | LAN TV browser → `deploy/wall/serve.py` → `/internal/pet*` | none today | LAN → wall:8800 → internal |
-| Gateway-config regen | worker → `/internal/llm/regen-gateway-config` | HMAC(supervisor token) bearer | internal |
+| jcode preview | PWA iframe + direct tab | slug in host (`<slug>-preview.<host>`), cookies stripped | separate origin, same site |
+| jcode agent + helpers | in-container | `GROK_API_KEY` → `http://api:8000/api/jcode/llm/v1` | jcode network |
+| jcode session work | in-container | git/npm/pip over https | today direct NAT |
+| Wall display | LAN TV → `deploy/wall/serve.py` → `/internal/pet*` | none today | LAN → wall:8800 → internal |
+| Gateway-config regen | worker → `/internal/llm/regen-gateway-config` | HMAC(supervisor token) | internal |
 | Debug console / external assistant | browser on LAN site; curl | capability bearer | same-origin / no Origin |
-| Ops → Update | PWA | owner cookie → supervisor | — |
+| `web_fetch` ladder | api → direct / reader / byparr / Tavily | — | outbound |
+| Minecraft "Dave" | players via BDS pack → `deploy/minecraft/bds.py` → api | xuid from BDS log lines | host network |
+| Ops → Update | PWA → supervisor → `update-inner.sh` | owner cookie | — |
 
 ## Findings → task map
 
 | # | Finding | Sev | Task |
 |---|---|---|---|
 | F1 | Preview proxy builds the upstream URL from the decoded `{path}`; httpx resolves `..`, so a slug holder reaches the jcode control server's `/sessions*` API carrying the api's bearer | High | S1.1 |
-| F2 | Same-site CSRF / CSWSH from the preview subdomain: `origin_allowed` is open when no allow-list is set (always, in production), no Origin/CSRF check on unsafe methods, no frame-ancestors, unsandboxed preview iframe → owner shell, live family locations, `/api/ops/reset` | High | S1.3 |
-| F3 | ~70 routes gated only by `PrincipalDep` admit device-key, jcode-share and intake-link cookies; RLS saves the data, not the side effects: LLM load/unload, Gmail creds read/used under a hardcoded owner context, Tavily key spent, TTS, host telemetry, 100 MB blob written before the RLS insert fails | Med | S1.2 |
-| F4 | `login()` lookup is not kind-filtered (a device key mints a Lax cookie on `/api/auth/session`) | Low | S1.2 |
-| F5 | jcode session shells inherit the ctl's env (`JCODE_TOKEN`, every session's control bearer) and run as root (so `/proc/1/environ` too); share recipients get both | High | S2.1 |
-| F6 | `/api/jcode/llm/v1/*` is "internal-only" but publicly routed under `/api`; the leaked gateway token works from the internet after a share is revoked; `!=` compare | Med | S2.1 |
-| F7 | `/internal/*` is unauthenticated and reachable from every network the api joins (jcode, jlaunch, sandbox, render, browser, radio, panel, internal incl. reader/byparr); `/internal/pet/say` runs as owner, `/internal/mqtt-auth` is an unthrottled key oracle | Med-High | S2.2 |
-| F8 | reader/byparr headless browsers are on the non-fenced `internal` network and follow redirects/JS after only the first URL is checked → SSRF into comfyui, local-llm, wall, api `/internal`, metadata | Med-High | S2.3 |
+| F2 | Same-site CSRF / CSWSH from the preview subdomain: `origin_allowed` is open with no allow-list (always, in production), no Origin/CSRF check, no frame-ancestors, unsandboxed preview iframe → owner shell, live family locations, `/api/ops/reset`; *rev:* side-effecting GETs, and cookie tossing (the preview can set a parent-domain `jbrain_session` that shadows the owner's) | High | S1.3 |
+| F3 | 61 routes gated only by `PrincipalDep` admit device-key, jcode-share, intake-link (and, via F4, capability/external-LLM) cookies; RLS saves the data, not the side effects: LLM load/unload, Gmail creds read/used under a hardcoded owner context, Tavily key spent, TTS, telemetry, a 100 MB blob written before the RLS insert fails; `/tiles` open to share/intake cookies | Med | S1.2 |
+| F4 | `login()` lookup is not kind-filtered; cookie lookup is not kind-filtered either, so any already-minted non-owner cookie stays live | Low-Med | S1.2 |
+| F5 | jcode shells inherit the ctl's env (`JCODE_TOKEN`) and run as root (so `/proc/1/environ`, the ctl's code); *rev:* the ctl runs git as root in session-controlled checkouts (hook/fsmonitor → root) | High | S2.1 |
+| F6 | `/api/jcode/llm/v1/*` is "internal-only" but publicly routed; the leaked gateway token works from the internet after a share is revoked | Med | S2.1 |
+| F7 | `/internal/*` is unauthenticated and reachable from every network the api joins (jcode, jlaunch, sandbox, render, browser, radio, panel, internal incl. reader/byparr); `/internal/pet/say` runs as owner, `/internal/mqtt-auth` is a key oracle | Med-High | S2.2 |
+| F8 | reader/byparr headless browsers sit on the non-fenced `internal` network and follow redirects/JS after only the first URL is checked → SSRF into comfyui, local-llm, wall, api `/internal`, metadata | Med-High | S2.3 |
 | F9 | Direct-fetch guard: check-then-connect DNS rebinding; `_is_public` passes 100.64/10 | Med | S2.3 |
-| F10 | Live location WS checks the cookie once; a revoked/removed member keeps the family feed | Med | S3.1 |
-| F11 | `PanelDep` / panel WS accept any device key (a phone acts as a panel: voice to a child's panel, converse compute, telemetry spoof); a panel key mints a member session | Low-Med | S3.2 |
-| F12 | Debug SQL redaction is by column name (alias bypass): settings secrets, plaintext pairing codes (→ device key that outlives the debug token) | Med | S3.3 |
-| F13 | Every rate limiter keys on `request.client.host`, which is always Caddy → one global bucket (anyone locks out pairing); `nudge._client_ip` trusts the first XFF hop | Low | S3.4 |
-| F14 | `/member/positions?subject_id=<any>` writes a forged "viewed you" audit row for any subject | Low | S3.4 |
-| F15 | jcode_llm and other secret compares use `!=` | Low | S2.1 |
-| F16 | Latent RLS: TimescaleDB chunk tables lack RLS but `jbrain_app` holds DML on them; `viewer_may_see`/`visible_subjects` SECURITY DEFINER take a caller-supplied viewer; `place_geofence_read` admits every device to unshared fences; `view_audit_write` doesn't check visibility | Latent | S4 |
-| F17 | Stolen desk-panel key = owner agent reads; keys in plaintext NVS, no flash encryption | Design | Out of scope (below) |
-| F18 | Wall binds `0.0.0.0:8800` unauthenticated | Low | Accepted (below) |
+| F10 | Live WS sockets authenticate once: a revoked member keeps the family location feed; *rev:* a revoked jcode share keeps its terminal, its backgrounded processes and its preview slug | Med | S3.1 |
+| F11 | `PanelDep` / panel WS accept any device key (a phone acts as a panel); a panel key mints a member session | Low-Med | S3.2 |
+| F12 | Debug SQL redaction is by column name; plaintext pairing codes → a device key that outlives the debug token | Med | S3.3 |
+| F13 | Every rate limiter keys on `request.client.host` (always Caddy) → one global bucket; `nudge` trusts the first XFF hop | Low | S3.4 |
+| F14 | `/member/positions?subject_id=<any>` writes a forged "viewed you" audit row | Low | S3.4 |
+| F15 | Secret compares with `!=` (jcode_llm, gmail OAuth state) | Low | S2.1 |
+| N1 *rev* | `local-llm` (and `flash-next` aliased as it) is on the jcode network: a session talks to llama-swap directly — loads cold models outside the residency budget (a host freeze), erases slots, bypasses caps | High | S2.1 |
+| N2 *rev* | jcode outbound is direct NAT: a share recipient reaches the home LAN, the host's published ports, metadata | Med | S2.4 |
+| N3 *rev* | A Minecraft player's `/jb:dave` text containing `Player connected: <me>, xuid: <victim>` matches the unanchored BDS regex → the player takes over another player's Dave session, memory and history | Low-Med | S3.5 |
+| N4 *rev* | `href`s built from LLM/web/email-derived URLs (`onlineUrl`, citations) have no scheme allow-list (`javascript:`) | Low | S1.4 |
+| N5 *rev* | htmlrender's request block doesn't intercept WebSockets from model-authored HTML | Low | S2.3 |
+| F16 | Latent RLS: Timescale chunks lack RLS but `jbrain_app` has DML on them; `viewer_may_see`/`visible_subjects` trust a caller-supplied viewer; `view_audit_write` doesn't check visibility | Latent | S5 |
+| F17 | Stolen desk-panel key = owner agent reads; plaintext NVS | Design | Out of scope |
+| F18 | Wall on `0.0.0.0:8800` relays pet controls for any LAN client (and, in direct mode, possibly the internet) | Low | Recorded (below) |
 
 ## Waves
 
 Each wave is one PR off the session branch, built task-by-task with an independent
 reviewer per task and a wave-level red-team review (PROCESS.md). Every task: failing test
-first, then the fix, then `ruff`/`pyright`/`pytest` (or `biome`/`tsc`) for its package.
+first, then the fix, then the package's full gate set (`CLAUDE.md` #11).
 
 ### S1 — close the critical web holes ◻️
 
-**S1.1 Preview proxy path containment (F1).** In `api/jcode_preview.py` (HTTP and WS),
-refuse any `path` whose segments contain `.` or `..` (after percent-decoding, including
-`%2e`, `%2f`, `%5c` and backslash), and build the upstream URL so it can only ever be under
-`/preview/{slug}/` (assert the normalized httpx URL's path keeps that prefix; 404 otherwise).
-Defence in depth on the control side: the ctl's preview routes get their own credential —
-`preview_token = HMAC(JCODE_TOKEN, "jcode-preview")`, derived on both sides so no new `.env`
-key — on a router separate from `authed`, and `authed` (sessions, terminal) stops accepting
-it. The ctl's `proxy_http` also refuses dot segments.
-*Keeps working:* every preview path a dev server serves (assets, HMR WS, query strings,
-encoded spaces), the PWA preview iframe, direct preview tab. *Tests:* traversal variants
-404 and never reach the transport; normal nested paths/queries proxy; ctl rejects the main
-token on preview routes and the preview token on `/sessions`.
+**S1.1 Preview proxy path containment (F1).**
+- `api/jcode_preview.py` (HTTP and WS) refuses a path any of whose `/`-segments, after
+  percent-decoding, is *equal to* `.` or `..` or contains `\`, `%2f`/`%5c` survivors or a NUL;
+  checked on the path only, never the query (*rev:* `main.js`, `node_modules/.vite/deps/…`
+  must keep working). It then asserts the normalised httpx URL path still starts with
+  `/preview/{slug}/` (or equals `/preview/{slug}`) — the real guard; 404 otherwise.
+- Cap the bytes actually read, not just `Content-Length` (*rev:* chunked bodies).
+- jcode ctl: preview routes (HTTP *and* the hand-checked preview WS) move to their own
+  credential, `preview_token = HMAC(JCODE_TOKEN, "jcode-preview")` derived on both sides (no
+  new `.env` key); `authed` and the terminal WS refuse it, the preview routes refuse the main
+  token. The ctl's `proxy_http` also refuses dot segments.
+- *Keeps working:* every dev-server path (assets, dotfiles like `.vite`, HMR WS, queries,
+  encoded spaces); the PWA iframe; the direct preview tab.
+- *Tests:* traversal variants (`..`, `%2e%2e`, mixed case, `..;`, backslash) 404 without
+  touching the transport; nested/dotted/queried paths proxy; ctl token separation both ways.
 
-**S1.2 Owner gate for owner surfaces (F3, F4).** Add `dependencies=[Depends(owner_only)]`
-to the `llm_settings`, `gmail_settings`, `tavily_settings`, `brave_settings`,
-`moltbook_settings`, `settings`, `brain`, `notes`, `analysis`, `search` and `wiki` routers
-(and any other router the matrix test below finds). Non-owner surfaces stay as they are,
-explicitly allow-listed: `/auth/me`, `/auth/session` DELETE (logout), `/tiles/*` (member
-map), `/intake/{chat,confirm}` (own intake check), `/member/*` (MemberDep), jcode
-operational routes (`JcodeAccessDep`), PanelDep/DeviceDep/DebugDep routes, the token
-routes. Add a **route-matrix test** that builds the real app, walks every route, and for
-each non-owner cookie kind (device_key, jcode_share_link, intake_link) asserts 401/403
-unless the route is on the explicit allow-list — so a future `PrincipalDep` route fails CI.
-`upload_attachment` resolves the note under RLS **before** `blobs.put`. `login()` filters
-`kind = 'owner'`. Fix the false "owner gate" docstrings in gmail/tavily.
-*Keeps working:* PWA everything (owner), member dashboard (`/member`, `/tiles`, live WS),
-jcode share page (`GET /jcode/sessions/{sid}`, terminal, preview), intake page.
-*Tests:* matrix; owner still 200 on each touched router; member/share/intake flows end to end.
+**S1.2 Owner gate for owner surfaces (F3, F4).**
+- `dependencies=[Depends(owner_only)]` on the `llm_settings`, `gmail_settings`,
+  `tavily_settings`, `settings`, `brain`, `notes`, `analysis`, `search`, `wiki` routers and
+  on any other router the matrix finds (*rev:* also confirm `ops`, `locations`, `lists`,
+  `sessions`, `appointments`, `chat_attachments` — gated at router level today).
+- `/tiles` narrows to owner + `device_key` (the member map); `/intake/{chat,confirm}` keep
+  their own intake-link check.
+- **Route-matrix test** (*rev* design): builds the app with *every* conditional router
+  mounted (debug, images_render, jcode, jlaunch, …), walks every HTTP and WS route, and for
+  every principal kind in the schema except owner (`device_key`, `jcode_share_link`,
+  `intake_link`, `capability_token`, `external_llm`), with sessions created directly through
+  the repo, asserts 401/403 (HTTP) or close-before-accept (WS) — unless the **(route, kind)**
+  pair is on an explicit allow-list. Allow-list: `/auth/me` and logout (all session kinds);
+  `/tiles`, `/member/*`, live WS (`device_key`); `/intake/*` (`intake_link`); jcode
+  `GET /jcode/sessions/{sid}`, preview GET/POST/DELETE, terminal WS (`jcode_share_link`, own
+  sid only); the token-in-path / bearer / Basic routes are exercised separately. A new
+  `PrincipalDep` route then fails CI.
+- `upload_attachment` resolves the note under RLS **before** `blobs.put`.
+- `login()` filters `kind = 'owner'`; the session-cookie lookup admits only the kinds that
+  may hold a session (`owner`, `device_key`, `jcode_share_link`, `intake_link`), which also
+  kills any capability/external-LLM cookie already minted through the old login.
+- Fix the false "owner gate" docstrings (gmail, tavily) and the "ctx_for is a full owner"
+  comments.
+- *Keeps working:* the owner's PWA; member dashboard; jcode share page; intake page.
+- *Tests:* the matrix; owner 200 on every touched router; member/share/intake flows.
 
-**S1.3 Same-site request forgery (F2).** (a) An HTTP middleware rejects POST/PUT/PATCH/DELETE
-that carry the session cookie when `Sec-Fetch-Site` is `same-site` or `cross-site`, or when
-`Sec-Fetch-Site` is absent and an `Origin` is present whose host[:port] ≠ the request
-`Host` (scheme ignored — behind the tunnel the api sees http; default ports normalized;
-`Origin: null` rejected when a cookie is present). Requests without the cookie, or without
-both headers (OkHttp, curl, TestClient), pass. (b) `origin_allowed` fails closed: with no
-allow-list it requires Origin host == Host; absent Origin still passes (native clients);
-a configured allow-list still wins; tolerate a missing Host. (c) Caddy `(app)` / public /
-LAN sites send `Content-Security-Policy: frame-ancestors 'self'` and
-`X-Frame-Options: SAMEORIGIN` — never on the preview wildcard site. (d) The preview iframe
-gets `sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups
-allow-popups-to-escape-sandbox allow-downloads"` (no top-navigation); `allow-same-origin`
-is safe only because the preview is always a different origin — the comment says so.
-*Keeps working:* every same-origin PWA/WebView call, OkHttp mint/pairing/SSE, panels,
-OwnTracks, debug bearer calls, previews, YouTube embed. Update `test_live.py:249` and
-`test_debug_tokens_api.py:84` (their assumptions are the bug). *Tests:* same-site and
-cross-site rejected with cookie; mismatched Origin rejected; matching Origin, absent
-headers, and cookieless cross-origin pass; WS fail-closed cases.
+**S1.3 Same-site request forgery (F2).**
+- (a) A **pure ASGI middleware** covering both `http` and `websocket` scopes (*rev:*
+  `@app.middleware("http")` never sees WS). For any request carrying the session cookie: if
+  `Sec-Fetch-Site` is `same-site` or `cross-site`, reject — except a `GET`/`HEAD` with
+  `Sec-Fetch-Mode: navigate` (*rev:* closes side-effecting GETs such as `/settings/gmail/connect`,
+  `/brain/tts`, favicon/geocode fetches, while external links into the PWA still open it). If
+  `Sec-Fetch-Site` is absent and `Origin` is present: Origin host[:port] must equal the
+  request `Host` (scheme ignored — behind the tunnel the api sees http; default ports
+  normalised); `Origin: null` with a cookie is rejected. No cookie, or neither header
+  (OkHttp, curl, TestClient), passes. WS rejection closes before accept.
+- (b) `origin_allowed` fails closed (Origin host == Host when no allow-list; absent Origin
+  still passes; a configured allow-list still wins; missing Host tolerated).
+- (c) **Cookie tossing** (*rev*): when `secure_cookies` is on, the session cookie becomes
+  `__Host-jbrain_session` (Secure, Path=/, no Domain — a subdomain cannot shadow it). Migration
+  is silent: a request authenticated by the legacy `jbrain_session` gets the same token
+  re-issued as `__Host-jbrain_session` and the legacy cookie deleted; once the `__Host-`
+  cookie is present the legacy name is ignored. No device has to log in again. When
+  `secure_cookies` is off (dev/tests) the legacy name stays. Every cookie reader
+  (`deps.py`, `live.py`, `jcode_terminal.py`, `jlaunch_terminal.py`, Android's
+  `DashboardActivity` injection) reads through one helper.
+- (d) Caddy `(app)` / public / LAN sites send `Content-Security-Policy: frame-ancestors 'self'`
+  and `X-Frame-Options: SAMEORIGIN` — never the preview wildcard site.
+- (e) The preview iframe gets `sandbox="allow-scripts allow-same-origin allow-forms
+  allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads
+  allow-pointer-lock"` (no top-navigation); the comment states `allow-same-origin` is safe
+  only because the preview is always a different origin.
+- *Keeps working:* every same-origin PWA/WebView call and WS; external links opening the
+  PWA; OkHttp mint/pairing/SSE; panels; OwnTracks; debug bearer calls; previews; the YouTube
+  embed; existing logins (silent cookie migration). Update `test_live.py:249` and
+  `test_debug_tokens_api.py:84` (their assumptions are the bug).
+- *Tests:* same-site/cross-site rejected with cookie (HTTP + WS); navigate GET allowed;
+  mismatched Origin / `null` rejected; matching Origin, absent headers, cookieless pass;
+  legacy cookie migrates; a tossed legacy cookie can't shadow a `__Host-` one.
+
+**S1.4 Safe hrefs (N4).** One `safeHref()` in the frontend (http/https/mailto only, else no
+link) used wherever an `href` comes from data (`CalendarScreen` `onlineUrl`, web citations,
+FullBrainSurface sources); the backend drops a non-http(s) `online_url` at projection.
+*Tests:* unit for `safeHref`; projection rejects `javascript:`.
 
 ### S2 — sandboxes and the internal network ◻️
 
-**S2.1 jcode secrets (F5, F6, F15).** The ctl strips its own settings (`JCODE_TOKEN`,
-`JCODE_*` ctl config) from the env it hands `spawn_shell`; `GROK_API_KEY` stays (the agent
-and helpers need it). Session shells run as an unprivileged `jcode` uid (owner decision
-D1): the ctl chowns `/work/<sid>` and `/work/.home/<sid>`, runs git as that uid or with
-`safe.directory`, writes `AGENTS.md` itself, and drops to the uid in the forked child. Caddy
-404s `/api/jcode/llm/*` on the app sites (in-container callers use `http://api:8000`,
-unchanged). `hmac.compare_digest` everywhere a secret is compared with `!=` (grep).
-*Keeps working:* sessions create/clone/reset, the agent's model + web tools, `jcode-grok
-upgrade`, npm -g into home, previews on 5173-5199, the share terminal. *Lost by design under
-D1:* `apt-get` and writes outside the session's home/checkout. *Tests:* child env lacks
-`JCODE_TOKEN`; uid drop; Caddyfile has the block; existing jcode suites.
+**S2.1 jcode: per-session users, no root, no control token (F5, F6, F15, N1).** Owner
+decision D1: **per-session unprivileged uids**.
+- Each session gets its own uid/gid from a pool (recorded with the session, stable across
+  ctl restarts); checkout `/work/<sid>` and home `/work/.home/<sid>` are created owned by it,
+  mode 0700. The forked child does `setgroups([])`, `setgid`, `setuid` before exec; the pty
+  slave is `fchown`ed to it.
+- **All git operations run as the session uid** (clone, checkout, reset, clean) — never as
+  root inside a session-controlled tree (*rev:* hooks/fsmonitor/filters). No
+  `safe.directory` escape hatch.
+- The ctl never writes into a session tree as root after creation; `AGENTS.md` is written as
+  the uid (or with `O_NOFOLLOW`); ownership changes use `lchown` (*rev:* symlink attacks).
+- **Existing sessions** are migrated once on ctl start, off the event loop: assign a uid,
+  `lchown` the tree recursively (no symlink following).
+- The env handed to `spawn_shell` drops `JCODE_TOKEN` and the ctl-only settings by explicit
+  name (`JCODE_TOKEN`, `JCODE_DEBUG_ACCESS_ENABLED`, `JCODE_LOG_LEVEL`, …) before the
+  per-session overrides; it keeps `JCODE_WORKSPACE_ROOT`, `JCODE_TOOLS_BIN`,
+  `JCODE_INTERNET_*`, `JCODE_GROK_*`, `GROK_*` and `HTTP(S)_PROXY`/`NO_PROXY`.
+- `local-llm` and `flash-next` leave the `jcode` network (N1) — grok already goes through the
+  api's residency-aware proxy; a compose topology test asserts it.
+- Caddy 404s `/api/jcode/llm/*` on the app sites (in-container callers use `http://api:8000`).
+- `hmac.compare_digest` for every secret compared with `!=` (grep: jcode_llm, gmail state, …).
+- *Keeps working:* create/clone/reset/stop/restart/delete; the agent's model, web tools and
+  OCR; `jcode-grok upgrade`, `npm -g` into home, `pip --user`; previews on 5173-5199; the
+  terminal for owner and share recipient; existing sessions after upgrade. *Lost by design:*
+  `apt-get` and writes outside the session's own tree.
+- *Tests:* child env lacks `JCODE_TOKEN`; uid/gid drop; 0700 trees; git runs as the uid;
+  migration of a root-owned tree; Caddyfile block; topology test.
 
-**S2.2 Authenticate `/internal/*` (F7).** A new `INTERNAL_API_TOKEN`, minted automatically by
-`update-inner.sh` / `install.sh` when missing (the existing mint-on-update pattern — no
-terminal step), required by a middleware on every `/internal/*` route (constant-time).
-Callers: the wall sends it as a bearer (passed via compose env); mosquitto-go-auth sends it
-in its configurable `auth_opt_http_user_agent` (rendered into the conf at container start
-by a small entrypoint, since the conf is a static mount); the worker's regen call keeps its
-own HMAC bearer and additionally sends the token. `/internal/mqtt-auth` gets a rate limit.
-Fix the no-op `auth_opt_http_response_timeout_ms` → `auth_opt_http_timeout`. Pin the
-mosquitto-go-auth image digest.
-*Keeps working:* wall pet controls from the LAN TV, MQTT phone auth/ACL, gateway regen, and
-a box updated before the token exists (fails closed for the callers until the update mints
-it — the update is the same action that ships the code). *Tests:* each route 401s without
-the token, 200s with it; wall/mosquitto render tests.
+**S2.2 Authenticate `/internal/*` (F7).**
+- Per-caller secrets, scoped by route: the wall's token opens `/internal/pet*` only;
+  mosquitto's opens `/internal/mqtt-*` only (*rev:* the LAN-facing wall must not hold a key to
+  MQTT). Enforced by router-level dependencies, constant-time.
+- **Distribution without a lag** (*rev:* `update-inner.sh` keeps executing the *old* script
+  after its own `git reset`, so a mint added there only lands on the *second* update). The api
+  generates the secrets on first start into a small named volume (`internal_secrets`, mode
+  0600 files), the wall mounts it read-only and reads its token per request, and mosquitto's
+  entrypoint waits for its file and renders `auth_opt_http_user_agent` into the conf. Same
+  update that ships the code ships the secrets; nothing in `.env`.
+- The worker's regen call keeps its HMAC bearer (unchanged).
+- No rate limit on `/internal/mqtt-auth` (*rev:* one peer → one bucket would lock every phone
+  out; 256-bit keys make the oracle moot once the route is gated). Fix the no-op
+  `auth_opt_http_response_timeout_ms` → `auth_opt_http_timeout`; pin the go-auth image
+  digest and confirm `auth_opt_http_user_agent` in that build; a test asserts no logger
+  records the User-Agent of `/internal` calls.
+- *Keeps working:* wall pet controls from the LAN TV; MQTT phone auth/ACL; gateway regen; the
+  first update.
+- *Tests:* each route 401 without/with the wrong caller's token, 200 with its own; secret
+  file generation idempotent; mosquitto conf render; wall sends the header.
 
-**S2.3 SSRF fence (F8, F9).** Put `reader` and `byparr` on a new `internal: true` network
-whose only exit is the squid `egress` (as the `browser` service is): byparr via
-`PROXY_SERVER=http://egress:3128`; reader's Chromium via `HTTP(S)_PROXY` env (Chromium on a
-headless Linux honours them), with the network fence as the guarantee if it doesn't. The api
-joins that network. `_is_public` uses `is_global` (reuse `browse_policy._is_public_ip`);
-direct fetches pin the validated IP through an httpcore network backend so the address
-checked is the address connected (redirect hops and keep-alive included), with a test seam
-for DNS. Apply to favicon, captions and moltbook clients.
-*Keeps working:* `web_fetch`'s direct → reader → byparr → Tavily ladder, SNI/Host on the
-original name, search. *Risk:* reader egress through squid is unverified on-box — S2's PR
-calls it out and the post-deploy check is `POST /api/debug/fetch` with `tier=reader` and
-`tier=solver`; if reader cannot use the proxy the ladder still falls through to byparr and
-Tavily (degraded, not broken). *Tests:* compose topology test (reader/byparr only on the
-fenced network + egress), `is_global` cases incl. CGNAT, rebinding test via the DNS seam.
+**S2.3 SSRF fence (F8, F9, N5).**
+- `reader` and `byparr` move to a **new** `internal: true` network (`fetchers`) whose only
+  exit is the squid `egress` (new networks, not a flag flip on `internal`, so no compose
+  network recreation on the box); the api and `egress` join it. Byparr uses per-request
+  `proxy: {"url": "http://egress:3128"}` in the FlareSolverr payload (*rev:* the env var is
+  unverified); reader's Chromium gets `HTTP(S)_PROXY` — and the network is the guarantee
+  either way. Squid's ACLs already deny private/CGNAT/link-local/compose names.
+- `_is_public` → `is_global` (reuse `browse_policy._is_public_ip`) plus explicit denies for
+  `64:ff9b::/96`, `::a9fe:a9fe`, `fec0::/10`. Direct httpx fetches (WebFetcher, favicon,
+  captions, moltbook) connect to the validated IP through an httpcore network backend (SNI and
+  Host keep the name; every redirect hop and pooled connection is covered), with a DNS seam
+  for tests.
+- htmlrender refuses WebSockets too (CSP `connect-src 'none'` on rendered pages).
+- **On-box gate before merge** (*rev*): `POST /api/debug/fetch` with `tier=reader` and
+  `tier=solver` against a real page must succeed on the box; the owner is asked for a debug
+  token (or to run it) at that point. If reader cannot reach the internet through squid, the
+  reader move is held back and recorded rather than merged.
+- *Residual, recorded:* yt-dlp/ffmpeg stream fetches (`web/stream.py`) are checked once and
+  fetch on their own stacks; routing them through squid would hit its 50 MB body cap.
+- *Keeps working:* the direct → reader → byparr → Tavily ladder; search; favicons; captions.
+- *Tests:* compose topology (reader/byparr only on `fetchers`; `fetchers` internal; egress on
+  it); `is_global` cases incl. CGNAT and the three v6 ranges; rebinding via the DNS seam;
+  redirect to a private address refused.
 
-### S3 — device and token hygiene ◻️
+**S2.4 jcode egress fence (N2).** Owner decision D3: **fence it**. jcode moves to a new
+`internal: true` network (`jcode_fenced`) shared with `api` and `egress`; its
+`HTTP(S)_PROXY` defaults to `http://egress:3128`, `NO_PROXY=api,localhost,127.0.0.1`. Squid
+gives git/npm/pip public https and http on 80/443 and refuses the LAN, the host, metadata and
+compose names. The old `jcode` network keeps only what still needs it (nothing, after N1 —
+then it is dropped from compose). *Lost by design:* git over ssh and non-80/443 outbound from
+sessions. *Keeps working:* clone over https, npm/pip installs, grok's model and web tools (via
+`api`), previews (served by the ctl via the api, not by outbound). *Tests:* topology; env
+defaults; squid ACL test cases for the LAN/host ranges. *On-box gate:* clone + `npm install`
+in a session.
 
-**S3.1 Live feed re-validation (F10).** The live WS re-authenticates its handshake token and
-clears its `viewer_may_see` cache on a ~30 s tick (the wait gets a timeout so an idle socket
-is re-checked too), closing 4401 on a revoked session/principal and dropping subjects that
-are no longer visible. *Keeps working:* owner and member live maps. *Tests:* revoke mid-stream
-closes; removal from group stops that subject's fixes.
+### S3 — device, session and token hygiene ◻️
+
+**S3.1 Sockets re-validate (F10).** One helper re-authenticates a WS's handshake token on a
+~30 s tick (the receive wait gets a timeout so idle sockets are re-checked) and closes 4401
+when the session/principal is revoked or expired. Used by the live map (also clears its
+`viewer_may_see` cache each tick) and the jcode and jlaunch terminals. Revoking a jcode share
+also has the ctl kill processes the share's terminals started (by session uid, which S2.1
+makes possible) and **rotates the session's preview slug**. *Keeps working:* owner and member
+live maps, owner terminals, a share's terminal while the share is live. *Tests:* revoke
+mid-stream closes; group removal stops that subject; slug rotates on revoke.
 
 **S3.2 Panel vs phone (F11).** `current_panel_principal` and the panel WS accept a device key
-only if its subject's `device_role IS NOT NULL`; `/api/session/mint` accepts only
-`device_role IS NULL`. (Panels are always provisioned with a role by `/endpoint/flash`;
-0211 back-filled legacy panels.) *Keeps working:* every flashed panel, phones' dashboard,
-OwnTracks, MQTT (unchanged). *Tests:* phone key 401 on panel routes/WS; panel key refused at
-mint; panel and phone happy paths.
+only if its subject's `device_role IS NOT NULL`; `/api/session/mint` and OwnTracks accept only
+`device_role IS NULL`. Every `/endpoint/flash` label is `panel …`/default, which 0211
+back-filled, so no flashed panel is NULL — and the api logs a warning at startup with the count
+of NULL-role principals that have `endpoint_status` rows, so a stray one is visible in the
+debug logs. *Tests:* phone key refused on panel routes/WS; panel key refused at mint/OwnTracks;
+happy paths.
 
-**S3.3 Debug SQL secrets (F12).** Pairing codes stored as `sha256(code)` (migration deletes
-unredeemed plaintext rows — 15-min TTL; Python hashes before insert/redeem; never use
-`hash_key`, codes are case-sensitive). The debug SQL route first runs `EXPLAIN (VERBOSE,
-FORMAT JSON)` and refuses plans touching a deny-list of relations (`pairing_code`,
-`principals`, `device_sessions`, `fcm_token`, the share-link tables, `intake_links`) or
-calling `set_config`/`current_setting`/`pg_read_*`/`lo_*`/`dblink`; `app.settings` rows are
-redacted by an explicit secret-key set, not by column alias. *Keeps working:* every other
-debug SQL read, pairing QR flow. *Tests:* alias bypass now redacted; deny-listed tables refused;
-pairing redeem with hashed code.
+**S3.3 Pairing codes and debug SQL (F12).** Owner decision D2: **hash + harden**, not a
+separate DB role. Pairing codes stored as `sha256(code)`; existing in-flight rows are hashed
+in place by the migration so an open QR still redeems; `redeem_pairing_code` compares hashes;
+never `hash_key` (codes are case-sensitive). The debug SQL route refuses statements naming
+the XML/SPI family (`query_to_xml`, `table_to_xml`, `cursor_to_xml`, `schema_to_xml`,
+`database_to_xml`), `set_config`, `pg_read_*`, `lo_*`, `dblink` (text match on the
+lower-cased statement; `EXPLAIN` checks its inner statement; `SHOW` passes), redacts any
+cell of an `app.settings` row whose key is in an explicit secret-key set when the query
+selects from `app.settings` (by relation, not alias), and keeps the column-name redaction as a
+backstop. The debug console remains owner-level read access by design; its token is the
+owner's to give. *Keeps working:* every other debug SQL read, the `SHOW`/`EXPLAIN` diagnostics,
+the pairing QR flow. *Tests:* `query_to_xml` refused; aliased settings secret redacted; hashed
+redeem; in-flight code survives the migration.
 
-**S3.4 Client IP and audit (F13, F14).** One `client_ip(request)` helper: when the peer is the
-proxy container, use `Cf-Connecting-IP` (tunnel) else the last `X-Forwarded-For` hop; any
-other peer uses the socket address. All limiters and `nudge` use it; Caddy strips an inbound
-`Cf-Connecting-IP` in direct mode. `/member/positions` audits only when rows came back and
-the subject isn't the viewer. *Tests:* helper matrix; audit not written for invisible subject.
+**S3.4 Client IP and audit (F13, F14).** Caddy always overwrites `X-Real-IP` with its peer
+(`{remote_host}`); the api trusts `X-Real-IP` only when the TCP peer is the proxy container,
+and uses `Cf-Connecting-IP` only when that peer is cloudflared (a docker-bridge address), else
+`X-Real-IP` — so a LAN client can't spoof `Cf-Connecting-IP` through the published port in
+either mode. The panel tunnel forwards `cf-connecting-ip` too. All limiters and `nudge` use
+the helper. `/member/positions` audits only when `viewer_may_see(viewer, target)` and target ≠
+viewer. *Tests:* helper matrix (direct, tunnel, LAN-spoof, sandbox peer); audit written for a
+visible subject with no fixes, not for an invisible one.
 
-### S4 — latent RLS hardening ◻️
+**S3.5 Minecraft log-line forgery (N3).** `deploy/minecraft/bds.py` dispatches pack lines
+(`[Scripting]`/`[jbrain]`) first and anchors every BDS regex to BDS's own line prefix
+(`^\[[^\]]+ INFO\] Player connected:` etc.), so a player's text can't impersonate a
+join/leave, the server-start or save-ready markers. *Tests:* the injected `/jb:dave` question
+is parsed as a question, not a connect; real lines still parse.
+
+### S4 — wave-level red team ◻️
+
+A cold red team re-analyses the whole codebase after S1–S3 merge: re-attack every finding,
+attack the fixes, and separately hunt regressions across the flow table. Findings are fixed in
+S4's PR.
+
+### S5 — latent RLS hardening ◻️
 
 Not reachable by a third party today (each needs arbitrary SQL, and the only arbitrary-SQL
-surface runs as owner), so each item lands only if it can be done without behaviour risk,
-proven by the integration suite; otherwise it is recorded as a residual in `ROADMAP.md`.
+surface runs as owner). Each lands only with an integration test proving no behaviour change;
+otherwise recorded as a residual in `ROADMAP.md`.
 (a) `view_audit_write` WITH CHECK adds `app.viewer_may_see(viewer, target)`.
-(b) `place_geofence_read` requires an actual share row for non-owners.
-(c) `viewer_may_see` / `visible_subjects`: non-owner callers may only pass their own
-`app.subject_id` (raise otherwise), keeping the signature RLS policies use.
-(d) TimescaleDB chunks: investigate whether revoking `jbrain_app`'s direct privileges on
-`_timescaledb_internal` chunks keeps hypertable reads/writes working (Timescale propagates
-grants to new chunks); land only with an integration test that inserts and reads fixes and
-host metrics as `jbrain_app`.
-Each new/changed policy gets an RLS isolation test.
+(b) `viewer_may_see` / `visible_subjects`: a non-owner caller may pass only its own
+`app.subject_id` — and in the same PR `SqlViewScopeRepo.may_view` runs under the viewer's
+`device_context` instead of an empty context (*rev:* otherwise the member live map raises),
+with a member-live integration test.
+(c) TimescaleDB chunks: revoke `jbrain_app`'s direct privileges on `_timescaledb_internal`
+only if an integration test inserting/reading fixes and host metrics as `jbrain_app` passes.
+Dropped after review: tightening `place_geofence_read` (*rev:* ingest-time geofence detection
+relies on it for owner "all devices" fences).
 
-## Owner decisions
+## Owner decisions (taken 2026-10-12)
 
-- **D1 — jcode sessions lose root.** Recommended: yes. Root in the session container is what
-  turns "a share recipient has a shell" into "a share recipient owns every jcode session"
-  (`/proc/1/environ`, the ctl's code). Cost: no `apt-get` in sessions. Alternative: keep
-  root, strip the env only — closes `echo $JCODE_TOKEN` but not `/proc/1/environ`.
-- **D2 — preview on a separate registrable domain.** Not required once S1.3 lands; would be
-  belt-and-braces but needs a DNS/Cloudflare change the owner makes. Not planned.
+- **D1 — jcode sessions lose root: yes, per-session uids.** Cost: no `apt-get` in sessions.
+- **D2 — debug SQL: hash pairing codes + harden**, not a separate login role.
+- **D3 — jcode egress: fenced** through the squid egress. Cost: no git-over-ssh or
+  non-80/443 outbound from sessions.
+- Not planned: moving previews to a separate registrable domain (S1.3 makes it unnecessary).
 
-## Out of scope, recorded
+## Out of scope / recorded
 
 - **F17 panel flash encryption.** ESP32 flash encryption/secure boot burn eFuses
-  irreversibly and interact with the "cable once" OTA rollback design; it needs hardware in
+  irreversibly and interact with the "cable once" OTA rollback design; needs hardware in
   hand. Carried to `ROADMAP.md` as a firmware residual.
-- **F18 wall on `0.0.0.0:8800`.** The wall is a LAN display by design; S2.2 stops it being a
-  credential-free path into `/internal`, and its own LAN surface is accepted.
+- **F18 wall.** A LAN display by design; S2.2 scopes its token to the pet routes. It still
+  relays pet commands (an owner-context pet line, statue compute) for any client that can
+  reach `:8800` — the LAN, and in direct mode possibly the internet since Docker-published
+  ports bypass ufw. Recorded as a residual; a bind-address default is an owner choice.
+- **`update-inner.sh` self-update lag.** The updater runs its pre-reset copy, so new mint steps
+  take two updates. S2.2 avoids depending on it; fixing the updater itself is its own change.
+- **Stream fetches** (yt-dlp/ffmpeg) keep check-once SSRF guarding (S2.3).
 
 ## Provenance
 
 Six cold reviewers (non-owner routes, unauthenticated routes, credentials/share links,
-devices/MQTT, infra/SSRF, RLS/contexts) and three researchers (jcode/internal, CSRF callers,
-SSRF/pairing/panels). F1, F2 (Origin gate default, iframe), F3 (route inventory) and F5 were
-re-verified by hand.
+devices/MQTT, infra/SSRF, RLS/contexts), three researchers (jcode/internal, CSRF callers,
+SSRF/pairing/panels), and three cold plan reviewers (adequacy, regressions, completeness).
+F1, F2 (Origin gate default, iframe), F3 (route inventory) and F5 were re-verified by hand.
