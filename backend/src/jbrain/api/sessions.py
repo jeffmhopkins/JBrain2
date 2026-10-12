@@ -116,6 +116,8 @@ async def create_session(
         subject_ids=body.subject_ids,
         title=body.title,
         agent=body.agent,
+        # The panel's Recent list (`api.panel_convo`) shows the chats started here.
+        origin="pwa",
     )
     return session_out(info)
 

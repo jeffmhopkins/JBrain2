@@ -16,7 +16,7 @@ from sqlalchemy import column, delete, exists, func, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
-from jbrain.agent.agents import ENGINE_ONLY_PERSONAS
+from jbrain.agent.agents import ENGINE_ONLY_PERSONAS, agent_for
 from jbrain.agent.contracts import DEFAULT_OWNER_POLICY, PermissionClass, PolicyOutcome
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.agent import AgentSession, AgentTurn, Run
@@ -70,9 +70,30 @@ class AgentSessionInfo:
     # This chat's plan status (not_approved | approved | in_work), for the Chats-card
     # planning badge (JERV_PLANNING_TOOL_PLAN.md). None when the chat has no plan.
     plan_status: str | None = None
+    # Where the chat was started: "panel", "pwa" or None (AgentSession.origin).
+    origin: str | None = None
     # A live public share link points at this chat (the Chats row's link glyph). Populated
     # by `list` only.
     shared: bool = False
+
+
+#: What the desk panel's thread is called until it has a name (`api.panel_agent`): shown in the
+#: PWA and on the panel, and NOT a name for `is_unnamed` — the owner's panel chats get the same
+#: in-turn title a PWA chat does.
+PANEL_PLACEHOLDER_TITLE = "Desk panel"
+
+
+def is_unnamed(session: object) -> bool:
+    """Whether a chat still waits for its name: no title, or the desk panel's placeholder on a
+    panel-started chat whose agent can name it (`name_session`; Minecraft_Dave cannot, so his
+    panel chats stay "Desk panel"). An owner's own title is never unnamed."""
+    title = str(getattr(session, "title", "")).strip()
+    if not title:
+        return True
+    if getattr(session, "origin", None) != "panel" or title != PANEL_PLACEHOLDER_TITLE:
+        return False
+    tools = agent_for(str(getattr(session, "agent", ""))).tools
+    return tools is None or "name_session" in tools
 
 
 def _info(
@@ -106,6 +127,7 @@ def _info(
         context_tokens=row.context_tokens,
         context_window=row.context_window,
         plan_status=plan_status,
+        origin=row.origin,
         shared=shared,
     )
 
@@ -151,6 +173,7 @@ class AgentSessionRepo:
         parent_session_id: str | None = None,
         depth: int = 0,
         no_memory: bool = False,
+        origin: str | None = None,
     ) -> AgentSessionInfo:
         async with scoped_session(self._maker, ctx) as session:
             return await self.create_on(
@@ -163,6 +186,7 @@ class AgentSessionRepo:
                 parent_session_id=parent_session_id,
                 depth=depth,
                 no_memory=no_memory,
+                origin=origin,
             )
 
     async def create_on(
@@ -177,6 +201,7 @@ class AgentSessionRepo:
         parent_session_id: str | None = None,
         depth: int = 0,
         no_memory: bool = False,
+        origin: str | None = None,
     ) -> AgentSessionInfo:
         """`create`, on the caller's already-RLS-scoped transaction.
 
@@ -193,6 +218,7 @@ class AgentSessionRepo:
             parent_session_id=uuid.UUID(parent_session_id) if parent_session_id else None,
             depth=depth,
             no_memory=no_memory,
+            origin=origin,
             domain_scopes=list(domain_scopes),
             subject_ids=[uuid.UUID(s) for s in subject_ids],
         )

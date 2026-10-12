@@ -21,6 +21,7 @@
 #include "svc_alarms_drv.h"
 #include "svc_audio_fake.h"
 #include "svc_box_fake.h"
+#include "svc_convo_drv.h"
 #include "svc_display.h"
 #include "svc_display_fake.h"
 #include "svc_messages_fake.h"
@@ -79,6 +80,148 @@ static void cap_sink(void *ctx, const uint8_t *b, size_t n)
     s_cap.n += n;
 }
 
+/* ---- the box's conversations (0.0.15), answered by the sim the way `api/panel_convo.py` does,
+ * from the mock's sessions (Main.dc.html `sessionSeed`) ---- */
+
+typedef struct {
+    const char *id, *title, *origin, *snippet;
+    int days, h, m; /* last active: `days` back at local h:m, or (days < 0) -days minutes ago */
+} sim_session_t;
+
+static const sim_session_t JERV_SESSIONS[] = {
+    {"6a1c0001-0000-4000-8000-000000000001", "Shopping list", "panel", "Added milk to your shopping list.", -2, 0, 0},
+    {"6a1c0002-0000-4000-8000-000000000002", "Tides at Port St John", "pwa",
+     "Yes. Go after 14:00, back up the beach by 16:30.", -12, 0, 0},
+    {"6a1c0003-0000-4000-8000-000000000003", "T-Rex fossils", "panel",
+     "Sue, in Chicago. About 90% of the skeleton was found.", 1, 19, 40},
+    {"6a1c0004-0000-4000-8000-000000000004", "Desk panel", "panel",
+     "Done. The porch light goes off at 11:00 tonight.", 1, 7, 58},
+    {"6a1c0005-0000-4000-8000-000000000005", "Car insurance renewal", "pwa",
+     "On the 28th. I added a reminder for the 21st.", 2, 16, 10},
+    {"6a1c0006-0000-4000-8000-000000000006", "Desk panel", "panel",
+     "Done. I'll remind you at 09:00 tomorrow.", 3, 8, 30},
+    {"6a1c0007-0000-4000-8000-000000000007", "Pancake recipe", "pwa",
+     "Two cups of flour, two eggs, two cups of milk, a pinch of salt.", 4, 18, 2},
+    {"6a1c0008-0000-4000-8000-000000000008", "Server backup", "pwa",
+     "Last night's backup finished at 02:14. Nothing failed.", 5, 22, 15},
+    {"6a1c0009-0000-4000-8000-000000000009", "Desk panel", "panel",
+     "Added: bins out every Tuesday evening.", 7, 9, 0},
+    {"6a1c0010-0000-4000-8000-000000000010", "Birthday ideas", "pwa",
+     "You: Birthday ideas for an eight-year-old?", 9, 12, 0},
+};
+static const sim_session_t DAVE_SESSIONS[] = {
+    {"6a1d0001-0000-4000-8000-000000000001", "Desk panel", "panel",
+     "North of spawn, past the river. I can point you there.", -5, 0, 0},
+    {"6a1d0002-0000-4000-8000-000000000002", "Wheat farm", "pwa",
+     "Water within four blocks of every crop, and light so it grows at night.", 1, 18, 20},
+    {"6a1d0003-0000-4000-8000-000000000003", "Desk panel", "panel", "It is. Two players are on right now.", 2, 10, 5},
+    {"6a1d0004-0000-4000-8000-000000000004", "Nether portal", "pwa",
+     "Ten for the frame without corners, fourteen with them.", 4, 19, 30},
+    {"6a1d0005-0000-4000-8000-000000000005", "Desk panel", "panel",
+     "At the bed in your base. It is your spawn point now.", 10, 20, 0},
+};
+
+/* Which session each agent's panel thread points at, as the box keeps it. */
+static int s_box_cur[2];
+/* Recent's loading board: its list is held unanswered. The empty board: the box has none. */
+static bool s_box_hold, s_box_none;
+
+static int64_t box_at(const sim_session_t *s)
+{
+    int64_t now = 0;
+    svc_rtc_epoch(&now);
+    if (s->days < 0) return now + s->days * 60;
+    rtc_time_t t;
+    svc_rtc_now(&t);
+    const int64_t midnight = now - (t.h * 3600 + t.m * 60 + t.s);
+    return midnight - (int64_t)s->days * 86400 + s->h * 3600 + s->m * 60;
+}
+
+static void box_sessions(const char *agent, const sim_session_t **list, int *n, int **cur)
+{
+    const bool jerv = !strcmp(agent, "jerv");
+    *list = jerv ? JERV_SESSIONS : DAVE_SESSIONS;
+    *n = jerv ? (int)(sizeof JERV_SESSIONS / sizeof *JERV_SESSIONS)
+              : (int)(sizeof DAVE_SESSIONS / sizeof *DAVE_SESSIONS);
+    *cur = &s_box_cur[jerv ? 0 : 1];
+}
+
+static char *box_body(const char *text)
+{
+    char *b = malloc(strlen(text) + 1);
+    strcpy(b, text);
+    return b;
+}
+
+/* The tides chat's last two exchanges, as `GET …/messages?limit=3` sends them. */
+static const char TIDES_THREAD[] =
+    "{\"id\":\"6a1c0002-0000-4000-8000-000000000002\",\"title\":\"Tides at Port St John\","
+    "\"messages\":[{\"mine\":true,\"text\":\"When's low tide today?\"},"
+    "{\"mine\":false,\"text\":\"Low 14:52, high 21:07.\"},"
+    "{\"mine\":true,\"text\":\"Good for rock pools later?\"},"
+    "{\"mine\":false,\"text\":\"Yes. Go after 14:00, back up the beach by 16:30.\"}],\"more\":true}";
+
+static void box_answer(const convo_req_t *r)
+{
+    static char body[4096];
+    const sim_session_t *list;
+    int n, *cur;
+    box_sessions(r->agent, &list, &n, &cur);
+    if (r->kind == CONVO_RQ_RECENT) {
+        int o = snprintf(body, sizeof body, "{\"items\":[");
+        for (int k = 0; k < n && !s_box_none; k++) {
+            /* The current one first, then newest first: the box's order. */
+            const int i = k == 0 ? *cur : (k <= *cur ? k - 1 : k);
+            o += snprintf(body + o, sizeof body - (size_t)o,
+                          "%s{\"id\":\"%s\",\"title\":\"%s\",\"at\":%lld,\"origin\":\"%s\","
+                          "\"snippet\":\"%s\",\"current\":%s}",
+                          k ? "," : "", list[i].id, list[i].title, (long long)box_at(&list[i]),
+                          list[i].origin, list[i].snippet, i == *cur ? "true" : "false");
+        }
+        snprintf(body + o, sizeof body - (size_t)o, "]}");
+    } else if (r->kind == CONVO_RQ_SWITCH) {
+        int found = -1;
+        for (int i = 0; i < n; i++)
+            if (!strcmp(list[i].id, r->id)) found = i;
+        if (found < 0) {
+            svc_convo_done(r, 404, NULL, 0);
+            return;
+        }
+        *cur = found;
+        if (!strcmp(r->id, JERV_SESSIONS[1].id))
+            snprintf(body, sizeof body, "%s", TIDES_THREAD);
+        else
+            snprintf(body, sizeof body,
+                     "{\"id\":\"%s\",\"title\":\"%s\",\"messages\":[{\"mine\":false,\"text\":\"%s\"}],"
+                     "\"more\":true}",
+                     list[found].id, list[found].title, list[found].snippet);
+    } else {
+        snprintf(body, sizeof body, "{\"id\":\"%s\",\"title\":\"%s\",\"messages\":[],\"more\":true}",
+                 list[*cur].id, list[*cur].title);
+    }
+    svc_convo_done(r, 200, box_body(body), strlen(body));
+}
+
+/* Every request the glass made, answered at once — except a list held for the loading board. */
+static void fake_box(void)
+{
+    static convo_req_t held;
+    static bool holding;
+    convo_req_t r;
+    if (holding && !s_box_hold) {
+        holding = false;
+        box_answer(&held);
+    }
+    while (svc_convo_take(&r)) {
+        if (r.kind == CONVO_RQ_RECENT && s_box_hold) {
+            held = r;
+            holding = true;
+            continue;
+        }
+        box_answer(&r);
+    }
+}
+
 static void step(uint32_t ms)
 {
     for (uint32_t t = 0; t < ms; t += 10) {
@@ -86,6 +229,8 @@ static void step(uint32_t ms)
         svc_rtc_fake_advance_ms(10);
         svc_audio_service();
         svc_siblings_service();
+        fake_box();
+        svc_convo_service();
         svc_alarms_service(svc_rtc_uptime_ms());
         shell_pump();
         lv_timer_handler();
@@ -192,6 +337,7 @@ static void boot(const char *only)
     svc_box_init();
     svc_messages_init();
     svc_siblings_init();
+    svc_convo_init();
     svc_audio_init();
     alarm_port_fake_wipe();
     svc_alarms_init();
@@ -256,6 +402,18 @@ static void fixtures(void)
 static void no_names(void)
 {
     s_no_names = true;
+}
+
+/* Recent's loading board: the box has not answered the list yet. */
+static void hold_list(void)
+{
+    s_box_hold = true;
+}
+
+/* Recent's empty board: nothing on the box for Jerv yet. */
+static void no_convos(void)
+{
+    s_box_none = true;
 }
 
 /* The tapped point of whatever on the top layer or screen says `text`: the sim taps a menu's
@@ -440,12 +598,25 @@ static const state_t STATES[] = {
     {"rec-dave", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), KEY_DOWN, WAIT(2600)}},
     {"dave-reply", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY}},
     {"compass", NULL, {OPEN("minecraft"), TAP_LABEL("Compass")}},
-    /* A long press in a conversation (owner, 2026-10-12): the menu, then Clear armed. */
-    {"chat-menu", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000)}},
-    {"chat-menu-armed", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Clear chat")}},
-    {"chat-cleared", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Clear chat"),
-                            TAP_LABEL("Tap again to clear")}},
+    /* A long press in a person's thread (owner, 2026-10-12): the menu, then Clear armed. */
+    {"quorra-menu", NULL, {OPEN(SVC_MESSAGES_THREAD_1), HOLD(240, 240), WAIT(1000)}},
+    {"quorra-menu-armed", NULL, {OPEN(SVC_MESSAGES_THREAD_1), HOLD(240, 240), WAIT(1000), TAP_LABEL("Clear chat")}},
+    {"quorra-cleared", NULL, {OPEN(SVC_MESSAGES_THREAD_1), HOLD(240, 240), WAIT(1000), TAP_LABEL("Clear chat"),
+                              TAP_LABEL("Tap again to clear")}},
+    /* 0.0.15 (owner, 2026-10-12, the mock's Convo boards): in an agent's thread the long press is
+       New conversation and Recent conversations. */
+    {"jerv-menu", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000)}},
+    {"jerv-recent-loading", hold_list, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Recent conversations")}},
+    {"jerv-recent", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Recent conversations")}},
+    {"jerv-recent-end", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Recent conversations"), SCROLL_END}},
+    {"jerv-recent-empty", no_convos, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("New conversation"),
+                                      WAIT(2400), HOLD(240, 240), WAIT(1000), TAP_LABEL("Recent conversations")}},
+    {"jerv-switched", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("Recent conversations"),
+                             TAP_LABEL("Tides at Port St John"), WAIT(500)}},
+    {"jerv-new", NULL, {OPEN("jerv"), HOLD(240, 240), WAIT(1000), TAP_LABEL("New conversation"), WAIT(2400)}},
     {"dave-menu", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), HOLD(240, 240), WAIT(1000)}},
+    {"dave-recent", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), HOLD(240, 240), WAIT(1000),
+                           TAP_LABEL("Recent conversations")}},
     {"settings", NULL, {OPEN("settings")}},
     {"settings-end", NULL, {OPEN("settings"), SCROLL_END}},
     {"settings-usb", no_battery, {OPEN("settings")}},
@@ -650,9 +821,11 @@ static int lifecycle(void)
        menu armed (the menu's lapse timer must go with it). */
     static const char *const DEEP[][4] = {
         {OPEN("minecraft"), "tap Dave", KEY_DOWN, NULL},
-        {OPEN("jerv"), HOLD(240, 240), "wait 1000", "tap Clear chat"},
+        {OPEN(SVC_MESSAGES_THREAD_1), HOLD(240, 240), "wait 1000", "tap Clear chat"},
         {OPEN("minecraft"), "tap Compass", NULL, NULL},
+        {OPEN("jerv"), HOLD(240, 240), "wait 1000", "tap Recent conversations"},
     };
+    static const char *const DEEP_NAME[] = {"dave", "quorra-menu", "compass", "jerv-recent"};
     for (size_t i = 0; i < sizeof DEEP / sizeof *DEEP; i++) {
         for (int k = 0; k < 4 && DEEP[i][k]; k++) {
             if (!strncmp(DEEP[i][k], "tap ", 4)) tap_label(DEEP[i][k] + 4);
@@ -667,7 +840,7 @@ static int lifecycle(void)
         step(3000);
         unsigned o = shell_obj_count(), t = shell_timer_count();
         printf("%-10s open %4u widgets; closed back to %u widgets (home %u), %u timers (home %u)\n",
-               i == 0 ? "dave" : i == 1 ? "jerv-menu" : "compass", open_objs, o, objs, t, timers);
+               DEEP_NAME[i], open_objs, o, objs, t, timers);
         if (o != objs || t != timers) bad = 1;
     }
     return bad;
@@ -966,18 +1139,105 @@ static int touch_checks(void)
     expect(!shell_menu_open(), "a scroll held at its end is not a long press");
 
     unsigned daves = svc_messages_count("dave");
+    /* 0.0.15: an agent's menu is New conversation and Recent conversations. */
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"subtitle\":\"Shopping list\"") != NULL,
+           "the thread's header names the conversation the box says it is");
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    expect(labelled(lv_layer_top(), "Recent conversations") && !labelled(lv_layer_top(), "Clear chat"),
+           "Jerv's menu has New and Recent, and no Clear chat");
+    tap_label("Recent conversations");
+    expect(!shell_menu_open() && strstr(run("{\"cmd\":\"snapshot\"}"), "\"recent\":\"list\"") != NULL,
+           "Recent opens over the thread with the box's list");
+    finger(240, 240, true);
+    step(900);
+    finger(240, 240, false);
+    step(200);
+    expect(!shell_menu_open(), "a long press on Recent opens no menu");
+    run(KEY_DOWN);
+    step(200);
+    const char *rs = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(rs, "\"recent\":\"closed\"") != NULL && strstr(rs, "\"talking\":true") != NULL,
+           "KEY in Recent closes it and talks in the current conversation");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    run(KEY_UP);
+    step(100);
+    expect(svc_messages_count("jerv") == answered, "(that hold cancelled, nothing sent)");
+
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    tap_label("Recent conversations");
+    tap_label("Tides at Port St John");
+    step(300);
+    rs = run("{\"cmd\":\"snapshot\"}");
+    expect(svc_messages_count("jerv") == 4 && strstr(rs, "\"subtitle\":\"Tides at Port St John\"") &&
+               strstr(rs, "\"recent\":\"closed\""),
+           "a row switches the thread to that conversation's last exchanges, under its title");
+    expect(svc_messages_count("dave") == daves, "and Dave's thread is untouched");
+    run(KEY_DOWN);
+    step(1500);
+    run(KEY_UP);
+    step(100);
+    expect(strstr(svc_audio_fake_last_path(), "persona=jerv") &&
+               !strstr(svc_audio_fake_last_path(), "new_thread"),
+           "the next talk in it continues that conversation");
+    svc_audio_fake_reply("and tomorrow?", "Low at 15:40.", false);
+    step(200);
+    const unsigned switched = svc_messages_count("jerv");
+
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    tap_label("New conversation");
+    expect(!shell_menu_open() && svc_messages_count("jerv") == 0 &&
+               strstr(run("{\"cmd\":\"snapshot\"}"), "\"subtitle\":\"New conversation\"") != NULL,
+           "New conversation is one tap: the thread starts over (the old one is in Recent)");
+    expect(switched > 0 && svc_messages_count("dave") == daves, "and Dave's is untouched");
+    expect(svc_audio_fresh_pending("jerv") && !svc_audio_fresh_pending("dave"),
+           "Jerv's next talk starts a new conversation on the box; Dave's continues");
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    tap_label("Recent conversations");
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"recent\":\"list\"") != NULL,
+           "Recent after New lists the last one, no longer current");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"recent\":\"closed\"") != NULL && shell_open_app(),
+           "BOOT leaves Recent for the thread");
+    const char *before_new = strstr(run("{\"cmd\":\"snapshot\"}"), "\"new_conversations\":");
+    const int news = before_new ? atoi(before_new + 20) : -1;
+    finger(240, 240, true);
+    step(800);
+    finger(240, 240, false);
+    step(200);
+    tap_label("New conversation");
+    expect(svc_messages_count("jerv") == 0 && svc_audio_fresh_pending("jerv") &&
+               strstr(run("{\"cmd\":\"snapshot\"}"), "\"new_conversations\":") != NULL && news >= 1,
+           "a second New on a new, empty conversation does nothing (it says it already is)");
+
+    /* A person's thread keeps 0.0.11's Clear chat, two taps. */
+    run(OPEN(SVC_MESSAGES_THREAD_1));
+    step(100);
+    const unsigned hers = svc_messages_count(SVC_MESSAGES_THREAD_1);
     finger(240, 240, true);
     step(800);
     finger(240, 240, false);
     step(200);
     tap_label("Clear chat");
-    expect(shell_menu_open() && svc_messages_count("jerv") == answered,
+    expect(shell_menu_open() && hers > 0 && svc_messages_count(SVC_MESSAGES_THREAD_1) == hers,
            "the first tap on Clear chat only arms it");
     tap_label("Tap again to clear");
-    expect(!shell_menu_open() && svc_messages_count("jerv") == 0, "the second clears Jerv's thread");
-    expect(svc_messages_count("dave") == daves, "and Dave's is untouched");
-    expect(svc_audio_fresh_pending("jerv") && !svc_audio_fresh_pending("dave"),
-           "Jerv's next talk starts a new conversation on the box; Dave's continues");
+    expect(!shell_menu_open() && svc_messages_count(SVC_MESSAGES_THREAD_1) == 0,
+           "the second clears her thread");
+    run(OPEN("jerv"));
+    step(100);
 
     finger(240, 240, true);
     step(800);

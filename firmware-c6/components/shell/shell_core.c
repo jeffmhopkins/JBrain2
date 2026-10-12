@@ -185,9 +185,9 @@ bool sh_menu_may_open(const sh_facts_t *f, bool conversation)
            !f->alarm_ringing && !(f->notices && !f->notices_held);
 }
 
-void sh_menu_open(sh_menu_t *m)
+void sh_menu_open(sh_menu_t *m, sh_menu_kind_t kind)
 {
-    *m = (sh_menu_t){.state = SH_MENU_OPEN};
+    *m = (sh_menu_t){.state = SH_MENU_OPEN, .kind = kind};
 }
 
 bool sh_menu_armed(const sh_menu_t *m, uint32_t now_ms)
@@ -198,7 +198,15 @@ bool sh_menu_armed(const sh_menu_t *m, uint32_t now_ms)
 sh_menu_do_t sh_menu_input(sh_menu_t *m, sh_menu_in_t in, uint32_t now_ms)
 {
     if (m->state != SH_MENU_OPEN) return SH_MENU_DO_NOTHING;
+    /* Each menu's own buttons only: neither can be reached through the other. */
+    const bool convo = m->kind == SH_MENU_CONVO;
+    if (in == SH_MENU_IN_NEW || in == SH_MENU_IN_RECENT) {
+        if (!convo) return SH_MENU_DO_NOTHING;
+        sh_menu_close(m);
+        return in == SH_MENU_IN_NEW ? SH_MENU_DO_NEW : SH_MENU_DO_RECENT;
+    }
     if (in == SH_MENU_IN_CLEAR) {
+        if (convo) return SH_MENU_DO_NOTHING;
         if (sh_menu_armed(m, now_ms)) {
             sh_menu_close(m);
             return SH_MENU_DO_CLEAR;

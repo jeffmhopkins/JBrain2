@@ -863,3 +863,351 @@ void ui_toast(const char *text, uint32_t ms)
     s_toast_timer = lv_timer_create(toast_expired, ms, NULL);
     lv_timer_set_repeat_count(s_toast_timer, 1);
 }
+
+/* ---- 0.0.15: the conversation menu, Recent and a switched thread (Main.dc.html) ---- */
+
+lv_obj_t *ui_header_sub(lv_obj_t *root, const ui_icon_t *icon, ui_accent_t accent,
+                        const char *title, const char *sub, lv_event_cb_t on_back, void *user,
+                        lv_obj_t **sub_label)
+{
+    lv_obj_t *h = ui_header(root, icon, accent, title, on_back, user);
+    /* The title the plain header made becomes the first of two lines: the name, and under it
+       the conversation's title, one line cut with "…". */
+    lv_obj_t *t = lv_obj_get_child(h, -1);
+    lv_obj_t *col = ui_box(h, LV_FLEX_FLOW_COLUMN, 0);
+    lv_obj_set_flex_grow(col, 1);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_parent(t, col);
+    lv_obj_set_style_text_font(t, ui_font(22), 0);
+    lv_obj_set_flex_grow(t, 0);
+    lv_obj_t *s = ui_label(col, sub, 18, UI_C_MUTED);
+    lv_label_set_long_mode(s, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s, UI_W - 2 * UI_PAD_PAGE - 2 * UI_TOUCH_MIN - 2 * 12);
+    if (sub_label) *sub_label = s;
+    return h;
+}
+
+/* The mock's phone on the 48-unit grid (its 24-unit SVG doubled): a rounded body and a short
+ * line for its button. */
+static const path_t PHONE_BUTTON[] = {{2, {{22, 36}, {26, 36}}}};
+
+lv_obj_t *ui_phone(lv_obj_t *parent, int px, uint32_t color)
+{
+    lv_obj_t *box = bare(parent);
+    lv_obj_set_size(box, px, px);
+    const int sw = px * 4 / 48 < 2 ? 2 : px * 4 / 48;
+    lv_obj_t *body = bare(box);
+    lv_obj_set_pos(body, 14 * px / 48 - sw / 2, 5 * px / 48 - sw / 2);
+    lv_obj_set_size(body, 20 * px / 48 + sw, 38 * px / 48 + sw);
+    lv_obj_set_style_radius(body, 5 * px / 48, 0);
+    border(body, color, sw);
+    draw_path(box, PHONE_BUTTON, px, color, sw);
+    return box;
+}
+
+void ui_menu_sub(lv_obj_t *card, const char *text)
+{
+    /* The card's title, then this one muted line under it, closer than the buttons below. */
+    lv_obj_t *title = lv_obj_get_child(card, 0);
+    lv_obj_t *head = ui_box(card, LV_FLEX_FLOW_COLUMN, 2);
+    lv_obj_move_to_index(head, 0);
+    lv_obj_set_width(head, LV_PCT(100));
+    lv_obj_set_style_pad_hor(head, 4, 0);
+    lv_obj_set_style_pad_bottom(head, 4, 0);
+    lv_obj_set_flex_align(head, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_parent(title, head);
+    lv_obj_set_style_text_font(title, ui_font(20), 0);
+    lv_obj_t *s = ui_label(head, text, 18, UI_C_MUTED);
+    lv_label_set_long_mode(s, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(s, LV_PCT(100));
+}
+
+lv_obj_t *ui_menu_row(lv_obj_t *parent, ui_row_glyph_t glyph, const char *text, uint32_t color,
+                      bool tinted, bool chevron, lv_event_cb_t cb, void *user)
+{
+    lv_obj_t *b = bare(parent);
+    lv_obj_set_size(b, LV_PCT(100), 60);
+    if (tinted) {
+        fill(b, color, UI_OPA_TINT, UI_R_BUTTON);
+    } else {
+        fill(b, UI_C_RAISED, LV_OPA_COVER, UI_R_BUTTON);
+        border(b, UI_C_LINE_STRONG, 1);
+    }
+    lv_obj_set_style_pad_left(b, 18, 0);
+    lv_obj_set_style_pad_right(b, 14, 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(b, 12, 0);
+    if (glyph == UI_ROW_GLYPH_PLUS) {
+        ui_label(b, LV_SYMBOL_PLUS, 20, color);
+    } else if (glyph == UI_ROW_GLYPH_CLOCK) {
+        lv_obj_t *g = bare(b);
+        lv_obj_set_size(g, 22, 22);
+        draw_ring(g, 22, 17, color, 2);
+        draw_path(g, HANDS, 22, color, 2);
+    }
+    lv_obj_t *l = ui_label(b, text, 20, color);
+    lv_obj_set_flex_grow(l, 1);
+    if (chevron) ui_label(b, LV_SYMBOL_RIGHT, 18, UI_C_MUTED);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+    return b;
+}
+
+lv_obj_t *ui_ghost_button(lv_obj_t *parent, const char *text, lv_event_cb_t cb, void *user)
+{
+    lv_obj_t *b = bare(parent);
+    lv_obj_set_size(b, LV_PCT(100), UI_BUTTON_H);
+    lv_obj_set_style_radius(b, UI_R_BUTTON, 0);
+    border(b, UI_C_LINE, 1);
+    lv_obj_t *l = ui_label(b, text, 20, UI_C_TEXT_SOFT);
+    lv_obj_center(l);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+    return b;
+}
+
+/* Recent's rows share their looks (ten rows of four widgets each would otherwise carry their own
+ * copies in LVGL's 64 KB pool), and the row's glyph is drawn rather than built from widgets. */
+static lv_style_t s_row, s_row_title, s_row_line, s_row_chip;
+static bool s_row_styles;
+
+static void row_styles(void)
+{
+    if (s_row_styles) return;
+    s_row_styles = true;
+    lv_style_init(&s_row);
+    lv_style_set_radius(&s_row, 20);
+    lv_style_set_bg_opa(&s_row, LV_OPA_COVER);
+    lv_style_set_bg_color(&s_row, C(UI_C_SURFACE));
+    lv_style_set_border_color(&s_row, C(UI_C_LINE));
+    lv_style_set_border_width(&s_row, 1);
+    lv_style_init(&s_row_title);
+    lv_style_set_text_font(&s_row_title, ui_font(20));
+    lv_style_set_text_color(&s_row_title, C(UI_C_TEXT));
+    lv_style_init(&s_row_line);
+    lv_style_set_text_font(&s_row_line, ui_font(18));
+    lv_style_set_text_color(&s_row_line, C(UI_C_MUTED));
+    lv_style_init(&s_row_chip);
+    lv_style_set_text_font(&s_row_chip, ui_font(18));
+    lv_style_set_text_color(&s_row_chip, C(UI_C_BG));
+    lv_style_set_bg_opa(&s_row_chip, LV_OPA_COVER);
+    lv_style_set_radius(&s_row_chip, 12);
+    lv_style_set_pad_hor(&s_row_chip, 10);
+    lv_style_set_pad_ver(&s_row_chip, 2);
+}
+
+#define ROW_H 84
+#define ROW_PAD_L 22
+#define ROW_PAD_R 16
+#define ROW_GLYPH 18
+#define ROW_TOP 12
+#define ROW_LINE_Y 46
+
+/* What a row's draw adds to its background: the glyph at its top left — the microphone (started
+ * at the panel) or the phone (in the app), the mock's strokes on the 48-unit grid — and, on the
+ * current row, the 6 px accent bar down its left edge inside its rounded corners. Packed into
+ * the event's user data: bit 0 the phone, bit 1 the bar, the accent above them. */
+#define ROW_APP 1u
+#define ROW_BAR 2u
+
+static void row_glyph(lv_event_t *e)
+{
+    lv_layer_t *layer = lv_event_get_layer(e);
+    lv_obj_t *o = lv_event_get_current_target(e);
+    const uintptr_t flags = (uintptr_t)lv_event_get_user_data(e);
+    const bool app = flags & ROW_APP;
+    lv_area_t a;
+    lv_obj_get_coords(o, &a);
+    if (flags & ROW_BAR) {
+        /* The row's own rounded shape in the accent, clipped to its first 6 px: no layer, which
+           clipping a child to the corners would cost. */
+        lv_draw_rect_dsc_t bar;
+        lv_draw_rect_dsc_init(&bar);
+        bar.bg_color = C((uint32_t)(flags >> 8));
+        bar.radius = 20;
+        const lv_area_t keep = layer->_clip_area;
+        lv_area_t *clip = &layer->_clip_area;
+        clip->x1 = LV_MAX(keep.x1, a.x1);
+        clip->x2 = LV_MIN(keep.x2, a.x1 + 5);
+        clip->y1 = LV_MAX(keep.y1, a.y1);
+        clip->y2 = LV_MIN(keep.y2, a.y2);
+        if (clip->x1 <= clip->x2 && clip->y1 <= clip->y2) {
+            const lv_area_t shape = {a.x1, a.y1, a.x1 + 60, a.y2};
+            lv_draw_rect(layer, &bar, &shape);
+        }
+        layer->_clip_area = keep;
+    }
+    const int px = ROW_GLYPH, x0 = a.x1 + ROW_PAD_L, y0 = a.y1 + ROW_TOP + 3;
+    const int sw = 2;
+    lv_draw_rect_dsc_t r;
+    lv_draw_rect_dsc_init(&r);
+    r.bg_opa = LV_OPA_TRANSP;
+    r.border_color = C(UI_C_MUTED);
+    r.border_width = sw;
+    lv_area_t body;
+    lv_draw_line_dsc_t l;
+    lv_draw_line_dsc_init(&l);
+    l.color = C(UI_C_MUTED);
+    l.width = sw;
+    l.round_start = l.round_end = 1;
+    if (app) {
+        body = (lv_area_t){x0 + 14 * px / 48 - 1, y0 + 5 * px / 48 - 1, x0 + 34 * px / 48 + 1,
+                           y0 + 43 * px / 48 + 1};
+        r.radius = 3;
+        lv_draw_rect(layer, &r, &body);
+        l.p1 = (lv_point_precise_t){x0 + 22 * px / 48, y0 + 36 * px / 48};
+        l.p2 = (lv_point_precise_t){x0 + 26 * px / 48, y0 + 36 * px / 48};
+        lv_draw_line(layer, &l);
+        return;
+    }
+    body = (lv_area_t){x0 + 18 * px / 48 - 1, y0 + 6 * px / 48 - 1, x0 + 30 * px / 48 + 1,
+                       y0 + 28 * px / 48 + 1};
+    r.radius = LV_RADIUS_CIRCLE;
+    lv_draw_rect(layer, &r, &body);
+    for (size_t i = 0; i + 1 < (size_t)MIC_CRADLE[0].n; i++) {
+        l.p1 = (lv_point_precise_t){x0 + MIC_CRADLE[0].p[i][0] * px / 48, y0 + MIC_CRADLE[0].p[i][1] * px / 48};
+        l.p2 = (lv_point_precise_t){x0 + MIC_CRADLE[0].p[i + 1][0] * px / 48,
+                                    y0 + MIC_CRADLE[0].p[i + 1][1] * px / 48};
+        lv_draw_line(layer, &l);
+    }
+    l.p1 = (lv_point_precise_t){x0 + 24 * px / 48, y0 + 36 * px / 48};
+    l.p2 = (lv_point_precise_t){x0 + 24 * px / 48, y0 + 42 * px / 48};
+    lv_draw_line(layer, &l);
+}
+
+lv_obj_t *ui_convo_row(lv_obj_t *parent, const ui_convo_row_t *r, ui_accent_t accent,
+                       lv_event_cb_t cb, void *user)
+{
+    row_styles();
+    const uint32_t color = ui_accent_color(accent);
+    lv_obj_t *b = bare(parent);
+    lv_obj_add_style(b, &s_row, 0);
+    lv_obj_set_size(b, LV_PCT(100), ROW_H);
+    const uintptr_t draw = (r->from_app ? ROW_APP : 0u) |
+                           (r->current ? ROW_BAR | (uintptr_t)color << 8 : 0u);
+    lv_obj_add_event_cb(b, row_glyph, LV_EVENT_DRAW_MAIN_END, (void *)draw);
+    lv_obj_update_layout(parent);
+    const int w = lv_obj_get_content_width(parent);
+    const int text_x = ROW_PAD_L + ROW_GLYPH + 8;
+    /* The time, or the Current chip, at the top right; the title takes what is left. */
+    lv_obj_t *right;
+    if (r->current) {
+        lv_obj_set_style_bg_color(b, C(color), 0);
+        lv_obj_set_style_bg_opa(b, UI_OPA_TINT, 0);
+        lv_obj_set_style_border_width(b, 0, 0);
+        right = lv_label_create(b);
+        lv_obj_add_style(right, &s_row_chip, 0);
+        lv_obj_set_style_bg_color(right, C(color), 0);
+        lv_label_set_text(right, "Current");
+    } else {
+        right = lv_label_create(b);
+        lv_obj_add_style(right, &s_row_line, 0);
+        if (r->opening) lv_obj_set_style_text_color(right, C(color), 0);
+        lv_label_set_text(right, r->when ? r->when : "");
+    }
+    lv_obj_align(right, LV_ALIGN_TOP_RIGHT, -ROW_PAD_R, r->current ? ROW_TOP - 1 : ROW_TOP + 2);
+    lv_obj_update_layout(right);
+    const int right_w = lv_obj_get_width(right);
+    lv_obj_t *t = lv_label_create(b);
+    lv_obj_add_style(t, &s_row_title, 0);
+    lv_label_set_text(t, r->title ? r->title : "");
+    lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(t, text_x, ROW_TOP);
+    lv_obj_set_size(t, w - text_x - ROW_PAD_R - right_w - 12, lv_font_get_line_height(ui_font(20)));
+    lv_obj_t *s = lv_label_create(b);
+    lv_obj_add_style(s, &s_row_line, 0);
+    lv_label_set_text(s, r->snippet ? r->snippet : "");
+    lv_label_set_long_mode(s, LV_LABEL_LONG_DOT);
+    lv_obj_set_pos(s, ROW_PAD_L, ROW_LINE_Y);
+    lv_obj_set_size(s, w - ROW_PAD_L - ROW_PAD_R, lv_font_get_line_height(ui_font(18)));
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+    return b;
+}
+
+lv_obj_t *ui_skeleton_row(lv_obj_t *parent, int w1_pct, int w2_pct, lv_opa_t opa)
+{
+    lv_obj_t *b = bare(parent);
+    lv_obj_set_size(b, LV_PCT(100), 84);
+    fill(b, UI_C_SURFACE, LV_OPA_COVER, 20);
+    border(b, UI_C_LINE, 1);
+    lv_obj_set_style_opa(b, opa, 0);
+    lv_obj_set_style_pad_hor(b, 20, 0);
+    lv_obj_set_style_pad_ver(b, 18, 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(b, 12, 0);
+    lv_obj_t *top = bare(b);
+    lv_obj_set_size(top, LV_PCT(100), 18);
+    lv_obj_t *a = bare(top);
+    lv_obj_set_size(a, LV_PCT(w1_pct), 18);
+    fill(a, UI_C_LINE, LV_OPA_COVER, 9);
+    lv_obj_t *when = bare(top);
+    lv_obj_set_size(when, LV_PCT(22), 18);
+    lv_obj_align(when, LV_ALIGN_RIGHT_MID, 0, 0);
+    fill(when, UI_C_RAISED, LV_OPA_COVER, 9);
+    lv_obj_t *bottom = bare(b);
+    lv_obj_set_size(bottom, LV_PCT(w2_pct), 14);
+    fill(bottom, UI_C_RAISED, LV_OPA_COVER, 7);
+    return b;
+}
+
+/* The mock's speech bubble on the 48-unit grid (its 24-unit path doubled). */
+static const path_t SPEECH[] = {
+    {8, {{8, 10}, {40, 10}, {40, 32}, {20, 32}, {12, 40}, {12, 32}, {8, 32}, {8, 10}}}};
+
+lv_obj_t *ui_empty_state(lv_obj_t *parent, const char *title, const char *body)
+{
+    lv_obj_t *col = ui_box(parent, LV_FLEX_FLOW_COLUMN, 14);
+    lv_obj_set_width(col, LV_PCT(100));
+    lv_obj_set_style_pad_hor(col, 28, 0);
+    lv_obj_set_style_pad_top(col, 32, 0);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *disc = bare(col);
+    lv_obj_set_size(disc, 72, 72);
+    fill(disc, UI_C_SURFACE, LV_OPA_COVER, LV_RADIUS_CIRCLE);
+    border(disc, UI_C_LINE, 1);
+    lv_obj_t *g = bare(disc);
+    lv_obj_set_size(g, 34, 34);
+    lv_obj_center(g);
+    draw_path(g, SPEECH, 34, UI_C_FAINT, 2);
+    ui_label(col, title, 22, UI_C_TEXT);
+    lv_obj_t *l = ui_label_wrap(col, body, 18, UI_C_MUTED);
+    lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    return col;
+}
+
+lv_obj_t *ui_app_chip(lv_obj_t *parent, const char *text)
+{
+    lv_obj_t *c = bare(parent);
+    lv_obj_set_size(c, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    fill(c, UI_C_SURFACE, LV_OPA_COVER, 20);
+    border(c, UI_C_LINE, 1);
+    lv_obj_set_style_pad_hor(c, 16, 0);
+    lv_obj_set_style_pad_ver(c, 8, 0);
+    lv_obj_set_flex_flow(c, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(c, 8, 0);
+    ui_phone(c, 18, UI_C_MUTED);
+    ui_label(c, text, 18, UI_C_MUTED);
+    return c;
+}
+
+lv_obj_t *ui_fade_bottom(lv_obj_t *parent, int h)
+{
+    /* Four bands of black, each more opaque than the one above: plain blending, which every
+       renderer does the same, rather than a gradient of opacity. */
+    static const lv_opa_t BANDS[] = {LV_OPA_20, LV_OPA_40, LV_OPA_60, LV_OPA_80};
+    const int n = (int)(sizeof BANDS / sizeof *BANDS), band = h / n;
+    lv_obj_t *f = bare(parent);
+    lv_obj_set_size(f, UI_W, band * n);
+    lv_obj_align(f, LV_ALIGN_BOTTOM_MID, 0, 0);
+    for (int i = 0; i < n; i++) {
+        lv_obj_t *b = bare(f);
+        lv_obj_set_size(b, UI_W, band);
+        lv_obj_set_pos(b, 0, i * band);
+        fill(b, UI_C_BG, BANDS[i], 0);
+    }
+    return f;
+}
