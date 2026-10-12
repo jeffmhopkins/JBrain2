@@ -1176,6 +1176,75 @@ to it. App: 1,926,224 → 1,942,032 B (+16 KB; 54 % of the slot still free).
 7. Leave one ringing: it stops by itself at 10 minutes; the snapshot says `timed_out`.
 8. `inject event=alarm_test` over a talk to Jerv: the talk ends, nothing is sent, the alarm rings.
 
+## What 0.0.14 adds: the steps, a spinner that keeps turning, and a new chat from outside
+
+Three things the owner asked for on 2026-10-12, and two on the box and in the PWA that travel with
+them (plan §1 "KEY routing" and "Progress on the panel, and the whole answer").
+
+### On the glass
+
+- **The steps Jerv (or Dave) takes**, under the question: one dim line per tool in the tool's own
+  shorthand and its target — "web_search · tide Port St John", "web_fetch · tide-forecast.com" —
+  with a ✓ when it finished, a dim ✗ when it failed, and the spinner on the one running. Between
+  tools the line is "Thinking… 0:42", its clock running from KEY's release. The last four show;
+  older ones fold into "+N more" above them. When the answer lands they collapse to one dim line
+  over it, "2 steps · 58 s"; an answer that ran no tool has none.
+- **The spinner goes all the way round, and never starts over.** It is a fixed 90° arc turning once
+  a second (`ui_spinner`), not LVGL's spinner, whose arc grows and shrinks on an eased sweep — a
+  third of the way round it shrank back and read as a reset. And it was reset: every status line
+  rebuilt the whole conversation, spinner included. Now a status, a step or the clock's second
+  updates the working view where it stands and moves the one spinner between its rows; only a
+  change to the messages rebuilds the list (`convo_redraw`, from `svc_messages_rev`). The spinner's
+  angle is read from the tick, so even one made by a rebuild is exactly where the last one was.
+- **KEY outside Jerv's thread starts a new conversation.** Home, the clock, Settings, Minecraft's
+  menu, a person's thread: once the hold is sent the Jerv thread opens holding just the new
+  exchange, and the talk carries `new_thread=true`, so the box starts a fresh "Desk panel" chat
+  (the old ones stay in the PWA). KEY inside Jerv's thread continues it; inside Dave's, Dave's. A
+  cancelled or too-short hold changes nothing. One rule, `talk_key_route`, for the conversation
+  view and the shell's own talk.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_audio/talk_core.c` | JT2's `STEP_START` (0x07: index, label ≤ 60 B) and `STEP_DONE` (0x08: index, ok) read like ANSWER and END — a number byte, then the rest — in any split; `tk_steps_*`, the last four steps in place and the rest counted; `tk_steps_summary`. The converse path adds `&steps=1`. |
+| `svc_audio/talk_policy.c` | `talk_key_route` (inside a conversation: continue it; anywhere else: a new Jerv one) and `talk_clock`. |
+| `svc_audio/svc_audio_talk.c` | `TALK_TO_NEW_AGENT`: the hold asks for `new_thread`, and its send clears the panel's view of the thread first; `svc_audio_work` (the steps, the phase, the clock) replaces `svc_audio_status`; the answer's message carries the summary in its `status`, which grew from 16 to 24 bytes. |
+| `svc_messages` | `svc_messages_rev`, a count that moves with every change to a thread. |
+| `convo` | The working view built once per question and changed in place; `convo_refresh` asks `convo_redraw` whether the list or only the working view needs drawing. |
+| `ui_kit` | `ui_spinner`, `ui_is_spinner`, `ui_step_row`, `ui_note_line` (replacing `ui_status_row`). |
+| `main/talk_link.c` | Hands STEP_START / STEP_DONE to the audio service. |
+
+### The memory budget
+
+Static DIRAM (both ELFs, `.dram0.data` + `.dram0.bss`; 0.0.13 rebuilt from main to the byte of its
+`dist/`): 148,336 → 148,968 B, **+632 B** (`.bss` +616, `.data` +16). The steps are fixed buffers:
+`tk_steps_t` in the audio service, four steps of a 64-byte label plus counts (~270 B); each agent
+conversation (`convo_t`, Jerv's and Dave's) holds its working view's widget pointers and the last
+drawn signature (~2 × 90 B); a message's `status` grew from 16 to 24 bytes for "12 steps · 2:05"
+(24 kept messages, +192 B); a revision count per thread and the send time. **No heap per step and
+no new task:** drawing copies the view (`svc_work_t`, ~350 B) onto the UI task's stack for the
+moment it draws, and the widgets — one row per shown step, made once per question — come out of
+LVGL's own pool (the sim's peak for the steps states is 19.5 KB on its 64-bit host, the same as
+0.0.12's `jerv-working` and under Settings' 36.9 KB). One LVGL timer (a second's tick) lives only
+while the box works and goes with the working view. `int_min` should read about 0.6 KB lower than
+0.0.13's. App: 1,942,032 → 1,944,608 B (+2.5 KB). `.iram0.text` is unchanged.
+
+### What to check on the glass
+
+1. From the home page, hold KEY and ask Jerv something that needs the web ("find the high tide near
+   Port St John, Florida"). On release the Jerv thread opens with only that question; in the PWA a
+   new "Desk panel" chat appears and the old one is still there.
+2. Under the question: "Thinking… 0:03" with the clock counting, then a line per tool —
+   "web_search · …" with the spinner on it, a ✓ when it ends. The spinner turns smoothly all the
+   way round and does not jump as lines are added.
+3. On a turn of more than four tools, "+N more" above the last four.
+4. When the answer comes, the steps fold to "N steps · M s" over it.
+5. Inside the Jerv thread, hold KEY again: the conversation continues (the PWA's chat gets the
+   second exchange, no new chat).
+6. Open Minecraft → Dave and talk: Dave's thread continues. Back on Minecraft's menu, KEY starts a
+   new Jerv conversation, not a Dave one.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
