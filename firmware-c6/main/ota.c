@@ -3,8 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 
+#include "box_http.h"
 #include "cJSON.h"
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
@@ -20,15 +20,9 @@
 static const char *TAG = "ota";
 
 #define MANIFEST_MAX 1024
-/* The box serves one manifest per board, chosen by the panel asking; absent means the S3
-   panels. The image URL it hands back already carries the same id. */
-#define BOARD_ID "c6-amoled-216"
 #define HTTP_TIMEOUT_MS 15000
 
-/* Exactly one of two trust answers, decided at flash time. A LAN name is served by Caddy's
-   internal CA, which no public bundle contains, so the box's own root is the only thing
-   trusted; a public hostname has an ordinary certificate and only the bundle can validate it.
-   Never both: pinning one root is the stronger guarantee and is free on the LAN path. */
+/* The download's half of box_http.c's trust rule: the box's own root, or the public bundle. */
 static void trust(esp_http_client_config_t *hc, const cfg_t *cfg)
 {
     if (cfg->ca != NULL && cfg->ca[0] != '\0') {
@@ -46,86 +40,14 @@ static char *bearer(const cfg_t *cfg)
     return v;
 }
 
-/* The reply's Date header, caught as the headers arrive: esp_http_client keeps only the request's
-   headers for later lookup. */
-typedef struct {
-    char date[32];
-} reply_t;
-
-static esp_err_t on_http(esp_http_client_event_t *e)
-{
-    reply_t *r = e->user_data;
-    if (e->event_id == HTTP_EVENT_ON_HEADER && r && e->header_key && e->header_value &&
-        strcasecmp(e->header_key, "Date") == 0)
-        snprintf(r->date, sizeof r->date, "%s", e->header_value);
-    return ESP_OK;
-}
-
-/* One request, one TLS session, closed before returning. The S3 panels moved to a shared
-   WebSocket (firmware/main/link.c) because talk turns and polls overlapped; this image makes
-   one request at a time on one task, so there is nothing to share and the plain HTTPS twin of
-   each route is the simpler thing to trust. Returns the HTTP status, or -1 when no response
-   arrived at all. */
-static int box_call(const cfg_t *cfg, const char *path, const char *body, char *out, size_t cap,
-                    size_t *got, reply_t *reply)
-{
-    if (got != NULL) *got = 0;
-    char url[320];
-    if (snprintf(url, sizeof(url), "%s%s", cfg->api, path) >= (int)sizeof(url)) return -1;
-    char *auth = bearer(cfg);
-    if (auth == NULL) return -1;
-
-    esp_http_client_config_t hc = {
-        .url = url,
-        .timeout_ms = HTTP_TIMEOUT_MS,
-        .method = body != NULL ? HTTP_METHOD_POST : HTTP_METHOD_GET,
-        .event_handler = reply != NULL ? on_http : NULL,
-        .user_data = reply,
-    };
-    trust(&hc, cfg);
-    esp_http_client_handle_t c = esp_http_client_init(&hc);
-    if (c == NULL) {
-        free(auth);
-        return -1;
-    }
-    esp_http_client_set_header(c, "Authorization", auth);
-    if (body != NULL) esp_http_client_set_header(c, "Content-Type", "application/json");
-
-    int status = -1;
-    const int len = body != NULL ? (int)strlen(body) : 0;
-    esp_err_t err = esp_http_client_open(c, len);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "%s: %s", path, esp_err_to_name(err));
-        goto done;
-    }
-    if (len > 0 && esp_http_client_write(c, body, len) != len) {
-        ESP_LOGW(TAG, "%s: short write", path);
-        goto done;
-    }
-    if (esp_http_client_fetch_headers(c) < 0) {
-        ESP_LOGW(TAG, "%s: no response headers", path);
-        goto done;
-    }
-    status = esp_http_client_get_status_code(c);
-    if (out != NULL && cap > 0) {
-        const int n = esp_http_client_read_response(c, out, (int)cap);
-        if (n > 0 && got != NULL) *got = (size_t)n;
-    }
-
-done:
-    esp_http_client_close(c);
-    esp_http_client_cleanup(c);
-    free(auth);
-    return status;
-}
-
 esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
 {
+    (void)cfg;
     char body[MANIFEST_MAX];
     size_t got = 0;
-    reply_t reply = {{0}};
-    const int status = box_call(cfg, "/endpoint/firmware?board=" BOARD_ID, NULL, body,
-                                sizeof(body) - 1, &got, &reply);
+    box_reply_t reply = {{0}};
+    const int status = box_http_call("/endpoint/firmware?board=" OTA_BOARD_ID, NULL, NULL, 0, body,
+                                     sizeof(body) - 1, &got, &reply, HTTP_TIMEOUT_MS);
     out->date = 0;
     if (!http_date_parse(reply.date, &out->date)) out->date = 0;
     if (status != 200) {
@@ -158,7 +80,9 @@ esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
 
 esp_err_t ota_report(const cfg_t *cfg, const char *body)
 {
-    const int status = box_call(cfg, "/endpoint/telemetry", body, NULL, 0, NULL, NULL);
+    (void)cfg;
+    const int status = box_http_call("/endpoint/telemetry", "application/json", body, strlen(body),
+                                     NULL, 0, NULL, NULL, HTTP_TIMEOUT_MS);
     if (status != 204) {
         ESP_LOGW(TAG, "telemetry: HTTP %d", status);
         return ESP_FAIL;
@@ -205,6 +129,8 @@ static esp_err_t failed(esp_err_t err, const char *why)
 esp_err_t ota_apply(const cfg_t *cfg, const char *url, const ota_hooks_t *hooks)
 {
     ESP_LOGI(TAG, "installing %s", url);
+    /* The download opens its own session; the kept one goes first, so there is never two. */
+    box_http_close();
     char *auth = bearer(cfg);
     if (auth == NULL) return failed(ESP_ERR_NO_MEM, "no-mem");
 

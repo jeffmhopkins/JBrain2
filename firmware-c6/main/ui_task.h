@@ -10,6 +10,11 @@
  * `notify` is woken once the UI has settled (or stopped), for a report that shows it. */
 void ui_task_start(TaskHandle_t notify);
 
+/* The UI task exists and has not stopped, so it alone may touch LVGL (starting up included).
+ * False on a boot without it and after it stopped, when it never will again and another task
+ * may. */
+bool ui_task_owns_lvgl(void);
+
 /* True once since the last call if the UI asked for a report. */
 bool ui_task_take_dirty(void);
 

@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -17,7 +17,7 @@ panel, the others import it at a fixed `start` state).
   bottom-left, Tamsin bottom-right. Unplayed messages ride the tile as an amber count.
 - **Home, page 2 (swipe left):** Clock, then Settings. Kept off page 1 because it is rarely used and the
   four main tiles already fill the glass.
-- **Buttons** (measured order, seen from the front, 0.0.3 probe): BOOT (left) home / cancel,
+- **Buttons** (measured order, seen from the front, 0.0.3 probe): BOOT (left) home / cancel (held: the Clock),
   PWR (middle) screen on/off, KEY (right) hold-to-talk. PWR is not the talk key because the
   AXP2101 shuts down on a long press of it.
 - **Hold-to-talk is the only input for speech**, to Jerv and to the girls alike: hold KEY,
@@ -78,3 +78,8 @@ panel, the others import it at a fixed `start` state).
   home, clock face, Settings, Minecraft — it records to Jerv, and on release the panel opens the
   Jerv thread so the transcript and the answer are seen. Inside Quorra's or Tamsin's thread it
   is still a message to her. A ringing alarm still takes KEY as snooze.
+- **BOOT held opens the Clock** (owner, 2026-10-12): a long press of BOOT (800 ms) opens the
+  Clock from anywhere — home, any app, over a notice — the moment it is crossed, while still
+  held. A short press keeps home / back but now acts on release, so a long press is never also
+  a back. Already on the Clock it does nothing; over the talk ring or a ringing alarm it is
+  plain BOOT (cancel, stop). Built in firmware 0.0.9.

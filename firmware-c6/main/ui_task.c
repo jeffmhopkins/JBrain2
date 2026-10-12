@@ -10,6 +10,7 @@
 
 #include "apps.h"
 #include "dbg_core.h"
+#include "dbg_link.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -35,10 +36,10 @@ static const char *TAG = "ui";
 #define HEAP_AFTER_MS 5000
 
 /* Breadcrumb stages (dbg_sys_crumb). svc_display writes 101-109 during the panel's init. */
-enum { ST_LVGL = 1, ST_SHELL, ST_PUMP = 10, ST_RENDER, ST_BRIGHTNESS, ST_IDLE, ST_STOPPED };
+enum { ST_LVGL = 1, ST_SHELL, ST_PUMP = 10, ST_RENDER, ST_BRIGHTNESS, ST_IDLE, ST_STOPPED, ST_DEBUG };
 
 static TaskHandle_t s_task, s_notify;
-static volatile bool s_running, s_dirty;
+static volatile bool s_running, s_dirty, s_stopped;
 static volatile uint32_t s_beat_ms;
 static const char *s_fail = "";
 static uint32_t s_heap_free, s_heap_min;
@@ -60,6 +61,7 @@ static void stop(const char *why)
 {
     s_fail = why;
     s_running = false;
+    s_stopped = true;
     dbg_sys_crumb(ST_STOPPED);
     ESP_LOGE(TAG, "UI stopped (%s); the panel keeps updating headless", why);
     poke();
@@ -113,6 +115,10 @@ static void ui_loop(void *arg)
         dbg_sys_crumb(ST_BRIGHTNESS);
         svc_display_service();
         if (!svc_display_ok()) stop("flush");
+        /* Between frames, after the brightness write: a screenshot re-renders the screen and
+           must not find a transfer of the last one in flight. */
+        dbg_sys_crumb(ST_DEBUG);
+        dbg_link_ui_service();
         s_beat_ms = now;
         if (!s_heap_free && (uint32_t)(now - started) >= HEAP_AFTER_MS) {
             s_heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
@@ -142,8 +148,14 @@ void ui_task_start(TaskHandle_t notify)
 
 void ui_task_button(btn_event_t ev)
 {
-    static const sh_button_t MAP[] = {SH_BTN_KEY_DOWN, SH_BTN_KEY_UP, SH_BTN_BOOT, SH_BTN_PWR};
+    static const sh_button_t MAP[] = {SH_BTN_KEY_DOWN, SH_BTN_KEY_UP, SH_BTN_BOOT, SH_BTN_PWR,
+                                      SH_BTN_BOOT_LONG};
     if (s_running) shell_button(MAP[ev]);
+}
+
+bool ui_task_owns_lvgl(void)
+{
+    return s_task && !s_stopped;
 }
 
 void ui_task_note(char *out, size_t len)

@@ -1185,6 +1185,237 @@ static void test_a_hold_that_cannot_be_sent_says_so(void)
           "a knock or a cancel leaves nothing");
 }
 
+/* ---- 0.0.9: the debug relay's pickup, and BOOT held ---- */
+
+/* The buttons task in miniature: one raw sample every 10 ms through the debounce and the hold. */
+static void boot_samples(btn_db_t *db, btn_hold_t *h, uint32_t *t, bool pressed, int n, int *shorts, int *longs)
+{
+    for (int i = 0; i < n; i++, *t += 10) {
+        const btn_hold_ev_t e = btn_hold_step(h, btn_db_step(db, pressed), *t);
+        *shorts += e == BTN_HOLD_SHORT;
+        *longs += e == BTN_HOLD_LONG;
+    }
+}
+
+static void test_boot_short_is_back_on_release_and_long_is_the_clock_once(void)
+{
+    btn_db_t db = {0};
+    btn_hold_t h = {0};
+    uint32_t t = 1000;
+    int s = 0, l = 0;
+    boot_samples(&db, &h, &t, true, 30, &s, &l);
+    CHECK(s == 0 && l == 0, "a press held 0.3 s has done nothing yet: it might still be long");
+    boot_samples(&db, &h, &t, false, 5, &s, &l);
+    CHECK(s == 1 && l == 0, "its release is one home/back");
+
+    s = l = 0;
+    boot_samples(&db, &h, &t, true, BTN_LONG_MS / 10 + 3, &s, &l);
+    CHECK(l == 1 && s == 0, "held past the threshold, the clock fires while still held");
+    boot_samples(&db, &h, &t, false, 5, &s, &l);
+    CHECK(l == 1 && s == 0, "and its release is not also a home/back");
+
+    s = l = 0;
+    boot_samples(&db, &h, &t, true, 6000, &s, &l);
+    CHECK(l == 1 && s == 0, "held for a minute it fires once, not on repeat");
+    boot_samples(&db, &h, &t, false, 5, &s, &l);
+
+    s = l = 0;
+    for (int i = 0; i < 50; i++) {
+        boot_samples(&db, &h, &t, true, BTN_DB_SAMPLES - 1, &s, &l);
+        boot_samples(&db, &h, &t, false, 1, &s, &l);
+    }
+    CHECK(s == 0 && l == 0, "a chattering contact below the debounce is nothing at all");
+
+    btn_hold_t w = {0};
+    CHECK(btn_hold_step(&w, 1, 0xFFFFFF00u) == BTN_HOLD_NONE &&
+              btn_hold_step(&w, 0, 0xFFFFFF00u + BTN_LONG_MS) == BTN_HOLD_LONG,
+          "the threshold holds across the 49-day wrap");
+    btn_hold_t z = {0};
+    CHECK(btn_hold_step(&z, -1, 5) == BTN_HOLD_NONE, "a release with no press before it is nothing");
+}
+
+static void test_boot_held_opens_the_clock_from_anywhere_but_the_clock(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = {0};
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_OPEN_CLOCK, "from home");
+    f.app_open = true;
+    sh_route_t r = sh_route_button(&st, &f, SH_BTN_BOOT_LONG);
+    CHECK(r.first == SH_ACT_OPEN_CLOCK && r.fallback == SH_ACT_NONE, "from an app, which is not asked");
+    f.clock_open = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_NONE, "on the clock it does nothing");
+    f.clock_open = false;
+    f.notices = 1;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_OPEN_CLOCK,
+          "over a notice too: the face keeps it as its badge");
+    f.notices = 0;
+    f.talking = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_CANCEL_TALK,
+          "over the talk ring it is BOOT: cancel");
+    f.talking = false;
+    f.alarm_ringing = true;
+    r = sh_route_button(&st, &f, SH_BTN_BOOT_LONG);
+    CHECK(r.first == SH_ACT_TO_APP && r.fallback == SH_ACT_STOP_ALARM, "on a ringing alarm it is BOOT: stop");
+    f.alarm_ringing = false;
+    f.dark = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_WAKE, "on a dark screen it only wakes");
+}
+
+static void test_the_pickup_waits_three_seconds_backs_off_and_never_jumps_the_manifest(void)
+{
+    dbg_sched_t s;
+    uint32_t sleep = 0;
+    dbg_sched_init(&s, 1000);
+    CHECK(dbg_sched_next(&s, 1000, 61000, true, &sleep) == DBG_NEXT_POLL, "the first pickup is at once");
+    dbg_sched_done(&s, 1000, DBG_POLL_EMPTY);
+    CHECK(dbg_sched_next(&s, 1000, 61000, true, &sleep) == DBG_NEXT_SLEEP && sleep == DBG_POLL_MS,
+          "nothing waiting: three seconds");
+    dbg_sched_done(&s, 4000, DBG_POLL_CMD);
+    CHECK(dbg_sched_next(&s, 4000, 61000, true, &sleep) == DBG_NEXT_SLEEP && sleep == DBG_POLL_AFTER_CMD_MS,
+          "after a command, sooner: the session is likely to ask again");
+    uint32_t gaps[7];
+    for (int i = 0; i < 7; i++) {
+        dbg_sched_done(&s, 0, DBG_POLL_FAIL);
+        gaps[i] = s.due_ms;
+    }
+    CHECK(gaps[0] == 6000 && gaps[1] == 12000 && gaps[2] == 24000 && gaps[3] == 48000 &&
+              gaps[4] == DBG_POLL_MAX_MS && gaps[6] == DBG_POLL_MAX_MS,
+          "a dead box is asked at 6, 12, 24, 48, then every 60 s");
+    dbg_sched_done(&s, 0, DBG_POLL_EMPTY);
+    CHECK(s.due_ms == DBG_POLL_MS && s.fails == 0, "one answer and it is back to three seconds");
+
+    dbg_sched_init(&s, 0);
+    CHECK(dbg_sched_next(&s, 5000, 5000, true, &sleep) == DBG_NEXT_CHECK,
+          "a due manifest goes before a due pickup");
+    CHECK(dbg_sched_next(&s, 5000, 6000, false, &sleep) == DBG_NEXT_SLEEP && sleep == 1000,
+          "offline, nothing but the manifest check is scheduled");
+    dbg_sched_init(&s, 0xFFFFF000u);
+    dbg_sched_done(&s, 0xFFFFF000u, DBG_POLL_EMPTY);
+    CHECK(dbg_sched_next(&s, 0xFFFFF000u, 0x00010000u, true, &sleep) == DBG_NEXT_SLEEP && sleep == DBG_POLL_MS,
+          "across the 49-day wrap the pickup is still three seconds out");
+    CHECK(dbg_sched_next(&s, 0x00001000u, 0x00010000u, true, &sleep) == DBG_NEXT_POLL, "and due after it");
+}
+
+static void test_the_relay_reports_itself_in_one_token(void)
+{
+    dbg_stats_t s = {.polls_ok = 1200, .polls_err = 3, .cmds = 4, .last_cmd = "screenshot",
+                     .last_status = 204, .shot_bytes = 31012, .shot_ms = 240};
+    char out[96];
+    dbg_stats_note(&s, out, sizeof out);
+    CHECK(!strcmp(out, "dbg=ok:1200,err:3,cmds:4,last:screenshot/204,shot:31012/240"), "dbg= as the README reads it");
+    dbg_stats_t z = {.last_status = -1};
+    dbg_stats_note(&z, out, sizeof out);
+    CHECK(!strcmp(out, "dbg=ok:0,err:0,cmds:0,last:-/-1,shot:0/0"), "and before any command");
+}
+
+static void test_a_request_id_is_uuid_text_or_it_is_dropped(void)
+{
+    CHECK(dbg_req_id_ok("0b6c2a7e-41d3-4f0a-9a51-3d2e8c1f7b90"), "the box's ids pass");
+    CHECK(!dbg_req_id_ok(""), "an empty id does not");
+    CHECK(!dbg_req_id_ok("../telemetry"), "a path does not");
+    CHECK(!dbg_req_id_ok("abc?x=1"), "a query does not");
+    CHECK(!dbg_req_id_ok("0b6c2a7e-41d3-4f0a-9a51-3d2e8c1f7b90-0000"), "nor one longer than the request holds");
+}
+
+static void test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short(void)
+{
+    static const char token[] = "dk_live_9f8e7d6c5b4a39281706f5e4";
+    static const char pass[] = "correct horse";
+    dbg_secret_clear();
+    dbg_secret_add(token);
+    dbg_secret_add(pass);
+    CHECK(dbg_secret_registered(token) && dbg_secret_registered(pass) && !dbg_secret_registered("dk_live"),
+          "registration is by exact value");
+    dbg_log_reset();
+    dbg_log_line("auth Bearer dk_live_9f8e7d6c5b4a39281706f5e4 ok");
+    char line[200];
+    snprintf(line, sizeof line, "I (5) wifi: joining with '%s' then '%s'\n", pass, pass);
+    dbg_log_line(line);
+    /* The line limit lands inside the token: what is left is still most of it. */
+    char fmt[DBG_LOG_LINE_MAX + 64];
+    memset(fmt, '.', DBG_LOG_LINE_MAX - 12);
+    snprintf(fmt + DBG_LOG_LINE_MAX - 12, sizeof fmt - (DBG_LOG_LINE_MAX - 12), "%s\n", token);
+    log_via_hook("%s", fmt);
+    static char buf[4096];
+    dbg_json_t w;
+    dbg_json_init(&w, buf, sizeof buf);
+    dbg_json_obj_begin(&w, NULL);
+    dbg_log_write(&w, "lines");
+    dbg_json_obj_end(&w);
+    CHECK(!strstr(buf, "dk_live_9f8e") && !strstr(buf, "horse"), "neither secret, whole or cut, is in the dump");
+    CHECK(strstr(buf, "\"auth Bearer " DBG_REDACTED " ok\""), "a whole one is replaced and the line kept");
+    CHECK(strstr(buf, "joining with '" DBG_REDACTED "' then '" DBG_REDACTED "'"), "every occurrence of it");
+    CHECK(strstr(buf, "......" DBG_REDACTED "\""), "a clipped one is cut at its start and marked");
+    char plain[] = "a line that merely ends in dk_l";
+    CHECK(!dbg_secret_scrub(plain, sizeof plain, false), "an unclipped line ending like a secret is left alone");
+    char tiny[12] = "x correct h";
+    dbg_secret_scrub(tiny, sizeof tiny, true);
+    CHECK(strlen(tiny) < sizeof tiny && !strstr(tiny, "corr"), "the marker never overruns the buffer");
+    dbg_secret_clear();
+}
+
+static void test_the_stream_is_byte_for_byte_what_the_box_decodes(void)
+{
+    /* The box's own vectors (backend/tests/unit/test_panel_debug_relay.py, `jps1()`), as bytes. */
+    static uint8_t out[256];
+    mem_t m = {out, 0, sizeof out, 0};
+    dbg_shot_t s;
+    const uint16_t two[] = {0xFFFF, 0x8410};
+    dbg_shot_begin(&s, 2, 1, mem_sink, &m);
+    dbg_shot_stripe(&s, 0, 1, two);
+    CHECK(dbg_shot_end(&s), "a 2x1 frame encodes");
+    static const uint8_t WANT2[] = {'J', 'P', 'S', '1', 2, 0, 1, 0, 0, 0, 1, 0, 6, 0, 0, 0,
+                                    0, 0xFF, 0xFF, 0, 0x10, 0x84, 0xFF, 0xFF};
+    CHECK(m.n == sizeof WANT2 && !memcmp(out, WANT2, sizeof WANT2),
+          "white and mid-grey: little-endian RGB565, not byte-swapped for the glass");
+
+    m.n = 0;
+    const uint16_t px[] = {1, 1, 2, 2, 3, 3, 4, 4};
+    dbg_shot_begin(&s, 4, 2, mem_sink, &m);
+    dbg_shot_stripe(&s, 0, 1, px);
+    dbg_shot_stripe(&s, 1, 1, px + 4);
+    dbg_shot_end(&s);
+    static const uint8_t WANT4[] = {'J', 'P', 'S', '1', 4, 0, 2, 0, 0, 0, 1, 0, 6, 0, 0, 0, 1, 1, 0, 1,
+                                    2, 0, 1, 0, 1, 0, 6, 0, 0, 0, 1, 3, 0, 1, 4, 0, 0xFF, 0xFF};
+    CHECK(m.n == sizeof WANT4 && !memcmp(out, WANT4, sizeof WANT4), "the box's one-row-stripe vector, exactly");
+
+    static uint16_t row[300];
+    static uint8_t big[2048];
+    mem_t b = {big, 0, sizeof big, 0};
+    for (int i = 0; i < 300; i++) row[i] = 0x1234;
+    dbg_shot_begin(&s, 128, 1, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_end(&s);
+    CHECK(big[16] == 127 && b.n == 8 + 8 + 3 + 2, "128 alike is one run of the most a byte says");
+    b.n = 0;
+    dbg_shot_begin(&s, 129, 1, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_end(&s);
+    CHECK(big[16] == 127 && big[19] == 0 && b.n == 8 + 8 + 6 + 2, "129 is that and a run of one");
+    b.n = 0;
+    dbg_shot_begin(&s, 100, 3, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 3, row);
+    dbg_shot_end(&s);
+    CHECK(big[16] == 127 && big[19] == 127 && big[22] == 43 && b.n == 8 + 8 + 9 + 2,
+          "a run carries on across rows inside a stripe");
+    b.n = 0;
+    dbg_shot_begin(&s, 4, 2, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_stripe(&s, 1, 1, row);
+    dbg_shot_end(&s);
+    CHECK(b.n == 8 + 2 * (8 + 3) + 2 && big[16] == 3 && big[27] == 3, "but never across a stripe");
+    for (int i = 0; i < 300; i++) row[i] = (uint16_t)(i & 1 ? 0xF800 : 0x001F);
+    b.n = 0;
+    dbg_shot_begin(&s, 64, 1, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_end(&s);
+    CHECK(b.n == 8 + 8 + 64 * 3 + 2 && big[12] == 192, "alternating pixels cost 3 bytes each, as the length says");
+    uint16_t back[64];
+    CHECK(dbg_shot_decode(big, b.n, back, 64, 1) && !memcmp(back, row, sizeof back), "and decode back");
+    dbg_shot_begin(&s, 64, 1, mem_sink, &b);
+    CHECK(!dbg_shot_stripe(&s, 0, 0, row), "a stripe of no rows fails the capture rather than send one");
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -1243,6 +1474,13 @@ int main(void)
     test_disconnect_takes_two_taps_within_three_seconds();
     test_update_now_is_live_only_online_and_idle();
     test_a_hold_that_cannot_be_sent_says_so();
+    test_boot_short_is_back_on_release_and_long_is_the_clock_once();
+    test_boot_held_opens_the_clock_from_anywhere_but_the_clock();
+    test_the_pickup_waits_three_seconds_backs_off_and_never_jumps_the_manifest();
+    test_the_relay_reports_itself_in_one_token();
+    test_a_request_id_is_uuid_text_or_it_is_dropped();
+    test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short();
+    test_the_stream_is_byte_for_byte_what_the_box_decodes();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

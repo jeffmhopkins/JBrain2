@@ -18,6 +18,22 @@ typedef struct {
  * 0 otherwise. */
 int btn_db_step(btn_db_t *b, bool pressed_now);
 
+/* BOOT's two meanings (owner, 2026-10-12). Held this long it opens the Clock — once, the moment
+ * the threshold passes, while still held, so the owner sees it happen without letting go. A
+ * shorter press is home/back, sent on the RELEASE: only then is it known not to be a long one.
+ * 800 ms is well clear of the 0.0.3 probe's ~0.4 s deliberate taps and short of feeling stuck. */
+#define BTN_LONG_MS 800
+
+typedef enum { BTN_HOLD_NONE, BTN_HOLD_SHORT, BTN_HOLD_LONG } btn_hold_ev_t;
+typedef struct {
+    bool down, fired;
+    uint32_t since;
+} btn_hold_t;
+
+/* Fed every poll with btn_db_step's result for the button (so a glitch the debounce swallowed
+ * is nothing here either) and the time. */
+btn_hold_ev_t btn_hold_step(btn_hold_t *h, int edge, uint32_t now_ms);
+
 /* PWR may reach the chip two ways and which one works is what 0.0.4 measures (HARDWARE.md
  * "Measured on the board"): GPIO18 through the BSS138, and the AXP2101's latched key press.
  * When both work, one press arrives twice, a poll apart; the second inside this window is the

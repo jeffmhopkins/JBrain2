@@ -14,7 +14,7 @@
 
 static const char *s_version = "";
 static void (*s_wake)(void);
-static volatile bool s_request;
+static volatile bool s_request, s_report;
 static volatile fw_phase_t s_phase = FW_IDLE;
 static volatile uint8_t s_pct;
 static char s_next[16], s_err[24];
@@ -48,7 +48,15 @@ bool svc_box_update_now(void)
 
 void svc_box_report_now(void)
 {
+    s_report = true;
     if (s_wake) s_wake();
+}
+
+bool svc_box_take_report_request(void)
+{
+    const bool r = s_report;
+    s_report = false;
+    return r;
 }
 
 uint32_t svc_box_quiet_s(void)

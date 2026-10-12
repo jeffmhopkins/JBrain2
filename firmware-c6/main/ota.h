@@ -7,6 +7,10 @@
 #include "esp_err.h"
 
 #define OTA_VERSION_MAX 48
+/* The box serves one manifest per board, chosen by the panel asking; absent means the S3
+   panels. The image URL it hands back already carries the same id, and the debug pickup names
+   the same board. */
+#define OTA_BOARD_ID "c6-amoled-216"
 
 typedef struct {
     char version[OTA_VERSION_MAX];

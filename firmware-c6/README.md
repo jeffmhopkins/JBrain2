@@ -125,7 +125,7 @@ has run for ~5 s (and a PWR press asks for one too). Everything is in the teleme
 | `lcdrst=` | `aldo3` | `sw-only`: the PMIC refused the reset pulse; the controller got a software reset only. |
 | `frames=` / `flush_ms=` | climbing / ~20-30 | stuck at 0 with `display=ok`: LVGL never flushed. `flush_err` > 0: a strip never completed. |
 | `bri=req/sent/state`, `bri_n=` | `50/128/sent` ~2 s after boot | `…/err`: the bus refused the write. `sent` while the glass did not step down from full brightness: the write is discarded — the S3's failure. **Only the eye can tell**; PWR must black the screen and bring it back. |
-| `ui=`, `stage=`, `ui_age=` | `up`, 10-13, 0 | `ui_age` growing: the UI task is stuck at `stage` (1 LVGL, 2 shell, 10 events, 11 render, 12 brightness, 13 idle, 101-109 the display's init steps, 14 stopped). |
+| `ui=`, `stage=`, `ui_age=` | `up`, 10-13, 0 | `ui_age` growing: the UI task is stuck at `stage` (1 LVGL, 2 shell, 10 events, 11 render, 12 brightness, 13 idle, 101-109 the display's init steps, 14 stopped, 15 a debug command — since 0.0.9). |
 | `ui_heap=free/min` | free ≥ 100000 | under ~100 KB: the next TLS handshake or OTA is at risk. Compare `int_min` after an OTA. |
 | `ui_stack=` / `main_stack=` | > 1500 / > 1500 bytes | small: a stack near overflow. |
 | `pmu=` | `ok` | `failed:<reg>`: that register did not read back; `absent`: no AXP2101 on the bus; `readonly`: a fault boot. |
@@ -380,6 +380,166 @@ a long note is still cut rather than costing the report.
    seconds: the Jerv thread opens with the "Not sent" bubble. A quick tap of KEY says "Hold KEY
    the whole time you talk".
 
+## What 0.0.9 adds: the panel's half of the debug relay
+
+The box side has been live since 2026-10-12 (plan §4, `../backend/src/jbrain/api/panel_debug.py`);
+0.0.9 is the panel collecting requests and answering them, so a session holding the owner's debug
+token can take a snapshot, read the logs, see the screen, press a button or reboot the panel with
+nobody at it. Also: a long press of BOOT opens the Clock, and the conversations draw the mock's
+microphone instead of a music note.
+
+### The pickup, and what it costs
+
+`GET /endpoint/debug/next?board=c6-amoled-216` every **3 s**, from the update loop on the main
+task — the task that already owns every box request — in the time between manifest checks
+(`dbg_sched.c`, host-tested):
+
+- **The manifest goes first.** A due check (every 60 s, or at once on a wake) always runs
+  before a pickup, so a debug session can delay an update by one exchange at most, and every
+  exchange is bounded (8 s per request, one retry; 3 s for the UI's turn; 5 s for a capture).
+- **A dead box is not hammered.** A pickup the box does not answer backs off — 6, 12, 24, 48,
+  then every 60 s — and there are no pickups at all while the last manifest check failed: the
+  manifest is the reachability probe, and it alone runs. Any answer resets to 3 s.
+- **A session is served quickly.** After a command the next pickup is 0.5 s out, since a
+  session usually asks again at once.
+- **Each pickup is the panel's proof of life** to the box (a command is refused `offline` after
+  30 s without one), and counts as the box being reached for the 10-minute re-join rule.
+
+**One kept-alive HTTPS session** (`main/box_http.c`) now carries the manifest, telemetry and the
+pickups. A fresh TLS session per pickup — 0.0.8's pattern — would be an ECDHE handshake and a
+certificate check every 3 s on a 160 MHz core at the UI's priority, estimated at 0.2-0.4 s of CPU
+each: ~10 % of the core, taken in round-robin from the UI. Kept alive, a pickup is two small TLS
+records (a ~300-byte request, an empty 204). It is still ONE session: closed before the OTA
+download opens its own, closed on a Wi-Fi re-join, and a request that fails on a session the box
+has since closed is retried once on a fresh one — so at worst this is 0.0.8's transport. The
+cost moves from CPU to RAM: the session's TLS buffers (~25 KB, mostly mbedTLS's 16 KB receive
+record) stay allocated between requests where 0.0.8 freed them, so steady-state `int_free` is
+that much lower; `int_min`, the handshake's peak, is the same peak 0.0.8 reached every minute.
+`tls=` in the note counts handshakes and requests that rode the kept session, and times the
+connects, so the estimate is measured on the first day.
+
+Static RAM grows by 11.4 KB (measured from the two ELFs): the 6 KB answer buffer, the 3 KB copy
+the log dump writes from (linked for the first time now that something calls it), the 768-byte
+request, the capture's 0.6 KB state and the larger telemetry note. With 0.0.8's `int_min` at
+~114 KB, expect ~100-103 KB — still above the ~100 KB line "Reading 0.0.4" draws, and the first
+thing to read in 0.0.9's telemetry.
+
+### Running a command
+
+Every command runs through `svc_debug`'s dispatcher (`dbg_cmd_run`: the whitelist, `confirm`
+for `reboot`, the flat parser) **on the UI task**, the one owner of LVGL: the main task fills a
+one-slot job and the UI loop runs it on its next pass (≤ 50 ms), between frames. The main task
+waits up to **3 s** and otherwise answers `ui busy`; a job the UI had already started is left to
+finish on its own, and nothing is collected from the box until it has. On a boot **without** a
+UI — after a fault, or a UI that stopped — nothing else touches LVGL, so the main task runs the
+command itself: a snapshot and the logs work exactly when they matter most.
+
+| Command | On the panel |
+| --- | --- |
+| `help` | The whitelist with each command's `destructive` / `idempotent` / `available`. |
+| `snapshot` | Every describer: shell, services, `system` (heap, stacks, reset reason, crash breadcrumb, coredump). |
+| `logs` | The RAM log ring (last ~3 KB of `ESP_LOGx` lines, oldest first) and how many lines were evicted. |
+| `log_level` | `esp_log_level_set(tag, level)`, `tag` `*` for all, level 0-5; answers `max`, the compiled ceiling (3, INFO: higher levels are compiled out). |
+| `open` / `home` | The shell opens that app / goes home, as a tile tap or BOOT would. |
+| `set` | A setting by `svc_settings_name` and `value`, through the UI's own setter, so it is saved like a slider move. |
+| `inject` | `event` `key_down`, `key_up`, `boot`, `boot_long`, `pwr`, or `touch`/`swipe` at `x`,`y` (swipe `value` = dx) through the virtual pointer — exactly where a finger would land. |
+| `ota_check` | Update now's own path: the Firmware card shows Checking, and the loop checks once this answer is sent. `offline or busy` when the button would be dead. |
+| `report_now` | Telemetry on the loop's next pass (seconds). |
+| `screenshot` | The screen, streamed as `JPS1` (below). |
+| `reboot` | Only with `"confirm": true`. Answers first, then restarts 0.3 s later. |
+
+The answer is `dbg_cmd_run`'s JSON, POSTed as is (≤ 6 KB: anything larger is answered
+`result too large` rather than truncated).
+
+### The screenshot, without a framebuffer
+
+The UI task re-renders the whole screen once (`svc_display_capture`) and each 480×40 strip is
+run-length encoded **as it is flushed** — before the byte swap the CO5300 needs, so the stream
+carries LVGL's little-endian RGB565 — into one of **two 4 KB chunks**; the main task streams
+each full chunk to the box as a chunked `application/octet-stream` POST while the UI fills the
+other. Nothing larger than a chunk is ever held: a strip is the display's own DMA buffer, and
+the extra RAM is the 8 KB pair — allocated once the upload's handshake is over, so it never adds
+to the handshake's peak, and freed after — and the 0.6 KB encoder.
+
+The screen stands still for the capture — the UI is inside one render from the first strip to
+the last — so it is bounded: **at most 2 s**, and no single wait for a free chunk over 250 ms.
+Either limit aborts the capture as `net slow`; a strip that is not full-width or out of order
+is `capture torn`. A failed capture is never finished as a stream (the box would decode a torn
+picture): the upload is cut off without its last chunk, so the box records nothing, and the
+reason follows as the JSON answer. Wi-Fi power save is off while the stream goes up — one TCP ACK
+held a beacon interval at the access point would otherwise be most of the wait. The mock's
+screens are 13-70 KB on the wire (the sim prints each).
+
+### Logs, and the secrets that may not leave
+
+`esp_log_set_vprintf` now feeds the log ring as well as the console (the 0.0.4 image left the
+hook out). It allocates nothing, never blocks, and takes the ring's lock as an ISR-safe critical
+section — interrupts are off for one copy of at most the 3 KB ring. ESP_LOGx itself is not for
+ISRs; `ESP_DRAM_LOGx` and `ESP_EARLY_LOGx` print through the ROM and never reach it.
+
+Every byte that leaves goes through `dbg_json`, which refuses the provisioning keys and scrubs
+every registered secret value. The ring scrubs too, as each line is stored, because that is
+where a line is clipped to 120 characters: a device key cut off at the limit is still most of
+one, so a clipped line whose tail starts a secret has that tail replaced (`dbg_secret_scrub`,
+host-tested). At boot `check_secrets` confirms the device key, Wi-Fi password and CA from NVS
+are registered by value before the hook is installed or a command can run, and registers any
+that are not (`sec=`).
+
+### BOOT held opens the Clock (owner, 2026-10-12)
+
+**Held 800 ms, BOOT opens the Clock from anywhere** — home, any app, over a notice (the face
+keeps it as its badge) — the moment the threshold passes, without letting go. A shorter press
+is home/back as before, but now fires on the **release**: only then is it known not to be a long
+one, so a long press is never also a back. Held for a minute it fires once. On the Clock it does
+nothing; on the talk ring or a ringing alarm it is plain BOOT (cancel, stop); on a dark screen
+it only wakes. The press timing is `btn_hold_step` (`btn_logic.c`) and the routing
+`sh_route_button` (`shell_core.c`), both host-tested; the debug `inject` takes `boot_long`.
+
+### The microphone
+
+The "Hold KEY to talk" footer and the voice bubbles drew `LV_SYMBOL_AUDIO`, a music note: the
+symbol font has no microphone. `ui_mic` draws the mock's (a capsule, its cradle and stem) as
+strokes, at 20 px in the footer and 18 px in a bubble.
+
+### The safety rules, again
+
+- **Nothing new before the rollback gate** but the transport the gate tests: the manifest now
+  rides `box_http.c`, whose first request is a fresh session exactly like 0.0.8's. The log hook,
+  the secret check, the commands and the pickup all start in `start_panel`, after
+  `ota_confirm_health`.
+- **No new task.** The pickup rides the update loop; commands and the capture ride the UI loop.
+  Every task is still priority 1.
+- **A debug failure cannot block OTA or telemetry:** the manifest check outranks a pickup, every
+  exchange is bounded, and a dead box costs one 8 s attempt a minute at most.
+- **Every buffer is bounded:** request 768 B, answer 6 KB, log line 120 B, ring 3 KB, capture
+  chunks 2 × 4 KB, failure answers 192 B.
+
+### Reading 0.0.9 from the box
+
+The note's cap grew from 960 to 1280 bytes (the body from 1536 to 1856) for three new tokens.
+
+| Token | Good | Bad, and what it means |
+| --- | --- | --- |
+| `dbg=ok:N,err:N,cmds:N,last:<cmd>/<status>,shot:<bytes>/<ms>` | `ok` climbing ~20 a minute; `last:…/204` | `err` climbing: pickups failing (read `box_quiet_s`). `last:…/404`: the answer came after the box's 120 s. `/422` on a screenshot: the stream did not decode (recorded as `bad_stream`). `/-1`: the answer never landed. |
+| `tls=hs:N,reuse:N,hs_ms:N,max_ms:N` | `hs` a handful a day, `reuse` climbing with every request | `hs` climbing with `reuse`: the box closes the kept session each time — every request pays a handshake. `hs_ms`: the last connect (TCP + TLS + headers). |
+| `sec=` | `ok` | `fixed:token,pass,…`: provisioning did not register those as debug secrets and this boot did (a regression to fix, not a leak). |
+| `stage=15` | — | the UI was running a debug command (`ui_age` growing there: a command is stuck). |
+| `edges=` | `boot=long@…` after a long press | — |
+
+### Checking it from the box
+
+From a session with the owner's token (`../docs/runbooks/DEBUG_ACCESS.md`):
+
+```sh
+scripts/debug-connect.sh panel-list                                   # online: true, board c6-amoled-216
+scripts/debug-connect.sh panel-cmd c6 help                            # the whitelist, all available
+scripts/debug-connect.sh panel-cmd c6 snapshot                        # system, shell, settings… no secrets
+scripts/debug-connect.sh panel-cmd c6 logs
+scripts/debug-connect.sh panel-shot c6 out.png                        # the screen as it is
+scripts/debug-connect.sh panel-cmd c6 inject --arg event=boot_long    # the Clock opens
+scripts/debug-connect.sh panel-cmd c6 reboot                          # 409 needs_confirm
+```
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -393,8 +553,11 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **`GET {api}/endpoint/firmware?board=c6-amoled-216`** is the manifest and the health signal,
   and since 0.0.8 the panel's clock: its reply's `Date` header sets the time ("What 0.0.8 adds").
   The image URL it returns carries the same board id and is fetched exactly as given. The id is
-  one constant, `BOARD_ID` in `main/ota.c`; the box's per-board table must use the same string.
-  Without it the box answers for the S3 panels.
+  one constant, `OTA_BOARD_ID` in `main/ota.h`; the box's per-board table must use the same
+  string. Without it the box answers for the S3 panels.
+- **`GET {api}/endpoint/debug/next?board=c6-amoled-216`** and **`POST
+  {api}/endpoint/debug/{id}`** (since 0.0.9) are the debug relay's pickup and answer ("What
+  0.0.9 adds"). The only routes that are the C6's own; the S3 panels never call them.
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -405,9 +568,12 @@ The same protocol as the S3 panels, so the box needs no new route for it:
   ("Reading 0.0.4 from the box" above). The note is bounded on its own, so a long one is cut
   rather than costing the whole report.
 
-Each request is its own HTTPS session, closed before the next. The S3 panels moved to one shared
-WebSocket (`../firmware/main/link.c`) because talk turns and polls overlapped; this image makes
-one request at a time on one task, so there is nothing to share.
+One request at a time, on one task, over **one HTTPS session kept open between requests** (since
+0.0.9, `main/box_http.c`; until then each request was its own session, closed after). The S3
+panels moved to one shared WebSocket (`../firmware/main/link.c`) because talk turns and polls
+overlapped; this image still makes one request at a time, so a kept-alive HTTPS session is all
+the sharing it needs. It is closed before the OTA download opens its own and whenever the radio
+re-joins, so there is never a second.
 
 **It refuses another board's image before writing anything.** A box that predates `?board=`
 ignores it and offers the S3 panels' `jbrain-endpoint`. `ota.c` reads the incoming image's app
@@ -555,18 +721,19 @@ the debug path. `--only <app>` registers a single app, for working on one with n
 Fonts are LVGL's Montserrat plus the generated clock digits and punctuation fallbacks in
 `components/ui_kit/fonts/` ("What 0.0.8 adds", Fonts). States the mock has no board for:
 `settings-end`, `settings-armed` (the first Disconnect tap), `settings-usb`, `clock-badge`,
-`clock-alarms-end`, `rec-anywhere` (KEY from Settings) and `jerv-after-key`. Each render also
+`clock-alarms-end`, `rec-anywhere` (KEY from Settings), `jerv-after-key` and `boot-long` (BOOT held in Settings). Each render also
 prints LVGL's pool peak (64-bit pointers; the device's pool is 64 KB with 32-bit ones).
 
 ### Debugging a panel with no cable
 
 `svc_debug` is how a session holding the owner's debug token reads and drives this panel through
-the box (plan §4 has the box routes). A **snapshot** is every describer — the shell (open app,
+the box (plan §4 has the box routes; the panel collects and answers from 0.0.9, "What 0.0.9
+adds"). A **snapshot** is every describer — the shell (open app,
 page, overlay, key owner, queue depth and drops, the last events, widget and timer counts, and
 the open app's own `describe`), each service, and `system` (heap, low-water mark, largest block,
 reset reason, crash breadcrumb, coredump present, watched tasks' stack high-water marks). The
 **log ring** keeps the last ~3 KB of `ESP_LOGx` lines. **Commands** are a whitelist: `help`,
-`snapshot`, `logs`, `log_level`, `open`, `home`, `set`, `inject` (KEY/BOOT/PWR, touch, swipe),
+`snapshot`, `logs`, `log_level`, `open`, `home`, `set`, `inject` (KEY/BOOT/BOOT held/PWR, touch, swipe),
 `ota_check`, `report_now`, `screenshot`, and `reboot` — the only destructive one, refused
 without `"confirm": true`. **Secrets cannot leave:** the writer every byte goes through refuses
 the provisioning keys (`pass`, `token`, `ca`, any `*_key`/`*_token`…) and scrubs the registered

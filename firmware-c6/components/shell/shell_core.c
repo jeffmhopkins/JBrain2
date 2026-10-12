@@ -44,6 +44,15 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
      * meant to send. */
     if (f->dark) return r(SH_ACT_WAKE, SH_ACT_NONE);
 
+    /* BOOT held is the shell's, never offered to an app: the Clock from anywhere, a notice
+     * included (the face keeps it as its badge). Over the talk ring or a ringing alarm it is
+     * just BOOT — cancel, stop — because those are what a hand on BOOT is reaching for. */
+    if (b == SH_BTN_BOOT_LONG) {
+        if (!f->talking && !f->alarm_ringing)
+            return r(f->clock_open ? SH_ACT_NONE : SH_ACT_OPEN_CLOCK, SH_ACT_NONE);
+        b = SH_BTN_BOOT;
+    }
+
     /* The talk ring covers everything: BOOT is its cancel, and a second KEY_DOWN (a debug
      * inject; a finger cannot) must not start another. */
     if (f->talking) return r(b == SH_BTN_BOOT ? SH_ACT_CANCEL_TALK : SH_ACT_NONE, SH_ACT_NONE);

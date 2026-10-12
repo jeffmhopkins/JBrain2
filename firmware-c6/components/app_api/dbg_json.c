@@ -59,6 +59,59 @@ bool dbg_secret_in(const char *text)
     return false;
 }
 
+bool dbg_secret_registered(const char *value)
+{
+    if (!value) return false;
+    for (unsigned i = 0; i < s_secret_n; i++)
+        if (!strcmp(value, s_secrets[i])) return true;
+    return false;
+}
+
+/* Replaces s[at, at+n) with the marker, cutting the tail if the buffer cannot hold it. */
+static void splice(char *s, size_t cap, size_t at, size_t n)
+{
+    const size_t mk = sizeof DBG_REDACTED - 1, len = strlen(s);
+    size_t tail = len - at - n;
+    if (at + mk + tail + 1 > cap) tail = at + mk + 1 > cap ? 0 : cap - 1 - at - mk;
+    if (at + mk + 1 > cap) {
+        s[at] = '\0';
+        return;
+    }
+    memmove(s + at + mk, s + at + n, tail);
+    memcpy(s + at, DBG_REDACTED, mk);
+    s[at + mk + tail] = '\0';
+}
+
+bool dbg_secret_scrub(char *s, size_t cap, bool clipped)
+{
+    bool changed = false;
+    if (!s || !cap) return false;
+    for (unsigned i = 0; i < s_secret_n; i++) {
+        const size_t n = strlen(s_secrets[i]);
+        char *hit;
+        size_t from = 0;
+        while ((hit = strstr(s + from, s_secrets[i])) != NULL) {
+            const size_t at = (size_t)(hit - s);
+            splice(s, cap, at, n);
+            from = at + sizeof DBG_REDACTED - 1;
+            changed = true;
+            if (from >= strlen(s)) break;
+        }
+    }
+    if (!clipped) return changed;
+    const size_t len = strlen(s);
+    for (unsigned i = 0; i < s_secret_n; i++) {
+        const size_t n = strlen(s_secrets[i]);
+        /* The longest tail that is a proper start of this secret; 4 is dbg_secret_add's floor. */
+        for (size_t k = n - 1 < len ? n - 1 : len; k >= 4; k--)
+            if (!memcmp(s + len - k, s_secrets[i], k)) {
+                splice(s, cap, len - k, k);
+                return true;
+            }
+    }
+    return changed;
+}
+
 static void put(dbg_json_t *w, const char *s, size_t n)
 {
     if (w->overflow) return;

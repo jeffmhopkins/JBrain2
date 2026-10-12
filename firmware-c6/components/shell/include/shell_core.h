@@ -18,8 +18,16 @@
 #define SH_TAP_SLOP 20
 
 /* SH_BTN_TOUCH is a finger landing on a dark screen (sh_gate), queued like a button so it keeps
- * its place among them. */
-typedef enum { SH_BTN_KEY_DOWN, SH_BTN_KEY_UP, SH_BTN_BOOT, SH_BTN_PWR, SH_BTN_TOUCH } sh_button_t;
+ * its place among them. SH_BTN_BOOT is a short press (it arrives on release); SH_BTN_BOOT_LONG a
+ * hold past svc_buttons' threshold, which opens the Clock from anywhere (owner, 2026-10-12). */
+typedef enum {
+    SH_BTN_KEY_DOWN,
+    SH_BTN_KEY_UP,
+    SH_BTN_BOOT,
+    SH_BTN_PWR,
+    SH_BTN_TOUCH,
+    SH_BTN_BOOT_LONG,
+} sh_button_t;
 
 /* In priority order: an alarm outranks a notice, which outranks every app (plan §2). */
 typedef enum { SH_OV_NONE, SH_OV_NOTICE, SH_OV_ALARM } sh_overlay_t;
@@ -37,6 +45,7 @@ typedef enum {
     SH_ACT_CANCEL_TALK,    /* BOOT during it */
     SH_ACT_WAKE,
     SH_ACT_DARK,
+    SH_ACT_OPEN_CLOCK,     /* BOOT held: the clock app, over home or any app */
 } sh_act_t;
 
 typedef struct {
@@ -52,6 +61,7 @@ typedef struct {
     uint8_t page;
     bool dark;
     bool talking;      /* the shell's own talk to Jerv is up */
+    bool clock_open;   /* the open app is the clock */
 } sh_facts_t;
 
 /* SH_KEY_SHELL: the hold is the shell's talk to Jerv, so its release sends to Jerv whatever
