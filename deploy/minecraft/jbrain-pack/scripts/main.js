@@ -360,7 +360,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 });
 
 initTransport({ carried, tricorderOn, say });
-initWormholes();
+initWormholes({ onPlanted: (player) => story.firstWormhole(player) });
 
 // --- the Tricorder's arrow, about four times a second -----------------------------------
 

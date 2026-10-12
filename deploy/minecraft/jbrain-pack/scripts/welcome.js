@@ -144,6 +144,14 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
     play(player, steps, (s) => dave(player, s.text), () => {});
   };
 
+  // The first gate a player plants (§M12's beat, owner 2026-10-12), just after the
+  // planted line, and only through their own Tricorder.
+  const firstWormhole = (player) => {
+    if (has(player, BEAT.firstWormhole) || tricorderOn(player) !== "own") return;
+    record(player, BEAT.firstWormhole);
+    play(player, [{ at: 30, step: "dave", text: LINES.firstWormhole }], (s) => dave(player, s.text), () => {});
+  };
+
   // After the item guide's look at what they carry (main.js's learn): `added` are the
   // unlocks just recorded, `known` all of them, `held` the item ids on them now.
   const onUnlocks = (player, { added, known, held }) => {
@@ -184,5 +192,5 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
     }
   });
 
-  return { needsWelcome, welcome, inWelcome, firstDeath, onUnlocks, hello };
+  return { needsWelcome, welcome, inWelcome, firstDeath, firstWormhole, onUnlocks, hello };
 };

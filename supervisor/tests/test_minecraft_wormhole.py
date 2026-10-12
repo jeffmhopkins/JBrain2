@@ -83,7 +83,7 @@ def test_main_only_starts_the_gates() -> None:
     """The gates live in their own module; main.js imports and starts them."""
     main = (PACK / "scripts" / "main.js").read_text()
     assert 'import { initWormholes } from "./wormhole.js";' in main
-    assert main.count("initWormholes()") == 1
+    assert main.count("initWormholes(") == 1
     assert "jb:wormhole" not in main
 
 

@@ -78,6 +78,9 @@ const named = (name) => world.getAllPlayers().find((p) => p.name.toLowerCase() =
 
 // --- planting ---------------------------------------------------------------------------
 
+// What else happens on a planting: Dave's first-gate beat (welcome.js), set by init.
+let onPlanted = () => {};
+
 const plant = (player, block) => {
   const dim = player.dimension;
   const dimKey = DIM_KEYS[dim.id];
@@ -108,6 +111,7 @@ const plant = (player, block) => {
     }
   });
   say(`wormhole planted: gate ${id} by ${player.name} at ${where({ ...gate, id })}`);
+  fx(() => onPlanted(player));
 };
 
 // --- breaking ---------------------------------------------------------------------------
@@ -270,7 +274,8 @@ const look = () => {
   }
 };
 
-export const initWormholes = () => {
+export const initWormholes = ({ onPlanted: planted } = {}) => {
+  if (planted) onPlanted = planted;
   world.afterEvents.playerInteractWithBlock.subscribe((ev) => {
     const item = ev.beforeItemStack ?? ev.itemStack;
     if (item?.typeId !== SEED || ev.isFirstEvent === false) return;

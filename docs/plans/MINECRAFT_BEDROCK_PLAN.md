@@ -2641,8 +2641,11 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
   question reaches the backend. It still needs their own Tricorder. "hello there" is a
   real question and goes to Dave as before.
-- **Not here:** the wormhole gates' and the chests' beats have no signed-off lines yet;
-  they come with lines on the lore page.
+- **First wormhole** (owner, 2026-10-12, with the gate's lines signed off): just after a
+  player's first planted line, Dave says "…a fold, held open. Stand close and tell me where
+  it should lead." Beat `first_wormhole`, through their own Tricorder only; `wormhole.js`
+  calls it through `initWormholes({ onPlanted })`.
+- **Not here:** the chests' beat; it comes with M11 and lines on the lore page.
 
 **Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)
 carries a story section copied from the lore page's canon: Dave, the Old Makers, the

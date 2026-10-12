@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { Dimension, ItemStack, Player, sim, world } from "@minecraft/server";
+import { LINES } from "./pack/scripts/rules.js";
 import { SURFACE, WORMHOLE_LINES as L, frameCells } from "./pack/scripts/wormhole_rules.js";
 
 // --- blocks, dimensions and teleports for the fake ---------------------------------------
@@ -114,6 +115,31 @@ test("planting the seed in a ring of diamond blocks: the seed goes, a dormant ga
   });
   assert.deepEqual(surface(cells), Array(6).fill(AIR)); // dormant: dark
   assert.equal(last(), "[jbrain] wormhole planted: gate 1 by Mira at 0 64 0 (overworld)");
+});
+
+test("Dave speaks up at a player's first planted gate, through their own Tricorder, once", () => {
+  const mira = crew("Mira", "-1");
+  sim.spawn(mira, true);
+  sim.advance(500); // the welcome plays out
+  mira.messages.length = 0;
+  const first = build();
+  const seed = () => {
+    mira.selectedSlotIndex = 1; // the welcome put the Tricorder in slot 0
+    mira.inventory.setItem(1, new ItemStack("jbrain:wormhole_seed", 1));
+  };
+  seed();
+  plant(mira, first.ring[0]);
+  sim.advance(40);
+  assert.deepEqual(mira.messages, [`§7${L.planted}`, `§b[Dave]§r ${LINES.firstWormhole}`]);
+  assert.ok(JSON.parse(sim.props.get("jb:beats:-1")).includes("first_wormhole"));
+
+  mira.messages.length = 0;
+  build({ axis: "x", x: 30, y: 64, z: 0 });
+  seed();
+  mira.location = { x: 31.5, y: 64, z: 3.5 };
+  plant(mira, frameCells({ axis: "x", x: 30, y: 64, z: 0 }).ring[0]);
+  sim.advance(40);
+  assert.deepEqual(mira.messages, [`§7${L.planted}`]);
 });
 
 test("either axis, with or without corners, from a top or a side block", () => {

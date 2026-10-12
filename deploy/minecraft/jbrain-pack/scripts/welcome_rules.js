@@ -9,6 +9,7 @@ export const BEAT = {
   firstDeath: "first_death",
   firstEnderPearl: "first_ender_pearl",
   firstPowerPack: "first_power_pack",
+  firstWormhole: "first_wormhole",
 };
 
 // Dave speaks every 3 s, the lore table's pace, so a line can be read before the next.
