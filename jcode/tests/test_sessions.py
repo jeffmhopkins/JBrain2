@@ -256,6 +256,45 @@ async def test_a_failed_create_leaves_no_tree_and_frees_the_uid() -> None:
     assert mgr.user_for(s.id).uid == 30000
 
 
+async def test_a_failed_prepare_removes_nothing_it_did_not_make() -> None:
+    # prepare refuses an existing path (it undoes its own partial work); the manager
+    # must not then delete that path — it was never this session's.
+    class Refuses(FakeWorkspace):
+        def prepare(self, path, user) -> None:
+            raise FileExistsError(path)
+
+    ws = Refuses()
+    mgr = _mgr(workspace=ws, uid_pool=UidPool(30000, 30000))
+    with pytest.raises(FileExistsError):
+        await mgr.create("r")
+    assert ws.removed == []
+    ws2 = FakeWorkspace()
+    mgr._workspace = ws2  # the uid was released: the next create gets it
+    s = await mgr.create("r")
+    assert mgr.user_for(s.id).uid == 30000
+
+
+async def test_a_delete_that_fails_midway_keeps_the_session_for_a_retry() -> None:
+    class Flaky(FakeWorkspace):
+        fail = True
+
+        def remove(self, path) -> None:
+            if self.fail:
+                raise OSError("busy")
+            super().remove(path)
+
+    ws = Flaky()
+    mgr = _mgr(workspace=ws)
+    s = await mgr.create("r")
+    with pytest.raises(OSError):
+        await mgr.delete(s.id)
+    assert mgr.user_for(s.id).uid  # still on the books, uid not freed
+    ws.fail = False
+    await mgr.delete(s.id)
+    with pytest.raises(SessionError):
+        mgr.get(s.id)
+
+
 async def test_startup_hands_the_live_set_to_the_workspace() -> None:
     ws = FakeWorkspace()
     mgr = _mgr(workspace=ws)

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import resource
 import shutil
 import signal
 import socket
@@ -22,6 +23,8 @@ import pytest
 
 import jcode_ctl.sandbox as sandbox_mod
 from jcode_ctl.sandbox import (
+    SESSION_NPROC,
+    SHARED_TMP_DIRS,
     UID_HIGH,
     UID_LOW,
     PoolExhaustedError,
@@ -29,6 +32,7 @@ from jcode_ctl.sandbox import (
     UidPool,
     drop_privileges,
     ensure_root_dir,
+    ipc_objects,
     kill_uids,
     listener_uids,
     make_private_dir,
@@ -82,6 +86,16 @@ def test_image_registers_exactly_the_pool() -> None:
 # --- the privilege drop --------------------------------------------------------------
 
 
+@pytest.fixture
+def rlimits(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, tuple[int, int]]]:
+    """Never lower this test process's own limits (irreversible for a non-root run)."""
+    set_: list[tuple[int, tuple[int, int]]] = []
+    monkeypatch.setattr(
+        sandbox_mod.resource, "setrlimit", lambda r, lim: set_.append((r, lim))
+    )
+    return set_
+
+
 def test_drop_privileges_sheds_groups_then_gid_then_uid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -101,6 +115,11 @@ def test_drop_privileges_sheds_groups_then_gid_then_uid(
     monkeypatch.setattr(
         os, "fchown", lambda fd, u, g: calls.append(("fchown", (fd, u)))
     )
+    monkeypatch.setattr(
+        sandbox_mod.resource,
+        "setrlimit",
+        lambda r, lim: calls.append(("setrlimit", (r, lim))),
+    )
     monkeypatch.setattr(os, "setgroups", lambda g: calls.append(("setgroups", g)))
     monkeypatch.setattr(os, "setgid", _setgid)
     monkeypatch.setattr(os, "setuid", _setuid)
@@ -111,6 +130,8 @@ def test_drop_privileges_sheds_groups_then_gid_then_uid(
     drop_privileges(SessionUser(20001, 20001, "/h"), tty_fd=7)
     assert calls == [
         ("fchown", (7, 20001)),
+        # The per-uid process cap, while root can still lower it for good.
+        ("setrlimit", (resource.RLIMIT_NPROC, (SESSION_NPROC, SESSION_NPROC))),
         ("setgroups", []),
         ("setgid", 20001),
         ("setuid", 20001),
@@ -118,7 +139,7 @@ def test_drop_privileges_sheds_groups_then_gid_then_uid(
 
 
 def test_drop_privileges_refuses_a_reversible_drop(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, rlimits: list[tuple[int, tuple[int, int]]]
 ) -> None:
     # If root could be regained (a broken setuid), the child must not exec the shell.
     for name in ("fchown", "setgroups", "setgid", "setuid"):
@@ -130,7 +151,7 @@ def test_drop_privileges_refuses_a_reversible_drop(
 
 
 def test_drop_privileges_refuses_a_drop_that_did_not_take(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, rlimits: list[tuple[int, tuple[int, int]]]
 ) -> None:
     for name in ("fchown", "setgroups", "setgid", "setuid"):
         monkeypatch.setattr(os, name, lambda *_a: None)
@@ -358,3 +379,103 @@ def test_ensure_root_dir_refuses_a_symlink(base: Path, monkeypatch: Any) -> None
     monkeypatch.setattr(sandbox_mod.os, "chown", lambda *_a, **_k: None)
     with pytest.raises(OSError, match="not a directory"):
         ensure_root_dir(base / "work")
+
+
+# --- SysV IPC and the other shared places --------------------------------------------
+
+
+def _sysvipc(root: Path) -> str:
+    (root / "shm").write_text(
+        "       key      shmid perms                  size  cpid  lpid nattch   uid"
+        "   gid  cuid  cgid      atime      dtime      ctime                   rss"
+        "                  swap\n"
+        "         0         11   600                  4096   100   100      0 20001"
+        " 20001 20001 20001          0          0          0                     0"
+        "                     0\n"
+        "         0         12   600                  4096   100   100      0     0"
+        "     0 20001 20001          0          0          0                     0"
+        "                     0\n"  # given away, but created by the session
+        "         0         13   600                  4096   100   100      0 20002"
+        " 20002 20002 20002          0          0          0                     0"
+        "                     0\n"
+    )
+    (root / "msg").write_text(
+        "       key      msqid perms      cbytes       qnum lspid lrpid   uid   gid"
+        "  cuid  cgid      stime      rtime      ctime\n"
+        "         0         21   600           0          0     0     0 20001 20001"
+        " 20001 20001          0          0          0\n"
+    )
+    (root / "sem").write_text(
+        "       key      semid perms      nsems   uid   gid  cuid  cgid      otime"
+        "      ctime\n"
+        "         0         31   600          1 20001 20001 20001 20001          0"
+        "          0\n"
+    )
+    return str(root)
+
+
+def test_ipc_objects_finds_what_the_uid_owns_or_created(tmp_path: Path) -> None:
+    ipc = _sysvipc(tmp_path)
+    assert sorted(ipc_objects([20001], ipc)) == [
+        ("msg", 21),
+        ("sem", 31),
+        ("shm", 11),
+        ("shm", 12),
+    ]
+    assert ipc_objects([20002], ipc) == [("shm", 13)]
+    assert ipc_objects([20001], str(tmp_path / "missing")) == []
+
+
+def test_purge_owned_removes_the_uids_ipc_objects(tmp_path: Path) -> None:
+    ipc = _sysvipc(tmp_path)
+    removed: list[tuple[str, int]] = []
+    purge_owned([20002], dirs=[], sysvipc=ipc, rmid=lambda k, i: removed.append((k, i)))
+    assert removed == [("shm", 13)]
+
+
+def test_an_ipc_object_keeps_its_uid_out_of_the_pool(tmp_path: Path) -> None:
+    ipc = _sysvipc(tmp_path)
+    assert owns_anything(20002, [], tmp_dirs=(), proc=str(tmp_path), sysvipc=ipc)
+    assert not owns_anything(20003, [], tmp_dirs=(), proc=str(tmp_path), sysvipc=ipc)
+
+
+@needs_root
+def test_purge_owned_really_removes_a_shared_memory_segment() -> None:
+    import ctypes
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    uid = 29_996
+    # IPC_PRIVATE, one page, IPC_CREAT | 0600 — created by root, then handed to the uid
+    # with IPC_SET (struct ipc_perm leads struct shmid_ds; key, uid, gid, cuid, cgid).
+    shmid = libc.shmget(0, 4096, 0o1000 | 0o600)
+    if shmid < 0:
+        pytest.skip("SysV shm unavailable here")
+
+    class _Perm(ctypes.Structure):
+        _fields_ = [
+            ("key", ctypes.c_int),
+            ("uid", ctypes.c_uint),
+            ("gid", ctypes.c_uint),
+            ("cuid", ctypes.c_uint),
+            ("cgid", ctypes.c_uint),
+            ("mode", ctypes.c_ushort),
+        ]
+
+    try:
+        perm_buf = (ctypes.c_char * 256)()
+        ipc_stat, ipc_set = 2, 1
+        assert libc.shmctl(shmid, ipc_stat, perm_buf) == 0
+        perm = _Perm.from_buffer(perm_buf)
+        perm.uid, perm.gid = uid, uid
+        assert libc.shmctl(shmid, ipc_set, perm_buf) == 0
+        assert ("shm", shmid) in ipc_objects([uid])
+        purge_owned([uid], dirs=[])
+        assert ("shm", shmid) not in ipc_objects([uid])
+    finally:
+        libc.shmctl(shmid, 0, None)
+
+
+def test_the_shared_places_cover_lock_and_mqueue() -> None:
+    assert {"/tmp", "/var/tmp", "/dev/shm", "/run/lock", "/dev/mqueue"} <= set(
+        SHARED_TMP_DIRS
+    )

@@ -130,6 +130,9 @@ def home_env(home: str) -> dict[str, str]:
         "PATH": path,
         "JCODE_TOOLS_BIN": tools_bin,
         "NPM_CONFIG_PREFIX": f"{home}/.npm-global",
+        # Temp files in the session's own 0700 tree rather than the shared /tmp, where
+        # another session could see their names (and read any created world-readable).
+        "TMPDIR": f"{home}/.tmp",
     }
 
 
@@ -168,6 +171,12 @@ def spawn_shell(
     pid, master_fd = pty.fork()
     if pid == 0:  # child — replace ourselves with the shell  # pragma: no cover
         try:
+            # Every other session's pty master (and any socket or file the server has
+            # open) was copied into this child by fork. Kept, a session could type into
+            # another session's shell as that session's uid — so only the slave on 0-2
+            # survives, whatever its inheritable flag.
+            os.closerange(3, os.sysconf("SC_OPEN_MAX"))
+            os.umask(0o077)
             os.chdir(cwd)
             env = child_env(os.environ, env_overrides)
             if user is not None:
@@ -175,6 +184,9 @@ def spawn_shell(
             os.execvpe(argv[0], list(argv), env)
         except Exception:  # exec failed — never fall back into Python in the child
             os._exit(127)
+    # Belt and braces with the child's closerange: no exec'd child of this server (git,
+    # a later shell) can inherit the master by accident either.
+    os.set_inheritable(master_fd, False)
     return pid, master_fd
 
 

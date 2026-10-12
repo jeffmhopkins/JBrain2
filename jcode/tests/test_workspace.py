@@ -44,7 +44,11 @@ def chown_ok(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, int, int]]:
         def _fake(path: Any, uid: int, gid: int, **_: Any) -> None:
             calls.append((str(path), uid, gid))
 
+        def _fake_fd(fd: int, uid: int, gid: int) -> None:
+            calls.append((os.readlink(f"/proc/self/fd/{fd}"), uid, gid))
+
         monkeypatch.setattr(os, "chown", _fake)
+        monkeypatch.setattr(os, "fchown", _fake_fd)
     return calls
 
 
@@ -72,17 +76,26 @@ def test_prepare_makes_both_trees_private_to_the_session_uid(
     user = _user(base)
     ws.prepare(base / "s1", user)
     home = Path(user.home)
-    for tree in (base / "s1", home):
+    # Private trees, including the session's own $TMPDIR.
+    for tree in (base / "s1", home, home / ".tmp"):
         assert stat.S_IMODE(os.lstat(tree).st_mode) == 0o700
     # The skeleton the tool-version mechanism needs: a PATH-leading bin + npm prefix.
     assert (home / ".local" / "bin").is_dir()
     assert (home / ".npm-global").is_dir()
+    # grok reads ~/.grok/AGENTS.md (never the checkout's parent); claude ~/.claude.
+    assert (home / ".grok" / "AGENTS.md").read_text() == AGENTS_MD
+    assert (home / ".claude" / "CLAUDE.md").read_text() == AGENTS_MD
     owned = [
         base / "s1",
         home,
         home / ".local",
         home / ".local/bin",
         home / ".npm-global",
+        home / ".tmp",
+        home / ".grok",
+        home / ".grok/AGENTS.md",
+        home / ".claude",
+        home / ".claude/CLAUDE.md",
     ]
     if _ROOT:
         for p in owned:
@@ -98,8 +111,23 @@ def test_prepare_refuses_a_path_that_already_exists(
     # An existing path wasn't made for this session; it is never adopted.
     ws = GitWorkspace([], workspace_root=str(base), home_root=str(base / ".home"))
     (base / "s1").mkdir()
+    (base / "s1" / "theirs").write_text("x")
     with pytest.raises(FileExistsError):
         ws.prepare(base / "s1", _user(base))
+    assert (base / "s1" / "theirs").exists()  # refused, not deleted
+
+
+def test_a_failed_prepare_undoes_only_its_own_work(
+    base: Path, chown_ok: list[tuple[str, int, int]]
+) -> None:
+    ws = GitWorkspace([], workspace_root=str(base), home_root=str(base / ".home"))
+    (base / ".home").mkdir(mode=0o711)
+    user = _user(base)
+    Path(user.home).mkdir()  # the home already exists: prepare fails after the checkout
+    with pytest.raises(FileExistsError):
+        ws.prepare(base / "s1", user)
+    assert not (base / "s1").exists()  # the checkout it made is gone again
+    assert Path(user.home).is_dir()  # the home it didn't make is left alone
 
 
 class _Recorder:
@@ -129,6 +157,11 @@ async def test_every_git_run_is_the_session_uid_with_its_own_home(
     monkeypatch.setenv("HOME", "/root")
     monkeypatch.setenv("HTTPS_PROXY", "http://egress:3128")
     monkeypatch.setenv("no_proxy", "api")
+    # The squid egress the network fence points at: every spelling git/curl reads.
+    monkeypatch.setenv("HTTP_PROXY", "http://egress:3128")
+    monkeypatch.setenv("http_proxy", "http://egress:3128")
+    monkeypatch.setenv("https_proxy", "http://egress:3128")
+    monkeypatch.setenv("NO_PROXY", "api")
     rec = _Recorder()
     monkeypatch.setattr(workspace_mod.asyncio, "create_subprocess_exec", rec)
     ws = GitWorkspace([])
@@ -146,11 +179,14 @@ async def test_every_git_run_is_the_session_uid_with_its_own_home(
     for argv, kw in rec.calls:
         assert argv[0] == "git"
         assert (kw["user"], kw["group"], kw["extra_groups"]) == (20005, 20005, [])
+        assert kw["umask"] == 0o077
         env = kw["env"]
         assert env["HOME"] == "/work/.home/s1"
+        assert env["TMPDIR"] == "/work/.home/s1/.tmp"
         assert "JCODE_TOKEN" not in env
-        assert env["HTTPS_PROXY"] == "http://egress:3128"
-        assert env["no_proxy"] == "api"
+        for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            assert env[name] == "http://egress:3128", name
+        assert env["NO_PROXY"] == env["no_proxy"] == "api"
         assert env["GIT_TERMINAL_PROMPT"] == "0"
         assert "safe.directory" not in " ".join(argv)
 
@@ -165,6 +201,7 @@ def test_git_env_is_built_from_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
         "PATH",
         "LANG",
         "GIT_TERMINAL_PROMPT",
+        "TMPDIR",
         *workspace_mod._PROXY_VARS,
     }
     assert "HTTP_PROXY" not in env  # unset stays unset, not ""

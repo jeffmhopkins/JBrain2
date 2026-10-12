@@ -35,6 +35,11 @@ def test_jcode_is_isolated_on_its_fenced_network_only() -> None:
     assert services["jcode"]["profiles"] == ["jcode"]
 
 
+def test_jcode_sessions_cannot_regain_privileges() -> None:
+    # Session shells are unprivileged uids; no setuid/file-capability binary may lift one.
+    assert "no-new-privileges:true" in _spec()["services"]["jcode"]["security_opt"]
+
+
 def test_jcode_marks_itself_a_sandbox_so_the_cli_runs_as_root() -> None:
     # Session shells now run as their own uid (security plan S2.1), so the CLI's root guard
     # no longer fires; the marker stays for any CLI behaviour keyed off it.

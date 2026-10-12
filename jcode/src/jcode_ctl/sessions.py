@@ -136,8 +136,13 @@ class SessionManager:
         user = SessionUser(uid=uid, gid=uid, home=str(self.home_for(sid)))
         try:
             # Checkout dir + private $HOME (its tool bin on PATH, ~/.grok, npm prefix),
-            # both owned by the session's uid, then the clone as that uid.
+            # both owned by the session's uid. All or nothing: a failure here has
+            # already undone itself, and never touched a path it didn't create.
             self._workspace.prepare(path, user)
+        except BaseException:
+            self._uids.release(uid)
+            raise
+        try:
             await self._workspace.clone(path, repo, branch, work_branch, user)
         except BaseException:
             # A failed create leaves no tree behind for the uid's next holder to find.
@@ -262,15 +267,18 @@ class SessionManager:
         for pid in self._terminals.pop(sid, set()):
             kill_process_group(pid)
         kill_processes_in_dir(session.workspace)
-        user = self._users.pop(sid)
+        user = self._users[sid]
         kill_uids([user.uid])
         self._workspace.remove(Path(session.workspace))
         # Purge the session's private $HOME alongside the checkout (its installed tools,
         # ~/.grok, npm cache) so a deleted session leaves nothing on the volume, and
-        # whatever it left in /tmp, so the uid's next holder inherits nothing.
+        # whatever it left in /tmp or SysV IPC, so the uid's next holder inherits
+        # nothing. The session is forgotten only once all of that is done: a removal
+        # that raises leaves it (and its uid) on the books for a retried delete.
         self._workspace.remove(self.home_for(sid))
         self._workspace.purge_uid(user.uid)
         self._uids.release(user.uid)
+        del self._users[sid]
         del self._sessions[sid]
         _log.info("session delete sid=%s", sid)
 

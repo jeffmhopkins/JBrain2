@@ -661,6 +661,11 @@ services:
     build:
       context: ./src/jcode
     restart: unless-stopped
+    # Session shells run as unprivileged uids (security plan S2.1); no exec of a setuid
+    # or file-capability binary may lift one back up. The control server's own drop is a
+    # root setuid(), which no_new_privs doesn't restrict.
+    security_opt:
+      - no-new-privileges:true
     environment:
       # Bearer token the api presents on every control call (fail-closed: no token,
       # the service refuses to start). Shared with the api via JBRAIN_JCODE_TOKEN.

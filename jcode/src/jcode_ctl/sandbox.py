@@ -21,8 +21,10 @@ traversed.
 from __future__ import annotations
 
 import contextlib
+import ctypes
 import logging
 import os
+import resource
 import shutil
 import signal
 import stat
@@ -40,7 +42,22 @@ UID_HIGH = 20999
 
 # World-writable places a session can leave files in outside its own trees. Top level
 # only: anything deeper sits under a directory some uid owns, and goes with it.
-SHARED_TMP_DIRS: tuple[str, ...] = ("/tmp", "/var/tmp", "/dev/shm")
+SHARED_TMP_DIRS: tuple[str, ...] = (
+    "/tmp",
+    "/var/tmp",
+    "/dev/shm",
+    "/run/lock",
+    "/dev/mqueue",
+)
+
+# Processes (threads included) one session's uid may hold at once.
+SESSION_NPROC = 256
+
+# SysV IPC: shared memory, message queues and semaphore sets outlive their creator and
+# are keyed by owner uid, so a recycled uid would inherit them. Each /proc/sysvipc
+# table's column holding the object id, the owner uid and the creator uid.
+_SYSVIPC = {"shm": (1, 7, 9), "msg": (1, 7, 9), "sem": (1, 4, 6)}
+_IPC_RMID = 0
 
 _KILL_ROUNDS = 10
 _LISTEN = "0A"
@@ -99,6 +116,11 @@ def drop_privileges(user: SessionUser, tty_fd: int = 0) -> None:
     allowed. The final probe proves root can't be regained — a half-dropped child must
     not exec."""
     os.fchown(tty_fd, user.uid, -1)
+    # Counted per uid by the kernel, so this caps the session, not the container: one
+    # session's fork bomb hits its own ceiling before the container's pids_limit, which
+    # every other session (and the server) shares. Lowered while root, it can't be
+    # raised again after the drop.
+    resource.setrlimit(resource.RLIMIT_NPROC, (SESSION_NPROC, SESSION_NPROC))
     os.setgroups([])
     os.setgid(user.gid)
     os.setuid(user.uid)
@@ -246,12 +268,51 @@ def sweep_orphans(root: Path, live: set[str], keep: set[str]) -> list[str]:
     return removed
 
 
-def purge_owned(
-    uids: Iterable[int] | range, dirs: Iterable[str] = SHARED_TMP_DIRS
-) -> None:
-    """Remove top-level entries in the shared temp dirs owned by one of ``uids``, so a
-    recycled uid can't read what the last session left in ``/tmp``."""
+def ipc_objects(
+    uids: Iterable[int] | range, sysvipc: str = "/proc/sysvipc"
+) -> list[tuple[str, int]]:
+    """``(kind, id)`` of every SysV IPC object owned or created by one of ``uids``."""
     wanted = set(uids)
+    found: list[tuple[str, int]] = []
+    for kind, (id_col, uid_col, cuid_col) in _SYSVIPC.items():
+        try:
+            with open(f"{sysvipc}/{kind}", encoding="ascii", errors="replace") as fh:
+                rows = fh.readlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            fields = row.split()
+            try:
+                if int(fields[uid_col]) in wanted or int(fields[cuid_col]) in wanted:
+                    found.append((kind, int(fields[id_col])))
+            except (IndexError, ValueError):
+                continue
+    return found
+
+
+def _ipc_rmid(kind: str, ipc_id: int) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    if kind == "shm":
+        libc.shmctl(ipc_id, _IPC_RMID, None)
+    elif kind == "msg":
+        libc.msgctl(ipc_id, _IPC_RMID, None)
+    else:
+        libc.semctl(ipc_id, 0, _IPC_RMID)
+
+
+def purge_owned(
+    uids: Iterable[int] | range,
+    dirs: Iterable[str] = SHARED_TMP_DIRS,
+    *,
+    sysvipc: str = "/proc/sysvipc",
+    rmid: Callable[[str, int], None] = _ipc_rmid,
+) -> None:
+    """Remove what ``uids`` left outside their own trees — top-level entries in the
+    shared temp dirs and SysV IPC objects — so a recycled uid can't read what the last
+    session left behind."""
+    wanted = set(uids)
+    for kind, ipc_id in ipc_objects(wanted, sysvipc):
+        rmid(kind, ipc_id)
     for base in dirs:
         try:
             names = os.listdir(base)
@@ -273,9 +334,12 @@ def owns_anything(
     *,
     tmp_dirs: Iterable[str] = SHARED_TMP_DIRS,
     proc: str = "/proc",
+    sysvipc: str = "/proc/sysvipc",
 ) -> bool:
     """True while ``uid`` still owns a tree under a session root, a shared temp entry,
-    or a running process — the pool's reuse guard."""
+    a SysV IPC object or a running process — the pool's reuse guard."""
+    if ipc_objects([uid], sysvipc):
+        return True
     for base in [*roots, *(Path(d) for d in tmp_dirs)]:
         try:
             names = os.listdir(base)

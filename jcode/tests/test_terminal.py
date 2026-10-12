@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import fcntl
 import os
+import re
 import select
 import struct
 import subprocess
@@ -25,7 +26,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from jcode_ctl.config import Settings
-from jcode_ctl.sandbox import SessionUser
+from jcode_ctl.sandbox import SESSION_NPROC, SessionUser
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.terminal import (
     CTL_ONLY_ENV,
@@ -327,6 +328,7 @@ def test_home_env_sets_home_and_a_path_leading_tool_bin() -> None:
     assert env["HOME"] == "/work/.home/s1"
     assert env["JCODE_TOOLS_BIN"] == "/work/.home/s1/.local/bin"
     assert env["NPM_CONFIG_PREFIX"] == "/work/.home/s1/.npm-global"
+    assert env["TMPDIR"] == "/work/.home/s1/.tmp"  # private, not the shared /tmp
     # The tool bin and the npm-global bin come FIRST, ahead of the inherited PATH.
     assert env["PATH"].startswith(
         "/work/.home/s1/.local/bin:/work/.home/s1/.npm-global/bin:"
@@ -459,6 +461,56 @@ def test_spawned_shell_cannot_see_the_control_token(
     finally:
         _close_child(pid, fd)
     assert b"T=none G=sk-gateway END" in out
+
+
+def test_a_shell_inherits_no_other_sessions_pty_master(tmp_path) -> None:
+    # Every session's pty master lives in this one process; a later shell that kept one
+    # open could type into the earlier session's shell — as that session's uid.
+    first_pid, first_fd = spawn_shell(str(tmp_path))
+    try:
+        script = 'ls -l /proc/$$/fd; echo "FDS$((1+1))"'
+        pid, fd = spawn_shell(str(tmp_path), argv=("/bin/sh", "-c", script))
+        try:
+            out = _read_until(fd, b"FDS2")
+        finally:
+            _close_child(pid, fd)
+    finally:
+        _close_child(first_pid, first_fd)
+    assert b"FDS2" in out
+    assert b"ptmx" not in out
+    fds = {int(m) for m in re.findall(rb" (\d+) -> ", out)}
+    assert fds <= {0, 1, 2}, out
+
+
+def test_spawn_shell_closes_inherited_fds_and_sets_umask(tmp_path) -> None:
+    # A descriptor the server opened (a socket, a log) must not reach a session either,
+    # and what a session creates is private to it by default.
+    leaked = os.open(str(tmp_path), os.O_RDONLY)
+    os.set_inheritable(leaked, True)
+    try:
+        script = f'[ -e /proc/$$/fd/{leaked} ] && echo LEAK; echo "UM=$(umask) END"'
+        pid, fd = spawn_shell(str(tmp_path), argv=("/bin/sh", "-c", script))
+        try:
+            out = _read_until(fd, b" END")
+        finally:
+            _close_child(pid, fd)
+    finally:
+        os.close(leaked)
+    assert b"LEAK" not in out
+    assert b"UM=0077 END" in out
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to setuid")
+def test_spawned_shell_has_a_process_cap(tmp_path) -> None:
+    user = SessionUser(uid=29_981, gid=29_981, home=str(tmp_path))
+    pid, fd = spawn_shell(
+        str(tmp_path), argv=("/bin/bash", "-c", 'echo "NP=$(ulimit -u) END"'), user=user
+    )
+    try:
+        out = _read_until(fd, b" END")
+    finally:
+        _close_child(pid, fd)
+    assert f"NP={SESSION_NPROC} END".encode() in out
 
 
 @pytest.mark.skipif(os.geteuid() != 0, reason="needs root to setuid")

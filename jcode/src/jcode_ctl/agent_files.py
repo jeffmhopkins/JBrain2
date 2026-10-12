@@ -3,9 +3,10 @@
 Both CLIs read ``AGENTS.md`` / ``CLAUDE.md`` as instruction context, but neither treats
 the shell's login banner as available tools — so without this, grok inspects only its
 MCP registry, finds nothing, and tells the owner it can't search the web or read an
-image (observed on-box). The file sits at the workspace ROOT, the parent of every
-checkout, so both CLIs find it as a parent-directory memory file without it ever
-showing in the owner's ``git status``.
+image (observed on-box). It is written to the workspace ROOT (the parent of every
+checkout) and seeded into each session's home as the CLIs' global instruction files —
+grok reads only the git root down plus ``~/.grok/AGENTS.md`` — so it never shows in the
+owner's ``git status``.
 
 The control server writes it as root at startup. It used to be a login-shell hook, but
 session shells no longer run as root and can't write ``/work`` — and must not be able
@@ -55,3 +56,26 @@ def write_agent_files(root: Path) -> None:
             fh.write(AGENTS_MD)
         os.chmod(tmp, 0o644)
         os.replace(tmp, target)
+
+
+# Where each CLI looks in a session's own $HOME. grok reads project instruction files
+# from the git root down plus its global ~/.grok/AGENTS.md — never a checkout's parent —
+# so /work/AGENTS.md alone doesn't reach it; claude reads ~/.claude/CLAUDE.md likewise.
+HOME_AGENT_FILES = (".grok/AGENTS.md", ".claude/CLAUDE.md")
+
+
+def write_home_agent_files(home: Path, uid: int, gid: int) -> None:
+    """Seed the session's global instruction files into a fresh, still-empty home,
+    owned by the session (it is their home; editing them is theirs to do). Only ever
+    called before anything runs as ``uid``, and ``O_EXCL | O_NOFOLLOW`` refuses any
+    path that already exists."""
+    for rel in HOME_AGENT_FILES:
+        target = home / rel
+        if not target.parent.exists():
+            target.parent.mkdir(mode=0o700)
+            os.chown(target.parent, uid, gid, follow_symlinks=False)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        fd = os.open(target, flags, 0o644)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            os.fchown(fh.fileno(), uid, gid)
+            fh.write(AGENTS_MD)

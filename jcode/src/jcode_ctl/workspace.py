@@ -14,7 +14,11 @@ import os
 from pathlib import Path
 from typing import Protocol
 
-from jcode_ctl.agent_files import AGENT_FILES, write_agent_files
+from jcode_ctl.agent_files import (
+    AGENT_FILES,
+    write_agent_files,
+    write_home_agent_files,
+)
 from jcode_ctl.sandbox import (
     UID_HIGH,
     UID_LOW,
@@ -102,6 +106,7 @@ def git_env(user: SessionUser) -> dict[str, str]:
     hanging. Built from nothing so the control token can't leak into a hook."""
     env = {
         "HOME": user.home,
+        "TMPDIR": f"{user.home}/.tmp",
         "PATH": os.environ.get("PATH", _DEFAULT_PATH),
         "LANG": "C.UTF-8",
         "GIT_TERMINAL_PROMPT": "0",
@@ -161,13 +166,25 @@ class GitWorkspace:
     def prepare(self, path: Path, user: SessionUser) -> None:
         # Made empty and handed over before anything runs as the uid, so creating the
         # skeleton as root here never writes into a tree the session already controls.
-        make_private_dir(path, user)
-        home = Path(user.home)
-        make_private_dir(home, user)
-        for sub in _HOME_SUBDIRS:
-            d = home / sub
-            d.mkdir(mode=0o755)
-            os.chown(d, user.uid, user.gid, follow_symlinks=False)
+        # All or nothing: on a failure, what this call made is removed (and nothing it
+        # didn't make — an existing path is refused, never adopted or deleted).
+        made: list[Path] = []
+        try:
+            make_private_dir(path, user)
+            made.append(path)
+            home = Path(user.home)
+            make_private_dir(home, user)
+            made.append(home)
+            for sub in _HOME_SUBDIRS:
+                d = home / sub
+                d.mkdir(mode=0o755)
+                os.chown(d, user.uid, user.gid, follow_symlinks=False)
+            make_private_dir(home / ".tmp", user)  # the session's $TMPDIR
+            write_home_agent_files(home, user.uid, user.gid)
+        except BaseException:
+            for p in made:
+                remove_entry(p)
+            raise
 
     async def _git(self, *args: str, cwd: Path, user: SessionUser) -> None:
         proc = await asyncio.create_subprocess_exec(
@@ -178,6 +195,7 @@ class GitWorkspace:
             user=user.uid,
             group=user.gid,
             extra_groups=[],
+            umask=0o077,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
