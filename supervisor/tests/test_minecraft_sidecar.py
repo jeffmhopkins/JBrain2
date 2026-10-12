@@ -1495,6 +1495,16 @@ def test_a_no_log_file_prefixed_lifecycle_line_still_parses(tmp_path: Path) -> N
     assert b.players["Al"]["xuid"] == "7"
 
 
+def test_a_no_log_file_prefixed_pack_event_is_still_read(tmp_path: Path) -> None:
+    b = bds.Bds(tmp_path)
+    b._record("[x INFO] Player connected: Al, xuid: 7")
+    b._record(
+        "NO LOG FILE! - [2026-10-10 12:00:03:000 INFO] [Scripting] [jbrain] "
+        '{"ev":"death","name":"Al","x":1,"y":2,"z":3,"dim":"overworld"}'
+    )
+    assert [e["kind"] for e in b.events_after(0)] == ["join", "death"]
+
+
 def test_a_pack_say_quoting_an_event_is_not_an_event(tmp_path: Path) -> None:
     # The JSON must be the whole pack line: a `say` that ends in a quoted event (e.g. a
     # player-named waypoint) is not filed as that event.
