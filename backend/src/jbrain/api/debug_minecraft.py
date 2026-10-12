@@ -469,6 +469,39 @@ async def minecraft_map_find(
     return await _sidecar(settings, "GET", "/map/find", params=params)
 
 
+@router.get("/map/items")
+async def minecraft_map_items(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    x: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    z: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    items: Annotated[str, Query(pattern=r"^[a-z0-9_:,]{2,600}$")],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    radius: Annotated[int | None, Query(ge=1, le=60_000_000)] = None,
+    flush: bool = False,
+) -> dict[str, Any]:
+    """The nearest containers holding the named items, from the world's BlockEntity
+    records — Minecraft_Dave's `mc_find_item` without the ground look. Also the index's
+    own counts (records, unreadable, unopened loot) for checking the format on a real
+    world. `flush` first has the running world write itself out."""
+    request.state.debug_detail = f"minecraft map items {slot} {dim} {x},{z} {items}"
+    params: dict[str, Any] = {
+        "slot": slot,
+        "dim": dim,
+        "x": x,
+        "z": z,
+        "items": items,
+        "limit": limit,
+        "flush": int(flush),
+    }
+    if radius is not None:
+        params["radius"] = radius
+    return await _sidecar(settings, "GET", "/map/items", params=params)
+
+
 @router.get("/map/nearby")
 async def minecraft_map_nearby(
     request: Request,

@@ -150,6 +150,7 @@ STEP_LABELS: dict[str, str] = {
     "mc_nearby": "Checked what's nearby",
     "mc_find_block": "Searched for blocks",
     "mc_find_mob": "Looked for a mob",
+    "mc_find_item": "Looked for items",
     "mc_show_map": "Showed the map",
     "mc_set_waypoint": "Set the tricorder",
     "mc_place_save": "Saved a place",

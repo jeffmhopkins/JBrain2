@@ -178,6 +178,14 @@ def test_a_snapshot_is_cut_to_the_queried_lengths_and_resumes(
     assert (tmp_path / "resumed").read_text() == "yes"
 
 
+def test_a_flush_holds_queries_and_always_resumes(running, tmp_path: Path) -> None:
+    running.flush(wait_s=20)
+    running._wait_for(0, lambda t: "resumed" in t, 5)
+    assert (tmp_path / "resumed").read_text() == "yes"
+    sent = [ln.text for ln in running.tail(50)]
+    assert any("Data saved" in t for t in sent)
+
+
 def test_a_snapshot_path_outside_the_world_is_refused(tmp_path: Path) -> None:
     world = tmp_path / "w"
     world.mkdir()
@@ -417,6 +425,11 @@ class _FakeBds:
     def start(self) -> None:
         self.calls.append("start")
         self.running = True
+
+    def flush(self, _wait_s: float) -> None:
+        self.calls.append("flush")
+        if getattr(self, "flush_fails", False):
+            raise bds.ConsoleError("save query never reported the files ready")
 
 
 def _update_rig(
@@ -1592,6 +1605,118 @@ def test_find_brings_an_ores_deepslate_twin_and_suggests_names() -> None:
     assert none["searched"] == [] and "minecraft:diamond_block" in none["suggestions"]
     with pytest.raises(ValueError):
         rig.map_find("slot1", "overworld", 0, 0, ["stone; op @a"], 3, 500)
+
+
+def test_a_chest_search_brings_every_storage_block_and_says_how_fresh() -> None:
+    world = _make_world("world")
+    (world / "db" / "000005.log").write_bytes(b"")
+    rig = _world_rig()
+    asked: list[set[str]] = []
+
+    class Index:
+        def refresh(self) -> None:
+            pass
+
+        def names(self, dim: int) -> set[str]:
+            return {"minecraft:chest", "minecraft:barrel", "minecraft:lime_shulker_box"}
+
+        def find(self, dim, x, z, wanted, limit, radius):
+            asked.append(wanted)
+            return [], 1
+
+    rig._block_index["world"] = Index()
+    got = rig.map_find("slot1", "overworld", 0, 0, ["chest"], 3, 500)
+    assert asked[-1] == {
+        "minecraft:chest",
+        "minecraft:barrel",
+        "minecraft:lime_shulker_box",
+    }
+    assert "minecraft:trapped_chest" in got["not_in_explored_ground"]
+    assert got["as_of"] == (world / "db" / "000005.log").stat().st_mtime
+    assert 0 <= got["age_s"] < 60
+
+
+def _chest_world() -> Path:
+    from tests.test_minecraft_containers import be_key, block_entity, item
+    from tests.test_minecraft_mapping import write_log
+
+    world = _make_world("world")
+    write_log(
+        world / "db" / "000009.log",
+        5,
+        [
+            (
+                be_key(0, 0),
+                block_entity("Chest", 4, 64, 3, [item("minecraft:diamond", 12)]),
+            ),
+            (
+                be_key(10, 0),
+                block_entity("Barrel", 170, 64, 0, [item("minecraft:diamond", 2)]),
+            ),
+            (be_key(3, 3), b"\x0a\x00"),
+        ],
+    )
+    return world
+
+
+def test_items_are_found_in_containers_nearest_first() -> None:
+    _chest_world()
+    rig = _world_rig()
+    got = rig.map_items("slot1", "overworld", 0, 0, ["diamond"], 5, None)
+    assert [(h["kind"], h["items"]) for h in got["found"]] == [
+        ("chest", {"minecraft:diamond": 12}),
+        ("barrel", {"minecraft:diamond": 2}),
+    ]
+    assert got["totals"] == {"minecraft:diamond": 14} and got["matched"] == 2
+    assert got["unreadable_records"] == 1 and got["flush"] == "not asked"
+    assert got["as_of"] is not None and got["age_s"] >= 0
+    near = rig.map_items("slot1", "overworld", 0, 0, ["minecraft:diamond"], 5, 48)
+    assert near["matched"] == 1 and near["radius"] == 48
+    none = rig.map_items("slot1", "overworld", 0, 0, ["diamonds"], 5, None)
+    assert none["found"] == [] and none["in_no_container"] == ["minecraft:diamonds"]
+    assert none["suggestions"] == ["minecraft:diamond"]
+    for bad in (["diamond; op @a"], ["a"], [f"item_{i}" for i in range(9)], [""]):
+        with pytest.raises(ValueError):
+            rig.map_items("slot1", "overworld", 0, 0, bad, 5, None)
+    with pytest.raises(ValueError):
+        rig.map_items("slot1", "moon", 0, 0, ["diamond"], 5, None)
+    with pytest.raises(ValueError):
+        rig.map_items("slot2", "overworld", 0, 0, ["diamond"], 5, None)
+
+
+def test_a_chest_search_flushes_the_running_world_at_most_every_so_often() -> None:
+    _chest_world()
+    rig = _world_rig(running=True)
+    first = rig.map_items("slot1", "overworld", 0, 0, ["diamond"], 5, None, flush=True)
+    assert first["flush"] == "flushed" and rig.bds.calls == ["flush"]
+    assert first["age_s"] == 0  # written out just now
+    again = rig.map_items("slot1", "overworld", 0, 0, ["diamond"], 5, None, flush=True)
+    assert again["flush"] == "recent" and rig.bds.calls == ["flush"]
+    rig._flushed_at = None
+    rig.bds.flush_fails = True  # type: ignore[attr-defined]
+    failed = rig.map_items("slot1", "overworld", 0, 0, ["diamond"], 5, None, flush=True)
+    assert failed["flush"].startswith("failed:") and failed["matched"] == 2
+    rig.bds.running = False
+    rig._flushed_at = None
+    off = rig.map_items("slot1", "overworld", 0, 0, ["diamond"], 5, None, flush=True)
+    assert off["flush"] == "not running"
+
+
+def test_the_items_route_checks_its_numbers_and_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    httpd, get = _serve(monkeypatch, "t")
+    _chest_world()
+    try:
+        auth = "Bearer t"
+        assert get("/map/items?x=0&z=0&items=diamond", auth) == 200
+        assert get("/map/items?x=0&z=0&items=diamond&radius=48&limit=99", auth) == 200
+        assert get("/map/items?x=a&z=0&items=diamond", auth) == 400
+        assert get("/map/items?x=0&z=0&items=diamond&radius=far", auth) == 400
+        assert get("/map/items?x=0&z=0&items=op%20@a", auth) == 400
+        assert get("/map/items?x=0&z=0", auth) == 400
+    finally:
+        httpd.shutdown()
 
 
 def test_an_installed_test_kit_is_refreshed_on_every_start(

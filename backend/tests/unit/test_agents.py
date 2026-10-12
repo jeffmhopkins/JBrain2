@@ -959,9 +959,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v14: `mc_wormhole_aim` (§M12), only once the guide describes wormholes.
         # v15–v16: the in-game door moved to /dave, /d and /ai, and Dave's story (lore canon).
         # v17: `mc_find_mob`, and `mc_locate` in every dimension (§M22).
+        # v18: `mc_find_item`, chests and the ground; near is free, wider a deep scan (§M23).
         "minecraft_dave": (
-            "agent-minecraft-dave-v17",
-            "766d688c3b0131227d600ce8ed5c165e7a0ab190779789640b5c7a894cecb857",
+            "agent-minecraft-dave-v18",
+            "bca2e285b2cd75f3b1e6d55520c07984ea666e6d5a8df5f9d0b9c473e4ed2a54",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —
@@ -1105,6 +1106,8 @@ def test_in_game_dave_is_the_player_tier_and_only_ever_narrower() -> None:
     # Every player gets the world searches (owner, 2026-10-11): ore and block finding,
     # structures, what's at a spot — all read-only, from the world's own files or locate.
     assert {"mc_find_block", "mc_locate", "mc_nearby", "mc_what_is_at"} <= tools
+    # And looking inside chests and on the ground (§M23): any chest, never an inventory.
+    assert "mc_find_item" in tools
     assert dave.prompt == AGENTS["minecraft_dave"].prompt
     # Intersection: it can't widen a profile that was already narrower.
     assert narrow_for_ingame(replace(dave, tools=frozenset({"mc_goals", "web_fetch"}))).tools == {

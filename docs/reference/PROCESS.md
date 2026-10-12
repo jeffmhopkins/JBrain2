@@ -1,6 +1,6 @@
 # JBrain2 — Multi-wave execution process
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-10-12
 
 The **binding process** for building a phased plan (e.g. `docs/archive/WORKFLOW_ENGINE_PLAN.md`)
 once its waves are defined. It governs *how* the work is sequenced, reviewed, and
@@ -59,6 +59,27 @@ A wave is a set of tasks that can run mostly in parallel. For each wave:
   - **The GUI gate** (below).
 - A new **runtime dependency** is avoided by default (zero-new-dep goal); if one
   becomes unavoidable it is flagged in the wave status, not treated as a stop.
+
+## Post-merge review issues
+
+The owner runs a **separate reviewer agent** (owner, 2026-10-12). Its only job is to
+review **merged** PRs for bugs, and it files what it finds as **GitHub issues**. Its
+issues say which PR introduced the bug ("Introduced in #N" or "Found while reviewing
+merged PR #N"), with the files and lines, a repro and a suggested fix.
+
+So every working session owns the issues filed against **its own** PRs:
+- **Check the open issues periodically, not once:** at the start of a session, after
+  every merge of your own PR (the reviewer runs after merge), and before you report a
+  stretch of work as done. List the open issues and match each one's
+  "Introduced in" / "while reviewing" PR against the PRs this session (or the work you
+  continued) opened.
+- **One that names your PR is yours:** fix it the usual way — a failing test first, the
+  fix, `Fixes #N` in the commit, merge, deploy, verify on the box, then a one-line
+  closing comment saying what was wrong and which PR fixed it.
+- **One that names another session's PR** is that session's; mention it to the owner
+  rather than fixing it, unless the owner says otherwise.
+- **A finding you judge wrong** gets a reply on the issue with the path you traced and
+  why, and the owner decides; never close it silently.
 
 ## GUI gate
 

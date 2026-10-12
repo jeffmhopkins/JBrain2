@@ -70,3 +70,9 @@ they disagree the code and docs here are fixed to match it.
     that skipped the third one is exactly how a green local run turned CI red. And `cd`
     persists between commands here: prefer `(cd pkg && …)` or absolute paths. See
     `docs/reference/DEVELOPMENT.md` "Verifying a change".
+12. **A reviewer agent files issues against merged PRs; the PR's session fixes them.**
+    The owner runs a separate agent whose only job is to review merged PRs for bugs and
+    file GitHub issues ("Introduced in #N"). Check the open issues at session start,
+    after each of your own merges, and before calling work done; any issue naming a PR
+    you opened is yours to fix (failing test first, `Fixes #N`, merge, deploy, verify,
+    closing comment). See `docs/reference/PROCESS.md` "Post-merge review issues".

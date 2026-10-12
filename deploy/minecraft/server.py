@@ -36,6 +36,7 @@ from typing import Any
 
 import blocks
 import bds
+import containers
 import install
 import mapping
 import structure_sweep
@@ -118,6 +119,10 @@ TRACK_S = 10.0
 # page by IP, so no DNS is involved, every PUBLIC_IP_S; a lookup that fails keeps the last.
 PUBLIC_IP_URL = "https://1.1.1.1/cdn-cgi/trace"
 PUBLIC_IP_S = 600.0
+# A chest search (§M23) first has the running world write itself out — the snapshot's
+# save hold/query/resume, nothing copied — at most this often, waiting this long for it.
+FLUSH_EVERY_S = 30.0
+FLUSH_WAIT_S = 10.0
 TRACK_MIN_MOVE = 4.0
 TRACK_KEPT = 20000
 _DIMENSIONS = {0: "overworld", 1: "nether", 2: "the_end"}
@@ -165,6 +170,9 @@ class Rig:
         self._surface_lock = threading.Lock()
         self._map_index: dict[str, mapping.WorldIndex] = {}
         self._block_index: dict[str, blocks.BlockIndex] = {}
+        self._container_index: dict[str, containers.ContainerIndex] = {}
+        # When the running world was last written out for a chest search (§M23).
+        self._flushed_at: float | None = None
         self._map_seed: dict[str, str | None] = {}
         self._map_spawn: dict[str, dict[str, int] | None] = {}
         self._predictor = mapping.Predictor()
@@ -1411,6 +1419,8 @@ class Rig:
             wanted.add(name)
             if name.endswith("_ore") and "deepslate_" not in name:
                 wanted.add(name.replace("minecraft:", "minecraft:deepslate_", 1))
+            if name == "minecraft:chest":
+                wanted |= _STORAGE_BLOCKS
         if not wanted:
             raise ValueError("name at least one block")
         d = mapping.DIMENSIONS[dim]
@@ -1440,7 +1450,102 @@ class Rig:
             "explored_chunks_in_range": searched,
             "radius": radius,
             "found": hits,
+            **_freshness(self.world_dir(folder) / "db"),
         }
+
+    def map_items(
+        self,
+        slot_id: str,
+        dim: str,
+        x: int,
+        z: int,
+        names: list[str],
+        limit: int,
+        radius: int | None,
+        flush: bool = False,
+    ) -> dict[str, Any]:
+        """The nearest containers holding the named items, read from the world's
+        BlockEntity records: "which chest has my diamonds" (§M23). `radius` None is the
+        whole dimension. `flush` first has a running world write itself out (at most
+        every FLUSH_EVERY_S), so a chest filled a minute ago is seen."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+            raise ValueError("that point is outside the world")
+        wanted: set[str] = set()
+        for raw in names:
+            name = raw.strip().lower()
+            if not _ITEM_NAME.fullmatch(name):
+                raise ValueError(f"`{raw}` isn't an item id")
+            wanted.add(containers.item_name(name))
+        if not wanted or len(wanted) > 8:
+            raise ValueError("name one to eight items")
+        rec = self.slots.get(slot_id)
+        if not rec["exists"]:
+            raise ValueError(f"{slot_id} has no world yet")
+        folder = rec["folder"]
+        flushed = self._flush_for_search(folder) if flush else "not asked"
+        d = mapping.DIMENSIONS[dim]
+        with self._map_lock:
+            index = self._container_index.get(folder)
+            if index is None:
+                index = containers.ContainerIndex(self.world_dir(folder) / "db")
+                self._container_index[folder] = index
+            index.refresh(force=flushed == "flushed")
+            known = index.names(d)
+            hits, totals, matched = index.find(d, x, z, wanted, limit, radius)
+            stats = {
+                "containers_indexed": len(index.containers),
+                "records": index.records,
+                "unreadable_records": index.unreadable,
+                "unopened_loot": index.unopened,
+            }
+        missing = sorted(wanted - known)
+        bare = {n.split(":", 1)[-1] for n in missing}
+        suggestions = (
+            # Either way round: "diamonds" should suggest diamond, "log" oak_log.
+            sorted(
+                n for n in known if any(b in n or n.split(":", 1)[-1] in b for b in bare)
+            )[:12]
+            if missing and not (wanted & known)
+            else []
+        )
+        return {
+            "dimension": dim,
+            "x": x,
+            "z": z,
+            "radius": radius,
+            "searched": sorted(wanted),
+            "in_no_container": missing,
+            "suggestions": suggestions,
+            "matched": matched,
+            "totals": totals,
+            "found": hits,
+            "flush": flushed,
+            **stats,
+            # Just written out, the files are the world as it is now, whatever their mtimes.
+            **(
+                {"as_of": time.time(), "age_s": 0}
+                if flushed == "flushed"
+                else _freshness(self.world_dir(folder) / "db")
+            ),
+        }
+
+    def _flush_for_search(self, folder: str) -> str:
+        """Ask the running world to write itself out, so the files hold what's in the
+        chests now: "flushed", or why it wasn't (another world, a stopped server, one done
+        moments ago, or no confirmation in time — then the files are read as they are)."""
+        if folder != self.active_folder() or not self.bds.running:
+            return "not running"
+        now = time.monotonic()
+        if self._flushed_at is not None and now - self._flushed_at < FLUSH_EVERY_S:
+            return "recent"
+        self._flushed_at = now
+        try:
+            self.bds.flush(FLUSH_WAIT_S)
+        except bds.ConsoleError as exc:
+            return f"failed: {exc}"
+        return "flushed"
 
     def map_nearby(self, dim: str, x: int, z: int) -> dict[str, Any]:
         """The nearest structure of each kind the dimension has, from (x, z), by the
@@ -1838,6 +1943,31 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/items":
+            try:
+                x, z = int(query.get("x", [""])[0]), int(query.get("z", [""])[0])
+                limit = max(1, min(int(query.get("limit", ["5"])[0]), 20))
+                raw_radius = query.get("radius", [""])[0]
+                radius = max(1, min(int(raw_radius), 60_000_000)) if raw_radius else None
+            except ValueError:
+                self._send(400, {"detail": "x, z, limit and radius are whole numbers"})
+                return
+            try:
+                self._send(
+                    200,
+                    rig.map_items(
+                        query.get("slot", ["slot1"])[0],
+                        query.get("dim", ["overworld"])[0],
+                        x,
+                        z,
+                        query.get("items", [""])[0].split(","),
+                        limit,
+                        radius,
+                        flush=query.get("flush", [""])[0] in ("1", "true"),
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
         elif url.path == "/map/structures":
             try:
                 self._send(
@@ -2101,6 +2231,30 @@ _WORLD_POWER_PACK = re.compile(r"^/worlds/(slot\d+)/power-pack$")
 _WORLD_TRANSPORT = re.compile(r"^/worlds/(slot\d+)/power-pack-transport$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 _BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
+# An item id, its namespace optional (the box's own items are `jbrain:`).
+_ITEM_NAME = re.compile(r"^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$")
+# "Find me a chest" means anywhere things are kept: both chests, barrels, and a shulker
+# box of any colour (and the single pre-1.20 id an old world may still hold).
+_SHULKER_COLOURS = (
+    "white orange magenta light_blue yellow lime pink gray light_gray cyan purple blue"
+    " brown green red black undyed"
+).split()
+_STORAGE_BLOCKS = frozenset(
+    {"minecraft:trapped_chest", "minecraft:barrel", "minecraft:shulker_box"}
+    | {f"minecraft:{c}_shulker_box" for c in _SHULKER_COLOURS}
+)
+
+
+def _freshness(db: Path) -> dict[str, Any]:
+    """How old what's read from a world's files is: the newest write to any of them, as
+    a time and an age, both None when there are none."""
+    try:
+        newest = max((p.stat().st_mtime for p in db.iterdir()), default=None)
+    except FileNotFoundError:
+        newest = None
+    if newest is None:
+        return {"as_of": None, "age_s": None}
+    return {"as_of": newest, "age_s": max(round(time.time() - newest), 0)}
 _MAP_TILE = re.compile(r"^/map/tile/(overworld|nether|the_end)/(\d)/(-?\d+)/(-?\d+)\.png$")
 
 

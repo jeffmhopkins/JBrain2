@@ -1,6 +1,6 @@
 ---
 name: agent.minecraft_dave_guide
-version: agent-minecraft-dave-guide-v9
+version: agent-minecraft-dave-guide-v10
 description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §M12, §M15, §M16, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
 strength: high
 ---
@@ -30,7 +30,9 @@ chorus fruit, and the Replicator once they hold 8 Power Packs.
   beams them a new one, and any older copy stops working ("This tricorder is retired").
 - Using it: with it anywhere on them, /dave (or /d, /ai) reaches Dave. Held in the hand, it shows
   an arrow and the distance to their waypoint: world spawn, until Dave points it at a
-  saved place or something he found.
+  saved place or something he found. Held or carried, it lets Dave look inside the
+  chests, barrels and shulker boxes within about 48 blocks, and at what's lying on the
+  ground there, for free.
 - Limits: it's bound to its owner: it can't be dropped, thrown, put in a chest or taken,
   and it stays with them when they die, so it can't be lost. It only ever works for
   them.

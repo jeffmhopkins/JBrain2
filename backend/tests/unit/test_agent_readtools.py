@@ -1841,6 +1841,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "d7c0b6b987cc9165aaad2dd1a70c1e8a29202cecce205d33b7b490c087b24a84",
         ),
+        # Chest contents and the ground (§M23): near is free in game, wider a deep scan.
+        "mc_find_item.tool": (
+            "mc_find_item",
+            1,
+            "3fe9f09f6faadd4a4dfc584ffb40a87d2b4ec262991b7434d0fbad6f6852612e",
+        ),
         # v2: in game, one of the player's daily deep scans (§M17).
         "mc_nearby.tool": (
             "mc_nearby",
