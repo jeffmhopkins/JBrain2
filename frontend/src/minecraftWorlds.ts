@@ -51,7 +51,7 @@ export function settingsLine(s: MinecraftSlot, running: boolean): string {
   if (!s.active)
     return `Not loaded — a change is saved and applied when ${slotName(s)} next loads.`;
   if (!running) return "Loaded, server stopped — a change is applied when the server starts.";
-  return "Loaded and running — difficulty changes live; game mode and cheats apply at the next restart.";
+  return "Loaded and running — difficulty and Power\u00a0Pack teleport change live; game mode and cheats apply at the next restart.";
 }
 
 export function originText(s: MinecraftSlot): string {
@@ -818,4 +818,59 @@ export function keepSavedToast(to: KeepMode, from: KeepMode, s: MinecraftSlot, l
   return s.active
     ? `Saved — ${what} when the server starts`
     : `Saved — ${what} from ${slotName(s)}'s next load`;
+}
+
+// ---- Power Pack teleport (plan §M10, transport on request) ----
+// A world switch beside Cheats (binding mock docs/mocks/minecraft-transport-switch/,
+// pick B), not a game rule: the rules editor's counts and resets never touch it.
+
+/** On unless the slot says off: the field defaults on, and older sidecars don't send it. */
+export const transportOn = (s: MinecraftSlot) => s.power_pack_transport !== false;
+
+const onOff = (on: boolean) => (on ? "on" : "off");
+
+export function transportMeaning(on: boolean): string {
+  return on
+    ? "on — players can ask Dave to take them to their own saved places; each trip burns a Power\u00a0Pack."
+    : "off — Dave won't teleport anyone in this world. Saved places still work with the Tricorder.";
+}
+
+/** The New world row's line: no help box there, as nothing applies live before it exists. */
+export function transportDraftMeaning(on: boolean): string {
+  return on
+    ? "on — players can ask Dave to take them to their own saved places; each trip burns a Power\u00a0Pack"
+    : "off — Dave won't teleport anyone in this world";
+}
+
+/** Fixed, so the mode is explained before anyone flips it: a flip can apply live. */
+export const TRANSPORT_HELP =
+  "a player asks Dave for one of their own saved places, then says Yes on a form. One Power\u00a0Pack burns only if they arrive, and they need their own Tricorder. Wormhole gates aren't affected by this switch.";
+
+export const transportBusyText = (to: boolean) => `Turning Power\u00a0Pack teleport ${onOff(to)}…`;
+
+/** After a flip lands; `live` is the route's own `applies`. */
+export function transportSavedToast(on: boolean, s: MinecraftSlot, live: boolean): string {
+  const what = `teleport ${onOff(on)}`;
+  if (live) return `Applied live — ${what}`;
+  return s.active
+    ? `Saved — ${what} when the server starts`
+    : `Saved — ${what} from ${slotName(s)}'s next load`;
+}
+
+/** The rose line after a failed flip, worded from the re-read slot as keepFailText() is:
+ *  *Nothing changed* only when the server refused and the re-read agrees. */
+export function transportFailText(o: {
+  to: boolean;
+  now: boolean | null;
+  refused: boolean;
+  reason: string;
+}): string {
+  const head = `Couldn't turn Power\u00a0Pack teleport ${onOff(o.to)} — ${o.reason}.`;
+  const maybe = "The server may still be working on it.";
+  if (o.now === null) return `${head} Couldn't read it back. ${maybe}`;
+  if (o.now === o.to)
+    return `Power\u00a0Pack teleport reads ${onOff(o.now)} now, but the server reported a problem — ${o.reason}.`;
+  return o.refused
+    ? `${head} Nothing changed; it's still ${onOff(o.now)}.`
+    : `${head} It still reads ${onOff(o.now)}. ${maybe}`;
 }

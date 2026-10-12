@@ -823,6 +823,8 @@ class Rig:
             created_at=time.time(),
             wreck=self._arm(body.get("wreck")),
             test=bool(body.get("test")),
+            # Set either way: a named, never-generated slot may hold an old choice.
+            power_pack_transport=body.get("power_pack_transport", True),
         )
 
     def update_slot(self, slot_id: str, body: dict[str, Any]) -> dict[str, Any]:

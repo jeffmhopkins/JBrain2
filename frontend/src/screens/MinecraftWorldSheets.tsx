@@ -52,6 +52,7 @@ import {
   seedFor,
   slotName,
   slotNumber,
+  transportDraftMeaning,
   whenOf,
   wreckSwitchText,
 } from "../minecraftWorlds";
@@ -202,6 +203,29 @@ function WreckSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
   );
 }
 
+/** Power Pack teleport at creation, on by default, laid out as the crash site above it. */
+function TransportSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="mc-sw-row">
+      <span className="mc-sw-l">
+        <b>Power&nbsp;Pack teleport</b>
+        <br />
+        {transportDraftMeaning(on)}
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label="Power Pack teleport"
+        className={`mc-switch${on ? " on" : ""}`}
+        onClick={() => onChange(!on)}
+      >
+        <span className="mc-knob" />
+      </button>
+    </div>
+  );
+}
+
 function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void }) {
   const w = useW();
   const [name, setName] = useState("");
@@ -212,6 +236,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
   const [difficulty, setDifficulty] = useState<string>("normal");
   const [cheats, setCheats] = useState(false);
   const [wreck, setWreck] = useState(w.spawnWreck);
+  const [transport, setTransport] = useState(true);
   const [rules, setRules] = useState<Record<string, MinecraftRuleValue>>({});
   const values = { ...DEFAULT_RULES, ...rules };
   const changed = Object.keys(rules).length;
@@ -284,6 +309,8 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
           </button>
         </div>
         <WreckSwitch on={wreck} onChange={setWreck} />
+        <TransportSwitch on={transport} onChange={setTransport} />
+        <p className="mc-note">Wormhole gates aren't affected by this switch.</p>
         <details className="mc-rules-new">
           <summary>
             <span>World rules</span>
@@ -328,6 +355,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
                 difficulty,
                 cheats,
                 wreck,
+                power_pack_transport: transport,
                 ...(changed ? { rules } : {}),
               });
             }}

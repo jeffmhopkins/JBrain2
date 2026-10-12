@@ -371,7 +371,7 @@ describe("Minecraft worlds and backups", () => {
     fireEvent.click(create);
     await waitFor(() =>
       expect(writes()).toContain(
-        'POST /api/minecraft/worlds/slot5/create {"name":"Skyblock 2","seed":"424242","gamemode":"survival","difficulty":"normal","cheats":false,"wreck":true}',
+        'POST /api/minecraft/worlds/slot5/create {"name":"Skyblock 2","seed":"424242","gamemode":"survival","difficulty":"normal","cheats":false,"wreck":true,"power_pack_transport":true}',
       ),
     );
   });
@@ -1079,6 +1079,223 @@ describe("Minecraft worlds and backups", () => {
     expect(writes()).toEqual([]);
   });
 
+  // ---- Power Pack teleport (plan §M10; binding mock docs/mocks/minecraft-transport-switch/ B)
+
+  /** The box's side of the switch: the route saves it on the slot, and /worlds reports it. */
+  function transportWorld(slot: string, on: boolean, applies: "now" | "next load") {
+    const set = (v: boolean) => {
+      world.worlds = {
+        ...world.worlds,
+        slots: world.worlds.slots.map((x) =>
+          x.id === slot ? { ...x, power_pack_transport: v } : x,
+        ),
+      };
+    };
+    set(on);
+    world.write = (_method, path, body) => {
+      if (!path.endsWith(`/${slot}/power-pack-transport`)) return undefined;
+      set((body as { on: boolean }).on);
+      const rec = world.worlds.slots.find((x) => x.id === slot);
+      return json({ ...rec, applies });
+    };
+    return set;
+  }
+
+  const tpSwitch = (world: string) =>
+    screen.getByRole("switch", { name: `Power Pack teleport in ${world}` });
+
+  it("Power Pack teleport sits under Cheats, on, explained before a flip, and live", async () => {
+    transportWorld("slot2", true, "now");
+    await openWorld(/^Castle Hill/);
+    const sw = tpSwitch("Castle Hill");
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(/^Loaded and running — difficulty and Power Pack teleport change live;/),
+    ).toBeInTheDocument();
+    const row = sw.closest(".mc-sw-row") as HTMLElement;
+    expect(row).toHaveTextContent(
+      "Power Pack teleport on — players can ask Dave to take them to their own saved places; each trip burns a Power Pack.",
+    );
+    expect(row).not.toHaveTextContent("pending");
+    expect(screen.getByText(/^Power Pack teleport:/).closest("p")).toHaveTextContent(
+      "Power Pack teleport: a player asks Dave for one of their own saved places, then says Yes on a form. One Power Pack burns only if they arrive, and they need their own Tricorder. Wormhole gates aren't affected by this switch.",
+    );
+    fireEvent.click(sw);
+    expect(await screen.findByText("Applied live — teleport off")).toBeInTheDocument();
+    expect(writes()).toEqual(['PUT /api/minecraft/worlds/slot2/power-pack-transport {"on":false}']);
+    await waitFor(() => expect(tpSwitch("Castle Hill")).toHaveAttribute("aria-checked", "false"));
+    const off = tpSwitch("Castle Hill").closest(".mc-sw-row") as HTMLElement;
+    expect(off).toHaveTextContent(
+      "off — Dave won't teleport anyone in this world. Saved places still work with the Tricorder.",
+    );
+    expect(off).not.toHaveTextContent("pending");
+  });
+
+  it("the switch shows the new value the moment the flip lands, even if the re-read fails", async () => {
+    transportWorld("slot2", true, "now");
+    await openWorld(/^Castle Hill/);
+    // After the PUT, the worlds list can't be read: the PUT's own answer has to carry it.
+    const write = world.write;
+    world.write = (method, path, body) => {
+      const res = write?.(method, path, body);
+      world.read = (p) =>
+        p === "/api/minecraft/worlds" ? json({ detail: "sidecar unreachable" }, 503) : undefined;
+      return res;
+    };
+    fireEvent.click(tpSwitch("Castle Hill"));
+    expect(await screen.findByText("Applied live — teleport off")).toBeInTheDocument();
+    expect(tpSwitch("Castle Hill")).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("turned off on a world that isn't loaded, it's pending until that world loads", async () => {
+    transportWorld("slot4", true, "next load");
+    await openWorld(/^Skyblock run/);
+    fireEvent.click(tpSwitch("Skyblock run"));
+    expect(
+      await screen.findByText("Saved — teleport off from Skyblock run's next load"),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(tpSwitch("Skyblock run")).toHaveAttribute("aria-checked", "false"));
+    expect(tpSwitch("Skyblock run").closest(".mc-sw-row")).toHaveTextContent(
+      "Power Pack teleport pending",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    const listRow = await screen.findByRole("button", { name: /^Skyblock run/ });
+    expect(listRow).toHaveTextContent("1 pending");
+    expect(listRow).toHaveTextContent("teleport off");
+  });
+
+  it("on the loaded world with the server stopped, it waits for the start", async () => {
+    world.server = mcStopped();
+    transportWorld("slot2", false, "next load");
+    await openWorld(/^Castle Hill/);
+    fireEvent.click(tpSwitch("Castle Hill"));
+    expect(await screen.findByText("Saved — teleport on when the server starts")).toBeVisible();
+    await waitFor(() =>
+      expect(tpSwitch("Castle Hill").closest(".mc-sw-row")).toHaveTextContent("pending"),
+    );
+  });
+
+  it("while it applies, the knob is the spinner and the line names the step", async () => {
+    transportWorld("slot2", true, "now");
+    let release: () => void = () => {};
+    const box = world.write;
+    world.write = (method, path, body) =>
+      path.endsWith("/power-pack-transport")
+        ? new Promise<Response>((done) => {
+            release = () => done(box?.(method, path, body) as Response);
+          })
+        : undefined;
+    await openWorld(/^Castle Hill/);
+    fireEvent.click(tpSwitch("Castle Hill"));
+    expect(await screen.findByText("Turning Power Pack teleport off…")).toBeInTheDocument();
+    const sw = tpSwitch("Castle Hill");
+    expect(sw).toHaveAttribute("aria-busy", "true");
+    expect(sw).toHaveClass("busy");
+    // One write at a time: a second tap while it applies sends nothing.
+    fireEvent.click(sw);
+    expect(writes()).toHaveLength(1);
+    act(() => release());
+    expect(await screen.findByText("Applied live — teleport off")).toBeInTheDocument();
+    expect(screen.queryByText("Turning Power Pack teleport off…")).toBeNull();
+    expect(tpSwitch("Castle Hill")).toHaveAttribute("aria-busy", "false");
+  });
+
+  it("a refusal names the reason and says nothing changed once re-read", async () => {
+    transportWorld("slot2", true, "now");
+    world.write = (_method, path) =>
+      path.endsWith("/power-pack-transport")
+        ? json({ detail: "busy: restoring a backup" }, 409)
+        : undefined;
+    await openWorld(/^Castle Hill/);
+    fireEvent.click(tpSwitch("Castle Hill"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Couldn't turn Power Pack teleport off — the server is restoring a backup. Nothing changed; it's still on.",
+    );
+    expect(tpSwitch("Castle Hill")).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(within(alert).getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a dropped connection never says nothing changed", async () => {
+    transportWorld("slot2", true, "now");
+    world.write = (_method, path) =>
+      path.endsWith("/power-pack-transport")
+        ? json({ detail: "upstream unavailable" }, 503)
+        : undefined;
+    await openWorld(/^Castle Hill/);
+    fireEvent.click(tpSwitch("Castle Hill"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "Couldn't turn Power Pack teleport off — the server didn't answer. It still reads on. The server may still be working on it.",
+    );
+    expect(alert).not.toHaveTextContent("Nothing changed");
+  });
+
+  it("New world: Power Pack teleport starts on, says gates aren't affected, and is sent", async () => {
+    await openWorlds();
+    fireEvent.click(await screen.findByRole("button", { name: "New world" }));
+    const sheet = await screen.findByRole("dialog", { name: "New world" });
+    const sw = within(sheet).getByRole("switch", { name: "Power Pack teleport" });
+    expect(sw).toHaveAttribute("aria-checked", "true");
+    expect(sheet).toHaveTextContent(
+      "on — players can ask Dave to take them to their own saved places; each trip burns a Power Pack",
+    );
+    expect(sheet).toHaveTextContent("Wormhole gates aren't affected by this switch.");
+    fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Quiet" } });
+    await within(sheet).findByText("424242");
+    fireEvent.click(within(sheet).getByRole("button", { name: "Create world" }));
+    await waitFor(() =>
+      expect(writes().join("\n")).toMatch(/slot5\/create .*"power_pack_transport":true/),
+    );
+  });
+
+  it("New world: turned off, the create says so", async () => {
+    await openWorlds();
+    fireEvent.click(await screen.findByRole("button", { name: "New world" }));
+    const sheet = await screen.findByRole("dialog", { name: "New world" });
+    fireEvent.click(within(sheet).getByRole("switch", { name: "Power Pack teleport" }));
+    expect(within(sheet).getByRole("switch", { name: "Power Pack teleport" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(sheet).toHaveTextContent("off — Dave won't teleport anyone in this world");
+    fireEvent.change(within(sheet).getByLabelText("Name"), { target: { value: "Quiet" } });
+    await within(sheet).findByText("424242");
+    fireEvent.click(within(sheet).getByRole("button", { name: "Create world" }));
+    await waitFor(() =>
+      expect(writes().join("\n")).toMatch(/slot5\/create .*"power_pack_transport":false/),
+    );
+  });
+
+  it("the Worlds list says teleport off only on a world that has it off", async () => {
+    transportWorld("slot2", false, "now");
+    await openWorlds();
+    expect(await screen.findByRole("button", { name: /^Castle Hill/ })).toHaveTextContent(
+      "teleport off",
+    );
+    for (const name of [/^Creative test/, /^Skyblock run/]) {
+      expect(screen.getByRole("button", { name })).not.toHaveTextContent("teleport");
+    }
+  });
+
+  it("it isn't a game rule: Reset all never sends it", async () => {
+    transportWorld("slot2", false, "now");
+    const base = world.rules;
+    world.rules = (id) => {
+      const v = base(id);
+      return id === "slot2" ? { ...v, rules: { ...v.rules, pvp: false } } : v;
+    };
+    const box = world.write;
+    world.write = (method, path, body) =>
+      path.endsWith("/slot2/rules") ? json(world.rules("slot2")) : box?.(method, path, body);
+    await openWorld(/^Castle Hill/);
+    fireEvent.click(await screen.findByRole("button", { name: /^Game rules/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Reset all" }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toBe('PUT /api/minecraft/worlds/slot2/rules {"set":{"pvp":true}}');
+  });
+
   it("New world's rules offer keep inventory Off · On only — no Power Pack", async () => {
     await openWorlds();
     fireEvent.click(await screen.findByRole("button", { name: "New world" }));
@@ -1093,7 +1310,9 @@ describe("Minecraft worlds and backups", () => {
         .getAllByRole("radio")
         .map((r) => r.textContent),
     ).toEqual(["Off", "On"]);
-    expect(within(sheet).queryByText(/Power Pack/)).toBeNull();
+    // Keep's Power Pack mode is a saved world's; the sheet's teleport switch is outside the rules.
+    const rulesBox = sheet.querySelector(".mc-rules-new") as HTMLElement;
+    expect(within(rulesBox).queryByText(/Power Pack/)).toBeNull();
     fireEvent.click(within(keep).getByRole("radio", { name: "On" }));
     expect(within(keep).getByRole("radio", { name: "On" })).toHaveAttribute("aria-checked", "true");
     expect(within(sheet).getByText("1 rule changed")).toBeInTheDocument();

@@ -55,6 +55,21 @@ def test_a_record_from_before_the_switch_reads_on(
     assert rig.slots.get("slot2")["power_pack_transport"] is True
 
 
+def test_a_new_world_is_made_with_the_owners_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, _sent = _running_rig(monkeypatch, tmp_path)
+    assert rig.create_slot("slot2", {"name": "Usual"})["power_pack_transport"] is True
+    made = rig.create_slot("slot3", {"name": "Quiet", "power_pack_transport": False})
+    assert made["power_pack_transport"] is False
+    assert '"power_pack_transport": false' in server.pack_config(made)
+    # Made again before it was ever generated: the new choice, not the old one.
+    assert rig.create_slot("slot3", {"name": "Again"})["power_pack_transport"] is True
+    with pytest.raises(ValueError):
+        rig.create_slot("slot4", {"name": "Bad", "power_pack_transport": "off"})
+    assert rig.slots.get("slot4")["name"] is None
+
+
 def test_the_route(monkeypatch: pytest.MonkeyPatch) -> None:
     httpd, _get = _serve(monkeypatch, "s3cret")
 

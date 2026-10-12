@@ -527,6 +527,9 @@ export interface MinecraftSlot {
   test?: boolean;
   /** The world's "Power Pack keeps inventory" switch (plan §M10); absent from older sidecars. */
   power_pack_keep?: boolean;
+  /** The world's "Power Pack teleport" switch (plan §M10): on by default; absent from older
+   *  sidecars, which reads as on. */
+  power_pack_transport?: boolean;
   /** The owner's saved rule choices, re-applied at every load. While the Power Pack switch is
    *  on, `keepInventory` here is the plain choice it hands back when turned off. */
   rules?: Record<string, MinecraftRuleValue>;
@@ -826,6 +829,8 @@ export interface MinecraftNewWorld {
   rules?: Record<string, MinecraftRuleValue>;
   /** The crash site at spawn; omitted follows the server's `spawn_wreck`. */
   wreck?: boolean;
+  /** Power Pack teleport; omitted is on. */
+  power_pack_transport?: boolean;
 }
 
 /** PUT /settings: the box's own settings, which apply at once. */
@@ -5328,6 +5333,14 @@ export const api = {
   async minecraftSetPowerPack(slot: string, on: boolean): Promise<MinecraftPowerPackResult> {
     const response = await request(
       `/api/minecraft/worlds/${slot}/power-pack`,
+      jsonInit("PUT", { on }),
+    );
+    return (await response.json()) as MinecraftPowerPackResult;
+  },
+
+  async minecraftSetTransport(slot: string, on: boolean): Promise<MinecraftPowerPackResult> {
+    const response = await request(
+      `/api/minecraft/worlds/${slot}/power-pack-transport`,
       jsonInit("PUT", { on }),
     );
     return (await response.json()) as MinecraftPowerPackResult;

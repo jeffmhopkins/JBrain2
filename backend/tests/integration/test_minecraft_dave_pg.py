@@ -10,7 +10,7 @@ The contract, case by case (docs/plans/MINECRAFT_BEDROCK_PLAN.md §P1):
 - a player's data written by name moves onto their xuid once the server has seen them;
 - the chat intro carries the player's memory and open goals, fenced as data;
 - nobody but the owner can read or write any of the four tables;
-- a goal may count an item (0236): the pair is all-or-nothing and range-checked in the
+- a goal may count an item (0237): the pair is all-or-nothing and range-checked in the
   table too, goals written before it read as they did, and progress counts the chests
   near the player's saved places as stored.
 """
@@ -412,7 +412,7 @@ async def test_a_goal_counts_an_item_and_old_goals_read_as_before(maker) -> None
     owner = await _owner(maker)
     ctx = await _chat(maker, owner)
     tools = _tools(maker, "Steve42")
-    # A goal from before 0236: no item, no count.
+    # A goal from before 0237: no item, no count.
     async with scoped_session(maker, owner) as s:
         await s.execute(
             text(
