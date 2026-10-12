@@ -1,6 +1,6 @@
 # The twins' panels (ESP32-S3-Touch-AMOLED-1.8): the bench
 
-Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.4's own UI code** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.6's own UI code** · Last verified: 2026-10-12
 
 An interactive mock of the twins' panel, with one difference from Jeff's C6 set
 (`../jpanel-c6/`): nothing here is a drawing of the panel. `sim.wasm` is the firmware's own UI
@@ -40,6 +40,9 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
 - **Timing.** 10× runs the waits the owner set: the notice shrinking to its badge (15 s), the
   again/reply pair standing (10 s) and the who-menu timing out (10 s). It does this without
   sitting through them.
+- **Tilt.** The bench's slider turns the drawn case right side down, and the pet leans and
+  rights his head as the accelerometer would make him. Upright only: on its side the panel also
+  slides the figure's square into the glass's side bands, which the page does not draw.
 - **F4.** The SENDING / SENT / NOBODY / NOT SENT / DROPPED visuals are 0.4.x placeholders until
   the owner approves the final ones (`docs/plans/JPANEL_MESSAGING_FIXES_PLAN.md` §15 row F).
   This page is where they get reviewed. Each new version is in `overlay.c`, so the mock and
@@ -55,7 +58,9 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
   for a set time each time a microphone opens (2.5 s by default), and while "Hold while she
   talks" or Space is held. With "she says nothing", a recording is dropped after 4 s, as on
   the glass;
-- the screen's dim and dark stages.
+- the screen's dim and dark stages;
+- the accelerometer, which is the tilt slider (the lean's arithmetic is copied from `display.c`;
+  the axes and the head's righting are `orient.c`'s own).
 
-It does not model orientation, calibration, the maintenance gestures, voice actions or colours.
+It does not model the quarter turns, calibration, the maintenance gestures, voice actions or colours.
 Names are placeholders (this panel is QUORRA and its twin is Tamsin), never a child's real name.
