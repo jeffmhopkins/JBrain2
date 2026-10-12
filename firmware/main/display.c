@@ -1870,6 +1870,9 @@ static void face_task(void *arg)
     memset(&s_drawn, 0, sizeof(s_drawn));
     sm_init(&s_sm, (uint32_t)(esp_timer_get_time() / 1000));
 
+    /* ONE SAMPLE BEFORE THE LOOP (#1690): the beat below refreshes it every 10 s, and until the
+       first beat the boot report, the one carrying `reset_reason`, would say 0, a stack used up. */
+    s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
     while (true) {
         PHASE(1);
         bool dirty = false;
