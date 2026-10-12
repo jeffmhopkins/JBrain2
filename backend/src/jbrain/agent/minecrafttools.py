@@ -90,6 +90,15 @@ class Found(ToolOutput):
 # Read off the text, not `Found`, because a free repeat (§M17) answers from the stored text.
 _LOCATE_HIT = re.compile(r"\bis at block (-?\d+), (?:~|\(y\?\)|(-?\d+)), (-?\d+)")
 _BLOCK_HIT = re.compile(r"\bat x=(-?\d+) y=(-?\d+) z=(-?\d+), ")
+# The pack's answer to a look around for items on the ground (rules.js `itemsLines`).
+_GROUND_HIT = re.compile(
+    r"\bitems ground: (?P<n>\d+) (?P<type>[a-z0-9_:]+) at x=(?P<x>-?\d+) y=(?P<y>-?\d+)"
+    r" z=(?P<z>-?\d+), (?P<blocks>\d+) blocks from .+? \((?P<dim>overworld|nether|the_end)\)"
+)
+# An item id: namespace optional (the box's own are `jbrain:`), digits allowed (music discs).
+_ITEM_ID = re.compile(r"^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$")
+# The Tricorder's short-range scan (lore, canon 2026-10-12): about 3 chunks, free in game.
+NEAR_BLOCKS = 48
 # The pack's answer to a mob search (rules.js `findLine`).
 _MOB_HIT = re.compile(
     r"\bfind found (?P<type>[a-z_:]+) at x=(?P<x>-?\d+) y=(?P<y>-?\d+) z=(?P<z>-?\d+),"
@@ -105,6 +114,22 @@ def first_hit(result: str, dim: str) -> Spot | None:
         y = None if m.group(2) is None else int(m.group(2))
         return Spot(int(m.group(1)), y, int(m.group(3)), dim)
     return None
+
+
+def as_of(age_s: Any) -> str:
+    """The lore's "…as of a few minutes ago" with the number filled in, for files two
+    minutes old or more; "" when they're fresher (or the age isn't known)."""
+    if not isinstance(age_s, int | float) or age_s < 120:
+        return ""
+    minutes = int(age_s // 60)
+    if minutes < 120:
+        return f" (as of {minutes} minutes ago)"
+    hours = minutes // 60
+    return f" (as of {hours} hours ago)" if hours < 48 else f" (as of {hours // 24} days ago)"
+
+
+def _item_words(name: str) -> str:
+    return name.removeprefix("minecraft:").replace("_", " ")
 
 
 def fence(body: str) -> str:
@@ -949,6 +974,207 @@ def build_minecraft_handlers(
             result_brief=f"{len(found)} found",
         )
 
+    async def mc_find_item(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """What's inside the world's containers, and lying on the ground near a player
+        (§M23). In game a search within NEAR_BLOCKS of the asker is their Tricorder's
+        short-range scan and free; anything wider is a deep scan (§M17). The owner's app
+        chats are unlimited."""
+        dim = dimension_of(arguments, ctx)
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        raw = arguments.get("items")
+        names = [
+            str(i).strip().lower().replace(" ", "_")
+            for i in (raw if isinstance(raw, list) else [raw])
+            if i
+        ]
+        if not names or len(names) > 8 or not all(_ITEM_ID.fullmatch(n) for n in names):
+            return 'items is a list of 1-8 Bedrock item ids, e.g. ["diamond", "iron_ingot"].'
+        limit = _int(arguments.get("limit"), 5, 1, 20)
+        wide = arguments.get("radius") in (None, "")
+        radius = None if wide else _int(arguments.get("radius"), NEAR_BLOCKS, 1, 60_000_000)
+        if limit is None or (radius is None and not wide):
+            return "limit and radius must be numbers."
+        asker = asker_for(ctx.agent_session_id)
+        if asker is not None:
+            raw_tag = str(arguments.get("gamertag") or "").strip()
+            if raw_tag and raw_tag.casefold() != asker.gamertag.casefold():
+                return ToolOutput(only_you, result_brief="refused")
+        at = await where(arguments, ctx, dim)
+        if isinstance(at, str):
+            return at
+        xi, zi, origin = at
+        # Who to look around on the ground: in game the asker (it's their Tricorder), in
+        # the app only a player named — the ground is only loaded around online players.
+        looker: str | None = None
+        if asker is not None and asker.at.dim == dim:
+            looker = asker.gamertag
+        elif asker is None and arguments.get("gamertag"):
+            looker = check_gamertag(str(arguments["gamertag"]))
+            if looker is None:
+                return "That isn't a gamertag (letters, digits and spaces, up to 16)."
+        near = (
+            asker is not None
+            and asker.at.dim == dim
+            and radius is not None
+            and radius <= NEAR_BLOCKS
+            and math.dist((xi, zi), (asker.at.x, asker.at.z)) <= NEAR_BLOCKS
+        )
+        if near and asker is not None:
+            # The Tricorder scans around the one carrying it.
+            xi, zi, origin = asker.at.x, asker.at.z, "where the player is standing"
+
+        async def run() -> tuple[str, bool]:
+            out = await find_items(names, dim, xi, zi, origin, limit, radius, looker)
+            return out, out.result_brief not in ("", "none anywhere")
+
+        if asker is None or near:
+            out, _ = await run()
+            return out
+        search = scans.Search(
+            "mc_find_item",
+            f"{','.join(sorted(set(names)))}|r{radius or 'all'}|n{limit}",
+            dim,
+            xi,
+            zi,
+        )
+        return await scanned(ctx, search, run, needs_server=False)
+
+    async def ground_look(gamertag: str, names: list[str], reach: int) -> list[dict] | str:
+        """Stacks on the ground around an online player, from the game itself (the pack's
+        `jb:items`), or a sentence saying why there are none to show."""
+        query = {"player": gamertag, "types": names, "max": reach}
+        got = await console(f"scriptevent jb:items {json.dumps(query)}")
+        if isinstance(got, str):
+            return got
+        reply = _reply(got)
+        hits = [
+            {
+                "item": m["type"],
+                "count": int(m["n"]),
+                "spot": Spot(int(m["x"]), int(m["y"]), int(m["z"]), m["dim"]),
+                "distance": int(m["blocks"]),
+            }
+            for m in _GROUND_HIT.finditer(reply)
+        ]
+        if hits or "items none" in reply:
+            return hits
+        if "items refused" in reply:
+            return f"Nothing was looked for on the ground: {fence(reply)}"
+        return (
+            "The ground couldn't be looked at: the jbrain pack didn't answer (it updates"
+            " when the server restarts)."
+        )
+
+    async def find_items(
+        names: list[str],
+        dim: str,
+        xi: int,
+        zi: int,
+        origin: str,
+        limit: int,
+        radius: int | None,
+        looker: str | None,
+    ) -> ToolOutput:
+        """The search itself: the containers from the world's files, then the ground
+        around `looker`. A bare sentence (no `result_brief`) searched nothing."""
+        worlds = await sidecar("GET", "/worlds")
+        if isinstance(worlds, str):
+            return ToolOutput(worlds)
+        slot = next((w["id"] for w in worlds.get("slots", []) if w.get("active")), "slot1")
+        params: dict[str, Any] = {
+            "slot": slot,
+            "dim": dim,
+            "x": xi,
+            "z": zi,
+            "items": ",".join(names),
+            "limit": limit,
+            "flush": 1,
+        }
+        if radius is not None:
+            params["radius"] = radius
+        got = await sidecar("GET", "/map/items", params=params)
+        if isinstance(got, str):
+            return ToolOutput(got)
+        where_ = f"within {radius} blocks" if radius is not None else "anywhere in the dimension"
+        head = (
+            f"Inside chests and other containers {where_} of ({xi}, {zi}) in the"
+            f" {_DIMENSION_NAMES[dim]}, {origin}{as_of(got.get('age_s'))}"
+        )
+        found = got.get("found") or []
+        # Not one of the names is in any container at all: most likely a wrong id.
+        nowhere = len(got.get("in_no_container") or []) >= len(got.get("searched") or names)
+        box_lines: list[tuple[int, str]] = []
+        named: list[str] = []
+        for h in found:
+            what = ", ".join(f"{n} {_item_words(i)}" for i, n in h["items"].items())
+            boxed = sum((h.get("in_shulker_boxes") or {}).values())
+            inside = f" ({boxed} of them in shulker boxes)" if boxed else ""
+            box_lines.append(
+                (
+                    int(h["distance"]),
+                    f"- {what} in a {h['kind']} at x={h['x']} y={h['y']} z={h['z']},"
+                    f" {h['distance']} blocks away{inside}",
+                )
+            )
+            if h.get("name"):
+                named.append(f"({h['x']}, {h['y']}, {h['z']}): {h['name']}")
+        if found:
+            totals = ", ".join(f"{n} {_item_words(i)}" for i, n in got["totals"].items())
+            more = int(got.get("matched", len(found))) - len(found)
+            body = f"{head}, nearest first:\n" + "\n".join(t for _, t in box_lines)
+            body += f"\nIn all, {totals} in {got.get('matched')} container(s)"
+            body += f" ({more} more not listed)." if more > 0 else "."
+        elif nowhere:
+            hint = got.get("suggestions") or []
+            body = f"{head}: no {', '.join(names)} in any container in the dimension." + (
+                f" Item ids that are in containers: {', '.join(hint)}." if hint else ""
+            )
+        else:
+            body = f"{head}: none, though some are in containers farther away."
+        if got.get("unopened_loot"):
+            body += (
+                f" {got['unopened_loot']} loot chest(s) in the world haven't been opened yet;"
+                " what's in them doesn't exist until someone opens one."
+            )
+        ground: list[dict] | str = []
+        if looker is not None:
+            ground = await ground_look(looker, names, NEAR_BLOCKS)
+        ground_lines: list[tuple[int, str]] = []
+        if isinstance(ground, str):
+            body += f"\n{ground}"
+        elif looker is not None:
+            for g in ground[:limit]:
+                spot = g["spot"]
+                there = "" if spot.dim == dim else f" (in the {_DIMENSION_NAMES[spot.dim]})"
+                ground_lines.append(
+                    (
+                        g["distance"],
+                        f"- {g['count']} {_item_words(g['item'])} on the ground at x={spot.x}"
+                        f" y={spot.y} z={spot.z}, {g['distance']} blocks away{there}",
+                    )
+                )
+            ground_head = f"On the ground within {NEAR_BLOCKS} blocks of the player, now"
+            ground_text = (
+                f"{ground_head}:\n" + "\n".join(t for _, t in ground_lines)
+                if ground_lines
+                else f"{ground_head}: none (things on the ground vanish after 5 minutes)."
+            )
+            # Whichever holds the nearest hit comes first: it's the one a Tricorder is aimed at.
+            if ground_lines and (not box_lines or ground_lines[0][0] < box_lines[0][0]):
+                body = f"{ground_text}\n{body}"
+            else:
+                body = f"{body}\n{ground_text}"
+        if named:
+            body += "\nNames players gave those containers:\n" + fence("\n".join(named))
+        if found or ground_lines:
+            brief = f"{len(found)} container(s)" + (
+                f", {len(ground_lines)} on the ground" if ground_lines else ""
+            )
+        else:
+            brief = "none anywhere" if nowhere else "none in range"
+        return ToolOutput(body, result_brief=brief)
+
     async def loaded_world(ctx: ToolContext) -> str:
         """The world a place is filed under: the one the in-game asker is in, else the
         loaded world's folder; "" when the server can't say."""
@@ -1528,6 +1754,7 @@ def build_minecraft_handlers(
         "mc_nearby": mc_nearby,
         "mc_find_block": mc_find_block,
         "mc_find_mob": mc_find_mob,
+        "mc_find_item": mc_find_item,
         "mc_set_waypoint": mc_set_waypoint,
         "mc_place_save": mc_place_save,
         "mc_places": mc_places,

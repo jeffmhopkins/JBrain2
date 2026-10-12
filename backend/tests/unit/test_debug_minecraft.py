@@ -324,6 +324,29 @@ async def test_the_debug_block_finder_passes_its_search_through(sidecar) -> None
     }
 
 
+async def test_the_debug_item_finder_passes_its_search_through(sidecar) -> None:
+    seen, replies = sidecar
+    replies["/map/items"] = httpx.Response(200, json={"found": [], "records": 4})
+    req = _request(FakeSupervisor([]))
+    got = await mc.minecraft_map_items(
+        req, SETTINGS, PRINCIPAL, x=1, z=2, items="diamond,elytra", dim="nether", limit=3
+    )
+    assert got["records"] == 4
+    assert dict(seen[0].url.params) == {
+        "slot": "slot1",
+        "dim": "nether",
+        "x": "1",
+        "z": "2",
+        "items": "diamond,elytra",
+        "limit": "3",
+        "flush": "0",
+    }
+    await mc.minecraft_map_items(
+        req, SETTINGS, PRINCIPAL, x=0, z=0, items="diamond", radius=48, flush=True
+    )
+    assert seen[1].url.params["radius"] == "48" and seen[1].url.params["flush"] == "1"
+
+
 async def test_the_debug_structure_index_and_sweep_pass_through(sidecar) -> None:
     seen, replies = sidecar
     replies["/map/structures"] = httpx.Response(200, json={"structures": [], "stale": None})

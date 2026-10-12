@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -101,7 +101,7 @@ Wrapper HTTP surface (internal network, bearer token, as for the SDR sidecar):
 | `POST /worlds/{slot}/import` | Accepts a streamed `.mcworld` or zip into a slot. Refused for the active slot while BDS is running. |
 | `POST /worlds/{slot}/activate` | Points `level-name` at the slot. Done while the server is stopped; the backend runs the stop → snapshot → activate → start sequence. |
 | `POST /worlds/{slot}/reset` | Empties a slot or regenerates it from a seed. Refused for the active slot while BDS is running. |
-| `GET /world/index` | Parses the latest snapshot (never the live DB, which BDS holds locked) and streams JSONL records (M4). |
+| `GET /world/index` | Parses the latest snapshot and streams JSONL records (M4). Not built: the map (§M8) and chest search (§M23) read the live world's LevelDB directly instead — BDS holds LevelDB's lock, but the stdlib reader never takes it, and table files are immutable while the log is only appended to. |
 | `GET /bridge/events`, `POST /bridge/reply` | The companion bridge (M5). |
 
 Graceful stop: the wrapper traps SIGTERM, sends `stop`, and waits for BDS to exit. The compose
@@ -604,6 +604,12 @@ Exit: **Test** reports the server reachable from outside, and one brother joins 
 house by typing the address.
 
 ### M4 — World index (the companion's long-term memory of the world)
+
+> **Status (2026-10-12):** the tables below were never needed for what has been built.
+> Explored ground (§M8), blocks (`mc_find_block`) and chest contents (§M23,
+> `mc_find_item`) are read straight off the live world's LevelDB by in-memory indexes in
+> the sidecar, refreshed when the files change — no snapshot parse, no `app.mc_*` world
+> tables. Entities (villagers, pets) are what's left of this wave.
 
 - After each snapshot, the wrapper parses **the snapshot copy** and streams JSONL. The backend
   upserts it into owner-RLS'd tables:
@@ -2023,7 +2029,8 @@ satellite's deep scan needs time to recharge.
   and costs nothing.
 
 **What counts as a deep scan:** the searches that reveal something nobody has pointed out:
-`mc_nearby` (the server's own `locate`) and `mc_find_block`. Free: `mc_what_is_at`, saved
+`mc_nearby` (the server's own `locate`), `mc_find_block`, and `mc_find_item` past 48
+blocks (§M23). Free: `mc_what_is_at`, saved
 places and waypoints, where other players are, a player's own trail and deaths.
 
 **How it's built:**
@@ -2345,6 +2352,89 @@ structure, a biome, a block or an ore.
 
 Only checkable on the box: that `getEntities` with `closest` answers within the console's
 3-second reply window on a busy server, and Nether biome ids with `locate biome`.
+
+### M23 — Dave finds items: chest contents and the ground (owner, 2026-10-12)
+
+**Why.** "Which chest has my diamonds?" and "where did my stuff go?" are the questions
+players ask most that Dave couldn't answer: `mc_find_block` sees blocks, not what's inside
+them. The story is canon on the lore page ("The Tricorder's short-range scan", 2026-10-12).
+
+**Owner decisions (2026-10-12):**
+1. **Any chest.** A player may search every container in the world: chests have no owner.
+   A player's own inventory and ender chest are not searched.
+2. **Cost.** Within 3 chunks (48 blocks) of the asker it's their Tricorder's short-range
+   scan, **free** (in game they need their own Tricorder on them, which `/dave` already
+   requires). Farther is a **deep scan** through the §M17 ledger: two a Minecraft day in
+   game, unlimited in the app, a repeat from about the same place free.
+3. **First wave:** container contents from the world's files, and a live look around the
+   asker for items on the ground (a death's drops).
+4. **Freshness.** Answers carry the files' age; Dave says "as of N minutes ago" from 2
+   minutes on. Before reading, the sidecar asks the running world to write itself out.
+
+**What's built.**
+- **Sidecar** (`deploy/minecraft/`): `nbt.py`, a full little-endian NBT reader (all 12 tag
+  types, depth and size caps, every length checked against the bytes left, back-to-back
+  compounds). `containers.py`'s `ContainerIndex`, modelled on `BlockIndex` (same 60 s
+  refresh by the db files' sizes and mtimes), reads every `BlockEntity` record (key tag 49,
+  with or without the dimension int): chests (trapped too, which share the `Chest` id),
+  barrels, shulker boxes, hoppers, dispensers, droppers, furnaces, blast furnaces, smokers,
+  brewing stands, crafters and chiseled bookshelves by their `Items`; item frames (`Item`),
+  decorated pots (`item`) and lecterns (`book`). A shulker box carried as an item is read
+  one level down (`tag.Items`), and its contents count toward the container holding it.
+  A double chest (`pairx`/`pairz`, each half naming the other) is one chest. A loot chest
+  nobody opened (`LootTable`, no `Items`) is skipped and counted, an unreadable record
+  skipped and counted, ender chests never read. A `CustomName` is kept.
+- `GET /map/items?slot&dim&x&z&items&radius&limit&flush` — the nearest containers holding
+  any of 1–8 items (limit ≤ 20; no `radius` = the whole dimension), each with its kind,
+  x/y/z, distance, count per item, how many are in shulker boxes, and its name; the totals
+  across every match in range; suggestions when no name is in any container; the index's
+  own counts (`records`, `unreadable_records`, `unopened_loot`, `containers_indexed`);
+  and `as_of` / `age_s` (the newest db file's mtime). `/map/find` carries `as_of` /
+  `age_s` too, and its `chest` now also searches `trapped_chest`, `barrel` and every
+  shulker box colour.
+- **Flush.** With `flush=1` the sidecar runs the snapshot's `save hold` → `save query` →
+  `save resume` dance with nothing copied (`Bds.flush`, under the console lock, resume
+  always sent), at most every 30 s and waiting at most 10 s, only for the loaded world
+  while it runs. After one, the index re-reads at once and the answer is current
+  (`age_s` 0). It's safe for the reason snapshots are: hold pauses saving, resume always
+  follows; the cost is one forced save, no worse than a hot snapshot. The result's
+  `flush` says what happened (`flushed`, `recent`, `not running`, `failed: …`, `not
+  asked`).
+- **Pack** (1.7.0): `scriptevent jb:items {"player", "types", "max"}` answers with one
+  console line per kind per block within 48 blocks of that online player (`items ground: 3
+  minecraft:iron_ingot at x= y= z=, N blocks from <player> (<dim>)`, nearest first, up to
+  10), or `items none` / `items refused`. Item entities via `getEntities({type:
+  "minecraft:item"})` and their `minecraft:item` component's `itemStack`, stable
+  `@minecraft/server` 2.0.0. Containers are NOT read live: `dimension.getBlocks` over a
+  97×97×384 volume is millions of block checks in one tick, which risks the script
+  watchdog on a busy server; the files, flushed first, are fresh enough.
+- **`mc_find_item`** (both Dave tiers): `items` (1–8, spaces become underscores), `x`/`z`,
+  `radius`, `limit`, `dimension`, and `gamertag` (the app only). In game, a radius of 48
+  or less around the asker is free and also looks on the ground around them; wider,
+  omitted, or centred more than 48 blocks away is a deep scan (an id in no container at
+  all is refunded, as `mc_find_block`'s unexplored names are). In the app it's unlimited
+  and files-only, unless a `gamertag` is named, when the ground around that online player
+  is looked at too. Each hit is a line in `first_hit`'s shape (`- 12 diamond in a chest at
+  x= y= z=, N blocks away`, `- 3 iron ingot on the ground at …`); whichever of the ground
+  and the containers holds the nearer hit is printed first, so the Tricorder is aimed at
+  the best one. Player-written container names are listed after every hit, fenced. Prompt
+  `agent-minecraft-dave-v18`, guide v9 (the Tricorder entry), `mc_find_item` v1.
+- **Debug:** `GET /minecraft/map/items` passes through (with `flush`), for the box check.
+- No new tables.
+
+**Not built.** The fast path ("which chest has my diamonds") — no signed-off quick-answer
+line for it on the lore page yet; once one is, it's a `_nearest`-style branch. Minecart
+chests and chest boats are entities, not block entities, so they aren't searched.
+
+**Box checks (after deploy).**
+- The format on the owner's real imported world: `GET /minecraft/map/items?x=0&z=0&items=
+  diamond` → `records` (how many key-49 records), `unreadable_records` (should be 0),
+  `unopened_loot`, `containers_indexed`, and a known chest's contents matching the game.
+  Then the Nether (`dim=nether`).
+- Time the first (cold) call and a `flush=true` call: the cold read decompresses every
+  table, as the block index's first search does.
+- That `save hold`/`save query` answers within 10 s on the busy server (the `flush` field),
+  and that `jb:items` answers within the console's 3-second window.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
@@ -3076,7 +3166,7 @@ never in the prompt:
 | ★ `locate_biome(biome)` | "nearest cherry grove / mushroom island" | index → `locate` / seed map | Player |
 | `find_villager(profession, trade?)` | "nearest librarian selling Mending" (villager trades are in the saved actor data) | index | Player |
 | `find_block(block, area)` | "nearest diamonds", "any spawners near here" | index | **Fair play** |
-| ★ `find_container(item)` | "which chest has my diamonds?" | index | Player |
+| ★ `find_container(item)` — **shipped as `mc_find_item`** (2026-10-12, §M23) | "which chest has my diamonds?" | index | Player |
 | ★ `where_is(player)` — **shipped as `mc_players` with a `gamertag`** (2026-10-11, §M18) | another player's position (sharing is on, owner decision) | live → index | Player |
 | `guide_me(target)` / `stop_guiding` | a live **actionbar compass** ("→ pig, 42 m NE") refreshed every second until arrival. Display only: `titleraw … actionbar`, with no world change | live | Player |
 | `portal_math(x,z)` | Overworld↔Nether coordinates; "where do I build the portal so it links to my base?" | computed | Player |

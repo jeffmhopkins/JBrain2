@@ -226,3 +226,44 @@ export const findLine = (q, who, here, mob) => {
   const dim = Object.keys(DIMS).find((k) => DIMS[k] === here.dim) ?? here.dim;
   return `find found ${q.type} at x=${x} y=${y} z=${z}, ${blocks} blocks from ${who} (${dim})`;
 };
+
+// The Tricorder's short-range scan (§M23, lore "The Tricorder's short-range scan"): about
+// 3 chunks around the player asking. Lines past ITEMS_LINES are left out, nearest kept.
+export const ITEMS_MAX = 48;
+export const ITEMS_LINES = 10;
+const ITEM_ID = /^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$/;
+
+// An item search from `scriptevent jb:items {json}` (Dave's mc_find_item): whose
+// surroundings, which item types (1-8, namespaced), and how far out. Throws on anything
+// malformed.
+export const parseItems = (message) => {
+  const q = JSON.parse(message);
+  if (typeof q !== "object" || q === null) throw new Error("not an object");
+  if (typeof q.player !== "string" || !q.player) throw new Error("no player");
+  const types = Array.isArray(q.types) ? q.types : [];
+  if (!types.length || types.length > 8 || !types.every((t) => typeof t === "string" && ITEM_ID.test(t))) {
+    throw new Error("not 1-8 item types");
+  }
+  const max = Number.isFinite(q.max) ? Math.min(Math.max(Math.round(q.max), 8), ITEMS_MAX) : ITEMS_MAX;
+  return { player: q.player, types: types.map((t) => (t.includes(":") ? t : `minecraft:${t}`)), max };
+};
+
+// The console lines answering an item search: one per kind per block, nearest first, in
+// the "at x= y= z=, " shape the backend's hit reader parses; or one `items none` line.
+export const itemsLines = (q, who, here, stacks) => {
+  const dim = Object.keys(DIMS).find((k) => DIMS[k] === here.dim) ?? here.dim;
+  const piles = new Map();
+  for (const s of stacks) {
+    const [x, y, z] = [s.location.x, s.location.y, s.location.z].map(Math.floor);
+    const key = `${s.typeId} ${x} ${y} ${z}`;
+    const pile = piles.get(key) ?? { typeId: s.typeId, x, y, z, amount: 0 };
+    pile.amount += s.amount;
+    piles.set(key, pile);
+  }
+  if (!piles.size) return [`items none: no ${q.types.join(", ")} on the ground within ${q.max} blocks of ${who}`];
+  const away = (p) => Math.round(Math.hypot(p.x + 0.5 - here.x, p.z + 0.5 - here.z));
+  return [...piles.values()]
+    .sort((a, b) => away(a) - away(b))
+    .slice(0, ITEMS_LINES)
+    .map((p) => `items ground: ${p.amount} ${p.typeId} at x=${p.x} y=${p.y} z=${p.z}, ${away(p)} blocks from ${who} (${dim})`);
+};

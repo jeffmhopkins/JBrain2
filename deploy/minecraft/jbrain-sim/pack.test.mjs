@@ -284,3 +284,29 @@ test("Dave's mob search finds the nearest of a type around an online player", ()
   sim.scriptevent("jb:find", JSON.stringify({ player: "Steve 42", type: "cow\"; op @a" }));
   assert.match(sim.logs.at(-1), /^\[jbrain\] find refused: Error: not a mob type/);
 });
+
+test("Dave's look around finds item stacks on the ground near an online player", () => {
+  const p = sim.player("Steve 42", "-61");
+  p.location = { x: 0.5, y: 64, z: 0.5 };
+  sim.overworld.dropItem(new ItemStack("minecraft:iron_ingot", 3), { x: 10.2, y: 64.1, z: 0.7 });
+  sim.overworld.dropItem(new ItemStack("minecraft:iron_ingot", 2), { x: 10.9, y: 64.4, z: 0.1 });
+  sim.overworld.dropItem(new ItemStack("minecraft:diamond", 1), { x: -3, y: 63, z: 4 });
+  sim.overworld.dropItem(new ItemStack("minecraft:diamond", 9), { x: 100, y: 64, z: 0 }); // too far
+  sim.overworld.dropItem(new ItemStack("minecraft:dirt", 64), { x: 1, y: 64, z: 1 });
+  sim.overworld.spawnEntity("minecraft:cow", { x: 2, y: 64, z: 2 });
+  sim.logs.length = 0;
+  sim.scriptevent("jb:items", JSON.stringify({ player: "steve 42", types: ["iron_ingot", "minecraft:diamond"] }));
+  assert.deepEqual(sim.logs, [
+    "[jbrain] items ground: 1 minecraft:diamond at x=-3 y=63 z=4, 5 blocks from Steve 42 (overworld)",
+    "[jbrain] items ground: 5 minecraft:iron_ingot at x=10 y=64 z=0, 10 blocks from Steve 42 (overworld)",
+  ]);
+  sim.logs.length = 0;
+  sim.scriptevent("jb:items", JSON.stringify({ player: "Steve 42", types: ["emerald"] }));
+  assert.deepEqual(sim.logs, [
+    "[jbrain] items none: no minecraft:emerald on the ground within 48 blocks of Steve 42",
+  ]);
+  sim.scriptevent("jb:items", JSON.stringify({ player: "Nobody", types: ["emerald"] }));
+  assert.equal(sim.logs.at(-1), "[jbrain] items refused: Nobody isn't online");
+  sim.scriptevent("jb:items", JSON.stringify({ player: "Steve 42", types: ["x; op @a"] }));
+  assert.match(sim.logs.at(-1), /^\[jbrain\] items refused: Error: not 1-8 item types/);
+});

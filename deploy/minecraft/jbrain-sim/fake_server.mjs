@@ -96,7 +96,16 @@ export class Dimension {
       .filter((e) => (!type || e.id === type) && (!maxDistance || d(e) <= maxDistance))
       .sort((a, b) => d(a) - d(b))
       .slice(0, closest ?? Infinity)
-      .map((e) => ({ typeId: e.id, location: { ...e.loc } }));
+      .map((e) => ({
+        typeId: e.id,
+        location: { ...e.loc },
+        // An item entity's stack (`dropItem` below), as 2.0.0's minecraft:item component.
+        getComponent: (n) => (n === "minecraft:item" && e.item ? { itemStack: e.item.clone() } : undefined),
+      }));
+  }
+  // A stack lying on the ground: an item entity the pack's look-around can find.
+  dropItem(item, loc) {
+    this.entities.push({ id: "minecraft:item", loc: { ...loc }, item: item.clone() });
   }
 }
 
