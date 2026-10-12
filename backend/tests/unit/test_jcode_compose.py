@@ -40,6 +40,11 @@ def test_jcode_sessions_cannot_regain_privileges() -> None:
     assert "no-new-privileges:true" in _spec()["services"]["jcode"]["security_opt"]
 
 
+def test_jcode_reaps_orphaned_session_processes() -> None:
+    # Without an init, uvicorn is PID 1 and orphans become zombies counted in pids_limit.
+    assert _spec()["services"]["jcode"]["init"] is True
+
+
 def test_jcode_marks_itself_a_sandbox_so_the_cli_runs_as_root() -> None:
     # Session shells now run as their own uid (security plan S2.1), so the CLI's root guard
     # no longer fires; the marker stays for any CLI behaviour keyed off it.

@@ -666,6 +666,10 @@ services:
     # root setuid(), which no_new_privs doesn't restrict.
     security_opt:
       - no-new-privileges:true
+    # An init reaps the orphans a closed terminal or deleted session leaves behind.
+    # Uvicorn as PID 1 never does, so they would sit as zombies against pids_limit — a
+    # share recipient could fill it for every session by forking, deleting, repeating.
+    init: true
     environment:
       # Bearer token the api presents on every control call (fail-closed: no token,
       # the service refuses to start). Shared with the api via JBRAIN_JCODE_TOKEN.
