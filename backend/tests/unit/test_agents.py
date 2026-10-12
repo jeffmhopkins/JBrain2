@@ -952,9 +952,14 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v10: in game, the deep scan's daily limit (§M17) and saying how many are left.
         # v11: `mc_players` finds one player (§M18), and the item guide is the only source
         # on the Old Makers' items, in game only what the asker has unlocked (§M19).
+        # v12: `mc_transport` (§M10), and "transport beacon" once the guide describes it.
+        # v13: `mc_replicator_program`, in game only, for the asker's held Replicator (§M15).
+        # v14: `mc_wormhole_aim` (§M12), only once the guide describes wormholes.
+        # v15–v16: the in-game door moved to /dave, /d and /ai, and Dave's story (lore canon).
+        # v17: `mc_find_mob`, and `mc_locate` in every dimension (§M22).
         "minecraft_dave": (
-            "agent-minecraft-dave-v11",
-            "604ea35d458e6782bbc48cccd5bf8b9df2168a4bb476d1fbd1909dc4174c397c",
+            "agent-minecraft-dave-v17",
+            "766d688c3b0131227d600ce8ed5c165e7a0ab190779789640b5c7a894cecb857",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —
@@ -1093,6 +1098,8 @@ def test_in_game_dave_is_the_player_tier_and_only_ever_narrower() -> None:
     }
     assert not tools & held_back
     assert {"mc_place_save", "mc_places", "mc_set_waypoint", "mc_goals"} <= tools
+    # Programming a Replicator is the asker's own, from their own inventory (§M15).
+    assert "mc_replicator_program" in tools
     # Every player gets the world searches (owner, 2026-10-11): ore and block finding,
     # structures, what's at a spot — all read-only, from the world's own files or locate.
     assert {"mc_find_block", "mc_locate", "mc_nearby", "mc_what_is_at"} <= tools

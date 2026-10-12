@@ -132,11 +132,19 @@ export const dropSpot = (at, minY, lastSafe) => {
 // Dave's item guide, unlocked as each item becomes craftable (§M19; canon: "Dave explains
 // each item only once you can make it"). Like the game's recipe book, an unlock comes the
 // first time the player holds the key ingredient. Only built items are here: the Tricorder
-// from the start, the Power Pack on a first Ender Pearl, its uses on a first Power Pack.
+// from the start, the Power Pack on a first Ender Pearl, its uses on a first Power Pack,
+// the No-Spawn Beacon on a first echo shard once they have made a Power Pack, and the
+// Wormhole Seed on a first popped chorus fruit once they have made a Power Pack (§M12).
 export const UNLOCKED_BY = {
   "minecraft:ender_pearl": "power_pack",
   [POWER_PACK]: "power_pack_uses",
+  "minecraft:echo_shard": "no_spawn_beacon",
+  "minecraft:popped_chorus_fruit": "wormhole_seed",
 };
+// An unlock that also needs an earlier one: an echo shard before any Power Pack teaches
+// nothing, and the same shard held later (or with a pack in the same look) does. Popped
+// chorus fruit and the Wormhole Seed likewise.
+export const UNLOCK_NEEDS = { no_spawn_beacon: "power_pack_uses", wormhole_seed: "power_pack_uses" };
 
 // A player's recorded unlocks, from the world property; anything unreadable is a fresh start.
 export const parseKnown = (raw) => {
@@ -154,6 +162,35 @@ export const parseKnown = (raw) => {
 export const unlocksFrom = (known, typeIds) => {
   const out = new Set(known);
   out.add("tricorder");
-  for (const t of typeIds) if (UNLOCKED_BY[t]) out.add(UNLOCKED_BY[t]);
+  const held = typeIds.map((t) => UNLOCKED_BY[t]).filter(Boolean);
+  for (const k of held) if (!UNLOCK_NEEDS[k]) out.add(k);
+  for (const k of held) if (UNLOCK_NEEDS[k] && out.has(UNLOCK_NEEDS[k])) out.add(k);
   return [...out].sort();
+};
+
+// The farthest a mob search reaches from the player: mobs only exist in the chunks
+// around players, which a server's simulation distance keeps to about this.
+export const FIND_MAX = 256;
+const MOB_ID = /^(minecraft:)?[a-z_]{2,40}$/;
+
+// A mob search from `scriptevent jb:find {json}` (Dave's mc_find_mob): whose
+// surroundings, which mob type (namespaced), and how far out. Throws on anything malformed.
+export const parseFind = (message) => {
+  const q = JSON.parse(message);
+  if (typeof q !== "object" || q === null) throw new Error("not an object");
+  if (typeof q.player !== "string" || !q.player) throw new Error("no player");
+  if (typeof q.type !== "string" || !MOB_ID.test(q.type)) throw new Error("not a mob type");
+  const type = q.type.includes(":") ? q.type : `minecraft:${q.type}`;
+  const max = Number.isFinite(q.max) ? Math.min(Math.max(Math.round(q.max), 8), FIND_MAX) : FIND_MAX;
+  return { player: q.player, type, max };
+};
+
+// The console line answering a mob search. Its "at x= y= z=, " is the shape the
+// backend's hit reader already parses for mc_find_block.
+export const findLine = (q, who, here, mob) => {
+  if (!mob) return `find none: no ${q.type} within ${q.max} blocks of ${who}`;
+  const [x, y, z] = [mob.x, mob.y, mob.z].map(Math.floor);
+  const blocks = Math.round(Math.hypot(mob.x - here.x, mob.z - here.z));
+  const dim = Object.keys(DIMS).find((k) => DIMS[k] === here.dim) ?? here.dim;
+  return `find found ${q.type} at x=${x} y=${y} z=${z}, ${blocks} blocks from ${who} (${dim})`;
 };

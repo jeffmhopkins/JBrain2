@@ -3,7 +3,7 @@
 // pack out beside it and runs this file, so CI does too.
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { ItemLockMode, ItemStack, sim } from "@minecraft/server";
+import { CustomCommandStatus, ItemLockMode, ItemStack, sim } from "@minecraft/server";
 import { LINES } from "./pack/scripts/rules.js";
 
 await import("./pack/scripts/main.js");
@@ -104,6 +104,18 @@ test("no Tricorder, no Dave: static lines and no question reaches the backend", 
   ask(p, "point", "me", "home");
   assert.equal(daveEvents().length, 1);
   assert.match(daveEvents()[0], /"text":"point me home"/);
+});
+
+test("/d and /ai are the same door as /dave, and an empty ask names /dave", () => {
+  const p = sim.player("Shorty", "-30");
+  sim.spawn(p, true);
+  for (const name of ["jb:d", "jb:ai"]) {
+    const res = sim.command(name).cb({ sourceEntity: p }, "point", "me", name);
+    sim.flush();
+    assert.equal(res.status, CustomCommandStatus.Success);
+    assert.match(daveEvents().at(-1), new RegExp(`"text":"point me ${name}"`));
+  }
+  assert.match(sim.command("jb:dave").cb({ sourceEntity: p }).message, /\/dave point me home/);
 });
 
 const kit = (p) => {
@@ -209,7 +221,7 @@ test("the rule off while the switch says on: the game drops, the pack doesn't do
 
 const knownOf = (line) => JSON.parse(line.slice(line.indexOf("{"))).known;
 
-test("each /jb:dave question carries the asker's unlocks, first held and then kept", () => {
+test("each /dave question carries the asker's unlocks, first held and then kept", () => {
   const p = sim.player("Learner", "-80");
   sim.spawn(p, true);
   ask(p, "hello");
@@ -244,4 +256,23 @@ test("a pearl in a shulker box isn't held; an unreadable record starts fresh", (
   p.inventory.setItem(6, new ItemStack("minecraft:shulker_box", 1));
   ask(p, "hello");
   assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
+});
+
+test("Dave's mob search finds the nearest of a type around an online player", () => {
+  const p = sim.player("Steve 42", "-60");
+  p.location = { x: 10, y: 64, z: 10 };
+  sim.overworld.spawnEntity("minecraft:cow", { x: 200, y: 64, z: 10 });
+  sim.overworld.spawnEntity("minecraft:cow", { x: 40, y: 70, z: 50 });
+  sim.overworld.spawnEntity("minecraft:pig", { x: 11, y: 64, z: 11 });
+  sim.scriptevent("jb:find", JSON.stringify({ player: "steve 42", type: "cow" }));
+  assert.equal(
+    sim.logs.at(-1),
+    "[jbrain] find found minecraft:cow at x=40 y=70 z=50, 50 blocks from Steve 42 (overworld)",
+  );
+  sim.scriptevent("jb:find", JSON.stringify({ player: "Steve 42", type: "sheep" }));
+  assert.equal(sim.logs.at(-1), "[jbrain] find none: no minecraft:sheep within 256 blocks of Steve 42");
+  sim.scriptevent("jb:find", JSON.stringify({ player: "Nobody", type: "cow" }));
+  assert.equal(sim.logs.at(-1), "[jbrain] find refused: Nobody isn't online");
+  sim.scriptevent("jb:find", JSON.stringify({ player: "Steve 42", type: "cow\"; op @a" }));
+  assert.match(sim.logs.at(-1), /^\[jbrain\] find refused: Error: not a mob type/);
 });

@@ -190,6 +190,25 @@ def jlaunch_share_context(link_id: str = "") -> SessionContext:
     )
 
 
+def mc_share_context(link_id: str = "") -> SessionContext:
+    """The session a Minecraft map-share visitor (an unauthenticated stranger) runs under.
+
+    Identical shape to `research_share_context`: a NON-owner principal kind with NO
+    `subject_id`/`domain_scopes`, so every owner-only table denies it and it reads zero
+    notes/chunks/locations. Its only grants are the travel-log `*_share` policies and the
+    share-links SELECT (migration 0230), keyed off `auth_context='mc_share'` and
+    `principal_id` — the resolved link id, which pins every read to that link's world.
+
+    Called with no `link_id` to resolve a token by hash (the empty pin matches no link),
+    then re-opened pinned to the resolved id. Read-only: no write policy anywhere.
+    """
+    return SessionContext(
+        principal_id=link_id,
+        principal_kind="mc_share",
+        auth_context="mc_share",
+    )
+
+
 @asynccontextmanager
 async def scoped_session(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext

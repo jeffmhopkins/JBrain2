@@ -63,6 +63,31 @@ def _write_firmware(root: Path, *, version: str = VERSION, sums: bool = True) ->
     return root
 
 
+C6 = "c6-amoled-216"
+C6_VERSION = "0.1.0"
+C6_NAMES = (
+    "bootloader.bin",
+    "partition-table.bin",
+    "ota_data_initial.bin",
+    "jbrain-jpanel-c6.bin",
+)
+C6_APP_IMAGE = "jbrain-jpanel-c6.bin"
+
+
+def _write_c6_firmware(root: Path) -> Path:
+    """The `firmware-c6/` checkout: different bytes from the S3's, so a mixed-up set shows."""
+    dist = root / "dist"
+    dist.mkdir(parents=True)
+    (root / "version.txt").write_text(f"{C6_VERSION}\n", encoding="utf-8")
+    lines = []
+    for i, name in enumerate(C6_NAMES):
+        data = bytes([0xC0 + i]) * 48
+        (dist / name).write_bytes(data)
+        lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+    (dist / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return root
+
+
 @pytest.fixture
 def client(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -73,6 +98,9 @@ def client(
         database_url="postgresql+asyncpg://nobody@localhost:1/none",
         endpoint_url=SIDECAR,
         firmware_dir=str(firmware),
+        # Pointed at the test's own tree but NOT written: a box whose checkout predates the
+        # C6 is the starting state, and the C6 tests write it when they need it.
+        firmware_c6_dir=str(tmp_path / "firmware-c6"),
     )
     app = create_app(settings)
     sent: list[Any] = []
@@ -619,6 +647,187 @@ class TestFirmwareFromTheCheckout:
         assert c.get("/api/endpoint/firmware").json()["version"] == VERSION
         (fw / "version.txt").write_text("1.2.3\n", encoding="utf-8")
         assert c.get("/api/endpoint/firmware").json()["version"] == "1.2.3"
+
+
+class TestMoreThanOneBoard:
+    """Two kinds of panel, one box: the S3 jpets and the owner's C6.
+
+    The property everything here protects is that the S3 path is UNCHANGED. Every panel on a
+    wall runs firmware that has never heard of a board, so the absent board must be the S3 on
+    every route — and a C6 must get its own image rather than an S3 one, which
+    `esp_https_ota` would refuse by chip id and so leave the C6 never updating.
+    """
+
+    def _flash(self, c: TestClient, **extra: Any) -> httpx.Response:
+        return c.post(
+            "/api/endpoint/flash",
+            json={"port": "/dev/ttyACM0", "ssid": "net", "password": "pw", **extra},
+        )
+
+    def test_a_flash_that_names_no_board_is_the_s3_it_always_was(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        c, fw, sent = client
+        _fake_sidecar(monkeypatch, sent)
+        assert self._flash(c).status_code == 200
+        assert sent[-1]["chip"] == "esp32s3"
+        by_offset = {i["offset"]: base64.b64decode(i["b64"]) for i in sent[-1]["images"]}
+        assert by_offset["0x20000"] == (fw / "dist" / APP_IMAGE).read_bytes()
+
+    def test_a_c6_flash_sends_the_c6_set_and_names_the_chip(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """Its own images at the shared offsets, NO model partition (the C6 runs no speech
+        models), and `esp32c6` — both boards are 303a:1001, so the chip is the only thing
+        that makes esptool refuse the wrong one."""
+        c, _fw, sent = client
+        c6 = _write_c6_firmware(tmp_path / "firmware-c6")
+        _fake_sidecar(monkeypatch, sent)
+        assert self._flash(c, board=C6).status_code == 200
+
+        payload = sent[-1]
+        assert payload["chip"] == "esp32c6"
+        offsets = [int(i["offset"], 16) for i in payload["images"]]
+        assert offsets == [0x0, 0x8000, 0xF000, 0x20000]
+        by_offset = {i["offset"]: base64.b64decode(i["b64"]) for i in payload["images"]}
+        assert by_offset["0x20000"] == (c6 / "dist" / C6_APP_IMAGE).read_bytes()
+        assert by_offset["0x0"] == (c6 / "dist" / "bootloader.bin").read_bytes()
+        # The per-unit config is the same contract on either board.
+        assert payload["nvs_offset"] == "0x9000" and payload["nvs_size"] == "0x6000"
+        assert {"ssid", "pass", "api", "token"} <= set(payload["nvs"])
+
+    def test_an_incomplete_c6_set_refuses_and_names_its_directory(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        c, _fw, sent = client
+        c6 = _write_c6_firmware(tmp_path / "firmware-c6")
+        (c6 / "dist" / C6_APP_IMAGE).unlink()
+        _fake_sidecar(monkeypatch, sent)
+
+        resp = self._flash(c, board=C6)
+        assert resp.status_code == 503
+        assert "firmware-c6/dist/" in resp.json()["detail"]
+        assert "Update" in resp.json()["detail"]
+        assert not sent, "nothing may reach the board once an image is missing"
+
+    def test_a_box_with_no_c6_firmware_refuses_a_c6_flash(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The S3 set being present must never stand in for the C6's."""
+        c, _fw, sent = client
+        _fake_sidecar(monkeypatch, sent)
+        assert self._flash(c, board=C6).status_code == 503
+        assert not sent
+
+    def test_an_unknown_board_is_refused_at_the_edge(
+        self,
+        client: tuple[TestClient, Path, list[Any]],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        c, _fw, sent = client
+        _fake_sidecar(monkeypatch, sent)
+        assert self._flash(c, board="esp8266").status_code == 422
+        assert not sent
+
+    def test_the_c6_manifest_serves_the_c6_version_and_a_url_that_names_it(
+        self, client: tuple[TestClient, Path, list[Any]], tmp_path: Path
+    ) -> None:
+        """What the C6 firmware is built against: ask with `?board=`, then follow the URL
+        exactly as given. The board rides in the URL so the firmware never has to know the
+        image route takes a parameter."""
+        c, _fw, _sent = client
+        c6 = _write_c6_firmware(tmp_path / "firmware-c6")
+        key = _provision_panel(c)
+        c.cookies.clear()
+        auth = {"Authorization": f"Bearer {key}"}
+
+        body = c.get(f"/api/endpoint/firmware?board={C6}", headers=auth).json()
+        assert set(body) == {"version", "url"}
+        assert body["version"] == C6_VERSION
+        assert body["url"].endswith(f"/endpoint/firmware/bin?board={C6}")
+
+        path = "/api" + body["url"].split("/api", 1)[1]
+        resp = c.get(path, headers=auth)
+        assert resp.status_code == 200, resp.text
+        assert resp.content == (c6 / "dist" / C6_APP_IMAGE).read_bytes()
+
+    def test_an_s3_panel_that_sends_nothing_new_is_served_exactly_as_before(
+        self, client: tuple[TestClient, Path, list[Any]], tmp_path: Path
+    ) -> None:
+        """A C6 build sitting in the checkout must change nothing an S3 panel sees."""
+        c, fw, _sent = client
+        _write_c6_firmware(tmp_path / "firmware-c6")
+        key = _provision_panel(c)
+        c.cookies.clear()
+        auth = {"Authorization": f"Bearer {key}"}
+
+        body = c.get("/api/endpoint/firmware", headers=auth).json()
+        assert body["version"] == VERSION
+        assert body["url"].endswith("/endpoint/firmware/bin")
+        resp = c.get("/api/endpoint/firmware/bin", headers=auth)
+        assert resp.content == (fw / "dist" / APP_IMAGE).read_bytes()
+
+    def test_a_missing_c6_build_does_not_take_the_s3_manifest_down(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        resp = c.get(f"/api/endpoint/firmware?board={C6}")
+        assert resp.status_code == 503
+        assert "firmware-c6" in resp.json()["detail"]
+        assert c.get("/api/endpoint/firmware").status_code == 200
+        assert c.get(f"/api/endpoint/firmware/bin?board={C6}").status_code == 503
+
+    def test_an_unknown_board_gets_no_manifest(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """Refused rather than defaulted: a firmware that misspells its board should fail
+        loudly here, not be quietly offered another chip's image."""
+        c, _fw, _sent = client
+        assert c.get("/api/endpoint/firmware?board=nope").status_code == 422
+
+    def test_the_owner_can_see_which_boards_have_firmware(
+        self, client: tuple[TestClient, Path, list[Any]], tmp_path: Path
+    ) -> None:
+        """The PWA's board picker: a board whose firmware is not in the checkout yet is
+        listed but not ready, so the button can say why rather than 503 on press."""
+        c, _fw, _sent = client
+        boards = {b["id"]: b for b in c.get("/api/endpoint/boards").json()}
+        assert boards["s3-amoled-18"]["version"] == VERSION
+        assert boards["s3-amoled-18"]["ready"] is True
+        assert boards["s3-amoled-18"]["chip"] == "esp32s3"
+        assert boards[C6]["version"] is None
+        assert boards[C6]["ready"] is False
+
+        _write_c6_firmware(tmp_path / "firmware-c6")
+        c6 = {b["id"]: b for b in c.get("/api/endpoint/boards").json()}[C6]
+        assert (c6["version"], c6["ready"], c6["chip"]) == (C6_VERSION, True, "esp32c6")
+
+    def test_a_partial_set_is_listed_as_not_ready(
+        self, client: tuple[TestClient, Path, list[Any]], tmp_path: Path
+    ) -> None:
+        c, fw, _sent = client
+        (fw / "dist" / MODEL_IMAGE).unlink()
+        boards = {b["id"]: b for b in c.get("/api/endpoint/boards").json()}
+        assert boards["s3-amoled-18"]["ready"] is False
+
+    def test_a_panel_cannot_list_the_boards(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+        resp = c.get("/api/endpoint/boards", headers={"Authorization": f"Bearer {key}"})
+        assert resp.status_code == 401
 
 
 class TestTheConsoleMonitor:

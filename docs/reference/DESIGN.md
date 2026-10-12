@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-11
+> **Status:** Living · **Last verified:** 2026-10-12
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3464,6 +3464,31 @@ Sheet → Dialog.
   `playerWaypoints` offers only the reported value plus *everyone*. Search filters in place;
   each group and the whole set reset to defaults, with room under **Reset all** so a toast
   never covers it.
+- **Keep inventory is Off · On · Power Pack** (M10; settled in a three-way GUI gate — binding
+  mock `docs/mocks/minecraft-keep-inventory/a-segmented-row.html`, owner pick A, 2026-10-11,
+  with the conditions in that folder's `REVIEW.md`). The **Keep inventory on death** row
+  holds the shared segmented control full-width (Power Pack takes a wider share, so it fits a
+  third of 320 px at Text size 100%; no icon), then one line for what the pick means (*Everyone
+  drops their things where they die.* / *Everyone keeps everything when they die.* / with
+  Power Pack, the saved choice underneath and that it comes back), then a fixed help line that
+  states the mode before anyone picks it — a pick can apply live: *Power Pack: players keep
+  their things only while carrying a Power Pack and their own Tricorder; one pack burns each
+  time. Without both, they drop everything.* Off and On write the rule; Power Pack writes the
+  slot's switch (`PUT …/power-pack`); leaving it turns the switch off (back to the saved
+  choice, which the sidecar pins when the switch turns on) and then writes the rule only if
+  the pick differs. While a write runs the picked segment spins, the others take no picks, and
+  the meaning line (one persistent status region) names the step. After **any** failure the
+  rules are re-read and the inline rose line is worded from what the server now reports, with
+  the sidecar's real reason (*the server is restoring a backup*, *restarting*, *isn't
+  running*, *Power Pack is holding it on*); *Nothing changed* only for a 400/409 the re-read
+  confirms. The toast says live from the write's own answer and otherwise *when the server
+  starts* or *from {world}'s next load* from the slot. While Power Pack is on the row is tagged
+  *held on by the Power Pack*, the Players summary and the world page's Game rules line say
+  *Power Pack*, and the rule is left out of every changed count, the group reset and **Reset
+  all** (the footer says so). *pending* is the API's own. The New world form's draft editor
+  offers **Off · On** only — the switch belongs to a saved slot. The segmented control is one
+  radiogroup tab stop; arrows move between segments and Space or Enter picks, since every
+  pick is a write.
 - **Forms are Sheets, consequences are Dialogs** (the shared shells). New world: name (40),
   seed **Random** (the box's roll, shown, with **Re-roll** — so the seed is always known) or
   **Enter a seed** (64, with a counter), game mode, difficulty, cheats, and a collapsed **World
@@ -3620,8 +3645,13 @@ opens this screen on its spot.
   marker has a 46-px hit circle. Labels go tapped thing, players, spawn, structures; a label that
   would collide with another, a floating control, the panel or the scale bar moves below its
   marker or is dropped — never drawn under it.
-- **Layers:** **Biomes** (explored + satellite survey) is the only base layer; Surface and Height
-  are listed, disabled, *later*. Overlays: **Players**; **Trails** (live, each player's latest
+- **Layers:** two live base layers, a radio pair: **Surface** (the default; explored ground in
+  its real block colours, hillshaded, the satellite survey beyond) and **Biomes** (explored +
+  satellite survey, all biome colours). The pick is remembered per device. A Surface tile the
+  box hasn't drawn yet shows the Biomes tile in its place (asked for first, drawn in
+  milliseconds), never a loading hole while Biomes is there to show. In the Nether
+  Surface draws biomes too, and its legend says why (the top block is the bedrock roof). Height
+  is listed, disabled, *later*. Overlays: **Players**; **Trails** (live, each player's latest
   session; on the timeline, everyone's path up to the moment, faint, with a bold fading tail of
   the last 5 minutes); **Deaths** (the last week's live, the range's up to the moment on the
   timeline); **Beds & spawn** (the world spawn from `level.dat` — beds aren't recorded, so its
@@ -3674,6 +3704,42 @@ opens this screen on its spot.
 - **Absolute sizes:** the canvas and its floating chrome (`.mc-map*` over the picture) don't
   scale with the text-size setting (see "Theming"); the panel, the Sheet and their words use
   the type tokens. The pulse stops under `prefers-reduced-motion` and while the tab is hidden.
+
+### The Tricorder target on the Minecraft map (owner, 2026-10-12; plan §M21)
+
+With a player selected on the live map, the spot Dave has their Tricorder pointed at is
+drawn as two rings and a centre dot in the player's colour over a halo, labelled with
+Dave's label, with a dashed bearing line (8 on, 6 off, the player's colour over a halo, so
+it never reads as a solid trail) from the player's disc to it. The line is drawn only when
+the player and the target are both in the dimension shown; a target in the shown
+dimension is marked either way. The player card gets one line under the coordinates,
+`.mc-map-det-tri`: a crosshair glyph, **Tricorder** then *Diamonds · 330 blocks north-east
+· y -58* (a compass word, north being −z as in game; *y* only when the target has a
+depth), or *Diamonds · in the Nether* across a portal. Hidden on the compact (timeline)
+card and on the replay. Shared maps show it the same way.
+
+### The Minecraft map share (owner, 2026-10-11 — mock reviewed in chat; plan §M20)
+
+A view-only map for someone without a login, at `/mc/s/{token}`.
+
+- **Share this map** is a `.mc-map-fab` (link glyph) at the right end of the top row, the
+  owner's map only. It opens a Sheet *Share the map*: a note saying what the link gives away
+  (*every player's live position, travel history and timeline … until you revoke it*), a
+  fieldset **Open the map on** of 56px player rows (radio, gamertag, *online now* or *last
+  seen …*, an ok dot when on; the checked row takes the steel tint), and **Create link**
+  (`mc-btn-primary`). Made, it shows the link in a read-only monospace field with **Copy
+  link** (*Copied* once done) and, where `navigator.share` exists, **Send…**. Below, **Active
+  links**: one row per live link (gamertag; world · *opened N times* or *not opened yet* ·
+  *last …*) with a `mc-btn-danger` **Revoke**.
+- **The shared map** is the owner's map page with the owner's chrome taken away: no back
+  button (a **View only** chip — eye glyph, `--warn-text`, amber being the system's
+  read-only colour — takes its place), the world name as plain text instead of the picker,
+  no Share fab, no *Search again*. It opens on the shared player at a close zoom, selected,
+  in their dimension.
+- **An ended link** (revoked, or the world gone) is a centred page: an amber-tinted eye
+  disc, *This map link was turned off*, one line on asking for a new link, and the
+  wordmark. An unreachable box says *The map isn't answering* instead — never that the link
+  ended.
 
 ## Implementation rules
 

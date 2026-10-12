@@ -23,13 +23,13 @@ from jbrain.minecraft import client as mc
 from jbrain.minecraft import fastpath as fp
 from jbrain.minecraft import scans
 from jbrain.minecraft.asker import Asker, Spot, asking
-from tests.unit.test_minecraft_scans import MemoryBook
+from tests.unit.test_minecraft_scans import MemoryBook, MemoryTargets
 
 SID = "door-session"
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=(), agent_session_id=SID)
 STEVE = Asker(key="111", gamertag="Steve 42", world="slot2", at=Spot(0, 64, 0, "overworld"))
 DAY = "time query day"
-LOCATE = "execute positioned 0 64 0 run locate structure village"
+LOCATE = "execute in overworld positioned 0 64 0 run locate structure village"
 
 
 # --- matching -------------------------------------------------------------------------
@@ -76,6 +76,28 @@ LOCATE = "execute positioned 0 64 0 run locate structure village"
             "where is the nearest spawner",
             fp.Ask("nearest", kind="block", what="mob_spawner", label="spawner"),
         ),
+        ("nearest cow", fp.Ask("nearest", kind="mob", what="cow", label="cow")),
+        ("find the closest wolves", fp.Ask("nearest", kind="mob", what="wolf", label="wolf")),
+        (
+            "where's the nearest iron golem?",
+            fp.Ask("nearest", kind="mob", what="iron_golem", label="iron_golem"),
+        ),
+        (
+            "nearest cherry grove",
+            fp.Ask("nearest", kind="biome", what="cherry_grove", label="cherry grove"),
+        ),
+        (
+            "closest badlands",
+            fp.Ask("nearest", kind="biome", what="mesa", label="badlands"),
+        ),
+        (
+            "where's the nearest nether fortress",
+            fp.Ask("nearest", kind="structure", what="fortress", label="nether fortress"),
+        ),
+        (
+            "nearest bastion",
+            fp.Ask("nearest", kind="structure", what="bastion_remnant", label="bastion"),
+        ),
     ],
 )
 def test_what_clearly_is_a_fixed_request_matches(said: str, want: fp.Ask | None) -> None:
@@ -98,13 +120,13 @@ def test_what_clearly_is_a_fixed_request_matches(said: str, want: fp.Ask | None)
         "forget about it",
         "where is my base",
         "where is the river",
-        "where is the nearest pig",  # not a structure or block the fast path knows
+        "where is the nearest unicorn",  # nothing the fast path knows
         "nearest village to Mira's base",
         "where am I and what should I build",
         "how many scans does Mira have left",
         "list Mira's places",
         "clear my waypoint and point me home",
-        # "take me to" is transport in the canon, which isn't built: always the model's.
+        # "take me to" is transport (§M10): the model's mc_transport and its Yes / No form.
         "take me home",
         "take me to tree farm",
         # DW1's welcome replay isn't built; the model answers hello (§M18 note).
@@ -264,6 +286,7 @@ def _fast(book: MemoryBook, stand: Stand) -> fp.FastPath:
         object(),
         None,
         scan_book=lambda _ctx: book,
+        target_book=lambda _ctx: MemoryTargets(),
     )
     return fp.FastPath({**real, **stand.handlers()})
 
@@ -329,7 +352,7 @@ async def test_a_search_that_finds_nothing_or_cant_run_goes_to_the_model(
     assert book.used(STEVE, 7) == 0  # refunded: nothing was searched
     sidecar["down"].add(DAY)
     assert await _answer(fast, "where's the nearest village") is None
-    # locate searches the Overworld only; from the Nether the model explains.
+    # An Overworld structure asked for from the Nether: the model explains.
     nether = Asker(key="111", gamertag="Steve 42", world="slot2", at=Spot(0, 64, 0, "nether"))
     assert await _answer(fast, "where's the nearest village", nether) is None
 
@@ -376,13 +399,42 @@ async def test_navigate_uses_the_saved_place_or_says_there_is_none(book, stand, 
             return mt.Found("set", "portal", target=Spot(10, 70, 10, "nether"))
         return mt.Found("set", "Home (your bed)", target=Spot(0, 70, 120, "overworld"))
 
-    fast = fp.FastPath({"mc_set_waypoint": fake_waypoint})
+    async def fake_players(args: dict, ctx: Any) -> str:
+        return ToolOutput("Nobody called that", result_brief="unknown")
+
+    fast = fp.FastPath({"mc_set_waypoint": fake_waypoint, "mc_players": fake_players})
     got = await _answer(fast, "point me home")
     assert got is not None and got.reply == fp.locked_on("home", 120, "south")
     nowhere = await _answer(fast, "navigate to nowhere")
     assert nowhere is not None and nowhere.reply == fp.no_such_place("nowhere")
     # Another dimension has no line with a distance: the model explains.
     assert await _answer(fast, "navigate to portal") is None
+
+
+async def test_point_me_to_a_player_when_no_place_has_their_name(book, stand, sidecar) -> None:
+    pointed: list[dict] = []
+
+    async def fake_waypoint(args: dict, ctx: Any) -> str:
+        if "place" in args:
+            return ToolOutput("no such", result_brief="no such place")
+        pointed.append(args)
+        return mt.Found("set", args["label"], target=Spot(args["x"], None, args["z"], "overworld"))
+
+    seen: dict[str, Any] = {"online": True, "spot": Spot(0, 64, -300, "overworld")}
+
+    async def fake_players(args: dict, ctx: Any) -> str:
+        return mt.Found("x", "online", gamertag="Mira P", **seen)
+
+    fast = fp.FastPath({"mc_set_waypoint": fake_waypoint, "mc_players": fake_players})
+    got = await _answer(fast, "point me to mira p")
+    assert got is not None and got.reply == fp.locked_on("Mira P", 300, "north")
+    assert pointed == [{"x": 0, "z": -300, "dimension": "overworld", "label": "Mira P"}]
+    # Offline, or across a portal: nowhere to point now, so the model says where they were.
+    seen["online"] = False
+    assert await _answer(fast, "point me to mira p") is None
+    seen.update(online=True, spot=Spot(0, 64, -300, "nether"))
+    assert await _answer(fast, "point me to mira p") is None
+    assert len(pointed) == 1
 
 
 async def test_where_is_another_player(book, stand, sidecar) -> None:
@@ -436,3 +488,55 @@ def test_first_hit_reads_both_search_shapes() -> None:
     )
     assert mt.first_hit("is at block 1, 70, 2", "overworld") == Spot(1, 70, 2, "overworld")
     assert mt.first_hit("none within 2048 blocks", "overworld") is None
+
+
+NETHER = Asker(key="111", gamertag="Steve 42", world="slot2", at=Spot(0, 64, 0, "nether"))
+
+
+async def test_nearest_nether_structure_and_biome_search_where_they_stand(
+    book, stand, sidecar
+) -> None:
+    fortress = "execute in nether positioned 0 64 0 run locate structure fortress"
+    sidecar["replies"][fortress] = [
+        "[x INFO] The nearest fortress is at block -96, ~, 160 (186 blocks away)"
+    ]
+    fast = _fast(book, stand)
+    got = await _answer(fast, "nearest fortress", NETHER)
+    assert got is not None and got.reply.startswith("From up here I see one 187 blocks south-west")
+    assert fortress in sidecar["sent"]
+    assert '"dim": "nether"' in _waypoints(sidecar)[-1]
+    assert '"label": "Fortress"' in _waypoints(sidecar)[-1]
+    # A Nether structure from the Overworld (or an End city from the Nether): the model's.
+    assert await _answer(fast, "nearest fortress") is None
+    assert await _answer(fast, "nearest end city", NETHER) is None
+
+    grove = "execute in overworld positioned 0 64 0 run locate biome minecraft:cherry_grove"
+    sidecar["replies"][grove] = [
+        "[x INFO] The nearest minecraft:cherry_grove is at block 0, ~, -640 (640 blocks away)"
+    ]
+    got = await _answer(_fast(MemoryBook(), stand), "nearest cherry grove")
+    assert got is not None and got.reply.startswith("From up here I see one 640 blocks north")
+    assert '"label": "Cherry grove"' in _waypoints(sidecar)[-1]
+
+
+async def test_nearest_mob_asks_the_game_and_costs_no_scan(book, stand, sidecar) -> None:
+    find = 'scriptevent jb:find {"player": "Steve 42", "type": "iron_golem", "max": 256}'
+    sidecar["replies"][find] = [
+        "[x] [Scripting] [jbrain] find found minecraft:iron_golem at x=30 y=70 z=-40,"
+        " 50 blocks from Steve 42 (overworld)"
+    ]
+    fast = _fast(book, stand)
+    got = await _answer(fast, "where's the nearest iron golem?")
+    assert got is not None
+    assert got.reply == (
+        "From up here I see one 50 blocks north-east, at 30, 70, -40. Hold your Tricorder"
+        " and follow the arrow, crew."
+    )
+    assert [s["name"] for s in got.steps] == ["mc_find_mob", "mc_set_waypoint"]
+    assert '"label": "Iron golem"' in _waypoints(sidecar)[-1]
+    assert book.used(STEVE, 7) == 0
+    # None about: nothing to point at, so the model says so in its own words.
+    sidecar["replies"][find] = [
+        "[x] [Scripting] [jbrain] find none: no minecraft:iron_golem within 256 blocks"
+    ]
+    assert await _answer(fast, "nearest iron golem") is None

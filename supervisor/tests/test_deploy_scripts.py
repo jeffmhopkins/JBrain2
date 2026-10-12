@@ -1382,11 +1382,14 @@ def test_the_api_can_reach_the_panel_firmware_without_leaving_the_box() -> None:
     """
     compose = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
     assert "./src/firmware:/firmware:ro" in compose["services"]["api"]["volumes"]
+    # The C6 panel's firmware is a sibling project, mounted the same way.
+    assert "./src/firmware-c6:/firmware-c6:ro" in compose["services"]["api"]["volumes"]
 
     config = (
         Path(__file__).resolve().parents[2] / "backend/src/jbrain/config.py"
     ).read_text()
     assert 'firmware_dir: str = "/firmware"' in config
+    assert 'firmware_c6_dir: str = "/firmware-c6"' in config
     # The release path is gone, not merely unused: a lingering repo setting is how a
     # second distribution channel grows back.
     assert "endpoint_firmware_repo" not in config

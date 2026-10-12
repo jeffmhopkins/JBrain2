@@ -147,6 +147,16 @@
 #   scripts/debug-connect.sh panel-heard [--now]       # what each panel last heard
 #   scripts/debug-connect.sh panel-reach [--now]       # can each panel reach the box, and why not
 #   scripts/debug-connect.sh panel-report-now          # make them post it now (~3 s)
+#   scripts/debug-connect.sh panel-list                # every panel: board, last pickup, commands
+#   scripts/debug-connect.sh panel-cmd c6 snapshot     # ask the live C6 panel; prints its answer
+#   scripts/debug-connect.sh panel-cmd c6 inject --arg event=touch --arg x=240 --arg y=200
+#   scripts/debug-connect.sh panel-cmd c6 reboot --confirm
+#   scripts/debug-connect.sh panel-shot c6 [out.png]   # the panel's screen, to a local PNG
+#     (The debug relay, JPANEL_C6_PLAN.md §4. <device> is a device id, a panel's name, or
+#      `c6`: the one panel picking up as a C6 — refused, with the list, if there are several
+#      or none. Commands are the panel's whitelist (`panel-cmd c6 help` lists them); ints for
+#      level/x/y/value, strings for app/tag/event/name. `reboot` needs --confirm. A panel
+#      that has not picked up in 30 s is refused as offline, never queued for later.)
 #   scripts/debug-connect.sh update                    # pull main, rebuild, restart
 #   scripts/debug-connect.sh update-status [tail]      # that update's state + log tail
 #   scripts/debug-connect.sh backup                    # full backup ("Back up everything")
@@ -688,7 +698,7 @@ PY
     _call POST /api/debug/replay "$(cat "$BODYFILE")" | _pp
     ;;
 
-  panel-flash) # [--port /dev/ttyACM0] [--name Quorra] [--role jpet|display] [--erase] — flash a panel
+  panel-flash) # [--port /dev/ttyACM0] [--name Quorra] [--role jpet|display] [--board ID] [--erase] — flash a panel
     # Uses the network the owner asked this box to REMEMBER; a Wi-Fi password is never
     # taken from here, because it would then live in a debug transcript. Mints a fresh
     # device key and retires the ones it replaced — which the flash only started actually
@@ -698,12 +708,16 @@ PY
     # --role decides whether this unit joins the twins' addressing. Defaults to `jpet`,
     # which is what every panel in the house is; `display` is an endpoint the owner
     # operates that no pet can reach.
-    fport=""; fname=""; frole="jpet"; ferase="false"
+    #
+    # --board picks the image set and esptool's chip: `s3-amoled-18` (the default, every
+    # jpet) or `c6-amoled-216` (the owner's C6 panel). The api refuses an unknown one.
+    fport=""; fname=""; frole="jpet"; fboard="s3-amoled-18"; ferase="false"
     while [ $# -gt 0 ]; do
       case "$1" in
         --port) fport="$2"; shift 2 ;;
         --name) fname="$2"; shift 2 ;;
         --role) frole="$2"; shift 2 ;;
+        --board) fboard="$2"; shift 2 ;;
         --erase) ferase="true"; shift ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
       esac
@@ -712,7 +726,7 @@ PY
       jpet|display) ;;
       *) echo "--role must be jpet or display" >&2; exit 2 ;;
     esac
-    body="$(P="$fport" N="$fname" R="$frole" E="$ferase" python3 -c 'import json,os; print(json.dumps({"port": os.environ["P"], "name": os.environ["N"], "role": os.environ["R"], "erase": os.environ["E"] == "true"}))')"
+    body="$(P="$fport" N="$fname" R="$frole" B="$fboard" E="$ferase" python3 -c 'import json,os; print(json.dumps({"port": os.environ["P"], "name": os.environ["N"], "role": os.environ["R"], "board": os.environ["B"], "erase": os.environ["E"] == "true"}))')"
     _call POST /api/debug/endpoint/flash "$body" | _pp ;;
 
   panel-address) # why a panel is, or is not, reaching this box over the LAN
@@ -767,6 +781,85 @@ PY
     # fifteen-minute cycle — that interval is what makes a report at 6-7 s of uptime mean
     # "this panel just booted".
     _call POST "/api/debug/endpoint/report-now" | _pp ;;
+
+  panel-list) _call GET /api/debug/panel | _pp ;;  # board, last pickup and published commands
+
+  panel-cmd | panel-shot) # <device|c6> <command> [--arg k=v ...] [--confirm] | <device|c6> [out.png]
+    # Queue one command through the box's debug relay, wait for the panel's answer and print
+    # it. Exits non-zero if it was refused, expired, or the panel answered ok:false — so a
+    # `reboot` that did not happen never reads as one that did (see `_call`).
+    dev="${1:?usage: debug-connect.sh $cmd <device|c6> ...}"; shift
+    if [ "$cmd" = "panel-shot" ]; then
+      pcmd=screenshot; out="${1:-}"; [ $# -gt 0 ] && shift
+    else
+      pcmd="${1:?usage: debug-connect.sh panel-cmd <device|c6> <command> [--arg k=v] [--confirm]}"
+      shift
+    fi
+    confirm=false; kvs=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --arg) kvs+=("${2:?--arg needs k=v}"); shift 2 ;;
+        --confirm) confirm=true; shift ;;
+        *) echo "unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    # Resolve <device>: an id as given; a name or `c6` against the live list, never a guess.
+    dev=$(_call GET /api/debug/panel | WANT="$dev" python3 -c '
+import json, os, re, sys
+want = os.environ["WANT"]
+panels = json.load(sys.stdin)
+if re.fullmatch(r"[0-9a-f-]{36}", want):
+    print(want)
+    raise SystemExit(0)
+if want in ("c6", "c6-amoled-216"):
+    hits = [p for p in panels if p.get("board") == "c6-amoled-216"]
+    what = "picking up as a C6 (one must have polled since the box started)"
+else:
+    hits = [p for p in panels if p["name"].lower() == want.lower()]
+    what = "named " + repr(want)
+if len(hits) != 1:
+    sys.stderr.write("%d panels %s; pass a device id:\n" % (len(hits), what))
+    for p in panels:
+        sys.stderr.write("  %s  %-16s board=%s last_seen_s=%s\n"
+                         % (p["device_id"], p["name"], p["board"], p["last_seen_s"]))
+    raise SystemExit(2)
+print(hits[0]["device_id"])
+') || exit 2
+    body=$(CMD="$pcmd" CONFIRM="$confirm" python3 -c '
+import json, os, sys
+args = {}
+for kv in sys.argv[1:]:
+    k, sep, v = kv.partition("=")
+    if not sep:
+        sys.exit("--arg %r is not k=v" % kv)
+    args[k] = int(v) if k in ("level", "x", "y", "value") else v
+print(json.dumps({"command": os.environ["CMD"], "args": args,
+                  "confirm": os.environ["CONFIRM"] == "true"}))
+' "${kvs[@]+"${kvs[@]}"}") || exit 2
+    # The refusal's body (needs_confirm, offline + last_seen_s, unknown_command + the list)
+    # is the useful part, so it is printed rather than swallowed by the parse below.
+    queued=$(_call POST "/api/debug/panel/$dev/command" "$body") || { printf '%s' "$queued" | _pp; exit 1; }
+    rid=$(printf '%s' "$queued" | python3 -c 'import json,sys; print(json.load(sys.stdin)["request_id"])')
+    # Long-poll in 20 s slices: each call stays under the tunnel's ~100 s edge limit, and the
+    # request is dead within 60 s (uncollected) or 120 s (unanswered) whatever happens.
+    st=queued; res=
+    for _ in 1 2 3 4 5 6 7 8 9; do
+      res=$(_call GET "/api/debug/panel/$dev/result/$rid?wait=20") || exit 1
+      st=$(printf '%s' "$res" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+      case "$st" in done | expired) break ;; esac
+    done
+    printf '%s' "$res" | _pp
+    [ "$st" = "done" ] || { echo "request $rid: $st" >&2; exit 1; }
+    ok=$(printf '%s' "$res" | python3 -c 'import json,sys; print((json.load(sys.stdin)["result"] or {}).get("ok"))')
+    [ "$ok" = "True" ] || { echo "the panel answered ok:false" >&2; exit 1; }
+    if [ "$cmd" = "panel-shot" ]; then
+      out="${out:-panel-${rid:0:8}.png}"
+      code=$(curl -sS -o "$out" -w '%{http_code}' -H "Authorization: Bearer $KEY" \
+        "$BASE/api/debug/panel/$dev/screenshot/$rid.png")
+      [ "$code" = "200" ] || { echo "HTTP $code fetching the screenshot" >&2; rm -f "$out"; exit 1; }
+      echo "wrote $out" >&2
+    fi
+    ;;
 
   sdr) _call GET /api/debug/sdr | _pp ;;   # is the USB radio there, and is anything holding it?
   sdr-sessions) _call GET /api/debug/sdr/sessions | _pp ;;  # which radios are held, and which the icon shows

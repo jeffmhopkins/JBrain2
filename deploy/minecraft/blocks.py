@@ -220,7 +220,7 @@ class BlockIndex:
             if len(hits) >= limit and centre(group[0]) - 12 > hits[limit - 1]["distance"]:
                 break
             keys = {
-                _key(dim, cx, cz, sy)
+                section_key(dim, cx, cz, sy)
                 for (_, cx, cz) in group
                 for sy, names in self._chunks[(dim, cx, cz)].items()
                 if names & wanted
@@ -233,7 +233,7 @@ class BlockIndex:
         return [h for h in hits if h["distance"] <= radius][:limit], len(in_range)
 
 
-def _key(dim: int, cx: int, cz: int, sy: int) -> bytes:
+def section_key(dim: int, cx: int, cz: int, sy: int) -> bytes:
     prefix = struct.pack("<ii", cx, cz) + (struct.pack("<i", dim) if dim else b"")
     return prefix + bytes([SUBCHUNK]) + struct.pack("<b", sy)
 
@@ -255,7 +255,7 @@ def _section_hits(
             continue
         for i in positions(value, bits, words_at, idx):
             bx, bz = cx * 16 + (i >> 8), cz * 16 + ((i >> 4) & 15)
-            name = palette[_palette_index(value, bits, words_at, i)]
+            name = palette[palette_index(value, bits, words_at, i)]
             distance = round(math.dist((x, z), (bx, bz)))
             if name not in best or distance < best[name]["distance"]:
                 by = section * 16 + (i & 15)
@@ -263,7 +263,7 @@ def _section_hits(
     return list(best.values())
 
 
-def _palette_index(value: bytes, bits: int, words_at: int, i: int) -> int:
+def palette_index(value: bytes, bits: int, words_at: int, i: int) -> int:
     if not bits:
         return 0
     per = 32 // bits

@@ -252,6 +252,18 @@ export function mcMapPlayers(slot: string, live: boolean): MinecraftMapPlayers {
             z: last[3],
             at: on ? t - 8 : last[0],
             online: live && on,
+            // Dave has BlockyFox's Tricorder on some diamonds to the north-east.
+            target:
+              p.gamertag === "BlockyFox"
+                ? {
+                    dim: "overworld" as MinecraftDim,
+                    x: 362,
+                    y: -58,
+                    z: -437,
+                    label: "Diamonds",
+                    set_at: t - 600,
+                  }
+                : null,
           },
         ];
       })

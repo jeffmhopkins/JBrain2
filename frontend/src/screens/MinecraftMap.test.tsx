@@ -244,6 +244,22 @@ describe("the Minecraft map", () => {
     expect(screen.getByRole("tab", { name: "Timeline" })).toBeEnabled();
   });
 
+  it("picks the base layer: Surface (true colour) by default, Biomes on a tap, remembered", async () => {
+    localStorage.removeItem("jbrain.minecraftMap.layer");
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const surface = screen.getByRole("radio", { name: /^Surface/ });
+    const biomes = screen.getByRole("radio", { name: /^Biomes/ });
+    expect(surface).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/in the colour of its top block/)).toBeInTheDocument();
+    fireEvent.click(biomes);
+    expect(biomes).toHaveAttribute("aria-checked", "true");
+    expect(surface).toHaveAttribute("aria-checked", "false");
+    expect(localStorage.getItem("jbrain.minecraftMap.layer")).toBe("biomes");
+    expect(screen.getByRole("radio", { name: /^Height/ })).toBeDisabled();
+    localStorage.removeItem("jbrain.minecraftMap.layer");
+  });
+
   it("back returns to the Minecraft screen", async () => {
     await openMap();
     fireEvent.click(screen.getAllByRole("button", { name: "Back" }).at(-1) as HTMLElement);

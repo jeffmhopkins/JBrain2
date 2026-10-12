@@ -17,8 +17,10 @@ import {
   spotText,
   statusLine,
   structureInfo,
+  tileKey,
   toScreen,
   toWorld,
+  tricorderLine,
   visibleTiles,
   zoomAt,
   zoomFor,
@@ -73,10 +75,14 @@ describe("map geometry", () => {
     expect(far.every((t) => t.zoom === 4 && t.size === 256)).toBe(true);
   });
 
-  it("builds the owner tile route from the slot, dimension, zoom and tile", () => {
+  it("builds the owner tile route from the slot, dimension, zoom, tile and layer", () => {
     expect(minecraftTileUrl("slot2", "nether", 3, -1, 4)).toBe(
-      "/api/minecraft/map/tile/nether/3/-1/4.png?slot=slot2",
+      "/api/minecraft/map/tile/nether/3/-1/4.png?slot=slot2&layer=surface",
     );
+    expect(minecraftTileUrl("slot2", "nether", 3, -1, 4, "biomes")).toMatch(/&layer=biomes$/);
+    // Each layer's tiles are cached apart, so switching never shows the other's picture.
+    const t = { zoom: 0, tx: 1, tz: 2 };
+    expect(tileKey("slot1", "overworld", t)).not.toBe(tileKey("slot1", "overworld", t, "biomes"));
   });
 
   it("frames everyone in the visible map", () => {
@@ -257,5 +263,36 @@ describe("scaleOfZoom", () => {
     expect(scaleOfZoom(4)).toBe(S_MIN);
     expect(scaleOfZoom(-3)).toBe(S_MAX);
     expect(scaleOfZoom(-9)).toBe(S_MAX);
+  });
+});
+
+describe("the Tricorder line", () => {
+  const at = { dim: "overworld" as const, x: 0.5, z: 0.5 };
+  const target = (x: number, z: number, y: number | null = null) => ({
+    dim: "overworld" as const,
+    x,
+    y,
+    z,
+    label: "Diamonds",
+    set_at: 0,
+  });
+
+  it("says how far and which way, north being -z as in game", () => {
+    expect(tricorderLine(at, target(0, -100))).toBe("Diamonds · 100 blocks north");
+    expect(tricorderLine(at, target(100, 100))).toBe("Diamonds · 141 blocks south-east");
+    expect(tricorderLine(at, target(-30, 0))).toBe("Diamonds · 30 blocks west");
+    expect(tricorderLine(at, target(1, 0))).toBe("Diamonds · 1 block east");
+  });
+
+  it("adds the depth when it matters, and is plain about standing on it", () => {
+    expect(tricorderLine(at, target(0, 40, -58))).toBe("Diamonds · 40 blocks south · y -58");
+    expect(tricorderLine(at, target(0, 0, -58))).toBe("Diamonds · here");
+  });
+
+  it("names the dimension instead of a bearing across a portal", () => {
+    expect(tricorderLine(at, { ...target(5, 5), dim: "nether" })).toBe("Diamonds · in the Nether");
+    expect(tricorderLine({ ...at, dim: "the_end" }, target(5, 5))).toBe(
+      "Diamonds · in the Overworld",
+    );
   });
 });

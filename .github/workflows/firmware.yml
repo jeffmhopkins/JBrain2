@@ -1,5 +1,5 @@
 # The endpoint firmware builds against a ~2 GB ESP-IDF toolchain and only depends on
-# firmware/**, so it runs on its own path filter rather than on every PR — the android.yml
+# firmware/** (the twins' S3 panels) and firmware-c6/** (Jeff's C6 jpanel), so it runs on its own path filter rather than on every PR — the android.yml
 # pattern. The workflow file is in the filter so changes to it still trigger a run.
 #
 # There is no hardware in CI, so what this proves is that the image COMPILES and that it fits
@@ -20,10 +20,12 @@ on:
     tags: ["v*"]
     paths:
       - "firmware/**"
+      - "firmware-c6/**"
       - ".github/workflows/firmware.yml"
   pull_request:
     paths:
       - "firmware/**"
+      - "firmware-c6/**"
       - ".github/workflows/firmware.yml"
   # GitHub starts no workflow runs for a pull request opened through an App, so a PR raised by
   # an assistant carries no checks at all — see the same note in ci.yml. A dispatch is the
@@ -167,5 +169,90 @@ jobs:
         if: always()
         with:
           name: endpoint-firmware
+          path: out/
+          if-no-files-found: ignore
+
+  # JEFF'S C6 JPANEL — a separate project with its own committed images, held to the same
+  # rule: `firmware-c6/dist/` is what the box flashes, so it must be what this source builds.
+  # No srmodels.bin (ESP-SR does not support the C6, so there is no model partition).
+  firmware-c6:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      # The app framework's pure half — shell arbitration, the app models, the notice policy,
+      # the debug surface's redaction, the drivers' decisions (flush alignment, the PMIC's
+      # registers, button debounce, the boot-after-a-fault guard) — in seconds, before the
+      # toolchain pull.
+      - name: Host tests for the app framework
+        run: make -C firmware-c6/host test
+
+      # Every app depends only on app_api, ui_kit and LVGL (JPANEL_C6_PLAN.md §1). The
+      # self-test first, so a checker that has stopped catching anything fails too.
+      - name: Apps never depend on each other
+        run: |
+          python3 firmware-c6/tools/check_app_deps.py --self-test
+          python3 firmware-c6/tools/check_app_deps.py
+
+      # The framework against real LVGL, headless: every mock board's state rendered through
+      # the debug screenshot path, every app opened and closed back to the same widget and
+      # timer count, and a debug snapshot checked for provisioning secrets. The PNGs are
+      # uploaded so a drift from docs/mocks/jpanel-c6/ is visible in review.
+      - name: Simulator renders the mock states
+        run: firmware-c6/sim/render.sh "$RUNNER_TEMP/jpanel-c6-sim" "$RUNNER_TEMP/sim-build"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jpanel-c6-sim
+          path: ${{ runner.temp }}/jpanel-c6-sim/
+          if-no-files-found: ignore
+
+      # The same IDF pin as the S3 job, so the two projects never disagree about a header.
+      # Since 0.0.4 the image carries LVGL and the CO5300's sh8601 driver as managed
+      # components: the build fetches them itself, at the versions and content hashes
+      # `firmware-c6/dependencies.lock` pins, so the byte comparison below still holds.
+      - uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.5
+          target: esp32c6
+          path: firmware-c6
+
+      - name: The committed images must match this source
+        run: |
+          set -eu
+          mkdir -p out
+          cp firmware-c6/build/jbrain-jpanel-c6.bin out/
+          cp firmware-c6/build/bootloader/bootloader.bin out/
+          cp firmware-c6/build/partition_table/partition-table.bin out/
+          cp firmware-c6/build/ota_data_initial.bin out/
+          ( cd out && sha256sum ./*.bin | sed 's| \./| |' > SHA256SUMS )
+          echo "version=$(cat firmware-c6/version.txt)" >> "$GITHUB_STEP_SUMMARY"
+          for f in bootloader.bin partition-table.bin ota_data_initial.bin jbrain-jpanel-c6.bin; do
+            if ! cmp -s "out/$f" "firmware-c6/dist/$f"; then
+              {
+                echo "### firmware-c6/dist/$f is not what this source builds"
+                echo
+                echo 'Rebuild and commit it:'
+                echo '```'
+                echo 'IDF_TARGETS=esp32c6 scripts/firmware-setup.sh   # once'
+                echo '. ~/esp-idf/export.sh && (cd firmware-c6 && idf.py fullclean && idf.py build)'
+                echo 'scripts/firmware-dist.sh firmware-c6'
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              echo "MISMATCH: firmware-c6/dist/$f" >&2
+              exit 1
+            fi
+          done
+          diff -u firmware-c6/dist/SHA256SUMS out/SHA256SUMS
+          echo "firmware-c6/dist/ matches this build" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jpanel-c6-firmware
           path: out/
           if-no-files-found: ignore

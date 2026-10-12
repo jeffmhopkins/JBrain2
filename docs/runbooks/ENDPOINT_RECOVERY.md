@@ -1,6 +1,6 @@
 # Recovering a room-endpoint panel
 
-> **Status:** Living · **Last verified:** 2026-09-28
+> **Status:** Living · **Last verified:** 2026-10-11
 
 What to do when a panel stops working, in the order to try it. Plan:
 `../plans/ROOM_ENDPOINT_PLAN.md`; firmware: `../../firmware/README.md`.
@@ -94,6 +94,28 @@ Normally none of this is needed: the board has an auto-download circuit and the 
 drives it with `--before default_reset`, so an ordinary reflash does not require the
 button. BOOT is for when the running firmware is wedged badly enough that the auto-reset
 does not take.
+
+## Two kinds of panel
+
+The box flashes and updates two boards, and everything above applies to both:
+
+| Board id | Panel | Chip | Firmware in the checkout | Images |
+| --- | --- | --- | --- | --- |
+| `s3-amoled-18` (default) | the twins' jpets | ESP32-S3 | `firmware/dist/` | bootloader, table, otadata, app, `srmodels.bin` at `0xaa0000` |
+| `c6-amoled-216` | the owner's panel | ESP32-C6 | `firmware-c6/dist/` | bootloader, table, otadata, app — no model partition |
+
+The offsets are shared (bootloader `0x0`, table `0x8000`, NVS `0x9000`, otadata `0xf000`, app
+`0x20000`). **Both boards show up in Rescan USB with the same label**, "Espressif
+USB-Serial/JTAG (ESP32-S3 or ESP32-C6)": they enumerate with the same USB id, so the box cannot
+tell them apart from the port alone. Pick the board in the flash request (`board`, default
+`s3-amoled-18`); the flasher passes that chip to esptool, which refuses a board that is not
+the chip it was told — so picking wrong fails the flash rather than writing it.
+
+OTA is per board too: an S3 panel's manifest poll carries nothing new and gets the S3 image,
+and a C6 panel asks `GET /api/endpoint/firmware?board=c6-amoled-216`. A panel that somehow got
+another chip's image would refuse it in `esp_https_ota` (chip id check), so a mix-up costs an
+update, never a brick. `GET /api/endpoint/boards` (owner) lists each board with the version its
+checkout holds and whether its image set is complete.
 
 ## When the panel does not appear in Rescan USB
 

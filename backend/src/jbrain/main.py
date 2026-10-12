@@ -47,7 +47,10 @@ from jbrain.agent.media_results import MediaResults
 from jbrain.agent.memory import MemoryRepo, MemoryService
 from jbrain.agent.minecraftadmin import build_minecraft_admin_handlers
 from jbrain.agent.minecraftmap import build_minecraft_map_handlers
+from jbrain.agent.minecraftreplicator import build_minecraft_replicator_handlers
 from jbrain.agent.minecrafttools import build_minecraft_handlers
+from jbrain.agent.minecrafttransport import build_minecraft_transport_handlers
+from jbrain.agent.minecraftwormhole import build_minecraft_wormhole_handlers
 from jbrain.agent.moltbooktools import build_moltbook_handlers
 from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
 from jbrain.agent.ocrtools import build_ocr_handlers
@@ -84,6 +87,7 @@ from jbrain.api import (
     chat_attachments,
     debug,
     debug_minecraft,
+    debug_panel,
     debug_tokens,
     devices,
     external_llm,
@@ -106,12 +110,14 @@ from jbrain.api import (
     llm_internal,
     locations,
     member,
+    minecraft_share,
     mqtt,
     notes,
     notifications,
     ops,
     owntracks,
     pairing,
+    panel_debug,
     plans,
     proposals,
     research_library,
@@ -1329,6 +1335,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             minecraft_handlers={
                 **build_minecraft_handlers(maker, settings, settings_store),
                 **build_minecraft_map_handlers(maker, settings, settings_store),
+                **build_minecraft_transport_handlers(maker, settings),
+                **build_minecraft_replicator_handlers(settings),
+                **build_minecraft_wormhole_handlers(maker, settings, settings_store),
                 **build_minecraft_admin_handlers(settings, app.state.agent_proposals),
             },
             moltbook_handlers=moltbook_handlers,
@@ -1411,6 +1420,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.research_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
         # Per-IP bound on the unauthenticated jlaunch results-share reads (api/jlaunch_share.py).
         app.state.jlaunch_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
+        # Per-IP bounds on the unauthenticated map-share reads (api/minecraft_share.py):
+        # the viewer polls players and the live log, and a pan pulls a screenful of tiles.
+        app.state.mc_share_rate_limiter = TokenBucket(capacity=60, refill_per_sec=2.0)
+        app.state.mc_share_tile_rate_limiter = TokenBucket(capacity=400, refill_per_sec=20.0)
         # The Automations operator surface: projects the live trigger/schedule/
         # pipeline config + the run log into the "when -> do" cards, and the action
         # registry into the Catalog. `seeded_names` is the subset mirrored into
@@ -1818,8 +1831,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.debug_access_enabled:
         app.include_router(debug.router, prefix="/api")
         app.include_router(debug_minecraft.router, prefix="/api")
+        app.include_router(debug_panel.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
+    # The panel's half of the debug relay. Mounted with or without debug access: with it
+    # off nothing can queue a request, so a pickup is always an empty 204.
+    app.include_router(panel_debug.router, prefix="/api")
     # The owner's Minecraft screen (MINECRAFT_BEDROCK_PLAN §M1). Owner-gated; a box
     # whose sidecar is stopped or unconfigured answers with that state, not a 500.
     app.include_router(minecraft_api.router, prefix="/api")
@@ -1858,6 +1875,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jlaunch.router, prefix="/api")
     app.include_router(jlaunch_terminal.router, prefix="/api")
     app.include_router(jlaunch_share.router, prefix="/api")
+    # The public map-share reads (token-in-path, rate-limited, noindex, read-only).
+    app.include_router(minecraft_share.router, prefix="/api")
     app.include_router(external_llm.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(pet_api.router, prefix="/api")

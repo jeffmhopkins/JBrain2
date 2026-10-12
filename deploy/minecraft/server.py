@@ -162,6 +162,7 @@ class Rig:
         # Map tiles (§M8): one chunk index per world folder, and the PNGs it rendered,
         # both dropped when that world's database files change.
         self._map_lock = threading.Lock()
+        self._surface_lock = threading.Lock()
         self._map_index: dict[str, mapping.WorldIndex] = {}
         self._block_index: dict[str, blocks.BlockIndex] = {}
         self._map_seed: dict[str, str | None] = {}
@@ -874,6 +875,7 @@ class Rig:
                     wreck=None,  # the owner's own world: never touched
                     test=False,
                     power_pack_keep=False,
+                    power_pack_transport=True,
                 )
 
             self._restart_around(folder, work, "A world is being imported here")
@@ -943,6 +945,7 @@ class Rig:
             # settings no longer describe it. Rules come with the source's choices.
             fields["rules"] = dict(src.get("rules") or {})
             fields["power_pack_keep"] = bool(src.get("power_pack_keep"))
+            fields["power_pack_transport"] = src.get("power_pack_transport") is not False
             if not rec["exists"]:
                 when = time.strftime("%b %-d", time.localtime(path.stat().st_mtime))
                 fields["name"] = f"{src.get('name') or source} ({when})"
@@ -1088,19 +1091,39 @@ class Rig:
         """The world's "Power Pack keeps inventory" switch (§M10). Saved on the slot and
         applied at every start; on the loaded, running world also at once: the rule,
         then the pack's own copy of the switch. Turning it off hands keepInventory back
-        to the owner's saved choice, or vanilla's off, saved so a later load agrees."""
+        to the owner's saved choice, saved so a later load agrees."""
         if not isinstance(on, bool):
             raise ValueError("`on` is true or false")
         with self._locked():
             rec = self.slots.get(slot_id)
             rules = dict(rec.get("rules") or {})
-            if not on:
+            if on and not rec.get("power_pack_keep"):
+                # A world with no saved choice (an import, a reset, a new world made
+                # without the rule) runs whatever it last loaded with; pin that as the
+                # saved choice so turning the switch off returns to what the owner saw,
+                # not to vanilla's off.
+                known = rec.get("rules_known") or worlds.DEFAULT_RULES
+                rules.setdefault("keepInventory", bool(known.get("keepInventory")))
+            elif not on:
                 rules.setdefault("keepInventory", False)
             rec = self.slots.update(slot_id, power_pack_keep=on, rules=rules)
             live = rec["folder"] == self.active_folder() and self.bds.state == "running"
             if live:
                 keep = effective_rules(rec)["keepInventory"]
                 self.bds.command(worlds.rule_command("keepInventory", keep))
+                self.bds.command(pack_config(rec))
+        return {**rec, "applies": "now" if live else "next load"}
+
+    def set_power_pack_transport(self, slot_id: str, on: Any) -> dict[str, Any]:
+        """The world's "Power Pack teleport" switch (§M10), on by default. Saved on the
+        slot and sent to the pack at every start; on the loaded, running world also at
+        once. No game rule rides on it: off, the pack refuses every trip."""
+        if not isinstance(on, bool):
+            raise ValueError("`on` is true or false")
+        with self._locked():
+            rec = self.slots.update(slot_id, power_pack_transport=on)
+            live = rec["folder"] == self.active_folder() and self.bds.state == "running"
+            if live:
                 self.bds.command(pack_config(rec))
         return {**rec, "applies": "now" if live else "next load"}
 
@@ -1324,7 +1347,7 @@ class Rig:
             "extent": area,
             "tile_blocks": mapping.TILE,
             "max_zoom": mapping.MAX_ZOOM,
-            "layers": ["biome"],
+            "layers": list(mapping.LAYERS),
             # Ground nobody has been to is drawn from the seed; without it, transparent
             # is ungenerated ground.
             "predicted": predicted,
@@ -1571,31 +1594,46 @@ class Rig:
         threading.Thread(target=run, name="structure-sweep", daemon=True).start()
         return self.sweep_view()
 
-    def map_tile(self, slot_id: str, dim: str, zoom: int, tx: int, tz: int) -> bytes:
+    def map_tile(
+        self, slot_id: str, dim: str, zoom: int, tx: int, tz: int, layer: str = "surface"
+    ) -> bytes:
         if dim not in mapping.DIMENSIONS:
             raise ValueError("dimension must be overworld, nether or the_end")
+        if layer not in mapping.LAYERS:
+            raise ValueError("layer must be surface or biomes")
         if not 0 <= zoom <= mapping.MAX_ZOOM:
             raise ValueError(f"zoom is 0 to {mapping.MAX_ZOOM}")
         if abs(tx) > 200_000 or abs(tz) > 200_000:
             raise ValueError("that tile is outside the world")
         with self._map_lock:
             folder, index = self._map_for(slot_id)
-            key = (folder, dim, zoom, tx, tz)
+            key = (folder, dim, zoom, tx, tz, layer)
             cached = self._tiles.get(key)
-            if cached is None:
-                cached = mapping.tile(
-                    index,
-                    mapping.DIMENSIONS[dim],
-                    zoom,
-                    tx,
-                    tz,
-                    self._predictor,
-                    self._map_seed.get(folder),
+            signature, seed = index._signature, self._map_seed.get(folder)
+            if cached is None and not mapping.true_colour_of(layer, mapping.DIMENSIONS[dim]):
+                image = mapping.tile(
+                    index, mapping.DIMENSIONS[dim], zoom, tx, tz, self._predictor, seed, layer
                 )
-                if len(self._tiles) > 512:  # a few MB of PNGs at most
-                    self._tiles.clear()
-                self._tiles[key] = cached
-        return cached
+                cached = self._keep_tile(key, image)
+        if cached is not None:
+            return cached
+        # A true-colour tile reads block sections and can take a second once the world
+        # moves, so it's drawn outside the map lock: the Biomes tiles the PWA shows under
+        # it meanwhile are never queued behind it. One true-colour draw at a time.
+        with self._surface_lock:
+            image = mapping.tile(
+                index, mapping.DIMENSIONS[dim], zoom, tx, tz, self._predictor, seed, layer
+            )
+        with self._map_lock:
+            if index._signature == signature:  # not drawn from a world since re-read
+                self._keep_tile(key, image)
+        return image
+
+    def _keep_tile(self, key: tuple, image: bytes) -> bytes:
+        if len(self._tiles) > 512:  # a few MB of PNGs at most
+            self._tiles.clear()
+        self._tiles[key] = image
+        return image
 
     def probe_pack(self, install_it: bool) -> dict[str, Any]:
         """Install (or remove) the bundled probe behavior pack in the active world and
@@ -1635,7 +1673,10 @@ def managed_rules(rec: dict[str, Any] | None) -> dict[str, bool | int | str]:
 def pack_config(rec: dict[str, Any] | None) -> str:
     """The console line that tells the jbrain pack the world's settings. JSON-escaped
     by json.dumps, one line, as every scriptevent the wrapper sends."""
-    cfg = {"power_pack_keep": bool((rec or {}).get("power_pack_keep"))}
+    cfg = {
+        "power_pack_keep": bool((rec or {}).get("power_pack_keep")),
+        "power_pack_transport": (rec or {}).get("power_pack_transport") is not False,
+    }
     return f"scriptevent jb:config {json.dumps(cfg)}"
 
 
@@ -1822,6 +1863,7 @@ class Handler(BaseHTTPRequestHandler):
                     int(m.group(2)),
                     int(m.group(3)),
                     int(m.group(4)),
+                    query.get("layer", ["surface"])[0],
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
@@ -1965,6 +2007,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(202, rig.sweep_structures(str(body.get("slot") or "")))
             elif m := _WORLD_POWER_PACK.match(self.path):
                 self._send(200, rig.set_power_pack(m.group(1), body.get("on")))
+            elif m := _WORLD_TRANSPORT.match(self.path):
+                self._send(
+                    200, rig.set_power_pack_transport(m.group(1), body.get("on"))
+                )
             elif self.path == "/probe-pack":
                 self._send(200, rig.probe_pack(bool(body.get("install", True))))
             else:
@@ -2043,6 +2089,7 @@ _SNAP_ACTION = re.compile(r"^/snapshots/([^/]+\.mcworld)/(pin|delete|restore)$")
 _WORLD_ACTION = re.compile(r"^/worlds/(slot\d+)/(load|create|update|reset)$")
 _WORLD_RULES = re.compile(r"^/worlds/(slot\d+)/rules$")
 _WORLD_POWER_PACK = re.compile(r"^/worlds/(slot\d+)/power-pack$")
+_WORLD_TRANSPORT = re.compile(r"^/worlds/(slot\d+)/power-pack-transport$")
 _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 _BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
 _MAP_TILE = re.compile(r"^/map/tile/(overworld|nether|the_end)/(\d)/(-?\d+)/(-?\d+)\.png$")

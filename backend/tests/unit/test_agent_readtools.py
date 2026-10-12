@@ -1796,6 +1796,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "24962528ead4bd2793c17ef132fe5559b2e02c870de178464068e2448cba5e1d",
         ),
+        # Transport on request (§M10): the one acting tool, in game only, the asker only.
+        "mc_transport.tool": (
+            "mc_transport",
+            1,
+            "7081110983693064ea6333a44beafa55126753965e4b496fdf7bee79a06871d3",
+        ),
         "mc_places.tool": (
             "mc_places",
             1,
@@ -1806,16 +1812,34 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "9c9c361ada06950f833ffd1248dfc2da387830bd96796118d8aab1848c1a0b9c",
         ),
+        # Wormhole gates (§M12): opens or re-aims the player's own gate at a saved place.
+        "mc_wormhole_aim.tool": (
+            "mc_wormhole_aim",
+            1,
+            "eda4dbb595d6db1ee749991fef5cb2f3a72accbe51b4180912e778a78487bde5",
+        ),
+        # In game only: the asker's held Replicator, from 8 stacks they carry (§M15).
+        "mc_replicator_program.tool": (
+            "mc_replicator_program",
+            1,
+            "6406cfd569f7751ba799020b9a934833ed5808eca95d3c5b48cfc28150a68685",
+        ),
         "mc_goals.tool": (
             "mc_goals",
             1,
             "363a6a9fcc0a832b00a82f9aa5aa44747f814d44cc12c9d19dabb0290f8b4ab6",
         ),
         # v3: in game, one of the player's daily deep scans (§M17).
+        # v4: `dimension`, so Nether and End structures and biomes can be found (§M22).
         "mc_locate.tool": (
             "mc_locate",
-            3,
-            "5a161a7e726ac89e9badff28db91fd3fe1121c4d4cb4cc262d79c8c4b601e42e",
+            4,
+            "a7307f55955b2cafcc6b4611653099702c5bc047ee20c78253ba8d4af514dac6",
+        ),
+        "mc_find_mob.tool": (
+            "mc_find_mob",
+            1,
+            "d7c0b6b987cc9165aaad2dd1a70c1e8a29202cecce205d33b7b490c087b24a84",
         ),
         # v2: in game, one of the player's daily deep scans (§M17).
         "mc_nearby.tool": (

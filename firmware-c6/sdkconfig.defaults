@@ -1,0 +1,70 @@
+# Baseline config for Jeff's jpanel, the bring-up image. Anything not needed to get on Wi-Fi
+# and take an OTA is deliberately absent — see README "What this first image is for".
+CONFIG_IDF_TARGET="esp32c6"
+
+# 16 MB NOR flash, DIO, 80 MHz. THE BOOTLOADER HEADER IS THE ONLY PLACE THESE LIVE: the box's
+# flasher writes C6 images with `--flash_size keep --flash_mode keep --flash_freq keep`, so the
+# bytes in dist/ are the bytes that land on the chip, header included. DIO because it is the
+# mode every 16 MB part answers to; nothing in this image is flash-bandwidth bound.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# The whole point of this firmware. Without it a bad image is permanent and the fix is a cable.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Both trust paths compiled in: which one a panel needs is decided at flash time by whether
+# the box handed over its own Caddy root (`ca` in NVS) or is reached at a public hostname.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+
+# THE CONSOLE IS THE NATIVE USB, AND ONLY THE NATIVE USB. On the C6, UART0's default pins are
+# GPIO16/17 — wired on this board to the QMI8658's INT1/INT2 outputs. A UART console would
+# drive TX into an IMU interrupt line. USB-Serial/JTAG is also the only port the USB-C
+# connector reaches. It cannot be relied on in the field (a charger has no host); telemetry
+# is the channel that can.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# A panic's stack dump goes to the `coredump` partition and survives the reset, because the
+# console that would have printed it is not attached. Reported as `dump=1` in telemetry; a
+# later image reads it out to the box.
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+
+# The OTA check compares the image's own version (from version.txt) against the manifest, so a
+# hand-edited version string would loop or stall the updates.
+CONFIG_APP_PROJECT_VER_FROM_CONFIG=n
+
+# dist/ IS the release and CI diffs it against a fresh build, which only works if the same
+# source builds the same bytes. Without this ESP-IDF stamps the date and absolute paths in.
+CONFIG_APP_REPRODUCIBLE_BUILD=y
+
+# LVGL, matching sim/lv_conf.h wherever the picture depends on it: RGB565, Montserrat 14-30 and
+# 48 with 20 as the default, no theme (ui_kit styles every widget from its own tokens). Its heap
+# is a static 64 KB pool rather than malloc, so a widget tree can never fragment the heap a TLS
+# handshake needs; the sim's busiest state peaks at 33 KB, with 64-bit pointers.
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_USE_BUILTIN_MALLOC=y
+CONFIG_LV_MEM_SIZE_KILOBYTES=64
+CONFIG_LV_USE_THEME_DEFAULT=n
+CONFIG_LV_USE_THEME_SIMPLE=n
+CONFIG_LV_BUILD_EXAMPLES=n
+CONFIG_LV_FONT_MONTSERRAT_14=y
+CONFIG_LV_FONT_MONTSERRAT_16=y
+CONFIG_LV_FONT_MONTSERRAT_18=y
+CONFIG_LV_FONT_MONTSERRAT_20=y
+CONFIG_LV_FONT_MONTSERRAT_22=y
+CONFIG_LV_FONT_MONTSERRAT_24=y
+CONFIG_LV_FONT_MONTSERRAT_26=y
+CONFIG_LV_FONT_MONTSERRAT_28=y
+CONFIG_LV_FONT_MONTSERRAT_30=y
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_20=y
+# A failed LVGL assert panics rather than spinning (lv_port/lv_assert_trap.h).
+CONFIG_LV_ASSERT_HANDLER_INCLUDE="lv_assert_trap.h"

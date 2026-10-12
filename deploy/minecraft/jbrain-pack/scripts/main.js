@@ -5,9 +5,15 @@
 // canon gives them. Stable @minecraft/server only. The rules themselves are in rules.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, parseConfig,
-  parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
-  xpToDrop } from "./rules.js";
+import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, packToBurn,
+  parseConfig, parseFind, parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus,
+  unlocksFrom, xpToDrop } from "./rules.js";
+import { initWormholes } from "./wormhole.js";
+import { initTransport } from "./transport.js";
+import { initReplicator } from "./replicator.js";
+import { initBeacon } from "./beacon.js";
+
+initBeacon(world, system);
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",
@@ -309,6 +315,27 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     } catch (e) {
       say(`waypoint refused: ${e}`);
     }
+  } else if (ev.id === "jb:find") {
+    // Dave's nearest-mob search: only the game knows where mobs are, and only near players.
+    try {
+      const q = parseFind(ev.message);
+      const who = q.player.toLowerCase();
+      const p = world.getAllPlayers().find((pl) => pl.name.toLowerCase() === who);
+      if (!p) {
+        say(`find refused: ${q.player} isn't online`);
+        return;
+      }
+      const [mob] = p.dimension.getEntities({
+        type: q.type,
+        location: p.location,
+        closest: 1,
+        maxDistance: q.max,
+      });
+      const here = { dim: p.dimension.id, x: p.location.x, z: p.location.z };
+      say(findLine(q, p.name, here, mob?.location));
+    } catch (e) {
+      say(`find refused: ${e}`);
+    }
   } else if (ev.id === "jb:config") {
     try {
       const cfg = parseConfig(ev.message);
@@ -319,6 +346,9 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
     }
   }
 });
+
+initTransport({ carried, tricorderOn, say });
+initWormholes();
 
 // --- the Tricorder's arrow, about four times a second -----------------------------------
 
@@ -416,10 +446,18 @@ const askDave = (player, text) => {
   player.sendMessage("§7Dave is thinking…");
 };
 
+// Bedrock also answers each name without its namespace, so players type /dave, /d or /ai;
+// the short ones are the owner's ask (2026-10-12), and all share one handler.
+const DAVE_COMMANDS = ["jb:dave", "jb:d", "jb:ai"];
+
 system.beforeEvents.startup.subscribe((ev) => {
-  ev.customCommandRegistry.registerCommand(
+  for (const name of DAVE_COMMANDS) registerDave(ev.customCommandRegistry, name);
+});
+
+const registerDave = (registry, name) => {
+  registry.registerCommand(
     {
-      name: "jb:dave",
+      name,
       description: "Ask Dave",
       permissionLevel: CommandPermissionLevel.Any,
       optionalParameters: Array.from({ length: WORDS }, (_, i) => ({
@@ -436,7 +474,7 @@ system.beforeEvents.startup.subscribe((ev) => {
       if (!text) {
         return {
           status: CustomCommandStatus.Success,
-          message: 'Ask Dave something, like: /jb:dave point me home (use "quotes" for commas or numbers)',
+          message: 'Ask Dave something, like: /dave point me home (use "quotes" for commas or numbers)',
         };
       }
       // A command callback runs read-only; reading the inventory and the spawn point and
@@ -445,4 +483,6 @@ system.beforeEvents.startup.subscribe((ev) => {
       return { status: CustomCommandStatus.Success };
     },
   );
-});
+};
+
+initReplicator();

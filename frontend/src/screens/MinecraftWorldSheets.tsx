@@ -292,6 +292,7 @@ function NewWorldSheet({ slot, onClose }: { slot: string; onClose: () => void })
             </span>
           </summary>
           <div className="mc-rules-in">
+            {/* No `keep`: keep inventory is Off · On here — Power Pack is a saved world's switch. */}
             <RulesEditor
               values={values}
               defaults={DEFAULT_RULES}

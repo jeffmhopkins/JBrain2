@@ -525,7 +525,16 @@ export interface MinecraftSlot {
   /** Made over the debug API to test the crash site; cleared once the owner resets,
    *  imports or restores over it. */
   test?: boolean;
+  /** The world's "Power Pack keeps inventory" switch (plan §M10); absent from older sidecars. */
+  power_pack_keep?: boolean;
+  /** The owner's saved rule choices, re-applied at every load. While the Power Pack switch is
+   *  on, `keepInventory` here is the plain choice it hands back when turned off. */
+  rules?: Record<string, MinecraftRuleValue>;
 }
+
+/** PUT /worlds/{slot}/power-pack: the slot as saved, and whether it reached the running
+ *  world ("now") or waits for a start or load ("next load"). */
+export type MinecraftPowerPackResult = MinecraftSlot & { applies: "now" | "next load" };
 
 export type MinecraftWreck = "armed" | "done" | "skipped" | null;
 
@@ -582,6 +591,18 @@ export interface MinecraftMapPlayer {
   z: number;
   at: number;
   online: boolean;
+  /** Where Dave has their Tricorder pointed, until they reach it; null for none. */
+  target?: MinecraftTricorderTarget | null;
+}
+
+/** A Tricorder target: a block (y when it matters, like an ore) and Dave's label for it. */
+export interface MinecraftTricorderTarget {
+  dim: MinecraftDim;
+  x: number;
+  y: number | null;
+  z: number;
+  label: string;
+  set_at: number;
 }
 
 export interface MinecraftMapPlayers {
@@ -694,15 +715,88 @@ export interface MinecraftTimeline {
 
 export type MinecraftTimelinePart = "trails" | "events" | "sessions" | "explored";
 
-/** A biome-map tile: built by the client, never authored by a model (DESIGN "minecraft_map"). */
+/** A map tile of one base layer: built by the client, never authored by a model (DESIGN
+ *  "minecraft_map"). */
 export function minecraftTileUrl(
   slot: string,
   dim: MinecraftDim,
   zoom: number,
   tx: number,
   tz: number,
+  layer: "surface" | "biomes" = "surface",
 ): string {
-  return `/api/minecraft/map/tile/${dim}/${zoom}/${tx}/${tz}.png?slot=${encodeURIComponent(slot)}`;
+  return `/api/minecraft/map/tile/${dim}/${zoom}/${tx}/${tz}.png?slot=${encodeURIComponent(slot)}&layer=${layer}`;
+}
+
+/** A map share link: a no-login view of one world's map, opened on one player, until
+ *  revoked. The token itself is shown only once, at mint. */
+export interface MinecraftMapShare {
+  id: string;
+  slot: string;
+  xuid: string;
+  gamertag: string;
+  created_at: number;
+  last_viewed_at: number | null;
+  view_count: number;
+}
+
+export interface MinecraftMapShareToken extends MinecraftMapShare {
+  token: string;
+}
+
+/** What a shared map opens with (GET /api/mc-share/{token}). */
+export interface MinecraftShareView {
+  slot: string;
+  name: string | null;
+  active: boolean;
+  last_played: number | null;
+  focus: { xuid: string; gamertag: string };
+}
+
+/** A shared map's tile: the token, never a slot, picks the world. */
+export function mcShareTileUrl(
+  token: string,
+  dim: MinecraftDim,
+  zoom: number,
+  tx: number,
+  tz: number,
+  layer: "surface" | "biomes" = "surface",
+): string {
+  return `${mcShareBase(token)}/map/tile/${dim}/${zoom}/${tx}/${tz}.png?layer=${layer}`;
+}
+
+function mcShareBase(token: string): string {
+  return `/api/mc-share/${encodeURIComponent(token)}`;
+}
+
+type TimelineOpts = {
+  include?: MinecraftTimelinePart[];
+  players?: string[];
+  dim?: MinecraftDim;
+};
+
+function timelineQuery(from: number, to: number, opts: TimelineOpts): URLSearchParams {
+  const q = new URLSearchParams({ from: String(Math.floor(from)), to: String(Math.ceil(to)) });
+  if (opts.include) q.set("include", opts.include.join(","));
+  if (opts.players?.length) q.set("players", opts.players.join(","));
+  if (opts.dim) q.set("dim", opts.dim);
+  return q;
+}
+
+async function timelineBody(response: Response): Promise<MinecraftTimeline> {
+  const body = (await response.json()) as MinecraftTimeline;
+  if (!body || typeof body.from !== "number") {
+    throw new ApiError(502, "Unexpected response from the Minecraft timeline.");
+  }
+  return body;
+}
+
+async function playersBody(response: Response): Promise<MinecraftMapPlayers> {
+  const body = (await response.json()) as MinecraftMapPlayers;
+  if (!body || !Array.isArray(body.players)) {
+    throw new ApiError(502, "Unexpected response from the Minecraft map's players.");
+  }
+  return body;
 }
 
 /** PATCH /worlds/{slot}: the slot, plus when a change takes effect. */
@@ -718,6 +812,9 @@ export interface MinecraftRules {
   rules: Record<string, MinecraftRuleValue>;
   defaults: Record<string, MinecraftRuleValue>;
   pending: string[];
+  /** Rules a box feature holds, e.g. `{keepInventory: true}` while the Power Pack switch is
+   *  on; a write to one is refused. Absent from older sidecars. */
+  managed?: Record<string, MinecraftRuleValue>;
 }
 
 export interface MinecraftNewWorld {
@@ -3356,6 +3453,16 @@ export interface EndpointFirmware {
   url: string;
 }
 
+/** A kind of panel the box can flash. The twins' panels are `s3-amoled-18`; the owner's own
+ *  is `c6-amoled-216`. `ready` is "every image is on the box", not a checksum. */
+export interface EndpointBoard {
+  id: string;
+  label: string;
+  chip: string;
+  version: string | null;
+  ready: boolean;
+}
+
 /** What a unit IS, chosen at flash time. A `jpet` is one of the twins' panels: it joins the
  *  roster and can exchange voice messages with its sibling. A `display` is an endpoint the
  *  owner operates — same OTA, settings and telemetry — that no pet can reach. */
@@ -3371,6 +3478,9 @@ export interface FlashRequest {
   erase?: boolean;
   /** Keep this network on the box so a panel can be re-flashed without a phone. */
   remember?: boolean;
+  /** Which kind of panel is on the cable. Absent = the twins' S3, which is what a box that
+   *  predates the second board flashes. */
+  board?: string;
 }
 
 /** One jpanel message, owner-facing (docs/plans/JPANEL_PLAN.md §3b).
@@ -4948,12 +5058,9 @@ export const api = {
   },
 
   async minecraftMapPlayers(slot: string): Promise<MinecraftMapPlayers> {
-    const response = await request(`/api/minecraft/map/players?slot=${encodeURIComponent(slot)}`);
-    const body = (await response.json()) as MinecraftMapPlayers;
-    if (!body || !Array.isArray(body.players)) {
-      throw new ApiError(502, "Unexpected response from the Minecraft map's players.");
-    }
-    return body;
+    return playersBody(
+      await request(`/api/minecraft/map/players?slot=${encodeURIComponent(slot)}`),
+    );
   },
 
   async minecraftMapStructures(slot: string, dim: MinecraftDim): Promise<MinecraftMapStructures> {
@@ -4974,26 +5081,66 @@ export const api = {
     slot: string,
     from: number,
     to: number,
-    opts: {
-      include?: MinecraftTimelinePart[];
-      players?: string[];
-      dim?: MinecraftDim;
-    } = {},
+    opts: TimelineOpts = {},
   ): Promise<MinecraftTimeline> {
-    const q = new URLSearchParams({
-      slot,
-      from: String(Math.floor(from)),
-      to: String(Math.ceil(to)),
+    const q = timelineQuery(from, to, opts);
+    q.set("slot", slot);
+    return timelineBody(await request(`/api/minecraft/timeline?${q}`));
+  },
+
+  async minecraftMapShares(): Promise<MinecraftMapShare[]> {
+    return (await request("/api/minecraft/shares")).json();
+  },
+
+  async minecraftMintMapShare(slot: string, xuid: string): Promise<MinecraftMapShareToken> {
+    const response = await request("/api/minecraft/shares", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ slot, xuid }),
     });
-    if (opts.include) q.set("include", opts.include.join(","));
-    if (opts.players?.length) q.set("players", opts.players.join(","));
-    if (opts.dim) q.set("dim", opts.dim);
-    const response = await request(`/api/minecraft/timeline?${q}`);
-    const body = (await response.json()) as MinecraftTimeline;
-    if (!body || typeof body.from !== "number") {
-      throw new ApiError(502, "Unexpected response from the Minecraft timeline.");
-    }
-    return body;
+    return response.json();
+  },
+
+  async minecraftRevokeMapShare(id: string): Promise<void> {
+    await request(`/api/minecraft/shares/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // The public map share: every read is keyed by the token, which picks the world.
+  async mcShareView(token: string): Promise<MinecraftShareView> {
+    return (await request(mcShareBase(token))).json();
+  },
+
+  async mcShareMapInfo(token: string, dim: MinecraftDim): Promise<MinecraftMapInfo> {
+    return (await request(`${mcShareBase(token)}/map/info?${new URLSearchParams({ dim })}`)).json();
+  },
+
+  async mcShareMapPoint(
+    token: string,
+    dim: MinecraftDim,
+    x: number,
+    z: number,
+  ): Promise<MinecraftMapPoint> {
+    const q = new URLSearchParams({ dim, x: String(x), z: String(z) });
+    return (await request(`${mcShareBase(token)}/map/point?${q}`)).json();
+  },
+
+  async mcShareMapPlayers(token: string): Promise<MinecraftMapPlayers> {
+    return playersBody(await request(`${mcShareBase(token)}/map/players`));
+  },
+
+  async mcShareMapStructures(token: string, dim: MinecraftDim): Promise<MinecraftMapStructures> {
+    const q = new URLSearchParams({ dim });
+    return (await request(`${mcShareBase(token)}/map/structures?${q}`)).json();
+  },
+
+  async mcShareTimeline(
+    token: string,
+    from: number,
+    to: number,
+    opts: TimelineOpts = {},
+  ): Promise<MinecraftTimeline> {
+    const q = timelineQuery(from, to, opts);
+    return timelineBody(await request(`${mcShareBase(token)}/timeline?${q}`));
   },
 
   async minecraftNewSeed(): Promise<string> {
@@ -5114,6 +5261,14 @@ export const api = {
   ): Promise<MinecraftRules> {
     const response = await request(`/api/minecraft/worlds/${slot}/rules`, jsonInit("PUT", { set }));
     return (await response.json()) as MinecraftRules;
+  },
+
+  async minecraftSetPowerPack(slot: string, on: boolean): Promise<MinecraftPowerPackResult> {
+    const response = await request(
+      `/api/minecraft/worlds/${slot}/power-pack`,
+      jsonInit("PUT", { on }),
+    );
+    return (await response.json()) as MinecraftPowerPackResult;
   },
 
   async minecraftBackups(slot?: string): Promise<MinecraftBackup[]> {
@@ -6430,6 +6585,18 @@ export const api = {
   // Which firmware this box would flash. There is only ever one — the images committed in
   // `firmware/dist/`, which arrive with every Ops -> Update like the rest of the box — so
   // there is no "installed vs available" to reconcile and nothing to sync.
+  // Empty on a box that predates the board list (404), so the Flash tab falls back to the
+  // one board it always flashed rather than refusing to flash at all.
+  async getEndpointBoards(): Promise<EndpointBoard[]> {
+    try {
+      const response = await request("/api/endpoint/boards");
+      return (await response.json()) as EndpointBoard[];
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) return [];
+      throw e;
+    }
+  },
+
   async getEndpointFirmware(): Promise<EndpointFirmware | null> {
     // `request` throws on any non-2xx, so an absent firmware has to be caught rather than
     // read off the response. It is a real state rather than a failure (a checkout with no

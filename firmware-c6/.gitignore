@@ -1,0 +1,10 @@
+# The root .gitignore drops every `dist/`; this one is shipped product (README "Building").
+!dist/
+# Generated from sdkconfig.defaults; committing it would freeze whatever the last build negotiated.
+build/
+managed_components/
+sdkconfig
+sdkconfig.old
+# The host suite binary and the sim's build and renders (sim/render.sh defaults).
+host/run_tests
+sim/out/

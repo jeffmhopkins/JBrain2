@@ -1,0 +1,14 @@
+{
+  "format_version": "1.20.10",
+  "minecraft:recipe_shaped": {
+    "description": { "identifier": "jbrain:no_spawn_beacon" },
+    "tags": ["crafting_table"],
+    "pattern": ["SSS", "SPS", "SSS"],
+    "key": {
+      "S": { "item": "minecraft:echo_shard" },
+      "P": { "item": "jbrain:power_pack" }
+    },
+    "unlock": [{ "item": "minecraft:echo_shard" }],
+    "result": { "item": "jbrain:no_spawn_beacon", "count": 1 }
+  }
+}

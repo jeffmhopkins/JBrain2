@@ -4,7 +4,7 @@ Split out from `server.py` because it is the half with no device in it: given a
 sysfs tree it is pure string work, so it is testable on a machine with nothing
 plugged in — which is every machine this repo's CI runs on.
 
-The ESP32-S3 presents its NATIVE USB (a USB-Serial-JTAG peripheral inside the chip,
+The ESP32-S3 (and the C6) presents its NATIVE USB (a USB-Serial-JTAG peripheral inside the chip,
 not a bridge chip) so it enumerates as a kernel CDC-ACM tty: `/dev/ttyACM*`, NOT the
 `/dev/ttyUSB*` a CP210x or CH340 board would give you. That distinction is why this
 sidecar needs `/dev` and the tty cgroup rules rather than the `/dev/bus/usb` mapping
@@ -17,11 +17,14 @@ from __future__ import annotations
 import os
 from dataclasses import asdict, dataclass
 
-# Espressif's USB vendor id. The S3's built-in USB-Serial-JTAG is 1001; other Espressif
-# USB devices exist, so the vendor alone is what marks a port "probably the panel" and
-# the product id only sharpens the label.
+# Espressif's USB vendor id. The built-in USB-Serial-JTAG is 1001; other Espressif USB
+# devices exist, so the vendor alone is what marks a port "probably the panel" and the
+# product id only sharpens the label. 1001 is the SAME on the S3 and the C6 — it names
+# the peripheral, not the chip — so the label says both rather than claim one it cannot
+# know. Which board it is comes from the owner's pick, and esptool's `--chip` refuses a
+# mismatch before writing anything.
 ESPRESSIF_VID = "303a"
-S3_USB_SERIAL_JTAG_PID = "1001"
+USB_SERIAL_JTAG_PID = "1001"
 
 # The usual USB-UART bridges. Not panels, but worth naming in the picker so an owner
 # looking at three ports can tell which is the Arduino they forgot about.
@@ -80,8 +83,8 @@ def _usb_attrs(sysfs: str, name: str) -> tuple[str, str, str, str]:
 
 def _label(vid: str, pid: str, product: str, manufacturer: str) -> str:
     if vid == ESPRESSIF_VID:
-        if pid == S3_USB_SERIAL_JTAG_PID:
-            return "Espressif ESP32-S3 (native USB)"
+        if pid == USB_SERIAL_JTAG_PID:
+            return "Espressif USB-Serial/JTAG (ESP32-S3 or ESP32-C6)"
         return f"Espressif device {pid or '????'}"
     bridge = KNOWN_BRIDGES.get(vid)
     if bridge:

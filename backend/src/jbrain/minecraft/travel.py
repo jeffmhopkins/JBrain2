@@ -13,6 +13,7 @@ a new boot resets the cursor, and replaying a sample writes nothing twice.
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 from datetime import UTC, datetime
 from typing import Any
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.minecraft import client as mc
+from jbrain.minecraft import targets
 from jbrain.minecraft.sessions import player_key
 
 log = structlog.get_logger(__name__)
@@ -87,16 +89,35 @@ class TrackDrain:
             got = await mc.call(self._settings, "GET", "/track", params={"after": 0})
         samples = list(got.get("samples", []))
         stored = 0
+        arrivals: list[str] = []
         async with scoped_session(self._maker, _OWNER) as s:
             for sample in samples:
-                stored += await self.apply(s, boot, sample)
+                stored += await self.apply(s, boot, sample, arrivals)
         if new_boot:
             self.boot_id, self.cursor = boot, 0
         self.cursor = max([self.cursor, *(int(t["id"]) for t in samples)])
+        for gamertag in arrivals:
+            await self._clear_tricorder(gamertag)
         return stored
 
+    async def _clear_tricorder(self, gamertag: str) -> None:
+        """The player reached their target: point their Tricorder back at spawn, as Dave's
+        own clear does. Best effort — the map has already dropped the target."""
+        event = json.dumps({"player": gamertag, "clear": True})
+        try:
+            await mc.call(
+                self._settings,
+                "POST",
+                "/command",
+                json={"command": f"scriptevent jb:waypoint {event}", "wait_s": 3.0},
+            )
+        except HTTPException as exc:
+            log.warning("minecraft.tricorder_clear_failed", gamertag=gamertag, error=exc.detail)
+
     @staticmethod
-    async def apply(s: AsyncSession, boot: str, t: dict[str, Any]) -> int:
+    async def apply(
+        s: AsyncSession, boot: str, t: dict[str, Any], arrivals: list[str] | None = None
+    ) -> int:
         params = {
             "world": str(t.get("world") or "world"),
             "xuid": player_key(str(t.get("xuid", "")), str(t.get("name", ""))),
@@ -124,6 +145,18 @@ class TrackDrain:
                 "r": REVEAL_CHUNKS,
             },
         )
+        reached = await targets.arrived(
+            s,
+            world=params["world"],
+            gamertag=params["name"],
+            dim=params["dim"],
+            x=params["x"],
+            y=params["y"],
+            z=params["z"],
+            at=params["at"],
+        )
+        if reached is not None and arrivals is not None:
+            arrivals.append(reached)
         return 1
 
 
@@ -175,12 +208,12 @@ LATEST_SQL = text(
 
 
 async def latest_positions(
-    maker: async_sessionmaker[AsyncSession], world: str
+    maker: async_sessionmaker[AsyncSession], world: str, ctx: SessionContext = _OWNER
 ) -> list[dict[str, Any]]:
     """Each player's newest sample in one world folder: where they are now if they are
     on (a sample is kept only once they move, so standing still keeps the last one), or
-    where they logged off."""
-    async with scoped_session(maker, _OWNER) as s:
+    where they logged off. A map share reads it under its own pinned `ctx`."""
+    async with scoped_session(maker, ctx) as s:
         rows = (await s.execute(LATEST_SQL, {"world": world})).mappings().all()
     return [
         {

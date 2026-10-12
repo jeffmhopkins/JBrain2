@@ -1,0 +1,5 @@
+dependencies:
+  # The driver every Waveshare source drives this board's CO5300 with (HARDWARE.md headline 1):
+  # it frames each command for QSPI as (0x02<<24)|(reg<<8) and takes a vendor init table.
+  # Espressif's own release, exact.
+  espressif/esp_lcd_sh8601: "==2.0.1"

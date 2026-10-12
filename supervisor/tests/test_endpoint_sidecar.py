@@ -10,9 +10,12 @@ has no cable attached to it.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 DEPLOY = Path(__file__).resolve().parents[2] / "deploy"
 
@@ -32,6 +35,7 @@ def _load(name: str, filename: str):
 ports = _load("endpoint_ports", "ports.py")
 flash = _load("endpoint_flash", "flash.py")
 monitor = _load("endpoint_monitor", "monitor.py")
+server = _load("endpoint_server", "server.py")
 
 
 def _fake_tree(
@@ -67,6 +71,16 @@ class TestPortScan:
         assert found.device.endswith("ttyACM0")
         assert found.is_espressif
         assert "ESP32-S3" in found.label
+
+    def test_the_label_does_not_claim_a_chip_the_ids_cannot_tell_apart(
+        self, tmp_path: Path
+    ) -> None:
+        """The S3 and the C6 both enumerate as 303a:1001 — the id names the USB
+        peripheral, not the chip. A label naming only one would be wrong for the other
+        board on the same port."""
+        sysfs, dev = _fake_tree(tmp_path, "ttyACM0", "303a", "1001")
+        (found,) = ports.scan(sysfs, dev)
+        assert "ESP32-C6" in found.label
 
     def test_a_serial_bridge_is_named_but_not_mistaken_for_a_panel(
         self, tmp_path: Path
@@ -154,6 +168,72 @@ class TestEsptoolArgv:
         argv = flash.esptool_argv("/dev/ttyACM0", [("0x0", "boot.bin")])
         assert "&&" not in argv
         assert "erase_flash" not in argv
+
+
+class TestChip:
+    """Which chip esptool is told it is writing. Two boards share a USB id, so this is
+    the line that stops an S3 bootloader landing on a C6."""
+
+    def test_the_default_is_the_s3_so_an_older_api_flashes_what_it_always_did(
+        self,
+    ) -> None:
+        argv = flash.esptool_argv("/dev/ttyACM0", [("0x0", "boot.bin")])
+        assert argv[argv.index("--chip") + 1] == "esp32s3"
+
+    def test_the_c6_is_named_and_keeps_the_geometry_its_build_wrote(self) -> None:
+        """Nothing here knows the C6 board's flash part, so the bootloader header the
+        firmware-c6 build produced is left alone rather than overwritten by a guess."""
+        argv = flash.esptool_argv("/dev/ttyACM0", [("0x0", "boot.bin")], "esp32c6")
+        assert argv[argv.index("--chip") + 1] == "esp32c6"
+        for flag in ("--flash_size", "--flash_mode", "--flash_freq"):
+            assert argv[argv.index(flag) + 1] == "keep"
+
+    def test_an_unknown_chip_never_reaches_esptool(self) -> None:
+        with pytest.raises(flash.FlashError):
+            flash.esptool_argv("/dev/ttyACM0", [("0x0", "boot.bin")], "esp8266")
+
+    def test_an_unknown_chip_refuses_before_anything_is_staged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The staging directory holds the Wi-Fi password; a refusal must not create it,
+        and must not reach the erase that would wipe a board for nothing."""
+        made: list[str] = []
+
+        def mkdtemp(**_: object) -> str:
+            made.append("staged")
+            return ""
+
+        monkeypatch.setattr(flash.tempfile, "mkdtemp", mkdtemp)
+        gen = flash.flash(
+            "/dev/ttyACM0", [], {}, "0x9000", "0x6000", erase=True, chip="?"
+        )
+        with pytest.raises(flash.FlashError):
+            next(gen)
+        assert not made
+
+
+class TestFlashRequest:
+    """`server._request`: what the api may ask for, checked before a device opens."""
+
+    @pytest.fixture(autouse=True)
+    def _one_port(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        port = server.ports.Port("/dev/ttyACM0", "303a", "1001", "", "", True, "x")
+        monkeypatch.setattr(server.ports, "scan", lambda: [port])
+
+    def _body(self, **extra: object) -> dict[str, object]:
+        img = {"offset": "0x0", "b64": base64.b64encode(b"boot").decode()}
+        return {"port": "/dev/ttyACM0", "images": [img], **extra}
+
+    def test_a_request_with_no_chip_is_the_s3(self) -> None:
+        """Every api before the second board sent no chip, and meant the S3."""
+        assert server._request(self._body())[-1] == "esp32s3"
+
+    def test_the_chip_the_api_names_is_the_one_used(self) -> None:
+        assert server._request(self._body(chip="esp32c6"))[-1] == "esp32c6"
+
+    def test_an_unknown_chip_is_refused_as_a_bad_request(self) -> None:
+        with pytest.raises(ValueError, match="unknown chip"):
+            server._request(self._body(chip="esp32"))
 
 
 class TestRecoveryNet:

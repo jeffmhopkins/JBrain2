@@ -306,6 +306,9 @@ class Settings(BaseSettings):
     # `version.txt` plus the built images in `dist/`, so a flash needs no network and no
     # credential, and `Ops -> Update` is what ships a new firmware (CLAUDE.md #10).
     firmware_dir: str = "/firmware"
+    # The same, for the second board (`firmware-c6/`, the ESP32-C6 panel). One setting
+    # per board rather than a parent mount: see `jbrain.api.endpoint.BOARDS`.
+    firmware_c6_dir: str = "/firmware-c6"
     # The box's own LAN address (`https://jbrain.local`), already set on the host as
     # JBRAIN_LAN_ADDR for Caddy's local HTTPS site — declared here so the api can read the
     # same value. A room endpoint sits on this LAN, so this is the address it should be

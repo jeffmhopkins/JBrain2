@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Installs the ESP-IDF toolchain for the room endpoint firmware (firmware/).
+# Installs the ESP-IDF toolchain for the panel firmware (firmware/, and firmware-c6/ with
+# IDF_TARGETS=esp32c6).
 #
 # Opt-in and separate from scripts/dev-setup.sh on purpose: this is ~3.5 GB and ~10 minutes
 # for a package most sessions never touch, and CI (.github/workflows/firmware.yml) is the
@@ -26,8 +27,12 @@ else
     https://github.com/espressif/esp-idf.git "$IDF_DIR"
 fi
 
-# esp32s3 only: the other targets' toolchains are another gigabyte for hardware we do not own.
-say "installing the xtensa-esp32s3 toolchain"
-"$IDF_DIR/install.sh" esp32s3
+# Only the targets asked for: each toolchain is another gigabyte. The default is the twins'
+# S3 panels (firmware/); IDF_TARGETS=esp32c6 adds the RISC-V toolchain for Jeff's C6 jpanel
+# (firmware-c6/), and IDF_TARGETS=esp32s3,esp32c6 installs both into the same checkout.
+IDF_TARGETS="${IDF_TARGETS:-esp32s3}"
+say "installing the toolchain(s) for $IDF_TARGETS"
+"$IDF_DIR/install.sh" "$IDF_TARGETS"
 
 say "done — now: . $IDF_DIR/export.sh && (cd firmware && idf.py build)"
+say "        or: . $IDF_DIR/export.sh && (cd firmware-c6 && idf.py build)"

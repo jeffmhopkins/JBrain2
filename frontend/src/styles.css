@@ -31700,6 +31700,22 @@ button.wf-sigpill {
   color: var(--text);
 }
 
+.mc-seg button[aria-busy="true"] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.mc-seg button[aria-busy="true"] .mc-spin {
+  color: var(--warn-text);
+}
+
+.mc-seg button[aria-disabled="true"] {
+  cursor: default;
+}
+
 @media (max-width: 360px) {
   .mc-seg.four {
     display: grid;
@@ -31994,6 +32010,41 @@ button.wf-sigpill {
 .mc-rule.choice .mc-sel,
 .mc-rule.choice .mc-rstatic {
   flex: 1;
+}
+
+/* Keep inventory: the segments take the row's full width, the meaning and help under them. */
+.mc-rule.mc-keep {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.mc-keep-now {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.mc-keep-now .mc-spin {
+  color: var(--warn-text);
+}
+
+.mc-keep-err {
+  margin-bottom: 0;
+}
+
+.mc-keep-help {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  font-size: var(--fs-micro);
+  line-height: 1.45;
+  color: var(--text-2);
 }
 
 .mc-rl {
@@ -32510,6 +32561,182 @@ button.wf-sigpill {
 
 .mc-map-world svg {
   color: var(--text-2);
+}
+
+/* The map share (DESIGN.md "Minecraft map share"): the owner's Share sheet, and the
+   view-only chrome a /mc/s/{token} visitor gets in place of the back button. Amber is the
+   system's read-only colour. */
+/* The selected player's Tricorder target (DESIGN.md "Minecraft map"): one line on the
+   player card; the marker and dashed bearing are drawn on the canvas. */
+.mc-map-det-tri {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.mc-map-det-tri svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.mc-map-det-tri b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+span.mc-map-world {
+  cursor: default;
+}
+
+.mc-map-viewonly {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  color: var(--warn-text);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mc-share {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.mc-share-head {
+  padding: 0;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.mc-share-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.mc-share-pick legend {
+  margin-bottom: 8px;
+}
+
+.mc-share-player,
+.mc-share-link {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+}
+
+.mc-share-player {
+  cursor: pointer;
+}
+
+.mc-share-player:has(input:checked) {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+}
+
+.mc-share-player input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--steel);
+}
+
+.mc-share-player .mc-navtx,
+.mc-share-link .mc-navtx {
+  flex: 1;
+  min-width: 0;
+}
+
+.mc-share-ready,
+.mc-share-links {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mc-share-url {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: var(--fs-micro);
+}
+
+.mc-share-problem {
+  color: var(--danger-text);
+}
+
+.mc-share-msg {
+  min-height: 100dvh;
+  box-sizing: border-box;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.mc-share-msg h1 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 500;
+}
+
+.mc-share-msg .mc-note {
+  max-width: 320px;
+}
+
+.mc-share-msg-icon {
+  width: 64px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--amber-tint);
+  color: var(--warn-text);
+}
+
+.mc-share-mark {
+  margin-top: 24px;
+  font-size: var(--fs-title);
+  font-weight: 700;
+}
+
+.mc-share-mark span {
+  color: var(--steel);
 }
 
 .mc-map-tabs {

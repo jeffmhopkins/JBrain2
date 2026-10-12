@@ -30,9 +30,23 @@ from collections.abc import Iterator
 # The NVS namespace the firmware opens (firmware/main/cfg.c).
 NAMESPACE = "jbrain"
 
-# esptool's own default for the S3's native USB. Slower than a bridge could go, and not
+# esptool's own default for the native USB. Slower than a bridge could go, and not
 # worth tuning: the whole image is ~900 KB and the flash takes seconds either way.
 BAUD = 460800
+
+# The chips a panel can be, and the flash geometry each is written with. An allowlist
+# rather than a pass-through because the api names the chip and this process runs as
+# root with /dev mounted: an unknown value is refused before esptool ever sees it.
+#
+# The S3 values are firmware/partitions.csv's 16 MB table, asserted by the tests. The C6
+# is "keep" on all three — esptool then leaves the bootloader header exactly as the
+# firmware-c6 build wrote it. Nothing on this side knows that board's flash part, and
+# guessing a size here would be overwriting the build's own correct answer with one.
+CHIPS: dict[str, tuple[str, str, str]] = {
+    "esp32s3": ("16MB", "dio", "80m"),
+    "esp32c6": ("keep", "keep", "keep"),
+}
+DEFAULT_CHIP = "esp32s3"
 
 
 class FlashError(RuntimeError):
@@ -56,7 +70,9 @@ def nvs_csv(keys: list[str]) -> str:
     return out.getvalue()
 
 
-def esptool_argv(port: str, images: list[tuple[str, str]]) -> list[str]:
+def esptool_argv(
+    port: str, images: list[tuple[str, str]], chip: str = DEFAULT_CHIP
+) -> list[str]:
     """The exact command that writes the images.
 
     `write_flash` takes offset/path pairs in order. `--before default_reset` and
@@ -65,11 +81,18 @@ def esptool_argv(port: str, images: list[tuple[str, str]]) -> list[str]:
     is its own esptool invocation in `flash()` rather than a flag here — they are two
     commands, and pretending otherwise inside an argv list is how you ship a literal
     "&&" to execve.
+
+    `chip` is NOT left to esptool's autodetect: a C6 and an S3 enumerate as the same
+    303a:1001, and naming it makes esptool refuse a board that is not what the image
+    set was built for, before a byte of the wrong bootloader is written.
     """
+    if chip not in CHIPS:
+        raise FlashError(f"unknown chip {chip!r}; known: {sorted(CHIPS)}")
+    size, mode, freq = CHIPS[chip]
     argv = [
         "esptool",
         "--chip",
-        "esp32s3",
+        chip,
         "--port",
         port,
         "--baud",
@@ -80,11 +103,11 @@ def esptool_argv(port: str, images: list[tuple[str, str]]) -> list[str]:
         "hard_reset",
         "write_flash",
         "--flash_size",
-        "16MB",
+        size,
         "--flash_mode",
-        "dio",
+        mode,
         "--flash_freq",
-        "80m",
+        freq,
     ]
     for offset, path in images:
         argv += [offset, path]
@@ -150,6 +173,7 @@ def flash(
     nvs_size: str,
     *,
     erase: bool,
+    chip: str = DEFAULT_CHIP,
 ) -> Iterator[str]:
     """The whole operation, as a stream of log lines.
 
@@ -157,9 +181,13 @@ def flash(
     is removed in a `finally` — a flash that fails partway must not leave credentials on
     disk in a container the next flash will reuse.
     """
+    # Before anything is staged: an unknown chip must not leave credentials on disk even
+    # briefly, and it must not reach the erase, which would wipe the board for nothing.
+    if chip not in CHIPS:
+        raise FlashError(f"unknown chip {chip!r}; known: {sorted(CHIPS)}")
     workdir = tempfile.mkdtemp(prefix="flash-")
     try:
-        yield f"port {port}"
+        yield f"port {port} chip {chip}"
         paths: list[tuple[str, str]] = []
         for offset, blob in images:
             name = f"img-{offset}.bin"
@@ -176,9 +204,9 @@ def flash(
         paths.sort(key=lambda p: int(p[0], 16))
         if erase:
             yield "erasing flash"
-            yield from run(["esptool", "--chip", "esp32s3", "--port", port, "erase_flash"], workdir)
+            yield from run(["esptool", "--chip", chip, "--port", port, "erase_flash"], workdir)
 
-        argv = esptool_argv(port, paths)
+        argv = esptool_argv(port, paths, chip)
         yield " ".join(argv)
         yield from run(argv, workdir)
         yield "OK"

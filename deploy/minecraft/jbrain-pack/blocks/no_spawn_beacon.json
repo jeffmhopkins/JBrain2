@@ -1,0 +1,21 @@
+{
+  "format_version": "1.21.40",
+  "minecraft:block": {
+    "description": {
+      "identifier": "jbrain:no_spawn_beacon",
+      "menu_category": { "category": "items" }
+    },
+    "components": {
+      "minecraft:display_name": "No-Spawn Beacon",
+      "minecraft:destructible_by_mining": { "seconds_to_destroy": 1.5 },
+      "minecraft:destructible_by_explosion": { "explosion_resistance": 6 },
+      "minecraft:light_emission": 7,
+      "minecraft:map_color": "#9a72d6",
+      "minecraft:material_instances": {
+        "*": { "texture": "jbrain_no_spawn_beacon_side", "render_method": "opaque" },
+        "up": { "texture": "jbrain_no_spawn_beacon_top", "render_method": "opaque" },
+        "down": { "texture": "jbrain_no_spawn_beacon_bottom", "render_method": "opaque" }
+      }
+    }
+  }
+}

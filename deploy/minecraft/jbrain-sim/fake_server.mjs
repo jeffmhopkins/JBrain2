@@ -10,6 +10,8 @@ export const EquipmentSlot = {
 export const CommandPermissionLevel = { Any: 0 };
 export const CustomCommandParamType = { String: "String" };
 export const CustomCommandStatus = { Success: 0, Failure: 1 };
+// No block types here; replicator_fake.mjs has the blocks the Replicator's tests need.
+export const BlockTypes = { get: () => undefined };
 
 export class ItemStack {
   constructor(typeId, amount = 1) {
@@ -83,6 +85,16 @@ export class Dimension {
   spawnEntity(id, loc) {
     this.entities.push({ id, loc: { ...loc } });
   }
+  // The game's query, for the options the pack passes: a type, the nearest `closest`
+  // within `maxDistance` of `location`.
+  getEntities({ type, location, closest, maxDistance } = {}) {
+    const d = (e) => Math.hypot(e.loc.x - location.x, e.loc.y - location.y, e.loc.z - location.z);
+    return this.entities
+      .filter((e) => (!type || e.id === type) && (!maxDistance || d(e) <= maxDistance))
+      .sort((a, b) => d(a) - d(b))
+      .slice(0, closest ?? Infinity)
+      .map((e) => ({ typeId: e.id, location: { ...e.loc } }));
+  }
 }
 
 export class Player {
@@ -140,20 +152,29 @@ export class Player {
   }
 }
 
-const subs = { die: [], spawn: [], script: [], startup: [] };
+const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [] };
 const intervals = [];
 let queued = [];
 const props = new Map();
 let players = [];
 let commands = new Map();
+const blockComponents = new Map();
 const rules = { keepInventory: false };
 
 export const world = {
   afterEvents: {
     entityDie: { subscribe: (fn) => subs.die.push(fn) },
     playerSpawn: { subscribe: (fn) => subs.spawn.push(fn) },
+    playerInteractWithBlock: { subscribe: (fn) => subs.interact.push(fn) },
+    playerBreakBlock: { subscribe: (fn) => subs.break.push(fn) },
+    // The No-Spawn Beacon's (beacon.test.mjs drives it with its own stand-in); its
+    // playerBreakBlock is the wormhole gates' one above.
+    entitySpawn: { subscribe: () => {} },
+    playerInteractWithEntity: { subscribe: () => {} },
+    playerPlaceBlock: { subscribe: () => {} },
   },
   getDynamicProperty: (k) => props.get(k),
+  getDynamicPropertyIds: () => [...props.keys()],
   setDynamicProperty: (k, v) => (v === undefined ? props.delete(k) : props.set(k, v)),
   getAllPlayers: () => [...players],
   getDefaultSpawnLocation: () => ({ x: 0, y: 64, z: 0 }),
@@ -182,10 +203,14 @@ export const sim = {
   startup() {
     commands = new Map();
     for (const fn of subs.startup) {
-      fn({ customCommandRegistry: { registerCommand: (def, cb) => commands.set(def.name, { def, cb }) } });
+      fn({
+        customCommandRegistry: { registerCommand: (def, cb) => commands.set(def.name, { def, cb }) },
+        blockComponentRegistry: { registerCustomComponent: (name, c) => blockComponents.set(name, c) },
+      });
     }
   },
   command: (name) => commands.get(name),
+  blockComponent: (name) => blockComponents.get(name),
   player(name, id) {
     const p = new Player(name, id, sim.overworld);
     players.push(p);
@@ -201,6 +226,12 @@ export const sim = {
   die(player) {
     for (const fn of subs.die) fn({ deadEntity: player, damageSource: { cause: "fall" } });
     sim.flush();
+  },
+  interact(ev) {
+    for (const fn of subs.interact) fn(ev);
+  },
+  breakBlock(ev) {
+    for (const fn of subs.break) fn(ev);
   },
   scriptevent(id, message) {
     for (const fn of subs.script) fn({ id, message });

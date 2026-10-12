@@ -53,9 +53,10 @@ JBRAIN_PACK_ID = json.loads(
 )["header"]["uuid"]
 
 
-JBRAIN_RP_ID = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())[
-    "header"
-]["uuid"]
+_JBRAIN_RP = json.loads((DEPLOY / "minecraft/jbrain-rp/manifest.json").read_text())
+JBRAIN_RP_ID = _JBRAIN_RP["header"]["uuid"]
+# Bumped whenever its textures change, so clients re-download it.
+JBRAIN_RP_VERSION = _JBRAIN_RP["header"]["version"]
 # The home-test kit's resource pack, retired when its icons moved to the jbrain one.
 OLD_PROBE_RP_ID = "26d6c250-8ead-4bb8-9dd0-d3805e61d61e"
 
@@ -971,7 +972,8 @@ def test_a_loaded_world_gets_its_saved_rules_once_it_is_up(
         "gamerule doFireTick false",
         "gamerule keepInventory true",
         # The jbrain pack's copy of the switch, last.
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
 
 
@@ -1141,7 +1143,8 @@ def test_saved_rules_come_back_on_a_plain_start_too(
         _t.sleep(0.02)
     assert sent == [
         "gamerule doFireTick false",
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
 
 
@@ -1416,11 +1419,11 @@ def test_a_dave_question_carries_the_askers_unlocks_bounded(tmp_path: Path) -> N
 
 
 def test_only_the_jbrain_pack_registers_the_dave_command() -> None:
-    """Both packs can be in one world, and two registrations of `jb:dave` collide."""
+    """Both packs can share a world, and two registrations of one command collide."""
     mc_dir = DEPLOY / "minecraft"
     door = (mc_dir / "jbrain-pack/scripts/main.js").read_text()
     probe = (mc_dir / "probe-pack/scripts/main.js").read_text()
-    assert 'name: "jb:dave"' in door and "getSpawnPoint" in door
+    assert '"jb:dave", "jb:d", "jb:ai"' in door and "getSpawnPoint" in door
     assert "registerCommand" not in probe
     # The engine refuses the whole command past eight parameters (BDS 1.26.52), which
     # would leave players with no door at all.
@@ -1473,6 +1476,8 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
         rig.map_info("slot1", "aether")
     with pytest.raises(ValueError):
         rig.map_tile("slot1", "overworld", mapping.MAX_ZOOM + 1, 0, 0)
+    with pytest.raises(ValueError):
+        rig.map_tile("slot1", "overworld", 0, 0, 0, layer="height")
     info = rig.map_info("slot1", "overworld")
     assert info["extent"] is None and info["tile_blocks"] == 256  # empty db: all fog
     assert info["predicted"] is False  # no level.dat seed and no binary in the test rig
@@ -1482,6 +1487,28 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
     assert (
         rig.map_tile("slot1", "overworld", 0, 0, 0) is png
     )  # cached until files change
+    # Each layer is its own tile: switching layers never serves the other's picture.
+    assert rig.map_tile("slot1", "overworld", 0, 0, 0, layer="biomes") is not png
+    # A true-colour draw in progress never holds up the Biomes tile shown under it.
+    with rig._surface_lock:
+        under = rig.map_tile("slot1", "overworld", 0, 1, 0, layer="biomes")
+    assert under[:8] == png[:8]
+    # A true-colour tile drawn from a world re-read meanwhile is served, not kept.
+    index = rig._map_index["world"]
+    # The module the sidecar loaded, whichever test file ran first.
+    real_tile = server.mapping.tile
+
+    def reread_meanwhile(*args: object) -> bytes:
+        index._signature = ("moved",)
+        return real_tile(*args)
+
+    server.mapping.tile = reread_meanwhile
+    try:
+        drawn = rig.map_tile("slot1", "overworld", 0, 2, 0)
+    finally:
+        server.mapping.tile = real_tile
+    assert drawn[:8] == png[:8]
+    assert not any(k[3] == 2 for k in rig._tiles)
 
 
 def test_a_point_is_explored_ground_the_survey_or_unknown() -> None:
@@ -1607,12 +1634,15 @@ def test_every_world_gets_the_jbrain_resource_pack_and_clients_must_take_it(
     monkeypatch.setattr(rig, "_apply_rules_when_up", lambda folder: None)
     rig._start()
     rp = json.loads((world / "world_resource_packs.json").read_text())
-    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": [1, 0, 0]}]
+    assert rp == [{"pack_id": JBRAIN_RP_ID, "version": JBRAIN_RP_VERSION}]
     assert not old.exists()
     icons = world / "resource_packs" / "jbrain" / "textures" / "items"
     assert sorted(p.name for p in icons.iterdir()) == [
         "power_pack.png",
+        "replicator.png",
+        "replicator_programmed.png",
         "tricorder.png",
+        "wormhole_seed.png",
     ]
     assert rig.properties()["texturepacks-required"] == "true"
     rig._start()  # a second start replaces, never duplicates
@@ -1645,14 +1675,15 @@ def test_the_power_pack_switch_is_off_by_default_and_applies_live(
     assert out["power_pack_keep"] is True and out["applies"] == "now"
     assert sent == [
         "gamerule keepInventory true",
-        'scriptevent jb:config {"power_pack_keep": true}',
+        'scriptevent jb:config {"power_pack_keep": true, "power_pack_transport": true}',
     ]
     sent.clear()
     out = rig.set_power_pack("slot1", False)
     # Off hands the rule back (the owner's choice, or vanilla's off), saved for later.
     assert sent == [
         "gamerule keepInventory false",
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
     assert rig.slots.get("slot1")["rules"] == {"keepInventory": False}
     with pytest.raises(ValueError):
@@ -1668,6 +1699,35 @@ def test_an_owners_saved_keep_inventory_survives_the_charm(
     assert out["applies"] == "next load" and sent == []  # not the loaded world
     rig.set_power_pack("slot2", False)
     assert rig.slots.get("slot2")["rules"] == {"keepInventory": True, "pvp": False}
+
+
+def test_turning_the_charm_off_returns_to_the_value_it_was_turned_on_over(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An import whose file kept inventory has no saved choice, only what it last
+    loaded with; the switch pins that on the way in, so off hands back On, not Off."""
+    rig, _sent = _running_rig(monkeypatch, tmp_path)
+    known = {**worlds.DEFAULT_RULES, "keepInventory": True}
+    rig.slots.update("slot2", rules={}, rules_known=known)
+    assert rig.rules_view("slot2")["rules"]["keepInventory"] is True
+    rig.set_power_pack("slot2", True)
+    assert rig.slots.get("slot2")["rules"] == {"keepInventory": True}
+    rig.set_power_pack("slot2", True)  # again: the held value never becomes the choice
+    rig.set_power_pack("slot2", False)
+    assert rig.slots.get("slot2")["rules"] == {"keepInventory": True}
+    assert rig.rules_view("slot2")["rules"]["keepInventory"] is True
+
+
+def test_a_second_switch_on_does_not_overwrite_the_saved_choice(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rig, _sent = _running_rig(monkeypatch, tmp_path)
+    rig.slots.update("slot2", rules={})
+    rig.set_power_pack("slot2", True)
+    # The view now reads the held True; a repeat on must not capture it as the choice.
+    rig.slots.update("slot2", rules={}, rules_known={"keepInventory": True})
+    rig.set_power_pack("slot2", True)
+    assert rig.slots.get("slot2")["rules"] == {}
 
 
 def test_keep_inventory_is_managed_by_the_charm_while_it_is_on(
@@ -1707,7 +1767,8 @@ def test_every_start_tells_the_pack_the_switch_after_the_rules(
     started[-1].join(5)
     assert sent == [
         "gamerule pvp false",
-        'scriptevent jb:config {"power_pack_keep": false}',
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true}',
     ]
     sent.clear()
     rig.slots.update("slot1", power_pack_keep=True)
@@ -1716,7 +1777,7 @@ def test_every_start_tells_the_pack_the_switch_after_the_rules(
     assert sent == [
         "gamerule pvp false",
         "gamerule keepInventory true",
-        'scriptevent jb:config {"power_pack_keep": true}',
+        'scriptevent jb:config {"power_pack_keep": true, "power_pack_transport": true}',
     ]
 
 

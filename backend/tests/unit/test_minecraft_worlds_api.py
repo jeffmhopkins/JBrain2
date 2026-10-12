@@ -180,6 +180,9 @@ def test_map_tiles_pass_through_as_png_and_bad_input_never_reaches_the_box(clien
     assert resp.status_code == 200 and resp.content == png
     assert resp.headers["content-type"] == "image/png"
     assert seen[-1].url.params["slot"] == "slot2"
+    assert seen[-1].url.params["layer"] == "surface"  # true colour unless asked otherwise
+    client.get("/api/minecraft/map/tile/overworld/1/-2/3.png?layer=biomes")
+    assert seen[-1].url.params["layer"] == "biomes"
     info = client.get("/api/minecraft/map/info?dim=nether").json()
     assert info["tile_blocks"] == 256 and seen[-1].url.params["dim"] == "nether"
     count = len(seen)
@@ -187,6 +190,7 @@ def test_map_tiles_pass_through_as_png_and_bad_input_never_reaches_the_box(clien
         "/api/minecraft/map/tile/aether/0/0/0.png",
         "/api/minecraft/map/tile/overworld/5/0/0.png",
         "/api/minecraft/map/tile/overworld/0/0/0.png?slot=../etc",
+        "/api/minecraft/map/tile/overworld/0/0/0.png?layer=../etc",
         "/api/minecraft/map/info?dim=moon",
     ):
         assert client.get(bad).status_code == 422, bad
@@ -283,7 +287,13 @@ def test_map_players_are_the_travel_logs_latest_with_who_is_on(
             },
         ]
 
+    lock = {"dim": "overworld", "x": 40, "y": None, "z": -108, "label": "Fortress", "set_at": 9.0}
+
+    async def locks(_m: Any, world: str, _ctx: Any = None) -> dict[str, Any]:
+        return {"steve42": lock} if world == "castle" else {}
+
     monkeypatch.setattr(api.travel, "latest_positions", latest)
+    monkeypatch.setattr(api.targets, "for_world", locks)
     client.app.state.session_maker = object()
     _players_world(sidecar, active=True)
     got = client.get("/api/minecraft/map/players?slot=slot2").json()
@@ -292,6 +302,8 @@ def test_map_players_are_the_travel_logs_latest_with_who_is_on(
         ("BlockyFox", True),
         ("Steve42", False),
     ]
+    # Each player carries the Tricorder target Dave set, matched by gamertag, or null.
+    assert [p["target"] for p in got["players"]] == [None, lock]
     _players_world(sidecar, active=True, state="stopped")
     stopped = client.get("/api/minecraft/map/players?slot=slot2").json()
     assert stopped["live"] is False and not any(p["online"] for p in stopped["players"])

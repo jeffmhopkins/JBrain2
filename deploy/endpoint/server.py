@@ -129,7 +129,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         try:
-            port, images, values, offset, size, erase = _request(body)
+            port, images, values, offset, size, erase, chip = _request(body)
         except ValueError as exc:
             self._json(400, {"error": str(exc)})
             return
@@ -151,7 +151,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Accel-Buffering", "no")
         self.end_headers()
         try:
-            for line in flash.flash(port, images, values, offset, size, erase=erase):
+            for line in flash.flash(
+                port, images, values, offset, size, erase=erase, chip=chip
+            ):
                 self.wfile.write(f"{line}\n".encode())
                 self.wfile.flush()
         except flash.FlashError as exc:
@@ -162,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def _request(
     body: dict[str, Any],
-) -> tuple[str, list[tuple[str, bytes]], dict[str, str], str, str, bool]:
+) -> tuple[str, list[tuple[str, bytes]], dict[str, str], str, str, bool, str]:
     """Validate a flash request, or say exactly what is wrong with it.
 
     The port is checked against what is actually present rather than taken on trust: this
@@ -198,7 +200,12 @@ def _request(
 
     nvs_offset = str(body.get("nvs_offset") or "0x9000")
     nvs_size = str(body.get("nvs_size") or "0x6000")
-    return port, images, values, nvs_offset, nvs_size, bool(body.get("erase"))
+    # Absent means the S3, which is what every request meant before there was a second
+    # board — so an api one update behind this sidecar still flashes what it always did.
+    chip = str(body.get("chip") or flash.DEFAULT_CHIP)
+    if chip not in flash.CHIPS:
+        raise ValueError(f"unknown chip {chip!r}; known: {sorted(flash.CHIPS)}")
+    return port, images, values, nvs_offset, nvs_size, bool(body.get("erase")), chip
 
 
 def main() -> None:

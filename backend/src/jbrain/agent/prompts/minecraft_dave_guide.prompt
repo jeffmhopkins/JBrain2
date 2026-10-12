@@ -1,7 +1,7 @@
 ---
 name: agent.minecraft_dave_guide
-version: agent-minecraft-dave-guide-v1
-description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
+version: agent-minecraft-dave-guide-v8
+description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §M12, §M15, §M16, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
 strength: high
 ---
 [entry: intro_game]
@@ -17,8 +17,10 @@ they're ready.
 What each Old Maker item that is built does, for answering Jeff. Explain from this text
 only, and never add to it. In game, a player hears about an item only once they can
 make it: the Tricorder from the start, the Power Pack once they've held an Ender Pearl,
-its uses once they've made one, and keeping your things only in a world where Jeff has
-switched it on.
+its uses once they've made one, keeping your things or transport only in a world
+where Jeff has switched it on, the No-Spawn Beacon once they've made a Power Pack and
+held an echo shard, the Wormhole Seed once they've made a Power Pack and held popped
+chorus fruit, and the Replicator once they hold 8 Power Packs.
 
 [entry: tricorder]
 ### The Tricorder
@@ -26,12 +28,12 @@ switched it on.
   them ("Mira's Tricorder"). Dave beams it down when they wake.
 - Getting one: it can't be crafted. If a player's is ever missing when they wake, Dave
   beams them a new one, and any older copy stops working ("This tricorder is retired").
-- Using it: with it anywhere on them, /jb:dave reaches Dave. Held in the hand, it shows
+- Using it: with it anywhere on them, /dave (or /d, /ai) reaches Dave. Held in the hand, it shows
   an arrow and the distance to their waypoint: world spawn, until Dave points it at a
   saved place or something he found.
-- Limits: it only works for its owner. Anyone else who holds it gets static, no arrow
-  and no Dave. It's bound to its owner: it can't be dropped, thrown, put in a chest or
-  taken, and it stays with them when they die.
+- Limits: it's bound to its owner: it can't be dropped, thrown, put in a chest or taken,
+  and it stays with them when they die, so it can't be lost. It only ever works for
+  them.
 
 [entry: power_pack]
 ### The Power Pack
@@ -54,6 +56,80 @@ switched it on.
   things fall where they were, and only the Tricorder comes home with them. It only
   works in a world where Jeff has switched it on.
 
+[entry: power_pack_transport]
+### What a Power Pack does: transport to your saved places
+- With their own Tricorder and a Power Pack on them, a player can ask Dave to take them
+  to one of their own saved places ("Dave, take me to tree farm"), and the transporter
+  brings them there with their things (mc_transport). Each trip burns one pack.
+- Their saved places are transport beacons: each time they saved one, Dave planted a
+  beacon on their Tricorder's signal right where they stood. Either way of asking works,
+  including "place a transport beacon here named mine entrance", which saves a place.
+- How it goes: a Yes / No question opens on their screen with the place, how far it is,
+  the dimension and the cost. Nothing is spent unless they choose Yes and the landing is
+  clear.
+- Limits: only their own saved places, never a bed, a structure, coordinates or another
+  player; only to a dimension they've already been to; a spot that's been built over is
+  refused and the pack kept. It only works in a world where Jeff has switched it on.
+
 [entry: power_pack_unused]
 ### What a Power Pack does
 - Nothing in this world yet. Never promise that it will, or say what it might do.
+
+[entry: no_spawn_beacon]
+### The No-Spawn Beacon
+- What it is: Old Maker tech for a safe home, even one built out in the sky, where
+  endermen would otherwise come.
+- Recipe: a Power Pack in the middle of a crafting table, surrounded by eight echo
+  shards. It shows in the recipe book once they've held an echo shard. The shards come
+  from an ancient city, so a quiet base is earned.
+- Using it: place it and it works at once; there's no need to ask Dave. It covers the
+  3×3 of chunks around it (48 by 48 blocks), from bedrock to the sky. Any hostile or
+  neutral mob there, and any wild animal nobody has looked after, is beamed away by Dave:
+  it vanishes in a puff, with nothing left behind. Endermen that teleport in go the same
+  way, and so does the Warden. The wandering trader and his llamas go too, even after a
+  trade; only a lead or a name tag keeps one.
+- What it leaves alone: players, pets, anything with a name tag or on a lead, animals
+  they've fed or bred, villagers, golems (the copper golems are Old Maker helpers), and
+  the great bosses, the Ender Dragon and the Wither.
+- Limits: anyone can break it, like any other block, and it drops itself; broken, it
+  switches off. Inside its area, raids, phantoms and mob farms stop working, so a mob
+  farm has to be built outside it.
+
+[entry: replicator]
+### The Replicator
+- What it is: Old Maker tech, a furnace taught to burn any block into one chosen thing.
+- Recipe: a furnace in the middle of a crafting table with eight Power Packs around it
+  makes a blank Replicator.
+- Programming: they hold the Replicator, carry 8 full stacks (512) of what it should
+  make, and ask you ("program this replicator for iron"). You take all 512 as the
+  pattern, and it becomes, say, an Iron Replicator. Only things that stack to 64 can be a
+  pattern: not things that stack to 16 (ender pearls, snowballs) or don't stack at all
+  (tools, armour). Asking again with 8 full stacks of something else reprograms it: the
+  old pattern is lost, and the Power Packs aren't paid twice.
+- Using it: it places like a block and keeps its programming when broken and picked up.
+  A chest or hopper on top holds the blocks it burns (any block), one beside it holds
+  the fuel (coal lasts 8), and one below takes what it makes: one about every 10
+  seconds. Using it shows what it makes and what it's waiting for.
+- Limits: it has no furnace screen; it works only through the chests or hoppers around
+  it. It only runs while someone is nearby, or in a ticking area. Fuel already burning
+  in it is lost when it's picked up.
+
+[entry: wormhole_seed]
+### The Wormhole Seed and wormhole gates
+- What it is: an Old Maker door that folds the way between two places, opened by Dave.
+  The seed is chorus fruit's throw, tamed. It stacks to 1.
+- Recipe: a Power Pack in the middle of a crafting table, 4 popped chorus fruit on the
+  sides and 4 Ender Pearls in the corners. Chorus grows on the End's outer islands.
+- Building a gate: a ring of blocks of diamond shaped like a Nether portal, 4 wide and 5
+  tall (the corners can be left out), empty inside. Using the seed on the ring plants it:
+  the gate wakes but stays dark.
+- Opening it: standing within 4 blocks of their own gate, they ask Dave to open it to one
+  of their own saved places ("open the wormhole to tree farm"), in a dimension they've
+  been to. The first opening is free.
+- Using it: anyone can step in, and comes out at that saved place. It only goes one way:
+  to come back the same way, they build a second gate at the other end.
+- Re-aiming: within 4 blocks, they ask Dave to point it at another of their saved places.
+  Each re-aim burns one Power Pack. Only the one who planted a gate can open or re-aim it.
+- Limits: breaking any block of the ring destroys the gate, and the seed burns out. If
+  the saved place it leads to is removed, the gate goes dark until it's re-aimed. A
+  landing spot that's been built over or flooded since is refused, and they stay put.
