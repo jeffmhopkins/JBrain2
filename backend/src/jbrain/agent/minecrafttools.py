@@ -36,6 +36,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.minecraft import client as mc
 from jbrain.minecraft import scans
 from jbrain.minecraft import sessions as mc_sessions
+from jbrain.minecraft import targets as tricorder
 from jbrain.minecraft.asker import Asker, Spot, asker_for
 from jbrain.minecraft.sessions import check_gamertag
 
@@ -415,16 +416,23 @@ def build_minecraft_handlers(
     settings_store: SqlSettingsStore | None,
     *,
     scan_book: Callable[[SessionContext], scans.ScanBook] | None = None,
+    target_book: Callable[[SessionContext], tricorder.TargetBook] | None = None,
 ) -> dict[str, ToolHandler]:
     """Minecraft_Dave's tools, bound to the app's sessionmaker, its config (the sidecar's
     address and token) and the settings store (the owner's gamertag). Each DB handler runs
     under `ctx.session`, so the owner-only RLS on the Minecraft tables is the gate.
-    `scan_book` replaces the deep-scan ledger (unit tests keep it in memory)."""
+    `scan_book` replaces the deep-scan ledger and `target_book` the Tricorder targets the
+    map draws (unit tests keep both in memory)."""
 
     def book_for(ctx: ToolContext) -> scans.ScanBook:
         if scan_book is not None:
             return scan_book(ctx.session)
         return scans.SqlScanBook(maker, ctx.session)
+
+    def targets_for(ctx: ToolContext) -> tricorder.TargetBook:
+        if target_book is not None:
+            return target_book(ctx.session)
+        return tricorder.SqlTargetBook(maker, ctx.session)
 
     async def chat_player(s: AsyncSession, ctx: ToolContext) -> Player | None:
         # In game the player is whoever the server says typed the command, whatever the
@@ -996,6 +1004,15 @@ def build_minecraft_handlers(
                 " box's own jbrain pack may not have loaded in this world (check the server"
                 " log for its `[jbrain]` lines)."
             )
+        # The map's copy of the target (the pack's own can't be read back): what it draws,
+        # and what the track drain clears when the player gets there.
+        world = await loaded_world(ctx)
+        if world:
+            book = targets_for(ctx)
+            if target is None:
+                await book.clear(world, gamertag)
+            else:
+                await book.set(world, gamertag, target, str(event["label"]))
         if clear or target is None:
             return ToolOutput(
                 f"Cleared {fence(gamertag)}'s tricorder waypoint; it points at spawn again.",

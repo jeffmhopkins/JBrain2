@@ -287,7 +287,13 @@ def test_map_players_are_the_travel_logs_latest_with_who_is_on(
             },
         ]
 
+    lock = {"dim": "overworld", "x": 40, "y": None, "z": -108, "label": "Fortress", "set_at": 9.0}
+
+    async def locks(_m: Any, world: str, _ctx: Any = None) -> dict[str, Any]:
+        return {"steve42": lock} if world == "castle" else {}
+
     monkeypatch.setattr(api.travel, "latest_positions", latest)
+    monkeypatch.setattr(api.targets, "for_world", locks)
     client.app.state.session_maker = object()
     _players_world(sidecar, active=True)
     got = client.get("/api/minecraft/map/players?slot=slot2").json()
@@ -296,6 +302,8 @@ def test_map_players_are_the_travel_logs_latest_with_who_is_on(
         ("BlockyFox", True),
         ("Steve42", False),
     ]
+    # Each player carries the Tricorder target Dave set, matched by gamertag, or null.
+    assert [p["target"] for p in got["players"]] == [None, lock]
     _players_world(sidecar, active=True, state="stopped")
     stopped = client.get("/api/minecraft/map/players?slot=slot2").json()
     assert stopped["live"] is False and not any(p["online"] for p in stopped["players"])

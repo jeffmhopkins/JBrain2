@@ -591,6 +591,18 @@ export interface MinecraftMapPlayer {
   z: number;
   at: number;
   online: boolean;
+  /** Where Dave has their Tricorder pointed, until they reach it; null for none. */
+  target?: MinecraftTricorderTarget | null;
+}
+
+/** A Tricorder target: a block (y when it matters, like an ore) and Dave's label for it. */
+export interface MinecraftTricorderTarget {
+  dim: MinecraftDim;
+  x: number;
+  y: number | null;
+  z: number;
+  label: string;
+  set_at: number;
 }
 
 export interface MinecraftMapPlayers {

@@ -23,7 +23,7 @@ from jbrain.minecraft import client as mc
 from jbrain.minecraft import fastpath as fp
 from jbrain.minecraft import scans
 from jbrain.minecraft.asker import Asker, Spot, asking
-from tests.unit.test_minecraft_scans import MemoryBook
+from tests.unit.test_minecraft_scans import MemoryBook, MemoryTargets
 
 SID = "door-session"
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=(), agent_session_id=SID)
@@ -264,6 +264,7 @@ def _fast(book: MemoryBook, stand: Stand) -> fp.FastPath:
         object(),
         None,
         scan_book=lambda _ctx: book,
+        target_book=lambda _ctx: MemoryTargets(),
     )
     return fp.FastPath({**real, **stand.handlers()})
 

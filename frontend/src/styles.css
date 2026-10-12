@@ -32566,6 +32566,27 @@ button.wf-sigpill {
 /* The map share (DESIGN.md "Minecraft map share"): the owner's Share sheet, and the
    view-only chrome a /mc/s/{token} visitor gets in place of the back button. Amber is the
    system's read-only colour. */
+/* The selected player's Tricorder target (DESIGN.md "Minecraft map"): one line on the
+   player card; the marker and dashed bearing are drawn on the canvas. */
+.mc-map-det-tri {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.mc-map-det-tri svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.mc-map-det-tri b {
+  color: var(--text);
+  font-weight: 500;
+}
+
 span.mc-map-world {
   cursor: default;
 }

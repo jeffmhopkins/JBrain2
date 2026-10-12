@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -2270,6 +2270,39 @@ map link was turned off*.
 
 Only checkable on the box: that the link opens from outside the house (it needs the
 public hostname — Cloudflare Tunnel or direct mode, not LAN-only).
+
+### M21 — The Tricorder's target on the map (owner, 2026-10-12; shipped 2026-10-12)
+
+**Why.** When Dave locks a player's Tricorder onto something (a biome, an ore, a
+structure, a saved place), the owner looking at that player on the map should see the
+target and the line from the player to it. Owner decisions: the target goes away once
+the player reaches it, and a map share link shows it too.
+
+**How.**
+- `mc_set_waypoint` (the only writer of a Tricorder waypoint, fast path included) also
+  records the target in `app.mc_tricorder_targets` (migration `0231`), one row per player
+  per world, keyed by the lowercased gamertag as the pack's own copy is; a clear deletes
+  it. The pack's copy is a world dynamic property nothing outside the game can read, so
+  this is the map's only source; targets set before this shipped don't show until Dave
+  sets the next one.
+- **Arrival.** The track drain checks each new position sample (`targets.arrived`): a
+  sample taken after the target was set, within 7 blocks across (the Tricorder's own
+  "You're here" is 3; samples are kept every 10 s after 4 blocks of movement, so the last
+  one can trail where the player stopped) and, for a target with a depth like an ore,
+  within 6 blocks of it vertically, deletes the row and sends the pack's own clear
+  (`scriptevent jb:waypoint {"player", "clear": true}`), so the Tricorder points at spawn
+  again.
+- `/map/players` (owner and share) gives each player a `target` (`dim, x, y, z, label,
+  set_at`, or null). RLS: owner-only, plus a SELECT for a share link pinned to the row's
+  world (as 0230).
+- **The map.** With a player selected on the live view, their target is drawn as two rings
+  in their colour with Dave's label, and a dashed bearing line from where they stand when
+  both are in the dimension shown. Their card adds *Tricorder · Diamonds · 330 blocks
+  north-east · y -58*, or *· in the Nether* across a portal. Not drawn on the replay: the
+  target is where it points now.
+
+Not built: Dave has no mob or animal finder, so "point me to a cow" isn't a target yet;
+and a target is a fixed block, so a moving one would show where it was found.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 

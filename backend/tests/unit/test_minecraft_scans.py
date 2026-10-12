@@ -39,6 +39,19 @@ FOUND = {
 }
 
 
+class MemoryTargets:
+    """The Tricorder targets the map draws, kept in memory: (world, gamertag) → (spot, label)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, str], tuple[Spot, str]] = {}
+
+    async def set(self, world: str, gamertag: str, spot: Spot, label: str) -> None:
+        self.rows[(world, gamertag)] = (spot, label)
+
+    async def clear(self, world: str, gamertag: str) -> None:
+        self.rows.pop((world, gamertag), None)
+
+
 class MemoryBook:
     """`ScanBook` in a dict, with the SQL book's semantics: a write drops the world's
     other days, and a reservation past the limit spends nothing."""
@@ -117,6 +130,7 @@ def _tools(book: MemoryBook) -> dict[str, Any]:
         object(),
         None,
         scan_book=lambda _ctx: book,
+        target_book=lambda _ctx: MemoryTargets(),
     )
 
 

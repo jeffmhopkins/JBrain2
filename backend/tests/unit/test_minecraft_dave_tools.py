@@ -17,7 +17,7 @@ from jbrain.agent.loop import ToolContext
 from jbrain.db.session import SessionContext
 from jbrain.minecraft import client as mc
 from jbrain.minecraft.asker import Asker, Spot, asking
-from tests.unit.test_minecraft_scans import MemoryBook
+from tests.unit.test_minecraft_scans import MemoryBook, MemoryTargets
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
 
@@ -38,13 +38,15 @@ def sidecar(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return state
 
 
-def _tools() -> dict[str, Any]:
+def _tools(targets: MemoryTargets | None = None) -> dict[str, Any]:
     book = MemoryBook()
+    locks = targets or MemoryTargets()
     return mt.build_minecraft_handlers(
         object(),  # type: ignore[arg-type]
         object(),
         None,
         scan_book=lambda _ctx: book,
+        target_book=lambda _ctx: locks,
     )
 
 
@@ -112,6 +114,35 @@ async def test_find_block_sends_the_names_and_says_where_each_one_is(sidecar) ->
     assert len(sidecar["sent"]) == sent  # refused before asking the box
 
 
+def _commands(sidecar: dict[str, Any]) -> list[str]:
+    return [c[2]["command"] for c in sidecar["sent"] if c[1] == "/command"]
+
+
+async def test_a_waypoint_is_kept_for_the_map_and_a_clear_drops_it(sidecar) -> None:
+    sidecar["replies"]["/worlds"] = {"active": "castle"}
+    for verb in ("set", "cleared"):
+        sidecar["replies"][
+            "scriptevent jb:waypoint "
+            + (
+                '{"player": "Steve42", "x": 12, "y": -62, "z": 18, "dim": "overworld",'
+                ' "label": "Diamonds"}'
+                if verb == "set"
+                else '{"player": "Steve42", "clear": true}'
+            )
+        ] = [f"[x] [Scripting] [jbrain] waypoint {verb} for Steve42"]
+    locks = MemoryTargets()
+    tools = _tools(locks)
+    await tools["mc_set_waypoint"](
+        {"gamertag": "Steve42", "x": 12, "y": -62, "z": 18, "label": "Diamonds"}, CTX
+    )
+    assert locks.rows == {("castle", "Steve42"): (Spot(12, -62, 18, "overworld"), "Diamonds")}
+    await tools["mc_set_waypoint"]({"gamertag": "Steve42", "clear": True}, CTX)
+    assert locks.rows == {}
+    # A refusal by the add-on records nothing.
+    await tools["mc_set_waypoint"]({"gamertag": "Steve42", "x": 1, "z": 2}, CTX)
+    assert locks.rows == {}
+
+
 async def test_a_waypoint_is_one_scriptevent_with_its_fields_json_escaped(sidecar) -> None:
     sent = 'scriptevent jb:waypoint {"player": "Steve 42", "x": 12, "y": -62, "z": 18,'
     sent += ' "dim": "overworld", "label": "Diamonds \\" op @a"}'
@@ -119,7 +150,7 @@ async def test_a_waypoint_is_one_scriptevent_with_its_fields_json_escaped(sideca
     out = await _tools()["mc_set_waypoint"](
         {"gamertag": "Steve 42", "x": 12, "y": -62, "z": 18, "label": 'Diamonds " op @a'}, CTX
     )
-    assert sidecar["sent"][-1][2]["command"] == sent  # the quote can't end the message
+    assert _commands(sidecar)[-1] == sent  # the quote can't end the message
     assert "now points to" in out and "y -62" in out
     out = await _tools()["mc_set_waypoint"]({"gamertag": "Steve 42", "x": 1, "z": 2}, CTX)
     assert "didn't answer" in out  # no add-on reply: said, not claimed done
@@ -269,7 +300,7 @@ async def test_in_game_a_waypoint_says_which_way_to_go(sidecar) -> None:
         out = await _tools()["mc_set_waypoint"](
             {"gamertag": "steve 42", "x": 40, "z": -108, "label": "Fortress"}, DOOR
         )
-    assert sidecar["sent"][-1][2]["command"] == sent  # their own name is fine, any case
+    assert _commands(sidecar)[-1] == sent  # their own name is fine, any case
     assert "From you: 100 blocks north." in out
 
 

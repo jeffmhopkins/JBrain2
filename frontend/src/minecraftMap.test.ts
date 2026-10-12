@@ -20,6 +20,7 @@ import {
   tileKey,
   toScreen,
   toWorld,
+  tricorderLine,
   visibleTiles,
   zoomAt,
   zoomFor,
@@ -262,5 +263,36 @@ describe("scaleOfZoom", () => {
     expect(scaleOfZoom(4)).toBe(S_MIN);
     expect(scaleOfZoom(-3)).toBe(S_MAX);
     expect(scaleOfZoom(-9)).toBe(S_MAX);
+  });
+});
+
+describe("the Tricorder line", () => {
+  const at = { dim: "overworld" as const, x: 0.5, z: 0.5 };
+  const target = (x: number, z: number, y: number | null = null) => ({
+    dim: "overworld" as const,
+    x,
+    y,
+    z,
+    label: "Diamonds",
+    set_at: 0,
+  });
+
+  it("says how far and which way, north being -z as in game", () => {
+    expect(tricorderLine(at, target(0, -100))).toBe("Diamonds · 100 blocks north");
+    expect(tricorderLine(at, target(100, 100))).toBe("Diamonds · 141 blocks south-east");
+    expect(tricorderLine(at, target(-30, 0))).toBe("Diamonds · 30 blocks west");
+    expect(tricorderLine(at, target(1, 0))).toBe("Diamonds · 1 block east");
+  });
+
+  it("adds the depth when it matters, and is plain about standing on it", () => {
+    expect(tricorderLine(at, target(0, 40, -58))).toBe("Diamonds · 40 blocks south · y -58");
+    expect(tricorderLine(at, target(0, 0, -58))).toBe("Diamonds · here");
+  });
+
+  it("names the dimension instead of a bearing across a portal", () => {
+    expect(tricorderLine(at, { ...target(5, 5), dim: "nether" })).toBe("Diamonds · in the Nether");
+    expect(tricorderLine({ ...at, dim: "the_end" }, target(5, 5))).toBe(
+      "Diamonds · in the Overworld",
+    );
   });
 });

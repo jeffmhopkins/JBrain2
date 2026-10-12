@@ -14,6 +14,7 @@ import type {
   MinecraftTimelineEvent,
   MinecraftTrail,
   MinecraftTrailSegment,
+  MinecraftTricorderTarget,
 } from "./api/client";
 
 /** Tile side in px, and in blocks at zoom 0. */
@@ -899,4 +900,38 @@ export function dimNote(gamertag: string, to: MinecraftDim, respawned: boolean):
   return respawned
     ? `${gamertag} died and respawned in the ${DIM_SHORT[to]}`
     : `${gamertag} went to the ${DIM_SHORT[to]}`;
+}
+
+const IN_DIM: Record<MinecraftDim, string> = {
+  overworld: "the Overworld",
+  nether: "the Nether",
+  the_end: "the End",
+};
+
+const COMPASS = [
+  "north",
+  "north-east",
+  "east",
+  "south-east",
+  "south",
+  "south-west",
+  "west",
+  "north-west",
+] as const;
+
+/** The player card's Tricorder line: how far and which way, as the crow flies (north is
+ *  -z, as in game), or which dimension the target is in when it's not theirs. */
+export function tricorderLine(
+  p: { dim: MinecraftDim; x: number; z: number },
+  t: MinecraftTricorderTarget,
+): string {
+  if (t.dim !== p.dim) return `${t.label} · in ${IN_DIM[t.dim]}`;
+  const dx = t.x + 0.5 - p.x;
+  const dz = t.z + 0.5 - p.z;
+  const blocks = Math.round(Math.hypot(dx, dz));
+  if (blocks < 1) return `${t.label} · here`;
+  const turn = ((Math.atan2(dx, -dz) * 180) / Math.PI + 360) % 360;
+  const way = COMPASS[Math.round(turn / 45) % 8];
+  const depth = t.y === null ? "" : ` · y ${t.y}`;
+  return `${t.label} · ${blocks} block${blocks === 1 ? "" : "s"} ${way}${depth}`;
 }
