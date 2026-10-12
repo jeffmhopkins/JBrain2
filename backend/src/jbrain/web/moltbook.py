@@ -43,6 +43,7 @@ import httpx
 import structlog
 
 from jbrain.web.fetch import BROWSER_HEADERS, _read_capped, guard_public_host
+from jbrain.web.netguard import pinned_transport
 
 log = structlog.get_logger()
 
@@ -286,7 +287,9 @@ class MoltbookClient:
             headers["Content-Type"] = "application/json"
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT,
+                transport=pinned_transport(self._transport),
+                follow_redirects=False,
             ) as client:
                 resp = await client.send(
                     client.build_request(

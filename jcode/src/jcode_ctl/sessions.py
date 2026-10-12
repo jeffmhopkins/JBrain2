@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
+from jcode_ctl.sandbox import SessionUser, UidPool, kill_uids
 from jcode_ctl.terminal import kill_process_group, kill_processes_in_dir
 from jcode_ctl.workspace import Workspace
 
@@ -76,8 +77,13 @@ class SessionManager:
         max_sessions: int = 8,
         now: Callable[[], datetime] = _utcnow,
         new_id: Callable[[], str] = lambda: secrets.token_hex(4),
+        uid_pool: UidPool | None = None,
     ) -> None:
         self._workspace = workspace
+        self._uids = uid_pool or UidPool(in_use=workspace.uid_in_use)
+        # sid -> the uid its shell and git run as. Kept off ``Session`` so the shape the
+        # api mirrors is unchanged.
+        self._users: dict[str, SessionUser] = {}
         self._root = Path(workspace_root)
         self._home_root = Path(home_root)
         self._max = max_sessions
@@ -92,6 +98,15 @@ class SessionManager:
 
     def _stamp(self) -> str:
         return self._now().isoformat()
+
+    def startup(self) -> None:
+        """Clear what a previous run left on the volume, before the first uid is handed
+        out (see ``GitWorkspace.startup``)."""
+        self._workspace.startup(set(self._sessions))
+
+    def user_for(self, sid: str) -> SessionUser:
+        self.get(sid)
+        return self._users[sid]
 
     def home_for(self, sid: str) -> Path:
         """The session's private $HOME dir. Derived (not stored on the session) so the
@@ -113,11 +128,30 @@ class SessionManager:
         if self._max > 0 and len(self._sessions) >= self._max:
             raise SessionError(f"at capacity ({self._max} sessions) — close one first")
         sid = self._new_id()
+        if sid in self._sessions:
+            raise SessionError(f"session id collision: {sid}")
         work_branch = work_branch or f"jcode/{sid}"
         path = self._root / sid
-        await self._workspace.clone(path, repo, branch, work_branch)
-        # The session's private $HOME (its own tool bin on PATH, ~/.grok, npm prefix).
-        self._workspace.prepare_home(self.home_for(sid))
+        uid = self._uids.acquire()
+        user = SessionUser(uid=uid, gid=uid, home=str(self.home_for(sid)))
+        try:
+            # Checkout dir + private $HOME (its tool bin on PATH, ~/.grok, npm prefix),
+            # both owned by the session's uid. All or nothing: a failure here has
+            # already undone itself, and never touched a path it didn't create.
+            self._workspace.prepare(path, user)
+        except BaseException:
+            self._uids.release(uid)
+            raise
+        try:
+            await self._workspace.clone(path, repo, branch, work_branch, user)
+        except BaseException:
+            # A failed create leaves no tree behind for the uid's next holder to find.
+            self._workspace.remove(path)
+            self._workspace.remove(self.home_for(sid))
+            self._workspace.purge_uid(uid)
+            self._uids.release(uid)
+            raise
+        self._users[sid] = user
         now = self._stamp()
         session = Session(
             id=sid,
@@ -199,6 +233,10 @@ class SessionManager:
         # a bg job) so a paused session leaves nothing executing.
         with contextlib.suppress(Exception):
             kill_processes_in_dir(session.workspace)
+        # ...and anything running as the session's uid, wherever its cwd: a daemon that
+        # left the shell's group and the checkout is still the session's.
+        with contextlib.suppress(Exception):
+            kill_uids([self._users[sid].uid])
         session.status = "stopped"
         session.last_active_at = self._stamp()
         _log.info("session stop sid=%s", sid)
@@ -215,7 +253,7 @@ class SessionManager:
 
     async def reset(self, sid: str) -> Session:
         session = self.get(sid)
-        await self._workspace.reset(Path(session.workspace))
+        await self._workspace.reset(Path(session.workspace), self._users[sid])
         session.status = "ready"
         session.last_active_at = self._stamp()
         _log.info("session reset sid=%s", sid)
@@ -229,10 +267,18 @@ class SessionManager:
         for pid in self._terminals.pop(sid, set()):
             kill_process_group(pid)
         kill_processes_in_dir(session.workspace)
+        user = self._users[sid]
+        kill_uids([user.uid])
         self._workspace.remove(Path(session.workspace))
         # Purge the session's private $HOME alongside the checkout (its installed tools,
-        # ~/.grok, npm cache) so a deleted session leaves nothing on the volume.
+        # ~/.grok, npm cache) so a deleted session leaves nothing on the volume, and
+        # whatever it left in /tmp or SysV IPC, so the uid's next holder inherits
+        # nothing. The session is forgotten only once all of that is done: a removal
+        # that raises leaves it (and its uid) on the books for a retried delete.
         self._workspace.remove(self.home_for(sid))
+        self._workspace.purge_uid(user.uid)
+        self._uids.release(user.uid)
+        del self._users[sid]
         del self._sessions[sid]
         _log.info("session delete sid=%s", sid)
 

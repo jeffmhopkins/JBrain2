@@ -296,6 +296,12 @@ static const cue_def_t DEF[CUE_COUNT] = {
     [CUE_KICK] = {SH_NOISE, 200, 0.0f, 0, 4.2f, 260.0f, {END}, 1, 60},
     /* Three rises, each starting higher than the last — a spiral, which one sweep cannot be. */
     [CUE_SPIN] = {SH_STEPS, 380, 523.25f, 0.2f, 0, 0, {0, 5, 12, 17}, 2, 10},
+    /* Woozy: a slow, deep vibrato that slides down an octave as it goes, so it wobbles AND
+       falls — dizziness is both. The slide is WARBLE's step, which nothing else sets. */
+    [CUE_DIZZY] = {SH_WARBLE, 700, 660.0f, 0.35f, 5.5f, 0.07f, {-12, END}, 12, 0},
+    /* Two coos, a major third apart — the blush's warm arc said twice, which is how pleased
+       sounds rather than merely content. */
+    [CUE_LOVE] = {SH_COO, 620, 440.0f, 0.0f, 0.4f, 0, {0, 4, END}, 30, 0},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -409,6 +415,8 @@ cue_t cue_for_action(int action)
     case ACT_EAT:    return CUE_EAT;
     case ACT_KICK:   return CUE_KICK;
     case ACT_SPIN:   return CUE_SPIN;
+    case ACT_DIZZY:  return CUE_DIZZY;
+    case ACT_LOVE:   return CUE_LOVE;
     default:         return CUE_BLIP;
     }
 }
@@ -512,7 +520,9 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
         }
 
         case SH_WARBLE: {
-            const float hz = base * (1.0f + d->b * sinf(TWO_PI * d->a * t * 0.001f));
+            /* A step, if one is set, is a slide across the run: the dizzy cue falls. */
+            const float slide = n_steps > 0 ? exp2f((float)d->steps[0] * u / 12.0f) : 1.0f;
+            const float hz = base * slide * (1.0f + d->b * sinf(TWO_PI * d->a * t * 0.001f));
             e.hold_ms = dur * 0.75f;
             e.decay_ms = dur * 0.25f - (float)d->attack_ms;
             v = pulse(step_osc(&a, hz, rate), d->duty, hz);
@@ -524,12 +534,18 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
                between contentment and a question. A triangle, so it is warm rather than
                bright, with a soft fifth above it for body. A long attack on purpose: a coo
                has no impact, and a fast one would read as a beep. */
-            const float arc = sinf((float)M_PI * u);
-            const float hz = base * exp2f(d->a * arc);
+            /* With steps, one arc per step at that step's pitch, dipping between them. */
+            const int arcs = n_steps > 1 ? n_steps : 1;
+            const int seg = (int)(u * (float)arcs) < arcs ? (int)(u * (float)arcs) : arcs - 1;
+            const float lu = u * (float)arcs - (float)seg;
+            const float arc = sinf((float)M_PI * lu);
+            const float hz = semi(base, n_steps > 1 ? (float)d->steps[seg] : 0.0f) *
+                             exp2f(d->a * arc);
             e.hold_ms = dur * 0.45f;
             e.decay_ms = dur * 0.55f - (float)d->attack_ms;
             v = triangle(step_osc(&a, hz, rate), hz) +
                 0.28f * triangle(step_osc(&b, hz * 1.5f, rate), hz * 1.5f);
+            if (arcs > 1) v *= 0.3f + 0.7f * sqrtf(arc);
             break;
         }
 

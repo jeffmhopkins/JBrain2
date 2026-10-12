@@ -92,3 +92,29 @@ uint8_t screen_level(uint8_t configured, screen_stage_t stage, int dim_percent);
    with `screen_moved()` so the log can print what it nearly was. */
 int screen_motion(const int16_t prev[3], const int16_t cur[3]);
 bool screen_moved(int magnitude);
+
+/* A SHAKE: the owner's *"when we shake the whole unit ... the robots sit down and shake their
+   head in confusion because you just shook them really hard."*
+ *
+ * Built from the same per-sample difference as `screen_motion`, and told apart from the
+ * things that are not a shake by COUNT and RHYTHM rather than size. Picking the panel up, a
+ * knock on the table or setting it down is one or two big jerks; a shake is several, back and
+ * forth, inside a second and a half. Samples closer together than `SHAKE_GAP_MS` are the same
+ * jerk, so one violent bump spread over two samples still counts once. And after a shake it
+ * rests, so shaking for five seconds is one dizzy pet, not five. */
+#define SHAKE_JERK_COUNTS 9000 /* about 1.1 g of change between samples (8192 counts = 1 g) */
+#define SHAKE_JERKS 4
+#define SHAKE_WINDOW_MS 1500
+#define SHAKE_GAP_MS 90
+#define SHAKE_REST_MS 6000
+
+typedef struct {
+    uint32_t at[SHAKE_JERKS]; /* the last jerks, oldest first once full */
+    int n;
+    uint32_t fired_at;
+    bool fired;
+} shake_t;
+
+/* Feed one sample's `screen_motion` magnitude at `now_ms`; true on the sample that completes a
+   shake. */
+bool screen_shaken(shake_t *s, int magnitude, uint32_t now_ms);

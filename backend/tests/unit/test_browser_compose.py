@@ -54,7 +54,13 @@ def test_only_the_proxy_has_a_way_out_and_it_never_touches_internal() -> None:
     # A plain bridge: the one network in this fence WITH a gateway, so the proxy can reach out.
     assert not (compose["networks"]["browser_out"] or {}).get("internal")
     assert _members("browser_out") == {"egress"}
-    assert compose["services"]["egress"]["networks"] == ["browser", "browser_out"]
+    # The proxy is the single exit of every fenced network, and never touches `internal`.
+    assert compose["services"]["egress"]["networks"] == [
+        "browser",
+        "fetchers",
+        "jcode_fenced",
+        "browser_out",
+    ]
 
 
 def test_nothing_that_holds_data_or_models_shares_a_network_with_the_browser() -> None:
@@ -181,6 +187,9 @@ def test_the_proxy_denies_every_non_public_range() -> None:
         "::ffff:0:0/96",
         "2002::/16",
         "2001::/32",
+        "::/96",
+        "fec0::/10",
+        "64:ff9b::/96",
     } <= _denied_ranges()
 
 
@@ -215,5 +224,87 @@ def test_ci_runs_the_built_proxy_against_its_deny_matrix() -> None:
     ci = (_DEPLOY.parent / ".github" / "workflows" / "ci.yml").read_text()
     assert "bash deploy/egress/fence-check.sh http://127.0.0.1:3128" in ci
     check = (_DEPLOY / "egress" / "fence-check.sh").read_text()
-    for target in ("169.254.169.254", "db:5432", "searxng:8080", "100.64.0.1", "localtest.me"):
+    for target in (
+        "169.254.169.254",
+        "db:5432",
+        "searxng:8080",
+        "100.64.0.1",
+        "localtest.me",
+        "host.docker.internal",
+        "github.com:22",
+    ):
         assert target in check
+
+
+# --- The other fenced networks: web_fetch's renderers and code mode (S2.3, S2.4) ---------------
+
+
+_EGRESS = "http://egress:3128"
+
+
+def test_the_fetchers_and_code_mode_networks_have_no_gateway() -> None:
+    networks = _compose()["networks"]
+    assert networks["fetchers"]["internal"] is True
+    assert networks["jcode_fenced"]["internal"] is True
+
+
+def test_the_renderers_sit_only_on_fetchers_and_leave_through_the_proxy() -> None:
+    services = _compose()["services"]
+    for name in ("reader", "byparr"):
+        assert services[name]["networks"] == ["fetchers"], name
+    assert _members("fetchers") == {"reader", "byparr", "api", "egress"}
+    assert "reader" not in _members("internal") and "byparr" not in _members("internal")
+
+
+def test_the_reader_and_solver_browsers_are_pointed_at_the_proxy() -> None:
+    services = _compose()["services"]
+    for name in ("reader", "byparr"):
+        env = services[name]["environment"]
+        for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            assert env[var] == _EGRESS, (name, var)
+    config = (_DEPLOY.parent / "backend" / "src" / "jbrain" / "config.py").read_text()
+    assert f'solver_proxy_url: str = "{_EGRESS}"' in config
+    assert f'reader_proxy_url: str = "{_EGRESS}"' in config
+    # Byparr's own proxy knob; its request model has no body `proxy` field.
+    assert services["byparr"]["environment"]["PROXY_SERVER"] == _EGRESS
+
+
+def test_code_mode_shares_its_network_with_only_the_api_and_the_proxy() -> None:
+    services = _compose()["services"]
+    assert services["jcode"]["networks"] == ["jcode_fenced"]
+    assert _members("jcode_fenced") == {"jcode", "api", "egress"}
+
+
+def test_no_model_server_is_reachable_from_a_sandbox_or_a_renderer() -> None:
+    """N1: a session talking to llama-swap directly could load a cold model outside the
+    residency budget (a host freeze); its models come through the api's jcode proxy."""
+    compose = _compose()
+    fenced = {"jcode_fenced", "fetchers", "browser"}
+    for name in ("local-llm", "flash-next", "comfyui", "tts-stt", "embed", "db", "supervisor"):
+        nets = set(compose["services"][name].get("networks") or [])
+        assert not fenced & nets, name
+        assert "jcode" not in nets, name
+    # Nothing joins the retired `jcode` network, so it is dropped from the file.
+    assert "jcode" not in compose["networks"]
+
+
+def test_code_mode_goes_out_through_the_proxy_by_default() -> None:
+    env = _compose()["services"]["jcode"]["environment"]
+    for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        # The owner's JCODE_EGRESS_PROXY still wins; unset or empty means squid.
+        assert env[var] == "${JCODE_EGRESS_PROXY:-" + _EGRESS + "}", var
+    for var in ("NO_PROXY", "no_proxy"):
+        assert env[var] == "${JCODE_NO_PROXY:-api,localhost,127.0.0.1,::1}", var
+    assert "egress" in _compose()["services"]["jcode"]["depends_on"]
+    assert env["NODE_USE_ENV_PROXY"] == "1"
+
+
+def test_the_proxy_serves_https_and_http_on_the_standard_ports_only() -> None:
+    """git, npm and pip in a code-mode session need public https (CONNECT 443) and plain http
+    on 80; anything else (ssh, a LAN port) is refused before the deny list is consulted."""
+    assert re.search(r"^acl web_ports port 80 443$", _SQUID, re.MULTILINE)
+    assert re.search(r"^acl tls_port port 443$", _SQUID, re.MULTILINE)
+    rules = re.findall(r"^http_access (\S+) (.+)$", _SQUID, re.MULTILINE)
+    assert ("deny", "!web_ports") in rules and ("deny", "CONNECT !tls_port") in rules
+    # No source ACL: membership of a fenced network is what grants use of the proxy.
+    assert not re.search(r"^acl \S+ src ", _SQUID, re.MULTILINE)

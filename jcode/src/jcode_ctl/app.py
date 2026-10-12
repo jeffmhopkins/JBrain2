@@ -19,7 +19,7 @@ import contextlib
 import hashlib
 import hmac
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -39,7 +39,13 @@ from pydantic import BaseModel, Field
 from jcode_ctl.config import Settings
 from jcode_ctl.host_preview import HostPreviewManager
 from jcode_ctl.preview import PreviewError
-from jcode_ctl.preview_proxy import proxy_http, proxy_ws
+from jcode_ctl.preview_proxy import (
+    UNREACHABLE,
+    has_dot_segment,
+    proxy_http,
+    proxy_ws,
+)
+from jcode_ctl.sandbox import listener_uids
 from jcode_ctl.sessions import SessionError, SessionManager
 from jcode_ctl.terminal import TerminalRegistry, serve_terminal
 
@@ -123,9 +129,13 @@ def create_app(
     settings: Settings,
     sessions: SessionManager,
     host_preview: HostPreviewManager,
+    *,
+    port_owners: Callable[[int], set[int]] = listener_uids,
 ) -> FastAPI:
     # host_preview is the per-session port + hostname allocator fronting each session's
     # dev server. It fail-closes (.enabled is False) when no base host is configured.
+    # port_owners reports the uids listening on a port; injectable because tests have no
+    # session-uid process to bind one.
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # The session GC reaper runs for the life of the server.
@@ -284,6 +294,31 @@ def create_app(
         # delete/reap) and a stable URL is the point — there's nothing to tear down.
         sessions.get(sid)
 
+    def _preview_target(slug: str, path: str) -> int | Response:
+        """The dev port to proxy ``slug`` to, or the refusal. Unknown slug or a session
+        that isn't running both refuse — a paused/absent session is never reachable. So
+        does a port another uid listens on: sessions share one network namespace, so a
+        neighbour can bind the session's port (on another loopback address, or before
+        its dev server starts) and would otherwise be served under this session's URL.
+        With nothing listening there is nothing to proxy, and connecting anyway would
+        only race whoever binds next."""
+        sid = host_preview.resolve(slug)
+        session = sessions.get_or_none(sid) if sid is not None else None
+        port = host_preview.port_for(sid) if sid is not None else None
+        if sid is None or session is None or session.status == "stopped" or not port:
+            return Response("preview not available", status_code=404)
+        if has_dot_segment(path):
+            return Response("preview not available", status_code=404)
+        owners = port_owners(port)
+        if not owners:
+            return Response(UNREACHABLE, status_code=502)
+        if owners != {sessions.user_for(sid).uid}:
+            _log.warning(
+                "preview refused sid=%s: port %d held by %s", sid, port, owners
+            )
+            return Response("preview not available", status_code=404)
+        return port
+
     # The preview proxy carries the preview token, never the control token (see
     # preview_token), so it lives on its own router rather than under `authed`.
     previews = APIRouter(dependencies=[Depends(require_preview_token)])
@@ -300,14 +335,11 @@ def create_app(
         request: Request, slug: str, path: str = ""
     ) -> Response:
         # The api forwards <slug>-preview.<host> here by slug; resolve it to the live
-        # session's reserved dev port and reverse-proxy. Unknown slug or a session that
-        # isn't running both refuse — a paused/absent session is never reachable.
-        sid = host_preview.resolve(slug)
-        session = sessions.get_or_none(sid) if sid is not None else None
-        port = host_preview.port_for(sid) if sid is not None else None
-        if session is None or session.status == "stopped" or port is None:
-            return Response("preview not available", status_code=404)
-        return await proxy_http(port, path, request)
+        # session's reserved dev port and reverse-proxy.
+        target = _preview_target(slug, path)
+        if isinstance(target, Response):
+            return target
+        return await proxy_http(target, path, request)
 
     @app.websocket("/preview/{slug}/{path:path}")
     @app.websocket("/preview/{slug}")
@@ -323,13 +355,12 @@ def create_app(
         ):
             await websocket.close(code=4401)
             return
-        sid = host_preview.resolve(slug)
-        session = sessions.get_or_none(sid) if sid is not None else None
-        port = host_preview.port_for(sid) if sid is not None else None
-        if session is None or session.status == "stopped" or port is None:
-            await websocket.close(code=4404)
+        target = _preview_target(slug, path)
+        if isinstance(target, Response):
+            # 1011 for "nothing listening" matches proxy_ws's own unreachable close.
+            await websocket.close(code=1011 if target.status_code == 502 else 4404)
             return
-        await proxy_ws(websocket, port, path, websocket.url.query)
+        await proxy_ws(websocket, target, path, websocket.url.query)
 
     @app.websocket("/sessions/{sid}/terminal")
     async def terminal(websocket: WebSocket, sid: str) -> None:
@@ -380,6 +411,7 @@ def create_app(
             internet_egress=session.internet_egress,
             preview_port=preview_port,
             home=str(sessions.home_for(sid)),
+            user=sessions.user_for(sid),
             on_open=lambda pid: sessions.terminal_opened(sid, pid),
             on_close=lambda pid: sessions.terminal_closed(sid, pid),
             on_shell_exit=_on_shell_exit,

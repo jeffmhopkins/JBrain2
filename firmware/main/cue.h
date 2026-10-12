@@ -40,7 +40,7 @@
  */
 
 typedef enum {
-    /* --- the nineteen actions, in the order `rig.h` declares them ---------------------- */
+    /* --- the twenty-one actions, in the order `rig.h` declares them ---------------------- */
     CUE_WIGGLE = 0, /* a wobble — pitch vibrato, no journey */
     CUE_GIGGLE,     /* four quick rising blips */
     CUE_BOING,      /* up fast, down slow, with a wobble on the way back */
@@ -63,6 +63,8 @@ typedef enum {
     CUE_EAT,        /* two soft noise bites */
     CUE_KICK,       /* a thud: noise plus a pitch drop */
     CUE_SPIN,       /* three rising sweeps, each starting higher */
+    CUE_DIZZY,      /* a slow warble sliding down an octave — the room going round */
+    CUE_LOVE,       /* THE COO, twice, the second higher: the happiest thing it says */
 
     /* --- the interface, which is not an action ----------------------------------------- */
     CUE_BLIP,   /* a tap that resolved to nothing to do */

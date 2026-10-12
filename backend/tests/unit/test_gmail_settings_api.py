@@ -197,6 +197,19 @@ def test_callback_rejects_a_bad_state(
     assert "gmail_refresh_token" not in store.values  # nothing stored on a state mismatch
 
 
+def test_callback_rejects_a_non_ascii_state_without_erroring(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    _save_creds(test_client)
+    test_client.get("/api/settings/gmail/connect", follow_redirects=False)
+    resp = test_client.get(
+        "/api/settings/gmail/callback?code=auth-code&state=f%C3%B6rged", follow_redirects=False
+    )
+    assert resp.headers["location"] == "https://box.example/settings?gmail=error"
+    assert "gmail_refresh_token" not in store.values
+
+
 def test_connect_derives_redirect_uri_from_request_without_public_base() -> None:
     """No public_base_url set: the redirect_uri is derived from the host the browser
     hit, so a tunneled box works after a plain redeploy (no env editing)."""

@@ -2205,6 +2205,64 @@ async def test_solver_recovers_when_the_reader_returns_a_challenge() -> None:
     assert result.url == "https://x.example/walled"  # the public URL, not the solver's
 
 
+@pytest.mark.parametrize("proxy", ["http://egress:3128", ""])
+async def test_the_solver_is_told_to_browse_through_the_egress_proxy(proxy: str) -> None:
+    """byparr's network has no gateway (S2.3): its browser reaches the page through squid or
+    not at all. Byparr takes a per-request proxy only from `X-Proxy-Server` (its request model
+    drops a body `proxy`); FlareSolverr proper reads the body field, so both carry it."""
+    sent: list[httpx.Request] = []
+    solved = _tiered_handler(
+        httpx.Response(403), reader=None, solver_response={"response": _SOLVED_HTML}
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "byparr":
+            sent.append(request)
+        return solved(request)
+
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        solver_url="http://byparr:8191",
+        solver_proxy_url=proxy,
+    )
+    assert await fetcher.solve("https://x.example/walled") is not None
+    [request] = sent
+    payload = json.loads(request.content)
+    assert payload["url"] == "https://x.example/walled"
+    if proxy:
+        assert request.headers["x-proxy-server"] == proxy
+        assert payload["proxy"] == {"url": proxy}
+    else:
+        assert "x-proxy-server" not in request.headers and "proxy" not in payload
+
+
+@pytest.mark.parametrize("proxy", ["http://egress:3128", ""])
+async def test_the_reader_is_told_to_browse_through_the_egress_proxy(proxy: str) -> None:
+    """The reader is fenced the same way; `X-Proxy-Url` is its per-request proxy, sent beside
+    the proxy env compose gives its Chromium."""
+    sent: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            sent.append(request)
+            return httpx.Response(
+                200,
+                content=b"# Title\n\n" + b"Real words. " * 80,
+                headers={"content-type": "text/markdown"},
+            )
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        reader_url="http://reader:3000",
+        reader_proxy_url=proxy,
+    )
+    await fetcher.fetch("https://x.example/page")
+    assert sent
+    for request in sent:
+        assert request.headers.get("x-proxy-url") == (proxy or None)
+
+
 async def test_solver_that_is_still_challenged_surfaces_the_block() -> None:
     # The solver ran but the stealth browser ALSO got a challenge (interactive Turnstile it
     # can't clear): that is a miss too, so the original 403 surfaces — never the challenge text.

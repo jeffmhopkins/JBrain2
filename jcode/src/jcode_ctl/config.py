@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     # on-box gateway (or the api's residency-aware jcode proxy in front of it).
     # Informational here; the CLI reads its base_url from ~/.grok/config.toml, which
     # ``grok-config.sh`` renders from the process env (set by the Dockerfile/compose).
-    model_base_url: str = "http://local-llm:8080"
+    model_base_url: str = "http://api:8000/api/jcode/llm/v1"
 
     # The served model name the gateway resolves (llama-swap id). Local-only. Pins the
     # terminal's ``grok`` CLI to the on-box coder.

@@ -1,6 +1,6 @@
 # jcode grok Internet Access — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-08-23 · **Waves:** S1✅ S2✅ S3✅ S4✅ S5✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped; S5 = the AGENTS.md/CLAUDE.md discovery hook so grok/claude actually reach for the shell helpers — the on-box banner alone didn't. CI covers the bridge/helpers/plumbing with fakes + a localhost stub; the hook is shipped (`jcode/Dockerfile` installs `agents-md.sh`) — confirm on the next deploy that the CLIs read the workspace-root memory file. E1 = raw-egress toggle, deferred: the shared-container caveat in §6 has no live resolution path — the UI toggle ships disabled)
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2✅ S3✅ S4✅ S5✅ E1◻️ (S1–S4 = SearXNG search for grok, shipped; S5 = the AGENTS.md/CLAUDE.md discovery hook so grok/claude actually reach for the shell helpers — the on-box banner alone didn't. CI covers the bridge/helpers/plumbing with fakes + a localhost stub; since security plan S2.1 the control server writes the file as root to `/work` and seeds each session's `~/.grok/AGENTS.md` + `~/.claude/CLAUDE.md` (grok reads its global file, not a checkout's parent) — confirm on the next deploy that grok picks the home copy up. E1 = raw-egress toggle, deferred: the shared-container caveat in §6 has no live resolution path — the UI toggle ships disabled)
 
 > Reconciled with the root `CLAUDE.md` non-negotiables: the search bridge runs
 > the same on-box SearXNG discipline jerv already uses (invariant #9 — no owner
@@ -28,8 +28,9 @@ The box **already runs SearXNG** (`deploy/docker-compose.yml` `searxng`, plus a
 
 ## 2. The constraint that shapes everything — the network
 
-The jcode sandbox sits on its **own `jcode` network** (`docker-compose.yml`),
-reachable peers by design: **only `local-llm` and `api`**. SearXNG
+The jcode sandbox sits on its **own `jcode_fenced` network** (`docker-compose.yml`,
+`internal: true`), reachable peers by design: **only `api` and the `egress` proxy** —
+all outbound goes through squid (security plan S2.4). SearXNG
 lives on the **`internal`** network and is **unreachable from the
 sandbox**. Widening the sandbox onto `internal` is rejected — it's the whole point
 of the isolation (no `db`, no notes, no blob store).
@@ -90,13 +91,14 @@ defense-in-depth logging.
   the flag is off.
 - **S5 — discovery (resolved on-box).** A login banner (`web-tools.sh`) alone did
   NOT make grok use the helpers: on-box it inspected only its MCP tool registry,
-  found nothing, and told the owner it had no web access. Fix: a `jcode-agents.sh`
-  login hook writes an `AGENTS.md` + `CLAUDE.md` to the workspace root (the parent
-  of every checkout, so it never dirties the owner's repo) — grok and claude both
-  read those memory files, so they now discover `web-search` / `web-fetch` / `ocr`
-  as shell commands. Static content (the helpers self-gate). Verify on the next
-  deploy that the CLIs traverse *above* the git root to find it; the fallback is to
-  write it inside the checkout with a `.git/info/exclude` entry.
+  found nothing, and told the owner it had no web access. Fix: an `AGENTS.md` +
+  `CLAUDE.md` naming `web-search` / `web-fetch` / `ocr` as shell commands. Static
+  content (the helpers self-gate). Originally a login hook wrote it to the workspace
+  root; since security plan S2.1 sessions are unprivileged, so the control server
+  (`jcode_ctl.agent_files`) writes it as root to `/work` at startup and seeds every
+  new session's `~/.grok/AGENTS.md` and `~/.claude/CLAUDE.md` — grok 0.2.67 reads the
+  git root down plus that global file, never a checkout's parent. Neither location
+  dirties the owner's repo.
 - **S3 — flag plumbing.** `internet_search: bool` through `CreateSessionBody` →
   `JcodeApi.create_session` → `SessionManager.create` → `Session.internet_search`
   → `model_env()` → `JCODE_INTERNET_SEARCH`. Tests updated at each seam.

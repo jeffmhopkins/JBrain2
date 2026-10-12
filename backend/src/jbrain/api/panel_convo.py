@@ -4,7 +4,7 @@ docs/plans/JPANEL_C6_PLAN.md, owner decision 2026-10-12 (firmware-c6 0.0.15): *"
 the Jerv [conversation] … another button so that you can click it and view recent conversations
 to re-change what conversation we're actually in."* The panel lists one agent's last ten chats —
 the ones started at the panel and the ones started in the PWA (`agent_sessions.origin`,
-migration 0238) — and pointing it at one makes the next talk continue THAT chat, through the
+migration 0239) — and pointing it at one makes the next talk continue THAT chat, through the
 same `endpoint_panel_thread` row `panel_agent.panel_thread` already reads.
 
 THE SAME GATE AS THE TALK. Every route here answers only a caller `panel_agent.agent_allowed`

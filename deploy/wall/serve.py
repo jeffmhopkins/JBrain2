@@ -8,7 +8,8 @@ supervisor/src/supervisor/host_metrics.py. `POST /event` accepts a tiny
 tendril). It is deliberately decoupled from the authenticated api: it touches NO
 database and NO user data, only non-sensitive host vitals (GPU/RAM/power/load,
 net + disk throughput) and content-free web-tool markers, so it is safe to expose
-without auth *on a trusted LAN*.
+without auth *on a trusted LAN*. Its pet view proxies the api's `/internal/pet*` routes,
+presenting the wall's own token (WALL_TOKEN_FILE), which opens those routes and no others.
 
 SECURITY: there is no authentication. Bind it to your LAN only and never
 port-forward it to the public internet. Defaults to 0.0.0.0 so it answers at
@@ -27,6 +28,7 @@ import math
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
@@ -43,15 +45,55 @@ PET_PAGE = HERE / "pet.html"
 # proxied so the LAN browser reads it same-origin. Never off-box.
 API_URL = os.environ.get("BRAIN_API_URL", "http://api:8000")
 
+# The wall's own bearer for the api's /internal/pet* routes. The api mints it into the shared
+# `internal_secrets` volume, mounted read-only here, and it opens nothing but the pet routes
+# (the wall faces the LAN, so it must hold no other key). Read on every call: the api may
+# mint it after this server starts, and a missing file only means the api refuses the call.
+WALL_TOKEN_FILE = Path(os.environ.get("BRAIN_WALL_TOKEN_FILE", "/run/jbrain-internal/wall.token"))
+
+# Each problem is printed once until it clears, so a 1 Hz pet poll can't flood the log.
+_warned: set[str] = set()
+
+
+def _warn_once(key: str, message: str) -> None:
+    if key not in _warned:
+        _warned.add(key)
+        print(f"wall: {message}", flush=True)
+
+
+def api_headers() -> dict[str, str]:
+    """The Authorization header for an /internal call, or none while there is no token."""
+    try:
+        token = WALL_TOKEN_FILE.read_text().strip()
+    except OSError:
+        token = ""
+    if not token:
+        _warn_once("token", f"no api token at {WALL_TOKEN_FILE} yet; the api will refuse pet calls")
+        return {}
+    _warned.discard("token")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _note_status(status: int) -> None:
+    if status == 401:
+        _warn_once("401", "the api refused the wall's token (401)")
+    else:
+        _warned.discard("401")
+
 
 def fetch_pet_state() -> bytes | None:
     """GET the pet snapshot from the on-box api. None on any error (the wall shows a
     'waiting for pet' state and retries on the next poll)."""
     try:
-        with urllib.request.urlopen(f"{API_URL}/internal/pet", timeout=2) as resp:  # noqa: S310
+        req = urllib.request.Request(f"{API_URL}/internal/pet", headers=api_headers())  # noqa: S310
+        with urllib.request.urlopen(req, timeout=2) as resp:  # noqa: S310
+            _note_status(resp.status)
             if resp.status != 200:
                 return None
             return resp.read()
+    except urllib.error.HTTPError as exc:
+        _note_status(exc.code)
+        return None
     except Exception:  # noqa: BLE001 — any failure just means "not ready"; poll again
         return None
 
@@ -68,12 +110,18 @@ def api_post(path: str, data: bytes = b"", ctype: str = "", timeout: float = 2.0
     one-shot `/internal/pet/effects/clear` (empty body) and its voice `/internal/pet/say` (a JSON
     command, which can take a moment when it hits the LLM). 503 on any failure."""
     try:
-        headers = {"Content-Type": ctype} if ctype else {}
+        headers = api_headers()
+        if ctype:
+            headers["Content-Type"] = ctype
         req = urllib.request.Request(  # noqa: S310
             f"{API_URL}{path}", data=data, method="POST", headers=headers
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
+            _note_status(resp.status)
             return resp.status, resp.read(), resp.headers.get("Content-Type", "application/json")
+    except urllib.error.HTTPError as exc:
+        _note_status(exc.code)
+        return 503, b'{"error":"unavailable"}', "application/json"
     except Exception:  # noqa: BLE001 — any failure just means the command didn't land; harmless
         return 503, b'{"error":"unavailable"}', "application/json"
 

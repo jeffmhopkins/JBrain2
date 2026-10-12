@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.responses import Response
 from starlette.websockets import WebSocketDisconnect
 
+import jcode_ctl.app as app_mod
 from jcode_ctl.app import create_app, preview_token
 from jcode_ctl.config import Settings
 from jcode_ctl.host_preview import HostPreviewManager
@@ -174,3 +177,79 @@ def test_proxy_refuses_a_dot_segment_path() -> None:
     ):
         pass
     assert exc.value.code == 4404
+
+
+# --- Port ownership (S2.1): sessions share a network namespace, so the preview only
+# proxies a port whose every listener is the session's own uid. ---
+
+
+def _owned_app(owners: dict[int, set[int]]) -> tuple[TestClient, SessionManager, str]:
+    sessions = SessionManager(FakeWorkspace(), "/work")
+    host = HostPreviewManager(base_host="box.test", port_low=59000, port_high=59010)
+    settings = Settings(token="t", preview_base_host="box.test")
+    app = create_app(
+        settings, sessions, host, port_owners=lambda port: owners.get(port, set())
+    )
+    c = TestClient(app)
+    sid = c.post("/sessions", json={"repo": "r"}, headers=AUTH).json()["id"]
+    url = c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()["url"]
+    return c, sessions, _slug(url)
+
+
+def _never_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _never(*_a: Any) -> Any:
+        raise AssertionError("must not proxy")
+
+    monkeypatch.setattr(app_mod, "proxy_http", _never)
+    monkeypatch.setattr(app_mod, "proxy_ws", _never)
+
+
+def test_preview_proxies_a_port_the_session_owns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proxied: list[int] = []
+
+    async def _proxy(port: int, path: str, request: Any) -> Response:
+        proxied.append(port)
+        return Response("dev", status_code=200)
+
+    monkeypatch.setattr(app_mod, "proxy_http", _proxy)
+    owners: dict[int, set[int]] = {}
+    c, sessions, slug = _owned_app(owners)
+    owners[59000] = {sessions.user_for(sessions.list()[0].id).uid}
+    resp = c.get(f"/preview/{slug}/", headers=PREVIEW_AUTH)
+    assert (resp.status_code, resp.text, proxied) == (200, "dev", [59000])
+
+
+@pytest.mark.parametrize("foreign", [{20999}, {0}])
+def test_preview_refuses_a_port_another_uid_listens_on(
+    monkeypatch: pytest.MonkeyPatch, foreign: set[int]
+) -> None:
+    _never_proxy(monkeypatch)
+    owners: dict[int, set[int]] = {}
+    c, sessions, slug = _owned_app(owners)
+    own = sessions.user_for(sessions.list()[0].id).uid
+    # Squatted outright, or shared with a neighbour bound on the other loopback family.
+    for held in (foreign, {own, *foreign}):
+        owners[59000] = held
+        assert c.get(f"/preview/{slug}/", headers=PREVIEW_AUTH).status_code == 404
+        with (
+            pytest.raises(WebSocketDisconnect) as exc,
+            c.websocket_connect(f"/preview/{slug}/", headers=PREVIEW_AUTH),
+        ):
+            pass
+        assert exc.value.code == 4404
+
+
+def test_preview_with_nothing_listening_is_502_without_connecting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _never_proxy(monkeypatch)
+    c, _, slug = _owned_app({})
+    assert c.get(f"/preview/{slug}/", headers=PREVIEW_AUTH).status_code == 502
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        c.websocket_connect(f"/preview/{slug}/", headers=PREVIEW_AUTH),
+    ):
+        pass
+    assert exc.value.code == 1011

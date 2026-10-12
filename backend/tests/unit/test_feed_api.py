@@ -126,6 +126,8 @@ def test_wrong_or_missing_token_is_404(client: TestClient, repo: FakeAuthRepo) -
     client.post("/api/feed/appointments/rotate")
     assert client.get("/api/feed/appointments.ics").status_code == 404  # no token
     assert client.get("/api/feed/appointments.ics", params={"token": "nope"}).status_code == 404
+    # A non-ASCII guess is just another wrong token, not a 500 from the constant-time compare.
+    assert client.get("/api/feed/appointments.ics", params={"token": "nöpe"}).status_code == 404
 
 
 def test_rotate_invalidates_the_old_url_and_disable_kills_it(

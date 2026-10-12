@@ -20,15 +20,15 @@ none of it.
 - "pwa": any other root Jerv or Dave session that is not the game door's (`mc_chat_player`), a
   task's run (`task_runs`) or a note conversation (`note_conversations`).
 
-Revision ID: 0238
-Revises: 0237
+Revision ID: 0239
+Revises: 0238
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0238"
-down_revision = "0237"
+revision = "0239"
+down_revision = "0238"
 branch_labels = None
 depends_on = None
 

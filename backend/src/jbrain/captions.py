@@ -28,6 +28,7 @@ import structlog
 
 from jbrain.transcribe import Transcript, Word
 from jbrain.web.fetch import WebFetchError, guard_public_host
+from jbrain.web.netguard import pinned_transport
 
 log = structlog.get_logger()
 
@@ -112,7 +113,9 @@ async def fetch_caption_transcript(
         return None
     try:
         async with httpx.AsyncClient(
-            timeout=_CAPTION_TIMEOUT_S, transport=transport, follow_redirects=False
+            timeout=_CAPTION_TIMEOUT_S,
+            transport=pinned_transport(transport),
+            follow_redirects=False,
         ) as client:
             resp = await client.get(track.url, headers=dict(headers or {}))
             if resp.is_redirect:  # a redirect could dodge the host guard — refuse it

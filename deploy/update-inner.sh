@@ -584,8 +584,7 @@ if grep -q '^JCODE_ENABLED=true' .env; then
   fi
   grep -q '^JCODE_URL=' .env || printf 'JCODE_URL=%s\n' 'http://jcode:9100' >> .env
   grep -q '^JCODE_MODEL=' .env || printf 'JCODE_MODEL=%s\n' 'qwen3-coder-next' >> .env
-  grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
-fi
+  fi
 
 # Software-defined radio (sdr): opt-in and profile-gated, but enabled by DETECTING THE
 # DONGLE rather than by a flag the owner would have to set — they run this box from the

@@ -30,7 +30,12 @@ drive the pet from the **phone Control screen** in the PWA; this wall just shows
 Data path: `pet.html` polls `GET /pet/state` on this server once a second, and
 `serve.py` proxies that to the on-box api's **internal-only** `GET /internal/pet`
 (`BRAIN_API_URL`, default `http://api:8000`; reachable only on the docker `internal`
-network — Caddy never routes `/internal` off-box). The snapshot is a content-free
+network — Caddy never routes `/internal` off-box). Every call to the api's
+`/internal/pet*` carries the wall's own token as `Authorization: Bearer …`: the api
+mints it into the `internal_secrets` volume on start-up, the wall mounts that volume
+read-only and reads `wall.token` on each call, and the token opens the pet routes and
+nothing else (security plan S2.2). Until it exists the api refuses the call and the
+wall prints that once; nothing needs configuring. The snapshot is a content-free
 pet state (name/mood/position/current-command/objects in the safe `general` domain), so
 the display stays DB-free and the pet is never exposed publicly. Until the api is up (or
 the ensure loop has created the pet) the wall shows *"waiting for the pet…"* and retries.
@@ -118,6 +123,11 @@ firewalls. That makes it safe to serve unauthenticated **on a trusted LAN**.
 Never port-forward it to the public internet. Bind it to your LAN only
 (`BRAIN_HOST`), and don't reverse-proxy it past your network edge.
 
+The wall holds one credential, its token for the api's `/internal/pet*` routes,
+so any LAN client of `:8800` can still drive the pet through `/pet/say` and
+`/pet/statue` (rate-limited on the api). The token is scoped so that this is all a
+LAN client gets: it opens no other api route.
+
 ## Run
 
 ```bash
@@ -144,6 +154,7 @@ badge, so the display is never a dead black screen.
 | `BRAIN_HOST` | `0.0.0.0` | Bind interface — set a LAN IP to pin one NIC |
 | `BRAIN_PORT` | `8800` | Port |
 | `BRAIN_API_URL` | `http://api:8000` | On-box api base for the `/pet` view's read-only snapshot (`/internal/pet`) |
+| `BRAIN_WALL_TOKEN_FILE` | `/run/jbrain-internal/wall.token` | The wall's api token, minted by the api into the `internal_secrets` volume |
 | `BRAIN_POWER_MAX_W` | `90` | APU TDP ceiling, used to normalise power → heat |
 | `BRAIN_DEMO` | unset | `1` = synthetic values (no amdgpu needed) |
 

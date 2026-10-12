@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     session_cookie: str = "jbrain_session"
     blob_dir: str = "/data/blobs"
     backups_dir: str = "/data/backups"
+    # The `internal_secrets` volume: the api mints one bearer per /internal caller here
+    # (wall, mosquitto) and those services mount it read-only, so a new caller secret
+    # ships with the same update as the code that checks it — no `.env` key, no second
+    # update (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S2.2).
+    internal_secrets_dir: str = "/run/jbrain-internal"
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
 
@@ -178,6 +183,15 @@ class Settings(BaseSettings):
     # as absent and falls back to this default, so it does NOT disable it. To turn it off, point
     # JBRAIN_SOLVER_URL at a non-serving endpoint or remove the byparr service.
     solver_url: str = "http://byparr:8191"
+    # The forward proxy the solver's browser must use, sent on every solve as byparr's
+    # `X-Proxy-Server` header (its compose env also sets PROXY_SERVER). byparr sits on the fenced
+    # `fetchers` network whose only way out is the squid egress (SECURITY_REVIEW_FIXES_PLAN.md
+    # S2.3), so this is its route, not a preference. As with the URLs above, env_ignore_empty
+    # means an empty JBRAIN_SOLVER_PROXY_URL falls back to this default rather than disabling it.
+    solver_proxy_url: str = "http://egress:3128"
+    # The same for the reader, sent as its `X-Proxy-Url` header: belt-and-braces beside the
+    # proxy env compose gives it, since the reader image's Chromium launch is not ours to set.
+    reader_proxy_url: str = "http://egress:3128"
     # Domains that go STRAIGHT to the challenge solver, skipping the direct+reader tiers that
     # only waste a round trip on them. A handful of majors (Reuters, WSJ, Bloomberg) run bot
     # management that rejects the plain fetch (401/403) AND rate-limits the headless reader

@@ -1,0 +1,256 @@
+"""The callers' half of the `/internal/*` handshake (SECURITY_REVIEW_FIXES_PLAN.md S2.2).
+
+The api half is test_internal_auth.py. Here: the wall (deploy/wall/serve.py, loaded by
+path) presents its token as a bearer, mosquitto's entrypoint (deploy/mosquitto/entrypoint.sh,
+run under `sh`) renders the conf with its token as go-auth's User-Agent, and the compose
+file gives the api the volume read-write and each caller read-only. None of this runs
+Docker; the live check is MQTT phone auth and the wall's pet view on the box.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+import shutil
+import stat
+import subprocess
+import sys
+import threading
+import types
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+_DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
+_ENTRYPOINT = _DEPLOY / "mosquitto" / "entrypoint.sh"
+_CONF = _DEPLOY / "mosquitto" / "mosquitto.conf"
+_TOKEN = "a1" * 32
+
+
+# --- the wall ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def wall(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "wall_serve_under_test", _DEPLOY / "wall" / "serve.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    monkeypatch.setattr(module, "WALL_TOKEN_FILE", tmp_path / "wall.token")
+    return module
+
+
+class _Resp:
+    status = 200
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+
+    def __enter__(self) -> _Resp:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return b"{}"
+
+
+def _capture(
+    monkeypatch: pytest.MonkeyPatch, wall: types.ModuleType
+) -> list[urllib.request.Request]:
+    sent: list[urllib.request.Request] = []
+
+    def urlopen(req: urllib.request.Request, timeout: float = 0) -> _Resp:
+        sent.append(req)
+        return _Resp()
+
+    monkeypatch.setattr(wall.urllib.request, "urlopen", urlopen)
+    return sent
+
+
+def test_the_wall_sends_its_token_on_every_api_call(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    wall.WALL_TOKEN_FILE.write_text(_TOKEN + "\n")
+    sent = _capture(monkeypatch, wall)
+    assert wall.fetch_pet_state() == b"{}"
+    wall.api_post("/internal/pet/effects/clear")
+    wall.api_post("/internal/pet/say", b"{}", "application/json")
+    assert [r.full_url for r in sent] == [
+        "http://api:8000/internal/pet",
+        "http://api:8000/internal/pet/effects/clear",
+        "http://api:8000/internal/pet/say",
+    ]
+    for req in sent:
+        assert req.get_header("Authorization") == f"Bearer {_TOKEN}"
+    assert sent[2].get_header("Content-type") == "application/json"
+
+
+def test_the_wall_reads_its_token_per_request(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The api may mint the token after the wall starts: until then it sends no header
+    (the api refuses), says so once, and picks the token up on the next call."""
+    sent = _capture(monkeypatch, wall)
+    wall.fetch_pet_state()
+    wall.fetch_pet_state()
+    assert all(r.get_header("Authorization") is None for r in sent)
+    assert capsys.readouterr().out.count("no api token") == 1
+
+    wall.WALL_TOKEN_FILE.write_text(_TOKEN)
+    wall.fetch_pet_state()
+    assert sent[-1].get_header("Authorization") == f"Bearer {_TOKEN}"
+
+
+def test_the_wall_logs_a_refusal_once_and_degrades(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    wall.WALL_TOKEN_FILE.write_text(_TOKEN)
+
+    def refused(req: urllib.request.Request, timeout: float = 0) -> Any:
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(wall.urllib.request, "urlopen", refused)
+    assert wall.fetch_pet_state() is None
+    assert wall.api_post("/internal/pet/say", b"{}", "application/json")[0] == 503
+    out = capsys.readouterr().out
+    assert out.count("refused the wall's token") == 1
+    assert _TOKEN not in out
+
+
+# --- mosquitto's entrypoint ----------------------------------------------------------
+
+needs_sh = pytest.mark.skipif(shutil.which("sh") is None, reason="needs a POSIX sh")
+
+
+def _run(tmp_path: Path, *, wait: int = 5, conf: Path = _CONF) -> subprocess.CompletedProcess[str]:
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "JBRAIN_MQTT_CONF": str(conf),
+        "JBRAIN_MQTT_TOKEN_FILE": str(tmp_path / "mqtt.token"),
+        "JBRAIN_MQTT_CONF_OUT": str(tmp_path / "rendered.conf"),
+        "JBRAIN_MQTT_TOKEN_WAIT": str(wait),
+    }
+    # `true` stands in for mosquitto: the script execs whatever it is given.
+    return subprocess.run(
+        ["sh", str(_ENTRYPOINT), "true"], env=env, capture_output=True, text=True, timeout=30
+    )
+
+
+@needs_sh
+def test_the_entrypoint_renders_the_token_as_go_auths_user_agent(tmp_path: Path) -> None:
+    (tmp_path / "mqtt.token").write_text(_TOKEN)
+    result = _run(tmp_path)
+    assert result.returncode == 0, result.stderr
+    rendered = tmp_path / "rendered.conf"
+    lines = rendered.read_text().splitlines()
+    assert lines.count(f"auth_opt_http_user_agent {_TOKEN}") == 1
+    assert not [line for line in lines if "UNRENDERED" in line]
+    assert stat.S_IMODE(rendered.stat().st_mode) == 0o600
+    # Everything else is the source conf, unchanged and in order (so the option stays in
+    # its listener's section).
+    source = _CONF.read_text().splitlines()
+    assert len(lines) == len(source)
+    assert [a for a, b in zip(lines, source, strict=True) if a != b] == [
+        f"auth_opt_http_user_agent {_TOKEN}"
+    ]
+    assert _TOKEN not in result.stdout + result.stderr
+
+
+@needs_sh
+def test_the_entrypoint_waits_for_the_api_to_mint_the_token(tmp_path: Path) -> None:
+    timer = threading.Timer(1.5, (tmp_path / "mqtt.token").write_text, args=(_TOKEN,))
+    timer.start()
+    try:
+        result = _run(tmp_path, wait=20)
+    finally:
+        timer.cancel()
+    assert result.returncode == 0, result.stderr
+    assert f"auth_opt_http_user_agent {_TOKEN}" in (tmp_path / "rendered.conf").read_text()
+
+
+@needs_sh
+def test_the_entrypoint_gives_up_rather_than_start_a_broker_that_denies_everyone(
+    tmp_path: Path,
+) -> None:
+    result = _run(tmp_path, wait=0)
+    assert result.returncode == 1
+    assert "no api token" in result.stderr
+    assert not (tmp_path / "rendered.conf").exists()
+
+
+@needs_sh
+def test_the_entrypoint_refuses_a_token_it_cannot_put_on_a_conf_line(tmp_path: Path) -> None:
+    (tmp_path / "mqtt.token").write_text("abc\nauth_plugin /evil.so")
+    result = _run(tmp_path)
+    assert result.returncode == 1
+    assert not (tmp_path / "rendered.conf").exists()
+
+
+@needs_sh
+def test_the_entrypoint_refuses_a_conf_with_no_line_to_fill(tmp_path: Path) -> None:
+    (tmp_path / "mqtt.token").write_text(_TOKEN)
+    conf = tmp_path / "bare.conf"
+    conf.write_text("listener 1883\n")
+    result = _run(tmp_path, conf=conf)
+    assert result.returncode == 1
+    assert "no auth_opt_http_user_agent" in result.stderr
+
+
+def test_the_conf_uses_options_go_auth_actually_reads() -> None:
+    """go-auth's http backend reads `http_timeout` (seconds); the `_ms` option that was here
+    was silently ignored. Confirmed against the pinned build's go-auth.so."""
+    conf = _CONF.read_text()
+    assert "auth_opt_http_timeout 2\n" in conf
+    assert "response_timeout_ms" not in conf
+    assert "auth_opt_http_user_agent JBRAIN_MQTT_TOKEN_UNRENDERED\n" in conf
+
+
+# --- compose and the image -----------------------------------------------------------
+
+
+def _compose() -> dict[str, Any]:
+    return yaml.safe_load((_DEPLOY / "docker-compose.yml").read_text())
+
+
+def _mounts(service: str) -> list[str]:
+    return [v for v in _compose()["services"][service]["volumes"] if isinstance(v, str)]
+
+
+def test_only_the_api_can_write_the_internal_secrets() -> None:
+    compose = _compose()
+    assert "internal_secrets" in compose["volumes"]
+    users = {
+        name: [m for m in spec.get("volumes") or [] if str(m).startswith("internal_secrets:")]
+        for name, spec in compose["services"].items()
+    }
+    assert {name for name, mounts in users.items() if mounts} == {"api", "wall", "mqtt"}
+    assert users["api"] == ["internal_secrets:/run/jbrain-internal"]
+    assert users["wall"] == ["internal_secrets:/run/jbrain-internal:ro"]
+    assert users["mqtt"] == ["internal_secrets:/run/jbrain-internal:ro"]
+
+
+def test_mosquitto_runs_the_entrypoint_from_the_checkout() -> None:
+    mqtt = _compose()["services"]["mqtt"]
+    assert mqtt["entrypoint"] == [
+        "/usr/bin/tini",
+        "--",
+        "/bin/sh",
+        "/etc/jbrain-mosquitto/entrypoint.sh",
+    ]
+    assert "./src/deploy/mosquitto:/etc/jbrain-mosquitto:ro" in _mounts("mqtt")
+    assert "api" in mqtt["depends_on"]
+    # Pinned: the conf depends on this build's option names and .so path.
+    assert "@sha256:" in mqtt["image"]
+
+
+def test_the_image_pre_owns_the_secrets_mount_for_the_app_user() -> None:
+    dockerfile = (_DEPLOY.parent / "backend" / "Dockerfile").read_text()
+    assert "mkdir -p /run/jbrain-internal && chown appuser /run/jbrain-internal" in dockerfile
+    assert dockerfile.index("/run/jbrain-internal") < dockerfile.index("USER appuser")
