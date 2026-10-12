@@ -1719,6 +1719,45 @@ def test_the_items_route_checks_its_numbers_and_names(
         httpd.shutdown()
 
 
+def test_a_stock_count_adds_up_the_containers_around_several_points() -> None:
+    _chest_world()
+    rig = _world_rig()
+    got = rig.map_stock("slot1", "overworld", [(0, 0), (170, 0)], ["diamond"], 48)
+    assert got["totals"] == {"minecraft:diamond": 14} and got["containers"] == 2
+    assert [c["totals"] for c in got["centres"]] == [
+        {"minecraft:diamond": 12},
+        {"minecraft:diamond": 2},
+    ]
+    assert got["flush"] == "not asked" and got["age_s"] >= 0
+    alone = rig.map_stock("slot1", "overworld", [(0, 0)], ["diamond"], 48)
+    assert alone["totals"] == {"minecraft:diamond": 12}
+    for bad in (
+        ([], ["diamond"]),
+        ([(0, 0)] * 102, ["diamond"]),
+        ([(99_999_999, 0)], ["diamond"]),
+        ([(0, 0)], ["op @a"]),
+    ):
+        with pytest.raises(ValueError):
+            rig.map_stock("slot1", "overworld", bad[0], bad[1], 48)
+    with pytest.raises(ValueError):
+        rig.map_stock("slot1", "moon", [(0, 0)], ["diamond"], 48)
+
+
+def test_the_stock_route_reads_its_points(monkeypatch: pytest.MonkeyPatch) -> None:
+    httpd, get = _serve(monkeypatch, "t")
+    _chest_world()
+    try:
+        auth = "Bearer t"
+        assert get("/map/stock?centres=0,0;170,0&items=diamond", auth) == 200
+        assert get("/map/stock?centres=0,0&items=diamond&radius=9999", auth) == 200
+        assert get("/map/stock?centres=0&items=diamond", auth) == 400
+        assert get("/map/stock?centres=a,b&items=diamond", auth) == 400
+        assert get("/map/stock?items=diamond", auth) == 400
+        assert get("/map/stock?centres=0,0", auth) == 400
+    finally:
+        httpd.shutdown()
+
+
 def test_an_installed_test_kit_is_refreshed_on_every_start(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
