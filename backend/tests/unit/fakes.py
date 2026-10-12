@@ -96,7 +96,8 @@ class FakeAuthRepo:
                 for p in self.principals:
                     live = p.expires_at is None or p.expires_at > now
                     holder = p.kind in SESSION_KINDS
-                    if p.id == s.principal_id and not p.revoked and live and holder:
+                    phone = p.kind != "device_key" or p.device_role is None
+                    if p.id == s.principal_id and not p.revoked and live and holder and phone:
                         return _info(p)
         return None
 

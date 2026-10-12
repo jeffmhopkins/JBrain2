@@ -9,7 +9,18 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, column, func, or_, select, table, text, update
+from sqlalchemy import (
+    ColumnElement,
+    CursorResult,
+    column,
+    exists,
+    func,
+    or_,
+    select,
+    table,
+    text,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.auth.service import (
@@ -28,6 +39,18 @@ _BOOTSTRAP = SessionContext(auth_context="bootstrap")
 # mapped column the Subject model would then write on every insert. `login` may SELECT
 # subjects (migration 0211's `subjects_select_login`).
 _SUBJECTS = table("subjects", column("id"), column("device_role"), schema="app")
+
+
+def _has_role(condition: ColumnElement[bool]) -> ColumnElement[bool]:
+    """The principal's subject exists AND meets `condition`. Fails closed: a subject the
+    `login` context could not see matches neither the phone nor the panel test."""
+    return exists().where(_SUBJECTS.c.id == Principal.subject_id, condition)
+
+
+def _is_phone() -> ColumnElement[bool]:
+    # A key with no subject at all stays the phone it always was (no legacy key locks out);
+    # a panel always has a role'd subject.
+    return or_(Principal.subject_id.is_(None), _has_role(_SUBJECTS.c.device_role.is_(None)))
 
 
 class SqlAuthRepo:
@@ -67,13 +90,10 @@ class SqlAuthRepo:
             Principal.kind == "device_key",
             Principal.revoked_at.is_(None),
         )
-        if device_class is not None:
-            # Outer: a key with no subject at all has no role, so it stays the phone it always
-            # was rather than locking out a legacy key; a panel always has a role'd subject.
-            role = _SUBJECTS.c.device_role
-            query = query.outerjoin(_SUBJECTS, _SUBJECTS.c.id == Principal.subject_id).where(
-                role.is_(None) if device_class == "phone" else role.is_not(None)
-            )
+        if device_class == "phone":
+            query = query.where(_is_phone())
+        elif device_class == "panel":
+            query = query.where(_has_role(_SUBJECTS.c.device_role.is_not(None)))
         async with scoped_session(self._maker, _LOGIN) as session:
             row = (await session.execute(query)).scalar_one_or_none()
             if row is None:
@@ -129,6 +149,9 @@ class SqlAuthRepo:
                         # the moment it lapses — the cookie can't outlive the share's
                         # expiry. Owner/device principals have NULL expiry, so unaffected.
                         or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
+                        # Only a phone holds a member cookie: one a panel key minted before
+                        # mint was phone-only must stop working, not linger until revoked.
+                        or_(Principal.kind != "device_key", _is_phone()),
                     )
                 )
             ).scalar_one_or_none()
