@@ -158,6 +158,55 @@
       "w": 720,
       "h": 720,
       "title": "20 \u00b7 Push with a sound \u2014 playing, tap or wait to hide"
+    },
+    "ConvoMenu.dc.html": {
+      "x": 0,
+      "y": 6103,
+      "w": 720,
+      "h": 720,
+      "title": "21 \u00b7 Long press in Jerv\u2019s thread \u2014 New conversation / Recent (proposal)"
+    },
+    "ConvoLoading.dc.html": {
+      "x": 800,
+      "y": 6103,
+      "w": 720,
+      "h": 720,
+      "title": "22 \u00b7 Recent conversations \u2014 loading from the box"
+    },
+    "ConvoRecent.dc.html": {
+      "x": 1600,
+      "y": 6103,
+      "w": 720,
+      "h": 720,
+      "title": "23 \u00b7 Recent conversations \u2014 tap one to switch"
+    },
+    "ConvoSwitched.dc.html": {
+      "x": 2400,
+      "y": 6103,
+      "w": 720,
+      "h": 720,
+      "title": "24 \u00b7 Switched \u2014 an older conversation, its title under Jerv"
+    },
+    "ConvoNew.dc.html": {
+      "x": 0,
+      "y": 6943,
+      "w": 720,
+      "h": 720,
+      "title": "25 \u00b7 After New conversation \u2014 a blank thread"
+    },
+    "ConvoEmpty.dc.html": {
+      "x": 800,
+      "y": 6943,
+      "w": 720,
+      "h": 720,
+      "title": "26 \u00b7 Recent conversations \u2014 nothing earlier yet"
+    },
+    "DaveRecent.dc.html": {
+      "x": 1600,
+      "y": 6943,
+      "w": 720,
+      "h": 720,
+      "title": "27 \u00b7 Dave\u2019s own recent conversations (per agent)"
     }
   },
   "order": [
@@ -181,7 +230,14 @@
     "ClockBadge.dc.html",
     "NotifyPicture.dc.html",
     "NotifyBanner.dc.html",
-    "NotifyAudio.dc.html"
+    "NotifyAudio.dc.html",
+    "ConvoMenu.dc.html",
+    "ConvoLoading.dc.html",
+    "ConvoRecent.dc.html",
+    "ConvoSwitched.dc.html",
+    "ConvoNew.dc.html",
+    "ConvoEmpty.dc.html",
+    "DaveRecent.dc.html"
   ],
   "notes": {
     "states": {

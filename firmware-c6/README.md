@@ -1245,6 +1245,113 @@ while the box works and goes with the working view. `int_min` should read about 
 6. Open Minecraft → Dave and talk: Dave's thread continues. Back on Minecraft's menu, KEY starts a
    new Jerv conversation, not a Dave one.
 
+## What 0.0.15 adds: New conversation, Recent, and switching between conversations
+
+The owner's request of 2026-10-12 — *"On long press of the Jerv [conversation] where it makes you
+able to clear a conversation, it should also have another button so that you can click it and
+view recent conversations to re-change what conversation we're actually in … change the clear
+conversation to new session."* — drawn as the mock's Convo boards and DaveRecent and approved by
+him the same day, with its four defaults (plan §1 "Switching conversations").
+
+### On the glass
+
+- **The thread's header names the conversation**: "Jerv" (or "Dave") and under it the box's
+  title for the conversation the panel is in — "Shopping list", "Tides at Port St John" — or
+  "Desk panel" until the box has one, "New conversation" for one not yet begun. Asked of the box
+  when the thread opens and again when an answer lands (Jerv may have just named it).
+- **The long press in Jerv's or Dave's thread** opens "This conversation" / "Jerv · Shopping list"
+  with **New conversation** (the agent's colour, one tap: the thread starts over, the toast says
+  "New conversation — the last one is in Recent", and the next talk asks the box for a new
+  conversation; on one already new and empty it does nothing and says "Already a new
+  conversation"), **Recent conversations ›** and **Cancel**. This replaces 0.0.11's Clear chat
+  there. Quorra's and Tamsin's threads keep Clear chat and its two taps exactly as they were.
+- **Recent** is its own screen over the thread: "Recent" / "Jerv's conversations", a "+ New
+  conversation" row, then up to ten 84 px rows from the box — a microphone for a conversation
+  begun at the panel, a phone for one begun in the app; the title, cut with "…"; when ("12 min
+  ago", "Yesterday 19:40", "Sat 10:05", "5 Oct", on the panel's own 24-hour clock and zone); and
+  the last line, "You: " before the owner's own. The current one has the 6 px accent bar, the tint
+  and the "Current" chip; more below fades out at the bottom. While the box answers: "Loading…"
+  over three grey rows; with none: "No other conversations yet"; with no answer: "Try again".
+- **Tapping a row** puts "Opening…" in its corner and switches: the thread then holds that
+  conversation's last three exchanges from the box, under its title, with the chip "Earlier
+  messages are in the app" at the top, and the next KEY inside it continues THAT conversation. An
+  answer still on its way for the conversation being left is let go first (the box finishes it
+  there).
+- **Buttons in Recent**: KEY closes it and talks in the current conversation (mid-switch it only
+  says "One moment: opening that conversation"); BOOT and the back arrow return to the thread.
+  KEY outside a thread is 0.0.14's `talk_key_route`, unchanged.
+
+### The protocol
+
+Three routes, all behind the talk's own gate (`panel_agent.agent_allowed`: a twin's panel, or a
+display the owner has not switched on, gets 403 and nothing else), all answered for the live
+owner principal on owner-scoped sessions (backend `api/panel_convo.py`):
+
+| Request | Answer |
+| --- | --- |
+| `GET /endpoint/convo/{jerv\|dave}/recent` | `{"items":[{"id","title","at","origin","snippet","current"}…]}` — at most 10, the current first, then newest; `at` in UTC seconds; `origin` `panel` or `pwa`; title ≤ 40 B and snippet ≤ 80 B, cut with "…". |
+| `POST /endpoint/convo/{agent}/select` `{"session_id"}` | `{"id","title"}`, or 404 for anything that is not the owner's own root chat with that agent from the panel or the app. |
+| `GET /endpoint/convo/{agent}/messages?limit=N` | `{"id","title","messages":[{"mine","text"}…],"more"}` — the last N exchanges (N ≤ 4; the panel asks 3), the newest answer ≤ 1,000 B and the rest ≤ 255 B; `limit=0` is the title alone. |
+
+A switch is `select` and then `messages`, one after the other on the main task. New conversation
+has no request: it is the talk's own `new_thread=true` (0.0.11), so the box makes nothing until
+something is said, and Recent leaves the box's current row un-marked meanwhile.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_convo` (new) | The service: the Recent list on the heap only while Recent is open, the switch, each agent's title and "earlier" flag; requests queued for the main task (a repeat of the same ask replaces the waiting one), answers applied on the UI task's pass and announced as the thread's `MSG_ARRIVED`. `convo_wire.c`: the paths, the select body (a session id or nothing), and the two answers' readers — unknown fields skipped, rows past ten ignored, a row without an id or a known origin dropped, every string cut at a character with "…". |
+| `main/convo_link.c` (new) | Runs the waiting request on the main loop, straight after a talk, over the kept session: one request in flight, an 8 s bound, the reply into a buffer allocated for it and handed to the UI task. |
+| `convo` | The header's title line, the "Earlier messages" chip and the new-conversation page; `convo_menu` / `convo_new` / `convo_recent`; `convo_recent.c`, the Recent screen. Its rules are pure and host-tested in `convo_model.c`: `convo_new_decide`, `convo_subtitle`, `convo_row_is_current`, `convo_when`, and `rc_step`, Recent's state machine. One implementation, an instance per agent. |
+| `shell` / `app_api` | The long-press menu has two kinds (`sh_menu_open(m, SH_MENU_CLEAR\|SH_MENU_CONVO)`): an app that offers `convo_menu`, `convo_new` and `convo_recent` gets New / Recent / Cancel; one that offers `can_clear` / `clear` keeps Clear chat. |
+| `ui_kit` | `ui_header_sub`, `ui_phone`, `ui_menu_sub`, `ui_menu_row`, `ui_ghost_button`, `ui_convo_row`, `ui_skeleton_row`, `ui_empty_state`, `ui_app_chip`, `ui_fade_bottom`. A Recent row is four widgets on shared styles, its glyph and accent bar drawn in its own draw event — clipping a child to its corners would cost a layer the size of the strip. |
+| `svc_audio` | `svc_audio_continue`: a switch forgets a new conversation asked for before it. |
+
+### The memory budget
+
+Static DIRAM (`.dram0.data` + `.dram0.bss`; 0.0.14 rebuilt from its source to the byte of its
+`dist/`): 148,968 → 149,800 B, **+832 B** (`.bss` +776, `.data` +56) — `svc_convo`'s queue of four
+requests and four answers, each agent's title (41 B) and flags, the counts; the two `convo_t`s'
+Recent fields; four shared row styles. `.iram0.text` is unchanged. App: 1,944,608 → 1,963,008 B
+(+18 KB: the service, the reader, Recent and the new widgets; 53% of the slot free).
+
+**On the heap, only while it is needed:**
+
+- **The Recent list, 1,768 B** (ten `convo_row_t` of 176 B: id 37, title 41, last line 81, the
+  time and two flags), `calloc`ed when Recent opens and freed when it closes.
+- **A reply buffer, 6,146 B** (`CONVO_BODY_MAX` + 2), allocated by the main task for one request
+  and freed by the UI task once applied — milliseconds after it arrives. The box's longest answer
+  (ten full rows, or a switch's six messages with the 1,000-byte answer) is under 4 KB; a reply
+  that fills the buffer is taken as cut off.
+- **1,024 B of scratch** on the UI task while a switch's messages are read into the thread; a
+  switched thread lives in `svc_messages`' existing buffers (eight messages, the one long answer),
+  so nothing grows there.
+
+One request in flight, on the main task's existing loop: no new task and no new stack. LVGL's pool
+peaks at 34.9 KB in the sim's busiest new state (`jerv-switched`, the thread under Recent just
+closed; `jerv-recent` 33.8 KB) on its 64-bit host, under Settings' 36.9 KB: a Recent row is four
+widgets on shared styles with its glyph drawn, not built (the first draft, a widget per stroke and
+a corner-clipped bar, peaked at 81 KB). `int_min` should read about 0.8 KB lower than 0.0.14's; the
+worst transient is the list and a reply buffer together, ~8 KB, for the moment a list lands.
+
+### What to check on the glass
+
+1. Open Jerv: under "Jerv" the header says what the PWA calls the current "Desk panel" chat (or
+   "Desk panel" if Jerv has not named it).
+2. Long-press the thread: New conversation, Recent conversations, Cancel — no Clear chat. Long-press
+   Quorra's thread: Clear chat, as before.
+3. Recent conversations: the panel's chats with a microphone, the PWA's with a phone, the current
+   one barred and chipped, times in 24-hour. Tap a PWA chat: "Opening…", then its last exchanges
+   under its title with "Earlier messages are in the app". Hold KEY and ask a follow-up: it lands
+   in THAT chat in the PWA.
+4. New conversation: the thread empties to "New conversation"; a second New says "Already a new
+   conversation". Talk: a new chat appears in the PWA, and within the turn Jerv names it — the
+   header shows the name once the answer lands.
+5. In Recent, press KEY: Recent closes and the talk goes to the current conversation. BOOT in
+   Recent returns to the thread.
+6. Minecraft → Dave: the same menu and Recent, in Dave's green, listing only Dave's chats.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -1271,6 +1378,9 @@ The same protocol as the S3 panels, so the box needs no new route for it:
   two message threads ("What 0.0.11 adds").
 - **`GET {api}/endpoint/alarms?etag=…`** and **`PUT {api}/endpoint/alarms/{id}`** `{"on":bool}`
   (since 0.0.13) are the owner's alarms and the switch on the glass ("What 0.0.13 adds").
+- **`GET {api}/endpoint/convo/{agent}/recent`**, **`POST …/select`** and **`GET
+  …/messages?limit=N`** (since 0.0.15) are the agent's Recent list, a switch, and the switched
+  thread's last exchanges or the title alone ("What 0.0.15 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -1441,8 +1551,12 @@ Fonts are LVGL's Montserrat plus the generated clock digits and punctuation fall
 `clock-alarms-end`, `rec-anywhere` (KEY from Settings), `jerv-after-key` (the hold waiting for
 its transcript), `jerv-reply` and `jerv-reply-text` (the box's answer, spoken and text-only),
 `boot-long` (BOOT held in Settings), and from 0.0.11 `home-unnamed` / `thread-unnamed` (before the
-box has sent the panels' names), `dave`, `rec-dave`, `dave-reply`, `compass`, `chat-menu`,
-`chat-menu-armed`, `chat-cleared` and `dave-menu`, and from 0.0.13 `ringing-dark`,
+box has sent the panels' names), `dave`, `rec-dave`, `dave-reply`, `compass`, and
+`quorra-menu`, `quorra-menu-armed` and `quorra-cleared` (0.0.11's `chat-menu` states, in a
+person's thread since 0.0.15), from 0.0.15 `jerv-menu`, `jerv-recent`, `jerv-recent-loading`,
+`jerv-recent-end`, `jerv-recent-empty`, `jerv-switched`, `jerv-new`, `dave-menu` and
+`dave-recent` (the box's conversations answered by the sim from the mock's sessions), and from
+0.0.13 `ringing-dark`,
 `ringing-over-notice`, `alarm-snoozed` and `alarm-test`. The alarms come from the box's own JSON
 through `svc_alarms_offer`, as the siblings' names do. The sim feeds the panels' names through the
 box's own JSON and the panel's own path (`svc_siblings_offer`), with placeholder names. Each render also

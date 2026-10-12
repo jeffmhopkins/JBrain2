@@ -39,15 +39,20 @@ static void describe(app_t *self, dbg_json_t *w)
     convo_describe(self->state, w);
 }
 
-static bool can_clear(app_t *self)
+/* The long press's menu is the conversation's own: New and Recent (0.0.15). */
+static bool menu(app_t *self, char *sub, size_t cap, ui_accent_t *accent)
 {
-    (void)self;
-    return true;
+    return convo_menu(self->state, sub, cap, accent);
 }
 
-static void clear(app_t *self)
+static const char *start_new(app_t *self)
 {
-    convo_clear(self->state);
+    return convo_new(self->state);
+}
+
+static void recent(app_t *self)
+{
+    convo_recent(self->state);
 }
 
 app_t app_jerv = {
@@ -61,7 +66,8 @@ app_t app_jerv = {
     .close = jerv_close,
     .on_event = on_event,
     .describe = describe,
-    .can_clear = can_clear,
-    .clear = clear,
+    .convo_menu = menu,
+    .convo_new = start_new,
+    .convo_recent = recent,
     .state = &s_convo,
 };

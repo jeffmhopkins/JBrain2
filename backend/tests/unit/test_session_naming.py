@@ -25,13 +25,15 @@ pytestmark = pytest.mark.anyio
 @dataclass
 class _Session:
     title: str
+    origin: str | None = None
+    agent: str = "jerv"
 
 
 class _FakeRepo:
     """Stands in for AgentSessionRepo: records renames, serves one session."""
 
-    def __init__(self, title: str = "", *, missing: bool = False):
-        self.session = None if missing else _Session(title)
+    def __init__(self, title: str = "", *, missing: bool = False, origin: str | None = None):
+        self.session = None if missing else _Session(title, origin)
         self.renamed: list[tuple[str, str]] = []
 
     async def get(self, ctx, session_id):  # noqa: ANN001, ARG002
@@ -78,6 +80,20 @@ async def test_a_whitespace_only_title_does_not_count_as_named() -> None:
     repo = _FakeRepo(title="   ")
     await _call(repo, "Real Name Now")
     assert repo.renamed == [("s-1", "Real Name Now")]
+
+
+async def test_the_desk_panel_s_placeholder_is_named_like_an_empty_title() -> None:
+    """A chat started at the desk panel is called "Desk panel" until Jerv names it, exactly as a
+    PWA chat is (firmware-c6 0.0.15) — and only that chat: the same words chosen in the PWA are
+    the owner's name."""
+    panel = _FakeRepo(title="Desk panel", origin="panel")
+    await _call(panel, "Shopping List")
+    assert panel.renamed == [("s-1", "Shopping List")]
+    await _call(panel, "Something Else")
+    assert panel.renamed == [("s-1", "Shopping List")], "and then it is a name like any other"
+    chosen = _FakeRepo(title="Desk panel", origin="pwa")
+    await _call(chosen, "Shopping List")
+    assert chosen.renamed == []
 
 
 async def test_a_run_with_no_chat_session_names_nothing() -> None:

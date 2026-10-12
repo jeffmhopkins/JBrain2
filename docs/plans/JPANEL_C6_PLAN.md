@@ -49,6 +49,13 @@
 > that day): `panel_notice` and its RLS, the send/read routes and the debug route, the refusal
 > at the door from what the panel reports on its pickup, the `JN1` stream with test vectors,
 > Jerv's `panel_notify` and the PWA's *Send test notice* (§2). The panel half is next.
+> **0.0.15 (built, awaiting the board) is the conversation switcher** the owner approved on
+> 2026-10-12: in Jerv's or Dave's thread the long press offers New conversation (one tap) and
+> Recent conversations — the agent's last ten chats from the panel and the PWA, to switch the
+> panel into one — and the thread's header carries the conversation's title. On the box,
+> `agent_sessions.origin` (migration 0238), the `/endpoint/convo/{agent}/…` routes behind the talk's
+> own gate, and panel chats titled the way PWA chats are (§1 "Switching conversations", firmware
+> README "What 0.0.15 adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -277,6 +284,9 @@ screen. Code-wise that's fine, but they should be separate instances with separa
 
 ### Clear chat by a long press (owner, 2026-10-12)
 
+> 0.0.15 keeps this for the people's threads only; in Jerv's and Dave's the long press is now New
+> conversation and Recent conversations ("Switching conversations" below).
+
 *"Find a way to clear the chat. Maybe a long press in a chat window pulls up a menu?"* A finger
 held still for 600 ms (within the tap's 20 px slop, so a scroll never does it) anywhere in a
 conversation — Jerv's, Dave's, either person's thread — opens a small card: Clear chat, Cancel.
@@ -287,6 +297,51 @@ Dave it also starts a fresh conversation on the box on the next talk (`new_threa
 the PWA. The people's threads only clear the panel's view. One shell decision for every
 conversation (`shell_core.c`: `sh_long_press`, `sh_menu_*`), host-tested; a debug session drives it
 with `inject` `hold` at x,y.
+
+### Switching conversations (owner, 2026-10-12)
+
+*"On long press of the Jerv [conversation] where it makes you able to clear a conversation, it
+should also have another button so that you can click it and view recent conversations to
+re-change what conversation we're actually in … change the clear conversation to new session."*
+The mock (`../mocks/jpanel-c6/`, the Convo boards and DaveRecent) was **approved by the owner on
+2026-10-12**; it is the spec. He approved it without answering its four open questions, so their
+defaults stand:
+
+1. The conversation's title always shows under "Jerv" / "Dave" in the thread's header. A new
+   conversation reads "Desk panel" until the box has a title for it.
+2. After a switch the thread shows the chip "Earlier messages are in the app", not "Load earlier".
+3. Dave's Recent lists only his panel and PWA conversations; the in-game Minecraft chats are not
+   in it for now.
+4. Conversations started by KEY from outside a thread appear in Recent like any other.
+
+**On the panel (0.0.15).** In an agent's thread the long press opens "This conversation" /
+"<Agent> · <title>" with **New conversation** (the agent's colour, one tap, no confirm: "New
+conversation — the last one is in Recent"; on a conversation that is already new and empty it does
+nothing and says "Already a new conversation"), **Recent conversations ›** and **Cancel**. That
+replaces 0.0.11's Clear chat for Jerv and Dave; the people's threads keep Clear chat as it was.
+Recent is its own screen over the thread: a "+ New conversation" row, then up to ten 84 px rows —
+where it began (a microphone for the panel, a phone for the app), the title cut with "…", the time
+in the panel's 24-hour clock ("12 min ago", "Yesterday 19:40", "Sat 10:05", "5 Oct"), and the last
+line, the owner's prefixed "You: "; the current one with a 6 px accent bar, a tint and a
+"Current" chip; skeleton rows while loading; an empty state. Tapping a row says "Opening…" and
+switches: the thread then holds that conversation's last exchanges from the box under its title,
+and the next KEY inside it continues THAT conversation. KEY in Recent closes it and talks in the
+current conversation; BOOT or the back arrow returns to the thread. KEY routing outside a thread is
+0.0.14's, unchanged.
+
+**On the box.** Three device-key routes behind `panel_agent.agent_allowed` — the same gate as
+`/endpoint/converse`, so a twin's panel never reaches them — acting for the live owner principal
+(`auth/owner.py`) on owner-scoped sessions (`api/panel_convo.py`): `GET
+/endpoint/convo/{agent}/recent`, `POST …/select {session_id}` (a chat that is not the owner's root
+chat with that agent, from the panel or the PWA, is 404) and `GET …/messages?limit=N` (the last N
+exchanges through `panel_agent.condensed`, the newest answer up to 1,000 bytes and the rest 255;
+`limit=0` is the title alone). New conversation has no route: it is the talk's existing
+`new_thread=true`, so nothing is created on the box until something is said. Where a chat began
+is `agent_sessions.origin` (migration 0238: "panel" from `panel_thread`, "pwa" from `POST
+/api/sessions`, NULL for every other maker; the backfill marks only what the rows can tell).
+Panel chats are titled like PWA chats: the "Desk panel" placeholder on a panel-started chat no
+longer counts as a name (`session.is_unnamed`), so Jerv's in-turn `name_session` titles it —
+no new LLM call. Dave has no `name_session`, so his panel chats stay "Desk panel".
 
 ### The threads carry the panels' real names (owner, 2026-10-12)
 
@@ -675,7 +730,7 @@ four orientations fit with no relayout of the frame — only the content turns.
 | **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
 | **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **0.0.4 on the glass (measured):** home renders, runtime brightness and PWR dark/wake work, KEY and BOOT route as designed. **0.0.6 (built, awaiting the board):** `svc_touch` — the CST9220 polled every 20 ms over `svc_power`'s bus through a locked transfer API (still one owner), raw→display mapping, failure reported as `touch=failed:<step>`; the shell's real-pointer rules host- and sim-tested (tap within 20 px, sideways swipe ≥ 60 px, a stroke on a dark screen wakes and reaches nothing, a notice appearing under a finger ends its stroke). **Left:** confirming 0.0.5 installs and 0.0.6's taps, swipes and corners on the glass, then the RTC. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
 | **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI). **0.0.9 (built, awaiting the board):** the pickup every 3 s from the update loop (manifest first, backoff to 60 s on a silent box, none while the box is unreachable), one kept-alive session for every box request, commands on the UI task through a one-slot job (3 s, else `ui busy`; inline on a boot with no UI), the screenshot streamed chunked from the renderer (2 × 4 KB, ≤ 2 s of stillness, `net slow` / `capture torn` as JSON), the `esp_log` ring hook with clip-aware secret scrubbing, `dbg=` / `tls=` / `sec=` telemetry. **Left:** proving it on the glass, Ops → Panels buttons. |
-| **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **0.0.10 (built, awaiting the board):** Jerv's streamed hold-to-talk end to end — the ES8311/ES7210 under `svc_audio` (one task, priority 1), the upload chunked while KEY is held, the reply frame (transcript, Jerv's words, then speech) over the S3s' `/endpoint/converse` with `persona=jerv`, the speech streamed through a 16 KB ring, text only when read-aloud is off, KEY/BOOT stops a reply, a speaker-volume slider, `audio=` telemetry, the debug `play_tone`. Jerv here is a tool-less spoken persona, not the owner's agent (§5). **0.0.11 (built, awaiting the board):** Jerv is the owner's real agent, Dave is Minecraft_Dave in a conversation of his own a level under the Minecraft tile (Compass a work-in-progress page), one shared conversation view (`components/convo`) with an instance per agent, Clear chat by a long press, the people's threads named and bound by device id from `GET /endpoint/siblings`, the reply waited for 130 s, the audio stack 4.25 KB and microphone gain 24 dB from the first talks' numbers. **0.0.12 (built, awaiting the board):** the agent turn streamed (JT2: transcript at once, a live status line per tool, keep-alives, no 100 s cut-off, 5-minute cap), the whole answer kept (1,000 bytes) and read in full sentence by sentence (5-minute cap), KEY while Jerv works says so and BOOT leaves the turn running, the speaker's start gated so the first word is never clipped, the Clock's alarms on a 2 s hold, the PWA's icon and blue for Jerv. **0.0.14 (built, awaiting the board):** each tool Jerv or Dave runs listed under the question (✓, a dim ✗, the spinner on the running one, "+N more" past four) and folded into "2 steps · 58 s" over the answer, "Thinking… 0:42" between tools, a spinner that never restarts, and KEY outside a conversation starting a new Jerv conversation (§1 "KEY routing"); on the box, the voice prefix gone from the owner's words and a panel turn shown live in an open PWA chat. **0.0.13 (built, awaiting the board):** alarms end to end — the box's table, RLS and routes, the PWA editor on the desk panel's card, `svc_alarms` (etag fetch, NVS cache, UTC + daylight-saving schedule, snooze, 10-minute cap, the switch queued back to the box), the Ringing screen over everything with three synthesised ramping sounds, `inject event=alarm_test`, `alarm=` telemetry. **Left:** calibration, voice messages to Quorra and Tamsin (the box client for messages), Listen on a stored reply, the night clock's hours from the PWA. | Each app's mock states reproduced on the glass and in `sim/`. |
+| **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **0.0.10 (built, awaiting the board):** Jerv's streamed hold-to-talk end to end — the ES8311/ES7210 under `svc_audio` (one task, priority 1), the upload chunked while KEY is held, the reply frame (transcript, Jerv's words, then speech) over the S3s' `/endpoint/converse` with `persona=jerv`, the speech streamed through a 16 KB ring, text only when read-aloud is off, KEY/BOOT stops a reply, a speaker-volume slider, `audio=` telemetry, the debug `play_tone`. Jerv here is a tool-less spoken persona, not the owner's agent (§5). **0.0.11 (built, awaiting the board):** Jerv is the owner's real agent, Dave is Minecraft_Dave in a conversation of his own a level under the Minecraft tile (Compass a work-in-progress page), one shared conversation view (`components/convo`) with an instance per agent, Clear chat by a long press, the people's threads named and bound by device id from `GET /endpoint/siblings`, the reply waited for 130 s, the audio stack 4.25 KB and microphone gain 24 dB from the first talks' numbers. **0.0.12 (built, awaiting the board):** the agent turn streamed (JT2: transcript at once, a live status line per tool, keep-alives, no 100 s cut-off, 5-minute cap), the whole answer kept (1,000 bytes) and read in full sentence by sentence (5-minute cap), KEY while Jerv works says so and BOOT leaves the turn running, the speaker's start gated so the first word is never clipped, the Clock's alarms on a 2 s hold, the PWA's icon and blue for Jerv. **0.0.14 (built, awaiting the board):** each tool Jerv or Dave runs listed under the question (✓, a dim ✗, the spinner on the running one, "+N more" past four) and folded into "2 steps · 58 s" over the answer, "Thinking… 0:42" between tools, a spinner that never restarts, and KEY outside a conversation starting a new Jerv conversation (§1 "KEY routing"); on the box, the voice prefix gone from the owner's words and a panel turn shown live in an open PWA chat. **0.0.15 (built, awaiting the board):** the conversation switcher (§1 "Switching conversations") — New conversation and Recent conversations on the agents' long press, ten rows from `GET /endpoint/convo/{agent}/recent`, a switch through `…/select` and `…/messages`, the conversation's title in the thread's header, `agent_sessions.origin` (0238) and panel chats titled in-turn. **0.0.13 (built, awaiting the board):** alarms end to end — the box's table, RLS and routes, the PWA editor on the desk panel's card, `svc_alarms` (etag fetch, NVS cache, UTC + daylight-saving schedule, snooze, 10-minute cap, the switch queued back to the box), the Ringing screen over everything with three synthesised ramping sounds, `inject event=alarm_test`, `alarm=` telemetry. **Left:** calibration, voice messages to Quorra and Tamsin (the box client for messages), Listen on a stored reply, the night clock's hours from the PWA. | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C2r** | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, LVGL software rotation, touch mapped through it, the Settings switch. After touch is proven on the board. | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
 | **C3b** 🟡 | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tool, `svc_notice` and the overlay; pictures, sounds and hide-by-tap-or-time (owner, 2026-10-12). **Box side built 2026-10-12:** migration 0235 + `test_panel_notice_rls.py`, `POST/GET /api/panel/notify`, the debug route + `debug-connect.sh panel-notify`, the panel's `notice/next`, `…/body` and `…/state`, the refusal table from the pickup's `na nq nc nf nt tz`, the picture (fit, rgb565 runs, 320 KiB cap) and sound (16 kHz s16, ≤ 8 s, WAV/ffmpeg/`say`) pipelines, `JN1` with fixtures, Jerv's `panel_notify`, the PWA's *Send test notice*. **Next:** the panel half — `svc_notice`, the overlay, the report on the pickup, the stream into `storage`. | Jerv asks a yes/no on the panel and acts on the tap. |
 | **C4** 🟡 | Minecraft. **0.0.11:** the tile is a menu of Dave (the real Minecraft_Dave, a conversation of his own) and Compass (work in progress). **0.0.12:** Dave's talks stream like Jerv's (status line, the whole answer, read in full). | Compass scoped and built. |
