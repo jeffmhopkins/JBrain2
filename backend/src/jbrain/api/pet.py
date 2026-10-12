@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from jbrain.api.deps import PrincipalDep, owner_only
+from jbrain.api.internal_auth import require_wall
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
@@ -39,11 +40,11 @@ log = structlog.get_logger()
 
 router = APIRouter(prefix="/pet", dependencies=[Depends(owner_only)])
 
-# Mounted under /internal (Caddy never routes /internal off-box), so it is reachable
-# only on the docker network — e.g. by the on-box wall display. No auth:
-# it is a READ of the pet snapshot, the pet lives in the safe 'general' domain (no
-# health/finance/location), and the display never mutates. See main.include_router.
-internal_router = APIRouter(prefix="/pet")
+# Mounted under /internal (Caddy never routes /internal off-box) for the on-box wall display,
+# and gated on the wall's own token — the docker networks the api joins also hold sandboxes
+# (api/internal_auth.py). The pet lives in the safe 'general' domain (no
+# health/finance/location). See main.include_router.
+internal_router = APIRouter(prefix="/pet", dependencies=[Depends(require_wall)])
 
 # How long a quiet stream waits before emitting an SSE comment keepalive, so proxies
 # and mobile radios don't drop an idle connection between ticks.
@@ -384,11 +385,12 @@ class SayIn(BaseModel):
 @internal_router.post("/say")
 async def internal_say(request: Request, body: SayIn) -> PetOut:
     """Drive the pet from the on-box wall's voice listener (deploy/wall). Internal-only (Caddy
-    never routes /internal off-box) and reached solely through the wall's same-origin proxy, so
-    the exposure equals the wall itself: LAN-only, and the owner authorised that by deploying the
-    wall. Kept safe by construction — the pet lives in the non-sensitive 'general' domain (no
-    health/finance/location), the talk brain's persona is built only from in-scope pet state, and:
-    it is RATE-LIMITED (an unauthenticated LAN caller can't flood the local LLM) and does NOT write
+    never routes /internal off-box) and wall-token-gated, so it is reached solely through the
+    wall's same-origin proxy and the exposure equals the wall itself: LAN-only, and the owner
+    authorised that by deploying the wall. Kept safe by construction — the pet lives in the
+    non-sensitive 'general' domain (no health/finance/location), the talk brain's persona is
+    built only from in-scope pet state, and:
+    it is RATE-LIMITED (a LAN client of the wall can't flood the local LLM) and does NOT write
     the heard text into the pet's long-term memory (the authenticated phone path does that)."""
     limiter = cast(TokenBucket, request.app.state.pet_say_rate_limiter)
     if not limiter.allow("wall"):
@@ -416,7 +418,7 @@ class StatueIn(BaseModel):
 async def internal_statue(request: Request, body: StatueIn) -> dict[str, Any]:
     """Sculpt a voxel model of `subject` for the on-box wall's field build. Same LAN-only
     posture as /say (reached solely through the wall's same-origin proxy; the pet lives in the
-    non-sensitive 'general' domain) and RATE-LIMITED so an unauthenticated caller can't spin the
+    non-sensitive 'general' domain) and RATE-LIMITED so a LAN client of the wall can't spin the
     reasoning model in a loop. Returns the occupied voxels; the wall animates the block-by-block
     build. A model/parse failure is a clean 502 so the wall can say it couldn't imagine that one."""
     limiter = cast(TokenBucket, request.app.state.pet_say_rate_limiter)

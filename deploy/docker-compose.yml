@@ -246,6 +246,12 @@ services:
       # `./src` whole: the api has no business reading the rest of the source tree. This
       # file is copied in by `update-inner.sh`, so the mount arrives with Ops -> Update.
       - ./src/firmware-c6:/firmware-c6:ro
+      # The /internal callers' tokens (api/internal_auth.py). The api is the only writer:
+      # it mints `wall.token` and `mqtt.token` here on start-up, and the wall and mosquitto
+      # mount this read-only — so the secret ships with the code that checks it, with no
+      # `.env` key and no host step. The image pre-owns the mount point, so a fresh volume
+      # is writable by the non-root app.
+      - internal_secrets:/run/jbrain-internal
     # `jcode`: the api proxies the owner's code-mode control surface to the jcode
     # control server (http://jcode:9100), which lives ONLY on the jcode network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy
@@ -408,6 +414,9 @@ services:
     volumes:
       - ./src/deploy/wall:/app:ro
       - /proc:/host/proc:ro
+      # Read-only: the wall reads `wall.token` (its key to the api's /internal/pet* and
+      # nothing else) per request, so it works whichever of the two starts first.
+      - internal_secrets:/run/jbrain-internal:ro
     ports:
       - "${BRAIN_HOST_BIND:-0.0.0.0}:8800:8800"
     networks: [internal]
@@ -1168,10 +1177,19 @@ services:
   mqtt:
     logging: *logbound
     profiles: [mqtt]
-    image: ${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}
+    # Pinned by digest: the conf leans on this build's options (auth_opt_http_user_agent,
+    # auth_opt_http_timeout) and its /mosquitto/go-auth.so path. This is the `latest`
+    # build (go-auth 2.1.0 on mosquitto 2.0.15, Debian 11).
+    image: ${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest@sha256:acd65f8566f22126e3bf3b72fe5bee8a5002ca57695f211b1904013953560c3f}
     restart: unless-stopped
+    # entrypoint.sh waits for the api to mint `mqtt.token`, renders the conf with it as
+    # go-auth's User-Agent (the api's /internal/mqtt-* refuse anything else) and execs
+    # mosquitto on the rendered copy. Read from the checkout, like the wall, so the conf
+    # and its entrypoint arrive with Ops -> Update.
+    entrypoint: ["/usr/bin/tini", "--", "/bin/sh", "/etc/jbrain-mosquitto/entrypoint.sh"]
     volumes:
-      - ./mosquitto/mosquitto.conf:/etc/mosquitto/mosquitto.conf:ro
+      - ./src/deploy/mosquitto:/etc/jbrain-mosquitto:ro
+      - internal_secrets:/run/jbrain-internal:ro
     networks: [internal]
     depends_on: [api]
 
@@ -1236,6 +1254,9 @@ networks:
 
 volumes:
   blobs:
+  # The /internal callers' tokens (see the api service). Not backed up: the api mints
+  # fresh ones into an empty volume on its next start.
+  internal_secrets:
   db_data:
   caddy_data:
   caddy_config:

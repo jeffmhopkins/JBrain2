@@ -1,6 +1,6 @@
 # JBrain360 operations runbook
 
-> **Status:** Living · **Last verified:** 2026-09-10
+> **Status:** Living · **Last verified:** 2026-10-12
 
 Operating the family-location surface (Phase 7) safely: the controls the owner
 runs, and the deploy-time invariants the in-app security rests on. The in-database
@@ -21,7 +21,10 @@ that cuts a member off everywhere at once (M7b):
 - **MQTT live session → dropped within bound.** `mqtt-auth` already denies the
   next connect; the per-publish `mqtt-acl` re-check denies a revoked device **even
   on its own namespace**, so an already-connected phone is disconnected on its next
-  publish (bounded by the broker's ACL-cache TTL — keep it short).
+  publish (bounded by the broker's ACL-cache TTL — keep it short). The broker
+  reaches both routes with its own api-minted token as go-auth's User-Agent and the
+  api refuses any other caller, so nothing else on the internal networks can use
+  them as a device-key oracle; the token arrives with the update, nothing to set.
 - **History reads → gone.** The member is dropped from the family group
   (`view_scope`), so `viewer_may_see` returns false: no more family-sees-family
   reads in either direction.

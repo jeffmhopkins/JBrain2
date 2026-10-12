@@ -42,6 +42,11 @@ RUN useradd --create-home --uid 1000 appuser
 # this the volume mounts as root and the non-root app can't write — the tile
 # cache in particular would fail every write, blanking the location basemap.
 RUN mkdir -p /data/blobs /data/tiles && chown appuser /data/blobs /data/tiles
+# The `internal_secrets` volume, where the api mints the /internal callers' tokens
+# (api/internal_auth.py). Same reason as above, and 0700: only root (the wall,
+# mosquitto's entrypoint) and the app itself ever read it.
+RUN mkdir -p /run/jbrain-internal && chown appuser /run/jbrain-internal \
+ && chmod 0700 /run/jbrain-internal
 USER appuser
 
 EXPOSE 8000

@@ -101,6 +101,11 @@ jobs:
               - 'deploy/Dockerfile.egress'
               - 'deploy/egress/**'
               - 'deploy/docker-compose.yml'
+              # The two /internal callers (S2.2): test_internal_callers_deploy.py loads the
+              # wall's serve.py by path and runs mosquitto's entrypoint.sh under sh, so a
+              # change to either half of the token handshake runs the test that pins it.
+              - 'deploy/wall/**'
+              - 'deploy/mosquitto/**'
               - '.github/workflows/ci.yml'
             supervisor:
               - 'supervisor/**'
