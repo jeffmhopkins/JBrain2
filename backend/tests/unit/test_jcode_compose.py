@@ -1,10 +1,10 @@
 """Code-mode (jcode) deploy guarantees, asserted on the compose file.
 
 The api PROXIES the owner's code-mode control surface to the jcode control server
-at http://jcode:9100. That service lives ONLY on the isolated `jcode` network (kept
-off `internal` so the arbitrary-code sandbox can't reach db/worker/blobs), so the api
-must ALSO join `jcode` — otherwise it can't resolve/reach the control server and every
-/api/jcode/* create 502s. This regression-guards exactly that wiring, which was missing
+at http://jcode:9100. That service lives ONLY on the fenced `jcode_fenced` network
+(kept off `internal` so the arbitrary-code sandbox can't reach db/worker/blobs), so the api
+must ALSO join `jcode_fenced` — otherwise it can't resolve/reach the control server and
+every /api/jcode/* create 502s. This regression-guards exactly that wiring, which was missing
 from the original Wave J2 compose."""
 
 from pathlib import Path
@@ -21,16 +21,16 @@ def _spec() -> dict:
 def test_api_joins_the_jcode_network() -> None:
     # Without this the api cannot reach jcode:9100 and code-mode create 502s.
     api = _spec()["services"]["api"]["networks"]
-    assert "jcode" in api, (
-        "the api proxies http://jcode:9100, which is only on the `jcode` network — "
+    assert "jcode_fenced" in api, (
+        "the api proxies http://jcode:9100, which is only on the `jcode_fenced` network — "
         "the api must join it or every /api/jcode/* call 502s"
     )
 
 
-def test_jcode_is_isolated_on_the_jcode_network_only() -> None:
+def test_jcode_is_isolated_on_its_fenced_network_only() -> None:
     # The sandbox stays OFF `internal`: it must not reach db/worker/blobs.
     services = _spec()["services"]
-    assert services["jcode"]["networks"] == ["jcode"]
+    assert services["jcode"]["networks"] == ["jcode_fenced"]
     # Profile-gated so a stock deploy never starts the sandbox.
     assert services["jcode"]["profiles"] == ["jcode"]
 
@@ -89,11 +89,11 @@ def test_jcode_declares_its_aggregate_resource_ceilings() -> None:
     )
 
 
-def test_flash_next_answers_at_the_gateway_name_jcode_already_uses() -> None:
-    """jcode reaches its model at http://local-llm:8080. Flash-Next carries that alias on the
-    same two networks, so a switch needs no client change — and joins no other network, so
-    the sandbox reaches nothing new (FLASH_NEXT_ENGINE_PLAN §4)."""
+def test_flash_next_answers_at_the_gateway_name_its_clients_already_use() -> None:
+    """The api reaches its model at http://local-llm:8080. Flash-Next carries that alias on the
+    same network, so a switch needs no client change — and, like local-llm, it is on no
+    network the sandbox shares (N1: jcode's models come through the api's residency-aware
+    proxy, never the gateway directly)."""
     nets = _spec()["services"]["flash-next"]["networks"]
-    assert set(nets) == set(_spec()["services"]["local-llm"]["networks"])
-    for name in ("internal", "jcode"):
-        assert nets[name]["aliases"] == ["local-llm"], name
+    assert set(nets) == set(_spec()["services"]["local-llm"]["networks"]) == {"internal"}
+    assert nets["internal"]["aliases"] == ["local-llm"]

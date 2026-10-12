@@ -190,7 +190,7 @@ services:
       JBRAIN_JCODE_PREVIEW_BASE_HOST: ${JCODE_PREVIEW_BASE_HOST:-}
       # The external-LLM proxy (owner-minted public endpoints exposing the on-box coder)
       # forwards straight to the local-llm gateway's OpenAI endpoint (JBRAIN_LOCAL_LLM_URL
-      # above) — the api already reaches it on the `jcode` network. Off the jcode profile
+      # above) — the api already reaches it on `internal`. Off the jcode profile
       # the coder isn't resident, so the proxy fail-closes (no external sessions connect).
       JBRAIN_JCODE_GATEWAY_TOKEN: ${JCODE_GATEWAY_TOKEN:-}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
@@ -252,10 +252,12 @@ services:
       # `.env` key and no host step. The image pre-owns the mount point, so a fresh volume
       # is writable by the non-root app.
       - internal_secrets:/run/jbrain-internal
-    # `jcode`: the api proxies the owner's code-mode control surface to the jcode
-    # control server (http://jcode:9100), which lives ONLY on the jcode network — so
+    # `jcode_fenced`: the api proxies the owner's code-mode control surface to the jcode
+    # control server (http://jcode:9100), which lives ONLY on that fenced network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy
-    # the network is empty (no jcode profile); the api's jcode client stays fail-closed.
+    # only the api and egress sit on it (no jcode profile); the api's jcode client stays
+    # fail-closed. `fetchers` is the same shape for the web_fetch renderers (reader, byparr):
+    # the api calls them there, and their only way out is the egress proxy.
     # `render`: the egress-free network the htmlrender sidecar sits on. The api is its
     # only caller, and joining an `internal: true` network costs the api nothing — it
     # keeps its own egress through `edge`/`internal`. `sandbox` is the same shape for
@@ -265,7 +267,7 @@ services:
     # fenced network the headless browser sits on (BROWSER_AGENT_PLAN.md §2): the api drives
     # it over MCP, and `test_browser_compose.py` asserts nothing else but the egress proxy
     # joins it.
-    networks: [edge, internal, jcode, jlaunch, render, radio, sandbox, panel, browser]
+    networks: [edge, internal, jcode_fenced, jlaunch, render, radio, sandbox, panel, browser, fetchers]
     # `host.docker.internal` -> the host, for the host-networked Minecraft sidecar.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -490,9 +492,10 @@ services:
       # the tree to its 25 GiB budget through its own rw mount (line above, service `api`);
       # docker creates the host dir on first up.
       - ./local-models/.kvslots:/models/.kvslots
-    # Also joins the `jcode` network so the coding sandbox can reach the model
-    # endpoint here — and ONLY this — without being on the shared `internal` net.
-    networks: [internal, jcode]
+    # `internal` only: the coding sandbox reaches its models through the api's residency-aware
+    # jcode proxy, never this gateway directly — a session talking to llama-swap could load a
+    # cold model outside the residency budget (a host freeze) or erase another caller's slots.
+    networks: [internal]
 
   # OPT-IN second engine: Qwen3.8-Flash-Next behind its own llama-swap
   # (docs/plans/FLASH_NEXT_ENGINE_PLAN.md). The ALTERNATIVE to `local-llm`, never its
@@ -504,8 +507,8 @@ services:
   #
   # Everything but the image and the config file mirrors `local-llm` on purpose: the same
   # devices, groups, read-only weights with the one rw `.kvslots` carve-out, and the same
-  # networks — under the network alias `local-llm`, so every client (the api, jcode) reaches
-  # whichever engine is up at the name it already uses. That alias is safe ONLY because the
+  # network — under the network alias `local-llm`, so every client (the api, the worker)
+  # reaches whichever engine is up at the name it already uses. That alias is safe ONLY because the
   # two never run together (§4d); the api opens a fresh client per call, so nothing pins the
   # old address across a switch.
   flash-next:
@@ -546,8 +549,6 @@ services:
       - ./local-models/.kvslots:/models/.kvslots
     networks:
       internal:
-        aliases: [local-llm]
-      jcode:
         aliases: [local-llm]
 
   # OPT-IN on-box image generation: a ROCm ComfyUI serving Qwen-Image, the sibling
@@ -641,15 +642,18 @@ services:
   # jcode proxy), so no code leaves the box. It has NO published port and mounts NO
   # Docker socket.
   #
-  # ISOLATION: the sandbox runs arbitrary agent-driven shell, so it sits on its OWN
-  # `jcode` network — NOT the shared `internal` — and is therefore unable to reach
-  # `db`, `supervisor` (which holds the docker socket), `worker`, `embed`, or the blob
-  # store. The only peer on the `jcode` network is the `local-llm` gateway (the model
-  # endpoint); the api joins it in Wave J2 to proxy the control surface.
+  # ISOLATION: the sandbox runs arbitrary agent-driven shell (and a share-link recipient
+  # drives it), so it sits on its OWN `jcode_fenced` network — NOT the shared `internal` —
+  # and is unable to reach `db`, `supervisor` (which holds the docker socket), `worker`,
+  # `embed`, the model servers or the blob store. Its only peers are the `api` (which
+  # proxies the control surface and serves its models, web tools and OCR) and the squid
+  # `egress` proxy (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S2.4).
+  # EGRESS IS FENCED: `jcode_fenced` is `internal: true`, so there is no NAT route out — the
+  # proxy env below sends git/npm/pip/curl/Node fetch through squid, which serves public
+  # http/https on 80/443 and refuses the LAN, the host, metadata and every compose name
+  # (deploy/egress/squid.conf). Lost by design: git over ssh and any non-80/443 outbound.
   # HARDENING (Wave J5): resource caps (below) bound CPU/memory/PIDs; the control server
-  # GC-reaps idle sessions. Outbound is still default NAT by DEFAULT; the HTTP(S)_PROXY
-  # seam below makes a git/npm egress ALLOWLIST opt-in (an allowlisting forward proxy),
-  # left opt-in because routing cloudflared over a proxy needs on-box verification.
+  # GC-reaps idle sessions.
   jcode:
     logging: *logbound
     profiles: [jcode]
@@ -681,7 +685,7 @@ services:
       # coder's native 256k (the gateway serves it at full native context); override if a
       # different served `-c` is configured.
       GROK_CONTEXT_WINDOW: ${JCODE_GROK_CONTEXT_WINDOW:-262144}
-      # Mark the container as a genuine sandbox — isolated `jcode` network (no host, db,
+      # Mark the container as a genuine sandbox — fenced `jcode_fenced` network (no host, db,
       # or notes) + a throwaway per-session checkout — so a CLI's root-user permission
       # guard treats it as the sandbox it is rather than refusing to run.
       IS_SANDBOX: "1"
@@ -714,19 +718,25 @@ services:
       # logs the debug console pulls — no separate switch. Shares the api's flag; takes
       # effect on the same `jbrain up` that enables debug access.
       JCODE_DEBUG_ACCESS_ENABLED: ${DEBUG_ACCESS_ENABLED:-false}
-      # OPT-IN strict egress (Wave J5): point these at an allowlisting forward proxy to
-      # confine the sandbox's outbound to git/npm (and Cloudflare, when preview is on).
-      # Empty = direct NAT (the default today). git/npm/the SDK honor these; cloudflared
-      # over a proxy needs on-box verification, so strict egress is opt-in, not default.
-      HTTP_PROXY: ${JCODE_EGRESS_PROXY:-}
-      HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-}
-      # Never proxy the on-box peers on the jcode network: the model gateway and `api`
-      # (grok's model calls go to the api's residency-aware jcode proxy).
-      NO_PROXY: ${JCODE_NO_PROXY:-api,local-llm,localhost,127.0.0.1}
+      # The sandbox's ONLY way out (S2.4): `jcode_fenced` has no gateway, so these are not a
+      # preference but the route. Both spellings, because curl (and so git) reads only the
+      # lowercase `http_proxy`, while npm/pip read either. JCODE_EGRESS_PROXY still overrides
+      # when the owner sets it (another proxy reachable on `jcode_fenced`); an EMPTY value
+      # falls back to squid, since no proxy here means no outbound at all.
+      HTTP_PROXY: ${JCODE_EGRESS_PROXY:-http://egress:3128}
+      HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-http://egress:3128}
+      http_proxy: ${JCODE_EGRESS_PROXY:-http://egress:3128}
+      https_proxy: ${JCODE_EGRESS_PROXY:-http://egress:3128}
+      # Never proxy the on-box peer: `api` serves grok's models (the residency-aware jcode
+      # proxy), the web tools and OCR, and squid refuses compose names anyway.
+      NO_PROXY: ${JCODE_NO_PROXY:-api,localhost,127.0.0.1}
+      no_proxy: ${JCODE_NO_PROXY:-api,localhost,127.0.0.1}
+      # Node's built-in fetch ignores the proxy env without this (Node >= 22.21).
+      NODE_USE_ENV_PROXY: "1"
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
-    networks: [jcode]
+    networks: [jcode_fenced]
     # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
     # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
     mem_limit: ${JCODE_MEM_LIMIT:-4g}
@@ -837,8 +847,12 @@ services:
   # real memory cost and needs its own /dev/shm — heavier than searxng. To turn it off,
   # point JBRAIN_READER_URL at a non-serving endpoint or remove this service (web_fetch
   # then just reports a blocked/empty page, as before) — an EMPTY JBRAIN_READER_URL does
-  # NOT disable it, since env_ignore_empty falls back to the on-box default. It needs
-  # egress to fetch the target, so it sits on `internal` alongside searxng.
+  # NOT disable it, since env_ignore_empty falls back to the on-box default.
+  # FENCED (S2.3): its Chromium follows redirects and runs page JS after only the first URL
+  # was checked, so it sits ONLY on `fetchers` (`internal: true`), whose one way out is the
+  # squid `egress` proxy — it cannot reach comfyui, the model servers, the wall, the api's
+  # `/internal` routes or metadata. The proxy env points Chromium at squid; the network is
+  # the guarantee either way.
   # Pinned by digest (the repo publishes only `latest`, and the update never re-pulls a
   # floating tag — the SearXNG lesson). Resolved 2026-10-04; re-resolve to upgrade.
   reader:
@@ -847,7 +861,16 @@ services:
     restart: unless-stopped
     mem_limit: 1g
     shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
-    networks: [internal]
+    environment:
+      HTTP_PROXY: http://egress:3128
+      HTTPS_PROXY: http://egress:3128
+      http_proxy: http://egress:3128
+      https_proxy: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1
+      no_proxy: localhost,127.0.0.1
+      NODE_USE_ENV_PROXY: "1"
+    depends_on: [egress]
+    networks: [fetchers]
 
   # Bot-challenge SOLVER (docs/plans/CHALLENGE_SOLVER_PLAN.md): a stealth browser behind a
   # FlareSolverr-compatible `/v1` API (Byparr, Camoufox-backed) that clears the JS/managed
@@ -859,8 +882,9 @@ services:
   # a solve when a fetch actually hits a wall the reader couldn't clear, so an idle box pays
   # just the process baseline (mem_limit caps a burst). To turn it off, point JBRAIN_SOLVER_URL
   # at a non-serving endpoint — an EMPTY value does NOT disable it (env_ignore_empty falls back
-  # to the on-box default). On `internal` — it needs egress to reach the target and holds no
-  # owner data (only jerv reaches it, like the reader).
+  # to the on-box default). It holds no owner data (only jerv reaches it, like the reader),
+  # and is FENCED like the reader: ONLY on `fetchers`, out through squid. The api names the
+  # proxy in every FlareSolverr request (`proxy: {"url": "http://egress:3128"}`).
   # Pinned by digest for the same reason as `reader`: `latest` froze at install. Resolved
   # 2026-10-04 from ghcr's `latest`; re-resolve to upgrade the stealth browser.
   byparr:
@@ -869,7 +893,17 @@ services:
     restart: unless-stopped
     mem_limit: ${BYPARR_MEM_LIMIT:-2g}  # a stealth browser is heavier than the reader's Chromium
     shm_size: 2gb  # headless browser crashes on the default 64m /dev/shm
-    networks: [internal]
+    # Belt to the per-request proxy: Firefox on Linux reads the proxy env as its "system"
+    # setting, and anything else in the image that goes out does too.
+    environment:
+      HTTP_PROXY: http://egress:3128
+      HTTPS_PROXY: http://egress:3128
+      http_proxy: http://egress:3128
+      https_proxy: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1
+      no_proxy: localhost,127.0.0.1
+    depends_on: [egress]
+    networks: [fetchers]
 
   # The browser jerv's `browse` sub-agent drives (docs/plans/BROWSER_AGENT_PLAN.md): Microsoft's
   # playwright-mcp, which holds no model of its own — the api runs the loop through the LLM
@@ -941,12 +975,14 @@ services:
     depends_on: [egress]
     networks: [browser]
 
-  # The browser's only route off the box: Squid, resolving DNS itself and refusing RFC1918,
+  # The fenced networks' only route off the box: Squid, resolving DNS itself and refusing RFC1918,
   # loopback, link-local (169.254/16, the metadata endpoint), CGNAT, IPv6 ULA/link-local,
-  # single-label hosts and every compose service name (deploy/egress/squid.conf). It joins
-  # `browser` (to be reached) and `browser_out` (to reach the internet) and nothing else, so it
-  # has no route to `internal` either. Built on the box from a digest-pinned base, with a
-  # build-time `squid -k parse` so a broken config fails the update rather than the proxy.
+  # single-label hosts and every compose service name (deploy/egress/squid.conf). It is the
+  # single way out of every fenced network — `browser`, `fetchers` (reader, byparr) and
+  # `jcode_fenced` (code mode) — and reaches the internet over `browser_out`. It never joins
+  # `internal`, so it has no route to db or the model servers either. Built on the box from a
+  # digest-pinned base, with a build-time `squid -k parse` so a broken config fails the
+  # update rather than the proxy.
   egress:
     logging: *logbound
     image: jbrain2-egress:local
@@ -959,7 +995,7 @@ services:
     cap_drop: [ALL]
     cap_add: [SETUID, SETGID]
     security_opt: [no-new-privileges:true]
-    networks: [browser, browser_out]
+    networks: [browser, fetchers, jcode_fenced, browser_out]
 
   # Deterministic CPU OCR (docs/plans/RAPIDOCR_PLAN.md): a RapidOCR (PP-OCR / ONNX) sidecar,
   # the swap-free counterpart to the VLM `vision.ocr` path. The api reaches it at
@@ -1213,10 +1249,15 @@ services:
 networks:
   edge:
   internal:
-  # Isolates the opt-in coding sandbox (`jcode` profile) from the rest of the stack:
-  # only `jcode` + `local-llm` (and `api` from Wave J2) join it, so the arbitrary-code
-  # sandbox has no network route to db/supervisor/worker/embed/blobs.
-  jcode:
+  # The opt-in coding sandbox (`jcode` profile), EGRESS-FENCED (S2.4): only `jcode`, `api`
+  # and `egress` join it, so the arbitrary-code sandbox has no route to
+  # db/supervisor/worker/embed/blobs or the model servers, and no gateway — its outbound is
+  # squid's public http(s) or nothing. A NEW name rather than flipping the old `jcode`
+  # network to internal: compose cannot change an existing network's `internal` flag in
+  # place, so a fresh name is created on the next update with no host step. The old
+  # `jcode` network is left as an orphan on boxes that had it; nothing joins it.
+  jcode_fenced:
+    internal: true
   # Isolates the job launcher: only `jlaunch` + `api` join it, so a job's arbitrary code
   # has no route to db/supervisor/worker/embed/blobs.
   jlaunch:
@@ -1247,6 +1288,11 @@ networks:
   # proxy to be its single way out. With no gateway, the proxy's deny list is the only path to
   # anything, which is what makes that list the boundary.
   browser:
+    internal: true
+  # The web_fetch renderers' network (S2.3): only `reader`, `byparr`, `api` and `egress` join
+  # it. The renderers run untrusted page JS and follow redirects, so with no gateway their
+  # one way to anything is the egress proxy's deny list. New, not a flag flip on `internal`.
+  fetchers:
     internal: true
   # The egress proxy's internet side. Only `egress` joins it, so nothing else gains a route
   # out through it and the proxy itself has no route to `internal`.

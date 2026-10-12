@@ -21,7 +21,7 @@
 # the session's pinned GROK_MODEL, so a shell still works.
 if command -v grok >/dev/null 2>&1; then
   mkdir -p "${HOME:-/root}/.grok"
-  base_url="${GROK_MODELS_BASE_URL:-http://local-llm:8080/v1}"
+  base_url="${GROK_MODELS_BASE_URL:-http://api:8000/api/jcode/llm/v1}"
   default_model="${GROK_MODEL:-qwen3-coder-next}"
   # Subagents are grok Build's task agents. They're ON — but grok has no sequential/
   # concurrency knob (verified against grok-build source: only `enabled` + per-type

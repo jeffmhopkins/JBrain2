@@ -2205,6 +2205,35 @@ async def test_solver_recovers_when_the_reader_returns_a_challenge() -> None:
     assert result.url == "https://x.example/walled"  # the public URL, not the solver's
 
 
+@pytest.mark.parametrize(
+    ("proxy", "expected"), [("http://egress:3128", {"url": "http://egress:3128"}), ("", None)]
+)
+async def test_the_solver_is_told_to_browse_through_the_egress_proxy(
+    proxy: str, expected: dict[str, str] | None
+) -> None:
+    """byparr's network has no gateway (S2.3): its browser reaches the page through squid or
+    not at all, so every FlareSolverr request names the proxy."""
+    sent: list[dict[str, object]] = []
+    solved = _tiered_handler(
+        httpx.Response(403), reader=None, solver_response={"response": _SOLVED_HTML}
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "byparr":
+            sent.append(json.loads(request.content))
+        return solved(request)
+
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        solver_url="http://byparr:8191",
+        solver_proxy_url=proxy,
+    )
+    assert await fetcher.solve("https://x.example/walled") is not None
+    [payload] = sent
+    assert payload["url"] == "https://x.example/walled"
+    assert payload.get("proxy") == expected
+
+
 async def test_solver_that_is_still_challenged_surfaces_the_block() -> None:
     # The solver ran but the stealth browser ALSO got a challenge (interactive Turnstile it
     # can't clear): that is a miss too, so the original 403 surfaces — never the challenge text.

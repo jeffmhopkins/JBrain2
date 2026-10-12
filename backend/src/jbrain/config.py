@@ -183,6 +183,11 @@ class Settings(BaseSettings):
     # as absent and falls back to this default, so it does NOT disable it. To turn it off, point
     # JBRAIN_SOLVER_URL at a non-serving endpoint or remove the byparr service.
     solver_url: str = "http://byparr:8191"
+    # The forward proxy the solver's browser must use, sent in every FlareSolverr request as
+    # `proxy: {"url": ...}`. byparr sits on the fenced `fetchers` network whose only way out is
+    # the squid egress (SECURITY_REVIEW_FIXES_PLAN.md S2.3), so this is its route, not a
+    # preference. Empty sends no proxy (an off-box solver with its own egress).
+    solver_proxy_url: str = "http://egress:3128"
     # Domains that go STRAIGHT to the challenge solver, skipping the direct+reader tiers that
     # only waste a round trip on them. A handful of majors (Reuters, WSJ, Bloomberg) run bot
     # management that rejects the plain fetch (401/403) AND rate-limits the headless reader
