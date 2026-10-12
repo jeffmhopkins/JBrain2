@@ -365,7 +365,9 @@ async def test_scans_left_and_the_waypoint_tools(book, stand, sidecar) -> None:
     assert cleared is not None and cleared.reply == fp.ARROW_CLEARED
     assert '"clear": true' in _waypoints(sidecar)[-1]
     # Nothing the fast path can say: the server is down, so the model says so.
-    sidecar["down"].add('scriptevent jb:waypoint {"player": "Steve 42", "clear": true}')
+    sidecar["down"].add(
+        'scriptevent jb:waypoint {"player": "Steve 42", "clear": true, "end_scan": true}'
+    )
     assert await _answer(fast, "clear my waypoint") is None
     sidecar["down"].add(DAY)
     assert await _answer(fast, "how many scans do I have left") is None

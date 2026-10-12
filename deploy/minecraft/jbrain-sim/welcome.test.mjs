@@ -346,6 +346,43 @@ test("a death mid-welcome: the first-death lines come after it, with the Tricord
   assert.equal(said(p).length, LINES.welcome("Unlucky", false).length + 2); // heard once
 });
 
+test("a death mid-welcome, then gone before it ends: the lines on the next join, once (#1698)", () => {
+  const p = sim.player("Drifter", "-31");
+  sim.spawn(p, true);
+  sim.advance(140); // the Tricorder is theirs; Dave not yet on
+  sim.die(p);
+  sim.spawn(p, false); // the first-death beat waits for the welcome
+  sim.advance(20);
+  sim.leave(p);
+  sim.advance(WELCOME_TICKS);
+  assert.ok(!beats(p).includes("first_death"));
+
+  const back = sim.player("Drifter", "-31"); // a new entity on rejoin
+  sim.spawn(back, true);
+  sim.advance(WELCOME_TICKS);
+  // Their Tricorder stayed with the old entity here: it is beamed back, said first.
+  assert.deepEqual(said(back), [LINES.rebeamed, ...LINES.firstDeath]);
+  assert.ok(beats(back).includes("first_death"));
+  sim.leave(back);
+  const again = sim.player("Drifter", "-31");
+  sim.spawn(again, true);
+  sim.advance(WELCOME_TICKS);
+  assert.ok(!said(again).some((l) => LINES.firstDeath.includes(l)));
+});
+
+test("leaving lets go of what was waiting for Dave (#1698)", async () => {
+  const { initWelcome } = await import("./pack/scripts/welcome.js");
+  const quiet = () => {};
+  const story = initWelcome({ beam: quiet, ownSlot: () => -1, tricorderOn: () => "own", say: quiet,
+    dave: quiet });
+  const p = sim.player("Gone", "-32");
+  story.hello(p); // Dave mid-speech
+  story.firstDeath(p, false);
+  assert.equal(story.waitingFor(p.id), 1);
+  sim.leave(p);
+  assert.equal(story.waitingFor(p.id), 0);
+});
+
 test("/dave hello replays the welcome's lines, no darkness, no Tricorder, no backend", () => {
   config({ wreck: true });
   const p = sim.player("Hi", "-13");

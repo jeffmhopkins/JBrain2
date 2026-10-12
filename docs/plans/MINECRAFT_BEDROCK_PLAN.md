@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1390,8 +1390,10 @@ amount and everything else. Every pack gets the same single line (an older wordi
 rewritten too), because Bedrock stacks only identical lore. A fresh craft lands apart
 from a lored stack, and Bedrock never merges two stacks already in separate slots, so the
 look folds a newly lored inventory pack into any lored stack with room (to 16); only what
-doesn't fit keeps its own slot, and nothing is lost (#1694). A pack in a chest gets it when
-it's next carried. Transport shipped later, below.
+doesn't fit keeps its own slot, and nothing is lost (#1694). The fold writes the source slot
+first and the top-ups after it; a write that throws (a player mid-leave) puts the source's
+unmoved packs back as they were, so a failure never makes a pack and the next look folds
+them again (#1698). A pack in a chest gets it when it's next carried. Transport shipped later, below.
 **Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
 `entityDie`, `spawnItem` keeping enchantments, names and durability, and what one
@@ -2317,7 +2319,9 @@ map link was turned off*.
   `/map/structures` and `/timeline` under it. The token picks the slot; the visitor never
   names one. Every route, tiles included, 404s once the slot holds another world: the
   token works outside the viewer, so an old link must never draw the new world (#1664).
-  Tiles cache the slot's checked folder for 5 s, one sidecar read per view's burst.
+  Tiles cache the slot's folder (or that it's empty) for 5 s whichever world it is, so a
+  view's burst, a stale link's included, costs one sidecar read (#1698). A slot record with
+  no folder is a broken sidecar: a 502, never cached, never called a gone world.
   Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`, `noindex`.
 - Storage and RLS (migration `0230_mc_share_links`): `app.mc_share_links` keeps only the
   token's SHA-256, the slot, its world folder at mint, and the player. A visitor reads under
@@ -2479,6 +2483,158 @@ chests and chest boats are entities, not block entities, so they aren't searched
   table, as the block index's first search does.
 - That `save hold`/`save query` answers within 10 s on the busy server (the `flush` field),
   and that `jb:items` answers within the console's 3-second window.
+
+### M24 — Goals that count: "I need 23 iron blocks" (owner, 2026-10-12)
+
+**Why.** A player says "Dave, remind me I need 23 iron blocks", and later "how many iron
+blocks have I got, how many more do I need?". Dave should answer "17 of 23, 6 to go: 12
+in chests near your base, 5 on you". Goals were titles only, and `mc_find_item` searches
+any chest in the world, not "my stock".
+
+**Owner decisions (2026-10-12):**
+1. **A goal can count an item.** It has an optional item id and a count (1–100,000). Goals
+   written before this read exactly as they did.
+2. **"Mine" means two things.** It is what the player carries (inventory, armor,
+   off-hand) plus the containers within 48 blocks of each of **their own saved places**
+   in the loaded world, and within 48 blocks of where they stand. A container in reach
+   of two places counts once.
+3. **Cost.** Carried items are always free. Chests near a saved place are free only when
+   that place is within the Tricorder's reach (48 blocks) of where the asker stands. If
+   any counted place is farther, the check is **one** deep scan (§M17), not one per
+   place, and the same check again from about the same place is free. If they're out of
+   scans, Dave still gives the free part, and says the far places weren't counted
+   because the deep scan needs to recharge. The app is unlimited. A whole-world count is
+   still `mc_find_item` and costs a deep scan in game, as before.
+4. **Own pockets only.** In game it is always the asker's. In the app it is counted only
+   when the goal's own player is named and online.
+5. **Reached means asked, not done.** When the count is reached, Dave says so and offers
+   to mark the goal done. He marks it only if the player says yes.
+
+**What's built.**
+- **Migration 0236** adds nullable `item` and `item_count` columns to `app.mc_goals`. The
+  item's CHECK is `mc_find_item`'s id pattern, the count's is 1–100,000, and a third
+  CHECK makes them a pair (both or neither). There is no new table, and 0226's owner-only
+  policy is unchanged. The integration isolation test now writes both columns as a
+  non-owner and is refused.
+- **Pack 1.9.0**: `scriptevent jb:carry {"player", "types"}` adds up that online player's
+  inventory, armor and off-hand for 1–8 item ids. It answers one console line: `carry
+  counted for <player> in <dim> at x= y= z=: minecraft:iron_block=5; shulker boxes=1`, or
+  `carry refused`. The position lets the app count the chests around them too. **Carried
+  shulker boxes are not read.** Stable `@minecraft/server` 2.0.0 has no way to see inside
+  a shulker box item (the item-inventory component is beta-only). So the line counts the
+  boxes, and Dave says what's inside them wasn't counted.
+- **Sidecar** `GET /map/stock?slot&dim&centres=x,z;x,z&items&radius&flush` (radius 48 by
+  default, at most 256, 1–101 points). It sums the item across every container within
+  `radius` of any point. Each container is counted once, toward its nearest point (the
+  first named on a tie), and the sum is broken down per point. It returns `as_of` /
+  `age_s` and flushes like `/map/items`. Built on `ContainerIndex.stock`. One call per
+  dimension, so a Nether base's chests are counted in the Nether.
+- **`mc_goal_create` / `mc_goal_update` v2** take `item` (normalized as `mc_find_item`'s:
+  spaces become underscores, `minecraft:` dropped) and `count`. Both are checked before
+  any write. A create needs both or neither, and so does an update to a goal that counts
+  nothing yet. `mc_goals` and the chat intro show "Get 23 iron blocks (iron_block ×23)".
+- **`mc_goal_progress(goal?, gamertag?)`**, read-only, is in both Dave tiers. It is a
+  separate tool rather than an `mc_goals` flag because `mc_goals` is a cheap database
+  read, while this one asks the pack and the world files and can cost a deep scan. Each
+  has its own failure modes, cost and step label. `goal` can be left out when exactly
+  one open goal counts an item. In game, places in another dimension or more than 48
+  blocks away are "far" and are paid for with `scans.charge`, which does no stored-answer
+  replay: a repeat recounts live and free, because chests change. A failed count is
+  refunded. The answer gives the headline ("17 of 23 — 6 to go"), where they are (fenced,
+  because place names are player-written), which places' chests were counted, the files'
+  age, the no-saved-places hint ("save your base"), the shulker-box caveat, the scan
+  line, and the ask-before-done line.
+- Prompt `agent-minecraft-dave-v20` (v19 on its own branch; v20 once merged with §M25): "remind me I need N X" makes a goal with an item and
+  a count, the progress wording, and the deep-scan rule for far places.
+
+**Not built.**
+- **The goals list in the PWA doesn't show progress.** Any screen change goes through
+  the GUI mock gate (`docs/reference/DESIGN.md`), so this is a follow-up for the owner.
+- **No fast path.** There is no signed-off fixed line for progress on the lore page.
+- **Ender chests** are never counted, and neither are minecart chests or chest boats
+  (§M23).
+- **No way to clear a goal's item** once it is set. To stop counting, make a new goal.
+
+### M25 — The Tricorder's live scan (owner, 2026-10-12)
+
+**Why.** "Dave, set my Tricorder to scan for diamonds": the Tricorder enters a scan mode
+and its arrow leads to the nearest such block around the player, re-aimed as they move
+and dig, with no deep scan spent. Chests and containers stay on `mc_find_item`'s free
+48-block look (§M23); this is the live 16-block sense. No other cost rule changed.
+
+**Owner decisions (2026-10-12):**
+- **Every 10 seconds** the Tricorder finds the **nearest matching block within 16 blocks**
+  (one chunk) of the player, and the held Tricorder's arrow and distance point at it, the
+  same line as a waypoint's. An ore id brings its deepslate twin (and the reverse), as
+  `mc_find_block` does.
+- **Any block**, not just ores; an id the game doesn't know is refused with a reply Dave
+  can relay.
+- **None within 16:** no arrow; the held Tricorder reads `Scanning: diamond · none
+  nearby` (the block in plain words). The arrow returns at the next scan that finds one.
+- **It ends only** when the player asks Dave to stop ("stop scanning"), when the arrow
+  goes back to the waypoint they had before (or spawn), or when they ask for a new
+  waypoint, which replaces it. Never on its own: it's kept per player in a world dynamic
+  property, like a waypoint, so it lasts across sessions and rejoins.
+- **Free**: the Tricorder's own short-range sense, never a deep scan.
+
+**What's built.**
+- **Pack** (1.9.0, `jbrain-pack/scripts/scan.js`, pure rules in `rules.js`): `scriptevent
+  jb:scan {"player", "block"}` starts a scan, `{"player", "stop": true}` ends it, answered
+  `scan set for <player>: <label> (<ids>)`, `scan stopped for <player>` (`(none was on)`),
+  or `scan refused: …`. A new event rather than a `jb:waypoint` field: the scan has its own
+  state, reply and refusals, and `jb:waypoint` keeps its message shape. The block is checked
+  with `BlockTypes.get`; a bare ore name with no such block ("diamond") is taken as the ore
+  (`diamond_ore`). The twins are the ore, `deepslate_`, `lit_` and `lit_deepslate_` forms,
+  kept only where the game knows the id (redstone's lit ore comes along; nether gold gets
+  no made-up deepslate twin). Stored as `jb:scan:<gamertag>`; the waypoint under it is
+  never touched, so a stop simply drops the scan.
+- **The scan.** `dimension.getBlocks(new BlockVolume(…), { includeTypes }, true)` over a
+  33×33×33 box around the player (y clamped to the dimension), nearest by 3D distance to
+  the block's centre. One call, not sliced with `system.runJob`: it's 35,937 blocks with
+  the type filter applied natively, and only the matches reach the script. The first
+  scan after a start, and any taking 10 ms or more, prints `scan took N ms for <player>
+  (<label>)` on the console, so the real cost shows in the server log.
+- **Cadence and staggering.** The arrow loop (every 5 ticks) runs the scheduler first:
+  at most **one scan a frame**, for the most overdue scanning player, who is next due 40
+  frames (200 ticks) later. Players who start together drift onto frames of their own
+  and stay there, so no two scans share a tick (40 players fit in the 10 s at full
+  cadence). A rejoin or a restart scans at once.
+- **Between scans** the arrow shows the last block found. Each frame it re-checks that
+  block with one `getBlock`: mined (or unloaded), the arrow drops at once and the scan
+  runs again within a second (4 frames, no sooner, so digging through a vein doesn't scan
+  every frame); walked more than 16 blocks from, it's hidden until the next scan.
+- **Ending.** A `jb:waypoint` set ends a scan (`…; scan ended` on its reply). A clear ends
+  it only with `"end_scan": true`, which Dave's `mc_set_waypoint` clear sends ("clear my
+  arrow" is a new heading: spawn); the track drain's arrival clear (§M21) doesn't, so
+  reaching an old waypoint never ends a scan on its own.
+- **`mc_tricorder_scan(block | stop, gamertag?)`** (both Dave tiers): a tool of its own,
+  not `mc_set_waypoint` fields, because the model reaches for it by its ask ("scan for",
+  "stop scanning") and its answers (scanning, none was on, no such block) aren't a
+  waypoint's. Whose Tricorder follows `mc_set_waypoint`'s precedent: in game only the
+  asker's; in the app any named gamertag, online or not (the pack keeps it for them), or
+  this chat's player. `mc_set_waypoint` v4 says when it ended a scan. Prompt
+  `agent-minecraft-dave-v20` (with §M24), guide v11 (one Tricorder line), `mc_tricorder_scan` v1.
+- **Fast path.** No new line: "stop scanning" goes to the model. The one signed-off line
+  near it, "Arrow cleared. Ask me when you need a heading.", would be false after a stop
+  (the arrow returns to their waypoint, not cleared). A new quick-answer line needs the
+  owner's sign-off on the lore page first.
+- **The map (§M21).** Not shown: a scan's target is found in game every 10 s and never
+  reaches the backend, so showing it would need a new pack-to-backend event and a target
+  row that doesn't overwrite the waypoint the scan returns to. Skipped; during a scan the
+  map keeps showing the player's waypoint.
+- **Lore.** Canon on the lore page as "The Tricorder's live scan" (2026-10-12): "until
+  you ask Dave to stop or ask him for a new heading", which is why Dave's clear (spawn,
+  a new heading) ends a scan too.
+
+**Box checks (after deploy).**
+- The cost of `getBlocks` on the real server: the `scan took N ms` lines in the server log
+  (the debug API's `GET /minecraft/logs?tail=`) for a dense block (stone) and a rare one
+  (diamond ore), with several players online. If a scan is regularly past a few ms,
+  slice the box across frames with `system.runJob`.
+- That the `Scanning: diamond · none nearby` line and the `·` separators render on Xbox and
+  Windows like the waypoint line does, and the arrow re-aims as the player turns.
+- That `BlockTypes.get` knows the ids players ask for (`diamond_ore`, `ancient_debris`,
+  `lit_redstone_ore`) and refuses a made-up one, on 1.26.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
@@ -2840,12 +2996,15 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   after the owner turns one on. The pearl and pack beats wait for their own Tricorder
   on them, like every other Dave line (a respawn always has it, or is re-beamed one): an
   unlock made without it leaves the beat unheard for a later look, never spent (#1684).
-- **Beats never cut into Dave's speech** (#1683): while the welcome, a `/dave hello` or
-  the first-death lines are playing, no other beat speaks. The ones a look re-checks
+- **Beats never cut into Dave's speech** (#1683): while the welcome, a `/dave hello`, the
+  first-death lines or the first-wormhole line (from the plant, through its 1.5 s wait)
+  are playing, no other beat speaks, and a `/dave hello` asked then is dropped. The ones a look re-checks
   (pearl, pack, Replicator) stay unheard until a look after he's done; a death or a
   planted gate waits and plays once he's done. So a death mid-welcome gets its lines
   after the welcome, with the Tricorder it handed over, and a pre-DW1 player carrying
-  packs hears their beats after it, not over the darkness.
+  packs hears their beats after it, not over the darkness. A player who leaves before a
+  queued beat plays keeps it (in the script's memory, so not across a server restart): it
+  plays once on their next join, after anything Dave says first (#1698).
 - **`/dave hello`** (also `/d`, `/ai`; exactly "hello", any case) replays the six lines at
   the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
   question reaches the backend. It still needs their own Tricorder. "hello there" is a
@@ -2944,7 +3103,7 @@ is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
 | Maps (with **M8**) | `minecraft_map(center, radius, layers, overlays, slot?)`: terrain, biome, height, explored, changes, slice@Y; overlays for players, waypoints, structures, deaths | Renderer in the sidecar; returns an image artifact rendered **inline in the chat** |
 | Admin (owner) | `mc_command` (any console command) and `mc_server_action` (every server action) — superseded the four planned admin tools, 2026-10-11 | Look-only commands run at once; everything else is staged as a `minecraft` Proposal the owner approves, never silent |
 | Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
-| Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
+| Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename; an item and count since §M24), `mc_goal_progress` (§M24), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
 | Memory, **per player**, self-managed | `mc_memory_read`, plus **line-level edits only**: `mc_memory_add(text)`, `mc_memory_replace(line, text)`, `mc_memory_remove(line)`. There is no whole-document write. | `app.mc_player_memory` (one row per line, with history); see "Memory: self-managed, never overwritten" below |
 
 **Goals and the progress log (owner, 2026-10-10).** The "session log" is a **journal of
@@ -2954,7 +3113,9 @@ doesn't lose it.
 
 - **Goals** (`app.mc_goals`): player xuid, world slot, title (for example "Beacon at the
   base" or "20 obsidian for the portal"), optional target notes, status
-  (open / done / abandoned), created and finished times.
+  (open / done / abandoned), created and finished times; and since §M24 an optional item
+  and count ("iron_block ×23"), which `mc_goal_progress` counts against what the player
+  carries and the chests near their saved places.
 - **Progress log** (`app.mc_goal_log`): player xuid, optional goal, time, text, and
   **source**:
   - `owner`: written from the PWA agent;

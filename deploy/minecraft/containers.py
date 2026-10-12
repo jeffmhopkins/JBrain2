@@ -251,3 +251,34 @@ class ContainerIndex:
             for distance, c, held in hits[:limit]
         ]
         return out, totals, len(hits)
+
+    def stock(
+        self,
+        dim: int,
+        centres: list[tuple[int, int]],
+        wanted: set[str],
+        radius: int,
+    ) -> tuple[list[dict[str, int]], list[int], dict[str, int]]:
+        """How many of each wanted item the containers within `radius` blocks across of
+        any of `centres` hold (§M24, "how many have I got"): per centre, how many
+        containers that is, and the totals. Each container counts once, toward its
+        nearest centre (the first named on a tie), so two saved places whose circles
+        overlap never count the same chest twice."""
+        per: list[dict[str, int]] = [{} for _ in centres]
+        count = [0 for _ in centres]
+        totals: dict[str, int] = {}
+        for c in self.containers:
+            if c.dim != dim:
+                continue
+            held = {n: c.items[n] for n in wanted if n in c.items}
+            if not held:
+                continue
+            gaps = [math.dist((x, z), (c.x, c.z)) for x, z in centres]
+            nearest = min(range(len(centres)), key=lambda i: gaps[i], default=None)
+            if nearest is None or round(gaps[nearest]) > radius:
+                continue
+            count[nearest] += 1
+            for n, k in held.items():
+                per[nearest][n] = per[nearest].get(n, 0) + k
+                totals[n] = totals.get(n, 0) + k
+        return per, count, totals

@@ -308,6 +308,24 @@ test("folding a crafted pack in stops at 16 and loses none, even in a full inven
   assert.ok(packs(full).every((s) => s.lore[0] === LINES.powerPackLore));
 });
 
+const packCount = (p) => packs(p).reduce((n, s) => n + s.amount, 0);
+
+test("a write that fails mid-fold never makes a Power Pack, and loses none (#1698)", () => {
+  // Slot 2 is the lored stack topped up; slot 7 the crafted pack folded in from.
+  for (const failing of [2, 7]) {
+    const p = sim.player(`Glitch${failing}`, `-9${failing}`);
+    wake(p);
+    p.inventory.setItem(2, lored(1));
+    p.inventory.setItem(7, new ItemStack("jbrain:power_pack", 1));
+    p.inventory.failNextWrite(failing);
+    sim.tick(); // one look, the one that fails
+    for (let i = 0; i < 3; i++) sim.tick();
+    assert.equal(packCount(p), 2, `a failed write to slot ${failing}`);
+    for (let i = 0; i < 4; i++) sim.tick(); // the next look folds it after all
+    assert.deepEqual(packs(p).map((s) => s.amount), [2]);
+  }
+});
+
 const knownOf = (line) => JSON.parse(line.slice(line.indexOf("{"))).known;
 
 test("each /dave question carries the asker's unlocks, first held and then kept", () => {
@@ -390,4 +408,27 @@ test("Dave's look around finds item stacks on the ground near an online player",
   assert.equal(sim.logs.at(-1), "[jbrain] items refused: Nobody isn't online");
   sim.scriptevent("jb:items", JSON.stringify({ player: "Steve 42", types: ["x; op @a"] }));
   assert.match(sim.logs.at(-1), /^\[jbrain\] items refused: Error: not 1-8 item types/);
+});
+
+test("Dave's carry count reads the asker's own inventory, armor and off-hand", () => {
+  const p = sim.player("Steve 42", "-62");
+  p.location = { x: 5.5, y: 70, z: -9.2 };
+  p.inventory.setItem(0, new ItemStack("minecraft:iron_block", 3));
+  p.inventory.setItem(8, new ItemStack("minecraft:iron_block", 2));
+  p.inventory.setItem(9, new ItemStack("minecraft:blue_shulker_box", 1));
+  p.getComponent("minecraft:equippable").setEquipment("Offhand", new ItemStack("minecraft:iron_block", 1));
+  p.getComponent("minecraft:equippable").setEquipment("Head", new ItemStack("minecraft:iron_helmet", 1));
+  // Someone else's pockets never count.
+  const other = sim.player("Mira", "-63");
+  other.inventory.setItem(0, new ItemStack("minecraft:iron_block", 64));
+  sim.logs.length = 0;
+  sim.scriptevent("jb:carry", JSON.stringify({ player: "steve 42", types: ["iron_block", "minecraft:iron_helmet"] }));
+  assert.deepEqual(sim.logs, [
+    "[jbrain] carry counted for Steve 42 in overworld at x=5 y=70 z=-10:"
+      + " minecraft:iron_block=6 minecraft:iron_helmet=1; shulker boxes=1",
+  ]);
+  sim.scriptevent("jb:carry", JSON.stringify({ player: "Nobody", types: ["iron_block"] }));
+  assert.equal(sim.logs.at(-1), "[jbrain] carry refused: Nobody isn't online");
+  sim.scriptevent("jb:carry", JSON.stringify({ player: "Steve 42", types: ["x; op @a"] }));
+  assert.match(sim.logs.at(-1), /^\[jbrain\] carry refused: Error: not 1-8 item types/);
 });

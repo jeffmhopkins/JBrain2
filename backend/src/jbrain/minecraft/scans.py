@@ -4,8 +4,10 @@ docs/plans/MINECRAFT_BEDROCK_PLAN.md §M17 (owner, 2026-10-11). In the story the
 satellite's deep scan has to recharge (Bleepbloop_City `notes/lore.md`, "The deep scan").
 
 - **What counts**: the searches that find something nobody pointed out — `mc_locate`,
-  `mc_nearby`, `mc_find_block`, and `mc_find_item` past the Tricorder's 48-block
-  short-range scan (§M23). Everything else is free.
+  `mc_nearby`, `mc_find_block`, `mc_find_item` past the Tricorder's 48-block
+  short-range scan (§M23), and `mc_goal_progress` when it counts chests near a saved place
+  more than 48 blocks away or in another dimension (one scan per check, §M24). Everything
+  else is free.
 - **In game only**: the handlers gate a scan only while a door turn's asker is set
   (`minecraft/asker.py`), the same signal `mc_show_map` refuses on. The owner's PWA chats
   never reach this module.
@@ -171,6 +173,21 @@ async def deep_scan(book: ScanBook, asker: Asker, day: int, search: Search, run:
     return ToolOutput(
         f"{out}\nThat used a deep scan: {left} (say so).", result_brief=f"{brief} · {left}"
     )
+
+
+async def charge(book: ScanBook, asker: Asker, day: int, search: Search) -> tuple[str, int]:
+    """Pay for a deep scan whose answer is rebuilt live every time, so a stored answer
+    would be stale (§M24's goal counts: chests fill and empty). "repeat" — the same
+    search from about here today, free; "spent"; or "out" — and the scans left after.
+    A caller whose search then fails refunds; one that succeeds remembers the result,
+    which is what later repeats match."""
+    used, results = await book.today(asker.world, asker.key, day)
+    if any(search.repeats(r) for r in results):
+        return "repeat", max(SCANS_PER_DAY - used, 0)
+    spent = await book.reserve(asker.world, asker.key, asker.gamertag, day)
+    if spent is None:
+        return "out", 0
+    return "spent", SCANS_PER_DAY - spent
 
 
 class SqlScanBook:
