@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0, §15) W1◻️ W2◻️ W3◻️ P1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.2, §15) W1◻️ W2◻️ W3◻️ P1◻️
 >
 > **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
 > until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs
@@ -2089,7 +2089,7 @@ F3 also updates JP's text on exit, the pair, and refusals.
 | **F1** host foundations | §10, no behaviour change against F0's baseline | F0 | firmware, backend, supervisor, docs |
 | **F2** engine | §7; defects only; wrappers | F1, W3 | firmware, backend, supervisor, docs |
 | **F3** state machine | §8; Appendix A; Q1–Q3; hand-back | F2 | firmware, backend, supervisor, docs |
-| **F4** panel visuals | Overlay, pips, pulse, glyphs, hush ring; `CUE_NOBODY` / `CUE_SENT` / `CUE_BUSY` contours. **GUI gate:** three interactive mocks (WebAudio) first, saved to `docs/mocks/jpanel-panel-messaging/`. | F3 | firmware, backend, supervisor, docs |
+| **F4** panel visuals | Overlay, pips, pulse, glyphs, hush ring; `CUE_NOBODY` / `CUE_SENT` / `CUE_BUSY` contours. **GUI gate:** interactive mocks first, run on the bench (`docs/mocks/jpanel-s3/`, the firmware's own UI in WebAssembly, with its own cues). | F3 | firmware, backend, supervisor, docs |
 | **P1** PWA | C3 buttons; C4 copy; C5 status; composer; launcher badge; read dwell; retention line; retired threads + merge button; "Displays"; "Load earlier"; delete/revoke copy. **GUI gate.** | W2, W3 | frontend, docs |
 
 **Order:** W1 → W2 → W3, and F0 → F1 → F2 → F3 → F4. P1 can land any time after W3; F0 and F1
@@ -2443,7 +2443,7 @@ test`) and with the ESP32-S3 toolchain:
 | **C — engine** | new `jpanel_core.c`; `jpanel.c` cut to the task, queue, cJSON, mbedTLS and the real io (`jpanel_post` and `jpanel_snapshot` for render); `jpanel.h` trimmed (its `JPANEL_QUEUE_MAX` copy deleted) | new `run_jpanel_tests` with a scripted box in two modes (**today's box** and the new contract): every engine test in §9 A1, A2, A3 (F2 half), A4, A5 (engine half), A6 (engine half), A7–A9; §7.5's tests; `test_old_box_positional_fetch_still_acks_header_id`; `test_send_outcome_survives_concurrent_chain`; `test_claim_near_expiry_never_trips_unclaimed_backstop`; backend retargets of every census row that reads `jpanel.c`/`jpanel.h` |
 | **D — machine** | new `panel_sm.c`; `ui.c`, `ui.h`, `host/ui_tests.c` **deleted**; `ui.h`'s timing constants move, with their comments, to `panel_sm.h` | new `host/sm_tests.c` (`run_sm_tests`): all 51 Appendix A tests with the stated U/R dispositions; every test named in §8.2, §8.5 and §9 B1–B10; `test_storm` |
 | **E — integration** | `display.c` cut to sampling, the executor and drawing `sm_view_t` (its `s_pending`, `s_repeat_until`, `s_talk`, `s_sendto_until`, `s_paused_since`, `s_pend_reply_to` and tap-order logic deleted); `main.c` (the `jp` object after `pmu_history`, `speech_ok`, the update-first order, watchdogs and the RTC cap, the internal-RAM floor); `talk.c` (lease 2, the reply slot, waiting on `reply_done`); `ota.c`'s `ota_running`; `check_no_logic_in_display`; `CMakeLists.txt` `SRCS` and the host Makefile; `firmware.yml`'s `idf.py size` step with the DRAM baseline; `version.txt` 0.4.0 and `dist/` | `jpanel_tests` end to end (`sm_step` against the real `jpanel_core` and `stream.c`, including `test_selection_held_while_stop_outcome_pending`); `test_update_check_precedes_task_starts`; backend: `TelemetryIn.jp` and `speech_ok`, `test_jp_keys_from_main_c_validate_against_telemetry_in`, `test_the_model_declares_all_of_them` and `test_the_panel_s_whole_payload_fits_the_buffer_it_is_built_in` retargeted, and the §10 census rows that read `display.c`, `ui.h` and `ui.c` |
-| **F — visuals (F4)** | the overlay, pips, pulse, glyphs and hush ring; the `CUE_NOBODY`/`CUE_SENT`/`CUE_BUSY` contours | The GUI gate first: three interactive mocks in `docs/mocks/jpanel-panel-messaging/`, approved by the owner. If they are not approved when E is done, 0.4.0 ships the placeholders and F becomes 0.4.1. |
+| **F — visuals (F4)** | the overlay, pips, pulse, glyphs and hush ring; the `CUE_NOBODY`/`CUE_SENT`/`CUE_BUSY` contours | The GUI gate first: interactive mocks on the bench (`docs/mocks/jpanel-s3/`), approved by the owner. If they are not approved when E is done, 0.4.0 ships the placeholders and F follows in a later release (0.4.1 went to the bench's `overlay.c` split). |
 
 **Integration order**
 
@@ -2502,9 +2502,34 @@ E (integration):
 - **Hardware (FW → ✅):** read the boot log's `mem: pre-speech`/`post-speech` and a send's low-water
   through the debug API, record `S`, `T`, `P` in §6a and set the floor; confirm `speech_ok` and
   `int_min` on both panels.
-- **F4:** the mocks in `docs/mocks/jpanel-panel-messaging/`, then the overlay, pips and contours
-  replacing 0.4.0's placeholders (`SENDING`, `SENT`/`NOBODY`/`NOT SENT`/`DROPPED`; `CUE_NOBODY`
-  is still sounded as `CUE_OOPS`) — 0.4.1.
+- **F4:** the overlay, pips and contours replacing 0.4.0's placeholders (`SENDING`,
+  `SENT`/`NOBODY`/`NOT SENT`/`DROPPED`; `CUE_NOBODY` is still sounded as `CUE_OOPS`), in the
+  release after 0.4.1. The GUI gate's mocks are now the bench (below): each candidate is drawn by
+  `overlay.c` and run in the browser, not drawn a second time in HTML.
+
+**0.4.2, from the first 0.4.0 panel on hardware (2026-10-12).** It updated over the air and
+reported `speech_ok`, every `jp` counter zero, and an internal low-water of 18,208 B with a request
+in flight. Two faults the owner saw within the hour:
+
+- *Messages paused when the room was noisy.* A word the recogniser thought it heard sounded its cue
+  in the press slot, and a message stream yields the speaker to a cue. 0.3.39 had refused the cue.
+  The machine now mutes commands in PLAY and while a stream is live
+  (`test_commands_are_deaf_while_a_message_plays`).
+- *REPLY only from a message that has stopped talking* (owner). In PLAY the envelope is drawn and
+  pressable only while the message is paused; once it ends, the AGAIN/REPLY pair carries it as
+  before. Mid-message the corner is empty and a press there does nothing (`view.reply`, checked
+  under I3).
+- *The animation was choppy.* With the socket off, every request was a fresh TLS handshake, and
+  the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
+  requests, turned on only after speech has started (`firmware/README.md`).
+
+**Landed in 0.4.1 (no behaviour change): the bench.** The overlays moved from `display.c` into a
+pure `overlay.c` (`overlay_draw(fb, view, ctx)`), so the host and the browser draw the panel's
+own pixels. `firmware/mock/` compiles the machine, the engine, the arbiter, the cues, the pet and
+the overlays to WebAssembly against the scripted box. `docs/mocks/jpanel-s3/` is the interactive
+page, with the machine's hit test painted over the glass on request. `firmware.yml` rebuilds the
+module, byte-compares the committed one, and runs `firmware/mock/smoke.mjs` (message, play,
+AGAIN/REPLY, a sent reply, the who-menu).
 - **W1–W3, P1** as §12 orders them; 0.4.0 already degrades to today's box as §6 says.
 
 ---

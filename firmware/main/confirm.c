@@ -475,7 +475,7 @@ void confirm_draw_exit(uint16_t *fb, int w, int h, int y0, int over_h)
     stroke_r(fb, w, h, cx + a, cy - a, cx - a, cy + a, th, CONFIRM_GLYPH);
 }
 
-void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing)
+void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing, bool reply)
 {
     const int cy = confirm_cy(over_h);
 
@@ -496,6 +496,7 @@ void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing
 
     /* REPLY, bottom right: an envelope. Green, because this one SENDS — the same meaning the
        tick carries in the same corner, so the colour is already learned too. */
+    if (!reply) return;
     disc(fb, w, h, CONFIRM_CX_SEND, cy, CONFIRM_R, CONFIRM_ENVELOPE);
     {
         const int hw = CONFIRM_R * 17 / 32, hh = CONFIRM_R * 12 / 32;

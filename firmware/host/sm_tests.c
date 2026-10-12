@@ -773,12 +773,17 @@ static void test_the_order_is_a_list_and_ends_with_the_pet(void)
     tap_the_notice();
     until_on();
     run_ms(EXIT_GRACE_MS);
+    CHECK(targets_mask() == (T(SM_T_EXIT) | T(SM_T_FACE) | T(SM_T_PAUSE) | T(SM_T_SWALLOW)),
+          "PLAY: the exit, the face and pause; no reply while it talks");
+    tap_at(LEFT_X, DISC_Y);
+    CHECK(w.sm.play.pause_on, "paused");
+    run_ms(EXIT_GRACE_MS);
     CHECK(targets_mask() == (T(SM_T_EXIT) | T(SM_T_FACE) | T(SM_T_PAUSE) | T(SM_T_REPLY)),
-          "PLAY: the exit, the face, pause and reply");
+          "PLAY, paused: and now reply");
     world_reset();
     play_a_message(true);
     run_ms(EXIT_GRACE_MS);
-    CHECK(targets_mask() == (T(SM_T_EXIT) | T(SM_T_SWALLOW) | T(SM_T_PAUSE) | T(SM_T_REPLY)),
+    CHECK(targets_mask() == (T(SM_T_EXIT) | T(SM_T_SWALLOW) | T(SM_T_PAUSE)),
           "PLAY with nothing to cycle to: the face quadrant swallows");
 }
 
@@ -1201,7 +1206,11 @@ static void test_every_playback_control_answers_the_finger(void)
     play_a_message(false);
     run_ms(EXIT_GRACE_MS + 100);
     tap_at(RIGHT_X, DISC_Y);
-    CHECK(w.sm.mode == SM_RECORD, "the reply is taken");
+    CHECK(w.sm.mode == SM_PLAY && !w.paused, "no reply while it talks: it plays on, untouched");
+    tap_at(LEFT_X, DISC_Y);
+    run_ms(400); /* the pause's own cue, which a microphone does not open over */
+    tap_at(RIGHT_X, DISC_Y);
+    CHECK(w.sm.mode == SM_RECORD, "paused, the reply is taken");
     CHECK(last_cue() == CUE_REPLY, "and answers the finger now");
 
     world_reset();
@@ -1270,6 +1279,23 @@ static void test_a_notification_arrives_and_a_tap_plays_it(void)
     CHECK(!w.out.view.notice, "the notice does not invite a second press");
     run_ms(400);
     CHECK(plays() == 1, "then the message is asked for, exactly once");
+}
+
+/* A message is listened to, not talked over: a word the recogniser hears while it plays would sound
+   a cue, and the stream yields to cues. */
+static void test_commands_are_deaf_while_a_message_plays(void)
+{
+    world_reset();
+    arrive("m1", true);
+    run_ms(400);
+    CHECK(!w.muted, "commands are live while a message only waits");
+    tap_the_notice();
+    run_ms(400);
+    CHECK(w.sm.mode == SM_PLAY && w.muted, "and deaf from the press that plays it");
+    engine_end(JP_PLAY_HEARD);
+    step();
+    run_ms(400);
+    CHECK(w.sm.mode == SM_PET && !w.muted, "and live again once it has ended");
 }
 
 static void test_a_press_does_not_evaporate_behind_its_own_cue(void)
@@ -2273,12 +2299,22 @@ static void test_exit_does_not_resurrect_older_offer(void)
     CHECK(w.sm.mode == SM_PET && !w.sm.offer.up, "the old pair does not come back");
 }
 
+/* A reply starts from a paused message (0.4.2): the envelope is not there while it talks. */
+static void pause_for_reply(void)
+{
+    tap_at(LEFT_X, DISC_Y);
+    CHECK(w.sm.play.pause_on, "paused, so the envelope is up");
+    run_ms(400); /* the pause's own cue */
+}
+
 static void test_reply_during_replay_goes_to_offer_sender(void)
 {
     world_reset();
     offer_from(true);
     tap_at(LEFT_X, DISC_Y);
     until_on();
+    run_ms(EXIT_GRACE_MS);
+    pause_for_reply();
     tap_at(RIGHT_X, DISC_Y);
     CHECK(w.sm.mode == SM_RECORD && w.sm.rec.to == JP_TO_DAD, "the replay's sender is answered");
 }
@@ -2288,6 +2324,7 @@ static void test_reply_during_playback_opens_a_working_recording(void)
     /* B1: no pair over the tick and cross, and the tick sends. */
     world_reset();
     play_a_message(true);
+    pause_for_reply();
     tap_at(RIGHT_X, DISC_Y);
     CHECK(w.sm.mode == SM_RECORD, "the reply opens a recording");
     CHECK(w.stop_heard == 1, "and the stop counts as heard (§4)");
@@ -2306,6 +2343,7 @@ static void test_reply_under_heard_min_counts_as_heard(void)
     world_reset();
     play_a_message(false);
     CHECK(w.out_ms < 3000, "well under the heard threshold");
+    pause_for_reply();
     tap_at(RIGHT_X, DISC_Y);
     CHECK(fx_index(SM_FX_STOP, 1) >= 0, "REPLY's STOP carries heard");
     CHECK(fx_index(SM_FX_SILENCE, -1) < 0 && fx_index(SM_FX_STOP, 1) < fx_index(SM_FX_PAUSE, 0),
@@ -2317,6 +2355,7 @@ static void test_reply_refused_during_pet_reply_keeps_playing(void)
 {
     world_reset();
     play_a_message(true);
+    pause_for_reply();
     w.reply = true; /* a pet reply pre-empts the message */
     tap_at(RIGHT_X, DISC_Y);
     CHECK(last_cue() == CUE_BUSY && w.cue_slot[w.ncue - 1] == STREAM_SLOT_REFUSAL, "busy");
@@ -3666,6 +3705,7 @@ int main(void)
     test_every_playback_control_answers_the_finger();
     test_the_draw_layers_are_a_list();
     test_a_notification_arrives_and_a_tap_plays_it();
+    test_commands_are_deaf_while_a_message_plays();
     test_a_press_does_not_evaporate_behind_its_own_cue();
     test_a_press_during_the_arrival_cue_plays_the_message();
     test_the_run_controls_appear_from_the_press_not_the_stream();

@@ -1,0 +1,76 @@
+// Drives the built mock headless through the messaging loop the page is for, and fails if the
+// firmware's own machine ends anywhere it should not. `node smoke.mjs [sim.wasm]`.
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const mocks = resolve(here, '../../docs/mocks/jpanel-s3');
+const { createPanel, VOICE } = await import(resolve(mocks, 'panel.js'));
+const wasm = readFileSync(process.argv[2] || resolve(mocks, 'sim.wasm'));
+
+const events = [];
+const p = await createPanel(wasm, { onEvent: (e) => events.push(e) });
+let failures = 0;
+const check = (ok, what) => {
+  if (!ok) {
+    failures++;
+    console.error(`FAIL: ${what}\n  state: ${JSON.stringify(p.state())}`);
+  }
+};
+const tap = (x, y) => {
+  p.touch(0, x, y);
+  p.advance(80);
+  p.touch(2, x, y);
+  p.advance(80);
+};
+const until = (ok, ms) => {
+  for (let t = 0; t < ms && !ok(); t += 40) p.advance(40);
+  return ok();
+};
+const W = p.W;
+const H = p.H;
+
+p.advance(2000);
+check(p.state().mode === 'PET', 'it boots to the pet');
+
+// A message from Dad: the big notice, then it plays, then the again/reply pair.
+p.message(true, 3000);
+check(until(() => p.state().notice_big, 5000), 'a waiting message shows the big notice');
+tap(W / 2, H / 2);
+check(until(() => p.state().mode === 'PLAY', 2000), 'the notice press plays it');
+check(until(() => p.state().out_ms > 0, 6000), 'and it becomes audible');
+check(until(() => p.state().mode === 'PET' && p.state().offer, 10000), 'it ends on AGAIN/REPLY');
+check(until(() => p.state().queue.length === 0, 2000), 'the box was told it was heard');
+
+// REPLY records to Dad; the hush sends it; the box confirms.
+const before = events.length;
+const cy = H - 90; // the pair's row (confirm_cy)
+tap(W * 3 / 4, cy);
+check(until(() => p.state().mode === 'RECORD', 2000), 'REPLY opens a recording');
+p.hearing(true);
+p.advance(2500);
+p.hearing(false);
+check(until(() => p.state().sending, 6000), 'the hush sends it');
+check(until(() => events.slice(before).some((e) => e.includes('cue SENT')), 20000), 'and SENT sounds');
+
+// The menu: hold on the pet, pick the sister, nobody there.
+p.set(4, 404);
+p.touch(0, W / 2, H / 2);
+p.advance(900);
+p.touch(2, W / 2, H / 2);
+p.advance(80);
+check(p.state().mode === 'GRID', 'a hold on the pet opens who?');
+
+// The wake phrase while idle opens a turn with the pet.
+p.voice(VOICE.WAKE);
+p.advance(200);
+
+const bugs = events.filter((e) => / bug /.test(e));
+check(bugs.length === 0, `no invariant broke: ${bugs.join('; ')}`);
+if (process.env.SMOKE_LOG) console.log(events.join('\n'));
+if (failures) {
+  console.error(`smoke: ${failures} failed`);
+  process.exit(1);
+}
+console.log(`smoke: OK (${events.length} events, ${Math.round(p.now / 1000)} s of panel time)`);

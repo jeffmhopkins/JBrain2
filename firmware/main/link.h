@@ -47,6 +47,18 @@ bool link_start(const cfg_t *cfg);
 
 link_res_t link_request(const link_req_t *req);
 
+/* KEEP ONE HTTPS CONNECTION BETWEEN REQUESTS (0.4.2). With the socket off, every request was a
+   fresh TLS handshake, and the settings poll alone is one every 3 s: 1-2 s of mbedTLS each, taken
+   from the render task and the producer filling the speaker. The owner saw the animation lose its
+   smoothness on 0.4.0's first afternoon. Still one session at a time, under the same lock; the
+   request after it reuses it, so the handshake is paid once, not twenty times a minute.
+
+   OFF UNTIL `main.c` TURNS IT ON, after the recogniser has started: a session held through boot
+   would be the ~32 KB of internal RAM `speech_start` needs, which is §6a's whole lesson. While on,
+   the steady state is what a request in flight already cost on 0.4.0, so the low-water mark the
+   first 0.4.0 panel reported (with a session open) is unchanged. */
+void link_keep_alive(bool on);
+
 /* For the OTA: close the socket, wait for its session to be gone, and hold every other request
    off (they fail with "suspended") until `link_resume`. */
 void link_suspend(void);
@@ -60,6 +72,8 @@ void link_on_event(void (*fn)(const char *why));
 bool link_live(void);
 
 /* For telemetry. `mode` is "ws" (the socket is carrying everything), "http" (fell back),
-   "down" (the socket is the transport and is reconnecting), or "off" (never started). */
+   "down" (the socket is the transport and is reconnecting), or "off" (never started). Without the
+   socket, "https-keep" is the kept connection and `connects` counts TLS handshakes since boot,
+   `drops` the kept connections the box had closed by the time they were reused. */
 const char *link_mode(void);
 void link_stats(unsigned *connects, unsigned *drops, unsigned *events, const char **err);
