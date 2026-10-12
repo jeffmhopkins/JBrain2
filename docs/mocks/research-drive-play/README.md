@@ -13,4 +13,13 @@ the rest of the card unchanged and making the play controls tappable in the mock
 | **B — Hero disc** | 72px amber disc leading the card, title beside it, progress + time beneath. | Play/pause only — no new plumbing. |
 | **C — Drive mode player** | 52px "Play brief" button that opens an in-card player: 88px pause, 60px previous/next-section, current section heading, progress. | Needs the TTS split per report section for skip/back. |
 
+**Round 1:** the owner liked C, but its back/skip circles were hard to tell apart at a
+glance. `compare-c.html` tries three ways to make *skip story* clearly different from pause:
+
+| Variant | Treatment |
+|---|---|
+| **C1 — Labelled story buttons** | Big round pause on its own row; two full-width rectangles under it that name where they go ("Previous · …" / "Restart · …", "Next · …"). |
+| **C2 — Chapter bar** | Progress split into one segment per story (tap a segment to jump); skip buttons are big steel-blue squares labelled "Prev story" / "Next story", as tall as pause. |
+| **C3 — Story list** | The player is the list of stories: the current story expands into an amber row with its own pause button, finished ones get a ✓, and a full-width "Next story" button sits at the bottom. |
+
 **Chosen:** pending owner review.
