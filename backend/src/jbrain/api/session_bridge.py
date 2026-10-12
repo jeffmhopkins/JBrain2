@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel
 
 from jbrain.api.deps import AuthRepoDep, SettingsDep
+from jbrain.api.session_cookie import set_session_cookie
 from jbrain.auth import service
 
 router = APIRouter(prefix="/session")
@@ -38,11 +39,6 @@ async def mint(
     token = await service.mint_dashboard_session(repo, body.device_key)
     if token is None:
         raise HTTPException(status_code=401, detail="invalid device key")
-    response.set_cookie(
-        settings.session_cookie,
-        token,
-        httponly=True,
-        secure=settings.secure_cookies,
-        samesite="strict",
-        max_age=60 * 60 * 24 * 365,
-    )
+    # Exactly one Set-Cookie: the Android minter hands the WebView jar only the single
+    # header OkHttp returns, so a second (say, deleting the legacy name) would replace it.
+    set_session_cookie(response, settings, token, samesite="strict", max_age=60 * 60 * 24 * 365)

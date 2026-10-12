@@ -4,6 +4,7 @@ from typing import Annotated, cast
 
 from fastapi import Depends, HTTPException, Request
 
+from jbrain.api.session_cookie import mark_for_migration, session_token
 from jbrain.auth import service
 from jbrain.auth.service import AuthRepo, PrincipalInfo
 from jbrain.config import Settings
@@ -24,10 +25,11 @@ AuthRepoDep = Annotated[AuthRepo, Depends(get_auth_repo)]
 async def current_principal(
     request: Request, repo: AuthRepoDep, settings: SettingsDep
 ) -> PrincipalInfo:
-    token = request.cookies.get(settings.session_cookie, "")
+    token = session_token(request, settings)
     principal = await service.authenticate(repo, token)
     if principal is None:
         raise HTTPException(status_code=401, detail="not authenticated")
+    mark_for_migration(request, settings, token, principal)
     return principal
 
 
@@ -145,9 +147,10 @@ async def current_panel_principal(
     the same kind-filtered one the OwnTracks and MQTT paths use, so an owner or capability
     key presented as a bearer token resolves to nothing (L4).
     """
-    token = request.cookies.get(settings.session_cookie, "")
+    token = session_token(request, settings)
     principal = await service.authenticate(repo, token) if token else None
     if principal is not None and principal.kind == "owner":
+        mark_for_migration(request, settings, token, principal)
         return principal
 
     key = _bearer(request.headers.get("Authorization", ""))

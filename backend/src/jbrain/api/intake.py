@@ -26,6 +26,7 @@ from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import AuthRepoDep, OwnerDep, PrincipalDep, SettingsDep
+from jbrain.api.session_cookie import set_session_cookie
 from jbrain.db.session import SessionContext, intake_context
 from jbrain.intake import service, turn
 from jbrain.intake.materialize import materialize_submission
@@ -393,13 +394,8 @@ async def redeem(
     # first-party to that origin and `lax` both permits that navigation and the subsequent
     # same-origin XHR while still refusing cross-site POSTs (CSRF). `strict` would drop the
     # cookie on the very top-level navigation that opens the link. httponly keeps it off JS.
-    response.set_cookie(
-        settings.session_cookie,
-        result.cookie_token,
-        httponly=True,
-        secure=settings.secure_cookies,
-        samesite="lax",
-        max_age=max(remaining, 0),
+    set_session_cookie(
+        response, settings, result.cookie_token, samesite="lax", max_age=max(remaining, 0)
     )
     snap = result.config_snapshot
     return RedeemOut(

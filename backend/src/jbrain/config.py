@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -366,6 +368,11 @@ class Settings(BaseSettings):
     external_geocoder_url: str = ""
     # Cookies require HTTPS in production; tests and local dev run plain HTTP.
     secure_cookies: bool = True
+    # With secure_cookies on, the session cookie is `__Host-<session_cookie>` and a request
+    # still carrying the legacy name is migrated silently (api/session_cookie.py). After this
+    # day the legacy name is ignored outright, so a cookie tossed onto the parent domain by a
+    # sibling subdomain is never read; a device not seen for the whole window signs in again.
+    legacy_session_cookie_until: date = date(2026, 11, 11)
 
     # One-time install reset (W3.3 cutover): when set, the `jbrain.install_wipe`
     # one-shot drops + rebuilds the schema, clears blob/backup storage, and

@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-10-10 — the `minecraft_dave` persona row (Minecraft_Dave, `../plans/MINECRAFT_BEDROCK_PLAN.md` §P1). Prior: the `browser` and `egress` rows: a fenced headless browser (playwright-mcp, pinned) on its own egress-free `browser` network, whose only way out is a Squid proxy refusing every non-public address and compose service; the `api` joins `browser` to drive it for jerv's `browse` sub-agent, and jerv gained `browse`. Prior: backups: `deploy/backup.sh` retention is by stamp (every backup from the last 48 h, then the newest per day for 14 days, run before and after writing), stamps are UTC, a failed step leaves no final-named file, an unchanged blob tarball is skipped and each dump's `.blobs` sidecar names its tarball, which `restore.sh` uses. Prior: the `searxng` row: general web search goes to SearXNG FIRST again, with Brave Search then Tavily as hosted backstops. Prior: the `searxng`, `reader` and `byparr` rows: images pinned (dated tag / digest) — an update never re-pulls `latest`. Prior: general web search now goes to Tavily first, SearXNG is its fallback. Prior: the `sdr` row now carries the two PER-RADIO signal-path settings (tuner gain, upconverter offset). Prior: the **`note_ingest`** persona's allowlist filled: the two note-bound graph writes, `ask_owner`, and the inherited entity reads + clock — and it now reads the knowledge base, narrowed to the note's own domain plus `general`. Prior: added the persona (the note conversation) to the persona table.
+> **Status:** Living · **Last verified:** 2026-10-12 — the PWA's session cookie is `__Host-jbrain_session` on HTTPS deploys (legacy name migrated silently) and the api refuses cookie-bearing same-site / cross-site requests (security plan S1.3). Prior: the `minecraft_dave` persona row (Minecraft_Dave, `../plans/MINECRAFT_BEDROCK_PLAN.md` §P1). Prior: the `browser` and `egress` rows: a fenced headless browser (playwright-mcp, pinned) on its own egress-free `browser` network, whose only way out is a Squid proxy refusing every non-public address and compose service; the `api` joins `browser` to drive it for jerv's `browse` sub-agent, and jerv gained `browse`. Prior: backups: `deploy/backup.sh` retention is by stamp (every backup from the last 48 h, then the newest per day for 14 days, run before and after writing), stamps are UTC, a failed step leaves no final-named file, an unchanged blob tarball is skipped and each dump's `.blobs` sidecar names its tarball, which `restore.sh` uses. Prior: the `searxng` row: general web search goes to SearXNG FIRST again, with Brave Search then Tavily as hosted backstops. Prior: the `searxng`, `reader` and `byparr` rows: images pinned (dated tag / digest) — an update never re-pulls `latest`. Prior: general web search now goes to Tavily first, SearXNG is its fallback. Prior: the `sdr` row now carries the two PER-RADIO signal-path settings (tuner gain, upconverter offset). Prior: the **`note_ingest`** persona's allowlist filled: the two note-bound graph writes, `ask_owner`, and the inherited entity reads + clock — and it now reads the knowledge base, narrowed to the note's own domain plus `general`. Prior: added the persona (the note conversation) to the persona table.
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -97,7 +97,15 @@ Settings**.
 
 React 18 + TypeScript on **Vite**, an installable **offline-first PWA** (Workbox
 service worker, `autoUpdate`; hourly foreground update check). Auth is an
-httpOnly session cookie; any 401 drops to login. Mobile-first: a persistent home
+httpOnly session cookie (`__Host-jbrain_session` whenever cookies are Secure, so a
+sibling subdomain such as a jcode preview can't set or shadow it; an older
+`jbrain_session` cookie is re-issued under the new name on its next request until the
+`JBRAIN_LEGACY_SESSION_COOKIE_UNTIL` sunset). The api's `SameSiteGuard`
+(`api/same_site.py`) refuses any cookie-bearing request or WS handshake whose
+`Sec-Fetch-Site` is `same-site` / `cross-site` (only the Gmail OAuth callback admits a
+cross-site navigation) or, without fetch metadata, whose `Origin` differs from `Host`;
+the WS `origin_allowed` gate fails closed the same way. Caddy's app sites send
+`frame-ancestors 'self'` / `X-Frame-Options: SAMEORIGIN`. Any 401 drops to login. Mobile-first: a persistent home
 stream + segmented **omnibox** (capture a domain-tagged note *or* talk to an
 agent), a swipe-up **card launcher**, and slide-in reading layers
 (note → entity → wiki). Offline capture uses an **IndexedDB outbox**;
