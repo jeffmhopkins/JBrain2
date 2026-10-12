@@ -42,6 +42,7 @@
 #include "svc_siblings_drv.h"
 #include "svc_convo.h"
 #include "svc_convo_drv.h"
+#include "svc_post_drv.h"
 #include "thread_model.h"
 #include "time_logic.h"
 #include "tp_logic.h"
@@ -1172,17 +1173,6 @@ static void test_update_now_is_live_only_online_and_idle(void)
           "a check or download under way is already the answer");
 }
 
-static void test_a_hold_that_cannot_be_sent_says_so(void)
-{
-    msg_t m;
-    CHECK(talk_placeholder(TALK_SENT, 3400, 1000, &m) && m.mine && m.voice && m.dur_s == 3 &&
-              !strcmp(m.status, "Not sent") && strstr(m.text, "later update"),
-          "a finished hold leaves an honest bubble, not a made-up transcript");
-    CHECK(talk_placeholder(TALK_CAPPED, 61000, 1001, &m) && m.dur_s == 60, "the cap is a minute");
-    CHECK(!talk_placeholder(TALK_TOO_SHORT, 300, 1, &m) && !talk_placeholder(TALK_CANCELLED, 5000, 1, &m),
-          "a knock or a cancel leaves nothing");
-}
-
 /* ---- 0.0.9: the debug relay's pickup, and BOOT held ---- */
 
 /* The buttons task in miniature: one raw sample every 10 ms through the debounce and the hold. */
@@ -1818,9 +1808,9 @@ static void test_a_hold_that_cannot_reach_jerv_is_refused_up_front(void)
     CHECK(!svc_audio_talk_begin(TALK_TO_AGENT, "jerv") && strstr(svc_audio_talk_refused(), "Wi-Fi"),
           "offline, KEY says why instead of recording into nothing");
     svc_net_fake_set(NET_CONNECTED);
-    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1), "a hold to a person still starts");
-    svc_rtc_fake_advance_ms(1500);
-    CHECK(svc_audio_talk_end(true) == TALK_SENT, "and still ends honestly unsent");
+    CHECK(!svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1) &&
+              strstr(svc_audio_talk_refused(), "not known"),
+          "a hold to a twin whose panel the box has not named yet is refused, not recorded");
 }
 
 static void test_key_or_boot_over_a_reply_is_the_shells_stop(void)
@@ -3437,6 +3427,348 @@ static void test_the_conversation_service_end_to_end(void)
     svc_messages_fake_clear();
 }
 
+/* ---- 0.0.16: voice post with the twins' panels ---- */
+
+#define Q_DEV "0b8e5f7a-1111-4c2d-9e3f-5a6b7c8d9e01"
+#define T_DEV "0b8e5f7a-2222-4c2d-9e3f-5a6b7c8d9e02"
+#define M1 "6b000000-0000-4000-8000-000000000001"
+#define M2 "6b000000-0000-4000-8000-000000000002"
+#define M3 "6b000000-0000-4000-8000-000000000003"
+#define M4 "6b000000-0000-4000-8000-000000000004"
+#define M5 "6b000000-0000-4000-8000-000000000005"
+
+static const char POST_SIBS[] =
+    "{\"siblings\":[{\"device_id\":\"" Q_DEV "\",\"name\":\"Quorra\"},"
+    "{\"device_id\":\"" T_DEV "\",\"name\":\"Tamsin\"}]}";
+
+static void test_post_paths_take_only_box_ids(void)
+{
+    char p[POST_PATH_BYTES];
+    CHECK(post_id_ok(M1) && !post_id_ok("6B000000-0000-4000-8000-000000000001") && !post_id_ok("x") &&
+              !post_id_ok(M1 "0") && !post_id_ok(NULL) && !post_id_ok("../../../endpoint/debug/next?x=1234"),
+          "an id is 36 of [0-9a-f-], nothing else reaches a path");
+    CHECK(post_thread_path(Q_DEV, p, sizeof p) && !strcmp(p, "/endpoint/messages/" Q_DEV "?limit=4"),
+          "a thread asks for the four a person keeps");
+    CHECK(post_send_path(Q_DEV, p, sizeof p) && !strcmp(p, "/endpoint/messages/" Q_DEV "/send"), "send");
+    CHECK(post_pcm_path(Q_DEV, M1, p, sizeof p) && !strcmp(p, "/endpoint/messages/" Q_DEV "/" M1 "/pcm"),
+          "play");
+    CHECK(post_played_path(Q_DEV, M1, p, sizeof p) &&
+              !strcmp(p, "/endpoint/messages/" Q_DEV "/" M1 "/played"),
+          "played");
+    CHECK(!post_send_path("", p, sizeof p) && !p[0] && !post_pcm_path(Q_DEV, "nope", p, sizeof p) && !p[0],
+          "no panel or no id: no path at all");
+    char tiny[20];
+    CHECK(!post_thread_path(Q_DEV, tiny, sizeof tiny) && !tiny[0], "a path that does not fit is none");
+}
+
+static void test_post_upload_is_framed_and_capped(void)
+{
+    CHECK(POST_MAX_BYTES == 960000u, "30 s of 16 kHz s16: exactly the box's MAX_MESSAGE_BYTES");
+    CHECK(post_upload_room(0, 1024) == 1024 && post_upload_room(POST_MAX_BYTES - 100, 1024) == 100 &&
+              post_upload_room(POST_MAX_BYTES, 1024) == 0 && post_upload_room(POST_MAX_BYTES + 5, 1) == 0,
+          "the upload stops at the box's cap, mid-chunk if it must");
+    CHECK(!strcmp(POST_SHA_HEADER, "X-Jpanel-Sha256") && !strcmp(POST_SHA_TRAILER, "trailer") &&
+              POST_DIGEST_BYTES == 32,
+          "the digest follows the audio, as the box's `trailer` reads it");
+}
+
+static void test_post_thread_json_reads_as_the_box_writes_it(void)
+{
+    static post_thread_t t;
+    const char ok[] =
+        "{\"device_id\":\"" Q_DEV "\",\"name\":\"Quorra\",\"tag\":\"a1b2c3d4\",\"messages\":["
+        "{\"id\":\"" M1 "\",\"mine\":false,\"text\":\"Daddy, when are you coming home?\",\"ms\":4600,"
+        "\"played\":false,\"voice\":true,\"extra\":{\"a\":[1,2]}},"
+        "{\"id\":\"" M2 "\",\"mine\":true,\"text\":\"Soon!\",\"ms\":1200,\"played\":true,\"voice\":true}]}";
+    CHECK(post_parse_thread(ok, sizeof ok - 1, &t) && t.n == 2 && !strcmp(t.tag, "a1b2c3d4"),
+          "two messages and the tag");
+    CHECK(!t.line[0].mine && !t.line[0].played && t.line[0].ms == 4600 && !strcmp(t.line[0].id, M1) &&
+              !strcmp(t.line[0].text, "Daddy, when are you coming home?"),
+          "hers, unplayed, with her words and length; unknown fields skipped");
+    CHECK(t.line[1].mine && t.line[1].played, "his, which she has heard");
+    const char six[] = "{\"messages\":[{\"id\":\"" M1 "\"},{\"id\":\"bad\"},{\"id\":\"" M2 "\"},{\"id\":\"" M3
+                       "\"},{\"id\":\"" M4 "\"},{\"id\":\"" M5 "\"},{\"text\":\"no id\"}]}";
+    CHECK(post_parse_thread(six, sizeof six - 1, &t) && t.n == POST_KEEP && !strcmp(t.line[0].id, M2) &&
+              !strcmp(t.line[3].id, M5),
+          "past four the newest are kept; a message with no usable id is dropped");
+    char long_json[1400];
+    int o = snprintf(long_json, sizeof long_json, "{\"messages\":[{\"id\":\"" M1 "\",\"text\":\"");
+    for (int i = 0; i < 150; i++) o += snprintf(long_json + o, sizeof long_json - (size_t)o, "\xc3\xa9");
+    snprintf(long_json + o, sizeof long_json - (size_t)o, "\\u00e9\"}]}");
+    CHECK(post_parse_thread(long_json, strlen(long_json), &t) && t.n == 1 && strlen(t.line[0].text) < 256 &&
+              !strcmp(t.line[0].text + strlen(t.line[0].text) - 3, "\xE2\x80\xA6"),
+          "a text past a bubble is cut on a character with an ellipsis");
+    const char esc[] = "{\"messages\":[{\"id\":\"" M1 "\",\"text\":\"a\\nb \\\"c\\\" \\ud83d\"}]}";
+    CHECK(post_parse_thread(esc, sizeof esc - 1, &t) && !strcmp(t.line[0].text, "a b \"c\" ?"),
+          "escapes: a newline is a space, a lone surrogate a question mark");
+    static const char *const BAD[] = {"", "[]", "{}", "{\"messages\":{}}", "{\"messages\":[1]}",
+                                      "{\"messages\":[{\"id\":", "{\"tag\":\"x\"}", "nope",
+                                      "{\"messages\":[{\"ms\":1.5}]}"};
+    for (size_t i = 0; i < sizeof BAD / sizeof *BAD; i++)
+        CHECK(!post_parse_thread(BAD[i], strlen(BAD[i]), &t) && t.n == 0, "not the box's shape: nothing");
+}
+
+static void test_post_sent_answer_and_bubbles(void)
+{
+    char id[POST_ID_BYTES], text[256];
+    uint32_t ms;
+    const char ok[] = "{\"id\":\"" M3 "\",\"text\":\"Night night\",\"ms\":2100}";
+    CHECK(post_parse_sent(ok, sizeof ok - 1, id, text, sizeof text, &ms) && !strcmp(id, M3) &&
+              !strcmp(text, "Night night") && ms == 2100,
+          "the send's 201: its id, her transcript of his words, the length");
+    CHECK(!post_parse_sent("{\"text\":\"x\"}", 12, id, text, sizeof text, &ms) && !id[0],
+          "an answer with no id is not one");
+    post_line_t l = {.mine = false, .voice = true, .ms = 4600};
+    msg_t m;
+    post_to_msg(&l, 700001, &m);
+    CHECK(m.id == 700001 && !m.mine && m.dur_s == 5 && !strcmp(m.text, POST_NO_TEXT) && !m.status[0],
+          "hers with no transcript says it is a voice message, rounded to seconds");
+    l.mine = true;
+    post_to_msg(&l, 2, &m);
+    CHECK(!strcmp(m.status, "Sent"), "his, not heard yet: Sent");
+    l.played = true;
+    post_to_msg(&l, 2, &m);
+    CHECK(!strcmp(m.status, "Played"), "his, heard on her panel: Played");
+}
+
+static void test_post_unread_badge_and_chime_rules(void)
+{
+    static post_thread_t t;
+    post_seen_t seen = {0};
+    const char two[] = "{\"messages\":[{\"id\":\"" M1 "\",\"mine\":false,\"played\":false},"
+                       "{\"id\":\"" M2 "\",\"mine\":true,\"played\":false}]}";
+    post_parse_thread(two, sizeof two - 1, &t);
+    CHECK(post_arrivals(&seen, &t) == 0, "the first list of a boot is the backlog: badged, not chimed");
+    CHECK(post_arrivals(&seen, &t) == 0, "the same list again is nothing new");
+    const char three[] = "{\"messages\":[{\"id\":\"" M1 "\",\"mine\":false,\"played\":false},"
+                         "{\"id\":\"" M2 "\",\"mine\":true},{\"id\":\"" M3 "\",\"mine\":false,\"played\":false},"
+                         "{\"id\":\"" M4 "\",\"mine\":false,\"played\":true}]}";
+    post_parse_thread(three, sizeof three - 1, &t);
+    CHECK(post_arrivals(&seen, &t) == 1, "one new of hers, unplayed: one arrival (his and played ones never)");
+    CHECK(post_chime(1, true, false, false), "chimes");
+    CHECK(!post_chime(0, true, false, false) && !post_chime(1, false, false, false) &&
+              !post_chime(1, true, true, false) && !post_chime(1, true, false, true),
+          "never with nothing new, the chime off, at night, or over anything else on the speaker");
+    post_tag_t tag = {0};
+    CHECK(post_tag_feed(&tag, "a1b2c3d4") && !post_tag_feed(&tag, "a1b2c3d4") && post_tag_feed(&tag, "ffff0000"),
+          "the first tag and every change are a fetch; the same tag is not");
+    CHECK(!post_tag_feed(&tag, "") && !post_tag_feed(&tag, NULL) && !strcmp(tag.last, "ffff0000"),
+          "a pickup with no tag says nothing");
+}
+
+static void test_tk_listen_claims_without_a_hold(void)
+{
+    tk_t t;
+    tk_init(&t);
+    CHECK(tk_listen(&t, 7) == TK_BEGIN_OK && t.phase == TK_SEND && t.kind == TK_KIND_LISTEN && t.voice,
+          "a play starts at the send with its speech wanted");
+    CHECK(tk_net_claim(&t) && tk_net_next(&t) == TK_NET_FINISH, "the network takes it with no upload");
+    tk_net_reply(&t, true);
+    CHECK(t.phase == TK_PLAY && tk_audio_want(&t) == TK_AUDIO_SPK, "the audio plays through the reply path");
+    CHECK(tk_listen(&t, 8) == TK_BEGIN_BUSY, "a second play waits for the first to let go");
+    tk_net_end(&t);
+    tk_audio_drained(&t);
+    CHECK(tk_take(&t, NULL, 0) == TK_RES_SPOKEN && tk_quiet(&t), "played to its end");
+    CHECK(tk_begin(&t, 0, false, 9) == TK_BEGIN_OK && t.kind == TK_KIND_AGENT, "a talk after is a talk");
+    tk_set_post(&t);
+    CHECK(t.kind == TK_KIND_POST && !t.fresh, "or a voice message to a twin");
+}
+
+static void test_a_person_thread_keeps_the_panels_own_bubbles(void)
+{
+    svc_messages_fake_clear();
+    msg_t sending = {.id = 1000, .mine = true, .voice = true, .pending = true, .text = "Sending…"};
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_1, &sending);
+    msg_t box[POST_KEEP];
+    for (int i = 0; i < POST_KEEP; i++) box[i] = (msg_t){.id = 700000u + (uint32_t)i, .voice = true};
+    CHECK(svc_messages_fake_set(SVC_MESSAGES_THREAD_1, box, POST_KEEP), "the box's list replaces the thread");
+    msg_t last;
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 3, &last);
+    CHECK(svc_messages_count(SVC_MESSAGES_THREAD_1) == 4 && last.id == 1000,
+          "but a send on its way stays, last, and the oldest of the box's gives way");
+    CHECK(!svc_messages_fake_set(SVC_MESSAGES_THREAD_1, box, POST_KEEP), "the same list is no change");
+    CHECK(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == 3, "her three unplayed are the tile's badge");
+    CHECK(!svc_messages_fake_set("jerv", box, 1), "an agent's thread is never the box's post");
+    svc_messages_fake_clear();
+}
+
+static void post_answer(const char *json)
+{
+    post_req_t r;
+    while (svc_post_take(&r)) {
+        if (r.kind != POST_RQ_THREAD) {
+            svc_post_done(&r, 204, NULL, 0);
+            continue;
+        }
+        char *b = malloc(strlen(json) + 1);
+        strcpy(b, json);
+        svc_post_done(&r, 200, b, strlen(json));
+    }
+    svc_post_service();
+}
+
+static const char Q_LIST[] =
+    "{\"tag\":\"t1\",\"messages\":[{\"id\":\"" M1 "\",\"mine\":true,\"text\":\"Have a good day\",\"ms\":2000,"
+    "\"played\":true},{\"id\":\"" M2 "\",\"mine\":false,\"text\":\"Daddy!\",\"ms\":3000,\"played\":false}]}";
+
+static void test_the_people_s_threads_end_to_end(void)
+{
+    sib_port_fake_wipe();
+    svc_messages_fake_clear();
+    svc_siblings_init();
+    svc_post_init();
+    svc_net_fake_set(NET_CONNECTED);
+    svc_siblings_offer(POST_SIBS, sizeof POST_SIBS - 1);
+    svc_siblings_service();
+    svc_post_service();
+    post_req_t r;
+    CHECK(svc_post_take(&r) && r.kind == POST_RQ_THREAD && !strcmp(r.path, "/endpoint/messages/" Q_DEV "?limit=4"),
+          "a bound thread is fetched at once");
+    CHECK(svc_post_take(&r) && strstr(r.path, T_DEV), "both of them");
+    CHECK(!svc_post_take(&r), "and nothing else");
+    CHECK(!svc_post_loaded(SVC_MESSAGES_THREAD_1), "not loaded until the box answers");
+    svc_post_open(SVC_MESSAGES_THREAD_1);
+    svc_post_service();
+    post_answer(Q_LIST);
+    CHECK(svc_post_loaded(SVC_MESSAGES_THREAD_1) && svc_messages_count(SVC_MESSAGES_THREAD_1) == 2,
+          "the box's two messages are the thread");
+    CHECK(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == 1 && svc_messages_unplayed_total() == 1,
+          "her unplayed one is the tile's badge and the clock's");
+    CHECK(!svc_post_take_chime(false), "the backlog at boot does not chime");
+
+    /* A new one: the pickup's tag moves, both threads are fetched, the new one chimes. */
+    svc_post_tag("t2");
+    svc_post_service();
+    CHECK(svc_post_take(&r) && svc_post_take(&r) && !svc_post_take(&r), "a moved tag fetches both threads");
+    svc_post_tag("t2");
+    svc_post_service();
+    CHECK(!svc_post_take(&r), "the same tag again fetches nothing");
+    static const char Q_NEW[] =
+        "{\"tag\":\"t2\",\"messages\":[{\"id\":\"" M1 "\",\"mine\":true,\"played\":true},"
+        "{\"id\":\"" M2 "\",\"mine\":false,\"text\":\"Daddy!\",\"ms\":3000,\"played\":false},"
+        "{\"id\":\"" M3 "\",\"mine\":false,\"text\":\"I love you\",\"ms\":1500,\"played\":false}]}";
+    svc_post_open(SVC_MESSAGES_THREAD_1);
+    svc_post_service();
+    post_answer(Q_NEW);
+    CHECK(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == 2, "two waiting: the badge says 2");
+    svc_settings_set(SET_NOTIF_CHIME, 0);
+    CHECK(!svc_post_take_chime(false), "the chime switch off: silent");
+    svc_post_open(SVC_MESSAGES_THREAD_1);
+    svc_post_service();
+    static const char Q_NEWER[] =
+        "{\"messages\":[{\"id\":\"" M2 "\",\"mine\":false,\"played\":false},{\"id\":\"" M3
+        "\",\"mine\":false,\"played\":false},{\"id\":\"" M4 "\",\"mine\":false,\"played\":false}]}";
+    svc_settings_set(SET_NOTIF_CHIME, 1);
+    svc_rtc_fake_set(12, 0);
+    post_answer(Q_NEWER);
+    CHECK(!svc_post_take_chime(true), "busy with the speaker: no chime");
+    svc_post_open(SVC_MESSAGES_THREAD_1);
+    svc_post_service();
+    static const char Q_NEWEST[] =
+        "{\"messages\":[{\"id\":\"" M3 "\",\"mine\":false,\"played\":false},{\"id\":\"" M4
+        "\",\"mine\":false,\"played\":false},{\"id\":\"" M5 "\",\"mine\":false,\"played\":false}]}";
+    post_answer(Q_NEWEST);
+    CHECK(svc_post_take_chime(false), "a new one in the day, chime on, speaker free: one chime");
+    CHECK(!svc_post_take_chime(false), "once");
+
+    /* Play her newest: streamed, then marked played here and on the box. */
+    msg_t m;
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(svc_audio_play(m.id) && svc_audio_playing() == m.id, "a tap plays her message");
+    CHECK(!strcmp(svc_audio_fake_last_path(), "/endpoint/messages/" Q_DEV "/" M5 "/pcm"),
+          "from the box's own PCM route for that message");
+    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1) == false,
+          "a hold waits for the play to finish");
+    svc_audio_fake_listen(true, false, false);
+    svc_audio_service();
+    CHECK(svc_audio_speaking() && svc_audio_playing() == m.id, "playing through the reply's speaker path");
+    svc_audio_stop();
+    svc_audio_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(!svc_audio_playing() && !m.played && !svc_post_take(&r), "stopped part way: still unplayed, nothing told");
+    CHECK(svc_audio_play(m.id), "again");
+    svc_audio_fake_listen(true, true, false);
+    svc_audio_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(!m.played && !svc_post_take(&r), "played to the end but its digest did not match: still unplayed");
+    CHECK(svc_audio_play(m.id), "and again");
+    svc_audio_fake_listen(true, true, true);
+    svc_audio_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(m.played && !svc_audio_playing(), "heard whole: played here");
+    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED &&
+              !strcmp(r.path, "/endpoint/messages/" Q_DEV "/" M5 "/played"),
+          "and on the box, so the PWA shows it played too");
+    svc_post_done(&r, -1, NULL, 0);
+    svc_post_open(SVC_MESSAGES_THREAD_1);
+    svc_post_service();
+    post_answer(Q_NEWEST);
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(m.played, "a list from before the box heard keeps it played");
+    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED, "and the lost stamp is asked for again");
+    CHECK(svc_audio_play(m.id) && (svc_audio_fake_listen(false, false, false), svc_audio_service(), true) &&
+              !svc_audio_playing(),
+          "a play the box refuses ends quietly");
+    CHECK(!svc_audio_play(123) && strstr(svc_audio_talk_refused(), "not on the box"),
+          "a bubble that is not the box's cannot be played");
+
+    /* KEY in her thread: a voice message to her, through the box's send. */
+    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1), "KEY in her thread records to her");
+    CHECK(!strcmp(svc_audio_fake_last_path(), "/endpoint/messages/" Q_DEV "/send"), "to her panel's send");
+    svc_rtc_fake_advance_ms(2200);
+    CHECK(svc_audio_talk_end(true) == TALK_SENT, "released: sent");
+    const uint16_t n = svc_messages_count(SVC_MESSAGES_THREAD_1);
+    svc_messages_get(SVC_MESSAGES_THREAD_1, (uint16_t)(n - 1), &m);
+    CHECK(m.mine && m.pending && !strcmp(m.text, TALK_POSTING) && m.dur_s == 2, "Sending…, two seconds");
+    svc_post_open(SVC_MESSAGES_THREAD_1);
+    svc_post_service();
+    post_answer(Q_NEWEST);
+    svc_messages_get(SVC_MESSAGES_THREAD_1, (uint16_t)(svc_messages_count(SVC_MESSAGES_THREAD_1) - 1), &m);
+    CHECK(m.pending, "a list landing meanwhile keeps the send on its way");
+    svc_audio_fake_posted(201, "Night night, sweetheart");
+    svc_audio_service();
+    svc_post_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, (uint16_t)(svc_messages_count(SVC_MESSAGES_THREAD_1) - 1), &m);
+    CHECK(!m.pending && !strcmp(m.text, "Night night, sweetheart") && !strcmp(m.status, TALK_POSTED),
+          "sent: her transcript of his words, and Sent");
+    bool fetched = false;
+    while (svc_post_take(&r)) fetched |= r.kind == POST_RQ_THREAD && strstr(r.path, Q_DEV) != NULL;
+    CHECK(fetched, "and the thread is fetched for the box's copy");
+    while (svc_post_take(&r)) {
+    }
+    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_2), "to her sister");
+    CHECK(strstr(svc_audio_fake_last_path(), T_DEV "/send") != NULL, "goes to her sister's panel");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    svc_audio_fake_posted(422, NULL);
+    svc_audio_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_2, (uint16_t)(svc_messages_count(SVC_MESSAGES_THREAD_2) - 1), &m);
+    CHECK(!strcmp(m.status, "Not sent") && strstr(m.text, "damaged"), "a damaged upload says so: Not sent");
+    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_2), "again");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    svc_audio_fake_posted(400, NULL);
+    svc_audio_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_2, (uint16_t)(svc_messages_count(SVC_MESSAGES_THREAD_2) - 1), &m);
+    CHECK(strstr(m.text, "Nothing heard"), "silence is not a message");
+
+    /* A different panel bound to the thread: what it showed was somebody else's conversation. */
+    static const char OTHER[] = "{\"siblings\":[{\"device_id\":\"0b8e5f7a-3333-4c2d-9e3f-5a6b7c8d9e03\","
+                                "\"name\":\"Quorra\"},{\"device_id\":\"" T_DEV "\",\"name\":\"Tamsin\"}]}";
+    svc_siblings_offer(OTHER, sizeof OTHER - 1);
+    svc_siblings_service();
+    svc_post_service();
+    CHECK(!svc_post_loaded(SVC_MESSAGES_THREAD_1) && svc_post_take(&r) && strstr(r.path, "3333"),
+          "a replaced panel starts its thread over, fetched from the box");
+    char note[160];
+    svc_post_note(note, sizeof note);
+    CHECK(!strncmp(note, "post=rq:", 8) && strstr(note, "tag:t2"), "telemetry's post= token");
+    while (svc_post_take(&r)) {
+    }
+    svc_messages_fake_clear();
+    sib_port_fake_wipe();
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -3492,7 +3824,7 @@ int main(void)
     test_settings_are_written_once_the_panel_is_left_alone();
     test_disconnect_takes_two_taps_within_three_seconds();
     test_update_now_is_live_only_online_and_idle();
-    test_a_hold_that_cannot_be_sent_says_so();
+    
     test_boot_short_is_back_on_release_and_long_is_the_clock_once();
     test_boot_held_opens_the_clock_from_anywhere_but_the_clock();
     test_the_pickup_waits_three_seconds_backs_off_and_never_jumps_the_manifest();
@@ -3555,6 +3887,14 @@ int main(void)
     test_the_box_s_recent_json_is_read_as_the_box_writes_it();
     test_a_switched_thread_s_json_is_read_as_the_box_writes_it();
     test_the_conversation_service_end_to_end();
+    test_post_paths_take_only_box_ids();
+    test_post_upload_is_framed_and_capped();
+    test_post_thread_json_reads_as_the_box_writes_it();
+    test_post_sent_answer_and_bubbles();
+    test_post_unread_badge_and_chime_rules();
+    test_tk_listen_claims_without_a_hold();
+    test_a_person_thread_keeps_the_panels_own_bubbles();
+    test_the_people_s_threads_end_to_end();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

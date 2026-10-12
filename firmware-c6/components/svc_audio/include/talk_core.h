@@ -74,6 +74,12 @@ bool tk_agent_from(const char *id, tk_agent_t *out);
  * outside the conversation). */
 void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t cap);
 
+/* What an exchange is (0.0.16): a talk to an agent; a voice message to a twin (POST: recorded
+ * and uploaded like a talk, answered with the box's id and transcript, no speech); or one of her
+ * messages played (LISTEN: no recording — it starts at TK_SEND, asks the box for the audio and
+ * plays it through the same ring, the same speaker start and the same stop as a reply). */
+typedef enum { TK_KIND_AGENT, TK_KIND_POST, TK_KIND_LISTEN } tk_kind_t;
+
 typedef struct {
     tk_phase_t phase;
     uint32_t since_ms;
@@ -88,6 +94,7 @@ typedef struct {
     tk_res_t res;
     uint8_t agent; /* tk_agent_t: whose thread the bubbles land in, which persona the box runs */
     bool fresh;    /* this exchange asks the box for a new conversation (Clear chat) */
+    uint8_t kind;  /* tk_kind_t */
     char why[40];
 } tk_t;
 
@@ -100,6 +107,11 @@ void tk_copy(char *dst, size_t cap, const char *src);
 tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id);
 /* Right after a TK_BEGIN_OK, under the same lock: who the hold is with. */
 void tk_set_agent(tk_t *t, tk_agent_t agent, bool fresh);
+/* Right after a TK_BEGIN_OK, under the same lock: the hold is a voice message to a twin. */
+void tk_set_post(tk_t *t);
+/* A message played: straight to TK_SEND with no hold, its speech wanted. BUSY while anything else
+ * holds the radio or the codec, a reply's voice included (KEY or BOOT stops that first). */
+tk_begin_t tk_listen(tk_t *t, uint32_t msg_id);
 /* The hold's end. A send that the box was already failed for is TALK_FAILED (the result says
  * why); anything short of a message lets go of everything. */
 talk_outcome_t tk_end(tk_t *t, uint32_t now_ms, bool send);
@@ -232,13 +244,10 @@ void tk_steps_summary(const tk_steps_t *s, uint32_t ms, char *out, size_t cap);
 bool tk_spk_may_start(uint32_t since_amp_ms, uint32_t queued, bool more);
 
 /* ---- the conversation's bubbles ---- */
-/* What the conversation shows for a hold to a person this panel could not send: a voice bubble
- * of the length held that says plainly nothing was recorded — never a made-up transcript.
- * False for a hold that is not a message at all (cancelled, or too short). Pure, host-tested. */
-#define TALK_PLACEHOLDER "Not sent: this panel cannot send messages yet. They arrive in a later update."
-bool talk_placeholder(talk_outcome_t o, uint32_t held_ms, uint32_t id, msg_t *out);
-
 #define TALK_HEARING "Transcribing…"
+/* A voice message to a twin on its way up, and once the box has it (0.0.16). */
+#define TALK_POSTING "Sending…"
+#define TALK_POSTED "Sent"
 void talk_bubble_sent(uint32_t id, uint32_t held_ms, msg_t *out);
 /* The voice bubble once the box has answered, or failed, or heard nothing. */
 void talk_bubble_heard(msg_t *m, const char *heard);
@@ -251,6 +260,7 @@ typedef struct {
     uint32_t up_bytes, down_bytes;
     uint32_t reply_ms, reply_ms_max;
     uint32_t underruns, overruns, tones;
+    uint32_t plays, play_failed, posted; /* 0.0.16: her messages played, and voice messages sent */
     uint16_t peak_l, peak_r;
 } tk_stats_t;
 /* `audio=<state>,talks:N,sent:N,heard:N,none:N,fail:N,stop:N,up:<KB>,down:<KB>,ms:<last>/<max>,
