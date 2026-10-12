@@ -1657,8 +1657,8 @@ class TestReplyCeiling:
 
         # And the state machine's copy is the same number, or the tested model is not the
         # shipped one.
-        ui = re.search(r"^#define TALK_TIMEOUT_MS (\d+)$", (main / "ui.h").read_text(), re.M)
-        assert ui is not None and int(ui.group(1)) == wait, "ui.h disagrees with display.c"
+        sm = re.search(r"^#define TALK_TIMEOUT_MS (\d+)$", (main / "panel_sm.h").read_text(), re.M)
+        assert sm is not None and int(sm.group(1)) == wait, "panel_sm.h disagrees with display.c"
 
     def test_the_reply_does_not_start_with_a_beat_of_nothing(
         self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch

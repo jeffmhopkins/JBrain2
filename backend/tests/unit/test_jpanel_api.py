@@ -652,13 +652,14 @@ class TestNamingAPanelWithoutACable:
             f"the panel holds {m.group(1)} queue entries and the box describes "
             f"{jpanel.JPANEL_QUEUE_MAX}"
         )
-        ui = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "ui.h").read_text(
-            encoding="utf-8"
-        )
-        u = re.search(r"#define UI_QUEUE_MAX\s+(\d+)", ui)
-        assert u, "firmware/main/ui.h no longer defines UI_QUEUE_MAX"
+        # The state machine and the engine share one definition, in `jpanel_types.h`.
+        types = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_types.h"
+        ).read_text(encoding="utf-8")
+        u = re.search(r"#define JPANEL_QUEUE_MAX\s+(\d+)", types)
+        assert u, "firmware/main/jpanel_types.h no longer defines JPANEL_QUEUE_MAX"
         assert int(u.group(1)) == jpanel.JPANEL_QUEUE_MAX, (
-            "the interaction module and the box disagree about how long the queue can be"
+            "the state machine and the box disagree about how long the queue can be"
         )
 
     def test_the_panel_reads_the_queue_this_poll_serves(self) -> None:

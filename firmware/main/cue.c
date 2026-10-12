@@ -346,6 +346,8 @@ static const cue_def_t DEF[CUE_COUNT] = {
        the sound stopping or starting: it is a turn arriving. Major, open, and it does not
        resolve downward — a question, not a full stop. */
     [CUE_REPLY] = {SH_STEPS, 260, 587.33f, 0.5f, 0, 0, {0, 4, 7, END}, 2, 5},
+    /* The placeholder refusal: two flat low taps, "uh-uh", neither rising nor falling. */
+    [CUE_BUSY] = {SH_STEPS, 220, 392.0f, 0.5f, 0, 0, {0, 0, END}, 2, 0},
 };
 
 /* The longest any variant stretches a cue. Kept beside `variant_stretch` in spirit; declared

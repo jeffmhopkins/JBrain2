@@ -99,6 +99,10 @@ typedef enum {
     CUE_PAUSE,  /* held, not ended — a quick falling fourth */
     CUE_RESUME, /* and its mirror, the same fourth rising */
     CUE_REPLY,  /* your turn is coming — the only arpeggio here */
+    /* Every refusal — a press or a phrase the panel cannot serve right now — has its own sound
+       (owner, 2026-10-11), so "busy" is never confused with "cancelled" (`CUE_STOP`). A
+       placeholder until F4 designs its contour. */
+    CUE_BUSY,
     CUE_COUNT,
 } cue_t;
 
