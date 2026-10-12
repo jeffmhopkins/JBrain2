@@ -359,6 +359,7 @@ OPTIONAL_MINECRAFT_TOOLS = frozenset(
         "mc_goals",
         "mc_goal_create",
         "mc_goal_update",
+        "mc_goal_progress",
         "mc_log",
         "mc_log_read",
         "mc_memory_read",

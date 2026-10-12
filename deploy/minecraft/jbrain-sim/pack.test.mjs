@@ -391,3 +391,26 @@ test("Dave's look around finds item stacks on the ground near an online player",
   sim.scriptevent("jb:items", JSON.stringify({ player: "Steve 42", types: ["x; op @a"] }));
   assert.match(sim.logs.at(-1), /^\[jbrain\] items refused: Error: not 1-8 item types/);
 });
+
+test("Dave's carry count reads the asker's own inventory, armor and off-hand", () => {
+  const p = sim.player("Steve 42", "-62");
+  p.location = { x: 5.5, y: 70, z: -9.2 };
+  p.inventory.setItem(0, new ItemStack("minecraft:iron_block", 3));
+  p.inventory.setItem(8, new ItemStack("minecraft:iron_block", 2));
+  p.inventory.setItem(9, new ItemStack("minecraft:blue_shulker_box", 1));
+  p.getComponent("minecraft:equippable").setEquipment("Offhand", new ItemStack("minecraft:iron_block", 1));
+  p.getComponent("minecraft:equippable").setEquipment("Head", new ItemStack("minecraft:iron_helmet", 1));
+  // Someone else's pockets never count.
+  const other = sim.player("Mira", "-63");
+  other.inventory.setItem(0, new ItemStack("minecraft:iron_block", 64));
+  sim.logs.length = 0;
+  sim.scriptevent("jb:carry", JSON.stringify({ player: "steve 42", types: ["iron_block", "minecraft:iron_helmet"] }));
+  assert.deepEqual(sim.logs, [
+    "[jbrain] carry counted for Steve 42 in overworld at x=5 y=70 z=-10:"
+      + " minecraft:iron_block=6 minecraft:iron_helmet=1; shulker boxes=1",
+  ]);
+  sim.scriptevent("jb:carry", JSON.stringify({ player: "Nobody", types: ["iron_block"] }));
+  assert.equal(sim.logs.at(-1), "[jbrain] carry refused: Nobody isn't online");
+  sim.scriptevent("jb:carry", JSON.stringify({ player: "Steve 42", types: ["x; op @a"] }));
+  assert.match(sim.logs.at(-1), /^\[jbrain\] carry refused: Error: not 1-8 item types/);
+});

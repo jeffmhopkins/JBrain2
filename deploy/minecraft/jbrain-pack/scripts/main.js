@@ -6,8 +6,8 @@
 // Dave's welcome and first-time beats are welcome.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, itemsLines,
-  packLoreStale, packToBurn, parseConfig, parseFind, parseItems, parseKnown, parseWaypoint,
+import { LINES, LORE, POWER_PACK, TRICORDER, carryLine, deathPlan, dropSpot, findLine, itemsLines,
+  packLoreStale, packToBurn, parseCarry, parseConfig, parseFind, parseItems, parseKnown, parseWaypoint,
   slotFate, trackerLine, tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
@@ -425,6 +425,23 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
       for (const line of itemsLines(q, p.name, here, stacks)) say(line);
     } catch (e) {
       say(`items refused: ${e}`);
+    }
+  } else if (ev.id === "jb:carry") {
+    // What the asker carries toward a goal (§M24): their own inventory, armor and
+    // off-hand, nobody else's — Dave only ever sends the asker's own name.
+    try {
+      const q = parseCarry(ev.message);
+      const who = q.player.toLowerCase();
+      const p = world.getAllPlayers().find((pl) => pl.name.toLowerCase() === who);
+      if (!p) {
+        say(`carry refused: ${q.player} isn't online`);
+        return;
+      }
+      const stacks = carried(p).map(({ item }) => ({ typeId: item.typeId, amount: item.amount }));
+      const here = { dim: p.dimension.id, x: p.location.x, y: p.location.y, z: p.location.z };
+      say(carryLine(q, p.name, here, stacks));
+    } catch (e) {
+      say(`carry refused: ${e}`);
     }
   } else if (ev.id === "jb:config") {
     try {

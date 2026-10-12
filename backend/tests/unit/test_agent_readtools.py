@@ -1767,15 +1767,23 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "9c4f4d5fc993e5c31dd048c0c1cf03250fb8e03898d1a8b0d5fec69e5b582380",
         ),
         # Minecraft_Dave's tools (MINECRAFT_BEDROCK_PLAN.md §P1).
+        # v2: an optional `item` and `count`, "I need 23 iron blocks" (§M24).
         "mc_goal_create.tool": (
             "mc_goal_create",
-            1,
-            "9aee8a3e0d825c67ad5dddda9f17513f9eb0efd33d6be9102601701a8530973b",
+            2,
+            "959c909df8ebd4f3028ee257eac47dc8c889cce4f217871bad0cd502e341780c",
         ),
+        # v2: change a goal's `item` and `count` (§M24).
         "mc_goal_update.tool": (
             "mc_goal_update",
+            2,
+            "9e98e7e9630814af8f9b096200eb0baf85bc64614303227dd45429eaf058be0e",
+        ),
+        # How far along a counted goal is: pockets plus chests near saved places (§M24).
+        "mc_goal_progress.tool": (
+            "mc_goal_progress",
             1,
-            "c22563fc12d61589cccc3f6aa033380a3aa5367c2ed97f3d7565236141a4b42b",
+            "8f8bf73a653c2776c5215653e7959bd7ea7cb6026d4aa5e4a65713ac90461408",
         ),
         # v2: in game, one of the player's daily deep scans (§M17).
         "mc_find_block.tool": (

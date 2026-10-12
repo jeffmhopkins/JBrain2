@@ -54,6 +54,8 @@ MEMORY_MAX_CHARS = 6000
 MEMORY_LINE_MAX = 300
 LOG_MAX = 500
 GOAL_TITLE_MAX = 120
+# A goal's item count (§M24): a stack of 64 up to well past any build anyone finishes.
+GOAL_COUNT_MAX = 100_000
 PLACE_NAME_MAX = 40
 # Per player and world: a handful of bases, farms and portals, not a survey.
 PLACES_MAX = 100
@@ -99,6 +101,12 @@ _GROUND_HIT = re.compile(
 _ITEM_ID = re.compile(r"^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$")
 # The Tricorder's short-range scan (lore, canon 2026-10-12): about 3 chunks, free in game.
 NEAR_BLOCKS = 48
+# The pack's answer to a count of what a player carries (rules.js `carryLine`).
+_CARRY_HIT = re.compile(
+    r"\bcarry counted for .+? in (?P<dim>overworld|nether|the_end) at x=(?P<x>-?\d+)"
+    r" y=(?P<y>-?\d+) z=(?P<z>-?\d+): (?P<counts>[a-z0-9_:]+=\d+(?: [a-z0-9_:]+=\d+)*);"
+    r" shulker boxes=(?P<boxes>\d+)"
+)
 # The pack's answer to a mob search (rules.js `findLine`).
 _MOB_HIT = re.compile(
     r"\bfind found (?P<type>[a-z_:]+) at x=(?P<x>-?\d+) y=(?P<y>-?\d+) z=(?P<z>-?\d+),"
@@ -130,6 +138,72 @@ def as_of(age_s: Any) -> str:
 
 def _item_words(name: str) -> str:
     return name.removeprefix("minecraft:").replace("_", " ")
+
+
+def item_id(raw: Any) -> str:
+    """A model-typed item as a goal stores it — lowercase, spaces as underscores, the
+    `minecraft:` namespace dropped (others kept) — or "" when it isn't an item id."""
+    name = str(raw or "").strip().lower().replace(" ", "_")
+    return name.removeprefix("minecraft:") if _ITEM_ID.fullmatch(name) else ""
+
+
+def full_id(item: str) -> str:
+    """An item id as the world and the pack name it: namespaced."""
+    return item if ":" in item else f"minecraft:{item}"
+
+
+def goal_line(goal: Any) -> str:
+    """A goal's title, with what it counts when it counts something."""
+    if goal.item is None:
+        return str(goal.title)
+    return f"{goal.title} ({goal.item} ×{goal.item_count})"
+
+
+def tally(need: int, carried: int | None, chests: list[tuple[str, int]]) -> tuple[int, str, str]:
+    """A goal count's total, its headline ("17 of 23 — 6 to go") and where they are
+    ("12 in chests near home, 5 on you"; "" when there's none anywhere). `carried` is
+    None when the pockets weren't counted."""
+    have = (carried or 0) + sum(n for _, n in chests)
+    head = (
+        f"{have} of {need} — that's the goal reached"
+        if have >= need
+        else f"{have} of {need} — {need - have} to go"
+    )
+    parts = [f"{n} in chests near {label}" for label, n in chests if n]
+    if carried:
+        parts.append(f"{carried} on you")
+    return have, head, ", ".join(parts)
+
+
+def check_goal_item(raw_item: Any, raw_count: Any) -> tuple[str | None, int | None] | str:
+    """The item and count a goal write passed (None for one left out), or why one of
+    them can't be stored — checked before any write."""
+    item = None
+    if raw_item not in (None, ""):
+        item = item_id(raw_item)
+        if not item:
+            return 'item is one Bedrock item id, e.g. "iron_block", "oak_log" or "diamond".'
+    count = None
+    if raw_count not in (None, ""):
+        whole = not isinstance(raw_count, bool) and (
+            not isinstance(raw_count, float) or raw_count.is_integer()
+        )
+        try:
+            count = int(raw_count) if whole else None
+        except (TypeError, ValueError):
+            count = None
+        if count is None or not 1 <= count <= GOAL_COUNT_MAX:
+            return f"count is a whole number of items, 1 to {GOAL_COUNT_MAX:,}."
+    return item, count
+
+
+class Pocket:
+    """What one online player carries of the asked items, and where they stand."""
+
+    __slots__ = ("counts", "spot", "boxes")
+
+    def __init__(self, counts: dict[str, int], spot: Spot, boxes: int) -> None:
+        self.counts, self.spot, self.boxes = counts, spot, boxes
 
 
 def fence(body: str) -> str:
@@ -329,8 +403,8 @@ async def _goals(s: AsyncSession, key: str) -> list[Any]:
     # earlier one is finished.
     rows = await s.execute(
         text(
-            "SELECT id, title, notes, status, world, created_at, finished_at"
-            " FROM app.mc_goals WHERE xuid = :k ORDER BY created_at, id"
+            "SELECT id, title, notes, status, world, created_at, finished_at, item,"
+            " item_count FROM app.mc_goals WHERE xuid = :k ORDER BY created_at, id"
         ),
         {"k": key},
     )
@@ -348,7 +422,7 @@ async def player_context(s: AsyncSession, key: str) -> str:
             "Memory:\n" + "\n".join(f"{i}. {t}" for i, (_, t) in enumerate(lines, start=1))
         )
     if goals:
-        parts.append("Open goals:\n" + "\n".join(f"{i}. {g.title}" for i, g in goals))
+        parts.append("Open goals:\n" + "\n".join(f"{i}. {goal_line(g)}" for i, g in goals))
     return fence("\n\n".join(parts)) if parts else ""
 
 
@@ -1521,7 +1595,8 @@ def build_minecraft_handlers(
                 result_brief="none",
             )
         body = "\n".join(
-            f"{i}. [{g.status}] {g.title}" + (f" — {g.notes}" if g.notes else "") for i, g in shown
+            f"{i}. [{g.status}] {goal_line(g)}" + (f" — {g.notes}" if g.notes else "")
+            for i, g in shown
         )
         return ToolOutput(
             f"Goals for {fence(player.gamertag)}:\n{fence(body)}",
@@ -1535,20 +1610,37 @@ def build_minecraft_handlers(
             return f"A goal needs a title of 1–{GOAL_TITLE_MAX} characters."
         if len(notes) > LOG_MAX:
             return f"Notes are capped at {LOG_MAX} characters."
+        counted = check_goal_item(arguments.get("item"), arguments.get("count"))
+        if isinstance(counted, str):
+            return counted
+        item, count = counted
+        if (item is None) != (count is None):
+            return (
+                "item and count go together: the item id and how many they need, e.g."
+                ' item "iron_block", count 23. Or leave both out.'
+            )
         async with scoped_session(maker, ctx.session) as s:
             player = await chat_player(s, ctx)
             if player is None:
                 return no_player
             await s.execute(
                 text(
-                    "INSERT INTO app.mc_goals (xuid, gamertag, title, notes)"
-                    " VALUES (:k, :g, :t, :n)"
+                    "INSERT INTO app.mc_goals (xuid, gamertag, title, notes, item, item_count)"
+                    " VALUES (:k, :g, :t, :n, :it, :ic)"
                 ),
-                {"k": player.key, "g": player.gamertag, "t": title, "n": notes},
+                {
+                    "k": player.key,
+                    "g": player.gamertag,
+                    "t": title,
+                    "n": notes,
+                    "it": item,
+                    "ic": count,
+                },
             )
             number = len(await _goals(s, player.key))
+        counts = f" ({item} ×{count}; mc_goal_progress counts how many they have)" if item else ""
         return ToolOutput(
-            f"Added goal {number} for {fence(player.gamertag)}: {fence(title)}",
+            f"Added goal {number} for {fence(player.gamertag)}: {fence(title)}{counts}",
             result_brief=f"goal {number}",
         )
 
@@ -1563,8 +1655,12 @@ def build_minecraft_handlers(
             return "status must be open, done or abandoned."
         if title and len(title) > GOAL_TITLE_MAX:
             return f"A title is at most {GOAL_TITLE_MAX} characters."
-        if status is None and not title:
-            return "Nothing to change — pass a status or a new title."
+        counted = check_goal_item(arguments.get("item"), arguments.get("count"))
+        if isinstance(counted, str):
+            return counted
+        item, count = counted
+        if status is None and not title and item is None and count is None:
+            return "Nothing to change — pass a status, a new title, or an item and count."
         async with scoped_session(maker, ctx.session) as s:
             player = await chat_player(s, ctx)
             if player is None:
@@ -1573,24 +1669,286 @@ def build_minecraft_handlers(
             if not 1 <= number <= len(goals):
                 return f"There is no goal {number} — {fence(player.gamertag)} has {len(goals)}."
             goal = goals[number - 1]
+            if (item is not None or count is not None) and (
+                (item or goal.item) is None or (count or goal.item_count) is None
+            ):
+                return (
+                    f"Goal {number} doesn't count anything yet, so it needs both an item and"
+                    ' a count, e.g. item "iron_block", count 23.'
+                )
             await s.execute(
                 text(
                     "UPDATE app.mc_goals SET title = coalesce(:t, title),"
                     " status = coalesce(:st, status),"
+                    " item = coalesce(:it, item), item_count = coalesce(:ic, item_count),"
                     " finished_at = CASE WHEN coalesce(:st, status) = 'open' THEN NULL"
                     "   WHEN :st IS NOT NULL AND :st <> status THEN now() ELSE finished_at END"
                     " WHERE id = :id"
                 ),
-                {"t": title or None, "st": status, "id": goal.id},
+                {"t": title or None, "st": status, "it": item, "ic": count, "id": goal.id},
             )
+        counts = (
+            f"now counts {item or goal.item} ×{count or goal.item_count}"
+            if item is not None or count is not None
+            else ""
+        )
         change = ", ".join(
             x
-            for x in (f"now {status}" if status else "", f"renamed “{title}”" if title else "")
+            for x in (
+                f"now {status}" if status else "",
+                f"renamed “{title}”" if title else "",
+                counts,
+            )
             if x
         )
         return ToolOutput(
             f"Goal {number} ({fence(goal.title)}): {change}.", result_brief=f"goal {number}"
         )
+
+    # --- goal progress: what they carry and what's in their own chests (§M24) ----------
+
+    async def carry_count(gamertag: str, names: list[str]) -> Pocket | str:
+        """What an online player carries of `names` (inventory, armor, off-hand), from
+        the game itself (the pack's `jb:carry`), or a sentence saying why it wasn't counted."""
+        query = {"player": gamertag, "types": names}
+        got = await console(f"scriptevent jb:carry {json.dumps(query)}")
+        if isinstance(got, str):
+            return got
+        reply = _reply(got)
+        if m := _CARRY_HIT.search(reply):
+            counts = {k: int(n) for k, n in (pair.split("=") for pair in m["counts"].split())}
+            spot = Spot(int(m["x"]), int(m["y"]), int(m["z"]), m["dim"])
+            return Pocket(counts, spot, int(m["boxes"]))
+        if "carry refused" in reply:
+            return f"What they carry wasn't counted: {fence(reply)}"
+        return (
+            "What they carry wasn't counted: the jbrain pack didn't answer (it updates when"
+            " the server restarts)."
+        )
+
+    async def chest_counts(
+        centres: list[tuple[str, Spot]], item: str
+    ) -> tuple[list[tuple[str, int]], Any] | str:
+        """How many of `item` the containers within NEAR_BLOCKS of each centre hold, each
+        container once, toward its nearest centre (the sidecar's `/map/stock`, one call a
+        dimension); and the files' age. A sentence when nothing could be counted."""
+        worlds = await sidecar("GET", "/worlds")
+        if isinstance(worlds, str):
+            return worlds
+        slot = next((w["id"] for w in worlds.get("slots", []) if w.get("active")), "slot1")
+        found: dict[int, int] = {}
+        age: Any = None
+        for dim in _DIMENSIONS:
+            here = [(i, sp) for i, (_, sp) in enumerate(centres) if sp.dim == dim]
+            if not here:
+                continue
+            got = await sidecar(
+                "GET",
+                "/map/stock",
+                params={
+                    "slot": slot,
+                    "dim": dim,
+                    "centres": ";".join(f"{sp.x},{sp.z}" for _, sp in here),
+                    "items": item,
+                    "radius": NEAR_BLOCKS,
+                    "flush": 1,
+                },
+            )
+            if isinstance(got, str):
+                return got
+            for (i, _), c in zip(here, got.get("centres") or [], strict=False):
+                found[i] = int((c.get("totals") or {}).get(item, 0))
+            if isinstance(got.get("age_s"), int | float):
+                age = max(age or 0, got["age_s"])
+        return [(label, found.get(i, 0)) for i, (label, _) in enumerate(centres)], age
+
+    def pick_goal(goals: list[Any], raw: Any, gamertag: str) -> tuple[int, Any] | str:
+        if raw not in (None, "", 0):
+            try:
+                number = int(raw)
+            except (TypeError, ValueError):
+                return "goal must be a goal number from mc_goals."
+            if not 1 <= number <= len(goals):
+                return f"There is no goal {number} — {fence(gamertag)} has {len(goals)}."
+            return number, goals[number - 1]
+        counting = [(i, g) for i, g in enumerate(goals, start=1) if g.status == "open" and g.item]
+        if len(counting) == 1:
+            return counting[0]
+        if not counting:
+            return (
+                f"{fence(gamertag)} has no open goal that counts an item. Make one with"
+                " mc_goal_create (item and count), or give one with mc_goal_update."
+            )
+        listed = "\n".join(f"{i}. {goal_line(g)}" for i, g in counting)
+        return "Which goal? Pass its number:\n" + fence(listed)
+
+    async def mc_goal_progress(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """How far along a counted goal is: what the player carries plus what's in the
+        containers within NEAR_BLOCKS of each of their saved places and of where they
+        stand. Their own stock, so free — except, in game, chests near a place beyond the
+        Tricorder's reach of them, which is one deep scan per check (owner, 2026-10-12)."""
+        asker = asker_for(ctx.agent_session_id)
+        raw_tag = str(arguments.get("gamertag") or "").strip()
+        if asker is not None and raw_tag and raw_tag.casefold() != asker.gamertag.casefold():
+            return ToolOutput(only_you, result_brief="refused")
+        world = await loaded_world(ctx)
+        async with scoped_session(maker, ctx.session) as s:
+            player = await chat_player(s, ctx)
+            if player is None:
+                return no_player
+            goals = await _goals(s, player.key)
+            places = await _places(s, player.key, world) if world else []
+        picked = pick_goal(goals, arguments.get("goal"), player.gamertag)
+        if isinstance(picked, str):
+            return ToolOutput(picked, result_brief="which goal")
+        number, goal = picked
+        if goal.item is None:
+            return ToolOutput(
+                f"Goal {number} ({fence(goal.title)}) doesn't count an item. To count it, give"
+                " it one with mc_goal_update (item and count).",
+                result_brief="nothing to count",
+            )
+        if not world:
+            return "The Minecraft server can't say which world is loaded, so nothing was counted."
+        item, need = full_id(goal.item), int(goal.item_count)
+        # Whose pockets: in game the asker's; in the app only the goal's own player, by
+        # name, while online — never anyone else's toward this goal.
+        who: str | None = asker.gamertag if asker is not None else None
+        if asker is None and raw_tag:
+            who = check_gamertag(raw_tag)
+            if who is None:
+                return "That isn't a gamertag (letters, digits and spaces, up to 16)."
+            if who.casefold() != player.gamertag.casefold():
+                return ToolOutput(
+                    f"Goal progress counts only {fence(player.gamertag)}'s own pockets;"
+                    " nothing was counted.",
+                    result_brief="refused",
+                )
+        notes: list[str] = []
+        pocket: Pocket | None = None
+        if who is not None:
+            got = await carry_count(who, [item])
+            if isinstance(got, str):
+                notes.append(got)
+            else:
+                pocket = got
+        else:
+            notes.append(
+                "What they carry wasn't counted: name their gamertag (while they're online)"
+                " to count it."
+            )
+        stand = asker.at if asker is not None else (pocket.spot if pocket else None)
+        # Places first, so a chest as near a place as the player goes to the place.
+        centres = [(str(r.name), _spot(r)) for r in places]
+        far: list[tuple[str, Spot]] = []
+        if asker is not None:
+            far = [
+                (n, sp)
+                for n, sp in centres
+                if sp.dim != asker.at.dim
+                or math.dist((sp.x, sp.z), (asker.at.x, asker.at.z)) > NEAR_BLOCKS
+            ]
+        if stand is not None:
+            centres.append(("you", stand))
+        paid: tuple[str, int] | None = None
+        search: scans.Search | None = None
+        book = book_for(ctx)
+        day = scans.UNKNOWN_DAY
+        if asker is not None and far:
+            # A files-only count never needs the running server, so it always has a day.
+            got_day = await scans.scan_day(
+                book, asker, await console("time query day"), needs_server=False
+            )
+            day = got_day if isinstance(got_day, int) else scans.UNKNOWN_DAY
+            search = scans.Search(
+                "mc_goal_progress",
+                f"{item}|" + ",".join(sorted(n.casefold() for n, _ in far)),
+                asker.at.dim,
+                asker.at.x,
+                asker.at.z,
+            )
+            paid = await scans.charge(book, asker, day, search)
+            if paid[0] == "out":
+                centres = [c for c in centres if c not in far]
+                names = ", ".join(n for n, _ in far)
+                notes.append(
+                    f"Chests near {fence(names)} weren't counted: they're beyond the"
+                    f" Tricorder's reach, which takes a deep scan, and all {scans.SCANS_PER_DAY}"
+                    " of today's are used. Say so in Dave's words: " + scans.RECHARGE
+                )
+        counted: list[tuple[str, int]] = []
+        age: Any = None
+        if centres:
+            got_chests = await chest_counts(centres, item)
+            if isinstance(got_chests, str):
+                if paid is not None and paid[0] == "spent" and asker is not None:
+                    await book.refund(asker.world, asker.key, day)
+                return got_chests
+            counted, age = got_chests
+        carried = pocket.counts.get(item, 0) if pocket is not None else None
+        if carried is None and not counted:
+            return ToolOutput(
+                f"Nothing was counted for goal {number} ({fence(goal_line(goal))}). "
+                + " ".join(notes)
+                + (
+                    ""
+                    if places
+                    else f" {fence(player.gamertag)} has no saved places in this world"
+                    " either: suggest saving their base (mc_place_save) so its chests count."
+                ),
+                result_brief="nothing counted",
+            )
+        have, head, where_ = tally(need, carried, counted)
+        lines = [f"Goal {number}, {fence(goal_line(goal))}: {head}."]
+        if where_:
+            lines.append(f"Where they are: {fence(where_)}.")
+        if counted:
+            near = ", ".join(n for n, _ in counted)
+            lines.append(
+                f"Counted the chests within {NEAR_BLOCKS} blocks of: {fence(near)}{as_of(age)}."
+            )
+        if not places:
+            lines.append(
+                f"{fence(player.gamertag)} has no saved places in this world, so no base"
+                " chests were counted. Suggest saving their base: they stand there and ask"
+                " to save it (mc_place_save), and its chests count from then on."
+            )
+        if pocket is not None and pocket.boxes:
+            lines.append(
+                f"They carry {pocket.boxes} shulker box(es); what's inside those can't be"
+                " seen, so it isn't counted."
+            )
+        lines.extend(notes)
+        if have >= need and goal.status == "open":
+            lines.append(
+                f"Ask whether to mark goal {number} done; mark it (mc_goal_update,"
+                " status done) only if they say yes."
+            )
+        if paid is not None and asker is not None and search is not None:
+            if paid[0] == "spent":
+                await book.remember(
+                    asker.world,
+                    asker.key,
+                    day,
+                    {
+                        "tool": search.tool,
+                        "what": search.what,
+                        "dim": search.dim,
+                        "x": search.x,
+                        "z": search.z,
+                        "text": "\n".join(lines),
+                    },
+                )
+                lines.append(
+                    f"That used a deep scan for the far places: {scans.scans_left(paid[1])}"
+                    " (say so)."
+                )
+            elif paid[0] == "repeat":
+                lines.append(
+                    "The far places were counted earlier today from about here, so this"
+                    f" recount is free: {scans.scans_left(paid[1])}."
+                )
+        return ToolOutput("\n".join(lines), result_brief=f"{have} of {need}")
 
     async def mc_log(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         entry = " ".join(str(arguments.get("text") or "").split())
@@ -1768,6 +2126,7 @@ def build_minecraft_handlers(
         "mc_goals": mc_goals,
         "mc_goal_create": mc_goal_create,
         "mc_goal_update": mc_goal_update,
+        "mc_goal_progress": mc_goal_progress,
         "mc_log": mc_log,
         "mc_log_read": mc_log_read,
         "mc_memory_read": mc_memory_read,

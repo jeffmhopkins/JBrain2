@@ -168,6 +168,7 @@ STEP_LABELS: dict[str, str] = {
     "mc_goals": "Read the goals",
     "mc_goal_create": "Added a goal",
     "mc_goal_update": "Updated a goal",
+    "mc_goal_progress": "Counted toward a goal",
     "mc_log": "Logged progress",
     "mc_log_read": "Read the progress log",
     "mc_memory_read": "Read memory",

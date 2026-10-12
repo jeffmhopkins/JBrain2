@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -2480,6 +2480,77 @@ chests and chest boats are entities, not block entities, so they aren't searched
 - That `save hold`/`save query` answers within 10 s on the busy server (the `flush` field),
   and that `jb:items` answers within the console's 3-second window.
 
+### M24 — Goals that count: "I need 23 iron blocks" (owner, 2026-10-12)
+
+**Why.** A player says "Dave, remind me I need 23 iron blocks", and later "how many iron
+blocks have I got, how many more do I need?". Dave should answer "17 of 23, 6 to go: 12
+in chests near your base, 5 on you". Goals were titles only, and `mc_find_item` searches
+any chest in the world, not "my stock".
+
+**Owner decisions (2026-10-12):**
+1. **A goal can count an item.** It has an optional item id and a count (1–100,000). Goals
+   written before this read exactly as they did.
+2. **"Mine" means two things.** It is what the player carries (inventory, armor,
+   off-hand) plus the containers within 48 blocks of each of **their own saved places**
+   in the loaded world, and within 48 blocks of where they stand. A container in reach
+   of two places counts once.
+3. **Cost.** Carried items are always free. Chests near a saved place are free only when
+   that place is within the Tricorder's reach (48 blocks) of where the asker stands. If
+   any counted place is farther, the check is **one** deep scan (§M17), not one per
+   place, and the same check again from about the same place is free. If they're out of
+   scans, Dave still gives the free part, and says the far places weren't counted
+   because the deep scan needs to recharge. The app is unlimited. A whole-world count is
+   still `mc_find_item` and costs a deep scan in game, as before.
+4. **Own pockets only.** In game it is always the asker's. In the app it is counted only
+   when the goal's own player is named and online.
+5. **Reached means asked, not done.** When the count is reached, Dave says so and offers
+   to mark the goal done. He marks it only if the player says yes.
+
+**What's built.**
+- **Migration 0236** adds nullable `item` and `item_count` columns to `app.mc_goals`. The
+  item's CHECK is `mc_find_item`'s id pattern, the count's is 1–100,000, and a third
+  CHECK makes them a pair (both or neither). There is no new table, and 0226's owner-only
+  policy is unchanged. The integration isolation test now writes both columns as a
+  non-owner and is refused.
+- **Pack 1.9.0**: `scriptevent jb:carry {"player", "types"}` adds up that online player's
+  inventory, armor and off-hand for 1–8 item ids. It answers one console line: `carry
+  counted for <player> in <dim> at x= y= z=: minecraft:iron_block=5; shulker boxes=1`, or
+  `carry refused`. The position lets the app count the chests around them too. **Carried
+  shulker boxes are not read.** Stable `@minecraft/server` 2.0.0 has no way to see inside
+  a shulker box item (the item-inventory component is beta-only). So the line counts the
+  boxes, and Dave says what's inside them wasn't counted.
+- **Sidecar** `GET /map/stock?slot&dim&centres=x,z;x,z&items&radius&flush` (radius 48 by
+  default, at most 256, 1–101 points). It sums the item across every container within
+  `radius` of any point. Each container is counted once, toward its nearest point (the
+  first named on a tie), and the sum is broken down per point. It returns `as_of` /
+  `age_s` and flushes like `/map/items`. Built on `ContainerIndex.stock`. One call per
+  dimension, so a Nether base's chests are counted in the Nether.
+- **`mc_goal_create` / `mc_goal_update` v2** take `item` (normalized as `mc_find_item`'s:
+  spaces become underscores, `minecraft:` dropped) and `count`. Both are checked before
+  any write. A create needs both or neither, and so does an update to a goal that counts
+  nothing yet. `mc_goals` and the chat intro show "Get 23 iron blocks (iron_block ×23)".
+- **`mc_goal_progress(goal?, gamertag?)`**, read-only, is in both Dave tiers. It is a
+  separate tool rather than an `mc_goals` flag because `mc_goals` is a cheap database
+  read, while this one asks the pack and the world files and can cost a deep scan. Each
+  has its own failure modes, cost and step label. `goal` can be left out when exactly
+  one open goal counts an item. In game, places in another dimension or more than 48
+  blocks away are "far" and are paid for with `scans.charge`, which does no stored-answer
+  replay: a repeat recounts live and free, because chests change. A failed count is
+  refunded. The answer gives the headline ("17 of 23 — 6 to go"), where they are (fenced,
+  because place names are player-written), which places' chests were counted, the files'
+  age, the no-saved-places hint ("save your base"), the shulker-box caveat, the scan
+  line, and the ask-before-done line.
+- Prompt `agent-minecraft-dave-v19`: "remind me I need N X" makes a goal with an item and
+  a count, the progress wording, and the deep-scan rule for far places.
+
+**Not built.**
+- **The goals list in the PWA doesn't show progress.** Any screen change goes through
+  the GUI mock gate (`docs/reference/DESIGN.md`), so this is a follow-up for the owner.
+- **No fast path.** There is no signed-off fixed line for progress on the lore page.
+- **Ender chests** are never counted, and neither are minecart chests or chest boats
+  (§M23).
+- **No way to clear a goal's item** once it is set. To stop counting, make a new goal.
+
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
 **What the owner asked for:** every **new** world starts at a crash site. An escape pod
@@ -2944,7 +3015,7 @@ is untrusted. The owner's agent sits on the **owner side**. It is a new entry in
 | Maps (with **M8**) | `minecraft_map(center, radius, layers, overlays, slot?)`: terrain, biome, height, explored, changes, slice@Y; overlays for players, waypoints, structures, deaths | Renderer in the sidecar; returns an image artifact rendered **inline in the chat** |
 | Admin (owner) | `mc_command` (any console command) and `mc_server_action` (every server action) — superseded the four planned admin tools, 2026-10-11 | Look-only commands run at once; everything else is staged as a `minecraft` Proposal the owner approves, never silent |
 | Web | `web_search`, `web_fetch` (the existing tools, same fences) | For wiki, recipe and seed questions the bundled data doesn't answer |
-| Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
+| Goals and progress log, **per player** | `mc_goal_create` / `mc_goals` / `mc_goal_update` (done, abandoned, rename; an item and count since §M24), `mc_goal_progress` (§M24), `mc_log` (add a progress entry, optionally against a goal), `mc_log_read` (a player's journal, filterable by goal or date) | `app.mc_goals` and `app.mc_goal_log`; see "Goals and the progress log" below |
 | Memory, **per player**, self-managed | `mc_memory_read`, plus **line-level edits only**: `mc_memory_add(text)`, `mc_memory_replace(line, text)`, `mc_memory_remove(line)`. There is no whole-document write. | `app.mc_player_memory` (one row per line, with history); see "Memory: self-managed, never overwritten" below |
 
 **Goals and the progress log (owner, 2026-10-10).** The "session log" is a **journal of
@@ -2954,7 +3025,9 @@ doesn't lose it.
 
 - **Goals** (`app.mc_goals`): player xuid, world slot, title (for example "Beacon at the
   base" or "20 obsidian for the portal"), optional target notes, status
-  (open / done / abandoned), created and finished times.
+  (open / done / abandoned), created and finished times; and since §M24 an optional item
+  and count ("iron_block ×23"), which `mc_goal_progress` counts against what the player
+  carries and the chests near their saved places.
 - **Progress log** (`app.mc_goal_log`): player xuid, optional goal, time, text, and
   **source**:
   - `owner`: written from the PWA agent;

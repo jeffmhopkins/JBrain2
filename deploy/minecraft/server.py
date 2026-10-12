@@ -122,6 +122,12 @@ PUBLIC_IP_S = 600.0
 # A chest search (§M23) first has the running world write itself out — the snapshot's
 # save hold/query/resume, nothing copied — at most this often, waiting this long for it.
 FLUSH_EVERY_S = 30.0
+# A stock count's points: a player's saved places (Dave caps them at 100 a world) and
+# where they stand.
+STOCK_CENTRES_MAX = 101
+# A stock count's reach around each point: the Tricorder's short-range scan, or a little
+# more, never a survey.
+STOCK_RADIUS_MAX = 256
 FLUSH_WAIT_S = 10.0
 TRACK_MIN_MOVE = 4.0
 TRACK_KEPT = 20000
@@ -1472,26 +1478,12 @@ class Rig:
             raise ValueError("dimension must be overworld, nether or the_end")
         if abs(x) > 30_000_000 or abs(z) > 30_000_000:
             raise ValueError("that point is outside the world")
-        wanted: set[str] = set()
-        for raw in names:
-            name = raw.strip().lower()
-            if not _ITEM_NAME.fullmatch(name):
-                raise ValueError(f"`{raw}` isn't an item id")
-            wanted.add(containers.item_name(name))
-        if not wanted or len(wanted) > 8:
-            raise ValueError("name one to eight items")
-        rec = self.slots.get(slot_id)
-        if not rec["exists"]:
-            raise ValueError(f"{slot_id} has no world yet")
-        folder = rec["folder"]
+        wanted = _wanted_items(names)
+        folder = self._world_folder(slot_id)
         flushed = self._flush_for_search(folder) if flush else "not asked"
         d = mapping.DIMENSIONS[dim]
         with self._map_lock:
-            index = self._container_index.get(folder)
-            if index is None:
-                index = containers.ContainerIndex(self.world_dir(folder) / "db")
-                self._container_index[folder] = index
-            index.refresh(force=flushed == "flushed")
+            index = self._containers(folder, flushed)
             known = index.names(d)
             hits, totals, matched = index.find(d, x, z, wanted, limit, radius)
             stats = {
@@ -1530,6 +1522,65 @@ class Rig:
                 else _freshness(self.world_dir(folder) / "db")
             ),
         }
+
+    def map_stock(
+        self,
+        slot_id: str,
+        dim: str,
+        centres: list[tuple[int, int]],
+        names: list[str],
+        radius: int,
+        flush: bool = False,
+    ) -> dict[str, Any]:
+        """How many of the named items the containers around several points hold, each
+        container counted once (§M24): Dave's "how many iron blocks have I got", over the
+        chests near each of a player's saved places and near where they stand."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if not 1 <= len(centres) <= STOCK_CENTRES_MAX:
+            raise ValueError(f"name one to {STOCK_CENTRES_MAX} points")
+        if any(abs(x) > 30_000_000 or abs(z) > 30_000_000 for x, z in centres):
+            raise ValueError("that point is outside the world")
+        wanted = _wanted_items(names)
+        folder = self._world_folder(slot_id)
+        flushed = self._flush_for_search(folder) if flush else "not asked"
+        with self._map_lock:
+            index = self._containers(folder, flushed)
+            per, held_in, totals = index.stock(
+                mapping.DIMENSIONS[dim], centres, wanted, radius
+            )
+        return {
+            "dimension": dim,
+            "radius": radius,
+            "searched": sorted(wanted),
+            "centres": [
+                {"x": x, "z": z, "containers": n, "totals": t}
+                for (x, z), n, t in zip(centres, held_in, per, strict=True)
+            ],
+            "containers": sum(held_in),
+            "totals": totals,
+            "flush": flushed,
+            **(
+                {"as_of": time.time(), "age_s": 0}
+                if flushed == "flushed"
+                else _freshness(self.world_dir(folder) / "db")
+            ),
+        }
+
+    def _world_folder(self, slot_id: str) -> str:
+        rec = self.slots.get(slot_id)
+        if not rec["exists"]:
+            raise ValueError(f"{slot_id} has no world yet")
+        return rec["folder"]
+
+    def _containers(self, folder: str, flushed: str) -> containers.ContainerIndex:
+        """The world's container index, re-read at once after a flush. Under _map_lock."""
+        index = self._container_index.get(folder)
+        if index is None:
+            index = containers.ContainerIndex(self.world_dir(folder) / "db")
+            self._container_index[folder] = index
+        index.refresh(force=flushed == "flushed")
+        return index
 
     def _flush_for_search(self, folder: str) -> str:
         """Ask the running world to write itself out, so the files hold what's in the
@@ -1968,6 +2019,34 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/stock":
+            try:
+                centres = [
+                    (int(x), int(z))
+                    for x, z in (
+                        pair.split(",", 1)
+                        for pair in query.get("centres", [""])[0].split(";")
+                        if pair
+                    )
+                ]
+                radius = int(query.get("radius", ["48"])[0])
+            except ValueError:
+                self._send(400, {"detail": "centres are x,z;x,z and radius a whole number"})
+                return
+            try:
+                self._send(
+                    200,
+                    rig.map_stock(
+                        query.get("slot", ["slot1"])[0],
+                        query.get("dim", ["overworld"])[0],
+                        centres,
+                        query.get("items", [""])[0].split(","),
+                        max(1, min(radius, STOCK_RADIUS_MAX)),
+                        flush=query.get("flush", [""])[0] in ("1", "true"),
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
         elif url.path == "/map/structures":
             try:
                 self._send(
@@ -2233,6 +2312,19 @@ _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 _BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
 # An item id, its namespace optional (the box's own items are `jbrain:`).
 _ITEM_NAME = re.compile(r"^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$")
+
+
+def _wanted_items(names: list[str]) -> set[str]:
+    """1-8 item ids, namespaced; ValueError naming the first that isn't one."""
+    wanted: set[str] = set()
+    for raw in names:
+        name = raw.strip().lower()
+        if not _ITEM_NAME.fullmatch(name):
+            raise ValueError(f"`{raw}` isn't an item id")
+        wanted.add(containers.item_name(name))
+    if not wanted or len(wanted) > 8:
+        raise ValueError("name one to eight items")
+    return wanted
 # "Find me a chest" means anywhere things are kept: both chests, barrels, and a shulker
 # box of any colour (and the single pre-1.20 id an old world may still hold).
 _SHULKER_COLOURS = (

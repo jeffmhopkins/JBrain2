@@ -173,6 +173,21 @@ async def deep_scan(book: ScanBook, asker: Asker, day: int, search: Search, run:
     )
 
 
+async def charge(book: ScanBook, asker: Asker, day: int, search: Search) -> tuple[str, int]:
+    """Pay for a deep scan whose answer is rebuilt live every time, so a stored answer
+    would be stale (§M24's goal counts: chests fill and empty). "repeat" — the same
+    search from about here today, free; "spent"; or "out" — and the scans left after.
+    A caller whose search then fails refunds; one that succeeds remembers the result,
+    which is what later repeats match."""
+    used, results = await book.today(asker.world, asker.key, day)
+    if any(search.repeats(r) for r in results):
+        return "repeat", max(SCANS_PER_DAY - used, 0)
+    spent = await book.reserve(asker.world, asker.key, asker.gamertag, day)
+    if spent is None:
+        return "out", 0
+    return "spent", SCANS_PER_DAY - spent
+
+
 class SqlScanBook:
     """`app.mc_scans` under the turn's own RLS context (owner-only, migration 0229)."""
 
