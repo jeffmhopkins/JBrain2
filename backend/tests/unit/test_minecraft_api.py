@@ -196,7 +196,7 @@ async def test_settings_send_only_what_changed(fake) -> None:
 
 
 async def test_a_worlds_crash_site_choice_reaches_the_box(fake) -> None:
-    await api.create_world("slot2", api.WorldIn(name="A", wreck=False), SETTINGS)
+    await api.create_world("slot2", api.CreateIn(name="A", wreck=False), SETTINGS)
     assert fake["calls"][-1][2]["json"]["wreck"] is False
     await api.reset_world("slot2", api.ResetIn(mode="same_seed", wreck=True), SETTINGS)
     assert fake["calls"][-1][2]["json"]["wreck"] is True

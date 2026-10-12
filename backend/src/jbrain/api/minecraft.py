@@ -237,9 +237,15 @@ async def load_world(slot: Annotated[str, Path(pattern=_SLOT)], settings: Settin
     return await mc.call(settings, "POST", f"/worlds/{slot}/load", timeout_s=WORLD_JOB_TIMEOUT_S)
 
 
+class CreateIn(WorldIn):
+    # The Power Pack teleport switch (§M10) is a create-time choice and its own route after,
+    # so a PATCH never carries it. Unset leaves the sidecar's default, on.
+    power_pack_transport: bool | None = None
+
+
 @router.post("/worlds/{slot}/create")
 async def create_world(
-    slot: Annotated[str, Path(pattern=_SLOT)], body: WorldIn, settings: SettingsDep
+    slot: Annotated[str, Path(pattern=_SLOT)], body: CreateIn, settings: SettingsDep
 ) -> dict[str, Any]:
     return await mc.call(
         settings, "POST", f"/worlds/{slot}/create", json=body.model_dump(exclude_none=True)
