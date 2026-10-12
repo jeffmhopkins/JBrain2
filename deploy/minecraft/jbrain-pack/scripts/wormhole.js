@@ -22,16 +22,27 @@ const INDEX = "jb:gates";
 const gateKey = (id) => `jb:gate:${id}`;
 const NEXT = "jb:gate_next";
 
-const ids = () => {
+const idsIn = (raw) => {
   try {
-    const list = JSON.parse(String(world.getDynamicProperty(INDEX) ?? "[]"));
+    const list = JSON.parse(String(raw ?? "[]"));
     return Array.isArray(list) ? list.filter(Number.isInteger) : [];
   } catch {
     return [];
   }
 };
+const ids = () => {
+  try {
+    return idsIn(world.getDynamicProperty(INDEX));
+  } catch {
+    return [];
+  }
+};
 
-const allGates = () => ids().map((id) => parseGate(world.getDynamicProperty(gateKey(id)))).filter(Boolean);
+const gatesOf = (list) => list.map((id) => parseGate(world.getDynamicProperty(gateKey(id)))).filter(Boolean);
+const allGates = () => gatesOf(ids());
+// The load snapshot replaces every gate the map holds, so a failed read must throw rather
+// than pass for "no gates".
+const allGatesOrThrow = () => gatesOf(idsIn(world.getDynamicProperty(INDEX)));
 
 const save = (gate) => {
   world.setDynamicProperty(gateKey(gate.id), JSON.stringify(gate));
@@ -316,11 +327,11 @@ export const initWormholes = ({ onPlanted: planted } = {}) => {
   system.runInterval(() => {
     // Once per load, after the first tick: the properties can't be read any sooner.
     if (!reported) {
-      reported = true;
       try {
-        emit(gatesSnapshot(allGates()));
+        emit(gatesSnapshot(allGatesOrThrow()));
+        reported = true;
       } catch (e) {
-        say(`wormhole report failed: ${e}`);
+        say(`wormhole report failed, trying again: ${e}`);
       }
     }
     look();

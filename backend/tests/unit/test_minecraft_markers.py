@@ -138,6 +138,26 @@ def test_in_game_only_the_askers_own_and_only_what_they_have_unlocked() -> None:
     assert "- barn: protected, by their beacon at X 90, Z -10." in body
 
 
+def test_in_game_beacons_with_no_recorded_placer_are_counted_not_dropped() -> None:
+    # Beacons placed before pack 1.10 have no placer: their owner must still hear of them.
+    old = {"dim": "overworld", "x": 200, "y": 70, "z": 200, "placed_by": ""}
+    got = {**GOT, "beacons": [BEACON, old, {**old, "x": 300}]}
+    asker = Asker("222", "Steve", "w", Spot(0, 64, 0, "overworld"))
+    body, brief = mk.listing(
+        got,
+        who="Steve",
+        asker=asker,
+        show_beacons=True,
+        show_gates=False,
+        places=[],
+        place_owner="Steve",
+    )
+    assert "No-Spawn Beacons: none placed by Steve." in body
+    assert "Also 2 beacons placed before Dave kept track of who placed them" in body
+    assert "X 200" not in body and "X 300" not in body
+    assert brief == "0 beacons"
+
+
 @pytest.fixture
 def sidecar(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     state: dict[str, Any] = {"sent": [], "down": False, "worlds": {"slots": []}}

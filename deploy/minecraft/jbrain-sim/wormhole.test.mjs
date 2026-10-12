@@ -104,6 +104,20 @@ const TREE_FARM = { place: "Tree Farm", dim: "overworld", x: 100, y: 70, z: -50 
 // First in the file: the report is once per load, and main.js loads once for all of them.
 test("the first tick after a load reports every gate once, where each leads", () => {
   openGate();
+  // The first read fails: no snapshot goes out, and the next tick tries again.
+  const read = world.getDynamicProperty;
+  let failed = false;
+  world.getDynamicProperty = function (k) {
+    if (k === "jb:gates" && !failed) {
+      failed = true;
+      throw new Error("not ready");
+    }
+    return read.call(this, k);
+  };
+  sim.tick();
+  world.getDynamicProperty = read;
+  assert.deepEqual(events("gates"), []);
+  assert.ok(lines("wormhole report failed").length === 1);
   sim.tick();
   sim.tick();
   assert.deepEqual(events("gates"), [

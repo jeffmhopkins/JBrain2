@@ -151,6 +151,14 @@ def listing(
             )
         else:
             lines.append("No-Spawn Beacons: none" + (f" placed by {who}." if who else "."))
+        # Beacons placed before the pack kept placers could be this player's own, so they
+        # are counted rather than left out; where they stand stays unsaid in game.
+        unknown = sum(1 for b in every_beacon if not b["placed_by"]) if who else 0
+        if unknown:
+            lines.append(
+                f"Also {unknown} beacon{'s' if unknown != 1 else ''} placed before Dave kept "
+                "track of who placed them; they may be yours."
+            )
         brief.append(f"{len(beacons)} beacon{'s' if len(beacons) != 1 else ''}")
         if places:
             lines.append(f"{place_owner}'s saved places, protected or not:")
