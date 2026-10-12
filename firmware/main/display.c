@@ -196,6 +196,7 @@ static bool paint(void)
 /* Defined with the rest of the breadcrumb machinery, below the render loop it instruments. */
 static void phase_init(void);
 static void frame_note(uint32_t pass_start);
+static uint32_t s_fr_blit_at; /* when this frame's blit began */
 
 bool display_start(void)
 {
@@ -1522,14 +1523,19 @@ static void phase_init(void)
 
 /* FRAME TIMING, for the report: how many frames were drawn since the last read, how long one took
    to draw and blit, and the gap between them. What a person calls smooth is the gap. */
-static uint32_t s_fr_n, s_fr_work_sum, s_fr_work_max, s_fr_gap_sum, s_fr_gap_max, s_fr_last;
+static uint32_t s_fr_n, s_fr_draw_sum, s_fr_draw_max, s_fr_blit_sum, s_fr_blit_max;
+static uint32_t s_fr_gap_sum, s_fr_gap_max, s_fr_last;
 
 static void frame_note(uint32_t pass_start)
 {
     const uint32_t t = (uint32_t)(esp_timer_get_time() / 1000);
-    const uint32_t work = t - pass_start;
-    s_fr_work_sum += work;
-    if (work > s_fr_work_max) s_fr_work_max = work;
+    /* Split at the blit (0.4.4): the pass up to it is sampling, the machine and the drawing; the
+       rest is the QSPI transfer. Which one to work on next depends on which is bigger. */
+    const uint32_t draw = s_fr_blit_at - pass_start, blit = t - s_fr_blit_at;
+    s_fr_draw_sum += draw;
+    if (draw > s_fr_draw_max) s_fr_draw_max = draw;
+    s_fr_blit_sum += blit;
+    if (blit > s_fr_blit_max) s_fr_blit_max = blit;
     /* A gap over a second is the screen resting at its floor, not a dropped frame. */
     if (s_fr_last != 0 && t - s_fr_last < 1000) {
         const uint32_t gap = t - s_fr_last;
@@ -1540,16 +1546,18 @@ static void frame_note(uint32_t pass_start)
     s_fr_last = t;
 }
 
-void display_frame_stats(unsigned *frames, unsigned *work_avg, unsigned *work_max,
-                         unsigned *gap_avg, unsigned *gap_max)
+void display_frame_stats(display_frame_stats_t *out)
 {
     const uint32_t n = s_fr_n;
-    *frames = n;
-    *work_avg = n ? s_fr_work_sum / n : 0;
-    *work_max = s_fr_work_max;
-    *gap_avg = n ? s_fr_gap_sum / n : 0;
-    *gap_max = s_fr_gap_max;
-    s_fr_n = s_fr_work_sum = s_fr_work_max = s_fr_gap_sum = s_fr_gap_max = 0;
+    out->frames = n;
+    out->draw_avg = n ? s_fr_draw_sum / n : 0;
+    out->draw_max = s_fr_draw_max;
+    out->blit_avg = n ? s_fr_blit_sum / n : 0;
+    out->blit_max = s_fr_blit_max;
+    out->gap_avg = n ? s_fr_gap_sum / n : 0;
+    out->gap_max = s_fr_gap_max;
+    s_fr_n = s_fr_draw_sum = s_fr_draw_max = s_fr_blit_sum = s_fr_blit_max = 0;
+    s_fr_gap_sum = s_fr_gap_max = 0;
 }
 
 int display_stack_free(void)
@@ -1862,6 +1870,9 @@ static void face_task(void *arg)
     memset(&s_drawn, 0, sizeof(s_drawn));
     sm_init(&s_sm, (uint32_t)(esp_timer_get_time() / 1000));
 
+    /* ONE SAMPLE BEFORE THE LOOP (#1690): the beat below refreshes it every 10 s, and until the
+       first beat the boot report, the one carrying `reset_reason`, would say 0, a stack used up. */
+    s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
     while (true) {
         PHASE(1);
         bool dirty = false;
@@ -2064,7 +2075,13 @@ static void face_task(void *arg)
             action_mag = 1.0f;
             action_start = now;
         }
-        if (s_out.n > 0) dirty = true;
+        /* A FRAME FOR WHAT THE MACHINE DID, not for the fact that it spoke: since 0.4.0 it emits
+           MUTE_COMMANDS on every frame (derived, so no exit can leave the recogniser deaf), and
+           counting that made every pass a redraw. Lydian's panel drew 13.5 frames a second with
+           nobody touching it, which is processor time and PSRAM bandwidth taken from speech. */
+        for (int i = 0; i < s_out.n; i++) {
+            if (s_out.fx[i].kind != SM_FX_MUTE_COMMANDS) dirty = true;
+        }
         if (s_out.say != NULL) caption_say(&cap, s_out.say);
         if (s_out.dash_why != SM_DASH_NONE) {
             /* COUNTED AND NAMED, at the owner's ask: *"anytime we get a red – I want you to make
@@ -2434,6 +2451,7 @@ static void face_task(void *arg)
                 }
             }
             PHASE(9);
+            s_fr_blit_at = (uint32_t)(esp_timer_get_time() / 1000);
             const esp_err_t err = blit_frame(fb);
             if (err != ESP_OK) {
                 /* ONCE, THEN EVERY HUNDREDTH, AND ALWAYS WITH THE HEAP: the number that explains a

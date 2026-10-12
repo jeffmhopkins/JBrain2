@@ -4,7 +4,8 @@ docs/plans/MINECRAFT_BEDROCK_PLAN.md §M17 (owner, 2026-10-11). In the story the
 satellite's deep scan has to recharge (Bleepbloop_City `notes/lore.md`, "The deep scan").
 
 - **What counts**: the searches that find something nobody pointed out — `mc_locate`,
-  `mc_nearby` and `mc_find_block`. Everything else is free.
+  `mc_nearby`, `mc_find_block`, and `mc_find_item` past the Tricorder's 48-block
+  short-range scan (§M23). Everything else is free.
 - **In game only**: the handlers gate a scan only while a door turn's asker is set
   (`minecraft/asker.py`), the same signal `mc_show_map` refuses on. The owner's PWA chats
   never reach this module.

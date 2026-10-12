@@ -6,13 +6,15 @@ revoked one. The slot is the link's, never the visitor's: tiles, map info, tappe
 structures go to the sidecar for that slot only, and every travel-log read runs under
 `mc_share_context(link_id)` so the `*_share` RLS policies (0230) admit that world's history
 and nothing else. A slot that now holds a different world (the folder changed) reads as
-gone. Only reads live here; the structure sweep and every server control stay owner-only.
-Responses are rate-limited, `no-referrer` and `noindex`. This router carries NO owner
-dependency — do not add owner reads here.
+gone, tiles included (their check is cached for a few seconds). Only reads live here; the
+structure sweep and every server control stay owner-only. Responses are rate-limited,
+`no-referrer` and `noindex`. This router carries NO owner dependency — do not add owner
+reads here.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, HTTPException, Path, Query, Request
@@ -74,6 +76,27 @@ async def _world(settings: Any, link: ShareLink) -> dict[str, Any]:
     return rec
 
 
+# Tiles arrive by the dozen, so each slot's checked folder is kept this long: a map view's
+# burst costs one sidecar read, and a world swapped into the slot is gone within it.
+FOLDER_TTL = 5.0
+# slot -> (expires at, on `_clock`; the folder `_world` last confirmed there)
+_folders: dict[str, tuple[float, str]] = {}
+_clock = time.monotonic
+
+
+async def _tile_world(settings: Any, link: ShareLink) -> None:
+    """`_world` for tiles: a bearer token outlives the world it was minted for, so an old
+    link must never draw whatever world now holds its slot (#1664)."""
+    now = _clock()
+    cached = _folders.get(link.slot)
+    if cached is not None and cached[0] > now:
+        if cached[1] != link.world:
+            raise HTTPException(status_code=404, detail="the shared world is gone")
+        return
+    rec = await _world(settings, link)
+    _folders[link.slot] = (now + FOLDER_TTL, str(rec.get("folder")))
+
+
 Token = Annotated[str, Path(min_length=1, max_length=128)]
 
 
@@ -122,11 +145,11 @@ async def map_tile(
     settings: SettingsDep,
     layer: Annotated[str, Query(pattern=_LAYER)] = "surface",
 ) -> Response:
-    # A map view pulls dozens of tiles at once, so tiles get their own, wider bucket, and
-    # skip the world check (a sidecar round trip each): the viewer can't draw a tile
-    # without the map info, which makes that check.
+    # A map view pulls dozens of tiles at once, so tiles get their own, wider bucket and
+    # a cached world check.
     _allow(request, _tile_limiter(request))
     link = await _link(request, token)
+    await _tile_world(settings, link)
     png = await mc.image(
         settings,
         f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png",

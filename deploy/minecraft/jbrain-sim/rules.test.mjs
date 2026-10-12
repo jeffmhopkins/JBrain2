@@ -137,3 +137,34 @@ test("a Power Pack's lore is stale unless it is exactly the one current line", (
   assert.equal(r.packLoreStale(r.TRICORDER, []), false);
   assert.equal(r.packLoreStale("minecraft:ender_pearl", []), false);
 });
+
+test("an item search names 1-8 namespaced types and stays within the short-range scan", () => {
+  assert.deepEqual(r.parseItems('{"player":"Steve 42","types":["diamond","jbrain:power_pack"]}'), {
+    player: "Steve 42",
+    types: ["minecraft:diamond", "jbrain:power_pack"],
+    max: r.ITEMS_MAX,
+  });
+  assert.equal(r.parseItems('{"player":"a","types":["apple"],"max":2}').max, 8);
+  assert.equal(r.parseItems('{"player":"a","types":["apple"],"max":500}').max, r.ITEMS_MAX);
+  const nine = JSON.stringify({ player: "a", types: Array(9).fill("apple") });
+  for (const bad of ['{"types":["apple"]}', '{"player":"a","types":[]}', '{"player":"a","types":"apple"}',
+    '{"player":"a","types":["Apple!"]}', nine, "null"]) {
+    assert.throws(() => r.parseItems(bad), bad);
+  }
+});
+
+test("an item search answers one line per kind per block, nearest first, capped", () => {
+  const q = { types: ["minecraft:apple"], max: 48 };
+  const here = { dim: "minecraft:the_end", x: 0, z: 0 };
+  const stacks = Array.from({ length: 12 }, (_, i) => ({
+    typeId: "minecraft:apple",
+    amount: 1,
+    location: { x: 12 - i + 0.3, y: 50.9, z: 0.2 },
+  }));
+  const lines = r.itemsLines(q, "Steve", here, stacks);
+  assert.equal(lines.length, r.ITEMS_LINES);
+  assert.equal(lines[0], "items ground: 1 minecraft:apple at x=1 y=50 z=0, 2 blocks from Steve (the_end)");
+  assert.deepEqual(r.itemsLines(q, "Steve", here, []), [
+    "items none: no minecraft:apple on the ground within 48 blocks of Steve",
+  ]);
+});

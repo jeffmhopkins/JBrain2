@@ -267,6 +267,47 @@ test("a lored pack is left alone: the look writes nothing back", () => {
   assert.equal(p.inventory.slots[4].amount, 2);
 });
 
+const lored = (n) => {
+  const it = new ItemStack("jbrain:power_pack", n);
+  it.setLore([LINES.powerPackLore]);
+  return it;
+};
+const packs = (p) => p.inventory.slots.filter((s) => s?.typeId === "jbrain:power_pack");
+
+test("a freshly crafted pack joins the lored stack once it gets the lore (#1694)", () => {
+  const p = sim.player("Crafter", "-92");
+  wake(p);
+  p.inventory.setItem(2, lored(1));
+  p.inventory.setItem(7, new ItemStack("jbrain:power_pack", 1)); // off the crafting table
+  for (let i = 0; i < 4; i++) sim.tick();
+  assert.deepEqual(packs(p).map((s) => s.amount), [2]);
+  assert.equal(p.inventory.slots[2].amount, 2);
+  assert.equal(p.inventory.slots[7], undefined);
+});
+
+test("folding a crafted pack in stops at 16 and loses none, even in a full inventory", () => {
+  const p = sim.player("Hoarder", "-93");
+  wake(p);
+  p.inventory.setItem(2, lored(15));
+  p.inventory.setItem(7, new ItemStack("jbrain:power_pack", 3));
+  for (let i = 0; i < 4; i++) sim.tick();
+  assert.equal(p.inventory.slots[2].amount, 16);
+  assert.equal(p.inventory.slots[7].amount, 2); // the rest stays where it landed
+  assert.deepEqual(p.inventory.slots[7].lore, [LINES.powerPackLore]);
+
+  const full = sim.player("Packed", "-94");
+  wake(full);
+  for (let i = 0; i < full.inventory.size; i++) {
+    if (!full.inventory.slots[i]) full.inventory.setItem(i, new ItemStack("minecraft:dirt", 64));
+  }
+  full.inventory.setItem(3, lored(16));
+  full.inventory.setItem(9, lored(10));
+  full.inventory.setItem(20, new ItemStack("jbrain:power_pack", 9));
+  for (let i = 0; i < 4; i++) sim.tick();
+  assert.deepEqual(packs(full).map((s) => s.amount), [16, 16, 3]);
+  assert.ok(packs(full).every((s) => s.lore[0] === LINES.powerPackLore));
+});
+
 const knownOf = (line) => JSON.parse(line.slice(line.indexOf("{"))).known;
 
 test("each /dave question carries the asker's unlocks, first held and then kept", () => {
@@ -323,4 +364,30 @@ test("Dave's mob search finds the nearest of a type around an online player", ()
   assert.equal(sim.logs.at(-1), "[jbrain] find refused: Nobody isn't online");
   sim.scriptevent("jb:find", JSON.stringify({ player: "Steve 42", type: "cow\"; op @a" }));
   assert.match(sim.logs.at(-1), /^\[jbrain\] find refused: Error: not a mob type/);
+});
+
+test("Dave's look around finds item stacks on the ground near an online player", () => {
+  const p = sim.player("Steve 42", "-61");
+  p.location = { x: 0.5, y: 64, z: 0.5 };
+  sim.overworld.dropItem(new ItemStack("minecraft:iron_ingot", 3), { x: 10.2, y: 64.1, z: 0.7 });
+  sim.overworld.dropItem(new ItemStack("minecraft:iron_ingot", 2), { x: 10.9, y: 64.4, z: 0.1 });
+  sim.overworld.dropItem(new ItemStack("minecraft:diamond", 1), { x: -3, y: 63, z: 4 });
+  sim.overworld.dropItem(new ItemStack("minecraft:diamond", 9), { x: 100, y: 64, z: 0 }); // too far
+  sim.overworld.dropItem(new ItemStack("minecraft:dirt", 64), { x: 1, y: 64, z: 1 });
+  sim.overworld.spawnEntity("minecraft:cow", { x: 2, y: 64, z: 2 });
+  sim.logs.length = 0;
+  sim.scriptevent("jb:items", JSON.stringify({ player: "steve 42", types: ["iron_ingot", "minecraft:diamond"] }));
+  assert.deepEqual(sim.logs, [
+    "[jbrain] items ground: 1 minecraft:diamond at x=-3 y=63 z=4, 5 blocks from Steve 42 (overworld)",
+    "[jbrain] items ground: 5 minecraft:iron_ingot at x=10 y=64 z=0, 10 blocks from Steve 42 (overworld)",
+  ]);
+  sim.logs.length = 0;
+  sim.scriptevent("jb:items", JSON.stringify({ player: "Steve 42", types: ["emerald"] }));
+  assert.deepEqual(sim.logs, [
+    "[jbrain] items none: no minecraft:emerald on the ground within 48 blocks of Steve 42",
+  ]);
+  sim.scriptevent("jb:items", JSON.stringify({ player: "Nobody", types: ["emerald"] }));
+  assert.equal(sim.logs.at(-1), "[jbrain] items refused: Nobody isn't online");
+  sim.scriptevent("jb:items", JSON.stringify({ player: "Steve 42", types: ["x; op @a"] }));
+  assert.match(sim.logs.at(-1), /^\[jbrain\] items refused: Error: not 1-8 item types/);
 });

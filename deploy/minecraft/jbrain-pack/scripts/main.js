@@ -6,9 +6,9 @@
 // Dave's welcome and first-time beats are welcome.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, packLoreStale,
-  packToBurn, parseConfig, parseFind, parseKnown, parseWaypoint, slotFate, trackerLine,
-  tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
+import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, itemsLines,
+  packLoreStale, packToBurn, parseConfig, parseFind, parseItems, parseKnown, parseWaypoint,
+  slotFate, trackerLine, tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
@@ -83,7 +83,7 @@ const carried = (player) => {
   if (inv) {
     for (let i = 0; i < inv.size; i++) {
       const item = inv.getItem(i);
-      if (item) out.push({ item, put: (v) => inv.setItem(i, v) });
+      if (item) out.push({ item, put: (v) => inv.setItem(i, v), inv, slot: i });
     }
   }
   const eq = player.getComponent("minecraft:equippable");
@@ -197,16 +197,39 @@ const onWaking = (player, initialSpawn) => {
 
 // --- the item guide's unlocks (§M19) ----------------------------------------------------
 
+// Bedrock never merges two stacks already in separate slots, so a crafted pack lored
+// where it landed would sit apart from the lored stack for good (#1694): it tops up any
+// lored stack with room, and only what doesn't fit stays in its own slot. Folded by hand,
+// not re-added, so a pack with nowhere to merge never jumps to another slot.
+const fold = (inv, slot, item) => {
+  let left = item.amount;
+  for (let j = 0; j < inv.size && left > 0; j++) {
+    const other = j === slot ? undefined : inv.getItem(j);
+    if (!other?.isStackableWith(item)) continue;
+    const n = Math.min(other.maxAmount - other.amount, left);
+    if (n <= 0) continue;
+    other.amount += n;
+    // The top-up is written first: a failure between the two writes doubles a pack
+    // rather than losing one.
+    inv.setItem(j, other);
+    left -= n;
+  }
+  if (left === 0) return inv.setItem(slot, undefined);
+  item.amount = left;
+  inv.setItem(slot, item);
+};
+
 // What the player has unlocked, after a look at what they carry now; written back only
 // when something new was unlocked. The same look lores their Power Packs (§M10): a
 // crafted one comes without, and only a stack written back keeps it.
 const learn = (player) => {
   const before = parseKnown(world.getDynamicProperty(knownKey(player.id)));
   const stacks = carried(player);
-  for (const { item, put } of stacks) {
+  for (const { item, put, inv, slot } of stacks) {
     if (!packLoreStale(item.typeId, item.getLore())) continue;
     item.setLore([LINES.powerPackLore]);
-    put(item);
+    if (inv) fold(inv, slot, item);
+    else put(item);
   }
   const held = stacks.map((c) => c.item.typeId);
   const after = unlocksFrom(before, held);
@@ -214,7 +237,7 @@ const learn = (player) => {
     world.setDynamicProperty(knownKey(player.id), JSON.stringify(after));
   }
   try {
-    story.onUnlocks(player, { added: after.filter((k) => !before.includes(k)), known: after, held });
+    story.onUnlocks(player, { known: after, held });
   } catch (e) {
     say(`story beat failed for ${player.name}: ${e}`);
   }
@@ -375,6 +398,33 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
       say(findLine(q, p.name, here, mob?.location));
     } catch (e) {
       say(`find refused: ${e}`);
+    }
+  } else if (ev.id === "jb:items") {
+    // Dave's look around for things on the ground (§M23): a death's drops, a dropped
+    // stack. Item entities, like mobs, exist only in the chunks around players.
+    try {
+      const q = parseItems(ev.message);
+      const who = q.player.toLowerCase();
+      const p = world.getAllPlayers().find((pl) => pl.name.toLowerCase() === who);
+      if (!p) {
+        say(`items refused: ${q.player} isn't online`);
+        return;
+      }
+      const stacks = [];
+      for (const e of p.dimension.getEntities({
+        type: "minecraft:item",
+        location: p.location,
+        maxDistance: q.max,
+      })) {
+        const stack = e.getComponent("minecraft:item")?.itemStack;
+        if (stack && q.types.includes(stack.typeId)) {
+          stacks.push({ typeId: stack.typeId, amount: stack.amount, location: e.location });
+        }
+      }
+      const here = { dim: p.dimension.id, x: p.location.x, z: p.location.z };
+      for (const line of itemsLines(q, p.name, here, stacks)) say(line);
+    } catch (e) {
+      say(`items refused: ${e}`);
     }
   } else if (ev.id === "jb:config") {
     try {

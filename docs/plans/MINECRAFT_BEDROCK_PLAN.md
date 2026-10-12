@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -101,7 +101,7 @@ Wrapper HTTP surface (internal network, bearer token, as for the SDR sidecar):
 | `POST /worlds/{slot}/import` | Accepts a streamed `.mcworld` or zip into a slot. Refused for the active slot while BDS is running. |
 | `POST /worlds/{slot}/activate` | Points `level-name` at the slot. Done while the server is stopped; the backend runs the stop → snapshot → activate → start sequence. |
 | `POST /worlds/{slot}/reset` | Empties a slot or regenerates it from a seed. Refused for the active slot while BDS is running. |
-| `GET /world/index` | Parses the latest snapshot (never the live DB, which BDS holds locked) and streams JSONL records (M4). |
+| `GET /world/index` | Parses the latest snapshot and streams JSONL records (M4). Not built: the map (§M8) and chest search (§M23) read the live world's LevelDB directly instead — BDS holds LevelDB's lock, but the stdlib reader never takes it, and table files are immutable while the log is only appended to. |
 | `GET /bridge/events`, `POST /bridge/reply` | The companion bridge (M5). |
 
 Graceful stop: the wrapper traps SIGTERM, sends `stop`, and waits for BDS to exit. The compose
@@ -604,6 +604,12 @@ Exit: **Test** reports the server reachable from outside, and one brother joins 
 house by typing the address.
 
 ### M4 — World index (the companion's long-term memory of the world)
+
+> **Status (2026-10-12):** the tables below were never needed for what has been built.
+> Explored ground (§M8), blocks (`mc_find_block`) and chest contents (§M23,
+> `mc_find_item`) are read straight off the live world's LevelDB by in-memory indexes in
+> the sidecar, refreshed when the files change — no snapshot parse, no `app.mc_*` world
+> tables. Entities (villagers, pets) are what's left of this wave.
 
 - After each snapshot, the wrapper parses **the snapshot copy** and streams JSONL. The backend
   upserts it into owner-RLS'd tables:
@@ -1381,8 +1387,10 @@ once-a-second look at each player's inventory (main.js `learn()`) writes
 `LINES.powerPackLore`, *"The same fuel the Old Makers' ships ran on."* (owner,
 2026-10-12), on every Power Pack they carry that lacks exactly that line, keeping its
 amount and everything else. Every pack gets the same single line (an older wording is
-rewritten too), because Bedrock stacks only identical lore: a fresh craft sits apart
-from a lored stack for at most a second, then matches it. A pack in a chest gets it when
+rewritten too), because Bedrock stacks only identical lore. A fresh craft lands apart
+from a lored stack, and Bedrock never merges two stacks already in separate slots, so the
+look folds a newly lored inventory pack into any lored stack with room (to 16); only what
+doesn't fit keeps its own slot, and nothing is lost (#1694). A pack in a chest gets it when
 it's next carried. Transport shipped later, below.
 **Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
@@ -2063,7 +2071,8 @@ satellite's deep scan needs time to recharge.
   and costs nothing.
 
 **What counts as a deep scan:** the searches that reveal something nobody has pointed out:
-`mc_nearby` (the server's own `locate`) and `mc_find_block`. Free: `mc_what_is_at`, saved
+`mc_nearby` (the server's own `locate`), `mc_find_block`, and `mc_find_item` past 48
+blocks (§M23). Free: `mc_what_is_at`, saved
 places and waypoints, where other players are, a player's own trail and deaths.
 
 **How it's built:**
@@ -2306,8 +2315,10 @@ map link was turned off*.
   world and the player it opens on; the only read that counts as a view), then
   `/map/info`, `/map/tile/{dim}/{zoom}/{tx}/{tz}.png`, `/map/point`, `/map/players`,
   `/map/structures` and `/timeline` under it. The token picks the slot; the visitor never
-  names one. Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`,
-  `noindex`.
+  names one. Every route, tiles included, 404s once the slot holds another world: the
+  token works outside the viewer, so an old link must never draw the new world (#1664).
+  Tiles cache the slot's checked folder for 5 s, one sidecar read per view's burst.
+  Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`, `noindex`.
 - Storage and RLS (migration `0230_mc_share_links`): `app.mc_share_links` keeps only the
   token's SHA-256, the slot, its world folder at mint, and the player. A visitor reads under
   `mc_share_context(link_id)`; the `*_share` policies on `mc_player_track`,
@@ -2385,6 +2396,89 @@ structure, a biome, a block or an ore.
 
 Only checkable on the box: that `getEntities` with `closest` answers within the console's
 3-second reply window on a busy server, and Nether biome ids with `locate biome`.
+
+### M23 — Dave finds items: chest contents and the ground (owner, 2026-10-12)
+
+**Why.** "Which chest has my diamonds?" and "where did my stuff go?" are the questions
+players ask most that Dave couldn't answer: `mc_find_block` sees blocks, not what's inside
+them. The story is canon on the lore page ("The Tricorder's short-range scan", 2026-10-12).
+
+**Owner decisions (2026-10-12):**
+1. **Any chest.** A player may search every container in the world: chests have no owner.
+   A player's own inventory and ender chest are not searched.
+2. **Cost.** Within 3 chunks (48 blocks) of the asker it's their Tricorder's short-range
+   scan, **free** (in game they need their own Tricorder on them, which `/dave` already
+   requires). Farther is a **deep scan** through the §M17 ledger: two a Minecraft day in
+   game, unlimited in the app, a repeat from about the same place free.
+3. **First wave:** container contents from the world's files, and a live look around the
+   asker for items on the ground (a death's drops).
+4. **Freshness.** Answers carry the files' age; Dave says "as of N minutes ago" from 2
+   minutes on. Before reading, the sidecar asks the running world to write itself out.
+
+**What's built.**
+- **Sidecar** (`deploy/minecraft/`): `nbt.py`, a full little-endian NBT reader (all 12 tag
+  types, depth and size caps, every length checked against the bytes left, back-to-back
+  compounds). `containers.py`'s `ContainerIndex`, modelled on `BlockIndex` (same 60 s
+  refresh by the db files' sizes and mtimes), reads every `BlockEntity` record (key tag 49,
+  with or without the dimension int): chests (trapped too, which share the `Chest` id),
+  barrels, shulker boxes, hoppers, dispensers, droppers, furnaces, blast furnaces, smokers,
+  brewing stands, crafters and chiseled bookshelves by their `Items`; item frames (`Item`),
+  decorated pots (`item`) and lecterns (`book`). A shulker box carried as an item is read
+  one level down (`tag.Items`), and its contents count toward the container holding it.
+  A double chest (`pairx`/`pairz`, each half naming the other) is one chest. A loot chest
+  nobody opened (`LootTable`, no `Items`) is skipped and counted, an unreadable record
+  skipped and counted, ender chests never read. A `CustomName` is kept.
+- `GET /map/items?slot&dim&x&z&items&radius&limit&flush` — the nearest containers holding
+  any of 1–8 items (limit ≤ 20; no `radius` = the whole dimension), each with its kind,
+  x/y/z, distance, count per item, how many are in shulker boxes, and its name; the totals
+  across every match in range; suggestions when no name is in any container; the index's
+  own counts (`records`, `unreadable_records`, `unopened_loot`, `containers_indexed`);
+  and `as_of` / `age_s` (the newest db file's mtime). `/map/find` carries `as_of` /
+  `age_s` too, and its `chest` now also searches `trapped_chest`, `barrel` and every
+  shulker box colour.
+- **Flush.** With `flush=1` the sidecar runs the snapshot's `save hold` → `save query` →
+  `save resume` dance with nothing copied (`Bds.flush`, under the console lock, resume
+  always sent), at most every 30 s and waiting at most 10 s, only for the loaded world
+  while it runs. After one, the index re-reads at once and the answer is current
+  (`age_s` 0). It's safe for the reason snapshots are: hold pauses saving, resume always
+  follows; the cost is one forced save, no worse than a hot snapshot. The result's
+  `flush` says what happened (`flushed`, `recent`, `not running`, `failed: …`, `not
+  asked`).
+- **Pack** (1.7.0): `scriptevent jb:items {"player", "types", "max"}` answers with one
+  console line per kind per block within 48 blocks of that online player (`items ground: 3
+  minecraft:iron_ingot at x= y= z=, N blocks from <player> (<dim>)`, nearest first, up to
+  10), or `items none` / `items refused`. Item entities via `getEntities({type:
+  "minecraft:item"})` and their `minecraft:item` component's `itemStack`, stable
+  `@minecraft/server` 2.0.0. Containers are NOT read live: `dimension.getBlocks` over a
+  97×97×384 volume is millions of block checks in one tick, which risks the script
+  watchdog on a busy server; the files, flushed first, are fresh enough.
+- **`mc_find_item`** (both Dave tiers): `items` (1–8, spaces become underscores), `x`/`z`,
+  `radius`, `limit`, `dimension`, and `gamertag` (the app only). In game, a radius of 48
+  or less around the asker is free and also looks on the ground around them; wider,
+  omitted, or centred more than 48 blocks away is a deep scan (an id in no container at
+  all is refunded, as `mc_find_block`'s unexplored names are). In the app it's unlimited
+  and files-only, unless a `gamertag` is named, when the ground around that online player
+  is looked at too. Each hit is a line in `first_hit`'s shape (`- 12 diamond in a chest at
+  x= y= z=, N blocks away`, `- 3 iron ingot on the ground at …`); whichever of the ground
+  and the containers holds the nearer hit is printed first, so the Tricorder is aimed at
+  the best one. Player-written container names are listed after every hit, fenced. Prompt
+  `agent-minecraft-dave-v18`, guide v9 (the Tricorder entry), `mc_find_item` v1.
+- **Debug:** `GET /minecraft/map/items` passes through (with `flush`), for the box check.
+- No new tables.
+
+**Not built.** The fast path ("which chest has my diamonds") — no signed-off quick-answer
+line for it on the lore page yet; once one is, it's a `_nearest`-style branch. Minecart
+chests and chest boats are entities, not block entities, so they aren't searched.
+
+**Box checks (after deploy).**
+- The format on the owner's real imported world: `GET /minecraft/map/items?x=0&z=0&items=
+  diamond` → `records` (how many key-49 records), `unreadable_records` (should be 0),
+  `unopened_loot`, `containers_indexed`, and a known chest's contents matching the game.
+  Then the Nether (`dim=nether`).
+- Time the first (cold) call and a `flush=true` call: the cold read decompresses every
+  table, as the block index's first search does.
+- That `save hold`/`save query` answers within 10 s on the busy server (the `flush` field),
+  and that `jb:items` answers within the console's 3-second window.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 
@@ -2739,12 +2833,19 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   over (`skipped`) sends the line again at once with `false`.
 - **First death** (the first respawn, beat `first_death`): Dave's two lines; when a Power
   Pack saved their things on that death, only the first, so he never says they're where
-  they fell. **First Ender Pearl** (`first_ender_pearl`): the moment M19's `power_pack`
-  unlock is first recorded. **First Power Pack** (`first_power_pack`): the field line only
+  they fell. **First Ender Pearl** (`first_ender_pearl`): the first look with a pearl on
+  them once M19's `power_pack` unlock is recorded. **First Power Pack** (`first_power_pack`): the field line only
   with the keep switch on, the saved-places line only with the transport switch on;
   neither on, nothing is said or recorded, so it comes the next time they hold a pack
   after the owner turns one on. The pearl and pack beats wait for their own Tricorder
-  on them, like every other Dave line (a respawn always has it, or is re-beamed one).
+  on them, like every other Dave line (a respawn always has it, or is re-beamed one): an
+  unlock made without it leaves the beat unheard for a later look, never spent (#1684).
+- **Beats never cut into Dave's speech** (#1683): while the welcome, a `/dave hello` or
+  the first-death lines are playing, no other beat speaks. The ones a look re-checks
+  (pearl, pack, Replicator) stay unheard until a look after he's done; a death or a
+  planted gate waits and plays once he's done. So a death mid-welcome gets its lines
+  after the welcome, with the Tricorder it handed over, and a pre-DW1 player carrying
+  packs hears their beats after it, not over the darkness.
 - **`/dave hello`** (also `/d`, `/ai`; exactly "hello", any case) replays the six lines at
   the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
   question reaches the backend. It still needs their own Tricorder. "hello there" is a
@@ -2754,9 +2855,10 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   it should lead." Beat `first_wormhole`, through their own Tricorder only; `wormhole.js`
   calls it through `initWormholes({ onPlanted })`.
 - **First Replicator** (owner, 2026-10-12, with the panel signed off): when
-  `replicator.js` records the unlock (8 Power Packs held), Dave says "Eight Power Packs…
+  `replicator.js` sees 8 Power Packs held, Dave says "Eight Power Packs…
   that's enough to wake a Replicator. …". Beat `first_replicator`, own Tricorder only,
-  through `initReplicator({ onUnlocked })`.
+  through `initReplicator({ onUnlocked })`, which is called on every look while they hold
+  8 (not only the unlocking one), so a player without their Tricorder hears it later.
 - **Not here:** the chests' beat; it comes with M11 and lines on the lore page.
 
 **Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)
@@ -3122,7 +3224,7 @@ never in the prompt:
 | ★ `locate_biome(biome)` | "nearest cherry grove / mushroom island" | index → `locate` / seed map | Player |
 | `find_villager(profession, trade?)` | "nearest librarian selling Mending" (villager trades are in the saved actor data) | index | Player |
 | `find_block(block, area)` | "nearest diamonds", "any spawners near here" | index | **Fair play** |
-| ★ `find_container(item)` | "which chest has my diamonds?" | index | Player |
+| ★ `find_container(item)` — **shipped as `mc_find_item`** (2026-10-12, §M23) | "which chest has my diamonds?" | index | Player |
 | ★ `where_is(player)` — **shipped as `mc_players` with a `gamertag`** (2026-10-11, §M18) | another player's position (sharing is on, owner decision) | live → index | Player |
 | `guide_me(target)` / `stop_guiding` | a live **actionbar compass** ("→ pig, 42 m NE") refreshed every second until arrival. Display only: `titleraw … actionbar`, with no world change | live | Player |
 | `portal_math(x,z)` | Overworld↔Nether coordinates; "where do I build the portal so it links to my base?" | computed | Player |

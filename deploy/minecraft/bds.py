@@ -9,6 +9,7 @@ the server's stdin.
 from __future__ import annotations
 
 import collections
+import contextlib
 import io
 import json
 import os
@@ -343,6 +344,19 @@ class Bds:
             finally:
                 self._send("save resume")
         return data, [f"{name}:{length}" for name, length in files]
+
+    def flush(self, wait_s: float = 10.0) -> None:
+        """Have the running world written out to its files, players left connected:
+        the snapshot's hold/query/resume with nothing copied, so a read of the files
+        straight after sees what's in the chests now (§M23). Raises ConsoleError when the
+        server doesn't confirm in time; `save resume` is sent either way."""
+        with self._cmd_lock:
+            self._send("save hold")
+            try:
+                self._query_files(wait_s)
+            finally:
+                with contextlib.suppress(ConsoleError, OSError):
+                    self._send("save resume")
 
     def _query_files(self, wait_s: float) -> list[tuple[str, int]]:
         deadline = time.monotonic() + wait_s

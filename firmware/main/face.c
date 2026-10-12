@@ -15,6 +15,8 @@
 #include "face.h"
 
 #include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <string.h>
 
 /* The panel takes RGB565 big-endian; storing swapped means the blit is a straight memcpy. */
@@ -66,11 +68,41 @@ static void fill_rect(uint16_t *fb, int x, int y, int w, int h, uint16_t c)
         for (int i = x; i < x + w; i++) px(fb, i, j, c);
 }
 
+/* ROWS, NOT PIXELS (0.4.4). The disc is the same set of pixels it always was, `i*i + j*j <= r*r`,
+   but each row is found once and written as one run: no per-pixel test, no per-pixel bounds check.
+   The framebuffer is in PSRAM, where a run of neighbouring writes is what the cache is good at. */
+
+/* The largest i with i*i + j*j <= r*r, or -1 when the row misses the disc. */
+static int disc_hw(int r, int j)
+{
+    const int rem = r * r - j * j;
+    if (rem < 0) return -1;
+    int i = (int)sqrtf((float)rem);
+    while (i * i > rem) i--;
+    while ((i + 1) * (i + 1) <= rem) i++;
+    return i;
+}
+
+static void hspan(uint16_t *fb, int y, int x0, int x1, uint16_t c)
+{
+    if (y < 0 || y >= FACE_H) return;
+    if (x0 < 0) x0 = 0;
+    if (x1 >= FACE_W) x1 = FACE_W - 1;
+    uint16_t *row = &fb[y * FACE_W];
+    for (int x = x0; x <= x1; x++) row[x] = c;
+}
+
+void face_fill_circle(uint16_t *fb, int cx, int cy, int r, uint16_t c)
+{
+    for (int j = -r; j <= r; j++) {
+        const int hw = disc_hw(r, j);
+        if (hw >= 0) hspan(fb, cy + j, cx - hw, cx + hw, c);
+    }
+}
+
 static void fill_circle(uint16_t *fb, int cx, int cy, int r, uint16_t c)
 {
-    for (int j = -r; j <= r; j++)
-        for (int i = -r; i <= r; i++)
-            if (i * i + j * j <= r * r) px(fb, cx + i, cy + j, c);
+    face_fill_circle(fb, cx, cy, r, c);
 }
 
 /* Centre rectangle plus four quarter-discs. Everything the mock draws is a roundRect. */
@@ -103,17 +135,62 @@ static void arc_stroke(uint16_t *fb, int cx, int cy, int r, float a0, float a1, 
 /* A limb is a rotated capsule with a ball on the end — the mock's `drawLimb`. Canvas rotates
    clockwise with y down, so its (0,len) lands at (-len*sin, +len*cos); getting that sign
    backwards would splay the arms inward, which reads as a completely different pose. */
-static void draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uint16_t c)
+/* AND A LIMB IS THEIR UNION, ONE RUN PER ROW (0.4.4). It was a full disc stamped at every pixel of
+   its length, about six writes for every pixel that ended up lit, and the limbs were most of the
+   frame: the ostrich's legs, toes, tail and crest are ~80% of its pixel writes. Every disc of a limb
+   is one colour, so drawing order inside it never mattered and the union is the whole picture.
+   Each row's leftmost and rightmost covered pixel is gathered first, then the row is written once;
+   `host/tests.c` holds the old stamping loop and checks the two agree pixel for pixel. */
+void face_draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uint16_t c)
 {
     const float a = deg * (float)M_PI / 180.0f;
     const float ex = -sinf(a), ey = cosf(a);
-    const int steps = len;
-    for (int i = 0; i <= steps; i++) {
-        const float t = (float)i;
-        fill_circle(fb, x + (int)lrintf(ex * t), y + (int)lrintf(ey * t), w / 2, c);
+    const int r = w / 2;
+    const int rb = (int)(w * 0.62f);
+    const int bx = x + (int)lrintf(ex * (float)len), by = y + (int)lrintf(ey * (float)len);
+    int y0 = (y < by ? y : by) - r, y1 = (y > by ? y : by) + r;
+    if (y0 < 0) y0 = 0;
+    if (y1 >= FACE_H) y1 = FACE_H - 1;
+    if (y0 > y1 || len < 0) {
+        face_fill_circle(fb, bx, by, rb, c);
+        return;
     }
-    fill_circle(fb, x + (int)lrintf(ex * (float)len), y + (int)lrintf(ey * (float)len),
-                (int)(w * 0.62f), c);
+    /* On the stack: 1.8 KB at most, for the length of one limb. */
+    int16_t lo[FACE_H], hi[FACE_H];
+    for (int row = y0; row <= y1; row++) {
+        lo[row] = INT16_MAX;
+        hi[row] = INT16_MIN;
+    }
+    /* One disc's row widths, worked out once: every stroke disc of a limb has the same radius. */
+    int16_t hw_r[2 * 64 + 1];
+    const bool table = r <= 64;
+    if (table) {
+        for (int j = -r; j <= r; j++) hw_r[j + r] = (int16_t)disc_hw(r, j);
+    }
+    /* The stroke's discs at 0..len. Their centres move at most a pixel per step, so each row's
+       coverage is one run. */
+    for (int i = 0; i <= len; i++) {
+        const int cx = x + (int)lrintf(ex * (float)i), cy = y + (int)lrintf(ey * (float)i);
+        for (int j = -r; j <= r; j++) {
+            const int row = cy + j;
+            if (row < y0 || row > y1) continue;
+            const int hw = table ? hw_r[j + r] : disc_hw(r, j);
+            if (hw < 0) continue;
+            if (cx - hw < lo[row]) lo[row] = (int16_t)(cx - hw);
+            if (cx + hw > hi[row]) hi[row] = (int16_t)(cx + hw);
+        }
+    }
+    for (int row = y0; row <= y1; row++) {
+        if (lo[row] <= hi[row]) hspan(fb, row, lo[row], hi[row], c);
+    }
+    /* THE BALL ON ITS OWN. It is wider than the stroke, so near the end it can cover part of a row
+       the stroke left off further back, and one run per row would fill the gap between. */
+    face_fill_circle(fb, bx, by, rb, c);
+}
+
+static void draw_limb(uint16_t *fb, int x, int y, float deg, int len, int w, uint16_t c)
+{
+    face_draw_limb(fb, x, y, deg, len, w, c);
 }
 
 /* Mock geometry, verbatim. Origin is translate(W/2, H*0.545) for the small-body variant. */

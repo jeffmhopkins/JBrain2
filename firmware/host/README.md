@@ -1,6 +1,6 @@
 # The firmware's host suite
 
-Six binaries and five gates, all run by `make -C firmware/host test`. Nothing here needs hardware,
+Six binaries and six gates, all run by `make -C firmware/host test`. Nothing here needs hardware,
 an ESP-IDF toolchain, or a network.
 
 | binary | source | what it is for |
@@ -35,6 +35,8 @@ air (plan §6a).
 files with no host harness: a touch that wakes a dark screen forgets the last press's point (or a
 drag on the next frame is a swipe measured from it), and only `audio_task` calls the functions
 that write the codec's control registers (`esp_codec_dev` has no lock).
+`test_stack_sampled_before_first_report` pins a third: `face_task` samples its stack high-water
+mark before its loop, so the boot report never says `stack_free: 0` (#1690).
 
 They are separate because they need different things. The first wants to be a tight loop over
 inputs; the second needs a world — cues that hold the speaker for a while, commands that are
