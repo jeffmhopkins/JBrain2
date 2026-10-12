@@ -86,6 +86,7 @@ from jbrain.api import (
     auth,
     brain,
     chat_attachments,
+    chat_share,
     debug,
     debug_minecraft,
     debug_panel,
@@ -1451,6 +1452,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.jlaunch_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
         # Per-IP bounds on the unauthenticated map-share reads (api/minecraft_share.py):
         # the viewer polls players and the live log, and a pan pulls a screenful of tiles.
+        # Per-IP bounds on the unauthenticated chat-share reads (api/chat_share.py): the page
+        # load, and the favicons one load asks for (a dozen citations at once).
+        app.state.chat_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
+        app.state.chat_share_favicon_rate_limiter = TokenBucket(capacity=120, refill_per_sec=4.0)
         app.state.mc_share_rate_limiter = TokenBucket(capacity=60, refill_per_sec=2.0)
         app.state.mc_share_tile_rate_limiter = TokenBucket(capacity=400, refill_per_sec=20.0)
         # The Automations operator surface: projects the live trigger/schedule/
@@ -1940,6 +1945,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(proposals.router, prefix="/api")
     app.include_router(research_library.router, prefix="/api")
     app.include_router(research_share.router, prefix="/api")
+    # The public chat-share reads (token-in-path, rate-limited, noindex, read-only).
+    app.include_router(chat_share.router, prefix="/api")
     app.include_router(runs.router, prefix="/api")
     app.include_router(sdr.router, prefix="/api")
     app.include_router(search.router, prefix="/api")

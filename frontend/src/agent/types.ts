@@ -449,6 +449,8 @@ export interface AgentSession {
    * or null when there is no plan — drives the composer-foot plan pill and the
    * Chats-picker plan badge (docs/archive/JERV_PLANNING_TOOL_PLAN.md). */
   plan_status?: string | null;
+  /** A live public share link points at this chat — the Chats row shows a link glyph. */
+  shared?: boolean;
   /** The last completed turn's context fill + the window it ran against, so the
    * composer's context-usage meter restores when this chat is reopened (null/absent
    * until a turn reports usage). */

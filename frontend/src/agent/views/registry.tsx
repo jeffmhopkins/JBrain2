@@ -5,7 +5,15 @@
 // selects a registered component and fills its data-only slots. Adding a
 // component is a deliberate change here, like adding a tool.
 
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   type MetricPoint,
   type PlanOut,
@@ -30,6 +38,7 @@ import { serverMetricSeries } from "../../components/serverMetricSeries";
 import { DeepestRunCard } from "../DeepResearchProgress";
 import { ReportPlayer, type ReportReadAloud } from "../ReportPlayer";
 import { type CiteTarget, Markdown } from "../markdown";
+import { SHARE_WITHHELD_VIEWS, ShareModeContext } from "../shareMode";
 import type { ToolActivity } from "../transcript";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
@@ -3974,7 +3983,16 @@ export function ToolView({
   readAloud?: ReportReadAloud | undefined;
 }): ReactNode {
   const Component = REGISTRY[payload.view];
+  const shared = useContext(ShareModeContext);
   if (!Component) return null;
+  const withheld = shared ? SHARE_WITHHELD_VIEWS.get(payload.view) : undefined;
+  if (withheld) {
+    return (
+      <div className={`tool-view surface-${payload.surface}`}>
+        <p className="tv-withheld">{withheld}</p>
+      </div>
+    );
+  }
   return (
     <div className={`tool-view surface-${payload.surface}`}>
       <Component

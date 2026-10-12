@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-10-10
+> **Status:** Living · **Last verified:** 2026-10-12
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Around
@@ -104,7 +104,11 @@ empty-scope, non-owner context pinned to one share-link id; a row-scoped policy
 (`research_reports_share`, migration 0150) grants read to exactly that link's
 report or its folder's current members, and nothing else. The token is only the
 key that resolves the pin — the database, not the endpoint, decides what the
-visitor may read.
+visitor may read. A chat share link (`/api/chat-share`, migration 0238) is the
+same shape: `agent_sessions_share`, `agent_turns_share` and `runs_chat_share`
+admit exactly the pinned link's one chat — its session row, turns and runs, read
+as they stand at each load — and none of its notes, attachments, generated
+images or sub-agent children.
 
 ## Knowledge pipeline
 
