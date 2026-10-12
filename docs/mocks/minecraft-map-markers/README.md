@@ -2,8 +2,8 @@
 
 > **Status:** Living · **Last verified:** 2026-10-12
 >
-> **Open — awaiting the owner's pick after the independent review (`REVIEW.md`, to be
-> written by a reviewer who did not build these).** Behaviour sources:
+> **Open — awaiting the owner's pick.** The independent review is `REVIEW.md` in this
+> folder: it picks **A** with changes. Revision 2 (below) makes those changes. Behaviour sources:
 > `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M16, §M12, §M8 and P3 (the map and its chat card),
 > and §M21 (the Tricorder target's marker grammar).
 
@@ -37,13 +37,33 @@ point markers under 40 px. Each kind's colour carries a meaning the map already 
 | **No-Spawn Beacon** | `--green` ring | shield | *safe*: green is ok/healthy. Its area is green too. |
 | **Protected area** (the 3 × 3 chunks, 48 × 48 blocks) | `--green` 2 px dashed outline over a halo, optional 16 % green fill | — | the chunk-aligned square, drawn to the block. Two overlapping beacons show both squares. |
 | **Gate · open** | `--violet` solid ring, the portal filled violet with its swirl | portal (the app's `PortalIcon`) | violet is the scrubber's portal glyph, so travel reads the same |
-| **Gate · dormant** | `--violet` **dashed** ring, the portal empty | portal outline | same kind, not leading anywhere |
+| **Gate · dormant** | `--violet` **dashed** ring, the same portal and swirl, unfilled | portal + swirl | the same glyph, so it still reads as a gate; the dashed ring and the empty frame carry *not open* |
 | **Where an open gate leads** | a dotted `--violet` line (1 on, 6 off, 3 px over a 6 px halo) with an arrowhead, ending at a violet-ringed pin labelled with the place | pin | dotted, so it never reads as a solid trail or as the Tricorder's dashed bearing (8/6) |
-| **A gate into another dimension** | no line; a label plate *→ Nether base · Nether* by the gate | — | the line would end in another dimension's coordinates |
+| **A gate into another dimension** | no line; a label plate *to Nether base · in the Nether* by the gate | — | the line would end in another dimension's coordinates; no arrow, which would read as a bearing |
 
-Labels follow the map's label rule: to the right, else the left, else below. A label that
-still hits the edge, a floating control, the panel or the scale bar is **dropped, never
-drawn under it**. The mocks implement this.
+**Draw order:** areas, gate lines, place pins, beacons, gates, the selection ring, then
+**player discs on top**. A player is never under a gate, beacon or selection ring.
+
+**Labels** follow the map's label rule, **extended**: to the right, else the left, else below,
+else above. A label that would still hit something is **dropped, never drawn under or over
+it**. Things it must not touch:
+- the edge, a floating control, the panel or the scale bar;
+- another label, a marker tile or a player disc;
+- **any drawn gate line** other than its own (and the Tricorder bearing, when shown), so a
+  plate never sits on another gate's line and appears to say where that line goes.
+
+Markers are kept clear of the floating chrome by the camera. The mocks also follow DESIGN's
+rule that the + / − go under 380 px of visible map, and the segments and *show everyone*
+under 230 px.
+
+**Values** use a real minus sign (*X −160*) and never break inside a number, a unit or a
+time.
+
+**Proposed token: `--violet-text`.** DESIGN's accent-text tokens have no violet. These mocks
+use `--violet-text` for the *open* pill, the gate's panel icon and the *Leads to* arrow. In
+dark it is `var(--violet)`; in light it is `color-mix(in srgb, var(--violet) 52%,
+var(--text))`, the same pattern as `--steel-text`. The review measured it at 6.5:1 on white.
+Add it to `tokens.css` and to DESIGN's "Accent text tokens" list with the pick.
 
 **Tapping a gate** opens the panel's *what you tapped* block:
 
@@ -72,9 +92,9 @@ map's existing status line. They never claim *live* for a world that isn't runni
 
 | Variant | File | Thesis |
 |---|---|---|
-| **A** | `a-always-drawn.html` | *Always drawn.* Two overlay rows, **No-Spawn Beacons** and **Wormhole gates**. With them on, every protected square and every open gate's dotted line and destination are on the map. |
+| **A** | `a-always-drawn.html` | *Always drawn.* Two overlay rows, **No-Spawn Beacons** and **Wormhole gates**. With them on, every protected square is outlined, and every open gate's dotted line and destination are on the map. A tapped beacon's square is filled. The Layers tab carries an **In this world** list. |
 | **B** | `b-on-tap.html` | *Quiet until tapped.* Glyphs only. An open gate wears a small violet arrow badge. A tap draws that beacon's square, or that gate's line, pin and label. A sub-choice under Beacons, **Areas when tapped · All areas**, lets the owner see every square. |
-| **C** | `c-one-layer-list.html` | *One layer, listed.* A single **Beacons & gates** row. Areas are outlines only (filled when tapped), and gates carry a *→ Tree farm* label instead of a line. An **In this world** list in the Layers panel flies to each one. |
+| **C** | `c-one-layer-list.html` | *One layer, listed.* A single **Beacons & gates** row. Areas are outlines only (filled when tapped), and gates carry a *to Tree farm · NW* label instead of a line (the chat card too). An **In this world** list in the Layers panel flies to each one. |
 
 - **A — for:** it answers *is my base covered?* and *where does this gate go?* with no tap.
   It's the plan's wording made literal, and it matches the Tricorder's always-drawn bearing.
@@ -107,7 +127,25 @@ For each variant `v` in `a`, `b`, `c`:
 - `png/{v}-4-beacon-{theme}.png` — a beacon tapped, zoomed;
 - `png/{v}-5-layers-{theme}.png` — the Layers tab at 80 %;
 - `png/{v}-6-chat-card-{theme}.png` — Dave's card;
-- `png/{v}-7-map-320x568-dark.png` — the overview on a 320 × 568 phone.
+- `png/{v}-7-map-320x568-dark.png` — the overview on a 320 × 568 phone;
+- `png/{v}-8-busy-hub-{theme}.png` — a hub of three more open gates by spawn. It is A's
+  stress case: four dotted lines fan out, and labels drop rather than land on a line.
+
+**Revision 2** answers `REVIEW.md` in all three variants:
+- **X1:** players are drawn on top.
+- **X2:** the dormant glyph is the portal, unfilled.
+- **A1 / C1:** gate lines and player discs are label obstacles.
+- **C2:** a non-directional *to … · NW*.
+- **X3:** the cameras are re-framed. The render script now warns when a marker sits under a
+  floating control, and none does.
+- **X4:** the fixture says *two gates open*.
+- **X5:** real minus signs and no breaks inside values.
+- **X6:** the legend swatches sit on the neutral `--map-void`.
+- **A2 / A3 / A5 / A4:** A outlines its squares and fills the tapped one, keeps no arrow
+  badge, and gains the list and the hub state.
+- **C5:** C's chat card uses its labels.
+- **Light PNGs:** re-taken. The first set lost the 13 % tints when reduced to 256 colours;
+  they are now palette PNGs that keep every frequent exact colour.
 
 The render script audited every shot: no horizontal overflow, every DOM control's hit area at
 least 44 px, and no console errors. All passed. The canvas labels were checked by eye against
@@ -115,8 +153,10 @@ the drop rule.
 
 ## Recommendation
 
-**A, with B's arrow badge kept for dormant-versus-open at a glance, and C's *In this world*
-list added to the Layers tab.** The owner's two questions are *what's protected* and *where
+**A, as revised** — the independent review's pick too: lines are label obstacles, players
+are on top, the dormant gate is still a portal, squares are outlined with the tapped one
+filled, the **In this world** list is in Layers, and there is **no arrow badge**. The solid
+versus dashed ring and the line already tell open from dormant. The owner's two questions are *what's protected* and *where
 does it go*, and A is the only variant that answers both without a tap. The volume is small:
 the costs (a Power Pack and 8 echo shards per beacon; a seed, 90 diamonds and a pack per
 gate) keep counts in the single digits. The dotted line is distinct from the trails and the

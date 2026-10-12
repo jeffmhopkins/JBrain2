@@ -221,8 +221,18 @@ const GATES = [
   {id:2, x:-70, y:66, z:62, by:"Mira_P", open:false, to:null, at:"Oct 12"},
   {id:3, x:4, y:70, z:-78, by:"BlockyFox", open:true, to:{place:"Nether base", x:-20, y:72, z:40, dim:"nether"}, at:"Oct 12", aimed:"Oct 12"},
 ];
-const PLAYERS = [{n:"BlockyFox", tok:"--steel", x:44, z:22}, {n:"Mira_P", tok:"--green", x:74, z:-28}];
+// A's busy case: a hub of gates by the spawn, each leading somewhere else.
+const HUB = [
+  {id:4, x:-90, y:68, z:-14, by:"Mira_P", open:true, to:{place:"Mine", x:-150, y:40, z:56, dim:"overworld"}, at:"Oct 12", aimed:"Oct 12"},
+  {id:5, x:-66, y:68, z:-14, by:"BlockyFox", open:true, to:{place:"Village", x:-128, y:66, z:-118, dim:"overworld"}, at:"Oct 12", aimed:"Oct 12"},
+  {id:6, x:-42, y:68, z:-14, by:"Mira_P", open:true, to:{place:"Pumpkin patch", x:-20, y:70, z:-130, dim:"overworld"}, at:"Oct 12", aimed:"Oct 12"},
+];
+const PLAYERS = [{n:"BlockyFox", tok:"--steel", x:44, z:22}, {n:"Mira_P", tok:"--green", x:60, z:-22}];
 const chunk = (v) => Math.floor(v / 16);
+const nb = (t) => t.replace(/ /g, "&nbsp;");
+// a real minus sign, and no break inside a value
+const n = (v) => (v < 0 ? "\u2212" + -v : String(v));
+const XYZ = (o, y) => `X&nbsp;${n(o.x)}${y ? ` · Y&nbsp;${n(o.y)}` : ""} · Z&nbsp;${n(o.z)}`;
 const area = (b) => ({x0:(chunk(b.x) - 1) * 16, z0:(chunk(b.z) - 1) * 16, x1:(chunk(b.x) + 2) * 16, z1:(chunk(b.z) + 2) * 16});
 const dist = (a, b) => Math.round(Math.hypot(a.x - b.x, a.z - b.z));
 function compass(from, to){
@@ -293,12 +303,12 @@ function glyph(ctx, x, y, d, fill){
   ctx.restore();
 }
 function beaconMark(ctx, x, y){ tile(ctx, x, y, T.green); glyph(ctx, x, y, "shield"); }
-function gateMark(ctx, x, y, open){ tile(ctx, x, y, T.violet, !open); glyph(ctx, x, y, open ? ["portal", "swirl"] : ["portal"], open ? T.violet : null); }
+function gateMark(ctx, x, y, open){ tile(ctx, x, y, T.violet, !open); glyph(ctx, x, y, ["portal", "swirl"], open ? T.violet : null); }
 function ring(ctx, x, y, r){ ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.strokeStyle = T.halo; ctx.lineWidth = 5; ctx.stroke(); ctx.strokeStyle = T.ink; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
 function protArea(ctx, view, b, mode){
   const a = area(b); const [x0, y0] = toS(view, a.x0, a.z0), [x1, y1] = toS(view, a.x1, a.z1);
   ctx.save();
-  if (mode !== "outline") { ctx.fillStyle = "rgba(143,188,154,.16)"; ctx.fillRect(x0, y0, x1 - x0, y1 - y0); }
+  if (mode !== "outline") { ctx.fillStyle = "rgba(143,188,154,.24)"; ctx.fillRect(x0, y0, x1 - x0, y1 - y0); }
   ctx.setLineDash([6, 4]);
   ctx.strokeStyle = T.halo; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
   ctx.strokeStyle = T.green; ctx.lineWidth = 2; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
@@ -308,6 +318,7 @@ function link(ctx, view, g){
   const [ax, ay] = toS(view, g.x, g.z), [bx, by] = toS(view, g.to.x, g.to.z);
   const len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len;
   const sx = ax + ux * 15, sy = ay + uy * 15, ex = bx - ux * 15, ey = by - uy * 15;
+  SEGS.push([sx, sy, ex, ey, g.id]);
   ctx.save(); ctx.lineCap = "round";
   ctx.setLineDash([1, 6]);
   ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
@@ -329,16 +340,29 @@ function playerDisc(ctx, x, y, p){
   ctx.fillStyle = T.inkOn; ctx.font = "700 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(p.n[0], x, y + .5);
   ctx.restore();
 }
-function label(ctx, txt, x, y, left){
+// Things a label must not sit on: other labels, marker tiles, player discs and drawn lines.
+let BOXES = [], SEGS = [];
+const boxHit = (lx, ly, w, b) => lx < b[2] && lx + w > b[0] && ly - 10 < b[3] && ly + 10 > b[1];
+function segHit(lx, ly, w, s){
+  const n = Math.ceil(Math.hypot(s[2] - s[0], s[3] - s[1]) / 3);
+  for (let k = 0; k <= n; k++) { const px = s[0] + (s[2] - s[0]) * k / n, py = s[1] + (s[3] - s[1]) * k / n; if (px > lx - 2 && px < lx + w + 2 && py > ly - 12 && py < ly + 12) return true; }
+  return false;
+}
+function label(ctx, txt, x, y, left, own){
   ctx.save(); ctx.font = "500 12px system-ui, sans-serif";
   const w = ctx.measureText(txt).width + 12, cw = ctx.canvas.width / (devicePixelRatio || 1);
-  // right of the marker, else left, else below; a label that still hits the edge, a floating
-  // control, the panel or the scale bar is dropped, never drawn under it (DESIGN "Markers")
-  const right = left ? [x - w, y] : [x, y], other = left ? [x + 28, y] : [x - w - 34, y];
-  const below = [(left ? x + 14 : x - 17) - w / 2, y + 24];
-  const fits = ([lx, ly]) => lx >= 6 && lx + w <= cw - 6 && !CHROME.some((r) => lx < r[2] && lx + w > r[0] && ly - 10 < r[3] && ly + 10 > r[1]);
-  const at = [right, other, below].find(fits);
+  // right of the marker, else left, else below, else above; a label that still hits the edge, a
+  // floating control, the panel, the scale bar, another label, a marker, a player or a drawn
+  // line is dropped, never drawn under or over it (DESIGN "Markers", extended to lines)
+  const mx = left ? x + 14 : x - 17;
+  const cands = [left ? [x - w, y] : [x, y], left ? [x + 28, y] : [mx - 17 - w, y], [mx - w / 2, y + 24], [mx - w / 2, y - 24]];
+  const fits = ([lx, ly]) => lx >= 6 && lx + w <= cw - 6
+    && !CHROME.some((r) => boxHit(lx, ly, w, r))
+    && !BOXES.some((b) => b[4] !== own && boxHit(lx, ly, w, b))
+    && !SEGS.some((sg) => sg[4] !== own && segHit(lx, ly, w, sg));
+  const at = cands.find(fits);
   if (!at) { ctx.restore(); return; }
+  BOXES.push([at[0], at[1] - 10, at[0] + w, at[1] + 10, "label"]);
   ctx.fillStyle = T.plate; ctx.beginPath(); ctx.roundRect(at[0], at[1] - 10, w, 20, 6); ctx.fill();
   ctx.fillStyle = T.text; ctx.textBaseline = "middle"; ctx.fillText(txt, at[0] + 6, at[1] + .5);
   ctx.restore();
@@ -349,34 +373,40 @@ let CHROME = [];
 function readT(){ T = {halo:css("--map-halo"), ink:css("--map-ink"), inkOn:css("--map-ink-on"), plate:css("--map-plate"), text:css("--text"), green:css("--green"), violet:css("--violet")}; }
 
 /* ---- what each variant draws ---- */
-function drawMarkers(ctx, view, sel, card){
-  const selB = sel && sel.kind === "beacon" ? BEACONS[sel.i] : null, selG = sel && sel.kind === "gate" ? GATES[sel.i] : null;
-  // areas under everything
-  for (const b of BEACONS) {
-    if (V === "a") protArea(ctx, view, b, "fill");
-    else if (V === "b") { if (b === selB) protArea(ctx, view, b, "fill"); }
-    else protArea(ctx, view, b, b === selB ? "fill" : "outline");
-  }
-  for (const g of GATES) {
-    if (!g.open || g.to.dim !== "overworld") continue;
-    if (V === "a" || g === selG) link(ctx, view, g);
-  }
-  for (const g of GATES) {
-    if (!g.open || g.to.dim !== "overworld") continue;
-    if (V === "a" || g === selG) { const [x, y] = toS(view, g.to.x, g.to.z); placeMark(ctx, x, y); label(ctx, g.to.place, x + 16, y); }
-  }
-  if (!card) for (const p of PLAYERS) { const [x, y] = toS(view, p.x, p.z); playerDisc(ctx, x, y, p); }
-  for (const b of BEACONS) { const [x, y] = toS(view, b.x, b.z); beaconMark(ctx, x, y); if (b === selB) ring(ctx, x, y, 18); }
-  for (const g of GATES) {
-    const [x, y] = toS(view, g.x, g.z); gateMark(ctx, x, y, g.open); if (g === selG) ring(ctx, x, y, 18);
+const ABBR = {"north":"N","north-east":"NE","east":"E","south-east":"SE","south":"S","south-west":"SW","west":"W","north-west":"NW"};
+function drawMarkers(ctx, view, sel, card, gates){
+  gates = gates || GATES;
+  BOXES = []; SEGS = [];
+  const selB = sel && sel.kind === "beacon" ? BEACONS[sel.i] : null, selG = sel && sel.kind === "gate" ? gates[sel.i] : null;
+  const lines = (g) => g.open && g.to.dim === "overworld" && (g === selG ? !(card && V === "c") : V === "a");
+  // areas under everything; the tapped one filled, so it reads apart from an overlapping neighbour
+  for (const b of BEACONS) if (V !== "b" || b === selB) protArea(ctx, view, b, b === selB ? "fill" : "outline");
+  for (const g of gates) if (lines(g)) link(ctx, view, g);
+  for (const g of gates) if (lines(g)) { const [x, y] = toS(view, g.to.x, g.to.z); placeMark(ctx, x, y); BOXES.push([x - 12, y - 12, x + 12, y + 12, g.id]); }
+  for (const b of BEACONS) { const [x, y] = toS(view, b.x, b.z); beaconMark(ctx, x, y); BOXES.push([x - 12, y - 12, x + 12, y + 12, "m"]); if (b === selB) ring(ctx, x, y, 18); }
+  for (const g of gates) {
+    const [x, y] = toS(view, g.x, g.z); gateMark(ctx, x, y, g.open); BOXES.push([x - 12, y - 12, x + 12, y + 12, "m"]); if (g === selG) ring(ctx, x, y, 18);
     if (V === "b" && g.open && g !== selG) { // a small arrow notch: this gate leads somewhere
       ctx.save(); ctx.fillStyle = T.halo; ctx.beginPath(); ctx.arc(x + 11, y - 11, 7, 0, 7); ctx.fill();
       ctx.strokeStyle = T.violet; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + 8, y - 11); ctx.lineTo(x + 14, y - 11); ctx.moveTo(x + 11.5, y - 14); ctx.lineTo(x + 14, y - 11); ctx.lineTo(x + 11.5, y - 8); ctx.stroke(); ctx.restore();
     }
-    if (g.open && g.to.dim !== "overworld" && (V !== "b" || g === selG)) label(ctx, `→ ${g.to.place} · Nether`, x + 17, y);
-    if (V === "c" && g.open && g.to.dim === "overworld" && g !== selG) label(ctx, `→ ${g.to.place}`, x + 17, y);
   }
-  if (!card) for (const p of PLAYERS) { const [x, y] = toS(view, p.x, p.z); label(ctx, p.n, x - 14, y + 18, true); }
+  // players last: above every tile and the selection ring, so a child is never under a gate
+  const pl = card ? [] : PLAYERS;
+  for (const p of pl) { const [x, y] = toS(view, p.x, p.z); playerDisc(ctx, x, y, p); BOXES.push([x - 11, y - 11, x + 11, y + 11, "p"]); }
+  // labels: the tapped thing, players, then gate destinations
+  for (const g of gates) if (lines(g) && g === selG) { const [x, y] = toS(view, g.to.x, g.to.z); label(ctx, g.to.place, x + 16, y, false, g.id); }
+  for (const p of pl) { const [x, y] = toS(view, p.x, p.z); label(ctx, p.n, x - 14, y + 18, true); }
+  for (const g of gates) {
+    if (!g.open) continue;
+    const [x, y] = toS(view, g.x, g.z);
+    if (lines(g) && g !== selG) { const [px, py] = toS(view, g.to.x, g.to.z); label(ctx, g.to.place, px + 16, py, false, g.id); }
+    else if (g.to.dim !== "overworld" && (V !== "b" || g === selG)) label(ctx, `to ${g.to.place} · in the Nether`, x + 17, y, false, g.id);
+    else if (V === "c" && g.to.dim === "overworld" && !lines(g)) label(ctx, `to ${g.to.place} · ${ABBR[compass(g, g.to)]}`, x + 17, y, false, g.id);
+  }
+  // reviewer check: no marker under a floating control
+  const cvh = ctx.canvas.height / (devicePixelRatio || 1);
+  for (const b of BOXES) if (b[4] !== "label" && b[3] > 0 && b[1] < cvh && CHROME.slice(0, 3).some((r) => b[0] < r[2] && b[2] > r[0] && b[1] < r[3] && b[3] > r[1])) console.warn("marker under chrome at " + b.slice(0, 2).map(Math.round).join(","));
 }
 
 /* ---- the panel ---- */
@@ -387,22 +417,22 @@ function head(){
 const STAT = `<div class="stat"><span class="dot"></span><span><b>Live · 2 on</b>Up to a minute behind the world · positions live</span></div>`;
 function gateDet(g){
   const sub = g.open
-    ? `<span class="state open">open</span> · ${g.by}'s · planted ${g.at}, aimed ${g.aimed}`
-    : `<span class="state dorm">dormant</span> · ${g.by}'s · planted ${g.at}`;
+    ? `<span class="state open">open</span> · ${g.by}'s · planted ${nb(g.at)}, aimed ${nb(g.aimed)}`
+    : `<span class="state dorm">dormant</span> · ${g.by}'s · planted ${nb(g.at)}`;
   let lead;
   if (!g.open) lead = `<p class="note">Not open yet. ${g.by} can ask Dave to open it to one of their saved places, standing within 4 blocks.</p>`;
-  else if (g.to.dim === "overworld") lead = `<div class="lead">${I.arrow}<span>Leads to <b>${g.to.place}</b> · ${dist(g, g.to)} blocks ${compass(g, g.to)} · X ${g.to.x} · Z ${g.to.z}</span></div>`;
-  else lead = `<div class="lead">${I.arrow}<span>Leads to <b>${g.to.place}</b> · in the Nether · X ${g.to.x} · Z ${g.to.z}</span></div>`;
+  else if (g.to.dim === "overworld") lead = `<div class="lead">${I.arrow}<span>Leads to <b>${g.to.place}</b> · ${dist(g, g.to)}&nbsp;blocks ${compass(g, g.to)} · ${XYZ(g.to)}</span></div>`;
+  else lead = `<div class="lead">${I.arrow}<span>Leads to <b>${g.to.place}</b> · in the Nether · ${XYZ(g.to)}</span></div>`;
   const btn = g.open ? `<div class="btnrow"><button class="btn primary">${g.to.dim === "overworld" ? `Show ${g.to.place}` : "Show it in the Nether"}</button></div>` : "";
   return `<div class="det"><div class="det-h"><span class="det-ic gate">${I.portal}</span><div class="det-tx"><div class="det-t">Wormhole gate ${g.id}</div><div class="det-s">${sub}</div></div><button class="x" aria-label="Close">${I.x}</button></div>
-    <div class="coord"><span class="xyz">X ${g.x} · Y ${g.y} · Z ${g.z}</span><button class="lnk">${I.copy}Copy X Z</button></div>${lead}${btn}</div>`;
+    <div class="coord"><span class="xyz">${XYZ(g, true)}</span><button class="lnk">${I.copy}Copy X Z</button></div>${lead}${btn}</div>`;
 }
 function beaconDet(b){
   const a = area(b);
   const over = b.n > 1 ? " · overlaps 1 other beacon" : "";
-  return `<div class="det"><div class="det-h"><span class="det-ic bea">${I.shield}</span><div class="det-tx"><div class="det-t">No-Spawn Beacon</div><div class="det-s"><span class="state prot">protecting</span> · placed by ${b.by}, ${b.at}</div></div><button class="x" aria-label="Close">${I.x}</button></div>
-    <div class="coord"><span class="xyz">X ${b.x} · Y ${b.y} · Z ${b.z}</span><button class="lnk">${I.copy}Copy X Z</button></div>
-    <p class="note"><b style="color:var(--text);font-weight:500">48 × 48 blocks, floor to sky</b> — X ${a.x0} to ${a.x1 - 1}, Z ${a.z0} to ${a.z1 - 1} (the 3 × 3 chunks round it)${over}. Wild and hostile mobs vanish there; tamed, named, fed and bred ones stay.</p></div>`;
+  return `<div class="det"><div class="det-h"><span class="det-ic bea">${I.shield}</span><div class="det-tx"><div class="det-t">No-Spawn Beacon</div><div class="det-s"><span class="state prot">protecting</span> · placed by ${b.by}, ${b.at.replace(" pm", "&nbsp;pm").replace(" am", "&nbsp;am")}</div></div><button class="x" aria-label="Close">${I.x}</button></div>
+    <div class="coord"><span class="xyz">${XYZ(b, true)}</span><button class="lnk">${I.copy}Copy X Z</button></div>
+    <p class="note"><b style="color:var(--text);font-weight:500">48&nbsp;×&nbsp;48 blocks, floor to sky</b> — X&nbsp;${n(a.x0)}&nbsp;to&nbsp;${n(a.x1 - 1)}, Z&nbsp;${n(a.z0)}&nbsp;to&nbsp;${n(a.z1 - 1)} (the 3&nbsp;×&nbsp;3 chunks round it)${over}. Wild and hostile mobs vanish there; tamed, named, fed and bred ones stay.</p></div>`;
 }
 function swatch(kind){ return `<canvas data-sw="${kind}" width="44" height="44"></canvas>`; }
 function overlays(){
@@ -415,9 +445,9 @@ function overlays(){
       + ov(I.portal, "Wormhole gates", "2 open · 1 dormant · tap one for where it leads", true, "gate");
   else ours = ov(I.portal, "Beacons &amp; gates", "3 beacons · 3 wormhole gates · listed below", true, "gate");
   const later = `<div class="ov later"><span class="ov-gl">${I.pin}</span><span class="ov-t">Saved places<small>with Minecraft_Dave's places</small></span><span class="badge">later</span></div>`;
-  const list = V === "c" ? `<h3 class="sect">In this world</h3><div class="list">${
-    BEACONS.map((b) => `<button class="li"><span class="det-ic bea">${I.shield}</span><span class="lt"><b>No-Spawn Beacon · ${b.by}</b><span>X ${b.x} · Z ${b.z}${b.y > 150 ? " · up at Y " + b.y : ""} · placed ${b.at.split(",")[0]}</span></span>${I.chev}</button>`).join("") +
-    GATES.map((g) => `<button class="li"><span class="det-ic gate">${I.portal}</span><span class="lt"><b>Gate ${g.id} · ${g.by}</b><span>${g.open ? `open → ${g.to.place}${g.to.dim !== "overworld" ? " (Nether)" : ""}` : "dormant"} · X ${g.x} · Z ${g.z}</span></span>${I.chev}</button>`).join("")
+  const list = V !== "b" ? `<h3 class="sect">In this world</h3><div class="list">${
+    BEACONS.map((b) => `<button class="li"><span class="det-ic bea">${I.shield}</span><span class="lt"><b>No-Spawn Beacon · ${b.by}</b><span>${XYZ(b)}${b.y > 150 ? " · up at Y&nbsp;" + b.y : ""} · placed ${b.at.split(",")[0]}</span></span>${I.chev}</button>`).join("") +
+    GATES.map((g) => `<button class="li"><span class="det-ic gate">${I.portal}</span><span class="lt"><b>Gate ${g.id} · ${g.by}</b><span>${g.open ? `open, to ${g.to.place}${g.to.dim !== "overworld" ? " (Nether)" : ""}` : "dormant"} · ${XYZ(g)}</span></span>${I.chev}</button>`).join("")
   }</div>` : "";
   const legend = `<h3 class="sect">Legend</h3><div class="lg"><div class="lg-row">
      <span class="lg-i">${swatch("beacon")}No-Spawn Beacon</span><span class="lg-i">${swatch("area")}Protected (48 × 48)</span></div>
@@ -442,16 +472,21 @@ function mapScreen(){
   cv.width = W * dpr; cv.height = H * dpr;
   const ctx = cv.getContext("2d");
   const mapH = H - panelH;
-  let v = {k:1.25, cx:-30, cz:-30, mx:W / 2, my:mapH / 2 + 30};
+  let v = W < 360 ? {k:0.9, cx:-30, cz:-30, mx:W / 2, my:mapH / 2 + 30} : {k:1.25, cx:-30, cz:-30, mx:W / 2, my:mapH / 2 + 30};
   if (sel && sel.kind === "beacon") v = {k:2.5, cx:72, cz:-30, mx:W / 2, my:mapH / 2 + 26};
-  if (sel && sel.kind === "gate" && sel.i === 0) v = {k:1.25, cx:-62, cz:-62, mx:W / 2, my:mapH / 2 + 30};
-  if (sel && sel.kind === "gate" && sel.i === 2) v = {k:2, cx:20, cz:-60, mx:W / 2, my:mapH / 2 + 30};
-  if (view === "layers") v = {k:1.25, cx:-30, cz:-40, mx:W / 2, my:mapH / 2 + 30};
-  CHROME = [[0, 0, W, 70], [W - 64, 70, W, 236], [0, H - panelH - 44, 170, H], [0, H - panelH, W, H]];
+  if (sel && sel.kind === "gate" && sel.i === 0) v = {k:1.25, cx:-32, cz:-15, mx:W / 2, my:mapH / 2 + 30};
+  if (sel && sel.kind === "gate" && sel.i === 2) v = {k:2, cx:0, cz:-60, mx:W / 2, my:mapH / 2 + 30};
+  if (view === "layers") v = {k:1.25, cx:-75, cz:-62, mx:W / 2, my:mapH / 2 + 30};
+  if (view === "hub") v = {k:1.9, cx:-70, cz:-30, mx:W / 2, my:mapH / 2 + 34};
+  // DESIGN: under 380 px of visible map the + / − go; under 230 px the segments and show everyone too
+  const short = mapH < 380, tiny = mapH < 230;
+  if (tiny) { ph.querySelector(".dims").style.display = "none"; ph.querySelector(".fabs").style.display = "none"; }
+  else if (short) for (const z of ph.querySelectorAll(".fabs .fab:not(:last-child)")) z.style.display = "none";
+  CHROME = [tiny ? [0, 0, 68, 70] : [0, 0, W, 70], tiny ? [0, 0, 0, 0] : [W - 64, 70, W, short ? 132 : 236], [0, H - panelH - 44, 170, H - panelH], [0, H - panelH, W, H]];
   const sc = ph.querySelector(".scale span"); sc.textContent = `${Math.round(40 / v.k)} blocks · N↑`;
   drawTerrain(ctx, W, H, v, dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  drawMarkers(ctx, v, sel, false);
+  drawMarkers(ctx, v, sel, false, view === "hub" ? GATES.concat(HUB) : GATES);
   drawSwatches();
 }
 
@@ -459,18 +494,18 @@ function chatScreen(){
   const ph = document.getElementById("phone");
   ph.innerHTML = `<div class="chat"><div class="bar"><button class="back" aria-label="Back">${I.back}</button><span class="ttl">Minecraft_Dave</span></div>
    <div class="msgs"><div class="you">Where's BlockyFox's wormhole gate, and where does it go?</div>
-   <div class="dave">BlockyFox has one gate open in Castle Hill: gate 1, at X 30 · Z 14. It leads to their Tree farm, ${dist(GATES[0], GATES[0].to)} blocks north-west. Their gate 3 goes to the Nether base.</div>
+   <div class="dave">BlockyFox has two gates open in Castle Hill. Gate 1, at X&nbsp;30 · Z&nbsp;14, leads to their Tree farm, ${dist(GATES[0], GATES[0].to)}&nbsp;blocks north-west. Gate 3 goes to their Nether base.</div>
    <div class="tv"><div class="tv-h">${I.map}<span>Castle Hill · Overworld</span><span class="s">Surface</span><button class="fab" aria-label="Open the full map">${I.expand}</button></div>
      <div class="tv-map"><canvas id="cv"></canvas><div class="scale" style="bottom:8px"><i></i><span>64 blocks · N↑</span></div></div>
      <div class="tv-b"><div class="note">Live · 2 on · Up to a minute behind the world</div>
-       <div class="det-h"><span class="det-ic gate">${I.portal}</span><div class="det-tx"><div class="det-t">Wormhole gate 1</div><div class="det-s"><span class="state open">open</span> · BlockyFox's → <b>Tree farm</b></div></div></div>
-       <div class="coord"><span class="xyz">X 30 · Y 71 · Z 14</span><button class="lnk">${I.copy}Copy X Z</button></div>
+       <div class="det-h"><span class="det-ic gate">${I.portal}</span><div class="det-tx"><div class="det-t">Wormhole gate 1</div><div class="det-s"><span class="state open">open</span> · BlockyFox's, to <b>Tree farm</b></div></div></div>
+       <div class="coord"><span class="xyz">${XYZ(GATES[0], true)}</span><button class="lnk">${I.copy}Copy X Z</button></div>
        <div class="chips"><button class="chip" aria-pressed="false">Trail</button><button class="chip" aria-pressed="true">Deaths</button><button class="chip" aria-pressed="true">Structures</button><button class="chip" aria-pressed="false">Players</button>${V === "c" ? '<button class="chip" aria-pressed="true">Beacons &amp; gates</button>' : '<button class="chip" aria-pressed="true">Beacons</button><button class="chip" aria-pressed="true">Gates</button>'}</div>
      </div></div></div></div>`;
   const cv = document.getElementById("cv"), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
   cv.width = W * dpr; cv.height = H * dpr;
   const ctx = cv.getContext("2d");
-  const v = {k:0.82, cx:-65, cz:-50, mx:W / 2, my:H / 2};
+  const v = {k:0.82, cx:-80, cz:-55, mx:W / 2, my:H / 2};
   CHROME = [[0, H - 40, 170, H]];
   ph.querySelector(".scale span").textContent = `${Math.round(40 / v.k)} blocks · N↑`;
   drawTerrain(ctx, W, H, v, dpr);
@@ -480,7 +515,7 @@ function chatScreen(){
 
 function drawSwatches(){
   for (const c of document.querySelectorAll("canvas[data-sw]")) {
-    const ctx = c.getContext("2d"); ctx.scale(2, 2); ctx.fillStyle = "#4f6b3e"; ctx.beginPath(); ctx.roundRect(0, 0, 22, 22, 5); ctx.fill();
+    const ctx = c.getContext("2d"); ctx.scale(2, 2); ctx.fillStyle = css("--map-void"); ctx.beginPath(); ctx.roundRect(0, 0, 22, 22, 5); ctx.fill();
     const k = c.dataset.sw;
     ctx.save(); ctx.translate(11, 11); ctx.scale(.78, .78); ctx.translate(-11, -11);
     if (k === "beacon") beaconMark(ctx, 11, 11);
@@ -497,7 +532,7 @@ function render(){
   if (S.view === "card") chatScreen(); else mapScreen();
   const opt = (k, vals) => `<div class="srow"><span class="sl">${k}</span>${vals.map(([v, l]) => `<button aria-pressed="${S[k] === v}" data-k="${k}" data-v="${v}">${l}</button>`).join("")}</div>`;
   document.getElementById("sim").innerHTML = `<div class="stitle">Mock controls</div>` +
-    opt("view", [["map","Map"],["gate","Tap gate 1"],["gate3","Tap gate 3 (Nether)"],["beacon","Tap a beacon"],["layers","Layers tab"],["card","Dave's chat card"]]) +
+    opt("view", [["map","Map"],["hub","Busy hub"],["gate","Tap gate 1"],["gate3","Tap gate 3 (Nether)"],["beacon","Tap a beacon"],["layers","Layers tab"],["card","Dave's chat card"]]) +
     opt("theme", [["","System"],["dark","Dark"],["light","Light"]]);
 }
 document.addEventListener("click", (e) => {

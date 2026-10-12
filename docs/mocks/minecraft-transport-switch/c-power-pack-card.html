@@ -143,6 +143,7 @@
   .spin{width:14px;height:14px;border-radius:999px;border:2px solid var(--warn);border-top-color:transparent;animation:spin .9s linear infinite;flex:none;}
 
   /* the Power Pack card (variant C) */
+  .c-keep .nm{font-size:var(--fs-micro);}
   .ppk-head{display:flex;gap:10px;align-items:flex-start;}
   .ppk-ico{width:36px;height:36px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex:none;color:var(--text-2);}
   .ppk-ico svg{width:20px;height:20px;}
@@ -164,6 +165,14 @@
   details.rules-new[open] > summary svg{transform:rotate(90deg);}
   .rules-in{padding:0 10px 10px;}
   .foot{display:flex;gap:8px;justify-content:flex-end;padding-top:4px;}
+  .rfoot{display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 2px 76px;border-top:1px solid var(--border);}
+  .rfoot .note{flex:1;}
+  .w-row{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;min-height:64px;border-top:1px solid var(--border);}
+  .w-row:first-child{border-top:0;}
+  .w-row .t{font-size:var(--fs-body);font-weight:500;}
+  .w-row .m{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;}
+  .w-row .m .off{color:var(--text);}
+  .w-row > svg{margin-left:auto;color:var(--text-2);margin-top:6px;}
   #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 16px;font-size:var(--fs-micro);color:var(--text);z-index:30;text-align:center;max-width:88%;display:none;}
   #toast.show{display:block;}
   @media (prefers-reduced-motion: reduce){ *,*::before,*::after{animation:none !important;transition:none !important;} }
@@ -184,7 +193,7 @@ const I = {
   search:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
   zap:'<svg viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>',
 };
-const DEF = {scr: VARIANT === "a" ? "rules" : "world", tp:"on", where:"live", fb:"none", theme:""};
+const DEF = {scr: VARIANT === "a" ? "rules" : "world", tp:"on", where:"live", fb:"none", at:"", theme:""};
 let S = {...DEF};
 function readHash(){
   S = {...DEF};
@@ -200,7 +209,7 @@ const on = () => S.tp === "on";
 
 /* ---- the words (identical in every variant) ---- */
 const LABEL = "Power Pack teleport";
-const MEANING_ON = "On — players can ask Dave to take them to their own saved places; each trip burns a Power Pack.";
+const MEANING_ON = "On — players can ask Dave to take them to their own saved places; each trip burns a Power&nbsp;Pack.";
 const MEANING_OFF = "Off — Dave won't teleport anyone in this world. Saved places still work with the Tricorder.";
 const HELP = "<b>Power Pack teleport:</b> a player asks Dave for one of their own saved places, then says Yes on a form. One Power Pack burns only if they arrive, and they need their own Tricorder. Wormhole gates aren't affected by this switch.";
 function settingsLine(w){
@@ -209,7 +218,7 @@ function settingsLine(w){
   return VARIANT === "b" ? "Loaded and running — difficulty and Power Pack teleport change live; game mode and cheats apply at the next restart." : "Loaded and running — difficulty changes live; game mode and cheats apply at the next restart.";
 }
 function toastText(w){
-  const what = `Power Pack teleport ${on() ? "on" : "off"}`;
+  const what = `teleport ${on() ? "on" : "off"}`;
   if (w.active && w.running) return `Applied live — ${what}`;
   return w.active ? `Saved — ${what} when the server starts` : `Saved — ${what} from ${w.name}'s next load`;
 }
@@ -235,24 +244,25 @@ function worldPage(){
   const glance = `39 rules · 2 changed · keep inventory <span class="pp">Power Pack</span>${VARIANT === "a" && !on() ? " · teleport off" : ""}`;
   const bRow = `
       <div class="sw-row" id="tp-row">
-        <span class="sw-l"><b>${LABEL}</b> ${pending(w) ? '<span class="pend">pending</span>' : ""}<br>${S.fb === "busy" ? `Turning it ${on() ? "off" : "on"}…` : (on() ? MEANING_ON : MEANING_OFF).replace(/^On — /, "on — ").replace(/^Off — /, "off — ")}</span>
+        <span class="sw-l"><b>${LABEL}</b> ${pending(w) ? '<span class="pend">pending</span>' : ""}<br>${S.fb === "busy" ? `<span class="now"><span class="spin"></span>Turning Power Pack teleport ${on() ? "off" : "on"}…</span>` : (on() ? MEANING_ON : MEANING_OFF).replace(/^On — /, "on — ").replace(/^Off — /, "off — ")}</span>
         ${sw("tp-sw")}
       </div>
       ${errline(w)}
       <p class="help">${HELP}</p>`;
   const cCard = `
-    <h2 class="sect">Power Pack <span class="r">8 Ender Pearls round a Blaze Powder</span></h2>
+    <h2 class="sect">Power Pack</h2>
     <div class="card" id="tp-row">
       <div class="pad">
-        <p class="note">What a Power Pack can be spent on in this world. Players need their own Tricorder for either.</p>
+        <p class="note">8 Ender Pearls around a Blaze Powder. What a pack can be spent on in this world — players need their own Tricorder for either.</p>
+        <p class="note${w.active && w.running ? " live" : ""}">${w.active && w.running ? "Live — a change reaches the game at once." : w.active ? "Server stopped — a change applies when it starts." : `Not loaded — a change applies when ${w.name} next loads.`}</p>
         <div class="sw-row">
-          <span class="sw-l"><b>Teleport to saved places</b> ${pending(w) ? '<span class="pend">pending</span>' : ""}<br>${S.fb === "busy" ? `Turning it ${on() ? "off" : "on"}…` : (on() ? "on — ask Dave, say Yes on the form, one pack burns on arrival" : "off — Dave won't teleport anyone here")}</span>
+          <span class="sw-l"><b>${LABEL}</b> ${pending(w) ? '<span class="pend">pending</span>' : ""}<br>${S.fb === "busy" ? `<span class="now"><span class="spin"></span>Turning Power Pack teleport ${on() ? "off" : "on"}…</span>` : (on() ? MEANING_ON : MEANING_OFF).replace(/^On — /, "on — ").replace(/^Off — /, "off — ")}</span>
           ${sw("tp-sw")}
         </div>
         ${errline(w)}
+        <p class="help">${HELP}</p>
       </div>
-      <button class="navrow" data-go="rules"><span class="tx"><span class="nm">Keeping things on death</span><span class="sm">Keep inventory is on <span class="pp">Power Pack</span> — set in Game rules, under Players</span></span>${I.chev}</button>
-      <div class="pad" style="padding-top:0"><p class="help">Wormhole gates aren't switched here: a gate's planter always pays one pack per re-aim.</p></div>
+      <button class="navrow c-keep" data-go="rules"><span class="tx"><span class="nm">Keep inventory on death</span><span class="sm">On <span class="pp">Power Pack</span> — set in Game rules, under Players</span></span>${I.chev}</button>
     </div>`;
   return `
   <div class="bar"><button class="back" aria-label="Back to Worlds">${I.back}</button><span class="ttl">${w.name}<small>Slot ${w.slot}</small></span></div>
@@ -291,10 +301,8 @@ function keepRow(draft){
 function tpRuleRow(draft){
   const w = W();
   const tags = [];
-  tags.push('<span class="chg">a world switch · not a game rule</span>');
+  tags.push(`<span class="chg">world switch · ${on() ? "on" : "off"} · Reset all leaves it alone</span>`);
   if (!draft && pending(w)) tags.unshift('<span class="pend">pending</span>');
-  if (draft && !on()) tags.push('<span class="chg">changed · default on</span>');
-  if (!draft && !on()) tags.push('<span class="chg">changed · default on</span>');
   return `<div class="rule col" id="tp-row"><div class="top"><span class="rl"><span class="rt" id="${draft ? "nw-" : ""}tp-l">${LABEL}</span><span class="rtags">${tags.join("")}</span></span>${sw(draft ? "nw-tp-sw" : "tp-sw")}</div>
     ${nowLine()}${draft ? "" : errline(w)}
     <p class="help">${HELP}</p></div>`;
@@ -316,12 +324,29 @@ function rulesPage(){
     <p class="rules-note note${w.active && w.running ? " live" : ""}">${w.active && w.running ? "Live — a change applies in the game at once." : w.active ? "The server is stopped — changes apply when it starts." : `Saved — applied when ${w.name} next loads.`}</p>
     <div class="search">${I.search}Search 39 rules</div>
     <div class="rgroups">${closed}${playersGroup(false)}${after}</div>
+    <div class="rfoot" id="rfoot"><span class="note">1 rule differs from the defaults · keep inventory is on Power Pack${VARIANT === "a" ? `, and Power Pack teleport (${on() ? "on" : "off"}) is a world switch — Reset all leaves both alone` : ", which Reset all leaves alone"}</span><button class="btn">Reset all</button></div>
+  </div>`;
+}
+
+/* ---- the Worlds list: the glance with teleport off ---- */
+function listPage(){
+  const tpOff = (w) => !on() && w === W().name ? ' · <span class="off">teleport off</span>' : "";
+  return `
+  <div class="bar"><button class="back" aria-label="Back to Minecraft">${I.back}</button><span class="ttl">Worlds</span></div>
+  <div class="scroll" id="scroll">
+    <h2 class="sect">Loaded</h2>
+    <div class="card"><div class="w-row" id="tp-row"><span><span class="t">Castle Hill</span><span class="m">Survival · Normal · 2 on · keep inventory Power Pack${tpOff("Castle Hill")}</span><span class="m">Crash site: built</span></span>${I.chev}</div></div>
+    <h2 class="sect">Other worlds</h2>
+    <div class="card"><div class="w-row"><span><span class="t">Skyblock run</span><span class="m">Survival · Hard · not generated yet${tpOff("Skyblock run")}</span><span class="m">Crash site: on its way</span></span>${I.chev}</div>
+    <div class="w-row"><span><span class="t">Creative test</span><span class="m">Creative · Peaceful · last played Oct 9</span><span class="m">Crash site: off</span></span>${I.chev}</div></div>
+    <h2 class="sect">Empty slots</h2>
+    <div class="card"><div class="w-row"><span><span class="t" style="color:var(--text-2);font-weight:400">Slot 5</span><span class="m">New world or Import</span></span></div></div>
   </div>`;
 }
 
 /* ---- New world ---- */
 function newWorld(){
-  const draftTp = `<div class="sw-row" id="nw-tp"><span class="sw-l"><b>${LABEL}</b><br>${on() ? "on — players can ask Dave to take them to their saved places; each trip burns a Power Pack" : "off — Dave won't teleport anyone in this world"}</span>${sw("nw-tp-sw")}</div>`;
+  const draftTp = `<div class="sw-row" id="nw-tp"><span class="sw-l"><b>${LABEL}</b><br>${on() ? "on — players can ask Dave to take them to their own saved places; each trip burns a Power&nbsp;Pack" : "off — Dave won't teleport anyone in this world"}</span>${sw("nw-tp-sw")}</div>`;
   const inForm = VARIANT !== "a" ? draftTp : "";
   return worldPage() + `
   <div class="scrim"></div>
@@ -335,7 +360,8 @@ function newWorld(){
       <div class="sw-row"><span class="sw-l"><b>Cheats</b><br>off — no commands in game</span><button class="switch" role="switch" aria-checked="false" aria-label="Cheats"><span class="knob"></span></button></div>
       <div class="sw-row"><span class="sw-l"><b>Crash site at spawn</b><br>on — an escape pod crashed at spawn, its mothership overhead</span><button class="switch on" role="switch" aria-checked="true" aria-label="Crash site at spawn"><span class="knob"></span></button></div>
       ${inForm}
-      ${VARIANT === "c" ? '<p class="help">Keep inventory\'s Power Pack mode is set once the world exists, under Game rules.</p>' : ""}
+      ${VARIANT === "b" ? '<p class="note">Wormhole gates aren\'t affected by this switch.</p>' : ""}
+      ${VARIANT === "c" ? '<p class="help">Wormhole gates aren\'t affected by this switch. Keep inventory\'s Power Pack mode is set once the world exists, under Game rules.</p>' : ""}
       <details class="rules-new" ${VARIANT === "a" ? "open" : ""}><summary><span>World rules</span><span class="note">${VARIANT === "a" && !on() ? "teleport off" : "defaults"}</span>${I.chev}</summary>
         ${VARIANT === "a" ? `<div class="rules-in"><p class="note" style="margin:4px 2px 8px">Set before the world is generated. Leave them and it starts with the defaults below.</p><div class="rgroups">${playersGroup(true)}</div></div>` : ""}
       </details>
@@ -347,8 +373,8 @@ function newWorld(){
 function render(){
   readHash();
   const ph = document.getElementById("phone");
-  ph.innerHTML = (S.scr === "rules" ? rulesPage() : S.scr === "new" ? newWorld() : worldPage()) + `<div id="toast" class="${S.fb === "toast" ? "show" : ""}">${toastText(W())}</div>`;
-  const tgt = document.getElementById(S.scr === "new" ? (VARIANT === "a" ? "nw-tp-sw" : "nw-tp") : "tp-row");
+  ph.innerHTML = (S.scr === "rules" ? rulesPage() : S.scr === "new" ? newWorld() : S.scr === "list" ? listPage() : worldPage()) + `<div id="toast" class="${S.fb === "toast" ? "show" : ""}">${toastText(W())}</div>`;
+  const tgt = document.getElementById(S.at === "foot" ? "rfoot" : S.scr === "new" ? (VARIANT === "a" ? "nw-tp-sw" : "nw-tp") : "tp-row");
   if (tgt && S.scr !== "new") tgt.scrollIntoView({block:"center"});
   if (S.scr === "new" && tgt) tgt.scrollIntoView({block:"center"});
   sim();
@@ -356,7 +382,7 @@ function render(){
 function sim(){
   const opt = (k, vals) => `<div class="srow"><span class="sl">${k}</span>${vals.map(([v,l]) => `<button aria-pressed="${S[k] === v}" data-k="${k}" data-v="${v}">${l}</button>`).join("")}</div>`;
   document.getElementById("sim").innerHTML = `<div class="stitle">Mock controls</div>` +
-    opt("scr", [["world","World page"],["rules","Game rules"],["new","New world"]]) +
+    opt("scr", [["list","Worlds"],["world","World page"],["rules","Game rules"],["new","New world"]]) + opt("at", [["","The switch"],["foot","Rules footer"]]) +
     opt("tp", [["on","Teleport on"],["off","Teleport off"]]) +
     opt("where", [["live","Loaded · running"],["stopped","Loaded · stopped"],["other","Not loaded"]]) +
     opt("fb", [["none","Settled"],["busy","Applying"],["toast","Just saved"],["err","Refused (409)"]]) +
