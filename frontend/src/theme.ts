@@ -47,11 +47,17 @@ export function setThemePref(pref: ThemePref): void {
   apply(resolveTheme(pref, systemPrefersDark()));
 }
 
-export function initTheme(): void {
-  apply(resolveTheme(getThemePref(), systemPrefersDark()));
+/**
+ * `fallback` is the theme used while nothing is stored, without persisting it: a scoped
+ * surface (the shared Minecraft map) can open in its own look for a recipient who never
+ * picked one, while anyone with a saved pick on this origin still gets theirs.
+ */
+export function initTheme(fallback: ThemePref = "system"): void {
+  const current = () => (localStorage.getItem(STORAGE_KEY) ? getThemePref() : fallback);
+  apply(resolveTheme(current(), systemPrefersDark()));
   window
     .matchMedia("(prefers-color-scheme: dark)")
     .addEventListener("change", (event: MediaQueryListEvent) => {
-      if (getThemePref() === "system") apply(event.matches ? "dark" : "light");
+      if (current() === "system") apply(event.matches ? "dark" : "light");
     });
 }
