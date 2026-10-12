@@ -2664,7 +2664,7 @@ the owner picked **variant A, as revised** (always drawn), the independent revie
   type-checked like deaths: ints clamped to ±30,000,000, the dimension and `op` from closed
   lists, the axis `x|z`, names and places cut to 40, a snapshot to 256 records with
   `truncated` set when cut. They carry the world folder and no xuid.
-- **Backend:** migration `0239` (renumbered from 0238 after a clash with the chat share links) adds `app.mc_world_beacons` (keyed by world and block) and
+- **Backend:** migration `0240` (renumbered twice, after clashes with the chat share links and the agent session origin) adds `app.mc_world_beacons` (keyed by world and block) and
   `app.mc_world_gates` (keyed by world and the pack's gate id), owner-only RLS with
   isolation tests. The session drain hands each event to `minecraft/markers.py`: an event
   patches, a whole snapshot replaces a world's set (a cut one only patches), and

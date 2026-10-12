@@ -18,15 +18,15 @@ isn't loaded.
 Owner-only: the PWA map and the owner's Dave read them; the in-game tool narrows to the
 asker's own in code, under the owner's session like every door turn.
 
-Revision ID: 0239
-Revises: 0238
+Revision ID: 0240
+Revises: 0239
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0239"
-down_revision = "0238"
+revision = "0240"
+down_revision = "0239"
 branch_labels = None
 depends_on = None
 
