@@ -140,6 +140,16 @@ stream_facts_t stream_facts(const stream_t *s)
     f.stream_live = (busy & BUSY_LIVE) != 0;
     f.arb_hb = LOAD(&s->arb_hb, relaxed);
     f.cue_expired = LOAD(&s->cue_expired, relaxed);
+    /* THE STREAM IS READ OFF THE RING ITSELF, NOT OFF THE ARBITER'S LAST TICK. The busy word is a
+       tick old, so a short body that landed whole and was closed between two ticks read as "not
+       live" — and the engine classified a message it had not yet sounded as heard, acked it and
+       ended the PLAY with the audio still to come (found by `run_e2e_tests`). A current-gen
+       stream that is open or undrained is live from the producer's first write. */
+    const uint32_t word = LOAD(&s->word, acquire);
+    if (WORD_ID(word) != 0 && WORD_GEN(word) == (stream_gen(s) & 0xFFFFu) &&
+        ((word & WORD_OPEN) != 0 || ring_filled(&s->ring) != 0)) {
+        f.stream_live = f.speaker_busy = true;
+    }
     /* WHAT THE ARBITER HAS NOT PICKED UP YET COUNTS. Without this the frame after a cue is
        written would read a quiet speaker and post a PLAY on top of it. Every disposal writes a
        done word, so none of these can latch. */
