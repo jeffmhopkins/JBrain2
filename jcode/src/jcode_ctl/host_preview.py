@@ -76,6 +76,17 @@ class HostPreviewManager:
         if existing is not None:
             _log.debug("host preview reuse sid=%s port=%d", sid, existing.port)
             return existing
+        alloc = self._assign(sid, self._free_port())
+        _log.info(
+            "host preview allocated sid=%s port=%d host=%s-preview.%s",
+            sid,
+            alloc.port,
+            alloc.slug,
+            self._base_host,
+        )
+        return alloc
+
+    def _assign(self, sid: str, port: int) -> Allocation:
         # A 64-bit token never collides in practice, but a collision would silently
         # re-point `resolve(slug)` at a different session (a route hijack, not a benign
         # retry) while `_by_sid` keeps both — so make it impossible, not improbable.
@@ -83,19 +94,23 @@ class HostPreviewManager:
         while slug in self._by_slug:
             slug = secrets.token_hex(8)
         alloc = Allocation(
-            port=self._free_port(),
-            slug=slug,
-            url=f"https://{slug}-preview.{self._base_host}",
+            port=port, slug=slug, url=f"https://{slug}-preview.{self._base_host}"
         )
         self._by_sid[sid] = alloc
         self._by_slug[slug] = sid
-        _log.info(
-            "host preview allocated sid=%s port=%d host=%s-preview.%s",
-            sid,
-            alloc.port,
-            slug,
-            self._base_host,
-        )
+        return alloc
+
+    def rotate(self, sid: str) -> Allocation | None:
+        """Give the session a fresh slug on the SAME port and retire the old one, so a
+        preview URL handed out earlier (to a share recipient since revoked) stops
+        resolving while the running dev server keeps its ``$PORT``. None when the
+        session holds no reservation — there is no URL to retire."""
+        old = self._by_sid.get(sid)
+        if old is None:
+            return None
+        self._by_slug.pop(old.slug, None)
+        alloc = self._assign(sid, old.port)
+        _log.info("host preview slug rotated sid=%s port=%d", sid, alloc.port)
         return alloc
 
     def port_for(self, sid: str) -> int | None:

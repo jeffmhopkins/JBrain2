@@ -288,6 +288,20 @@ def create_app(
         a = host_preview.ensure(sid)
         return {"enabled": True, "url": a.url, "mode": "host", "port": a.port}
 
+    @authed.post("/sessions/{sid}/preview/rotate")
+    def preview_rotate(sid: str) -> dict[str, object]:
+        """Retire the session's preview URL for a fresh one on the same port. The api
+        calls this when the owner revokes a share, so the recipient's copy stops
+        working."""
+        sessions.get(sid)
+        a = host_preview.rotate(sid)
+        return {
+            "enabled": host_preview.enabled,
+            "url": a.url if a else None,
+            "mode": "host",
+            "port": a.port if a else host_preview.port_for(sid),
+        }
+
     @authed.delete("/sessions/{sid}/preview", status_code=204)
     async def preview_close(sid: str) -> None:
         # No-op, kept for API compatibility: the reservation is kept (released on

@@ -253,3 +253,30 @@ def test_preview_with_nothing_listening_is_502_without_connecting(
     ):
         pass
     assert exc.value.code == 1011
+
+
+def test_rotate_retires_the_old_slug(monkeypatch: pytest.MonkeyPatch) -> None:
+    _never_proxy(monkeypatch)
+    c, sessions, old = _owned_app({})
+    sid = sessions.list()[0].id
+    rotated = c.post(f"/sessions/{sid}/preview/rotate", headers=AUTH)
+    assert rotated.status_code == 200
+    new_url = rotated.json()["url"]
+    assert _slug(new_url) != old and rotated.json()["port"] == 59000
+    assert c.get(f"/sessions/{sid}/preview", headers=AUTH).json()["url"] == new_url
+    # The old slug no longer resolves; the new one reaches the (absent) dev server.
+    assert c.get(f"/preview/{old}/", headers=PREVIEW_AUTH).status_code == 404
+    assert c.get(f"/preview/{_slug(new_url)}/", headers=PREVIEW_AUTH).status_code == 502
+
+
+def test_rotate_is_main_token_only_and_404s_an_unknown_session() -> None:
+    c = _host_app()
+    sid = c.post("/sessions", json={"repo": "r"}, headers=AUTH).json()["id"]
+    assert c.post(f"/sessions/{sid}/preview/rotate").status_code == 401
+    assert (
+        c.post(f"/sessions/{sid}/preview/rotate", headers=PREVIEW_AUTH).status_code
+        == 401
+    )
+    assert c.post("/sessions/nope/preview/rotate", headers=AUTH).status_code == 404
+    # A session that never opened a preview has nothing to rotate.
+    assert c.post(f"/sessions/{sid}/preview/rotate", headers=AUTH).json()["url"] is None
