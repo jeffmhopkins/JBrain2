@@ -572,8 +572,6 @@ class NoticeService:
             raise N.NoticeRefused("bad_choice", 422, why="only an answer carries a choice")
         if (cur[0], state) == ("shown", "shown"):
             return  # a repeated report is the panel retrying after a lost reply
-        if state == "shown" and cur[0] != "delivered":
-            raise N.NoticeRefused("bad_move", 409, now=cur[0])
         try:
             async with scoped_session(self._maker, ctx) as s:
                 done = (
