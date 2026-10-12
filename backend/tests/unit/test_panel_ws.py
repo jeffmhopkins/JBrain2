@@ -20,8 +20,8 @@ from fastapi.testclient import TestClient
 from starlette.testclient import WebSocketTestSession
 from starlette.websockets import WebSocketDisconnect
 
+from jbrain.api import client_ip, nudge, panel_ws
 from jbrain.api import endpoint as endpoint_api
-from jbrain.api import nudge, panel_ws
 from jbrain.auth import keys
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
@@ -52,6 +52,8 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[TestClie
                 "device_key", keys.hash_key(PANEL_KEY), "panel Quorra"
             )
         )
+        # Flashed panels have a role; a role-less device key is a phone's.
+        app.state.auth_repo.principals[-1].device_role = "jpet"
         yield c
     panel_ws._live.clear()
     panel_ws._replaced.clear()
@@ -144,6 +146,15 @@ class TestAuthentication:
             auth_service.rotate_owner_key(cast(FastAPI, client.app).state.auth_repo)
         )
         with pytest.raises(WebSocketDisconnect) as exc, _connect(client, owner):
+            pass
+        assert exc.value.code == 4401
+
+    def test_a_phone_key_is_not_a_panel_key(self, client: TestClient) -> None:
+        """Phones and panels share the `device_key` kind; only a subject with a `device_role`
+        is a panel, so a family phone's key cannot open the panel socket."""
+        repo = cast(FastAPI, client.app).state.auth_repo
+        asyncio.run(repo.create_principal("device_key", keys.hash_key("phone-key"), "Kid", "s"))
+        with pytest.raises(WebSocketDisconnect) as exc, _connect(client, "phone-key"):
             pass
         assert exc.value.code == 4401
 
@@ -250,6 +261,29 @@ class TestSameRouteAsHttp:
         assert seen["authorization"] == f"Bearer {PANEL_KEY}"
         assert "cookie" not in seen
         assert seen.get("x-forwarded-for") != "6.6.6.6"
+
+    def test_the_panels_lan_address_rides_the_tunnel_to_nudge(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The upgrade came through Caddy, which set `X-Real-IP`; each replayed request carries
+        it (and never the frame's own), so `nudge.remember` learns the panel's LAN address
+        exactly as it does from a direct HTTPS poll."""
+        cast(Any, client)._transport.client = ("172.18.0.3", 40000)
+        nudge._seen.clear()
+        try:
+            with client_ip.pinned(proxy=("172.18.0.3",)):
+                headers = {**_auth(), "X-Real-IP": "192.168.1.50"}
+                with client.websocket_connect(WS, headers=headers) as ws:
+                    _hello(ws)
+                    _request(ws, 1, "GET", "/endpoint/settings", headers={"X-Real-IP": "6.6.6.6"})
+                    # The settings read itself needs a database this suite does not have;
+                    # the address is learned before it, which is what is under test.
+                    _response(ws, 1)
+                    device = next(iter(panel_ws._live))
+                    assert panel_ws._live[device].stats.client == "192.168.1.50"
+            assert nudge._seen[device][0] == "192.168.1.50"
+        finally:
+            nudge._seen.clear()
 
 
 class TestWhatTheSocketRefuses:

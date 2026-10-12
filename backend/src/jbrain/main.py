@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import structlog
 from fastapi import FastAPI, Request
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import box_events
 from jbrain.agent.agents import MINECRAFT_DAVE_INGAME_TOOLS
@@ -141,6 +141,7 @@ from jbrain.api import (
     appointments as appointments_api,
 )
 from jbrain.api import brave_settings as brave_settings_api
+from jbrain.api import client_ip as client_ip_api
 from jbrain.api import (
     endpoint as endpoint_api,
 )
@@ -176,7 +177,7 @@ from jbrain.connectors.medical import medical_connectors
 from jbrain.connectors.repo import SqlConnectorCache
 from jbrain.connectors.service import ConnectorService
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.devices.repo import SqlDeviceRepo
+from jbrain.devices.repo import SqlDeviceRepo, count_unroled_reporting_devices
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
@@ -368,6 +369,25 @@ def _mint_internal_secrets(store: InternalSecrets) -> None:
             )
 
 
+async def _warn_unroled_panels(maker: async_sessionmaker[AsyncSession]) -> None:
+    """Log the live device keys with no `device_role` that have reported as panels.
+
+    Panel routes now refuse a role-less key (a phone's), so such a unit would 401 — this puts
+    the count in the debug logs, where the owner's console can see it, instead of leaving a
+    dark wall to explain itself. Detached and best-effort: it never delays or fails boot."""
+    try:
+        count = await count_unroled_reporting_devices(maker, SYSTEM_CTX)
+    except Exception:  # noqa: BLE001 - a diagnostic must never crash boot
+        structlog.get_logger().info("panel_auth.unroled_check_failed", exc_info=True)
+        return
+    if count:
+        structlog.get_logger().warning(
+            "panel_auth.unroled_panels",
+            count=count,
+            hint="a device key with no device_role is a phone; re-flash the panel to give it one",
+        )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
@@ -442,6 +462,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # only when the ingest identity is configured (same gate as the M1 consumer)
         # — so a stock deploy / the tests never open a broker connection.
         app.state.live_broadcaster = LiveBroadcaster()
+        # The proxy's and tunnel connector's addresses, kept resolved off the request path:
+        # every limiter keys on the client `client_ip` reads through them (api/client_ip.py).
+        client_ip_task = asyncio.create_task(client_ip_api.refresh_forever())
+        unroled_task = asyncio.create_task(_warn_unroled_panels(maker))
         live_task: asyncio.Task[None] | None = None
         if settings.mqtt_ingest_secret:
             live_task = asyncio.create_task(
@@ -1777,6 +1801,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         if live_task is not None:
             live_task.cancel()
+        client_ip_task.cancel()
+        unroled_task.cancel()
         tasks_loop_task.cancel()
         jmolt_night_loop_task.cancel()
         jmolt_sweep_loop_task.cancel()

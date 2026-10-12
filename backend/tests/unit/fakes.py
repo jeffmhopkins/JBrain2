@@ -7,7 +7,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from jbrain.auth.service import SESSION_KINDS, CapabilityToken, ExternalSession, PrincipalInfo
+from jbrain.auth.service import (
+    SESSION_KINDS,
+    CapabilityToken,
+    DeviceClass,
+    ExternalSession,
+    PrincipalInfo,
+)
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import DeviceInfo, DeviceRole, DeviceScope
 from jbrain.llm.engine_effort import EngineEfforts
@@ -32,6 +38,9 @@ class FakePrincipal:
     ext_in_tokens: int = 0
     ext_out_tokens: int = 0
     ext_requests: int = 0
+    # The device subject's `subjects.device_role`: None for a phone, 'jpet'/'display' for a
+    # flashed panel. Lives on the principal here because the fake has no subjects table.
+    device_role: str | None = None
 
 
 @dataclass
@@ -55,9 +64,15 @@ class FakeAuthRepo:
                 return _info(p)
         return None
 
-    async def find_active_device_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+    async def find_active_device_principal_by_key_hash(
+        self, key_hash: str, device_class: DeviceClass | None = None
+    ) -> PrincipalInfo | None:
         for p in self.principals:
             if p.key_hash == key_hash and p.kind == "device_key" and not p.revoked:
+                if device_class == "phone" and p.device_role is not None:
+                    continue
+                if device_class == "panel" and p.device_role is None:
+                    continue
                 return _info(p)
         return None
 

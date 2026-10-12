@@ -34,6 +34,8 @@ import time
 import structlog
 from fastapi import Request
 
+from jbrain.api.client_ip import client_ip
+
 log = structlog.get_logger(__name__)
 
 #: Spelled in ``firmware/main/nudge.h`` too, and a test pins that the two agree — the same
@@ -59,16 +61,11 @@ def _client_ip(request: Request) -> str | None:
 
     Panels reach the api through Caddy, so ``request.client.host`` is a container address on
     the compose network — firing a nudge at that would send it to the reverse proxy, which has
-    no panel behind it. Caddy sets ``X-Forwarded-For``; its FIRST entry is the originating
-    client. Falls back to the socket address, which is right when something talks to the api
-    directly.
+    no panel behind it. ``client_ip`` reads the address Caddy saw (``X-Real-IP``, which Caddy
+    overwrites) and only when the peer is Caddy; this used to take the first
+    ``X-Forwarded-For`` hop, which the client writes.
     """
-    fwd = request.headers.get("x-forwarded-for", "")
-    if fwd:
-        first = fwd.split(",")[0].strip()
-        if first:
-            return first
-    return request.client.host if request.client else None
+    return client_ip(request)
 
 
 def remember(device_id: str, request: Request) -> None:

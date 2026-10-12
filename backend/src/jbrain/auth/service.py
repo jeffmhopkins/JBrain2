@@ -7,7 +7,7 @@ Postgres in the integration suite.
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Literal, Protocol
 
 from jbrain.auth import keys
 
@@ -67,6 +67,11 @@ class ExternalSession:
     requests: int
 
 
+# Which half of the `device_key` kind a lookup admits, by the subject's `device_role`: a phone
+# (OwnTracks, the member dashboard) has none, a flashed panel has 'jpet' or 'display'.
+DeviceClass = Literal["phone", "panel"]
+
+
 # The principal kinds a session cookie may belong to: the owner (login), a member device
 # (/session/mint), a jcode share and an intake link (their redeem routes). The cookie
 # lookup admits no other kind, whatever is in device_sessions.
@@ -77,7 +82,7 @@ class AuthRepo(Protocol):
     async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
 
     async def find_active_device_principal_by_key_hash(
-        self, key_hash: str
+        self, key_hash: str, device_class: DeviceClass | None = None
     ) -> PrincipalInfo | None: ...
 
     async def find_active_device_principal_by_id(
@@ -162,18 +167,22 @@ async def authenticate(repo: AuthRepo, token: str, *, touch: bool = True) -> Pri
     return await repo.find_principal_by_session_token_hash(keys.hash_token(token), touch=touch)
 
 
-async def authenticate_device(repo: AuthRepo, key: str) -> PrincipalInfo | None:
-    """Resolve an OwnTracks HTTP Basic password (the device key) to its principal.
+async def authenticate_device(
+    repo: AuthRepo, key: str, device_class: DeviceClass | None = None
+) -> PrincipalInfo | None:
+    """Resolve a device key (an OwnTracks Basic password, a panel's bearer) to its principal.
 
     Kind-filtered in SQL (`find_active_device_principal_by_key_hash`) so an owner
     or capability key presented on the device path never authenticates — the
     device surface and the owner-cookie surface can never be conflated. Security
     rests on 256-bit key entropy + SHA-256 + the `revoked_at IS NULL` filter; an
     unknown/revoked/wrong-kind key returns None (the caller 401s, writing nothing).
+    `device_class` also filters on the subject's role, so a phone's key is not a panel's
+    and a panel's is not a phone's; only MQTT, which serves both, passes None.
     """
     if not key:
         return None
-    return await repo.find_active_device_principal_by_key_hash(keys.hash_key(key))
+    return await repo.find_active_device_principal_by_key_hash(keys.hash_key(key), device_class)
 
 
 async def logout(repo: AuthRepo, token: str) -> None:
@@ -189,9 +198,10 @@ async def mint_dashboard_session(repo: AuthRepo, device_key: str) -> str | None:
     SHA-256, `revoked_at IS NULL` — then a session token is minted bound to that
     device principal (so the cookie carries the device's subject + view-scope).
     An owner or capability key never resolves through the device lookup, so this
-    surface can mint a *member* session only, never owner authority (L4). Returns
-    None on an unknown / revoked / wrong-kind key (the caller 401s)."""
-    principal = await authenticate_device(repo, device_key)
+    surface can mint a *member* session only, never owner authority (L4). Phones only:
+    a panel key on a bedroom wall is not a family member's dashboard. Returns None on an
+    unknown / revoked / wrong-kind / panel key (the caller 401s)."""
+    principal = await authenticate_device(repo, device_key, "phone")
     if principal is None:
         return None
     token = keys.generate_session_token()

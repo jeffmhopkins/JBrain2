@@ -9,15 +9,25 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, func, or_, select, text, update
+from sqlalchemy import CursorResult, column, func, or_, select, table, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.auth.service import SESSION_KINDS, CapabilityToken, ExternalSession, PrincipalInfo
+from jbrain.auth.service import (
+    SESSION_KINDS,
+    CapabilityToken,
+    DeviceClass,
+    ExternalSession,
+    PrincipalInfo,
+)
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models import DeviceSession, Principal
 
 _LOGIN = SessionContext(auth_context="login")
 _BOOTSTRAP = SessionContext(auth_context="bootstrap")
+# `device_role` is read here and nowhere else through the ORM, so a bare table stands in for a
+# mapped column the Subject model would then write on every insert. `login` may SELECT
+# subjects (migration 0211's `subjects_select_login`).
+_SUBJECTS = table("subjects", column("id"), column("device_role"), schema="app")
 
 
 class SqlAuthRepo:
@@ -43,19 +53,29 @@ class SqlAuthRepo:
                 return None
             return _principal_info(row)
 
-    async def find_active_device_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+    async def find_active_device_principal_by_key_hash(
+        self, key_hash: str, device_class: DeviceClass | None = None
+    ) -> PrincipalInfo | None:
         """Look up a device key, kind-filtered in SQL so an owner or capability key
-        can never authenticate on the device path (no kind confusion)."""
+        can never authenticate on the device path (no kind confusion).
+
+        `device_class` narrows it further on the subject's `device_role`: phones and panels
+        share the `device_key` kind, so without it a phone key worked as a panel and a panel
+        key minted a member session. None (MQTT) admits either."""
+        query = select(Principal).where(
+            Principal.key_hash == key_hash,
+            Principal.kind == "device_key",
+            Principal.revoked_at.is_(None),
+        )
+        if device_class is not None:
+            # Outer: a key with no subject at all has no role, so it stays the phone it always
+            # was rather than locking out a legacy key; a panel always has a role'd subject.
+            role = _SUBJECTS.c.device_role
+            query = query.outerjoin(_SUBJECTS, _SUBJECTS.c.id == Principal.subject_id).where(
+                role.is_(None) if device_class == "phone" else role.is_not(None)
+            )
         async with scoped_session(self._maker, _LOGIN) as session:
-            row = (
-                await session.execute(
-                    select(Principal).where(
-                        Principal.key_hash == key_hash,
-                        Principal.kind == "device_key",
-                        Principal.revoked_at.is_(None),
-                    )
-                )
-            ).scalar_one_or_none()
+            row = (await session.execute(query)).scalar_one_or_none()
             if row is None:
                 return None
             return _principal_info(row)
