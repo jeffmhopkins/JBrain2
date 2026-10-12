@@ -38,7 +38,7 @@ bool shell_open(const char *id);
 void shell_home(void);
 const app_t *shell_open_app(void);
 
-/* Where KEY went since boot: `key=jerv:N,app:N,snz:N,sent:N,short:N,cxl:N`. Any task may read it;
+/* Where KEY went since boot: `key=jerv:N,app:N,snz:N,sent:N,short:N,cxl:N,fail:N,stop:N`. Any task may read it;
  * a torn count is a telemetry blemish, not a fault. */
 void shell_key_note(char *out, size_t len);
 

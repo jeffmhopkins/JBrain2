@@ -19,8 +19,13 @@ typedef void (*svc_power_pek_fn)(void);
 esp_err_t svc_power_start(bool configure, svc_power_pek_fn on_pek);
 
 /* The panel's reset: its RESET pin is pulled up to ALDO3 (HARDWARE.md §1), so ALDO3 off for
- * 100 ms, then on, then 100 ms to settle. Blocks ~200 ms. The only rail this service switches. */
+ * 100 ms, then on, then 100 ms to settle. Blocks ~200 ms. */
 esp_err_t svc_power_lcd_reset(void);
+
+/* The speaker amplifier's enable: the NS4150B's CTRL is pulled up to ALDO2 (HARDWARE.md §1), on
+ * from power-up. svc_audio switches it on for a reply and off after; nothing else touches it.
+ * ESP_ERR_INVALID_STATE on a fault boot, when the PMIC is never written. */
+esp_err_t svc_power_amp(bool on);
 
 /* The bus's other chips borrow it through these two calls, never through a handle of their own:
  * the lock that keeps a PMIC read-modify-write whole lives here, and a borrower that held the

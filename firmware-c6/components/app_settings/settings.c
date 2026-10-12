@@ -3,6 +3,7 @@
 
 #include "app_settings.h"
 #include "settings_model.h"
+#include "svc_audio.h"
 #include "svc_box.h"
 #include "svc_display.h"
 #include "svc_net.h"
@@ -26,7 +27,7 @@ typedef struct {
 
 typedef struct {
     lv_obj_t *root, *page;
-    lv_obj_t *bright_label;
+    lv_obj_t *bright_label, *volume_label;
     lv_timer_t *tick;
     live_t live;
     bool wifi_armed;
@@ -155,6 +156,16 @@ static void bright_changed(lv_event_t *e)
     lv_label_set_text_fmt(s->bright_label, "%ld%%", (long)svc_settings_get(SET_BRIGHTNESS));
 }
 
+/* Heard at the next reply: the speaker is only open while one plays. */
+static void volume_changed(lv_event_t *e)
+{
+    app_t *self = lv_event_get_user_data(e);
+    settings_t *s = self->state;
+    svc_settings_set(SET_VOLUME,
+                     settings_volume_from_slider(lv_slider_get_value(lv_event_get_current_target(e))));
+    lv_label_set_text_fmt(s->volume_label, "%ld%%", (long)svc_settings_get(SET_VOLUME));
+}
+
 static lv_obj_t *title_row(lv_obj_t *card, const char *title)
 {
     lv_obj_t *r = ui_box(card, LV_FLEX_FLOW_ROW, 12);
@@ -212,13 +223,21 @@ static void card_notifications(app_t *self, lv_obj_t *page)
 
 static void card_jerv(app_t *self, lv_obj_t *page)
 {
+    settings_t *s = self->state;
     lv_obj_t *c = ui_card(page, "Jerv");
     bool tts = svc_settings_get(SET_TTS) != 0;
-    lv_obj_t *sw = ui_switch_row(c, "Read replies aloud", tts, true, toggled, self);
+    bool speaker;
+    const char *note = settings_jerv_note(tts, svc_audio_state(), &speaker);
+    lv_obj_t *sw = ui_switch_row(c, "Read replies aloud", tts, speaker, toggled, self);
     lv_obj_set_user_data(sw, (void *)(uintptr_t)SET_TTS);
-    ui_label_wrap(c, tts ? "Replies are spoken and shown as text."
-                         : "Replies are text only. Tap Listen on a reply to hear it.",
-                  16, UI_C_MUTED);
+    ui_label_wrap(c, note, 16, speaker ? UI_C_MUTED : UI_C_WARN);
+    if (!speaker || !tts) return;
+    ui_divider(c);
+    lv_obj_t *r = title_row(c, "Speaker volume");
+    char pct[16];
+    snprintf(pct, sizeof pct, "%ld%%", (long)svc_settings_get(SET_VOLUME));
+    s->volume_label = ui_label(r, pct, 20, UI_C_TEXT);
+    ui_slider_row(c, VOLUME_FLOOR, VOLUME_MAX, svc_settings_get(SET_VOLUME), volume_changed, self);
 }
 
 static void card_firmware(app_t *self, lv_obj_t *page)

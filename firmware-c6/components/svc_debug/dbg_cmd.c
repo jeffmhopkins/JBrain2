@@ -12,6 +12,7 @@ static const dbg_cmd_info_t CMDS[] = {
     {"log_level", false, true},  {"open", false, true},      {"home", false, true},
     {"set", false, true},        {"inject", false, false},   {"ota_check", false, true},
     {"report_now", false, true}, {"screenshot", false, true}, {"reboot", true, false},
+    {"play_tone", false, true},
 };
 #define NCMDS (sizeof CMDS / sizeof *CMDS)
 

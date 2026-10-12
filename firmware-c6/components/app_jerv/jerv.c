@@ -34,21 +34,31 @@ static void listen(lv_event_t *e)
 
 static void fill_list(jerv_t *j)
 {
+    /* A redraw (a transcript filled in, "Speaking…" gone) keeps the reader where they were:
+       emptied, the page would clamp its scroll to the top and stay there. */
+    const int32_t y = lv_obj_get_scroll_y(j->list);
     lv_obj_clean(j->list);
     bool tts = svc_settings_get(SET_TTS) != 0;
+    const bool can_speak = svc_audio_can_speak();
     uint16_t n = svc_messages_count(PRINCIPAL);
     msg_t m = {0};
     for (uint16_t i = 0; i < n; i++) {
         if (!svc_messages_get(PRINCIPAL, i, &m)) continue;
         char dur[8];
         snprintf(dur, sizeof dur, "0:%02u", m.dur_s % 60);
+        const uint32_t speaking = svc_audio_playing();
         ui_bubble_t b = {.mine = m.mine, .voice = m.voice, .pending = m.pending, .text = m.text,
-                         .dur = dur, .status = m.status,
-                         .listen = jerv_shows_listen(&m, tts, 0), .tag = m.id};
+                         .dur = dur, .status = m.status, .speaking = speaking && m.id == speaking,
+                         .listen = can_speak && jerv_shows_listen(&m, tts, speaking), .tag = m.id};
         ui_bubble(j->list, &b, UI_ACCENT_JERV, listen, NULL);
     }
-    if (!n) ui_label_wrap(j->list, "No messages yet. Conversations arrive in a later update.", 18, UI_C_MUTED);
-    if (ui_pin_should(&j->pin, n ? m.id : 0)) ui_page_pin_bottom(j->list);
+    if (!n) ui_label_wrap(j->list, "Nothing said yet. Hold KEY and ask Jerv something.", 18, UI_C_MUTED);
+    if (ui_pin_should(&j->pin, n ? m.id : 0)) {
+        ui_page_pin_bottom(j->list);
+    } else {
+        lv_obj_update_layout(j->list);
+        lv_obj_scroll_to_y(j->list, y, LV_ANIM_OFF);
+    }
 }
 
 static void jerv_open(app_t *self, lv_obj_t *root)
@@ -92,7 +102,11 @@ static bool on_event(app_t *self, const app_event_t *ev)
     jerv_t *j = self->state;
     switch (ev->type) {
     case APP_EV_KEY_DOWN:
-        if (!svc_audio_talk_begin(TALK_TO_JERV, PRINCIPAL)) return true;
+        if (!svc_audio_talk_begin(TALK_TO_JERV, PRINCIPAL)) {
+            const char *why = svc_audio_talk_refused();
+            if (why) self->host->toast(why);
+            return true;
+        }
         j->talk = (ui_talk_t){.cap_ms = TALK_MAX_MS, .ms = svc_audio_talk_ms,
                               .level = svc_audio_level, .on_tap = tapped, .on_cap = capped,
                               .user = self};
@@ -116,6 +130,7 @@ static void describe(app_t *self, dbg_json_t *w)
     dbg_json_bool(w, "talking", ui_talk_up(&j->talk));
     dbg_json_int(w, "shown", svc_messages_count(PRINCIPAL));
     dbg_json_int(w, "pinned_to", j->pin.last_id);
+    dbg_json_int(w, "speaking", svc_audio_playing());
 }
 
 app_t app_jerv = {

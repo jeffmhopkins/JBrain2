@@ -24,6 +24,7 @@
 #include "shell_evq.h"
 #include "settings_store.h"
 #include "svc_audio_fake.h"
+#include "talk_core.h"
 #include "svc_box_fake.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
@@ -1416,6 +1417,306 @@ static void test_the_stream_is_byte_for_byte_what_the_box_decodes(void)
     CHECK(!dbg_shot_stripe(&s, 0, 0, row), "a stripe of no rows fails the capture rather than send one");
 }
 
+/* ---- 0.0.10: sound, and the talk to Jerv ---- */
+
+static void test_the_ring_never_overwrites_and_wraps(void)
+{
+    uint8_t mem[8], out[8];
+    tk_ring_t r;
+    tk_ring_init(&r, mem, sizeof mem);
+    CHECK(tk_ring_write(&r, "abcdef", 6) == 6 && tk_ring_used(&r) == 6, "it takes what fits");
+    CHECK(tk_ring_write(&r, "ghij", 4) == 2 && tk_ring_free(&r) == 0,
+          "a full ring takes no more: the producer never overwrites unread bytes");
+    CHECK(tk_ring_read(&r, out, 5) == 5 && !memcmp(out, "abcde", 5), "the oldest come out first");
+    CHECK(tk_ring_write(&r, "KLMN", 4) == 4, "freed room is reused across the end");
+    CHECK(tk_ring_read(&r, out, 8) == 7 && !memcmp(out, "fghKLMN", 7),
+          "and reads back in order across the wrap");
+    CHECK(tk_ring_read(&r, out, 4) == 0, "the consumer never reads past the producer");
+}
+
+static void test_a_hold_records_sends_and_hears_back(void)
+{
+    tk_t t;
+    tk_init(&t);
+    CHECK(tk_begin(&t, 1000, true, 7) == TK_BEGIN_OK && tk_audio_want(&t) == TK_AUDIO_MIC,
+          "KEY down opens the microphone");
+    CHECK(tk_net_claim(&t) && !tk_net_claim(&t), "the main task takes the exchange once");
+    CHECK(tk_net_next(&t) == TK_NET_UPLOAD, "while KEY is held the recording goes up");
+    t.mic_on = true;
+    CHECK(tk_end(&t, 4500, true) == TALK_SENT && t.held_ms == 3500, "the release sends");
+    CHECK(tk_net_next(&t) == TK_NET_FINISH && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "the upload finishes and the microphone closes");
+    CHECK(tk_replying(&t) && tk_begin(&t, 4600, true, 9) == TK_BEGIN_BUSY,
+          "a press while Jerv thinks starts nothing");
+    t.mic_on = false;
+    tk_net_reply(&t, true);
+    CHECK(t.phase == TK_PLAY && tk_audio_want(&t) == TK_AUDIO_SPK && tk_net_wants_audio(&t),
+          "the words come back and the speech plays");
+    char why[40];
+    CHECK(tk_take(&t, why, sizeof why) == TK_RES_REPLY && tk_take(&t, why, sizeof why) == TK_RES_NONE,
+          "the glass hears of the reply once");
+    tk_audio_drained(&t);
+    CHECK(t.phase == TK_PLAY, "the speaker is not done while the network may still send");
+    tk_net_end(&t);
+    tk_audio_drained(&t);
+    CHECK(t.phase == TK_IDLE && tk_take(&t, why, sizeof why) == TK_RES_SPOKEN,
+          "once all of it has played, the reply is spoken");
+    CHECK(tk_quiet(&t), "and nothing touches the ring any more");
+}
+
+static void test_a_knock_or_a_cancel_lets_go_of_everything(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    CHECK(tk_end(&t, 300, true) == TALK_TOO_SHORT && t.abort && tk_net_next(&t) == TK_NET_ABORT,
+          "a knock drops the upload, so the box hears no turn");
+    tk_net_end(&t);
+    CHECK(tk_begin(&t, 1000, true, 3) == TK_BEGIN_OK && !t.abort, "and the next hold starts clean");
+    CHECK(tk_end(&t, 9000, false) == TALK_CANCELLED && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "a tap on the glass cancels however long the hold");
+    t.mic_on = true;
+    CHECK(tk_begin(&t, 9100, true, 5) == TK_BEGIN_BUSY,
+          "a hold waits for the microphone a dropped one still has open");
+}
+
+static void test_key_or_boot_over_a_reply_stops_it(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    tk_net_reply(&t, true);
+    CHECK(tk_begin(&t, 3000, true, 3) == TK_BEGIN_STOPPED && t.phase == TK_IDLE && t.abort,
+          "KEY while Jerv speaks stops the speech and records nothing");
+    CHECK(!tk_net_wants_audio(&t) && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "the network stops sending it and the speaker closes");
+    tk_net_end(&t);
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    CHECK(tk_stop(&t) && !tk_replying(&t), "BOOT while Jerv thinks drops the wait");
+    tk_net_reply(&t, true);
+    CHECK(t.phase == TK_IDLE && t.res == TK_RES_NONE, "and an answer arriving after is not shown");
+    CHECK(!tk_stop(&t), "with nothing to stop, BOOT is BOOT again");
+}
+
+static void test_a_box_that_drops_mid_hold_is_told_at_the_release(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_net_fail(&t, "the upload failed");
+    CHECK(tk_audio_want(&t) == TK_AUDIO_OFF, "the microphone stops when nothing is listening");
+    CHECK(tk_end(&t, 5000, true) == TALK_FAILED && t.res == TK_RES_FAILED && !strcmp(t.why, "the upload failed"),
+          "the release learns it was not sent, and why");
+}
+
+static void test_text_only_never_opens_the_speaker(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, false, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    tk_net_reply(&t, true);
+    CHECK(t.phase == TK_IDLE && t.res == TK_RES_REPLY && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "with read-aloud off the words come and the speaker stays shut");
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    tk_net_nothing(&t);
+    CHECK(t.phase == TK_IDLE && t.res == TK_RES_NOTHING, "silence is its own answer, not a failure");
+}
+
+static void frame_bytes(uint8_t *b, size_t *n, uint8_t flags, const char *heard, const char *reply,
+                        const char *pcm)
+{
+    size_t k = 0;
+    memcpy(b, "JT1", 3);
+    k = 3;
+    b[k++] = flags;
+    const size_t hl = strlen(heard), rl = strlen(reply);
+    b[k++] = (uint8_t)hl;
+    b[k++] = (uint8_t)(hl >> 8);
+    memcpy(b + k, heard, hl);
+    k += hl;
+    b[k++] = (uint8_t)rl;
+    b[k++] = (uint8_t)(rl >> 8);
+    memcpy(b + k, reply, rl);
+    k += rl;
+    memcpy(b + k, pcm, strlen(pcm));
+    *n = k + strlen(pcm);
+}
+
+static void test_the_reply_frame_reads_in_any_split(void)
+{
+    uint8_t b[1200];
+    size_t n;
+    frame_bytes(b, &n, TF_FLAG_AUDIO, "what time is sunset", "About seven tonight.", "PCMPCM");
+    tk_frame_t f;
+    tk_frame_init(&f);
+    const size_t used = tk_frame_feed(&f, b, n);
+    CHECK(tk_frame_done(&f) && used == n - 6 && !strcmp(f.heard, "what time is sunset") &&
+              !strcmp(f.reply, "About seven tonight.") && (f.flags & TF_FLAG_AUDIO),
+          "whole, the words come out and the speech is what is left");
+    tk_frame_init(&f);
+    size_t head = 0;
+    for (size_t i = 0; i < n && !tk_frame_done(&f); i++) head += tk_frame_feed(&f, b + i, 1);
+    CHECK(tk_frame_done(&f) && head == n - 6 && !strcmp(f.reply, "About seven tonight."),
+          "a byte at a time, the same");
+    frame_bytes(b, &n, 0, "hi", "", "");
+    tk_frame_init(&f);
+    CHECK(tk_frame_feed(&f, b, n) == n && tk_frame_done(&f) && f.reply[0] == '\0' && !(f.flags & TF_FLAG_AUDIO),
+          "an empty reply and no speech is still a whole frame");
+    tk_frame_init(&f);
+    CHECK(tk_frame_feed(&f, (const uint8_t *)"<html>", 6) <= 6 && tk_frame_bad(&f),
+          "anything else — an error page — is refused at the first byte");
+    /* 300 two-byte letters: more than a bubble holds. */
+    char longr[601];
+    for (int i = 0; i < 300; i++) memcpy(longr + 2 * i, "\xC3\xA9", 2);
+    longr[600] = '\0';
+    frame_bytes(b, &n, 0, "x", longr, "");
+    tk_frame_init(&f);
+    tk_frame_feed(&f, b, n);
+    const size_t len = strlen(f.reply);
+    CHECK(tk_frame_done(&f) && len < sizeof f.reply && !strcmp(f.reply + len - 3, "…") &&
+              (len - 3) % 2 == 0,
+          "a reply too long for a bubble is cut on a character, with an ellipsis");
+}
+
+static void test_two_microphones_average_and_each_peak_is_kept(void)
+{
+    const int16_t lr[] = {1000, 3000, -32768, 0, 10, -20};
+    int16_t mono[3];
+    uint16_t pl, pr;
+    talk_mono(lr, 3, mono, &pl, &pr);
+    CHECK(mono[0] == 2000 && mono[1] == -16384 && mono[2] == -5, "the box gets the two averaged");
+    CHECK(pl == 32767 && pr == 3000, "and each microphone's peak is kept, so a dead one shows");
+    CHECK(talk_level(0) == 0 && talk_level(31) == 0 && talk_level(32767) == 100 &&
+              talk_level(4000) > talk_level(500),
+          "the ring pulses with the voice, quiet at -60 dB and full at full scale");
+}
+
+static void test_the_audio_token(void)
+{
+    tk_stats_t s = {.talks = 3, .sent = 2, .replies = 1, .failed = 1, .up_bytes = 65536,
+                    .down_bytes = 2048, .reply_ms = 2400, .reply_ms_max = 5100, .underruns = 4};
+    char out[200];
+    tk_stats_note(&s, "ok", out, sizeof out);
+    CHECK(!strcmp(out, "audio=ok,talks:3,sent:2,heard:1,none:0,fail:1,stop:0,up:64K,down:2K,"
+                       "ms:2400/5100,under:4,over:0"),
+          "telemetry says what the codecs did and what each talk cost");
+}
+
+static msg_t last_jerv(void)
+{
+    msg_t m = {0};
+    svc_messages_get("jerv", (uint16_t)(svc_messages_count("jerv") - 1), &m);
+    return m;
+}
+
+static void test_a_talk_on_the_glass_end_to_end(void)
+{
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_settings_set(SET_TTS, 1);
+    CHECK(svc_audio_talk_begin(TALK_TO_JERV, "jerv") && svc_audio_talking(), "KEY down records");
+    svc_rtc_fake_advance_ms(3200);
+    CHECK(svc_audio_talk_end(true) == TALK_SENT, "a three-second hold is sent");
+    msg_t m = last_jerv();
+    CHECK(m.mine && m.voice && m.pending && m.dur_s == 3 && !strcmp(m.text, TALK_HEARING),
+          "the bubble says it is being heard, never a made-up transcript");
+    CHECK(svc_audio_replying(), "and Jerv is thinking");
+    svc_audio_fake_reply("what time is sunset", "About seven tonight.", true);
+    svc_audio_service();
+    CHECK(svc_messages_count("jerv") == 2, "the reply arrives as a second bubble");
+    msg_t heard;
+    svc_messages_get("jerv", 0, &heard);
+    m = last_jerv();
+    CHECK(!heard.pending && !strcmp(heard.text, "what time is sunset"),
+          "the voice bubble now holds what the box heard");
+    CHECK(!m.mine && !strcmp(m.text, "About seven tonight.") && svc_audio_playing() == m.id,
+          "Jerv's words are shown while its voice plays");
+    CHECK(svc_audio_stop_reply() && svc_audio_playing() == 0 && !svc_audio_replying(),
+          "BOOT stops the voice; the words stay");
+    svc_audio_service();
+    CHECK(svc_audio_talk_begin(TALK_TO_JERV, "jerv"), "the next hold may start");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    CHECK(svc_audio_stop_reply(), "BOOT while Jerv thinks");
+    m = last_jerv();
+    CHECK(!m.pending && !strcmp(m.status, "Stopped"), "leaves the bubble saying it was stopped");
+    svc_audio_fake_reply("late", "too late", false);
+    svc_audio_service();
+    CHECK(svc_messages_count("jerv") == 3, "and an answer arriving after is never drawn");
+    svc_settings_set(SET_TTS, 1);
+}
+
+static void test_a_hold_that_cannot_reach_jerv_is_refused_up_front(void)
+{
+    svc_net_fake_set(NET_OFF);
+    CHECK(!svc_audio_talk_begin(TALK_TO_JERV, "jerv") && strstr(svc_audio_talk_refused(), "Wi-Fi"),
+          "offline, KEY says why instead of recording into nothing");
+    svc_net_fake_set(NET_CONNECTED);
+    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, "quorra"), "a hold to a person still starts");
+    svc_rtc_fake_advance_ms(1500);
+    CHECK(svc_audio_talk_end(true) == TALK_SENT, "and still ends honestly unsent");
+}
+
+static void test_key_or_boot_over_a_reply_is_the_shells_stop(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.replying = true;
+    sh_route_t r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_STOP_REPLY && st.key_owner == SH_KEY_FREE,
+          "KEY over a reply stops it, in any app, and takes no hold");
+    r = sh_route_button(&st, &f, SH_BTN_KEY_UP);
+    CHECK(r.first == SH_ACT_NONE, "so its release sends nothing");
+    r = sh_route_button(&st, &f, SH_BTN_BOOT);
+    CHECK(r.first == SH_ACT_STOP_REPLY, "BOOT over a reply stops it rather than going back");
+    f = home();
+    f.replying = true;
+    f.alarm_ringing = true;
+    r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.fallback == SH_ACT_SNOOZE_ALARM, "a ringing alarm still takes KEY first");
+    f = home();
+    r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_TALK_JERV, "with no reply, KEY is Jerv's again");
+}
+
+static void test_the_speaker_settings(void)
+{
+    CHECK(settings_volume_from_slider(3) == VOLUME_FLOOR && settings_volume_from_slider(73) == 75 &&
+              settings_volume_from_slider(100) == 100,
+          "the volume slider snaps to fives and never reaches silence");
+    CHECK(svc_settings_clamp(SET_VOLUME, 0) == VOLUME_FLOOR && svc_settings_clamp(SET_MIC_GAIN, 99) == MIC_GAIN_MAX &&
+              svc_settings_clamp(SET_MIC_GAIN, -3) == 0,
+          "whoever writes them, volume and microphone gain stay in range");
+    CHECK(!strcmp(svc_settings_name(SET_VOLUME), "volume") && !strcmp(svc_settings_name(SET_MIC_GAIN), "mic_gain") &&
+              svc_settings_default(SET_VOLUME) == 80 && svc_settings_default(SET_MIC_GAIN) == 30,
+          "saved under short NVS keys, defaulting to the middle of the vendor's range");
+    bool spk;
+    CHECK(!strcmp(settings_jerv_note(true, "ok", &spk), "Replies are spoken and shown as text.") && spk,
+          "with sound working the card says what a reply does");
+    CHECK(strstr(settings_jerv_note(true, "failed:i2c", &spk), "cannot record") && !spk,
+          "a codec that did not start is said plainly");
+    CHECK(strstr(settings_jerv_note(true, "mic-only:es8311", &spk), "text only") && !spk,
+          "a silent speaker means text-only replies, and no volume slider");
+}
+
+static void test_play_tone_is_whitelisted_and_harmless(void)
+{
+    const dbg_cmd_info_t *c = dbg_cmd_find("play_tone");
+    CHECK(c && !c->destructive && c->idempotent, "the box may ask for a tone and retry it");
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -1481,6 +1782,20 @@ int main(void)
     test_a_request_id_is_uuid_text_or_it_is_dropped();
     test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short();
     test_the_stream_is_byte_for_byte_what_the_box_decodes();
+    test_the_ring_never_overwrites_and_wraps();
+    test_a_hold_records_sends_and_hears_back();
+    test_a_knock_or_a_cancel_lets_go_of_everything();
+    test_key_or_boot_over_a_reply_stops_it();
+    test_a_box_that_drops_mid_hold_is_told_at_the_release();
+    test_text_only_never_opens_the_speaker();
+    test_the_reply_frame_reads_in_any_split();
+    test_two_microphones_average_and_each_peak_is_kept();
+    test_the_audio_token();
+    test_a_talk_on_the_glass_end_to_end();
+    test_a_hold_that_cannot_reach_jerv_is_refused_up_front();
+    test_key_or_boot_over_a_reply_is_the_shells_stop();
+    test_the_speaker_settings();
+    test_play_tone_is_whitelisted_and_harmless();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

@@ -19,7 +19,7 @@
 #include "lvgl.h"
 #include "shell.h"
 #include "svc_alarms_fake.h"
-#include "svc_audio_fake.h"
+#include "svc_audio_drv.h"
 #include "svc_display.h"
 #include "svc_display_drv.h"
 #include "svc_messages_fake.h"
@@ -94,7 +94,6 @@ static void ui_loop(void *arg)
     svc_display_set_brightness((uint8_t)svc_settings_get(SET_BRIGHTNESS));
     svc_messages_init();
     svc_messages_fake_clear();
-    svc_audio_init();
     svc_alarms_init();
     svc_notice_init();
     char err[96];
@@ -108,6 +107,7 @@ static void ui_loop(void *arg)
         const uint32_t now = now_ms();
         svc_rtc_poll();
         svc_settings_service(now);
+        svc_audio_service();
         dbg_sys_crumb(ST_PUMP);
         shell_pump();
         dbg_sys_crumb(ST_RENDER);

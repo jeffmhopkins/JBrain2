@@ -4,7 +4,8 @@
  * 0.0.4 is the first image that drives the screen: the AXP2101 (svc_power), the buttons
  * (svc_buttons), the CO5300 under LVGL (svc_display) and the shell (ui_task.c). 0.0.6 adds the
  * CST9220 (svc_touch); 0.0.8 the saved settings (svc_settings), the PCF85063 and the box's clock
- * (svc_rtc), and the real Wi-Fi and Firmware cards (svc_net, svc_box). ALL OF IT STARTS AFTER
+ * (svc_rtc), and the real Wi-Fi and Firmware cards (svc_net, svc_box); 0.0.10 the ES8311 and
+ * ES7210 (svc_audio) and the talk to Jerv on the box connection (talk_link.c). ALL OF IT STARTS AFTER
  * THE ROLLBACK GATE, and the boot after a panic or a watchdog leaves the display off
  * (disp_guard.c), so no fault in the new code can stop this loop reaching the box and taking the
  * image that fixes it (README "What 0.0.4 adds").
@@ -32,6 +33,7 @@
 #include "nvs_flash.h"
 #include "ota.h"
 #include "shell.h"
+#include "svc_audio_drv.h"
 #include "svc_box_drv.h"
 #include "svc_buttons.h"
 #include "svc_display_drv.h"
@@ -40,6 +42,7 @@
 #include "svc_rtc_drv.h"
 #include "svc_settings_drv.h"
 #include "svc_touch.h"
+#include "talk_link.h"
 #include "ui_task.h"
 
 static const char *TAG = "jpanel-c6";
@@ -172,12 +175,12 @@ static bool report(const cfg_t *cfg)
     /* Bounded on its own, so however long a service's tokens grow the body still fits and the
        report still goes: a truncated note is a smaller loss than no heartbeat. Static, as is
        the body, because this task then runs a TLS handshake on the same 8 KB stack. */
-    static char note[1280], part[256];
+    static char note[1408], part[256];
     size_t used = 0;
     void (*const parts[])(char *, size_t) = {
         svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
         svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
-        dbg_link_note,    box_http_note,  secrets_note};
+        svc_audio_note,   dbg_link_note,  box_http_note, secrets_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -185,7 +188,7 @@ static bool report(const cfg_t *cfg)
         if (k > 0) used += (size_t)k < sizeof note - used ? (size_t)k : sizeof note - used - 1;
     }
 
-    static char body[1856];
+    static char body[2048];
     const int n = snprintf(
         body, sizeof(body),
         "{\"version\":\"%s\",\"uptime_ms\":%" PRIu32 ",\"reset_reason\":\"%s\","
@@ -318,6 +321,8 @@ static void start_panel(const cfg_t *cfg)
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
     svc_touch_start();
+    /* Likewise: a codec that does not answer is a panel without sound, saying so in Settings. */
+    svc_audio_start(wake_main);
 }
 
 void app_main(void)
@@ -391,21 +396,31 @@ void app_main(void)
 
         /* Until the next manifest check: debug pickups while the box answers (dbg_sched.c). A
            PWR press, the UI settling, Update now, Connect, or a debug command that needs this
-           loop (ota_check, report_now) wakes it early, so the box hears it in seconds. */
+           loop (ota_check, report_now) wakes it early, so the box hears it in seconds.
+           A talk to Jerv outranks all of it (talk_link.h): it is taken the moment KEY wakes this
+           loop, and afterwards the loop makes its regular pass, so a manifest check or a
+           heartbeat that fell due meanwhile is the next thing on the connection. */
         const uint32_t check_due = now_ms() + CHECK_PERIOD_MS;
         for (;;) {
+            if (talk_link_run()) break;
             uint32_t sleep_ms = 0;
             const dbg_next_t next = dbg_sched_next(&pickup, now_ms(), check_due,
                                                    reachable && !svc_net_user_off(), &sleep_ms);
             if (next == DBG_NEXT_CHECK) break;
             if (next == DBG_NEXT_SLEEP) {
-                if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms))) break;
+                if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms))) {
+                    talk_link_run();
+                    break;
+                }
                 continue;
             }
             const dbg_poll_t got = dbg_link_poll();
             if (got != DBG_POLL_FAIL) box_reached();
             dbg_sched_done(&pickup, now_ms(), got);
-            if (ulTaskNotifyTake(pdTRUE, 0)) break;
+            if (ulTaskNotifyTake(pdTRUE, 0)) {
+                talk_link_run();
+                break;
+            }
         }
         /* All asked, all cleared: `|`, not `||`. */
         if (svc_buttons_take_dirty() | ui_task_take_dirty() | svc_box_take_report_request())

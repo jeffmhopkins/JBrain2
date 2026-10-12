@@ -41,7 +41,7 @@ static bool s_started;
 /* KEY held outside a conversation: the shell's own talk ring, over whatever is open. */
 static ui_talk_t s_talk;
 static struct {
-    uint32_t jerv, app, snooze, sent, too_short, cancelled;
+    uint32_t jerv, app, snooze, sent, too_short, cancelled, failed, stopped;
 } s_keys;
 
 static struct {
@@ -100,6 +100,7 @@ static sh_facts_t facts(void)
     f.dark = svc_display_dark();
     f.talking = ui_talk_up(&s_talk);
     f.clock_open = s_open && !strcmp(s_open->id, s_clock_app);
+    f.replying = svc_audio_replying();
     return f;
 }
 
@@ -258,7 +259,11 @@ static void talk_capped(void *user)
 
 static void talk_begin(void)
 {
-    if (!svc_audio_talk_begin(TALK_TO_JERV, s_talk_app)) return;
+    if (!svc_audio_talk_begin(TALK_TO_JERV, s_talk_app)) {
+        const char *why = svc_audio_talk_refused();
+        if (why) ui_toast(why, 2600);
+        return;
+    }
     s_keys.jerv++;
     s_talk = (ui_talk_t){.cap_ms = TALK_MAX_MS, .ms = svc_audio_talk_ms, .level = svc_audio_level,
                          .on_tap = talk_tapped, .on_cap = talk_capped};
@@ -275,6 +280,11 @@ static void talk_end(bool send)
     case TALK_SENT:
     case TALK_CAPPED:
         s_keys.sent++;
+        shell_open(s_talk_app);
+        break;
+    /* The box dropped out mid-hold: the thread's bubble says why. */
+    case TALK_FAILED:
+        s_keys.failed++;
         shell_open(s_talk_app);
         break;
     case TALK_TOO_SHORT:
@@ -415,6 +425,9 @@ static void act(sh_act_t a)
         talk_end(false);
         break;
     case SH_ACT_OPEN_CLOCK: shell_open(s_clock_app); break;
+    case SH_ACT_STOP_REPLY:
+        if (svc_audio_stop_reply()) s_keys.stopped++;
+        break;
     case SH_ACT_WAKE: set_dark(false); break;
     case SH_ACT_DARK:
         talk_end(false);
@@ -586,6 +599,7 @@ static void describe(void *ctx, dbg_json_t *w)
     static const char *const OWNER[] = {"free", "app", "alarm", "shell"};
     dbg_json_str(w, "key_owner", OWNER[s_st.key_owner]);
     dbg_json_bool(w, "talking", f.talking);
+    dbg_json_bool(w, "replying", f.replying);
     dbg_json_bool(w, "notices_held", f.notices_held);
     dbg_json_obj_begin(w, "keys");
     dbg_json_int(w, "jerv", s_keys.jerv);
@@ -594,6 +608,8 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "sent", s_keys.sent);
     dbg_json_int(w, "too_short", s_keys.too_short);
     dbg_json_int(w, "cancelled", s_keys.cancelled);
+    dbg_json_int(w, "failed", s_keys.failed);
+    dbg_json_int(w, "stopped", s_keys.stopped);
     dbg_json_obj_end(w);
     dbg_json_int(w, "queue_depth", s_q.count);
     dbg_json_int(w, "queue_dropped", s_q.dropped);
@@ -667,10 +683,11 @@ static void sink(const app_event_t *ev)
 
 void shell_key_note(char *out, size_t len)
 {
-    snprintf(out, len, "key=jerv:%lu,app:%lu,snz:%lu,sent:%lu,short:%lu,cxl:%lu",
+    snprintf(out, len, "key=jerv:%lu,app:%lu,snz:%lu,sent:%lu,short:%lu,cxl:%lu,fail:%lu,stop:%lu",
              (unsigned long)s_keys.jerv, (unsigned long)s_keys.app, (unsigned long)s_keys.snooze,
              (unsigned long)s_keys.sent, (unsigned long)s_keys.too_short,
-             (unsigned long)s_keys.cancelled);
+             (unsigned long)s_keys.cancelled, (unsigned long)s_keys.failed,
+             (unsigned long)s_keys.stopped);
 }
 
 bool shell_start(char *err, size_t err_len)

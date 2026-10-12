@@ -69,6 +69,14 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
     case SH_OV_NONE: break;
     }
 
+    /* A hand on KEY or BOOT while Jerv answers is reaching for "stop", in every app: the reply
+     * goes quiet and nothing else happens — no recording starts, and the release that follows
+     * sends nothing (owner, 2026-10-12: "KEY or BOOT during playback stops it"). */
+    if (f->replying && (b == SH_BTN_KEY_DOWN || b == SH_BTN_BOOT)) {
+        if (b == SH_BTN_KEY_DOWN) st->key_owner = SH_KEY_FREE;
+        return r(SH_ACT_STOP_REPLY, SH_ACT_NONE);
+    }
+
     if (f->app_open) {
         if (b == SH_BTN_KEY_DOWN) {
             st->key_owner = SH_KEY_APP;

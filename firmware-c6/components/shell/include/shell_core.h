@@ -46,6 +46,7 @@ typedef enum {
     SH_ACT_WAKE,
     SH_ACT_DARK,
     SH_ACT_OPEN_CLOCK,     /* BOOT held: the clock app, over home or any app */
+    SH_ACT_STOP_REPLY,     /* KEY or BOOT while Jerv thinks or speaks: drop the reply */
 } sh_act_t;
 
 typedef struct {
@@ -62,6 +63,7 @@ typedef struct {
     bool dark;
     bool talking;      /* the shell's own talk to Jerv is up */
     bool clock_open;   /* the open app is the clock */
+    bool replying;     /* Jerv is thinking about, or speaking, an answer */
 } sh_facts_t;
 
 /* SH_KEY_SHELL: the hold is the shell's talk to Jerv, so its release sends to Jerv whatever

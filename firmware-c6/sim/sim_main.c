@@ -80,6 +80,7 @@ static void step(uint32_t ms)
     for (uint32_t t = 0; t < ms; t += 10) {
         s_ms += 10;
         svc_rtc_fake_advance_ms(10);
+        svc_audio_service();
         shell_pump();
         lv_timer_handler();
     }
@@ -259,6 +260,15 @@ static void no_battery(void)
     svc_power_fake_set(&p);
 }
 
+static void text_only(void)
+{
+    svc_settings_set(SET_TTS, 0);
+}
+
+/* What the box answers to the sim's talks: a question the owner might ask his desk. */
+#define HEARD "What's the weather like tomorrow?"
+#define REPLIED "Sunny and 18 degrees in the morning, with rain after six in the evening."
+
 static void session(void)
 {
     msg_t m = {.id = 50, .voice = true, .dur_s = 4, .text = "Can we have pancakes?"};
@@ -279,6 +289,8 @@ typedef struct {
 #define KEY_DOWN "{\"cmd\":\"inject\",\"event\":\"key_down\"}"
 #define KEY_UP "{\"cmd\":\"inject\",\"event\":\"key_up\"}"
 #define WAIT(ms) "wait " #ms
+/* Not a debug command: the fake box answers the hold in flight. */
+#define REPLY "reply"
 
 /* Mock boards 1-17 (docs/mocks/jpanel-c6/canvas.json), by the live panel's `start` names. */
 static const state_t STATES[] = {
@@ -295,7 +307,7 @@ static const state_t STATES[] = {
     {"settings-usb", no_battery, {OPEN("settings")}},
     /* The first tap on Disconnect: rose, "Tap again to disconnect". */
     {"settings-armed", NULL, {OPEN("settings"), SCROLL_END, TAP(240, 418), WAIT(300)}},
-    {"updating", downloading, {OPEN("settings"), SCROLL(560)}},
+    {"updating", downloading, {OPEN("settings"), SCROLL(680)}},
     {"clock", NULL, {OPEN("clock")}},
     {"clock-night", night, {OPEN("clock")}},
     {"clock-badge", night_badge, {OPEN("clock")}},
@@ -306,8 +318,12 @@ static const state_t STATES[] = {
     {"notify-question", push_question, {WAIT(100)}},
     /* KEY from Settings: the shell's talk to Jerv, over whatever is open. */
     {"rec-anywhere", NULL, {OPEN("settings"), KEY_DOWN, WAIT(3400)}},
-    /* Its release: the Jerv thread, with the bubble that says nothing was recorded. */
+    /* Its release: the Jerv thread, the hold's bubble waiting for its transcript. */
     {"jerv-after-key", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300)}},
+    /* The box answers: the transcript, Jerv's words, and "Speaking…" while its voice plays. */
+    {"jerv-reply", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY}},
+    /* The same with "Read replies aloud" off: words only. */
+    {"jerv-reply-text", text_only, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY}},
     /* BOOT held from inside an app: the clock face (owner, 2026-10-12). */
     {"boot-long", NULL, {OPEN("settings"), "{\"cmd\":\"inject\",\"event\":\"boot_long\"}", WAIT(300)}},
     /* Not a mock board: a short session whose snapshot shows the debug surface. */
@@ -352,6 +368,11 @@ static int render(const char *name, const char *png, const char *snap)
     for (int i = 0; i < 6 && st->cmds[i]; i++) {
         if (!strncmp(st->cmds[i], "wait ", 5)) {
             step((uint32_t)atoi(st->cmds[i] + 5));
+            continue;
+        }
+        if (!strcmp(st->cmds[i], REPLY)) {
+            svc_audio_fake_reply(HEARD, REPLIED, svc_settings_get(SET_TTS) != 0);
+            step(300);
             continue;
         }
         if (!strncmp(st->cmds[i], "scroll ", 7)) {
@@ -556,8 +577,21 @@ static int touch_checks(void)
            "a real hold opens the Jerv thread on release");
     msg_t last = {0};
     svc_messages_get("jerv", (uint16_t)(svc_messages_count("jerv") - 1), &last);
-    expect(svc_messages_count("jerv") == before + 1 && !strcmp(last.status, "Not sent"),
-           "where the hold is shown as not sent, not as a transcript");
+    expect(svc_messages_count("jerv") == before + 1 && last.pending,
+           "where the hold waits for its transcript, never a made-up one");
+    svc_audio_fake_reply(HEARD, REPLIED, true);
+    step(100);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"replying\":true") != NULL,
+           "the reply arrives and Jerv speaks it");
+    unsigned answered = svc_messages_count("jerv");
+    run(KEY_DOWN);
+    step(300);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"talking\":false") != NULL &&
+               !svc_audio_replying(),
+           "KEY while Jerv speaks stops it and records nothing");
+    run(KEY_UP);
+    step(100);
+    expect(svc_messages_count("jerv") == answered, "and its release sends nothing");
     run("{\"cmd\":\"home\"}");
     run(KEY_DOWN);
     step(300);
@@ -566,7 +600,7 @@ static int touch_checks(void)
     step(100);
     run(KEY_UP);
     step(100);
-    expect(!shell_open_app() && svc_messages_count("jerv") == before + 1,
+    expect(!shell_open_app() && svc_messages_count("jerv") == answered,
            "a tap during the hold cancels it, and the release sends nothing");
     return s_touch_bad;
 }
