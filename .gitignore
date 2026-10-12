@@ -40,3 +40,4 @@ firmware/host/run_link_tests
 firmware/host/run_stream_tests
 firmware/host/run_jpanel_tests
 firmware/host/run_sm_tests
+firmware/host/run_e2e_tests

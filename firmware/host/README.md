@@ -1,6 +1,6 @@
 # The firmware's host suite
 
-Five binaries and a gate, all run by `make -C firmware/host test`. Nothing here needs hardware,
+Six binaries and three gates, all run by `make -C firmware/host test`. Nothing here needs hardware,
 an ESP-IDF toolchain, or a network.
 
 | binary | source | what it is for |
@@ -11,9 +11,20 @@ an ESP-IDF toolchain, or a network.
 | `run_stream_tests` | `stream_tests.c` | **The speaker's arbiter** (`main/stream.c`), one 40 ms tick at a time against a fake clock: what reaches the codec when cues, the pet's reply, a silence, a stop and a streamed message meet, and what render may know about it. Built with `STREAM_TEST_HOOKS`, so the seqlock test can stop render half-way through a slot write. |
 | `run_jpanel_tests` | `jpanel_tests.c` | **The voice-post engine** (`main/jpanel_core.c`) against a scripted box in two modes — today's 0.3.39 contract (positional `/next`, no ids, no delivery header, no `/returned`) and the W3 contract — with a fake clock, a fake arbiter (`fake_stream.c`, built from `stream.h`'s contract) and a fake link that enforces deadlines the way `link.c` does. Every 40 ms of fake time it checks the UI backstops and the watchdog's condition against the published snapshot. |
 
+| `run_e2e_tests` | `e2e_tests.c` | **The three together** (plan §8.5): `panel_sm.c`, the real `jpanel_core.c` and the real `stream.c`, wired the way `display.c` wires them — every 40 ms of fake time the arbiter ticks and a render frame samples, steps and executes — against `jpanel_tests.c`'s scripted box, which it includes whole minus its `main`. It is where a fault in the seam shows: its first run found the stream reading as finished a tick before it had sounded (`stream_facts` now reads the ring itself). |
+
 `check_no_logic_in_audio` greps `main/audio.c` for anything but codec I/O — ring arithmetic, cue
 rendering, slot writes, a field of the speaker state — because a decision made on the audio task
 works on the device and is invisible to `run_stream_tests`.
+
+`check_no_logic_in_display` (`check_no_logic_in_display.sh`) holds `main/display.c` to sampling,
+executing and drawing: no static whose name, `s_` stripped, is a field of `sm_t` (read out of
+`panel_sm.h` by awk), and no `jpanel_*`/`stream_*` call outside the executor's list. A renamed
+duplicate passes it; review covers that.
+
+`test_update_check_precedes_task_starts` pins `app_main`'s order: the update check before speech,
+talk, voice post, the nudge and the watchdogs, so a broken image can always be replaced over the
+air (plan §6a).
 
 They are separate because they need different things. The first wants to be a tight loop over
 inputs; the second needs a world — cues that hold the speaker for a while, commands that are

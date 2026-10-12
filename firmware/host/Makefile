@@ -17,7 +17,7 @@ LDLIBS = -lm
 # `panel_sm.c` is in this list for the reason the header comment gives: it is the panel's state
 # machine, it is supposed to be free of ESP-IDF, and the link is what checks that. It is built
 # into BOTH binaries so the claim is tested even by the suite that does not use it.
-SRC = ../main/cue.c ../main/orient.c ../main/screen.c ../main/cadence.c ../main/reach.c ../main/confirm.c ../main/ring.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/vocab.c ../main/wsproto.c ../main/panel_sm.c ../main/stream.c iface_check.c
+SRC = ../main/cue.c ../main/orient.c ../main/screen.c ../main/cadence.c ../main/reach.c ../main/confirm.c ../main/ring.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/vocab.c ../main/wsproto.c ../main/panel_sm.c ../main/stream.c
 # HEADERS ARE PREREQUISITES TOO. They were not, and the cost was a green run against a stale
 # binary: a constant moved into `face.h`, `make` saw no newer .c file and re-ran the previous
 # build. A suite that can report OK without having compiled the change is worse than no suite.
@@ -30,13 +30,14 @@ HDR = $(wildcard ../main/*.h)
 # slowed down by. `run_stream_tests` steps the speaker's arbiter (`stream.c`) one 40 ms tick at a
 # time against a fake clock. Sequential, not parallel: a suite whose failure output interleaves with
 # another's is a suite nobody reads.
-.PHONY: test clean check_no_logic_in_audio
-test: run_tests run_sm_tests run_link_tests run_stream_tests run_jpanel_tests check_no_logic_in_audio
+.PHONY: test clean check_no_logic_in_audio check_no_logic_in_display test_update_check_precedes_task_starts
+test: run_tests run_sm_tests run_link_tests run_stream_tests run_jpanel_tests run_e2e_tests check_no_logic_in_audio check_no_logic_in_display test_update_check_precedes_task_starts
 	./run_tests
 	./run_sm_tests
 	./run_link_tests
 	./run_stream_tests
 	./run_jpanel_tests
+	./run_e2e_tests
 
 run_tests: tests.c $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
@@ -71,5 +72,22 @@ JPANEL_SRC = ../main/jpanel_core.c ../main/reach.c fake_stream.c
 run_jpanel_tests: jpanel_tests.c $(JPANEL_SRC) fake_stream.h $(HDR)
 	$(CC) $(CFLAGS) -pthread -o $@ $(filter-out %.h,$^) $(LDLIBS)
 
+# THE THREE TOGETHER (plan §8.5): the machine, the real engine and the real arbiter, wired the way
+# `display.c` wires them, against `jpanel_tests.c`'s scripted box (included whole, minus its
+# `main`). Its own source list for the reason `run_jpanel_tests` has one: this links the real
+# `stream.c` where that one links the fake.
+E2E_SRC = ../main/jpanel_core.c ../main/stream.c ../main/panel_sm.c ../main/cue.c ../main/ring.c ../main/reach.c ../main/confirm.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/gesture.c
+run_e2e_tests: e2e_tests.c jpanel_tests.c $(E2E_SRC) fake_stream.h $(HDR)
+	$(CC) $(CFLAGS) -pthread -o $@ e2e_tests.c $(E2E_SRC) $(LDLIBS)
+
+# `display.c` SAMPLES, EXECUTES AND DRAWS (plan §8.1): no static that duplicates the machine's
+# state, no engine or speaker call outside the executor's list. The script says how it reads both.
+check_no_logic_in_display:
+	@./check_no_logic_in_display.sh ../main
+
+# `app_main` checks for an update before it starts a single task (plan §6a, gate 4).
+test_update_check_precedes_task_starts:
+	@./test_update_check_precedes_task_starts.sh ../main
+
 clean:
-	rm -f run_tests run_sm_tests run_link_tests run_stream_tests run_jpanel_tests
+	rm -f run_tests run_sm_tests run_link_tests run_stream_tests run_jpanel_tests run_e2e_tests

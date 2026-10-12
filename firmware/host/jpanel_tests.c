@@ -229,11 +229,13 @@ static void check_backstops(void)
 
 static void advance(uint32_t ms)
 {
+    /* The arbiter's codec chunk: the fake ignores it, the real one (`e2e_tests.c`) writes it. */
+    static int16_t out[AUDIO_CHUNK];
     while (ms > 0) {
         const uint32_t step = ms < 40 ? ms : 40;
         g_now += step;
         ms -= step;
-        (void)stream_tick(&g_st, g_now, NULL, (size_t)step * (AUDIO_RATE / 1000));
+        (void)stream_tick(&g_st, g_now, out, (size_t)step * (AUDIO_RATE / 1000));
         if (g_tick != NULL) g_tick();
         check_backstops();
     }
@@ -2126,6 +2128,7 @@ static void test_exactly_one_outcome_per_command(void)
     }
 }
 
+#ifndef JP_E2E
 int main(void)
 {
     test_sha_known_answer();
@@ -2180,3 +2183,4 @@ int main(void)
     printf("jpanel: %d checks OK\n", checks);
     return 0;
 }
+#endif
