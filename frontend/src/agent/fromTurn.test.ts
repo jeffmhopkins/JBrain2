@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TranscriptTurn } from "./types";
-import { fromTurn } from "./useFullBrain";
+import { LEGACY_VOICE_PREFIX, fromTurn } from "./useFullBrain";
 
 // The transcript hydrator has to survive a server-authored tool step that omits `sources`.
 // A background deepest-research progress tick persists exactly such a step (deepest_progress.
@@ -76,5 +76,24 @@ describe("fromTurn", () => {
     expect(fromTurn(turn).elapsedMs).toBe(112_000);
     expect(fromTurn({ ...turn, elapsed_ms: null }).elapsedMs).toBeUndefined();
     expect(fromTurn({ role: "user", content: "q", tools: [] }).elapsedMs).toBeUndefined();
+  });
+});
+
+describe("fromTurn on an old desk-panel turn", () => {
+  const turn = (role: "user" | "assistant", content: string): TranscriptTurn => ({
+    role,
+    content,
+    tools: [],
+  });
+
+  it("shows only what the owner said, without the stored voice prefix", () => {
+    const said = fromTurn(turn("user", `${LEGACY_VOICE_PREFIX}How big was the storm?`));
+    expect(said.text).toBe("How big was the storm?");
+  });
+
+  it("leaves a typed message and an answer that merely quote it alone", () => {
+    expect(fromTurn(turn("user", "How big was the storm?")).text).toBe("How big was the storm?");
+    const answer = `${LEGACY_VOICE_PREFIX}is what the panel used to send.`;
+    expect(fromTurn(turn("assistant", answer)).text).toBe(answer);
   });
 });

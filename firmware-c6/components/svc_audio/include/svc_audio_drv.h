@@ -41,6 +41,9 @@ uint32_t talk_net_take(void *dst, uint32_t cap);
 /* JT2, as each record lands: what the box heard, what the agent is doing, then the answer. */
 void talk_net_heard(const char *heard);
 void talk_net_status(const char *status);
+/* STEP_START / STEP_DONE (0.0.14): a tool the agent started, and how it ended. */
+void talk_net_step_start(uint8_t index, const char *label);
+void talk_net_step_done(uint8_t index, bool ok);
 void talk_net_reply(const char *reply, bool audio_follows);
 void talk_net_nothing(void);
 void talk_net_fail(const char *why);

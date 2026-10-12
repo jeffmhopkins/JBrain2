@@ -20,6 +20,7 @@ import type {
   LiveRun,
   ProposalDetail,
   ProposalSummary,
+  RunAnnouncement,
   SessionCreate,
   TranscriptTurn,
 } from "../agent/types";
@@ -5946,6 +5947,19 @@ export const api = {
     yield* parseChatStream(response.body);
   },
 
+  /** Every turn of this owner's that starts or ends, wherever it was started (GET
+   * /api/chat/events), until `signal` aborts or the server drops the stream. */
+  async *chatEvents(signal?: AbortSignal): AsyncGenerator<RunAnnouncement> {
+    const response = await request("/api/chat/events", { ...(signal ? { signal } : {}) });
+    if (!response.body) return;
+    for await (const event of parseChatStream(response.body)) {
+      const e = event as unknown as Partial<RunAnnouncement>;
+      if ((e.type === "run_started" || e.type === "run_ended") && e.session_id && e.run_id) {
+        yield e as RunAnnouncement;
+      }
+    }
+  },
+
   /** A session's currently-live turn (GET /api/chat/sessions/{id}/live-run), or null when it
    * has none. After a full PWA reload the in-memory run handle is gone, so this is how the
    * controller finds a still-running detached turn to reattach to: it seeds the bubble from
@@ -5963,12 +5977,14 @@ export const api = {
         snapshot: TranscriptTurn | null;
         frame_index: number;
         elapsed_ms?: number;
+        question?: string;
       };
       return {
         runId: body.run_id,
         snapshot: body.snapshot ?? null,
         frameIndex: body.frame_index ?? 0,
         elapsedMs: body.elapsed_ms ?? 0,
+        ...(body.question ? { question: body.question } : {}),
       };
     } catch {
       return null;

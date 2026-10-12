@@ -278,6 +278,7 @@ def _turn(
     stt_fails: bool = False,
     synth_log: list[str] | None = None,
     cap_s: float = 5.0,
+    steps: bool = False,
 ) -> panel_stream.Turn:
     async def transcribe() -> str:
         if stt_fails:
@@ -302,7 +303,13 @@ def _turn(
         return say
 
     return panel_stream.Turn(
-        transcribe=transcribe, start=start, synth=synth, agent="jerv", voice=voice, cap_s=cap_s
+        transcribe=transcribe,
+        start=start,
+        synth=synth,
+        agent="jerv",
+        voice=voice,
+        cap_s=cap_s,
+        steps=steps,
     )
 
 
@@ -456,3 +463,94 @@ def test_frames_that_say_nothing_still_get_keep_alives(monkeypatch: pytest.Monke
     gaps = [b - a for a, b in zip(stamps, stamps[1:], strict=False)]
     assert len(stamps) > 6, "keep-alives flow while non-status frames stream"
     assert max(gaps) < 0.05 * 2.5
+
+
+# ---- the steps (firmware-c6 0.0.14) ---------------------------------------------------------
+
+
+def test_a_step_record_is_an_index_and_a_one_line_label() -> None:
+    rec = panel_stream.step_start_record(3, "web_search · " + "tide " * 40)
+    assert rec[0] == panel_stream.STEP_START and rec[3] == 3
+    label = rec[4:]
+    assert len(label) <= panel_stream.STEP_BYTES and label.decode().endswith("…")
+    assert panel_stream.step_start_record(0, "web_fetch · a.example")[4:] == (
+        "web_fetch · a.example".encode()
+    )
+    assert panel_stream.step_done_record(7, True) == b"\x08\x02\x00\x07\x01"
+    assert panel_stream.step_done_record(7, False)[-1] == 0
+
+
+def test_a_step_reads_as_the_tool_s_shorthand_and_its_target() -> None:
+    label = panel_stream.step_label
+    assert label("web_search", {"query": "tide  Port St John"}) == "web_search · tide Port St John"
+    assert label("web_fetch", {"url": "https://www.tide-forecast.com/x"}) == (
+        "web_fetch · tide-forecast.com"
+    )
+    assert label("weather") == "weather" and label("") == "tool"
+
+
+def test_steps_start_finish_and_keep_the_phase_between_them() -> None:
+    st = panel_stream.Steps()
+    out = [
+        st.feed(_frame({"type": "reasoning_delta", "text": "hm"})),
+        st.feed(
+            _frame(
+                {"type": "tool_call", "id": "a", "name": "web_search", "arguments": {"query": "x"}}
+            )
+        ),
+        st.feed(_frame({"type": "tool_progress", "tool_call_id": "a", "label": "page 2"})),
+        st.feed(_frame({"type": "tool_progress", "tool_call_id": "zz", "label": "stray"})),
+        st.feed(_frame({"type": "tool_result", "tool_call_id": "a", "ok": True})),
+        st.feed(_frame({"type": "tool_call", "id": "b", "name": "web_fetch", "arguments": {}})),
+        st.feed(_frame({"type": "tool_result", "tool_call_id": "b", "ok": False})),
+        st.feed(_frame({"type": "tool_result", "tool_call_id": "b", "ok": True})),
+        st.feed(_frame({"type": "text_delta", "text": "High"})),
+        st.feed(_frame({"type": "text_delta", "text": " tide"})),
+        st.feed(_frame({"type": "tool_call", "id": "c", "name": "weather", "arguments": {}})),
+        st.feed(b": keepalive\n\n"),
+    ]
+    assert out[0] == [] and out[3] == [] and out[7] == [] and out[9] == [] and out[11] == []
+    assert out[1] == [panel_stream.step_start_record(0, "web_search · x")]
+    assert out[2] == [panel_stream.step_start_record(0, "web_search · x · page 2")]
+    assert out[4] == [panel_stream.step_done_record(0, True)]
+    assert out[5] == [panel_stream.step_start_record(1, "web_fetch")]
+    assert out[6] == [panel_stream.step_done_record(1, False)]
+    assert out[8] == [panel_stream.status_record(panel_stream.WRITING)]
+    assert out[10] == [
+        panel_stream.step_start_record(2, "weather"),
+        panel_stream.status_record(panel_stream.THINKING),
+    ], "a tool after the writing began puts the phase back to thinking"
+    assert st.tools == 3
+
+
+def test_a_turn_with_more_tools_than_an_index_holds_reuses_the_last() -> None:
+    st = panel_stream.Steps()
+    recs: list[bytes] = []
+    for i in range(panel_stream.STEP_MAX + 3):
+        recs = st.feed(_frame({"type": "tool_call", "id": str(i), "name": "t", "arguments": {}}))
+    assert recs[0][3] == panel_stream.STEP_MAX
+
+
+def test_a_panel_that_asks_for_steps_gets_them_and_no_tool_status() -> None:
+    frames = [
+        _frame(
+            {"type": "tool_call", "id": "1", "name": "web_search", "arguments": {"query": "tides"}}
+        ),
+        _frame({"type": "tool_result", "tool_call_id": "1", "ok": True}),
+        _frame({"type": "text_delta", "text": "High"}),
+    ]
+    recs = _run(_turn(_Live(frames, _acc("High tide at 4.")), steps=True))
+    kinds = [k for k, _ in recs]
+    assert kinds[:5] == [
+        panel_stream.HEARD,
+        panel_stream.STATUS,
+        panel_stream.STEP_START,
+        panel_stream.STEP_DONE,
+        panel_stream.STATUS,
+    ]
+    assert [p.decode() for k, p in recs if k == panel_stream.STATUS] == [
+        "Thinking…",
+        "Writing the answer…",
+    ]
+    assert recs[2][1] == b"\x00web_search \xc2\xb7 tides" and recs[3][1] == b"\x00\x01"
+    assert kinds[-1] == panel_stream.END

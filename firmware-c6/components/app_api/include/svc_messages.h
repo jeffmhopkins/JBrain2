@@ -14,7 +14,9 @@ typedef struct {
     uint16_t dur_s;
     /* A transcript or Jerv's reply; longer is cut at a character with an ellipsis. */
     char text[256];
-    char status[16]; /* mine: "Sending", "Delivered", "Played" */
+    /* mine: "Sending", "Delivered", "Played"; an agent's answer: how it was worked out, "2 steps ·
+       58 s" (0.0.14), shown dim above it */
+    char status[24];
 } msg_t;
 
 /* The threads: "jerv" and "dave" (the agents), and the two people's, by slot. A person's thread
@@ -28,6 +30,9 @@ typedef struct {
 #define MSG_LONG_TEXT 1024
 
 uint16_t svc_messages_count(const char *principal);
+/* Moves whenever anything in `principal`'s thread does — a message added, filled in, played or
+ * cleared — so a view can tell a redraw of its messages from one of only what sits under them. */
+uint32_t svc_messages_rev(const char *principal);
 /* What to show for `m` in `principal`'s thread: its whole text when it is the answer the thread
  * keeps long, else m->text. Valid until that thread next changes. */
 const char *svc_messages_text(const char *principal, const msg_t *m);

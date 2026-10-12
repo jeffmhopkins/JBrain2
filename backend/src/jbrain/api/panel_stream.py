@@ -16,6 +16,15 @@ THE FORMAT. `JT2`, then records until the body ends. Every record is
     0x04 ANSWER  flags: u8 (bit 0 speech follows, bit 1 text was cut to fit) | UTF-8 answer
     0x05 PCM     16 kHz mono s16le speech, at most PCM_RECORD bytes, an even count
     0x06 END     code: u8 (0 answered, 1 nothing heard, 2 failed) | UTF-8 why
+    0x07 STEP_START  index: u8 | UTF-8, at most STEP_BYTES: a tool the agent started
+                     ("web_search · tide Port St John"); the same index again relabels it
+    0x08 STEP_DONE   index: u8 | ok: u8 (1 succeeded, 0 failed)
+
+THE STEPS (firmware-c6 0.0.14, asked for with `steps=1`). Owner, 2026-10-12: "if Jerv is using
+tools we should be able to see that too … you could say using xtool or whatever the tool
+shorthand is". One STATUS line that "Thinking…" overwrote the moment a tool ended could not show
+that, so each tool is its own record pair and the panel keeps the list; STATUS carries only the
+phase between them (THINKING, WRITING). A panel that does not ask keeps the 0.0.12 status lines.
 
 A reader skips a type it does not know (its length says how far) and may refuse a record longer
 than MAX_RECORD. A stream that ends without END was cut off. The panel asks for JT2 with
@@ -54,6 +63,7 @@ log = structlog.get_logger()
 
 MAGIC = b"JT2"
 HEARD, STATUS, ALIVE, ANSWER, PCM, END = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
+STEP_START, STEP_DONE = 0x07, 0x08
 ANSWER_SPEECH, ANSWER_CUT = 0x01, 0x02
 END_OK, END_NOTHING, END_FAILED = 0, 1, 2
 
@@ -63,6 +73,11 @@ MAX_RECORD = 4096
 PCM_RECORD = 4096
 #: The status line under the transcript is one line on the panel.
 STATUS_BYTES = 60
+#: A step's label: one line on the panel (firmware `TK_STEP_LABEL`).
+STEP_BYTES = 60
+#: Indices are a u8; a turn with more tools than this reuses the last one rather than wrapping
+#: onto a step the panel already shows as finished.
+STEP_MAX = 255
 #: The panel keeps the newest agent answer up to this many bytes (firmware `MSG_LONG_TEXT`).
 TEXT_BYTES = 1000
 #: Something every this many seconds, so neither side's idle timeout fires (the panel's is 45 s).
@@ -102,6 +117,24 @@ def status_record(text: str) -> bytes:
         room = STATUS_BYTES - len("…".encode())
         text = raw[:room].decode("utf-8", "ignore").rstrip(" :,") + "…"
     return text_record(STATUS, text, STATUS_BYTES)
+
+
+def fit_line(text: str, limit: int) -> bytes:
+    """`text` as one line of at most `limit` UTF-8 bytes, cut on a character with "…"."""
+    text = re.sub(r"\s+", " ", text).strip()
+    raw = text.encode("utf-8")
+    if len(raw) <= limit:
+        return raw
+    room = limit - len("…".encode())
+    return (raw[:room].decode("utf-8", "ignore").rstrip(" :,·") + "…").encode("utf-8")
+
+
+def step_start_record(index: int, label: str) -> bytes:
+    return record(STEP_START, bytes([index]) + fit_line(label, STEP_BYTES))
+
+
+def step_done_record(index: int, ok: bool) -> bytes:
+    return record(STEP_DONE, bytes([index, 1 if ok else 0]))
 
 
 def end_record(code: int, why: str = "") -> bytes:
@@ -151,16 +184,27 @@ def progress_label(name: str, args: dict[str, Any] | None = None) -> str:
     else:
         verb, _, rest = past.partition(" ")
         base = f"{ING.get(verb, verb)} {rest}".strip()
-    target = ""
+    target = _target(args)
+    return f"{base}: {target}…" if target else f"{base}…"
+
+
+def step_label(name: str, args: dict[str, Any] | None = None) -> str:
+    """A step as the panel lists it: the tool's own short name and the call's target, the way
+    the owner put it ("using xtool or whatever the tool shorthand is") — `web_search` +
+    {"query": "tide Port St John"} -> "web_search · tide Port St John"; a URL is its host."""
+    target = _target(args)
+    return f"{name} · {target}" if target else (name or "tool")
+
+
+def _target(args: dict[str, Any] | None) -> str:
     for key in _TARGET_KEYS:
         value = (args or {}).get(key)
         if isinstance(value, str) and value.strip():
             target = value.strip()
             if key == "url":
                 target = re.sub(r"^https?://(www\.)?", "", target).split("/", 1)[0]
-            break
-    target = re.sub(r"\s+", " ", target)
-    return f"{base}: {target}…" if target else f"{base}…"
+            return re.sub(r"\s+", " ", target)
+    return ""
 
 
 THINKING = "Thinking…"
@@ -178,13 +222,8 @@ class Progress:
     lines: list[str] = field(default_factory=list)
 
     def feed(self, frame: bytes) -> str | None:
-        if not frame.startswith(b"data:"):
-            return None
-        try:
-            event = json.loads(frame[5:].strip())
-        except ValueError:
-            return None
-        if not isinstance(event, dict):
+        event = _event(frame)
+        if event is None:
             return None
         kind = event.get("type")
         line: str | None = None
@@ -211,6 +250,62 @@ class Progress:
         self.said = line
         self.lines.append(line)
         return line
+
+
+@dataclass
+class Steps:
+    """The steps mode of `Progress`: each tool call a STEP_START, each result its STEP_DONE, and
+    the phase between them (THINKING, WRITING) as STATUS, said only when it changes."""
+
+    phase: str = THINKING
+    tools: int = 0
+    _ids: dict[str, int] = field(default_factory=dict)
+    _labels: dict[int, str] = field(default_factory=dict)
+
+    def feed(self, frame: bytes) -> list[bytes]:
+        event = _event(frame)
+        if event is None:
+            return []
+        kind = event.get("type")
+        out: list[bytes] = []
+        if kind == "tool_call":
+            index = min(self.tools, STEP_MAX)
+            self.tools += 1
+            self._ids[str(event.get("id", ""))] = index
+            args = event.get("arguments")
+            label = step_label(str(event.get("name", "")), args if isinstance(args, dict) else {})
+            self._labels[index] = label
+            out.append(step_start_record(index, label))
+            # Whatever the agent does after a tool, it thinks first: the phase line goes back.
+            out.extend(self._phase(THINKING))
+        elif kind == "tool_progress":
+            index = self._ids.get(str(event.get("tool_call_id", "")))
+            label = event.get("label")
+            if index is not None and isinstance(label, str) and label.strip():
+                out.append(step_start_record(index, f"{self._labels[index]} · {label}"))
+        elif kind == "tool_result":
+            index = self._ids.pop(str(event.get("tool_call_id", "")), None)
+            if index is not None:
+                out.append(step_done_record(index, event.get("ok") is not False))
+        elif kind == "text_delta":
+            out.extend(self._phase(WRITING))
+        return out
+
+    def _phase(self, line: str) -> list[bytes]:
+        if line == self.phase:
+            return []
+        self.phase = line
+        return [status_record(line)]
+
+
+def _event(frame: bytes) -> dict[str, Any] | None:
+    if not frame.startswith(b"data:"):
+        return None
+    try:
+        event = json.loads(frame[5:].strip())
+    except ValueError:
+        return None
+    return event if isinstance(event, dict) else None
 
 
 # ---- the speech, a group of sentences at a time ---------------------------------------------
@@ -300,6 +395,8 @@ class Turn:
     agent: panel_agent.PanelAgent
     voice: bool
     cap_s: float = panel_agent.AGENT_STREAM_CAP_S
+    #: The panel asked for STEP records (`steps=1`, firmware-c6 0.0.14).
+    steps: bool = False
     stats: dict[str, Any] = field(default_factory=dict)
 
 
@@ -311,11 +408,11 @@ async def _alive_until(task: asyncio.Future[Any]) -> AsyncIterator[bytes]:
 
 
 async def _follow(
-    started: panel_agent.Started, cap_s: float, stats: dict[str, Any]
+    started: panel_agent.Started, cap_s: float, stats: dict[str, Any], *, steps: bool = False
 ) -> AsyncIterator[bytes]:
-    """STATUS as the agent works, ALIVE when it is quiet, until the turn ends or `cap_s` passes.
-    The live turn's frames are pumped into a queue by a task of our own, so a keep-alive wait
-    never cancels the turn's own iterator."""
+    """STATUS (or, with `steps`, STEP records and the phase) as the agent works, ALIVE when it
+    is quiet, until the turn ends or `cap_s` passes. The live turn's frames are pumped into a
+    queue by a task of our own, so a keep-alive wait never cancels the turn's own iterator."""
     live = started.live
     queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
@@ -328,6 +425,7 @@ async def _follow(
 
     pumper = asyncio.ensure_future(pump())
     progress = Progress()
+    stepper = Steps() if steps else None
     deadline = time.monotonic() + cap_s
     # Measured from the last record SENT: frames that make no status line (reasoning, a
     # sub-agent's tokens) still arrive, and would otherwise starve the panel's idle timeout.
@@ -348,16 +446,21 @@ async def _follow(
                 continue
             if frame is None:
                 return
-            line = progress.feed(frame)
-            if line:
-                yield status_record(line)
+            if stepper is not None:
+                recs = stepper.feed(frame)
+            else:
+                line = progress.feed(frame)
+                recs = [status_record(line)] if line else []
+            if recs:
+                for rec in recs:
+                    yield rec
                 last_sent = time.monotonic()
             elif time.monotonic() - last_sent >= ALIVE_S:
                 yield record(ALIVE)
                 last_sent = time.monotonic()
     finally:
         stats["statuses"] = len(progress.lines)
-        stats["tools"] = progress.tools
+        stats["tools"] = stepper.tools if stepper is not None else progress.tools
         pumper.cancel()
         with contextlib.suppress(BaseException):
             await pumper
@@ -400,7 +503,7 @@ async def agent_turn(turn: Turn) -> AsyncGenerator[bytes, None]:
     if started.early is not None:
         answer = started.early
     else:
-        async for rec in _follow(started, turn.cap_s, stats):
+        async for rec in _follow(started, turn.cap_s, stats, steps=turn.steps):
             yield rec
         if started.live.task.done():
             answer = panel_agent.settle(started, turn.agent)

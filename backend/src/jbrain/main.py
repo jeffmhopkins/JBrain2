@@ -62,6 +62,7 @@ from jbrain.agent.publicrecordstools import build_public_records_handlers
 from jbrain.agent.pythontools import build_python_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.researchtools import build_research_report_handlers
+from jbrain.agent.run_bus import RunBus
 from jbrain.agent.runlog import AgentRunLog, RunLogReader, reap_stranded_loop
 from jbrain.agent.sdrtools import build_sdr_handlers
 from jbrain.agent.session import AgentSessionRepo
@@ -390,6 +391,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # In-flight chat turns, detached from their SSE response so a backgrounded PWA
         # can't kill them; keyed by run_id for the Stop endpoint and shutdown cleanup.
         app.state.live_turns = {}
+        # Each live turn's start and end, for an open PWA chat that did not start it (the desk
+        # panel's spoken turn): GET /api/chat/events (agent.run_bus).
+        app.state.run_bus = RunBus()
         # "A turn is starting for this session" markers (session_id → monotonic ts), set by
         # /chat before it registers in live_turns, read by the plan-continuation sweep so it
         # yields to an owner turn mid-startup (JERV_PLANNING_TOOL_PLAN.md).
@@ -1627,6 +1631,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             runlog=app.state.agent_runlog,
             transcript=app.state.agent_transcript,
             live_turns=app.state.live_turns,
+            runs=app.state.run_bus,
             owner_principal_id=lambda: _owner_principal_id(maker),
             turn_starting=app.state.turn_starting,
             client_presence=app.state.plan_presence,

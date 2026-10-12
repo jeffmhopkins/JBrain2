@@ -13,6 +13,8 @@
 #include <stdint.h>
 
 #include "app_api.h"
+#include "convo_model.h"
+#include "svc_audio.h"
 #include "ui_kit.h"
 #include "ui_pin.h"
 
@@ -24,12 +26,23 @@ typedef struct {
     const char *empty; /* what an empty thread says */
 } convo_config_t;
 
+/* The working view under the waiting question: made once per question and then changed in place,
+ * its spinner moved between rows rather than remade. Its widgets are the list's; `tick` (the
+ * clock's second) goes with them. All NULL while there is none. */
+typedef struct {
+    lv_obj_t *root, *fold, *phase_row, *phase, *spin;
+    lv_obj_t *mark[WORK_SHOWN], *text[WORK_SHOWN];
+    lv_timer_t *tick;
+} convo_work_t;
+
 typedef struct {
     const convo_config_t *cfg;
     const app_host_t *host;
     lv_obj_t *root, *list;
     ui_talk_t talk;
     ui_pin_t pin;
+    convo_work_t work;
+    convo_sig_t drawn;
     char listening[40];
 } convo_t;
 
@@ -39,6 +52,9 @@ void convo_open(convo_t *c, const convo_config_t *cfg, const app_host_t *host, l
                 lv_event_cb_t on_back, void *back_user);
 /* Lets go of a hold in progress. The widgets are the caller's root's, freed with it. */
 void convo_close(convo_t *c);
+/* Draws what changed since the last draw (convo_redraw): the whole list, or only the working view
+ * where it stands. */
+void convo_refresh(convo_t *c);
 /* KEY down/up talk to this conversation's agent; BOOT cancels a hold in progress; a message on
  * this thread redraws it. True when consumed. */
 bool convo_event(convo_t *c, const app_event_t *ev);

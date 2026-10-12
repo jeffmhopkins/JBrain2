@@ -30,6 +30,7 @@ from jbrain.agent.continuation import (
 from jbrain.agent.live_turn import _LiveTurn
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.plantools import build_plan_handlers
+from jbrain.agent.run_bus import RunBus
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.api.agent import _plan_blocks
 from jbrain.auth import service
@@ -246,6 +247,9 @@ async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) ->
 
     executor = _FakeExecutor()
     transcript = _FakeTranscript()
+    runs = RunBus()
+    owner_pid = await _owner_principal_id(maker)
+    heard = runs.subscribe(str(owner_pid))
     runner = PlanContinuationRunner(
         maker=maker,
         executor=executor,  # type: ignore[arg-type]
@@ -253,8 +257,13 @@ async def test_sweep_tick_fires_a_due_continuation(maker: async_sessionmaker) ->
         transcript=transcript,  # type: ignore[arg-type]
         live_turns={},
         owner_principal_id=lambda: _owner_principal_id(maker),  # raw uuid, like production
+        runs=runs,
     )
     await runner.tick()
+    # An open PWA chat attaches to the step live: it is announced as it starts and as it ends.
+    announced = [heard.get_nowait() for _ in range(heard.qsize())]
+    assert [(e.phase, e.session_id) for e in announced] == [("started", sid), ("ended", sid)]
+    assert announced[0].run_id == announced[1].run_id
 
     assert [c["sid"] for c in executor.calls] == [sid]  # claimed + ran (didn't throw)
     assert executor.calls[0]["pid_type"] == "str"  # the RLS ctx got a str, not a uuid

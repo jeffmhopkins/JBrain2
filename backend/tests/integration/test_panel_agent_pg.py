@@ -138,6 +138,7 @@ def box(
         voice: bool,
         fresh: bool,
         jt: int = 1,
+        steps: bool = False,
     ) -> Any:
         turns.append({"device": principal.id, "agent": agent, "fresh": fresh, "jt": jt})
         return endpoint_api.Response(status_code=200, content=b"agent")
