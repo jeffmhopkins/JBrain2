@@ -161,6 +161,7 @@ from jbrain.api import (
 from jbrain.api import tavily_settings as tavily_settings_api
 from jbrain.api.debug_activity import DebugActivity
 from jbrain.api.research_service import ResearchLibrary
+from jbrain.api.same_site import SameSiteGuard
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.owner import owner_principal_id
 from jbrain.auth.repo import SqlAuthRepo
@@ -1848,6 +1849,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     detail=getattr(request.state, "debug_detail", ""),
                 )
             return response
+
+    # Added last so it is outermost: a forged request is refused before any route,
+    # middleware or WebSocket handler runs (api/same_site.py).
+    app.add_middleware(SameSiteGuard)
 
     app.include_router(health.router, prefix="/api")
     app.include_router(agent.router, prefix="/api")

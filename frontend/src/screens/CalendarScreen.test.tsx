@@ -145,6 +145,25 @@ describe("CalendarScreen", () => {
     expect(screen.getByText(/with Dr\. Nguyen, Pat \(declined\)/)).toBeInTheDocument();
   });
 
+  it("renders an unsafe join link as plain text, never an href", async () => {
+    stubFetch([
+      appt({
+        id: "A1",
+        title: "Dentist",
+        start: today(),
+        attendance_mode: "online",
+        online_url: " JavaScript:alert(document.cookie)",
+      }),
+    ]);
+    render(<CalendarScreen onOpenNote={noop} onCompose={noop} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Tasks" }));
+    await waitFor(() => screen.getByText("Dentist"));
+    fireEvent.click(screen.getByText("Dentist"));
+    expect(screen.getByText("Online")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /join the meeting/i })).toBeNull();
+    expect(document.querySelector('a[href*="alert"]')).toBeNull();
+  });
+
   it("opens the source note from the event sheet when there is one", async () => {
     const onOpenNote = vi.fn();
     stubFetch([appt({ id: "A1", title: "Dentist", start: today(), source_note_id: "note-7" })]);

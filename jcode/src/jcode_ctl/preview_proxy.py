@@ -14,8 +14,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 import websockets
@@ -54,6 +56,27 @@ _TIMEOUT = httpx.Timeout(30.0, connect=2.0)
 # unreachable on 127.0.0.1. Trying both makes the common dev server work with no flags;
 # a refused connect on loopback returns instantly, so the fallback costs nothing.
 _DEV_HOSTS = ("127.0.0.1", "[::1]")
+
+
+# Mirrors the api's bound: a path still changing after this many decodes is refused.
+_MAX_DECODE_ROUNDS = 4
+_UNSAFE_CHAR = re.compile(r"[\x00-\x1f\x7f?#\\]")
+
+
+def _has_dot_segment(path: str) -> bool:
+    """Defence in depth behind the api's own containment check: the path comes from a
+    stranger, and a dot segment (or a backslash some servers read as one) would be
+    resolved against the dev server's root rather than kept under it."""
+    for _ in range(_MAX_DECODE_ROUNDS):
+        if _UNSAFE_CHAR.search(path) or any(
+            seg.split(";", 1)[0] in (".", "..") for seg in path.split("/")
+        ):
+            return True
+        decoded = unquote(path)
+        if decoded == path:
+            return False
+        path = decoded
+    return True
 
 
 def _default_client() -> httpx.AsyncClient:
@@ -104,6 +127,8 @@ async def proxy_http(
     Vite is reached without ``--host``. A 502 stands in when nothing is reachable on
     EITHER family, or the server errors once connected (slow / malformed).
     ``client_factory`` is injectable so tests can drive a mock transport."""
+    if _has_dot_segment(path):
+        return Response("preview not available", status_code=404)
     body = await request.body()
     headers = _request_headers(request, port)
     query = request.url.query.encode()
@@ -195,6 +220,9 @@ async def proxy_ws(  # pragma: no cover - opens a live upstream socket, deploy-o
     # forwards the incoming preview Host, so must rewrite it to localhost), websockets
     # builds a fresh handshake with that IP literal as Host — which a host-pinning dev
     # server allows — so the preview host never reaches the dev WS; no rewrite needed.
+    if _has_dot_segment(path):
+        await browser.close(code=4404)
+        return
     suffix = f"?{query}" if query else ""
     requested = browser.scope.get("subprotocols") or []
     _log.debug("preview ws → :%d /%s (subprotocols=%s)", port, path, requested)

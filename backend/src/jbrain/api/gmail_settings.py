@@ -4,7 +4,9 @@ The settings panel writes the archivist's OAuth credentials (client id, client
 secret, refresh token) into owner-only app.settings, and the provider picks them up
 live — no restart. Secrets are NEVER echoed back: the GET reports only which fields
 are set and whether Gmail is connected; the POST /test verifies the saved credentials
-by listing labels. Owner-only via the store's RLS (and the router's owner gate).
+by listing labels. Owner-only by the router's `owner_only` gate. RLS alone is not
+enough: `/test` drives the provider, which reads the credentials under its own context,
+not the caller's.
 
 The refresh token can be set two ways: pasted directly (from the bootstrap script),
 or minted by the in-app **Connect** flow — `/connect` redirects the owner to Google's
@@ -21,11 +23,11 @@ from typing import cast
 from urllib.parse import urlencode
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
-from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
@@ -33,7 +35,9 @@ from jbrain.gmail import GmailClientProvider, GmailError
 
 log = structlog.get_logger()
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 # The owner-consent endpoints. `gmail.modify` only (read/label/archive, never delete);
 # offline + consent so Google returns a refresh token. `_STATE_KEY` holds the

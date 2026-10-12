@@ -36,7 +36,7 @@ from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from jbrain.appointments.service import STATUSES
+from jbrain.appointments.service import STATUSES, web_join_url
 from jbrain.models.analysis import Entity, Fact, TemporalToken
 from jbrain.models.appointments import Appointment, AppointmentLocation
 
@@ -387,7 +387,7 @@ def _row_facets(facets: dict[str, list[Fact]], names: dict[uuid.UUID, str]) -> d
     return {
         "organizer": _ref_label(organizer[0], names) if organizer else None,
         "attendance_mode": _coerce_mode(_text_value(_first_value(facets, _ATTENDANCE_MODE))),
-        "online_url": _text_value(_first_value(facets, _ONLINE_URL)),
+        "online_url": web_join_url(_text_value(_first_value(facets, _ONLINE_URL))),
         "description": _text_value(_first_value(facets, _DESCRIPTION)),
         "appointment_type": _text_value(
             _first_value(facets, _APPOINTMENT_TYPE) or _first_value(facets, _TYPE)

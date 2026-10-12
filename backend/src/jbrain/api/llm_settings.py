@@ -24,7 +24,7 @@ from jbrain import box_events, queue
 from jbrain.agent.agents import AGENTS
 from jbrain.agent.priming import jerv_prime_inputs, jerv_prime_spec
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
@@ -87,7 +87,9 @@ from jbrain.settings_store import (
 
 log = structlog.get_logger()
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 # Human labels for each routed task — the screen lists every TASK_DEFAULTS key.
 TASK_LABELS: dict[str, str] = {

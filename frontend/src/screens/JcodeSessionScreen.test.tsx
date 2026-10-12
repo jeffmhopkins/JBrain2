@@ -304,6 +304,10 @@ describe("JcodeSessionScreen", () => {
     fireEvent.click(await screen.findByText("Open preview"));
     const frame = await screen.findByTitle("Dev server preview");
     expect(frame).toHaveAttribute("src", "https://abc123-preview.box.test");
+    // Sandboxed with no top-navigation, so a dev app cannot redirect the owner's tab.
+    const tokens = (frame.getAttribute("sandbox") ?? "").split(" ");
+    expect(tokens).toContain("allow-scripts");
+    expect(tokens.some((t) => t.startsWith("allow-top-navigation"))).toBe(false);
   });
 
   it("reloads the preview iframe past the cache when Reload is tapped", async () => {

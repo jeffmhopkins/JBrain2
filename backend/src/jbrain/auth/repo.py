@@ -12,7 +12,7 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.auth.service import CapabilityToken, ExternalSession, PrincipalInfo
+from jbrain.auth.service import SESSION_KINDS, CapabilityToken, ExternalSession, PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models import DeviceSession, Principal
 
@@ -24,12 +24,18 @@ class SqlAuthRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
 
-    async def find_active_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+    async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        """The login lookup, kind-filtered in SQL: only the owner key mints a session here.
+        Unfiltered, a device key typed into the login form minted a cookie for the device
+        principal, and a capability key's hash never matched only because it is hashed the
+        other way — luck, not a rule."""
         async with scoped_session(self._maker, _LOGIN) as session:
             row = (
                 await session.execute(
                     select(Principal).where(
-                        Principal.key_hash == key_hash, Principal.revoked_at.is_(None)
+                        Principal.key_hash == key_hash,
+                        Principal.kind == "owner",
+                        Principal.revoked_at.is_(None),
                     )
                 )
             ).scalar_one_or_none()
@@ -92,6 +98,10 @@ class SqlAuthRepo:
                     .where(
                         DeviceSession.token_hash == token_hash,
                         DeviceSession.revoked_at.is_(None),
+                        # Only these kinds are ever minted a cookie (login, mint, redeem).
+                        # A capability or external-LLM session can only have come from the
+                        # old unfiltered login, and must not stay live.
+                        Principal.kind.in_(SESSION_KINDS),
                         Principal.revoked_at.is_(None),
                         # A time-boxed principal (a jcode share link) stops authenticating
                         # the moment it lapses — the cookie can't outlive the share's

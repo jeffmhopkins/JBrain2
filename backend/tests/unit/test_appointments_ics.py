@@ -146,3 +146,9 @@ def test_long_summary_is_folded_at_75_octets() -> None:
         assert len(physical.encode("utf-8")) <= 75
     # And unfolding restores the full summary.
     assert ("SUMMARY:" + "x" * 200) in lines(out)
+
+
+def test_a_non_web_join_link_stored_before_the_projection_check_is_not_published() -> None:
+    # Rows projected before the http(s) check can still hold a `javascript:` link.
+    body = lines(to_ics([appt(online_url="javascript:alert(1)")], now=NOW))
+    assert not any(line.startswith("CONFERENCE") for line in body)

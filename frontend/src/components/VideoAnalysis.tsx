@@ -8,6 +8,7 @@
 // caller builds it from the attachment id — no URL ever rides the payload, #9).
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { safeHref } from "../safeHref";
 import { TranscriptBody, type TranscriptWord, currentWordIndex } from "./AudioTranscript";
 import { VideoIcon } from "./icons";
 
@@ -193,6 +194,8 @@ export function VideoAnalysis({
   const onTimeUpdate = () => videoRef.current && setCurrentMs(videoRef.current.currentTime * 1000);
 
   const nowCaption = activeFrame >= 0 ? frames[activeFrame]?.caption : undefined;
+  // A stream/video page URL from the web: an unsafe scheme gets no source chip.
+  const sourceHref = safeHref(sourceUrl);
 
   return (
     <div className="tv-vid">
@@ -202,15 +205,15 @@ export function VideoAnalysis({
         </span>
         {isLive && <span className="tv-vid-live">LIVE</span>}
         <span className="tv-vid-fn">{filename}</span>
-        {sourceUrl && (
+        {sourceHref && (
           <a
             className="tv-vid-src"
-            href={sourceUrl}
+            href={sourceHref}
             target="_blank"
             rel="noreferrer"
             title={sourceUrl}
           >
-            {sourceHost(sourceUrl)} ↗
+            {sourceHost(sourceHref)} ↗
           </a>
         )}
         {hasFrames && (

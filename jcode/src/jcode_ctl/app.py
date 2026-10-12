@@ -1,8 +1,9 @@
 """HTTP surface: a token-authed command set over the session manager.
 
 Every route except /healthz requires the bearer token (mirrors the supervisor:
-the authed routes live on a router carrying the token dependency). Built by a
-factory taking settings + a SessionManager so tests inject fakes — no git, no
+the authed routes live on a router carrying the token dependency) — except the
+``/preview/*`` proxy, which takes only its own derived token (``preview_token``).
+Built by a factory taking settings + a SessionManager so tests inject fakes — no git, no
 model gateway. Internal-network only; the JBrain api is the sole caller and
 proxies these to the owner (Wave J2).
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import hmac
 import logging
 from collections.abc import AsyncIterator
@@ -42,6 +44,17 @@ from jcode_ctl.sessions import SessionError, SessionManager
 from jcode_ctl.terminal import TerminalRegistry, serve_terminal
 
 _log = logging.getLogger("jcode_ctl")
+
+_PREVIEW_TOKEN_CONTEXT = b"jcode-preview"
+
+
+def preview_token(token: str) -> str:
+    """The credential for the ``/preview/*`` routes, derived from the control token so
+    no new secret has to be provisioned (the api derives the same value). It opens the
+    preview routes ONLY, and the control token does not open them: the api's preview hop
+    forwards a stranger's path, so whatever it carries must be useless against
+    ``/sessions`` and the terminal if that path ever escapes the preview prefix."""
+    return hmac.new(token.encode(), _PREVIEW_TOKEN_CONTEXT, hashlib.sha256).hexdigest()
 
 
 async def reap_idle(
@@ -164,7 +177,19 @@ def create_app(
     def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
         # Compare the WHOLE header in constant time (supervisor-style), so a wrong
         # scheme fails identically to a wrong token. Fail-closed on a missing header.
-        if not authorization or not hmac.compare_digest(authorization, expected_header):
+        if not authorization or not hmac.compare_digest(
+            authorization.encode("latin-1", "replace"), expected_header.encode()
+        ):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+    expected_preview_header = f"Bearer {preview_token(settings.token)}"
+
+    def require_preview_token(
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> None:
+        if not authorization or not hmac.compare_digest(
+            authorization.encode("latin-1", "replace"), expected_preview_header.encode()
+        ):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     @app.get("/healthz")
@@ -259,11 +284,15 @@ def create_app(
         # delete/reap) and a stable URL is the point — there's nothing to tear down.
         sessions.get(sid)
 
-    @authed.api_route(
+    # The preview proxy carries the preview token, never the control token (see
+    # preview_token), so it lives on its own router rather than under `authed`.
+    previews = APIRouter(dependencies=[Depends(require_preview_token)])
+
+    @previews.api_route(
         "/preview/{slug}/{path:path}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
     )
-    @authed.api_route(
+    @previews.api_route(
         "/preview/{slug}",
         methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
     )
@@ -284,11 +313,14 @@ def create_app(
     @app.websocket("/preview/{slug}")
     async def preview_ws_route(websocket: WebSocket, slug: str, path: str = "") -> None:
         # The HMR live-reload channel: the api forwards the preview WS upgrade here by
-        # slug (bearer-authed on the handshake, like the terminal). Same guard as the
-        # HTTP proxy — unknown slug or a non-running session refuses before any upstream
-        # connect; proxy_ws accepts the browser socket only after the dev WS is reached.
+        # slug (authed on the handshake by the preview token — not the control token).
+        # Same guard as the HTTP proxy — unknown slug or a non-running session refuses
+        # before any upstream connect; proxy_ws accepts the browser socket only after
+        # the dev WS is reached.
         header = websocket.headers.get("authorization", "")
-        if not hmac.compare_digest(header, expected_header):
+        if not hmac.compare_digest(
+            header.encode("latin-1", "replace"), expected_preview_header.encode()
+        ):
             await websocket.close(code=4401)
             return
         sid = host_preview.resolve(slug)
@@ -305,7 +337,9 @@ def create_app(
         # close a WS cleanly, so check the same bearer header here (constant-time) and
         # close 4401 on mismatch — the api forwards the token. 4404 for an unknown id.
         header = websocket.headers.get("authorization", "")
-        if not hmac.compare_digest(header, expected_header):
+        if not hmac.compare_digest(
+            header.encode("latin-1", "replace"), expected_header.encode()
+        ):
             await websocket.close(code=4401)
             return
         session = sessions.get_or_none(sid)
@@ -352,4 +386,5 @@ def create_app(
         )
 
     app.include_router(authed)
+    app.include_router(previews)
     return app
