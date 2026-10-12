@@ -3584,6 +3584,27 @@ export interface PanelAppearance {
 /** Whether a DISPLAY panel's spoken turns reach the owner's real Jerv and Minecraft_Dave — full
  *  tools and memory, as the owner (owner decision 2026-10-12). Off by default; the box refuses it
  *  for a pet panel (409), so the twins' units can never be given the agents. */
+/** A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2): what the PWA's test control
+ *  sends, and what the box answers. */
+export interface PanelNoticeIn {
+  device_id: string;
+  title: string;
+  body?: string;
+  choices?: string[];
+}
+
+/** `sent`, or the box's refusal (`offline`, `not_accepting`, `quiet_hours` with `until`,
+ *  `no_notice_surface`, `busy`, …) with the HTTP status it came with. */
+export type PanelNoticeResult =
+  | { sent: { id: string; panel: string } }
+  | { refused: { status: number; reason: string; until?: string } };
+
+export interface PanelNoticeOut {
+  id: string;
+  state: "queued" | "delivered" | "shown" | "answered" | "dismissed" | "expired";
+  answer: string | null;
+}
+
 export interface PanelAgentAccess {
   agent_access: boolean;
 }
@@ -6477,6 +6498,40 @@ export const api = {
   async panelAgentAccess(deviceId: string): Promise<PanelAgentAccess> {
     const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/agent`);
     return (await response.json()) as PanelAgentAccess;
+  },
+
+  // A refusal is an ANSWER here, not a failure: the box turns a notice away at the door and the
+  // reason (quiet hours until 06:30) is what the owner needs to read, so it is returned whole
+  // rather than flattened into an ApiError's message.
+  async sendPanelNotice(body: PanelNoticeIn): Promise<PanelNoticeResult> {
+    const transport = await getTransport();
+    const response = await transport("/api/panel/notify", {
+      credentials: "same-origin",
+      ...jsonInit("POST", body),
+    });
+    if (response.status === 401) {
+      unauthorizedHandler?.();
+      throw new ApiError(401, "Not authenticated");
+    }
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (response.ok) return { sent: data as { id: string; panel: string } };
+    const detail = data.detail;
+    const refused =
+      detail && typeof detail === "object"
+        ? (detail as { reason?: unknown; until?: unknown })
+        : { reason: typeof detail === "string" ? detail : `HTTP ${response.status}` };
+    return {
+      refused: {
+        status: response.status,
+        reason: String(refused.reason ?? response.status),
+        ...(typeof refused.until === "string" ? { until: refused.until } : {}),
+      },
+    };
+  },
+
+  async panelNotice(id: string, waitS: number): Promise<PanelNoticeOut> {
+    const response = await request(`/api/panel/notify/${encodeURIComponent(id)}?wait=${waitS}`);
+    return (await response.json()) as PanelNoticeOut;
   },
 
   async setPanelAgentAccess(deviceId: string, agentAccess: boolean): Promise<PanelAgentAccess> {

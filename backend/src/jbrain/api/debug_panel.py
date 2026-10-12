@@ -33,6 +33,7 @@ from jbrain.api.endpoint import panel_display_name
 from jbrain.blob_refs import blob_referenced
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.jpanel import debug_relay as relay
+from jbrain.jpanel import notice
 from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
@@ -134,6 +135,9 @@ class PanelOut(BaseModel):
     online: bool
     #: What its last `help` published; None until one has been asked.
     commands: list[dict[str, Any]] | None
+    #: The notice switches and night window its last pickup reported (§2); None when its
+    #: firmware reports none, which a notice is refused for as `no_notice_surface`.
+    notices: dict[str, Any] | None = None
 
 
 @router.get("")
@@ -168,6 +172,7 @@ async def list_panels(request: Request, _p: DebugDep) -> list[PanelOut]:
                 last_seen_s=int(seen[0]) if seen else None,
                 online=seen is not None and seen[0] <= relay.OFFLINE_AFTER_S,
                 commands=[c.__dict__ for c in pub] if pub is not None else None,
+                notices=prefs.as_dict() if (prefs := notice.prefs_for(str(device_id))) else None,
             )
         )
     return out

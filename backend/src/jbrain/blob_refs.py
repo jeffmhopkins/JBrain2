@@ -124,6 +124,11 @@ BLOB_REFERENCES: tuple[BlobRef, ...] = (
     BlobRef("app.jpanel_message", "blob_sha256 = :sha", "a voice message between the twins"),
     BlobRef("app.entities", "image_sha = :sha", "an entity's portrait"),
     BlobRef("app.panel_debug_request", "png_sha256 = :sha", "a panel debug screenshot (decoded)"),
+    BlobRef(
+        "app.panel_notice",
+        "image_sha256 = :sha OR audio_sha256 = :sha",
+        "a desk-panel notice's picture or sound, as the panel takes it",
+    ),
     BlobRef("app.wiki_articles", "image_sha = :sha", "a wiki article's portrait"),
 )
 

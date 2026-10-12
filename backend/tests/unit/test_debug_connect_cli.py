@@ -23,6 +23,7 @@ from threading import Thread
 
 import pytest
 
+_DEV = "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
 _SCRIPT = pathlib.Path(__file__).resolve().parents[3] / "scripts" / "debug-connect.sh"
 _BENCH = _SCRIPT.with_name("browse-bench.sh")
 
@@ -53,8 +54,36 @@ class _Handler(BaseHTTPRequestHandler):
 
     # What `browse` submitted, so a test reads the exact request the CLI built.
     browse_bodies: list[dict[str, object]] = []
+    # What `panel-notify` sent, likewise.
+    notice_bodies: list[dict[str, object]] = []
+
+    def _send(self, status: int, payload: object) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _respond(self) -> None:
+        if self.path == "/api/debug/panel":
+            self._send(
+                200,
+                [{"device_id": _DEV, "name": "Jeff", "board": "c6-amoled-216", "last_seen_s": 2}],
+            )
+            return
+        if self.path == f"/api/debug/panel/{_DEV}/notice":
+            length = int(self.headers.get("Content-Length") or 0)
+            sent = json.loads(self.rfile.read(length))
+            _Handler.notice_bodies.append(sent)
+            if sent["title"] == "refuse me":
+                self._send(409, {"detail": {"reason": "quiet_hours", "until": "06:30"}})
+            else:
+                self._send(202, {"id": "n-1", "state": "queued"})
+            return
+        if self.path.startswith(f"/api/debug/panel/{_DEV}/notice/n-1"):
+            self._send(200, {"id": "n-1", "state": "answered", "answer": "Yes"})
+            return
         status = 422 if "refuse" in self.path else 200
         if "/disk/cleanup" in self.path or "/debug/minecraft/" in self.path:
             # Echoes the request body, so a test reads exactly what the CLI sent.
@@ -351,3 +380,54 @@ def test_minecraft_set_prop_null_removes_the_override(box: str) -> None:
     result = _run(box, "minecraft", "set-prop", "transport", "null")
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)["received"] == {"set": {"transport": None}}
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_panel_notify_sends_the_notice_and_waits_for_the_tap(
+    box: str, tmp_path: pathlib.Path
+) -> None:
+    """The CLI builds the body in Python (a quote in a title, a picture as base64), resolves
+    `c6` to the one panel picking up as one, and ends on the tap — not on the receipt."""
+    _Handler.notice_bodies.clear()
+    pic = tmp_path / "banner.png"
+    pic.write_bytes(__import__("base64").b64decode(_PNG_B64))
+    result = _run(
+        box,
+        "panel-notify",
+        "c6",
+        'Run "cleanup" now?',
+        "--body",
+        "38 GB",
+        "--choice",
+        "Yes",
+        "--choice",
+        "No",
+        "--image",
+        str(pic),
+        "--hide",
+        "30",
+        "--chime",
+    )
+    assert result.returncode == 0, result.stderr
+    sent = _Handler.notice_bodies[-1]
+    assert sent["title"] == 'Run "cleanup" now?' and sent["choices"] == ["Yes", "No"]
+    assert sent["body"] == "38 GB" and sent["hide_after_s"] == 30 and sent["chime"] is True
+    assert sent["sender"] == "debug" and sent["image_mode"] == "auto"
+    assert __import__("base64").b64decode(str(sent["image_b64"])).startswith(b"\x89PNG")
+    assert '"answer": "Yes"' in result.stdout
+    assert "notice n-1: answered" in result.stderr
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_panel_notify_reports_a_refusal_as_a_failure(box: str) -> None:
+    result = _run(box, "panel-notify", "c6", "refuse me", "--say", "hello", "--no-wait")
+    assert result.returncode != 0
+    assert "quiet_hours" in result.stdout and "06:30" in result.stdout
+    assert _Handler.notice_bodies[-1]["say"] == "hello"
+
+
+@pytest.mark.skipif(not _SCRIPT.exists(), reason="the console script is not in this checkout")
+def test_panel_notify_can_return_without_waiting(box: str) -> None:
+    result = _run(box, "panel-notify", _DEV, "Hello", "--no-wait")
+    assert result.returncode == 0, result.stderr
+    assert '"id": "n-1"' in result.stdout and "answered" not in result.stdout

@@ -35,6 +35,8 @@ from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import scoped_session
 from jbrain.jpanel import debug_relay as relay
+from jbrain.jpanel import notice
+from jbrain.jpanel.notice_service import queued_count
 from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
@@ -59,12 +61,21 @@ async def next_request(
 ) -> Response | dict[str, Any]:
     """The oldest request waiting for this panel, marked `sent`, or 204.
 
+    The query may also carry the panel's notice settings — `na`, `nq`, `nc` (accept, refuse
+    at night, chime: 0/1), `nf`, `nt` (the night window, minutes after local midnight) and
+    `tz` (the panel's zone index) — and either answer carries `X-Notice: <n>` when n notices
+    wait for it (JPANEL_C6_PLAN.md §2).
+
     200 carries exactly the flat object `dbg_cmd_run` takes. Collecting it starts the
     answer window (`relay.ANSWER_WINDOW_S`); a request not collected within
     `relay.PICKUP_WINDOW_S` of being asked is never delivered."""
     _panel_only(principal)
     relay.mark_seen(principal.id, board)
+    # The pickup also carries the panel's notice switches and night window (C3b), so the box
+    # can refuse a notice at send time from what the panel said seconds ago (notice.py).
+    notice.record_prefs(principal.id, notice.parse_prefs(dict(request.query_params)))
     async with scoped_session(_maker(request), ctx_for(principal)) as session:
+        waiting = await queued_count(session)
         row = (
             await session.execute(
                 text(
@@ -85,10 +96,16 @@ async def next_request(
             )
         ).first()
         await session.commit()
+    # `X-Notice: <n>` when notices wait: the panel then collects them from
+    # `/endpoint/notice/next` (api/panel_notice.py), so an idle pickup stays one request.
+    hint = {"X-Notice": str(waiting)} if waiting else {}
     if row is None:
-        return Response(status_code=204)
+        return Response(status_code=204, headers=hint)
     log.info("debug.panel_pickup", device=principal.id, request_id=row[0], cmd=row[1])
-    return relay.panel_request(str(row[0]), str(row[1]), dict(row[2] or {}), bool(row[3]))
+    return JSONResponse(
+        relay.panel_request(str(row[0]), str(row[1]), dict(row[2] or {}), bool(row[3])),
+        headers=hint,
+    )
 
 
 class _TooLarge(Exception):

@@ -136,6 +136,8 @@ function box(
     clearChats?: (path: string) => Response;
     agent?: (path: string) => Response;
     agentPut?: (path: string, init?: RequestInit) => Response;
+    notify?: (init?: RequestInit) => Response;
+    notice?: (path: string) => Response;
   } = {},
 ) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -180,6 +182,14 @@ function box(
         return opts.agentPut ? opts.agentPut(path, init) : json(JSON.parse(String(init?.body)));
       }
       return opts.agent ? opts.agent(path) : json({ agent_access: false });
+    }
+    if (path === "/api/panel/notify" && method === "POST") {
+      return opts.notify ? opts.notify(init) : json({ id: "n-1", panel: "Jeff" }, 202);
+    }
+    if (path.startsWith("/api/panel/notify/") && method === "GET") {
+      return opts.notice
+        ? opts.notice(path)
+        : json({ id: "n-1", state: "answered", answer: "Got it" });
     }
     if (path === "/api/endpoint/settings") {
       if (method === "PUT") {
@@ -1412,5 +1422,108 @@ describe("the desk panel's reach into the real agents", () => {
     fireEvent.click(toggle);
     expect(await screen.findByText(/only a display panel|Could not change it/)).toBeInTheDocument();
     expect(toggle).not.toBeChecked();
+  });
+});
+
+describe("a test notice from the app", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  async function send(): Promise<void> {
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+    await screen.findByText("the other one");
+    const buttons = await screen.findAllByRole("button", { name: "Send test notice" });
+    expect(buttons).toHaveLength(1); // the owner's display only, never a pet panel
+    fireEvent.click(buttons[0] as HTMLElement);
+  }
+
+  it("sends a question to the display and shows the tap that comes back", async () => {
+    const sent: unknown[] = [];
+    const polled: string[] = [];
+    let polls = 0;
+    fetchMock.mockImplementation(
+      box({
+        notify: (init) => {
+          sent.push(JSON.parse(String(init?.body)));
+          return json({ id: "n-1", panel: "Jeff" }, 202);
+        },
+        notice: (path) => {
+          polled.push(path);
+          polls += 1;
+          return json(
+            polls < 2
+              ? { id: "n-1", state: "shown", answer: null }
+              : { id: "n-1", state: "answered", answer: "Got it" },
+          );
+        },
+      }),
+    );
+    await send();
+    expect(await screen.findByText("Answered on the panel: Got it")).toBeInTheDocument();
+    expect(sent).toEqual([
+      {
+        device_id: "panel-desk",
+        title: "Test from the app",
+        body: "Tap an answer: it comes back to your phone.",
+        choices: ["Got it", "Not now"],
+      },
+    ]);
+    expect(polled).toEqual(["/api/panel/notify/n-1?wait=20", "/api/panel/notify/n-1?wait=20"]);
+  });
+
+  it.each([
+    [
+      { reason: "quiet_hours", until: "06:30" },
+      409,
+      "The panel is in its night hours until 06:30.",
+    ],
+    [{ reason: "not_accepting" }, 409, "The panel has notices switched off."],
+    [
+      { reason: "offline", last_seen_s: null },
+      503,
+      "The panel is offline, so the box turned it away.",
+    ],
+    [{ reason: "no_notice_surface" }, 409, "This panel's firmware cannot show notices yet."],
+    [{ reason: "busy" }, 429, "Four notices are already waiting on it."],
+    [{ reason: "which_panel" }, 409, "The box refused it: which_panel."],
+    ["plain words", 500, "The box refused it: plain words."],
+  ])("shows the box's refusal %j in words", async (detail, status, words) => {
+    fetchMock.mockImplementation(box({ notify: () => json({ detail }, status) }));
+    await send();
+    expect(await screen.findByText(words)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["dismissed", "Dismissed on the panel without an answer."],
+    ["expired", "Nobody answered it in time."],
+  ])("says how a %s notice ended", async (state, words) => {
+    fetchMock.mockImplementation(box({ notice: () => json({ id: "n-1", state, answer: null }) }));
+    await send();
+    expect(await screen.findByText(words)).toBeInTheDocument();
+  });
+
+  it("gives up waiting politely", async () => {
+    fetchMock.mockImplementation(
+      box({ notice: () => json({ id: "n-1", state: "shown", answer: null }) }),
+    );
+    await send();
+    expect(
+      await screen.findByText("No tap yet. It stays on the panel for 15 minutes."),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a read that fails", async () => {
+    fetchMock.mockImplementation(box({ notice: () => json({ detail: "gone" }, 404) }));
+    await send();
+    expect(await screen.findByText("gone")).toBeInTheDocument();
   });
 });

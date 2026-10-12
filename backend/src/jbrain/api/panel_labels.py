@@ -106,6 +106,7 @@ STEP_LABELS: dict[str, str] = {
     "home_status": "Checked home status",
     "device_status": "Checked device status",
     "query_server_metrics": "Checked server metrics",
+    "panel_notify": "Posted to your panel",
     "weather": "Checked the weather",
     "weather_history": "Checked past weather",
     "hurricane": "Checked the hurricane outlook",

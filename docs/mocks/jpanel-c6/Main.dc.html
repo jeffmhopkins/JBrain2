@@ -393,21 +393,80 @@ body{margin:0}
         </sc-if>
 
         <sc-if value="{{hasNote}}" hint-placeholder-val="{{false}}">
-          <div role="alertdialog" aria-label="{{note.aria}}" style="position: absolute; inset: 0; background: #000000; display: flex; flex-direction: column; padding: 40px 32px 30px; box-sizing: border-box; gap: 14px;">
+          <div role="alertdialog" aria-label="{{note.aria}}" onClick="{{note.tapCard}}" style="position: absolute; inset: 0; background: #000000; display: flex; flex-direction: column; padding: {{note.pad}}; box-sizing: border-box; gap: 14px;">
+            <sc-if value="{{note.hasBanner}}" hint-placeholder-val="{{false}}">
+              <div aria-label="{{note.imageAlt}}" style="margin: 0 -32px; height: {{note.bannerH}}px; position: relative; overflow: hidden; flex-shrink: 0;">
+                <sc-if value="{{note.imgMinecraft}}" hint-placeholder-val="{{false}}">
+                  <svg width="480" height="{{note.bannerH}}" viewBox="0 0 480 140" preserveAspectRatio="none" aria-hidden="true">
+                    <rect x="0" y="0" width="480" height="140" fill="#6FA8DC"></rect>
+                    <rect x="0" y="0" width="480" height="40" fill="#8BBCE6"></rect>
+                    <rect x="360" y="18" width="36" height="36" fill="#F6E27A"></rect>
+                    <rect x="40" y="26" width="64" height="14" fill="#FFFFFF"></rect><rect x="52" y="16" width="36" height="12" fill="#FFFFFF"></rect>
+                    <rect x="210" y="40" width="48" height="12" fill="#FFFFFF"></rect>
+                    <rect x="0" y="92" width="480" height="16" fill="#5C9E3F"></rect>
+                    <rect x="0" y="108" width="480" height="32" fill="#8A5A3B"></rect>
+                    <rect x="24" y="116" width="12" height="8" fill="#6E4630"></rect><rect x="96" y="126" width="12" height="8" fill="#6E4630"></rect><rect x="180" y="118" width="12" height="8" fill="#6E4630"></rect><rect x="300" y="128" width="12" height="8" fill="#6E4630"></rect><rect x="420" y="120" width="12" height="8" fill="#6E4630"></rect>
+                    <rect x="120" y="44" width="16" height="48" fill="#6E4630"></rect><rect x="100" y="20" width="56" height="32" fill="#3F7A2A"></rect>
+                    <rect x="420" y="56" width="14" height="36" fill="#6E4630"></rect><rect x="404" y="36" width="46" height="26" fill="#3F7A2A"></rect>
+                    <rect x="236" y="60" width="44" height="32" fill="#B0B0B0"></rect><rect x="236" y="60" width="44" height="6" fill="#8F8F8F"></rect><rect x="250" y="74" width="16" height="18" fill="#5A5A5A"></rect>
+                  </svg>
+                </sc-if>
+                <span style="position: absolute; right: 12px; bottom: 8px; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.75);">{{note.imageCaption}}</span>
+              </div>
+            </sc-if>
             <div style="display: flex; align-items: center; gap: 10px; color: {{note.accent}};">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
               <span style="font-size: 18px; font-weight: 700; letter-spacing: 0.02em; flex-grow: 1;">{{note.from}}</span>
               <span style="font-size: 16px; font-weight: 600; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{note.count}}</span>
             </div>
-            <span style="font-size: 30px; font-weight: 700; line-height: 1.2;">{{note.title}}</span>
+            <span style="font-size: {{note.titleSize}}px; font-weight: 700; line-height: 1.2;">{{note.title}}</span>
             <span style="font-size: 21px; font-weight: 500; line-height: 1.35; color: #C4C7CC; flex-grow: 1;">{{note.body}}</span>
-            <div style="display: grid; grid-template-columns: repeat({{note.cols}}, minmax(0, 1fr)); gap: 10px;">
-              <sc-for list="{{note.choices}}" as="ch" hint-placeholder-count="2">
-                <button onClick="{{ch.pick}}" style="height: 64px; border-radius: 20px; border: 1px solid {{ch.border}}; background: {{ch.bg}}; color: {{ch.color}}; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer; padding: 0 8px;">{{ch.label}}</button>
-              </sc-for>
-            </div>
+            <sc-if value="{{note.hasAudio}}" hint-placeholder-val="{{false}}">
+              <div aria-label="{{note.audio.aria}}" style="display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; border-radius: 18px; background: {{note.audio.tint}}; color: {{note.accent}};">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11" opacity="{{note.audio.waveOpacity}}"></path></svg>
+                <div style="flex-grow: 1; height: 6px; border-radius: 3px; background: #2C2F34; overflow: hidden;">
+                  <div style="height: 6px; width: {{note.audio.pct}}%; background: {{note.accent}};"></div>
+                </div>
+                <span style="font-size: 17px; font-weight: 600; color: #C4C7CC; font-variant-numeric: tabular-nums;">{{note.audio.time}}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{note.hasButtons}}" hint-placeholder-val="{{true}}">
+              <div style="display: grid; grid-template-columns: repeat({{note.cols}}, minmax(0, 1fr)); gap: 10px;">
+                <sc-for list="{{note.choices}}" as="ch" hint-placeholder-count="2">
+                  <button onClick="{{ch.pick}}" style="height: 64px; border-radius: 20px; border: 1px solid {{ch.border}}; background: {{ch.bg}}; color: {{ch.color}}; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer; padding: 0 8px;">{{ch.label}}</button>
+                </sc-for>
+              </div>
+            </sc-if>
             <span style="font-size: 15px; font-weight: 500; color: #9A9DA3; text-align: center;">{{note.hint}}</span>
           </div>
+          <sc-if value="{{note.isPicture}}" hint-placeholder-val="{{false}}">
+            <div role="img" aria-label="{{note.imageAlt}}" onClick="{{note.tapCard}}" style="position: absolute; inset: 0; background: #000000; cursor: pointer;">
+              <sc-if value="{{note.imgWeather}}" hint-placeholder-val="{{true}}">
+                <svg width="480" height="480" viewBox="0 0 480 480" aria-hidden="true">
+                  <defs><linearGradient id="nsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1B2A4A"></stop><stop offset="0.62" stop-color="#C46A4A"></stop><stop offset="1" stop-color="#F2B66B"></stop></linearGradient></defs>
+                  <rect x="0" y="0" width="480" height="480" fill="url(#nsky)"></rect>
+                  <circle cx="330" cy="300" r="62" fill="#FBD38A"></circle>
+                  <rect x="0" y="330" width="480" height="150" fill="#2A2238"></rect>
+                  <path d="M0 330 L70 296 L130 318 L200 272 L270 312 L340 284 L410 316 L480 290 L480 330 Z" fill="#3A2F4C"></path>
+                  <g fill="#E9EEF5"><circle cx="318" cy="168" r="34"></circle><circle cx="360" cy="150" r="44"></circle><circle cx="406" cy="172" r="30"></circle><rect x="286" y="168" width="150" height="34" rx="17"></rect></g>
+                  <g stroke="#9CC3E6" stroke-width="5" stroke-linecap="round"><path d="M318 220 L310 244"></path><path d="M352 220 L344 244"></path><path d="M386 220 L378 244"></path></g>
+                  <text x="40" y="196" font-family="Montserrat, sans-serif" font-size="88" font-weight="700" fill="#FFFFFF">72°</text>
+                  <text x="44" y="404" font-family="Montserrat, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF">Rain at 3 pm</text>
+                  <text x="44" y="440" font-family="Montserrat, sans-serif" font-size="20" font-weight="600" fill="#F2D6C2">Take the umbrella · clears by 6</text>
+                </svg>
+              </sc-if>
+              <div style="position: absolute; left: 22px; top: 22px; height: 36px; padding: 0 14px; border-radius: 18px; background: rgba(0,0,0,0.55); color: #E6E7E9; display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
+                <span>{{note.from}}</span>
+              </div>
+              <span style="position: absolute; right: 22px; top: 30px; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.8);">{{note.hint}}</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{note.hasTimer}}" hint-placeholder-val="{{false}}">
+            <div aria-label="{{note.timerAria}}" style="position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,0.10); pointer-events: none;">
+              <div style="height: 4px; width: {{note.timerPct}}%; background: {{note.timerColor}};"></div>
+            </div>
+          </sc-if>
         </sc-if>
 
         <sc-if value="{{isRinging}}" hint-placeholder-val="{{false}}">
@@ -440,7 +499,7 @@ body{margin:0}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question","notify-picture","notify-banner","notify-audio"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent","picture","banner question","with a sound"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -486,6 +545,10 @@ class Component extends DCLogic {
     if (start === 'clock') { s.screen = 'clock'; s.page = 1; }
     if (start === 'notify-info') s.notes = [this.sample('info')];
     if (start === 'notify-question') s.notes = [this.sample('yes/no question'), this.sample('info')];
+    // Frozen part-way so the board shows the countdown line and the clip's progress.
+    if (start === 'notify-picture') { s.notes = [this.sample('picture')]; s.noteAge = 3; s.noteFrozen = true; }
+    if (start === 'notify-banner') { s.notes = [this.sample('banner question')]; s.noteFrozen = true; }
+    if (start === 'notify-audio') { s.notes = [this.sample('with a sound')]; s.noteAge = 2.6; s.noteFrozen = true; }
     if (start === 'clock-night') { s.screen = 'clock'; s.page = 1; s.forceNight = true; }
     if (start === 'clock-badge') { s.screen = 'clock'; s.page = 1; s.forceNight = true; s.notes = [this.sample('yes/no question')]; }
     if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
@@ -507,6 +570,7 @@ class Component extends DCLogic {
   }
 
   componentWillUnmount() {
+    clearInterval(this.noteTimer);
     clearInterval(this.recTimer);
     clearInterval(this.playTimer);
     clearTimeout(this.toastTimer);
@@ -517,7 +581,25 @@ class Component extends DCLogic {
 
   componentDidMount() {
     this.measure();
+    // A notice's age on the glass: drives the hide-after line, the clip's progress, and the
+    // hide itself when the time is up (the panel then reports `expired`).
+    this.noteTimer = setInterval(() => this.ageNote(), 250);
     this.tick = setInterval(() => this.forceUpdate(), 15000);
+  }
+
+  ageNote() {
+    const b = this.base(this.state);
+    const n = b.notes[0];
+    if (!n || b.noteFrozen || b.off || b.ring || b.rec) return;
+    if (b.screen === 'clock' && b.clockView === 'face' && !b.noteOpen) return;
+    if (!n.hide && !n.audio) return;
+    const age = n.id === b.noteAgeId ? (b.noteAge || 0) + 0.25 : 0;
+    if (n.hide && age >= n.hide) {
+      this.put((c) => ({ notes: c.notes.slice(1), noteOpen: false, noteAge: 0, noteAgeId: null }));
+      this.say('Hid itself — the sender reads expired');
+      return;
+    }
+    this.put({ noteAge: age, noteAgeId: n.id });
   }
 
   hm(h, m) {
@@ -666,7 +748,13 @@ class Component extends DCLogic {
       info: { from: 'Ops', title: 'Disk 91% full', body: 'The box is running low on space. Ops → Disk shows what is using it.', choices: [] },
       'yes/no question': { from: 'Jerv', title: 'Run the cleanup now?', body: 'Frees about 38 GB of build cache. Nothing you keep is touched.', choices: ['Yes', 'No'] },
       'three choices': { from: 'Minecraft', title: 'Restart the server?', body: 'An update is ready. Two players are on.', choices: ['Now', 'In 10 min', 'Skip'] },
-      urgent: { from: 'Ops', title: 'Backup failed', body: 'Last night\'s backup did not finish. Check Ops → Backups.', choices: [], urgent: true }
+      urgent: { from: 'Ops', title: 'Backup failed', body: 'Last night\'s backup did not finish. Check Ops → Backups.', choices: [], urgent: true },
+      // A picture the sender drew itself, the whole glass; it hides itself after 8 s.
+      picture: { from: 'Morning brief', title: 'Rain at 3 pm', body: '', choices: [], image: 'weather', mode: 'full', hide: 8 },
+      // A banner the sender drew, over the words and the answers.
+      'banner question': { from: 'Minecraft', title: 'Update the server?', body: 'Two players are on.', choices: ['Now', 'In 10 min', 'Skip'], image: 'minecraft', mode: 'banner' },
+      // Words read aloud in the PWA's voice (≤ 8 s), hidden after 20 s or a tap.
+      'with a sound': { from: 'Jerv', title: 'The pizza is here', body: 'The driver is at the front door.', choices: [], audio: 6, hide: 20 }
     }[kind];
     this.noteSeq = (this.noteSeq || 0) + 1;
     return Object.assign({ id: this.noteSeq, urgent: false }, k);
@@ -973,21 +1061,58 @@ class Component extends DCLogic {
       })(),
       note: (() => {
         const n = s.notes[0];
-        if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', accent: '#7FA7C9', aria: '' };
+        if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', accent: '#7FA7C9', aria: '', pad: '40px 32px 30px', titleSize: 30, hasButtons: false, hasBanner: false, isPicture: false, hasAudio: false, hasTimer: false, audio: { pct: 0, time: '', aria: '', tint: '', waveOpacity: 1 }, timerPct: 0, timerColor: '#7FA7C9', timerAria: '', bannerH: 0, imgMinecraft: false, imgWeather: false, imageAlt: '', imageCaption: '', tapCard: () => {} };
         const answer = (label) => () => {
-          this.put((b) => ({ notes: b.notes.slice(1), noteOpen: false }));
-          this.say(n.choices.length ? 'Sent to ' + n.from + ': ' + label : 'Dismissed');
+          this.put((b) => ({ notes: b.notes.slice(1), noteOpen: false, noteAge: 0 }));
+          this.say('Sent to ' + n.from + ': ' + label);
         };
-        const labels = n.choices.length ? n.choices : ['OK'];
+        const accent = n.urgent ? '#C9A36A' : '#7FA7C9';
+        const age = n.id === s.noteAgeId || s.noteFrozen ? (s.noteAge || 0) : 0;
+        const left = n.hide ? Math.max(0, n.hide - age) : 0;
+        const isPicture = n.mode === 'full';
+        const tapHides = !n.choices.length;
+        const hint = n.choices.length
+          ? 'Your answer goes back to ' + n.from + ' · BOOT answers nothing'
+          : (n.hide ? 'Tap to hide · hides in ' + Math.ceil(left) + ' s' : 'Tap to hide');
+        const played = n.audio ? Math.min(n.audio, age) : 0;
         return {
           from: n.from + (n.urgent ? ' · urgent' : ''),
           title: n.title, body: n.body,
-          accent: n.urgent ? '#C9A36A' : '#7FA7C9',
+          accent: accent,
           count: s.notes.length > 1 ? '1 of ' + s.notes.length : '',
-          cols: labels.length === 3 ? 3 : labels.length,
-          hint: n.choices.length ? 'Your answer goes back to ' + n.from + ' · BOOT answers nothing' : 'BOOT dismisses',
+          cols: n.choices.length === 3 ? 3 : Math.max(1, n.choices.length),
+          hint: isPicture ? (n.hide ? 'Tap to hide · ' + Math.ceil(left) + ' s' : 'Tap to hide') : hint,
           aria: n.from + ': ' + n.title,
-          choices: labels.map((label, k) => ({
+          pad: n.mode === 'banner' ? '0 32px 26px' : '40px 32px 30px',
+          titleSize: n.mode === 'banner' ? 26 : 30,
+          hasButtons: n.choices.length > 0,
+          hasBanner: n.mode === 'banner',
+          bannerH: 140,
+          isPicture: isPicture,
+          imgMinecraft: n.image === 'minecraft',
+          imgWeather: n.image === 'weather',
+          imageAlt: n.title,
+          imageCaption: n.image === 'minecraft' ? 'drawn by the sender' : '',
+          hasAudio: !!n.audio,
+          audio: {
+            pct: n.audio ? Math.round(100 * played / n.audio) : 0,
+            time: n.audio ? '0:0' + Math.floor(played) + ' / 0:0' + n.audio : '',
+            aria: n.audio ? (played < n.audio ? 'Playing the sound' : 'Sound played') : '',
+            tint: 'rgba(127,167,201,0.10)',
+            waveOpacity: n.audio && played < n.audio ? 1 : 0.25
+          },
+          // The hide-after countdown: a thin line along the bottom edge that drains to the
+          // left, the same on every kind of notice. Absent when it waits for a tap.
+          hasTimer: !!n.hide,
+          timerPct: n.hide ? Math.round(100 * left / n.hide) : 0,
+          timerColor: isPicture ? 'rgba(255,255,255,0.85)' : accent,
+          timerAria: n.hide ? 'Hides in ' + Math.ceil(left) + ' seconds' : '',
+          tapCard: () => {
+            if (!tapHides || this.swiped) return;
+            this.put((b) => ({ notes: b.notes.slice(1), noteOpen: false, noteAge: 0 }));
+            this.say('Hidden — the sender reads dismissed');
+          },
+          choices: n.choices.map((label, k) => ({
             label: label,
             bg: k === 0 ? 'rgba(127,167,201,0.18)' : '#1E2024',
             color: k === 0 ? '#7FA7C9' : '#E6E7E9',
@@ -1104,7 +1229,7 @@ class Component extends DCLogic {
         clearInterval(this.recTimer);
         const b = this.base(this.state);
         if (b.ring) { this.put({ ring: null, off: false }); this.say('Alarm stopped'); return; }
-        if (b.notes.length && (b.noteOpen || !(b.screen === 'clock' && b.clockView === 'face'))) { this.put({ notes: b.notes.slice(1), noteOpen: false }); this.say('Dismissed — no answer sent'); return; }
+        if (b.notes.length && (b.noteOpen || !(b.screen === 'clock' && b.clockView === 'face'))) { this.put({ notes: b.notes.slice(1), noteOpen: false, noteAge: 0 }); this.say('Dismissed — no answer sent'); return; }
         if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
         this.put({ screen: 'home', page: 0, rec: null, playing: null, off: false });
       },
