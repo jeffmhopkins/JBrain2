@@ -97,18 +97,17 @@ async def post_tag(maker: async_sessionmaker[AsyncSession], owner: SessionContex
     """A short tag that moves whenever the owner's post does: a message to or from him filed,
     played or cleared. Equal tags mean nothing the desk panel shows has changed."""
     async with scoped_session(maker, owner) as s:
-        row = (
-            await s.execute(
-                text(
-                    """
-                    SELECT count(*), max(created_at)::text, max(played_at)::text,
-                           count(*) FILTER (WHERE played_at IS NULL)
-                    FROM app.jpanel_message
-                    WHERE sender_kind = 'owner' OR recipient_kind = 'owner'
-                    """
-                )
+        result = await s.execute(
+            text(
+                """
+                SELECT count(*), max(created_at)::text, max(played_at)::text,
+                       count(*) FILTER (WHERE played_at IS NULL)
+                FROM app.jpanel_message
+                WHERE sender_kind = 'owner' OR recipient_kind = 'owner'
+                """
             )
-        ).one()
+        )
+        row = result.one()
     return hashlib.sha256("|".join(str(v) for v in row).encode()).hexdigest()[:TAG_HEX]
 
 

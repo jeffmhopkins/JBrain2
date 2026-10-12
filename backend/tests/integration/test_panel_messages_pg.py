@@ -276,3 +276,37 @@ def test_send_refuses_what_is_not_a_message(box: Box) -> None:
     )
     assert nowhere.status_code == 404
     assert _rows(box) == {}
+
+
+async def test_the_tag_moves_with_the_owner_s_post_only(maker: Any) -> None:
+    """Called directly: a message to or from the owner moves it; twin-to-twin post does not,
+    since nothing the desk panel shows changed."""
+    from sqlalchemy import text
+
+    from jbrain.api import panel_messages
+    from jbrain.db.session import scoped_session
+    from tests.integration.test_rls import OWNER
+
+    async def file(sender: str, recipient: str) -> None:
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text(
+                    "INSERT INTO app.jpanel_message (sender_kind, sender_device, recipient_kind,"
+                    " recipient_device, blob_sha256, transcript, composed, duration_ms)"
+                    " VALUES (:sk, :sd, :rk, :rd, 'x', '', 'voice', 1000)"
+                ),
+                {
+                    "sk": sender,
+                    "sd": str(uuid.uuid4()) if sender == "panel" else None,
+                    "rk": recipient,
+                    "rd": str(uuid.uuid4()) if recipient == "panel" else None,
+                },
+            )
+            await s.commit()
+
+    empty = await panel_messages.post_tag(maker, OWNER)
+    assert len(empty) == panel_messages.TAG_HEX
+    await file("panel", "panel")
+    assert await panel_messages.post_tag(maker, OWNER) == empty
+    await file("panel", "owner")
+    assert await panel_messages.post_tag(maker, OWNER) != empty
