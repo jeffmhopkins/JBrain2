@@ -53,7 +53,8 @@ done < <( { find "$DOCS" -name '*.md' 2>/dev/null; [ -f "$ROOT/CLAUDE.md" ] && e
 # 🟡 counts as UNFINISHED, and that was a hole: a wave half shipped is the state this
 # repo's plans spend most of their life in, and without it a plan whose every wave was
 # 🟡 read as ready to archive — the one thing this rule exists to catch.
-EMPTY_BOX='◻|◻️|⬜|▫️|▢|◯|❌|🔲|🟡|🟠|\[ \]'
+# ⏸️ (on hold) is unfinished too: a held wave is not shipped, so it keeps the plan open.
+EMPTY_BOX='◻|◻️|⬜|▫️|▢|◯|❌|🔲|🟡|🟠|⏸|\[ \]'
 while IFS= read -r f; do
   case "$f" in */archive/*) continue;; esac
   header="$(head -n 8 "$f" || true)"

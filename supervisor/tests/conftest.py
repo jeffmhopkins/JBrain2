@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import tempfile
+from pathlib import Path
+from types import ModuleType
 from typing import TYPE_CHECKING
 
 import pytest
@@ -20,6 +25,27 @@ from supervisor.gateway import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+# The Minecraft wrapper (deploy/minecraft/server.py) roots every file it keeps at
+# MC_DATA_DIR, /data by default: the live box's volume. Set before any test module
+# loads it, so even a path a test forgot (or a thread that outlives its test's patches)
+# lands in this sentinel, never /data; _mc_sentinel_stays_empty fails the run if
+# anything does.
+MC_SENTINEL = Path(tempfile.mkdtemp(prefix="mc-data-sentinel-"))
+os.environ["MC_DATA_DIR"] = str(MC_SENTINEL)
+MC_SERVER_PY = Path(__file__).resolve().parents[2] / "deploy/minecraft/server.py"
+# Every module-level path in server.py, as it is under DATA.
+MC_DATA_PATHS = {
+    "DATA": "",
+    "SERVER_DIR": "server",
+    "SNAPSHOT_DIR": "snapshots",
+    "OVERRIDES": "properties.json",
+    "SETTINGS": "settings.json",
+    "SLOTS": "slots.json",
+    "SNAPSHOT_INDEX": "snapshot-index.json",
+    "UPLOAD_DIR": "uploads",
+    "STRUCTURE_DIR": "structures",
+}
 
 TOKEN = "test-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -214,3 +240,47 @@ def client(gateway: FakeGateway) -> Iterator[TestClient]:
     # watch_api off: route tests have no business starting a background network probe.
     with TestClient(create_app(settings, gateway, watch_api=False)) as test_client:
         yield test_client
+
+
+def mc_server_modules() -> list[ModuleType]:
+    """Every loaded copy of server.py. Test files load it by path, and a later load
+    replaces the sys.modules entry while the first file still holds its own copy, so
+    the copies are found through every loaded module's globals too."""
+    found: dict[int, ModuleType] = {}
+    for mod in list(sys.modules.values()):
+        for obj in [mod, *list(getattr(mod, "__dict__", {}).values())]:
+            if not isinstance(obj, ModuleType):
+                continue
+            file = getattr(obj, "__file__", None)
+            if file and Path(file).resolve() == MC_SERVER_PY:
+                found[id(obj)] = obj
+    return list(found.values())
+
+
+@pytest.fixture(scope="session")
+def _mc_modules() -> list[ModuleType]:
+    # Looked up once: every test file has been imported by the first test.
+    return mc_server_modules()
+
+
+@pytest.fixture(autouse=True)
+def _mc_data_in_tmp(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, _mc_modules: list[ModuleType]
+) -> None:
+    """Each test's own data dir for every server.py copy, so no test shares state
+    through the sentinel or reaches /data. A test may still point one elsewhere."""
+    data = tmp_path / "mc-data"
+    for mod in _mc_modules:
+        for name, rel in MC_DATA_PATHS.items():
+            monkeypatch.setattr(mod, name, data / rel if rel else data)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _mc_sentinel_stays_empty() -> Iterator[None]:
+    yield
+    leaked = sorted(str(p.relative_to(MC_SENTINEL)) for p in MC_SENTINEL.rglob("*"))
+    assert not leaked, (
+        f"a test wrote to the Minecraft wrapper's default data dir (on a real run, "
+        f"/data): {leaked}"
+    )
+    MC_SENTINEL.rmdir()

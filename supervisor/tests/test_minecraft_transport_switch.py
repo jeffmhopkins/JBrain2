@@ -16,13 +16,6 @@ import pytest
 from tests.test_minecraft_sidecar import _running_rig, _serve, server
 
 
-@pytest.fixture(autouse=True)
-def _own_slots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    # The slot records' file is a module constant the shared rig helpers leave alone;
-    # a switch turned off here must not leak into another test's world.
-    monkeypatch.setattr(server, "SLOTS", tmp_path / "slots.json")
-
-
 def test_on_by_default_and_applies_live_without_a_rule(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

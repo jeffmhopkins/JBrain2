@@ -1,6 +1,6 @@
 # JBrain2 — Doc Lifecycle
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-10-12
 
 Binding process for how a document is born, changes, and dies alongside the
 feature it describes. It exists because the `docs/` folder drifted into a
@@ -103,7 +103,8 @@ Rules for the header:
   a `Last verified` date — nothing re-verifies a frozen doc.
 - **Wave labels.** Waves use a single-letter or single-letter+digit scheme
   (`A B C`, `W1 W2`, `P0 P1`, `S1 S4`, `G1 G3`), each with a status glyph in the
-  header: `✅` done, `◻️` not done. `Waves:` mirrors the body's wave sections;
+  header: `✅` done, `◻️` not done, `⏸️` on hold (an owner pause; it counts as not
+  done, so it keeps the plan open). `Waves:` mirrors the body's wave sections;
   when a body wave flips to ✅, the header marker flips in the same edit.
 - `Last verified` is bumped by whoever last confirmed the doc matches reality,
   in the PR that made it match.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import re
 import struct
 import subprocess
@@ -61,20 +62,19 @@ JBRAIN_RP_VERSION = _JBRAIN_RP["header"]["version"]
 OLD_PROBE_RP_ID = "26d6c250-8ead-4bb8-9dd0-d3805e61d61e"
 
 
-@pytest.fixture(autouse=True)
-def _data_in_tmp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Every wrapper path under a temp dir, for every test. A test that forgot one
-    would otherwise write to /data — fine as root locally, a PermissionError on CI."""
-    data = tmp_path / "data"
-    monkeypatch.setattr(server, "DATA", data)
-    monkeypatch.setattr(server, "SERVER_DIR", data / "server")
-    monkeypatch.setattr(server, "SNAPSHOT_DIR", data / "snapshots")
-    monkeypatch.setattr(server, "OVERRIDES", data / "properties.json")
-    monkeypatch.setattr(server, "SETTINGS", data / "settings.json")
-    monkeypatch.setattr(server, "SLOTS", data / "slots.json")
-    monkeypatch.setattr(server, "SNAPSHOT_INDEX", data / "snapshot-index.json")
-    monkeypatch.setattr(server, "UPLOAD_DIR", data / "uploads")
-    monkeypatch.setattr(server, "STRUCTURE_DIR", data / "structures")
+def test_no_test_reaches_the_live_data_dir(tmp_path: Path) -> None:
+    """conftest's guard: every path the wrapper keeps is under this test's tmp dir, and
+    the import-time default it falls back to is conftest's sentinel, never /data."""
+    from tests.conftest import MC_DATA_PATHS, MC_SENTINEL, mc_server_modules
+
+    assert Path(os.environ["MC_DATA_DIR"]) == MC_SENTINEL
+    mods = mc_server_modules()
+    assert server in mods
+    for mod in mods:
+        for name in MC_DATA_PATHS:
+            path = getattr(mod, name)
+            assert path.is_relative_to(tmp_path), (name, path)
+            assert not path.is_relative_to("/data"), (name, path)
 
 
 FAKE_BDS = textwrap.dedent(
