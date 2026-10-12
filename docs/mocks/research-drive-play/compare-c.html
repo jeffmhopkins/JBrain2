@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Drive mode — skip variants</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C; --border-2:#34373C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --green:#8FBC9A; --amber:#C9A36A; --steel:#7FA7C9;
+    --amber-tint:rgba(201,163,106,.13); --amber-tint-2:rgba(201,163,106,.24);
+    --steel-tint:rgba(127,167,201,.14);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --border-2:#D2D2CE; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 12px 60px;min-height:100vh;}
+  svg{display:block;}
+  button{font:inherit;color:inherit;}
+  .pfill{fill:currentColor;stroke:none;}
+  .ln{fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
+
+  .head{max-width:1150px;width:100%;padding:0 6px;}
+  .head h1{font-size:19px;font-weight:600;margin-bottom:6px;color:#E6E7E9;}
+  .head p{color:#9A9DA3;font-size:13px;line-height:1.55;max-width:780px;}
+  .head p b{color:#E6E7E9;font-weight:500;}
+  .toggle{display:inline-flex;background:#17181B;border:1px solid #26282C;border-radius:999px;padding:3px;margin-top:10px;}
+  .toggle button{appearance:none;border:none;background:none;color:#9A9DA3;font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:rgba(201,163,106,.13);color:#C9A36A;font-weight:600;}
+
+  .grid{display:flex;flex-wrap:wrap;gap:22px;justify-content:center;align-items:flex-start;max-width:1500px;}
+  .col{width:372px;max-width:94vw;display:flex;flex-direction:column;gap:10px;}
+  .label{display:flex;align-items:baseline;gap:8px;padding:0 2px;}
+  .label .k{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#C9A36A;}
+  .label .name{font-size:14px;font-weight:600;color:#E6E7E9;}
+  .blurb{font-size:11.5px;color:#9A9DA3;line-height:1.5;padding:0 2px;min-height:64px;}
+  .blurb b{color:#E6E7E9;font-weight:500;}
+
+  .phone{width:100%;background:var(--bg);border:1px solid #2a2c30;border-radius:28px;overflow:hidden;padding:14px 12px 18px;}
+  .pbar{font-size:17px;font-weight:600;padding:2px 4px 12px;}
+  .bubble{border:1px solid var(--border);border-radius:18px;padding:12px;}
+  .lead{font-size:14px;line-height:1.45;margin-bottom:11px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--text-2);}
+  .dr{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:11px 12px;}
+  .cap{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);flex:1;}
+  .q{font-size:13px;font-weight:500;line-height:1.4;margin-top:5px;}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:10px 0 9px;}
+  .chip{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--border);color:var(--text-2);}
+  .toggleline{font-size:11.5px;color:var(--text-3);padding:3px 0;}
+  .roster{border-top:1px solid var(--border);margin-top:8px;padding-top:7px;}
+  .row{display:flex;align-items:center;gap:8px;}
+  .grow{flex:1;min-width:0;}
+  .mini{display:inline-flex;gap:2px;}
+  .mini button{width:30px;height:30px;border:0;background:none;color:var(--text-3);border-radius:7px;display:flex;align-items:center;justify-content:center;}
+  .mini svg{width:15px;height:15px;}
+  .time{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .clamp1{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+  .idle{margin-top:11px;width:100%;height:52px;border:0;border-radius:14px;background:var(--amber);color:#17181B;display:flex;align-items:center;justify-content:center;gap:9px;font-size:15px;font-weight:650;cursor:pointer;}
+  .idle svg{width:20px;height:20px;}
+  .player{margin-top:11px;border-radius:16px;background:var(--surface-2);padding:14px 12px 10px;display:none;}
+  .player.show{display:block;}
+  .now{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);}
+  .sec{font-size:15px;font-weight:600;margin-top:3px;}
+  .big{width:84px;height:84px;flex:none;border-radius:999px;border:0;background:var(--amber);color:#17181B;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .big svg{width:34px;height:34px;}
+  .stop{display:block;margin:8px auto 0;border:0;background:none;color:var(--text-3);font-size:12px;cursor:pointer;padding:6px 10px;}
+  .track{height:4px;border-radius:999px;background:var(--surface);overflow:hidden;}
+  .track > i{display:block;height:100%;width:0;background:var(--amber);border-radius:999px;transition:width .25s linear;}
+  .flash{animation:flash .5s ease-out;}
+  @keyframes flash{from{background:var(--amber-tint-2);}to{background:transparent;}}
+
+  /* ===== C1 — Story buttons: wide labelled rectangles that name where they go ===== */
+  .c1-prog{margin:11px 0 3px;}
+  .c1-times{display:flex;justify-content:space-between;}
+  .c1-mid{display:flex;justify-content:center;margin:10px 0 12px;}
+  .c1-skips{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;}
+  .c1-skip{min-width:0;overflow:hidden;height:60px;border-radius:12px;border:1px solid var(--border-2);background:var(--surface);display:flex;align-items:center;gap:8px;padding:0 10px;cursor:pointer;text-align:left;}
+  .c1-skip.next{flex-direction:row-reverse;text-align:right;}
+  .c1-skip svg{width:24px;height:24px;flex:none;color:var(--text);}
+  .c1-skip .dir{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .c1-skip .ttl{font-size:12.5px;font-weight:600;color:var(--text);line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .c1-skip:disabled{opacity:.35;cursor:default;}
+
+  /* ===== C2 — Chapter bar: progress split into story segments; skip = arrow + story counter ===== */
+  .c2-segs{display:flex;gap:4px;margin:12px 0 4px;}
+  .c2-seg{flex:1;height:8px;border-radius:999px;background:var(--surface);overflow:hidden;border:0;padding:0;cursor:pointer;}
+  .c2-seg > i{display:block;height:100%;width:0;background:var(--amber);}
+  .c2-seg.cur{outline:2px solid var(--amber-tint-2);outline-offset:2px;}
+  .c2-segmeta{display:flex;justify-content:space-between;}
+  .c2-ctrls{display:flex;align-items:center;justify-content:space-between;margin-top:12px;gap:10px;}
+  .c2-skip{flex:1;height:84px;border-radius:16px;border:0;background:var(--steel-tint);color:var(--steel);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;}
+  .c2-skip svg{width:28px;height:28px;}
+  .c2-skip span{font-size:11px;font-weight:600;letter-spacing:.02em;}
+  .c2-skip:disabled{opacity:.35;cursor:default;}
+
+  /* ===== C3 — Story list: every story is a big row; current one is the player ===== */
+  .c3-list{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
+  .c3-item{display:flex;align-items:center;gap:10px;min-height:52px;border-radius:12px;border:1px solid var(--border);background:var(--surface);padding:6px 10px;cursor:pointer;text-align:left;width:100%;}
+  .c3-item .n{width:26px;height:26px;flex:none;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:var(--text-2);background:var(--surface-2);}
+  .c3-item .t{font-size:13px;font-weight:500;}
+  .c3-item.done .t{color:var(--text-3);}
+  .c3-item.done .n{color:var(--green);}
+  .c3-item.cur{border-color:color-mix(in srgb,var(--amber) 55%,transparent);background:var(--amber-tint);min-height:auto;padding:10px;flex-wrap:wrap;cursor:default;}
+  .c3-item.cur .n{background:var(--amber);color:#17181B;}
+  .c3-item.cur .t{font-size:14.5px;font-weight:650;}
+  .c3-curbody{width:100%;display:flex;align-items:center;gap:12px;margin-top:8px;}
+  .c3-curbody .big{width:64px;height:64px;}
+  .c3-curbody .big svg{width:26px;height:26px;}
+  .c3-next{margin-top:8px;width:100%;height:56px;border-radius:14px;border:1px solid var(--border-2);background:var(--surface);display:flex;align-items:center;justify-content:center;gap:9px;font-size:15px;font-weight:600;cursor:pointer;}
+  .c3-next svg{width:22px;height:22px;}
+  .c3-next:disabled{opacity:.35;}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Drive mode — three ways to make "skip story" obvious</h1>
+  <p>In the first version of C, the back/skip buttons were the same grey circles as each other and only differed by a small glyph, so they were hard to tell apart at a glance. Each variant below makes <b>skipping a story</b> look clearly different from <b>pause</b>, and says <b>where you'll land</b>. Tap <b>Play brief</b> in each, then try skip and back. The clock runs fast so progress visibly moves.</p>
+  <div class="toggle" role="group" aria-label="Theme">
+    <button type="button" data-t="dark" aria-pressed="true">Dark</button>
+    <button type="button" data-t="light" aria-pressed="false">Light</button>
+  </div>
+</div>
+
+<div class="grid">
+
+  <div class="col" data-v="c1">
+    <div class="label"><span class="k">C1</span><span class="name">Labelled story buttons</span></div>
+    <div class="blurb">Pause stays a big round button on its own row. Underneath are two <b>full-width rectangular buttons</b> that name the story they jump to: <b>"Previous · Top national headlines"</b> and <b>"Next · Space: NASA…"</b> (or <b>"Restart"</b> once you're a few seconds into a story). Round means pause, rectangles mean change story, and the words remove the guesswork.</div>
+    <div class="phone"><div class="pbar">News</div><div class="bubble">
+      <div class="lead">Morning, Jeff — your Monday brief is in: the Ukraine "energy ceasefire" claim, NASA's push for private ISS successors, and Microsoft's call for global AI rules…</div>
+      <div class="dr">
+        <div class="row"><span class="cap">deep research</span><span class="mini" data-mini></span></div>
+        <div class="q">Daily news briefing for Monday, October 12, 2026 — national, space, AI, and the Space Coast (Port St. John &amp; Titusville)</div>
+        <button type="button" class="idle" data-idle></button>
+        <div class="player" data-player>
+          <div class="now" data-now></div>
+          <div class="sec clamp1" data-sec></div>
+          <div class="c1-prog"><div class="track"><i data-bar></i></div></div>
+          <div class="c1-times"><span class="time" data-el></span><span class="time">~6:00</span></div>
+          <div class="c1-mid"><button type="button" class="big" data-pp></button></div>
+          <div class="c1-skips">
+            <button type="button" class="c1-skip" data-prev><svg viewBox="0 0 24 24"><path class="ln" d="M19 5 9 12l10 7z"/><path class="ln" d="M5 5v14"/></svg><span class="grow"><div class="dir" data-prevdir>Previous</div><div class="ttl" data-prevname></div></span></button>
+            <button type="button" class="c1-skip next" data-next><svg viewBox="0 0 24 24"><path class="ln" d="m5 5 10 7-10 7z"/><path class="ln" d="M19 5v14"/></svg><span class="grow"><div class="dir">Next</div><div class="ttl" data-nextname></div></span></button>
+          </div>
+          <button type="button" class="stop" data-stop>Stop</button>
+        </div>
+        <div class="chips"><span class="chip">deep</span><span class="chip">19 sources</span><span class="chip">1 round</span></div>
+        <div class="toggleline">▸ Show report</div>
+        <div class="roster toggleline">▸ 19 sub-agents</div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="col" data-v="c2">
+    <div class="label"><span class="k">C2</span><span class="name">Chapter bar</span></div>
+    <div class="blurb">The progress bar is <b>split into one segment per story</b>, so every skip visibly jumps a whole block (you can also tap a segment). Skip buttons are <b>big blue squares</b> as tall as pause, marked <b>"Prev story"</b> and <b>"Next story"</b>. They're a different colour and shape from the amber pause.</div>
+    <div class="phone"><div class="pbar">News</div><div class="bubble">
+      <div class="lead">Morning, Jeff — your Monday brief is in: the Ukraine "energy ceasefire" claim, NASA's push for private ISS successors, and Microsoft's call for global AI rules…</div>
+      <div class="dr">
+        <div class="row"><span class="cap">deep research</span><span class="mini" data-mini></span></div>
+        <div class="q">Daily news briefing for Monday, October 12, 2026 — national, space, AI, and the Space Coast (Port St. John &amp; Titusville)</div>
+        <button type="button" class="idle" data-idle></button>
+        <div class="player" data-player>
+          <div class="now" data-now></div>
+          <div class="sec clamp1" data-sec></div>
+          <div class="c2-segs" data-segs></div>
+          <div class="c2-segmeta"><span class="time" data-el></span><span class="time">~6:00</span></div>
+          <div class="c2-ctrls">
+            <button type="button" class="c2-skip" data-prev><svg viewBox="0 0 24 24"><path class="pfill" d="M11 6 3 12l8 6zM21 6l-8 6 8 6z"/></svg><span>Prev story</span></button>
+            <button type="button" class="big" data-pp></button>
+            <button type="button" class="c2-skip" data-next><svg viewBox="0 0 24 24"><path class="pfill" d="m3 6 8 6-8 6zM13 6l8 6-8 6z"/></svg><span>Next story</span></button>
+          </div>
+          <button type="button" class="stop" data-stop>Stop</button>
+        </div>
+        <div class="chips"><span class="chip">deep</span><span class="chip">19 sources</span><span class="chip">1 round</span></div>
+        <div class="toggleline">▸ Show report</div>
+        <div class="roster toggleline">▸ 19 sub-agents</div>
+      </div>
+    </div></div>
+  </div>
+
+  <div class="col" data-v="c3">
+    <div class="label"><span class="k">C3</span><span class="name">Story list</span></div>
+    <div class="blurb">The player <b>is the list of stories</b>. The current story expands into an amber row with its own pause button. Finished stories turn grey with a ✓, and the ones coming up are rows you can tap to jump to. A single full-width <b>"Next story"</b> button sits at the bottom; there's no back button, but you can tap any earlier row.</div>
+    <div class="phone"><div class="pbar">News</div><div class="bubble">
+      <div class="lead">Morning, Jeff — your Monday brief is in: the Ukraine "energy ceasefire" claim, NASA's push for private ISS successors, and Microsoft's call for global AI rules…</div>
+      <div class="dr">
+        <div class="row"><span class="cap">deep research</span><span class="mini" data-mini></span></div>
+        <div class="q">Daily news briefing for Monday, October 12, 2026 — national, space, AI, and the Space Coast (Port St. John &amp; Titusville)</div>
+        <button type="button" class="idle" data-idle></button>
+        <div class="player" data-player style="padding:10px 10px 8px">
+          <div class="c3-list" data-list style="margin-top:0"></div>
+          <button type="button" class="c3-next" data-next><svg viewBox="0 0 24 24"><path class="pfill" d="m3 6 8 6-8 6zM13 6l8 6-8 6z"/></svg>Next story</button>
+          <button type="button" class="stop" data-stop>Stop</button>
+        </div>
+        <div class="chips"><span class="chip">deep</span><span class="chip">19 sources</span><span class="chip">1 round</span></div>
+        <div class="toggleline">▸ Show report</div>
+        <div class="roster toggleline">▸ 19 sub-agents</div>
+      </div>
+    </div></div>
+  </div>
+
+</div>
+
+<script>
+  const PLAY = '<svg viewBox="0 0 24 24"><path class="pfill" d="M8 5v14l11-7z"/></svg>';
+  const PAUSE = '<svg viewBox="0 0 24 24"><rect class="pfill" x="6" y="5" width="4" height="14" rx="1"/><rect class="pfill" x="14" y="5" width="4" height="14" rx="1"/></svg>';
+  const COPY = '<svg viewBox="0 0 24 24"><rect class="ln" x="9" y="9" width="11" height="11" rx="2"/><path class="ln" d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>';
+  const DL = '<svg viewBox="0 0 24 24"><path class="ln" d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>';
+  const S = [
+    { t: "Top national headlines", d: 70 },
+    { t: "Ukraine energy ceasefire", d: 85 },
+    { t: "Space: NASA & private ISS successors", d: 75 },
+    { t: "AI: Microsoft's call for global rules", d: 70 },
+    { t: "Space Coast: weather & launches", d: 60 },
+  ];
+  const START = []; S.reduce((a, s, i) => (START[i] = a, a + s.d), 0);
+  const TOTAL = S.reduce((a, s) => a + s.d, 0);
+  const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+  const secAt = t => { let i = 0; while (i < S.length-1 && t >= START[i+1]) i++; return i; };
+
+  document.querySelectorAll("[data-mini]").forEach(m => m.innerHTML = `<button aria-label="Copy">${COPY}</button><button aria-label="Download">${DL}</button>`);
+
+  document.querySelectorAll(".col").forEach(col => {
+    const v = col.dataset.v;
+    const q = s => col.querySelector(s);
+    const idle = q("[data-idle]"), player = q("[data-player]");
+    idle.innerHTML = `${PLAY}Play brief · ~6 min`;
+    let t = 0, on = false, timer = null, lastSec = -1;
+
+    function jump(i){ t = START[Math.max(0, Math.min(S.length-1, i))]; render(); }
+
+    function render(){
+      const i = secAt(t);
+      const pp = q("[data-pp]");
+      if (pp) { pp.innerHTML = on ? PAUSE : PLAY; pp.setAttribute("aria-label", on ? "Pause" : "Play"); }
+      if (q("[data-now]")) q("[data-now]").textContent = `Story ${i+1} of ${S.length}${on ? "" : " · paused"}`;
+      if (q("[data-sec]")) q("[data-sec]").textContent = S[i].t;
+      if (q("[data-el]")) q("[data-el]").textContent = fmt(t);
+      if (q("[data-bar]")) q("[data-bar]").style.width = `${t/TOTAL*100}%`;
+      const prev = q("[data-prev]"), next = q("[data-next]");
+      if (prev) prev.disabled = false;
+      if (next) next.disabled = i === S.length-1;
+      if (v === "c1") {
+        // "Previous" restarts the current story when you're past its first few seconds
+        const restart = t - START[i] > 4 || i === 0;
+        q("[data-prevdir]").textContent = restart ? "Restart" : "Previous";
+        q("[data-prevname]").textContent = restart ? S[i].t : S[i-1].t;
+        q("[data-nextname]").textContent = i < S.length-1 ? S[i+1].t : "End of brief";
+      }
+      if (v === "c2") {
+        const segs = q("[data-segs]");
+        if (!segs.children.length) S.forEach((s, k) => {
+          const b = document.createElement("button");
+          b.type = "button"; b.className = "c2-seg"; b.style.flex = s.d; b.setAttribute("aria-label", `Jump to ${s.t}`);
+          b.innerHTML = "<i></i>"; b.onclick = () => jump(k); segs.appendChild(b);
+        });
+        [...segs.children].forEach((b, k) => {
+          const f = Math.max(0, Math.min(1, (t - START[k]) / S[k].d));
+          b.firstChild.style.width = `${f*100}%`; b.classList.toggle("cur", k === i);
+        });
+      }
+      if (v === "c3") {
+        const list = q("[data-list]");
+        list.innerHTML = "";
+        S.forEach((s, k) => {
+          const el = document.createElement(k === i ? "div" : "button");
+          el.className = `c3-item${k < i ? " done" : ""}${k === i ? " cur" : ""}`;
+          if (k === i) {
+            const f = (t - START[k]) / s.d;
+            el.innerHTML = `<span class="n">${k+1}</span><span class="t grow">${s.t}</span>
+              <div class="c3-curbody"><button type="button" class="big" data-pp2 aria-label="${on ? "Pause" : "Play"}">${on ? PAUSE : PLAY}</button>
+              <div class="grow"><div class="track"><i style="width:${f*100}%"></i></div>
+              <div class="row" style="justify-content:space-between;margin-top:5px"><span class="time">${fmt(t-START[k])}</span><span class="time">${fmt(s.d)}</span></div></div></div>`;
+            el.querySelector("[data-pp2]").onclick = () => set(!on);
+          } else {
+            el.type = "button";
+            el.innerHTML = `<span class="n">${k < i ? "✓" : k+1}</span><span class="t grow clamp1">${s.t}</span><span class="time">${fmt(s.d)}</span>`;
+            el.onclick = () => jump(k);
+          }
+          list.appendChild(el);
+        });
+      }
+      if (i !== lastSec && lastSec !== -1) { const f = q("[data-sec]") || q(".c3-item.cur"); f && (f.classList.remove("flash"), void f.offsetWidth, f.classList.add("flash")); }
+      lastSec = i;
+    }
+    function set(x){
+      on = x; clearInterval(timer);
+      if (on) timer = setInterval(() => { t = Math.min(TOTAL, t + 1.5); if (t >= TOTAL) set(false); render(); }, 250);
+      render();
+    }
+    idle.onclick = () => { idle.style.display = "none"; player.classList.add("show"); set(true); };
+    q("[data-stop]").onclick = () => { set(false); t = 0; lastSec = -1; player.classList.remove("show"); idle.style.display = ""; };
+    const pp = q("[data-pp]"); if (pp) pp.onclick = () => set(!on);
+    q("[data-next]").onclick = () => jump(secAt(t) + 1);
+    const prev = q("[data-prev]");
+    if (prev) prev.onclick = () => { const i = secAt(t); jump(t - START[i] > 4 ? i : i - 1); };
+    render();
+  });
+
+  document.querySelectorAll(".toggle button").forEach(b => b.addEventListener("click", () => {
+    document.documentElement.dataset.theme = b.dataset.t;
+    document.querySelectorAll(".toggle button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  }));
+</script>
+</body>
+</html>

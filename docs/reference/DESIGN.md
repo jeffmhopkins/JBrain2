@@ -2769,6 +2769,23 @@ the live `.tool-view`. Like every view it is **data, not instruction** (I-1) and
 external resource (I-9). The non-happy states (coverage-limited / truncated / thin-sources)
 and a reference mock go through the mock gate before this is marked settled.
 
+**Drive-mode player** (GUI gate settled: **C2 — chapter bar**, owner 2026-10-12; reference mock
+`docs/mocks/research-drive-play/compare-c.html`). With read-aloud on, the report reads aloud
+from a player under its question, built to be played in the car rather than read
+(`ReportPlayer.tsx`, `.rp-*`; the Research Library's report screen shares it). Folded, it is a
+single full-width amber **Play brief · ~N min** button. Playing, it opens into: the story
+number and heading; a progress bar **split into one segment per story** (widths by estimated
+length, the current one ringed, each tappable to jump there); an **84px amber round
+play/pause**; and either side of it **steel square "Prev story" / "Next story" buttons as tall
+as it** — a different colour *and* shape from pause, so skip never reads as pause at a glance.
+Prev restarts the current story once it is a few seconds in, otherwise goes back one; Stop
+folds the player away. A **story** is a `#`/`##` section of the report (the daily_news
+briefing's beats), split by `reportSections.ts`; a heading-less report is one story. Playback
+is `useReadAloud.playSections` — the stories queue back-to-back from the chosen index, so a
+skip is just playing again from another one, and progress is measured by rendered clips.
+Button sizes are absolute (sized for a glance from the driver's seat); its text follows the
+Text size setting like the rest of the card.
+
 ### Deepest research — the in-flight surface (GUI gate settled: **A — backgrounded card**; reference mock `docs/mocks/deepest-research/compare.html`, build plan `docs/archive/DEEPEST_RESEARCH_TOOL_PLAN.md` R8)
 
 `deepest_research` is a no-holds **background** run (two agent tiers, minutes-to-hours), so
