@@ -12,15 +12,15 @@ someone's screen right now, so the rows are hashed in place and that QR still re
 `!~` guard makes the UPDATE safe to meet a row that is already a digest (a plaintext code is
 27 urlsafe chars, never 64 lowercase hex).
 
-Revision ID: 0239
-Revises: 0238
+Revision ID: 0240
+Revises: 0239
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0239"
-down_revision = "0238"
+revision = "0240"
+down_revision = "0239"
 branch_labels = None
 depends_on = None
 

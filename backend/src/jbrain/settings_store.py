@@ -259,7 +259,7 @@ MOLTBOOK_KILL_DEFAULT = False
 # The panel network remembered for a re-flash (api/endpoint.py): {"ssid", "password"}.
 ENDPOINT_WIFI_KEY = "endpoint_wifi"
 
-# Every row whose value is a credential. Migration 0240's restrictive policy hides these
+# Every row whose value is a credential. Migration 0241's restrictive policy hides these
 # rows from any READ-ONLY transaction — the debug SQL console's — and its integration test
 # walks this set, so a secret added here without the policy learning it fails CI. The Gmail
 # client id is left out: an OAuth client id is not a secret and the console is how it's
