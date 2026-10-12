@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Research card — drive play</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --violet:#A493C9;
+    --amber-tint:rgba(201,163,106,.13); --amber-tint-2:rgba(201,163,106,.22);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 12px 60px;min-height:100vh;}
+  svg{display:block;}
+  button{font:inherit;color:inherit;}
+
+  .head{max-width:1150px;width:100%;padding:0 6px;}
+  .head h1{font-size:19px;font-weight:600;margin-bottom:6px;color:#E6E7E9;}
+  .head p{color:#9A9DA3;font-size:13px;line-height:1.55;max-width:760px;}
+  .head p b{color:#E6E7E9;font-weight:500;}
+  .toggle{display:inline-flex;background:#17181B;border:1px solid #26282C;border-radius:999px;padding:3px;margin-top:10px;}
+  .toggle button{appearance:none;border:none;background:none;color:#9A9DA3;font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:rgba(201,163,106,.13);color:#C9A36A;font-weight:600;}
+
+  .grid{display:flex;flex-wrap:wrap;gap:22px;justify-content:center;align-items:flex-start;max-width:1500px;}
+  .col{width:372px;max-width:94vw;display:flex;flex-direction:column;gap:10px;}
+  .label{display:flex;align-items:baseline;gap:8px;padding:0 2px;}
+  .label .k{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#C9A36A;}
+  .label .name{font-size:14px;font-weight:600;color:#E6E7E9;}
+  .blurb{font-size:11.5px;color:#9A9DA3;line-height:1.5;padding:0 2px;min-height:64px;}
+  .blurb b{color:#E6E7E9;font-weight:500;}
+  .needs{font-size:10.5px;color:#5C5F66;padding:0 2px;}
+  .needs b{color:#8FBC9A;font-weight:600;} .needs i{color:#C9A36A;font-style:normal;font-weight:600;}
+
+  /* phone frame mirroring the screenshot: assistant bubble on the News chat */
+  .phone{width:100%;background:var(--bg);border:1px solid #2a2c30;border-radius:28px;overflow:hidden;padding:14px 12px 18px;}
+  .pbar{font-size:17px;font-weight:600;padding:2px 4px 12px;}
+  .bubble{border:1px solid var(--border);border-radius:18px;padding:12px;}
+  .lead{font-size:14px;line-height:1.45;margin-bottom:11px;}
+  .lead.short{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:var(--text-2);}
+  .turnfoot{display:flex;gap:14px;font-size:11.5px;color:var(--text-3);padding:9px 2px 0;margin-top:10px;border-top:1px solid var(--border);}
+
+  /* the deep_research_report tool-view (today's look) */
+  .dr{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:11px 12px;}
+  .cap{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);}
+  .q{font-size:13px;font-weight:500;line-height:1.4;margin-top:5px;}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0 9px;}
+  .chip{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--border);color:var(--text-2);}
+  .toggleline{font-size:11.5px;color:var(--text-3);padding:3px 0;}
+  .roster{border-top:1px solid var(--border);margin-top:8px;padding-top:7px;}
+  .mini{display:inline-flex;gap:2px;}
+  .mini button{width:30px;height:30px;border:0;background:none;color:var(--text-3);border-radius:7px;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .mini svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+  .row{display:flex;align-items:center;gap:8px;}
+  .grow{flex:1;min-width:0;}
+  .pfill{fill:currentColor;stroke:none;}
+
+  /* progress */
+  .track{height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .track > i{display:block;height:100%;width:0;background:var(--amber);border-radius:999px;transition:width .25s linear;}
+  .time{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+
+  /* ===== A — Play bar: full-width amber pill under the title ===== */
+  .a-play{margin-top:11px;width:100%;height:56px;border:1px solid color-mix(in srgb,var(--amber) 40%,transparent);background:var(--amber-tint);color:var(--amber);border-radius:14px;display:flex;align-items:center;gap:12px;padding:0 14px 0 8px;cursor:pointer;text-align:left;}
+  .a-play .disc{width:42px;height:42px;border-radius:999px;background:var(--amber);color:#17181B;display:flex;align-items:center;justify-content:center;flex:none;}
+  .a-play .disc svg{width:20px;height:20px;}
+  .a-play .lbl{font-size:15px;font-weight:600;}
+  .a-play .sub{font-size:11px;color:color-mix(in srgb,var(--amber) 70%,var(--text-3));margin-top:1px;font-variant-numeric:tabular-nums;}
+  .a-play .track{margin-top:6px;background:color-mix(in srgb,var(--amber) 18%,transparent);}
+  .a-play.on{background:var(--amber-tint-2);}
+
+  /* ===== B — Hero disc: 72px button leads the card ===== */
+  .b-top{display:flex;gap:13px;align-items:center;margin-top:8px;}
+  .b-disc{width:72px;height:72px;flex:none;border-radius:999px;border:0;background:var(--amber);color:#17181B;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 0 0 6px var(--amber-tint);}
+  .b-disc svg{width:30px;height:30px;}
+  .b-disc.on{box-shadow:0 0 0 6px var(--amber-tint-2),0 0 0 12px var(--amber-tint);}
+  .b-q{font-size:13.5px;font-weight:600;line-height:1.35;}
+  .b-meta{display:flex;align-items:center;gap:8px;margin-top:9px;}
+  .b-meta .track{flex:1;}
+
+  /* ===== C — Drive mode: the card becomes a player while speaking ===== */
+  .c-idle{margin-top:11px;width:100%;height:52px;border:0;border-radius:14px;background:var(--amber);color:#17181B;display:flex;align-items:center;justify-content:center;gap:9px;font-size:15px;font-weight:650;cursor:pointer;}
+  .c-idle svg{width:20px;height:20px;}
+  .c-player{margin-top:11px;border-radius:16px;background:var(--surface-2);padding:14px 12px 12px;display:none;}
+  .c-player.show{display:block;}
+  .c-now{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--amber);}
+  .c-sec{font-size:15px;font-weight:600;margin-top:3px;min-height:20px;}
+  .c-sec-n{font-size:11px;color:var(--text-3);margin-top:1px;}
+  .c-prog{margin:12px 0 4px;}
+  .c-times{display:flex;justify-content:space-between;}
+  .c-ctrls{display:flex;align-items:center;justify-content:space-between;margin-top:10px;padding:0 4px;}
+  .c-side{width:60px;height:60px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text-2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex-direction:column;gap:1px;font-size:9.5px;}
+  .c-side svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+  .c-big{width:88px;height:88px;border-radius:999px;border:0;background:var(--amber);color:#17181B;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .c-big svg{width:36px;height:36px;}
+  .c-stop{display:block;margin:10px auto 0;border:0;background:none;color:var(--text-3);font-size:12px;cursor:pointer;padding:6px 10px;}
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>Research card — drive-friendly play button</h1>
+  <p>Today's read-aloud control is the <b>26px icon</b> beside copy/download (see your screenshot). Each variant below keeps the same card — question, chips, Show report, sub-agent roster — and only changes how <b>play</b> is presented. <b>Tap the play controls</b>: they simulate speaking with a fake progress clock. Copy and download stay small; they don't matter in a car.</p>
+  <div class="toggle" role="group" aria-label="Theme">
+    <button type="button" data-t="dark" aria-pressed="true">Dark</button>
+    <button type="button" data-t="light" aria-pressed="false">Light</button>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- ================= A ================= -->
+  <div class="col">
+    <div class="label"><span class="k">A</span><span class="name">Play bar</span></div>
+    <div class="blurb">A <b>full-width 56px amber bar</b> under the question: big disc + "Play brief" + estimated length. While speaking it becomes the progress bar. The whole bar is the tap target. Least change to the card.</div>
+    <div class="needs"><b>No new plumbing</b> · play/pause + estimated-time from word count</div>
+    <div class="phone"><div class="pbar">News</div>
+      <div class="bubble">
+        <div class="lead short">Morning, Jeff — your Monday brief is in: the Ukraine "energy ceasefire" claim, NASA's push for private ISS successors, and Microsoft's call for global AI rules…</div>
+        <div class="dr">
+          <div class="row"><span class="cap grow">deep research</span><span class="mini" data-mini></span></div>
+          <div class="q">Daily news briefing for Monday, October 12, 2026 — national, space, AI, and the Space Coast (Port St. John &amp; Titusville)</div>
+          <button type="button" class="a-play" data-player="a" aria-label="Play brief">
+            <span class="disc" data-glyph></span>
+            <span class="grow">
+              <div class="lbl" data-label>Play brief</div>
+              <div class="sub"><span data-elapsed>~6 min</span></div>
+              <div class="track"><i data-bar></i></div>
+            </span>
+          </button>
+          <div class="chips"><span class="chip">deep</span><span class="chip">19 sources</span><span class="chip">1 round</span></div>
+          <div class="toggleline">▸ Show report</div>
+          <div class="roster toggleline">▸ 19 sub-agents</div>
+        </div>
+        <div class="turnfoot"><span>Thought for 27m 18s</span><span>Worked · 1 step</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= B ================= -->
+  <div class="col">
+    <div class="label"><span class="k">B</span><span class="name">Hero disc</span></div>
+    <div class="blurb">A <b>72px amber disc</b> leads the card, title beside it, thin progress + time underneath. Reads as "this card is audio" at a glance; the disc sits where a thumb lands on a dash-mounted phone.</div>
+    <div class="needs"><b>No new plumbing</b> · same play/pause hook, bigger target</div>
+    <div class="phone"><div class="pbar">News</div>
+      <div class="bubble">
+        <div class="lead short">Morning, Jeff — your Monday brief is in: the Ukraine "energy ceasefire" claim, NASA's push for private ISS successors, and Microsoft's call for global AI rules…</div>
+        <div class="dr">
+          <div class="row"><span class="cap grow">deep research</span><span class="mini" data-mini></span></div>
+          <div class="b-top">
+            <button type="button" class="b-disc" data-player="b" aria-label="Play brief"><span data-glyph></span></button>
+            <div class="grow"><div class="b-q">Daily news briefing for Monday, October 12, 2026 — national, space, AI, and the Space Coast</div></div>
+          </div>
+          <div class="b-meta" data-for="b"><span class="time" data-elapsed>0:00</span><span class="track"><i data-bar></i></span><span class="time">~6:00</span></div>
+          <div class="chips"><span class="chip">deep</span><span class="chip">19 sources</span><span class="chip">1 round</span></div>
+          <div class="toggleline">▸ Show report</div>
+          <div class="roster toggleline">▸ 19 sub-agents</div>
+        </div>
+        <div class="turnfoot"><span>Thought for 27m 18s</span><span>Worked · 1 step</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= C ================= -->
+  <div class="col">
+    <div class="label"><span class="k">C</span><span class="name">Drive mode player</span></div>
+    <div class="blurb">Idle: one <b>52px "Play brief"</b> button. Once tapped, the card opens a <b>car-stereo player</b>: an 88px pause, 60px <b>previous / next section</b> buttons ("skip this story"), the current section's heading, and progress. Most useful on the road; the biggest build.</div>
+    <div class="needs"><i>New plumbing</i> · TTS split per report section so skip/back can jump stories</div>
+    <div class="phone"><div class="pbar">News</div>
+      <div class="bubble">
+        <div class="lead short">Morning, Jeff — your Monday brief is in: the Ukraine "energy ceasefire" claim, NASA's push for private ISS successors, and Microsoft's call for global AI rules…</div>
+        <div class="dr">
+          <div class="row"><span class="cap grow">deep research</span><span class="mini" data-mini></span></div>
+          <div class="q">Daily news briefing for Monday, October 12, 2026 — national, space, AI, and the Space Coast (Port St. John &amp; Titusville)</div>
+          <button type="button" class="c-idle" data-c-idle><svg viewBox="0 0 24 24"><path class="pfill" d="M8 5v14l11-7z"/></svg>Play brief · ~6 min</button>
+          <div class="c-player" data-c-player>
+            <div class="c-now">Now reading</div>
+            <div class="c-sec" data-sec></div>
+            <div class="c-sec-n" data-secn></div>
+            <div class="c-prog"><div class="track"><i data-bar></i></div></div>
+            <div class="c-times"><span class="time" data-elapsed>0:00</span><span class="time">~6:00</span></div>
+            <div class="c-ctrls">
+              <button type="button" class="c-side" data-prev aria-label="Previous section"><svg viewBox="0 0 24 24"><path d="M19 5 9 12l10 7z"/><path d="M5 5v14"/></svg>back</button>
+              <button type="button" class="c-big" data-player="c" aria-label="Pause"><span data-glyph></span></button>
+              <button type="button" class="c-side" data-next aria-label="Next section"><svg viewBox="0 0 24 24"><path d="m5 5 10 7-10 7z"/><path d="M19 5v14"/></svg>skip</button>
+            </div>
+            <button type="button" class="c-stop" data-stop>Stop</button>
+          </div>
+          <div class="chips"><span class="chip">deep</span><span class="chip">19 sources</span><span class="chip">1 round</span></div>
+          <div class="toggleline">▸ Show report</div>
+          <div class="roster toggleline">▸ 19 sub-agents</div>
+        </div>
+        <div class="turnfoot"><span>Thought for 27m 18s</span><span>Worked · 1 step</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const PLAY = '<svg viewBox="0 0 24 24"><path class="pfill" d="M8 5v14l11-7z"/></svg>';
+  const PAUSE = '<svg viewBox="0 0 24 24"><rect class="pfill" x="6" y="5" width="4" height="14" rx="1"/><rect class="pfill" x="14" y="5" width="4" height="14" rx="1"/></svg>';
+  const COPY = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>';
+  const DL = '<svg viewBox="0 0 24 24"><path d="M12 4v11m-5-5 5 5 5-5M5 20h14"/></svg>';
+  const TOTAL = 360;
+  const SECTIONS = ["Top national headlines","Ukraine energy ceasefire","Space: NASA & private ISS successors","AI: Microsoft's call for global rules","Space Coast: weather & launches"];
+  const fmt = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+
+  document.querySelectorAll("[data-mini]").forEach(m => m.innerHTML = `<button aria-label="Copy">${COPY}</button><button aria-label="Download">${DL}</button>`);
+
+  document.querySelectorAll(".col").forEach(col => {
+    const btn = col.querySelector("[data-player]");
+    const kind = btn.dataset.player;
+    const glyph = btn.querySelector("[data-glyph]");
+    const bar = col.querySelector("[data-bar]");
+    const el = col.querySelector("[data-elapsed]");
+    const lbl = col.querySelector("[data-label]");
+    let t = 0, on = false, timer = null;
+
+    function render(){
+      glyph.innerHTML = on ? PAUSE : PLAY;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-label", on ? "Pause" : "Play brief");
+      bar.style.width = `${(t/TOTAL)*100}%`;
+      if (kind === "a") {
+        lbl.textContent = on ? "Pause" : (t > 0 ? "Resume brief" : "Play brief");
+        el.textContent = t > 0 ? `${fmt(t)} / ~6:00` : "~6 min";
+      } else el.textContent = fmt(t);
+      if (kind === "c") {
+        const i = Math.min(SECTIONS.length-1, Math.floor(t/(TOTAL/SECTIONS.length)));
+        col.querySelector("[data-sec]").textContent = SECTIONS[i];
+        col.querySelector("[data-secn]").textContent = `Section ${i+1} of ${SECTIONS.length}`;
+      }
+    }
+    function set(v){
+      on = v; clearInterval(timer);
+      // fast-forward clock (×6) so the progress visibly moves in the mock
+      if (on) timer = setInterval(() => { t = Math.min(TOTAL, t+1.5); if (t >= TOTAL) set(false); render(); }, 250);
+      render();
+    }
+    btn.addEventListener("click", () => set(!on));
+
+    if (kind === "c") {
+      const idle = col.querySelector("[data-c-idle]"), player = col.querySelector("[data-c-player]");
+      const seg = TOTAL/SECTIONS.length;
+      idle.addEventListener("click", () => { idle.style.display = "none"; player.classList.add("show"); set(true); });
+      col.querySelector("[data-stop]").addEventListener("click", () => { set(false); t = 0; render(); player.classList.remove("show"); idle.style.display = ""; });
+      col.querySelector("[data-next]").addEventListener("click", () => { t = Math.min(TOTAL-1, (Math.floor(t/seg)+1)*seg); render(); });
+      col.querySelector("[data-prev]").addEventListener("click", () => { const cur = Math.floor(t/seg)*seg; t = (t-cur < 4 && cur > 0) ? cur-seg : cur; render(); });
+    }
+    render();
+  });
+
+  document.querySelectorAll(".toggle button").forEach(b => b.addEventListener("click", () => {
+    document.documentElement.dataset.theme = b.dataset.t;
+    document.querySelectorAll(".toggle button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+  }));
+</script>
+</body>
+</html>
