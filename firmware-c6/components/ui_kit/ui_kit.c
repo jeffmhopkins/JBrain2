@@ -5,6 +5,8 @@
 
 #define C(hex) lv_color_hex(hex)
 
+#include "ui_jerv_mark.h"
+
 uint32_t ui_accent_color(ui_accent_t a)
 {
     switch (a) {
@@ -135,8 +137,6 @@ typedef struct {
     int16_t p[10][2];
 } path_t;
 
-static const path_t STAR[] = {{9, {{24, 5}, {28, 19}, {43, 24}, {28, 29}, {24, 43}, {19, 29},
-                                   {5, 24}, {19, 19}, {24, 5}}}};
 static const path_t CUBE[] = {{7, {{24, 5}, {41, 14}, {41, 33}, {24, 43}, {7, 33}, {7, 14}, {24, 5}}},
                               {3, {{7, 14}, {24, 24}, {41, 14}}},
                               {2, {{24, 24}, {24, 43}}}};
@@ -202,7 +202,16 @@ lv_obj_t *ui_icon(lv_obj_t *parent, const ui_icon_t *icon, ui_accent_t accent, i
     lv_obj_set_size(box, g, g);
     lv_obj_center(box);
     switch (icon->glyph) {
-    case UI_GLYPH_STAR: draw_path(box, STAR, g, color, stroke); break;
+    case UI_GLYPH_JERV: {
+        /* The PWA's mark, rasterised from its SVG for each size the panel draws (an alpha mask,
+           recoloured here): the tile's, or the header's for anything smaller. */
+        lv_obj_t *img = lv_image_create(box);
+        lv_image_set_src(img, g >= 40 ? &ui_jerv_mark_52 : &ui_jerv_mark_23);
+        lv_obj_set_style_image_recolor(img, C(color), 0);
+        lv_obj_set_style_image_recolor_opa(img, LV_OPA_COVER, 0);
+        lv_obj_center(img);
+        break;
+    }
     case UI_GLYPH_CUBE:
         for (size_t i = 0; i < sizeof CUBE / sizeof *CUBE; i++) draw_path(box, &CUBE[i], g, color, stroke);
         break;
@@ -615,6 +624,63 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
     }
     if (b->speaking) ui_label(wrap, LV_SYMBOL_VOLUME_MAX " Speaking…", 16, UI_C_JERV);
     if (b->status && b->status[0]) ui_label(wrap, b->status, 16, UI_C_MUTED);
+    return line;
+}
+
+lv_obj_t *ui_hold_ring(lv_obj_t *parent, int x, int y, uint32_t color)
+{
+    enum { D = 92, W = 3 };
+    lv_obj_t *a = lv_arc_create(parent);
+    lv_obj_remove_style_all(a);
+    lv_obj_remove_flag(a, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(a, D, D);
+    int cx = x - D / 2, cy = y - D / 2;
+    cx = cx < 0 ? 0 : cx > UI_W - D ? UI_W - D : cx;
+    cy = cy < 0 ? 0 : cy > UI_H - D ? UI_H - D : cy;
+    lv_obj_set_pos(a, cx, cy);
+    lv_arc_set_rotation(a, 270);
+    lv_arc_set_bg_angles(a, 0, 360);
+    lv_arc_set_range(a, 0, 1000);
+    lv_arc_set_value(a, 0);
+    /* A faint track and a thin stroke: feedback, not a control. */
+    lv_obj_set_style_arc_width(a, W, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(a, C(color), LV_PART_MAIN);
+    lv_obj_set_style_arc_opa(a, LV_OPA_20, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(a, W, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(a, C(color), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(a, true, LV_PART_INDICATOR);
+    return a;
+}
+
+void ui_hold_ring_set(lv_obj_t *ring, uint16_t permille)
+{
+    lv_arc_set_value(ring, permille > 1000 ? 1000 : permille);
+}
+
+lv_obj_t *ui_status_row(lv_obj_t *parent, const char *text, ui_accent_t accent)
+{
+    /* On its own line under the waiting question, where the answer will land. */
+    lv_obj_t *line = bare(parent);
+    lv_obj_set_size(line, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(line, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(line, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(line, 10, 0);
+    lv_obj_set_style_pad_left(line, 6, 0);
+    lv_obj_t *spin = lv_spinner_create(line);
+    lv_obj_remove_style_all(spin);
+    lv_obj_remove_flag(spin, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(spin, 18, 18);
+    lv_spinner_set_anim_params(spin, 1000, 90);
+    lv_obj_set_style_arc_width(spin, 2, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(spin, C(UI_C_LINE_STRONG), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(spin, 2, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(spin, C(ui_accent_color(accent)), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(spin, true, LV_PART_INDICATOR);
+    /* The mock's italic status row: the image carries no italic face, so it is the dim colour and
+       a smaller size that set it apart from a message. */
+    lv_obj_t *l = ui_label(line, text, 18, UI_C_MUTED);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(l, 360);
     return line;
 }
 

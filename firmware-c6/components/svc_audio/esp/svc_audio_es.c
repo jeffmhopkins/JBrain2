@@ -28,6 +28,7 @@
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "svc_audio_drv.h"
@@ -51,9 +52,6 @@ static const char *TAG = "audio";
  * microphones (4 B a frame), TX one channel (2 B). */
 #define DMA_DESC 4
 #define DMA_FRAMES TALK_CHUNK_FRAMES
-/* The reply starts once this much is queued, so a radio that hiccups in the first 100 ms is not
- * a gap in the first word. */
-#define PREROLL_BYTES 4096
 /* 4.25 KB. 0.0.10's 3.5 KB measured `stack_free` 1,524 B after the first two talks on the glass
  * (2,060 B used: esp_codec_dev_open through the I2S reconfig and its log lines), under the 2 KB
  * of headroom a task that logs from a driver call wants. +768 B of internal RAM buys ~2.3 KB
@@ -74,6 +72,9 @@ static uint32_t s_tones;
 static int s_vol_set = -1;
 static float s_gain_set = -1;
 static bool s_amp;
+/* The last reply's start, for the snapshot: how long the amp had been on when the first speech
+ * sample was written (want ≥ TK_SPK_SETTLE_MS), and how much was queued then. */
+static uint32_t s_settle_ms, s_start_fill;
 
 /* Both chunks static: a DMA destination and its mono copy, never on a task's stack. */
 static int16_t s_lr[TALK_CHUNK_FRAMES * 2];
@@ -135,6 +136,8 @@ void talk_port_describe(dbg_json_t *w)
     dbg_json_int(w, "i2c_errors", s_i2c_err);
     dbg_json_int(w, "codec_errors", s_codec_err);
     dbg_json_int(w, "tones", s_tones);
+    dbg_json_int(w, "spk_settle_ms", s_settle_ms);
+    dbg_json_int(w, "spk_start_fill", s_start_fill);
     dbg_json_int(w, "stack_free", s_task ? uxTaskGetStackHighWaterMark(s_task) : 0);
 }
 
@@ -322,6 +325,29 @@ static void close_spk(void)
     esp_codec_dev_close(s_spk);
 }
 
+static uint32_t ms_now(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+/* 20 ms of zeros: the pre-roll while the amp settles, a pause while a reply's next sentence is
+   still on its way, and the tail that lets the DMA's last real buffers out before the amp goes
+   off. Each write blocks on the DMA, so a loop of these is paced, never busy. */
+static void silence(int chunks)
+{
+    memset(s_mono, 0, TALK_CHUNK_BYTES);
+    for (int i = 0; i < chunks; i++) esp_codec_dev_write(s_spk, s_mono, TALK_CHUNK_BYTES);
+}
+
+/* After open_spk: zeros until the amp has had TK_SPK_SETTLE_MS, whatever came before — the same
+   start every time, so the first word is never the amp's start-up. Returns when the amp came on. */
+static uint32_t settle(void)
+{
+    const uint32_t amp_at = ms_now();
+    while (ms_now() - amp_at < TK_SPK_SETTLE_MS) silence(1);
+    return amp_at;
+}
+
 /* 32 steps of a sine, Q15: a test tone needs no libm on a core with no FPU. */
 static const int16_t SINE[32] = {0,      6393,   12540,  18205,  23170,  27246,  30274,  32138,
                                  32767,  32138,  30274,  27246,  23170,  18205,  12540,  6393,
@@ -336,6 +362,7 @@ static void play_tone(void)
         return;
     }
     talk_audio_on(false, true);
+    settle();
     uint32_t phase = 0;
     const uint32_t step = (uint32_t)(((uint64_t)hz << 21) / TALK_RATE); /* 32 steps << 16 */
     for (uint32_t c = 0; c < chunks && talk_audio_want() == TK_AUDIO_OFF; c++) {
@@ -343,6 +370,7 @@ static void play_tone(void)
             s_mono[i] = (int16_t)(SINE[(phase >> 16) & 31] / 4); /* -12 dBFS */
         esp_codec_dev_write(s_spk, s_mono, TALK_CHUNK_BYTES);
     }
+    silence(TK_SPK_TAIL_MS / 20);
     close_spk();
     talk_audio_on(false, false);
     s_tones++;
@@ -355,24 +383,43 @@ static void speak(void)
         talk_audio_drop();
         return;
     }
+    const uint32_t amp_at = ms_now();
     talk_audio_on(false, true);
-    bool primed = false, more = true;
+    /* Gated (tk_spk_may_start): silence until the amp has settled AND the ring holds 150 ms or the
+       box says no more is coming; again after an underrun, so a sentence still being synthesised
+       on the box is a pause, not a stutter. */
+    bool started = false, waiting = true;
     while (talk_audio_want() == TK_AUDIO_SPK) {
-        /* Preroll, bounded by the network: a reply whose speech never arrives ends when the
-           network says so, not here. */
-        if (!primed && (more = talk_audio_more()) && talk_audio_queued() < PREROLL_BYTES) {
-            vTaskDelay(pdMS_TO_TICKS(10) + 1);
-            continue;
+        const bool more = talk_audio_more();
+        if (waiting) {
+            const uint32_t since = started ? TK_SPK_SETTLE_MS : ms_now() - amp_at;
+            const uint32_t queued = talk_audio_queued();
+            if (!tk_spk_may_start(since, queued, more)) {
+                silence(1);
+                continue;
+            }
+            if (!started) {
+                started = true;
+                s_settle_ms = ms_now() - amp_at;
+                s_start_fill = queued;
+                ESP_LOGI(TAG, "reply: amp on %lu ms before the first sample, %lu B queued",
+                         (unsigned long)s_settle_ms, (unsigned long)s_start_fill);
+            }
+            waiting = false;
         }
-        primed = true;
-        const uint32_t got = talk_audio_get(s_mono, TALK_CHUNK_BYTES, &more);
-        if (!got && !more) {
+        bool more_after;
+        const uint32_t got = talk_audio_get(s_mono, TALK_CHUNK_BYTES, &more_after);
+        if (!got && !more_after) {
+            silence(TK_SPK_TAIL_MS / 20);
             talk_audio_drained();
             break;
         }
         if (got < TALK_CHUNK_BYTES) {
             memset((uint8_t *)s_mono + got, 0, TALK_CHUNK_BYTES - got);
-            if (more) talk_audio_underrun();
+            if (more_after) {
+                talk_audio_underrun();
+                waiting = true;
+            }
         }
         esp_codec_dev_write(s_spk, s_mono, TALK_CHUNK_BYTES);
     }

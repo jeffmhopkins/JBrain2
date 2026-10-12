@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #define TALK_MIN_MS 600u
@@ -31,6 +32,15 @@ uint8_t svc_audio_level(void); /* 0-100, the ring's pulse */
 
 /* Jerv is thinking about, or speaking, a reply. */
 bool svc_audio_replying(void);
+/* ... and speaking it: KEY or BOOT now stops the voice. While only thinking, KEY says the agent is
+ * still working and BOOT leaves the thread — the turn goes on and its answer lands when it comes
+ * (owner, 2026-10-12). */
+bool svc_audio_speaking(void);
+/* What KEY says then: no new talk starts (owner, 2026-10-12). */
+#define TALK_STILL_WORKING "Still working on the last one"
+/* The live status line under `thread`'s waiting question ("Searching the web…"): true, with the
+ * words, while that thread's agent is working on an answer the box has started streaming. */
+bool svc_audio_status(const char *thread, char *out, size_t cap);
 /* Drops that reply (BOOT or KEY over it). False when there was none. */
 bool svc_audio_stop_reply(void);
 

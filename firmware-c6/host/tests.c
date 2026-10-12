@@ -38,6 +38,7 @@
 #include "thread_model.h"
 #include "time_logic.h"
 #include "tp_logic.h"
+#include "ui_hold.h"
 #include "ui_pin.h"
 #include "ui_theme.h"
 
@@ -1546,60 +1547,190 @@ static void test_text_only_never_opens_the_speaker(void)
     CHECK(t.phase == TK_IDLE && t.res == TK_RES_NOTHING, "silence is its own answer, not a failure");
 }
 
-static void frame_bytes(uint8_t *b, size_t *n, uint8_t flags, const char *heard, const char *reply,
-                        const char *pcm)
+/* A JT2 record as the box writes it (backend `panel_stream.record`). */
+static size_t rec(uint8_t *b, uint8_t type, const void *payload, size_t n)
 {
-    size_t k = 0;
-    memcpy(b, "JT1", 3);
-    k = 3;
-    b[k++] = flags;
-    const size_t hl = strlen(heard), rl = strlen(reply);
-    b[k++] = (uint8_t)hl;
-    b[k++] = (uint8_t)(hl >> 8);
-    memcpy(b + k, heard, hl);
-    k += hl;
-    b[k++] = (uint8_t)rl;
-    b[k++] = (uint8_t)(rl >> 8);
-    memcpy(b + k, reply, rl);
-    k += rl;
-    memcpy(b + k, pcm, strlen(pcm));
-    *n = k + strlen(pcm);
+    b[0] = type;
+    b[1] = (uint8_t)n;
+    b[2] = (uint8_t)(n >> 8);
+    memcpy(b + 3, payload, n);
+    return 3 + n;
 }
 
-static void test_the_reply_frame_reads_in_any_split(void)
+/* A turn's whole stream: transcript, two statuses, a keep-alive, an unknown record, the answer
+ * with its speech in two records, END. Returns its length; `pcm` gets the speech. */
+static size_t jt2_turn(uint8_t *b, uint8_t *pcm, size_t *pcm_n)
 {
-    uint8_t b[1200];
-    size_t n;
-    frame_bytes(b, &n, TF_FLAG_AUDIO, "what time is sunset", "About seven tonight.", "PCMPCM");
-    tk_frame_t f;
-    tk_frame_init(&f);
-    const size_t used = tk_frame_feed(&f, b, n);
-    CHECK(tk_frame_done(&f) && used == n - 6 && !strcmp(f.heard, "what time is sunset") &&
-              !strcmp(f.reply, "About seven tonight.") && (f.flags & TF_FLAG_AUDIO),
-          "whole, the words come out and the speech is what is left");
-    tk_frame_init(&f);
-    size_t head = 0;
-    for (size_t i = 0; i < n && !tk_frame_done(&f); i++) head += tk_frame_feed(&f, b + i, 1);
-    CHECK(tk_frame_done(&f) && head == n - 6 && !strcmp(f.reply, "About seven tonight."),
-          "a byte at a time, the same");
-    frame_bytes(b, &n, 0, "hi", "", "");
-    tk_frame_init(&f);
-    CHECK(tk_frame_feed(&f, b, n) == n && tk_frame_done(&f) && f.reply[0] == '\0' && !(f.flags & TF_FLAG_AUDIO),
-          "an empty reply and no speech is still a whole frame");
-    tk_frame_init(&f);
-    CHECK(tk_frame_feed(&f, (const uint8_t *)"<html>", 6) <= 6 && tk_frame_bad(&f),
-          "anything else — an error page — is refused at the first byte");
-    /* 300 two-byte letters: more than a bubble holds. */
-    char longr[601];
-    for (int i = 0; i < 300; i++) memcpy(longr + 2 * i, "\xC3\xA9", 2);
-    longr[600] = '\0';
-    frame_bytes(b, &n, 0, "x", longr, "");
-    tk_frame_init(&f);
-    tk_frame_feed(&f, b, n);
-    const size_t len = strlen(f.reply);
-    CHECK(tk_frame_done(&f) && len < sizeof f.reply && !strcmp(f.reply + len - 3, "…") &&
+    size_t k = 0;
+    memcpy(b, "JT2", 3);
+    k = 3;
+    k += rec(b + k, TS_HEARD, "high tide at Port St John", 25);
+    k += rec(b + k, TS_STATUS, "Thinking\xE2\x80\xA6", 11);
+    k += rec(b + k, TS_ALIVE, "", 0);
+    k += rec(b + k, 0x7F, "a record from a newer box", 25);
+    k += rec(b + k, TS_STATUS, "Searching the web: tides\xE2\x80\xA6", 27);
+    uint8_t answer[64] = {TS_ANSWER_SPEECH};
+    memcpy(answer + 1, "High tide is at 4:12 pm.", 24);
+    k += rec(b + k, TS_ANSWER, answer, 25);
+    for (size_t i = 0; i < 1000; i++) pcm[i] = (uint8_t)(i * 7);
+    k += rec(b + k, TS_PCM, pcm, 600);
+    k += rec(b + k, TS_PCM, pcm + 600, 400);
+    *pcm_n = 1000;
+    const uint8_t end[] = {TS_END_OK};
+    k += rec(b + k, TS_END, end, 1);
+    return k;
+}
+
+typedef struct {
+    int heard, status, alive, answer, end, bad;
+    uint8_t flags, code;
+    char last_status[64], answer_text[64];
+    uint8_t pcm[1200];
+    size_t pcm_n;
+} jt2_seen_t;
+
+/* Feeds `b` in slices of `step` bytes, as reads off the radio would land, and tallies. */
+static void jt2_read(const uint8_t *b, size_t n, size_t step, jt2_seen_t *out)
+{
+    tk_stream_t *s = malloc(sizeof *s);
+    tk_stream_init(s);
+    memset(out, 0, sizeof *out);
+    for (size_t at = 0; at < n && !tk_stream_bad(s);) {
+        const size_t len = n - at < step ? n - at : step;
+        size_t off = 0;
+        while (off < len) {
+            tk_stream_ev_t ev;
+            const uint8_t *pcm;
+            size_t pn;
+            const size_t used = tk_stream_feed(s, b + at + off, len - off, &ev, &pcm, &pn);
+            off += used;
+            switch (ev) {
+            case TS_EV_HEARD: out->heard++; break;
+            case TS_EV_STATUS:
+                out->status++;
+                tk_fit(out->last_status, sizeof out->last_status, s->text);
+                break;
+            case TS_EV_ALIVE: out->alive++; break;
+            case TS_EV_ANSWER:
+                out->answer++;
+                out->flags = s->flags;
+                tk_fit(out->answer_text, sizeof out->answer_text, s->text);
+                break;
+            case TS_EV_PCM:
+                memcpy(out->pcm + out->pcm_n, pcm, pn);
+                out->pcm_n += pn;
+                break;
+            case TS_EV_END:
+                out->end++;
+                out->code = s->flags;
+                break;
+            case TS_EV_BAD: out->bad++; break;
+            default: break;
+            }
+            if (!used || ev == TS_EV_BAD) break;
+        }
+        at += len;
+    }
+    free(s);
+}
+
+static void test_the_reply_stream_reads_in_any_split(void)
+{
+    uint8_t b[1400], pcm[1000];
+    size_t pcm_n;
+    const size_t n = jt2_turn(b, pcm, &pcm_n);
+    static const size_t STEPS[] = {4096, 1, 2, 3, 7, 250, 1024};
+    for (size_t i = 0; i < sizeof STEPS / sizeof *STEPS; i++) {
+        jt2_seen_t got;
+        jt2_read(b, n, STEPS[i], &got);
+        CHECK(got.heard == 1 && got.status == 2 && got.alive == 1 && got.answer == 1 && got.end == 1 &&
+                  !got.bad,
+              "every record lands once, however the reads split it");
+        CHECK(!strcmp(got.last_status, "Searching the web: tides\xE2\x80\xA6") &&
+                  !strcmp(got.answer_text, "High tide is at 4:12 pm.") &&
+                  (got.flags & TS_ANSWER_SPEECH) && got.code == TS_END_OK,
+              "the words, the flags and the end code come out whole");
+        CHECK(got.pcm_n == pcm_n && !memcmp(got.pcm, pcm, pcm_n),
+              "the speech comes out byte for byte, in the slices it arrived in");
+    }
+    tk_stream_t *s = malloc(sizeof *s);
+    tk_stream_init(s);
+    tk_stream_ev_t ev;
+    const uint8_t *p;
+    size_t pn;
+    size_t off = 0, events = 0;
+    while (off < n) {
+        off += tk_stream_feed(s, b + off, n - off, &ev, &p, &pn);
+        events += ev != TS_EV_NONE;
+    }
+    CHECK(s->skipped == 1 && s->records == 9 && events == 8,
+          "a record type this panel does not know is skipped by its length");
+    CHECK(tk_stream_done(s) && tk_stream_feed(s, (const uint8_t *)"JUNK", 4, &ev, &p, &pn) == 4 &&
+              ev == TS_EV_NONE,
+          "after END the rest of the body is consumed and ignored");
+    free(s);
+}
+
+static void test_a_stream_that_is_not_jt2_or_too_big_is_refused_cleanly(void)
+{
+    jt2_seen_t got;
+    jt2_read((const uint8_t *)"<html>", 6, 64, &got);
+    CHECK(got.bad == 1 && !got.heard, "an error page is refused at its first byte");
+    jt2_read((const uint8_t *)"JT1\x01\x02\x00hi", 8, 64, &got);
+    CHECK(got.bad == 1, "a JT1 frame is not read as JT2");
+    uint8_t big[16] = {'J', 'T', '2', TS_PCM, (TS_MAX_RECORD + 1) & 0xFF, (TS_MAX_RECORD + 1) >> 8};
+    jt2_read(big, 6, 64, &got);
+    CHECK(got.bad == 1 && !got.pcm_n, "a record longer than any the box sends is refused, not buffered");
+    tk_stream_t *s = malloc(sizeof *s);
+    tk_stream_init(s);
+    tk_stream_ev_t ev;
+    const uint8_t *p;
+    size_t pn;
+    tk_stream_feed(s, big, 6, &ev, &p, &pn);
+    CHECK(tk_stream_bad(s) && tk_stream_feed(s, big, 6, &ev, &p, &pn) == 0,
+          "and nothing more is read once it is");
+    free(s);
+}
+
+static void test_an_answer_longer_than_the_panel_keeps_is_cut_on_a_character(void)
+{
+    /* 700 two-byte letters: 1,400 bytes, more than the 1 KB the panel keeps. */
+    static uint8_t b[1600];
+    uint8_t answer[1401] = {0};
+    for (int i = 0; i < 700; i++) memcpy(answer + 1 + 2 * i, "\xC3\xA9", 2);
+    memcpy(b, "JT2", 3);
+    const size_t n = 3 + rec(b + 3, TS_ANSWER, answer, sizeof answer);
+    tk_stream_t *s = malloc(sizeof *s);
+    tk_stream_init(s);
+    tk_stream_ev_t ev = TS_EV_NONE;
+    const uint8_t *p;
+    size_t pn, off = 0;
+    while (off < n && ev != TS_EV_ANSWER) off += tk_stream_feed(s, b + off, n - off, &ev, &p, &pn);
+    const size_t len = strlen(s->text);
+    CHECK(ev == TS_EV_ANSWER && len < TS_TEXT_CAP && !strcmp(s->text + len - 3, "\xE2\x80\xA6") &&
               (len - 3) % 2 == 0,
-          "a reply too long for a bubble is cut on a character, with an ellipsis");
+          "an answer longer than the panel keeps is cut on a character, with an ellipsis");
+    free(s);
+    char fit[8];
+    tk_fit(fit, sizeof fit, "\xC3\xA9\xC3\xA9\xC3\xA9\xC3\xA9");
+    CHECK(!strcmp(fit, "\xC3\xA9\xC3\xA9\xE2\x80\xA6"), "a bubble's copy is cut the same way");
+    tk_fit(fit, sizeof fit, "short");
+    CHECK(!strcmp(fit, "short"), "and what fits is copied whole");
+}
+
+static void test_the_voice_starts_only_once_the_amp_has_settled_and_the_ring_has_filled(void)
+{
+    CHECK(!tk_spk_may_start(0, 16384, true) && !tk_spk_may_start(TK_SPK_SETTLE_MS - 1, 16384, false),
+          "never before the amp has had its settle time, however full the ring");
+    CHECK(!tk_spk_may_start(TK_SPK_SETTLE_MS, TK_SPK_START_BYTES - 1, true),
+          "nor while less than 150 ms is queued and more is coming");
+    CHECK(tk_spk_may_start(TK_SPK_SETTLE_MS, TK_SPK_START_BYTES, true),
+          "settled and filled: the first word plays whole");
+    CHECK(tk_spk_may_start(TK_SPK_SETTLE_MS + 500, 640, false),
+          "a short reply whose stream has ended plays what it has");
+    CHECK(TK_SPK_START_BYTES == 150 * TALK_RATE * 2 / 1000 && TK_SPK_SETTLE_MS >= 100 &&
+              TK_SPK_SETTLE_MS <= 250 && TK_SPK_TAIL_MS >= 80,
+          "150 ms queued, a settle of 100-250 ms, a tail past the DMA's 80 ms");
 }
 
 static void test_two_microphones_average_and_each_peak_is_kept(void)
@@ -1645,6 +1776,22 @@ static void test_a_talk_on_the_glass_end_to_end(void)
     CHECK(m.mine && m.voice && m.pending && m.dur_s == 3 && !strcmp(m.text, TALK_HEARING),
           "the bubble says it is being heard, never a made-up transcript");
     CHECK(svc_audio_replying(), "and Jerv is thinking");
+    char status[64];
+    CHECK(!svc_audio_status("jerv", status, sizeof status),
+          "no status line until the box has heard the question");
+    svc_audio_fake_progress("what time is sunset", NULL);
+    svc_audio_service();
+    m = last_jerv();
+    CHECK(!m.pending && !strcmp(m.text, "what time is sunset") && svc_messages_count("jerv") == 1,
+          "the transcript replaces \"Transcribing…\" the moment the box has it");
+    CHECK(svc_audio_status("jerv", status, sizeof status) && !strcmp(status, "Thinking…"),
+          "and the status line says Jerv is thinking");
+    svc_audio_fake_progress(NULL, "Searching the web: sunset…");
+    svc_audio_service();
+    CHECK(svc_audio_status("jerv", status, sizeof status) &&
+              !strcmp(status, "Searching the web: sunset…") && !svc_audio_status("dave", status, sizeof status),
+          "each step the agent takes replaces the line, in its own thread only");
+    CHECK(svc_audio_replying() && !svc_audio_speaking(), "thinking, not speaking");
     svc_audio_fake_reply("what time is sunset", "About seven tonight.", true);
     svc_audio_service();
     CHECK(svc_messages_count("jerv") == 2, "the reply arrives as a second bubble");
@@ -1655,6 +1802,8 @@ static void test_a_talk_on_the_glass_end_to_end(void)
           "the voice bubble now holds what the box heard");
     CHECK(!m.mine && !strcmp(m.text, "About seven tonight.") && svc_audio_playing() == m.id,
           "Jerv's words are shown while its voice plays");
+    CHECK(!svc_audio_status("jerv", status, sizeof status) && svc_audio_speaking(),
+          "the answer replaces the status line");
     CHECK(svc_audio_stop_reply() && svc_audio_playing() == 0 && !svc_audio_replying(),
           "BOOT stops the voice; the words stay");
     svc_audio_service();
@@ -1685,14 +1834,23 @@ static void test_key_or_boot_over_a_reply_is_the_shells_stop(void)
 {
     sh_state_t st = {0};
     sh_facts_t f = in_app();
-    f.replying = true;
+    f.replying = f.speaking = true;
     sh_route_t r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
     CHECK(r.first == SH_ACT_STOP_REPLY && st.key_owner == SH_KEY_FREE,
-          "KEY over a reply stops it, in any app, and takes no hold");
+          "KEY while Jerv speaks stops the voice, in any app, and takes no hold");
     r = sh_route_button(&st, &f, SH_BTN_KEY_UP);
     CHECK(r.first == SH_ACT_NONE, "so its release sends nothing");
     r = sh_route_button(&st, &f, SH_BTN_BOOT);
-    CHECK(r.first == SH_ACT_STOP_REPLY, "BOOT over a reply stops it rather than going back");
+    CHECK(r.first == SH_ACT_STOP_REPLY, "BOOT while Jerv speaks stops it rather than going back");
+    f.speaking = false;
+    r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_STILL_WORKING && st.key_owner == SH_KEY_FREE,
+          "KEY while he is still working says so and starts no new talk");
+    r = sh_route_button(&st, &f, SH_BTN_KEY_UP);
+    CHECK(r.first == SH_ACT_NONE, "and its release sends nothing");
+    r = sh_route_button(&st, &f, SH_BTN_BOOT);
+    CHECK(r.first == SH_ACT_TO_APP && r.fallback == SH_ACT_GO_HOME,
+          "BOOT while he works is ordinary BOOT: it leaves the thread, the turn goes on");
     f = home();
     f.replying = true;
     f.alarm_ringing = true;
@@ -1746,6 +1904,65 @@ static void test_a_still_finger_is_a_long_press_once_and_a_scroll_never(void)
     sh_long_press(&lp, false, 0, 0, 9000);
     CHECK(!sh_long_press(&lp, true, 300, 300, 10000) && !sh_long_press(&lp, false, 0, 0, 10300),
           "a tap is never one");
+}
+
+static void test_the_clock_face_opens_its_alarms_only_on_a_two_second_hold(void)
+{
+    ui_hold_t h = {0};
+    CHECK(ui_hold_feed(&h, true, 240, 240, 0, CLOCK_HOLD_MS) == UI_HOLD_GROWING &&
+              ui_hold_feed(&h, false, 240, 240, 120, CLOCK_HOLD_MS) == UI_HOLD_IDLE,
+          "a tap opens nothing");
+    ui_hold_feed(&h, true, 240, 240, 1000, CLOCK_HOLD_MS);
+    CHECK(ui_hold_feed(&h, true, 244, 238, 1000 + 1900, CLOCK_HOLD_MS) == UI_HOLD_GROWING &&
+              ui_hold_feed(&h, false, 0, 0, 1000 + 1950, CLOCK_HOLD_MS) == UI_HOLD_IDLE,
+          "1.9 s held and let go opens nothing");
+    ui_hold_feed(&h, true, 240, 240, 5000, CLOCK_HOLD_MS);
+    CHECK(ui_hold_feed(&h, true, 240, 240, 5000 + CLOCK_HOLD_MS, CLOCK_HOLD_MS) == UI_HOLD_FIRE,
+          "2 s held still opens the alarms list");
+    CHECK(ui_hold_feed(&h, true, 240, 240, 5000 + 3 * CLOCK_HOLD_MS, CLOCK_HOLD_MS) == UI_HOLD_IDLE,
+          "once: holding on does not open it again");
+    ui_hold_feed(&h, false, 0, 0, 12000, CLOCK_HOLD_MS);
+    ui_hold_feed(&h, true, 240, 240, 13000, CLOCK_HOLD_MS);
+    CHECK(ui_hold_feed(&h, true, 240 + UI_HOLD_SLOP, 240, 13500, CLOCK_HOLD_MS) == UI_HOLD_IDLE &&
+              ui_hold_feed(&h, true, 240, 240, 13000 + 2 * CLOCK_HOLD_MS, CLOCK_HOLD_MS) == UI_HOLD_IDLE,
+          "a drag cancels it, even if the finger comes back and waits");
+    ui_hold_feed(&h, false, 0, 0, 20000, CLOCK_HOLD_MS);
+    ui_hold_feed(&h, true, 240, 240, 30000, CLOCK_HOLD_MS);
+    CHECK(ui_hold_permille(&h, 30000 + UI_HOLD_SHOW_MS, CLOCK_HOLD_MS) == 0,
+          "no ring for the first 0.3 s: a tap shows nothing");
+    CHECK(ui_hold_permille(&h, 30000 + UI_HOLD_SHOW_MS + (CLOCK_HOLD_MS - UI_HOLD_SHOW_MS) / 2,
+                           CLOCK_HOLD_MS) == 500 &&
+              ui_hold_permille(&h, 30000 + 5 * CLOCK_HOLD_MS, CLOCK_HOLD_MS) == 1000,
+          "then the ring fills over the rest of the two seconds");
+    ui_hold_feed(&h, false, 0, 0, 40000, CLOCK_HOLD_MS);
+    CHECK(ui_hold_permille(&h, 40100, CLOCK_HOLD_MS) == 0, "and lifting the finger empties it");
+    CHECK(CLOCK_HOLD_MS >= 2000 && SH_LONG_PRESS_MS < CLOCK_HOLD_MS,
+          "the face's hold is the owner's two seconds; a conversation's menu keeps its 600 ms");
+}
+
+static void test_an_agent_answer_is_kept_whole_on_the_glass(void)
+{
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_settings_set(SET_TTS, 0);
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "a hold to Jerv");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    char answer[1001];
+    for (int i = 0; i < 100; i++) memcpy(answer + 10 * i, "Tide data ", 10);
+    answer[1000] = '\0';
+    svc_audio_fake_reply("high tide at Port St John", answer, false);
+    svc_audio_service();
+    msg_t m = last_jerv();
+    const char *shown = svc_messages_text("jerv", &m);
+    CHECK(strlen(m.text) < sizeof m.text && strlen(shown) == 1000 && !strncmp(shown, answer, 1000),
+          "the answer is shown whole (1,000 bytes), past the 255 a bubble keeps");
+    msg_t heard;
+    svc_messages_get("jerv", 0, &heard);
+    CHECK(svc_messages_text("jerv", &heard) == heard.text, "the question is its bubble's own text");
+    svc_messages_clear("jerv");
+    CHECK(svc_messages_text("jerv", &m) == m.text, "Clear chat lets the whole answer go too");
+    svc_settings_set(SET_TTS, 1);
 }
 
 static void test_the_menu_opens_only_over_a_clear_conversation(void)
@@ -1827,9 +2044,10 @@ static void test_jerv_and_dave_are_two_threads_and_two_conversations(void)
 {
     char path[96];
     tk_converse_path(TK_AGENT_JERV, true, false, path, sizeof path);
-    CHECK(!strcmp(path, "/endpoint/converse?persona=jerv&voice=true"), "Jerv's talk, as 0.0.10 sent it");
+    CHECK(!strcmp(path, "/endpoint/converse?persona=jerv&voice=true&jt=2"),
+          "Jerv's talk, asking for the JT2 stream");
     tk_converse_path(TK_AGENT_DAVE, false, true, path, sizeof path);
-    CHECK(!strcmp(path, "/endpoint/converse?persona=dave&voice=false&new_thread=true"),
+    CHECK(!strcmp(path, "/endpoint/converse?persona=dave&voice=false&jt=2&new_thread=true"),
           "Dave's, text only, after Clear chat");
     tk_agent_t a = TK_AGENT_JERV;
     CHECK(tk_agent_from("dave", &a) && a == TK_AGENT_DAVE && !tk_agent_from("thread1", &a),
@@ -2097,7 +2315,10 @@ int main(void)
     test_key_or_boot_over_a_reply_stops_it();
     test_a_box_that_drops_mid_hold_is_told_at_the_release();
     test_text_only_never_opens_the_speaker();
-    test_the_reply_frame_reads_in_any_split();
+    test_the_reply_stream_reads_in_any_split();
+    test_a_stream_that_is_not_jt2_or_too_big_is_refused_cleanly();
+    test_an_answer_longer_than_the_panel_keeps_is_cut_on_a_character();
+    test_the_voice_starts_only_once_the_amp_has_settled_and_the_ring_has_filled();
     test_two_microphones_average_and_each_peak_is_kept();
     test_the_audio_token();
     test_a_talk_on_the_glass_end_to_end();
@@ -2106,6 +2327,8 @@ int main(void)
     test_the_speaker_settings();
     test_play_tone_is_whitelisted_and_harmless();
     test_a_still_finger_is_a_long_press_once_and_a_scroll_never();
+    test_the_clock_face_opens_its_alarms_only_on_a_two_second_hold();
+    test_an_agent_answer_is_kept_whole_on_the_glass();
     test_the_menu_opens_only_over_a_clear_conversation();
     test_clear_chat_takes_two_taps_within_three_seconds();
     test_buttons_over_the_menu_only_close_it();

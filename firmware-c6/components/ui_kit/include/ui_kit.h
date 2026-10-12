@@ -116,6 +116,16 @@ void ui_talk_close(ui_talk_t *t);
 bool ui_talk_up(const ui_talk_t *t);
 void ui_talk_refresh(ui_talk_t *t);
 
+/* A long press's feedback (ui_hold): a thin ring centred where the finger is, filling clockwise
+ * from the top, in `color`. ui_hold_ring_set takes ui_hold_permille's 0-1000. Not clickable: the
+ * finger's stroke stays with the widget it started on. */
+lv_obj_t *ui_hold_ring(lv_obj_t *parent, int x, int y, uint32_t color);
+void ui_hold_ring_set(lv_obj_t *ring, uint16_t permille);
+
+/* The live status line under a conversation's waiting question ("Searching the web…"): a small
+ * spinner and dim words, so it reads as the box working, not as a message. */
+lv_obj_t *ui_status_row(lv_obj_t *parent, const char *text, ui_accent_t accent);
+
 /* One toast at a time, on the top layer, above every overlay. */
 void ui_toast(const char *text, uint32_t ms);
 void ui_toast_clear(void);

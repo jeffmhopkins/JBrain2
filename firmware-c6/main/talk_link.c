@@ -1,6 +1,7 @@
 #include "talk_link.h"
 
 #include <stdio.h>
+#include <string.h>
 
 #include "box_http.h"
 #include "esp_log.h"
@@ -20,19 +21,23 @@ static const char *TAG = "talk";
 /* The recording's own cap is the ring's 1:00 (TALK_MAX_MS); this backstops a release that never
    came. */
 #define HOLD_LIMIT_MS (TALK_MAX_MS + 5000)
-/* Whisper, the agent and the speech. Since 0.0.11 the box runs the owner's real Jerv or Dave,
-   whose tool-using turns are far longer than 0.0.10's spoken persona: the box gives the agent
-   100 s, then answers "still working" and lets the turn finish into the thread, so 130 s here
-   covers that, transcription and the speech. */
-#define ANSWER_LIMIT_MS 130000
+/* The box answers with its headers the moment the upload ends and streams the turn after them
+   (JT2, backend `panel_stream`), so this wait is for a reply to begin, not for the answer. */
+#define HEADERS_LIMIT_MS 30000
+/* JT2's idle limit: the box sends a record at least every 8 s (ALIVE while the agent or the
+   speech synthesis is quiet), so this long with no byte at all is a box that has gone. There is
+   no cap on the whole turn while records flow — the box caps the agent at 5 minutes and the
+   speech at 5 more; TURN_LIMIT_MS only backstops a box that streams forever. */
+#define IDLE_MS 45000
+#define TURN_LIMIT_MS (12u * 60u * 1000u)
 /* Slices, so a hold dropped on the glass is let go within one. */
 #define WAIT_SLICE_MS 500
 #define READ_SLICE_MS 250
-/* A reply whose bytes stop arriving for this long is over. */
-#define STALL_MS 10000
 
 static uint8_t s_buf[SLICE];
-static tk_frame_t s_frame;
+/* The stream reader keeps one text record at a time (≤ 1 KB, the answer) and hands speech on
+   in the slices it arrived in: nothing holds the whole response. */
+static tk_stream_t s_stream;
 
 static uint32_t now_ms(void)
 {
@@ -66,8 +71,9 @@ static const char *upload(uint32_t *up)
     }
 }
 
-/* The speech after the frame's words, into the ring at the speaker's pace. False when it is no
-   longer wanted (stopped on the glass, or text only). */
+/* Speech into the ring at the speaker's pace: this read blocks while the ring is full, which is
+   what paces the box (TCP backpressure). False when it is no longer wanted — stopped on the
+   glass — and the connection is let go, which tells the box to stop synthesising. */
 static bool give(const uint8_t *b, uint32_t n)
 {
     while (n) {
@@ -80,43 +86,107 @@ static bool give(const uint8_t *b, uint32_t n)
     return true;
 }
 
-/* The reply: the words as soon as they are in, then the speech. */
+typedef struct {
+    bool answered; /* the ANSWER record is in */
+    bool speech;   /* ... and said speech follows */
+    bool ended;    /* END */
+    uint32_t *down, *reply_ms, statuses;
+} reading_t;
+
+/* One finished record or speech slice. NULL to carry on; otherwise why the reading stops. */
+static const char *take(reading_t *r, tk_stream_ev_t ev, const uint8_t *pcm, size_t pcm_n,
+                        uint32_t sent_at)
+{
+    switch (ev) {
+    case TS_EV_HEARD: talk_net_heard(s_stream.text); break;
+    case TS_EV_STATUS:
+        r->statuses++;
+        talk_net_status(s_stream.text);
+        break;
+    case TS_EV_ANSWER:
+        if (r->answered) break;
+        r->answered = true;
+        r->speech = (s_stream.flags & TS_ANSWER_SPEECH) != 0;
+        *r->reply_ms = now_ms() - sent_at;
+        talk_net_reply(s_stream.text, r->speech);
+        break;
+    case TS_EV_PCM:
+        if (!r->answered || !r->speech) break;
+        if (!give(pcm, (uint32_t)pcm_n)) return "stopped";
+        break;
+    case TS_EV_END:
+        r->ended = true;
+        if (s_stream.flags == TS_END_NOTHING) {
+            talk_net_nothing();
+        } else if (!r->answered) {
+            static char why[48];
+            tk_fit(why, sizeof why, s_stream.text[0] ? s_stream.text : "the box failed");
+            return why;
+        }
+        break;
+    case TS_EV_BAD: return "a reply this panel could not read";
+    default: break;
+    }
+    return NULL;
+}
+
+/* The JT2 stream, record by record as it arrives. */
 static const char *read_reply(uint32_t sent_at, uint32_t *down, uint32_t *reply_ms, bool *whole)
 {
-    tk_frame_init(&s_frame);
-    bool words = false;
+    tk_stream_init(&s_stream);
+    reading_t r = {.down = down, .reply_ms = reply_ms};
     uint32_t heard_at = now_ms();
-    for (;;) {
+    const char *why = NULL;
+    while (!why && !r.ended) {
+        /* Before the answer, a hold dropped on the glass (Clear chat) lets the box go; after it, a
+           stopped voice is noticed in give(). A text-only answer reads on to END. */
+        if (!r.answered && dropped()) {
+            why = "stopped";
+            break;
+        }
+        if (now_ms() - sent_at > TURN_LIMIT_MS) {
+            why = "the answer ran too long";
+            break;
+        }
         const int n = box_http_reply_read(s_buf, sizeof s_buf, READ_SLICE_MS);
         if (n == BOX_HTTP_AGAIN) {
-            if ((!words && dropped()) || now_ms() - heard_at > STALL_MS) break;
+            if (now_ms() - heard_at > IDLE_MS) why = "the box went quiet";
             continue;
         }
-        if (n < 0) break;
-        if (n == 0) {
-            *whole = true;
+        if (n <= 0) {
+            *whole = n == 0;
             break;
         }
         heard_at = now_ms();
         *down += (uint32_t)n;
-        size_t used = 0;
-        if (!words) {
-            used = tk_frame_feed(&s_frame, s_buf, (size_t)n);
-            if (tk_frame_bad(&s_frame)) return "a reply this panel could not read";
-            if (!tk_frame_done(&s_frame)) continue;
-            words = true;
-            *reply_ms = now_ms() - sent_at;
-            talk_net_reply(s_frame.heard, s_frame.reply, (s_frame.flags & TF_FLAG_AUDIO) != 0);
+        size_t off = 0;
+        while (off < (size_t)n && !why && !r.ended) {
+            tk_stream_ev_t ev;
+            const uint8_t *pcm;
+            size_t pcm_n;
+            off += tk_stream_feed(&s_stream, s_buf + off, (size_t)n - off, &ev, &pcm, &pcm_n);
+            why = take(&r, ev, pcm, pcm_n, sent_at);
+            if (tk_stream_bad(&s_stream)) break;
         }
-        if (used < (size_t)n && !give(s_buf + used, (uint32_t)((size_t)n - used))) break;
     }
-    return words ? NULL : "the reply was cut off";
+    if (r.ended) {
+        /* The chunked body's terminator follows END: read it so the session is kept. */
+        while (box_http_reply_read(s_buf, sizeof s_buf, READ_SLICE_MS) > 0) {
+        }
+        *whole = true;
+    }
+    ESP_LOGI(TAG, "stream: %lu records (%lu status, %lu skipped)%s",
+             (unsigned long)s_stream.records, (unsigned long)r.statuses,
+             (unsigned long)s_stream.skipped, r.ended ? "" : ", no END");
+    if (why && r.answered && !strcmp(why, "stopped")) return NULL; /* a voice stopped on the glass */
+    if (why) return why;
+    return r.answered || r.ended ? NULL : "the reply was cut off";
 }
 
 static const char *exchange(tk_agent_t agent, bool voice, bool fresh, uint32_t *up,
                             uint32_t *down, uint32_t *reply_ms)
 {
-    char path[96];
+    char path[112];
     tk_converse_path(agent, voice, fresh, path, sizeof path);
     if (!box_http_stream_open(path, "application/octet-stream", SEND_TIMEOUT_MS, true))
         return "the box did not answer";
@@ -128,14 +198,14 @@ static const char *exchange(tk_agent_t agent, bool voice, bool fresh, uint32_t *
     }
     if (!box_http_stream_end()) return "the upload failed";
     const uint32_t sent_at = now_ms();
-    /* A slice that ends with no headers yet is the box thinking, not a fault: keep the client's
-       "timed out" warning out of the log ring for the length of the wait. */
+    /* A slice that ends with no headers yet is the box transcribing, not a fault: keep the
+       client's "timed out" warning out of the log ring for the length of the wait. */
     const esp_log_level_t was = esp_log_level_get("HTTP_CLIENT");
     esp_log_level_set("HTTP_CLIENT", ESP_LOG_ERROR);
     int status = 0;
     while (!(status = box_http_reply_wait(WAIT_SLICE_MS))) {
         if (dropped()) break;
-        if (now_ms() - sent_at > ANSWER_LIMIT_MS) {
+        if (now_ms() - sent_at > HEADERS_LIMIT_MS) {
             status = -2;
             break;
         }
@@ -177,11 +247,11 @@ bool talk_link_run(void)
     uint32_t up = 0, down = 0, reply_ms = 0;
     const char *why = exchange(agent, voice, fresh, &up, &down, &reply_ms);
     if (had) esp_wifi_set_ps(ps);
-    if (why) {
+    if (why && strcmp(why, "stopped")) {
         ESP_LOGW(TAG, "not answered: %s", why);
         talk_net_fail(why);
     }
-    ESP_LOGI(TAG, "%s%s: up %lu B, down %lu B, reply in %lu ms, %lu ms in all",
+    ESP_LOGI(TAG, "%s%s: up %lu B, down %lu B, answer in %lu ms, %lu ms in all",
              tk_agent_id(agent), fresh ? " (new chat)" : "", (unsigned long)up,
              (unsigned long)down, (unsigned long)reply_ms, (unsigned long)(now_ms() - t0));
     talk_net_end(up, down, reply_ms);

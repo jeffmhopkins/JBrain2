@@ -67,9 +67,16 @@ void talk_port_describe(dbg_json_t *w)
     dbg_json_str(w, "codecs", "none (host)");
 }
 
+void svc_audio_fake_progress(const char *heard, const char *status)
+{
+    if (heard) talk_net_heard(heard);
+    if (status) talk_net_status(status);
+}
+
 void svc_audio_fake_reply(const char *heard, const char *reply, bool speaking)
 {
-    talk_net_reply(heard, reply, speaking);
+    talk_net_heard(heard);
+    talk_net_reply(reply, speaking);
     s_net = false;
     talk_net_end(32000, speaking ? 64000 : 0, 2400);
 }

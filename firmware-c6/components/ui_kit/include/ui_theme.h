@@ -23,8 +23,9 @@
 #define UI_C_FAINT 0x5C5F66
 #define UI_C_MINE 0x1D2733     /* my bubble */
 
-/* DESIGN.md accents. */
-#define UI_C_JERV 0xA493C9
+/* DESIGN.md accents. Jerv is the PWA's own blue (owner, 2026-10-12: "the PWA's actual icon in
+ * the PWA's blue"): the favicon's #7FA7C9, the same value as steel. */
+#define UI_C_JERV 0x7FA7C9
 /* The people's threads: four colours, one per sibling panel, chosen from its name (svc_siblings). */
 #define UI_C_PERSON_A 0xC9A36A
 #define UI_C_PERSON_B 0x6FB6B1
@@ -77,7 +78,7 @@ typedef enum {
 } ui_accent_t;
 
 typedef enum {
-    UI_GLYPH_STAR,
+    UI_GLYPH_JERV, /* the PWA's mark (ui_jerv_mark.c, from frontend/public/favicon.svg) */
     UI_GLYPH_CUBE,
     UI_GLYPH_INITIAL,
     UI_GLYPH_CLOCK,

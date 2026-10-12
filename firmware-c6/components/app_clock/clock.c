@@ -8,6 +8,7 @@
 #include "svc_notice.h"
 #include "svc_rtc.h"
 #include "svc_settings.h"
+#include "ui_hold.h"
 #include "ui_kit.h"
 
 typedef enum { VIEW_FACE, VIEW_ALARMS, VIEW_RINGING } view_t;
@@ -28,6 +29,11 @@ typedef struct {
     lv_timer_t *tick;
     face_sig_t sig;
     uint32_t released_id; /* the notice whose badge was tapped open */
+    /* The face's hold (CLOCK_HOLD_MS) and its ring, a child of the face: gone with it. */
+    ui_hold_t hold;
+    lv_obj_t *ring;
+    uint32_t ring_color;
+    uint32_t holds; /* holds that opened the alarms list, for the snapshot */
 } clock_t_;
 
 static clock_t_ s_clock;
@@ -55,9 +61,40 @@ static void later(app_t *self, view_t v)
     lv_async_call(rebuild, self);
 }
 
-static void face_tapped(lv_event_t *e)
+/* A plain tap on the face does nothing: only a finger held still for CLOCK_HOLD_MS opens the alarms
+ * list (owner, 2026-10-12 — the night clock is touched in the dark, and a brush opened it). The
+ * rule is ui_hold's, the conversation menu's own. A tap on a dark screen still wakes it: that is
+ * the shell's pointer gate, which no stroke on a dark screen gets past to here. */
+static void ring_drop(clock_t_ *c)
 {
-    later(lv_event_get_user_data(e), VIEW_ALARMS);
+    if (c->ring) lv_obj_delete(c->ring);
+    c->ring = NULL;
+}
+
+static void face_pressed(lv_event_t *e)
+{
+    app_t *self = lv_event_get_user_data(e);
+    clock_t_ *c = self->state;
+    const lv_event_code_t code = lv_event_get_code(e);
+    const bool down = code == LV_EVENT_PRESSED || code == LV_EVENT_PRESSING;
+    lv_point_t p = {0};
+    lv_indev_t *in = lv_indev_active();
+    if (in) lv_indev_get_point(in, &p);
+    const uint32_t now = svc_rtc_uptime_ms();
+    const ui_hold_state_t st = ui_hold_feed(&c->hold, down, p.x, p.y, now, CLOCK_HOLD_MS);
+    const uint16_t fill = ui_hold_permille(&c->hold, now, CLOCK_HOLD_MS);
+    if (st == UI_HOLD_FIRE) {
+        ring_drop(c);
+        c->holds++;
+        later(self, VIEW_ALARMS);
+        return;
+    }
+    if (!fill) {
+        ring_drop(c); /* released early, or moved: cancelled quietly */
+        return;
+    }
+    if (!c->ring) c->ring = ui_hold_ring(c->view, p.x, p.y, c->ring_color);
+    ui_hold_ring_set(c->ring, fill);
 }
 
 static void back(lv_event_t *e)
@@ -111,8 +148,16 @@ static void build_face(app_t *self, lv_obj_t *v)
     svc_rtc_now(&t);
     clock_face_t f = face_now(&t);
     c->sig = face_sig();
+    c->ring = NULL;
+    c->hold = (ui_hold_t){0};
+    /* The ring in the night colour when the night face is on — never a bright stroke in the dark —
+       and steel by day. */
+    c->ring_color = f.night ? f.color : UI_C_STEEL;
     lv_obj_add_flag(v, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(v, face_tapped, LV_EVENT_CLICKED, self);
+    lv_obj_add_event_cb(v, face_pressed, LV_EVENT_PRESSED, self);
+    lv_obj_add_event_cb(v, face_pressed, LV_EVENT_PRESSING, self);
+    lv_obj_add_event_cb(v, face_pressed, LV_EVENT_RELEASED, self);
+    lv_obj_add_event_cb(v, face_pressed, LV_EVENT_PRESS_LOST, self);
     char hm[6];
     clock_fmt_face(&t, hm);
     lv_obj_t *l = ui_label_big(v, hm, 124, f.color);
@@ -306,6 +351,7 @@ static void show(app_t *self, view_t v)
 {
     clock_t_ *c = self->state;
     if (c->view) lv_obj_delete(c->view);
+    c->ring = NULL;
     c->view = lv_obj_create(c->root);
     lv_obj_remove_style_all(c->view);
     lv_obj_set_size(c->view, UI_W, UI_H);
@@ -394,6 +440,8 @@ static void describe(app_t *self, dbg_json_t *w)
     clock_t_ *c = self->state;
     dbg_json_str(w, "view", V[c->shown]);
     dbg_json_int(w, "badge", c->sig.badge);
+    dbg_json_int(w, "holds", c->holds);
+    dbg_json_int(w, "hold_fill", c->ring ? ui_hold_permille(&c->hold, svc_rtc_uptime_ms(), CLOCK_HOLD_MS) : 0);
     dbg_json_bool(w, "holds_notices", holds_notices(self));
 }
 

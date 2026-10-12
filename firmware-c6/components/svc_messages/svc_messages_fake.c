@@ -14,19 +14,28 @@
 #define AGENT_KEEP 8
 #define PERSON_KEEP 4
 
+/* An agent's newest answer, whole (MSG_LONG_TEXT): one per agent thread, 2 KB in all, rather
+ * than every bubble at 1 KB (24 KB). Older answers show their bubble's 255 bytes. */
+typedef struct {
+    uint32_t id;
+    char text[MSG_LONG_TEXT];
+} long_t;
+
 typedef struct {
     const char *principal;
     uint16_t n, cap;
     msg_t *m;
+    long_t *keep; /* NULL for a person's thread */
 } thread_t;
 
 static msg_t s_jerv[AGENT_KEEP], s_dave[AGENT_KEEP], s_one[PERSON_KEEP], s_two[PERSON_KEEP];
+static long_t s_jerv_long, s_dave_long;
 
 static thread_t s_t[] = {
-    {"jerv", 0, AGENT_KEEP, s_jerv},
-    {"dave", 0, AGENT_KEEP, s_dave},
-    {SVC_MESSAGES_THREAD_1, 0, PERSON_KEEP, s_one},
-    {SVC_MESSAGES_THREAD_2, 0, PERSON_KEEP, s_two},
+    {"jerv", 0, AGENT_KEEP, s_jerv, &s_jerv_long},
+    {"dave", 0, AGENT_KEEP, s_dave, &s_dave_long},
+    {SVC_MESSAGES_THREAD_1, 0, PERSON_KEEP, s_one, NULL},
+    {SVC_MESSAGES_THREAD_2, 0, PERSON_KEEP, s_two, NULL},
 };
 #define THREADS (sizeof s_t / sizeof *s_t)
 
@@ -57,6 +66,24 @@ bool svc_messages_find(const char *principal, uint32_t id, msg_t *out)
             return true;
         }
     return false;
+}
+
+bool svc_messages_fake_long(const char *principal, uint32_t id, const char *text)
+{
+    thread_t *t = find(principal);
+    if (!t || !t->keep) return false;
+    t->keep->id = id;
+    const size_t n = strnlen(text, sizeof t->keep->text - 1);
+    memcpy(t->keep->text, text, n);
+    t->keep->text[n] = 0;
+    return true;
+}
+
+const char *svc_messages_text(const char *principal, const msg_t *m)
+{
+    thread_t *t = find(principal);
+    if (t && t->keep && t->keep->id && t->keep->id == m->id && !m->mine) return t->keep->text;
+    return m->text;
 }
 
 bool svc_messages_get(const char *principal, uint16_t idx, msg_t *out)
@@ -113,13 +140,17 @@ bool svc_messages_clear(const char *principal)
     thread_t *t = find(principal);
     if (!t) return false;
     t->n = 0;
+    if (t->keep) t->keep->id = 0;
     announce(principal);
     return true;
 }
 
 void svc_messages_fake_clear(void)
 {
-    for (unsigned i = 0; i < THREADS; i++) s_t[i].n = 0;
+    for (unsigned i = 0; i < THREADS; i++) {
+        s_t[i].n = 0;
+        if (s_t[i].keep) s_t[i].keep->id = 0;
+    }
 }
 
 static msg_t *slot_for(thread_t *t, uint32_t id)
@@ -151,6 +182,10 @@ static void describe(void *ctx, dbg_json_t *w)
         dbg_json_int(w, "keeps", s_t[i].cap);
         dbg_json_int(w, "unplayed", svc_messages_unplayed(s_t[i].principal));
         dbg_json_int(w, "last_id", s_t[i].n ? s_t[i].m[s_t[i].n - 1].id : 0);
+        if (s_t[i].keep) {
+            dbg_json_int(w, "long_id", s_t[i].keep->id);
+            dbg_json_int(w, "long_bytes", s_t[i].keep->id ? (int32_t)strlen(s_t[i].keep->text) : 0);
+        }
         dbg_json_obj_end(w);
     }
 }

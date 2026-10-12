@@ -77,12 +77,19 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
     case SH_OV_NONE: break;
     }
 
-    /* A hand on KEY or BOOT while Jerv answers is reaching for "stop", in every app: the reply
+    /* A hand on KEY or BOOT while Jerv speaks is reaching for "stop", in every app: the voice
      * goes quiet and nothing else happens — no recording starts, and the release that follows
      * sends nothing (owner, 2026-10-12: "KEY or BOOT during playback stops it"). */
-    if (f->replying && (b == SH_BTN_KEY_DOWN || b == SH_BTN_BOOT)) {
+    if (f->speaking && (b == SH_BTN_KEY_DOWN || b == SH_BTN_BOOT)) {
         if (b == SH_BTN_KEY_DOWN) st->key_owner = SH_KEY_FREE;
         return r(SH_ACT_STOP_REPLY, SH_ACT_NONE);
+    }
+    /* While he is still working on the last question, KEY starts nothing new and says so; BOOT
+     * is ordinary BOOT — it leaves the thread, and the answer lands in it when it comes
+     * (owner, 2026-10-12: progress on the panel, not "the answer will be in the app"). */
+    if (f->replying && b == SH_BTN_KEY_DOWN) {
+        st->key_owner = SH_KEY_FREE;
+        return r(SH_ACT_STILL_WORKING, SH_ACT_NONE);
     }
 
     if (f->app_open) {
@@ -160,24 +167,7 @@ bool sh_gate(sh_gate_t *g, bool pressed, bool dark, bool *wake)
 
 bool sh_long_press(sh_lp_t *lp, bool pressed, int x, int y, uint32_t now_ms)
 {
-    if (!pressed) {
-        lp->down = false;
-        return false;
-    }
-    if (!lp->down) {
-        *lp = (sh_lp_t){.down = true, .x0 = x, .y0 = y, .t0 = now_ms};
-        return false;
-    }
-    if (lp->done) return false;
-    const int dx = x - lp->x0, dy = y - lp->y0;
-    if ((dx < 0 ? -dx : dx) >= SH_TAP_SLOP || (dy < 0 ? -dy : dy) >= SH_TAP_SLOP) {
-        /* A scroll or a swipe: this stroke is never a long press, even if it comes back. */
-        lp->done = true;
-        return false;
-    }
-    if ((uint32_t)(now_ms - lp->t0) < SH_LONG_PRESS_MS) return false;
-    lp->done = true;
-    return true;
+    return ui_hold_feed(lp, pressed, x, y, now_ms, SH_LONG_PRESS_MS) == UI_HOLD_FIRE;
 }
 
 bool sh_menu_may_open(const sh_facts_t *f, bool conversation)
