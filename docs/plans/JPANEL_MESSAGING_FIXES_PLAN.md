@@ -2515,6 +2515,10 @@ in flight. Two faults the owner saw within the hour:
   in the press slot, and a message stream yields the speaker to a cue. 0.3.39 had refused the cue.
   The machine now mutes commands in PLAY and while a stream is live
   (`test_commands_are_deaf_while_a_message_plays`).
+- *REPLY only from a message that has stopped talking* (owner). In PLAY the envelope is drawn and
+  pressable only while the message is paused; once it ends, the AGAIN/REPLY pair carries it as
+  before. Mid-message the corner is empty and a press there does nothing (`view.reply`, checked
+  under I3).
 - *The animation was choppy.* With the socket off, every request was a fresh TLS handshake, and
   the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
   requests, turned on only after speech has started (`firmware/README.md`).

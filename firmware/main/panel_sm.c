@@ -400,7 +400,9 @@ sm_target_t sm_target(const sm_t *sm, const sm_in_t *in, int x, int y)
         const confirm_hit_t h = confirm_hit(x, y, in->over_h);
         if (h == CONFIRM_NONE) return SM_T_SWALLOW;
         if (!on(sm, in)) return SM_T_IGNORED; /* nothing audible to pause or answer yet */
-        return h == CONFIRM_CANCEL ? SM_T_PAUSE : SM_T_REPLY;
+        if (h == CONFIRM_CANCEL) return SM_T_PAUSE;
+        /* No envelope is drawn while it talks, so the finger there presses nothing. */
+        return sm->play.pause_on ? SM_T_REPLY : SM_T_SWALLOW;
     }
     case SM_PET:
         return pet_target(sm, in, x, y);
@@ -1258,6 +1260,7 @@ static void make_view(const sm_t *sm, const sm_in_t *in, sm_view_t *v)
     v->transport = play;
     v->paused = play && sm->play.pause_on;
     v->playing_glyph = play && !sm->play.pause_on;
+    v->reply = v->offer || (play && sm->play.pause_on);
     v->exit_corner = play || v->offer;
     v->face_none = !sm_face(sm, s, &v->face);
     sel_set_t S;
@@ -1322,6 +1325,11 @@ uint32_t sm_check(const sm_t *sm, const sm_in_t *in)
         v |= SM_I3;
     }
     if (sm->mode == SM_PLAY && !probe(sm, in, FACE_W * 3 / 4, over_h / 4, SM_T_EXIT)) v |= SM_I3;
+    if (sm->mode == SM_PLAY &&
+        (view.reply ? !probe(sm, in, CONFIRM_CX_SEND, cy, SM_T_REPLY)
+                    : sm_target(sm, in, CONFIRM_CX_SEND, cy) == SM_T_REPLY)) {
+        v |= SM_I3;
+    }
     if (sm->mode == SM_PET && !view.notice && !view.offer &&
         sm_target(sm, in, FACE_W / 2, over_h / 2) != SM_T_PET) {
         v |= SM_I3;
