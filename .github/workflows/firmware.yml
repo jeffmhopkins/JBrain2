@@ -62,6 +62,41 @@ jobs:
           target: esp32s3
           path: firmware
 
+      # THE STATIC INTERNAL-RAM BUDGET (plan §6a, gate 1). Internal RAM is what Wi-Fi, the PHY
+      # and a TLS handshake are made of, and 0.3.39 aborted at boot for want of it — so the
+      # statics a release puts there (`.data` + `.bss` in DIRAM) are measured on every build and
+      # may not creep. Baseline 0.3.39: .data 76,856 + .bss 20,288 = 97,144 B. 0.4.0 measured
+      # .data 76,840 + .bss 16,696 = 93,536 B (its new statics went to PSRAM). The budget is the
+      # baseline plus 1,024 B: a release may grow a little; more than that is a decision to make
+      # out loud, by moving this line, not something a build drifts into.
+      - name: Measure the image (idf.py size)
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: v5.5.5
+          target: esp32s3
+          path: firmware
+          command: idf.py size --format json2 --output-file build/size.json
+      - name: Static DIRAM must stay inside its budget
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          BASELINE = 97144  # 0.3.39: .data 76,856 + .bss 20,288
+          BUDGET = 1024
+          layout = json.load(open("firmware/build/size.json"))["layout"]
+          diram = next(m for m in layout if m["name"] == "DIRAM")
+          parts = {k: v["size"] for k, v in diram["parts"].items()}
+          static = parts.get(".data", 0) + parts.get(".bss", 0)
+          print(f"DIRAM used {diram['used']} of {diram['total']} B: "
+                + ", ".join(f"{k} {v}" for k, v in parts.items()))
+          print(f"static DIRAM (.data + .bss) {static} B; baseline {BASELINE} B; "
+                f"limit {BASELINE + BUDGET} B ({static - BASELINE:+d} B against 0.3.39)")
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as s:
+              s.write(f"static DIRAM {static} B (limit {BASELINE + BUDGET} B)\n")
+          if static > BASELINE + BUDGET:
+              sys.exit(f"static DIRAM {static} B exceeds {BASELINE} + {BUDGET} B: move new "
+                       "statics to PSRAM (EXT_RAM_BSS_ATTR) or raise the budget deliberately")
+          EOF
+
       # THE COMMITTED IMAGES ARE THE PRODUCT. The box flashes `firmware/dist/` straight
       # out of the checkout `update-inner.sh` keeps current, so a stale `dist/` is a panel
       # running the wrong firmware with nothing to say so. This is the only thing that
