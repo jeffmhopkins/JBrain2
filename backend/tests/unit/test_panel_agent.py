@@ -171,7 +171,7 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> Iterator[dict[str, Any]]:
         seen["threads"].append((owner.principal_id, sid, agent, fresh))
         return f"session-{agent}"
 
-    monkeypatch.setattr(panel_agent, "_owner_principal_id", owner_id)
+    monkeypatch.setattr(panel_agent, "owner_principal_id", owner_id)
     monkeypatch.setattr(panel_agent, "panel_thread", thread)
     monkeypatch.setattr(agent_api, "get_agent_sessions", lambda request: None)
     monkeypatch.setattr(panel_agent, "AGENT_WAIT_S", 0.2)
@@ -411,3 +411,41 @@ def test_every_sentence_fits_but_the_suffix_does_not() -> None:
     prose = "x" * 200 + "."
     out = panel_agent.condensed(prose, panel_agent.ASKED)
     assert len(out.encode()) <= panel_agent.REPLY_BYTES and panel_agent.ASKED.strip() in out
+
+
+# ---- JT2: the whole answer, and what waits for the owner in words ---------------------------
+
+
+def test_the_screen_keeps_the_whole_answer_or_what_fits_with_an_ellipsis() -> None:
+    assert panel_agent.screen_text("Short.", 1000) == ("Short.", False)
+    text, cut = panel_agent.screen_text("word " * 400, 1000)
+    assert cut and text.endswith("…") and len(text.encode()) <= 1000
+    assert not text.endswith(" …")
+    text, cut = panel_agent.screen_text("é" * 600, 1000)
+    assert cut and len(text.encode()) <= 1000
+
+
+def test_what_waits_is_said_in_words() -> None:
+    ask = _acc("", AWAITING_OWNER, [{"name": "ask_owner", "args": {"questions": ["bad"]}}])
+    assert panel_agent.waiting(ask, "dave") == "Dave has a question for you. Answer it in the app."
+    long_q = "Which " + "very " * 60 + "long thing?"
+    asked = panel_agent.waiting(
+        _acc("", AWAITING_OWNER, [{"args": {"questions": [{"question": long_q}]}}]), "jerv"
+    )
+    assert asked.startswith("Jerv asks: Which very") and "… Answer it in the app." in asked
+    odd = _acc("", steps=[{"proposal": {"kind": "something-new"}}])
+    assert panel_agent.waiting(odd, "jerv") == "Jerv wants to make a change. Confirm it in the app."
+    assert panel_agent.waiting(_acc("", steps=[{"proposal": "p"}]), "jerv").startswith(
+        "Jerv wants to make a change"
+    )
+    assert panel_agent.waiting(_acc("Done."), "jerv") == ""
+
+
+def test_jt1_keeps_its_condensed_words_while_jt2_gets_the_whole_answer(
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prose = " ".join(f"Sentence number {i} is here." for i in range(30))
+    _chat(monkeypatch, wired, lambda: _Live(_acc(prose)))
+    answer = _turn()
+    assert len(answer.words.encode()) <= panel_agent.REPLY_BYTES
+    assert answer.full == prose

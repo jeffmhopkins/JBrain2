@@ -58,7 +58,13 @@ async def owner_ctx(maker: async_sessionmaker) -> SessionContext:
     on the shared OWNER context will not do."""
     await service.rotate_owner_key(SqlAuthRepo(maker))
     async with scoped_session(maker, SessionContext(principal_kind="owner")) as s:
-        pid = (await s.execute(text("SELECT id FROM app.principals WHERE kind = 'owner'"))).scalar()
+        # The LIVE owner row: the rotation above just revoked any earlier one, and an unordered
+        # `kind = 'owner'` meets the oldest first — the same misfiling the desk panel had.
+        pid = (
+            await s.execute(
+                text("SELECT id FROM app.principals WHERE kind = 'owner' AND revoked_at IS NULL")
+            )
+        ).scalar()
     return SessionContext(principal_id=str(pid), principal_kind="owner")
 
 

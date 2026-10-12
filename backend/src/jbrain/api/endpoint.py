@@ -50,7 +50,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from starlette.requests import ClientDisconnect
 
-from jbrain.api import nudge, panel_agent, panel_ws
+from jbrain.api import nudge, panel_agent, panel_stream, panel_ws
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
@@ -2364,7 +2364,12 @@ def _jerv_with_history(turns: list[tuple[str, str]]) -> str:
 
 
 async def _jerv_turn(
-    principal: PrincipalInfo, request: Request, audio: bytes, started: float, voice: bool
+    principal: PrincipalInfo,
+    request: Request,
+    audio: bytes,
+    started: float,
+    voice: bool,
+    jt: int = 1,
 ) -> Response:
     """One spoken turn with Jerv for the desk panel: 204 when nothing was heard, else the reply
     frame — with audio only when the panel will play it (`voice`), so a panel set to text
@@ -2425,13 +2430,17 @@ async def _jerv_turn(
         total_ms=int((time.monotonic() - started) * 1000),
         reply_bytes=len(pcm),
     )
+    if jt == 2:
+        return Response(
+            content=panel_stream.whole(heard, reply, pcm), media_type="application/x-jpanel-turn"
+        )
     return Response(content=jerv_frame(heard, reply, pcm), media_type="application/x-jpanel-turn")
 
 
 # THE REAL AGENTS, for the one panel the owner allowed (owner decision 2026-10-12; plan §5).
 # `panel_agent` holds the gate, the thread and the voice; this is the audio either side of it.
-# The firmware waits 130 s for an answer (0.0.11); the agent gets `AGENT_WAIT_S` of that and
-# the rest is Whisper and Kokoro.
+# JT1 (0.0.11): the firmware waits 130 s for an answer; the agent gets `AGENT_WAIT_S` of that and
+# the rest is Whisper and Kokoro. JT2 (0.0.12, `jt=2`): `_agent_stream`, which has no such cut.
 async def _agent_turn(
     principal: PrincipalInfo,
     request: Request,
@@ -2441,12 +2450,17 @@ async def _agent_turn(
     agent: panel_agent.PanelAgent,
     voice: bool,
     fresh: bool,
+    jt: int = 1,
 ) -> Response:
     """One spoken turn with the real Jerv or Dave: 204 when nothing was heard, else the same
     reply frame as the persona's — what was heard, the answer condensed to what the panel
     keeps, and (unless `voice` is false) that answer spoken in the PWA read-aloud's voice."""
     if len(audio) > PANEL_JERV_AUDIO_MAX:
         audio = audio[:PANEL_JERV_AUDIO_MAX]
+    if jt == 2:
+        return _agent_stream(
+            principal, request, audio, started, agent=agent, voice=voice, fresh=fresh
+        )
     held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
     audio = _trim_to_speech(audio)
     settings = cast(Settings, request.app.state.settings)
@@ -2494,6 +2508,76 @@ async def _agent_turn(
     )
 
 
+def _agent_stream(
+    principal: PrincipalInfo,
+    request: Request,
+    audio: bytes,
+    started: float,
+    *,
+    agent: panel_agent.PanelAgent,
+    voice: bool,
+    fresh: bool,
+) -> StreamingResponse:
+    """The same turn as JT2 (`panel_stream`): the transcript the moment Whisper has it, a status
+    line for each tool the agent starts, keep-alives, then the whole answer and its speech
+    sentence by sentence. The headers go at once, so the panel's wait is for records, never for
+    the turn."""
+    held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+    audio = _trim_to_speech(audio)
+    settings = cast(Settings, request.app.state.settings)
+    store = cast(SqlSettingsStore, request.app.state.settings_store)
+
+    async def transcribe() -> str:
+        heard, _ctx = await _panel_transcribe(settings, audio)
+        return heard
+
+    async def start(heard: str) -> panel_agent.Started:
+        return await panel_agent.start_turn(request, principal, agent, heard, fresh=fresh)
+
+    async def synth(turn: panel_agent.Started) -> panel_stream.Synth | None:
+        try:
+            spoken_in = await panel_agent.owner_voice(store, turn.owner_ctx)
+        except Exception as exc:  # noqa: BLE001 — the default voice rather than none
+            log.warning("endpoint.converse_agent_voice_error", error=repr(exc))
+            spoken_in = None
+
+        async def say(words: str, budget: int) -> bytes:
+            return await _panel_speech(settings, words, budget, spoken_in)
+
+        return say
+
+    turn = panel_stream.Turn(
+        transcribe=transcribe, start=start, synth=synth, agent=agent, voice=voice
+    )
+
+    async def body() -> AsyncIterator[bytes]:
+        cut_off = True
+        try:
+            async for chunk in panel_stream.agent_turn(turn):
+                yield chunk
+            cut_off = False
+        finally:
+            # ONE LINE PER TURN, however it ended: a panel that went away mid-answer (BOOT, a
+            # stop, the radio) is `cut_off`, and the agent's turn is unharmed by it.
+            log.info(
+                "endpoint.converse",
+                persona=agent,
+                agent=True,
+                jt=2,
+                fresh=fresh,
+                held_ms=held_ms,
+                cut_off=cut_off,
+                total_ms=int((time.monotonic() - started) * 1000),
+                **turn.stats,
+            )
+
+    return StreamingResponse(
+        body(),
+        media_type="application/x-jpanel-turn",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.post("/converse")
 async def converse(
     principal: PanelDep,
@@ -2501,6 +2585,7 @@ async def converse(
     persona: Literal["pet", "jerv", "dave"] = "pet",
     voice: bool = True,
     new_thread: bool = False,
+    jt: int = 1,
 ) -> Response:
     """A child holds the panel, talks, and the panel answers out loud.
 
@@ -2529,6 +2614,10 @@ async def converse(
     `new_thread=true` (the panel's Clear chat) starting a fresh one. Any other caller asking for
     Jerv keeps the tool-less persona above, and asking for Dave is refused: no limited Dave
     exists to fall back to.
+
+    `jt=2` (the desk panel from 0.0.12) asks for the reply as a JT2 stream (`panel_stream`)
+    instead of JT1's single frame: progress while the agent works, the whole answer, speech
+    sentence by sentence. The pet path never streams; it ignores `jt`.
     """
     started = time.monotonic()
     try:
@@ -2544,12 +2633,19 @@ async def converse(
     if persona != "pet":
         if await panel_agent.agent_allowed(request.app.state.session_maker, principal):
             return await _agent_turn(
-                principal, request, audio, started, agent=persona, voice=voice, fresh=new_thread
+                principal,
+                request,
+                audio,
+                started,
+                agent=persona,
+                voice=voice,
+                fresh=new_thread,
+                jt=jt,
             )
         if persona == "dave":
             log.warning("endpoint.converse_agent_refused", persona=persona, device=principal.id)
             raise HTTPException(status_code=403, detail="this panel cannot talk to Dave")
-        return await _jerv_turn(principal, request, audio, started, voice)
+        return await _jerv_turn(principal, request, audio, started, voice, jt)
     if len(audio) > PANEL_AUDIO_MAX:
         audio = audio[:PANEL_AUDIO_MAX]
     held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
