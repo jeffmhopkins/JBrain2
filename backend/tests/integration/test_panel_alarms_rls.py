@@ -10,6 +10,7 @@ row:
 - a sibling cannot read, switch or delete another panel's alarms.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -231,3 +232,58 @@ async def test_a_label_the_panel_cannot_draw_is_refused(maker: async_sessionmake
         await _alarm(maker, desk, 1, "Café")
     with pytest.raises(Exception):  # noqa: B017
         await _alarm(maker, desk, 1, "x" * 25)
+    for refused in ('say "hi"', "back\\slash"):
+        with pytest.raises(Exception):  # noqa: B017 — the panel's buffer has no room to escape
+            await _alarm(maker, desk, 1, refused)
+
+
+_INSERT = (
+    "INSERT INTO app.endpoint_panel_alarm (subject_id, minute) VALUES (CAST(:sid AS uuid), :m)"
+)
+
+
+async def test_two_concurrent_adds_cannot_both_take_the_eighth_place(
+    maker: async_sessionmaker,
+) -> None:
+    """Each add counts the panel's alarms before it inserts. Without the trigger's per-subject
+    lock, two transactions that both count seven both land, and the panel holds nine."""
+    desk = await _panel(maker, "panel alarm-race")
+    for m in range(7):
+        await _alarm(maker, desk, m)
+
+    async def second() -> None:
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(text(_INSERT), {"sid": desk, "m": 101})
+            await s.commit()
+
+    async with scoped_session(maker, OWNER) as first:
+        await first.execute(text(_INSERT), {"sid": desk, "m": 100})
+        racing = asyncio.create_task(second())
+        await asyncio.sleep(0.5)
+        assert not racing.done(), "the second add must wait on the first one's lock"
+        await first.commit()
+    with pytest.raises(Exception) as caught:
+        await racing
+    assert "at most 8" in str(caught.value)
+    async with scoped_session(maker, OWNER) as s:
+        n = (
+            await s.execute(
+                text(
+                    "SELECT count(*) FROM app.endpoint_panel_alarm"
+                    " WHERE subject_id = CAST(:sid AS uuid)"
+                ),
+                {"sid": desk},
+            )
+        ).scalar_one()
+    assert n == 8
+
+
+async def test_another_panel_s_add_does_not_wait_on_this_one(maker: async_sessionmaker) -> None:
+    desk = await _panel(maker, "panel alarm-lock-a")
+    other = await _panel(maker, "panel alarm-lock-b")
+    async with scoped_session(maker, OWNER) as held:
+        await held.execute(text(_INSERT), {"sid": desk, "m": 1})
+        async with scoped_session(maker, OWNER) as s:
+            await asyncio.wait_for(s.execute(text(_INSERT), {"sid": other, "m": 1}), timeout=5)
+            await s.commit()
+        await held.commit()

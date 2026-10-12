@@ -14,6 +14,17 @@
 
 #define ALARM_ETAG_BYTES 24
 
+/* The longest answer the box can give, from its own shape (panel_alarms.py, compact JSON): every
+ * number at its widest, every label full. A label never holds `"` or `\` (the box refuses them),
+ * so nothing in it is escaped — which is what keeps this bound true. The fetch buffer is sized
+ * from it, and the host suite builds that worst case and checks it fits and parses. */
+#define ALARM_JSON_ENTRY_MAX                                                                       \
+    (sizeof("{\"at\":1439,\"days\":127,\"on\":false,\"label\":\"\",\"sound\":\"chime\","            \
+            "\"id\":9223372036854775807},") - 1 + ALARM_LABEL_BYTES)
+#define ALARM_JSON_MAX                                                                             \
+    (sizeof("{\"etag\":\"\",\"alarms\":[],\"max\":8,\"panel_etag\":\"\",\"panel_seen_s\":4294967295}") \
+     - 1 + 2 * (ALARM_ETAG_BYTES - 1) + ALARM_MAX * ALARM_JSON_ENTRY_MAX)
+
 typedef struct {
     alarm_t a[ALARM_MAX];
     uint8_t n;

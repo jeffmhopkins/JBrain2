@@ -1,5 +1,6 @@
 /* The alarms as the panel holds them: the schedule (the UI task's alone), one hand-over from the
- * main task, which fetches the list, and the switch queue it drains. */
+ * main task, which fetches the list, the switch queue it drains, and a published view of the
+ * schedule for the readers on other tasks (telemetry, the debug snapshot). */
 #include <stdio.h>
 #include <string.h>
 
@@ -22,9 +23,29 @@ static bool s_dirty;
 static uint32_t s_dirty_ms;
 static void (*s_wake)(void);
 
-/* The zone's rule, parsed once per change of zone. */
+/* The zone's rule, parsed once per change of zone. The UI task's alone, like the schedule. */
 static tz_rule_t s_tz;
 static int32_t s_tz_idx = -1;
+
+/* What another task may read, under alarm_port_lock. The schedule and the zone are the UI task's
+ * alone: telemetry runs on the main task and the debug snapshot can too, and neither may walk
+ * the list while an applied one is being copied in, nor parse the zone beside the UI task. So
+ * the UI task publishes a copy — its state, the zone it used and what rings next — at most once
+ * a second and whenever something changed, and those readers read only that. */
+typedef struct {
+    alarm_sched_t s;
+    tz_rule_t tz;
+    const char *source;
+    bool has_next;
+    alarm_next_t next;
+} alarm_view_t;
+static alarm_view_t s_view;
+static bool s_view_stale;
+static uint32_t s_view_ms;
+#define VIEW_EVERY_MS 1000
+/* The debug snapshot's own copy: static rather than on whichever task's stack runs it, and one
+ * is enough because the relay runs one request at a time. */
+static alarm_view_t s_dbg;
 
 /* Shared with the main task, under alarm_port_lock: the switches on their way and the version. */
 static alarm_queue_t s_q;
@@ -54,16 +75,37 @@ static const tz_rule_t *zone(void)
 {
     const int32_t idx = svc_settings_get(SET_TZ);
     if (idx != s_tz_idx) {
+        /* Parsed aside and committed with its index, so the rule and the index never disagree. */
+        tz_rule_t r;
+        if (!tz_parse(tz_posix(idx), &r)) r = (tz_rule_t){0};
+        s_tz = r;
         s_tz_idx = idx;
-        if (!tz_parse(tz_posix(idx), &s_tz)) s_tz = (tz_rule_t){0};
     }
     return &s_tz;
 }
 
 static void touched(void)
 {
+    s_view_stale = true;
     s_dirty = true;
     s_dirty_ms = svc_rtc_uptime_ms();
+}
+
+/* UI task only. Every pass of the service once a second or after a change, and at once after a
+ * call from an app or the relay, so a snapshot taken in the same request already shows it. */
+static void publish(uint32_t now_ms)
+{
+    alarm_next_t n;
+    const bool has = svc_alarms_next(&n);
+    alarm_port_lock();
+    s_view.s = s_s;
+    s_view.tz = s_tz;
+    s_view.source = s_source;
+    s_view.has_next = has;
+    if (has) s_view.next = n;
+    alarm_port_unlock();
+    s_view_stale = false;
+    s_view_ms = now_ms;
 }
 
 static void post(app_event_type_t type, uint32_t id)
@@ -164,6 +206,7 @@ static void apply_pending(void)
     snprintf(s_etag, sizeof s_etag, "%s", l.etag);
     alarm_port_unlock();
     alarm_sched_set_list(&s_s, &l);
+    s_view_stale = true;
     if (moved) touched();
 }
 
@@ -186,11 +229,13 @@ void svc_alarms_service(uint32_t now_ms)
     if (svc_rtc_epoch(&now)) {
         uint32_t off;
         if (alarm_sched_cap(&s_s, now, now_ms, &off)) {
+            s_view_stale = true;
             sound(false);
             switch_off(off);
             post(APP_EV_ALARM_ENDED, s_s.ring.id);
         }
         if (alarm_sched_tick(&s_s, zone(), now, now_ms)) {
+            s_view_stale = true;
             sound(true);
             post(APP_EV_ALARM_DUE, s_s.ring.id);
         }
@@ -199,6 +244,7 @@ void svc_alarms_service(uint32_t now_ms)
         s_dirty = false;
         save();
     }
+    if (s_view_stale || (uint32_t)(now_ms - s_view_ms) >= VIEW_EVERY_MS) publish(now_ms);
 }
 
 /* ---- the app-facing interface ---- */
@@ -222,6 +268,7 @@ void svc_alarms_set_on(uint32_t id, bool on)
     alarm_queue_put(&s_q, id, on);
     alarm_port_unlock();
     touched();
+    publish(svc_rtc_uptime_ms());
     if (s_wake) s_wake();
 }
 
@@ -244,6 +291,7 @@ uint16_t svc_alarms_snooze(void)
     } else {
         until = now;
     }
+    publish(svc_rtc_uptime_ms());
     civil_t c;
     tz_local(zone(), until, &c);
     return (uint16_t)(c.h * 60 + c.m);
@@ -262,6 +310,7 @@ void svc_alarms_stop(void)
         sound(false);
         post(APP_EV_ALARM_ENDED, id);
     }
+    publish(svc_rtc_uptime_ms());
 }
 
 bool svc_alarms_next(alarm_next_t *out)
@@ -298,6 +347,7 @@ bool svc_alarms_test(uint8_t snd)
     int64_t now;
     if (!svc_rtc_epoch(&now)) return false;
     alarm_sched_test(&s_s, snd, zone(), now, svc_rtc_uptime_ms());
+    publish(svc_rtc_uptime_ms());
     sound(true);
     post(APP_EV_ALARM_DUE, 0);
     return true;
@@ -313,29 +363,34 @@ static const char *fetch_word(void)
     return s_last_status == 304 ? "304" : s_last_status == 200 ? "ok" : "fail";
 }
 
+/* Main task: the published view only. */
 void svc_alarms_note(char *out, size_t len)
 {
-    alarm_next_t n;
-    char next[16] = "-";
-    if (svc_alarms_next(&n)) snprintf(next, sizeof next, "%s%lu", n.snoozed ? "z" : "+", (unsigned long)n.wait_min);
     alarm_port_lock();
     const uint8_t q = alarm_queue_count(&s_q);
+    const uint8_t n = s_view.s.list.n;
+    const uint32_t fired = s_view.s.fired, snz = s_view.s.snoozes, stop = s_view.s.dismissed,
+                   cap = s_view.s.timed_out, miss = s_view.s.missed;
+    const bool has = s_view.has_next, snoozed = s_view.next.snoozed;
+    const uint32_t wait = s_view.next.wait_min;
+    const char *src = s_view.source;
     alarm_port_unlock();
+    char next[16] = "-";
+    if (has) snprintf(next, sizeof next, "%s%lu", snoozed ? "z" : "+", (unsigned long)wait);
     snprintf(out, len, "alarm=n:%u,next:%s,fired:%lu,snz:%lu,stop:%lu,cap:%lu,miss:%lu,q:%u,src:%s,"
                        "fetch:%s/%d",
-             (unsigned)s_s.list.n, next, (unsigned long)s_s.fired, (unsigned long)s_s.snoozes,
-             (unsigned long)s_s.dismissed, (unsigned long)s_s.timed_out, (unsigned long)s_s.missed,
-             (unsigned)q, s_source, fetch_word(), s_last_status);
+             (unsigned)n, next, (unsigned long)fired, (unsigned long)snz, (unsigned long)stop,
+             (unsigned long)cap, (unsigned long)miss, (unsigned)q, src, fetch_word(), s_last_status);
 }
 
-static void when(dbg_json_t *w, const char *key, int64_t utc)
+static void when(dbg_json_t *w, const tz_rule_t *z, const char *key, int64_t utc)
 {
     if (!utc) {
         dbg_json_str(w, key, "never");
         return;
     }
     civil_t c;
-    tz_local(zone(), utc, &c);
+    tz_local(z, utc, &c);
     char s[24];
     snprintf(s, sizeof s, "%04u-%02u-%02u %02u:%02u", c.year, c.mon, c.mday, c.h, c.m);
     dbg_json_str(w, key, s);
@@ -344,10 +399,15 @@ static void when(dbg_json_t *w, const char *key, int64_t utc)
 static void describe(void *ctx, dbg_json_t *w)
 {
     (void)ctx;
-    dbg_json_int(w, "count", s_s.list.n);
-    dbg_json_str(w, "source", s_source);
-    alarm_next_t n;
-    if (svc_alarms_next(&n)) {
+    /* Whichever task runs the relay: the published view, never the live schedule. */
+    alarm_port_lock();
+    s_dbg = s_view;
+    alarm_port_unlock();
+    const alarm_sched_t *v = &s_dbg.s;
+    const alarm_next_t n = s_dbg.next;
+    dbg_json_int(w, "count", v->list.n);
+    dbg_json_str(w, "source", s_dbg.source);
+    if (s_dbg.has_next) {
         dbg_json_obj_begin(w, "next");
         dbg_json_int(w, "id", (int32_t)n.a.id);
         char hm[8];
@@ -359,24 +419,24 @@ static void describe(void *ctx, dbg_json_t *w)
     } else {
         dbg_json_str(w, "next", "none");
     }
-    dbg_json_int(w, "ringing", s_s.ringing ? (int32_t)s_s.ring.id : -1);
-    if (s_s.ringing) {
-        dbg_json_int(w, "ring_ms", (int32_t)(svc_rtc_uptime_ms() - s_s.ring_ms));
-        dbg_json_str(w, "ring_sound", alarm_sound_name(s_s.ring.sound));
+    dbg_json_int(w, "ringing", v->ringing ? (int32_t)v->ring.id : -1);
+    if (v->ringing) {
+        dbg_json_int(w, "ring_ms", (int32_t)(svc_rtc_uptime_ms() - v->ring_ms));
+        dbg_json_str(w, "ring_sound", alarm_sound_name(v->ring.sound));
     }
     dbg_json_int(w, "ring_cap_min", ALARM_RING_CAP_MIN);
-    when(w, "last_fired", s_s.last_fired);
-    dbg_json_int(w, "last_fired_id", (int32_t)s_s.last_fired_id);
-    when(w, "last_snoozed", s_s.last_snoozed);
-    when(w, "last_dismissed", s_s.last_dismissed);
-    dbg_json_str(w, "last_end", ENDS[s_s.last_end]);
-    dbg_json_int(w, "fired", s_s.fired);
-    dbg_json_int(w, "snoozes", s_s.snoozes);
-    dbg_json_int(w, "dismissed", s_s.dismissed);
-    dbg_json_int(w, "timed_out", s_s.timed_out);
-    dbg_json_int(w, "missed", s_s.missed);
-    dbg_json_int(w, "snooze_cancelled", s_s.snooze_cancelled);
-    dbg_json_int(w, "taken_over", s_s.taken_over);
+    when(w, &s_dbg.tz, "last_fired", v->last_fired);
+    dbg_json_int(w, "last_fired_id", (int32_t)v->last_fired_id);
+    when(w, &s_dbg.tz, "last_snoozed", v->last_snoozed);
+    when(w, &s_dbg.tz, "last_dismissed", v->last_dismissed);
+    dbg_json_str(w, "last_end", ENDS[v->last_end]);
+    dbg_json_int(w, "fired", v->fired);
+    dbg_json_int(w, "snoozes", v->snoozes);
+    dbg_json_int(w, "dismissed", v->dismissed);
+    dbg_json_int(w, "timed_out", v->timed_out);
+    dbg_json_int(w, "missed", v->missed);
+    dbg_json_int(w, "snooze_cancelled", v->snooze_cancelled);
+    dbg_json_int(w, "taken_over", v->taken_over);
     dbg_json_obj_begin(w, "fetch");
     dbg_json_str(w, "last", fetch_word());
     dbg_json_int(w, "status", s_last_status);
@@ -404,8 +464,8 @@ static void describe(void *ctx, dbg_json_t *w)
     }
     dbg_json_arr_end(w);
     dbg_json_arr_begin(w, "alarms");
-    for (uint8_t i = 0; i < s_s.list.n; i++) {
-        const alarm_t *a = &s_s.list.a[i];
+    for (uint8_t i = 0; i < v->list.n; i++) {
+        const alarm_t *a = &v->list.a[i];
         dbg_json_obj_begin(w, NULL);
         dbg_json_int(w, "id", (int32_t)a->id);
         dbg_json_int(w, "at", a->h * 60 + a->m);
@@ -442,5 +502,13 @@ void svc_alarms_init(void)
         alarm_port_unlock();
         alarm_sched_set_list(&s_s, &c.list);
     }
+    /* Before the UI task runs: what was loaded, with no "next" until its first pass works it out
+     * (the zone is the UI task's to parse). */
+    alarm_port_lock();
+    memset(&s_view, 0, sizeof s_view);
+    s_view.s = s_s;
+    s_view.source = s_source;
+    alarm_port_unlock();
+    s_view_stale = true;
     svc_debug_register("alarms", describe, NULL);
 }

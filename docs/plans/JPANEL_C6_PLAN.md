@@ -334,17 +334,29 @@ host-tested or sim-proven since the owner is away from the panel:
 
 - **Box.** `app.endpoint_panel_alarm` (migration 0236): per display panel, at most eight; minute of
   day in the panel's zone, the firmware's days mask (bit 0 Monday, 0 = once), on, a 24-character
-  ASCII label, a sound (`chime`, `beeps`, `rise`). RLS: the owner everything; a panel reads its own
-  rows and may UPDATE only `enabled` on them (a trigger refuses any other column from a device
-  key); a sibling sees nothing. Owner CRUD under `/endpoint/panels/{device_id}/alarms`; the panel's
-  `GET /endpoint/alarms` (etag, 304) and `PUT /endpoint/alarms/{id}` `{on}`, both 403 to anything
-  but a `display`, so the twins' S3 panels cannot use them. The owner's list carries the version
-  the panel last fetched, so the PWA says "On the panel" only when it is.
+  ASCII label without `"` or `\` (JSON escapes those, and the panel's fetch buffer is sized for
+  eight full labels with nothing escaped — the table, the route and the PWA all refuse them), a
+  sound (`chime`, `beeps`, `rise`). The cap of eight is the table's trigger, which takes a
+  per-panel advisory lock before it counts, so two adds at once cannot both take the eighth
+  place. RLS: the owner everything; a panel reads its own rows and may UPDATE only `enabled` on
+  them (a trigger refuses any other column from a device key); a sibling sees nothing. Owner CRUD
+  under `/endpoint/panels/{device_id}/alarms`; the panel's `GET /endpoint/alarms` (etag, 304) and
+  `PUT /endpoint/alarms/{id}` `{on}`, both 403 to anything but a `display`, so the twins' S3
+  panels cannot use them. The owner's list carries the version the panel last ASKED with — which
+  it sends only once that list is stored — so the PWA says "On the panel" only when it is, one
+  poll after the panel took it.
 - **Panel.** `svc_alarms` fetches on every update-loop pass (and right after boot), caches the list
   and the unsent switches in NVS, and fires from the UTC clock with the zone's own rule: a time in
   the spring-forward gap rings when the gap ends, a time in the fall-back overlap rings once, a due
   time up to 2 minutes late still rings (a reboot across it), later is `missed`. A snooze ends if
-  its alarm is deleted, switched off or moved.
+  its alarm is deleted, switched off or moved. The schedule and the zone are the UI task's alone;
+  telemetry and the debug snapshot read a copy it publishes once a second and after every change.
+- **A switch flipped on the panel while it is offline wins when it reconnects, even over a later
+  PWA edit of that alarm's on/off.** The panel holds the switch until the box takes it, and the
+  box applies switches as they arrive, not by when they were flipped. Chosen over carrying a
+  panel-side timestamp: the panel's clock is the one that may be wrong after a long time off the
+  network, and the owner can always flip it again from the PWA. Time, days, label and sound are
+  the PWA's alone and are never overwritten by the panel.
 - **Precedence: a ringing alarm beats everything** — dark screen, menu, talk ring, notice, a reply
   being spoken, a test tone: KEY snoozes, BOOT (short or held) stops, PWR cannot darken it; the
   shell ends the talk, the menu and the voice when it starts, and the audio task gives it the

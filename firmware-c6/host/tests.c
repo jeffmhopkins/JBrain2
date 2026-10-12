@@ -2515,6 +2515,46 @@ static void test_the_box_s_alarms_json_is_read_as_the_box_writes_it(void)
     CHECK(strlen(label) == ALARM_LABEL_BYTES, "a label is at most 24 bytes");
 }
 
+/* alarm_link.c sizes its fetch buffer from ALARM_JSON_MAX. Build the box's longest answer in its
+ * own shape (panel_alarms.py's `Alarms`, compact): every number at its widest, every label full
+ * of a character the box allows. It must fit the bound, and parse. */
+static int longest_answer(char *body, size_t cap, const char *id)
+{
+    char tag[ALARM_ETAG_BYTES];
+    memset(tag, 'f', sizeof tag - 1);
+    tag[sizeof tag - 1] = '\0';
+    char label[ALARM_LABEL_BYTES + 1];
+    memset(label, '~', ALARM_LABEL_BYTES);
+    label[ALARM_LABEL_BYTES] = '\0';
+    int n = snprintf(body, cap, "{\"etag\":\"%s\",\"alarms\":[", tag);
+    for (int i = 0; i < ALARM_MAX; i++)
+        n += snprintf(body + n, cap - (size_t)n,
+                      "%s{\"at\":1439,\"days\":127,\"on\":false,\"label\":\"%s\",\"sound\":\"chime\","
+                      "\"id\":%s}",
+                      i ? "," : "", label, id);
+    n += snprintf(body + n, cap - (size_t)n,
+                  "],\"max\":8,\"panel_etag\":\"%s\",\"panel_seen_s\":4294967295}", tag);
+    return n;
+}
+
+static void test_the_box_s_longest_alarms_answer_fits_the_fetch_buffer(void)
+{
+    static char body[ALARM_JSON_MAX + 64];
+    /* The box's ids are bigint: nineteen digits at the widest it could ever write. */
+    int n = longest_answer(body, sizeof body, "9223372036854775807");
+    CHECK((size_t)n == strlen(body) && (size_t)n <= ALARM_JSON_MAX,
+          "eight full alarms are within the bound the fetch buffer is sized from");
+    /* The panel keeps a 32-bit id; the widest of those must still read whole. */
+    n = longest_answer(body, sizeof body, "4294967295");
+    alarm_list_t l;
+    char label[ALARM_LABEL_BYTES + 1];
+    memset(label, '~', ALARM_LABEL_BYTES);
+    label[ALARM_LABEL_BYTES] = '\0';
+    CHECK(alarm_parse(body, (size_t)n, &l) && l.n == ALARM_MAX && !strcmp(l.a[0].label, label),
+          "and the panel reads all eight");
+    CHECK(ALARM_JSON_MAX < 1100, "the bound is a buffer the main task can afford");
+}
+
 static void test_switches_queue_for_the_box_and_the_last_one_wins(void)
 {
     alarm_queue_t q = {0};
@@ -2688,6 +2728,46 @@ static void test_the_alarms_service_end_to_end(void)
     alarm_port_fake_wipe();
 }
 
+/* Telemetry (the main task) and the debug snapshot (either task) read a view the UI task
+ * publishes, never the schedule it is changing: a list handed over shows up there only once the
+ * UI task has applied it, and "next" is worked out by the UI task, in its zone. */
+static void test_other_tasks_read_the_alarms_the_ui_task_published(void)
+{
+    alarm_port_fake_wipe();
+    svc_settings_set(SET_TZ, NEW_YORK);
+    svc_alarms_init();
+    svc_rtc_fake_set_date(2026, 10, 12); /* a Monday */
+    svc_rtc_fake_set(6, 30);
+    uint32_t ms = svc_rtc_uptime_ms();
+    char note[192];
+    svc_alarms_note(note, sizeof note);
+    CHECK(strstr(note, "alarm=n:0,next:-,") == note, "before the UI task's first pass: nothing");
+    CHECK(svc_alarms_offer(SERVICE_JSON, sizeof SERVICE_JSON - 1), "the main task hands a list over");
+    svc_alarms_note(note, sizeof note);
+    CHECK(strstr(note, "alarm=n:0,next:-,") == note,
+          "telemetry does not see a list the UI task has not applied");
+    svc_alarms_service(ms);
+    svc_alarms_note(note, sizeof note);
+    CHECK(strstr(note, "alarm=n:2,next:+15,") == note, "applied and published: 06:45, in 15 min");
+    svc_alarms_set_on(3, false);
+    svc_alarms_note(note, sizeof note);
+    CHECK(strstr(note, "next:+30,"), "a switch on the glass is published at once: 07:00 is next");
+    svc_rtc_fake_advance_ms(10 * 60000);
+    svc_alarms_service(ms + 500);
+    svc_alarms_note(note, sizeof note);
+    CHECK(strstr(note, "next:+30,"), "between passes the view is not recomputed");
+    svc_alarms_service(ms + 1000);
+    svc_alarms_note(note, sizeof note);
+    CHECK(strstr(note, "next:+20,"), "a second on, it is");
+    svc_settings_set(SET_TZ, 0);
+    svc_alarms_service(ms + 2000);
+    alarm_next_t n;
+    CHECK(svc_alarms_next(&n) && n.at_h == 7 && n.at_m == 0,
+          "a change of zone is parsed whole before it is used: the alarm stays at 07:00 local");
+    svc_settings_set(SET_TZ, NEW_YORK);
+    alarm_port_fake_wipe();
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -2788,10 +2868,12 @@ int main(void)
     test_a_ring_nobody_answers_stops_at_ten_minutes();
     test_reboots_and_clock_steps_never_ring_twice_or_late();
     test_the_box_s_alarms_json_is_read_as_the_box_writes_it();
+    test_the_box_s_longest_alarms_answer_fits_the_fetch_buffer();
     test_switches_queue_for_the_box_and_the_last_one_wins();
     test_the_alarm_sounds();
     test_a_ringing_alarm_beats_everything();
     test_the_alarms_service_end_to_end();
+    test_other_tasks_read_the_alarms_the_ui_task_published();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

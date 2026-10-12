@@ -1097,7 +1097,15 @@ checks it against glibc for every zone, every hour of 2026-2027.
 manifest's minute; at once after a switch on the glass wakes the loop) and right after boot, on the
 kept-alive session: **304 with no body** when nothing changed, otherwise
 `{"etag":"…","alarms":[{"id","at","days","on","label","sound"}],"max":8}` (`at` minutes past
-midnight in the panel's zone). Before the list, the queued switches go up as
+midnight in the panel's zone). The etag the panel sends moves only once a fetched list is stored,
+and it is what the box reports to the PWA, so "On the panel" is never said of a list the panel
+dropped. The answer is read into a buffer sized from the box's longest possible one
+(`ALARM_JSON_MAX`, about 1 KB: eight full labels, every number at its widest); labels never hold
+`"` or `\` (the box refuses them), so nothing in it is escaped and the bound holds — the host
+suite builds that answer and checks it fits and parses. A switch flipped while the box is
+unreachable waits in the queue and wins when it lands, even over a later PWA edit of that alarm's
+on/off: the box takes switches in the order they arrive. Before the list, the queued switches go
+up as
 `PUT {api}/endpoint/alarms/{id}` `{"on":bool}` — a 2xx or a 404 (deleted in the PWA) settles one,
 anything else keeps it. Both routes answer only a panel flashed as a `display` (the twins' S3 panels
 are 403); the box's RLS lets a panel read only its own alarms and write only their `on` flag
@@ -1108,7 +1116,7 @@ are 403); the box's RLS lets a panel read only its own alarms and write only the
 | Piece | What it is |
 | --- | --- |
 | `svc_alarms/alarm_logic.c` | Pure, host-tested: the box's JSON (`alarm_parse`), the next occurrence (`alarm_next_at`), the ring / snooze / stop / cap machine (`alarm_sched_*`), the switch queue (`alarm_queue_*`). |
-| `svc_alarms/svc_alarms.c` | The service on the UI task: applies the main task's hand-over (a sequence count, as the siblings'), fires, posts `ALARM_DUE` / `ALARM_ENDED`, starts and stops the sound, saves the cache 2 s after the last change. The queue and the etag are shared with the main task under a critical section. |
+| `svc_alarms/svc_alarms.c` | The service on the UI task: applies the main task's hand-over (a sequence count, as the siblings'), fires, posts `ALARM_DUE` / `ALARM_ENDED`, starts and stops the sound, saves the cache 2 s after the last change. The schedule and the parsed zone are the UI task's alone: it publishes a copy (with what rings next) once a second and after every change, and telemetry and the debug snapshot read only that. The queue, the etag and that copy are shared under a critical section. |
 | `svc_alarms/esp/alarm_port_nvs.c` | The cache: one NVS blob (`jpanel`/`alarms`, ~430 B) — the list, its etag and the switches not yet sent. |
 | `svc_rtc/time_logic.c` | The zone rules (`tz_*`) and `svc_rtc_epoch`. |
 | `svc_audio/alarm_sound.c` | The three sounds and the ramp, pure; `esp/svc_audio_es.c` plays them (`play_ring`) ahead of everything else. |
@@ -1141,20 +1149,22 @@ scripts/debug-connect.sh panel-cmd c6 snapshot                       # alarms.la
 ### The memory budget
 
 Static DIRAM (from the two ELFs, `.dram0.data` + `.dram0.bss`; 0.0.12 rebuilt from its tag to the
-byte of its `dist/`): 144,952 → 147,192 B, **+2,240 B** (`.bss` +2,472, `.data` −232 — the fake's
-sample alarms are gone). Most of it: the fetch buffer on the main task (1,024), the schedule
-(`s_s`, 496), the hand-over (316), the NVS blob kept static rather than on the UI task's stack
-(420), the switch queue (100), the etag and the parsed zone (52). `.iram0.text` is unchanged. **No
-new task and no heap per ring:** the sound is the audio task's existing chunk buffer, the fetch and
-the PUT ride the kept-alive session, the NVS write is a transient handle. So **`int_min` should read
-about 2.2 KB lower than 0.0.12's** at the same point (≈ 68 KB before a talk, ≈ 50–52 KB after one,
-on 0.0.12's estimate); an alarm ringing adds nothing to it. App: 1,926,224 → 1,941,376 B (+15 KB;
-54 % of the slot still free).
+byte of its `dist/`): 144,952 → 148,336 B, **+3,384 B** (`.data` −232 — the fake's sample alarms
+are gone). Most of it: the fetch buffer on the main task (1,001, sized from `ALARM_JSON_MAX`), the
+schedule (`s_s`, 496), the view of it the UI task publishes for the other tasks and the debug
+snapshot's copy of that (576 each), the hand-over (316), the NVS blob kept static rather than on
+the UI task's stack (420), the switch queue (100), the etag and the parsed zone (52).
+`.iram0.text` is unchanged. **No new task and no heap per ring:** the sound is the audio task's
+existing chunk buffer, the fetch and the PUT ride the kept-alive session, the NVS write is a
+transient handle. So **`int_min` should read about 3.4 KB lower than 0.0.12's** at the same point
+(≈ 67 KB before a talk, ≈ 49–51 KB after one, on 0.0.12's estimate); an alarm ringing adds nothing
+to it. App: 1,926,224 → 1,942,032 B (+16 KB; 54 % of the slot still free).
 
 ### What to check on the glass
 
 1. In the PWA (jpanel → Panels → the desk panel), add an alarm two minutes ahead, sound Rise. The card
-   says "Sending to panel…", then "On the panel" within about a minute.
+   says "Sending to panel…", then "On the panel" within about two minutes (the panel stores it
+   on one poll and says so on the next).
 2. Hold the Clock face 2 s: the alarm is in the list and the chip says "Next … · in 2 min".
 3. Put the screen out with PWR. At the minute the glass lights at a readable brightness, the Ringing
    screen is up and the sweep starts soft and climbs. PWR does not put it out.

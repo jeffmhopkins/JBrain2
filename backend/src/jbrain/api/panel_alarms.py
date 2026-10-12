@@ -31,6 +31,7 @@ import structlog
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api.deps import OwnerDep, PanelDep
@@ -46,6 +47,10 @@ router = APIRouter(prefix="/endpoint", tags=["endpoint"])
 ALARMS_MAX = 8
 #: The panel's `ALARM_LABEL_BYTES`. Printable ASCII only: it is what the panel's fonts draw.
 LABEL_MAX = 24
+#: Never in a label: JSON escapes them, and the panel's fetch buffer is sized for a list with
+#: nothing escaped (`alarm_link.c`). The table's CHECK holds the same rule.
+LABEL_REFUSED = '"\\'
+
 Sound = Literal["chime", "beeps", "rise"]
 SOUNDS: tuple[Sound, ...] = ("chime", "beeps", "rise")
 
@@ -64,9 +69,10 @@ class AlarmIn(BaseModel):
     @classmethod
     def _label(cls, v: str) -> str:
         v = " ".join(v.split())
-        if len(v) > LABEL_MAX or any(not (" " <= c <= "~") for c in v):
+        if len(v) > LABEL_MAX or any(not (" " <= c <= "~") or c in LABEL_REFUSED for c in v):
             raise ValueError(
-                f"letters, digits and punctuation the panel can draw, {LABEL_MAX} at most"
+                f'letters, digits and punctuation the panel can draw (not " or \\),'
+                f" {LABEL_MAX} at most"
             )
         return v
 
@@ -77,7 +83,7 @@ class Alarm(AlarmIn):
 
 class Alarms(BaseModel):
     """The list, oldest-first by time of day, and the version the panel compares. The owner's
-    copy also says which version the panel last fetched and how long ago, so the PWA can say
+    copy also says which version the panel last said it holds and how long ago, so the PWA can say
     "On the panel" only when it is."""
 
     etag: str
@@ -87,9 +93,12 @@ class Alarms(BaseModel):
     panel_seen_s: int | None = None
 
 
-#: subject_id -> (the etag the panel last fetched or confirmed, monotonic time). In memory, like
-#: the debug relay's `_seen`: the panel re-asserts it every minute, so a box restart costs one
-#: poll of "waiting for the panel" and nothing else.
+#: subject_id -> (the etag the panel last SENT, monotonic time). The tag it sends is the list it
+#: has applied: the firmware advances its etag only after a fetched list is stored, so a 200 the
+#: panel never applied (a truncated read, a list it refused) never reads as "On the panel". It
+#: costs one poll after an edit before the PWA says so. In memory, like the debug relay's
+#: `_seen`: the panel re-asserts it every minute, so a box restart costs one poll of "waiting
+#: for the panel" and nothing else.
 _held: dict[str, tuple[str, float]] = {}
 
 
@@ -200,19 +209,27 @@ async def add_alarm(
                 {"sid": sid},
             )
         ).scalar_one()
+        full = HTTPException(status_code=409, detail=f"the panel holds {ALARMS_MAX} alarms")
         if n >= ALARMS_MAX:
-            raise HTTPException(status_code=409, detail=f"the panel holds {ALARMS_MAX} alarms")
-        row = (
-            await s.execute(
-                text(
-                    "INSERT INTO app.endpoint_panel_alarm"
-                    " (subject_id, minute, days, enabled, label, sound)"
-                    " VALUES (CAST(:sid AS uuid), :at, :days, :on, :label, :sound)"
-                    f" RETURNING {_COLUMNS}"
-                ),
-                {"sid": sid, **body.model_dump()},
-            )
-        ).one()
+            raise full
+        try:
+            row = (
+                await s.execute(
+                    text(
+                        "INSERT INTO app.endpoint_panel_alarm"
+                        " (subject_id, minute, days, enabled, label, sound)"
+                        " VALUES (CAST(:sid AS uuid), :at, :days, :on, :label, :sound)"
+                        f" RETURNING {_COLUMNS}"
+                    ),
+                    {"sid": sid, **body.model_dump()},
+                )
+            ).one()
+        except IntegrityError as exc:
+            # The count above raced another add: the trigger, which counts under a lock, is
+            # the one that holds the cap.
+            if "at most" in str(exc.orig):
+                raise full from exc
+            raise
         await s.commit()
     log.info("panel_alarms.added", device=device_id, at=body.at, days=body.days)
     return _row(row)
@@ -311,6 +328,18 @@ async def _own_display(maker: async_sessionmaker[AsyncSession], principal: Princ
     return sid
 
 
+def _sent(etag: str | None, if_none_match: str | None) -> str:
+    """The version the panel says it holds: its `?etag=`, else the first `If-None-Match` tag,
+    else "" (it holds none yet)."""
+    for raw in (etag, if_none_match):
+        if raw:
+            p = raw.split(",")[0].strip()
+            if p.startswith("W/"):
+                p = p[2:]
+            return p.strip('"')
+    return ""
+
+
 def _matches(tag: str, held: str | None) -> bool:
     """`If-None-Match` as a header (`"abc"`, `W/"abc"` or a list) or the panel's `?etag=`."""
     if not held:
@@ -338,7 +367,7 @@ async def panel_alarms(
     async with scoped_session(maker, panel_context(principal.id, sid)) as s:
         alarms = await _list(s, sid)
     tag = etag_of(alarms)
-    _panel_holds(sid, tag)
+    _panel_holds(sid, _sent(etag, if_none_match))
     if _matches(tag, etag) or _matches(tag, if_none_match):
         return Response(status_code=304, headers={"ETag": f'"{tag}"'})
     return Alarms(etag=tag, alarms=alarms)
