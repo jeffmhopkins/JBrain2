@@ -105,7 +105,7 @@ def _maker(request: Request) -> async_sessionmaker[AsyncSession]:
     return cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
 
 
-async def _owner(request: Request, principal: PrincipalInfo) -> SessionContext:
+async def owner_for_panel(request: Request, principal: PrincipalInfo) -> SessionContext:
     """The gate, then the owner the panel acts for. 403 for any caller the talk would refuse."""
     maker = _maker(request)
     if not await agent_allowed(maker, principal):
@@ -157,7 +157,7 @@ async def recent(agent: PanelAgent, principal: PanelDep, request: Request) -> Re
     """The owner's last ten chats with `agent` that were started at the panel or in the PWA,
     newest first with the panel's current one at the top: no sub-agent child, no in-game chat,
     no task run, and no chat with nothing said in it yet."""
-    owner = await _owner(request, principal)
+    owner = await owner_for_panel(request, principal)
     maker = _maker(request)
     agent_id = AGENT_IDS[agent]
     current = await _current(maker, owner, principal.subject_id, agent_id)
@@ -237,7 +237,7 @@ async def select(
 ) -> Selected:
     """Point this panel's thread with `agent` at one of the owner's chats: the next talk
     continues it (`panel_agent.panel_thread`). 404 for a chat the Recent list would not show."""
-    owner = await _owner(request, principal)
+    owner = await owner_for_panel(request, principal)
     maker = _maker(request)
     agent_id = AGENT_IDS[agent]
     row = await _owned(maker, owner, agent_id, body.session_id)
@@ -288,7 +288,7 @@ async def messages(
     """The panel's current thread with `agent`: its title, and its last `limit` exchanges for
     the bubbles (0: the title alone, which the panel asks for when the thread opens). An empty
     id and title when the panel has no thread with this agent yet."""
-    owner = await _owner(request, principal)
+    owner = await owner_for_panel(request, principal)
     maker = _maker(request)
     agent_id = AGENT_IDS[agent]
     current = await _current(maker, owner, principal.subject_id, agent_id)
