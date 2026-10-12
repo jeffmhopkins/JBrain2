@@ -75,7 +75,12 @@ test("the wrapper's config and Dave's waypoints are parsed strictly", () => {
   assert.deepEqual(r.parseConfig('{"power_pack_keep": true}'), { power_pack_keep: true });
   assert.deepEqual(r.parseConfig('{"power_pack_keep": "yes", "other": 1}'), {});
   assert.throws(() => r.parseConfig("null"));
-  assert.deepEqual(r.parseWaypoint('{"player": "Steve 42", "clear": true}'), { player: "Steve 42", clear: true });
+  assert.deepEqual(r.parseWaypoint('{"player": "Steve 42", "clear": true}'), {
+    player: "Steve 42",
+    clear: true,
+    endScan: false,
+  });
+  assert.equal(r.parseWaypoint('{"player": "S", "clear": true, "end_scan": true}').endScan, true);
   const wp = r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "nether", "label": "' + "x".repeat(60) + '"}');
   assert.deepEqual(wp.record, { x: 1, y: null, z: 2, dim: "nether", label: "x".repeat(40) });
   assert.throws(() => r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "moon"}'));
@@ -167,4 +172,63 @@ test("an item search answers one line per kind per block, nearest first, capped"
   assert.deepEqual(r.itemsLines(q, "Steve", here, []), [
     "items none: no minecraft:apple on the ground within 48 blocks of Steve",
   ]);
+});
+
+test("a scan request: a block id namespaced and plain-worded, or a stop", () => {
+  assert.deepEqual(r.parseScan('{"player": "Steve 42", "block": "Diamond Ore"}'), {
+    player: "Steve 42",
+    block: "minecraft:diamond_ore",
+  });
+  assert.deepEqual(r.parseScan('{"player": "S", "stop": true}'), { player: "S", stop: true });
+  assert.equal(r.parseScan('{"player": "S", "block": "jbrain:replicator"}').block, "jbrain:replicator");
+  for (const bad of ['{"block": "stone"}', '{"player": "S"}', '{"player": "S", "block": "x\\"; op @a"}', "[]"]) {
+    assert.throws(() => r.parseScan(bad), bad);
+  }
+});
+
+test("an ore scans its deepslate and lit twins; anything else only itself", () => {
+  assert.deepEqual(r.scanTwins("minecraft:diamond_ore"), [
+    "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore", "minecraft:lit_diamond_ore",
+    "minecraft:lit_deepslate_diamond_ore",
+  ]);
+  assert.ok(r.scanTwins("minecraft:deepslate_iron_ore").includes("minecraft:iron_ore"));
+  assert.ok(r.scanTwins("minecraft:lit_redstone_ore").includes("minecraft:deepslate_redstone_ore"));
+  assert.deepEqual(r.scanTwins("minecraft:oak_log"), ["minecraft:oak_log"]);
+  assert.equal(r.scanLabel("minecraft:deepslate_diamond_ore"), "diamond");
+  assert.equal(r.scanLabel("minecraft:nether_gold_ore"), "nether gold");
+  assert.equal(r.scanLabel("minecraft:ancient_debris"), "ancient debris");
+});
+
+test("the scan box is 33 blocks a side around the player, y clamped to the world", () => {
+  const h = { min: -64, max: 320 };
+  assert.deepEqual(r.scanBox({ x: 0.5, y: 64.2, z: -0.5 }, h), {
+    from: { x: -16, y: 48, z: -17 },
+    to: { x: 16, y: 80, z: 15 },
+  });
+  assert.deepEqual(r.scanBox({ x: 0, y: -60, z: 0 }, h).from.y, -64);
+  assert.deepEqual(r.scanBox({ x: 0, y: 315, z: 0 }, h).to.y, 319);
+  assert.ok(r.inScanBox({ x: 0.5, y: 64, z: 0.5 }, { x: 16, y: 48, z: -16 }));
+  assert.ok(!r.inScanBox({ x: 0.5, y: 64, z: 0.5 }, { x: 17, y: 64, z: 0 }));
+});
+
+test("the nearest block is by 3D distance to its centre", () => {
+  const at = { x: 0.5, y: 64, z: 0.5 };
+  assert.deepEqual(r.nearestBlock(at, [{ x: 5, y: 64, z: 0 }, { x: 0, y: 60, z: 0 }, { x: 0, y: 70, z: 0 }]), {
+    x: 0, y: 60, z: 0,
+  });
+  assert.equal(r.nearestBlock(at, []), undefined);
+});
+
+test("one scan a frame: the most overdue player, the rest wait their turn", () => {
+  const due = new Map([["a", 5], ["b", 3], ["c", 9]]);
+  assert.equal(r.pickScan(due, 6), "b");
+  assert.equal(r.pickScan(due, 2), undefined);
+});
+
+test("the scan line: the waypoint arrow to the block, or none nearby", () => {
+  const here = { dim: "minecraft:overworld", x: 0, z: 0 };
+  const scan = { label: "diamond" };
+  assert.equal(r.scanLine(scan, null, here, N), "Scanning: diamond · none nearby");
+  assert.equal(r.scanLine(scan, { x: 0, y: -58, z: -10 }, here, N), "↑ Scanning: diamond · 10 blocks · y -58");
+  assert.equal(r.scanLine(scan, { x: 1, y: 12, z: 1 }, here, N), "↘ Scanning: diamond · You're here · y 12");
 });

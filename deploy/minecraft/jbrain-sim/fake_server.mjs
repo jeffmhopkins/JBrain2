@@ -10,8 +10,20 @@ export const EquipmentSlot = {
 export const CommandPermissionLevel = { Any: 0 };
 export const CustomCommandParamType = { String: "String" };
 export const CustomCommandStatus = { Success: 0, Failure: 1 };
-// No block types here; replicator_fake.mjs has the blocks the Replicator's tests need.
-export const BlockTypes = { get: () => undefined };
+// The block ids the Tricorder's scan tests use (scan.test.mjs); replicator_fake.mjs has
+// its own for the Replicator's tests.
+const BLOCK_IDS = new Set([
+  "minecraft:air", "minecraft:stone", "minecraft:diamond_ore", "minecraft:deepslate_diamond_ore",
+  "minecraft:iron_ore", "minecraft:deepslate_iron_ore", "minecraft:oak_log",
+]);
+export const BlockTypes = { get: (id) => (BLOCK_IDS.has(id) ? { id } : undefined) };
+
+export class BlockVolume {
+  constructor(from, to) {
+    this.from = { ...from };
+    this.to = { ...to };
+  }
+}
 
 export class ItemStack {
   constructor(typeId, amount = 1) {
@@ -78,6 +90,32 @@ export class Dimension {
     this.heightRange = { min: -64, max: 320 };
     this.spawned = []; // {item, loc}
     this.entities = []; // {id, loc}
+    this.blocks = new Map(); // "x,y,z" -> typeId; anything else is air
+    this.getBlocksCalls = [];
+  }
+  // A test placing a block (undefined for air).
+  setBlockAt(loc, typeId) {
+    const k = `${loc.x},${loc.y},${loc.z}`;
+    if (typeId) this.blocks.set(k, typeId);
+    else this.blocks.delete(k);
+  }
+  getBlock(loc) {
+    const k = `${Math.floor(loc.x)},${Math.floor(loc.y)},${Math.floor(loc.z)}`;
+    return { typeId: this.blocks.get(k) ?? "minecraft:air", location: { ...loc } };
+  }
+  // The game's getBlocks for the filter the pack passes: the locations in the volume
+  // (inclusive) of the included types, as a ListBlockVolume's iterator.
+  getBlocks(volume, { includeTypes = [] } = {}, allowUnloadedChunks = false) {
+    this.getBlocksCalls.push({ volume, includeTypes, allowUnloadedChunks });
+    const lo = (k) => Math.min(volume.from[k], volume.to[k]);
+    const hi = (k) => Math.max(volume.from[k], volume.to[k]);
+    const hits = [];
+    for (const [k, t] of this.blocks) {
+      const [x, y, z] = k.split(",").map(Number);
+      const inside = [["x", x], ["y", y], ["z", z]].every(([a, v]) => v >= lo(a) && v <= hi(a));
+      if (inside && includeTypes.includes(t)) hits.push({ x, y, z });
+    }
+    return { getBlockLocationIterator: () => hits[Symbol.iterator]() };
   }
   spawnItem(item, loc) {
     this.spawned.push({ item: item.clone(), loc: { ...loc } });
@@ -259,6 +297,13 @@ export const sim = {
       for (const t of due) t.fn();
       sim.flush();
     }
+  },
+  // The player leaves; sim.join (or sim.player) brings someone back as a new entity.
+  leave(player) {
+    players = players.filter((p) => p !== player);
+  },
+  join(player) {
+    players.push(player);
   },
   spawn(player, initialSpawn) {
     for (const fn of subs.spawn) fn({ player, initialSpawn });
