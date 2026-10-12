@@ -24,6 +24,7 @@ mid-message, holding the pet while a message waits, talking over a TV, and a USB
 | Cold review, round 10 | 2 blocking + 44 non-blocking (backend and firmware GREEN) |
 | Cold review, round 11 | 4 blocking + 35 non-blocking |
 | Cold review, round 12 | 6 blocking + 43 non-blocking; plus the 0.3.39 boot-loop incident (§6a) |
+| Cold review, round 13 | 7 blocking (F0 and two UX) + 39 non-blocking |
 
 **What has held since round 3**
 
@@ -47,7 +48,7 @@ in §4.
 
 Binding inputs: `CLAUDE.md`, `docs/DOC_LIFECYCLE.md`, `docs/reference/PROCESS.md`,
 `docs/reference/DEVELOPMENT.md`, and `docs/plans/JPANEL_PLAN.md` (**JP**). The panels are
-placeholder-named **Quorra** and **Tamsin**. Names in this plan are as of firmware 0.3.39, which does not boot on real hardware; F0 restores a booting baseline first (§6a).
+placeholder-named **Quorra** and **Tamsin**. Names in this plan are as of firmware 0.3.39, which does not boot on real hardware; F0 releases it with its persistent WebSocket disabled, as 0.3.40 (§6a).
 
 ## 1. Goal
 
@@ -101,7 +102,8 @@ Each item is testable and is cited in §3 and in the tests.
     reply already sounding, as `audio_stop()` does today. The stop's own cue then sounds. A send
     outcome still pending is not lost (E1.2).
   - Nothing chains on.
-  - The sound is cut by the gen within that bound whatever the network does. A WebSocket request
+  - The sound is cut by the gen within that bound whatever the network does. With the socket
+    disabled from F0 (§6a) the HTTPS rule applies; where the socket runs, a WebSocket request
     is cancelled at its next 250 ms wait step, plus however long `ws_send` takes to deliver the
     cancel under its own clamp (HTTPS: §7.6).
   - Sends are exempt (E1.2).
@@ -172,7 +174,7 @@ Each item is testable and is cited in §3 and in the tests.
   individually** by the owner — an explicit act (§4).
 - **E3.5** The "kept" count after a clear names the right child.
 - **E3.6** A twin-to-twin message appears in both threads. Clearing either thread deletes it
-  unless it is unheard and **not keyless**. Gave-up and waiting-for-re-flash rows are kept by a
+  unless it is a panel-addressed unheard row that is **not keyless**. Gave-up and waiting-for-re-flash rows are kept by a
   clear (`test_clear_keeps_in_window_mail_of_revoked_panel`).
 - **E3.7** A stale poll never removes a bubble that was just sent.
 - **E3.8** Errors read as sentences. The composer shows its limit and a hint. A recording made at
@@ -338,8 +340,9 @@ version, and `main.c` installs any version that **differs**. So:
   deletes a migration revision file**: W1 adds a step to the **backend job** (an already-required check, so branch protection enforces
   it) that runs on `pull_request` **and**
   `workflow_dispatch` with no `if:` gate — `ci.yml` notes that an App-opened PR starts no
-  `pull_request` run, so a dispatch is how its checks run — checks out with `fetch-depth: 0`, and
-  fails if `git diff --diff-filter=D --name-only origin/main...HEAD --
+  `pull_request` run, so a dispatch is how its checks run — changes the backend job's checkout
+  to `fetch-depth: 0` (it is 1 today), and
+  fails if `git diff --no-renames --diff-filter=D --name-only origin/main...HEAD --
   backend/migrations/versions/` is non-empty. A later re-land of a reverted wave therefore finds
   its revision file still present and must not add it again.
   - W2 is data-only.
@@ -353,7 +356,7 @@ version, and `main.c` installs any version that **differs**. So:
 Every box change is additive. Firmware degrades to today's path whenever a field, header or route
 is missing.
 
-| Change | New box + 0.3.39 | Old code + new firmware |
+| Change | New box + 0.3.39 / 0.3.40 (F0) | Old code + new firmware |
 |---|---|---|
 | `/send` ceiling = cap + 0.5 s | A3 fixed for every panel in the field | 413 → `FAILED("too-long")` |
 | `/waiting` `queue[].id` | ignored. `test_waiting_body_fits_0_3_39_buffer` (W3) pins the worst case against 0.3.39's 1,023-byte cap: 8 entries with ids, `from_owner=false`, names at **31 bytes**, a 4-digit `count`, and a sibling — about 1,021 B. The bound is real because W2 gives the flash name the rename rule (`MAX_PANEL_NAME` = 14 and `_panel_name`'s charset, none of which grows under JSON escaping, §11.1 item 8) **and** W1's `/waiting` cuts every name so that even its `ensure_ascii=True` escaping is at most 31 bytes, on a character boundary. The body itself goes out as UTF-8 (`JSONResponse`, relayed unchanged by `panel_ws`), which is never longer, so the escaped length is a safe upper bound and a name stored before the rule, quotes, control or non-ASCII characters included, cannot overflow it. The worst case leaves 2 bytes of headroom, so the pin test is load-bearing. The sibling comparison uses the **uncut** label and cuts afterwards, so a legacy name over 31 bytes still finds its sibling. `/next`'s `X-Jpanel-From` gets the same cut and is made printable ASCII (anything else becomes `?`; Starlette refuses a header it cannot encode), and `test_next_head_fits_link_head_max` assumes both. | positional `?at=`; "new" means a count rise |
@@ -384,40 +387,71 @@ ESP_ERROR_CHECK failed: ESP_ERR_NO_MEM … esp_phy/src/phy_common.c:118
   phy_track_pll_init: esp_timer_create(…)  → abort → reboot
 ```
 
-So 0.3.39's persistent TLS WebSocket (#1565) holds ~48 KB of internal RAM (119 → 70 KB), speech
-then takes most of what is left, and the Wi-Fi PHY's own internal allocation is what fails.
-`ROOM_ENDPOINT_PLAN.md` already measured speech and the tasks at ~100 KB internal (pre-speech
-154,435 B → post-speech 51,631 B), so 70 KB can never fit. Two fixes are ruled out:
-`MBEDTLS_DYNAMIC_BUFFER` alone saves ~20 KB, too little; `MBEDTLS_EXTERNAL_MEM_ALLOC` was
-rejected there on security grounds (TLS keys on the external bus without flash encryption).
+0.3.39's persistent TLS WebSocket (#1565) holds ~48 KB of internal RAM (119 → 70.5 KB free).
+Speech and its AFE then **start** in the 70.5 KB that is left — so speech costs less than that —
+and the Wi-Fi PHY's own internal allocation is what fails. `MBEDTLS_DYNAMIC_BUFFER` alone (~20 KB)
+would not close the gap, and `MBEDTLS_EXTERNAL_MEM_ALLOC` was rejected in `ROOM_ENDPOINT_PLAN.md`
+on security grounds (TLS keys on the external bus without flash encryption).
 
-**What the plan changes because of it**
+**Owner decision:** the twins stay on their existing S3 panels.
 
-1. **F0 is 0.3.38's code re-released as 0.3.40** — a forward version, so panels install it
-   (`main.c` installs any version that differs). It was recommended to the owner on the night of
-   the incident. F1's characterisation tests pin **that** baseline, and "0.3.39" in §7–§10 means
-   F0's firmware from then on; §7.5a's `link.c` design is re-verified against the restored code
-   in F1. The persistent WebSocket returns only in a later wave, with a measured internal budget
-   that fits it alongside speech and the PHY.
-2. **Every firmware wave carries an internal-RAM budget** (§12): a static DRAM budget in CI, and
-   a measured `int_free`/`int_min` floor after every task has started, reported in telemetry. The
-   floor is TLS's ~75 KB (`link.h`) plus a 16 KB margin. The plan's new statics go to PSRAM where
-   legal (§7.7); lease and atomic words stay internal.
-5. **`SPEECH_MIN_INTERNAL` is wrong for any firmware** (F0 sets it, F1 pins it with a test).
-   48 KB let speech start with 70 KB and leave the PHY nothing. The floor must cover the
-   **measured** speech-and-task cost (~100 KB) plus the PHY's and TLS's needs, so a starved panel
-   boots **deaf** — the existing "no recogniser" path — instead of crash-looping.
-3. **The skew table (§6) still holds.** The box side of 0.3.39 is fine; its 1,024-byte buffers and
-   `X-Jpanel-*` headers are what the field firmware parses, and F0 confirms them against its
-   baseline.
-4. **A broken image must always be replaceable over the air.** Today's order already allows it:
-   reach the box → `ota_confirm_health` → report → the manifest check and `ota_apply` → only then
-   speech, talk, jpanel and nudge. A looping panel therefore installs a fixed image from the box's
-   `dist/` before it reaches the crash. Every wave keeps that order
+**F0 = 0.3.39's code with the persistent WebSocket disabled**, released as 0.3.40 (a forward
+version, so the panels install it: `main.c` installs any version that differs).
+
+- `link.c` starts in its existing HTTPS fallback (`s_fallback`, `http_request`): one TLS session
+  at a time under its one-lock invariant. Push falls back to the existing nudge-and-poll path.
+- That removes the ~48 KB socket that caused the loop, and keeps `link.c`, `wsproto.c`, the
+  backend tests that read them, and §7.5–§7.6 valid. F1's characterisation tests pin this build.
+- It does **not** reintroduce 0.3.38's failure (`link.h`: "after about two talk turns every
+  request failed with 'connect'"): that came from two sessions in flight, which the one lock
+  forbids.
+- **The persistent socket is not planned to return.** It costs ~48 KB of internal RAM, which is
+  roughly the headroom the incident shows does not exist beside speech and the PHY. The
+  fallback carries every request, and push latency is covered by the nudge. It would come back
+  only as its own budgeted wave, and only if F0's measurements show room for it **plus** one
+  fallback session **plus** the PHY margin.
+
+**F0 measures before it sets any floor.** On hardware, through the panel console via the debug
+API, it records:
+- internal free before and after speech, giving the speech cost `S`;
+- the cost of one TLS handshake, `T` (`link.h` estimates ~40 KB; the ~75 KB it also quotes is
+  free heap at the moment of failure, not a cost);
+- the PHY's margin, `P`, from the low-water mark across a send.
+
+The report keeps `int_min` (0.3.39 already sends it) and gains a `speech_ok` flag, with
+`TelemetryIn` and the field-scan test updated in F0's PR.
+
+**Only then, `SPEECH_MIN_INTERNAL = S + T + P`.** The plan records the arithmetic. It must sit
+**below** the measured pre-speech free with the socket off (~119 KB after Wi-Fi), so a healthy
+panel always starts speech: `S < 70.5 KB` is known from the incident, and the check is
+`S + T + P ≤` the measured pre-speech free. If it is not, F0 does not ship that floor; it goes
+back to the owner.
+
+**What the floor is for.** A deaf panel cannot send: RECORD and LISTEN learn that she spoke only
+from `speech_hearing()`, so every recording drops after the lead silence and every tick answers
+OOPS. The floor exists to turn a crash loop into a visible fault — `speech_ok = 0` through the
+debug API — **never** as a normal state. Today's 48 KB floor is wrong for any firmware: it let
+speech start and starve the PHY.
+
+**Gates every firmware wave carries from F0 on** (§12):
+1. **Static budget.** F0 adds an `idf.py size` step to `firmware.yml` and records the internal
+   DRAM (`.data` + `.bss`) baseline. Each wave states its delta; the plan's new statics go to
+   PSRAM where legal (§7.7), and lease and atomic words stay internal.
+2. **Measured floor.** After deploy, the first report's `int_min` after every task has started
+   must stay at or above F0's measured floor (`S + T + P` and the post-task low-water F0
+   records). A panel below it is handled the F0 way: a fixed image at a higher version.
+3. **Skew holds.** The box side of 0.3.39 is fine. F0's buffers (`/waiting` 1,024 B) and its
+   `X-Jpanel-*` header parsing are 0.3.39's, so the §6 pins hold. `LINK_HEAD_MAX` bounds the
+   WebSocket head frame; with the socket off, the HTTPS head is parsed by `esp_http_client`, and
+   the pin stays for the day the socket returns.
+4. **A broken image must always be replaceable over the air.** Today's order already allows it,
+   in 0.3.38 and 0.3.39 alike: reach the box → `ota_confirm_health` → report → the manifest check
+   and `ota_apply` → only then speech, talk, jpanel and nudge. The 0.3.39 crash comes after
+   `ota_apply`, so looping panels will take 0.3.40. Every wave keeps that order
    (`test_update_check_precedes_task_starts`, a `main.c` order test). The image is marked valid
-   before the tasks start, so the bootloader will **not** roll back a crash that comes later; the
-   update-first order is the recovery path. The engine and arbiter watchdogs (§7.5d) do not cover
-   a panic; this ordering does.
+   before the tasks start, so the bootloader will **not** roll back a later crash; the
+   update-first order is the recovery path. The watchdogs (§7.5d) do not cover a panic; this
+   ordering does.
 
 ## 7. The engine (F2)
 
@@ -427,7 +461,7 @@ rejected there on security grounds (TLS keys on the external bus without flash e
 
 ```
 cmd { kind PLAY|REPLAY|SEND, seq (never 0), gen, expires_at, id[48], at, to,
-      from[32], from_dad }                                   // from/from_dad: REPLAY only
+      from[32], from_dad }      // from/from_dad: REPLAY only; gen is zero and ignored for SEND
 ```
 
 - Only render posts. A failed post is reported back as `in.post_failed = seq`.
@@ -563,7 +597,8 @@ guard (`jpanel.c`: a poll is a round trip, a TLS handshake on the HTTPS fallback
 task feeds I2S from the same core's spare cycles). The between-message poll of step 3 keeps the
 same guard. A queued command cancels the poll.
 
-Every exit publishes `done_seq` and its outcome in one write.
+Every exit publishes `done_seq` and its outcome in one write; a run that ends on a failed ack
+publishes it with `run_continues = false`.
 
 **The published `waiting` keeps `cur.id`** from the claim until the stream begins, as 0.3.39's
 `fetch_head` does, and `cur.in_waiting` says which side of that edge it is on. The machine never
@@ -727,7 +762,9 @@ flag is set only after `xTaskCreate` succeeds (`audio.c` allocates the ring befo
 
 ### 7.5 Deadlines are true by construction
 
-**(a) `link.c` enforces the deadline and reports progress.** `link_types.h` gains:
+**(a) `link.c` enforces the deadline and reports progress.** From F0 the persistent socket is
+disabled (§6a), so the HTTPS path is what runs; the WebSocket clamps below stay, because the code
+stays. `link_types.h` gains:
 
 ```
 deadline_ms; upload_mode LINK_DEADLINE_ABSOLUTE|LINK_DEADLINE_PROGRESS; head_budget_ms;
@@ -809,7 +846,8 @@ On firing:
   watchdogs restart their last-change clocks, so a failed OTA after a long erase does not trip on
   its first frame back.
 - **A cap on watchdog reboots.** RTC-retained words, validated by a magic as `display.c`'s
-  already are, count watchdog reboots. After 3 the watchdogs disarm and the report says so
+  already are, count watchdog reboots. They survive `esp_restart`, not a power cycle or a
+  brownout, which simply resets the count. After 3 the watchdogs disarm and the report says so
   (`wd_disarmed`). The count decays by one per hour of uptime without a watchdog reboot (uptime,
   because `esp_timer` restarts at each boot), and a **version change re-arms** them, so an OTA fix
   restores them without a power cycle the owner cannot perform. A deterministic wedge therefore
@@ -838,7 +876,8 @@ On firing:
 
 ### 7.6 Network cancel
 
-- **WebSocket:** waits call `wsp_wait_step` every 250 ms and send `wsp_cancel`.
+- **WebSocket** (only if the socket ever returns, §6a): waits call `wsp_wait_step` every 250 ms
+  and send `wsp_cancel`.
 - **HTTPS:** cancellation is checked between steps.
 - **SEND** passes no `cancelled`.
 - **Buffers:** `rel[96]`, `path[112]`, `/waiting` 1536 B.
@@ -856,7 +895,8 @@ On firing:
 | `reply` slot; `s_reply`; lease 2 release | talk |
 
 - `jpanel_types.h` is split from `jpanel.h`.
-- **Internal RAM** (§6a). TLS needs about 75 KB of internal heap free (`link.h`). The new statics
+- **Internal RAM** (§6a). One TLS session costs ~40 KB of internal RAM (`link.h`; F0 measures it).
+  The new statics
   that no DMA or ISR touches — both copies of the snapshot, the 1,536-byte `/waiting` buffer,
   `sm_t`, the slot buffers — are `EXT_RAM_BSS_ATTR`. The lease words and every word used with an
   atomic compare-and-swap stay in internal RAM (S32C1I does not work on PSRAM on the S3). The
@@ -868,8 +908,9 @@ On firing:
 **Telemetry**, which reaches the owner only through `main.c`'s report and the debug API (CLAUDE.md
 #10):
 
-- **Kept:** today's `msg_bytes`, `msg_ms`, `msg_ok`, `msg_bad`, `msg_err` and `msg_waited_ms`,
-  now read from the engine's counters.
+- **Kept:** today's `msg_bytes`, `msg_ms`, `msg_ok`, `msg_bad` and `msg_waited_ms`, now read from
+  the engine's counters, and `msg_err`, which is a string (the last error), from the engine's
+  last outcome reason.
 - **New**, in one compact `jp` object of **flat integer keys only** (about 140 B): `ack_owed`,
   `ack_retries`, `no_refund`, `returned`, `lease_refusals`, `snapshot_retries`, `post_failed`,
   `late_outcome`, `cue_expired`, `jpanel_stack_free`, `sm_violations`, `wd_engine`,
@@ -951,7 +992,10 @@ device and in the tests.
   dropped silently: calibration is the owner's maintenance act, not the child's;
 - **the offer is kept**, and any send continues;
 - the pet turn is left as it is: talk runs on, and the machine reads its edge on the first frame
-  back;
+  back — a SPOKE or FAILED edge first, then `TALK_TIMEOUT_MS`, so a reply that landed during
+  calibration is not reported as a timeout;
+- **standby** is written by the machine (its button effects); `display.c`'s touch-wake clears it
+  only through the machine's wake input, so there is one writer;
 - the machine is not stepped during calibration;
 - on the first frame back, outcomes are processed before backstops.
 
@@ -1050,15 +1094,21 @@ that has ended and break I5 when the next one begins (`test_pause_in_run_gap_is_
      hold's own point (the four-cell junction, where a lightening finger lands), so a deliberate
      tap on a face elsewhere acts at once.
 
-   PLAY's EXIT grace (`play.since` is that press) is the same rule.
+   PLAY's EXIT grace (`play.since` is that press) is the same rule. `mode_press_at` is cleared
+   whenever the mode changes **without** a press — a PLAY that fails inside 700 ms must not leave
+   AGAIN or the notice silently ignored. The hold's point is the finger's **last** position when
+   the hold fired, since a finger may drift up to 59 px without becoming a swipe.
    - **Exempt: PLAY's PAUSE and REPLY, and swipes.** PLAY's PAUSE and REPLY are already
      *ignored* until ON, which is the exact hazard; a clock on them is the shape `ui.c:482-485`
      and JP 0.3.36 record as tried and rejected ("700 ms of dead pause button is a real cost"),
      and it would break #45. (The pair's REPLY in PET acts at once, so it is graced.) Swipes are
      gestures, not targets: the swipe-from-the-big-box unwind (A1) and #18 need them at once. A
-     swipe that starts on the big box is a swipe even when it is clamped and moves nothing; it
-     never becomes a notice press.
+     swipe that starts on the big box has already pressed the notice on its down edge, so §8.3's
+     PLAY rule unwinds it to PET whatever the selection does.
    - A mode entered without a press or a hold (voice, a timer, an outcome) has no grace.
+   - A press ignored by the grace is logged (`tap_missed`) and silent. It is treated as part of
+     the press that opened the mode, which was already answered (E2.10), so a bounce never makes
+     a second sound.
 
    Tests: `test_pet_cell_bounce_does_not_drop_listen`, `test_notice_bounce_does_not_hit_face`,
    `test_grid_cancel_bounce_does_not_replay`, `test_cross_bounce_with_offer_does_not_replay`,
@@ -1079,8 +1129,14 @@ that has ended and break I5 when the next one begins (`test_pause_in_run_gap_is_
 - **Re-resolve, every frame:** `sel` is looked up by `sel.id` in `S`; if the id has left `S`, it
   keeps `sel.index`, clamped to `|S| − 1`, and takes that entry's id. **Except while a stop's
   outcome is pending:** a child-chosen stop of a **posted** PLAY records `stopped_seq`, and until
-  `done_seq` reaches it (or the next press) `sel.id` is held. A PLAY abandoned before it was
-  posted holds nothing. The engine puts a RETURNED id back into `waiting` in the same snapshot
+  `done_seq` reaches it `sel.id` is held. A PLAY abandoned before it was posted holds nothing.
+  - During the hold the notice and `sm_face` show the **held id's** sender, taken from the
+    stopped PLAY's `play_outcome`/`cur`, even while that id is in neither `waiting` nor `S`.
+  - A notice press during the hold is taken (`CUE_PLAY`, PLAY pending) but **not posted** until
+    `done_seq ≥ stopped_seq`. Its target is **resolved at the post**, from `S` as it then stands:
+    the held id if it came back RETURNED, otherwise the entry the selection re-resolves to. A
+    message acked by the stop is never fetched again
+    (`test_notice_press_during_stop_hold_resolves_at_post`). The engine puts a RETURNED id back into `waiting` in the same snapshot
   write as its outcome (§7.3), so the stopped message keeps the selection with no gap
   (`test_selection_held_while_stop_outcome_pending`, run end to end against the real
   `jpanel_core`).
@@ -1110,7 +1166,8 @@ that has ended and break I5 when the next one begins (`test_pause_in_run_gap_is_
 4. backstops and mode timers: the PLAY/SEND backstops, pending expiry, the pause limit, GRID's
    `SENDTO_MS`, and the recording's hush, cap and lead-silence;
 5. posting a pending PLAY once `!speaker_busy`;
-6. the pet turn;
+6. the pet turn, then the selection's re-resolution (§8.2) — after the press of step 1, which
+   carries the id drawn on the previous frame (E2.1);
 7. the follow-up decision on the reply-end edge (`reply_busy` falling), which reads `chime_ids`
    **before** step 8. A cut also makes `reply_busy` fall; what stops an EXIT that cut the reply
    from opening a follow-up is that **every child-chosen stop disarms the follow-up explicitly**,
@@ -1248,10 +1305,10 @@ WHILE WE ARE SPEAKING"*.
 | PET (offer hidden or none) | NOTICE (big box, or the badge quadrant; *ignored* in the press grace of §8.2 — e.g. after a press that left PLAY, so a bounce cannot play a message) · PET | `down.target == PET` (the down edge itself landed on the pet, so a finger left over from EXIT, FACE or an ignored notice press never counts), `on_pet`, free taps, not swiped, and `net != BUSY` (today's guard) → GRID |
 | PET, fresh offer | EXIT · AGAIN quadrant · REPLY quadrant · PET | **none**: the press belongs to the target it landed on, as today (0.3.35, `ui_menu_up`) |
 | PET, standing offer | EXIT (the upper-right quadrant, as with a fresh offer) · AGAIN/REPLY disc reach (r 82 at (92 \| 276, `confirm_cy`)) · PET | `down.target == PET` → GRID; a hold that lands in the exit quadrant is an EXIT (E1.6) |
-| GRID | four cells · swallow (flinches; the grid stays up, as today) | — |
+| GRID | four cells · swallow (flinches; the grid stays up, as today). A cell whose recording or listen is refused closes the grid with `CUE_BUSY`, as today's `s_sendto_until = 0` does | — |
 | LISTEN (voice), RECORD | CROSS · TICK quadrants (both *ignored* in the press grace when a touch opened the mode — REPLY, or any grid cell, whose lower-right pet cell shares the tick's quadrant) · a miss is *ignored*: no flinch, logged `tap_missed`, as today (a pet that twitches mid-sentence invites the next poke) | — |
 | PET while THINK | the offer's targets, if it is visible (as today) · PET (today's poke; `display.c`'s guard turns it into a flinch only while a reply sounds) | — |
-| PLAY | EXIT (*ignored* until `play.since + EXIT_GRACE_MS`, every phase) · FACE (live while \|`S`\| > 1 in a non-replay PLAY, after the press grace; *ignored* in a replay) · PAUSE/REPLY quadrants (*ignored* until ON) · swallow (flinches, as today's off-disc transport press) | — |
+| PLAY | EXIT (*ignored* until `play.since + EXIT_GRACE_MS`, every phase) · FACE (live while \|`S`\| > 1 in a non-replay PLAY, after the press grace; *ignored* in a replay) · PAUSE/REPLY quadrants (*ignored* until ON, with today's flinch while the press is pending) · swallow (flinches, as today's off-disc transport press) | — |
 
 `sm_target()` reports an *ignored* target as `TARGET_IGNORED`, distinct from the target itself.
 So "a press in the grace is not the exit" stays literally true, and Appendix A #9 holds.
@@ -1262,7 +1319,8 @@ a single message is "1/1" and its face is dead (`test_single_message_face_dead_b
 with a snapshot that still lists `cur.id`; `test_old_box_single_message_face_dead`).
 
 - `run_pos` starts at 1 at the press and advances by one each time a new `cur.id` is **seeded**
-  in the run ("1/3" → "2/3"), so there is no "1/2" gap between seeding and the first byte.
+  and then begins; an id that answers 204 (§7.3) is skipped without advancing it. It
+  counts "1/3" → "2/3" with no gap between seeding and the first byte.
 - At the press, a child who picked "2/3" therefore sees "1/3" once it plays: the
   numeral in PLAY counts the run this press started, which begins at the chosen message. This is
   intended and pinned by `test_counter_counts_the_run_from_the_press`; in PET the numeral is still
@@ -1278,7 +1336,9 @@ with a snapshot that still lists `cur.id`; `test_old_box_single_message_face_dea
 
 - **Notice:**
   - while sending → refusal;
-  - otherwise → `CUE_PLAY`, clear the offer, PLAY{target = the selection, `since = now`}.
+  - otherwise → `CUE_PLAY`, clear the offer, PLAY{target = the selection, `since = now`}. The
+    target is re-resolved when the command is posted (§8.2), so a press made during a stop's hold
+    plays what `S` holds at the post.
 - **AGAIN:**
   - while sending → refusal;
   - otherwise → `CUE_PLAY`, PLAY{replay; target = the offer's `{id, from, from_dad}`, carried in
@@ -1287,7 +1347,8 @@ with a snapshot that still lists `cur.id`; `test_old_box_single_message_face_dea
   - opens → clear the offer, RECORD{to = `sm_face`}, `CUE_REPLY`;
   - refused → refusal; the offer stays.
 - **EXIT** → the stop pattern of PLAY (`SILENCE`, then `CUE_STOP` at a later seq), clear the
-  offer, disarm the follow-up. So a pet reply sounding in THINK is cut, as `jpanel_stop()` →
+  offer, disarm the follow-up. So a pet reply sounding with the pair up (the reply itself plays
+  after SPOKE, when the turn is already NONE) is cut, as `jpanel_stop()` →
   `audio_stop()` does today.
 - **Swipe** → select, clamped; `CUE_HEARD` only if the selection moved.
 - **An unseen id arrives in PET** → the selection goes home (§8.2). In every mode it joins
@@ -1348,7 +1409,14 @@ is dead code in 0.3.39 and is not ported.
 - **FACE / swipe:**
   - if the selection over `S` moves → that pattern with `CUE_HEARD`, clear the offer, PET
     (JP 0.3.37);
-  - FACE **wraps** (today's `select_step(…, true)`); a swipe at a clamped end → nothing.
+  - FACE **wraps** (today's `select_step(…, true)`); a swipe that **began after** the press that
+    entered PLAY, at a clamped end → nothing.
+- **A swipe whose down edge is the press that entered PLAY** (`down.at == play.since`) → the stop
+  pattern with `CUE_HEARD`, PET — whatever the selection does. Touch queues the press on the down
+  edge and a swipe is recognised only after 60 px of travel, so that press has already become
+  the notice press; this is RECORD's "swipe in the opening press" rule, and it keeps *"a lone
+  message must not be losable to a smear"* (`ui.h`) true: a smear across a lone message, or
+  toward an end, never plays it (`test_smear_from_notice_never_plays`).
 - **PAUSE** (when ON) → toggle `pause_req` for `cur.stream_id`, with `CUE_PAUSE` or
   `CUE_RESUME`.
 - **REPLY** (when ON) → mic gate, checked **before** stopping:
@@ -1416,7 +1484,8 @@ is dead code in 0.3.39 and is not ported.
   - `test_poke_during_outcome_still_sounds_outcome`;
   - `test_standby_after_tick_still_sends`;
   - `test_reply_refused_during_pet_reply_keeps_playing`;
-  - `test_swipe_at_clamped_end_stops_nothing`;
+  - `test_later_swipe_at_clamped_end_stops_nothing` (a swipe that began after the entering
+    press), `test_smear_from_notice_never_plays`;
   - `test_hold_on_upper_pet_during_fresh_offer_opens_nothing`;
   - `test_again_during_think_then_failed_turn_still_dashes`;
   - `test_single_message_face_dead_between_claim_and_stream` (the snapshot still lists `cur.id`);
@@ -1454,7 +1523,9 @@ is dead code in 0.3.39 and is not ported.
   - `test_hold_in_exit_quadrant_of_standing_offer_dismisses`;
   - `test_selection_held_while_stop_outcome_pending`;
   - `test_exit_cutting_reply_opens_no_follow_up`;
-  - `test_play_not_posted_in_frame_of_its_press_cue`.
+  - `test_play_not_posted_in_frame_of_its_press_cue`;
+  - `test_notice_press_during_stop_hold_resolves_at_post`;
+  - `test_failed_play_clears_mode_press_grace`.
 - **`test_storm`** — 300k seeded frames:
   - snapshots dropped, delayed (at most 2 s, below the `UI_MARGIN_MS` budget of §7.5c) or
     duplicated;
@@ -1614,7 +1685,8 @@ applies it through Ops → Update, and the panels OTA on the differing version.
     `_panel_names` call out of its open session the same way. No row-exclusive lock is ever held
     while waiting for a second connection.
 - **C5** — a between row is listed in both threads.
-  - Clearing either thread deletes the rows it shows, except unheard rows that are not keyless.
+  - Clearing either thread deletes the rows it shows, except panel-addressed unheard rows that
+    are not keyless (owner-addressed rows are deleted, as today).
     Gave-up rows are kept, as today.
   - Keyless rows (E3.3) are deleted from W2; waiting-for-re-flash rows are kept
     (`test_clear_keeps_in_window_mail_of_revoked_panel`). The clear's SQL uses one predicate,
@@ -1672,7 +1744,7 @@ so they are exempt from the GUI gate.
 4. `run_jpanel_tests`, `run_stream_tests` and **`check_no_logic_in_audio`** go into `make test`
    (`check_no_logic_in_display` follows in F3) (CI runs
    only `make -C firmware/host test`). The fakes are:
-   - a scripted box, with a 0.3.39 mode;
+   - a scripted box, with a mode for F0's build (0.3.40);
    - the real ring and stream;
    - a fake clock;
    - a test-only SHA-256, so `dev-setup.sh` is unchanged;
@@ -1724,7 +1796,11 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 
 ### 11.1 Design
 
-**1. `readdress_orphans(session) → moved rows`.** Idempotent; runs in owner context.
+**1. `readdress_orphans(session, *, subject_id: str | None = None) → moved rows`.** Idempotent;
+runs in owner context. `subject_id` scopes it to one subject (the send path); `None` means every
+subject (the sweep, the migration). It lives in the jpanel module; `SqlDeviceRepo.reflash` and
+`rotate` take an `after_revoke(session)` callback, which the endpoint route supplies, so the
+repo carries no jpanel SQL and the re-address still runs inside the same locked transaction.
 
 - It moves unplayed rows addressed to a revoked key onto the same subject's single live jpet
   key. It never crosses subjects.
@@ -1738,7 +1814,9 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 - **In the send path it is scoped** to the just-inserted row's recipient subject; reflash, rotate,
   merge and the sweep cover the rest. That keeps the owner-context escalation inside a panel
   route as narrow as it can be.
-- **It is one SQL statement** (`UPDATE … FROM` the subject's live key `… RETURNING`). Postgres
+- **It is one SQL statement** (`UPDATE … FROM` the subject's live key `… RETURNING`), whose rows
+  are taken by a `SELECT … ORDER BY id FOR UPDATE` subquery, so two concurrent calls lock rows in
+  one order and cannot deadlock on them. Postgres
   locks the table while parsing, before the statement's snapshot, so a call that overlaps a
   re-flash waits for its `SHARE ROW EXCLUSIVE` lock and then sees the revoke; a read of the
   mapping cannot fall before the lock and the write after it. It does **not** take the table lock
@@ -1838,7 +1916,8 @@ A waiting-for-re-flash row becomes keyless as it ages out. One SQL fragment, `_K
   and discardable); tombstone the source as `merged:<into>:<source>`; log the merge.
 - `SqlDeviceRepo.list` hides `merged:` tombstones from W2.
 - **Exposed** as owner `POST /jpanel/panels/{id}/merge`, where `{id}` is the source **subject**
-  id (a retired group's id, §11.1 item 4), and in W2 as:
+  id (a retired group's id, §11.1 item 4), with body `{"into": <live-key device id>}` — the id the
+  PWA already holds — resolved to its subject on the server; and in W2 as:
   - **debug `POST /api/debug/jpanel/panels/{id}/merge`** under `_OWNER_CTX`;
   - `GET /api/debug/jpanel/panels` (subjects, retired groups, ids, row counts);
   - the `debug-connect.sh` verbs `jpanel-panels` and `jpanel-merge`;
@@ -1872,9 +1951,12 @@ lands in W2 because its copy points at merge, which W2 builds:
 
 - **Empty** stays valid: an unnamed unit.
 - **Whitespace and case** are normalised as `_panel_name` does, and an existing subject of this
-  role is matched case-insensitively on the normalised name (item 3), reusing its stored name —
-  so a pre-rule label with a doubled space or other capitals still matches and the identity does
-  not split.
+  role is matched on `lower(regexp_replace(trim(name), '\s+', ' ', 'g'))` (item 3), reusing its
+  stored name — so a pre-rule label with a doubled space or other capitals still matches and the
+  identity does not split. **Re-flash's revoke uses the same predicate** (today it compares
+  `display_name = :label` exactly), or a case-variant subject would keep a live key and
+  `_panel_names` would see two siblings. `build_flash` writes the reused stored name into NVS.
+  Test: `test_flash_case_variant_revokes_old_key`.
 - **`_panel_name`'s 409** ("that is what an unnamed panel is called") passes through, with the
   sentence "Leave the name empty to flash an unnamed panel."
 - **Length over 14, or a character the panel's font lacks**, answers 422: *"Rename this panel in
@@ -1929,9 +2011,13 @@ No tables or policies change, so the existing RLS tests stand. New tests:
 | | `test_gave_up_row_kept_by_clear_and_retryable` |
 | | `test_readdress_resets_returns_and_offered_at` |
 | | `test_next_by_sibling_id_is_204` |
+| | `test_waiting_offered_at_stamps_only_own_rows` (isolation: the W3 panel-reachable write) |
 
 **Coverage.** `/returned`, `merge_subject`, `discard_message`, `readdress_orphans` and every debug
-route are security paths: 100% line coverage, as CLAUDE.md #5 requires. The W2 and W3 PRs attach
+route are security paths — as is **every new jpanel debug route** — so 100% line coverage, as
+CLAUDE.md #5 requires. `DEBUG_ACCESS.md`'s `whoami` row is rewritten with the full scope list
+(`jpanel.panels` for `GET /api/debug/jpanel/panels`, `jpanel.merge`, `jpanel.discard`,
+`jpanel.retry`). The W2 and W3 PRs attach
 the per-file coverage lines for each as evidence.
 
 ## 12. Waves
@@ -1953,10 +2039,11 @@ Each wave is one PR. Each package runs its **whole** gate set, from its own dire
 
 - bumps `version.txt` and commits a rebuilt `dist/`;
 - keeps the bootloader byte-identical;
-- **passes the internal-RAM gate (§6a)**: CI's ESP-IDF build reports internal DRAM static use,
-  which may not grow past the wave's stated budget; and after deploy the first report's
-  `int_free`/`int_min` (read through the debug API, after every task has started) must stay at or
-  above the floor. A panel below it is handled the F0 way;
+- **passes the internal-RAM gates (§6a)**: the `idf.py size` step F0 adds to `firmware.yml`
+  checks internal DRAM (`.data` + `.bss`) against F0's recorded baseline plus the delta the
+  wave's PR states; and after deploy the first report's `int_min` (read through the debug API,
+  after every task has started) must stay at or above F0's measured floor. A panel below it is
+  handled the F0 way;
 - keeps the update check **before** any task starts (§6a);
 - applies the §10 retargets it owns.
 
@@ -1972,10 +2059,10 @@ F3 also updates JP's text on exit, the pair, and refusals.
 
 | Wave | Contents | Depends on | Gates |
 |---|---|---|---|
-| **W1** box/PWA, invisible | A3 box (+ `asyncio.wait_for` inside `_transcribe`'s `try`); C2; C5 (+ a clear releases blobs); C6 (query function + backend `/summary` only — **no badge UI**, which is P1's); C7 audio route; C8 (non-visual); C9; C10; C11; names are cut to 31 escaped bytes on the wire; `ci.yml` edits (the revision-delete job, unfiltered); skew pins; revision-delete CI check | — | backend, frontend, supervisor, `jcode`, `jlaunch` (the `ci.yml` edit trips every filter), docs |
+| **W1** box/PWA, invisible | A3 box (+ `asyncio.wait_for` inside `_transcribe`'s `try`); C2; C5 (+ a clear releases blobs); C6 (query function + backend `/summary` only — **no badge UI**, which is P1's); C7 audio route; C8 (non-visual); C9; C10; C11; names are cut to 31 escaped bytes on the wire; `ci.yml` edits (the revision-delete step in the backend job); skew pins; revision-delete CI check | — | backend, frontend, supervisor, `jcode`, `jlaunch` (the `ci.yml` edit trips every filter), docs |
 | **W2** identity | §11 (one-statement `readdress_orphans` with its 14-day window and lock order, grouping, keyless rows cleared by a thread clear (waiting-for-re-flash rows kept), `discard_message` + debug discard, owner and debug merge, listing, tombstones hidden in `SqlDeviceRepo.list`, `whoami` scopes, inline-SQL migration with a pre-merge count, the flash-name rule of item 8); retired chips hidden; JP §3b, §5 and Part B "### Data" updated for the retention change. **Escalation + red-team review.** | W1 | backend, frontend, docs |
 | **W3** contract | `/waiting` ids + `offered_at`; `/next?id=` + headers; `/played {heard_ms}`; `/returned` + `_ALLOWED` + tunnel test; C3 owner routes; uuid guards; columns `heard_ms`, `offered_at`, `returns NOT NULL DEFAULT 0`; `readdress_orphans` also resets `returns` and `offered_at`; head and buffer pins. **Red-team review**: it adds panel-reachable writes (`/returned`, the `offered_at` stamp, an `_ALLOWED` row). | W2 | backend, docs |
-| **F0** booting baseline | §6a: 0.3.38's code as 0.3.40; a measured `SPEECH_MIN_INTERNAL`; the internal-RAM floor measured | — | firmware, backend, supervisor, docs |
+| **F0** booting baseline | §6a: 0.3.39's code with the persistent WebSocket disabled, as 0.3.40 — a minimal diff from HEAD, so the placeholder names stay; measurements on hardware; a `speech_ok` report flag with `TelemetryIn`; `SPEECH_MIN_INTERNAL = S + T + P`; the `idf.py size` step and DRAM baseline | — | firmware, backend, supervisor, docs |
 | **F1** host foundations | §10, no behaviour change against F0's baseline | F0 | firmware, backend, supervisor, docs |
 | **F2** engine | §7; defects only; wrappers | F1, W3 | firmware, backend, supervisor, docs |
 | **F3** state machine | §8; Appendix A; Q1–Q3; hand-back | F2 | firmware, backend, supervisor, docs |
@@ -2021,6 +2108,10 @@ can run in parallel with the W waves, and F2 needs both W3 and F1.
   three minutes for a 35 s message on a 10 KB/s link, about six if the box asks for a retry — so the pet answers "busy" to its wake word
   for that long.
 - A cancel before the head can cost one attempt.
+- **Until F2, a long send can report "didn't go" although it was stored.** F0's
+  `JPANEL_HTTP_TIMEOUT_MS` is 20 s, while W1 lets transcription take up to 60 s; a 35 s message
+  whose transcription runs past 20 s times out on the panel, and the child may re-record a
+  duplicate. F2's SEND head budget (60 + 15 s, §7.5) closes it.
 - Each duplicate subject left by re-flashes before W2 needs one explicit merge.
 - Between W2 and P1, display-role pet chats (today drawn as "panel xxxxxxxx" chips) disappear
   from the PWA: their "Displays" group needs `?include_retired=1`, which only P1 sends.
@@ -2044,7 +2135,7 @@ can run in parallel with the W waves, and F2 needs both W3 and F1.
 
 ## 14. Review log
 
-Every item in twelve rounds of cold review was checked against the code before it was accepted.
+Every item in thirteen rounds of cold review was checked against the code before it was accepted.
 None was rejected. The per-round counts are in the intro.
 
 **Mechanisms introduced and later removed**, because each kept producing defects:
@@ -2117,7 +2208,31 @@ None was rejected. The per-round counts are in the intro.
 | UX: rule 2 missed AGAIN and the pair's REPLY | the grid's cancel cell, the cross and AGAIN share the lower-left quadrant | Both graced; the exemption is PLAY's PAUSE/REPLY and swipes; two bounce tests |
 | UX: Finished and the backstops matched an unposted PLAY | `play.seq` was unassigned before the post | `play.seq = NONE` until posted; every engine-facing rule gated on it; `test_old_stop_outcome_does_not_finish_new_pending_play` |
 | UX: the hold grace silenced deliberate grid taps (#33) | #33 taps ~340 ms after the hold | The hold grace covers only down edges within 40 px of the hold point; `test_deliberate_cell_tap_after_hold_acts` |
-| Incident: 0.3.39 boot-loops on real hardware | the USB console: the WebSocket takes ~48 KB internal (119 → 70 KB); speech starts above its 48 KB floor; the PHY's `esp_timer_create` then fails `ESP_ERR_NO_MEM` and aborts | §6a: F0 = 0.3.38's code as 0.3.40; an internal-RAM gate on every firmware wave; a measured `SPEECH_MIN_INTERNAL`; the update check stays first |
+| Incident: 0.3.39 boot-loops on real hardware | the USB console: the WebSocket takes ~48 KB internal (119 → 70 KB); speech starts above its 48 KB floor; the PHY's `esp_timer_create` then fails `ESP_ERR_NO_MEM` and aborts | §6a (as revised in round 13): F0 = 0.3.39 with the socket disabled; internal-RAM gates on every firmware wave; a measured `SPEECH_MIN_INTERNAL`; the update check stays first |
+
+**Round 13** — 7 blocking items; the owner decided the twins stay on the S3 panels:
+
+| Item | Evidence checked | Resolution |
+|---|---|---|
+| F0 as 0.3.38's code deletes what F1–F3 build on | 0.3.38 has no `link.c`/`wsproto.*`; the backend reads them (`test_panel_ws.py`, `test_jpanel_api.py`); `link.h:9-14` records 0.3.38's two-session "connect" failure | F0 = 0.3.39 with the persistent WebSocket disabled: `link.c`'s HTTPS fallback under its one lock; the socket is not planned to return (§6a) |
+| RAM floors rested on misread figures | the ~100 KB was the AGC-on cost (`ROOM_ENDPOINT_PLAN.md` §10.4ba); `link.h`'s ~75 KB is free heap at failure; speech started at 70.5 KB in the incident | F0 measures `S`, `T`, `P` on hardware and sets `SPEECH_MIN_INTERNAL = S + T + P` below the measured pre-speech free; `speech_ok` added; a deaf panel cannot send, so the floor only prevents a crash loop |
+| The DRAM gate had no CI step | `firmware.yml` has no size step | F0 adds `idf.py size` with a recorded baseline; each wave states its delta |
+| A swipe from the notice played a message | touch queues the press on the down edge; a swipe is recognised after 60 px | A swipe whose down edge entered PLAY unwinds to PET with the stop pattern; `test_smear_from_notice_never_plays` |
+| A notice press during a stop's hold targeted an acked id | the held id is in neither `waiting` nor `S` | Posting waits for `done_seq ≥ stopped_seq`; the target is resolved at the post; the held sender is drawn; a test |
+
+**Round-13 non-blocking items, all taken** (39): backend — the revoke uses the flash match's
+normalised, case-insensitive predicate, and the reused name goes to NVS; "panel-addressed"
+unheard rows in E3.6 and C5; `readdress_orphans`' subject scope and its callback seam;
+row-ordered locking; the revision step's wording, `--no-renames` and `fetch-depth`; the
+F0-to-F2 send-timeout gap in §13; the merge body; the `whoami` scope list; the `offered_at`
+isolation test; the coverage wording. Firmware — §6a's numbering; the F0 skew header and scripted
+box; `LINK_HEAD_MAX` on the HTTPS path; F0 as a minimal diff that keeps the placeholder names;
+SEND's zero gen; `msg_err` a string; RTC words and brownouts; `run_continues = false` after a
+failed ack. UX — `mode_press_at` cleared without a press; graced presses silent and logged; the
+button-before-touch change in Appendix B; the hold point taken at the hold; re-resolution placed
+in the frame; `run_pos` skips 204s; #28, #30, #33 and #35 notes; the pet-reply wording; the grid
+refusal closes the grid; a pending transport press flinches; calibration's SPOKE-before-timeout
+order; one writer for standby.
 
 **Round-12 non-blocking items, all taken** (43): backend — the name rule before
 `provision_or_reflash`, with no key revoked on refusal; case-insensitive matching on the
@@ -2300,14 +2415,14 @@ the test protects. No test is deleted.
 | 25 | `test_the_run_controls_appear_from_the_press_not_the_stream` | U | The pause glyph is drawn while ignored. |
 | 26 | `test_the_top_right_corner_ends_a_message_while_it_plays` | R | Second half: after the exit, mode PET with **no offer**; one press (owner Q2). |
 | 27 | `test_the_pair_waits_for_a_finger_not_a_clock` | R | `jpanel_clear >= 1` becomes "`play_outcome` heard consumed, offer set"; plus standing at 10 s, still drawn, and hidden while a message waits (*the pair waits for a finger*). |
-| 28 | `test_reply_records_to_whoever_just_spoke` | U | The recipient comes from `sm_face` (the offer). |
+| 28 | `test_reply_records_to_whoever_just_spoke` | U | The recipient comes from `sm_face` (the offer). U only because the port opens RECORD the way the harness does, without a touch edge; a touch-opened RECORD graces the tick (§8.2), which the new tests cover. |
 | 29 | `test_sending_does_not_raise_the_playback_controls` | R | After SEND, `sending` with no transport or pair drawn; then a **press** on the notice is refused "busy", and a press after `SENT` raises the controls (*an outgoing message never shows playback controls*). |
-| 30 | `test_a_short_button_press_darkens_blanks_and_mutes` | U | Effects: `SILENCE`, then `CUE_STOP`, `STOP`, standby, `BLANK`. Extended to every mode; no `CAPTURE_OPEN` after standby, including a follow-up; a send continues. The audible order is proved in `stream_tests`. |
+| 30 | `test_a_short_button_press_darkens_blanks_and_mutes` | U | Effects: `SILENCE`, then `CUE_STOP`, `STOP`, standby, `BLANK`. Extended to every mode; no `CAPTURE_OPEN` after standby, including a follow-up; a send continues. Modes are entered without a touch edge, as in the harness. The audible order is proved in `stream_tests`. |
 | 31 | `test_a_five_second_hold_requests_deep_sleep_exactly_once` | U | |
 | 32 | `test_a_hold_on_the_pet_opens_the_grid_at_every_free_tap_count` | U | |
-| 33 | `test_the_grid_reaches_all_four_people` | R | It taps each cell ~340 ms after the hold opened the grid; the cell centres lie well outside the 40 px of the hold point that the hold grace covers (§8.2), so every tap acts. Every cell still reaches its person, with `CUE_LISTEN` and the right `rec_to`. The pet cell's `!w.muted` pinned a harness-only rule (`w.muted = ui_recording \|\| standby`); the device mutes commands in LISTEN too (`display.c:3212`, Appendix B). Rewritten: `cmds_muted` is true in LISTEN and in RECORD (*a cell opens a conversation or a message; an open microphone is deaf to commands*). |
+| 33 | `test_the_grid_reaches_all_four_people` | R | It taps each cell ~200 ms after the hold opened the grid; the cell centres lie well outside the 40 px of the hold point that the hold grace covers (§8.2), so every tap acts. Every cell still reaches its person, with `CUE_LISTEN` and the right `rec_to`. The pet cell's `!w.muted` pinned a harness-only rule (`w.muted = ui_recording \|\| standby`); the device mutes commands in LISTEN too (`display.c:3212`, Appendix B). Rewritten: `cmds_muted` is true in LISTEN and in RECORD (*a cell opens a conversation or a message; an open microphone is deaf to commands*). |
 | 34 | `test_the_grid_closes_itself_but_a_stray_finger_does_not` | U | |
-| 35 | `test_a_tick_pressed_into_silence_refuses_to_send` | U | `CUE_OOPS`. |
+| 35 | `test_a_tick_pressed_into_silence_refuses_to_send` | U | `CUE_OOPS`. As #28: RECORD is opened without a touch edge, so the tick is not graced. |
 | 36 | `test_the_cross_discards_and_the_pet_is_not_poked` | U | The top-half miss in LISTEN stays *ignored*: no flinch, `tap_missed` logged, and the turn survives (I4's exception; no recovery). |
 | 37 | `test_a_named_turn_with_nobody_speaking_costs_nothing` | U | |
 | 38 | `test_a_failed_turn_says_so_rather_than_going_quiet` | R | The harness sets `net = BUSY` in `perform()` after the step; the port keeps `CHECK(turn == THINKING)` on the entry frame because of frame-boundary rule 1 (§8.2), then the same failure, dash and OOPS assertions (*a failed turn says so*). |
@@ -2390,6 +2505,7 @@ the finding (†).
 | `display.c` 0.3.26 *"IT BLINKS FIRST"* — the stop cue sounds before the dark | Standby cue | K. Made true in F3: `SILENCE` then `CUE_STOP`. On 0.3.39 (and in F2) `audio_stop()` cuts it in the same frame (†) |
 | 0.3.32 "every playback control answers the finger" — the reply press | `CUE_REPLY` at the reply press | K. Made true in F3: on 0.3.39 (and in F2) `jpanel_stop()` cuts it in the same frame (†) |
 | `display.c` wake from standby | A press in standby wakes with `CUE_HEARD` | K |
+| `display.c` order: touch dispatch (~2480) runs before the button (~3240) | A touch and a button press in one frame both act | **C †**: the button is read first, and a frame that enters standby drops its touch and voice edges, so a queued press cannot start a PLAY in the dark (§8.2) |
 | `display.c` standby path (resets `s_talk` to idle) | A pet reply still in flight when the button is pressed plays when it arrives, and nothing follows it | K: `turn.state = NONE` with no `TALK_CLEAR`, `follow_turns = MAX` (§8.3). A reply already sounding is cut, as `audio_stop()` does today |
 | — | The new mode's targets right after the press that opened it (tick and cross after REPLY or a grid cell; the notice, AGAIN and REPLY after a press back to PET; FACE after the notice; grid cells near a hold's own point) | **C †**: ignored for `EXIT_GRACE_MS`, so a bounce cannot send, drop, replay or skip anything (§8.2). PLAY's PAUSE and REPLY and every swipe are exempt |
 | `display.c` hush/cap auto-send | No cue on auto-send; `CUE_SENT` follows | K |

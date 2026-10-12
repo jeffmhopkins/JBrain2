@@ -277,7 +277,7 @@ The location + family + intake slices shipped; build records are under
   probably unavailable and press-to-talk is the primary path, not the fallback.
 
 - **Panel voice-post fixes** — Scheduled (`plans/JPANEL_MESSAGING_FIXES_PLAN.md`; W1–W3 box/PWA,
-  F0–F4 firmware (F0 first restores a booting baseline: 0.3.39 boot-loops), P1 PWA) — fixes every finding of the 2026-10 adversarial review of the panels'
+  F0–F4 firmware (F0 first ships 0.3.39 with its persistent WebSocket off, as 0.3.40, because 0.3.39 boot-loops), P1 PWA) — fixes every finding of the 2026-10 adversarial review of the panels'
   voice post (`plans/JPANEL_PLAN.md`): stops undone mid-fetch, stuck runs, the recording-cap
   mismatch, mail orphaned by a re-flash, undeliverable rows that never clear, and "heard" that is
   not true. The engine and the panel state machine move into host-tested cores first.
