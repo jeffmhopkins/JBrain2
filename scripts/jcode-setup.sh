@@ -55,7 +55,6 @@ JCODE_MODEL="${JCODE_MODEL:-qwen3-coder-next}"
 set_env JCODE_ENABLED true
 set_env JCODE_URL "http://jcode:9100"
 set_env JCODE_MODEL "$JCODE_MODEL"
-set_env JCODE_MODEL_URL "${JCODE_MODEL_URL:-http://local-llm:8080}"
 
 if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
   # Provision the on-box coder model jcode talks to (catalog id == JCODE_MODEL ==

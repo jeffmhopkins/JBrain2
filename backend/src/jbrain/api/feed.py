@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from jbrain.api.deps import owner_only
 from jbrain.appointments.ics import to_ics
 from jbrain.appointments.repo import SqlAppointmentsRepo
+from jbrain.auth.keys import secrets_equal
 from jbrain.db.session import SessionContext
 from jbrain.settings_store import FEED_TOKEN_KEY, SqlSettingsStore
 
@@ -50,7 +51,7 @@ async def _stored_token(request: Request) -> str | None:
 async def appointments_ics(request: Request, token: str = "") -> Response:
     stored = await _stored_token(request)
     # Disabled feed or any token mismatch → an opaque 404 (never reveal which).
-    if stored is None or not token or not secrets.compare_digest(token, stored):
+    if stored is None or not token or not secrets_equal(token, stored):
         return Response(status_code=404)
     # Recent past + all future, cancelled included (emitted as STATUS:CANCELLED so
     # a subscribed calendar removes them). A lower bound keeps the polled document

@@ -31,6 +31,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit
 
+from jbrain.web.netguard import is_public_ip
+
 # --- The page view ------------------------------------------------------------
 
 # Roles the model may act on. Everything else is read, not driven.
@@ -428,13 +430,8 @@ _COMMIT_BUTTON = re.compile(
 )
 
 
-def _is_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    """`is_global` rather than `not is_private`: it also excludes CGNAT 100.64/10, which
-    Python counts as neither private nor global."""
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        ip = mapped
-    return ip.is_global and not ip.is_multicast
+# One public-address rule for every outbound path (web_fetch, favicons, the browse agent).
+_is_public_ip = is_public_ip
 
 
 _NUMERIC_LABEL = re.compile(r"^(?:0x[0-9a-f]*|[0-9]+)$", re.IGNORECASE)

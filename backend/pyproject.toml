@@ -10,7 +10,7 @@ dependencies = [
     "asyncpg>=0.29",
     "alembic>=1.13",
     "pydantic-settings>=2.4",
-    "httpx>=0.27",
+    "httpx>=0.27,<0.29",  # web/netguard.py rebuilds the private `_pool`
     # WebSocket *client* for ComfyUI's /ws — the only source of live generation
     # progress + b_preview frames (docs/archive/IMAGE_GEN_LIVE_PLAN.md). httpx has no WS
     # client; this is the standard minimal async one. (live.py's server-side WS is

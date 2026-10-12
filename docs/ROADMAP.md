@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-10
+> **Status:** Living · **Last verified:** 2026-10-12
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -290,7 +290,7 @@ The location + family + intake slices shipped; build records are under
   play-buttons, push-to-talk, a grown-ups room-map) drives it via `POST /api/pet/command`, and the
   **wall view lives on the on-box wall display** (`deploy/wall`, `:8800/pet`) — a
   read-only WebGL room that polls the pet through the internal-only `GET /internal/pet` (Caddy never
-  routes `/internal` off-box), so the display stays DB-free and the pet is never exposed publicly.
+  routes `/internal` off-box, and since security plan S2.2 it takes the wall's own token), so the display stays DB-free and the pet is never exposed publicly.
   **v2 (migration 0125)** pivoted from Tamagotchi decay to positive, command-and-response play: the
   `pet.turn` brain emits a bounded, enum-constrained **action-script** ("chase the ball", "pick up
   the ball and put it in the corner") the wall plays out; **room objects** (ball/bed/toy-box/food-
@@ -576,7 +576,8 @@ forgery from the preview subdomain, owner surfaces admitting any cookie principa
 that can read the jcode control token, an unauthenticated `/internal` reachable from sandbox
 networks, and an SSRF pivot through the reader/byparr browsers. S1 closes the web holes, S2 the
 sandboxes and internal network, S3 device and token hygiene, S4 a cold red-team re-analysis, S5 latent RLS hardening. S1 ✅
-(preview containment, owner gates + route matrix, same-site guard + `__Host-` cookie, safe hrefs).
+(preview containment, owner gates + route matrix, same-site guard + `__Host-` cookie, safe hrefs). S2 ✅
+(jcode per-session uids, per-caller `/internal` tokens, reader/byparr/jcode fenced behind the egress proxy, pinned direct fetches).
 
 **Scheduled:** jmolt hardening (build plan: `docs/plans/JMOLT_HARDENING_PLAN.md`, waves H1–H6) —
 after three live nights, four independent audits over the parts the first round of bugfixes had not

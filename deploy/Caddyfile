@@ -26,6 +26,14 @@
 		respond 404
 	}
 
+	# The jcode gateway bridge (models, completions, web, OCR) is for the jcode
+	# container alone, which reaches the api directly at http://api:8000. Routed
+	# publicly, its shared key — readable by every session — would keep working from
+	# the internet after a share is revoked.
+	handle /api/jcode/llm* {
+		respond 404
+	}
+
 	handle /api/* {
 		reverse_proxy api:8000 {
 			flush_interval -1

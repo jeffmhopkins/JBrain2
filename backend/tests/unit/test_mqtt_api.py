@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from jbrain.auth import keys
 from jbrain.config import Settings
 from jbrain.main import create_app
+from tests.internal_callers import mqtt_headers
 from tests.unit.fakes import FakeAuthRepo, FakeViewScopeRepo
 
 KEY = "jb1-AAAA-BBBB"
@@ -37,6 +38,7 @@ def client() -> Iterator[tuple[TestClient, str]]:
     app = create_app(settings)
     repo, pid = _make()
     with TestClient(app) as c:
+        c.headers.update(mqtt_headers(app))
         app.state.auth_repo = repo
         yield c, pid
 
@@ -77,6 +79,7 @@ def test_auth_rejects_revoked_and_wrong_kind_keys() -> None:
         app = create_app(settings)
         repo, pid = _make(kind=kind, revoked=revoked)
         with TestClient(app) as c:
+            c.headers.update(mqtt_headers(app))
             app.state.auth_repo = repo
             r = c.post("/internal/mqtt-auth", json={"username": pid, "password": KEY})
             assert r.status_code == 403, (kind, revoked)
@@ -110,6 +113,7 @@ def test_acl_denies_a_revoked_device_on_its_own_namespace() -> None:
     app = create_app(settings)
     repo, pid = _make(revoked=True)
     with TestClient(app) as c:
+        c.headers.update(mqtt_headers(app))
         app.state.auth_repo = repo
         r = c.post(
             "/internal/mqtt-acl",
@@ -134,6 +138,7 @@ def test_ingest_identity_authenticates_and_reads_owntracks_readonly() -> None:
     )
     app = create_app(settings)
     with TestClient(app) as c:
+        c.headers.update(mqtt_headers(app))
         app.state.auth_repo = FakeAuthRepo()
         # Auth: the right secret allows, a wrong one denies.
         assert (
@@ -145,6 +150,13 @@ def test_ingest_identity_authenticates_and_reads_owntracks_readonly() -> None:
         assert (
             c.post(
                 "/internal/mqtt-auth", json={"username": INGEST_USER, "password": "wrong"}
+            ).status_code
+            == 403
+        )
+        # Non-ASCII is an ordinary wrong secret, not a TypeError from compare_digest.
+        assert (
+            c.post(
+                "/internal/mqtt-auth", json={"username": INGEST_USER, "password": "wröng"}
             ).status_code
             == 403
         )
@@ -163,6 +175,7 @@ def test_ingest_identity_authenticates_and_reads_owntracks_readonly() -> None:
 def test_ingest_identity_is_disabled_when_no_secret_is_set() -> None:
     app = create_app(Settings(secure_cookies=False, database_url=_DB))  # secret == ""
     with TestClient(app) as c:
+        c.headers.update(mqtt_headers(app))
         app.state.auth_repo = FakeAuthRepo()
         # With no secret the ingest username falls through to the device path → denied.
         assert (
@@ -186,6 +199,7 @@ def test_acl_widens_to_group_members_on_read_only() -> None:
     scope = FakeViewScopeRepo(allowed={("sa", "sb")})
 
     with TestClient(app) as c:
+        c.headers.update(mqtt_headers(app))
         app.state.auth_repo = auth
         app.state.view_scope_repo = scope
 

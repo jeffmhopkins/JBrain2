@@ -24,11 +24,18 @@ logging.getLogger("jcode_ctl").setLevel(_level)
 if settings.debug_access_enabled:
     logging.getLogger("jcode_ctl").info("debug access on — jcode logging at DEBUG")
 sessions = SessionManager(
-    GitWorkspace(settings.egress_allowlist),
+    GitWorkspace(
+        settings.egress_allowlist,
+        workspace_root=settings.workspace_root,
+        home_root=settings.home_root,
+    ),
     settings.workspace_root,
     home_root=settings.home_root,
     max_sessions=settings.max_sessions,
 )
+# Before the app can serve a create: no uid is handed out until the trees, processes and
+# temp files a previous run left behind are gone.
+sessions.startup()
 # Host-served per-session preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md) — the sole
 # preview
 # path since the Wave P5b cutover retired the per-session cloudflared quick-tunnel. The

@@ -39,6 +39,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from jbrain import queue
+from jbrain.auth.keys import secrets_equal
 from jbrain.ingest.imageprep import pdf_page_images
 from jbrain.llm import engine as engines
 from jbrain.llm import gpu_guard, local_catalog
@@ -83,7 +84,7 @@ def _authorize(request: Request) -> None:
     """Fail-closed shared-token auth: the caller must present the jcode gateway secret.
     An empty configured token (code mode not provisioned) refuses every call."""
     token = getattr(request.app.state.settings, "jcode_gateway_token", "") or ""
-    if not token or _bearer(request) != token:
+    if not token or not secrets_equal(_bearer(request), token):
         raise HTTPException(status_code=401, detail="unauthorized")
 
 

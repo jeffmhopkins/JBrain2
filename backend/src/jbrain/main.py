@@ -101,6 +101,7 @@ from jbrain.api import (
     images_render,
     install,
     intake,
+    internal_auth,
     jcode,
     jcode_llm,
     jcode_preview,
@@ -239,7 +240,7 @@ from jbrain.settings_store import (
     LLM_KV_PREFIX_BUDGET_GB_DEFAULT,
     SqlSettingsStore,
 )
-from jbrain.storage import FsBackupShelf, FsBlobStore
+from jbrain.storage import FsBackupShelf, FsBlobStore, FsInternalSecrets, InternalSecrets
 from jbrain.stream import resolve_stream, ytdlp_available
 from jbrain.tasks.repo import TaskGroupRepo, TaskRepo, TaskRunRepo
 from jbrain.tasks.runner import LoopTurnExecutor, TaskRunner
@@ -356,6 +357,18 @@ def _prefix_lost_notifier(app: FastAPI) -> Callable[[str], None]:
     return notify
 
 
+def _mint_internal_secrets(store: InternalSecrets) -> None:
+    """Best-effort: an api that cannot write the volume still serves the owner; its
+    /internal routes then refuse every caller until the tokens exist (fail closed)."""
+    for caller in internal_auth.CALLERS:
+        try:
+            store.ensure(caller)
+        except OSError as exc:
+            structlog.get_logger().error(
+                "internal_secrets.mint_failed", caller=caller, error=repr(exc)
+            )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
 
@@ -365,6 +378,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         maker = async_sessionmaker(engine, expire_on_commit=False)
         app.state.engine = engine
         app.state.session_maker = maker
+        # Mint the /internal callers' tokens before anything can call in; the wall and
+        # mosquitto read them from the shared volume (api/internal_auth.py).
+        _mint_internal_secrets(app.state.internal_secrets)
         # The box's narration of its own GPU work (model loads, evictions, renders), which
         # the vitals surface reads back so a pinned trace with an empty roster explains
         # itself. Wired per PROCESS, not per request: the writers sit inside the gateway
@@ -763,6 +779,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         web_fetcher = WebFetcher(
             reader_url=settings.reader_url,
             solver_url=settings.solver_url,
+            solver_proxy_url=settings.solver_proxy_url,
+            reader_proxy_url=settings.reader_proxy_url,
             solver_first_domains=settings.solver_first_domains,
             tavily_url=settings.tavily_url,
             tavily_extract_depth=settings.tavily_extract_depth,
@@ -1821,6 +1839,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="JBrain", lifespan=lifespan)
     app.state.settings = settings
+    app.state.internal_secrets = FsInternalSecrets(settings.internal_secrets_dir)
     # A live, process-local feed of debug-console activity so the web console can
     # show every /api/debug/* call as it lands — including ones run from outside
     # that browser tab. Only the verb/route/outcome are kept (no bodies).
@@ -1941,10 +1960,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(live.router, prefix="/api")
     app.include_router(member.router, prefix="/api")
     # The MQTT broker's go-auth HTTP backend calls these on the internal network
-    # only — NOT under /api (Caddy never routes /internal off-box).
+    # only — NOT under /api (Caddy never routes /internal off-box) — with its own token.
     app.include_router(mqtt.router, prefix="/internal")
-    # The on-box wall display reads the pet snapshot here (internal
-    # network only; read-only; safe 'general' domain) — never off-box via Caddy.
+    # The on-box wall display drives the pet here (internal network only, wall-token-gated;
+    # safe 'general' domain) — never off-box via Caddy.
     app.include_router(pet_api.internal_router, prefix="/internal")
     # The worker's pre-load gateway-config re-stamp (internal network only, bearer-gated;
     # jbrain.llm.gateway_regen says why the worker cannot write the config itself).

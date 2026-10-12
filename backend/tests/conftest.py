@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import tempfile
 from typing import TYPE_CHECKING
 
 # Off for the WHOLE suite, before any Settings is constructed. The vitals sampler writes a
@@ -9,6 +10,11 @@ from typing import TYPE_CHECKING
 # absent gauge reads (None). Set here rather than in 64 individual Settings(...) calls, and
 # as an env var because that is what Settings reads.
 os.environ.setdefault("JBRAIN_VITALS_SAMPLER_ENABLED", "false")
+# Every app the suite starts mints its /internal caller tokens on start-up; keep them in a
+# throwaway directory rather than the production mount point (/run/jbrain-internal).
+os.environ.setdefault(
+    "JBRAIN_INTERNAL_SECRETS_DIR", tempfile.mkdtemp(prefix="jbrain-internal-secrets-")
+)
 
 
 if TYPE_CHECKING:

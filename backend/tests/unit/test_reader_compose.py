@@ -36,7 +36,8 @@ def test_reader_has_enlarged_shm_for_headless_chromium() -> None:
     assert reader.get("shm_size"), "reader renders with headless Chromium and needs shm_size set"
 
 
-def test_reader_shares_searxng_egress_network() -> None:
-    # The reader fetches the public target itself, so it needs egress — the same
-    # `internal` network searxng uses, reachable by api/worker at reader:3000.
-    assert _spec()["services"]["reader"]["networks"] == ["internal"]
+def test_reader_is_fenced_on_the_fetchers_network() -> None:
+    # The reader fetches the public target itself, but it runs page JS and follows redirects,
+    # so it sits on the gateway-less `fetchers` network (the api reaches it at reader:3000)
+    # and goes out only through the egress proxy (S2.3).
+    assert _spec()["services"]["reader"]["networks"] == ["fetchers"]
