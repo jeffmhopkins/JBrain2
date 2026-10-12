@@ -4,10 +4,12 @@
 `redeem` calls the SECURITY DEFINER `app.redeem_pairing_code`, which atomically
 validates the code and mints the device subject + `device_key` principal — so it
 needs no scope; a bare session suffices. The plaintext key is generated here and
-returned exactly once; only its hash reaches the DB.
+returned exactly once; only its hash reaches the DB. The pairing code is likewise stored
+only as `code_digest(code)` (migration 0238), so a reader of the table can't redeem it.
 """
 
 import base64
+import hashlib
 import json
 import secrets
 from dataclasses import dataclass
@@ -38,6 +40,12 @@ class RedeemedDevice:
 def generate_pairing_code() -> str:
     """A high-entropy (~160-bit), one-time, URL/QR-safe code."""
     return secrets.token_urlsafe(20)
+
+
+def code_digest(code: str) -> str:
+    """The at-rest form of a pairing code. Plain sha256, not `keys.hash_key`: that
+    lowercases, and these codes are case-sensitive. ~160 bits of entropy needs no salt."""
+    return hashlib.sha256(code.encode()).hexdigest()
 
 
 # The embeddable pairing payload version — bump if the shape changes so an old app
@@ -118,6 +126,7 @@ class SqlPairingRepo:
         EXISTING device (re-pair) — redemption rotates that device's key in place;
         without it the code provisions a fresh device. Returns (code, expiry)."""
         code = generate_pairing_code()
+        digest = code_digest(code)
         expires_at = datetime.now(UTC) + ttl
         async with scoped_session(self._maker, ctx) as session:
             await session.execute(
@@ -125,7 +134,7 @@ class SqlPairingRepo:
                     "INSERT INTO app.pairing_code (code, label, monitoring, subject_id, expires_at)"
                     " VALUES (:c, :l, :m, :s, :e)"
                 ),
-                {"c": code, "l": label, "m": monitoring, "s": subject_id, "e": expires_at},
+                {"c": digest, "l": label, "m": monitoring, "s": subject_id, "e": expires_at},
             )
         return code, expires_at
 
@@ -142,7 +151,7 @@ class SqlPairingRepo:
                         "   label, monitoring"
                         " FROM app.redeem_pairing_code(:c, :kh)"
                     ),
-                    {"c": code, "kh": keys.hash_key(key)},
+                    {"c": code_digest(code), "kh": keys.hash_key(key)},
                 )
             ).first()
         if row is None:

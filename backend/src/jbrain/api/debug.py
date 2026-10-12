@@ -1543,6 +1543,8 @@ def _jsonable(value: Any) -> Any:
 # Two shapes, because the secrets live in two shapes. A dedicated COLUMN named for a secret
 # is redacted by name. And `app.settings` is one row per key, so a row whose key names a
 # secret has its `value` redacted — the column there is called `value` and carries everything.
+# Both are by NAME, so an alias walks past them; since S3.3 the settings credentials are
+# hidden by relation in Postgres (migration 0239) and this is the backstop for everything else.
 _SECRET_NAME_RE = re.compile(
     r"(?:^|_)(?:api_key|secret|password|passwd|credential|bearer)s?(?:_|$)"
     r"|_key$|_token$|^token$|^key$",
@@ -1581,6 +1583,28 @@ def _redact_row(columns: list[str], row: list[Any]) -> list[Any]:
     return out
 
 
+# F12 (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S3.3). Functions that turn a read into
+# something the column-name redaction can't see: the *_to_xml family and ts_stat/ts_rewrite
+# run a query given as TEXT (so its columns arrive as one opaque blob), set_config moves the
+# session's RLS stamps, pg_read_*/pg_ls_dir/lo_* read server files and large objects, dblink
+# opens a second connection outside this transaction. `U&` spellings are refused because they
+# would let any of these names past a text match. A text match is crude — it also refuses a
+# string literal that merely mentions one — but none of these belong in a diagnostic read,
+# and EXPLAIN carries its inner statement verbatim, so it is checked by the same match.
+# The secret rows of app.settings are NOT this list's job: migration 0239 hides them from
+# any read-only transaction in Postgres itself, which no alias or expression gets around.
+_REFUSED_SQL_RE = re.compile(
+    r"\w*_to_xml\w*|\bset_config\b|\bpg_read_(?:binary_)?file\b|\bpg_ls_dir\b|\blo_\w+"
+    r"|\bdblink\w*|\bts_stat\b|\bts_rewrite\b|\bu&[\"']",
+)
+
+
+def _refused_sql(sql: str) -> str | None:
+    """The refused function the statement names, if any."""
+    found = _REFUSED_SQL_RE.search(sql.lower())
+    return found.group(0) if found else None
+
+
 def _is_single_read(sql: str) -> bool:
     """A single read statement: one statement (trailing ';' tolerated) whose first
     keyword is a read verb. The READ-ONLY transaction is the real guard; this just
@@ -1599,6 +1623,13 @@ async def run_sql(body: SqlRequest, request: Request, _p: DebugDep) -> SqlOut:
     request.state.debug_detail = body.sql
     if not _is_single_read(body.sql):
         raise HTTPException(status_code=400, detail="only a single read-only statement is allowed")
+    refused = _refused_sql(body.sql)
+    if refused is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{refused!r} is not allowed in the debug console (it reads around the"
+            " secret redaction or outside this read-only transaction)",
+        )
     try:
         async with scoped_session(_maker(request), _OWNER_CTX) as session:
             # set_config (the GUC stamps) are reads, so flipping the txn read-only

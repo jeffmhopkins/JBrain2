@@ -61,7 +61,7 @@ from jbrain.devices import service as devices
 from jbrain.devices.repo import DeviceRole
 from jbrain.g2p import phonemes_for
 from jbrain.llm.router import LlmRouter
-from jbrain.settings_store import SqlSettingsStore
+from jbrain.settings_store import ENDPOINT_WIFI_KEY, SqlSettingsStore
 from jbrain.transcribe import WhisperCppClient
 
 log = structlog.get_logger()
@@ -175,7 +175,7 @@ SIDECAR_TIMEOUT_S = 600.0
 # says so. The reason it is worth having: a panel on a bedroom wall that stops working is
 # recovered by re-flashing it, and CLAUDE.md #10 means that must not require a phone and a
 # retyped password (ROOM_ENDPOINT_PLAN.md §10.4k).
-WIFI_KEY = "endpoint_wifi"
+WIFI_KEY = ENDPOINT_WIFI_KEY
 
 
 def _store(request: Request) -> SqlSettingsStore:

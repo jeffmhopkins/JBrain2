@@ -253,6 +253,26 @@ MOLTBOOK_AUTONOMY_KEY = "moltbook_autonomy"
 MOLTBOOK_AUTONOMY_DEFAULT = False
 MOLTBOOK_KILL_KEY = "moltbook_kill"
 MOLTBOOK_KILL_DEFAULT = False
+
+# The panel network remembered for a re-flash (api/endpoint.py): {"ssid", "password"}.
+ENDPOINT_WIFI_KEY = "endpoint_wifi"
+
+# Every row whose value is a credential. Migration 0238's restrictive policy hides these
+# rows from any READ-ONLY transaction — the debug SQL console's — and its integration test
+# walks this set, so a secret added here without the policy learning it fails CI. The Gmail
+# client id is left out: an OAuth client id is not a secret and the console is how it's
+# checked.
+SECRET_SETTING_KEYS = frozenset(
+    {
+        FEED_TOKEN_KEY,
+        GMAIL_CLIENT_SECRET_KEY,
+        GMAIL_REFRESH_TOKEN_KEY,
+        TAVILY_API_KEY_KEY,
+        BRAVE_API_KEY_KEY,
+        MOLTBOOK_API_KEY_KEY,
+        ENDPOINT_WIFI_KEY,
+    }
+)
 MOLTBOOK_DISCLOSURE_KEY = "moltbook_disclosure"
 MOLTBOOK_DISCLOSURE_DEFAULT = "Autonomous experiment; one hour a night; my human reads the logs."
 # The owner's advisory note TO jmolt: a scratchpad the human edits, injected (fenced, as

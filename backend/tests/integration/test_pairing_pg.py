@@ -2,14 +2,20 @@
 
 Proves the SECURITY DEFINER `app.redeem_pairing_code` flow: minting (owner-only)
 then redeeming creates a real device that authenticates, is one-time, rejects
-expired/unknown codes, and that the `pairing_code` table is owner-only.
+expired/unknown codes, and that the `pairing_code` table is owner-only. Since 0238 the
+table holds only the code's sha256, and a code minted before that migration still redeems.
 """
 
+import importlib.util
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
+import sqlalchemy
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -20,9 +26,15 @@ from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices import service as device_service
 from jbrain.devices.repo import SqlDeviceRepo
-from jbrain.locations.pairing import SqlPairingRepo
+from jbrain.locations.pairing import SqlPairingRepo, code_digest, generate_pairing_code
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+from tests.integration.test_rls import (  # noqa: F401
+    OWNER,
+    _admin_url,
+    _Cluster,
+    _pg_cluster,
+    database_url,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -124,7 +136,8 @@ async def test_pairing_code_table_is_owner_only(maker: async_sessionmaker) -> No
     async with scoped_session(maker, OWNER) as session:
         seen = (
             await session.execute(
-                text("SELECT count(*) FROM app.pairing_code WHERE code = :c"), {"c": code}
+                text("SELECT count(*) FROM app.pairing_code WHERE code = :c"),
+                {"c": code_digest(code)},
             )
         ).scalar()
     assert seen == 1
@@ -143,3 +156,66 @@ async def test_pairing_code_table_is_owner_only(maker: async_sessionmaker) -> No
                 ),
                 {"c": str(uuid.uuid4())},
             )
+
+
+async def test_the_code_is_stored_only_as_its_digest(maker: async_sessionmaker) -> None:
+    repo = SqlPairingRepo(maker)
+    code, _ = await repo.mint_code(OWNER, label="X", monitoring=1)
+    async with scoped_session(maker, OWNER) as session:
+        stored = {r[0] for r in await session.execute(text("SELECT code FROM app.pairing_code"))}
+    assert code not in stored
+    assert code_digest(code) in stored
+    # A reader holding the digest can't redeem with it — only the code itself works.
+    assert await repo.redeem(code_digest(code)) is None
+    assert await repo.redeem(code) is not None
+
+
+_MIGRATION = (
+    Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0238_pairing_code_hashed.py"
+)
+
+
+@pytest.fixture
+def run_0238(_pg_cluster: _Cluster, database_url: str) -> Iterator[object]:  # noqa: F811
+    """Run 0238's upgrade as the superuser the deploy's `migrate` service uses."""
+    spec = importlib.util.spec_from_file_location("migration_0238_pg", _MIGRATION)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    dbname = database_url.rsplit("/", 1)[-1]
+    engine = sqlalchemy.create_engine(_admin_url(_pg_cluster, dbname, driver="psycopg"))
+
+    def _run() -> None:
+        with engine.begin() as conn, Operations.context(MigrationContext.configure(conn)):
+            module.upgrade()
+
+    yield _run
+    engine.dispose()
+
+
+async def test_a_code_minted_before_the_migration_still_redeems(
+    maker: async_sessionmaker, run_0238: object
+) -> None:
+    # The QR open on someone's screen during the upgrade: a plaintext row, as the old
+    # mint wrote it, next to one already in digest form.
+    old_code = generate_pairing_code()
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.pairing_code (code, label, expires_at)"
+                " VALUES (:c, 'Old QR', now() + interval '10 minutes')"
+            ),
+            {"c": old_code},
+        )
+    repo = SqlPairingRepo(maker)
+    new_code, _ = await repo.mint_code(OWNER, label="New QR", monitoring=1)
+
+    run_0238()  # type: ignore[operator]
+    run_0238()  # type: ignore[operator]  # idempotent: a digest is never re-hashed
+
+    async with scoped_session(maker, OWNER) as session:
+        stored = {r[0] for r in await session.execute(text("SELECT code FROM app.pairing_code"))}
+    assert old_code not in stored and code_digest(old_code) in stored
+    old = await repo.redeem(old_code)
+    assert old is not None and old.label == "Old QR"
+    assert await repo.redeem(new_code) is not None
