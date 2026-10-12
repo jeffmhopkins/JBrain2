@@ -410,6 +410,40 @@ def test_the_drop_lever_keeps_a_resident_mapped_model_engram_and_drops_it_once_g
     assert not local_weights.serves_file_backed("gpt-oss-120b")
 
 
+def test_the_drop_lever_also_drops_a_departed_models_slot_files_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Saved KV-slot files are WRITTEN, so they sit in `Cached` like the weights do, and the
+    weights walk never reached `.kvslots/<id>`. A model not serving loses that cache too, added
+    to its figure; a serving one keeps it (its next restore would re-read it from disk)."""
+    dropped = _recording_drop(monkeypatch)
+
+    def _slots(_dir: str, model_id: str) -> float:
+        dropped.append(f"{model_id}:slots")
+        return 2.0
+
+    monkeypatch.setattr(local_weights, "drop_kvslot_page_cache", _slots)
+    client = local_gateway.LocalGatewayClient("http://x/v1", models_dir=str(tmp_path))
+    client._seen_resident = {"gpt-oss-120b"}
+    freed = client.drop_page_cache([FLASH_ID, "gpt-oss-120b"])
+    assert dropped == [FLASH_ID, f"{FLASH_ID}:slots", "gpt-oss-120b"]
+    assert freed == {FLASH_ID: 3.5, "gpt-oss-120b": 1.5}
+
+
+def test_the_slot_files_drop_walks_the_slot_save_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen: list[tuple[str, tuple[str, ...]]] = []
+    monkeypatch.setattr(
+        local_weights, "_drop_page_cache", lambda root, sfx: seen.append((root, sfx)) or 1.0
+    )
+    assert local_weights.drop_kvslot_page_cache(str(tmp_path), FLASH_ID) == 1.0
+    # Every file: slot saves carry no weights suffix. The folder is the one the generated
+    # config hands llama-server as --slot-save-path.
+    assert seen == [(str(tmp_path / llama_swap_config.KVSLOT_DIR / FLASH_ID), ("",))]
+    assert local_weights.KVSLOT_DIR == llama_swap_config.KVSLOT_DIR
+
+
 @pytest.mark.asyncio
 async def test_unloading_a_mapped_model_drops_its_residue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch

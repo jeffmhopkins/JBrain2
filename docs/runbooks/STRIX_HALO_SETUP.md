@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-10-10
+> **Status:** Living · **Last verified:** 2026-10-12
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -1436,6 +1436,15 @@ of the shards except the engram tensor, read from the GGUF headers — during th
 and from `POST /api/debug/llm/drop-page-cache`. The load guard also drops it the moment host
 free memory comes within 4 GB of its 6 GB floor (at most once per 10 s, bounded to 2 s); the
 floor itself is unchanged — any reading under it aborts the load.
+
+A model that has unloaded leaves its cache behind (its engram pages, and the saved KV-slot
+files the prompt cache wrote), and that cache still counts as used. On 2026-10-12 it kept
+Flash-Next from reloading for nine minutes on a box with nothing loaded ("needs ~87.9 GB but
+only 86.3 GB is safely available", ~20 GiB cached), until an Update's global `drop_caches`
+cleared it. So before refusing a load for host memory, the gateway drops the cache of every
+model that is not resident (weights and `.kvslots/<id>`), reads memory again, and refuses only
+if the load still does not fit. Resident models' cache is left alone, and the cache is never
+counted as free.
 
 Every path that starts a gateway — the update and the model sync — starts only the
 **selected** engine, after releasing the other's models and waiting for its memory to come
