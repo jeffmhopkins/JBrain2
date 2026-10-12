@@ -371,25 +371,42 @@ is missing.
 
 ## 6a. Baseline (F0): 0.3.39 does not boot
 
-**The incident** (strong evidence; no crash log yet). One panel updated 0.3.38 → 0.3.39 and now
-panics about 3–4 s into every boot (reset reason panic; the crash phase varies: 6, 9, 10). No
-panel has ever run 0.3.39 successfully. Its telemetry shows ~70 KB of internal heap free against
-~121 KB on 0.3.38, and the panic follows right after the first report — exactly where `main.c`
-starts speech (whose 48 KB `SPEECH_MIN_INTERNAL` floor still passes), talk, jpanel and nudge. The
-likely cause is 0.3.39's persistent TLS WebSocket (#1565) holding the ~40–50 KB of internal RAM
-that 0.3.38 released after each request.
+**The incident, confirmed by the panel's console over USB.** A panel updated 0.3.38 → 0.3.39
+aborts 3–4 s into every boot; no panel has run 0.3.39 successfully. Every boot logs:
+
+```
+mem: wifi internal 119083 free / 45056 largest
+link: socket up — internal free 70643, low-water 39720
+mem: pre-speech internal 70535
+speech: starting with 70535 B            (passes SPEECH_MIN_INTERNAL, 48 KB)
+… AFE created …
+ESP_ERROR_CHECK failed: ESP_ERR_NO_MEM … esp_phy/src/phy_common.c:118
+  phy_track_pll_init: esp_timer_create(…)  → abort → reboot
+```
+
+So 0.3.39's persistent TLS WebSocket (#1565) holds ~48 KB of internal RAM (119 → 70 KB), speech
+then takes most of what is left, and the Wi-Fi PHY's own internal allocation is what fails.
+`ROOM_ENDPOINT_PLAN.md` already measured speech and the tasks at ~100 KB internal (pre-speech
+154,435 B → post-speech 51,631 B), so 70 KB can never fit. Two fixes are ruled out:
+`MBEDTLS_DYNAMIC_BUFFER` alone saves ~20 KB, too little; `MBEDTLS_EXTERNAL_MEM_ALLOC` was
+rejected there on security grounds (TLS keys on the external bus without flash encryption).
 
 **What the plan changes because of it**
 
-1. **F0 restores a booting baseline before F1.** Either 0.3.38's code re-released as **0.3.40** (a
-   forward version, so panels install it: `main.c` installs any version that differs), or a fixed
-   0.3.39 whose measured floor passes. F1's characterisation tests then pin **that** baseline;
-   "0.3.39" in §7–§10 means F0's firmware from then on. If F0 reverts the one-TLS-WebSocket
-   change, §7.5a's `link.c` design is re-verified against the restored code in F1.
+1. **F0 is 0.3.38's code re-released as 0.3.40** — a forward version, so panels install it
+   (`main.c` installs any version that differs). It was recommended to the owner on the night of
+   the incident. F1's characterisation tests pin **that** baseline, and "0.3.39" in §7–§10 means
+   F0's firmware from then on; §7.5a's `link.c` design is re-verified against the restored code
+   in F1. The persistent WebSocket returns only in a later wave, with a measured internal budget
+   that fits it alongside speech and the PHY.
 2. **Every firmware wave carries an internal-RAM budget** (§12): a static DRAM budget in CI, and
    a measured `int_free`/`int_min` floor after every task has started, reported in telemetry. The
    floor is TLS's ~75 KB (`link.h`) plus a 16 KB margin. The plan's new statics go to PSRAM where
    legal (§7.7); lease and atomic words stay internal.
+5. **`SPEECH_MIN_INTERNAL` is wrong for any firmware** (F0 sets it, F1 pins it with a test).
+   48 KB let speech start with 70 KB and leave the PHY nothing. The floor must cover the
+   **measured** speech-and-task cost (~100 KB) plus the PHY's and TLS's needs, so a starved panel
+   boots **deaf** — the existing "no recogniser" path — instead of crash-looping.
 3. **The skew table (§6) still holds.** The box side of 0.3.39 is fine; its 1,024-byte buffers and
    `X-Jpanel-*` headers are what the field firmware parses, and F0 confirms them against its
    baseline.
@@ -1958,7 +1975,7 @@ F3 also updates JP's text on exit, the pair, and refusals.
 | **W1** box/PWA, invisible | A3 box (+ `asyncio.wait_for` inside `_transcribe`'s `try`); C2; C5 (+ a clear releases blobs); C6 (query function + backend `/summary` only — **no badge UI**, which is P1's); C7 audio route; C8 (non-visual); C9; C10; C11; names are cut to 31 escaped bytes on the wire; `ci.yml` edits (the revision-delete job, unfiltered); skew pins; revision-delete CI check | — | backend, frontend, supervisor, `jcode`, `jlaunch` (the `ci.yml` edit trips every filter), docs |
 | **W2** identity | §11 (one-statement `readdress_orphans` with its 14-day window and lock order, grouping, keyless rows cleared by a thread clear (waiting-for-re-flash rows kept), `discard_message` + debug discard, owner and debug merge, listing, tombstones hidden in `SqlDeviceRepo.list`, `whoami` scopes, inline-SQL migration with a pre-merge count, the flash-name rule of item 8); retired chips hidden; JP §3b, §5 and Part B "### Data" updated for the retention change. **Escalation + red-team review.** | W1 | backend, frontend, docs |
 | **W3** contract | `/waiting` ids + `offered_at`; `/next?id=` + headers; `/played {heard_ms}`; `/returned` + `_ALLOWED` + tunnel test; C3 owner routes; uuid guards; columns `heard_ms`, `offered_at`, `returns NOT NULL DEFAULT 0`; `readdress_orphans` also resets `returns` and `offered_at`; head and buffer pins. **Red-team review**: it adds panel-reachable writes (`/returned`, the `offered_at` stamp, an `_ALLOWED` row). | W2 | backend, docs |
-| **F0** booting baseline | §6a: a firmware every panel boots, with the internal-RAM floor measured | — | firmware, backend, supervisor, docs |
+| **F0** booting baseline | §6a: 0.3.38's code as 0.3.40; a measured `SPEECH_MIN_INTERNAL`; the internal-RAM floor measured | — | firmware, backend, supervisor, docs |
 | **F1** host foundations | §10, no behaviour change against F0's baseline | F0 | firmware, backend, supervisor, docs |
 | **F2** engine | §7; defects only; wrappers | F1, W3 | firmware, backend, supervisor, docs |
 | **F3** state machine | §8; Appendix A; Q1–Q3; hand-back | F2 | firmware, backend, supervisor, docs |
@@ -2100,7 +2117,7 @@ None was rejected. The per-round counts are in the intro.
 | UX: rule 2 missed AGAIN and the pair's REPLY | the grid's cancel cell, the cross and AGAIN share the lower-left quadrant | Both graced; the exemption is PLAY's PAUSE/REPLY and swipes; two bounce tests |
 | UX: Finished and the backstops matched an unposted PLAY | `play.seq` was unassigned before the post | `play.seq = NONE` until posted; every engine-facing rule gated on it; `test_old_stop_outcome_does_not_finish_new_pending_play` |
 | UX: the hold grace silenced deliberate grid taps (#33) | #33 taps ~340 ms after the hold | The hold grace covers only down edges within 40 px of the hold point; `test_deliberate_cell_tap_after_hold_acts` |
-| Incident: 0.3.39 boot-loops on real hardware | ~70 KB internal free against ~121 KB; panic after the first report | §6a: F0 restores a booting baseline; an internal-RAM gate on every firmware wave; the update check stays first |
+| Incident: 0.3.39 boot-loops on real hardware | the USB console: the WebSocket takes ~48 KB internal (119 → 70 KB); speech starts above its 48 KB floor; the PHY's `esp_timer_create` then fails `ESP_ERR_NO_MEM` and aborts | §6a: F0 = 0.3.38's code as 0.3.40; an internal-RAM gate on every firmware wave; a measured `SPEECH_MIN_INTERNAL`; the update check stays first |
 
 **Round-12 non-blocking items, all taken** (43): backend — the name rule before
 `provision_or_reflash`, with no key revoked on refusal; case-insensitive matching on the
