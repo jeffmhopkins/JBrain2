@@ -22,7 +22,6 @@ Two identities authenticate:
   core. Disabled when the secret is empty (fail-closed).
 """
 
-import hmac
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -30,6 +29,7 @@ from pydantic import BaseModel
 
 from jbrain.api.internal_auth import require_mqtt
 from jbrain.auth import service
+from jbrain.auth.keys import secrets_equal
 from jbrain.auth.service import AuthRepo
 from jbrain.config import Settings
 from jbrain.locations.viewscope import ViewScopeRepo
@@ -85,7 +85,7 @@ def _is_ingest_identity(settings: Settings, username: str) -> bool:
 @router.post("/mqtt-auth")
 async def mqtt_auth(body: AuthCheck, repo: AuthRepoDep, settings: SettingsDep) -> Response:
     """Authenticate a connecting client. 200 allow / 403 deny (fail-closed)."""
-    if _is_ingest_identity(settings, body.username) and hmac.compare_digest(
+    if _is_ingest_identity(settings, body.username) and secrets_equal(
         body.password, settings.mqtt_ingest_secret
     ):
         return Response(status_code=_ALLOW)

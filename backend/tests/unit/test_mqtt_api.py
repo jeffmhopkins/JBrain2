@@ -153,6 +153,13 @@ def test_ingest_identity_authenticates_and_reads_owntracks_readonly() -> None:
             ).status_code
             == 403
         )
+        # Non-ASCII is an ordinary wrong secret, not a TypeError from compare_digest.
+        assert (
+            c.post(
+                "/internal/mqtt-auth", json={"username": INGEST_USER, "password": "wröng"}
+            ).status_code
+            == 403
+        )
 
         def acl(topic: str, acc: int) -> int:
             return c.post(
