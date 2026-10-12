@@ -786,17 +786,27 @@ static void test_raw_axes_map_to_the_glass_swapped_and_mirrored(void)
 {
     int16_t x, y;
     tp_map(0, 0, &x, &y);
-    CHECK(x == 0 && y == 479, "raw (0,0) is the bottom-left corner");
+    CHECK(x == 479 && y == 0, "raw (0,0) is the top-right corner");
     tp_map(479, 479, &x, &y);
-    CHECK(x == 479 && y == 0, "raw (479,479) is the top-right corner");
-    tp_map(479, 0, &x, &y);
-    CHECK(x == 0 && y == 0, "rawA is the inverted y axis");
+    CHECK(x == 0 && y == 479, "raw (479,479) is the bottom-left corner");
     tp_map(0, 479, &x, &y);
-    CHECK(x == 479 && y == 479, "rawB is x");
+    CHECK(x == 0 && y == 0, "rawB is the inverted x axis");
+    tp_map(479, 0, &x, &y);
+    CHECK(x == 479 && y == 479, "rawA is y");
     tp_map(100, 300, &x, &y);
-    CHECK(x == 300 && y == 379, "display x = rawB, y = 479 - rawA");
-    tp_map(480, 4095, &x, &y);
-    CHECK(x == 479 && y == 0, "a reading past the edge lands on the edge, not the far side");
+    CHECK(x == 179 && y == 100, "display x = 479 - rawB, y = rawA");
+    tp_map(4095, 480, &x, &y);
+    CHECK(x == 0 && y == 479, "a reading past the edge lands on the edge, not the far side");
+    /* The owner's four corner taps on the real panel (0.0.6 telemetry, raw a,b), each of which
+       0.0.6 placed in the opposite corner. */
+    tp_map(67, 401, &x, &y);
+    CHECK(x < 120 && y < 120, "his top-left tap lands top-left");
+    tp_map(63, 63, &x, &y);
+    CHECK(x > 360 && y < 120, "his top-right tap lands top-right");
+    tp_map(438, 47, &x, &y);
+    CHECK(x > 360 && y > 360, "his bottom-right tap lands bottom-right");
+    tp_map(418, 433, &x, &y);
+    CHECK(x < 120 && y > 360, "his bottom-left tap lands bottom-left");
 }
 
 static void test_a_stroke_survives_a_quiet_poll_but_not_three(void)
@@ -805,16 +815,16 @@ static void test_a_stroke_survives_a_quiet_poll_but_not_three(void)
     const tp_report_t down = {TP_DOWN, 100, 300}, moved = {TP_DOWN, 100, 310},
                       up = {TP_UP, 0, 0}, quiet = {TP_NOACK, 0, 0};
     CHECK(tp_track(&t, &quiet) == TP_EV_NONE, "silence with no finger is nothing");
-    CHECK(tp_track(&t, &down) == TP_EV_DOWN && t.x == 300 && t.y == 379, "a press, mapped");
+    CHECK(tp_track(&t, &down) == TP_EV_DOWN && t.x == 179 && t.y == 100, "a press, mapped");
     CHECK(tp_track(&t, &down) == TP_EV_NONE, "a finger that did not move is not a move");
-    CHECK(tp_track(&t, &moved) == TP_EV_MOVE && t.x == 310, "a moved one is");
+    CHECK(tp_track(&t, &moved) == TP_EV_MOVE && t.x == 169, "a moved one is");
     CHECK(tp_track(&t, &quiet) == TP_EV_NONE && tp_track(&t, NULL) == TP_EV_NONE,
           "a missing ack and a failed read each hold the stroke");
     CHECK(tp_track(&t, &down) == TP_EV_MOVE, "and the finger carries on where it is");
     for (int i = 1; i < TP_HOLD_POLLS; i++) CHECK(tp_track(&t, NULL) == TP_EV_NONE, "held");
     CHECK(tp_track(&t, NULL) == TP_EV_UP && !t.down, "but enough quiet polls lift it");
     CHECK(tp_track(&t, &down) == TP_EV_DOWN, "the next touch is a new press");
-    CHECK(tp_track(&t, &up) == TP_EV_UP && t.x == 300, "a release report lifts it at once, where it was");
+    CHECK(tp_track(&t, &up) == TP_EV_UP && t.x == 179, "a release report lifts it at once, where it was");
     CHECK(tp_track(&t, &up) == TP_EV_NONE, "and is reported once");
 }
 

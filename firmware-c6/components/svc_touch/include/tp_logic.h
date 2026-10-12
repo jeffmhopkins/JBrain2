@@ -27,9 +27,10 @@ typedef struct {
 
 tp_report_t tp_decode(const uint8_t d[TP_REPORT_LEN]);
 
-/* With the vendor's panel setup every ESP-IDF source sets swap_xy + mirror_y on the driver's
- * output (HARDWARE.md §3): display x = rawB, display y = 479 - rawA. Clamped to the glass, so a
- * reading past an edge lands on that edge rather than wrapping to the far one. */
+/* Measured on the board (0.0.6, four corner taps): display x = 479 - rawB, display y = rawA.
+ * The vendor's swap_xy + mirror_y (HARDWARE.md §3) put every tap in the opposite corner, because
+ * this firmware draws the panel 180° from the vendor's demos. Clamped to the glass, so a reading
+ * past an edge lands on that edge rather than wrapping to the far one. */
 void tp_map(uint16_t raw_a, uint16_t raw_b, int16_t *x, int16_t *y);
 
 typedef enum { TP_EV_NONE, TP_EV_DOWN, TP_EV_MOVE, TP_EV_UP } tp_ev_t;
