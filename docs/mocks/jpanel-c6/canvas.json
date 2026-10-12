@@ -122,7 +122,7 @@
       "y": 4423,
       "w": 720,
       "h": 720,
-      "title": "15 \u00b7 Push message from the box"
+      "title": "15 \u00b7 Push message from the box (tap to hide)"
     },
     "NotifyQuestion.dc.html": {
       "x": 1600,
@@ -137,6 +137,27 @@
       "w": 720,
       "h": 720,
       "title": "17 \u00b7 Clock face: a message waits as a corner badge"
+    },
+    "NotifyPicture.dc.html": {
+      "x": 0,
+      "y": 5263,
+      "w": 720,
+      "h": 720,
+      "title": "18 \u00b7 Push picture \u2014 the sender's own image, whole glass (hides itself)"
+    },
+    "NotifyBanner.dc.html": {
+      "x": 800,
+      "y": 5263,
+      "w": 720,
+      "h": 720,
+      "title": "19 \u00b7 Push banner \u2014 the sender's picture over a question"
+    },
+    "NotifyAudio.dc.html": {
+      "x": 1600,
+      "y": 5263,
+      "w": 720,
+      "h": 720,
+      "title": "20 \u00b7 Push with a sound \u2014 playing, tap or wait to hide"
     }
   },
   "order": [
@@ -157,7 +178,10 @@
     "ClockNight.dc.html",
     "NotifyInfo.dc.html",
     "NotifyQuestion.dc.html",
-    "ClockBadge.dc.html"
+    "ClockBadge.dc.html",
+    "NotifyPicture.dc.html",
+    "NotifyBanner.dc.html",
+    "NotifyAudio.dc.html"
   ],
   "notes": {
     "states": {

@@ -274,6 +274,10 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         # this, then analyze_stream on each new match).
         "check_channel",
         "query_server_metrics",
+        # A notice on the owner's desk panel, optionally a question whose tap comes back
+        # (JPANEL_C6_PLAN.md §2). `web`-gated for the gate, not for egress: it reaches only the
+        # owner's own panel, and the panel's own switches and night hours can refuse it.
+        "panel_notify",
         # Per-conversation planning (JERV_PLANNING_TOOL_PLAN.md): draft a plan for a
         # multi-step task, let the owner approve it, then execute against it. read_plan
         # reads this chat's plan (body + status + the step-results scratchpad); write_plan

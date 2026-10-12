@@ -1,0 +1,80 @@
+{
+  "plain": {
+    "bytes": 98,
+    "sha256": "64b29a78d9543190d158e1c90af261896a293ab988a62275bc3f8da8957e8428",
+    "id": "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    "sender": "Ops",
+    "title": "Disk 91% full",
+    "body": "The box is running low on space.",
+    "choices": [],
+    "chime": false,
+    "hide_after_s": null,
+    "ttl_s": 900,
+    "image": null,
+    "audio": null
+  },
+  "question": {
+    "bytes": 103,
+    "sha256": "004c3adb68345fb74bf5b23ff2fea28935ae706e7a3cba152abd5c59d0243b1f",
+    "id": "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    "sender": "Jerv",
+    "title": "Run the cleanup now?",
+    "body": "Frees about 38 GB.",
+    "choices": [
+      "Yes",
+      "No"
+    ],
+    "chime": true,
+    "hide_after_s": 30,
+    "ttl_s": 900,
+    "image": null,
+    "audio": null
+  },
+  "banner": {
+    "bytes": 667,
+    "sha256": "7fb86e0fcffa321e0439455e5bbe321d91cfe9444f5723575a2b119e0713bd1f",
+    "id": "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    "sender": "Nightly backup",
+    "title": "Backup done",
+    "body": "",
+    "choices": [
+      "OK",
+      "Show me",
+      "Later"
+    ],
+    "chime": false,
+    "hide_after_s": null,
+    "ttl_s": 600,
+    "image": {
+      "mode": "banner",
+      "w": 480,
+      "h": 48,
+      "stripes": 2,
+      "rgb565_le_sha256": "ed1c30aa74aa70f8b24ee44f92683a86b508c1aa4455c607e15268dec7110b82"
+    },
+    "audio": null
+  },
+  "full_sound": {
+    "bytes": 51273,
+    "sha256": "12da6ee7209055c248c597244eda1e0e1c9d2f131c76bd1739bafe09134a6e86",
+    "id": "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+    "sender": "Jerv",
+    "title": "Look",
+    "body": "",
+    "choices": [],
+    "chime": true,
+    "hide_after_s": 8,
+    "ttl_s": 120,
+    "image": {
+      "mode": "full",
+      "w": 480,
+      "h": 480,
+      "stripes": 12,
+      "rgb565_le_sha256": "72b20d214869463c261a409996d69ab31723b2510aa60b3fe774fd37243f065f"
+    },
+    "audio": {
+      "ms": 250,
+      "pcm_sha256": "f02407a93f68fef81ae3a880a34b1309b8bdf13482cee91467a046a419ab3ae0"
+    }
+  }
+}

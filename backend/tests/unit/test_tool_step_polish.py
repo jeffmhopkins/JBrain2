@@ -228,6 +228,7 @@ _AUTHORS_BRIEF = {
     "prefs_write",
     "propose_correction",
     "propose_merge",
+    "panel_notify",
     "query_server_metrics",
     "read_appointment",
     "read_appointments",

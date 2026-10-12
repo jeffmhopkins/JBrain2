@@ -150,6 +150,8 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "remove_external_video",
             "check_channel",
             "query_server_metrics",
+            # A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2), jerv-only.
+            "panel_notify",
             "read_plan",
             "write_plan",
             "write_plan_result",

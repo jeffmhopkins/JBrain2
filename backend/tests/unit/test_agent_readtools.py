@@ -1940,6 +1940,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "3aea96cc7384be24ef144fed5bd5177f2910324e67e7f62dd8de13017e3600fc",
         ),
+        # A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2).
+        "panel_notify.tool": (
+            "panel_notify",
+            1,
+            "883cf60cb497499a11c1b578516b4f11ffa5566c9442f738340587baf85a292a",
+        ),
         "mc_server_status.tool": (
             "mc_server_status",
             1,
