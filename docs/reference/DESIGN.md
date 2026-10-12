@@ -45,6 +45,8 @@ Dual theme, dark-first. Implementation:
   user setting.
 - `dark-bright` ("Dark+") is a dark variant that inherits every dark neutral
   and only lifts `--border` to `#464A52` for stronger, brighter hairlines.
+- A shared Minecraft map link (`/mc/s/{token}`) defaults to Dark+ when the
+  viewer has no saved theme; it is not persisted, and a saved pick still wins.
 - The PWA `theme-color` meta updates with the active theme.
 - **Text size**: every type token is `calc(px × var(--font-scale))`; a
   Settings "Text size" control (65 / 75 / 90 / 100%) sets the scale,
