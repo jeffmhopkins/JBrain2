@@ -170,6 +170,18 @@ async def test_a_near_radius_somewhere_else_is_still_a_deep_scan(book, sidecar) 
     assert (sidecar["params"][-1]["x"], sidecar["params"][-1]["z"]) == (500, 500)
 
 
+async def test_a_search_centred_elsewhere_leads_with_its_containers(book, sidecar) -> None:
+    """Ground hits are measured from the player and container hits from the search's
+    centre, so only the short-range scan (both from the player) orders them by distance
+    (#1695): a deep scan at x=500 z=500 leads with the chests found there, not with a pile
+    at the asker's feet."""
+    out = await ask(book, STEVE, {"items": ["diamond"], "radius": 20, "x": 500, "z": 500})
+    assert out.index("in a chest") < out.index("On the ground")
+    assert mt.first_hit(out, "overworld") == Spot(20, 64, 5, "overworld")
+    out = await ask(book, STEVE, {"items": ["diamond"]})
+    assert out.index("in a chest") < out.index("On the ground")
+
+
 async def test_an_id_in_no_container_costs_no_scan_and_suggests(book, sidecar) -> None:
     sidecar["replies"]["/map/items"] = {
         **CHESTS,

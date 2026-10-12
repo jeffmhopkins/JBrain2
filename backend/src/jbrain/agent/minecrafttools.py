@@ -1025,7 +1025,7 @@ def build_minecraft_handlers(
             xi, zi, origin = asker.at.x, asker.at.z, "where the player is standing"
 
         async def run() -> tuple[str, bool]:
-            out = await find_items(names, dim, xi, zi, origin, limit, radius, looker)
+            out = await find_items(names, dim, xi, zi, origin, limit, radius, looker, near)
             return out, out.result_brief not in ("", "none anywhere")
 
         if asker is None or near:
@@ -1075,9 +1075,12 @@ def build_minecraft_handlers(
         limit: int,
         radius: int | None,
         looker: str | None,
+        same_origin: bool = False,
     ) -> ToolOutput:
         """The search itself: the containers from the world's files, then the ground
-        around `looker`. A bare sentence (no `result_brief`) searched nothing."""
+        around `looker`. A bare sentence (no `result_brief`) searched nothing.
+        `same_origin`: the containers were searched around the player too, so the two
+        lists' distances compare."""
         worlds = await sidecar("GET", "/worlds")
         if isinstance(worlds, str):
             return ToolOutput(worlds)
@@ -1161,7 +1164,10 @@ def build_minecraft_handlers(
                 else f"{ground_head}: none (things on the ground vanish after 5 minutes)."
             )
             # Whichever holds the nearest hit comes first: it's the one a Tricorder is aimed at.
-            if ground_lines and (not box_lines or ground_lines[0][0] < box_lines[0][0]):
+            # Ground distances are from the player, the containers' from the search's centre,
+            # so only a search centred on the player can rank one against the other (#1695).
+            nearer = not box_lines or ground_lines and ground_lines[0][0] < box_lines[0][0]
+            if ground_lines and same_origin and nearer:
                 body = f"{ground_text}\n{body}"
             else:
                 body = f"{body}\n{ground_text}"
