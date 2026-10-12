@@ -18,6 +18,7 @@
 #include "display.h"
 #include "link.h"
 #include "reach.h"
+#include "wsproto.h"
 
 static const char *TAG = "ota";
 
@@ -38,6 +39,8 @@ bool ota_boot_is_new_image(void)
 
 
 #define MANIFEST_MAX 1024
+/* Each request's whole budget, lock to head (an absolute deadline since 0.4.0, plan §7.5a);
+   `ota_apply`'s own client takes it per operation. */
 #define HTTP_TIMEOUT_MS 15000
 /* How long to let the renderer park before restarting anyway. One frame plus its own 150 ms
    drain is about 200 ms, so a second is generous — and the fallback is not optional: the
@@ -119,7 +122,7 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     char body[MANIFEST_MAX];
     const link_req_t req = {.method = "GET",
                             .path = "/endpoint/settings",
-                            .timeout_ms = HTTP_TIMEOUT_MS,
+                            .deadline_ms = link_deadline_in(now_ms(), HTTP_TIMEOUT_MS),
                             .buf = (uint8_t *)body,
                             .cap = sizeof(body) - 1};
     const link_res_t res = link_request(&req);
@@ -210,7 +213,7 @@ esp_err_t ota_report(const cfg_t *cfg, const char *body)
                             .content_type = "application/json",
                             .body = (const uint8_t *)body,
                             .body_len = strlen(body),
-                            .timeout_ms = HTTP_TIMEOUT_MS};
+                            .deadline_ms = link_deadline_in(now_ms(), HTTP_TIMEOUT_MS)};
     const link_res_t res = link_request(&req);
     if (res.status < 0) {
         ESP_LOGW(TAG, "telemetry unreachable: %s", res.err);
@@ -235,7 +238,7 @@ esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
     char body[MANIFEST_MAX];
     const link_req_t req = {.method = "GET",
                             .path = "/endpoint/firmware",
-                            .timeout_ms = HTTP_TIMEOUT_MS,
+                            .deadline_ms = link_deadline_in(now_ms(), HTTP_TIMEOUT_MS),
                             .buf = (uint8_t *)body,
                             .cap = sizeof(body) - 1};
     const link_res_t res = link_request(&req);

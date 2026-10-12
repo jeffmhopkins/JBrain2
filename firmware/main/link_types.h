@@ -10,6 +10,15 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The link's clock constants, here rather than in `link.c` because the engine builds its SEND
+   bound (claim + LINK_UP_WAIT_MS + LINK_STALL_MS) and its UI margin from them (plan §7.5). */
+/* Every wait is cut into steps this long: the most a deadline, a cancel or a TICK can lag. */
+#define LINK_STEP_MS 250
+/* A body that has stopped flowing for this long is a connection that has died under it. */
+#define LINK_STALL_MS 20000
+/* How long a request waits for a socket that is reconnecting (unused while the socket is off). */
+#define LINK_UP_WAIT_MS 8000
+
 /* Body bytes as they arrive, on the caller's task. Return nonzero to stop: the rest of the
    answer is abandoned (a finger stopped a message). May block — that IS the backpressure. */
 typedef int (*link_sink_fn)(void *ctx, const uint8_t *data, size_t n);
@@ -22,11 +31,14 @@ typedef int (*link_head_fn)(void *ctx, int status);
 typedef enum {
     LINK_PHASE_UPLOAD = 0, /* a request-body frame went out; deadline refreshed (PROGRESS mode) */
     LINK_PHASE_HEAD,       /* the upload ended; deadline = now + head_budget_ms */
-    LINK_PHASE_TICK,       /* a wait loop's LINK_STEP_MS heartbeat; deadline unchanged */
+    /* A wait loop's LINK_STEP_MS heartbeat. Carries the deadline in force: the request's
+       until the head, then the body's stall bound (last byte + LINK_STALL_MS). */
+    LINK_PHASE_TICK,
 } link_phase_t;
 
 typedef enum {
-    /* `deadline_ms` bounds the whole request: every wait is clamped to what is left. */
+    /* `deadline_ms` bounds the request up to its head: every wait is clamped to what is left.
+       The body is then bounded by LINK_STALL_MS per network gap (plan §7.5a). */
     LINK_DEADLINE_ABSOLUTE = 0,
     /* jpanel's SEND only: the deadline moves with the upload (LINK_STALL_MS per frame), then
        becomes now + head_budget_ms once the body is out. */
