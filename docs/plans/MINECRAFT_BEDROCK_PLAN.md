@@ -677,7 +677,11 @@ should be able to do once we're live").** Not yet tried from a real client.
 - **The sidecar** (`bds.py`) turns the line into a `dave` event carrying the **xuid BDS
   logged when that name connected** — the script API has no xuid, and the line's own
   fields are never trusted for identity. A name that never connected, or an empty
-  question, is dropped.
+  question, is dropped. Because the line quotes the player's raw text, a `[Scripting]`
+  / `[jbrain]` line is only ever read as the pack's, and BDS's own lines (`Player
+  connected/disconnected`, `Server started.`, `Version`, the `save query` ready line)
+  count only right after BDS's `[… INFO] ` prefix, so a question can't forge a join
+  under someone else's xuid (security N3).
 - **The api** (`jbrain.minecraft.door`, started in `main.py` beside the session and
   track drains) polls `/events` and runs each fresh question (≤ 2 minutes old, so a
   restart never answers an old one late) as one headless Minecraft_Dave turn on the

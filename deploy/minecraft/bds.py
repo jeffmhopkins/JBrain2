@@ -32,9 +32,17 @@ EVENTS_KEPT = 2000
 # Changes on every wrapper start, so the api can tell "event ids restarted" from "no new
 # events" and close any session the restart cut off.
 BOOT_ID = uuid.uuid4().hex
-_CONNECTED = re.compile(r"Player connected: ([^,]+), xuid: ?(\d*)")
-_DISCONNECTED = re.compile(r"Player disconnected: ([^,]+), xuid")
-# A line from the jbrain behavior pack: `[Scripting] [jbrain] {"ev": "death", …}`.
+# BDS's own lines open `[<date time> INFO] `. Every lifecycle line is matched only right
+# after that prefix, never searched for: the pack logs a player's raw `/jb:dave` text
+# inside its own line, so `Player connected: Me, xuid: <victim>` anywhere else in a line
+# would otherwise hand Me the victim's xuid, and with it their Dave (N3).
+_BDS = r"\[[^\[\]]* INFO\] "
+_CONNECTED = re.compile(_BDS + r"Player connected: ([^,]+), xuid: ?(\d*)")
+_DISCONNECTED = re.compile(_BDS + r"Player disconnected: ([^,]+), xuid")
+# Script output, `[… INFO] [Scripting] [jbrain] {"ev": "death", …}`: read as the pack's
+# and never as a BDS lifecycle line, whatever text it quotes. A gamertag can't hold
+# `[`, so no line BDS writes about a player carries the pack's `[jbrain] ` tag either.
+_SCRIPTING = re.compile(r"(?:\[[^\[\]]*\] )?\[Scripting\] ")
 _PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
 # `wreck` is the spawn wreck reporting its build (plan §SW1): loaded, pod, ship, done.
 PACK_EVENTS = ("death", "respawn", "dave", "wreck")
@@ -44,10 +52,11 @@ QUESTION_MAX = 256
 # the ones it knows, so this just bounds what a line can carry.
 _KNOWN = re.compile(r"[a-z_]{1,32}")
 KNOWN_MAX = 16
-_VERSION = re.compile(r"Version:? ([0-9][0-9.]*[0-9])")
-_STARTED = "Server started."
+_VERSION = re.compile(_BDS + r"Version:? ([0-9][0-9.]*[0-9])")
+_STARTED = re.compile(_BDS + r"Server started\.\s*")
 # `save query` prints this line, then the file list on the next line.
-_SAVE_READY = "Data saved. Files are now ready to be copied."
+SAVE_READY_TEXT = "Data saved. Files are now ready to be copied."
+_SAVE_READY = re.compile(_BDS + re.escape(SAVE_READY_TEXT) + r"\s*")
 _SAVE_FILE = re.compile(r"\s*([^:,][^:]*?):(\d+)\s*$")
 
 # The console is the owner's tool, not a player's; these are refused because each has
@@ -170,21 +179,22 @@ class Bds:
         with self._cv:
             self._seq += 1
             self._lines.append(Line(self._seq, time.time(), time.monotonic(), text))
-            if _STARTED in text:
+            if _SCRIPTING.match(text) or "[jbrain] " in text:
+                if m := _PACK_LINE.search(text):
+                    self._pack_event(m.group(1))
+            elif _STARTED.fullmatch(text):
                 self.state = "running"
                 self._event("server_start", "", "")
-            if not self.version and (m := _VERSION.search(text)):
+            elif not self.version and (m := _VERSION.match(text)):
                 self.version = m.group(1)
-            if m := _CONNECTED.search(text):
+            elif m := _CONNECTED.match(text):
                 name, xuid = m.group(1).strip(), m.group(2)
                 self.players[name] = {"xuid": xuid, "joined_at": time.time()}
                 self._event("join", name, xuid)
-            elif m := _DISCONNECTED.search(text):
+            elif m := _DISCONNECTED.match(text):
                 name = m.group(1).strip()
                 gone = self.players.pop(name, None)
                 self._event("leave", name, gone["xuid"] if gone else "")
-            elif m := _PACK_LINE.search(text):
-                self._pack_event(m.group(1))
             self._cv.notify_all()
         print(text, flush=True)
 
@@ -363,7 +373,7 @@ class Bds:
         while time.monotonic() < deadline:
             mark = self._send("save query")
             try:
-                ready = self._wait_for(mark, lambda t: _SAVE_READY in t, 2.0)
+                ready = self._wait_for(mark, is_save_ready, 2.0)
                 listing = self._wait_for(ready, _is_file_list, 5.0)
             except ConsoleError:
                 continue  # "not ready yet" — ask again
@@ -400,6 +410,11 @@ def _place(data: dict[str, Any]) -> dict[str, Any]:
     if isinstance(data.get("dim"), str):
         out["dim"] = data["dim"][:64]
     return out
+
+
+def is_save_ready(text: str) -> bool:
+    """BDS's own `save query` "files ready" line, not a pack line quoting it."""
+    return _SAVE_READY.fullmatch(text) is not None
 
 
 def _is_file_list(text: str) -> bool:
