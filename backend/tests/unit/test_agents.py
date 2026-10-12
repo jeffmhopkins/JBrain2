@@ -956,8 +956,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v13: `mc_replicator_program`, in game only, for the asker's held Replicator (§M15).
         # v14: `mc_wormhole_aim` (§M12), only once the guide describes wormholes.
         "minecraft_dave": (
-            "agent-minecraft-dave-v15",
-            "2b273331fb722b20dcde2b92cab6a5bf3aa1257954579aa0609d0466d83d569d",
+            "agent-minecraft-dave-v16",
+            "e5cdee2ec248b844b07a66ee60f243708a534132fb075eec1e8c07f0927544fb",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —
