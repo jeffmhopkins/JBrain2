@@ -4,17 +4,22 @@ lifecycle (survives a pause, freed on delete), and the reverse-proxy route's gua
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from jcode_ctl.app import create_app
+from jcode_ctl.app import create_app, preview_token
 from jcode_ctl.config import Settings
 from jcode_ctl.host_preview import HostPreviewManager
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.workspace import FakeWorkspace
 
 AUTH = {"Authorization": "Bearer t"}
+# The preview routes' own credential: the api derives the same value from JCODE_TOKEN.
+PREVIEW_AUTH = {"Authorization": f"Bearer {preview_token('t')}"}
 
 
 def _host_app() -> TestClient:
@@ -65,7 +70,7 @@ def test_hostname_survives_a_pause_but_not_a_delete() -> None:
 
 def test_proxy_unknown_slug_is_404() -> None:
     c = _host_app()
-    assert c.get("/preview/deadbeefdeadbeef/", headers=AUTH).status_code == 404
+    assert c.get("/preview/deadbeefdeadbeef/", headers=PREVIEW_AUTH).status_code == 404
 
 
 def test_proxy_paused_session_is_404() -> None:
@@ -74,7 +79,7 @@ def test_proxy_paused_session_is_404() -> None:
     url = c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()["url"]
     c.post(f"/sessions/{sid}/stop", headers=AUTH)
     # A paused session is never reachable, even though its slug still resolves.
-    assert c.get(f"/preview/{_slug(url)}/", headers=AUTH).status_code == 404
+    assert c.get(f"/preview/{_slug(url)}/", headers=PREVIEW_AUTH).status_code == 404
 
 
 def test_proxy_running_session_without_a_dev_server_is_502() -> None:
@@ -83,7 +88,7 @@ def test_proxy_running_session_without_a_dev_server_is_502() -> None:
     url = c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()["url"]
     # Slug resolves, session is running, but nothing is listening on the reserved port →
     # a bad-gateway, not a crash.
-    assert c.get(f"/preview/{_slug(url)}/", headers=AUTH).status_code == 502
+    assert c.get(f"/preview/{_slug(url)}/", headers=PREVIEW_AUTH).status_code == 502
 
 
 def test_preview_ws_rejects_a_bad_bearer() -> None:
@@ -105,9 +110,67 @@ def test_preview_ws_unknown_slug_closes_before_connecting() -> None:
     c = _host_app()
     with (
         pytest.raises(WebSocketDisconnect) as exc,
-        c.websocket_connect(
-            "/preview/deadbeefdeadbeef/", headers={"authorization": "Bearer t"}
-        ),
+        c.websocket_connect("/preview/deadbeefdeadbeef/", headers=PREVIEW_AUTH),
+    ):
+        pass
+    assert exc.value.code == 4404
+
+
+def test_preview_token_is_the_hmac_of_the_control_token() -> None:
+    # The api mirrors this derivation (jbrain.api.jcode_preview.preview_token); a change
+    # on one side alone breaks every preview.
+    expected = hmac.new(b"t", b"jcode-preview", hashlib.sha256).hexdigest()
+    assert preview_token("t") == expected
+
+
+def test_preview_routes_refuse_the_control_token() -> None:
+    # The api's preview hop never holds the management credential, and the preview
+    # routes don't accept it either: each token opens exactly one surface.
+    c = _host_app()
+    sid = c.post("/sessions", json={"repo": "r"}, headers=AUTH).json()["id"]
+    url = c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()["url"]
+    assert c.get(f"/preview/{_slug(url)}/", headers=AUTH).status_code == 401
+    assert c.get(f"/preview/{_slug(url)}", headers=AUTH).status_code == 401
+    assert c.get(f"/preview/{_slug(url)}/").status_code == 401
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        c.websocket_connect(f"/preview/{_slug(url)}/", headers=AUTH),
+    ):
+        pass
+    assert exc.value.code == 4401
+
+
+def test_management_routes_refuse_the_preview_token() -> None:
+    # The preview token is what a request smuggled out of /preview/{slug} would carry;
+    # it must open nothing else.
+    c = _host_app()
+    sid = c.post("/sessions", json={"repo": "r"}, headers=AUTH).json()["id"]
+    assert c.get("/sessions", headers=PREVIEW_AUTH).status_code == 401
+    assert c.get(f"/sessions/{sid}", headers=PREVIEW_AUTH).status_code == 401
+    assert (
+        c.post("/sessions", json={"repo": "r"}, headers=PREVIEW_AUTH).status_code == 401
+    )
+    assert c.delete(f"/sessions/{sid}", headers=PREVIEW_AUTH).status_code == 401
+    assert c.get(f"/sessions/{sid}/preview", headers=PREVIEW_AUTH).status_code == 401
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        c.websocket_connect(f"/sessions/{sid}/terminal", headers=PREVIEW_AUTH),
+    ):
+        pass
+    assert exc.value.code == 4401
+
+
+def test_proxy_refuses_a_dot_segment_path() -> None:
+    # Defence in depth behind the api's own check: a dot segment never reaches the dev
+    # server (which would resolve it against its own root).
+    c = _host_app()
+    sid = c.post("/sessions", json={"repo": "r"}, headers=AUTH).json()["id"]
+    url = c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()["url"]
+    resp = c.get(f"/preview/{_slug(url)}/%2e%2e/%2e%2e/etc", headers=PREVIEW_AUTH)
+    assert resp.status_code == 404
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        c.websocket_connect(f"/preview/{_slug(url)}/a/%2e%2e/x", headers=PREVIEW_AUTH),
     ):
         pass
     assert exc.value.code == 4404

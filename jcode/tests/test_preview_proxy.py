@@ -6,6 +6,7 @@ the Host so an allowlisting framework accepts it, and 502s when nothing's listen
 from __future__ import annotations
 
 import httpx
+import pytest
 from starlette.requests import Request
 
 from jcode_ctl.preview_proxy import proxy_http
@@ -125,3 +126,34 @@ async def test_does_not_retry_the_other_family_on_a_read_error() -> None:
     resp = await proxy_http(5187, "", _request(), client_factory=_factory(handler))
     assert resp.status_code == 502
     assert tried == ["127.0.0.1"]
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["../etc/passwd", "a/./b", "..", "..;/x", "a\\..\\b", "%2e%2e/x", "%252e%252e/x"],
+)
+async def test_dot_segments_never_reach_the_dev_server(path: str) -> None:
+    tried: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        tried.append(str(req.url))
+        return httpx.Response(200)
+
+    resp = await proxy_http(5187, path, _request(), client_factory=_factory(handler))
+    assert resp.status_code == 404
+    assert tried == []
+
+
+@pytest.mark.parametrize(
+    "path", ["main.js", "node_modules/.vite/deps/x.js", ".well-known/a", "..."]
+)
+async def test_dotted_names_still_proxy(path: str) -> None:
+    tried: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        tried.append(req.url.path)
+        return httpx.Response(200)
+
+    resp = await proxy_http(5187, path, _request(), client_factory=_factory(handler))
+    assert resp.status_code == 200
+    assert tried == [f"/{path}"]

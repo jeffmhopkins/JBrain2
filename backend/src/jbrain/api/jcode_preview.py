@@ -8,8 +8,10 @@ server. The **unguessable slug is the auth** — no owner cookie (a preview is r
 by anyone holding the URL, like the retired trycloudflare link), and Caddy serves this
 prefix ONLY on the preview subdomain (the main site 404s it) so a sandbox-run dev app
 never executes on the owner origin. The owner's cookie + Authorization are stripped
-here so they can never reach sandbox code; the api↔jcode bearer is added for that hop
-and dropped again by the control server before the dev server sees it.
+here so they can never reach sandbox code; a preview-only bearer derived from the
+api↔jcode token is added for that hop (the control server's management routes refuse it)
+and dropped again by the control server before the dev server sees it. The path is
+refused unless it provably stays under the session's ``/preview/{slug}`` prefix.
 
 The HTTP body is buffered, not streamed (a dev page's assets are modest); the HMR
 live-reload WebSocket is bridged through the same slug + origin gate (Wave P3b).
@@ -18,8 +20,11 @@ live-reload WebSocket is bridged through the same slug + origin gate (Wave P3b).
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import hmac
 import re
 from typing import cast
+from urllib.parse import unquote
 
 import httpx
 import structlog
@@ -71,6 +76,41 @@ _TIMEOUT = httpx.Timeout(35.0, connect=5.0)
 _MAX_BODY = 8 * 1024 * 1024
 
 
+# Matches the control server's derivation (jcode_ctl.app.preview_token). No new `.env` key:
+# both sides already hold JCODE_TOKEN (CLAUDE.md #10).
+_PREVIEW_TOKEN_CONTEXT = b"jcode-preview"
+# The ASGI server already decoded the path once; a `%2f`/`%5c` still present was
+# double-encoded, and a dev server may decode it into a separator we never saw.
+_ENCODED_SEPARATOR = re.compile(r"%(2f|5c)", re.IGNORECASE)
+# Enough rounds for any plausible double-encoding; a path still changing after this is
+# refused rather than trusted.
+_MAX_DECODE_ROUNDS = 4
+
+
+def preview_token(jcode_token: str) -> str:
+    """The bearer the control server's preview routes accept — and its management API
+    refuses. Derived, not the control token itself, so a request that somehow escaped the
+    ``/preview/{slug}`` prefix carries nothing that opens ``/sessions``."""
+    return hmac.new(jcode_token.encode(), _PREVIEW_TOKEN_CONTEXT, hashlib.sha256).hexdigest()
+
+
+def _path_is_contained(path: str) -> bool:
+    """False for any path that could step out of the session's preview prefix: a dot
+    segment (also as `..;`, which some servers treat as `..`), a backslash or NUL, or an
+    encoded separator — checked at every decoding depth, since httpx and the servers
+    behind it resolve what this layer forwards. Dotted names (`main.js`, `.vite`) pass."""
+    for _ in range(_MAX_DECODE_ROUNDS):
+        if "\\" in path or "\x00" in path or _ENCODED_SEPARATOR.search(path):
+            return False
+        if any(seg.split(";", 1)[0] in (".", "..") for seg in path.split("/")):
+            return False
+        decoded = unquote(path)
+        if decoded == path:
+            return True
+        path = decoded
+    return False
+
+
 def _preview_host(slug: str, base_host: str) -> str:
     return f"{slug}-preview.{base_host}"
 
@@ -79,10 +119,23 @@ def _request_headers(request: Request, token: str) -> list[tuple[bytes, bytes]]:
     out = [
         (k, v) for k, v in request.headers.raw if k.decode("latin-1").lower() not in _DROP_REQUEST
     ]
-    # The bearer authenticates THIS hop (api → control server); the control server
-    # validates the slug and drops this header before the dev server is reached.
-    out.append((b"authorization", f"Bearer {token}".encode()))
+    # The bearer authenticates THIS hop (api → control server's preview routes only); the
+    # control server validates the slug and drops this header before the dev server.
+    out.append((b"authorization", f"Bearer {preview_token(token)}".encode()))
     return out
+
+
+async def _read_capped(request: Request) -> bytes | None:
+    """The body, or None once it passes _MAX_BODY — counted as it arrives, because a
+    chunked upload carries no Content-Length to check up front."""
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > _MAX_BODY:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _response_headers(resp: httpx.Response) -> dict[str, str]:
@@ -112,13 +165,20 @@ async def preview(request: Request, slug: str, path: str = "") -> Response:
     host = request.headers.get("host", "").split(":")[0].lower()
     if host != _preview_host(slug, base_host):
         return Response("preview not available", status_code=404)
+    if not _path_is_contained(path):
+        return Response("preview not available", status_code=404)
     if int(request.headers.get("content-length") or 0) > _MAX_BODY:
         return Response("request too large", status_code=413)
-    target = httpx.URL(
-        f"{settings.jcode_url.rstrip('/')}/preview/{slug}/{path}",
-        query=request.url.query.encode(),
-    )
-    body = await request.body()
+    base = settings.jcode_url.rstrip("/")
+    target = httpx.URL(f"{base}/preview/{slug}/{path}", query=request.url.query.encode())
+    # The real guard: httpx normalises dot segments when it builds the URL, so whatever
+    # the check above missed shows up here as a path that left the session's prefix.
+    prefix = f"{httpx.URL(base).path.rstrip('/')}/preview/{slug}"
+    if target.path != prefix and not target.path.startswith(f"{prefix}/"):
+        return Response("preview not available", status_code=404)
+    body = await _read_capped(request)
+    if body is None:
+        return Response("request too large", status_code=413)
     # An injectable transport lets tests drive the control server with no network.
     transport = getattr(request.app.state, "jcode_preview_transport", None)
     async with httpx.AsyncClient(timeout=_TIMEOUT, transport=transport) as client:
@@ -152,7 +212,7 @@ async def _proxy_ws(  # pragma: no cover - opens a live upstream socket, deploy-
     api↔jcode bearer and echoing the negotiated subprotocol (Vite speaks ``vite-hmr``).
     Connect upstream FIRST so the browser handshake can mirror its subprotocol."""
     requested = browser.scope.get("subprotocols") or []
-    headers = {"Authorization": f"Bearer {settings.jcode_token}"}
+    headers = {"Authorization": f"Bearer {preview_token(settings.jcode_token)}"}
     try:
         upstream = await websockets.connect(
             _ws_url(settings.jcode_url, slug, path, browser.url.query),
@@ -193,7 +253,7 @@ async def preview_ws(websocket: WebSocket, slug: str, path: str = "") -> None:
         await websocket.close(code=4404)
         return
     host = websocket.headers.get("host", "").split(":")[0].lower()
-    if host != _preview_host(slug, base_host):
+    if host != _preview_host(slug, base_host) or not _path_is_contained(path):
         await websocket.close(code=4404)
         return
     await _proxy_ws(websocket, settings, slug, path)
