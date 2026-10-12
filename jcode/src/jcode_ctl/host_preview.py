@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from jcode_ctl.preview import PreviewError
@@ -53,6 +54,9 @@ class HostPreviewManager:
         self._high = port_high
         self._by_sid: dict[str, Allocation] = {}
         self._by_slug: dict[str, str] = {}
+        # Callbacks to run when a slug stops resolving: the open preview sockets that
+        # were admitted on it, which a handshake-time check alone would leave streaming.
+        self._on_retire: dict[str, set[Callable[[], None]]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -108,7 +112,7 @@ class HostPreviewManager:
         old = self._by_sid.get(sid)
         if old is None:
             return None
-        self._by_slug.pop(old.slug, None)
+        self._retire(old.slug)
         alloc = self._assign(sid, old.port)
         _log.info("host preview slug rotated sid=%s port=%d", sid, alloc.port)
         return alloc
@@ -130,8 +134,27 @@ class HostPreviewManager:
     def release(self, sid: str) -> None:
         alloc = self._by_sid.pop(sid, None)
         if alloc is not None:
-            self._by_slug.pop(alloc.slug, None)
+            self._retire(alloc.slug)
             _log.debug("host preview released sid=%s port=%d", sid, alloc.port)
+
+    def on_retire(self, slug: str, callback: Callable[[], None]) -> Callable[[], None]:
+        """Run ``callback`` once when ``slug`` stops resolving (rotate or release).
+        Returns the function that unregisters it, for a socket that ends by itself."""
+        self._on_retire.setdefault(slug, set()).add(callback)
+
+        def unregister() -> None:
+            callbacks = self._on_retire.get(slug)
+            if callbacks is not None:
+                callbacks.discard(callback)
+                if not callbacks:
+                    del self._on_retire[slug]
+
+        return unregister
+
+    def _retire(self, slug: str) -> None:
+        self._by_slug.pop(slug, None)
+        for callback in self._on_retire.pop(slug, set()):
+            callback()
 
     def release_all(self) -> None:
         for sid in list(self._by_sid):

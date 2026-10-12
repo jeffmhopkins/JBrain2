@@ -115,3 +115,20 @@ def test_rotate_without_a_reservation_is_a_no_op() -> None:
     mgr = _mgr()
     assert mgr.rotate("s1") is None
     assert mgr.url("s1") is None
+
+
+def test_on_retire_fires_once_on_rotate_or_release_unless_unregistered() -> None:
+    mgr = _mgr()
+    fired: list[str] = []
+    a = mgr.ensure("a")
+    b = mgr.ensure("b")
+    c = mgr.ensure("c")
+    mgr.on_retire(a.slug, lambda: fired.append("a"))
+    mgr.on_retire(b.slug, lambda: fired.append("b"))
+    unregister = mgr.on_retire(c.slug, lambda: fired.append("c"))
+    unregister()
+    mgr.rotate("a")
+    mgr.rotate("a")  # the new slug has no watchers; the old one fired only once
+    mgr.release("b")
+    mgr.release("c")
+    assert fired == ["a", "b"]

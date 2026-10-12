@@ -280,3 +280,52 @@ def test_rotate_is_main_token_only_and_404s_an_unknown_session() -> None:
     assert c.post("/sessions/nope/preview/rotate", headers=AUTH).status_code == 404
     # A session that never opened a preview has nothing to rotate.
     assert c.post(f"/sessions/{sid}/preview/rotate", headers=AUTH).json()["url"] is None
+
+
+def _held_open_preview_ws(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dev HMR socket that echoes until something ends it."""
+
+    async def _proxy_ws(browser: Any, port: int, path: str, query: str) -> None:
+        await browser.accept()
+        try:
+            while True:
+                await browser.send_text(await browser.receive_text())
+        except WebSocketDisconnect:
+            return
+
+    monkeypatch.setattr(app_mod, "proxy_ws", _proxy_ws)
+
+
+@pytest.mark.parametrize("retire", ["rotate", "delete"])
+def test_an_open_preview_socket_closes_when_its_slug_is_retired(
+    monkeypatch: pytest.MonkeyPatch, retire: str
+) -> None:
+    # A revoked recipient's open HMR socket must not keep streaming the code's updates.
+    _held_open_preview_ws(monkeypatch)
+    owners: dict[int, set[int]] = {}
+    c, sessions, slug = _owned_app(owners)
+    sid = sessions.list()[0].id
+    owners[59000] = {sessions.user_for(sid).uid}
+    with c.websocket_connect(f"/preview/{slug}/", headers=PREVIEW_AUTH) as ws:
+        if retire == "rotate":
+            assert c.post(f"/sessions/{sid}/preview/rotate", headers=AUTH).is_success
+        else:
+            assert c.delete(f"/sessions/{sid}", headers=AUTH).status_code == 204
+        message = ws.receive()
+        assert (message["type"], message.get("code")) == ("websocket.close", 4404)
+
+
+def test_rotating_another_session_leaves_an_open_preview_socket_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _held_open_preview_ws(monkeypatch)
+    owners: dict[int, set[int]] = {}
+    c, sessions, slug = _owned_app(owners)
+    sid = sessions.list()[0].id
+    owners[59000] = {sessions.user_for(sid).uid}
+    other = c.post("/sessions", json={"repo": "r"}, headers=AUTH).json()["id"]
+    c.post(f"/sessions/{other}/preview", json={}, headers=AUTH)
+    with c.websocket_connect(f"/preview/{slug}/", headers=PREVIEW_AUTH) as ws:
+        assert c.post(f"/sessions/{other}/preview/rotate", headers=AUTH).is_success
+        ws.send_text("ping")
+        assert ws.receive_text() == "ping"
