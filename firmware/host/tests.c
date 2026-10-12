@@ -862,6 +862,119 @@ static void gravity_at(float deg, int *ax, int *ay)
     *ay = (int)lrintf(sinf(r) * 8192.0f);
 }
 
+/* The rotated blit reads its source through `orient_panel_to_frame` and a touch is mapped back
+   through it, so what has to hold is that the mapping IS a quarter turn of the square wherever
+   the square has slid: every glass pixel in the window is exactly one frame pixel, the blit's
+   per-row step is the one it assumes, and the slide is toward the lean. */
+static void test_the_square_slides_into_the_bands_with_one_mapping(void)
+{
+    static unsigned char seen[FACE_W * FACE_H];
+    for (int q = 1; q <= 3; q += 2) {
+        for (int lean = -FACE_LEAN_MAX_SIDE; lean <= FACE_LEAN_MAX_SIDE; lean += 5) {
+            const int win = orient_window(q, lean, FACE_LEAN_MAX_SIDE);
+            CHECK(win % 2 == 0, "the window starts on an even row, as the controller takes it");
+            CHECK(win >= -ORIENT_WIN_MAX && win <= ORIENT_WIN_MAX, "and never leaves the glass");
+            const int wy = ORIENT_SQ_Y0 + win;
+            memset(seen, 0, sizeof(seen));
+            int fails = 0;
+            for (int px = 0; px < ORIENT_SQ; px++) {
+                for (int py = wy; py < wy + ORIENT_SQ; py++) {
+                    int fx, fy, nx, ny;
+                    orient_panel_to_frame(q, win, px, py, &fx, &fy);
+                    if (fx < 0 || fx >= ORIENT_SQ || fy < ORIENT_SQ_Y0 ||
+                        fy >= ORIENT_SQ_Y0 + ORIENT_SQ || seen[fy * FACE_W + fx]++) {
+                        fails++;
+                        continue;
+                    }
+                    orient_panel_to_frame(q, win, px, py + 1, &nx, &ny);
+                    if (ny != fy || nx - fx != (q == 1 ? -1 : 1)) fails++;
+                }
+            }
+            CHECK(fails == 0, "each glass pixel of the window is one frame pixel of the square");
+        }
+        /* At full lean the square's edge is the glass's: 0 or 448 - 368 = 80 rows down. */
+        const int right = orient_window(q, FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE);
+        const int left = orient_window(q, -FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE);
+        CHECK(right == -left && (right == ORIENT_WIN_MAX || right == -ORIENT_WIN_MAX),
+              "full lean takes the square all the way into the band");
+        /* Toward the lean: the figure's right edge lands further to the viewer's right, which
+           is panel -Y clockwise and +Y anticlockwise. */
+        const int edge_at_rest = q == 1 ? ORIENT_SQ_Y0 : ORIENT_SQ_Y0 + ORIENT_SQ - 1;
+        const int edge_leaned = q == 1 ? ORIENT_SQ_Y0 + right : ORIENT_SQ_Y0 + right + ORIENT_SQ - 1;
+        int fx, fy;
+        orient_panel_to_frame(q, right, 0, edge_leaned, &fx, &fy);
+        CHECK(fx == ORIENT_SQ - 1, "the window's viewer-right edge is the figure's right edge");
+        CHECK(q == 1 ? edge_leaned < edge_at_rest : edge_leaned > edge_at_rest,
+              "and a lean right moves it to the viewer's right");
+    }
+    CHECK(orient_window(0, FACE_LEAN_MAX, FACE_LEAN_MAX) == 0 &&
+              orient_window(2, -FACE_LEAN_MAX, FACE_LEAN_MAX) == 0,
+          "upright and upside down there is no band to slide into");
+    CHECK(orient_window(1, 1000, FACE_LEAN_MAX_SIDE) == -ORIENT_WIN_MAX,
+          "a lean past the limit is clamped, not extrapolated off the glass");
+    int fx, fy;
+    orient_panel_to_frame(0, 40, 17, 29, &fx, &fy);
+    CHECK(fx == 17 && fy == 29, "portrait ignores the window");
+}
+
+/* The head turns back toward true up by a share of the angle the panel is turned. */
+static void test_the_head_rights_itself_against_the_tilt(void)
+{
+    for (int q = 0; q < 4; q++) {
+        /* Gravity this quarter's `down`, then turned 20 degrees right side down. Each quarter's
+           down axis sits at its CENTRE_DEG; right side down is the anticlockwise side of it in
+           atan2(ay, ax), the way upright's -ay is. */
+        static const float CENTRE[4] = {0.0f, 270.0f, 180.0f, 90.0f};
+        int ax, ay, tilt, down;
+        gravity_at(CENTRE[q] - 20.0f, &ax, &ay);
+        orient_axes(q, ax, ay, &tilt, &down);
+        CHECK(tilt > 0 && down > 0, "right side down reads as a positive tilt in every quarter");
+        const float u = orient_upright(tilt, down, 0.6f, 45.0f);
+        CHECK(u < -11.5f && u > -12.5f, "and turns the head back anticlockwise by 0.6 of it");
+        gravity_at(CENTRE[q] + 20.0f, &ax, &ay);
+        orient_axes(q, ax, ay, &tilt, &down);
+        CHECK(orient_upright(tilt, down, 0.6f, 45.0f) > 11.5f, "left side down, clockwise");
+        gravity_at(CENTRE[q], &ax, &ay);
+        orient_axes(q, ax, ay, &tilt, &down);
+        CHECK(fabsf(orient_upright(tilt, down, 0.6f, 45.0f)) < 0.01f, "level, nothing");
+    }
+    CHECK(orient_upright(8000, 10, 0.6f, 45.0f) > -27.01f, "clamped at the quarter's edge");
+    CHECK(orient_upright(100, -8000, 0.6f, 45.0f) < 0.0f, "and sane on a reading past flat");
+
+    /* On the drawing: the head moves toward the righting and the feet do not. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        int x0, x1, y0, y1;
+        bbox(&x0, &x1, &y0, &y1);
+        const int head_rows = y0 + (y1 - y0) / 4, feet_rows = y1 - (y1 - y0) / 4;
+        static uint16_t rest[FACE_W * FACE_H];
+        memcpy(rest, fb, sizeof(rest));
+        float cx[2];
+        for (int k = 0; k < 2; k++) {
+            st.upright = k ? 20.0f : -20.0f;
+            face_draw(fb, 0, &st);
+            double sum = 0, n = 0;
+            for (int y = y0; y < head_rows; y++) {
+                for (int x = 0; x < FACE_W; x++) {
+                    if (fb[y * FACE_W + x]) {
+                        sum += x;
+                        n++;
+                    }
+                }
+            }
+            cx[k] = (float)(sum / n);
+            CHECK(memcmp(fb + feet_rows * FACE_W, rest + feet_rows * FACE_W,
+                         (size_t)(FACE_H - feet_rows) * FACE_W * sizeof(uint16_t)) == 0,
+                  "the feet stay planted while the head rights itself");
+        }
+        CHECK(cx[1] - cx[0] > (f == FORM_ROBOT ? 8.0f : 40.0f),
+              "a clockwise righting carries the head right, anticlockwise left");
+    }
+}
+
 static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
 {
     /* The owner: "the tilt going to 90 and causing an orientation change shouldn't happen right
@@ -4436,6 +4549,8 @@ int main(void)
     test_a_tap_lands_where_the_pixel_it_touched_came_from();
     test_the_zones_follow_the_scaled_figure();
     test_the_lean_limits_are_the_room_that_exists();
+    test_the_square_slides_into_the_bands_with_one_mapping();
+    test_the_head_rights_itself_against_the_tilt();
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();
     test_the_open_mouth_is_the_smile_opening();

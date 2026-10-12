@@ -934,6 +934,8 @@ void display_set_debug_overlay(bool on)
    panel sits still reads as broken rather than alive. */
 #define LEAN_SMOOTH 4
 static int s_lean;
+/* THE HEAD RIGHTING (`face_state_t.upright`), in degrees — `orient_upright`. */
+static float s_upright;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
 static int s_blit_fails;
 static int s_blit_ok;
@@ -1116,27 +1118,65 @@ void display_blit_totals(int *fail_total, int *recoveries, int *meter_fail)
  * inverts it: for a fixed destination column the source addresses are consecutive, so PSRAM
  * is read sequentially and the scattered writes land in internal SRAM, where a stride costs
  * nothing. Same buffers, same 11,776 bytes, no second frame. */
-#define SQ 368                        /* the side of the square a quarter turn preserves */
-#define SQ_Y0 ((FACE_H - SQ) / 2)     /* 40: where it sits in the portrait frame */
+#define SQ ORIENT_SQ                  /* the side of the square a quarter turn preserves */
+#define SQ_Y0 ORIENT_SQ_Y0            /* where it sits in the portrait frame */
+_Static_assert(SQ == FACE_W && SQ_Y0 == (FACE_H - SQ) / 2, "the square is centred in the frame");
 #define COL_STRIPE 16                 /* columns per transfer; 368 / 16 = 23 exactly */
+
+/* THE SQUARE SLIDES, because the glass is 448 wide on its side and the square is 368. The
+ * owner, landscape: *"his feathers are cutting off before we even get into the left extent of
+ * the screen when tilting."* The lean is clamped inside the square, so at full lean the bird
+ * was cropped against an edge 40 px short of the glass's.
+ *
+ * So the whole square follows the lean into the bands (`orient_window`): at full lean its edge
+ * IS the glass's. Moving the window rather than widening the frame keeps every drawing, overlay
+ * and hit test in the same 368 square they were written for, and the blit and the touch both
+ * go through `orient_panel_to_frame`, so they cannot disagree about where it is.
+ *
+ * `s_win` is what the next blit will use, `s_win_shown` is what is on the glass — a touch is
+ * read against the picture the finger saw. */
+static int s_win;
+static int s_win_shown;
+
+/* Black over panel rows [y0, y1): the strip of band the square just slid out of. */
+static esp_err_t clear_rows(int y0, int y1)
+{
+    while (y0 < y1) {
+        int rows = y1 - y0;
+        if (rows > STRIPE_ROWS) rows = STRIPE_ROWS;
+        uint16_t *dst = next_stripe();
+        memset(dst, 0, (size_t)rows * FACE_W * sizeof(uint16_t));
+        const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, 0, y0, FACE_W, y0 + rows, dst);
+        if (err != ESP_OK) return err;
+        y0 += rows;
+    }
+    return ESP_OK;
+}
 
 static esp_err_t blit_frame_rotated(const uint16_t *fb, bool clockwise)
 {
     if (s_panel == NULL) return ESP_ERR_INVALID_STATE;
+    const int win = s_win, wy = SQ_Y0 + win;
     for (int x0 = 0; x0 < FACE_W; x0 += COL_STRIPE) {
         uint16_t *dst = next_stripe();
         for (int c = 0; c < COL_STRIPE; c++) {
             const int x = x0 + c;
             /* Both directions walk the source consecutively; only the sign differs. */
-            const uint16_t *src = clockwise ? &fb[(size_t)(SQ_Y0 + x) * FACE_W + (SQ - 1)]
-                                            : &fb[(size_t)(SQ_Y0 + SQ - 1 - x) * FACE_W];
+            int fx = 0, fy = 0;
+            orient_panel_to_frame(clockwise ? 1 : 3, win, x, wy, &fx, &fy);
+            const uint16_t *src = &fb[(size_t)fy * FACE_W + fx];
             const int step = clockwise ? -1 : 1;
             for (int r = 0; r < SQ; r++) dst[r * COL_STRIPE + c] = src[r * step];
         }
-        const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x0, SQ_Y0, x0 + COL_STRIPE,
-                                                        SQ_Y0 + SQ, dst);
+        const esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x0, wy, x0 + COL_STRIPE,
+                                                        wy + SQ, dst);
         if (err != ESP_OK) return err;
     }
+    /* What the old window covered and the new one does not still shows the old picture. */
+    const int was = s_win_shown;
+    s_win_shown = win;
+    if (win > was) return clear_rows(SQ_Y0 + was, wy);
+    if (win < was) return clear_rows(wy + SQ, SQ_Y0 + was + SQ);
     return ESP_OK;
 }
 
@@ -1162,20 +1202,7 @@ static esp_err_t blit_frame_rotated(const uint16_t *fb, bool clockwise)
  * the rim of the glass is the rim of the glass whichever way up the thing is mounted. */
 static void panel_to_frame(int px, int py, int *fx, int *fy)
 {
-    switch (s_quarter) {
-    case 1:
-        *fx = SQ_Y0 + SQ - 1 - py;
-        *fy = SQ_Y0 + px;
-        break;
-    case 3:
-        *fx = py - SQ_Y0;
-        *fy = SQ_Y0 + SQ - 1 - px;
-        break;
-    default:
-        *fx = px;
-        *fy = py;
-        break;
-    }
+    orient_panel_to_frame(s_quarter, s_win_shown, px, py, fx, fy);
 }
 
 static esp_err_t blit_frame(const uint16_t *fb)
@@ -1186,6 +1213,7 @@ static esp_err_t blit_frame(const uint16_t *fb)
             /* The bars beside the square are never written again, so whatever the portrait
                frame last left there would stay forever. Once, on the turn, not per frame. */
             s_quarter_changed = false;
+            s_win_shown = 0;
             memset(stripe, 0, sizeof(stripe));
             memset(stripe_b, 0, sizeof(stripe_b));
             for (int y = 0; y < FACE_H; y += STRIPE_ROWS) {
@@ -1311,18 +1339,20 @@ static void update_orientation(void)
      *
      * Which is also why the magnitudes work: whichever axis is NOT carrying gravity is the
      * small signal a tilt moves, in every orientation. */
-    int tilt;
-    switch (s_quarter) {
-    case 1: tilt = -ax; break;
-    case 2: tilt = ay; break;
-    case 3: tilt = ax; break;
-    default: tilt = -ay; break;
-    }
+    int tilt = 0, down = 0;
+    orient_axes(s_quarter, ax, ay, &tilt, &down);
     const int lean_max = side ? FACE_LEAN_MAX_SIDE : FACE_LEAN_MAX;
     int target = tilt * lean_max / LEAN_FULL;
     if (target > lean_max) target = lean_max;
     if (target < -lean_max) target = -lean_max;
     s_lean += (target - s_lean) / LEAN_SMOOTH;
+
+    /* The square follows the lean into the bands (`orient_window`). */
+    s_win = orient_window(s_quarter, s_lean, lean_max);
+
+    /* AND THE HEAD RIGHTS ITSELF while the body slides (`orient_upright`). */
+    const float up = orient_upright(tilt, down, ORIENT_UPRIGHT_SHARE, ORIENT_UPRIGHT_MAX_DEG);
+    s_upright += (up - s_upright) / (float)LEAN_SMOOTH;
 }
 
 /* A 180 degree rotation of a row-major buffer is exactly its reversal, which is why this is
@@ -1851,6 +1881,7 @@ static void face_task(void *arg)
     for (int i = 0; i < POOL_COUNT; i++) variants_reset(&mem[i]);
     float s_open = 1.0f;
     int s_drawn_lean = 0;
+    float s_drawn_upright = 0.0f;
     /* The shuffle's own state, and the lean it last saw (`rig.h`). */
     rig_walk_t walk = {0};
     int walked_from = 0;
@@ -2243,6 +2274,7 @@ static void face_task(void *arg)
         if (action != ACT_NONE) dirty = true;
         /* A moved figure is a new frame — once it has moved enough to see. */
         if (s_lean - s_drawn_lean > 2 || s_drawn_lean - s_lean > 2) dirty = true;
+        if (fabsf(s_upright - s_drawn_upright) > 1.0f) dirty = true;
         /* And while he is still putting his feet down (`rig.h`). */
         if (walk.amp > 0.0f) dirty = true;
         /* What the machine says to draw changed, or it animates: the dot pulses, the dots cycle,
@@ -2342,6 +2374,7 @@ static void face_task(void *arg)
         if (facts.speaker_busy) dirty = true;
         if (s_sleep != SCREEN_DARK && (dirty || since_draw >= FACE_FLOOR_MS)) {
             s_drawn_lean = s_lean;
+            s_drawn_upright = s_upright;
             s_drawn = *view;
             float p = 0.0f;
             if (action != ACT_NONE) {
@@ -2375,6 +2408,7 @@ static void face_task(void *arg)
             rig_figure(action, p, action_mag, now, fst.eyes.face_ang, &fst.fig);
             fst.bob = bob_step(frame++);
             fst.lean = s_lean;
+            fst.upright = s_upright;
             fst.open = dozing ? emotion_approach(emotion_approach(fst.open, 0.0f, 0.12f), 0.0f, 0.12f)
                               : s_open;
             fst.startle = s_flinch;
