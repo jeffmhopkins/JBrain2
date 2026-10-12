@@ -23,17 +23,18 @@
  * They share one codec output, so for the whole of this project's life the acknowledgement
  * tone has been exactly as loud as the pet's speech — and the beep is the part held closest
  * to an ear, the part that fires on every poke, and the part with a hard transient in it.
- * Scaling the tone in software costs nothing (it is synthesised here) and lets the voice get
- * louder while the beep gets quieter, which is the direction that makes the toy both more
- * useful and less shrill.
+ * Scaling the tone in software costs nothing (render synthesises it, at `STREAM_CUE_GAIN`)
+ * and lets the voice get louder while the beep gets quieter, which is the direction that makes
+ * the toy both more useful and less shrill.
+ *
+ * WHAT THIS FILE IS NOW: codec I/O, the ALC, levels, the capture buffer and `speech_feed`.
+ * Every decision about what the speaker says — cues, the reply, the message ring, pause,
+ * deafness — is `stream_tick`'s (`stream.c`, host-tested), and `make check_no_logic_in_audio`
+ * keeps it out of here.
  */
 
 #include "audio.h"
 
-#include "cue.h"
-#include "ring.h"
-
-#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -44,10 +45,12 @@
 #include "esp_codec_dev_defaults.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "i2c_bus.h"
 #include "speech.h"
+#include "stream.h"
 
 static const char *TAG = "audio";
 
@@ -104,14 +107,6 @@ static const char *TAG = "audio";
    could not have, because `VOLUME_MAX` clamped the slider at 85.
    A panel that never hears from the box is now loud enough on its own. */
 #define VOLUME 95
-/* What an ACKNOWLEDGEMENT should sound like on that same scale — the owner asked for 20
-   against the voice's 90, back when there was one 880 Hz tone rather than twenty-six cues,
-   and the reason holds for all of them: the cue is the part heard closest to a child's face
-   and the voice is the part they are listening to. Applied as an amplitude ratio rather than
-   a second codec call, because `esp_codec_dev` has no locking and one task owns the codec
-   (§10.4al): changing the output level around every cue is exactly the kind of cross-task
-   poke that panicked a panel. */
-#define CUE_VOLUME 20
 
 /* One handle for both directions. The vendor BSP builds two codec instances, one per
    direction — two objects writing the same chip's registers over the same I2C bus. A single
@@ -120,244 +115,30 @@ static esp_codec_dev_handle_t s_codec;
 /* Kept so the ALC can be read back from the audio task — see `alc_apply()`. */
 static const audio_codec_ctrl_if_t *s_ctrl;
 
-/* THE RECORDING. Ten seconds, and the box enforces the same cap: the panel must not fill
-   PSRAM because a screen is face-down in a bag, and the box must not transcribe a minute of a
-   room because the panel forgot to stop.
-
-   IT WAS SIX, AND SIX CUT CHILDREN OFF. The owner: *"the babies keep getting cut off because
-   they're a little bit slow."* The window has to hold the lead-in, the sentence AND the
-   silence the panel waits out to decide the sentence ended (`LISTEN_HUSH_MS`, now 1.8 s) —
-   three seconds of waiting plus two of talking plus the hush was already 6.8, so the cap was
-   ending turns before the hush could. The extra padding costs the box nothing now that it
-   trims the silence off before whisper sees it (`_trim_to_speech`).
-
-   THIRTY NOW, AT THE OWNER'S ASK (0.2.95), up from ten. Ten was chosen as "a long message for
-   a four-year-old" and left with a note to revisit it if the twins ever hit the ceiling — the
-   `full` branch below logs when they do. Nobody waited for that evidence; the ask came first,
-   and the cost is only memory.
-
-   30 s of 16 kHz mono s16 is 960 KB, claimed ONCE at start-up out of the board's 8 MB of
-   PSRAM. Never allocated while recording: a heap request in the middle of a four-year-old
-   talking is a failure with no good outcome.
-
-   IT IS THE LARGEST BUFFER ON THIS PANEL NOW, and by a wide margin. Streaming took the
-   inbound buffer away entirely and cut the play buffer to the reply it actually holds, so the
-   three come to about 1.4 MB — 960 KB here, 320 KB of playback, 128 KB of ring — beside a
-   322 KB framebuffer. The number to watch is `free_psram` in telemetry rather than this
-   comment. */
-#define CAPTURE_MAX_MS 35000
+/* THE RECORDING, claimed once at start-up out of the board's 8 MB of PSRAM: 35 s of 16 kHz mono
+   s16 is 1.1 MB, the largest buffer on this panel. Never allocated while recording — a heap
+   request in the middle of a four-year-old talking is a failure with no good outcome. The cap
+   (`CAPTURE_MAX_MS`) lives in `stream.h` so the machine and the box's pins read one number. */
 #define CAPTURE_MAX_SAMPLES (AUDIO_RATE * CAPTURE_MAX_MS / 1000)
 static int16_t *s_cap;          /* PSRAM, claimed at start-up */
 static volatile int s_cap_used; /* samples written this recording */
 static volatile bool s_cap_on;
 
-/* THE REPLY, WITH ITS OWN CEILING RATHER THAN THE RECORDING'S.
- *
- * These were one constant, and that is how the reply got cut off: a reply is not a recording
- * and there is no reason the two should be the same length. The owner: *"sometimes when the
- * robot is talking back on a longer reply I get cut off."* The box's log the same afternoon
- * had replies of 221,012 and 261,290 bytes against the 192,000 this held, so the long one
- * stopped mid-word — silently, because `audio_play` truncates without a word to anyone.
- *
- * `PANEL_REPLY_MAX` in `backend/src/jbrain/api/endpoint.py` is the same ten seconds, and
- * `REPLY_MAX_BYTES` in `talk.c` is how much of a reply this panel will read. That cap belongs
- * to the REPLY and stays with it.
- *
- * IT HOLDS A REPLY, AND SINCE 0.2.96 ONLY A REPLY. Voice post used to be copied through here
- * too, which is why this was sized to the longest message the box would serve — and why it
- * grew every time that cap did. Messages stream through the ring now (`audio_stream_*`), so
- * this is back to the one caller it was ever really for: `talk.c`, whose own `REPLY_MAX_BYTES`
- * is the same ten seconds and whose `PANEL_REPLY_MAX` on the box matches both.
- *
- * The cut this warns about therefore belongs to a reply that overran, not to a child's
- * message — a message is no longer capped at all. */
-#define PLAY_BUF_MS 10000
-#define PLAY_BUF_SAMPLES (AUDIO_RATE * PLAY_BUF_MS / 1000)
-static int16_t *s_play;
-static volatile int s_play_len;  /* samples still to write */
-static volatile int s_play_pos;
+/* The panel's one speaker state. Static and zeroed, so it is valid before `audio_start` and on a
+   panel with no codec. Internal RAM: the lease in it is used with compare-and-swap. */
+static stream_t s_stream;
 
-/* ── THE STREAM RING ────────────────────────────────────────────────────────────────────
- *
- * Four seconds, which is not a guess about messages — it is a guess about the WORST GAP this
- * panel's Wi-Fi will have in a bedroom, and the ring only has to outlast that. A message of
- * any length passes through it; what the depth buys is tolerance of a network that stalls.
- *
- * `s_ring_w` and `s_ring_r` are MONOTONIC sample counts, not indices, and the modulo happens
- * where they are used. Two cursors chasing each other around a buffer cannot tell full from
- * empty when they meet; counting forever can, and the subtraction is what every test below
- * asks. Single producer (the jpanel task), single consumer (this task), so neither needs a
- * lock — but they need that discipline, which is the same one `esp_codec_dev` demands. */
-#define STREAM_RING_MS 4000
-#define STREAM_RING_SAMPLES (AUDIO_RATE * STREAM_RING_MS / 1000)
-/* HOW MUCH ARRIVES BEFORE THE FIRST SOUND. Long enough that an ordinary hiccup is invisible,
-   short enough that the tap still feels answered: 1.5 s is ~48 KB, against the ~960 KB a
-   whole message used to need before anything happened. */
-#define STREAM_PREROLL_SAMPLES (AUDIO_RATE * 1500 / 1000)
-static int16_t *s_ring_buf;
-static ring_t s_ring;
-static volatile bool s_stream_open;  /* the producer has not said it is finished */
-static volatile bool s_stream_primed; /* the preroll has landed; sound has started */
-static volatile bool s_stream_paused;  /* a finger is holding it; the ring keeps its contents */
-
-static int stream_filled(void)
+struct stream_s *audio_stream(void)
 {
-    return s_ring_buf != NULL ? ring_filled(&s_ring) : 0;
+    return &s_stream;
 }
 
-bool audio_stream_begin(void)
+bool audio_capture_open(void)
 {
-    if (s_ring_buf == NULL) return false;
-    if (s_play_pos < s_play_len || s_stream_open || stream_filled() > 0) return false;
-    ring_reset(&s_ring);
-    s_stream_primed = false;
-    /* A NEW MESSAGE NEVER STARTS HELD. Nothing but a resume clears this flag, so a child who
-       paused one message and then let the run move on would have started the next one silent
-       with a play button over it — a panel that looks broken for a reason nobody can see. */
-    s_stream_paused = false;
-    s_stream_open = true;
-    return true;
-}
-
-size_t audio_stream_write(const void *pcm, size_t bytes)
-{
-    if (s_ring_buf == NULL || !s_stream_open) return 0;
-    return (size_t)ring_write(&s_ring, pcm, (int)bytes);
-}
-
-void audio_stream_end(void)
-{
-    s_stream_open = false;
-}
-
-bool audio_stream_live(void)
-{
-    return s_stream_open;
-}
-
-bool audio_stream_active(void)
-{
-    /* The same test `audio_playing()` applies to the ring, without the clip path: still open,
-       or still draining. A momentarily dry ring is still a message in flight. */
-    return s_stream_open || stream_filled() > 0;
-}
-
-void audio_stream_abort(void)
-{
-    s_stream_open = false;
-    ring_reset(&s_ring);
-    s_stream_primed = false;
-    s_stream_paused = false; /* the same reason `audio_stream_begin` clears it */
-}
-
-bool audio_play(const int16_t *pcm, size_t bytes)
-{
-    if (s_play == NULL || pcm == NULL || bytes < 2) return false;
-    if (s_play_pos < s_play_len) return false; /* still speaking */
-    int n = (int)(bytes / sizeof(int16_t));
-    if (n > PLAY_BUF_SAMPLES) {
-        /* SAID OUT LOUD NOW. Truncating silently is how a 261 KB reply stopped mid-word with
-           nothing in any log to say it had, and a cut message would be the same bug wearing a
-           different hat — a child told their father's message ended where it did not. */
-        ESP_LOGW(TAG, "cutting %d ms of audio: %d ms is all this buffer holds",
-                 (n - PLAY_BUF_SAMPLES) * 1000 / AUDIO_RATE, PLAY_BUF_MS);
-        n = PLAY_BUF_SAMPLES;
-    }
-    memcpy(s_play, pcm, (size_t)n * sizeof(int16_t));
-    s_play_pos = 0;
-    s_play_len = n;
-    return true;
-}
-
-bool audio_playing(void)
-{
-    /* A STREAM COUNTS, INCLUDING WHILE ITS RING IS MOMENTARILY DRY. Everything that asks this
-       question — the render loop's `speaking`, the pop-up, the queue, `POST /played` — is
-       really asking "is this message finished", and a Wi-Fi stall is not an answer to that.
-       See `audio.h`: a panel that said no here mid-sentence would mark the message played and
-       drop the rest of it. */
-    if (s_play_pos < s_play_len) return true;
-    return s_stream_open || stream_filled() > 0;
-}
-
-/* CUT IT SHORT. The one thing this panel could not do to its own speaker until voice post
-   started playing a QUEUE of messages: a run a child wants out of has to end on the finger,
-   not on the last message.
- *
-   Done by moving the read cursor to the end rather than by zeroing the length, so the audio
-   task's `s_play_pos < s_play_len` test sees a finished buffer on its next chunk and stops
-   where it is. Nothing is freed and nothing is racing: the writer only ever moves `pos`
-   forward and a reader that is mid-chunk finishes that chunk, which is ~20 ms. */
-void audio_stream_pause(bool on)
-{
-    /* NOT A RESET WHEN IT IS ALREADY THERE: pausing an already-paused stream must not disturb
-       the ring, because the renderer derives this from a button rather than an edge. */
-    if (s_stream_paused == on) return;
-    s_stream_paused = on;
-}
-
-bool audio_stream_paused(void)
-{
-    /* ONLY WHILE THERE IS A STREAM TO HOLD. The flag outlives a message that ended on its own
-       (nothing clears it but a resume), and a stale `true` would draw a play button over a
-       panel with nothing to play — so the answer is scoped to a stream actually being open. */
-    return s_stream_paused && (s_stream_open || stream_filled() > 0);
-}
-
-void audio_stop(void)
-{
-    s_play_pos = s_play_len;
-    audio_stream_abort();
-}
-
-/* THE RUDE NOISE, AND WHY IT IS AN OSCILLATOR RATHER THAN A FILE.
- *
- * `burp` and `fart` have been in the vocabulary since bring-up and have only ever moved the
- * face. A four-year-old saying "burp" to a robot is not asking for an expression.
- *
- * What makes a noise read as a BODY rather than a horn is three things, and none of them is
- * the waveform: the pitch falls while it sounds, the amplitude flutters fast enough to be
- * heard as texture rather than as tremolo, and it ends by running out rather than stopping.
- * A sawtooth supplies the harmonics a sine has not got — a pure tone at 120 Hz is a foghorn —
- * and the wet variant adds noise on top, which is the whole difference between the two words.
- *
- * Written into `s_play` and left for the audio task, so this shares the reply's chunked,
- * interruptible playback and its deafening rather than introducing a third way to make a
- * sound. That also means it cannot interrupt a reply, which is right: the pet finishing its
- * sentence beats a burp, and the child can ask again. */
-/* A CUE, RENDERED AND HANDED TO THE SPEAKER — the replacement for `audio_beep`.
- *
- * Same route as a reply: written into `s_play` and left for the audio task, so it is chunked,
- * interruptible and deafens the microphone while it sounds. It therefore cannot interrupt the
- * pet mid-sentence, which is right — an acknowledgement is worth less than the sentence it
- * would talk over, and the beep it replaces had exactly the same rule.
- *
- * Rendered at CUE_VOLUME against the speaking voice, because the original request that split
- * the two levels apart is still the right one: the tone is the part heard closest to a child's
- * face and the voice is the part they are listening to.
- *
- * THE VARIANT IS COUNTED PER CUE, not drawn at random. The complaint was repetition, and what
- * a child actually does is poke the same spot four times — so what has to differ is two
- * consecutive plays of the SAME cue, which a counter guarantees and a random draw only makes
- * likely. Kept as a byte per cue and allowed to wrap; `cue_render` accepts any value. */
-void audio_cue(cue_t c)
-{
-    if (s_play == NULL) return;
-    if (s_play_pos < s_play_len) return; /* a reply outranks an acknowledgement */
-    if (c < 0 || c >= CUE_COUNT) return;
-
-    static uint8_t s_variant[CUE_COUNT];
-    const int n = cue_render(c, s_play, AUDIO_RATE, CUE_VOLUME, s_variant[c]++);
-    if (n <= 0) return;
-    s_play_pos = 0;
-    s_play_len = n;
-}
-
-void audio_capture_open(void)
-{
-    if (s_cap == NULL) return;
+    if (s_cap == NULL || stream_leased(&s_stream)) return false;
     s_cap_used = 0;
     s_cap_on = true;
+    return true;
 }
 
 const int16_t *audio_capture_close(size_t *len_bytes)
@@ -478,28 +259,42 @@ bool audio_start(void)
              gain_err ? "REFUSED" : "accepted",
              AUDIO_RATE);
 
-    /* Priority 5, one above the render task: a late frame is a slightly janky robot, a late
-       capture is a dropped chunk and a meter that lags the room. The stack is small because
-       this task calls into the codec and computes a peak, and nothing else. */
-    /* PSRAM, claimed once, before anything else wants it. Failure is not fatal: the panel
-       keeps its voice commands and its meter and simply cannot record a message, which is a
-       smaller loss than refusing to start. */
+    /* PSRAM, claimed once, before anything else wants it, and never again: a heap request in the
+       middle of a four-year-old talking — or of her father's message playing — is a failure
+       with no good outcome. Failure is not fatal. No capture buffer: the panel keeps its voice
+       commands and meter and cannot record. No ring or cue buffer: `stream_can_play` is false
+       and a PLAY fails at once. No slot buffers: render writes no cues at all, all or none. */
     s_cap = heap_caps_malloc((size_t)CAPTURE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    s_play = heap_caps_malloc((size_t)PLAY_BUF_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    s_ring_buf =
+    int16_t *ring =
         heap_caps_malloc((size_t)STREAM_RING_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
-    ring_init(&s_ring, s_ring_buf, STREAM_RING_SAMPLES);
-    /* ALL THREE AT START-UP AND NEVER AGAIN. A heap request in the middle of a four-year-old
-       talking — or of her father's message playing — is a failure with no good outcome. */
-    ESP_LOGI(TAG, "capture %s (%d ms), playback %s (%d ms), stream %s (%d ms)",
+    int16_t *play = heap_caps_malloc((size_t)CUE_MAX_SAMPLES * sizeof(int16_t), MALLOC_CAP_SPIRAM);
+    stream_cue_buf_t *bufs[STREAM_SLOT_N] = {0};
+    bool slots = true;
+    for (int i = 0; i < STREAM_SLOT_N; i++) {
+        bufs[i] = heap_caps_malloc(sizeof(stream_cue_buf_t), MALLOC_CAP_SPIRAM);
+        slots = slots && bufs[i] != NULL;
+    }
+    if (!slots) {
+        for (int i = 0; i < STREAM_SLOT_N; i++) {
+            heap_caps_free(bufs[i]);
+            bufs[i] = NULL;
+        }
+    }
+    stream_init(&s_stream, ring, play, bufs);
+    ESP_LOGI(TAG, "capture %s (%d ms), stream %s, cues %s",
              s_cap != NULL ? "ready" : "UNAVAILABLE", CAPTURE_MAX_MS,
-             s_play != NULL ? "ready" : "UNAVAILABLE", PLAY_BUF_MS,
-             s_ring_buf != NULL ? "ready" : "UNAVAILABLE", STREAM_RING_MS);
+             ring != NULL && play != NULL ? "ready" : "UNAVAILABLE",
+             slots ? "ready" : "UNAVAILABLE");
 
+    /* Priority 5, one above the render task: a late frame is a slightly janky robot, a late
+       capture is a dropped chunk and a meter that lags the room. */
     if (xTaskCreate(audio_task, "audio", 4096, NULL, 5, NULL) != pdPASS) {
         ESP_LOGE(TAG, "audio task");
         return false;
     }
+    /* ONLY NOW: a speaker flag raised before the task exists would have render write slots that
+       nothing ever drains, and the busy facts would latch. */
+    stream_set_arbiter(&s_stream, true);
     return true;
 }
 
@@ -622,13 +417,30 @@ void audio_set_agc(bool on)
     alc_apply();
 }
 
-/* Chunks to ignore after the speaker runs. The codec routes the DAC into the ADC by design
-   (REG44), so the microphone hears every beep — and feeding our own tone to the recogniser is
-   worse than useless, because it is a false trigger with a loudspeaker behind it. The beep is
-   90 ms and a chunk is 40; this covers it and a tail. */
-#define DEAF_CHUNKS 6
-static int s_deaf;
+/* Internal RAM: the I2S transmit source, filled by `stream_tick`. */
+static int16_t s_out[AUDIO_CHUNK];
 
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+/* Appends one chunk to an open recording, as heard or as silence. Stops at the cap rather than
+   wrapping: a ring would hand the box the END of a long hold, and what a child said is at the
+   start. */
+static void capture_keep(const int16_t *chunk, bool silent)
+{
+    if (!s_cap_on || s_cap == NULL) return;
+    const int room = CAPTURE_MAX_SAMPLES - s_cap_used;
+    const int take = room < AUDIO_CHUNK ? room : AUDIO_CHUNK;
+    if (take <= 0) return;
+    if (silent) {
+        memset(&s_cap[s_cap_used], 0, (size_t)take * sizeof(int16_t));
+    } else {
+        memcpy(&s_cap[s_cap_used], chunk, (size_t)take * sizeof(int16_t));
+    }
+    s_cap_used += take;
+}
 
 static void audio_task(void *arg)
 {
@@ -637,111 +449,34 @@ static void audio_task(void *arg)
        poke from anywhere else is the race that panicked a panel on 2026-09-21. */
     alc_apply();
     while (true) {
-        if (s_play_pos < s_play_len) {
-            /* ONE CHUNK PER PASS, NOT THE WHOLE REPLY. `esp_codec_dev_write` blocks, so
-               handing it two seconds of audio would stop this task — and this task's read is
-               the clock for the level meter, the recogniser and the capture. A chunk at a
-               time keeps the loop turning and lets a reply be interrupted by a reboot or an
-               OTA rather than wedging the panel until it finishes talking. */
-            const int left = s_play_len - s_play_pos;
-            const int take = left < AUDIO_CHUNK ? left : AUDIO_CHUNK;
-            esp_codec_dev_write(s_codec, &s_play[s_play_pos], (int)(take * sizeof(int16_t)));
-            s_play_pos += take;
-            /* The codec routes the DAC into the ADC by design, so everything we say is also
-               heard. Feeding our own reply to the recogniser would have the pet answering
-               itself. */
-            s_deaf = DEAF_CHUNKS;
-        } else if (s_ring_buf != NULL && stream_filled() > 0 && !s_stream_paused) {
-            /* THE SAME ONE-CHUNK DISCIPLINE, for the same reason — this task is the clock. */
-            if (!s_stream_primed) {
-                /* Wait for the preroll, unless the producer has already finished: a message
-                   shorter than the preroll would otherwise sit in the ring forever. */
-                if (stream_filled() >= STREAM_PREROLL_SAMPLES || !s_stream_open) {
-                    s_stream_primed = true;
-                }
-            }
-            if (s_stream_primed) {
-                const int have = stream_filled();
-                /* AN UNDERRUN WAITS RATHER THAN PLAYING SHORT. A partial chunk into a blocking
-                   codec write is a click; doing nothing for one pass is 40 ms of silence the
-                   ear does not catch. Only drain below a chunk once nothing more is coming. */
-                if (have >= AUDIO_CHUNK || !s_stream_open) {
-                    int at = 0;
-                    const int run = ring_read_run(&s_ring, AUDIO_CHUNK, &at);
-                    if (run > 0) {
-                        esp_codec_dev_write(s_codec, &s_ring_buf[at],
-                                            (int)(run * sizeof(int16_t)));
-                        ring_advance(&s_ring, run);
-                        s_deaf = DEAF_CHUNKS;
-                    }
-                }
-            }
-        }
+        /* ONE CHUNK PER PASS: `esp_codec_dev_write` blocks, and this task's read is the clock
+           for the level meter, the recogniser and the capture. */
+        const stream_tick_t t = stream_tick(&s_stream, now_ms(), s_out, AUDIO_CHUNK);
+        if (t.n > 0) esp_codec_dev_write(s_codec, s_out, (int)(t.n * sizeof(int16_t)));
         apply_levels();
 
         /* THE READ IS THE CLOCK. It blocks for exactly one chunk and drains the DMA at the
            rate it fills, so this task needs no delay of its own and cannot fall behind the
            room. On failure it would spin, so that path delays instead. */
-        if (esp_codec_dev_read(s_codec, s_chunk, sizeof(s_chunk)) == 0) {
-            if (s_deaf > 0) {
-                /* THE PANEL DOES NOT LISTEN TO ITSELF. Reported as the meter railing for
-                   seconds after a beep; the chunk is still read, because this read is the
-                   task's clock and skipping it would stall everything. */
-                s_deaf--;
-                s_level = 0;
-                /* ── BUT A RECORDING KEEPS ITS TIMELINE ──────────────────────────────────
-                 *
-                 * The owner: *"I think the sound effects prohibit the microphone from properly
-                 * recording during that time since they shared the same SPI or whatever?"* Right
-                 * about the effect. The cause is not a shared bus — it was this `continue`, which
-                 * skipped the capture copy below along with everything else.
-                 *
-                 * The codec routes the DAC into the ADC by design, so a cue is genuinely heard by
-                 * the microphone and the deafness above is correct: it is what stops the pet
-                 * answering its own beep. But `s_deaf` is re-armed on EVERY written chunk, so a
-                 * 300 ms cue deafens for the cue plus `DEAF_CHUNKS` — about 540 ms — and dropping
-                 * those samples did not silence half a second of a recording, it DELETED it and
-                 * spliced the ends together. A child saying "I went to the park today" through a
-                 * cue came out as "I went to— today", shorter than she spoke and with the join
-                 * inaudible, so the transcript read as though she had said that.
-                 *
-                 * Silence keeps the length honest. What was said during the cue is lost either
-                 * way — the microphone really was full of the panel's own noise — but a gap sounds
-                 * like a gap, transcribes as a pause, and does not invent a sentence she never
-                 * said. */
-                if (s_cap_on && s_cap != NULL) {
-                    const int room = CAPTURE_MAX_SAMPLES - s_cap_used;
-                    const int take = room < AUDIO_CHUNK ? room : AUDIO_CHUNK;
-                    if (take > 0) {
-                        memset(&s_cap[s_cap_used], 0, (size_t)take * sizeof(int16_t));
-                        s_cap_used += take;
-                    }
-                }
-                continue;
-            }
-            s_level = audio_peak(s_chunk, AUDIO_CHUNK);
-            if (s_cap_on && s_cap != NULL) {
-                /* Straight off the same chunk the recogniser gets. One microphone, one
-                   owner, one read — a second reader would be the two-owners fault this
-                   file's header is about. Stops at the cap rather than wrapping: a ring
-                   buffer would hand the box the END of a long hold, and what a child said
-                   is at the start. */
-                const int room = CAPTURE_MAX_SAMPLES - s_cap_used;
-                const int take = room < AUDIO_CHUNK ? room : AUDIO_CHUNK;
-                if (take > 0) {
-                    memcpy(&s_cap[s_cap_used], s_chunk, (size_t)take * sizeof(int16_t));
-                    s_cap_used += take;
-                }
-            }
-            /* THE RECOGNISER IS FED FROM HERE because this task is the microphone's one
-               owner, and esp-sr's usual arrangement — its own task reading I2S directly —
-               would be a second one. `speech_feed` is a memcpy and a hand-off; the model
-               runs on its own core (`speech.c`), so nothing below this line can stall the
-               read that is also this task's clock. */
-            speech_feed(s_chunk, AUDIO_CHUNK);
-        } else {
+        if (esp_codec_dev_read(s_codec, s_chunk, sizeof(s_chunk)) != 0) {
             vTaskDelay(pdMS_TO_TICKS(AUDIO_CHUNK_MS));
+            continue;
         }
+        if (t.capture == STREAM_CAPTURE_SILENCE) {
+            /* THE PANEL DOES NOT LISTEN TO ITSELF, BUT A RECORDING KEEPS ITS TIMELINE. The
+               codec routes the DAC into the ADC, so this chunk is our own sound: the meter
+               and the recogniser skip it, and a recording gets silence of the same length.
+               Dropping it spliced "I went to the park today" into "I went to— today", and the
+               transcript read as though she had said the shorter thing. */
+            s_level = 0;
+            capture_keep(s_chunk, true);
+            continue;
+        }
+        s_level = audio_peak(s_chunk, AUDIO_CHUNK);
+        capture_keep(s_chunk, false);
+        /* THE RECOGNISER IS FED FROM HERE because this task is the microphone's one owner;
+           `speech_feed` is a memcpy and a hand-off, and the model runs on its own core. */
+        speech_feed(s_chunk, AUDIO_CHUNK);
     }
 }
 

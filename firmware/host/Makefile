@@ -17,23 +17,25 @@ LDLIBS = -lm
 # `ui.c` is in this list for the reason the header comment gives: it is the panel's interaction
 # state machine, it is supposed to be free of ESP-IDF, and the link is what checks that. It is
 # built into BOTH binaries so the claim is tested even by the suite that does not use it.
-SRC = ../main/cue.c ../main/orient.c ../main/screen.c ../main/cadence.c ../main/reach.c ../main/confirm.c ../main/ring.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/vocab.c ../main/wsproto.c ../main/ui.c iface_check.c
+SRC = ../main/cue.c ../main/orient.c ../main/screen.c ../main/cadence.c ../main/reach.c ../main/confirm.c ../main/ring.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/vocab.c ../main/wsproto.c ../main/ui.c ../main/stream.c iface_check.c
 # HEADERS ARE PREREQUISITES TOO. They were not, and the cost was a green run against a stale
 # binary: a constant moved into `face.h`, `make` saw no newer .c file and re-ran the previous
 # build. A suite that can report OK without having compiled the change is worse than no suite.
 HDR = $(wildcard ../main/*.h)
 
-# TWO SUITES, BOTH RUN BY `make test`, and the split is by what they need rather than by taste.
+# THE SUITES, ALL RUN BY `make test`, and the split is by what they need rather than by taste.
 # `run_tests` measures pure functions: given these numbers, what comes out. `run_ui_tests` drives
 # a STATE MACHINE across frames — a press, a clock advanced, an overlay arbitrated — so it needs a
 # harness (a fake speaker, a fake queue, a framebuffer) that the first suite would only be
-# slowed down by. Sequential, not parallel: a suite whose failure output interleaves with
+# slowed down by. `run_stream_tests` steps the speaker's arbiter (`stream.c`) one 40 ms tick at a
+# time against a fake clock. Sequential, not parallel: a suite whose failure output interleaves with
 # another's is a suite nobody reads.
-.PHONY: test clean
-test: run_tests run_ui_tests run_link_tests
+.PHONY: test clean check_no_logic_in_audio
+test: run_tests run_ui_tests run_link_tests run_stream_tests check_no_logic_in_audio
 	./run_tests
 	./run_ui_tests
 	./run_link_tests
+	./run_stream_tests
 
 run_tests: tests.c $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
@@ -45,5 +47,21 @@ run_ui_tests: ui_tests.c $(SRC) $(HDR)
 run_link_tests: link_tests.c ../main/wsproto.c $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
 
+# The arbiter's suite builds `stream.c` with its interleave hooks, so the seqlock test can stop
+# render half-way through a slot write; the device build never defines them.
+run_stream_tests: stream_tests.c $(SRC) $(HDR)
+	$(CC) $(CFLAGS) -DSTREAM_TEST_HOOKS -o $@ $(filter-out %.h,$^) $(LDLIBS)
+
+# `audio.c` IS CODEC I/O AND NOTHING ELSE (plan §7.4): every decision about what the speaker says
+# lives in `stream.c`, where this suite can reach it. A grep, because the failure it guards is a
+# quiet one — a shortcut added on the audio task works on the device and is invisible here. No
+# ring arithmetic, no clip buffer, no cue rendering, no slot or render-side stream call, and no
+# field of the speaker state; comments included, so nobody argues about what a mention means.
+AUDIO_FORBIDDEN = ring_|s_play|cue_render|\b(stream_cue|stream_cue_play|stream_silence|stream_stop|stream_reply|stream_pause_req|stream_begin|stream_write|stream_end)\(|STREAM_SLOT_(PRESS|SEND_RESULT|FAIL|REFUSAL|CHIME)|(\.|->)(stop|silence|slot|buf|pause_req|render_seq|variant|w|word|classified_gen|reply_[a-z]+|r|seen_w|out|arb_hb|busy|done|cue_expired|arbiter|a_[a-z_]+|primed|deaf|out_samples|snd[a-z_]*|elig_[a-z]+|lease|ring|play|play_pos|play_len)\b
+check_no_logic_in_audio:
+	@if grep -nE '$(AUDIO_FORBIDDEN)' ../main/audio.c; then \
+		echo "audio.c: the lines above belong in stream.c (check_no_logic_in_audio)"; exit 1; \
+	else echo "check_no_logic_in_audio: OK"; fi
+
 clean:
-	rm -f run_tests run_ui_tests run_link_tests
+	rm -f run_tests run_ui_tests run_link_tests run_stream_tests
