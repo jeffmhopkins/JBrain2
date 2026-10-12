@@ -19,6 +19,7 @@
 #include "alarm_link.h"
 #include "box_http.h"
 #include "cfg.h"
+#include "convo_link.h"
 #include "dbg_core.h"
 #include "dbg_link.h"
 #include "disp_guard.h"
@@ -38,6 +39,7 @@
 #include "svc_audio_drv.h"
 #include "svc_box_drv.h"
 #include "svc_buttons.h"
+#include "svc_convo_drv.h"
 #include "svc_display_drv.h"
 #include "svc_net_drv.h"
 #include "svc_power_drv.h"
@@ -185,7 +187,7 @@ static bool report(const cfg_t *cfg)
         svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
         svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
         svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note,
-        svc_alarms_note};
+        svc_alarms_note,  svc_convo_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -326,6 +328,8 @@ static void start_panel(const cfg_t *cfg)
        on the glass wakes this loop so the box hears it in seconds, not at the next minute. */
     svc_alarms_set_wake(wake_main);
     svc_alarms_init();
+    /* Recent and switching (0.0.15): the glass asks, this loop fetches. */
+    svc_convo_set_wake(wake_main);
     if (!may_start) return;
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
@@ -413,10 +417,12 @@ void app_main(void)
            loop (ota_check, report_now) wakes it early, so the box hears it in seconds.
            A talk to Jerv outranks all of it (talk_link.h): it is taken the moment KEY wakes this
            loop, and afterwards the loop makes its regular pass, so a manifest check or a
-           heartbeat that fell due meanwhile is the next thing on the connection. */
+           heartbeat that fell due meanwhile is the next thing on the connection. What the
+           conversation view asked of the box (convo_link.h) comes straight after a talk. */
         const uint32_t check_due = now_ms() + CHECK_PERIOD_MS;
         for (;;) {
             if (talk_link_run()) break;
+            convo_link_run();
             uint32_t sleep_ms = 0;
             const dbg_next_t next = dbg_sched_next(&pickup, now_ms(), check_due,
                                                    reachable && !svc_net_user_off(), &sleep_ms);
@@ -424,6 +430,7 @@ void app_main(void)
             if (next == DBG_NEXT_SLEEP) {
                 if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms))) {
                     talk_link_run();
+                    convo_link_run();
                     break;
                 }
                 continue;
@@ -433,6 +440,7 @@ void app_main(void)
             dbg_sched_done(&pickup, now_ms(), got);
             if (ulTaskNotifyTake(pdTRUE, 0)) {
                 talk_link_run();
+                convo_link_run();
                 break;
             }
         }

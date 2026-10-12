@@ -37,6 +37,9 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal);
  * a talk is answered (a hold the box heard nothing in keeps it); the other agent is untouched. */
 void svc_audio_fresh(const char *agent);
 bool svc_audio_fresh_pending(const char *agent);
+/* The panel's thread was switched to another conversation on the box (0.0.15, svc_convo): a
+ * new conversation asked for before is forgotten, so the next talk continues that one. */
+void svc_audio_continue(const char *agent);
 const char *svc_audio_talk_refused(void);
 /* `send` false is a tap on the glass. The outcome is what the app tells the user. */
 talk_outcome_t svc_audio_talk_end(bool send);

@@ -124,6 +124,7 @@ from jbrain.api import (
     pairing,
     panel_agent,
     panel_alarms,
+    panel_convo,
     panel_debug,
     panel_notice,
     plans,
@@ -1903,6 +1904,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(endpoint_api.router, prefix="/api")
     # The desk panel's reach into the real agents: the owner's switch and the siblings list.
     app.include_router(panel_agent.router, prefix="/api")
+    # Its conversation switcher (0.0.15): Recent, switch, and a switched thread's last words.
+    app.include_router(panel_convo.router, prefix="/api")
     # The desk panel's alarms: the PWA's editor and the panel's own sync and switch.
     app.include_router(panel_alarms.router, prefix="/api")
     # The panel's half of the debug relay. Mounted with or without debug access: with it

@@ -64,7 +64,7 @@ static sh_menu_t s_menu;
 static lv_obj_t *s_menu_obj;
 static lv_timer_t *s_menu_lapse;
 static sh_lp_t s_lp;
-static uint32_t s_menus, s_clears;
+static uint32_t s_menus, s_clears, s_news, s_recents;
 
 static void host_home(void);
 static void host_toast(const char *t);
@@ -155,6 +155,21 @@ static void menu_do(sh_menu_in_t in)
             ui_toast("Chat cleared", 2200);
         }
         break;
+    case SH_MENU_DO_NEW:
+        menu_drop();
+        if (s_open && s_open->convo_new) {
+            const char *said = s_open->convo_new(s_open);
+            s_news++;
+            if (said) ui_toast(said, 2200);
+        }
+        break;
+    case SH_MENU_DO_RECENT:
+        menu_drop();
+        if (s_open && s_open->convo_recent) {
+            s_recents++;
+            s_open->convo_recent(s_open);
+        }
+        break;
     case SH_MENU_DO_CLOSE: menu_drop(); break;
     default: break;
     }
@@ -173,6 +188,18 @@ static void menu_clear_cb(lv_event_t *e)
     lv_async_call(menu_later, (void *)(uintptr_t)SH_MENU_IN_CLEAR);
 }
 
+static void menu_new_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_async_call(menu_later, (void *)(uintptr_t)SH_MENU_IN_NEW);
+}
+
+static void menu_recent_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_async_call(menu_later, (void *)(uintptr_t)SH_MENU_IN_RECENT);
+}
+
 static void menu_cancel_cb(lv_event_t *e)
 {
     (void)e;
@@ -186,11 +213,35 @@ static void menu_outside_cb(lv_event_t *e)
     lv_async_call(menu_later, (void *)(uintptr_t)SH_MENU_IN_OUTSIDE);
 }
 
+/* An agent's conversation (0.0.15): New conversation in the agent's colour, one tap; Recent
+   conversations; Cancel. */
+static void build_convo_menu(lv_obj_t *card)
+{
+    char sub[72] = "";
+    ui_accent_t accent = UI_ACCENT_JERV;
+    if (s_open && s_open->convo_menu) s_open->convo_menu(s_open, sub, sizeof sub, &accent);
+    ui_menu_sub(card, sub);
+    lv_obj_set_style_pad_row(card, 10, 0);
+    ui_menu_row(card, UI_ROW_GLYPH_PLUS, "New conversation", ui_accent_color(accent), true, false,
+                menu_new_cb, NULL);
+    ui_menu_row(card, UI_ROW_GLYPH_CLOCK, "Recent conversations", UI_C_TEXT, false, true,
+                menu_recent_cb, NULL);
+    ui_ghost_button(card, "Cancel", menu_cancel_cb, NULL);
+    lv_obj_t *hint = ui_label_wrap(card, "New keeps this one in Recent and in the app. BOOT closes this.",
+                                   18, UI_C_MUTED);
+    lv_obj_set_width(hint, LV_PCT(100));
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+}
+
 static void build_menu(void)
 {
     if (s_menu_obj) lv_obj_delete(s_menu_obj);
     lv_obj_t *card = ui_menu(lv_layer_top(), "This conversation", menu_outside_cb, NULL);
     s_menu_obj = lv_obj_get_parent(card);
+    if (s_menu.kind == SH_MENU_CONVO) {
+        build_convo_menu(card);
+        return;
+    }
     const bool armed = sh_menu_armed(&s_menu, svc_rtc_uptime_ms());
     ui_button(card, armed ? "Tap again to clear" : "Clear chat", UI_BTN_DESTRUCTIVE, true,
               menu_clear_cb, NULL);
@@ -200,7 +251,17 @@ static void build_menu(void)
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
 }
 
-static bool conversation_open(void)
+/* An agent's conversation on screen: its New / Recent menu (0.0.15). */
+static bool agent_conversation_open(void)
+{
+    char sub[8];
+    ui_accent_t accent;
+    return s_open && s_open->convo_menu && s_open->convo_new && s_open->convo_recent &&
+           s_open->convo_menu(s_open, sub, sizeof sub, &accent);
+}
+
+/* A person's thread on screen: its Clear chat menu. */
+static bool clear_conversation_open(void)
 {
     return s_open && s_open->can_clear && s_open->clear && s_open->can_clear(s_open);
 }
@@ -208,14 +269,15 @@ static bool conversation_open(void)
 static void long_pressed(void)
 {
     sh_facts_t f = facts();
-    if (!sh_menu_may_open(&f, conversation_open())) return;
+    const bool agent = agent_conversation_open();
+    if (!sh_menu_may_open(&f, agent || clear_conversation_open())) return;
     /* The finger is still down on whatever it pressed: forget that press, so lifting it neither
        clicks a bubble's Play nor reaches the menu that is about to be under it. */
     if (s_indev) {
         lv_indev_reset(s_indev, NULL);
         lv_indev_wait_release(s_indev);
     }
-    sh_menu_open(&s_menu);
+    sh_menu_open(&s_menu, agent ? SH_MENU_CONVO : SH_MENU_CLEAR);
     s_menus++;
     build_menu();
 }
@@ -770,8 +832,11 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_str(w, "menu", !f.menu_open                                 ? "closed"
                             : sh_menu_armed(&s_menu, svc_rtc_uptime_ms()) ? "armed"
                                                                           : "open");
+    dbg_json_str(w, "menu_kind", s_menu.kind == SH_MENU_CONVO ? "convo" : "clear");
     dbg_json_int(w, "menus", s_menus);
     dbg_json_int(w, "clears", s_clears);
+    dbg_json_int(w, "new_conversations", s_news);
+    dbg_json_int(w, "recents", s_recents);
     dbg_json_obj_begin(w, "keys");
     dbg_json_int(w, "jerv", s_keys.jerv);
     dbg_json_int(w, "app", s_keys.app);

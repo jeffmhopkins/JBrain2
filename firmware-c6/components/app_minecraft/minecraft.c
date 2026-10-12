@@ -126,16 +126,24 @@ static bool on_event(app_t *self, const app_event_t *ev)
     return false;
 }
 
-static bool can_clear(app_t *self)
-{
-    const mc_t *m = self->state;
-    return m->at == MC_DAVE;
-}
-
-static void clear(app_t *self)
+/* Dave's thread has the conversation menu (New and Recent, 0.0.15); the Minecraft menu and
+   Compass have none. */
+static bool menu(app_t *self, char *sub, size_t cap, ui_accent_t *accent)
 {
     mc_t *m = self->state;
-    if (m->at == MC_DAVE) convo_clear(&m->dave);
+    return m->at == MC_DAVE && convo_menu(&m->dave, sub, cap, accent);
+}
+
+static const char *start_new(app_t *self)
+{
+    mc_t *m = self->state;
+    return m->at == MC_DAVE ? convo_new(&m->dave) : NULL;
+}
+
+static void recent(app_t *self)
+{
+    mc_t *m = self->state;
+    if (m->at == MC_DAVE) convo_recent(&m->dave);
 }
 
 static void describe(app_t *self, dbg_json_t *w)
@@ -157,7 +165,8 @@ app_t app_minecraft = {
     .close = mc_close,
     .on_event = on_event,
     .describe = describe,
-    .can_clear = can_clear,
-    .clear = clear,
+    .convo_menu = menu,
+    .convo_new = start_new,
+    .convo_recent = recent,
     .state = &s_mc,
 };

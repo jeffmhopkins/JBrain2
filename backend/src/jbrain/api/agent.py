@@ -78,7 +78,7 @@ from jbrain.agent.readtools import (
 )
 from jbrain.agent.run_bus import RunBus, announce
 from jbrain.agent.runlog import AgentRunLog, StepTally
-from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
+from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, is_unnamed, read_context
 from jbrain.agent.sessiontools import UNNAMED_CHAT_BLOCK
 from jbrain.agent.tool_artifacts import ToolArtifactRepo
 from jbrain.agent.toolregistry import ToolRegistry
@@ -1655,7 +1655,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # purpose: it changes the moment the chat is named, and anything that varies per turn must
     # stay out of the cache-stable prefix — which is the whole reason the separate
     # `session.title` completion was removed (it evicted that prefix to name the chat).
-    if not session.title.strip():
+    # The desk panel's "Desk panel" placeholder counts as no name (`is_unnamed`), so a chat
+    # started at the panel is titled exactly as a PWA chat is.
+    if is_unnamed(session):
         volatile.append(UserMessage(text=UNNAMED_CHAT_BLOCK))
     # Backstop the deferred auto-resume: fold in any finished-but-unclaimed analysis
     # (a headless Task run, or a chat whose card never mounted to claim it) as data-framed

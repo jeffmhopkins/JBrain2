@@ -102,7 +102,7 @@ body{margin:0}
               <sc-if value="{{cur.isCube}}" hint-placeholder-val="{{false}}">
                 <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L41 14.5 L41 33.5 L24 43 L7 33.5 L7 14.5 Z"></path><path d="M7 14.5 L24 24 L41 14.5"></path><path d="M24 24 L24 43"></path></svg>
               </sc-if>
-              <sc-if value="{{cur.isPerson}}" hint-placeholder-val="{{false}}">
+              <sc-if value="{{cur.isInitial}}" hint-placeholder-val="{{false}}">
                 <span style="font-size: 22px; font-weight: 700;">{{cur.initial}}</span>
               </sc-if>
               <sc-if value="{{cur.isClock}}" hint-placeholder-val="{{false}}">
@@ -112,12 +112,29 @@ body{margin:0}
                 <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" aria-hidden="true"><circle cx="24" cy="24" r="6"></circle><circle cx="24" cy="24" r="13"></circle><path d="M24 5 L24 11 M24 37 L24 43 M5 24 L11 24 M37 24 L43 24 M10.6 10.6 L14.8 14.8 M33.2 33.2 L37.4 37.4 M10.6 37.4 L14.8 33.2 M33.2 14.8 L37.4 10.6"></path></svg>
               </sc-if>
             </span>
-            <span style="font-size: 26px; font-weight: 600; flex-grow: 1;">{{cur.name}}</span>
+            <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+              <span style="font-size: {{cur.nameSize}}px; font-weight: 600; line-height: 1.15;">{{cur.name}}</span>
+              <sc-if value="{{cur.hasSub}}" hint-placeholder-val="{{false}}">
+                <span style="font-size: 18px; font-weight: 500; line-height: 1.3; color: #9A9DA3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{cur.sub}}</span>
+              </sc-if>
+            </div>
           </div>
         </sc-if>
 
         <sc-if value="{{isThread}}" hint-placeholder-val="{{false}}">
           <div ref="{{listRef}}" onScroll="{{onScroll}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 60px; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 16px 20px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;">
+            <sc-if value="{{earlierRow}}" hint-placeholder-val="{{false}}">
+              <div style="align-self: center; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 20px; background: #17181B; border: 1px solid #26282C; color: #9A9DA3; font-size: 18px; font-weight: 600;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"></rect><path d="M11 18 L13 18"></path></svg>
+                <span>Earlier messages are in the app</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{threadEmpty}}" hint-placeholder-val="{{false}}">
+              <div style="margin: auto 0; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 0 24px;">
+                <span style="font-size: 22px; font-weight: 600;">New conversation</span>
+                <span style="font-size: 18px; font-weight: 500; line-height: 1.35; color: #9A9DA3;">Hold KEY and ask {{cur.name}} something. The last one is in Recent conversations.</span>
+              </div>
+            </sc-if>
             <sc-for list="{{msgs}}" as="m" hint-placeholder-count="2">
               <sc-if value="{{m.them}}" hint-placeholder-val="{{true}}">
                 <div style="align-self: flex-start; max-width: 360px; display: flex; flex-direction: column; gap: 4px;">
@@ -485,6 +502,103 @@ body{margin:0}
           </div>
         </sc-if>
 
+        <sc-if value="{{rc.show}}" hint-placeholder-val="{{false}}">
+          <div style="position: absolute; inset: 0; background: #000000;">
+            <div style="position: absolute; left: 0; top: 0; right: 0; height: 76px; display: flex; align-items: center; gap: 12px; padding: 0 20px; box-sizing: border-box; border-bottom: 1px solid #17181B;">
+              <button onClick="{{rc.back}}" aria-label="Back to the conversation" style="width: 44px; height: 44px; border-radius: 22px; border: none; background: #17181B; color: #E6E7E9; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; flex-shrink: 0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5 L8 12 L15 19"></path></svg>
+              </button>
+              <span style="width: 44px; height: 44px; border-radius: 22px; background: {{rc.tint}}; color: {{rc.color}}; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">
+                <sc-if value="{{rc.isJerv}}" hint-placeholder-val="{{true}}">
+                  <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M29 27 L22 15"></path><path d="M22 15 L17 9"></path><path d="M22 15 L26 8"></path><path d="M25 31 L13 25"></path><path d="M13 25 L7 21"></path><path d="M13 25 L9 29"></path><path d="M27 38 L16 46"></path><path d="M16 46 L10 50"></path><path d="M16 46 L15 54"></path><path d="M40 32 L54 32"></path><path d="M54 32 L59 27"></path><path d="M54 32 L59 37"></path></g><g fill="currentColor"><circle cx="32" cy="32" r="8"></circle><circle cx="17" cy="9" r="2.4"></circle><circle cx="26" cy="8" r="2.4"></circle><circle cx="7" cy="21" r="2.4"></circle><circle cx="9" cy="29" r="2.4"></circle><circle cx="10" cy="50" r="2.4"></circle><circle cx="15" cy="54" r="2.4"></circle><circle cx="59" cy="27" r="2.7"></circle><circle cx="59" cy="37" r="2.7"></circle></g></svg>
+                </sc-if>
+                <sc-if value="{{rc.isInitial}}" hint-placeholder-val="{{false}}">
+                  <span style="font-size: 22px; font-weight: 700;">{{rc.initial}}</span>
+                </sc-if>
+              </span>
+              <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column;">
+                <span style="font-size: 22px; font-weight: 600; line-height: 1.15;">Recent</span>
+                <span style="font-size: 18px; font-weight: 500; line-height: 1.3; color: #9A9DA3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{rc.sub}}</span>
+              </div>
+            </div>
+            <div ref="{{recentRef}}" style="position: absolute; left: 0; right: 0; top: 77px; bottom: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; padding: 14px 16px 28px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;">
+              <button onClick="{{rc.startNew}}" aria-label="New conversation with {{rc.name}}" style="flex-shrink: 0; height: 60px; border-radius: 20px; border: none; background: {{rc.tint}}; color: {{rc.color}}; display: flex; align-items: center; gap: 12px; padding: 0 18px; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5 L12 19 M5 12 L19 12"></path></svg>
+                <span>New conversation</span>
+              </button>
+              <sc-if value="{{rc.loading}}" hint-placeholder-val="{{false}}">
+                <span style="font-size: 18px; font-weight: 600; color: #9A9DA3; padding: 4px 4px 0;">Loading…</span>
+                <sc-for list="{{rc.skeleton}}" as="sk" hint-placeholder-count="4">
+                  <div aria-hidden="true" style="flex-shrink: 0; height: 84px; border-radius: 20px; background: #17181B; border: 1px solid #26282C; box-sizing: border-box; padding: 18px 20px; display: flex; flex-direction: column; justify-content: center; gap: 12px; opacity: {{sk.dim}};">
+                    <div style="display: flex; justify-content: space-between; gap: 16px;">
+                      <span style="height: 18px; width: {{sk.w1}}%; border-radius: 9px; background: #26282C;"></span>
+                      <span style="height: 18px; width: 22%; border-radius: 9px; background: #1E2024;"></span>
+                    </div>
+                    <span style="height: 14px; width: {{sk.w2}}%; border-radius: 7px; background: #1E2024;"></span>
+                  </div>
+                </sc-for>
+              </sc-if>
+              <sc-if value="{{rc.empty}}" hint-placeholder-val="{{false}}">
+                <div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; padding: 0 28px 40px;">
+                  <span style="width: 72px; height: 72px; border-radius: 36px; background: #17181B; border: 1px solid #26282C; color: #5C5F66; display: flex; align-items: center; justify-content: center;">
+                    <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5 L20 5 L20 16 L10 16 L6 20 L6 16 L4 16 Z"></path></svg>
+                  </span>
+                  <span style="font-size: 22px; font-weight: 600;">No other conversations yet</span>
+                  <span style="font-size: 18px; font-weight: 500; line-height: 1.35; color: #9A9DA3;">Conversations started on the panel or in the app will be listed here.</span>
+                </div>
+              </sc-if>
+              <sc-for list="{{rc.rows}}" as="r" hint-placeholder-count="3">
+                <button onClick="{{r.pick}}" aria-label="{{r.aria}}" aria-current="{{r.ariaCurrent}}" style="flex-shrink: 0; position: relative; overflow: hidden; min-height: 84px; border-radius: 20px; background: {{r.bg}}; border: 1px solid {{r.border}}; box-sizing: border-box; padding: 12px 16px 12px 22px; display: flex; flex-direction: column; justify-content: center; gap: 4px; text-align: left; font-family: inherit; color: #E6E7E9; cursor: pointer;">
+                  <span style="position: absolute; left: 0; top: 0; bottom: 0; width: 6px; background: {{r.bar}};"></span>
+                  <span style="display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0;">
+                    <span style="flex-shrink: 0; color: #9A9DA3; display: flex;" aria-label="{{r.fromLabel}}">
+                      <sc-if value="{{r.isApp}}" hint-placeholder-val="{{false}}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.5"></rect><path d="M11 18 L13 18"></path></svg>
+                      </sc-if>
+                      <sc-if value="{{r.isPanel}}" hint-placeholder-val="{{true}}">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11 a7 7 0 0 0 14 0"></path><path d="M12 18 L12 21"></path></svg>
+                      </sc-if>
+                    </span>
+                    <span style="flex-grow: 1; min-width: 0; font-size: 20px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{r.title}}</span>
+                    <sc-if value="{{r.isCurrent}}" hint-placeholder-val="{{false}}">
+                      <span style="flex-shrink: 0; font-size: 18px; font-weight: 700; color: #000000; padding: 2px 10px; border-radius: 12px; background: {{rc.color}};">Current</span>
+                    </sc-if>
+                    <sc-if value="{{r.showWhen}}" hint-placeholder-val="{{true}}">
+                      <span style="flex-shrink: 0; font-size: 18px; font-weight: 500; color: {{r.whenColor}}; font-variant-numeric: tabular-nums;">{{r.when}}</span>
+                    </sc-if>
+                  </span>
+                  <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%;">{{r.snippet}}</span>
+                </button>
+              </sc-for>
+            </div>
+            <sc-if value="{{rc.fade}}" hint-placeholder-val="{{false}}">
+              <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 44px; background: linear-gradient(rgba(0,0,0,0), #000000); pointer-events: none;"></div>
+            </sc-if>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{mn.show}}" hint-placeholder-val="{{false}}">
+          <div onClick="{{mn.outside}}" style="position: absolute; inset: 0; background: rgba(0,0,0,0.72); display: flex; align-items: center; justify-content: center;">
+            <div role="dialog" aria-label="This conversation" style="width: 372px; background: #17181B; border: 1px solid #26282C; border-radius: 24px; padding: 20px 18px 18px; box-sizing: border-box; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; flex-direction: column; gap: 2px; padding: 0 4px 6px;">
+                <span style="font-size: 20px; font-weight: 600;">This conversation</span>
+                <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{mn.title}}</span>
+              </div>
+              <button onClick="{{mn.startNew}}" style="height: 60px; border-radius: 18px; border: none; background: {{mn.tint}}; color: {{mn.color}}; display: flex; align-items: center; gap: 12px; padding: 0 18px; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5 L12 19 M5 12 L19 12"></path></svg>
+                <span>New conversation</span>
+              </button>
+              <button onClick="{{mn.recent}}" style="height: 60px; border-radius: 18px; border: 1px solid #3A3D42; background: #1E2024; color: #E6E7E9; display: flex; align-items: center; gap: 12px; padding: 0 14px 0 18px; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5 L12 12 L15 14"></path></svg>
+                <span style="flex-grow: 1; text-align: left;">Recent conversations</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#9A9DA3" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5 L16 12 L9 19"></path></svg>
+              </button>
+              <button onClick="{{mn.cancel}}" style="height: 56px; border-radius: 18px; border: 1px solid #26282C; background: transparent; color: #C4C7CC; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer;">Cancel</button>
+              <span style="font-size: 18px; font-weight: 500; line-height: 1.35; color: #9A9DA3; text-align: center; padding: 2px 6px 0;">{{mn.hint}}</span>
+            </div>
+          </div>
+        </sc-if>
+
         <div style="position: absolute; inset: 0; background: #000000; opacity: {{veil}}; pointer-events: none;"></div>
 
         <sc-if value="{{hasToast}}" hint-placeholder-val="{{false}}">
@@ -499,7 +613,7 @@ body{margin:0}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question","notify-picture","notify-banner","notify-audio"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent","picture","banner question","with a sound"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question","notify-picture","notify-banner","notify-audio","dave","jerv-menu","jerv-recent","jerv-recent-loading","jerv-recent-empty","jerv-switched","jerv-new","dave-menu","dave-recent"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent","picture","banner question","with a sound"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -507,6 +621,7 @@ class Component extends DCLogic {
       quorra: { color: '#C9A36A', tint: 'rgba(201,163,106,0.16)', name: 'Quorra', initial: 'Q' },
       tamsin: { color: '#6FB6B1', tint: 'rgba(111,182,177,0.16)', name: 'Tamsin', initial: 'T' },
       minecraft: { color: '#8FBC9A', tint: 'rgba(143,188,154,0.16)', name: 'Minecraft', initial: '' },
+      dave: { color: '#8FBC9A', tint: 'rgba(143,188,154,0.16)', name: 'Dave', initial: 'D' },
       settings: { color: '#C4C7CC', tint: '#1E2024', name: 'Settings', initial: '' },
       clock: { color: '#E6E7E9', tint: '#1E2024', name: 'Alarms', initial: '' }
     };
@@ -525,13 +640,112 @@ class Component extends DCLogic {
       tamsin: [
         { id: 5, from: 'them', kind: 'voice', durS: 3, text: 'I made you a drawing.', played: true },
         { id: 6, from: 'me', kind: 'voice', durS: 2, text: "I can't wait to see it!", status: 'Played' }
+      ],
+      dave: [
+        { id: 7, from: 'me', kind: 'voice', durS: 2, text: 'Where did I leave my base?' },
+        { id: 8, from: 'them', kind: 'text', text: 'North of spawn, past the river. I can point you there.' }
       ]
     };
   }
 
+  // The box's sessions for each agent, newest first, as the panel would fetch them: the PWA's
+  // auto-title where one exists, else "Desk panel". `from` is where it was started. The
+  // current one's messages live in `threads`; the rest carry the last few the box would send.
+  sessionSeed() {
+    let id = 200;
+    const q = (me, them, voice) => [
+      { id: id++, from: 'me', kind: voice ? 'voice' : 'text', durS: 3, text: me },
+      { id: id++, from: 'them', kind: 'text', text: them }
+    ];
+    return {
+      jerv: [
+        { id: 'j1', title: 'Shopping list', when: '2 min ago', from: 'panel', msgs: [] },
+        { id: 'j2', title: 'Tides at Port St John', when: '12 min ago', from: 'app', more: true,
+          msgs: q("When's low tide today?", 'Low 14:52, high 21:07.', false)
+            .concat(q('Good for rock pools later?', 'Yes. Go after 14:00, back up the beach by 16:30.', false)) },
+        { id: 'j3', title: 'T-Rex fossils', when: 'Yesterday 19:40', from: 'panel', more: true,
+          msgs: q('How big was a T-Rex?', 'About 12 metres long and 4 metres tall at the hip. Longer than a bus.', true)
+            .concat(q("Where's the best one ever found?", 'Sue, in Chicago. About 90% of the skeleton was found.', true)) },
+        { id: 'j4', title: 'Desk panel', when: 'Yesterday 07:58', from: 'panel', msgs: q('Turn the porch light off at eleven.', 'Done. The porch light goes off at 11:00 tonight.', true) },
+        { id: 'j5', title: 'Car insurance renewal', when: 'Sat 16:10', from: 'app', more: true, msgs: q('When does the car insurance renew?', 'On the 28th. I added a reminder for the 21st.', false) },
+        { id: 'j6', title: 'Desk panel', when: 'Fri 08:30', from: 'panel', msgs: q('Remind me to call the vet tomorrow at nine.', "Done. I'll remind you at 09:00 tomorrow.", true) },
+        { id: 'j7', title: 'Pancake recipe', when: 'Thu 18:02', from: 'app', more: true, msgs: q('Pancakes for four?', 'Two cups of flour, two eggs, two cups of milk, a pinch of salt.', false) },
+        { id: 'j8', title: 'Server backup', when: 'Wed 22:15', from: 'app', msgs: q('Did the backup run?', "Last night's backup finished at 02:14. Nothing failed.", false) },
+        { id: 'j9', title: 'Desk panel', when: '5 Oct', from: 'panel', msgs: q('Put bin day on the calendar.', 'Added: bins out every Tuesday evening.', true) },
+        { id: 'j10', title: 'Birthday ideas', when: '3 Oct', from: 'app', more: true, msgs: q('Birthday ideas for an eight-year-old?', 'A beginner telescope, a dig-your-own fossil kit, or a craft box.', false) }
+      ],
+      dave: [
+        { id: 'd1', title: 'Desk panel', when: '5 min ago', from: 'panel', msgs: [] },
+        { id: 'd2', title: 'Wheat farm', when: 'Yesterday 18:20', from: 'app', more: true, msgs: q('How do I keep the wheat growing?', 'Water within four blocks of every crop, and light so it grows at night.', false) },
+        { id: 'd3', title: 'Desk panel', when: 'Sat 10:05', from: 'panel', msgs: q('Is the server up?', 'It is. Two players are on right now.', true) },
+        { id: 'd4', title: 'Nether portal', when: 'Thu 19:30', from: 'app', more: true, msgs: q('How much obsidian for a portal?', 'Ten for the frame without corners, fourteen with them.', false) },
+        { id: 'd5', title: 'Desk panel', when: '2 Oct', from: 'panel', msgs: q('Where do I respawn now?', 'At the bed in your base. It is your spawn point now.', true) }
+      ]
+    };
+  }
+
+  isAgent(key) {
+    return key === 'jerv' || key === 'dave';
+  }
+
+  // Keeps the current session's record in step with its thread, so switching away and back
+  // finds the same messages, and Recent shows the real last line.
+  saveCurrent(b, agent) {
+    const cur = b.cur[agent];
+    return b.sessions[agent].map((x) => (x.id === cur ? Object.assign({}, x, { msgs: b.threads[agent] }) : x));
+  }
+
+  // New conversation: one tap, since nothing is lost (the old one stays in Recent and in the
+  // PWA). Already in an empty one, it does nothing rather than pile up blank sessions.
+  startNew(agent) {
+    const b = this.base(this.state);
+    if (!b.threads[agent].length) {
+      this.put({ menu: null, recent: null });
+      this.say('Already a new conversation');
+      return;
+    }
+    const sessions = this.saveCurrent(b, agent);
+    const id = agent[0] + 'n' + b.nextId;
+    this.put({
+      menu: null, recent: null, nextId: b.nextId + 1,
+      sessions: Object.assign({}, b.sessions, { [agent]: [{ id: id, title: 'New conversation', when: 'Now', from: 'panel', msgs: [] }].concat(sessions) }),
+      cur: Object.assign({}, b.cur, { [agent]: id }),
+      earlier: Object.assign({}, b.earlier, { [agent]: false }),
+      threads: Object.assign({}, b.threads, { [agent]: [] })
+    });
+    this.say('New conversation — the last one is in Recent');
+  }
+
+  openRecent(agent) {
+    clearTimeout(this.recentTimer);
+    this.put({ menu: null, recent: { agent: agent, phase: 'loading' } });
+    // Stands in for the box's answer: the list is fetched each time, never kept on the panel.
+    this.recentTimer = setTimeout(() => this.put((b) => (b.recent && b.recent.phase === 'loading' ? { recent: Object.assign({}, b.recent, { phase: 'list' }) } : {})), 700);
+  }
+
+  switchTo(agent, id) {
+    const b = this.base(this.state);
+    if (id === b.cur[agent]) { this.put({ recent: null }); return; }
+    this.put({ recent: Object.assign({}, b.recent, { phase: 'opening', opening: id }) });
+    clearTimeout(this.recentTimer);
+    this.recentTimer = setTimeout(() => {
+      this.put((c) => {
+        const sessions = this.saveCurrent(c, agent);
+        const t = sessions.find((x) => x.id === id);
+        return {
+          recent: null, playing: null,
+          sessions: Object.assign({}, c.sessions, { [agent]: sessions }),
+          cur: Object.assign({}, c.cur, { [agent]: id }),
+          earlier: Object.assign({}, c.earlier, { [agent]: !!t.more }),
+          threads: Object.assign({}, c.threads, { [agent]: t.msgs })
+        };
+      });
+    }, 600);
+  }
+
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, autoRotate: true, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', menu: null, recent: null, sessions: this.sessionSeed(), cur: { jerv: 'j1', dave: 'd1' }, earlier: { jerv: false, dave: false }, clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, autoRotate: true, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
       alarms: [
         { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
@@ -553,6 +767,30 @@ class Component extends DCLogic {
     if (start === 'clock-badge') { s.screen = 'clock'; s.page = 1; s.forceNight = true; s.notes = [this.sample('yes/no question')]; }
     if (start === 'clock-alarms') { s.screen = 'clock'; s.page = 1; s.clockView = 'alarms'; }
     if (start === 'ringing') { s.screen = 'clock'; s.page = 1; s.ring = { h: 6, m: 45, label: 'Work' }; }
+    if (start === 'dave' || start === 'dave-menu' || start === 'dave-recent') s.screen = 'dave';
+    if (start === 'jerv-menu' || start === 'jerv-recent' || start === 'jerv-recent-loading' || start === 'jerv-recent-empty' || start === 'jerv-switched' || start === 'jerv-new') s.screen = 'jerv';
+    if (start === 'jerv-menu') s.menu = 'jerv';
+    if (start === 'dave-menu') s.menu = 'dave';
+    if (start === 'jerv-recent' || start === 'dave-recent') s.recent = { agent: s.screen, phase: 'list' };
+    if (start === 'jerv-recent-loading') s.recent = { agent: 'jerv', phase: 'loading', frozen: true };
+    // The very first time: nothing earlier on the box, and the current one is still blank.
+    if (start === 'jerv-recent-empty') {
+      s.threads.jerv = [];
+      s.sessions.jerv = [{ id: 'j1', title: 'New conversation', when: 'Now', from: 'panel', msgs: [] }];
+      s.recent = { agent: 'jerv', phase: 'list' };
+    }
+    if (start === 'jerv-switched') {
+      const t = s.sessions.jerv.find((x) => x.id === 'j2');
+      s.sessions.jerv = s.sessions.jerv.map((x) => (x.id === 'j1' ? Object.assign({}, x, { msgs: s.threads.jerv }) : x));
+      s.threads.jerv = t.msgs;
+      s.cur.jerv = 'j2';
+      s.earlier.jerv = true;
+    }
+    if (start === 'jerv-new') {
+      s.sessions.jerv = [{ id: 'jn', title: 'New conversation', when: 'Now', from: 'panel', msgs: [] }].concat(s.sessions.jerv.map((x) => (x.id === 'j1' ? Object.assign({}, x, { msgs: s.threads.jerv }) : x)));
+      s.threads.jerv = [];
+      s.cur.jerv = 'jn';
+    }
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
     if (start === 'rec-quorra') { s.screen = 'quorra'; s.rec = { to: 'quorra', secs: 4.1, frozen: true }; }
     return s;
@@ -798,7 +1036,7 @@ class Component extends DCLogic {
   scroller() {
     const s = this.base(this.state);
     if (s.off || s.rec || s.calib) return null;
-    if (s.ring) return null;
+    if (s.ring || s.menu || s.recent) return null;
     if (s.screen === 'settings') return this.settingsEl || null;
     if (s.screen === 'clock') return s.clockView === 'alarms' ? this.clockEl || null : null;
     if (s.threads[s.screen]) return this.listEl || null;
@@ -838,11 +1076,13 @@ class Component extends DCLogic {
     const s = this.base(this.state);
     if (s.ring) { this.snooze(); return; }
     if (s.off) return;
+    // KEY closes the menu and records nothing: the finger meant the menu, not a talk.
+    if (s.menu) { this.put({ menu: null }); this.keyClosedMenu = true; return; }
     // KEY outside a conversation is "talk to Jerv" from anywhere (owner, 2026-10-12); inside
     // Quorra's or Tamsin's thread it is a message to her.
     const to = s.threads[s.screen] ? s.screen : 'jerv';
     clearInterval(this.recTimer);
-    this.put({ rec: { to: to, secs: 0, from: s.screen }, toast: '' });
+    this.put({ rec: { to: to, secs: 0, from: s.screen }, toast: '', recent: null });
     this.recTimer = setInterval(() => {
       this.put((b) => {
         if (!b.rec || b.rec.frozen) return {};
@@ -854,6 +1094,7 @@ class Component extends DCLogic {
   }
 
   stopRec(send) {
+    if (this.keyClosedMenu) { this.keyClosedMenu = false; return; }
     clearInterval(this.recTimer);
     const s = this.base(this.state);
     if (!s.rec || s.rec.frozen) return;
@@ -864,23 +1105,26 @@ class Component extends DCLogic {
     const said = {
       jerv: ['Remind me to call the vet tomorrow at nine.', 'Turn the porch light off at eleven.'],
       quorra: ['Goodnight sweetheart, sleep well.', "I'll be home in twenty minutes."],
-      tamsin: ['Goodnight, sleep tight.', "I'll be home in twenty minutes."]
+      tamsin: ['Goodnight, sleep tight.', "I'll be home in twenty minutes."],
+      dave: ['Is anyone on the server?', 'Where is the nearest village?']
     }[to];
     const id = s.nextId;
     const text = said[s.said % said.length];
-    const mine = { id: id, from: 'me', kind: 'voice', durS: Math.round(secs), text: 'Transcribing…', pending: true, status: to === 'jerv' ? '' : 'Sending…' };
+    const mine = { id: id, from: 'me', kind: 'voice', durS: Math.round(secs), text: 'Transcribing…', pending: true, status: this.isAgent(to) ? '' : 'Sending…' };
     this.put((b) => ({ rec: null, screen: to === 'jerv' ? 'jerv' : b.screen, nextId: b.nextId + 2, said: b.said + 1, threads: Object.assign({}, b.threads, { [to]: b.threads[to].concat([mine]) }) }));
     setTimeout(() => {
       this.put((b) => {
-        const list = b.threads[to].map((m) => (m.id === id ? Object.assign({}, m, { text: text, pending: false, status: to === 'jerv' ? '' : 'Delivered' }) : m));
-        if (to === 'jerv') list.push({ id: id + 1, from: 'them', kind: 'text', text: '…', pending: true });
+        const list = b.threads[to].map((m) => (m.id === id ? Object.assign({}, m, { text: text, pending: false, status: this.isAgent(to) ? '' : 'Delivered' }) : m));
+        if (this.isAgent(to)) list.push({ id: id + 1, from: 'them', kind: 'text', text: '…', pending: true });
         return { threads: Object.assign({}, b.threads, { [to]: list }) };
       });
     }, 900);
-    if (to === 'jerv') {
-      const reply = s.said % 2 === 0 ? "Done — I'll remind you at 9:00 tomorrow." : "Done — the porch light goes off at 11:00 tonight.";
+    if (this.isAgent(to)) {
+      const reply = to === 'dave'
+        ? (s.said % 2 === 0 ? 'Two players are on, both near spawn.' : 'There is one about 300 blocks east of your base.')
+        : (s.said % 2 === 0 ? "Done — I'll remind you at 9:00 tomorrow." : "Done — the porch light goes off at 11:00 tonight.");
       setTimeout(() => {
-        this.put((b) => ({ speaking: b.tts ? id + 1 : b.speaking, threads: Object.assign({}, b.threads, { jerv: b.threads.jerv.map((m) => (m.id === id + 1 ? Object.assign({}, m, { text: reply, pending: false }) : m)) }) }));
+        this.put((b) => ({ speaking: b.tts ? id + 1 : b.speaking, threads: Object.assign({}, b.threads, { [to]: b.threads[to].map((m) => (m.id === id + 1 ? Object.assign({}, m, { text: reply, pending: false }) : m)) }) }));
         this.speakDone(id + 1);
       }, 2400);
     }
@@ -944,7 +1188,7 @@ class Component extends DCLogic {
         playLabel: playing ? 'Pause' : 'Play message',
         prog: playing ? Math.min(100, Math.round((s.progress / (m.durS || 1)) * 100)) : (m.played === false ? 0 : 100),
         play: () => { if (!this.swiped) this.togglePlay(s.screen, m); },
-        canSpeak: s.screen === 'jerv' && m.from !== 'me' && m.kind !== 'voice' && !m.pending && !s.tts && s.speaking !== m.id,
+        canSpeak: this.isAgent(s.screen) && m.from !== 'me' && m.kind !== 'voice' && !m.pending && !s.tts && s.speaking !== m.id,
         speakingNow: s.speaking === m.id,
         speak: () => { if (this.swiped) return; this.put({ speaking: m.id }); this.speakDone(m.id); }
       };
@@ -955,14 +1199,75 @@ class Component extends DCLogic {
       const t = s.rec.secs;
       const level = 0.6 * Math.abs(Math.sin(t * 5.3)) + 0.4 * Math.abs(Math.sin(t * 2.1));
       rec = {
-        color: s.rec.to === 'jerv' ? '#CF8A8F' : '#7FA7C9',
-        tint: s.rec.to === 'jerv' ? 'rgba(207,138,143,0.10)' : 'rgba(127,167,201,0.10)',
-        title: s.rec.to === 'jerv' ? 'Jerv is listening' : 'Message to ' + r.name,
+        color: this.isAgent(s.rec.to) ? '#CF8A8F' : '#7FA7C9',
+        tint: this.isAgent(s.rec.to) ? 'rgba(207,138,143,0.10)' : 'rgba(127,167,201,0.10)',
+        title: this.isAgent(s.rec.to) ? r.name + ' is listening' : 'Message to ' + r.name,
         time: this.fmt(t),
         ring: Math.round(170 + 50 * level)
       };
     }
+    const agentNow = this.isAgent(s.screen) ? s.screen : null;
+    const curSess = agentNow ? s.sessions[agentNow].find((x) => x.id === s.cur[agentNow]) : null;
+    const mn = (() => {
+      const ag = s.menu;
+      if (!ag || !on || s.rec || s.ring) return { show: false, title: '', tint: '', color: '', hint: '' };
+      const a2 = A[ag];
+      const cs = s.sessions[ag].find((x) => x.id === s.cur[ag]);
+      return {
+        show: true, title: a2.name + ' · ' + (cs ? cs.title : 'Desk panel'), tint: a2.tint, color: a2.color,
+        hint: 'New keeps this one in Recent and in the app. BOOT closes this.',
+        startNew: () => this.startNew(ag),
+        recent: () => this.openRecent(ag),
+        cancel: () => this.put({ menu: null }),
+        // Only a tap on the dim itself, and never the release of the press that opened it.
+        outside: (e) => { if (this.lpJust || (e && e.target !== e.currentTarget)) return; this.put({ menu: null }); }
+      };
+    })();
+    const rc = (() => {
+      const r = s.recent;
+      if (!r || !on || s.rec || s.ring) return { show: false, rows: [], skeleton: [] };
+      const ag = r.agent;
+      const a2 = A[ag];
+      const thr = s.threads[ag];
+      const list = s.sessions[ag].filter((x) => x.id !== s.cur[ag] || thr.length > 0).slice(0, 10);
+      const loading = r.phase === 'loading';
+      const rows = loading ? [] : list.map((x) => {
+        const isCur = x.id === s.cur[ag];
+        const msgs = isCur ? thr : x.msgs;
+        const last = msgs.length ? msgs[msgs.length - 1] : null;
+        const opening = r.phase === 'opening' && r.opening === x.id;
+        return {
+          title: x.title, isCurrent: isCur, showWhen: !isCur,
+          when: opening ? 'Opening…' : x.when,
+          whenColor: opening ? a2.color : '#9A9DA3',
+          snippet: last ? (last.from === 'me' ? 'You: ' : '') + last.text : '',
+          isApp: x.from === 'app', isPanel: x.from !== 'app',
+          fromLabel: x.from === 'app' ? 'Started in the app' : 'Started on the panel',
+          bar: isCur ? a2.color : 'transparent',
+          bg: isCur ? a2.tint : '#17181B',
+          border: isCur ? 'transparent' : '#26282C',
+          ariaCurrent: isCur ? 'true' : 'false',
+          aria: x.title + ', ' + (isCur ? 'current conversation' : x.when),
+          pick: () => { if (!this.swiped) this.switchTo(ag, x.id); }
+        };
+      });
+      return {
+        show: true, agent: ag, name: a2.name, color: a2.color, tint: a2.tint, initial: a2.initial,
+        isJerv: ag === 'jerv', isInitial: ag !== 'jerv',
+        sub: a2.name + "'s conversations",
+        loading: loading, empty: !loading && rows.length === 0,
+        skeleton: [{ w1: 58, w2: 84, dim: 1 }, { w1: 44, w2: 76, dim: 0.8 }, { w1: 52, w2: 88, dim: 0.6 }, { w1: 38, w2: 70, dim: 0.4 }],
+        rows: rows, fade: rows.length > 3,
+        back: () => this.put({ recent: null }),
+        startNew: () => { if (!this.swiped) this.startNew(ag); }
+      };
+    })();
     return {
+      mn: mn,
+      rc: rc,
+      recentRef: (el) => { this.recentEl = el; },
+      earlierRow: !!agentNow && !!s.earlier[agentNow],
+      threadEmpty: !!agentNow && s.threads[agentNow].length === 0,
       isHome: on && s.screen === 'home' && !s.rec && !s.ring,
       isHome0: on && s.screen === 'home' && s.page === 0 && !s.rec && !s.ring,
       isHome1: on && s.screen === 'home' && s.page === 1 && !s.rec && !s.ring,
@@ -1207,7 +1512,7 @@ class Component extends DCLogic {
       },
       isThread: isPage && !!thread && !s.rec && !s.ring,
       isMinecraft: isPage && s.screen === 'minecraft' && !s.rec,
-      cur: { name: a.name, color: a.color, tint: a.tint, initial: a.initial, isJerv: s.screen === 'jerv', isCube: s.screen === 'minecraft', isPerson: s.screen === 'quorra' || s.screen === 'tamsin', isGear: s.screen === 'settings', isClock: s.screen === 'clock' },
+      cur: { name: a.name, color: a.color, tint: a.tint, initial: a.initial, hasSub: !!curSess, sub: curSess ? curSess.title : '', nameSize: curSess ? 22 : 26, isJerv: s.screen === 'jerv', isCube: s.screen === 'minecraft', isInitial: s.screen === 'quorra' || s.screen === 'tamsin' || s.screen === 'dave', isGear: s.screen === 'settings', isClock: s.screen === 'clock' },
       msgs: msgs,
       isRec: on && !!s.rec,
       rec: rec || { color: '#7FA7C9', tint: 'transparent', title: '', time: '0:00', ring: 170 },
@@ -1231,6 +1536,8 @@ class Component extends DCLogic {
         if (b.ring) { this.put({ ring: null, off: false }); this.say('Alarm stopped'); return; }
         if (b.notes.length && (b.noteOpen || !(b.screen === 'clock' && b.clockView === 'face'))) { this.put({ notes: b.notes.slice(1), noteOpen: false, noteAge: 0 }); this.say('Dismissed — no answer sent'); return; }
         if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
+        if (b.menu) { this.put({ menu: null }); return; }
+        if (b.recent) { this.put({ recent: null }); return; }
         this.put({ screen: 'home', page: 0, rec: null, playing: null, off: false });
       },
       goHome: () => {
@@ -1246,11 +1553,27 @@ class Component extends DCLogic {
         this.swiped = false;
         const b = this.base(this.state);
         if (b.off) { this.put({ off: false }); return; }
+        // A finger held still 600 ms in an agent's conversation opens its menu; any move past
+        // the tap's 20 px slop (a scroll) cancels it.
+        clearTimeout(this.lpTimer);
+        this.lp = null;
+        if (this.isAgent(b.screen) && !b.menu && !b.recent && !b.rec && !b.notes.length) {
+          this.lp = { x: e.clientX, y: e.clientY };
+          this.lpTimer = setTimeout(() => {
+            if (!this.lp) return;
+            this.lp = null;
+            this.lpJust = true;
+            this.swiped = true;
+            this.drag = null;
+            this.put({ menu: b.screen });
+          }, 600);
+        }
         if (b.rec && !b.rec.frozen) this.stopRec(false);
       },
       // Touch scrolls natively (touch-action: pan-y); a mouse has no swipe, so dragging is
       // emulated here to make the mock behave like the glass.
       screenMove: (e) => {
+        if (this.lp && Math.hypot(e.clientX - this.lp.x, e.clientY - this.lp.y) > 20) { clearTimeout(this.lpTimer); this.lp = null; }
         const d = this.drag;
         if (!d) return;
         const dy = e.clientY - d.y;
@@ -1258,6 +1581,9 @@ class Component extends DCLogic {
         if (d.moved) d.el.scrollTop = d.top - dy;
       },
       screenUp: (e) => {
+        clearTimeout(this.lpTimer);
+        this.lp = null;
+        if (this.lpJust) setTimeout(() => { this.lpJust = false; this.swiped = false; }, 50);
         if (this.drag && this.drag.moved) {
           this.swiped = true;
           setTimeout(() => { this.swiped = false; }, 50);

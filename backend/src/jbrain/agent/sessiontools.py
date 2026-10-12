@@ -17,7 +17,7 @@ owner named themselves.
 """
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
-from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.session import AgentSessionRepo, is_unnamed
 
 # The ambient line that tells a turn its chat is still unnamed. DATA-framed like the clock's
 # `now_block`, and for the same reason: it is a fact about the conversation's state, not an
@@ -68,8 +68,9 @@ def build_session_handlers(sessions: AgentSessionRepo) -> dict[str, ToolHandler]
         # The guard that makes this safe to hand a sandboxed chatbot: naming is a
         # one-way door from unnamed to named. An owner's own title is never overwritten,
         # so a second call — a confused model, a retry, or text in a fetched page telling
-        # the agent to rename the chat — changes nothing.
-        if current.title.strip():
+        # the agent to rename the chat — changes nothing. The desk panel's "Desk panel"
+        # placeholder is the one title that is not a name (`is_unnamed`).
+        if not is_unnamed(current):
             return ToolOutput(
                 f"This chat is already named “{current.title}” — leaving it as is.",
                 result_brief="already named",

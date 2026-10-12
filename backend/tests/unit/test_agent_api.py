@@ -45,7 +45,9 @@ class FakeAgentSessions:
     def add(self, info: AgentSessionInfo) -> None:
         self._by_id[info.id] = info
 
-    async def create(self, ctx, *, domain_scopes, subject_ids=(), title="", agent="curator"):  # type: ignore[no-untyped-def]
+    async def create(
+        self, ctx, *, domain_scopes, subject_ids=(), title="", agent="curator", origin=None
+    ):  # type: ignore[no-untyped-def]
         info = AgentSessionInfo(
             id=f"sess-{len(self._by_id) + 1}",
             title=title,
@@ -55,6 +57,7 @@ class FakeAgentSessions:
             created_at=NOW,
             last_active_at=NOW,
             agent=agent,
+            origin=origin,
         )
         self.add(info)
         return info
@@ -2307,6 +2310,8 @@ def test_create_and_list_sessions(
     )
     assert created.status_code == 200
     assert created.json()["domain_scopes"] == ["general", "health"]
+    # Started in the PWA, so the desk panel's Recent list includes it.
+    assert sessions_store._by_id[created.json()["id"]].origin == "pwa"
 
     listed = client.get("/api/sessions")
     assert listed.status_code == 200

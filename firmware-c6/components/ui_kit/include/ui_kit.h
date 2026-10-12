@@ -133,6 +133,42 @@ lv_obj_t *ui_step_row(lv_obj_t *parent, lv_obj_t **mark, lv_obj_t **text);
 /* A dim line of its own in a conversation: an answer's "2 steps · 58 s". */
 lv_obj_t *ui_note_line(lv_obj_t *parent, const char *text);
 
+/* ---- 0.0.15: an agent's conversation menu, Recent, a switched thread (Main.dc.html) ---- */
+
+/* The header with a second, muted line under the title (the conversation's title, cut with "…").
+ * `*sub_label` is that line, for the caller to change in place. */
+lv_obj_t *ui_header_sub(lv_obj_t *root, const ui_icon_t *icon, ui_accent_t accent,
+                        const char *title, const char *sub, lv_event_cb_t on_back, void *user,
+                        lv_obj_t **sub_label);
+/* The mock's phone, `px` square, in strokes: where a conversation started in the app. */
+lv_obj_t *ui_phone(lv_obj_t *parent, int px, uint32_t color);
+/* A muted line under a ui_menu card's title: "Jerv · Shopping list". */
+void ui_menu_sub(lv_obj_t *card, const char *text);
+typedef enum { UI_ROW_GLYPH_NONE, UI_ROW_GLYPH_PLUS, UI_ROW_GLYPH_CLOCK } ui_row_glyph_t;
+/* A 60 px action: tinted in `color` (New conversation) or raised with a strong line (Recent
+ * conversations), a glyph before the words, a chevron after when it opens a page. */
+lv_obj_t *ui_menu_row(lv_obj_t *parent, ui_row_glyph_t glyph, const char *text, uint32_t color,
+                      bool tinted, bool chevron, lv_event_cb_t cb, void *user);
+/* A button drawn only as its outline: a menu's Cancel. */
+lv_obj_t *ui_ghost_button(lv_obj_t *parent, const char *text, lv_event_cb_t cb, void *user);
+typedef struct {
+    const char *title, *when, *snippet;
+    bool from_app; /* the phone; else the microphone */
+    bool current;  /* the accent bar, the tint and the "Current" chip, in place of the time */
+    bool opening;  /* `when` ("Opening…") in the accent */
+} ui_convo_row_t;
+/* One of Recent's rows, 84 px; LV_EVENT_CLICKED reaches `cb` with `user`. */
+lv_obj_t *ui_convo_row(lv_obj_t *parent, const ui_convo_row_t *r, ui_accent_t accent,
+                       lv_event_cb_t cb, void *user);
+/* A row still loading: grey bars where its words will be. */
+lv_obj_t *ui_skeleton_row(lv_obj_t *parent, int w1_pct, int w2_pct, lv_opa_t opa);
+/* An empty list: a speech bubble on a disc, a title and a line under it. */
+lv_obj_t *ui_empty_state(lv_obj_t *parent, const char *title, const char *body);
+/* A chip with the phone before its words: "Earlier messages are in the app". */
+lv_obj_t *ui_app_chip(lv_obj_t *parent, const char *text);
+/* Black fading in over the bottom `h` px of `parent`: there is more below. */
+lv_obj_t *ui_fade_bottom(lv_obj_t *parent, int h);
+
 /* One toast at a time, on the top layer, above every overlay. */
 void ui_toast(const char *text, uint32_t ms);
 void ui_toast_clear(void);

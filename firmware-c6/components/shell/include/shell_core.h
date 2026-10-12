@@ -127,8 +127,9 @@ bool sh_gate(sh_gate_t *g, bool pressed, bool dark, bool *wake);
 /* ---- the conversation menu (owner, 2026-10-12: "a long press in a chat window pulls up a
  * menu") ----
  *
- * A finger held still on a conversation for SH_LONG_PRESS_MS opens a small menu: Clear chat,
- * Cancel. "Still" is the tap's own slop, so a scroll — which moves past it first — never opens
+ * A finger held still on a conversation for SH_LONG_PRESS_MS opens a small menu. A person's
+ * thread (Quorra's, Tamsin's) offers Clear chat and Cancel; an agent's (Jerv's, Dave's) offers
+ * New conversation, Recent conversations and Cancel (0.0.15, owner 2026-10-12). "Still" is the tap's own slop, so a scroll — which moves past it first — never opens
  * it, and a long press is decided while the finger is still down, once. The rule itself is
  * ui_hold's (ui_kit), which the Clock face's two-second hold uses too. */
 #define SH_LONG_PRESS_MS 600
@@ -142,11 +143,17 @@ bool sh_long_press(sh_lp_t *lp, bool pressed, int x, int y, uint32_t now_ms);
 bool sh_menu_may_open(const sh_facts_t *f, bool conversation);
 
 /* Clear chat takes two taps, no more than SH_MENU_ARM_MS apart — the Wi-Fi Disconnect pattern:
- * the first arms it ("Tap again to clear"), the second clears. A history is not coming back. */
+ * the first arms it ("Tap again to clear"), the second clears. A history is not coming back.
+ * New conversation takes one: nothing is lost, the old one stays in Recent and in the app. */
 #define SH_MENU_ARM_MS 3000
 typedef enum { SH_MENU_CLOSED, SH_MENU_OPEN } sh_menu_state_t;
+typedef enum {
+    SH_MENU_CLEAR, /* a person's thread: Clear chat, Cancel */
+    SH_MENU_CONVO, /* an agent's: New conversation, Recent conversations, Cancel */
+} sh_menu_kind_t;
 typedef struct {
     sh_menu_state_t state;
+    sh_menu_kind_t kind;
     bool armed;
     uint32_t armed_ms;
 } sh_menu_t;
@@ -154,14 +161,18 @@ typedef enum {
     SH_MENU_IN_CLEAR,   /* the Clear chat button */
     SH_MENU_IN_CANCEL,  /* the Cancel button */
     SH_MENU_IN_OUTSIDE, /* a tap on the dim around the card */
+    SH_MENU_IN_NEW,     /* New conversation */
+    SH_MENU_IN_RECENT,  /* Recent conversations */
 } sh_menu_in_t;
 typedef enum {
     SH_MENU_DO_NOTHING,
-    SH_MENU_DO_ARM,   /* redraw: "Tap again to clear" */
-    SH_MENU_DO_CLEAR, /* clear the thread, close */
+    SH_MENU_DO_ARM,    /* redraw: "Tap again to clear" */
+    SH_MENU_DO_CLEAR,  /* clear the thread, close */
     SH_MENU_DO_CLOSE,
+    SH_MENU_DO_NEW,    /* close, and the conversation starts a new one */
+    SH_MENU_DO_RECENT, /* close, and the conversation opens its Recent list */
 } sh_menu_do_t;
-void sh_menu_open(sh_menu_t *m);
+void sh_menu_open(sh_menu_t *m, sh_menu_kind_t kind);
 sh_menu_do_t sh_menu_input(sh_menu_t *m, sh_menu_in_t in, uint32_t now_ms);
 /* Armed and not yet lapsed: what the Clear button says. */
 bool sh_menu_armed(const sh_menu_t *m, uint32_t now_ms);
