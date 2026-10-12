@@ -76,5 +76,5 @@ they disagree the code and docs here are fixed to match it.
     about **10 and 40 minutes after each of your own merges** (it files within 40 s to
     35 min of a merge), and before calling work done. The checks never hold up a PR, a
     merge or a deploy: they run alongside. Any issue naming a PR you opened is yours to
-    fix as a new PR (failing test first, `Fixes #N`, merge, deploy, verify, closing
-    comment). See `docs/reference/PROCESS.md` "Post-merge review issues".
+    fix as a new PR (failing test first, `Fixes #N`, merge, deploy, verify), commenting
+    on the issue as you go: when you start, when the PR is open, and when it's closed. See `docs/reference/PROCESS.md` "Post-merge review issues".
