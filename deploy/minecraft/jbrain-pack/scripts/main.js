@@ -2,7 +2,8 @@
 // §DW1): the deaths and respawns BDS never prints and the in-game door to Dave
 // (`/jb:dave …`), as one JSON line each on the console, which the wrapper turns into
 // events; and the crew's items, the Tricorder and the Power Pack, with the rules the
-// canon gives them. Stable @minecraft/server only. The rules themselves are in rules.js.
+// canon gives them. Stable @minecraft/server only. The rules themselves are in rules.js;
+// Dave's welcome and first-time beats are welcome.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
 import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, packToBurn,
@@ -12,6 +13,8 @@ import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
 import { initBeacon } from "./beacon.js";
+import { initWelcome } from "./welcome.js";
+import { isHello } from "./welcome_rules.js";
 
 initBeacon(world, system);
 
@@ -127,7 +130,9 @@ const makeTricorder = (player, serial) => {
   return item;
 };
 
-const beam = (player) => {
+// The selected slot when `hand` asks for it and it's free (the welcome's "in their hand"),
+// else the first free one.
+const beam = (player, { hand = false } = {}) => {
   const serial = (Number(currentSerial(player.id)) || 0) + 1;
   world.setDynamicProperty(serialKey(player.id), serial);
   const item = makeTricorder(player, serial);
@@ -138,34 +143,56 @@ const beam = (player) => {
       retire(c.item, c.put);
     }
   }
+  const slot = player.selectedSlotIndex;
+  if (hand && !inv.getItem(slot)) {
+    inv.setItem(slot, item);
+    return;
+  }
   if (inv.addItem(item) === undefined) return;
   // A full inventory: the selected slot's stack makes room, at the player's feet.
-  const slot = player.selectedSlotIndex;
   const displaced = inv.getItem(slot);
   if (displaced) player.dimension.spawnItem(displaced, player.location);
   inv.setItem(slot, item);
 };
 
-// DW1's welcome (not in this wave): a player's first-ever waking in this world. For now
-// the Tricorder arrives quietly; the welcome sequence replaces this function.
-const firstWaking = (player) => {
-  beam(player);
+// Where the player's own current Tricorder sits in their inventory, or -1.
+const ownSlot = (player) => {
+  const inv = player.getComponent("minecraft:inventory")?.container;
+  if (!inv) return -1;
+  for (let i = 0; i < inv.size; i++) {
+    const item = inv.getItem(i);
+    if (item?.typeId === TRICORDER && statusOf(item, player) === "own") return i;
+  }
+  return -1;
 };
 
-const onWaking = (player) => {
+const dave = (player, text) => player.sendMessage(DAVE + text);
+
+const story = initWelcome({ beam, ownSlot, tricorderOn, say, dave });
+
+const onWaking = (player, initialSpawn) => {
   const left = player.getDynamicProperty(BURNT);
-  if (typeof left === "number") {
+  const savedByPack = typeof left === "number";
+  if (savedByPack) {
     player.setDynamicProperty(BURNT, undefined);
     player.sendMessage(`§7${LINES.burnt(left)}`);
     player.playSound("random.fizz");
   }
-  if (currentSerial(player.id) === undefined) {
-    firstWaking(player);
+  // The welcome hands over the Tricorder itself, at its 5 s mark.
+  if (initialSpawn && story.needsWelcome(player)) {
+    story.welcome(player);
     return;
   }
-  if (tricorderOn(player) === "own") return;
-  beam(player);
-  player.sendMessage(DAVE + LINES.rebeamed);
+  if (!story.inWelcome(player)) {
+    if (currentSerial(player.id) === undefined) {
+      // Never beamed one (they left before the welcome's beam): nothing was lost.
+      beam(player);
+    } else if (tricorderOn(player) !== "own") {
+      beam(player);
+      dave(player, LINES.rebeamed);
+    }
+  }
+  if (!initialSpawn) story.firstDeath(player, savedByPack);
 };
 
 // --- the item guide's unlocks (§M19) ----------------------------------------------------
@@ -174,9 +201,15 @@ const onWaking = (player) => {
 // when something new was unlocked.
 const learn = (player) => {
   const before = parseKnown(world.getDynamicProperty(knownKey(player.id)));
-  const after = unlocksFrom(before, carried(player).map((c) => c.item.typeId));
+  const held = carried(player).map((c) => c.item.typeId);
+  const after = unlocksFrom(before, held);
   if (after.join() !== [...before].sort().join()) {
     world.setDynamicProperty(knownKey(player.id), JSON.stringify(after));
+  }
+  try {
+    story.onUnlocks(player, { added: after.filter((k) => !before.includes(k)), known: after, held });
+  } catch (e) {
+    say(`story beat failed for ${player.name}: ${e}`);
   }
   return after;
 };
@@ -291,7 +324,7 @@ world.afterEvents.playerSpawn.subscribe((ev) => {
   // A tick on, so the joining player's inventory is there to read and write.
   system.run(() => {
     try {
-      onWaking(player);
+      onWaking(player, ev.initialSpawn);
     } catch (e) {
       say(`waking failed for ${player.name}: ${e}`);
     }
@@ -348,7 +381,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 });
 
 initTransport({ carried, tricorderOn, say });
-initWormholes();
+initWormholes({ onPlanted: (player) => story.firstWormhole(player) });
 
 // --- the Tricorder's arrow, about four times a second -----------------------------------
 
@@ -421,6 +454,11 @@ const askDave = (player, text) => {
     player.sendMessage(STATIC + (tricorder === "none" ? LINES.noSignal : LINES.notTuned));
     return;
   }
+  // The welcome's lines again, answered here: no question for the backend.
+  if (isHello(text)) {
+    story.hello(player);
+    return;
+  }
   let spawn = null;
   try {
     spawn = bedOf(player);
@@ -485,4 +523,4 @@ const registerDave = (registry, name) => {
   );
 };
 
-initReplicator();
+initReplicator({ onUnlocked: (player) => story.firstReplicator(player) });

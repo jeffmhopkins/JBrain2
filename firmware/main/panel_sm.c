@@ -400,7 +400,9 @@ sm_target_t sm_target(const sm_t *sm, const sm_in_t *in, int x, int y)
         const confirm_hit_t h = confirm_hit(x, y, in->over_h);
         if (h == CONFIRM_NONE) return SM_T_SWALLOW;
         if (!on(sm, in)) return SM_T_IGNORED; /* nothing audible to pause or answer yet */
-        return h == CONFIRM_CANCEL ? SM_T_PAUSE : SM_T_REPLY;
+        if (h == CONFIRM_CANCEL) return SM_T_PAUSE;
+        /* No envelope is drawn while it talks, so the finger there presses nothing. */
+        return sm->play.pause_on ? SM_T_REPLY : SM_T_SWALLOW;
     }
     case SM_PET:
         return pet_target(sm, in, x, y);
@@ -1258,6 +1260,7 @@ static void make_view(const sm_t *sm, const sm_in_t *in, sm_view_t *v)
     v->transport = play;
     v->paused = play && sm->play.pause_on;
     v->playing_glyph = play && !sm->play.pause_on;
+    v->reply = v->offer || (play && sm->play.pause_on);
     v->exit_corner = play || v->offer;
     v->face_none = !sm_face(sm, s, &v->face);
     sel_set_t S;
@@ -1322,6 +1325,11 @@ uint32_t sm_check(const sm_t *sm, const sm_in_t *in)
         v |= SM_I3;
     }
     if (sm->mode == SM_PLAY && !probe(sm, in, FACE_W * 3 / 4, over_h / 4, SM_T_EXIT)) v |= SM_I3;
+    if (sm->mode == SM_PLAY &&
+        (view.reply ? !probe(sm, in, CONFIRM_CX_SEND, cy, SM_T_REPLY)
+                    : sm_target(sm, in, CONFIRM_CX_SEND, cy) == SM_T_REPLY)) {
+        v |= SM_I3;
+    }
     if (sm->mode == SM_PET && !view.notice && !view.offer &&
         sm_target(sm, in, FACE_W / 2, over_h / 2) != SM_T_PET) {
         v |= SM_I3;
@@ -1489,9 +1497,17 @@ void sm_step(sm_t *sm, const sm_in_t *in, sm_out_t *out)
         sm->reply_was = in->audio.reply_busy;
     }
 
-    /* Deaf to commands while the microphone is committed, and in standby. */
+    /* Deaf to commands while the microphone is committed, in standby, and while a message plays.
+       That last one is 0.4.2's: a word the recogniser thinks it heard sounds its cue in the press
+       slot, and a message stream yields the speaker to a cue chunk by chunk, so room noise mistaken
+       for "jump" paused a sister's message mid-sentence. 0.3.39 refused the cue instead; the
+       owner heard the difference on the first afternoon. */
     fx(out, SM_FX_MUTE_COMMANDS,
-       sm->mode == SM_LISTEN || sm->mode == SM_RECORD || sm->standby ? 1 : 0, 0);
+       sm->mode == SM_LISTEN || sm->mode == SM_RECORD || sm->mode == SM_PLAY || sm->standby ||
+               in->audio.stream_live
+           ? 1
+           : 0,
+       0);
 
     uint32_t v = sm_check(sm, in);
     if (v & SM_RECOVERS) {

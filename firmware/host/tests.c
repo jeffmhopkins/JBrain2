@@ -3340,8 +3340,8 @@ static void test_the_transport_discs_do_not_move_between_play_and_pause(void)
     const int over_h = FACE_H;
     memset(a, 0, sizeof(a));
     memset(b, 0, sizeof(b));
-    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false); /* play */
-    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true);  /* pause */
+    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false, true); /* play */
+    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true, true);  /* pause */
 
     /* The RIGHT half is the reply envelope in both, so it must be pixel-identical. */
     int right_diff = 0, left_diff = 0;
@@ -3382,7 +3382,7 @@ static void test_pause_reads_as_two_bars_and_play_as_one_shape(void)
 
     for (int pass = 0; pass < 2; pass++) {
         memset(fbt, 0, sizeof(fbt));
-        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1);
+        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1, true);
         int runs = 0;
         bool in_run = false;
         for (int x = 0; x < FACE_W / 2; x++) {

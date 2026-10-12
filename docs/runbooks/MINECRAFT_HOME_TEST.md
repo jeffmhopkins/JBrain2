@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-11 (the crew's items moved into every world)
+> **Status:** Living · **Last verified:** 2026-10-12 (Dave's welcome and first-time beats, DW1)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -13,6 +13,11 @@ Row 6 onward is **Dave in game** (M5's door, P2): the owner's three phrases, "po
 Rows 10–16 are **the Tricorder and the Power Pack** (M9, M10, DW1's rules), which are no
 longer part of the kit: the always-installed `jbrain` packs carry them, with their icons,
 into every world the box loads.
+
+Rows 17–21 are **Dave's welcome and the first-time beats** (DW1). They happen as you play
+the rows above: the welcome on your first join (rows 1–2), the Ender Pearl and Power Pack
+beats at row 4, the first death at row 7. Each is once per player per world, so they are
+checked where they happen; the rows only say what to look for.
 
 **The owner just plays, and the assistant reads the answers.** The test kit logs each
 finding as a `[jbrain-probe]` line on the server, the `jbrain` pack logs its own as
@@ -46,7 +51,7 @@ world** in slot 1, never on an imported real world.
 | 4 | In survival with cheats on: `/give @s ender_pearl 8` and `/give @s blaze_powder 1`, then put the pearls in a ring round the powder in a crafting table | **The Power Pack recipe works** (eight pearls round one blaze powder) and makes one Power Pack | log `power_pack in inventory` |
 | 5 | Hold **your Tricorder** (beamed into your inventory the first time you joined, named "<you>'s Tricorder") and turn around | The **actionbar arrow** follows your facing smoothly ("↗ World spawn · 120 blocks") — the M9 mechanic | log `tricorder in inventory: … lock inventory; keepOnDeath true`; your eyes on how smooth it is |
 | 5b | Ask Minecraft_Dave "point my tricorder at the nearest diamonds" (it finds them, then sets the waypoint), then hold the tricorder | The arrow now leads to **Dave's waypoint** with its label, distance and depth ("↗ Diamonds · 40 blocks · y -58"), and says "You're here" on arrival | log `waypoint set for …`; your eyes |
-| 6 | Type `/jb:dave hello` | The custom command (from the always-installed jbrain pack) appears in autocomplete and runs on a vanilla client; you see "Dave is thinking…" and then a private `<Dave> …` reply nobody else sees | log `[jbrain] {"ev":"dave",…}`; a Minecraft_Dave chat titled "In game: <your gamertag>" in the PWA |
+| 6 | Type `/jb:dave what can you do` | The custom command (from the always-installed jbrain pack) appears in autocomplete and runs on a vanilla client; you see "Dave is thinking…" and then a private `<Dave> …` reply nobody else sees | log `[jbrain] {"ev":"dave",…}`; a Minecraft_Dave chat titled "In game: <your gamertag>" in the PWA |
 | 6a | Stand somewhere, then `/jb:dave mark this location as tree farm` | **Saving a place** where you stand: Dave says it's saved with its coordinates | the PWA chat's `mc_place_save` step; `GET /api/debug/minecraft/logs` |
 | 6b | Walk away, then `/jb:dave navigate to tree farm`, and hold the tricorder | **Navigating to it:** Dave says which way and how far; the arrow leads back to "tree farm" | log `waypoint set for …`; your eyes |
 | 6c | `/jb:dave point me home` — first with no bed set, then after sleeping in a bed (or saying `/jb:dave mark this location as home`) | **Home:** with nothing to go on Dave says so and offers to mark it; with a bed the arrow points at the bed ("Home (your bed)"); a saved home wins over the bed | the reply; the PWA chat |
@@ -61,6 +66,11 @@ world** in slot 1, never on an imported real world.
 | 14 | Switch on. Die again with no pack (and once with a pack but someone else's Tricorder) | **Dropped like a normal death** at the spot: items, armor and off-hand fall, Curse of Vanishing items vanish, XP drops as orbs and resets, the Tricorder stays | log `power pack: … dropped their things`; check enchantments, names and durability on the dropped items |
 | 15 | Switch on. Fall into the void (the End, or below bedrock in creative→survival) | The drops land **at the last place you stood**, not in the void | log; your eyes |
 | 16 | Switch off. Die with a Power Pack | **Vanilla:** everything drops, the pack included; the Tricorder stays (keep on death) | your eyes |
+| 17 | Your first join since the welcome shipped (everyone gets it once, even players who had joined before, owner 2026-10-12) | **The welcome, about 25 s:** the screen dark for 2 s with "…where am I?", sparkles falling onto you with a rising chime, "…what's this?", then a chime and your Tricorder in your hand (no second one if you already had yours: it's selected instead), a crackle and **SIGNAL ACQUIRED**, then Dave's six lines 3 s apart. A world with a crash site says "Look up. That ship is ours…" and "Your pod kept you alive…"; one without (an import) says "Our ship came down long ago…" and "This land has grown over…". Nobody else online sees or hears any of it | your eyes; log `[jbrain] config wreck=true` (or `false`) at load |
+| 18 | Leave in the middle of a welcome (a second account, or a sibling's first join), then rejoin | **No replay and no error:** it just ends; on rejoin you have your Tricorder and no welcome | your eyes; no `welcome step … failed` line in the log |
+| 19 | `/dave hello`, then `/d hello` | **The welcome's six Dave lines again**, 3 s apart, with no darkness, no title and no second Tricorder, and no "Dave is thinking…" | your eyes; no `"ev":"dave"` line in the log |
+| 20 | Your first death (row 7) | Dave's two first-death lines ("…that was close…", then "The transporter can only carry you…"); a later death says nothing more. If a Power Pack saved your things on that first death (row 13 first), only the first line | your eyes |
+| 21 | Your first Ender Pearl, then your first Power Pack (row 4) | The pearl line once ("…is that an Ender Pearl?…"); on the first Power Pack, the field line only with the keep switch on, and the saved-places line only with the transport switch on. With both off, nothing, and it comes the next time you hold a pack after one is turned on | your eyes |
 
 ## After (assistant)
 

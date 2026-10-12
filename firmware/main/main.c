@@ -886,6 +886,9 @@ void app_main(void)
             ears_tried = true;
             mem_log("pre-speech");
             if (!speech_start()) ESP_LOGW(TAG, "no recogniser — the panel listens to nobody");
+            /* Only now may the link hold a session between requests (`link_keep_alive`): the
+               recogniser has had the internal RAM it needed to start. */
+            link_keep_alive(true);
             /* Alongside the recogniser, and after the first successful box contact for the
                same reason: this needs the API base, the token and the CA out of `cfg`, and
                starting it before the network is up would only mean a task blocked on a

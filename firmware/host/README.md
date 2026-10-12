@@ -13,6 +13,11 @@ an ESP-IDF toolchain, or a network.
 
 | `run_e2e_tests` | `e2e_tests.c` | **The three together** (plan §8.5): `panel_sm.c`, the real `jpanel_core.c` and the real `stream.c`, wired the way `display.c` wires them — every 40 ms of fake time the arbiter ticks and a render frame samples, steps and executes — against `jpanel_tests.c`'s scripted box, which it includes whole minus its `main`. It is where a fault in the seam shows: its first run found the stream reading as finished a tick before it had sounded (`stream_facts` now reads the ring itself). |
 
+`jpanel_tests.c` has two hooks that only the browser bench (`../mock/`) sets: `g_codec`, which
+hears what the arbiter writes to the codec, and `JP_MOCK_VOICE`, which replaces the box's sample
+ramp with something a person can listen to. The suites leave both unset. `main/overlay.c` is in
+`SRC`, which is what holds the overlays free of ESP-IDF.
+
 `check_no_logic_in_audio` greps `main/audio.c` for anything but codec I/O — ring arithmetic, cue
 rendering, slot writes, a field of the speaker state — because a decision made on the audio task
 works on the device and is invisible to `run_stream_tests`.

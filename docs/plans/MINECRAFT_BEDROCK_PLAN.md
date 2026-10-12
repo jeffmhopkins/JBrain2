@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -2104,7 +2104,7 @@ model stays for real questions.
 - where am I?
 - where is *player*?
 - how many scans do I have left? (M17);
-- `/jb:dave hello`, which replays the welcome (DW1);
+- `/jb:dave hello`, which replays the welcome (DW1; the pack answers it, below);
 - where's the nearest *structure* / *block*: still a deep scan that counts toward M17's
   limit, only without a model turn.
 
@@ -2151,8 +2151,9 @@ was decided while building it:
   Tricorder and follow the arrow, crew.") plus the scans left; the quick answers have no
   line of their own for it. `locate` is Overworld-only, so from elsewhere a structure
   goes to the model.
-- **`/jb:dave hello` is left to the model.** It replays DW1's welcome, which isn't built
-  (DW1 "Not built"); the fast path takes it when DW1 ships.
+- **`/jb:dave hello` never reaches the backend** (DW1, 2026-10-12). The pack answers it
+  itself, replaying the welcome's Dave lines, so neither the fast path nor the model
+  sees it.
 - **Recorded like any exchange:** the question and Dave's line go into the player's "In
   game: <gamertag>" session as a user turn and an assistant turn carrying the tool steps
   it ran (`AgentTranscript.record_exchange`, no run row since no model ran), so the next
@@ -2595,7 +2596,7 @@ token can make **test worlds**, and the owner's worlds stay read-only to it.
   in the sweep has now passed. The owner's world was loaded back, and the test slot was
   emptied.
 
-### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; not built)
+### DW1 — Dave's welcome and the crew's Tricorder (owner, 2026-10-11; built 2026-10-12)
 
 **What and why.** The story is canon in Bleepbloop_City's
 [`notes/lore.md`](https://github.com/jeffmhopkins/Bleepbloop_City/blob/main/notes/lore.md#dave-the-crew-and-the-tricorder).
@@ -2671,10 +2672,52 @@ on every waking with the "nearly lost you" line, retiring older copies. A player
 first-ever waking in a world gets theirs quietly: `firstWaking()` in the pack's
 `main.js` is the hook the welcome sequence replaces. Dave's lines are one constants
 block, `LINES` in `jbrain-pack/scripts/rules.js`, copied verbatim from the lore page.
-Not built: the welcome and the first-time beats, and `/dave hello`. Until they are, the model answers `hello`; once the welcome's lines exist,
-M18's fast path (`minecraft/fastpath.py`) is where `hello` belongs. The first-time beats'
-record can sit beside M19's unlocks (`jb:known:<id>`), which are recorded at the same
-moments.
+The welcome, the first-time beats and `/dave hello` followed on 2026-10-12 (below).
+
+**Shipped (2026-10-12): the welcome and the first-time beats.** All in the pack, no
+backend: `jbrain-pack/scripts/welcome.js` plays them and `welcome_rules.js` holds the
+timings and choices (node-tested); the words are new entries in `LINES` (`rules.js`),
+copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
+- **The welcome** follows the lore table to the tick with `system.runTimeout`, private to
+  the player: `camera.fade` to black for 2 s with "…where am I?"; end-rod sparkles falling
+  in a column onto them (`Player.spawnParticle`) with a climbing `note.chime`; "…what's
+  this?"; at 5 s a chime and their Tricorder beamed into the selected slot; a crackle and
+  the **SIGNAL ACQUIRED** title; then Dave's six lines 3 s apart. Each step re-checks the
+  player, so leaving mid-welcome ends it quietly.
+- **Who gets it:** once per player per world, on a join with no `welcome` beat, which
+  includes **players who joined before it shipped** (owner, 2026-10-12: they see it on
+  their next join). One who already has their own Tricorder keeps it: no second copy, it
+  is selected if it's in the hotbar. Beats are a JSON list per player in the world
+  property `jb:beats:<id>`, beside M19's `jb:known:<id>`; `welcome` is recorded as the
+  sequence starts, so a rejoin mid-welcome doesn't loop it (one who left before the beam
+  gets their Tricorder quietly on the rejoin). The re-beam safety net still runs on later
+  wakings and stands down during a welcome, which hands the Tricorder over itself.
+- **Crash site or not** reaches the pack from the wrapper: `pack_config` adds `"wreck"`
+  to the `scriptevent jb:config` line it sends at every load, true for a slot whose
+  `wreck` is `armed` (building on this very load) or `done`. The pack keeps it as the
+  world property `jb:wreck`; never told reads as no wreck. A wreck that passes its world
+  over (`skipped`) sends the line again at once with `false`.
+- **First death** (the first respawn, beat `first_death`): Dave's two lines; when a Power
+  Pack saved their things on that death, only the first, so he never says they're where
+  they fell. **First Ender Pearl** (`first_ender_pearl`): the moment M19's `power_pack`
+  unlock is first recorded. **First Power Pack** (`first_power_pack`): the field line only
+  with the keep switch on, the saved-places line only with the transport switch on;
+  neither on, nothing is said or recorded, so it comes the next time they hold a pack
+  after the owner turns one on. The pearl and pack beats wait for their own Tricorder
+  on them, like every other Dave line (a respawn always has it, or is re-beamed one).
+- **`/dave hello`** (also `/d`, `/ai`; exactly "hello", any case) replays the six lines at
+  the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
+  question reaches the backend. It still needs their own Tricorder. "hello there" is a
+  real question and goes to Dave as before.
+- **First wormhole** (owner, 2026-10-12, with the gate's lines signed off): just after a
+  player's first planted line, Dave says "…a fold, held open. Stand close and tell me where
+  it should lead." Beat `first_wormhole`, through their own Tricorder only; `wormhole.js`
+  calls it through `initWormholes({ onPlanted })`.
+- **First Replicator** (owner, 2026-10-12, with the panel signed off): when
+  `replicator.js` records the unlock (8 Power Packs held), Dave says "Eight Power Packs…
+  that's enough to wake a Replicator. …". Beat `first_replicator`, own Tricorder only,
+  through `initReplicator({ onUnlocked })`.
+- **Not here:** the chests' beat; it comes with M11 and lines on the lore page.
 
 **Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)
 carries a story section copied from the lore page's canon: Dave, the Old Makers, the

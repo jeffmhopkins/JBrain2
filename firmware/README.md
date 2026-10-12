@@ -185,6 +185,10 @@ finding of the 2026-10 adversarial review fixed in one release, with no wrapper 
   and what is drawn are one machine, stepped once per frame; `display.c` only samples, runs the
   effects in order and draws `sm_view_t` (`ui.c`/`ui.h` are gone). `check_no_logic_in_display`
   keeps it that way.
+- **`overlay.c` draws `sm_view_t`** (0.4.1): the notice, the run, the pair, the dot, the grid
+  and the send's outcome, with no ESP dependency. That is what lets `firmware/mock/` build the
+  same pixels for the browser bench, `docs/mocks/jpanel-s3/`: the machine, the engine, the
+  arbiter, the cues, the pet and the overlays compiled to WebAssembly and pressed with a mouse.
 - **`jpanel_core.c` is the engine**: one serial loop that owns every request and publishes one
   seqlocked snapshot; render posts commands and copies the snapshot, nothing else.
 - **`stream.c` owns the speaker**: cues, the pet's reply, silence, the stop word and the message
@@ -467,6 +471,15 @@ Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls b
 
 ## One connection to the box, not one per request (0.3.39)
 
+**0.4.2 keeps one HTTPS connection between requests** (`link_keep_alive`). 0.4.0's
+one-session-per-request meant a full TLS handshake every 3 s for the settings poll alone, and the
+first 0.4.0 panel's animation visibly lost its smoothness to them. The connection is still one at
+a time under the same lock. It is only turned on after the recogniser has started, so boot keeps
+the internal RAM speech needs. A response must be read to its last byte to be kept, a kept
+connection idle for over 60 s is dropped, and a request whose kept connection the box had closed
+is sent again on a fresh one. Telemetry reports `ws: "https-keep"`, with `ws_connects` counting
+handshakes since boot and `ws_drops` counting the stale connections.
+
 **0.4.0 turns the socket off** (`LINK_PERSISTENT_SOCKET 0` in `main/link.h`; plan
 `JPANEL_MESSAGING_FIXES_PLAN.md` §6a). Its ~48 KB of internal RAM is what made 0.3.39 abort at
 boot once speech started, so `link_start` now comes up in the HTTPS fallback described below — one
@@ -609,7 +622,11 @@ So changing the firmware is three commits' worth of one act:
 # 1. edit main/, 2. bump version.txt, 3. rebuild and commit dist/
 . ~/esp-idf/export.sh && (cd firmware && idf.py fullclean && idf.py build)
 scripts/firmware-dist.sh
+# 4. rebuild and commit the browser bench, 5. republish it (below)
+firmware/mock/build.sh && node firmware/mock/smoke.mjs
 ```
+
+**Steps 4 and 5 keep the bench true.** See "The bench follows the firmware" below.
 
 **Every source change rebuilds the image, including a comment-only one.** The app descriptor
 embeds `app_elf_sha256`, a hash of the ELF — and the ELF carries debug info, so touching a
@@ -627,6 +644,29 @@ all, since ESP-IDF otherwise stamps the build date and absolute paths into every
 
 Bumping `version.txt` is still the single act that makes a flashed panel update itself, since
 the running image compares that same string against the manifest.
+
+## The bench follows the firmware
+
+`docs/mocks/jpanel-s3/` is this firmware's UI running in a browser. It is not a drawing.
+`firmware/mock/build.sh` compiles the files in `main/` that decide and draw what the glass
+shows into `sim.wasm`:
+- `panel_sm.c`, `jpanel_core.c` and `stream.c` (the machine, the engine and the speaker);
+- `cue.c`, the pet (`face.c`, `rig.c`, `emotion.c`) and `overlay.c`, `confirm.c` and `font.c`.
+
+A change to any of them changes the bench the next time it is built. What keeps it honest:
+
+- **CI.** `firmware.yml` rebuilds `sim.wasm` and **fails the PR if the committed one is not
+  byte-for-byte what the source builds**, then runs `smoke.mjs` against it. On `main` the bench's
+  source copy can never be behind the firmware.
+- **The published copy is a snapshot.** https://claude.ai/artifact/TTyvginDY5RDYGQ5Xz4We8 is
+  republished by hand, and nothing in CI can do it. **After any change under `main/` that
+  reaches the glass, republish it** from `docs/mocks/jpanel-s3/` (index.html, panel.js,
+  sim.wasm), or it shows the last version that was published.
+- **One part is copied, not compiled.** `firmware/mock/sim.c` stands in for `display.c`, so it
+  copies `display.c`'s input sampling, effect executor, pet animation and screen stages. Those are
+  the bench's only way to drift, and CI does not catch it. **A change to those parts of
+  `display.c` (or to `talk.c`'s turn) must be made in `sim.c` too.** New pixels drawn over the pet
+  belong in `overlay.c`, not `display.c`, so the bench gets them for free.
 
 ## Building
 

@@ -227,6 +227,10 @@ static void check_backstops(void)
     }
 }
 
+/* What the arbiter wrote to the codec, for the browser mock (`../mock/`) to play; the suites leave
+   it NULL. */
+static void (*g_codec)(const int16_t *pcm, size_t n);
+
 static void advance(uint32_t ms)
 {
     /* The arbiter's codec chunk: the fake ignores it, the real one (`e2e_tests.c`) writes it. */
@@ -236,6 +240,7 @@ static void advance(uint32_t ms)
         g_now += step;
         ms -= step;
         (void)stream_tick(&g_st, g_now, out, (size_t)step * (AUDIO_RATE / 1000));
+        if (g_codec != NULL) g_codec(out, (size_t)step * (AUDIO_RATE / 1000));
         if (g_tick != NULL) g_tick();
         check_backstops();
     }
@@ -317,7 +322,12 @@ typedef struct {
 static req_log_t g_log[512];
 static int g_nlog;
 
+#ifdef JP_MOCK_VOICE
+/* The mock's messages have to be listened to, and this file's ramp is a 30 Hz buzz. */
+static int16_t sample_of(const msg_t *m, uint32_t i) { return JP_MOCK_VOICE(m->dad, i); }
+#else
 static int16_t sample_of(const msg_t *m, uint32_t i) { return (int16_t)((i * 31u + (uint8_t)m->id[0] * 7u) & 0x3fff); }
+#endif
 
 static void msg_pcm(const msg_t *m, uint8_t **out, size_t *n)
 {
