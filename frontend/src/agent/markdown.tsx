@@ -23,6 +23,7 @@ import { Fragment, type ReactNode, useMemo, useState } from "react";
 import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { safeHref } from "../safeHref";
 import { CodeBlock } from "./codeBlock";
 import { type FenceLang, fenceLang } from "./codeLang";
 import type { ViewPayload } from "./types";
@@ -295,8 +296,6 @@ function scanPlaces(text: string, key: string, ctx: Ctx): ReactNode[] {
   if (last < text.length) out.push(...scanEntities(text.slice(last), `${key}-pg${i}`, ctx));
   return out;
 }
-
-const SAFE_URL = /^(https?:|mailto:)/i;
 
 /** An entity a tool resolved this turn — linkified inline where any of its
  * surface forms (canonical label or an alias) appears in the answer prose. */
@@ -673,8 +672,10 @@ function inlineRun(text: string, key: string, ctx: Ctx): ReactNode[] {
       // through via onCite.
       const num = Number(tok.replace(/[[\]【】^]/g, ""));
       const target = ctx.cites?.[num - 1];
-      if (target?.kind === "web") {
-        out.push(<WebCite key={k} n={num} url={target.url} title={target.title} />);
+      // A web source's URL came off the web: an unsafe scheme keeps the plain chip.
+      const webHref = target?.kind === "web" ? safeHref(target.url) : undefined;
+      if (target?.kind === "web" && webHref) {
+        out.push(<WebCite key={k} n={num} url={webHref} title={target.title} />);
       } else {
         out.push(
           <sup key={k} className="md-cite">
@@ -691,16 +692,22 @@ function inlineRun(text: string, key: string, ctx: Ctx): ReactNode[] {
       // real, followable external source — surface it as a tappable link (brackets
       // dropped) rather than leaking the raw token as prose.
       const url = tok.slice(1, -1).trim();
+      const href = safeHref(url);
       out.push(
-        <a key={k} className="md-link" href={url} target="_blank" rel="noreferrer noopener">
-          {url}
-        </a>,
+        href ? (
+          <a key={k} className="md-link" href={href} target="_blank" rel="noreferrer noopener">
+            {url}
+          </a>
+        ) : (
+          url
+        ),
       );
     } else {
       const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);
-      if (lm?.[1] && lm[2] && SAFE_URL.test(lm[2])) {
+      const href = safeHref(lm?.[2]);
+      if (lm?.[1] && href) {
         out.push(
-          <a key={k} className="md-link" href={lm[2]} target="_blank" rel="noreferrer noopener">
+          <a key={k} className="md-link" href={href} target="_blank" rel="noreferrer noopener">
             {lm[1]}
           </a>,
         );

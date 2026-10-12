@@ -23,6 +23,26 @@ describe("Markdown", () => {
     expect(unsafe).toContain("click");
   });
 
+  it("never links a non-web scheme, whatever its case or padding", () => {
+    for (const bad of ["JAVASCRIPT:alert(1)", " javascript:alert(1)", "data:text/html,x"]) {
+      const out = html(`[click](${bad})`);
+      expect(out).not.toContain("<a");
+      expect(out).toContain("click");
+    }
+  });
+
+  it("keeps a web citation whose URL has an unsafe scheme as a plain numbered chip", () => {
+    const { container } = render(
+      <Markdown
+        text="claim.[^1]"
+        cites={[{ kind: "web", url: "javascript:alert(1)", title: "x" }]}
+      />,
+    );
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector(".md-webcite")).toBeNull();
+    expect(container.querySelector(".md-cite button")?.textContent).toBe("1");
+  });
+
   it("renders headings, lists, blockquotes, and code blocks", () => {
     const out = html(
       "# Title\n\n- one\n- two\n\n1. first\n2. second\n\n> a quote\n\n```\ncode line\n```",

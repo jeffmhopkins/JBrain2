@@ -21,6 +21,7 @@ import {
 import { type ModelLoad, api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { safeHref } from "../safeHref";
 import { ComputationPopover } from "./ComputationPopover";
 import { DeepResearchProgress, DeepestRunCard } from "./DeepResearchProgress";
 import { EntityWrites } from "./EntityWrites";
@@ -2633,14 +2634,10 @@ function WebSourceCard({ src }: { src: WebSource }): ReactNode {
     }
   })();
   const [failed, setFailed] = useState(false);
-  return (
-    <a
-      className="toolwork-card tw-web"
-      href={src.url}
-      target="_blank"
-      rel="noreferrer noopener"
-      title={src.url}
-    >
+  // The URL came off the web: an unsafe scheme keeps the card but drops the link.
+  const href = safeHref(src.url);
+  const body = (
+    <>
       {host && !failed ? (
         <img
           className="tw-favicon"
@@ -2658,6 +2655,24 @@ function WebSourceCard({ src }: { src: WebSource }): ReactNode {
         <span className="tw-web-title">{src.title || host || src.url}</span>
         {host && <span className="tw-web-host">{host}</span>}
       </span>
+    </>
+  );
+  if (!href) {
+    return (
+      <div className="toolwork-card tw-web" title={src.url}>
+        {body}
+      </div>
+    );
+  }
+  return (
+    <a
+      className="toolwork-card tw-web"
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={src.url}
+    >
+      {body}
       <ChevronGlyph className="tw-chev" />
     </a>
   );
