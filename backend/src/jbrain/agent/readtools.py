@@ -69,6 +69,7 @@ from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
 from jbrain.agent.metricstools import build_metrics_handlers
+from jbrain.agent.paneltools import OPTIONAL_PANEL_TOOL
 from jbrain.agent.plantools import build_plan_handlers
 from jbrain.agent.prefstools import build_owner_prefs_handlers
 from jbrain.agent.presencetools import build_presence_handlers
@@ -1222,6 +1223,7 @@ def build_registry(
     browse_handlers: dict[str, ToolHandler] | None = None,
     canvas_handlers: dict[str, ToolHandler] | None = None,
     crop_handlers: dict[str, ToolHandler] | None = None,
+    panel_handlers: dict[str, ToolHandler] | None = None,
     gmail_handlers: dict[str, ToolHandler] | None = None,
     minecraft_handlers: dict[str, ToolHandler] | None = None,
     external_handlers: dict[str, ToolHandler] | None = None,
@@ -1351,6 +1353,10 @@ def build_registry(
             **(browse_handlers or {}),
             **(canvas_handlers or {}),
             **(crop_handlers or {}),
+            # jerv's `panel_notify` (JPANEL_C6_PLAN.md §2): a notice on the owner's desk
+            # panel and his tap back. Built in main.py over the notice service; dropped
+            # where that is not wired.
+            **(panel_handlers or {}),
             # jerv's search over the external-source video corpus (`web`-gated). Reads the
             # general-domain corpus via a purpose-built scope (EXTERNAL_VIDEO_INGESTION_PLAN.md).
             **(external_handlers or {}),
@@ -1452,6 +1458,7 @@ def build_registry(
             | OPTIONAL_BROWSE_TOOL
             | OPTIONAL_CANVAS_TOOLS
             | OPTIONAL_CROP_TOOLS
+            | OPTIONAL_PANEL_TOOL
             | OPTIONAL_READ_ARTIFACT_TOOL
             | OPTIONAL_GMAIL_TOOLS
             | OPTIONAL_MINECRAFT_TOOLS

@@ -54,6 +54,7 @@ from jbrain.agent.minecraftwormhole import build_minecraft_wormhole_handlers
 from jbrain.agent.moltbooktools import build_moltbook_handlers
 from jbrain.agent.moltbookwritetools import build_moltbook_write_handlers
 from jbrain.agent.ocrtools import build_ocr_handlers
+from jbrain.agent.paneltools import build_panel_handlers
 from jbrain.agent.portaltools import build_portal_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.publicrecordstools import build_public_records_handlers
@@ -119,6 +120,7 @@ from jbrain.api import (
     pairing,
     panel_agent,
     panel_debug,
+    panel_notice,
     plans,
     proposals,
     research_library,
@@ -158,6 +160,7 @@ from jbrain.api import tavily_settings as tavily_settings_api
 from jbrain.api.debug_activity import DebugActivity
 from jbrain.api.research_service import ResearchLibrary
 from jbrain.appointments.repo import SqlAppointmentsRepo
+from jbrain.auth.owner import owner_principal_id
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.captions import fetch_caption_transcript
 from jbrain.citygeocode import CityGeocoder
@@ -182,6 +185,7 @@ from jbrain.intake.repo import SqlIntakeRepo
 from jbrain.intake.sweep import intake_reaper_loop
 from jbrain.jcode import JcodeClient
 from jbrain.jlaunch import JlaunchClient
+from jbrain.jpanel.notice_service import NoticeService
 from jbrain.jpanel.sweep import jpanel_retention_loop
 from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
@@ -1284,6 +1288,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.llm_router,
             app.state.rapidocr,
         )
+
+        # Notices on the owner's desk panel (JPANEL_C6_PLAN.md §2): one service behind the
+        # owner's route, the debug console, Jerv's `panel_notify`, and any Ops or workflow
+        # sender. Speech is the PWA's read-aloud voice, resolved per send.
+        async def _notice_voice() -> object:
+            owner_id = await owner_principal_id(maker)
+            if owner_id is None:
+                return None
+            return await panel_agent.owner_voice(
+                settings_store, SessionContext(principal_id=owner_id, principal_kind="owner")
+            )
+
+        app.state.panel_notices = NoticeService(
+            maker, app.state.blob_store, tts_url=settings.brain_tts_url, voice=_notice_voice
+        )
+        panel_handlers = build_panel_handlers(
+            app.state.panel_notices,
+            maker=maker,
+            blobs=app.state.blob_store,
+            images=app.state.generated_image_repo,
+            attachments=app.state.turn_attachments,
+        )
         deepest_handle = DeepestHandle()
         app.state.agent_registry = build_registry(
             app.state.search_service,
@@ -1332,6 +1358,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             browse_handlers=browse_handlers,
             canvas_handlers=canvas_handlers,
             crop_handlers=crop_handlers,
+            panel_handlers=panel_handlers,
             gmail_handlers=gmail_handlers,
             minecraft_handlers={
                 **build_minecraft_handlers(maker, settings, settings_store),
@@ -1834,6 +1861,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(debug_minecraft.router, prefix="/api")
         app.include_router(debug_panel.router, prefix="/api")
         app.include_router(panel_agent.debug_router, prefix="/api")
+        app.include_router(panel_notice.debug_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
     # The desk panel's reach into the real agents: the owner's switch and the siblings list.
@@ -1841,6 +1869,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The panel's half of the debug relay. Mounted with or without debug access: with it
     # off nothing can queue a request, so a pickup is always an empty 204.
     app.include_router(panel_debug.router, prefix="/api")
+    # Notices on the desk panel: the owner's send/read and the panel's collect/answer.
+    app.include_router(panel_notice.router, prefix="/api")
+    app.include_router(panel_notice.panel_router, prefix="/api")
     # The owner's Minecraft screen (MINECRAFT_BEDROCK_PLAN §M1). Owner-gated; a box
     # whose sidecar is stopped or unconfigured answers with that state, not a 500.
     app.include_router(minecraft_api.router, prefix="/api")

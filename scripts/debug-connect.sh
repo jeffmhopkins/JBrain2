@@ -152,6 +152,11 @@
 #   scripts/debug-connect.sh panel-cmd c6 inject --arg event=touch --arg x=240 --arg y=200
 #   scripts/debug-connect.sh panel-cmd c6 reboot --confirm
 #   scripts/debug-connect.sh panel-shot c6 [out.png]   # the panel's screen, to a local PNG
+#   scripts/debug-connect.sh panel-notify c6 "Title" [--body T] [--choice A]... [--image F]
+#        [--mode full|banner] [--audio F | --say T] [--hide S] [--chime] [--sender S] [--no-wait]
+#     (A notice on the panel, §2: prints the box's answer — 202 and the id, or the refusal:
+#      503 offline, 409 not_accepting / quiet_hours + until / no_notice_surface — then waits
+#      for the tap and prints it. --image is a PNG/JPEG/WebP, --audio a clip of ≤ 8 s.)
 #     (The debug relay, JPANEL_C6_PLAN.md §4. <device> is a device id, a panel's name, or
 #      `c6`: the one panel picking up as a C6 — refused, with the list, if there are several
 #      or none. Commands are the panel's whitelist (`panel-cmd c6 help` lists them); ints for
@@ -211,6 +216,31 @@ PY
 
 # --- plumbing ---------------------------------------------------------------
 # Pretty-print JSON when the body parses as JSON; pass plain text (logs) through.
+# Resolve a panel: an id as given; a name or `c6` against the live list, never a guess.
+_panel_device() { # <device|name|c6>
+  _call GET /api/debug/panel | WANT="$1" python3 -c '
+import json, os, re, sys
+want = os.environ["WANT"]
+panels = json.load(sys.stdin)
+if re.fullmatch(r"[0-9a-f-]{36}", want):
+    print(want)
+    raise SystemExit(0)
+if want in ("c6", "c6-amoled-216"):
+    hits = [p for p in panels if p.get("board") == "c6-amoled-216"]
+    what = "picking up as a C6 (one must have polled since the box started)"
+else:
+    hits = [p for p in panels if p["name"].lower() == want.lower()]
+    what = "named " + repr(want)
+if len(hits) != 1:
+    sys.stderr.write("%d panels %s; pass a device id:\n" % (len(hits), what))
+    for p in panels:
+        sys.stderr.write("  %s  %-16s board=%s last_seen_s=%s\n"
+                         % (p["device_id"], p["name"], p["board"], p["last_seen_s"]))
+    raise SystemExit(2)
+print(hits[0]["device_id"])
+'
+}
+
 _pp() { python3 -c 'import sys,json; d=sys.stdin.read();
 try: print(json.dumps(json.loads(d), indent=2))
 except Exception: sys.stdout.write(d)'; }
@@ -803,28 +833,7 @@ PY
         *) echo "unknown option $1" >&2; exit 2 ;;
       esac
     done
-    # Resolve <device>: an id as given; a name or `c6` against the live list, never a guess.
-    dev=$(_call GET /api/debug/panel | WANT="$dev" python3 -c '
-import json, os, re, sys
-want = os.environ["WANT"]
-panels = json.load(sys.stdin)
-if re.fullmatch(r"[0-9a-f-]{36}", want):
-    print(want)
-    raise SystemExit(0)
-if want in ("c6", "c6-amoled-216"):
-    hits = [p for p in panels if p.get("board") == "c6-amoled-216"]
-    what = "picking up as a C6 (one must have polled since the box started)"
-else:
-    hits = [p for p in panels if p["name"].lower() == want.lower()]
-    what = "named " + repr(want)
-if len(hits) != 1:
-    sys.stderr.write("%d panels %s; pass a device id:\n" % (len(hits), what))
-    for p in panels:
-        sys.stderr.write("  %s  %-16s board=%s last_seen_s=%s\n"
-                         % (p["device_id"], p["name"], p["board"], p["last_seen_s"]))
-    raise SystemExit(2)
-print(hits[0]["device_id"])
-') || exit 2
+    dev=$(_panel_device "$dev") || exit 2
     body=$(CMD="$pcmd" CONFIRM="$confirm" python3 -c '
 import json, os, sys
 args = {}
@@ -859,6 +868,70 @@ print(json.dumps({"command": os.environ["CMD"], "args": args,
       [ "$code" = "200" ] || { echo "HTTP $code fetching the screenshot" >&2; rm -f "$out"; exit 1; }
       echo "wrote $out" >&2
     fi
+    ;;
+
+  panel-notify) # <device|c6> "Title" [--body T] [--choice A]... [--image F] [--mode M] [--audio F | --say T] [--hide S] [--chime] [--sender S] [--no-wait]
+    # Put a notice on the panel through the box (JPANEL_C6_PLAN.md §2) and, unless --no-wait,
+    # wait for how it ends: answered (and with what), dismissed, or expired. A refusal is the
+    # box's answer at the door, printed as it came, and exits non-zero.
+    dev="${1:?usage: debug-connect.sh panel-notify <device|c6> \"Title\" [options]}"; shift
+    title="${1:?usage: debug-connect.sh panel-notify <device|c6> \"Title\" [options]}"; shift
+    nbody=; nimage=; nmode=auto; naudio=; nsay=; nhide=; nchime=false; nsender=debug; nwait=true
+    nchoices=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --body) nbody="$2"; shift 2 ;;
+        --choice) nchoices+=("$2"); shift 2 ;;
+        --image) nimage="$2"; shift 2 ;;
+        --mode) nmode="$2"; shift 2 ;;
+        --audio) naudio="$2"; shift 2 ;;
+        --say) nsay="$2"; shift 2 ;;
+        --hide) nhide="$2"; shift 2 ;;
+        --chime) nchime=true; shift ;;
+        --sender) nsender="$2"; shift 2 ;;
+        --no-wait) nwait=false; shift ;;
+        *) echo "unknown option $1" >&2; exit 2 ;;
+      esac
+    done
+    dev=$(_panel_device "$dev") || exit 2
+    # The body is built in Python so a title with quotes, or a 2 MB picture, is never a shell
+    # string; it goes to curl on stdin for the same reason (an argv has a size limit).
+    payload=$(TITLE="$title" NBODY="$nbody" NIMAGE="$nimage" NMODE="$nmode" NAUDIO="$naudio" \
+      NSAY="$nsay" NHIDE="$nhide" NCHIME="$nchime" NSENDER="$nsender" python3 -c '
+import base64, json, os, sys
+e = os.environ
+body = {"title": e["TITLE"], "sender": e["NSENDER"], "chime": e["NCHIME"] == "true",
+        "image_mode": e["NMODE"], "choices": sys.argv[1:]}
+if e["NBODY"]:
+    body["body"] = e["NBODY"]
+if e["NHIDE"]:
+    body["hide_after_s"] = int(e["NHIDE"])
+if e["NSAY"]:
+    body["say"] = e["NSAY"]
+for key, path in (("image_b64", e["NIMAGE"]), ("audio_b64", e["NAUDIO"])):
+    if path:
+        with open(path, "rb") as f:
+            body[key] = base64.b64encode(f.read()).decode()
+print(json.dumps(body))
+' "${nchoices[@]+"${nchoices[@]}"}") || exit 2
+    out=$(printf '%s' "$payload" | curl -sS -X POST -H "Authorization: Bearer $KEY" \
+      -H "Content-Type: application/json" --data-binary @- -w '\n%{http_code}' \
+      "$BASE/api/debug/panel/$dev/notice") || exit 1
+    code="${out##*$'\n'}"; out="${out%$'\n'*}"
+    printf '%s' "$out" | _pp
+    [ "$code" = "202" ] || { echo "HTTP $code: refused" >&2; exit 1; }
+    [ "$nwait" = "true" ] || exit 0
+    nid=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+    st=queued; res=
+    # Twenty-second slices under the tunnel's edge limit; the question is answerable for
+    # fifteen minutes, so give up long before that and say what it was.
+    for _ in $(seq 1 15); do
+      res=$(_call GET "/api/debug/panel/$dev/notice/$nid?wait=20") || exit 1
+      st=$(printf '%s' "$res" | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')
+      case "$st" in answered | dismissed | expired) break ;; esac
+    done
+    printf '%s' "$res" | _pp
+    echo "notice $nid: $st" >&2
     ;;
 
   sdr) _call GET /api/debug/sdr | _pp ;;   # is the USB radio there, and is anything holding it?

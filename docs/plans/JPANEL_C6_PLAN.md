@@ -1,6 +1,6 @@
 # Jeff's jpanel — the ESP32-C6 panel as a set of small apps
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C3🟡 C3b◻️ C4🟡
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C3🟡 C3b🟡 C4🟡
 > — C0 and C1 are proven on the board (2026-10-11): USB-flashed 0.0.1 from the PWA's board
 > picker, it joined Wi-Fi 6, reached the box over TLS, and took 0.0.2 over the air and kept it
 > across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
@@ -37,6 +37,11 @@
 > 100 s cut-off; KEY while Jerv works says so; the reply's first word is no longer clipped; the
 > Clock opens its alarms on a two-second hold; Jerv wears the PWA's own icon in its blue
 > (firmware README "What 0.0.12 adds", and the decisions under §1).
+> **C3b's box side is built (2026-10-12)** — notices that can carry a picture the sender drew
+> and a sound of up to eight seconds, hidden by a tap or by a timeout (three owner decisions
+> that day): `panel_notice` and its RLS, the send/read routes and the debug route, the refusal
+> at the door from what the panel reports on its pickup, the `JN1` stream with test vectors,
+> Jerv's `panel_notify` and the PWA's *Send test notice* (§2). The panel half is next.
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -328,59 +333,229 @@ The owner: *"an API … that just shows a pop-up of a message … so the machine
 panel messages that light it up and let me know to go check things … maybe even with a
 response of choices, so you could ask a question with a yes or no."*
 
-Anything on the box — Jerv, a workflow, an Ops alert — can put a message on this panel and,
-optionally, ask a question whose answer goes back to the sender. Mocked in
-`../mocks/jpanel-c6/` (boards 15-16, and the live panel's *Send a test message* tweak).
+Anything on the box — Jerv, a workflow, an Ops alert — can put a notice on this panel and,
+optionally, ask a question whose answer goes back to the sender. Three more owner decisions of
+**2026-10-12**:
 
-**The box side.** One table, `panel_notice` (RLS: the owner and the box's own services write;
-a panel reads only rows addressed to it and may write only `answer` / `answered_at` on them —
-an isolation test pins both, CLAUDE.md #3):
+- **A picture.** *"I want to be able to send a whole picture as a notification. This way some
+  push notifications can draw their own banner or picture or whatever and show that."*
+- **A sound.** *"allow the push notification to have a short 8 second or less audio clip to
+  play if it wants to."*
+- **Hidden by a tap or by time.** *"these notifications could be pressed to hide or time out to
+  hide."*
+
+Mocked in `../mocks/jpanel-c6/` (boards 15-20: NotifyInfo, NotifyQuestion, ClockBadge,
+NotifyPicture, NotifyBanner, NotifyAudio; the live panel's *Send a test message* tweak sends
+every kind).
+
+### What a notice is
+
+| part | |
+|---|---|
+| sender | shown as who it is from: "Jerv", "Ops", "You", "Debug", or a workflow's own name (`workflow:nightly_backup` → "Nightly backup") |
+| title | one line, ≤ 60 bytes — also what the clock face's badge and the log name it by |
+| body | ≤ 300 bytes, may break lines |
+| choices | 0-4 answers of ≤ 16 bytes; none is a plain notice. The tapped one goes back to the sender |
+| picture | optional, PNG/JPEG/WebP from the sender, fitted and encoded on the box (below) |
+| sound | optional, ≤ 8 s: a clip from the sender, or words the box speaks in the PWA's read-aloud voice |
+| chime | chime as it arrives (never inside quiet hours: a refusal is never bypassed) |
+| hide after | 3-600 s once shown, or none: up until tapped |
+| answer window | how long an answer is accepted once the panel has it (30 s - 24 h, default 15 min) |
+
+**Picture modes.** `full`: the whole 480×480 glass, the picture contained and letterboxed on
+black, only a small sender chip and the hide hint over it. `banner`: 480 wide across the top,
+as tall as its shape makes it up to 240 px (a taller one is contained in 480×240), with the
+title, body and answers below. **The default (`auto`) is `full` when there is no body and no
+choices, `banner` otherwise** — a picture with nothing beside it is the message, and one with
+words is a header over them. A sender that draws its own banner at 480 px wide gets its
+pixels exactly (no rescale).
+
+**Hiding.** A plain notice or a picture hides on a tap anywhere (`dismissed`). A question hides
+only by an answer, or by BOOT without one (`dismissed`) — a stray tap must not throw away a
+question. With `hide_after_s`, a thin line along the bottom edge drains to the left over that
+time and the notice hides itself when it runs out (`expired`); the hint names the seconds left.
+A sound plays once as the notice appears (a speaker row with its progress; the picture mode
+plays it under the picture), never over an alarm, and stops when the notice hides.
+
+### The box side (wave C3b, **built 2026-10-12**)
+
+One table, `app.panel_notice` (migration 0235; `test_panel_notice_rls.py` pins owner / self /
+sibling, CLAUDE.md #3):
 
 | column | |
 |---|---|
-| `id`, `device_id` | which panel |
-| `source` | shown as the sender: "Jerv", "Ops", a workflow's name |
-| `title`, `body` | short; the panel shows ~3 lines of body |
-| `choices` | 0-4 labels; empty means a plain notice with OK |
-| `urgent` | chimes even when the panel's chime is off; does NOT bypass a refusal |
-| `expires_at` | a question nobody answered in time is `expired`, not hanging forever |
-| `state`, `answer`, `answered_at` | `queued` → `shown` → `answered` / `dismissed` / `expired` |
+| `id`, `device_id` | which panel (the panel's principal) |
+| `sender` | `jerv` \| `ops` \| `owner` \| `debug` \| `workflow:<name>` |
+| `title`, `body`, `choices` | as above; a CHECK function holds choices to ≤ 4 strings of 1-16 bytes |
+| `chime`, `hide_after_s`, `ttl_s` | as above (`ttl_s` is the answer window) |
+| `image_mode`, `image_w`, `image_h`, `image_sha256`, `image_bytes` | the picture as the panel takes it — the encoded stripes, in the blob store (CLAUDE.md #2) |
+| `audio_sha256`, `audio_ms` | the sound as 16 kHz mono s16 PCM, in the blob store; ≤ 8000 ms |
+| `created_by` | the token's label, `owner (…)`, `jerv (session …)` — what sent it, on the record |
+| `state` | `queued` → `delivered` → `shown` → `answered` / `dismissed` / `expired` |
+| `answer` | the tapped choice's label; set only with `answered` |
+| `created_at`, `expires_at`, `delivered_at`, `shown_at`, `finished_at` | `expires_at` is the pickup deadline (60 s) while queued, the answer deadline once delivered |
 
-- `POST /api/panel/notify` (owner, debug scope, and in-process callers) → `{id}`; `GET
-  /api/panel/notify/{id}` → state and answer, with `?wait=` to long-poll for the answer.
-- A Jerv tool, `ask_panel(question, choices)` / `tell_panel(message)`, so a conversation or a
-  scheduled run can ask "run the cleanup now?" and act on the tap.
-- The panel learns of one on the settings poll it already makes every 3 s (the same path that
-  carries the twins' message count), so no new connection and no new latency budget.
+- **RLS.** The owner (and every box-side sender, which runs as the owner) does everything. A
+  panel reads only its own live notices, may only move them forward, and has no INSERT or
+  DELETE policy. A trigger holds what RLS cannot: for a panel, everything a notice says is
+  immutable, an answer must be one of its own choices byte for byte, and the clock columns are
+  the box's — delivery, not the panel, starts the answer window.
+- **The blobs** are registered in `jbrain.blob_refs`; finished rows are swept 24 h on, each
+  blob only once nothing else on the box holds the same bytes.
+- **One service**, `jpanel/notice_service.py` (`app.state.panel_notices`), behind every sender:
+  the owner's route, the debug console, Jerv's tool, and any Ops alert or workflow step that
+  calls `NoticeService.send(sender="ops" | "workflow:<name>", …)` in-process.
+
+**The routes.**
+
+| | |
+|---|---|
+| `POST /api/panel/notify` | owner. The notice as JSON (`title`, `body`, `choices`, `chime`, `hide_after_s`, `ttl_s`, `image_b64` + `image_mode`, `audio_b64` or `say`, `sender`, `device_id`) → `202 {id, device_id, panel, state: "queued", expires_in_s: 60, image, audio_ms}`. `device_id` omitted: the one panel that takes notices (409 `which_panel` with the list when there are several). |
+| `GET /api/panel/notify/{id}?wait=` | owner. State and answer; `wait` (≤ 25 s) holds until it is answered, dismissed or expired. |
+| `POST /api/debug/panel/{device_id}/notice`, `GET …/notice/{id}?wait=` | the same for a debug token (sender `debug` unless named), so a Claude session can put a test notice on the glass and read the tap. `debug-connect.sh panel-notify`. |
+| `GET /api/endpoint/notice/next` | panel key. The oldest queued notice as a JN1 stream (`application/x-jpanel-notice`), marked delivered; 204 when none. |
+| `GET /api/endpoint/notice/{id}/body` | panel key. The same stream again for a notice it already collected (a download the radio tore). |
+| `POST /api/endpoint/notice/{id}/state` | panel key. `{"state": "shown"}`, `{"state": "answered", "choice": 1}` (the button's index), `{"state": "dismissed"}`, `{"state": "expired"}` → 204; 404 for anything not its own live notice, 409 a move out of order, 422 a choice that is not one of the notice's. A repeated `shown` is fine (a retry). |
 
 **The panel decides, and the box refuses at send time.** The owner: *"I could disable it from
 the device … so if I don't want it bothering me I can turn it off, or not be on during
 bedtime. It would reject it and return the API response that the device is not online or not
-accepting push."* So a refused message is never stored and never queued for later — it does
+accepting push."* So a refused notice is never stored and never queued for later — it does
 not exist, and the sender is told why at once, while it can still choose another route:
 
-| answer | when |
-|---|---|
-| `202 {id, state: "queued"}` | accepted; poll `GET …/{id}` (or `?wait=`) for `shown` / `answered` |
-| `409 {reason: "not_accepting"}` | the owner switched messages off on the panel |
-| `409 {reason: "quiet_hours", until: "06:30"}` | inside the panel's quiet hours (the night-clock hours) |
-| `503 {reason: "offline", last_seen_s}` | the panel has not polled for 30 s — it could not show it anyway |
+| answer | when | decided from |
+|---|---|---|
+| `202 {id, state: "queued", …}` | accepted; poll `GET …/{id}?wait=` for `shown` / `answered` | |
+| `503 {reason: "offline", last_seen_s}` | the panel has not picked up in 30 s (`null`: not since the box started) | the last debug pickup (`debug_relay.last_seen`), checked first |
+| `409 {reason: "no_notice_surface", board}` | online, but its pickup reports no notice settings — firmware before C3b's panel half | the pickup's query |
+| `409 {reason: "not_accepting"}` | the owner switched notices off on the panel | `notif_accept` |
+| `409 {reason: "quiet_hours", until: "06:30", until_at, tz}` | inside the night window and *Refuse during night hours* is on | `notif_quiet`, `night_from`/`night_to`, in the panel's own zone (`tz`) |
+| `429 {reason: "busy", open: 4}` | four notices already open on that panel | the table |
+| `413` / `415` / `422` | a picture, sound or field the panel cannot take (`image_too_big`, `image_too_complex`, `image_format`, `image_unreadable`, `audio_too_big`, `audio_too_long` + `ms`, `audio_format`, `audio_unreadable`, `too_long` + `field`, `too_many_choices`, `bad_field`, `bad_sender`) | the request |
+| `503 {reason: "tts_unavailable"}` | `say` was asked for and the box cannot speak | |
 
-The box can answer instantly because the panel REPORTS its accept switch, its quiet-hours
-switch and its window on the 3 s settings poll; the box keeps the last report beside the
-panel's `last_seen` and decides from that, never from a guess. The panel is the source of
-truth — a setting changed on the glass reaches the box within one poll — and the PWA can show
-it but not override it, which is the point: "don't bother me" set at the panel has to hold.
-The window is evaluated in the panel's own timezone, reported with it. A message accepted a
-moment before quiet hours begin is still shown (silently): the refusal is at the door, not a
-recall.
+**Where the switches come from.** The panel REPORTS them on the debug pickup it already makes
+every 3 s, as query parameters: `GET /api/endpoint/debug/next?board=c6-amoled-216&na=1&nq=1&nc=1&nf=1290&nt=390&tz=5`
+— `na` `notif_accept`, `nq` `notif_quiet`, `nc` `notif_chime` (0/1), `nf`/`nt` `night_from`/
+`night_to` (minutes after local midnight, 0-1439), `tz` the panel's zone index (the
+`time_logic.c` table, mirrored in `notice.PANEL_ZONES` and unit-checked against it). A pickup
+without all six (an older image) clears what the box knew, so the box never decides from
+switches a panel no longer has. The box keeps the last report in memory beside `last_seen`
+(a restart costs one pickup) and decides from that, never from a guess. The panel is the source
+of truth — a setting changed on the glass reaches the box within one pickup — and the PWA can
+show it (`GET /api/debug/panel`'s `notices`) but not override it, which is the point: "don't
+bother me" set at the panel has to hold. An empty window (`nf == nt`) is never quiet. A notice
+accepted a moment before quiet hours begin is still shown (silently): the refusal is at the
+door, not a recall.
 
-**The panel side** is one more service (`svc_notice`) and a shell overlay, not an app: it has
-to appear over whatever app is open, the way an alarm does. It wakes the screen, chimes unless
-it is night hours (urgent always chimes), queues ("1 of 2"), and BOOT dismisses without
-answering. An alarm outranks it; it outranks every app **except the clock face**, where it
-waits as a corner badge (bell + count) and opens only on a tap, so the time is never covered
-(owner, 2026-10-11). A girl's message arriving on the clock face does the same.
+**The pickup says when one waits.** Both answers of `GET /api/endpoint/debug/next` (the 204 and
+the 200) carry `X-Notice: <n>` when n notices are queued for that panel; the panel then calls
+`GET /api/endpoint/notice/next` until it answers 204. An idle panel costs nothing more than the
+pickup it already makes; a notice reaches the glass within ~3 s.
+
+### The picture pipeline
+
+PNG, JPEG or WebP (anything else 415), ≤ 8 MiB and ≤ 40 MP (413 before it is decoded), EXIF
+rotation honoured, transparency composited on black (an unlit AMOLED pixel). Fitted as above
+(LANCZOS when it must scale), converted to rgb565 (`r>>3, g>>2, b>>3`) and cut into stripes:
+**the runs of the `JPS1` screenshot** (`dbg_shot.c`: `(len-1, rgb565 LE)`, run ≤ 128, greedy
+across rows, never across a stripe — a unit test holds the bytes identical to the screenshot
+encoder's for the same rows), but box → panel, with as many whole rows per stripe as fit one
+4 KB record and never more than 40 (the panel's 480×40 draw buffer, so one stripe decodes into
+one buffer). **The encoded picture is capped at 320 KiB**: over it the colours are posterized
+to 4 and then 3 bits a channel (a photograph's grain is what costs runs), and past that it is
+refused `413 image_too_complex` with the size it reached. A drawn banner is a few KB; a
+480×480 checkerboard is 43 KB; a photograph lands near the cap after posterizing.
+
+### The sound pipeline
+
+A PCM WAV (16-bit, mono or stereo, any rate) is read on the box with no dependency; anything
+else (MP3, Ogg/Opus, M4A, FLAC, WebM) goes through ffmpeg (`jbrain.media`'s protocol
+whitelist, the first 30 s at most, a temp file because MP4 keeps its index at the end), ≤ 4 MiB
+uploaded. Either way it becomes **16 kHz mono s16le**, the panel's playback format, and over
+**8000 ms** it is refused `422 audio_too_long` with its length. Or `say: "…"` (≤ 200
+characters): the box synthesises it with the on-box TTS in the PWA's read-aloud voice
+(`panel_agent.owner_voice` / `tts_params`, the owner's pronunciations included), trims Kokoro's
+padding, and holds it to the same eight seconds.
+
+### JN1: the notice on the wire, box → panel
+
+`JN1`, then records until END. Every record is JT2's framing (`api/panel_stream.py`):
+
+    type: u8 | length: u16 little-endian | payload: `length` bytes (≤ 4096)
+
+    0x01 META    fixed 30 bytes, little-endian, then the sender's label (UTF-8, ≤ 32 bytes):
+                   id        16  the notice's uuid, raw bytes (its text form goes in the state POST)
+                   flags      u8 bit 0 chime, bit 1 question (≥ 1 CHOICE follows),
+                                 bit 2 picture (STRIPEs follow), bit 3 sound (PCMs follow)
+                   hide_s    u16 hide this long after it is shown; 0 = until tapped
+                   ttl_s     u32 the answer is accepted for this long from now
+                   img_mode   u8 0 none, 1 full (480×480), 2 banner (480 × img_h)
+                   img_w     u16 0 without a picture
+                   img_h     u16
+                   audio_ms  u16 0 without a sound
+    0x02 TITLE   UTF-8, ≤ 60 bytes, one line
+    0x03 BODY    UTF-8, ≤ 300 bytes, may hold '\n'; absent when empty
+    0x04 CHOICE  UTF-8, ≤ 16 bytes; one record per answer button, in order (index 0-3)
+    0x05 STRIPE  u16 y0 | u16 rows | runs (u8 len-1, u16 rgb565 LE) covering rows × img_w
+                 pixels exactly; top to bottom, contiguous from row 0, rows ≤ 40, run ≤ 128
+    0x06 PCM     16 kHz mono s16le, ≤ 4096 bytes, an even count
+    0x07 END     u8 0, then u32: the byte count of everything before this record
+
+Order is fixed — META, TITLE, BODY?, CHOICE*, STRIPE*, PCM*, END. A reader skips a type it does
+not know (its length says how far). A stream without END, or whose END count disagrees, was
+torn and is discarded whole: a notice is shown complete or not at all (and fetched again from
+`…/{id}/body`). The flags must agree with the records. `jpanel/notice.py` has the encoder and
+the reference reader (`decode`), which refuses everything above.
+
+**Test vectors** for the firmware wave: `backend/tests/fixtures/jpanel_notice/` — `plain.jn1`
+(text only), `question.jn1` (two choices, chime, hide 30 s), `banner.jn1` (a 480×48 drawn
+banner, three choices) and `full_sound.jn1` (a 480×480 checkerboard and 250 ms of tone), with
+`vectors.json` giving each one's fields and the SHA-256 of its decoded rgb565 pixels (LE) and
+PCM. `test_panel_notice.py` rebuilds every file from its description and fails when a byte
+changes (`JPANEL_NOTICE_REGEN=1` rewrites them after a deliberate format change).
+
+### Jerv, Ops and workflows
+
+- **`panel_notify`** (Jerv; `web`-classed — opt-in, jerv-only, direct: the notice reaches only
+  the owner's own panel on his own box, so there is no egress to approve): `title`, `body`,
+  `choices`, `await_answer` (default on with choices) and `wait_s` (5-240, default 90), `say`,
+  `image_id` / `attachment_id` (an image in the chat — one he attached, or one Jerv rendered,
+  fetched or grabbed), `chime`, `hide_after_s`. It returns the tap ("He answered on the Jeff
+  panel: Yes."), how it ended, or the refusal in words with "do not retry; tell him in your
+  reply" — never an exception, so the turn goes on.
+- **Ops and workflows** call `app.state.panel_notices.send(...)` with `sender="ops"` or
+  `"workflow:<name>"` and get a `Sent` back or a `NoticeRefused` saying why; `wait(id, s)`
+  awaits the answer. No Ops alert or workflow action sends one yet — the first is a follow-up,
+  and a workflow action needs its `app.actions` row (WORKFLOW_ENGINE_PLAN §2).
+- **The PWA** has a *Send test notice* control on the display panel's card (jpanel → Panels):
+  a question goes to the panel and the tap — or the refusal, in words — comes back on the card.
+
+### The panel side (C3b's next wave)
+
+One more service (`svc_notice`) and a shell overlay, not an app: it has to appear over whatever
+app is open, the way an alarm does. Its work, from the box side above:
+
+- Report `na nq nc nf nt tz` on every debug pickup; on `X-Notice`, call `notice/next` until
+  204, stream each JN1 record straight into the `storage` partition (littlefs: one file per
+  notice — the picture and the sound never sit in RAM whole), check END, then POST `shown`
+  when it is on the glass.
+- Draw the picture from the file a stripe at a time through the draw buffer (one STRIPE is at
+  most one 480×40 buffer); play the PCM from the file through `svc_audio`'s ring.
+- Wake the screen, chime unless it is the night window (the box will have refused it at night
+  anyway when *Refuse during night hours* is on), queue ("1 of 2"), BOOT dismisses without
+  answering, a tap hides a plain notice or a picture, a choice POSTs `answered` with its index,
+  the countdown line and `expired` for `hide_s`.
+- An alarm outranks it; it outranks every app **except the clock face**, where it waits as a
+  corner badge (bell + count) and opens only on a tap, so the time is never covered (owner,
+  2026-10-11). A girl's message arriving on the clock face does the same.
+- Host-test the reader against the fixtures; delete a notice's file when it finishes.
+
+**Open for the owner:** the default `hide_after_s` (today: none — until tapped; 30 s for a plain
+notice is the alternative); whether a question may carry a sound (allowed today); whether a
+picture should be allowed through at night when quiet hours are off but the night clock is on
+(today the box only refuses on *Refuse during night hours*, and a picture lights the whole
+glass); whether a tap outside a question's buttons should hide it (today it does not).
 
 ## 2b. Auto-rotate
 
@@ -416,7 +591,7 @@ four orientations fit with no relayout of the frame — only the content turns.
 | **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI). **0.0.9 (built, awaiting the board):** the pickup every 3 s from the update loop (manifest first, backoff to 60 s on a silent box, none while the box is unreachable), one kept-alive session for every box request, commands on the UI task through a one-slot job (3 s, else `ui busy`; inline on a boot with no UI), the screenshot streamed chunked from the renderer (2 × 4 KB, ≤ 2 s of stillness, `net slow` / `capture torn` as JSON), the `esp_log` ring hook with clip-aware secret scrubbing, `dbg=` / `tls=` / `sec=` telemetry. **Left:** proving it on the glass, Ops → Panels buttons. |
 | **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **0.0.10 (built, awaiting the board):** Jerv's streamed hold-to-talk end to end — the ES8311/ES7210 under `svc_audio` (one task, priority 1), the upload chunked while KEY is held, the reply frame (transcript, Jerv's words, then speech) over the S3s' `/endpoint/converse` with `persona=jerv`, the speech streamed through a 16 KB ring, text only when read-aloud is off, KEY/BOOT stops a reply, a speaker-volume slider, `audio=` telemetry, the debug `play_tone`. Jerv here is a tool-less spoken persona, not the owner's agent (§5). **0.0.11 (built, awaiting the board):** Jerv is the owner's real agent, Dave is Minecraft_Dave in a conversation of his own a level under the Minecraft tile (Compass a work-in-progress page), one shared conversation view (`components/convo`) with an instance per agent, Clear chat by a long press, the people's threads named and bound by device id from `GET /endpoint/siblings`, the reply waited for 130 s, the audio stack 4.25 KB and microphone gain 24 dB from the first talks' numbers. **0.0.12 (built, awaiting the board):** the agent turn streamed (JT2: transcript at once, a live status line per tool, keep-alives, no 100 s cut-off, 5-minute cap), the whole answer kept (1,000 bytes) and read in full sentence by sentence (5-minute cap), KEY while Jerv works says so and BOOT leaves the turn running, the speaker's start gated so the first word is never clipped, the Clock's alarms on a 2 s hold, the PWA's icon and blue for Jerv. **Left:** calibration, the alarm service and PWA editor, voice messages to Quorra and Tamsin (the box client for messages), Listen on a stored reply. | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C2r** | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, LVGL software rotation, touch mapped through it, the Settings switch. After touch is proven on the board. | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
-| **C3b** | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tools, `svc_notice` and the overlay. | Jerv asks a yes/no on the panel and acts on the tap. |
+| **C3b** 🟡 | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tool, `svc_notice` and the overlay; pictures, sounds and hide-by-tap-or-time (owner, 2026-10-12). **Box side built 2026-10-12:** migration 0235 + `test_panel_notice_rls.py`, `POST/GET /api/panel/notify`, the debug route + `debug-connect.sh panel-notify`, the panel's `notice/next`, `…/body` and `…/state`, the refusal table from the pickup's `na nq nc nf nt tz`, the picture (fit, rgb565 runs, 320 KiB cap) and sound (16 kHz s16, ≤ 8 s, WAV/ffmpeg/`say`) pipelines, `JN1` with fixtures, Jerv's `panel_notify`, the PWA's *Send test notice*. **Next:** the panel half — `svc_notice`, the overlay, the report on the pickup, the stream into `storage`. | Jerv asks a yes/no on the panel and acts on the tap. |
 | **C4** 🟡 | Minecraft. **0.0.11:** the tile is a menu of Dave (the real Minecraft_Dave, a conversation of his own) and Compass (work in progress). **0.0.12:** Dave's talks stream like Jerv's (status line, the whole answer, read in full). | Compass scoped and built. |
 
 ## 4. Debugging a panel through the box

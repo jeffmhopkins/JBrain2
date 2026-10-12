@@ -1168,6 +1168,90 @@ function AgentAccessSwitch({ panel }: { panel: PanelStatusOut }) {
   );
 }
 
+/** The owner's words for a refusal the box answered at the door. */
+export function noticeRefusal(reason: string, until?: string): string {
+  switch (reason) {
+    case "offline":
+      return "The panel is offline, so the box turned it away.";
+    case "not_accepting":
+      return "The panel has notices switched off.";
+    case "quiet_hours":
+      return until
+        ? `The panel is in its night hours until ${until}.`
+        : "The panel is in its night hours.";
+    case "no_notice_surface":
+      return "This panel's firmware cannot show notices yet.";
+    case "busy":
+      return "Four notices are already waiting on it.";
+    default:
+      return `The box refused it: ${reason}.`;
+  }
+}
+
+const NOTICE_ENDS: Record<string, (answer: string | null) => string> = {
+  answered: (answer) => `Answered on the panel: ${answer ?? ""}`,
+  dismissed: () => "Dismissed on the panel without an answer.",
+  expired: () => "Nobody answered it in time.",
+};
+
+/** SEND A TEST NOTICE. The cheap way to see the push path work end to end without a terminal:
+ *  a question goes to this panel, and the tap comes back here. The box's refusal (offline,
+ *  switched off, night hours) is shown in words, because that is the answer the owner needs. */
+function TestNotice({ panel }: { panel: PanelStatusOut }) {
+  const [line, setLine] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  async function send(): Promise<void> {
+    setBusy(true);
+    setLine(null);
+    try {
+      const out = await api.sendPanelNotice({
+        device_id: panel.device_id,
+        title: "Test from the app",
+        body: "Tap an answer: it comes back to your phone.",
+        choices: ["Got it", "Not now"],
+      });
+      if ("refused" in out) {
+        setLine(noticeRefusal(out.refused.reason, out.refused.until));
+        return;
+      }
+      setLine("Sent. Waiting for a tap on the panel…");
+      for (let i = 0; i < 6 && alive.current; i++) {
+        const got = await api.panelNotice(out.sent.id, 20);
+        const end = NOTICE_ENDS[got.state];
+        if (end) {
+          if (alive.current) setLine(end(got.answer));
+          return;
+        }
+      }
+      if (alive.current) setLine("No tap yet. It stays on the panel for 15 minutes.");
+    } catch (err) {
+      if (alive.current) setLine(err instanceof ApiError ? err.message : "Could not send it.");
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+
+  return (
+    <div className="jp-unit-agent">
+      <div className="jp-unit-actions">
+        <button type="button" disabled={busy} onClick={() => void send()}>
+          Send test notice
+        </button>
+      </div>
+      {line !== null && <p className="jp-unit-hint">{line}</p>}
+    </div>
+  );
+}
+
 /** How long a revoke stays armed. It never disarmed at all: an owner who tapped "revoke",
  *  thought better of it and put the phone down left a panel one stray tap from being retired —
  *  and the next tap on that card, minutes later, would not have looked like a confirmation of
@@ -1263,6 +1347,7 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
       </p>
 
       {panel.role === "display" && <AgentAccessSwitch panel={panel} />}
+      {panel.role === "display" && <TestNotice panel={panel} />}
 
       {renaming ? (
         <div className="jp-unit-edit">
