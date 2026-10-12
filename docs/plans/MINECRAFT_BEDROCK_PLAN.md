@@ -2308,8 +2308,10 @@ map link was turned off*.
   world and the player it opens on; the only read that counts as a view), then
   `/map/info`, `/map/tile/{dim}/{zoom}/{tx}/{tz}.png`, `/map/point`, `/map/players`,
   `/map/structures` and `/timeline` under it. The token picks the slot; the visitor never
-  names one. Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`,
-  `noindex`.
+  names one. Every route, tiles included, 404s once the slot holds another world: the
+  token works outside the viewer, so an old link must never draw the new world (#1664).
+  Tiles cache the slot's checked folder for 5 s, one sidecar read per view's burst.
+  Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`, `noindex`.
 - Storage and RLS (migration `0230_mc_share_links`): `app.mc_share_links` keeps only the
   token's SHA-256, the slot, its world folder at mint, and the player. A visitor reads under
   `mc_share_context(link_id)`; the `*_share` policies on `mc_player_track`,
