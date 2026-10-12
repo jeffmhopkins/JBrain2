@@ -685,9 +685,10 @@ services:
       # coder's native 256k (the gateway serves it at full native context); override if a
       # different served `-c` is configured.
       GROK_CONTEXT_WINDOW: ${JCODE_GROK_CONTEXT_WINDOW:-262144}
-      # Mark the container as a genuine sandbox — fenced `jcode_fenced` network (no host, db,
-      # or notes) + a throwaway per-session checkout — so a CLI's root-user permission
-      # guard treats it as the sandbox it is rather than refusing to run.
+      # Mark the container as a genuine sandbox — fenced `jcode_fenced` network (no host,
+      # db, or notes) + a throwaway per-session checkout — for CLIs that check it. Sessions
+      # no longer run as root (each has its own uid, security plan S2.1); kept so a CLI
+      # that keys other sandbox behaviour off it is unchanged.
       IS_SANDBOX: "1"
       # Per-session web preview: the capability flag for the host-served preview
       # (JCODE_PREVIEW_BASE_HOST below) — a session's dev server is reachable at

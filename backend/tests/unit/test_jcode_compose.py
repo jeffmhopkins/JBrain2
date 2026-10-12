@@ -36,13 +36,10 @@ def test_jcode_is_isolated_on_its_fenced_network_only() -> None:
 
 
 def test_jcode_marks_itself_a_sandbox_so_the_cli_runs_as_root() -> None:
-    # The container runs as root; a coding CLI's root-user permission guard treats it as a
-    # sandbox only with IS_SANDBOX=1. Guard the escape hatch the on-box bring-up needed.
+    # Session shells now run as their own uid (security plan S2.1), so the CLI's root guard
+    # no longer fires; the marker stays for any CLI behaviour keyed off it.
     env = _spec()["services"]["jcode"]["environment"]
-    assert env.get("IS_SANDBOX") == "1", (
-        "jcode runs a coding CLI as root — it needs IS_SANDBOX=1 or the CLI's root guard "
-        "refuses to start"
-    )
+    assert env.get("IS_SANDBOX") == "1", "the jcode container must keep IS_SANDBOX=1"
 
 
 # --- Wave J5 hardening: the dataless-sandbox boundary, asserted on the compose file ---

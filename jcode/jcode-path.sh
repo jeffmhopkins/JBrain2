@@ -3,7 +3,7 @@
 # /usr/local/bin copy for THIS session only (docs/archive/JCODE_SESSION_TOOLS_PLAN.md).
 #
 # This MUST run from /etc/profile.d: `bash -l` sources it AFTER /etc/profile, which on
-# Debian RESETS root's PATH to a fixed default — so re-prepending here is the only thing
+# Debian RESETS PATH to a fixed default — so re-prepending here is the only thing
 # that makes the per-session bin actually lead. A no-op for non-session shells (the var
 # is unset), so it's safe image-wide. $JCODE_TOOLS_BIN / $HOME are set per session by the
 # terminal (jcode_ctl.terminal.home_env).

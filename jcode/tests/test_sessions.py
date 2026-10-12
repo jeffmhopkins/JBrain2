@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from jcode_ctl.sandbox import UidPool
 from jcode_ctl.sessions import SessionError, SessionManager
 from jcode_ctl.workspace import FakeWorkspace
 
@@ -117,15 +118,21 @@ async def test_stop_pauses_and_keeps_the_checkout() -> None:
     assert mgr.get(s.id).status == "stopped"
 
 
-async def test_stop_with_an_open_terminal_clears_it_and_pauses() -> None:
-    # Stop SIGKILLs each open terminal's process group (best-effort; a non-existent pid
-    # is suppressed) and drops the tracked terminal so the session reads paused, not
-    # falsely "fresh". The pid kill itself is OS-level — here we assert the bookkeeping.
+async def test_stop_with_an_open_terminal_clears_it_and_pauses(monkeypatch) -> None:
+    # Stop SIGKILLs each open terminal's process group and drops the tracked terminal
+    # so the session reads paused, not falsely "fresh". The kill is stubbed: 4242 is a
+    # made-up pid, and on a busy machine a real process (even this test run's own
+    # group) can hold it.
+    import jcode_ctl.sessions as sessions_mod
+
+    killed: list[int] = []
+    monkeypatch.setattr(sessions_mod, "kill_process_group", killed.append)
     mgr = _mgr()
     s = await mgr.create("r")
     mgr.terminal_opened(s.id, 4242)
     mgr.stop(s.id)
     assert mgr.get(s.id).status == "stopped"
+    assert killed == [4242]
 
 
 async def test_stop_is_idempotent() -> None:
@@ -172,3 +179,85 @@ async def test_lifecycle_logs(caplog) -> None:
     assert "session create" in msgs
     assert "session stop" in msgs
     assert "session restart" in msgs
+
+
+# --- Per-session uids (S2.1) ------------------------------------------------------
+
+
+async def test_each_session_gets_its_own_uid_and_home() -> None:
+    ws = FakeWorkspace()
+    mgr = _mgr(workspace=ws)
+    a = await mgr.create("r")
+    b = await mgr.create("r")
+    ua, ub = mgr.user_for(a.id), mgr.user_for(b.id)
+    assert ua.uid != ub.uid
+    assert ua.gid == ua.uid
+    assert ua.home == "/work/.home/s1"
+    # The clone ran as the session's user, not root.
+    assert ws.clone_users == [ua, ub]
+    # The uid stays off the session shape the api mirrors.
+    assert "uid" not in a.public()
+
+
+async def test_a_uid_still_owning_something_is_skipped() -> None:
+    ws = FakeWorkspace()
+    ws.busy_uids = {20000}
+    mgr = _mgr(workspace=ws)
+    s = await mgr.create("r")
+    assert mgr.user_for(s.id).uid == 20001
+
+
+async def test_delete_kills_by_uid_purges_and_frees_the_uid(monkeypatch) -> None:
+    import jcode_ctl.sessions as sessions_mod
+
+    killed: list[list[int]] = []
+    monkeypatch.setattr(sessions_mod, "kill_uids", killed.append)
+    ws = FakeWorkspace()
+    mgr = _mgr(workspace=ws)
+    s = await mgr.create("r")
+    uid = mgr.user_for(s.id).uid
+    await mgr.delete(s.id)
+    assert killed == [[uid]]
+    assert ws.purged_uids == [uid]
+    with pytest.raises(SessionError):
+        mgr.user_for(s.id)
+
+
+async def test_stop_kills_by_uid_and_keeps_the_uid(monkeypatch) -> None:
+    import jcode_ctl.sessions as sessions_mod
+
+    killed: list[list[int]] = []
+    monkeypatch.setattr(sessions_mod, "kill_uids", killed.append)
+    mgr = _mgr()
+    s = await mgr.create("r")
+    uid = mgr.user_for(s.id).uid
+    mgr.stop(s.id)
+    assert killed == [[uid]]
+    assert mgr.user_for(s.id).uid == uid  # a paused session resumes as itself
+
+
+async def test_a_failed_create_leaves_no_tree_and_frees_the_uid() -> None:
+    class FailOnce(FakeWorkspace):
+        failed = False
+
+        async def clone(self, path, repo, branch, work_branch, user) -> None:
+            if not self.failed:
+                self.failed = True
+                raise RuntimeError("clone failed")
+            await super().clone(path, repo, branch, work_branch, user)
+
+    ws = FailOnce()
+    mgr = _mgr(workspace=ws, uid_pool=UidPool(30000, 30000))
+    with pytest.raises(RuntimeError):
+        await mgr.create("r")
+    assert {str(p) for p in ws.removed} == {"/work/s1", "/work/.home/s1"}
+    assert mgr.list() == []
+    s = await mgr.create("r")  # the one-uid pool's uid came back
+    assert mgr.user_for(s.id).uid == 30000
+
+
+async def test_startup_hands_the_live_set_to_the_workspace() -> None:
+    ws = FakeWorkspace()
+    mgr = _mgr(workspace=ws)
+    mgr.startup()
+    assert ws.started == [set()]

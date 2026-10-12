@@ -63,7 +63,7 @@ _MAX_DECODE_ROUNDS = 4
 _UNSAFE_CHAR = re.compile(r"[\x00-\x1f\x7f?#\\]")
 
 
-def _has_dot_segment(path: str) -> bool:
+def has_dot_segment(path: str) -> bool:
     """Defence in depth behind the api's own containment check: the path comes from a
     stranger, and a dot segment (or a backslash some servers read as one) would be
     resolved against the dev server's root rather than kept under it."""
@@ -77,6 +77,9 @@ def _has_dot_segment(path: str) -> bool:
             return False
         path = decoded
     return True
+
+
+UNREACHABLE = "The dev server isn't reachable on this port."
 
 
 def _default_client() -> httpx.AsyncClient:
@@ -127,7 +130,7 @@ async def proxy_http(
     Vite is reached without ``--host``. A 502 stands in when nothing is reachable on
     EITHER family, or the server errors once connected (slow / malformed).
     ``client_factory`` is injectable so tests can drive a mock transport."""
-    if _has_dot_segment(path):
+    if has_dot_segment(path):
         return Response("preview not available", status_code=404)
     body = await request.body()
     headers = _request_headers(request, port)
@@ -149,7 +152,7 @@ async def proxy_http(
                 # Connected but failed mid-exchange (timeout / malformed): the server IS
                 # here, so don't retry the other family — report it.
                 _log.warning("preview: dev server errored on :%d (%s)", port, exc)
-                return Response("The dev server isn't reachable on this port.", 502)
+                return Response(UNREACHABLE, 502)
             _log.debug("preview proxy ← :%d %d", port, resp.status_code)
             return Response(
                 content=resp.content,
@@ -158,7 +161,7 @@ async def proxy_http(
             )
     # Refused on every loopback family — nothing is serving on this port.
     _log.warning("preview: dev server unreachable on :%d (%s)", port, refused)
-    return Response("The dev server isn't reachable on this port.", 502)
+    return Response(UNREACHABLE, 502)
 
 
 async def _pump_browser_to_dev(
@@ -220,7 +223,7 @@ async def proxy_ws(  # pragma: no cover - opens a live upstream socket, deploy-o
     # forwards the incoming preview Host, so must rewrite it to localhost), websockets
     # builds a fresh handshake with that IP literal as Host — which a host-pinning dev
     # server allows — so the preview host never reaches the dev WS; no rewrite needed.
-    if _has_dot_segment(path):
+    if has_dot_segment(path):
         await browser.close(code=4404)
         return
     suffix = f"?{query}" if query else ""

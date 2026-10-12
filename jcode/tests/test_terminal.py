@@ -24,11 +24,16 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from jcode_ctl.config import Settings
+from jcode_ctl.sandbox import SessionUser
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.terminal import (
+    CTL_ONLY_ENV,
+    CTL_ONLY_ENV_PREFIXES,
     TerminalRegistry,
     _close_child,
     _set_winsize,
+    child_env,
     home_env,
     internet_env,
     kill_processes_in_dir,
@@ -394,6 +399,79 @@ def test_spawn_shell_applies_preview_env(tmp_path) -> None:
         assert b"M=qwen3-coder-next-q8" in out
     finally:
         _close_child(pid, fd)
+
+
+def test_child_env_drops_the_control_settings_and_keeps_the_session_ones() -> None:
+    kept = {
+        "JCODE_WORKSPACE_ROOT": "/work",
+        "JCODE_TOOLS_BIN": "/h/.local/bin",
+        "JCODE_INTERNET_SEARCH": "1",
+        "JCODE_GROK_PLAN_MODEL": "p",
+        "JCODE_GROK_SUBAGENTS": "false",
+        "GROK_API_KEY": "sk-gateway",
+        "GROK_MODELS_BASE_URL": "http://api:8000/api/jcode/llm/v1",
+        "HTTP_PROXY": "http://egress:3128",
+        "https_proxy": "http://egress:3128",
+        "NO_PROXY": "api",
+        "no_proxy": "api",
+        "NODE_USE_ENV_PROXY": "1",
+        "IS_SANDBOX": "1",
+        "PATH": "/usr/bin",
+    }
+    dropped = {
+        "JCODE_TOKEN": "control-secret",
+        "jcode_token": "lower-case too — pydantic reads it case-blind",
+        "JCODE_DEBUG_ACCESS_ENABLED": "true",
+        "JCODE_LOG_LEVEL": "DEBUG",
+        "JCODE_SESSION_TTL_SECONDS": "1",
+        "JCODE_REAP_INTERVAL_SECONDS": "1",
+        "JCODE_MODEL_BASE_URL": "http://local-llm:8080",
+        "JCODE_PREVIEW_BASE_HOST": "box.test",
+        "JCODE_PREVIEW_ENABLED": "true",
+        "JCODE_PREVIEW_PORT_LOW": "5173",
+    }
+    env = child_env({**kept, **dropped}, {"GROK_MODEL": "m"})
+    assert env == {**kept, "TERM": "xterm-256color", "GROK_MODEL": "m"}
+
+
+def test_every_control_setting_is_dropped_or_deliberately_kept() -> None:
+    # A Settings field added later is a JCODE_ env var the shell would inherit; this
+    # fails until it is sorted into one list or the other.
+    deliberately_kept = {"JCODE_WORKSPACE_ROOT"}
+    for field in Settings.model_fields:
+        name = f"JCODE_{field.upper()}"
+        handled = name in CTL_ONLY_ENV or name.startswith(CTL_ONLY_ENV_PREFIXES)
+        assert handled or name in deliberately_kept, name
+    assert "JCODE_TOKEN" in CTL_ONLY_ENV
+
+
+def test_spawned_shell_cannot_see_the_control_token(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JCODE_TOKEN", "control-secret")
+    monkeypatch.setenv("GROK_API_KEY", "sk-gateway")
+    pid, fd = spawn_shell(
+        str(tmp_path),
+        argv=("/bin/sh", "-c", 'echo "T=${JCODE_TOKEN:-none} G=$GROK_API_KEY END"'),
+    )
+    try:
+        out = _read_until(fd, b"END")
+    finally:
+        _close_child(pid, fd)
+    assert b"T=none G=sk-gateway END" in out
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="needs root to setuid")
+def test_spawned_shell_runs_as_the_session_uid(tmp_path) -> None:
+    user = SessionUser(uid=29_980, gid=29_980, home=str(tmp_path))
+    script = 'echo "U=$(id -u) G=$(id -g) GS=$(id -G) TTY=$(stat -c %u "$(tty)") END"'
+    pid, fd = spawn_shell(str(tmp_path), argv=("/bin/sh", "-c", script), user=user)
+    try:
+        out = _read_until(fd, b"END")
+    finally:
+        _close_child(pid, fd)
+    # No supplementary groups (root's are shed), and the pty is the session's own.
+    assert b"U=29980 G=29980 GS=29980 TTY=29980 END" in out
 
 
 def test_set_winsize_reaches_the_pty(tmp_path) -> None:
