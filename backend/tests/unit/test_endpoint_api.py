@@ -170,7 +170,7 @@ def _provision_panel(c: TestClient) -> str:
     """
     asyncio.run(
         cast(FastAPI, c.app).state.auth_repo.create_principal(
-            "device_key", keys.hash_key(PANEL_KEY), "panel Elora"
+            "device_key", keys.hash_key(PANEL_KEY), "panel Quorra"
         )
     )
     return PANEL_KEY
@@ -974,7 +974,7 @@ class TestTheSharedFlashBuilder:
                 port="/dev/ttyACM0",
                 ssid="net",
                 password="pw",
-                name="Elora",
+                name="Quorra",
                 erase=False,
             )
 
@@ -1169,7 +1169,13 @@ class TestAPanelCanReportItsOwnState:
             "pmu_history": ["0123456789abcdef0123456789a"] * 8,
             "vocab_refused": ["make a rude noise"] * 6,
             "heard": [["make a rude noise", 100, 1]] * 3,
+            "speech_ok": False,
         }
+        # VOICE POST'S `jp` OBJECT (0.4.0), every key the firmware writes at its widest: it sits
+        # ahead of the tails that stop on room, so it is the part that must always fit.
+        jp_keys = re.findall(r'\\"([a-z_]+)\\":%u', main_c[main_c.index('\\"jp\\":{') :][:600])
+        assert len(jp_keys) >= 14, "the jp object moved; re-pin this test"
+        worst["jp"] = dict.fromkeys(jp_keys, 4294967295)
         wire = json.dumps(worst, separators=(",", ":"))
         assert len(wire) < cap, f"worst case {len(wire)} B does not fit {cap} B"
         # And every key really is one this route accepts — a field the panel spends bytes on
@@ -1975,9 +1981,10 @@ class TestReplyCeiling:
             assert m is not None, f"{name} not found in {path}"
             return int(m.group(1))
 
-        lead = const("display.c", "LISTEN_LEAD_MS")
-        hush = const("display.c", "LISTEN_HUSH_MS")
-        cap = const("audio.c", "CAPTURE_MAX_MS")
+        # The state machine's since 0.4.0 (`panel_sm.h`); `display.c` only samples and draws.
+        lead = const("panel_sm.h", "LISTEN_LEAD_MS")
+        hush = const("panel_sm.h", "LISTEN_HUSH_MS")
+        cap = const("stream.h", "CAPTURE_MAX_MS")
         assert hush >= 1500, "a four-year-old pauses mid-sentence for longer than an adult"
         # Four seconds of actual sentence left over, which is a long one at this age.
         assert cap - lead - hush >= 4000, (lead, hush, cap)
@@ -2008,8 +2015,8 @@ class TestReplyCeiling:
             assert m is not None, f"{name} not found in {path}"
             return int(m.group(1))
 
-        cap = const("audio.c", "CAPTURE_MAX_MS")
-        wait = const("display.c", "TALK_TIMEOUT_MS")
+        cap = const("stream.h", "CAPTURE_MAX_MS")
+        wait = const("panel_sm.h", "TALK_TIMEOUT_MS")
         http = const("talk.c", "TALK_HTTP_TIMEOUT_MS")
 
         # Whisper at ~0.47x realtime, the model and the voice from the same measurement.
@@ -2032,10 +2039,11 @@ class TestReplyCeiling:
         # and then speak the reply into a turn the child had been told had failed.
         assert http < wait, (http, wait)
 
-        # And the state machine's copy is the same number, or the tested model is not the
-        # shipped one.
-        ui = re.search(r"^#define TALK_TIMEOUT_MS (\d+)$", (main / "ui.h").read_text(), re.M)
-        assert ui is not None and int(ui.group(1)) == wait, "ui.h disagrees with display.c"
+        # ONE COPY: the machine that shipped is the machine the host tests drive. `display.c`
+        # used to keep its own and the two had to be pinned equal; it must not grow one back.
+        assert "TALK_TIMEOUT_MS" not in (main / "display.c").read_text(), (
+            "display.c keeps its own turn timeout again; the machine owns it (panel_sm.h)"
+        )
 
     def test_the_reply_does_not_start_with_a_beat_of_nothing(
         self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch

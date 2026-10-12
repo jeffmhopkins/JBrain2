@@ -15,6 +15,8 @@
 
 #include "link.h"
 #include "reach.h"
+#include "stream.h"
+#include "wsproto.h"
 
 static const char *TAG = "talk";
 
@@ -24,19 +26,14 @@ static uint32_t now_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-/* Generous, because the box may be transcribing on a shared GPU behind a chat model. The
-   renderer gives up sooner than this and shows the failure face; that is deliberate — a child
-   should be told "say that again" long before a socket decides it has waited enough. */
-/* ABOVE the renderer's `TALK_TIMEOUT_MS`, always, and that ordering is the point rather than
-   the value: the socket must not die while the face is still willing to wait, or the panel
-   gives up on a turn the box would have finished. The gap is also why the capture buffer is
-   guarded on `TALK_NET_BUSY` — between the renderer giving up and this timeout firing, a
-   frustrated child can hold again while the socket is still reading the last recording. */
-/* SHORTER THAN `TALK_TIMEOUT_MS` ON PURPOSE, and the ordering is the point. That one is the
+/* Generous, because the box may be transcribing on a shared GPU behind a chat model — but
+   SHORTER THAN `TALK_TIMEOUT_MS` ON PURPOSE, and the ordering is the point. That one is the
    renderer's backstop for a task that has stopped answering; this one is the actual wait. If the
    backstop fired first the panel would show the failure dash while this task was still running —
    and then speak the reply into a turn the child had already been told had failed. Letting the
-   network give up first means the failure is reported once, by the thing that knows why. */
+   network give up first means the failure is reported once, by the thing that knows why.
+   Since 0.4.0 it is an absolute deadline from the start of the turn to the reply's head, upload
+   included (plan §7.5a); the reply's body is then bounded by LINK_STALL_MS per network gap. */
 #define TALK_HTTP_TIMEOUT_MS 55000
 /* What the box returns at most, and THE REPLY'S OWN CEILING — `audio.c`'s buffer is bigger
    (it also holds voice-post messages), so this is the only thing bounding a reply here.
@@ -49,11 +46,42 @@ static SemaphoreHandle_t s_go;
 static volatile talk_net_t s_state;
 static const int16_t *s_pcm;
 static volatile size_t s_bytes;
-static uint8_t *s_reply; /* PSRAM; the response is read into this, then copied by audio.c */
+static uint8_t *s_reply; /* PSRAM; the response is read into this and played from it in place */
+/* The reply slot's id (stream.h): never 0, and different every turn, so "done" is about THIS
+   reply and never the previous one. */
+static uint32_t s_reply_id;
+
+/* HOW LONG A TURN WAITS FOR ITS LAST REPLY TO LEAVE THE SPEAKER before it may read a new one into
+   the same buffer. The arbiter plays `s_reply` in place, so overwriting it early would put the new
+   answer's bytes under the old one's cursor. A reply is at most `PLAY_BUF_MS`, a cue ahead of it
+   at most `CUE_MAX_MS`; past that plus slack the arbiter is wedged, its watchdog will reboot the
+   panel, and this turn fails rather than scribbling under it. */
+#define REPLY_DRAIN_MS (PLAY_BUF_MS + CUE_MAX_MS + 2000)
 
 /* One turn: POST the recording, read the reply, hand it to the speaker. */
 static void turn(void)
 {
+    const int64_t t0 = esp_timer_get_time();
+    talk_net_t out = TALK_NET_FAILED;
+    int got = 0;
+    /* Set at each `goto done` rather than at the label, because the label cannot tell which
+       branch reached it — and "the conversation failed" without which half is the report the box
+       has always been able to make for itself. */
+    const char *why = "unknown";
+    stream_t *const st = audio_stream();
+
+    /* The previous reply must be off the speaker before its buffer takes this one (plan §7.3).
+       Usually it already is: the machine only opens a microphone once no reply is busy. Before
+       the deadline is taken, so the wait never eats the request's own budget. */
+    for (uint32_t waited = 0; s_reply_id != 0 && !stream_reply_done(st, s_reply_id); waited += 20) {
+        if (waited >= REPLY_DRAIN_MS) {
+            stream_lease_release(st, STREAM_LEASE_TALK);
+            why = "reply-busy";
+            goto done;
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+
     /* OVER THE ONE SOCKET (`link.c`). This was its own HTTPS session, and on 0.3.38 it was the
        one that collided: a turn's handshake landing while the main task's settings poll held
        another is the "connect" of every red dash after the second turn. */
@@ -62,19 +90,12 @@ static void turn(void)
                             .content_type = "application/octet-stream",
                             .body = (const uint8_t *)s_pcm,
                             .body_len = s_bytes,
-                            .timeout_ms = TALK_HTTP_TIMEOUT_MS,
+                            .deadline_ms = link_deadline_in(now_ms(), TALK_HTTP_TIMEOUT_MS),
                             .buf = s_reply,
                             .cap = REPLY_MAX_BYTES};
-
-    const int64_t t0 = esp_timer_get_time();
-    talk_net_t out = TALK_NET_FAILED;
-    int got = 0;
-    /* Set at each `goto done` rather than at the label, because the label cannot tell which
-       branch reached it — and "the conversation failed" without which half is the report the box
-       has always been able to make for itself. */
-    const char *why = "unknown";
-
     const link_res_t res = link_request(&req);
+    /* The upload is over, so the capture buffer is free for the next recording (lease 2). */
+    stream_lease_release(st, STREAM_LEASE_TALK);
     if (res.status < 0) {
         /* THE ONE THAT ACTUALLY HAPPENS, AND THE ONE NOBODY COULD SEE. On 2026-09-29 and again
            on 2026-10-04 this was "connect", which named nothing. `res.err` is the real reason now
@@ -111,8 +132,17 @@ static void turn(void)
         why = "empty-reply";
         goto done;
     }
-    out = audio_play((const int16_t *)s_reply, (size_t)got) ? TALK_NET_SPOKE : TALK_NET_FAILED;
-    if (out == TALK_NET_FAILED) why = "no-playback";
+    /* INTO THE REPLY SLOT, PLAYED FROM THIS BUFFER WITHOUT A COPY, and SPOKE at once: the arbiter
+       sounds it as soon as any cue ahead of it ends, and the next turn waits for it above. */
+    {
+        uint32_t samples = (uint32_t)got / sizeof(int16_t);
+        if (samples > (uint32_t)AUDIO_RATE * PLAY_BUF_MS / 1000) {
+            samples = (uint32_t)AUDIO_RATE * PLAY_BUF_MS / 1000;
+        }
+        if (++s_reply_id == 0) s_reply_id = 1;
+        stream_reply(st, (const int16_t *)s_reply, samples, s_reply_id);
+        out = TALK_NET_SPOKE;
+    }
 
 done:
     /* Two numbers now rather than three: the upload and the wait share one socket and one call,

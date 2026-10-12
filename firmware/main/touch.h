@@ -61,5 +61,5 @@ void touch_point(int *x, int *y);
  * resolution and never its existence.
  *
  * NOT A GESTURE, DELIBERATELY. This reports a position; `display.c` decides what travel means and
- * `ui.c` decides what to do about it, which keeps the threshold somewhere it can be tested. */
+ * `panel_sm.c` decides what to do about it, which keeps the threshold somewhere it can be tested. */
 bool touch_drag(int *x, int *y);

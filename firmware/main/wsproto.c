@@ -190,3 +190,48 @@ int wsp_err_str(char *out, size_t cap, const char *what, int tls_err, int stack_
         n += snprintf(out + n, cap - (size_t)n, " hs=%d", hs_status);
     return fits(n, cap);
 }
+
+uint32_t link_left(uint32_t now_ms, uint32_t deadline_ms)
+{
+    const int32_t d = (int32_t)(deadline_ms - now_ms);
+    return d > 0 ? (uint32_t)d : 0;
+}
+
+uint32_t link_deadline_in(uint32_t now_ms, uint32_t in_ms)
+{
+    const uint32_t d = now_ms + in_ms;
+    return d == 0 ? 1 : d;
+}
+
+uint32_t link_req_deadline(uint32_t now_ms, uint32_t deadline_ms, int timeout_ms)
+{
+    if (deadline_ms != 0) return deadline_ms;
+    return link_deadline_in(now_ms, timeout_ms > 0 ? (uint32_t)timeout_ms : 0);
+}
+
+uint32_t wsp_wait_step(uint32_t left_ms, uint32_t step_ms)
+{
+    return left_ms < step_ms ? left_ms : step_ms;
+}
+
+int link_open_timeout_ms(uint32_t left_ms)
+{
+    const uint32_t third = left_ms / 3;
+    return third > 0 ? (int)third : 1;
+}
+
+uint32_t link_after_frame(link_upload_mode_t mode, uint32_t now_ms, uint32_t deadline_ms)
+{
+    return mode == LINK_DEADLINE_PROGRESS ? link_deadline_in(now_ms, LINK_STALL_MS) : deadline_ms;
+}
+
+uint32_t link_after_upload(link_upload_mode_t mode, uint32_t now_ms, uint32_t deadline_ms,
+                           uint32_t head_budget_ms)
+{
+    return mode == LINK_DEADLINE_PROGRESS ? link_deadline_in(now_ms, head_budget_ms) : deadline_ms;
+}
+
+bool link_tick_due(uint32_t now_ms, uint32_t last_beat_ms)
+{
+    return (uint32_t)(now_ms - last_beat_ms) >= LINK_STEP_MS;
+}

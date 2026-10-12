@@ -276,6 +276,13 @@ The location + family + intake slices shipped; build records are under
   is not true. The board has no echo reference (ES8311, one mic, no ES7210), so barge-in is
   probably unavailable and press-to-talk is the primary path, not the fallback.
 
+- **Panel voice-post fixes** — Scheduled (`plans/JPANEL_MESSAGING_FIXES_PLAN.md`; firmware 0.4.0 —
+  one rewrite release, with the persistent WebSocket off because 0.3.39 boot-loops — then W1–W3
+  box and P1 PWA) — fixes every finding of the 2026-10 adversarial review of the panels'
+  voice post (`plans/JPANEL_PLAN.md`): stops undone mid-fetch, stuck runs, the recording-cap
+  mismatch, mail orphaned by a re-flash, undeliverable rows that never clear, and "heard" that is
+  not true. The engine and the panel state machine move into host-tested cores first.
+
 - **JPet — the family wall play-pet** ✅ (`archive/JPET_PLAN.md` v1, `archive/JPET_V2_PLAN.md` v2,
   `archive/JPET_V3_PLAN.md` v3)
   — a Tron/synthwave **3D** wireframe robot the kids make *do things* and talk to. One

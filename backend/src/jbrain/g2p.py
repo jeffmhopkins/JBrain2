@@ -19,11 +19,11 @@ the same answer and registers the wake phrase the same way as everything else.
 WHAT THIS DOES NOT DO, stated plainly because it decides what the next step can be. CMUdict is a
 dictionary, not a model: it knows words, and an INVENTED NAME is not a word. Measured
 2026-09-26 — `fish` (the name in use) is present, and so are `blink`, `merc`, `nessa` and
-`bluey`; `elora` and `lydian` are NOT. An unknown name returns None here and the panel falls
+`bluey`; `quorra` and `tamsin` are NOT. An unknown name returns None here and the panel falls
 back to its own runtime converter, which is exactly today's behaviour and so cannot regress.
 Closing that gap needs a real G2P with out-of-vocabulary handling — `g2p_en` carries a neural
 net for precisely this — and that is a heavier dependency than a data wheel. It is also what
-per-panel sibling names ("tell Elora") would need, so it is worth doing deliberately rather
+per-panel sibling names ("tell Quorra") would need, so it is worth doing deliberately rather
 than as a rider on this.
 """
 

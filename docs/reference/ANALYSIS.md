@@ -968,8 +968,8 @@ must emit a separate relationship edge per named child (each its own
 bare mentions — the prompt teaches the fan-out and the dedup key (which
 includes `object_entity_ref`) keeps the distinct edges. A relationship between
 two named people is always a `relationship` edge, never an `attribute` whose
-value restates the sentence ("Lydian and Elora are identical twins" is
-`Lydian.sibling →twin Elora`, not `twinStatus → "…the whole sentence…"`); the
+value restates the sentence ("Tamsin and Quorra are identical twins" is
+`Tamsin.sibling →twin Quorra`, not `twinStatus → "…the whole sentence…"`); the
 reciprocity registry then materializes the symmetric mirror on the other
 party's stream, and kinship (`children`/`parent`, alongside the existing
 `parent_of`/`child_of`) reciprocates the same way.

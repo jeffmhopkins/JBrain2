@@ -8,7 +8,7 @@ share them to a child over a link, and review the results.
 
 - **Instructor** — an *owner* agent. The parent authors and approves lessons and
   curricula conversationally, assigns a lesson to a child, and later reviews
-  completed work ("status on Harmony's open lessons", "overview of her last
+  completed work ("status on Opal's open lessons", "overview of her last
   completed lesson", "list all my curriculum").
 - **Student** — a *non-owner* agent behind an **anonymous scoped link**. The
   child opens the link and is tutored in real time by a live LLM that is
@@ -32,13 +32,13 @@ child-safety fanned out to five). Sources are listed at the end.
    through grade 8."* The instructor drafts objectives, then a structured lesson
    built from the approved component catalog, rendered as editable cards. The
    parent iterates and **approves** (a Proposal, not a silent write).
-2. **Assign.** Parent: *"Assign it to Harmony."* The instructor stages a
-   **Proposal**; on approval the system creates a *lesson instance* for Harmony
+2. **Assign.** Parent: *"Assign it to Opal."* The instructor stages a
+   **Proposal**; on approval the system creates a *lesson instance* for Opal
    and mints an **anonymous scoped link** (`/learn/#t=…`). The parent gets a URL.
 3. **Complete.** The parent sends the link to their child. The child opens it —
    no account — and a live, sandboxed **student** agent tutors her through the
    lesson, capturing answers and grades. Resumable across sittings.
-4. **Review.** Back in instructor mode: *"What's the status on Harmony's open
+4. **Review.** Back in instructor mode: *"What's the status on Opal's open
    lessons?"* → a status table. *"Give an overview of her last completed
    lesson."* → an LLM-synthesized report card. *"List all my curriculum."* → the
    curriculum list.

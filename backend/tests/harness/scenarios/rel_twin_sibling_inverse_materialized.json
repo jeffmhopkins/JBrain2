@@ -1,20 +1,20 @@
 {
   "name": "twins are a symmetric sibling edge, mirrored onto the other twin",
-  "description": "The twin half of the four-daughters discrepancy: 'Lydian and Elora are identical twin girls' came back as an `attribute` (twinStatus) on Lydian whose VALUE was the whole sentence — so Elora carried nothing and the value rendered as prose instead of an edge. v10 teaches that a relationship between two named people is a `sibling` relationship edge (qualifier 'twin'), never a sentence-valued attribute; the pipeline then materializes the symmetric reciprocal on Elora's stream. The model emits only the one directed edge. TOOL-PATH NOTE: both sibling facts asserted qualifier='twin' before the W3 re-point; the tool has no qualifier field, and unlike the ownership cases this qualifier did NOT name the object -- 'twin' is a genuine lost discriminator. Nothing collides on its absence (sibling is non-functional and keys on its object), so the inverse materialization this file exists for is unaffected.",
+  "description": "The twin half of the four-daughters discrepancy: 'Tamsin and Quorra are identical twin girls' came back as an `attribute` (twinStatus) on Tamsin whose VALUE was the whole sentence — so Quorra carried nothing and the value rendered as prose instead of an edge. v10 teaches that a relationship between two named people is a `sibling` relationship edge (qualifier 'twin'), never a sentence-valued attribute; the pipeline then materializes the symmetric reciprocal on Quorra's stream. The model emits only the one directed edge. TOOL-PATH NOTE: both sibling facts asserted qualifier='twin' before the W3 re-point; the tool has no qualifier field, and unlike the ownership cases this qualifier did NOT name the object -- 'twin' is a genuine lost discriminator. Nothing collides on its absence (sibling is non-functional and keys on its object), so the inverse materialization this file exists for is unaffected.",
   "steps": [
     {
       "domain": "general",
       "created_at": "2026-06-12T22:05:00-06:00",
-      "body": "Lydian and Elora are identical twin girls.",
+      "body": "Tamsin and Quorra are identical twin girls.",
       "extraction": {
-        "title": "Lydian and Elora",
+        "title": "Tamsin and Quorra",
         "tags": ["family", "twins", "daughters"],
         "mentions": [
-          {"name": "Lydian", "kind": "Person", "surface_text": "Lydian"},
-          {"name": "Elora", "kind": "Person", "surface_text": "Elora"}
+          {"name": "Tamsin", "kind": "Person", "surface_text": "Tamsin"},
+          {"name": "Quorra", "kind": "Person", "surface_text": "Quorra"}
         ],
         "facts": [
-          {"predicate": "sibling", "qualifier": "twin", "kind": "relationship", "statement": "Lydian and Elora are identical twin sisters.", "value_json": null, "assertion": "asserted", "entity_ref": "Lydian", "object_entity_ref": "Elora", "temporal": null, "domain": "general", "confidence": 0.95}
+          {"predicate": "sibling", "qualifier": "twin", "kind": "relationship", "statement": "Tamsin and Quorra are identical twin sisters.", "value_json": null, "assertion": "asserted", "entity_ref": "Tamsin", "object_entity_ref": "Quorra", "temporal": null, "domain": "general", "confidence": 0.95}
         ],
         "temporal_tokens": []
       }
@@ -22,16 +22,16 @@
   ],
   "expect": {
     "facts": [
-      {"entity": "Lydian", "predicate": "sibling", "kind": "relationship", "value_contains": "Elora", "status": "active", "chained": false},
-      {"entity": "Elora", "predicate": "sibling", "kind": "relationship", "value_contains": "Lydian", "status": "active", "chained": false}
+      {"entity": "Tamsin", "predicate": "sibling", "kind": "relationship", "value_contains": "Quorra", "status": "active", "chained": false},
+      {"entity": "Quorra", "predicate": "sibling", "kind": "relationship", "value_contains": "Tamsin", "status": "active", "chained": false}
     ],
     "absent_facts": [
       {"predicate": "twinStatus"},
-      {"entity": "Lydian", "kind": "attribute", "value_contains": "twin"}
+      {"entity": "Tamsin", "kind": "attribute", "value_contains": "twin"}
     ],
     "entities": [
-      {"name": "Lydian", "kind": "Person", "status": "provisional"},
-      {"name": "Elora", "kind": "Person", "status": "provisional"}
+      {"name": "Tamsin", "kind": "Person", "status": "provisional"},
+      {"name": "Quorra", "kind": "Person", "status": "provisional"}
     ]
   }
 }

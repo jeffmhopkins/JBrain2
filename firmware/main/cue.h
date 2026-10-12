@@ -99,6 +99,13 @@ typedef enum {
     CUE_PAUSE,  /* held, not ended — a quick falling fourth */
     CUE_RESUME, /* and its mirror, the same fourth rising */
     CUE_REPLY,  /* your turn is coming — the only arpeggio here */
+    /* --- refusal and "nobody there", placeholders until F4 designs their contours -------
+     *
+     * A refusal used to borrow `CUE_STOP`, which already means "you ended this on purpose" —
+     * so a child whose press was refused heard the panel tell her she had cancelled. Every
+     * refusal now sounds one distinct `CUE_BUSY`, and `CUE_STOP` stays cancel and dropped. */
+    CUE_BUSY,   /* not now: two flat equal notes, neither rising nor falling */
+    CUE_NOBODY, /* the message had nowhere to go: a soft falling minor third */
     CUE_COUNT,
 } cue_t;
 

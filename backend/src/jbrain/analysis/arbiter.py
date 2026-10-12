@@ -212,7 +212,7 @@ def _object_named(
 def _relationship_object_named(fact: IntentFact, haystack: str) -> bool:
     """A relationship edge whose OBJECT the note names verbatim is surface-stated,
     even when the model flagged it inferred. The integrator under-flags ENUMERATED
-    kinship ("daughters named Summer, Lydian, Harmony, Elora") as inferred for the
+    kinship ("daughters named Hazel, Tamsin, Opal, Quorra") as inferred for the
     non-first members — sinking them to the inferred ceiling and into review while
     the first commits — yet the note names each child outright. `object_entity_ref`
     is the extraction mention name, i.e. the note's own surface for the object, so

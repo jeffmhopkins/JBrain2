@@ -30,13 +30,13 @@ class TestParseReference:
         assert parse_reference("the rat") == Reference(shape="definite", owner=None, noun="rat")
 
     def test_possessive(self) -> None:
-        assert parse_reference("Summer's rat") == Reference(
-            shape="possessive", owner="Summer", noun="rat"
+        assert parse_reference("Hazel's rat") == Reference(
+            shape="possessive", owner="Hazel", noun="rat"
         )
 
     def test_possessive_curly_apostrophe(self) -> None:
-        assert parse_reference("Summer’s rat") == Reference(
-            shape="possessive", owner="Summer", noun="rat"
+        assert parse_reference("Hazel’s rat") == Reference(
+            shape="possessive", owner="Hazel", noun="rat"
         )
 
     def test_plain_name_is_not_a_reference(self) -> None:

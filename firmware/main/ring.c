@@ -2,34 +2,48 @@
 
 #include <string.h>
 
+#define LOAD(p, o) atomic_load_explicit(p, memory_order_##o)
+#define STORE(p, v, o) atomic_store_explicit(p, v, memory_order_##o)
+
 void ring_init(ring_t *ring, int16_t *buf, int cap)
 {
     ring->buf = buf;
     ring->cap = cap;
-    ring->w = 0;
-    ring->r = 0;
+    STORE(&ring->w, 0, relaxed);
+    STORE(&ring->r, 0, relaxed);
 }
 
 void ring_reset(ring_t *ring)
 {
-    ring->w = 0;
-    ring->r = 0;
+    STORE(&ring->w, 0, release);
+    STORE(&ring->r, 0, release);
 }
 
 int ring_filled(const ring_t *ring)
 {
-    return (int)(ring->w - ring->r);
+    return (int)(LOAD(&ring->w, acquire) - LOAD(&ring->r, acquire));
+}
+
+uint32_t ring_written(const ring_t *ring)
+{
+    return LOAD(&ring->w, acquire);
+}
+
+void ring_discard(ring_t *ring, uint32_t w)
+{
+    STORE(&ring->r, w, release);
 }
 
 int ring_write(ring_t *ring, const void *pcm, int bytes)
 {
     if (ring->buf == NULL || pcm == NULL || bytes < (int)sizeof(int16_t)) return 0;
-    const int room = ring->cap - ring_filled(ring);
+    const uint32_t w = LOAD(&ring->w, relaxed);
+    const int room = ring->cap - (int)(w - LOAD(&ring->r, acquire));
     int want = bytes / (int)sizeof(int16_t);
     if (want > room) want = room;
     if (want <= 0) return 0;
     /* Two copies at most: the wrap is the only place this is not a straight memcpy. */
-    const int at = (int)(ring->w % (uint32_t)ring->cap);
+    const int at = (int)(w % (uint32_t)ring->cap);
     const int first = ring->cap - at < want ? ring->cap - at : want;
     memcpy(&ring->buf[at], pcm, (size_t)first * sizeof(int16_t));
     if (want > first) {
@@ -37,7 +51,7 @@ int ring_write(ring_t *ring, const void *pcm, int bytes)
                (size_t)(want - first) * sizeof(int16_t));
     }
     /* PUBLISHED LAST. The reader must never see a count that covers bytes not yet copied. */
-    ring->w += (uint32_t)want;
+    STORE(&ring->w, w + (uint32_t)want, release);
     return want * (int)sizeof(int16_t);
 }
 
@@ -49,7 +63,7 @@ int ring_read_run(const ring_t *ring, int want, int *at)
         *at = 0;
         return 0;
     }
-    const int from = (int)(ring->r % (uint32_t)ring->cap);
+    const int from = (int)(LOAD(&ring->r, relaxed) % (uint32_t)ring->cap);
     const int run = ring->cap - from;
     *at = from;
     return take < run ? take : run;
@@ -57,5 +71,5 @@ int ring_read_run(const ring_t *ring, int want, int *at)
 
 void ring_advance(ring_t *ring, int n)
 {
-    if (n > 0) ring->r += (uint32_t)n;
+    if (n > 0) STORE(&ring->r, LOAD(&ring->r, relaxed) + (uint32_t)n, release);
 }

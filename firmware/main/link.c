@@ -1,28 +1,139 @@
-/* The one connection. See link.h for why, and wsproto.h for the protocol. */
+/* The one connection. See link.h for why, and wsproto.h for the protocol and the deadline
+ * arithmetic.
+ *
+ * 0.4.0 (plan §6a, §7.5a, §7.6): the persistent socket is compiled out (`LINK_PERSISTENT_SOCKET`
+ * 0), so every request rides the HTTPS fallback, one session at a time under `s_http_lock`.
+ * Every wait in both transports is cut into LINK_STEP_MS steps, each clamped to the request's
+ * absolute deadline, ticking the caller's `on_progress` and polling its `cancelled`. */
 
 #include "link.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 
-#include "cJSON.h"
 #include "esp_attr.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "esp_websocket_client.h"
 #include "freertos/FreeRTOS.h"
-#include "freertos/event_groups.h"
 #include "freertos/semphr.h"
-#include "freertos/stream_buffer.h"
 #include "freertos/task.h"
+
+#if LINK_PERSISTENT_SOCKET
+#include "cJSON.h"
+#include "esp_websocket_client.h"
+#include "freertos/event_groups.h"
+#include "freertos/stream_buffer.h"
+#endif
 
 #include "wsproto.h"
 
 static const char *TAG = "link";
+
+/* One HTTPS read or upload write. The read buffer is PSRAM, so its size costs no internal RAM. */
+#define LINK_IO_BUF 2048
+#define LINK_WRITE_CHUNK 4096
+
+static const cfg_t *s_cfg;
+static SemaphoreHandle_t s_http_lock;
+static volatile bool s_started;
+static volatile bool s_fallback;
+static volatile bool s_suspended;
+/* The HTTPS path's last real failure. Written by whoever holds `s_http_lock`, read by telemetry;
+   a torn read costs a garbled string in one report, never a crash, because it stays
+   NUL-terminated at its last byte. */
+static char s_http_err[96];
+static uint8_t *s_http_tmp; /* one HTTPS read, PSRAM; only the holder of `s_http_lock` uses it */
+static bool s_suspend_holds_http;
+/* The fallback's traffic, for a socket retry to find a quiet moment in (`wsp_retry_quiet`). */
+static volatile uint32_t s_last_http_ms;
+static int s_http_waiting; /* touched only through __atomic builtins */
+static void (*s_event_fn)(const char *why);
+
+static uint32_t now_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+/* A wait of `ms` as ticks, rounded UP: at 100 Hz a 5 ms remainder is 0 ticks, which would turn
+   the last step before a deadline into a spin. 0 stays 0 (a poll). */
+static TickType_t ticks(uint32_t ms)
+{
+    if (ms == 0) return 0;
+    const TickType_t t = pdMS_TO_TICKS(ms);
+    return t > 0 ? t : 1;
+}
+
+static int as_timeout(uint32_t ms)
+{
+    return ms > (uint32_t)INT_MAX ? INT_MAX : (int)ms;
+}
+
+/* ── one request's clock ────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    const link_req_t *r;
+    uint32_t deadline;  /* in force: the caller's, moved by PROGRESS mode */
+    uint32_t last_beat; /* the last `on_progress` call, for a TICK every LINK_STEP_MS */
+} run_t;
+
+static void beat(run_t *x, link_phase_t phase, uint32_t shown)
+{
+    x->last_beat = now_ms();
+    if (x->r->on_progress != NULL) x->r->on_progress(x->r->ctx, phase, shown);
+}
+
+/* `shown` is the deadline in force: the request's until its head, the stall bound after. */
+static void tick(run_t *x, uint32_t shown)
+{
+    if (link_tick_due(now_ms(), x->last_beat)) beat(x, LINK_PHASE_TICK, shown);
+}
+
+static bool cancel_asked(const run_t *x)
+{
+    return x->r->cancelled != NULL && x->r->cancelled(x->r->ctx);
+}
+
+static uint32_t left(const run_t *x)
+{
+    return link_left(now_ms(), x->deadline);
+}
+
+/* A legacy request (`deadline_ms == 0`) keeps 0.3.39's HTTPS meaning: `timeout_ms` for each
+   phase — the lock, the open, each write, the head — rather than in total, so a caller not yet
+   migrated behaves as it did. A migrated request's deadline is never touched here. */
+static void phase(run_t *x)
+{
+    if (x->r->deadline_ms == 0) x->deadline = link_req_deadline(now_ms(), 0, x->r->timeout_ms);
+}
+
+static void frame_sent(run_t *x)
+{
+    x->deadline = link_after_frame(x->r->upload_mode, now_ms(), x->deadline);
+    if (x->r->upload_mode == LINK_DEADLINE_PROGRESS) {
+        beat(x, LINK_PHASE_UPLOAD, x->deadline);
+    } else {
+        tick(x, x->deadline);
+    }
+}
+
+static void upload_done(run_t *x)
+{
+    x->deadline =
+        link_after_upload(x->r->upload_mode, now_ms(), x->deadline, x->r->head_budget_ms);
+    if (x->r->upload_mode == LINK_DEADLINE_PROGRESS) beat(x, LINK_PHASE_HEAD, x->deadline);
+}
+
+#if LINK_PERSISTENT_SOCKET
+
+/* ── the persistent socket: compiled out since 0.4.0 (plan §6a) ─────────────────────────────
+ *
+ * Kept, with the same deadline rules as the HTTPS path, for the budgeted wave that would bring
+ * it back; nothing here is built or allocated while the switch is 0. */
 
 /* Requests in flight at once. Three tasks ask (main, talk, jpanel); the fourth is slack. The box
    allows the same number (`MAX_INFLIGHT`). */
@@ -41,9 +152,6 @@ static const char *TAG = "link";
    that (jpanel.c's push task), and every task here that handshakes has had at least 6144 since. */
 #define LINK_WS_STACK 7168
 #define LINK_OWNER_STACK 4096
-/* How long a request waits for a socket that is reconnecting rather than failing at once —
-   long enough for one handshake, short of every caller's own patience. */
-#define LINK_UP_WAIT_MS 8000
 #define LINK_CONNECT_MS 15000
 /* A retry from the fallback holds the HTTPS lock while it handshakes, and a request that arrives
    meanwhile waits for it; so it gives up sooner than a first connect. A box that is reachable
@@ -53,12 +161,9 @@ static const char *TAG = "link";
    cannot be interrupted short of its own network timeout (10 s), then the close (2 s). */
 #define LINK_SUSPEND_MS 30000
 #define LINK_SEND_MS 10000
-/* A body that has stopped flowing for this long is a connection that has died under it. */
-#define LINK_STALL_MS 20000
 #define LINK_TEXT_MAX 1024
 /* The whole `res` frame is kept, so it is as large as any frame this reads. */
 #define LINK_HEAD_MAX LINK_TEXT_MAX
-#define LINK_STEP_MS 250
 /* A socket counts as having come up only once it has STAYED up this long. One the box accepts and
    then drops at once (a key revoked mid-flight, a proxy that kills upgrades) would otherwise reset
    the failure count every time and reconnect every two seconds forever — a handshake loop on the
@@ -89,13 +194,11 @@ typedef struct {
     char headjson[LINK_HEAD_MAX];
 } slot_t;
 
-static const cfg_t *s_cfg;
 static EXT_RAM_BSS_ATTR char s_uri[300];
 static EXT_RAM_BSS_ATTR char s_auth_hdr[300];
 static esp_websocket_client_handle_t s_ws;
 static SemaphoreHandle_t s_ws_lock;
 static SemaphoreHandle_t s_slot_lock;
-static SemaphoreHandle_t s_http_lock;
 static EventGroupHandle_t s_ev;
 /* In PSRAM (`EXT_RAM_BSS_ATTR`): about 5 KB of bookkeeping that has no business in the
    internal RAM the TLS session it serves needs. */
@@ -106,33 +209,16 @@ static wsp_rx_t s_rx;
 static EXT_RAM_BSS_ATTR char s_text[LINK_TEXT_MAX];
 static uint8_t s_cur_op;
 
-static volatile bool s_started;
 static volatile bool s_up;
-static volatile bool s_fallback;
-static volatile bool s_suspended;
 static volatile uint32_t s_last_rx_ms;
 static volatile int s_hs_status;
 static unsigned s_connects;
 static unsigned s_drops;
 static unsigned s_events;
-/* The socket's last real failure, and the HTTPS path's. Written by one task each (the socket's
-   own, and whoever holds `s_http_lock`), read by telemetry; a torn read costs a garbled string
-   in one report, never a crash, because both stay NUL-terminated at their last byte. */
+/* The socket's last real failure; written by its own task only. */
 static char s_err[96];
-static char s_http_err[96];
-static uint8_t *s_http_tmp; /* one HTTPS read, PSRAM; only the holder of `s_http_lock` uses it */
-static bool s_suspend_holds_http;
-/* The fallback's traffic, for the retry to find a quiet moment in (`wsp_retry_quiet`). */
-static volatile uint32_t s_last_http_ms;
-static int s_http_waiting; /* touched only through __atomic builtins */
-static void (*s_event_fn)(const char *why);
 
-static uint32_t now_ms(void)
-{
-    return (uint32_t)(esp_timer_get_time() / 1000);
-}
-
-/* ── the socket task's side: events and data ─────────────────────────────────────────────── */
+/* ── the socket task's side: events and data ── */
 
 static slot_t *find(uint32_t id)
 {
@@ -272,15 +358,29 @@ static void on_ws(void *arg, esp_event_base_t base, int32_t event, void *data)
     }
 }
 
-/* ── the owner task ──────────────────────────────────────────────────────────────────────── */
+/* ── the owner task ── */
 
-static int ws_send(bool binary, const void *data, int n)
+/* `x` NULL is the owner task's own traffic (heartbeats, acks, cancels), which keeps the fixed
+   LINK_SEND_MS; a request's lock wait and send are clamped to its deadline and tick. */
+static int ws_send(run_t *x, bool binary, const void *data, int n)
 {
-    if (xSemaphoreTake(s_ws_lock, pdMS_TO_TICKS(LINK_SEND_MS)) != pdTRUE) return -1;
+    uint32_t budget = LINK_SEND_MS;
+    if (x != NULL) {
+        while (true) {
+            const uint32_t l = left(x);
+            if (l == 0) return -1;
+            if (xSemaphoreTake(s_ws_lock, ticks(wsp_wait_step(l, LINK_STEP_MS))) == pdTRUE) break;
+            tick(x, x->deadline);
+        }
+        const uint32_t l = left(x);
+        if (l < budget) budget = l;
+    } else if (xSemaphoreTake(s_ws_lock, pdMS_TO_TICKS(LINK_SEND_MS)) != pdTRUE) {
+        return -1;
+    }
     int sent = -1;
-    if (s_ws != NULL && s_up) {
-        sent = binary ? esp_websocket_client_send_bin(s_ws, data, n, pdMS_TO_TICKS(LINK_SEND_MS))
-                      : esp_websocket_client_send_text(s_ws, data, n, pdMS_TO_TICKS(LINK_SEND_MS));
+    if (s_ws != NULL && s_up && budget > 0) {
+        sent = binary ? esp_websocket_client_send_bin(s_ws, data, n, ticks(budget))
+                      : esp_websocket_client_send_text(s_ws, data, n, ticks(budget));
     }
     xSemaphoreGive(s_ws_lock);
     return sent;
@@ -405,7 +505,7 @@ static bool serve(void)
         if (now - last_hb >= WSP_HEARTBEAT_MS) {
             char hb[16];
             const int n = wsp_hb(hb, sizeof(hb));
-            if (n > 0) ws_send(false, hb, n);
+            if (n > 0) ws_send(NULL, false, hb, n);
             last_hb = now;
         }
         /* THE BOX IS THE LIVENESS TEST, as it is for the radio in `main.c`: it beats every twenty
@@ -491,10 +591,8 @@ static void owner_task(void *arg)
     }
 }
 
-bool link_start(const cfg_t *cfg)
+static bool socket_start(const cfg_t *cfg)
 {
-    if (cfg == NULL || s_started) return s_started;
-    s_cfg = cfg;
     if (wsp_ws_uri(s_uri, sizeof(s_uri), cfg->api, "/endpoint/ws") < 0) {
         ESP_LOGE(TAG, "cannot build a socket address from %s", cfg->api);
         return false;
@@ -509,11 +607,8 @@ bool link_start(const cfg_t *cfg)
     }
     s_ws_lock = xSemaphoreCreateMutex();
     s_slot_lock = xSemaphoreCreateMutex();
-    s_http_lock = xSemaphoreCreateMutex();
     s_ev = xEventGroupCreate();
-    if (s_ws_lock == NULL || s_slot_lock == NULL || s_http_lock == NULL || s_ev == NULL) {
-        return false;
-    }
+    if (s_ws_lock == NULL || s_slot_lock == NULL || s_ev == NULL) return false;
     for (int i = 0; i < LINK_SLOTS; i++) {
         slot_t *s = &s_slots[i];
         s->sig = xSemaphoreCreateBinary();
@@ -526,18 +621,15 @@ bool link_start(const cfg_t *cfg)
             return false;
         }
     }
-    s_http_tmp = heap_caps_malloc(LINK_WS_BUF, MALLOC_CAP_SPIRAM);
-    if (s_http_tmp == NULL) return false;
     wsp_policy_init(&s_policy);
     if (xTaskCreatePinnedToCore(owner_task, "link", LINK_OWNER_STACK, NULL, 4, NULL, 0) != pdPASS) {
         return false;
     }
-    s_started = true;
     ESP_LOGI(TAG, "one socket: %s", s_uri);
     return true;
 }
 
-/* ── the caller's side ──────────────────────────────────────────────────────────────────── */
+/* ── the caller's side ── */
 
 static slot_t *claim(const link_req_t *r)
 {
@@ -578,7 +670,7 @@ static void cancel(uint32_t id)
 {
     char c[48];
     const int n = wsp_cancel(c, sizeof(c), id);
-    if (n > 0) ws_send(false, c, n);
+    if (n > 0) ws_send(NULL, false, c, n);
 }
 
 static void headers_out(const slot_t *s, const link_req_t *r)
@@ -597,14 +689,10 @@ static void headers_out(const slot_t *s, const link_req_t *r)
     cJSON_Delete(root);
 }
 
-static link_res_t ws_request(const link_req_t *r)
+static link_res_t ws_request(run_t *x)
 {
+    const link_req_t *r = x->r;
     link_res_t res = {.status = -1, .err = ""};
-    /* THE DEADLINE INCLUDES THE UPLOAD. A caller's timeout is how long it is willing to wait in
-       all (`talk.c` keeps its own under the renderer's patience on purpose), and a 1.1 MB
-       recording takes real seconds to leave; counting only the wait after it would let the
-       network outlast the face that is waiting on it. */
-    const uint32_t t0 = now_ms();
     slot_t *s = claim(r);
     if (s == NULL) {
         res.err = "ws-busy";
@@ -618,8 +706,9 @@ static link_res_t ws_request(const link_req_t *r)
         release(s);
         return res;
     }
-    if (ws_send(false, ctl, cn) < 0) {
-        res.err = s_err[0] ? s_err : "ws-send";
+    if (ws_send(x, false, ctl, cn) < 0) {
+        res.timed_out = left(x) == 0;
+        res.err = res.timed_out ? "send-timeout" : (s_err[0] ? s_err : "ws-send");
         release(s);
         return res;
     }
@@ -629,7 +718,8 @@ static link_res_t ws_request(const link_req_t *r)
         const size_t n = r->body_len - off > LINK_TX_CHUNK ? LINK_TX_CHUNK : r->body_len - off;
         wsp_put_id(s->tx, s->id);
         memcpy(s->tx + WSP_ID_BYTES, r->body + off, n);
-        if (ws_send(true, s->tx, (int)(n + WSP_ID_BYTES)) < 0) {
+        if (ws_send(x, true, s->tx, (int)(n + WSP_ID_BYTES)) < 0) {
+            res.timed_out = left(x) == 0;
             res.err = "upload-stall";
             /* Told, so the box frees the request's slot now rather than when it ages out. */
             cancel(s->id);
@@ -637,14 +727,30 @@ static link_res_t ws_request(const link_req_t *r)
             return res;
         }
         off += n;
+        frame_sent(x);
     }
+    upload_done(x);
 
-    /* The answer's head. Waited for in steps so a dropped socket ends the wait at once. */
-    while (!s->head && !s->dead && (int)(now_ms() - t0) < r->timeout_ms) {
-        xSemaphoreTake(s->sig, pdMS_TO_TICKS(LINK_STEP_MS));
+    /* The answer's head, in steps so a dropped socket, a deadline or a cancel ends it at once.
+       A legacy request's one `timeout_ms` covers the upload too, as it did on the socket. */
+    while (!s->head && !s->dead) {
+        if (cancel_asked(x)) {
+            res.stopped = true;
+            break;
+        }
+        const uint32_t l = left(x);
+        if (l == 0) {
+            res.timed_out = true;
+            break;
+        }
+        xSemaphoreTake(s->sig, ticks(wsp_wait_step(l, LINK_STEP_MS)));
+        tick(x, x->deadline);
     }
     if (!s->head) {
-        res.err = s->dead ? (s_err[0] ? s_err : "ws-lost") : "no-answer";
+        res.err = res.stopped     ? "cancelled"
+                  : s->dead       ? (s_err[0] ? s_err : "ws-lost")
+                  : res.timed_out ? "no-answer"
+                                  : "ws-lost";
         if (!s->dead) cancel(s->id);
         release(s);
         return res;
@@ -658,14 +764,19 @@ static link_res_t ws_request(const link_req_t *r)
         return res;
     }
 
+    /* The body: LINK_STALL_MS per network gap. Time inside the sink does not count — the clock
+       restarts when it returns, because a sink blocked on a full ring is backpressure. */
+    uint32_t last_byte = now_ms();
     if (s->streaming) {
         size_t consumed = 0, acked = 0;
-        int stalled = 0;
         while (consumed < s->total) {
-            const size_t n = xStreamBufferReceive(s->sb, s->rx, LINK_WS_BUF,
-                                                  pdMS_TO_TICKS(LINK_STEP_MS));
+            if (cancel_asked(x)) {
+                res.stopped = true;
+                cancel(s->id);
+                break;
+            }
+            const size_t n = xStreamBufferReceive(s->sb, s->rx, LINK_WS_BUF, ticks(LINK_STEP_MS));
             if (n > 0) {
-                stalled = 0;
                 consumed += n;
                 res.got = consumed;
                 if (r->sink(r->ctx, s->rx, n) != 0) {
@@ -673,47 +784,58 @@ static link_res_t ws_request(const link_req_t *r)
                     if (consumed < s->total) cancel(s->id);
                     break;
                 }
+                last_byte = now_ms();
                 const size_t credit = wsp_credit(consumed, &acked, LINK_WIN);
                 if (credit > 0) {
                     char a[64];
                     const int an = wsp_ack(a, sizeof(a), s->id, credit);
-                    if (an > 0) ws_send(false, a, an);
+                    if (an > 0) ws_send(NULL, false, a, an);
                 }
+                tick(x, link_deadline_in(last_byte, LINK_STALL_MS));
                 continue;
             }
             if (s->dead && xStreamBufferIsEmpty(s->sb)) {
                 res.cut = true;
                 break;
             }
-            stalled += LINK_STEP_MS;
-            if (stalled >= LINK_STALL_MS) {
+            if (link_left(now_ms(), last_byte + LINK_STALL_MS) == 0) {
                 res.cut = true;
+                res.err = "body-stall";
                 cancel(s->id);
                 break;
             }
+            tick(x, link_deadline_in(last_byte, LINK_STALL_MS));
         }
         if (s->overflow) res.err = "window-overrun";
     } else {
         size_t seen = s->recvd;
-        int stalled = 0;
         while (s->recvd < s->total && !s->dead) {
-            xSemaphoreTake(s->sig, pdMS_TO_TICKS(LINK_STEP_MS));
-            if (s->recvd != seen) {
-                seen = s->recvd;
-                stalled = 0;
-            } else if ((stalled += LINK_STEP_MS) >= LINK_STALL_MS) {
+            if (cancel_asked(x)) {
+                res.stopped = true;
                 cancel(s->id);
                 break;
             }
+            xSemaphoreTake(s->sig, ticks(LINK_STEP_MS));
+            if (s->recvd != seen) {
+                seen = s->recvd;
+                last_byte = now_ms();
+            } else if (link_left(now_ms(), last_byte + LINK_STALL_MS) == 0) {
+                res.err = "body-stall";
+                cancel(s->id);
+                break;
+            }
+            tick(x, link_deadline_in(last_byte, LINK_STALL_MS));
         }
-        res.cut = s->recvd < s->total;
+        res.cut = !res.stopped && s->recvd < s->total;
         res.got = s->recvd < s->cap ? s->recvd : s->cap;
     }
     release(s);
     return res;
 }
 
-/* ── the fallback: one HTTPS session per request, one at a time ─────────────────────────── */
+#endif /* LINK_PERSISTENT_SOCKET */
+
+/* ── the HTTPS path: one session per request, one at a time ─────────────────────────────── */
 
 static esp_err_t http_event(esp_http_client_event_t *e)
 {
@@ -733,22 +855,51 @@ static void http_err(esp_http_client_handle_t c, esp_err_t err)
              (unsigned)tls, esp_http_client_get_errno(c));
 }
 
-static link_res_t http_request(const link_req_t *r)
+/* The lock in steps: a suspend, a cancel or the deadline ends the wait within one. */
+static bool http_lock(run_t *x, link_res_t *res)
 {
-    link_res_t res = {.status = -1, .err = ""};
+    phase(x);
     __atomic_add_fetch(&s_http_waiting, 1, __ATOMIC_SEQ_CST);
-    const bool got = xSemaphoreTake(s_http_lock, pdMS_TO_TICKS(r->timeout_ms)) == pdTRUE;
-    __atomic_sub_fetch(&s_http_waiting, 1, __ATOMIC_SEQ_CST);
-    if (!got) {
-        res.err = "http-busy";
-        return res;
+    bool got = false;
+    while (true) {
+        if (s_suspended) {
+            res->err = "suspended";
+            break;
+        }
+        if (cancel_asked(x)) {
+            res->stopped = true;
+            res->err = "cancelled";
+            break;
+        }
+        const uint32_t l = left(x);
+        if (l == 0) {
+            res->timed_out = true;
+            res->err = "http-busy";
+            break;
+        }
+        if (xSemaphoreTake(s_http_lock, ticks(wsp_wait_step(l, LINK_STEP_MS))) == pdTRUE) {
+            got = true;
+            break;
+        }
+        tick(x, x->deadline);
     }
+    __atomic_sub_fetch(&s_http_waiting, 1, __ATOMIC_SEQ_CST);
+    return got;
+}
+
+static link_res_t http_request(run_t *x)
+{
+    const link_req_t *r = x->r;
+    link_res_t res = {.status = -1, .err = ""};
+    if (!http_lock(x, &res)) return res;
+#if LINK_PERSISTENT_SOCKET
     /* The lock may have been held by a retry that brought the socket back: then this request
        is the socket's, and opening an HTTPS session now would be a second one beside it. */
     if (!s_fallback && s_up) {
         xSemaphoreGive(s_http_lock);
-        return ws_request(r);
+        return ws_request(x);
     }
+#endif
     char url[288];
     char auth[256];
     const int un = snprintf(url, sizeof(url), "%s%s", s_cfg->api, r->path);
@@ -758,9 +909,19 @@ static link_res_t http_request(const link_req_t *r)
         xSemaphoreGive(s_http_lock);
         return res;
     }
+    /* The open's own timeout is a third of what is left; it applies per phase (connect, then
+       each handshake read), so three phases still fit. */
+    phase(x);
+    const uint32_t open_left = left(x);
+    if (open_left == 0) {
+        res.timed_out = true;
+        res.err = "open-timeout";
+        xSemaphoreGive(s_http_lock);
+        return res;
+    }
     esp_http_client_config_t hc = {
         .url = url,
-        .timeout_ms = r->timeout_ms,
+        .timeout_ms = r->deadline_ms == 0 ? as_timeout(open_left) : link_open_timeout_ms(open_left),
         .method = strcmp(r->method, "POST") == 0 ? HTTP_METHOD_POST : HTTP_METHOD_GET,
         .event_handler = http_event,
         .user_data = (void *)r,
@@ -784,52 +945,115 @@ static link_res_t http_request(const link_req_t *r)
     esp_err_t err = esp_http_client_open(c, (int)r->body_len);
     if (err != ESP_OK) {
         http_err(c, err);
+        res.timed_out = left(x) == 0;
         res.err = s_http_err;
         goto done;
     }
+    /* Each write is one blocking call, bounded by what is left; PROGRESS mode then moves the
+       deadline to LINK_STALL_MS past it and tells the engine. */
     for (size_t off = 0; off < r->body_len;) {
-        const size_t left = r->body_len - off;
+        if (cancel_asked(x)) {
+            res.stopped = true;
+            res.err = "cancelled";
+            goto done;
+        }
+        phase(x);
+        const uint32_t l = left(x);
+        if (l == 0) {
+            res.timed_out = true;
+            res.err = "upload-timeout";
+            goto done;
+        }
+        esp_http_client_set_timeout_ms(c, as_timeout(l));
+        const size_t rest = r->body_len - off;
         const int n = esp_http_client_write(c, (const char *)r->body + off,
-                                            left > 4096 ? 4096 : (int)left);
+                                            rest > LINK_WRITE_CHUNK ? LINK_WRITE_CHUNK : (int)rest);
         if (n <= 0) {
+            res.timed_out = left(x) == 0;
             res.err = "upload-stall";
             goto done;
         }
         off += (size_t)n;
+        frame_sent(x);
     }
-    if (esp_http_client_fetch_headers(c) < 0) {
-        res.err = "no-headers";
-        goto done;
+    upload_done(x);
+    phase(x);
+    /* THE HEAD IN STEPS. `esp_http_client_fetch_headers` with a LINK_STEP_MS timeout returns
+       EAGAIN with its parser state kept, so a 60 s transcription ticks the engine and can be
+       cancelled, instead of one blind read the length of the whole budget. */
+    while (true) {
+        if (cancel_asked(x)) {
+            res.stopped = true;
+            res.err = "cancelled";
+            goto done;
+        }
+        const uint32_t l = left(x);
+        if (l == 0) {
+            res.timed_out = true;
+            res.err = "head-timeout";
+            goto done;
+        }
+        esp_http_client_set_timeout_ms(c, as_timeout(wsp_wait_step(l, LINK_STEP_MS)));
+        const int64_t h = esp_http_client_fetch_headers(c);
+        if (h >= 0) break;
+        if (h != -ESP_ERR_HTTP_EAGAIN) {
+            res.err = "no-headers";
+            goto done;
+        }
+        tick(x, x->deadline);
     }
     res.status = esp_http_client_get_status_code(c);
     if (r->on_head != NULL && r->on_head(r->ctx, res.status) != 0) {
         res.stopped = true;
         goto done;
     }
+    /* THE BODY: LINK_STALL_MS per network gap, read in LINK_STEP_MS steps so a cancel and the
+       engine's heartbeat are never further apart than one. Time inside the sink does not count:
+       the clock restarts when it returns, since a sink blocked on a full ring is backpressure. */
+    esp_http_client_set_timeout_ms(c, LINK_STEP_MS);
     uint8_t *tmp = s_http_tmp;
+    uint32_t last_byte = now_ms();
+    bool stalled = false;
     while (true) {
+        if (cancel_asked(x)) {
+            res.stopped = true;
+            break;
+        }
         int n;
+        const bool into_buf = r->sink == NULL && r->buf != NULL && res.got < r->cap;
+        if (into_buf) {
+            n = esp_http_client_read(c, (char *)r->buf + res.got, (int)(r->cap - res.got));
+        } else {
+            /* A sink's chunk, or past the caller's buffer (or no buffer at all): drained so the
+               session ends cleanly, and dropped. */
+            n = esp_http_client_read(c, (char *)tmp, LINK_IO_BUF);
+        }
+        if (n == -ESP_ERR_HTTP_EAGAIN) {
+            if (link_left(now_ms(), last_byte + LINK_STALL_MS) == 0) {
+                stalled = true;
+                break;
+            }
+            tick(x, link_deadline_in(last_byte, LINK_STALL_MS));
+            continue;
+        }
+        if (n <= 0) break;
         if (r->sink != NULL) {
-            n = esp_http_client_read(c, (char *)tmp, LINK_WS_BUF);
-            if (n <= 0) break;
             res.got += (size_t)n;
             if (r->sink(r->ctx, tmp, (size_t)n) != 0) {
                 res.stopped = true;
                 break;
             }
-        } else if (r->buf != NULL && res.got < r->cap) {
-            n = esp_http_client_read(c, (char *)r->buf + res.got, (int)(r->cap - res.got));
-            if (n <= 0) break;
+        } else if (into_buf) {
             res.got += (size_t)n;
-        } else {
-            /* Past the caller's buffer, or no buffer at all: drained so the session ends
-               cleanly, and dropped. */
-            n = esp_http_client_read(c, (char *)tmp, LINK_WS_BUF);
-            if (n <= 0) break;
         }
+        last_byte = now_ms();
+        tick(x, link_deadline_in(last_byte, LINK_STALL_MS));
     }
     const int64_t declared = esp_http_client_get_content_length(c);
-    if (!res.stopped && declared > 0 && !esp_http_client_is_complete_data_received(c)) {
+    if (stalled) {
+        res.cut = true;
+        res.err = "body-stall";
+    } else if (!res.stopped && declared > 0 && !esp_http_client_is_complete_data_received(c)) {
         res.cut = true;
     }
 
@@ -840,6 +1064,32 @@ done:
     return res;
 }
 
+/* ── the API ────────────────────────────────────────────────────────────────────────────── */
+
+bool link_start(const cfg_t *cfg)
+{
+    if (cfg == NULL || s_started) return s_started;
+    s_cfg = cfg;
+    /* Guarded, because `main.c` calls this again after a failed start. */
+    if (s_http_lock == NULL) s_http_lock = xSemaphoreCreateMutex();
+    if (s_http_tmp == NULL) s_http_tmp = heap_caps_malloc(LINK_IO_BUF, MALLOC_CAP_SPIRAM);
+    if (s_http_lock == NULL || s_http_tmp == NULL) return false;
+    /* The head is fetched in LINK_STEP_MS steps, and esp_http_client warns "timed out before
+       data was ready" on every one: 240 lines per 60 s transcription would drown the console.
+       Its errors still print; every failure that matters is in `res.err` anyway. */
+    esp_log_level_set("HTTP_CLIENT", ESP_LOG_ERROR);
+#if LINK_PERSISTENT_SOCKET
+    if (!socket_start(cfg)) return false;
+#else
+    /* NO SOCKET, NO OWNER TASK: nothing here holds a TLS session between requests, which is
+       the ~48 KB that made 0.3.39 abort at boot. */
+    s_fallback = true;
+    ESP_LOGI(TAG, "https, one session at a time");
+#endif
+    s_started = true;
+    return true;
+}
+
 link_res_t link_request(const link_req_t *req)
 {
     link_res_t res = {.status = -1, .err = "no-link"};
@@ -848,18 +1098,35 @@ link_res_t link_request(const link_req_t *req)
         res.err = "suspended";
         return res;
     }
-    if (s_fallback) return http_request(req);
+    const uint32_t t0 = now_ms();
+    run_t x = {.r = req,
+               .deadline = link_req_deadline(t0, req->deadline_ms, req->timeout_ms),
+               .last_beat = t0};
+    if (s_fallback) return http_request(&x);
+#if LINK_PERSISTENT_SOCKET
     /* THE SOCKET IS THE TRANSPORT, so a request does not open a session of its own while it is
        reconnecting — that would be the second concurrent handshake. It waits for one. */
-    const uint32_t t0 = now_ms();
     while (!s_up && !s_fallback && !s_suspended && now_ms() - t0 < LINK_UP_WAIT_MS) {
-        vTaskDelay(pdMS_TO_TICKS(50));
+        if (cancel_asked(&x)) {
+            res.stopped = true;
+            res.err = "cancelled";
+            return res;
+        }
+        const uint32_t l = left(&x);
+        if (l == 0) {
+            res.timed_out = true;
+            res.err = s_err[0] ? s_err : "ws-down";
+            return res;
+        }
+        vTaskDelay(ticks(wsp_wait_step(l, 50)));
+        tick(&x, x.deadline);
     }
-    if (s_up) return ws_request(req);
+    if (s_up) return ws_request(&x);
     /* It fell back while this request waited — a box without the route says so on the first
        attempt — and the fallback is exactly what this request should now use. */
-    if (s_fallback) return http_request(req);
+    if (s_fallback) return http_request(&x);
     res.err = s_err[0] ? s_err : "ws-down";
+#endif
     return res;
 }
 
@@ -867,13 +1134,16 @@ void link_suspend(void)
 {
     if (!s_started) return;
     s_suspended = true;
+#if LINK_PERSISTENT_SOCKET
     xEventGroupSetBits(s_ev, EV_WAKE);
     /* Parked means the socket is destroyed and its session's memory is back. Bounded: a stuck
        teardown must not stop an update that is the one thing that could fix it. */
     const EventBits_t parked = xEventGroupWaitBits(s_ev, EV_PARKED, pdFALSE, pdFALSE,
                                                    pdMS_TO_TICKS(LINK_SUSPEND_MS));
     if (!(parked & EV_PARKED)) ESP_LOGW(TAG, "socket still closing after %d ms", LINK_SUSPEND_MS);
-    /* And no fallback request is mid-session either. Held until `link_resume`. */
+#endif
+    /* And no request is mid-session either. Held until `link_resume`; a request already queued
+       on the lock sees `s_suspended` within one step and leaves. */
     s_suspend_holds_http = xSemaphoreTake(s_http_lock, pdMS_TO_TICKS(60000)) == pdTRUE;
     ESP_LOGI(TAG, "suspended — internal free %u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 }
@@ -884,13 +1154,17 @@ void link_resume(void)
     s_suspended = false;
     if (s_suspend_holds_http) xSemaphoreGive(s_http_lock);
     s_suspend_holds_http = false;
+#if LINK_PERSISTENT_SOCKET
     xEventGroupSetBits(s_ev, EV_WAKE);
+#endif
 }
 
 void link_on_event(void (*fn)(const char *why))
 {
     s_event_fn = fn;
 }
+
+#if LINK_PERSISTENT_SOCKET
 
 bool link_live(void)
 {
@@ -912,3 +1186,28 @@ void link_stats(unsigned *connects, unsigned *drops, unsigned *events, const cha
     if (events != NULL) *events = s_events;
     if (err != NULL) *err = s_err;
 }
+
+#else
+
+/* No socket: the box never speaks first, so the settings poll keeps its own pace. */
+bool link_live(void)
+{
+    return false;
+}
+
+const char *link_mode(void)
+{
+    return s_started ? "http" : "off";
+}
+
+/* The report's `ws_err` carries the HTTPS path's last failure instead, the only transport there
+   is: an empty field would hide the one reason the owner can read through the debug API. */
+void link_stats(unsigned *connects, unsigned *drops, unsigned *events, const char **err)
+{
+    if (connects != NULL) *connects = 0;
+    if (drops != NULL) *drops = 0;
+    if (events != NULL) *events = 0;
+    if (err != NULL) *err = s_http_err;
+}
+
+#endif

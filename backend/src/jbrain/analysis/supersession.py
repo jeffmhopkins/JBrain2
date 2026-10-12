@@ -106,8 +106,8 @@ INVERSE_PAIRS: dict[str, str] = {
     "child_of": "parent_of",
     "childof": "parent_of",
     # Kinship the prompt steers toward (schema.org `parent` / `children`). The
-    # parent's edge to their kid (Me.children -> Summer) reflects to the kid's
-    # parent edge (Summer.parent -> Me); a bare `child` ("Summer is my child")
+    # parent's edge to their kid (Me.children -> Hazel) reflects to the kid's
+    # parent edge (Hazel.parent -> Me); a bare `child` ("Hazel is my child")
     # reads the same direction as `children`, so it reciprocates to `parent`
     # too. The `_of` pair above stays for the opposite-direction spelling.
     "parent": "children",
@@ -125,8 +125,8 @@ INVERSE_PAIRS: dict[str, str] = {
     "mentors": "mentee_of",
     "mentee_of": "mentor_of",
     "menteeof": "mentor_of",
-    # Dating: the gendered words name an asymmetric pair (Summer.boyfriend ->
-    # colin reflects to colin.girlfriend -> Summer). The mapping is the common
+    # Dating: the gendered words name an asymmetric pair (Hazel.boyfriend ->
+    # colin reflects to colin.girlfriend -> Hazel). The mapping is the common
     # different-sex reading; a same-sex couple's reciprocal would be mis-gendered,
     # but the registry can't see the subjects' genders and the alternative —
     # leaving the bond one-directional — is the worse default the user hit.

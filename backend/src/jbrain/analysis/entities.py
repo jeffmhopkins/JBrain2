@@ -4,7 +4,7 @@ Layered, cheapest first:
 
   layer 1   exact alias / canonical-name match, case- and diacritic-
             insensitive, plus the first-person -> "Me" rule.
-  layer 2b  relationship hop for reference-shaped mentions ("Summer's rat",
+  layer 2b  relationship hop for reference-shaped mentions ("Hazel's rat",
             "my dentist", "the rat") — deterministic graph lookups, no LLM.
             Role references resolve through the relationship fact valid at
             the note's time (docs/reference/ANALYSIS.md "Role references"), never
@@ -160,10 +160,10 @@ _VALID_EDGE = """
 # An entity "matches a noun" when (a) its kind is the noun or its bare plural
 # — kind values are model-coined free text ("rat" vs "rats"), so strict
 # equality is brittle; (b) the noun appears in one of its aliases; (c) an
-# attribute/state fact ON IT mentions the noun ("Summer's rat is named Ricky"
+# attribute/state fact ON IT mentions the noun ("Hazel's rat is named Ricky"
 # / {"species": "rat"}); or (d) an asserted relationship edge pointing AT it
 # mentions the noun — live extractions often put the only species evidence in
-# the introducing edge's statement ("Summer owns a rat named Ricky") and emit
+# the introducing edge's statement ("Hazel owns a rat named Ricky") and emit
 # no facts on the animal itself. Edges FROM the entity stay excluded (their
 # statements routinely name OTHER entities), and (d) is assertion-gated so a
 # negated "does not own a rat" cannot read as rat-ness.
@@ -241,8 +241,8 @@ async def _owned_candidates(
     session: AsyncSession, owner_id: uuid.UUID, noun: str, *, at: datetime, domain: str
 ) -> list[EntityCandidate]:
     """Objects of any active relationship edge FROM `owner`, valid at the
-    note's time, that match the noun: "Summer's rat" -> the rat-shaped thing
-    Summer has an edge to. The edge predicate is deliberately unconstrained
+    note's time, that match the noun: "Hazel's rat" -> the rat-shaped thing
+    Hazel has an edge to. The edge predicate is deliberately unconstrained
     (owns / pet / adopted all read as possession); the noun filter is what
     keeps the hop precise."""
     rows = (
@@ -357,8 +357,8 @@ async def _relationship_hop(
             # Unknown or ambiguous owner: not a hop we can trust.
             return None
         owner_id = owners[0].id
-        # Both graph shapes: "Summer's dentist" (role edge whose object is
-        # Summer) and "Summer's rat" (possession edge from Summer).
+        # Both graph shapes: "Hazel's dentist" (role edge whose object is
+        # Hazel) and "Hazel's rat" (possession edge from Hazel).
         candidates = await _role_candidates(session, owner_id, ref.noun, at=at, domain=domain)
         seen = {c.id for c in candidates}
         candidates += [
@@ -1044,7 +1044,7 @@ async def resolve_entity(
         if hop is not None:
             return hop
 
-    # Layer 2 applies to plain names only: a reference surface ("Summer's
+    # Layer 2 applies to plain names only: a reference surface ("Hazel's
     # rat") is a description, not a name, so its vector matching an entity
     # NAME would be coincidence, not evidence.
     if ref is None and embedder is not None:

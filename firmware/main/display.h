@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "jpanel_types.h"
+
 /* Bring up the AMOLED and draw the test pattern. NEVER fails fatally: a display fault must
    not stop this unit reaching the box, because reaching the box is how the fault gets
    fixed. Returns whether the panel came up; the caller logs it and carries on either way. */
@@ -94,6 +96,8 @@ typedef enum {
     DISPLAY_RESTART_BLIT_HEAL,
     DISPLAY_RESTART_GESTURE,
     DISPLAY_RESTART_OTA_PARK,
+    DISPLAY_RESTART_WD_ENGINE,  /* the engine watchdog (plan §7.5d) */
+    DISPLAY_RESTART_WD_ARBITER, /* the audio arbiter watchdog */
 } display_restart_t;
 void display_note_restart(display_restart_t why);
 const char *display_restart_reason(void);
@@ -115,6 +119,8 @@ const char *display_restart_reason(void);
  * caller waits, and must keep its own timeout, because a renderer that has died cannot be
  * allowed to strand a panel on an image it has already installed. */
 void display_request_restart(void);
+/* The same park-then-restart, saying why (the watchdogs, `main.c`). */
+void display_request_restart_for(display_restart_t why);
 
 /* HOW MANY TIMES THE BOOT BUTTON HAS BEEN PRESSED SINCE BOOT, and why that is a question.
  *
@@ -160,3 +166,7 @@ void display_swipes(unsigned *n, int *last_dx, int *sel);
  * `"net"` (the reason is in the reach row) or `"timeout"` (there is no reach row, which is the
  * point of counting it here). */
 void display_dashes(unsigned *n, const char **why, uint32_t *ago_ms);
+
+/* The state machine's counters for the report's `jp` object: `sm_violations`, `late_outcome`,
+   render's `lease_refusals` (added to the engine's) and the arbiter's `cue_expired`. */
+void display_jp_stats(jp_stats_t *st);

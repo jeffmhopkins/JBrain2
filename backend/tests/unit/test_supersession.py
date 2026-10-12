@@ -868,7 +868,7 @@ def test_symmetric_predicate_reflects_with_same_predicate() -> None:
     assert inverse_predicate("sibling_of") == "sibling_of"
     assert inverse_predicate("co_founder") == "co_founder"
     # Twins are siblings; a bare `twin` predicate reciprocates symmetrically too,
-    # so "Lydian and Elora are twins" mirrors onto Elora's stream.
+    # so "Tamsin and Quorra are twins" mirrors onto Quorra's stream.
     assert inverse_predicate("sibling") == "sibling"
     assert inverse_predicate("twin") == "twin"
     # The gender-neutral romantic predicate reflects with itself, the safe

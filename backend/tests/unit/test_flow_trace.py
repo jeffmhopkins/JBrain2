@@ -63,7 +63,7 @@ def test_disabled_emits_nothing() -> None:
             entity_ref="Me",
             predicate="children",
             qualifier="",
-            object_ref="summer",
+            object_ref="hazel",
             subject_id="s",
             object_id="o",
             existing=[],
@@ -114,7 +114,7 @@ def _commit(**over: Any) -> dict[str, Any]:
         entity_ref="Me",
         predicate="children",
         qualifier="",
-        object_ref="summer",
+        object_ref="hazel",
         subject_id="7d381675-0000-0000",
         object_id="68f005d9-0000-0000",
         existing=[],
@@ -130,7 +130,7 @@ def _commit(**over: Any) -> dict[str, Any]:
 def test_commit_insert_against_empty_graph() -> None:
     ev = _commit()
     assert ev["event"] == "analysis.flow.commit"
-    assert ev["edge"] == "Me.children -> summer"
+    assert ev["edge"] == "Me.children -> hazel"
     assert ev["verb"] == "insert"
     assert ev["subject_id"] == "7d381675"  # shortened to first uuid segment
     assert ev["object_id"] == "68f005d9"
@@ -139,16 +139,16 @@ def test_commit_insert_against_empty_graph() -> None:
 
 
 def test_commit_surfaces_collapse_when_lookup_hits_a_sibling_row() -> None:
-    # An Elora candidate whose identity-key lookup pulls back the Summer row and
+    # A Quorra candidate whose identity-key lookup pulls back the Hazel row and
     # resolves to a refresh instead of an insert — the exact collapse signature
     # this trace exists to make visible.
     ev = _commit(
-        object_ref="Elora",
+        object_ref="Quorra",
         object_id="62c477b7-0000",
         existing=[_factview("68f005d9-aaaa", "68f005d9-aaaa", "active")],
         decision=Decision(refresh_id="68f005d9-aaaa"),
     )
-    assert ev["edge"] == "Me.children -> Elora"
+    assert ev["edge"] == "Me.children -> Quorra"
     assert ev["verb"] == "refresh"
     assert ev["object_id"] == "62c477b7"
     assert ev["existing"] == [{"id": "68f005d9", "obj": "68f005d9", "status": "active"}]

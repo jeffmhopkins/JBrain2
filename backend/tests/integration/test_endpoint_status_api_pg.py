@@ -70,14 +70,14 @@ async def test_the_owner_sees_what_each_panel_last_said_about_itself(
             client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
 
         login()
-        ellie = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        quorra = client.post(
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         client.post("/api/devices", json={"label": "room endpoint panel", "device_role": "jpet"})
 
         _report(
             client,
-            ellie["key"],
+            quorra["key"],
             {
                 "version": "0.2.94",
                 "uptime_ms": 7_200_000,
@@ -90,9 +90,9 @@ async def test_the_owner_sees_what_each_panel_last_said_about_itself(
         login()
 
         panels = {p["name"]: p for p in client.get("/api/endpoint/status").json()["panels"]}
-        assert set(panels) == {"Ellie", "the other one"}
+        assert set(panels) == {"Quorra", "the other one"}
 
-        reported = panels["Ellie"]
+        reported = panels["Quorra"]
         assert reported["version"] == "0.2.94"
         assert reported["report"]["screen"] == "dark"
         assert reported["report"]["restart_why"] == "ota-park"
@@ -121,12 +121,12 @@ async def test_a_second_report_replaces_the_first(
     app = create_app(Settings(secure_cookies=False, database_url=database_url))
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
-        ellie = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+        quorra = client.post(
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
 
-        _report(client, ellie["key"], {"version": "0.2.89", "uptime_ms": 1, "ota_err": "X"})
-        _report(client, ellie["key"], {"version": "0.2.94", "uptime_ms": 2})
+        _report(client, quorra["key"], {"version": "0.2.89", "uptime_ms": 1, "ota_err": "X"})
+        _report(client, quorra["key"], {"version": "0.2.94", "uptime_ms": 2})
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
 
         panels = client.get("/api/endpoint/status").json()["panels"]
@@ -151,9 +151,9 @@ async def test_a_re_flashed_panel_appears_once(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
         for _ in range(3):
-            client.post("/api/devices", json={"label": "panel Ellie", "device_role": "jpet"})
+            client.post("/api/devices", json={"label": "panel Quorra", "device_role": "jpet"})
         newest = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
 
         _report(client, newest["key"], {"version": "0.2.94", "uptime_ms": 1})
@@ -184,9 +184,9 @@ async def test_the_owner_can_revoke_a_panel_from_the_fleet_view(
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
         for _ in range(2):
-            client.post("/api/devices", json={"label": "panel Ellie", "device_role": "jpet"})
+            client.post("/api/devices", json={"label": "panel Quorra", "device_role": "jpet"})
         newest = client.post(
-            "/api/devices", json={"label": "panel Ellie", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         keeper = client.post(
             "/api/devices", json={"label": "panel Nora", "device_role": "jpet"}
@@ -197,11 +197,11 @@ async def test_the_owner_can_revoke_a_panel_from_the_fleet_view(
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
 
         panels = {p["name"]: p for p in client.get("/api/endpoint/status").json()["panels"]}
-        assert set(panels) == {"Ellie", "Nora"}
+        assert set(panels) == {"Quorra", "Nora"}
 
-        answer = client.post(f"/api/endpoint/panels/{panels['Ellie']['device_id']}/revoke")
+        answer = client.post(f"/api/endpoint/panels/{panels['Quorra']['device_id']}/revoke")
         assert answer.status_code == 200, answer.text
-        assert answer.json() == {"name": "Ellie", "keys": 3}, "all three flashes, not just one"
+        assert answer.json() == {"name": "Quorra", "keys": 3}, "all three flashes, not just one"
 
         # Gone from the fleet, and her sister untouched.
         after = {p["name"] for p in client.get("/api/endpoint/status").json()["panels"]}

@@ -371,7 +371,7 @@ async def test_the_roster_collapses_the_keys_a_reflash_leaves_behind(
     """ONE ROW PER NAME, NEWEST KEY WINS.
 
     Every `/flash` mints a fresh device key and nothing retires the old one. The live box had
-    thirteen unrevoked principals labelled "panel Elora" — one physical panel, re-flashed — and
+    thirteen unrevoked principals labelled "panel Quorra" — one physical panel, re-flashed — and
     two more unnamed, so `send(to="panel")` saw fifteen candidates where it needs exactly one.
     Even with the RLS fix above, that alone would have kept the feature at 409 forever.
 

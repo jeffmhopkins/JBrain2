@@ -119,7 +119,7 @@ class Waiting(BaseModel):
 
     count: int = 0
     from_name: str = ""
-    # WHO THE OTHER PANEL IS, so the blue recording indicator can say TO ELORA rather than
+    # WHO THE OTHER PANEL IS, so the blue recording indicator can say TO QUORRA rather than
     # MESSAGE. A panel had no way to ask that — there was no route for it, and inventing a word
     # for a child's twin would be worse than the placeholder — so the gap was written into
     # `display.c` as an honest one. This is the answer, and it rides the poll the panel already
@@ -161,7 +161,7 @@ class Message(BaseModel):
     # as something the OWNER had failed to deal with.
     #
     # The owner: *"my pwa is showing messages between the girls ... make sure the pwa is
-    # correctly listing that it was lydian to elora, not kid to Dad."* `to_name` was already on
+    # correctly listing that it was tamsin to quorra, not kid to Dad."* `to_name` was already on
     # the wire; nothing said the message was not his, so nothing drew it.
     direction: Literal["in", "out", "between"]
     transcript: str
@@ -264,7 +264,7 @@ async def _panel_names(maker) -> dict[str, str]:
 
     THE COST IS NAMING. Two physical panels flashed with the SAME name collapse to one row and
     one twin becomes unreachable. That is not a regression — a child saying "send a message"
-    could not have picked between two panels called Elora either — but it is now the ONE thing
+    could not have picked between two panels called Quorra either — but it is now the ONE thing
     that breaks addressing, so it is logged loudly rather than left to be discovered."""
     async with scoped_session(maker, _ADDRESSING) as session:
         rows = (
@@ -969,7 +969,7 @@ async def rename_panel(
     through that one moves one device's label and leaves the roster alone.
 
     Refused when the name is already another panel's, because `_panel_names` keeps one row per
-    label: two panels called Elora become one row and one twin becomes unreachable. That is the
+    label: two panels called Quorra become one row and one twin becomes unreachable. That is the
     one failure this addressing model has, it is documented where it is caused, and it must not
     be reachable from a text box."""
     name = _panel_name(body.name)
