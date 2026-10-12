@@ -123,9 +123,13 @@ static bool color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data
     return woken == pdTRUE;
 }
 
+static svc_display_strip_fn s_tap;
+static void *s_tap_ctx;
+
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
     if (s_ok) {
+        if (s_tap) s_tap(s_tap_ctx, a->x1, a->y1, a->x2, a->y2, (const uint16_t *)px);
         const int64_t t0 = esp_timer_get_time();
         lv_draw_sw_rgb565_swap(px, lv_area_get_size(a));
         esp_err_t e = esp_lcd_panel_draw_bitmap(s_panel, a->x1, a->y1, a->x2 + 1, a->y2 + 1, px);
@@ -254,6 +258,18 @@ void svc_display_service(void)
     s_applied = s_bri_err == ESP_OK;
     ESP_LOGI(TAG, "brightness %u%%%s -> 0x51=%u: %s", s_req_pct, s_dark ? " (dark)" : "", level,
              esp_err_to_name(s_bri_err));
+}
+
+bool svc_display_capture(svc_display_strip_fn strip, void *ctx)
+{
+    lv_display_t *d = lv_display_get_default();
+    if (!s_ok || !d) return false;
+    s_tap = strip;
+    s_tap_ctx = ctx;
+    lv_obj_invalidate(lv_screen_active());
+    lv_refr_now(d);
+    s_tap = NULL;
+    return s_ok;
 }
 
 bool svc_display_ok(void)

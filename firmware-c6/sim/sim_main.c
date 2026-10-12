@@ -308,6 +308,8 @@ static const state_t STATES[] = {
     {"rec-anywhere", NULL, {OPEN("settings"), KEY_DOWN, WAIT(3400)}},
     /* Its release: the Jerv thread, with the bubble that says nothing was recorded. */
     {"jerv-after-key", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300)}},
+    /* BOOT held from inside an app: the clock face (owner, 2026-10-12). */
+    {"boot-long", NULL, {OPEN("settings"), "{\"cmd\":\"inject\",\"event\":\"boot_long\"}", WAIT(300)}},
     /* Not a mock board: a short session whose snapshot shows the debug surface. */
     {"session", session, {OPEN("quorra"), KEY_DOWN, WAIT(2000), KEY_UP, OPEN("tamsin"), WAIT(100)}},
 };

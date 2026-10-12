@@ -9,7 +9,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-typedef enum { BTN_KEY_DOWN, BTN_KEY_UP, BTN_BOOT, BTN_PWR } btn_event_t;
+/* BTN_BOOT is a short press, sent on its release; BTN_BOOT_LONG is a hold past BTN_LONG_MS. */
+typedef enum { BTN_KEY_DOWN, BTN_KEY_UP, BTN_BOOT, BTN_PWR, BTN_BOOT_LONG } btn_event_t;
 typedef void (*btn_sink_fn)(btn_event_t ev);
 
 /* `sink` is called from this service's task. `notify` is woken (a task notification) when PWR

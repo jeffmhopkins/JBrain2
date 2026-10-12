@@ -17,12 +17,14 @@
  * the shell's alone and never reaches an app. */
 #define SH_EV_PWR ((app_event_type_t)APP_EV__COUNT)
 #define SH_EV_TOUCH ((app_event_type_t)(APP_EV__COUNT + 1))
+#define SH_EV_BOOT_LONG ((app_event_type_t)(APP_EV__COUNT + 2))
 #define APPS_MAX 8
 #define RECENT 8
 
 static app_t *s_apps[APPS_MAX];
 static unsigned s_napps;
 static const char *s_alarm_app = "clock";
+static const char *const s_clock_app = "clock";
 static const char *s_talk_app = "jerv";
 static uint8_t s_pages = 1;
 
@@ -50,7 +52,7 @@ static unsigned s_recent_n;
 
 static const char *const EV_NAMES[] = {"key_down", "key_up", "boot", "net_up", "net_down",
                                        "msg_arrived", "alarm_due", "notice_arrived",
-                                       "tick_minute", "wake", "pwr", "touch_wake"};
+                                       "tick_minute", "wake", "pwr", "touch_wake", "boot_long"};
 
 static void host_home(void);
 static void host_toast(const char *t);
@@ -97,6 +99,7 @@ static sh_facts_t facts(void)
     f.page = s_page;
     f.dark = svc_display_dark();
     f.talking = ui_talk_up(&s_talk);
+    f.clock_open = s_open && !strcmp(s_open->id, s_clock_app);
     return f;
 }
 
@@ -411,6 +414,7 @@ static void act(sh_act_t a)
         if (ui_talk_up(&s_talk)) ui_toast("Cancelled — nothing sent", 2200);
         talk_end(false);
         break;
+    case SH_ACT_OPEN_CLOCK: shell_open(s_clock_app); break;
     case SH_ACT_WAKE: set_dark(false); break;
     case SH_ACT_DARK:
         talk_end(false);
@@ -467,6 +471,8 @@ void shell_pump(void)
         case APP_EV_BOOT: handle_button(SH_BTN_BOOT, ev.type); break;
         case SH_EV_PWR: handle_button(SH_BTN_PWR, ev.type); break;
         case SH_EV_TOUCH: handle_button(SH_BTN_TOUCH, ev.type); break;
+        /* Offered as BOOT when it falls back to BOOT (a ringing alarm): apps know no other. */
+        case SH_EV_BOOT_LONG: handle_button(SH_BTN_BOOT_LONG, APP_EV_BOOT); break;
         default: handle_event(&ev); break;
         }
         sync_overlays();
@@ -482,7 +488,7 @@ void shell_post(const app_event_t *ev)
 void shell_button(sh_button_t b)
 {
     static const app_event_type_t MAP[] = {APP_EV_KEY_DOWN, APP_EV_KEY_UP, APP_EV_BOOT, SH_EV_PWR,
-                                           SH_EV_TOUCH};
+                                           SH_EV_TOUCH,     SH_EV_BOOT_LONG};
     app_event_t ev = {.type = MAP[b], .at_ms = svc_rtc_uptime_ms()};
     sh_evq_push(&s_q, &ev);
 }
@@ -634,7 +640,7 @@ static bool cmd_inject(const dbg_req_t *r, dbg_json_t *d, char *err, size_t n)
         const char *name;
         sh_button_t b;
     } BTN[] = {{"key_down", SH_BTN_KEY_DOWN}, {"key_up", SH_BTN_KEY_UP}, {"boot", SH_BTN_BOOT},
-               {"pwr", SH_BTN_PWR}};
+               {"boot_long", SH_BTN_BOOT_LONG}, {"pwr", SH_BTN_PWR}};
     for (size_t i = 0; i < sizeof BTN / sizeof *BTN; i++)
         if (!strcmp(r->event, BTN[i].name)) {
             shell_button(BTN[i].b);

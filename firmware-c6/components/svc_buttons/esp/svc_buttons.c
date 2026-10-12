@@ -72,11 +72,14 @@ static void buttons_task(void *arg)
 {
     (void)arg;
     btn_db_t boot = {0}, key = {0}, g18 = {0};
+    btn_hold_t boot_hold = {0};
     uint32_t last_notify = 0;
     for (;;) {
         int d = btn_db_step(&boot, gpio_get_level(PIN_BOOT) == 0);
         if (d) note_edge(d > 0 ? "boot=dn" : "boot=up");
-        if (d > 0 && s_sink) s_sink(BTN_BOOT);
+        const btn_hold_ev_t h = btn_hold_step(&boot_hold, d, now_ms());
+        if (h == BTN_HOLD_LONG) note_edge("boot=long");
+        if (h != BTN_HOLD_NONE && s_sink) s_sink(h == BTN_HOLD_LONG ? BTN_BOOT_LONG : BTN_BOOT);
 
         d = btn_db_step(&key, gpio_get_level(PIN_KEY) == 0);
         if (d) note_edge(d > 0 ? "key=dn" : "key=up");

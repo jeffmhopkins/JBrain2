@@ -16,7 +16,10 @@
 > adds").
 > **C2d's box side is built (2026-10-12)** — the table, its RLS, the command/result routes,
 > the `JPS1` → PNG decoder and `debug-connect.sh panel-cmd` / `panel-shot` (§4 "The box
-> side"); the panel's pickup lands in firmware 0.0.9.
+> side"). **0.0.9 (built, awaiting the board)** is the panel's half: the 3 s pickup over one
+> kept-alive HTTPS session, every command on the UI task, the screenshot streamed from the
+> renderer through two 4 KB chunks, the `esp_log` hook and the boot's secret check — plus BOOT
+> held for the Clock and the mock's microphone (firmware README "What 0.0.9 adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -159,6 +162,16 @@ the talk overlay keeps the rule that a release goes where its press went. Built 
 `sh_declined` hands the hold to the shell); until audio lands the release shows a "Not sent"
 bubble rather than a transcript.
 
+### BOOT held opens the Clock (owner, 2026-10-12)
+
+A **long press of BOOT (800 ms) opens the Clock from anywhere**, fired once the moment the
+threshold is crossed while still held. A short press keeps home / back but now fires on the
+**release** (only then is it known to be short), so a long press is never also a back. On the
+Clock it is a no-op; over the talk ring or a ringing alarm it is plain BOOT (cancel, stop); over a
+notice it opens the Clock, whose face keeps the notice as its badge; on a dark screen it only
+wakes. The timing is `btn_hold_step` (`svc_buttons/btn_logic.c`), the routing `sh_route_button`
+(`SH_BTN_BOOT_LONG` → `SH_ACT_OPEN_CLOCK`), both host-tested; built in 0.0.9.
+
 ## 2. The push path: the box can tap the owner on the shoulder
 
 The owner: *"an API … that just shows a pop-up of a message … so the machine can send this
@@ -250,7 +263,7 @@ four orientations fit with no relayout of the frame — only the content turns.
 | **C0** ✅ | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Proven on the board 2026-10-11. |
 | **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
 | **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **0.0.4 on the glass (measured):** home renders, runtime brightness and PWR dark/wake work, KEY and BOOT route as designed. **0.0.6 (built, awaiting the board):** `svc_touch` — the CST9220 polled every 20 ms over `svc_power`'s bus through a locked transfer API (still one owner), raw→display mapping, failure reported as `touch=failed:<step>`; the shell's real-pointer rules host- and sim-tested (tap within 20 px, sideways swipe ≥ 60 px, a stroke on a dark screen wakes and reaches nothing, a notice appearing under a finger ends its stroke). **Left:** confirming 0.0.5 installs and 0.0.6's taps, swipes and corners on the glass, then the RTC. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
-| **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI); left: the panel's pickup and upload (0.0.9), the stripe handoff, Ops → Panels buttons. |
+| **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI). **0.0.9 (built, awaiting the board):** the pickup every 3 s from the update loop (manifest first, backoff to 60 s on a silent box, none while the box is unreachable), one kept-alive session for every box request, commands on the UI task through a one-slot job (3 s, else `ui busy`; inline on a boot with no UI), the screenshot streamed chunked from the renderer (2 × 4 KB, ≤ 2 s of stillness, `net slow` / `capture torn` as JSON), the `esp_log` ring hook with clip-aware secret scrubbing, `dbg=` / `tls=` / `sec=` telemetry. **Left:** proving it on the glass, Ops → Panels buttons. |
 | **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **Left:** calibration, the alarm service and PWA editor, audio, the box client for messages. | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C2r** | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, LVGL software rotation, touch mapped through it, the Settings switch. After touch is proven on the board. | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
 | **C3b** | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tools, `svc_notice` and the overlay. | Jerv asks a yes/no on the panel and acts on the tap. |
@@ -294,7 +307,10 @@ screen, nothing can press a button.
   existing draw buffer is run-length encoded as it is flushed (`JPS1`: per strip `y0, rows, len`,
   then `(len-1, rgb565)` runs). Extra RAM is the encoder (~0.6 KB) plus a 2×4 KB handoff to the
   network task — the UI task never blocks on the network; if the handoff is full for 50 ms the
-  capture aborts with `net slow` rather than stall a frame. On the wire the mock's screens are
+  capture aborts with `net slow` rather than stall a frame. (As built in 0.0.9: the UI is inside
+  one render for the whole capture, so the bound is the total — 2 s — with 250 ms per wait,
+  because one TCP ACK held by Wi-Fi power save can take ~100 ms; power save is off while the
+  stream goes up.) On the wire the mock's screens are
   17-46 KB (measured in the sim); the worst case, noise, is 3 bytes a pixel. The box decodes to
   PNG. The sim's every render goes through this exact path.
 

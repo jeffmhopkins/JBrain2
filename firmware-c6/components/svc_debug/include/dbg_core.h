@@ -40,7 +40,11 @@ uint32_t dbg_log_evicted(void);
 void dbg_log_reset(void);
 void dbg_log_set_clock(uint32_t (*now_ms)(void));
 /* The esp_log hook: on the device, dbg_log_chain(esp_log_set_vprintf(dbg_log_vprintf)) puts
- * every ESP_LOGx line in the ring and still prints it. */
+ * every ESP_LOGx line in the ring and still prints it. Safe from any task: no allocation of its
+ * own, no blocking, and the ring's lock is a critical section that is ISR-safe too — but
+ * ESP_LOGx itself is not for ISRs (ESP_DRAM_LOGx/ESP_EARLY_LOGx print through the ROM and never
+ * reach here). Secrets are scrubbed as the line is stored, the one place that knows whether it
+ * was clipped: a token cut off at the line limit is still most of a token. */
 typedef int (*dbg_vprintf_t)(const char *fmt, va_list ap);
 int dbg_log_vprintf(const char *fmt, va_list ap);
 void dbg_log_chain(dbg_vprintf_t prev);
@@ -77,6 +81,44 @@ void dbg_cmd_reset(void);
 /* {"id":…,"cmd":…,"ok":…,"data":{…}|"err":…}. On the UI task only: handlers open apps,
  * inject presses and read widget counts, and the UI task is the one owner of LVGL. */
 void dbg_cmd_run(const char *req_json, dbg_json_t *out);
+
+/* ---- the pickup's schedule (dbg_sched.c) ----
+ * The main task's one connection carries the manifest, telemetry and the debug pickup, in that
+ * order of importance: a due manifest check always goes first, so a debug session can delay an
+ * update by at most one exchange (each bounded by its own timeout), never indefinitely. */
+#define DBG_POLL_MS 3000
+/* A session usually asks again at once, so the next request is collected sooner. */
+#define DBG_POLL_AFTER_CMD_MS 500
+/* A box that does not answer is asked every 6, 12, 24, 48, then 60 s, not every 3. */
+#define DBG_POLL_MAX_MS 60000
+
+typedef enum { DBG_POLL_EMPTY, DBG_POLL_CMD, DBG_POLL_FAIL } dbg_poll_t;
+typedef struct {
+    uint32_t due_ms;
+    uint8_t fails;
+} dbg_sched_t;
+typedef enum { DBG_NEXT_CHECK, DBG_NEXT_POLL, DBG_NEXT_SLEEP } dbg_next_t;
+
+void dbg_sched_init(dbg_sched_t *s, uint32_t now_ms);
+void dbg_sched_done(dbg_sched_t *s, uint32_t now_ms, dbg_poll_t outcome);
+/* What the loop does now. `online` false (no link, or the box not reached on the last check)
+ * means no pickup: the manifest check is the reachability probe, and it alone runs. SLEEP sets
+ * `*sleep_ms` to the wait for whichever is due first. Wrap-safe across the 49-day rollover. */
+dbg_next_t dbg_sched_next(const dbg_sched_t *s, uint32_t now_ms, uint32_t check_due_ms, bool online,
+                          uint32_t *sleep_ms);
+
+/* What telemetry says about the relay. */
+typedef struct {
+    uint32_t polls_ok, polls_err, cmds;
+    char last_cmd[16];
+    int16_t last_status; /* the result POST's HTTP status, -1 when nothing answered */
+    uint32_t shot_bytes, shot_ms;
+} dbg_stats_t;
+/* `dbg=ok:N,err:N,cmds:N,last:<cmd>/<status>,shot:<bytes>/<ms>`. */
+void dbg_stats_note(const dbg_stats_t *s, char *out, size_t len);
+
+/* The request id goes into the result's URL, so it must be the box's UUID text and nothing else. */
+bool dbg_req_id_ok(const char *id);
 
 /* ---- stripe screenshot ----
  * No PSRAM means no frame to copy, so a capture rides the renderer: the screen is invalidated
