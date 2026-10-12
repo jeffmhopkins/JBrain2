@@ -546,25 +546,26 @@ class TestNamingAPanelWithoutACable:
         font_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.h").read_text(
             encoding="utf-8"
         )
-        # THE BOX'S WIDTH IS IN `ui.h` NOW, not in a local in `draw_popup`, and that is the
-        # fix rather than a complication: the notice's picture and its tap target used to be
-        # different rectangles, so 0.3.29 gave the geometry one home and both read it from
-        # there. This pin follows it — reading the literal out of `draw_popup` would go stale
-        # the moment the drawing stops owning the number, which is exactly what happened.
+        # THE BOX'S WIDTH IS THE STATE MACHINE'S (`panel_sm.h`, since 0.4.0; `ui.h` before it),
+        # not a local in `draw_popup`, and that is the fix rather than a complication: the
+        # notice's picture and its tap target used to be different rectangles, so the geometry
+        # has one home and both read it from there. This pin follows it — reading the literal
+        # out of `draw_popup` would go stale the moment the drawing stops owning the number.
         start = display.index("static void draw_popup(")
         popup = display[start : display.index("\n}", start)]
-        ui_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "ui.h").read_text(
+        sm_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "panel_sm.h").read_text(
             encoding="utf-8"
         )
         scale = re.search(r"#define POPUP_SCALE (\d+)", display)
-        box = re.search(r"#define UI_POPUP_BIG_W (\d+)", ui_h)
+        box = re.search(r"#define SM_NOTICE_BIG_W (\d+)", sm_h)
         pad = re.search(r"w > bw - (\d+) \?", popup)
         width = re.search(r"#define FONT_W (\d+)", font_h)
         assert scale and box and pad and width, "the pop-up's geometry moved; re-pin this test"
         # And the drawing really does take its width from there, or the number above is just a
         # constant nothing uses.
-        assert "const int bw = UI_POPUP_BIG_W" in popup, (
-            "draw_popup stopped taking its width from ui.h; the picture can drift from the target"
+        assert "const int bw = SM_NOTICE_BIG_W" in popup, (
+            "draw_popup stopped taking its width from panel_sm.h; the picture can drift from the "
+            "target"
         )
         n = jpanel.MAX_PANEL_NAME
         drawn = (n * int(width.group(1)) + (n - 1)) * int(scale.group(1))
@@ -584,10 +585,16 @@ class TestNamingAPanelWithoutACable:
             encoding="utf-8"
         )
         assert '"sibling"' in src, "the panel stopped reading the sibling name off the poll"
+        # Since 0.4.0 the name rides the engine's snapshot (`jp_waiting_t.sibling`), and the
+        # recording indicator draws it from the copy render takes each frame.
+        types = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_types.h"
+        ).read_text(encoding="utf-8")
+        assert re.search(r"char sibling\[JP_NAME_MAX\];", types), "the snapshot lost the name"
         display = (
             Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
         ).read_text(encoding="utf-8")
-        assert "jpanel_sibling(" in display, (
+        assert "waiting.sibling" in display, (
             "the recording indicator no longer asks who the message is going to"
         )
 
@@ -685,10 +692,16 @@ class TestNamingAPanelWithoutACable:
         assert '"from_owner"' in src, "and it still needs each entry's sender kind"
         # And each entry's id, when the box sends one (W3): the run and `/next?id=` work by id.
         assert '"id"' in src, "the panel stopped reading the queue's ids"
+        # Since 0.4.0 the selected entry is the state machine's (`sm_face`, plan §8.2 I2) and
+        # the drawing takes it from the machine's view rather than asking the queue itself.
+        sm = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "panel_sm.c").read_text(
+            encoding="utf-8"
+        )
+        assert "waiting.q[" in sm, "the machine no longer reads the described queue"
         display = (
             Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
         ).read_text(encoding="utf-8")
-        assert "jpanel_waiting_at(" in display, (
+        assert "view->face" in display, (
             "the drawing no longer asks who the SELECTED message is from"
         )
 

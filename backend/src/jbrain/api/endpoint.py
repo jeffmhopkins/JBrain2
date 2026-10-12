@@ -716,6 +716,20 @@ class TelemetryIn(BaseModel):
     # Hex, one sample per entry, oldest first. Empty on a cold boot, which is itself the
     # answer to "did anything survive the restart".
     pmu_history: list[str] = []
+    # WHETHER THE RECOGNISER STARTED. A panel whose free internal RAM was under the floor when
+    # speech came up boots DEAF rather than crash-looping (0.3.39's PHY abort, firmware 0.4.0's
+    # `SPEECH_MIN_INTERNAL`) — and a deaf panel cannot send, because a recording only learns she
+    # spoke from the recogniser. That has to be a fault the owner can see without a cable, so it
+    # is reported. None from firmware older than 0.4.0, which is "unknown", not "deaf".
+    speech_ok: bool | None = None
+    # VOICE POST'S OWN COUNTERS (firmware 0.4.0, plan §7.7): one object of FLAT INTEGER keys —
+    # `ack_owed`, `ack_retries`, `no_refund`, `returned`, `lease_refusals`, `snapshot_retries`,
+    # `post_failed`, `late_outcome`, `cue_expired`, `jpanel_stack_free`, `sm_violations`,
+    # `wd_engine`, `wd_arbiter`, `wd_disarmed`. Deliberately loose here: a key the box does not
+    # know yet must not 422 the report, because a 422 is a FAILED report and this is the panel's
+    # only no-terminal diagnostic. Anything nested or non-integer still fails, which is the
+    # contract the firmware is pinned to (`test_jp_keys_from_main_c_validate_against_telemetry_in`).
+    jp: dict[str, int] | None = None
     note: str = ""
 
 

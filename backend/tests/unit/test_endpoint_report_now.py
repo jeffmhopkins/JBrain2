@@ -365,17 +365,22 @@ class TestTheVolumeCeilingWasTheBugReport:
 
         Pinned as the CONDITION, because the bug was a missing term in it rather than a missing
         call — a test that only checked `speech_mute_commands` is called would have passed
-        throughout."""
+        throughout. Since 0.4.0 the machine derives it every frame (`SM_FX_MUTE_COMMANDS`) and
+        `display.c` executes it."""
         import pathlib
         import re
 
-        display = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
-        ).read_text(encoding="utf-8")
-        call = re.search(r"speech_mute_commands\(([^;]+)\);", display)
+        main = pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main"
+        call = re.search(
+            r"fx\(out, SM_FX_MUTE_COMMANDS,([^;]+)\);", (main / "panel_sm.c").read_text("utf-8")
+        )
         assert call, "the command mute is gone"
         cond = call.group(1)
-        for state in ("TALK_RECORDING", "TALK_LISTENING", "s_standby"):
+        display = (main / "display.c").read_text(encoding="utf-8")
+        assert re.search(
+            r"case SM_FX_MUTE_COMMANDS:.*?speech_mute_commands\(f->arg != 0\);", display, re.S
+        ), "the machine's mute no longer reaches the recogniser"
+        for state in ("SM_RECORD", "SM_LISTEN", "sm->standby"):
             assert state in cond, (
                 f"{state} is no longer muted. Every one of these is a microphone open for "
                 "something other than commands: a message to a sibling, a conversation turn, and "
@@ -484,21 +489,32 @@ class TestTheButtonGridIsWiredToRealActions:
         src = self._fw("display.c")
         assert "#define BOOT_DEBOUNCE_MS 250" in src, "the debounce window is gone"
         assert "s_boot_last_ms" in src, "nothing rejects a bounced edge any more"
-        assert "if (boot_button_take()) {" in src, "the short press reaches nothing"
+        # Since 0.4.0 the press is an input to the machine (`btn_short`), which owns standby.
+        assert "btn_short = boot_button_take();" in src, "the short press reaches nothing"
+        assert "s_in.btn_short = btn_short;" in src, "the short press never reaches the machine"
         # Both halves: into standby, and back out of it.
-        assert "s_standby = true;" in src and 'sleep_wake("button")' in src, (
+        sm = self._fw("panel_sm.c")
+        assert "sm->standby = true;" in sm and "sm->standby = false;" in sm, (
             "the button no longer both enters and leaves standby"
         )
+        assert 'sleep_wake("button")' in src, "leaving standby no longer lights the screen"
         # And the hold is a separate edge, or the power-off would fire on every press.
         assert "boot_button_sleep_requested()" in src, "the five-second hold reaches nothing"
 
     def test_every_icon_reaches_the_same_path_the_voice_does(self) -> None:
-        src = self._fw("display.c")
-        # One helper each, so a refusal is identical however it was asked for.
-        assert "start_send_recording(who == SENDTO_DAD" in src, "the people icons do not record"
-        assert "who == SENDTO_PET" in src and "start_listening(now, speaking)" in src, (
+        """One helper each, behind one mic gate, so a refusal is identical however it was asked
+        for. The machine's since 0.4.0 (`panel_sm.c`)."""
+        src = self._fw("panel_sm.c")
+        cells = src[src.index("case SM_T_CELL_SISTER:") : src.index("case SM_T_CELL_CANCEL:")]
+        assert "mic_gate(sm, in, false)" in cells, "the icons skip the mic gate"
+        assert "open_record(sm, in, out, &w, true)" in cells, "the people icons do not record"
+        assert "open_listen(sm, in, out, false, true)" in cells, (
             "the pet icon does not start a conversation"
         )
+        voice = src[src.index("static void voice(") : src.index("static bool button(")]
+        assert voice.count("mic_gate(sm, in, false)") >= 2, "a phrase skips the mic gate"
+        assert "open_record(sm, in, out, &w, false)" in voice, "tell sister/dad does not record"
+        assert "open_listen(sm, in, out, false, false)" in voice, "the name does not listen"
 
     def test_commands_are_muted_while_a_message_is_recorded(self) -> None:
         """The pet acting on words from inside a message is what put farts into a four-year-old's
@@ -510,9 +526,9 @@ class TestTheButtonGridIsWiredToRealActions:
         # as an equality, went red on `main` rather than noticing a deliberate widening. What
         # must not change is that the argument is computed from `s_talk` every frame — an
         # armed-at-the-edges mute leaks, because recording ends five ways.
-        mute = re.search(r"speech_mute_commands\(([^;]*)\);", self._fw("display.c"))
+        mute = re.search(r"fx\(out, SM_FX_MUTE_COMMANDS,([^;]*)\);", self._fw("panel_sm.c"))
         assert mute is not None, "nothing mutes the commands any more"
-        assert "s_talk == TALK_RECORDING" in mute.group(1), (
+        assert "sm->mode == SM_RECORD" in mute.group(1), (
             "the mute is no longer derived from the state and can leak"
         )
         # The ring must still fill: a recording is when what it hears is most interesting.
@@ -647,6 +663,54 @@ class TestEveryFieldThePanelSendsIsDeclaredHere:
             "will never reach a log"
         )
 
+    def test_jp_keys_from_main_c_validate_against_telemetry_in(self) -> None:
+        """VOICE POST'S COUNTERS RIDE ONE OBJECT, AND ITS SHAPE IS A CONTRACT ON BOTH SIDES
+        (plan §7.7). `TelemetryIn.jp` is `dict[str, int]`, so the panel may add a key without a
+        box change — but anything nested or non-integer would 422 the whole report, and a 422 is
+        a FAILED report: the panel's only no-terminal diagnostic, lost. So the keys are read out
+        of `main.c`'s format string, every one is checked to be written as a bare integer, and a
+        worst case built from them is validated against the model. It is emitted AFTER
+        `pmu_history`, outside the span the field scan above reads, which is why it is pinned
+        separately."""
+        import pathlib
+        import re
+
+        import pytest
+        from pydantic import ValidationError
+
+        from jbrain.api.endpoint import TelemetryIn
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+        start = src.index('",\\"jp\\":{')
+        block = src[start : src.index('}",', start)]
+        keys = re.findall(r'\\"([a-z_0-9]+)\\":(%[a-z]+)', block)
+        names = [k for k, _ in keys]
+        assert len(names) >= 14, "the jp object moved; re-pin this test"
+        assert all(fmt == "%u" for _, fmt in keys), "every jp value must be a flat integer"
+        for want in ("ack_owed", "lease_refusals", "sm_violations", "wd_engine", "wd_disarmed"):
+            assert want in names, f"the report lost jp.{want}"
+        assert src.index('\\"pmu_history\\":[') < start, "jp must follow pmu_history"
+        report = TelemetryIn.model_validate(
+            {"version": "0.4.0", "uptime_ms": 1, "jp": dict.fromkeys(names, 4294967295)}
+        )
+        assert report.jp is not None and set(report.jp) == set(names)
+        with pytest.raises(ValidationError):
+            TelemetryIn.model_validate({"version": "0.4.0", "uptime_ms": 1, "jp": {"a": {"b": 1}}})
+
+    def test_the_panel_reports_whether_it_can_hear(self) -> None:
+        """`speech_ok` is how a panel that booted deaf (under `SPEECH_MIN_INTERNAL`) says so."""
+        import pathlib
+
+        from jbrain.api.endpoint import TelemetryIn
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+        assert '\\"speech_ok\\":%s' in src and 'speech_live() ? "true" : "false"' in src
+        assert "speech_ok" in TelemetryIn.model_fields
+
     def test_the_scan_found_a_realistic_number_of_fields(self) -> None:
         """Guards the guard: if the format string is restructured and the slice above stops
         matching, `_telemetry_keys` would return a handful of keys and the test above would
@@ -724,18 +788,18 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
         may still succeed. Nothing failed, so nothing was recorded, and the commonest shape of
         "it didn't work" was the one with no evidence.
 
-        Both halves of the firmware raise this dash — `panel_sm.c` is the tested machine,
-        `display.c` the shipping mirror until it only executes the machine's effects — and a
-        counter in only one of them is a counter that reports zero from the panel on the wall."""
-        for name, why in (
-            ("panel_sm.c", "in->net == SM_NET_FAILED"),
-            ("display.c", "talk_state() =="),
-        ):
-            src = _fw(name)
-            assert '"timeout"' in src and '"net"' in src, f"{name} no longer tells them apart"
-            assert why in src, f"{name} no longer decides the reason from the live state"
-        assert "sm->dashes++" in _fw("panel_sm.c"), "the machine stopped counting"
-        assert "s_dashes++" in _fw("display.c"), "the shipping half stopped counting"
+        Since 0.4.0 one half raises it: the machine (`panel_sm.c`) counts it and names the cause
+        from the live state, and `display.c` — which only executes the machine's effects — hands
+        both to the report. A counter the report does not read is one that reports zero from the
+        panel on the wall."""
+        sm = _fw("panel_sm.c")
+        assert '"timeout"' in sm and '"net"' in sm, "the machine no longer tells them apart"
+        assert "in->net == SM_NET_FAILED" in sm, "the reason is no longer read from the live state"
+        assert "sm->dashes++" in sm, "the machine stopped counting"
+        display = _fw("display.c")
+        assert "sm_dash_name(s_out.dash_why)" in display, "the reason never reaches the report"
+        assert "*n = s_sm.dashes" in display, "the count never reaches the report"
+        assert "display_dashes(&dashes, &dash_err, &dash_ago);" in _fw("main.c")
 
     def test_the_route_surfaces_both(self) -> None:
         """A number the firmware reports into a model that declares it and a route that never
