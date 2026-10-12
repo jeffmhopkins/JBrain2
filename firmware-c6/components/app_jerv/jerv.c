@@ -1,25 +1,17 @@
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>
-
+/* Jerv: the shared conversation (convo) with Jerv's thread, title and colour. Its own instance,
+ * so nothing here is Dave's (app_minecraft holds his). */
 #include "app_jerv.h"
-#include "jerv_model.h"
-#include "svc_audio.h"
-#include "svc_messages.h"
-#include "svc_settings.h"
-#include "ui_kit.h"
-#include "ui_pin.h"
+#include "convo.h"
 
-#define PRINCIPAL "jerv"
-
-typedef struct {
-    lv_obj_t *root, *list;
-    ui_talk_t talk;
-    ui_pin_t pin;
-} jerv_t;
-
-static jerv_t s_jerv;
 static const ui_icon_t ICON = {UI_GLYPH_STAR, 0};
+static const convo_config_t CFG = {
+    .thread = "jerv",
+    .title = "Jerv",
+    .icon = &ICON,
+    .accent = UI_ACCENT_JERV,
+    .empty = "Nothing said yet. Hold KEY and ask Jerv something.",
+};
+static convo_t s_convo;
 
 static void back(lv_event_t *e)
 {
@@ -27,110 +19,35 @@ static void back(lv_event_t *e)
     self->host->go_home();
 }
 
-static void listen(lv_event_t *e)
-{
-    svc_audio_speak((uint32_t)(uintptr_t)lv_obj_get_user_data(lv_event_get_current_target(e)));
-}
-
-static void fill_list(jerv_t *j)
-{
-    /* A redraw (a transcript filled in, "Speaking…" gone) keeps the reader where they were:
-       emptied, the page would clamp its scroll to the top and stay there. */
-    const int32_t y = lv_obj_get_scroll_y(j->list);
-    lv_obj_clean(j->list);
-    bool tts = svc_settings_get(SET_TTS) != 0;
-    const bool can_speak = svc_audio_can_speak();
-    uint16_t n = svc_messages_count(PRINCIPAL);
-    msg_t m = {0};
-    for (uint16_t i = 0; i < n; i++) {
-        if (!svc_messages_get(PRINCIPAL, i, &m)) continue;
-        char dur[8];
-        snprintf(dur, sizeof dur, "0:%02u", m.dur_s % 60);
-        const uint32_t speaking = svc_audio_playing();
-        ui_bubble_t b = {.mine = m.mine, .voice = m.voice, .pending = m.pending, .text = m.text,
-                         .dur = dur, .status = m.status, .speaking = speaking && m.id == speaking,
-                         .listen = can_speak && jerv_shows_listen(&m, tts, speaking), .tag = m.id};
-        ui_bubble(j->list, &b, UI_ACCENT_JERV, listen, NULL);
-    }
-    if (!n) ui_label_wrap(j->list, "Nothing said yet. Hold KEY and ask Jerv something.", 18, UI_C_MUTED);
-    if (ui_pin_should(&j->pin, n ? m.id : 0)) {
-        ui_page_pin_bottom(j->list);
-    } else {
-        lv_obj_update_layout(j->list);
-        lv_obj_scroll_to_y(j->list, y, LV_ANIM_OFF);
-    }
-}
-
 static void jerv_open(app_t *self, lv_obj_t *root)
 {
-    jerv_t *j = self->state;
-    *j = (jerv_t){.root = root};
-    ui_header(root, &ICON, UI_ACCENT_JERV, "Jerv", back, self);
-    j->list = ui_page(root, true, 60);
-    ui_talk_hint(root);
-    fill_list(j);
-}
-
-static void end_talk(jerv_t *j, bool send, const app_host_t *host)
-{
-    if (!ui_talk_up(&j->talk)) return;
-    ui_talk_close(&j->talk);
-    const char *t = jerv_talk_toast(svc_audio_talk_end(send));
-    if (t) host->toast(t);
-}
-
-static void tapped(void *user)
-{
-    app_t *self = user;
-    end_talk(self->state, false, self->host);
-}
-
-static void capped(void *user)
-{
-    app_t *self = user;
-    end_talk(self->state, true, self->host);
+    convo_open(self->state, &CFG, self->host, root, back, self);
 }
 
 static void jerv_close(app_t *self)
 {
-    jerv_t *j = self->state;
-    end_talk(j, false, self->host);
+    convo_close(self->state);
 }
 
 static bool on_event(app_t *self, const app_event_t *ev)
 {
-    jerv_t *j = self->state;
-    switch (ev->type) {
-    case APP_EV_KEY_DOWN:
-        if (!svc_audio_talk_begin(TALK_TO_JERV, PRINCIPAL)) {
-            const char *why = svc_audio_talk_refused();
-            if (why) self->host->toast(why);
-            return true;
-        }
-        j->talk = (ui_talk_t){.cap_ms = TALK_MAX_MS, .ms = svc_audio_talk_ms,
-                              .level = svc_audio_level, .on_tap = tapped, .on_cap = capped,
-                              .user = self};
-        ui_talk_open(&j->talk, j->root, UI_C_ROSE, "Jerv is listening");
-        return true;
-    case APP_EV_KEY_UP: end_talk(j, true, self->host); return true;
-    case APP_EV_BOOT:
-        if (!ui_talk_up(&j->talk)) return false;
-        end_talk(j, false, self->host);
-        return true;
-    case APP_EV_MSG_ARRIVED:
-        if (!strcmp(ev->u.principal, PRINCIPAL)) fill_list(j);
-        return false;
-    default: return false;
-    }
+    return convo_event(self->state, ev);
 }
 
 static void describe(app_t *self, dbg_json_t *w)
 {
-    jerv_t *j = self->state;
-    dbg_json_bool(w, "talking", ui_talk_up(&j->talk));
-    dbg_json_int(w, "shown", svc_messages_count(PRINCIPAL));
-    dbg_json_int(w, "pinned_to", j->pin.last_id);
-    dbg_json_int(w, "speaking", svc_audio_playing());
+    convo_describe(self->state, w);
+}
+
+static bool can_clear(app_t *self)
+{
+    (void)self;
+    return true;
+}
+
+static void clear(app_t *self)
+{
+    convo_clear(self->state);
 }
 
 app_t app_jerv = {
@@ -144,5 +61,7 @@ app_t app_jerv = {
     .close = jerv_close,
     .on_event = on_event,
     .describe = describe,
-    .state = &s_jerv,
+    .can_clear = can_clear,
+    .clear = clear,
+    .state = &s_convo,
 };

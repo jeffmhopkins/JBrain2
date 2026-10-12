@@ -18,6 +18,7 @@
 #define SH_EV_PWR ((app_event_type_t)APP_EV__COUNT)
 #define SH_EV_TOUCH ((app_event_type_t)(APP_EV__COUNT + 1))
 #define SH_EV_BOOT_LONG ((app_event_type_t)(APP_EV__COUNT + 2))
+#define SH_EV_LONG_PRESS ((app_event_type_t)(APP_EV__COUNT + 3))
 #define APPS_MAX 8
 #define RECENT 8
 
@@ -52,7 +53,15 @@ static unsigned s_recent_n;
 
 static const char *const EV_NAMES[] = {"key_down", "key_up", "boot", "net_up", "net_down",
                                        "msg_arrived", "alarm_due", "notice_arrived",
-                                       "tick_minute", "wake", "pwr", "touch_wake", "boot_long"};
+                                       "tick_minute", "wake", "pwr", "touch_wake", "boot_long",
+                                       "long_press"};
+
+/* The conversation menu (long press): its state is shell_core's, its widgets these. */
+static sh_menu_t s_menu;
+static lv_obj_t *s_menu_obj;
+static lv_timer_t *s_menu_lapse;
+static sh_lp_t s_lp;
+static uint32_t s_menus, s_clears;
 
 static void host_home(void);
 static void host_toast(const char *t);
@@ -101,7 +110,115 @@ static sh_facts_t facts(void)
     f.talking = ui_talk_up(&s_talk);
     f.clock_open = s_open && !strcmp(s_open->id, s_clock_app);
     f.replying = svc_audio_replying();
+    f.menu_open = s_menu.state == SH_MENU_OPEN;
     return f;
+}
+
+/* ---- the conversation menu ---- */
+
+static void build_menu(void);
+
+static void menu_drop(void)
+{
+    if (s_menu_lapse) lv_timer_delete(s_menu_lapse);
+    s_menu_lapse = NULL;
+    if (s_menu_obj) lv_obj_delete(s_menu_obj);
+    s_menu_obj = NULL;
+    sh_menu_close(&s_menu);
+}
+
+static void menu_lapsed(lv_timer_t *t)
+{
+    (void)t;
+    s_menu_lapse = NULL; /* a one-shot deletes itself */
+    if (s_menu.state == SH_MENU_OPEN) build_menu();
+}
+
+static void menu_do(sh_menu_in_t in)
+{
+    switch (sh_menu_input(&s_menu, in, svc_rtc_uptime_ms())) {
+    case SH_MENU_DO_ARM:
+        build_menu();
+        if (s_menu_lapse) lv_timer_delete(s_menu_lapse);
+        s_menu_lapse = lv_timer_create(menu_lapsed, SH_MENU_ARM_MS + 20, NULL);
+        lv_timer_set_repeat_count(s_menu_lapse, 1);
+        break;
+    case SH_MENU_DO_CLEAR:
+        menu_drop();
+        if (s_open && s_open->clear) {
+            s_open->clear(s_open);
+            s_clears++;
+            ui_toast("Chat cleared", 2200);
+        }
+        break;
+    case SH_MENU_DO_CLOSE: menu_drop(); break;
+    default: break;
+    }
+}
+
+/* Acted on after the event that asked, never inside it: the menu is rebuilt or deleted, and a
+   widget must not be deleted from its own click. */
+static void menu_later(void *in)
+{
+    menu_do((sh_menu_in_t)(uintptr_t)in);
+}
+
+static void menu_clear_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_async_call(menu_later, (void *)(uintptr_t)SH_MENU_IN_CLEAR);
+}
+
+static void menu_cancel_cb(lv_event_t *e)
+{
+    (void)e;
+    lv_async_call(menu_later, (void *)(uintptr_t)SH_MENU_IN_CANCEL);
+}
+
+static void menu_outside_cb(lv_event_t *e)
+{
+    /* Only a tap on the dim itself: a press on the card bubbles nowhere, but be sure. */
+    if (lv_event_get_target(e) != lv_event_get_current_target(e)) return;
+    lv_async_call(menu_later, (void *)(uintptr_t)SH_MENU_IN_OUTSIDE);
+}
+
+static void build_menu(void)
+{
+    if (s_menu_obj) lv_obj_delete(s_menu_obj);
+    lv_obj_t *card = ui_menu(lv_layer_top(), "This conversation", menu_outside_cb, NULL);
+    s_menu_obj = lv_obj_get_parent(card);
+    const bool armed = sh_menu_armed(&s_menu, svc_rtc_uptime_ms());
+    ui_button(card, armed ? "Tap again to clear" : "Clear chat", UI_BTN_DESTRUCTIVE, true,
+              menu_clear_cb, NULL);
+    ui_button(card, "Cancel", UI_BTN_SECONDARY, true, menu_cancel_cb, NULL);
+    lv_obj_t *hint = ui_label_wrap(card, "Clears it on this panel. BOOT closes this.", 16, UI_C_MUTED);
+    lv_obj_set_width(hint, LV_PCT(100));
+    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+}
+
+static bool conversation_open(void)
+{
+    return s_open && s_open->can_clear && s_open->clear && s_open->can_clear(s_open);
+}
+
+static void long_pressed(void)
+{
+    sh_facts_t f = facts();
+    if (!sh_menu_may_open(&f, conversation_open())) return;
+    /* The finger is still down on whatever it pressed: forget that press, so lifting it neither
+       clicks a bubble's Play nor reaches the menu that is about to be under it. */
+    if (s_indev) {
+        lv_indev_reset(s_indev, NULL);
+        lv_indev_wait_release(s_indev);
+    }
+    sh_menu_open(&s_menu);
+    s_menus++;
+    build_menu();
+}
+
+bool shell_menu_open(void)
+{
+    return s_menu.state == SH_MENU_OPEN;
 }
 
 /* ---- home ---- */
@@ -192,6 +309,7 @@ static void build_home(void)
 
 static void close_current(void)
 {
+    menu_drop();
     if (!s_open) return;
     s_open->close(s_open);
     /* The shell deletes the root whatever the app did, so a widget an app forgot to free
@@ -259,7 +377,7 @@ static void talk_capped(void *user)
 
 static void talk_begin(void)
 {
-    if (!svc_audio_talk_begin(TALK_TO_JERV, s_talk_app)) {
+    if (!svc_audio_talk_begin(TALK_TO_AGENT, s_talk_app)) {
         const char *why = svc_audio_talk_refused();
         if (why) ui_toast(why, 2600);
         return;
@@ -431,8 +549,10 @@ static void act(sh_act_t a)
     case SH_ACT_WAKE: set_dark(false); break;
     case SH_ACT_DARK:
         talk_end(false);
+        menu_drop();
         set_dark(true);
         break;
+    case SH_ACT_CLOSE_MENU: menu_drop(); break;
     default: break;
     }
 }
@@ -486,6 +606,7 @@ void shell_pump(void)
         case SH_EV_TOUCH: handle_button(SH_BTN_TOUCH, ev.type); break;
         /* Offered as BOOT when it falls back to BOOT (a ringing alarm): apps know no other. */
         case SH_EV_BOOT_LONG: handle_button(SH_BTN_BOOT_LONG, APP_EV_BOOT); break;
+        case SH_EV_LONG_PRESS: long_pressed(); break;
         default: handle_event(&ev); break;
         }
         sync_overlays();
@@ -511,7 +632,9 @@ void shell_button(sh_button_t b)
 static struct {
     int x, y, dx;
     int step; /* -1 idle; then press, drag, release */
-} s_touch = {0, 0, 0, -1};
+    uint32_t hold_until; /* a held stroke: pressed until this uptime, then released */
+    bool hold;
+} s_touch = {0, 0, 0, -1, 0, false};
 
 #define DRAG_STEPS 6
 
@@ -527,6 +650,14 @@ static sh_gate_t s_gate;
  * release that both landed inside one read period are each seen. */
 static void pointer_sample(lv_indev_data_t *d)
 {
+    if (s_touch.step >= 0 && s_touch.hold) {
+        d->point.x = s_touch.x;
+        d->point.y = s_touch.y;
+        const bool down = (int32_t)(s_touch.hold_until - svc_rtc_uptime_ms()) > 0;
+        d->state = down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+        if (!down) s_touch.step = -1;
+        return;
+    }
     if (s_touch.step >= 0) {
         int s = s_touch.step++;
         int moved = s < 2 ? 0 : s_touch.dx * (s - 1 > DRAG_STEPS ? DRAG_STEPS : s - 1) / DRAG_STEPS;
@@ -550,6 +681,12 @@ static void touch_read(lv_indev_t *in, lv_indev_data_t *d)
     if (!sh_gate(&s_gate, d->state == LV_INDEV_STATE_PRESSED, svc_display_dark(), &wake))
         d->state = LV_INDEV_STATE_RELEASED;
     if (wake) shell_button(SH_BTN_TOUCH);
+    /* Decided here, where every sample passes, and acted on from the queue like a button. */
+    if (sh_long_press(&s_lp, d->state == LV_INDEV_STATE_PRESSED, d->point.x, d->point.y,
+                      svc_rtc_uptime_ms())) {
+        app_event_t ev = {.type = SH_EV_LONG_PRESS, .at_ms = svc_rtc_uptime_ms()};
+        sh_evq_push(&s_q, &ev);
+    }
 }
 
 void shell_set_pointer(shell_pointer_fn fn)
@@ -562,6 +699,17 @@ void shell_touch(int x, int y, int dx)
     s_touch.x = x;
     s_touch.y = y;
     s_touch.dx = dx;
+    s_touch.hold = false;
+    s_touch.step = 0;
+}
+
+void shell_touch_hold(int x, int y, uint32_t ms)
+{
+    s_touch.x = x;
+    s_touch.y = y;
+    s_touch.dx = 0;
+    s_touch.hold_until = svc_rtc_uptime_ms() + ms;
+    s_touch.hold = true;
     s_touch.step = 0;
 }
 
@@ -601,6 +749,11 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_bool(w, "talking", f.talking);
     dbg_json_bool(w, "replying", f.replying);
     dbg_json_bool(w, "notices_held", f.notices_held);
+    dbg_json_str(w, "menu", !f.menu_open                                 ? "closed"
+                            : sh_menu_armed(&s_menu, svc_rtc_uptime_ms()) ? "armed"
+                                                                          : "open");
+    dbg_json_int(w, "menus", s_menus);
+    dbg_json_int(w, "clears", s_clears);
     dbg_json_obj_begin(w, "keys");
     dbg_json_int(w, "jerv", s_keys.jerv);
     dbg_json_int(w, "app", s_keys.app);
@@ -663,6 +816,18 @@ static bool cmd_inject(const dbg_req_t *r, dbg_json_t *d, char *err, size_t n)
             dbg_json_str(d, "queued", r->event);
             return true;
         }
+    if (!strcmp(r->event, "hold")) {
+        /* A finger held still: `value` ms (default 800, enough to open a conversation's menu). */
+        if (r->x < 0 || r->x >= UI_W || r->y < 0 || r->y >= UI_H) {
+            snprintf(err, n, "off the glass");
+            return false;
+        }
+        const uint32_t ms = r->value > 0 && r->value <= 10000 ? (uint32_t)r->value : 800;
+        shell_touch_hold(r->x, r->y, ms);
+        dbg_json_str(d, "queued", r->event);
+        dbg_json_int(d, "ms", ms);
+        return true;
+    }
     if (!strcmp(r->event, "touch") || !strcmp(r->event, "swipe")) {
         if (r->x < 0 || r->x >= UI_W || r->y < 0 || r->y >= UI_H) {
             snprintf(err, n, "off the glass");

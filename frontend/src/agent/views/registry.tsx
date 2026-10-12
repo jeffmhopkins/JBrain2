@@ -28,8 +28,8 @@ import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
 import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
 import { DeepestRunCard } from "../DeepResearchProgress";
+import { ReportPlayer, type ReportReadAloud } from "../ReportPlayer";
 import { type CiteTarget, Markdown } from "../markdown";
-import { reportToSpeech } from "../speakable.js";
 import type { ToolActivity } from "../transcript";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
@@ -68,14 +68,10 @@ export interface ViewProps {
    * plan_card view uses it (JERV_PLANNING_TOOL_PLAN.md). */
   onPlanChanged?: (() => void) | undefined;
   /** Read-aloud (TTS) control, present only when read-aloud is on and an engine can
-   * speak. A view that renders its own long text (the deep-research report) uses it to
-   * offer a play button: `onToggle(key, markdown)` speaks that text (or pauses it if the
-   * same key is already playing), and `playing` is the key speaking now (null = silent).
-   * The key must be distinct from the turn's own key so the two don't fight. Absent = no
-   * play control. */
-  readAloud?:
-    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
-    | undefined;
+   * speak. A view that renders its own long text (the deep-research report) uses it for
+   * its drive-mode player, under a key distinct from the turn's own so the two don't
+   * fight. Absent = no play control. */
+  readAloud?: ReportReadAloud | undefined;
 }
 
 // Tone/flag is an enum, never a color (DESIGN.md): the component maps it to a
@@ -1343,23 +1339,6 @@ function DownloadIcon(): ReactNode {
     </svg>
   );
 }
-function PlayIcon(): ReactNode {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-      <path d="M8 5v14l11-7z" />
-    </svg>
-  );
-}
-// Two bars — the pause state the play glyph becomes while the report is speaking,
-// matching the turn's read-aloud button (FullBrainSurface PauseGlyph).
-function PauseIcon(): ReactNode {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-      <rect x="6" y="5" width="4" height="14" rx="1" />
-      <rect x="14" y="5" width="4" height="14" rx="1" />
-    </svg>
-  );
-}
 
 function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
   const ran = typeof data.ran === "number" ? data.ran : 0;
@@ -1616,27 +1595,6 @@ function DeepResearchReport({ data, onOpenSession, readAloud }: ViewProps): Reac
         {question && <span className="tv-dr-q">{question}</span>}
         {reportMd && (
           <div className="tv-dr-actions">
-            {/* Read the report aloud (TTS) straight from the card — no need to paste it into
-                the chat to reach the turn's play button (REPORT_PRESET_PLAN.md). A distinct
-                key from the turn so playing the report doesn't collide with the turn's audio. */}
-            {readAloud &&
-              (() => {
-                const playKey = `dr-report:${question}`;
-                const isPlaying = readAloud.playing === playKey;
-                return (
-                  <button
-                    type="button"
-                    className={`tv-dr-act${isPlaying ? " playing" : ""}`}
-                    onClick={() => readAloud.onToggle(playKey, reportToSpeech(reportMd))}
-                    aria-label={
-                      isPlaying ? "Pause reading the report aloud" : "Read the report aloud"
-                    }
-                    title={isPlaying ? "Pause" : "Read aloud"}
-                  >
-                    {isPlaying ? <PauseIcon /> : <PlayIcon />}
-                  </button>
-                );
-              })()}
             <button
               type="button"
               className={`tv-dr-act${copied ? " done" : ""}`}
@@ -1658,6 +1616,12 @@ function DeepResearchReport({ data, onOpenSession, readAloud }: ViewProps): Reac
           </div>
         )}
       </div>
+      {/* The drive-mode player (docs/mocks/research-drive-play/, C2): big play/pause and
+          story-by-story skip, so the brief can be played in the car. A distinct key from
+          the turn so playing the report doesn't collide with the turn's audio. */}
+      {reportMd && readAloud && (
+        <ReportPlayer playKey={`dr-report:${question}`} reportMd={reportMd} readAloud={readAloud} />
+      )}
       <div className="tv-dr-chips">
         {chips.map((c) => (
           <span className="tv-dr-chip" key={c}>
@@ -4007,9 +3971,7 @@ export function ToolView({
   onOpenSession?: ((sessionId: string) => void) | undefined;
   onDeferredComplete?: ((resumeMessage: string) => void) | undefined;
   onPlanChanged?: (() => void) | undefined;
-  readAloud?:
-    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
-    | undefined;
+  readAloud?: ReportReadAloud | undefined;
 }): ReactNode {
   const Component = REGISTRY[payload.view];
   if (!Component) return null;

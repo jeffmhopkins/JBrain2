@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { reportToSpeech } from "../agent/speakable.js";
+import { reportSections } from "../agent/reportSections";
 import { type ReportDetail, type VideoDetail, api } from "../api/client";
 import { confidenceColor } from "../components/AudioTranscript";
 import { ReportDetailBody, ResearchDetailScreen, citedSourceCount } from "./ResearchDetailScreen";
@@ -156,7 +156,7 @@ describe("ResearchDetailScreen", () => {
       },
     });
     render(<ResearchDetailScreen kind="report" id="r1" syncStatus="synced" onClose={noop} />);
-    const play = await screen.findByRole("button", { name: "Read the report aloud" });
+    const play = await screen.findByRole("button", { name: /Play brief/ });
     fireEvent.click(play);
     await waitFor(() => expect(speak).toHaveBeenCalledTimes(1));
     Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
@@ -164,33 +164,26 @@ describe("ResearchDetailScreen", () => {
 });
 
 describe("ReportDetailBody read-aloud", () => {
-  it("speaks the report through TTS under a report-specific key when Play is tapped", () => {
-    const onToggle = vi.fn();
-    render(<ReportDetailBody report={REPORT} readAloud={{ playing: null, onToggle }} />);
-    fireEvent.click(screen.getByRole("button", { name: "Read the report aloud" }));
-    // A key distinct from any chat turn's, and the normalized speakable form of the report body.
-    expect(onToggle).toHaveBeenCalledWith(
-      `rl-report:${REPORT.id}`,
-      reportToSpeech(REPORT.report_md),
-    );
-  });
-
-  it("flips to a Pause control while this report is the one speaking", () => {
+  it("offers the drive-mode player under a report-specific key", () => {
+    const playSections = vi.fn();
     render(
       <ReportDetailBody
         report={REPORT}
-        readAloud={{ playing: `rl-report:${REPORT.id}`, onToggle: vi.fn() }}
+        readAloud={{ playing: null, onToggle: vi.fn(), playSections, progress: null }}
       />,
     );
-    expect(
-      screen.getByRole("button", { name: "Pause reading the report aloud" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Read the report aloud" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Play brief/ }));
+    // A key distinct from any chat turn's, played from the first story.
+    expect(playSections).toHaveBeenCalledWith(
+      `rl-report:${REPORT.id}`,
+      reportSections(REPORT.report_md).map((s) => s.md),
+      0,
+    );
   });
 
-  it("renders no play control without a read-aloud prop (the public share view)", () => {
+  it("renders no player without a read-aloud prop (the public share view)", () => {
     render(<ReportDetailBody report={REPORT} />);
-    expect(screen.queryByRole("button", { name: /the report aloud/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Play brief/ })).toBeNull();
   });
 });
 

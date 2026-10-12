@@ -9,7 +9,8 @@
 #define TALK_MIN_MS 600u
 #define TALK_MAX_MS 60000u
 
-typedef enum { TALK_TO_JERV, TALK_TO_PERSON } talk_kind_t;
+/* TALK_TO_AGENT: `principal` is the agent's thread, "jerv" or "dave" — the box's real agent. */
+typedef enum { TALK_TO_AGENT, TALK_TO_PERSON } talk_kind_t;
 
 /* TALK_FAILED: the box could not be reached mid-hold, so nothing was sent. */
 typedef enum { TALK_SENT, TALK_TOO_SHORT, TALK_CANCELLED, TALK_CAPPED, TALK_FAILED } talk_outcome_t;
@@ -17,6 +18,10 @@ typedef enum { TALK_SENT, TALK_TOO_SHORT, TALK_CANCELLED, TALK_CAPPED, TALK_FAIL
 /* False when no hold starts; then svc_audio_talk_refused() says why, or is NULL when the press
  * did something else on purpose (it stopped Jerv speaking). */
 bool svc_audio_talk_begin(talk_kind_t kind, const char *principal);
+/* Clear chat on an agent's thread: its next talk asks the box for a new conversation. Held until
+ * a talk is answered (a hold the box heard nothing in keeps it); the other agent is untouched. */
+void svc_audio_fresh(const char *agent);
+bool svc_audio_fresh_pending(const char *agent);
 const char *svc_audio_talk_refused(void);
 /* `send` false is a tap on the glass. The outcome is what the app tells the user. */
 talk_outcome_t svc_audio_talk_end(bool send);

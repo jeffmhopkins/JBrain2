@@ -3581,6 +3581,13 @@ export interface PanelAppearance {
   form: PanelForm;
 }
 
+/** Whether a DISPLAY panel's spoken turns reach the owner's real Jerv and Minecraft_Dave — full
+ *  tools and memory, as the owner (owner decision 2026-10-12). Off by default; the box refuses it
+ *  for a pet panel (409), so the twins' units can never be given the agents. */
+export interface PanelAgentAccess {
+  agent_access: boolean;
+}
+
 /** Letters and spaces only, and short. TWO unrelated systems constrain this and the stricter one
  *  wins: the panel's 5x7 font has no glyph for an apostrophe and draws it as NOTHING, and the
  *  wake word runs through MultiNet, which matches phonemes — so digits and punctuation are not
@@ -6465,6 +6472,20 @@ export const api = {
       },
     );
     return (await response.json()) as PanelAppearance;
+  },
+
+  async panelAgentAccess(deviceId: string): Promise<PanelAgentAccess> {
+    const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/agent`);
+    return (await response.json()) as PanelAgentAccess;
+  },
+
+  async setPanelAgentAccess(deviceId: string, agentAccess: boolean): Promise<PanelAgentAccess> {
+    const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/agent`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent_access: agentAccess }),
+    });
+    return (await response.json()) as PanelAgentAccess;
   },
 
   // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for

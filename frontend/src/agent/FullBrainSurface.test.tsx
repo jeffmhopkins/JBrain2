@@ -88,7 +88,8 @@ function Harness({
         fb={fb}
         onOpenNote={onOpenNote}
         onOpenEntity={onOpenEntity}
-        readAloud={readAloud}
+        // The turn-level tests don't exercise the report player's story playback.
+        readAloud={readAloud && { playSections: vi.fn(), progress: null, ...readAloud }}
         modelLoad={modelLoad}
       />
       <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />

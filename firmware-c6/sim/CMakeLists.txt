@@ -28,6 +28,6 @@ file(GLOB FW_INC LIST_DIRECTORIES true ${C}/*/include)
 set(M ${CMAKE_CURRENT_SOURCE_DIR}/../main)
 add_executable(jpanel-sim sim_main.c sim_png.c ${M}/apps.c ${FW_SRC})
 target_include_directories(jpanel-sim PRIVATE ${FW_INC} ${M} ${C}/app_clock ${C}/app_settings
-                                              ${C}/app_thread ${C}/app_jerv)
+                                              ${C}/app_thread)
 target_compile_options(jpanel-sim PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(jpanel-sim PRIVATE lvgl m)

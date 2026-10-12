@@ -25,8 +25,11 @@
 
 /* DESIGN.md accents. */
 #define UI_C_JERV 0xA493C9
-#define UI_C_QUORRA 0xC9A36A
-#define UI_C_TAMSIN 0x6FB6B1
+/* The people's threads: four colours, one per sibling panel, chosen from its name (svc_siblings). */
+#define UI_C_PERSON_A 0xC9A36A
+#define UI_C_PERSON_B 0x6FB6B1
+#define UI_C_PERSON_C 0xB79AD6
+#define UI_C_PERSON_D 0xD69A8A
 #define UI_C_MINECRAFT 0x8FBC9A
 #define UI_C_STEEL 0x7FA7C9
 #define UI_C_ROSE 0xCF8A8F      /* Jerv listening ring */
@@ -64,14 +67,23 @@
 
 typedef enum {
     UI_ACCENT_JERV,
-    UI_ACCENT_QUORRA,
-    UI_ACCENT_TAMSIN,
+    UI_ACCENT_PERSON_A,
+    UI_ACCENT_PERSON_B,
+    UI_ACCENT_PERSON_C,
+    UI_ACCENT_PERSON_D,
     UI_ACCENT_MINECRAFT,
     UI_ACCENT_STEEL,
     UI_ACCENT_NEUTRAL, /* Clock, Settings: grey glyph on a raised disc */
 } ui_accent_t;
 
-typedef enum { UI_GLYPH_STAR, UI_GLYPH_CUBE, UI_GLYPH_INITIAL, UI_GLYPH_CLOCK, UI_GLYPH_GEAR } ui_glyph_t;
+typedef enum {
+    UI_GLYPH_STAR,
+    UI_GLYPH_CUBE,
+    UI_GLYPH_INITIAL,
+    UI_GLYPH_CLOCK,
+    UI_GLYPH_GEAR,
+    UI_GLYPH_COMPASS,
+} ui_glyph_t;
 
 typedef struct {
     ui_glyph_t glyph;

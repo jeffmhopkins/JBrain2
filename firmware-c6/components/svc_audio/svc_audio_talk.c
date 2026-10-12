@@ -1,4 +1,4 @@
-/* The talk to Jerv as the glass sees it, and the one state the three tasks share. The same file
+/* A talk to Jerv or Dave as the glass sees it, and the one state the three tasks share. The same file
  * runs on the device and in the sim: only talk_port_* differ (esp/svc_audio_es.c, or
  * svc_audio_fake.c), so the bubbles the sim draws are the ones the panel will. */
 #include <stdio.h>
@@ -14,7 +14,9 @@
 #include "svc_rtc.h"
 #include "svc_settings.h"
 
-#define JERV "jerv"
+/* The thread the current exchange belongs to, "jerv" or "dave". `agent` is written only by the
+ * UI task (tk_set_agent at a hold's start), which is also the only reader of this. */
+#define THREAD tk_agent_id((tk_agent_t)s_tk.agent)
 /* Half a second of speech either way: the upload's slack for a radio that stalls, and the
  * reply's for a box that sends in bursts. Allocated per exchange, so between talks the heap
  * has it back (README "What 0.0.10 adds", the memory budget). */
@@ -41,6 +43,20 @@ static struct {
 } s_person;
 static uint32_t s_playing;
 static uint32_t s_next_person_id = 900000;
+/* Clear chat, per agent: the next talk to it asks the box for a new conversation. UI task's. */
+static bool s_fresh[TK_AGENT__COUNT];
+
+void svc_audio_fresh(const char *agent)
+{
+    tk_agent_t a;
+    if (tk_agent_from(agent, &a)) s_fresh[a] = true;
+}
+
+bool svc_audio_fresh_pending(const char *agent)
+{
+    tk_agent_t a;
+    return tk_agent_from(agent, &a) && s_fresh[a];
+}
 
 static void lock(void)
 {
@@ -68,17 +84,22 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
     const char *why = talk_port_refusal();
     net_info_t n;
     svc_net_info(&n);
-    if (!why && n.state != NET_CONNECTED) why = "Not connected: Jerv needs Wi-Fi";
+    if (!why && n.state != NET_CONNECTED) why = "Not connected: talking needs Wi-Fi";
     if (!why && !s_ring_mem && !(s_ring_mem = malloc(RING_BYTES))) why = "No memory to record";
     if (why) {
         s_refused = why;
         return false;
     }
+    tk_agent_t agent = TK_AGENT_JERV;
+    tk_agent_from(principal, &agent);
     const bool voice = svc_settings_get(SET_TTS) != 0 && talk_port_speaker();
     const uint32_t now = svc_rtc_uptime_ms();
     lock();
     const tk_begin_t b = tk_begin(&s_tk, now, voice, s_next_id);
-    if (b == TK_BEGIN_OK) tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+    if (b == TK_BEGIN_OK) {
+        tk_set_agent(&s_tk, agent, s_fresh[agent]);
+        tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+    }
     unlock();
     if (b == TK_BEGIN_STOPPED) {
         s_st.stopped++;
@@ -86,7 +107,7 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
         return false;
     }
     if (b == TK_BEGIN_BUSY) {
-        s_refused = "One moment: Jerv is finishing the last one";
+        s_refused = "One moment: still finishing the last one";
         return false;
     }
     s_holding = true;
@@ -139,7 +160,7 @@ talk_outcome_t svc_audio_talk_end(bool send)
         } else {
             s_st.sent++;
         }
-        svc_messages_fake_add(JERV, &m);
+        svc_messages_fake_add(THREAD, &m);
     }
     return o;
 }
@@ -168,10 +189,10 @@ bool svc_audio_replying(void)
     return r;
 }
 
-static void refresh_jerv(void)
+static void refresh_thread(void)
 {
     app_event_t ev = {.type = APP_EV_MSG_ARRIVED};
-    snprintf(ev.u.principal, sizeof ev.u.principal, "%s", JERV);
+    snprintf(ev.u.principal, sizeof ev.u.principal, "%s", THREAD);
     app_events_post(&ev);
 }
 
@@ -186,14 +207,14 @@ bool svc_audio_stop_reply(void)
     s_st.stopped++;
     talk_port_kick();
     msg_t m;
-    if (thinking && svc_messages_find(JERV, id, &m)) {
-        talk_bubble_unsent(&m, "Stopped before Jerv answered");
+    if (thinking && svc_messages_find(THREAD, id, &m)) {
+        talk_bubble_unsent(&m, "Stopped before the answer");
         snprintf(m.status, sizeof m.status, "Stopped");
-        svc_messages_fake_add(JERV, &m);
+        svc_messages_fake_add(THREAD, &m);
     }
     if (s_speaking) {
         s_speaking = 0;
-        refresh_jerv();
+        refresh_thread();
     }
     return true;
 }
@@ -250,22 +271,24 @@ void svc_audio_service(void)
     }
     unlock();
     msg_t m;
-    const bool have = svc_messages_find(JERV, id, &m);
+    const bool have = svc_messages_find(THREAD, id, &m);
     switch (res) {
     case TK_RES_REPLY:
         if (have) {
             talk_bubble_heard(&m, heard);
-            svc_messages_fake_add(JERV, &m);
+            svc_messages_fake_add(THREAD, &m);
         }
         talk_bubble_reply(id + 1, reply, &m);
-        svc_messages_fake_add(JERV, &m);
+        svc_messages_fake_add(THREAD, &m);
         s_speaking = playing ? id + 1 : 0;
+        /* The box answered, so it has started the new conversation this asked for. */
+        if (s_tk.fresh) s_fresh[s_tk.agent] = false;
         break;
     case TK_RES_NOTHING:
         if (have) {
             talk_bubble_unsent(&m, "Nothing heard. Hold KEY and speak.");
             snprintf(m.status, sizeof m.status, "Not heard");
-            svc_messages_fake_add(JERV, &m);
+            svc_messages_fake_add(THREAD, &m);
         }
         break;
     case TK_RES_FAILED:
@@ -273,20 +296,20 @@ void svc_audio_service(void)
             char line[80];
             snprintf(line, sizeof line, "Not answered: %s", why);
             talk_bubble_unsent(&m, line);
-            svc_messages_fake_add(JERV, &m);
+            svc_messages_fake_add(THREAD, &m);
         }
         break;
     case TK_RES_SPOKEN:
         if (s_speaking) {
             s_speaking = 0;
-            refresh_jerv();
+            refresh_thread();
         }
         break;
     default: break;
     }
     if (quiet && s_speaking) {
         s_speaking = 0;
-        refresh_jerv();
+        refresh_thread();
     }
     if (quiet && s_ring_mem) {
         lock();
@@ -299,11 +322,13 @@ void svc_audio_service(void)
 
 /* ---- the main task's half ---- */
 
-bool talk_net_claim(bool *voice)
+bool talk_net_claim(bool *voice, tk_agent_t *agent, bool *fresh)
 {
     lock();
     const bool mine = tk_net_claim(&s_tk);
     *voice = s_tk.voice;
+    *agent = (tk_agent_t)s_tk.agent;
+    *fresh = s_tk.fresh;
     unlock();
     return mine;
 }

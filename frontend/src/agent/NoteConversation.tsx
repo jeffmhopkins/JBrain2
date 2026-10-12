@@ -20,6 +20,7 @@
 import type { ReactNode } from "react";
 import type { ModelLoad } from "../api/client";
 import { AgentTranscript, ProposalsAside } from "./FullBrainSurface";
+import type { ReportReadAloud } from "./ReportPlayer";
 import type { FullBrain } from "./useFullBrain";
 
 export interface NoteConversationProps {
@@ -43,6 +44,8 @@ export interface NoteConversationProps {
         autoPlay: boolean;
         onToggle: (key: string, text: string) => void;
         onToggleAuto: () => void;
+        playSections: ReportReadAloud["playSections"];
+        progress: ReportReadAloud["progress"];
       }
     | undefined;
   /** The box's in-flight model load — a note turn waits on the same weights a chat turn

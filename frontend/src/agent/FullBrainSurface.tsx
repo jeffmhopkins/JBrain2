@@ -28,6 +28,7 @@ import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { QuestionBlock } from "./QuestionBlock";
+import type { ReportReadAloud } from "./ReportPlayer";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
 import {
@@ -189,6 +190,8 @@ interface Props {
         autoPlay: boolean;
         onToggle: (key: string, markdown: string) => void;
         onToggleAuto: () => void;
+        playSections: ReportReadAloud["playSections"];
+        progress: ReportReadAloud["progress"];
       }
     | undefined;
   /** The active plan's between-steps countdown, when one is armed: while jerv's approved
@@ -421,7 +424,14 @@ export function AgentTranscript({
               // The raw keyed capability (not the turn-bound `audio`) so a card inside the
               // turn — the deep-research report — can play its own text under its own key.
               readAloud={
-                readAloud ? { playing: readAloud.playing, onToggle: readAloud.onToggle } : undefined
+                readAloud
+                  ? {
+                      playing: readAloud.playing,
+                      onToggle: readAloud.onToggle,
+                      playSections: readAloud.playSections,
+                      progress: readAloud.progress,
+                    }
+                  : undefined
               }
             />
           ))}
@@ -877,13 +887,10 @@ function Bubble({
    * `onToggleAuto` (long-press) flips auto-play. Absent = read-aloud off (no control,
    * labelled copy). */
   audio?: AudioControl | undefined;
-  /** The raw read-aloud capability (keyed play/pause) for a card that speaks its OWN text
-   * — the deep-research report's play button. `onToggle(key, markdown)` speaks that text
-   * under a key distinct from the turn's, so the two never collide. Absent = read-aloud
-   * off. */
-  readAloud?:
-    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
-    | undefined;
+  /** The raw read-aloud capability (keyed play/pause + story-by-story playback) for a card
+   * that speaks its OWN text — the deep-research report's player — under a key distinct
+   * from the turn's, so the two never collide. Absent = read-aloud off. */
+  readAloud?: ReportReadAloud | undefined;
   /** This turn ended on an `ask_owner`: its question block, and how it is answered
    * (§3b I6). `live` means the set is still open — the controls fill LOCAL state and
    * nothing else; otherwise the owner already replied, `sent` says what that reply did to
