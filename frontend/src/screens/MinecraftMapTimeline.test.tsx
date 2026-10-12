@@ -95,15 +95,19 @@ describe("the map's timeline", () => {
 
   const status = () => text(document.querySelector(".mc-map-status"));
 
+  // The first, cold render loads the whole map screen: on a busy CI runner that alone has
+  // taken longer than the default 1 s wait.
+  const OPEN = { timeout: 5000 };
+
   async function openTimeline() {
     render(<MinecraftScreen />);
-    const row = await screen.findByRole("button", { name: /^Map/ });
-    await waitFor(() => expect(row).toHaveTextContent("on the map"));
+    const row = await screen.findByRole("button", { name: /^Map/ }, OPEN);
+    await waitFor(() => expect(row).toHaveTextContent("on the map"), OPEN);
     fireEvent.click(row);
-    await screen.findByRole("application");
-    await screen.findByText("Live · 2 on");
+    await screen.findByRole("application", undefined, OPEN);
+    await screen.findByText("Live · 2 on", undefined, OPEN);
     fireEvent.click(screen.getByRole("tab", { name: "Timeline" }));
-    return screen.findByRole("radiogroup", { name: "Day" });
+    return screen.findByRole("radiogroup", { name: "Day" }, OPEN);
   }
 
   async function loadFoxsNetherTrip() {
