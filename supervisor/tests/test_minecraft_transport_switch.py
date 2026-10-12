@@ -29,14 +29,15 @@ def test_on_by_default_and_applies_live_without_a_rule(
     rig, sent = _running_rig(monkeypatch, tmp_path)
     assert rig.slots.get("slot1")["power_pack_transport"] is True
     assert server.pack_config(rig.slots.get("slot1")) == (
-        'scriptevent jb:config {"power_pack_keep": false, "power_pack_transport": true}'
+        'scriptevent jb:config {"power_pack_keep": false,'
+        ' "power_pack_transport": true, "wreck": false}'
     )
     out = rig.set_power_pack_transport("slot1", False)
     assert out["power_pack_transport"] is False and out["applies"] == "now"
     # No game rule rides on it, and the charm's own switch is untouched.
     assert sent == [
         'scriptevent jb:config {"power_pack_keep": false,'
-        ' "power_pack_transport": false}'
+        ' "power_pack_transport": false, "wreck": false}'
     ]
     assert not rig.slots.get("slot1").get("rules")
     sent.clear()

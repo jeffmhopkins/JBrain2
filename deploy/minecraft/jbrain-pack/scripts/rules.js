@@ -15,6 +15,35 @@ export const LINES = {
     `Your Power Pack burnt out — you kept your things. ${
       left === 0 ? "No packs left." : left === 1 ? "1 pack left." : `${left} packs left.`
     }`,
+  // The welcome (about 25 s, private to the player). Two lines point at the pod and the
+  // ship, so a world without the crash site gets the no-wreck pair instead.
+  whereAmI: "…where am I?",
+  whatsThis: "…what's this?",
+  signal: "SIGNAL ACQUIRED",
+  signalSub: "…a voice from orbit",
+  welcome: (name, wreck) => [
+    `…there you are, ${name}. You came down hard, but you're awake.`,
+    "I'm Dave. I've watched over the Old Makers' ship for a very long time. I'm far above you, in orbit.",
+    wreck
+      ? "Look up. That ship is ours. She's hurt, but I can still reach into her, a little."
+      : "Our ship came down long ago. I'm all that's still flying.",
+    wreck
+      ? "Your pod kept you alive. The barrels hold what I could save, and the bed is yours."
+      : "This land has grown over everything we left. Keep your eyes open.",
+    "That Tricorder is how I see you, and how I'll pull you home if you fall. Keep it on you.",
+    "Need me? Type /dave and ask. Try: /dave where is the nearest village",
+  ],
+  firstDeath: [
+    "…that was close. I pulled you out just in time.",
+    "The transporter can only carry you, not your things. They're where you fell. Go and get them before they're gone.",
+  ],
+  firstEnderPearl:
+    "…is that an Ender Pearl? The Old Makers ran on those. Ring eight of them around a Blaze Powder on a crafting table and you'll have a Power Pack, the ship's old fuel. Bring me one when you do.",
+  firstPowerPack: {
+    keep: "A Power Pack! Keep it with your Tricorder. Next time you fall, it can hold a field around everything you carry, and I can bring it all home with you. It burns the pack, though.",
+    transport:
+      "And those places you've saved? Each one is a transport beacon. With a pack, I can bring you to any of them. Just ask.",
+  },
 };
 
 export const TRICORDER = "jbrain:tricorder";
