@@ -657,7 +657,52 @@ void ui_hold_ring_set(lv_obj_t *ring, uint16_t permille)
     lv_arc_set_value(ring, permille > 1000 ? 1000 : permille);
 }
 
-lv_obj_t *ui_status_row(lv_obj_t *parent, const char *text, ui_accent_t accent)
+/* A steady quarter arc, once round a second. LVGL's own spinner grows and shrinks its arc on an
+ * eased sweep, so a third of the way round it seemed to snap back and start again (owner,
+ * 2026-10-12: "I expected it to go all the way around but it's kind of like resetting"); and,
+ * rebuilt with its row on every status change, it really did. The angle is read from the tick,
+ * not from the animation's own clock, so any spinner — a new one included — is exactly where the
+ * last one was: there is no phase to lose. */
+#define UI_SPIN_PERIOD_MS 1000
+#define UI_SPIN_ARC 90
+
+static void spin_exec(void *obj, int32_t v)
+{
+    (void)v;
+    lv_arc_set_rotation(obj, (int32_t)(lv_tick_get() % UI_SPIN_PERIOD_MS * 360 / UI_SPIN_PERIOD_MS));
+}
+
+lv_obj_t *ui_spinner(lv_obj_t *parent, uint32_t color)
+{
+    lv_obj_t *a = lv_arc_create(parent);
+    lv_obj_remove_style_all(a);
+    lv_obj_remove_flag(a, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(a, 18, 18);
+    lv_arc_set_bg_angles(a, 0, 360);
+    lv_arc_set_angles(a, 0, UI_SPIN_ARC);
+    lv_obj_set_style_arc_width(a, 2, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(a, C(UI_C_LINE_STRONG), LV_PART_MAIN);
+    lv_obj_set_style_arc_width(a, 2, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(a, C(color), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(a, true, LV_PART_INDICATOR);
+    spin_exec(a, 0);
+    lv_anim_t an;
+    lv_anim_init(&an);
+    lv_anim_set_var(&an, a);
+    lv_anim_set_exec_cb(&an, spin_exec);
+    lv_anim_set_values(&an, 0, 360);
+    lv_anim_set_duration(&an, UI_SPIN_PERIOD_MS);
+    lv_anim_set_repeat_count(&an, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_start(&an);
+    return a;
+}
+
+bool ui_is_spinner(lv_obj_t *o)
+{
+    return o && lv_anim_get(o, spin_exec) != NULL;
+}
+
+lv_obj_t *ui_step_row(lv_obj_t *parent, lv_obj_t **mark, lv_obj_t **text)
 {
     /* On its own line under the waiting question, where the answer will land. */
     lv_obj_t *line = bare(parent);
@@ -666,22 +711,22 @@ lv_obj_t *ui_status_row(lv_obj_t *parent, const char *text, ui_accent_t accent)
     lv_obj_set_flex_align(line, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(line, 10, 0);
     lv_obj_set_style_pad_left(line, 6, 0);
-    lv_obj_t *spin = lv_spinner_create(line);
-    lv_obj_remove_style_all(spin);
-    lv_obj_remove_flag(spin, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(spin, 18, 18);
-    lv_spinner_set_anim_params(spin, 1000, 90);
-    lv_obj_set_style_arc_width(spin, 2, LV_PART_MAIN);
-    lv_obj_set_style_arc_color(spin, C(UI_C_LINE_STRONG), LV_PART_MAIN);
-    lv_obj_set_style_arc_width(spin, 2, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(spin, C(ui_accent_color(accent)), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(spin, true, LV_PART_INDICATOR);
+    *mark = ui_label(line, "", 16, UI_C_MUTED);
+    lv_obj_set_width(*mark, 18);
+    lv_obj_set_style_text_align(*mark, LV_TEXT_ALIGN_CENTER, 0);
     /* The mock's italic status row: the image carries no italic face, so it is the dim colour and
        a smaller size that set it apart from a message. */
-    lv_obj_t *l = ui_label(line, text, 18, UI_C_MUTED);
-    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(l, 360);
+    *text = ui_label(line, "", 18, UI_C_MUTED);
+    lv_label_set_long_mode(*text, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(*text, 360);
     return line;
+}
+
+lv_obj_t *ui_note_line(lv_obj_t *parent, const char *text)
+{
+    lv_obj_t *l = ui_label(parent, text, 16, UI_C_FAINT);
+    lv_obj_set_style_pad_left(l, 6, 0);
+    return l;
 }
 
 lv_obj_t *ui_overlay(lv_obj_t *parent)

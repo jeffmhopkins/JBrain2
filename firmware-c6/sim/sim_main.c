@@ -32,6 +32,7 @@
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
 #include "svc_siblings_drv.h"
+#include "ui_kit.h"
 
 #define W UI_W
 #define H UI_H
@@ -366,6 +367,13 @@ static void text_only(void)
 #define REPLIED "Sunny and 18 degrees in the morning, with rain after six in the evening."
 #define TIDE_HEARD "Find the high tide near Port St John, Florida"
 #define TIDE_STATUS "Searching the web: high tide Port St John FL…"
+/* The steps a tool-using answer takes (JT2 STEP records, 0.0.14), as the box labels them. */
+#define TIDE_STEP_0 "web_search · high tide Port St John FL"
+#define TIDE_STEP_1 "web_fetch · tide-forecast.com"
+#define TIDE_STEP_2 "web_fetch · tidesandcurrents.noaa.gov"
+#define TIDE_STEP_3 "weather · Port St John"
+#define TIDE_STEP_4 "web_search · Port St John sunset"
+#define TIDE_STEP_5 "web_fetch · timeanddate.com"
 #define TIDE_LONG                                                                                  \
     "High tide at Port St John is at 4:12 pm today, at 3.1 feet, and the next one is at 4:38 am "  \
     "tomorrow. Low tide falls between them, at 10:27 pm, at 0.4 feet. The Indian River there is "  \
@@ -409,6 +417,10 @@ typedef struct {
 #define PROGRESS "progress"
 /* Not a debug command: the fake box answers with a long answer, more than a bubble's 255 bytes. */
 #define REPLY_LONG "reply long"
+/* Not debug commands (0.0.14): the fake box streams the transcript, "Thinking…" and then six
+ * steps, the last still running and one failed; and, after them, the answer. */
+#define STEPS "steps"
+#define REPLY_TIDE "reply tide"
 
 /* Mock boards 1-17 (docs/mocks/jpanel-c6/canvas.json), by the live panel's `start` names. */
 static const state_t STATES[] = {
@@ -471,6 +483,11 @@ static const state_t STATES[] = {
     /* JT2 (0.0.12): the transcript the moment the box has it, and the live status line under it. */
     {"jerv-working", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), PROGRESS}},
     {"dave-working", NULL, {OPEN("minecraft"), TAP_LABEL("Dave"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), PROGRESS}},
+    /* 0.0.14: thinking with its clock, the steps mid-turn ("+2 more", ✓, a dim ✗, the spinner on
+       the running one), and the answer with its steps folded into one dim line. */
+    {"jerv-thinking", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), PROGRESS, WAIT(41500)}},
+    {"jerv-steps", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), STEPS, WAIT(20000)}},
+    {"jerv-steps-done", text_only, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), STEPS, WAIT(57000), REPLY_TIDE}},
     /* A long answer kept whole on the glass, past a bubble's 255 bytes. */
     {"jerv-long", text_only, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY_LONG, SCROLL_END}},
     /* The same with "Read replies aloud" off: words only. */
@@ -534,8 +551,26 @@ static int render(const char *name, const char *png, const char *snap)
         }
         if (!strcmp(st->cmds[i], PROGRESS)) {
             svc_audio_fake_progress(TIDE_HEARD, "Thinking…");
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], STEPS)) {
+            static const char *const LABELS[] = {TIDE_STEP_0, TIDE_STEP_1, TIDE_STEP_2,
+                                                 TIDE_STEP_3, TIDE_STEP_4, TIDE_STEP_5};
+            svc_audio_fake_progress(TIDE_HEARD, "Thinking…");
             step(100);
-            svc_audio_fake_progress(NULL, TIDE_STATUS);
+            for (uint8_t k = 0; k < 6; k++) {
+                svc_audio_fake_step(k, LABELS[k]);
+                step(100);
+                if (k < 5) svc_audio_fake_step_done(k, k != 2);
+            }
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], REPLY_TIDE)) {
+            svc_audio_fake_step_done(5, true);
+            svc_audio_fake_reply(TIDE_HEARD, "High tide at Port St John is at 4:12 pm, 3.1 feet.",
+                                 svc_settings_get(SET_TTS) != 0);
             step(300);
             continue;
         }
@@ -680,6 +715,55 @@ static bool on_page(int page)
     return strstr(run("{\"cmd\":\"snapshot\"}"), want) != NULL;
 }
 
+static lv_obj_t *find_spinner(lv_obj_t *o)
+{
+    if (ui_is_spinner(o)) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *hit = find_spinner(lv_obj_get_child(o, (int32_t)i));
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
+static unsigned spinners(lv_obj_t *o)
+{
+    unsigned n = ui_is_spinner(o);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+        n += spinners(lv_obj_get_child(o, (int32_t)i));
+    return n;
+}
+
+/* The spinner bug (owner, 2026-10-12: "it's kind of like resetting"): each status line rebuilt
+ * the conversation and with it the spinner, whose sweep began again. A status change, a step and
+ * the clock's tick must now leave the spinner and the question's widgets exactly where they are,
+ * the spinner turning on the tick's phase. Jerv's thread is open, the box has heard the question
+ * and the agent is thinking. */
+static void spinner_checks(void)
+{
+    lv_obj_t *spin = find_spinner(lv_screen_active());
+    lv_obj_t *question = labelled(lv_screen_active(), HEARD);
+    expect(spin && question && spinners(lv_screen_active()) == 1, "thinking: one spinner, under the question");
+    svc_audio_fake_progress(NULL, "Writing the answer…");
+    step(100);
+    svc_audio_fake_step(0, "weather · tomorrow");
+    step(100);
+    expect(find_spinner(lv_screen_active()) == spin && spinners(lv_screen_active()) == 1,
+           "a status change and a step move the same spinner: it is not remade");
+    expect(labelled(lv_screen_active(), HEARD) == question, "nor is the question above it");
+    expect(labelled(lv_screen_active(), "weather · tomorrow") != NULL, "the step is listed");
+    step(2400);
+    svc_audio_fake_step_done(0, true);
+    svc_audio_fake_progress(NULL, "Thinking…");
+    step(100);
+    expect(find_spinner(lv_screen_active()) == spin && labelled(lv_screen_active(), HEARD) == question,
+           "two seconds of the clock and the step ending change nothing above the working line");
+    /* The animation runs on LVGL's refresh period, so it may be a frame behind the tick. */
+    const int32_t lag = ((int32_t)(lv_tick_get() % 1000 * 360 / 1000) - lv_arc_get_rotation(spin) + 360) % 360;
+    expect(lag <= 15, "and it turns on the tick's phase, so even a new one would carry on where this one is");
+    expect(lv_arc_get_angle_end(spin) - lv_arc_get_angle_start(spin) == 90,
+           "a fixed quarter arc, not a sweep that grows and shrinks");
+}
+
 /* Every rule a real finger meets that the debug pointer's fixed stroke never did. The first
  * tile's centre is (134, 126). */
 static int touch_checks(void)
@@ -801,7 +885,7 @@ static int touch_checks(void)
     step(100);
     expect(shell_open_app() && !strcmp(shell_open_app()->id, "settings"),
            "released under 0.6 s it is a knock: nothing opens");
-    unsigned before = svc_messages_count("jerv");
+    expect(svc_messages_count("jerv") > 0, "Jerv's thread has an old conversation in it");
     run(KEY_DOWN);
     step(1500);
     run(KEY_UP);
@@ -810,10 +894,13 @@ static int touch_checks(void)
            "a real hold opens the Jerv thread on release");
     msg_t last = {0};
     svc_messages_get("jerv", (uint16_t)(svc_messages_count("jerv") - 1), &last);
-    expect(svc_messages_count("jerv") == before + 1 && last.pending,
-           "where the hold waits for its transcript, never a made-up one");
-    svc_audio_fake_progress(HEARD, "Checking the weather…");
+    expect(svc_messages_count("jerv") == 1 && last.pending,
+           "a new conversation, holding just the hold waiting for its transcript");
+    expect(strstr(svc_audio_fake_last_path(), "&new_thread=true") != NULL,
+           "KEY outside the conversation asks the box for a new one");
+    svc_audio_fake_progress(HEARD, "Thinking…");
     step(100);
+    spinner_checks();
     unsigned waiting = svc_messages_count("jerv");
     run(KEY_DOWN);
     step(300);

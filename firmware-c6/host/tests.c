@@ -1745,6 +1745,15 @@ static msg_t last_jerv(void)
     return m;
 }
 
+/* The working view's phase line, as the old one-line status was read. */
+static bool status_of(const char *thread, char *out, size_t cap)
+{
+    svc_work_t w;
+    if (!svc_audio_work(thread, &w)) return false;
+    snprintf(out, cap, "%s", w.phase);
+    return true;
+}
+
 static void test_a_talk_on_the_glass_end_to_end(void)
 {
     svc_messages_fake_clear();
@@ -1758,19 +1767,19 @@ static void test_a_talk_on_the_glass_end_to_end(void)
           "the bubble says it is being heard, never a made-up transcript");
     CHECK(svc_audio_replying(), "and Jerv is thinking");
     char status[64];
-    CHECK(!svc_audio_status("jerv", status, sizeof status),
+    CHECK(!status_of("jerv", status, sizeof status),
           "no status line until the box has heard the question");
     svc_audio_fake_progress("what time is sunset", NULL);
     svc_audio_service();
     m = last_jerv();
     CHECK(!m.pending && !strcmp(m.text, "what time is sunset") && svc_messages_count("jerv") == 1,
           "the transcript replaces \"Transcribing…\" the moment the box has it");
-    CHECK(svc_audio_status("jerv", status, sizeof status) && !strcmp(status, "Thinking…"),
+    CHECK(status_of("jerv", status, sizeof status) && !strcmp(status, "Thinking…"),
           "and the status line says Jerv is thinking");
     svc_audio_fake_progress(NULL, "Searching the web: sunset…");
     svc_audio_service();
-    CHECK(svc_audio_status("jerv", status, sizeof status) &&
-              !strcmp(status, "Searching the web: sunset…") && !svc_audio_status("dave", status, sizeof status),
+    CHECK(status_of("jerv", status, sizeof status) &&
+              !strcmp(status, "Searching the web: sunset…") && !status_of("dave", status, sizeof status),
           "each step the agent takes replaces the line, in its own thread only");
     CHECK(svc_audio_replying() && !svc_audio_speaking(), "thinking, not speaking");
     svc_audio_fake_reply("what time is sunset", "About seven tonight.", true);
@@ -1783,7 +1792,7 @@ static void test_a_talk_on_the_glass_end_to_end(void)
           "the voice bubble now holds what the box heard");
     CHECK(!m.mine && !strcmp(m.text, "About seven tonight.") && svc_audio_playing() == m.id,
           "Jerv's words are shown while its voice plays");
-    CHECK(!svc_audio_status("jerv", status, sizeof status) && svc_audio_speaking(),
+    CHECK(!status_of("jerv", status, sizeof status) && svc_audio_speaking(),
           "the answer replaces the status line");
     CHECK(svc_audio_stop_reply() && svc_audio_playing() == 0 && !svc_audio_replying(),
           "BOOT stops the voice; the words stay");
@@ -2025,10 +2034,10 @@ static void test_jerv_and_dave_are_two_threads_and_two_conversations(void)
 {
     char path[96];
     tk_converse_path(TK_AGENT_JERV, true, false, path, sizeof path);
-    CHECK(!strcmp(path, "/endpoint/converse?persona=jerv&voice=true&jt=2"),
-          "Jerv's talk, asking for the JT2 stream");
+    CHECK(!strcmp(path, "/endpoint/converse?persona=jerv&voice=true&jt=2&steps=1"),
+          "Jerv's talk, asking for the JT2 stream with its steps");
     tk_converse_path(TK_AGENT_DAVE, false, true, path, sizeof path);
-    CHECK(!strcmp(path, "/endpoint/converse?persona=dave&voice=false&jt=2&new_thread=true"),
+    CHECK(!strcmp(path, "/endpoint/converse?persona=dave&voice=false&jt=2&steps=1&new_thread=true"),
           "Dave's, text only, after Clear chat");
     tk_agent_t a = TK_AGENT_JERV;
     CHECK(tk_agent_from("dave", &a) && a == TK_AGENT_DAVE && !tk_agent_from("thread1", &a),
@@ -2064,6 +2073,258 @@ static void test_jerv_and_dave_are_two_threads_and_two_conversations(void)
     CHECK(svc_messages_count(SVC_MESSAGES_THREAD_1) == 4, "a person's thread keeps four");
     svc_messages_fake_clear();
     svc_settings_set(SET_TTS, 1);
+}
+
+/* ---- 0.0.14: the steps, the spinner's redraws, KEY routing ---- */
+
+static void test_step_records_read_in_any_split_and_an_old_panel_skips_them(void)
+{
+    uint8_t b[256];
+    size_t k = 0;
+    memcpy(b, "JT2", 3);
+    k = 3;
+    const uint8_t start0[] = {0, 'w', 'e', 'b', '_', 's', 'e', 'a', 'r', 'c', 'h'};
+    k += rec(b + k, TS_STEP_START, start0, sizeof start0);
+    const uint8_t done0[] = {0, 1};
+    k += rec(b + k, TS_STEP_DONE, done0, sizeof done0);
+    const uint8_t done1[] = {1, 0};
+    k += rec(b + k, TS_STEP_DONE, done1, sizeof done1);
+    const uint8_t end[] = {TS_END_OK};
+    k += rec(b + k, TS_END, end, 1);
+    static const size_t STEPS[] = {4096, 1, 2, 5};
+    for (size_t i = 0; i < sizeof STEPS / sizeof *STEPS; i++) {
+        tk_stream_t *st = malloc(sizeof *st);
+        tk_stream_init(st);
+        int starts = 0, oks = 0, fails = 0, ends = 0;
+        for (size_t at = 0; at < k;) {
+            const size_t len = k - at < STEPS[i] ? k - at : STEPS[i];
+            size_t off = 0;
+            while (off < len) {
+                tk_stream_ev_t ev;
+                const uint8_t *pcm;
+                size_t pn;
+                const size_t used = tk_stream_feed(st, b + at + off, len - off, &ev, &pcm, &pn);
+                off += used;
+                if (ev == TS_EV_STEP_START && st->flags == 0 && !strcmp(st->text, "web_search")) starts++;
+                if (ev == TS_EV_STEP_DONE) tk_stream_step_ok(st) ? oks++ : fails++;
+                if (ev == TS_EV_END) ends++;
+                if (!used) break;
+            }
+            at += len;
+        }
+        CHECK(starts == 1 && oks == 1 && fails == 1 && ends == 1 && !tk_stream_bad(st),
+              "a step's index, label and outcome come out whole, however the reads split them");
+        free(st);
+    }
+    /* What 0.0.13 does with them: an unknown type, skipped by its length. */
+    uint8_t old[64];
+    size_t n = 0;
+    memcpy(old, "JT2", 3);
+    n = 3;
+    n += rec(old + n, 0x09, "\x00step", 5);
+    n += rec(old + n, TS_HEARD, "hi", 2);
+    jt2_seen_t got;
+    jt2_read(old, n, 3, &got);
+    CHECK(got.heard == 1 && !got.bad, "a record type this panel does not know is skipped, not fatal");
+}
+
+static void test_the_steps_keep_the_last_four_and_count_the_rest(void)
+{
+    tk_steps_t s;
+    tk_steps_init(&s);
+    tk_steps_start(&s, 0, "web_search \xC2\xB7 tide Port St John");
+    CHECK(s.n == 1 && s.shown[0].state == WORK_RUNNING && tk_steps_folded(&s) == 0, "a step starts running");
+    tk_steps_done(&s, 0, true);
+    tk_steps_start(&s, 1, "web_fetch \xC2\xB7 tide-forecast.com");
+    tk_steps_done(&s, 1, false);
+    CHECK(s.shown[0].state == WORK_OK && s.shown[1].state == WORK_FAILED, "each ends as the box said");
+    tk_steps_start(&s, 1, "web_fetch \xC2\xB7 tide-forecast.com \xC2\xB7 page 2");
+    CHECK(s.n == 2 && s.total == 2 && strstr(s.shown[1].label, "page 2"),
+          "the same index again relabels it, never adds one");
+    for (uint8_t i = 2; i < 7; i++) tk_steps_start(&s, i, "weather");
+    CHECK(s.n == WORK_SHOWN && s.total == 7 && tk_steps_folded(&s) == 3 && s.shown[0].index == 3 &&
+              s.shown[3].index == 6,
+          "the newest four are shown, oldest first; the rest are \"+3 more\"");
+    tk_steps_start(&s, 1, "a late relabel");
+    tk_steps_done(&s, 0, true);
+    CHECK(s.total == 7 && s.shown[0].index == 3, "a folded step's late news changes nothing");
+    char long_label[200];
+    memset(long_label, 'x', sizeof long_label - 1);
+    long_label[sizeof long_label - 1] = 0;
+    tk_steps_start(&s, 7, long_label);
+    CHECK(strlen(s.shown[3].label) < WORK_LABEL, "a label never overruns its slot");
+
+    char line[24];
+    tk_steps_summary(&s, 58400, line, sizeof line);
+    CHECK(!strcmp(line, "8 steps \xC2\xB7 58 s"), "the answer's line: steps and seconds");
+    tk_steps_summary(&s, 125000, line, sizeof line);
+    CHECK(!strcmp(line, "8 steps \xC2\xB7 2:05"), "past a minute, a clock");
+    tk_steps_t one;
+    tk_steps_init(&one);
+    tk_steps_start(&one, 0, "weather");
+    tk_steps_summary(&one, 9000, line, sizeof line);
+    CHECK(!strcmp(line, "1 step \xC2\xB7 9 s"), "one step is a step");
+    tk_steps_init(&one);
+    tk_steps_summary(&one, 9000, line, sizeof line);
+    CHECK(!line[0], "a turn with no tool has no line");
+    tk_steps_t big = {.total = 65535, .n = 0};
+    tk_steps_summary(&big, 3599000, line, sizeof line);
+    CHECK(strlen(line) < sizeof line && line[0], "the longest summary fits a status");
+
+    char clock[12];
+    talk_clock(42000, clock, sizeof clock);
+    CHECK(!strcmp(clock, "0:42"), "the working line's clock");
+    talk_clock(725000, clock, sizeof clock);
+    CHECK(!strcmp(clock, "12:05"), "in minutes and seconds");
+}
+
+static void test_key_inside_a_conversation_continues_it_and_anywhere_else_starts_jerv_anew(void)
+{
+    talk_route_t r = talk_key_route("jerv");
+    CHECK(r.kind == TALK_TO_AGENT && !strcmp(r.agent, "jerv"), "inside Jerv's thread: Jerv, continued");
+    r = talk_key_route("dave");
+    CHECK(r.kind == TALK_TO_AGENT && !strcmp(r.agent, "dave"), "inside Dave's: Dave, continued");
+    r = talk_key_route(NULL);
+    CHECK(r.kind == TALK_TO_NEW_AGENT && !strcmp(r.agent, "jerv"), "home, the clock: a new Jerv conversation");
+    r = talk_key_route("minecraft");
+    CHECK(r.kind == TALK_TO_NEW_AGENT && !strcmp(r.agent, "jerv"),
+          "Minecraft's menu is outside any conversation: Jerv anew, never Dave");
+    r = talk_key_route(SVC_MESSAGES_THREAD_1);
+    CHECK(r.kind == TALK_TO_NEW_AGENT && !strcmp(r.agent, "jerv"), "a person's thread is not Jerv's either");
+
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_settings_set(SET_TTS, 0);
+    svc_messages_fake_add("jerv", &(msg_t){.id = 7, .text = "An old answer."});
+    svc_messages_fake_add("dave", &(msg_t){.id = 8, .text = "Dave's old answer."});
+    r = talk_key_route(NULL);
+    CHECK(svc_audio_talk_begin(r.kind, r.agent), "KEY from the clock records");
+    CHECK(strstr(svc_audio_fake_last_path(), "persona=jerv") &&
+              strstr(svc_audio_fake_last_path(), "&new_thread=true"),
+          "and asks the box for a fresh conversation");
+    svc_audio_talk_end(false);
+    CHECK(svc_messages_count("jerv") == 1, "a cancelled hold leaves the old conversation on the glass");
+    svc_audio_service();
+
+    CHECK(svc_audio_talk_begin(r.kind, r.agent), "again, and this time sent");
+    svc_rtc_fake_advance_ms(1800);
+    CHECK(svc_audio_talk_end(true) == TALK_SENT, "sent");
+    msg_t m;
+    CHECK(svc_messages_count("jerv") == 1 && svc_messages_get("jerv", 0, &m) && m.mine && m.pending,
+          "the thread now holds just the new question");
+    CHECK(svc_messages_count("dave") == 1, "Dave's thread is untouched");
+    CHECK(svc_audio_fresh_pending("jerv"), "until the box answers, Jerv's next talk asks anew too");
+    svc_audio_fake_reply("tides", "High at four.", false);
+    svc_audio_service();
+    CHECK(svc_messages_count("jerv") == 2 && !svc_audio_fresh_pending("jerv"),
+          "answered: the new conversation is the one");
+
+    r = talk_key_route("jerv");
+    CHECK(svc_audio_talk_begin(r.kind, r.agent), "KEY inside Jerv's thread");
+    CHECK(strstr(svc_audio_fake_last_path(), "new_thread") == NULL, "continues it");
+    svc_rtc_fake_advance_ms(1800);
+    svc_audio_talk_end(true);
+    CHECK(svc_messages_count("jerv") == 3, "and adds to it");
+    svc_audio_fake_reply("more", "Sure.", false);
+    svc_audio_service();
+    svc_messages_fake_clear();
+    svc_settings_set(SET_TTS, 1);
+}
+
+static void test_the_working_view_lists_steps_then_folds_into_the_answer_s_line(void)
+{
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_settings_set(SET_TTS, 0);
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "a talk to Jerv");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    svc_work_t w;
+    CHECK(!svc_audio_work("jerv", &w), "no working view before the box has heard");
+    svc_audio_fake_progress("high tide", "Thinking\xE2\x80\xA6");
+    svc_rtc_fake_advance_ms(4000);
+    CHECK(svc_audio_work("jerv", &w) && w.n == 0 && !strcmp(w.phase, "Thinking\xE2\x80\xA6") &&
+              w.elapsed_ms == 4000,
+          "thinking, with the clock running since the question went");
+    const uint32_t seq0 = w.seq;
+    svc_audio_fake_step(0, "web_search \xC2\xB7 tide Port St John");
+    CHECK(svc_audio_work("jerv", &w) && w.n == 1 && w.step[0].state == WORK_RUNNING && w.seq != seq0,
+          "a tool starting is a change to draw");
+    svc_rtc_fake_advance_ms(1000);
+    const uint32_t seq1 = w.seq;
+    CHECK(svc_audio_work("jerv", &w) && w.seq == seq1 && w.elapsed_ms == 5000,
+          "the clock alone is not a change");
+    svc_audio_fake_step_done(0, true);
+    svc_audio_fake_step(1, "web_fetch \xC2\xB7 tide-forecast.com");
+    svc_audio_fake_step_done(1, true);
+    CHECK(svc_audio_work("jerv", &w) && w.n == 2 && w.step[1].state == WORK_OK && !w.folded,
+          "two steps, both done");
+    CHECK(!svc_audio_work("dave", &w), "Dave's thread shows none of it");
+    svc_rtc_fake_advance_ms(53000);
+    svc_audio_fake_reply("high tide", "High tide is at 4:12 pm.", false);
+    svc_audio_service();
+    msg_t m = last_jerv();
+    CHECK(!strcmp(m.text, "High tide is at 4:12 pm.") && !strcmp(m.status, "2 steps \xC2\xB7 58 s"),
+          "the answer carries the steps as one dim line");
+    CHECK(!svc_audio_work("jerv", &w), "and the working view is gone");
+
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "the next talk");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    svc_audio_fake_progress("hi", NULL);
+    CHECK(svc_audio_work("jerv", &w) && w.n == 0, "starts with no steps");
+    svc_audio_fake_reply("hi", "Hello.", false);
+    svc_audio_service();
+    m = last_jerv();
+    CHECK(!m.status[0], "and a turn with no tool gets no line");
+    svc_messages_fake_clear();
+    svc_settings_set(SET_TTS, 1);
+}
+
+static void test_a_status_change_redraws_only_the_working_view(void)
+{
+    /* The spinner bug (owner, 2026-10-12): every status line rebuilt the whole list, and with it
+       the spinner, which started its sweep again. Now only the messages rebuild the list. */
+    const convo_sig_t drawn = {.rev = 4, .speaking = 0, .tts = true, .working = true, .work_seq = 2};
+    convo_sig_t now = drawn;
+    CHECK(convo_redraw(&drawn, &now) == CONVO_SAME, "nothing moved: nothing to draw");
+    now.work_seq = 3;
+    CHECK(convo_redraw(&drawn, &now) == CONVO_WORK, "a new status or step: the working view, in place");
+    now.rev = 5;
+    CHECK(convo_redraw(&drawn, &now) == CONVO_REBUILD, "a message changed: the list");
+    now = drawn;
+    now.working = false;
+    CHECK(convo_redraw(&drawn, &now) == CONVO_REBUILD, "the working view going: the list");
+    now = drawn;
+    now.speaking = 9;
+    CHECK(convo_redraw(&drawn, &now) == CONVO_REBUILD, "\"Speaking…\" coming: the list");
+    now = drawn;
+    now.can_speak = true;
+    CHECK(convo_redraw(&drawn, &now) == CONVO_REBUILD, "Listen buttons coming: the list");
+
+    svc_messages_fake_clear();
+    const uint32_t r0 = svc_messages_rev("jerv");
+    svc_messages_fake_add("jerv", &(msg_t){.id = 1, .text = "q"});
+    const uint32_t r1 = svc_messages_rev("jerv");
+    CHECK(r1 != r0 && svc_messages_rev("dave") == svc_messages_rev("dave"), "adding moves the thread's rev");
+    svc_audio_init();
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "a talk");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    svc_audio_fake_progress("q", NULL);
+    svc_audio_service();
+    const uint32_t r2 = svc_messages_rev("jerv");
+    svc_audio_fake_progress(NULL, "Writing the answer\xE2\x80\xA6");
+    svc_audio_fake_step(0, "weather");
+    svc_audio_service();
+    CHECK(svc_messages_rev("jerv") == r2, "a status line or a step leaves the messages as they were");
+    svc_messages_mark_played("jerv", 1);
+    svc_messages_mark_played("jerv", 1);
+    svc_messages_clear("jerv");
+    CHECK(svc_messages_rev("jerv") != r2 && svc_messages_rev("nobody") == 0, "clearing moves it");
+    svc_audio_stop_reply();
+    svc_audio_service();
+    svc_messages_fake_clear();
 }
 
 static void test_clear_chat_asks_that_agent_alone_for_a_new_conversation(void)
@@ -2775,6 +3036,11 @@ int main(void)
     test_clear_chat_takes_two_taps_within_three_seconds();
     test_buttons_over_the_menu_only_close_it();
     test_jerv_and_dave_are_two_threads_and_two_conversations();
+    test_step_records_read_in_any_split_and_an_old_panel_skips_them();
+    test_the_steps_keep_the_last_four_and_count_the_rest();
+    test_key_inside_a_conversation_continues_it_and_anywhere_else_starts_jerv_anew();
+    test_the_working_view_lists_steps_then_folds_into_the_answer_s_line();
+    test_a_status_change_redraws_only_the_working_view();
     test_clear_chat_asks_that_agent_alone_for_a_new_conversation();
     test_the_box_s_siblings_json_is_read_as_the_box_writes_it();
     test_a_name_is_what_the_panel_can_draw();

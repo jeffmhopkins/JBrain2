@@ -69,8 +69,9 @@ typedef enum { TK_AGENT_JERV, TK_AGENT_DAVE, TK_AGENT__COUNT } tk_agent_t;
 const char *tk_agent_id(tk_agent_t a);
 /* The agent a thread id names. False for anything else (a person's thread). */
 bool tk_agent_from(const char *id, tk_agent_t *out);
-/* `/endpoint/converse?persona=<id>&voice=<v>&jt=2` (the JT2 stream, 0.0.12), and
- * `&new_thread=true` after Clear chat. */
+/* `/endpoint/converse?persona=<id>&voice=<v>&jt=2&steps=1` (the JT2 stream, 0.0.12, with its
+ * step records, 0.0.14), and `&new_thread=true` for a new conversation (Clear chat, or KEY held
+ * outside the conversation). */
 void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t cap);
 
 typedef struct {
@@ -148,6 +149,8 @@ uint8_t talk_level(uint16_t peak);
 #define TS_ANSWER 0x04
 #define TS_PCM 0x05
 #define TS_END 0x06
+#define TS_STEP_START 0x07 /* index: u8 | UTF-8 label; the same index again relabels it */
+#define TS_STEP_DONE 0x08  /* index: u8 | ok: u8 */
 #define TS_ANSWER_SPEECH 0x01 /* the answer's speech follows */
 #define TS_ANSWER_CUT 0x02    /* the box cut the text to fit; the speech says all of it */
 #define TS_END_OK 0
@@ -164,6 +167,8 @@ typedef enum {
     TS_EV_ANSWER, /* `text`, and `flags` */
     TS_EV_PCM,    /* `*pcm`, `*pcm_n`: a slice of speech, pointing into the bytes fed */
     TS_EV_END,    /* `flags` is the code, `text` why */
+    TS_EV_STEP_START, /* `flags` is the index, `text` the label */
+    TS_EV_STEP_DONE,  /* `flags` is the index; tk_stream_step_ok says how it went */
     TS_EV_BAD,    /* not a JT2 stream, or a record longer than TS_MAX_RECORD */
 } tk_stream_ev_t;
 
@@ -185,11 +190,32 @@ void tk_stream_init(tk_stream_t *s);
 size_t tk_stream_feed(tk_stream_t *s, const uint8_t *b, size_t n, tk_stream_ev_t *ev,
                       const uint8_t **pcm, size_t *pcm_n);
 bool tk_stream_done(const tk_stream_t *s);
+/* The STEP_DONE just read: false only when the box said the tool failed. */
+bool tk_stream_step_ok(const tk_stream_t *s);
 bool tk_stream_bad(const tk_stream_t *s);
 
 /* `src` into `dst`, cut on a character with an ellipsis when it does not fit, never in the middle
  * of a letter. A bubble's text and the status line both pass through this. */
 void tk_fit(char *dst, size_t cap, const char *src);
+
+/* ---- the steps a turn took (JT2 STEP records, 0.0.14) ----
+ * The last WORK_SHOWN, oldest first, in place; anything older is only counted. A STEP_START for
+ * an index already shown relabels it; one at or below an index already seen but no longer shown
+ * is old news and changes nothing, so a late relabel never re-counts a folded step. */
+typedef struct {
+    work_step_t shown[WORK_SHOWN];
+    uint8_t n;
+    uint16_t total; /* steps started this turn */
+    uint16_t next;  /* one past the highest index seen */
+} tk_steps_t;
+
+void tk_steps_init(tk_steps_t *s);
+void tk_steps_start(tk_steps_t *s, uint8_t index, const char *label);
+void tk_steps_done(tk_steps_t *s, uint8_t index, bool ok);
+uint16_t tk_steps_folded(const tk_steps_t *s);
+/* The answer's one dim line once it lands: "1 step · 9 s", "12 steps · 2:05" — "" for a turn
+ * that ran no tool. Fits a msg_t's status. */
+void tk_steps_summary(const tk_steps_t *s, uint32_t ms, char *out, size_t cap);
 
 /* ---- the reply's voice, started the same way every time ----
  * The speaker's first word was sometimes lost (owner, 2026-10-12: "the first quarter second … is

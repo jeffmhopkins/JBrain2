@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12 (box side built, panel side next)** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; the steps list, the steady spinner and KEY-outside-starts-new in 0.0.14; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12 (box side built, panel side next)** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -80,6 +80,14 @@ panel, the others import it at a fixed `start` state).
   home, clock face, Settings, Minecraft — it records to Jerv, and on release the panel opens the
   Jerv thread so the transcript and the answer are seen. Inside Quorra's or Tamsin's thread it
   is still a message to her. A ringing alarm still takes KEY as snooze.
+- **KEY outside the conversation starts a new one** (owner, 2026-10-12: *"If I start off from not
+  within the Jerv conversation it starts a new one"*): KEY held inside Jerv's thread continues it;
+  held anywhere else — home, the clock, Settings, Minecraft's menu — it starts a new Jerv
+  conversation: on release the thread opens holding just the new exchange, and the box starts a
+  fresh "Desk panel" chat (the old one stays in the PWA). The same rule from Dave's side: KEY in
+  his thread continues Dave, and KEY anywhere else is Jerv's, new — never Dave's. A cancelled or
+  too-short hold changes nothing. Firmware 0.0.14; the sim's `jerv-after-key` and `jerv-reply`
+  states now show a thread that starts over.
 - **BOOT held opens the Clock** (owner, 2026-10-12): a long press of BOOT (800 ms) opens the
   Clock from anywhere — home, any app, over a notice — the moment it is crossed, while still
   held. A short press keeps home / back but now acts on release, so a long press is never also
@@ -127,6 +135,18 @@ panel, the others import it at a fixed `start` state).
   answer, which is kept whole on the glass (up to 1,000 bytes) and read aloud in full. KEY while
   he works says "Still working on the last one". The sim's `jerv-working`, `dave-working` and
   `jerv-long` states are the pictures. Firmware 0.0.12.
+- **The steps Jerv takes, not one line** (owner, 2026-10-12: *"if Jerv is using tools we should be
+  able to see that too … you could say using xtool or whatever the tool shorthand is"*): under the
+  question, one dim line per tool, in the tool's own shorthand and its target — "web_search · tide
+  Port St John", "web_fetch · tide-forecast.com" — a ✓ when it finished, a dim ✗ when it failed,
+  the spinner on the one running. Between tools the line is "Thinking… 0:42" with a clock from the
+  moment the question went. The last four show; older ones fold into "+N more" above them. When the
+  answer lands they collapse to one dim line over it, "2 steps · 58 s" (the PWA's "Worked · 2
+  steps"); an answer that ran no tool has none. **The spinner is a steady quarter arc going all the
+  way round once a second** (owner: *"I expected it to go all the way around but it's kind of like
+  resetting"*) — not LVGL's growing and shrinking sweep — and a status change no longer remakes it.
+  The sim's `jerv-thinking`, `jerv-steps` and `jerv-steps-done` states are the pictures; there is
+  no mock board. Firmware 0.0.14.
 - **Alarms, built** (firmware 0.0.13 and the PWA): `ClockAlarms`, `Ringing` and `PwaAlarms` as
   drawn, with these differences, each on purpose. **A sound per alarm** — the PWA's form gains a
   Chime / Beeps / Rise picker below the label (the mock has none; the brief asked for a small fixed
