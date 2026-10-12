@@ -223,11 +223,13 @@ async def test_a_question_is_one_player_tier_turn_answered_privately(world) -> N
     (call,) = executor.calls
     # Less transport, a Power Pack use, until the asker has made a pack (§M19), and the
     # Replicator's tool until they hold 8 packs (§M15), and the wormhole tool until they
-    # have unlocked the Wormhole Seed (§M12).
+    # have unlocked the Wormhole Seed (§M12), and the gates-and-beacons read until either
+    # it or the No-Spawn Beacon is (§M26).
     assert call["profile"].tools == MINECRAFT_DAVE_INGAME_TOOLS - {
         "mc_transport",
         "mc_replicator_program",
         "mc_wormhole_aim",
+        "mc_gates_beacons",
     }
     assert "intro for session-of-111" in call["profile"].prompt
     assert call["agent_session_id"] == "session-of-111"
@@ -439,6 +441,7 @@ async def test_the_turn_gets_only_the_askers_unlocked_items(world) -> None:
     assert "### The Replicator" in call["profile"].prompt
     assert "mc_replicator_program" in call["profile"].tools
     assert "mc_wormhole_aim" not in call["profile"].tools
+    assert "mc_gates_beacons" not in call["profile"].tools
 
     # Popped chorus fruit after a pack: the Wormhole Seed's entry and its tool (§M12).
     world["events"].append(
@@ -449,3 +452,12 @@ async def test_the_turn_gets_only_the_askers_unlocked_items(world) -> None:
     call = executor.calls[-1]
     assert "### The Wormhole Seed" in call["profile"].prompt
     assert "mc_wormhole_aim" in call["profile"].tools
+    assert "mc_gates_beacons" in call["profile"].tools
+
+    # The No-Spawn Beacon alone also brings the gates-and-beacons read (§M26).
+    world["events"].append(_event(7, "is my base safe?", known=["no_spawn_beacon"]))
+    await door.tick()
+    await door.drain()
+    call = executor.calls[-1]
+    assert "mc_gates_beacons" in call["profile"].tools
+    assert "mc_wormhole_aim" not in call["profile"].tools

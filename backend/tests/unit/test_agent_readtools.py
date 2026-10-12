@@ -1818,6 +1818,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "eda4dbb595d6db1ee749991fef5cb2f3a72accbe51b4180912e778a78487bde5",
         ),
+        # Gates and beacons (§M26): read-only, in game only the asker's own.
+        "mc_gates_beacons.tool": (
+            "mc_gates_beacons",
+            1,
+            "f67d8391d37283e2419ace59adf0086445dc9dc6a311ac1244eb02d12df2f268",
+        ),
         # In game only: the asker's held Replicator, from 8 stacks they carry (§M15).
         "mc_replicator_program.tool": (
             "mc_replicator_program",
@@ -1859,10 +1865,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "bde3de8951d40facacd6525a23243d968d739892b14d199977a969dd37cd4a8a",
         ),
         # The map card (§P3): data slots only, the app builds every tile request.
+        # v2: `gate` and `beacon` focuses, `beacons` and `gates` overlays (§M26).
         "mc_show_map.tool": (
             "mc_show_map",
-            1,
-            "cac3b45d09773eabc252a20fe32fbe37ff1fea4eebe64866801c8168115477b7",
+            2,
+            "41eb296db128df41e72a38a75238cb0cc40ec1944275430c7b44a9852b9bae9f",
         ),
         "mc_backups.tool": (
             "mc_backups",

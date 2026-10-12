@@ -6,12 +6,14 @@
 import { system, world } from "@minecraft/server";
 import { POWER_PACK, packToBurn } from "./rules.js";
 import { AIR, DIMS, FRAME_BLOCK, SEED, SURFACE, WORMHOLE_LINES as L, aimPlan, blockOf,
-  findFrame, frameCells, gateFor, inInterior, inRing, landing, overlaps, parseGate,
-  parseWormhole } from "./wormhole_rules.js";
+  findFrame, frameCells, gateEvent, gateFor, gatesSnapshot, inInterior, inRing, landing,
+  overlaps, parseGate, parseWormhole } from "./wormhole_rules.js";
 
 // A plain line for the console, which Dave's tools read their answer from (as
 // mc_set_waypoint reads `waypoint set`), and which is the trips' log.
 const say = (msg) => console.log(`[jbrain] ${msg}`);
+// The map's and Dave's record of a change, sent just before its prose line.
+const emit = (ev) => console.log(`[jbrain] ${JSON.stringify(ev)}`);
 
 const DIM_KEYS = Object.fromEntries(Object.entries(DIMS).map(([k, v]) => [v, k]));
 
@@ -102,7 +104,8 @@ const plant = (player, block) => {
   inv.setItem(slot, undefined); // stack size 1: the seed is gone into the gate
   const id = (Number(world.getDynamicProperty(NEXT)) || 0) + 1;
   world.setDynamicProperty(NEXT, id);
-  save({ id, ...gate, planter: player.name, planterId: player.id, target: null, opened: false });
+  const made = { id, ...gate, planter: player.name, planterId: player.id, target: null, opened: false };
+  save(made);
   player.sendMessage(`§7${L.planted}`);
   fx(() => player.playSound("block.end_portal_frame.fill"));
   fx(() => {
@@ -110,6 +113,7 @@ const plant = (player, block) => {
       dim.spawnParticle("minecraft:portal_reverse_particle", { x: c.x + 0.5, y: c.y + 0.5, z: c.z + 0.5 });
     }
   });
+  emit(gateEvent("planted", made, player.name));
   say(`wormhole planted: gate ${id} by ${player.name} at ${where({ ...gate, id })}`);
   fx(() => onPlanted(player));
 };
@@ -125,6 +129,7 @@ const collapse = (gate, by) => {
     if (p) fx(() => p.sendMessage(`§7${L.collapsed}`));
   }
   const breaker = by ? `, broken by ${by.name}` : "";
+  emit(gateEvent("collapsed", gate, by?.name ?? ""));
   say(`wormhole collapsed: gate ${gate.id} (${gate.planter}'s) at ${where(gate)}${breaker}`);
 };
 
@@ -205,7 +210,9 @@ const aim = ({ player: name, target }) => {
     return say(`wormhole refused: re-aiming gate ${gate.id} costs a Power Pack, and ${player.name} has none`);
   }
   fill(gate, SURFACE);
-  save({ ...gate, target, opened: true });
+  const aimed = { ...gate, target, opened: true };
+  save(aimed);
+  emit(gateEvent(plan === "charge" ? "aimed" : "opened", aimed, player.name));
   // Only now has the gate really changed, so only now is the pack spent.
   fx(() => player.playSound("mob.endermen.portal"));
   const to = `${target.place} at ${target.x} ${target.y} ${target.z} (${target.dim})`;
@@ -224,7 +231,9 @@ const forget = ({ player, place }) => {
     const theirs = gate.planter.toLowerCase() === player.toLowerCase();
     if (!theirs || t?.place.toLowerCase() !== place.toLowerCase()) continue;
     fx(() => fill(gate, AIR));
-    save({ ...gate, target: null });
+    const dark = { ...gate, target: null };
+    save(dark);
+    emit(gateEvent("dormant", dark, gate.planter));
     n += 1;
   }
   say(`wormhole forgot ${place} for ${player}: ${n} gate(s) went dormant`);
@@ -303,7 +312,17 @@ export const initWormholes = ({ onPlanted: planted } = {}) => {
     }
   });
   let frame = 0;
+  let reported = false;
   system.runInterval(() => {
+    // Once per load, after the first tick: the properties can't be read any sooner.
+    if (!reported) {
+      reported = true;
+      try {
+        emit(gatesSnapshot(allGates()));
+      } catch (e) {
+        say(`wormhole report failed: ${e}`);
+      }
+    }
     look();
     frame = (frame + 1) % 4;
     if (frame === 0) {

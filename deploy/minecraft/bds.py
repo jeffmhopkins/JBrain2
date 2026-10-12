@@ -37,7 +37,18 @@ _DISCONNECTED = re.compile(r"Player disconnected: ([^,]+), xuid")
 # A line from the jbrain behavior pack: `[Scripting] [jbrain] {"ev": "death", …}`.
 _PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
 # `wreck` is the spawn wreck reporting its build (plan §SW1): loaded, pod, ship, done.
-PACK_EVENTS = ("death", "respawn", "dave", "wreck")
+# `beacon` and `gate` are a No-Spawn Beacon or a wormhole gate changing, `beacons` and
+# `gates` every one of them, sent after each load (§M26): the map's and Dave's record.
+MARKER_EVENTS = ("beacon", "gate", "beacons", "gates")
+PACK_EVENTS = ("death", "respawn", "dave", "wreck", *MARKER_EVENTS)
+DIMENSIONS = ("overworld", "nether", "the_end")
+BEACON_OPS = ("on", "off")
+GATE_OPS = ("planted", "opened", "aimed", "dormant", "collapsed")
+# Bedrock's world border: a block coordinate is never further out.
+COORD_MAX = 30_000_000
+MARKER_TEXT_MAX = 40
+# A snapshot longer than this is cut and marked, so the api patches instead of replacing.
+SNAPSHOT_MAX = 256
 # A `/jb:dave` question as the pack cuts it (§M5); anything longer was not the pack's.
 QUESTION_MAX = 256
 # The asker's Old Maker unlocks (§M19), as the pack names them; the backend keeps only
@@ -214,6 +225,11 @@ class Bds:
         except ValueError:
             return
         if not isinstance(data, dict) or data.get("ev") not in PACK_EVENTS:
+            return
+        if data["ev"] in MARKER_EVENTS:
+            marker = marker_event(data)
+            if marker is not None:
+                self._event(str(data["ev"]), "", "", **marker)
             return
         name = str(data.get("name", ""))[:32]
         extra: dict[str, Any] = _place(data)
@@ -400,6 +416,79 @@ def _place(data: dict[str, Any]) -> dict[str, Any]:
     if isinstance(data.get("dim"), str):
         out["dim"] = data["dim"][:64]
     return out
+
+
+def _coord(value: Any) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return max(-COORD_MAX, min(int(value), COORD_MAX))
+
+
+def _text(value: Any) -> str:
+    return value[:MARKER_TEXT_MAX] if isinstance(value, str) else ""
+
+
+def _spot(data: Any) -> dict[str, Any] | None:
+    """A whole block position in a known dimension, or None."""
+    if not isinstance(data, dict) or data.get("dim") not in DIMENSIONS:
+        return None
+    xyz = {k: _coord(data.get(k)) for k in ("x", "y", "z")}
+    if any(v is None for v in xyz.values()):
+        return None
+    return {"dim": data["dim"], **xyz}
+
+
+def _beacon(data: Any) -> dict[str, Any] | None:
+    spot = _spot(data)
+    return None if spot is None else {**spot, "by": _text(data.get("by"))}
+
+
+def _gate(data: Any) -> dict[str, Any] | None:
+    spot = _spot(data)
+    gid = data.get("id") if isinstance(data, dict) else None
+    if spot is None or isinstance(gid, bool) or not isinstance(gid, int) or gid < 1:
+        return None
+    if data.get("axis") not in ("x", "z"):
+        return None
+    raw = data.get("target")
+    target = _spot(raw)
+    if target is not None:
+        place = _text(raw.get("place")).strip()
+        target = {"place": place, **target} if place else None
+    return {
+        "id": min(gid, 2**31 - 1),
+        **spot,
+        "axis": data["axis"],
+        "planter": _text(data.get("planter")),
+        "target": target,
+    }
+
+
+def marker_event(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A beacon or gate line's fields, every one type-checked and clamped, or None when
+    the line can't be one. The names in it (who placed, planted or broke; a place's name)
+    are gamertags and player-chosen words, so they are cut short and passed as text; the
+    api matches them to the roster itself."""
+    ev = data.get("ev")
+    if ev in ("beacons", "gates"):
+        items = data.get("all")
+        if not isinstance(items, list):
+            return None
+        check = _beacon if ev == "beacons" else _gate
+        good = [m for m in (check(i) for i in items[:SNAPSHOT_MAX]) if m is not None]
+        return {"all": good, "truncated": len(items) > SNAPSHOT_MAX}
+    op = data.get("op")
+    if ev == "beacon" and op in BEACON_OPS:
+        got = _beacon(data)
+    elif ev == "gate" and op in GATE_OPS:
+        got = _gate(data)
+        if got is not None:
+            got["by"] = _text(data.get("by"))
+    else:
+        return None
+    return None if got is None else {"op": op, **got}
 
 
 def _is_file_list(text: str) -> bool:

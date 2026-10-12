@@ -33284,6 +33284,138 @@ span.mc-map-world {
   color: var(--text);
 }
 
+/* beacons and gates (§M26; docs/mocks/minecraft-map-markers/, variant A) */
+.mc-map-det-ic.bea,
+.mc-map-det-ic.gate {
+  border-color: transparent;
+}
+
+.mc-map-det-ic.bea {
+  background: var(--green-tint);
+  color: var(--ok-text);
+}
+
+.mc-map-det-ic.gate {
+  background: var(--violet-tint);
+  color: var(--violet-text);
+}
+
+.mc-map-ov-gl.bea {
+  color: var(--ok-text);
+}
+
+.mc-map-ov-gl.gate {
+  color: var(--violet-text);
+}
+
+.mc-map-state {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.mc-map-state.open {
+  background: var(--violet-tint);
+  color: var(--violet-text);
+}
+
+.mc-map-state.prot {
+  background: var(--green-tint);
+  color: var(--ok-text);
+}
+
+.mc-map-state.dorm {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+}
+
+.mc-map-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.mc-map-lead svg {
+  flex: none;
+  color: var(--violet-text);
+}
+
+.mc-map-lead b,
+.mc-map-det-note b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.mc-map-det-note {
+  margin: 0;
+}
+
+.mc-map-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.mc-map-li {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  padding: 6px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mc-map-li:first-child {
+  border-top: 0;
+}
+
+.mc-map-li .mc-map-det-ic {
+  width: 30px;
+  height: 30px;
+}
+
+.mc-map-li > svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.mc-map-li-tx {
+  flex: 1;
+  min-width: 0;
+}
+
+.mc-map-li-tx b {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+
+.mc-map-li-tx span {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.mc-map-lg-sw {
+  flex: none;
+}
+
 /* the world picker (the shared Sheet) */
 .mc-map-picker-note {
   margin-bottom: 8px;
@@ -34086,6 +34218,22 @@ span.mc-map-world {
   background: var(--amber-tint);
   border-color: transparent;
   color: var(--warn-text);
+}
+.tv-mc-det-ic.bea {
+  background: var(--green-tint);
+  border-color: transparent;
+  color: var(--ok-text);
+}
+.tv-mc-det-ic.gate {
+  background: var(--violet-tint);
+  border-color: transparent;
+  color: var(--violet-text);
+}
+.tv-mc-lg-i.bea svg {
+  color: var(--ok-text);
+}
+.tv-mc-lg-i.gate svg {
+  color: var(--violet-text);
 }
 .tv-mc-det-tx {
   flex: 1;

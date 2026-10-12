@@ -184,9 +184,15 @@ def check_memory_op(current: list[str], op: str, line: int, new_text: str) -> st
     return ""
 
 
+# A pack event line (`[jbrain] {"ev": …}`): the wrapper's to queue, never part of a reply.
+_EVENT_LINE = re.compile(r"\[jbrain\] \{.*\}\s*$")
+
+
 def _reply(lines: list[str]) -> str:
-    """A console reply's text, its log-line prefixes dropped."""
-    return " ".join(line.split("] ", 1)[-1] for line in lines).strip() or "(no answer)"
+    """A console reply's text, its log-line prefixes and the pack's event lines dropped:
+    a gate's structured line names its place, which could read as a gate number."""
+    kept = [line for line in lines if not _EVENT_LINE.search(line)]
+    return " ".join(line.split("] ", 1)[-1] for line in kept).strip() or "(no answer)"
 
 
 def _int(raw: Any, default: int, low: int, high: int) -> int | None:

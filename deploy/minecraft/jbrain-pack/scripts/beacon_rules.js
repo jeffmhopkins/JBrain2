@@ -44,9 +44,10 @@ const whole = (v) => Math.floor(v);
 export const recordKey = (dim, at) =>
   `${RECORD_PREFIX}${dim}@${whole(at.x)},${whole(at.y)},${whole(at.z)}`;
 
-export const makeRecord = (dim, at) => {
+// `by` is who placed it: a record from before placers were kept has none.
+export const makeRecord = (dim, at, by = "") => {
   const pos = { x: whole(at.x), y: whole(at.y), z: whole(at.z) };
-  return { dim, ...pos, chunks: coveredChunks(pos) };
+  return { dim, ...pos, by, chunks: coveredChunks(pos) };
 };
 
 // A stored record, or undefined for anything unreadable (which the sweep then ignores).
@@ -56,11 +57,26 @@ export const parseRecord = (raw) => {
     const r = JSON.parse(raw);
     if (typeof r?.dim !== "string") return undefined;
     if (![r.x, r.y, r.z].every(Number.isInteger)) return undefined;
-    return makeRecord(r.dim, r);
+    return makeRecord(r.dim, r, typeof r.by === "string" ? r.by : "");
   } catch {
     return undefined;
   }
 };
+
+// The structured line the wrapper turns into an event for the map and Dave (§M16): the
+// dimension by its short name, as deaths carry it.
+export const dimKey = (dim) => dim.replace(/^minecraft:/, "");
+
+export const beaconEvent = (op, rec, by) => ({
+  ev: "beacon", op, dim: dimKey(rec.dim), x: rec.x, y: rec.y, z: rec.z, by,
+});
+
+// Every beacon at once, sent after each load so a restore, an import or a missed line
+// can't leave the map out of date.
+export const beaconsSnapshot = (records) => ({
+  ev: "beacons",
+  all: [...records].map((r) => ({ dim: dimKey(r.dim), x: r.x, y: r.y, z: r.z, by: r.by })),
+});
 
 // dimension id -> the chunk keys any beacon covers there. A Set: overlapping beacons
 // cover a chunk once, and a spawn's check is one lookup.

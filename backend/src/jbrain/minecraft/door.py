@@ -367,6 +367,9 @@ class DaveDoor:
         if "wormhole_seed" not in q.asker.known:
             # And the wormhole gates' tool, until the guide describes them (§M12).
             profile = replace(profile, tools=(profile.tools or frozenset()) - {"mc_wormhole_aim"})
+        if not q.asker.known & {"no_spawn_beacon", "wormhole_seed"}:
+            # The gates-and-beacons read, until the guide describes one of them (§M26).
+            profile = replace(profile, tools=(profile.tools or frozenset()) - {"mc_gates_beacons"})
         items = await self.item_guide(q.asker)
         profile = replace(profile, prompt=f"{profile.prompt}\n\n{items}\n\n{intro}")
         conversation = [

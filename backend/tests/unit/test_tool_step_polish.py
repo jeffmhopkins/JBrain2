@@ -128,6 +128,7 @@ def test_inline_arg_keys_exist_in_each_tool_schema() -> None:
 # Tools whose handler authors the row's answer itself — `ToolOutput(result_brief=...)`.
 # Prefer this: only the handler knows which part of its own result was the answer.
 _AUTHORS_BRIEF = {
+    "mc_gates_beacons",
     "add_list_item",
     "add_source_exclusion",
     "analyze_image",

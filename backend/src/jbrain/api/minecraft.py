@@ -25,7 +25,7 @@ from starlette.background import BackgroundTask
 
 from jbrain.api.deps import OwnerDep, SettingsDep, owner_only
 from jbrain.db.session import SessionContext
-from jbrain.minecraft import changelog, sessions, shares, targets, timeline, travel
+from jbrain.minecraft import changelog, markers, sessions, shares, targets, timeline, travel
 from jbrain.minecraft import client as mc
 
 router = APIRouter(prefix="/minecraft", dependencies=[Depends(owner_only)])
@@ -580,6 +580,21 @@ async def map_structures(
     the loaded, running world refreshes itself in the background."""
     params = {"slot": slot, "dim": dim}
     return await mc.call(settings, "GET", "/map/structures", params=params)
+
+
+@router.get("/map/markers")
+async def map_markers(
+    request: Request,
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str | None, Query(pattern=_DIM)] = None,
+) -> dict[str, Any]:
+    """The world's No-Spawn Beacons and wormhole gates (§M26), in one dimension or all:
+    the pack's own records, kept by the session drain, so they answer with the server
+    stopped or the world unloaded, as of `as_of` (when the pack last reported them)."""
+    rec = await mc.slot_record(settings, slot)
+    got = await markers.for_world(_maker(request), str(rec["folder"]), dim)
+    return {"slot": slot, "world": rec["folder"], **got}
 
 
 @router.post("/map/structures/sweep", status_code=202)

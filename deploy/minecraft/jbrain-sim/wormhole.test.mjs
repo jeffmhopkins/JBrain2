@@ -96,6 +96,50 @@ const openGate = () => {
   return { cells, mira };
 };
 
+// The structured lines, parsed: what the wrapper turns into the map's events (§M12).
+const events = (ev) =>
+  sim.logs.filter((l) => l.startsWith("[jbrain] {")).map((l) => JSON.parse(l.slice(9))).filter((e) => e.ev === ev);
+const TREE_FARM = { place: "Tree Farm", dim: "overworld", x: 100, y: 70, z: -50 };
+
+// First in the file: the report is once per load, and main.js loads once for all of them.
+test("the first tick after a load reports every gate once, where each leads", () => {
+  openGate();
+  sim.tick();
+  sim.tick();
+  assert.deepEqual(events("gates"), [
+    {
+      ev: "gates",
+      all: [{ id: 1, ...GATE, dim: "overworld", planter: "Mira", target: TREE_FARM }],
+    },
+  ]);
+});
+
+test("planting, opening, re-aiming, forgetting and collapsing each send a gate line", () => {
+  const { cells, mira } = openGate();
+  holding(mira, "jbrain:power_pack", 2);
+  aim("Mira", "Mine", { x: 5, y: 12, z: 5 });
+  sim.scriptevent("jb:wormhole", JSON.stringify({ op: "forget", player: "Mira", place: "mine" }));
+  const steve = crew("Steve", "-2");
+  sim.breakBlock({
+    block: sim.overworld.getBlock(cells.ring[0]),
+    brokenBlockPermutation: { type: { id: DIAMOND } },
+    dimension: sim.overworld,
+    player: steve,
+  });
+  const base = { ev: "gate", id: 1, ...GATE, dim: "overworld", planter: "Mira" };
+  const mine = { place: "Mine", dim: "overworld", x: 5, y: 12, z: 5 };
+  assert.deepEqual(events("gate"), [
+    { ...base, op: "planted", by: "Mira", target: null },
+    { ...base, op: "opened", by: "Mira", target: TREE_FARM },
+    { ...base, op: "aimed", by: "Mira", target: mine },
+    { ...base, op: "dormant", by: "Mira", target: null },
+    { ...base, op: "collapsed", by: "Steve", target: null },
+  ]);
+  // A refusal changes nothing, so it sends nothing.
+  aim("Mira", "Mine", { x: 5, y: 12, z: 5 });
+  assert.equal(events("gate").length, 5);
+});
+
 test("planting the seed in a ring of diamond blocks: the seed goes, a dormant gate stays", () => {
   const cells = build();
   const mira = crew("Mira", "-1");

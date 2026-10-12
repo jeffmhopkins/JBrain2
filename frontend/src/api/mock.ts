@@ -4068,6 +4068,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
         return json(m.mcMapPlayers(slot, running && !!slotOf(slot)?.active));
       }
       if (path === "/api/minecraft/map/structures") return json(m.mcMapStructures(slot, dim));
+      if (path === "/api/minecraft/map/markers") return json(m.mcMapMarkers(slot));
       if (path === "/api/minecraft/map/structures/sweep") {
         return running && slotOf(slot)?.active
           ? json({ state: "running", done: 0, total: 1200 }, 202)
