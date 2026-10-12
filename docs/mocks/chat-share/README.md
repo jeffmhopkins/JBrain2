@@ -1,24 +1,29 @@
-# Chat share links — GUI gate (pending owner choice)
+# Chat share links — GUI gate
 
-Mock for sharing an agent chat from the Chats list's swipe rail. `options-a-b-c.html` is the
-interactive mock: switch Variant × Screen (swipe rail · share sheet · public view · revoked)
-× theme, and pick the rail glyph at the bottom. No direction is chosen yet.
+Owner chose **B · Live** (2026-10-12), with two changes: the public page shows the chat
+exactly as the app does, and "live" means current as of each load (no push, no pause).
+`options-a-b-c.html` is the original three-way mock. The binding mock is published at
+https://claude.ai/artifact/PCwfnyFjqRunoT7FPsej3p and built from `source/`.
 
-- **Rail.** A fifth button, **share**, joins rename · scope · archive · delete. It sits
-  between rename and scope so its steel tint never touches archive's. Each button stays
-  48px, so the rail grows from 192 to 240px. A shared chat shows the share glyph beside
-  its turn count. Glyph candidates: chain link (recommended; matches report sharing),
-  share arrow, share nodes.
-- **A · Snapshot.** Tapping share mints a link to the chat as it is now; later turns stay
-  private until "Update snapshot".
-- **B · Live.** The link follows the chat; a "Keep updating" switch pauses it.
-- **C · Pick turns.** Choose turns before the link exists; the public page marks a gap
-  where a turn was left out.
+**Owner side.**
+- **Rail.** A fifth button, **share** (chain-link glyph, steel), between rename and scope,
+  so its tint never touches archive's. 48px each; the rail grows from 192 to 240px. A
+  shared chat shows the link glyph beside its turn count.
+- **Sheet.** Tapping share mints the link and opens a sheet: link box + Copy, "Send with…"
+  (Web Share), opens count + last opened, and **Revoke**. A violet warning appears when the
+  chat's scope includes a firewalled domain (Financial / Medical / Location). There are no
+  toggles: tool steps are always included.
 
-All three: a link box with Copy and "Send with…", a "Show tool steps" switch (off by
-default), opens count + last opened, **Revoke**, and a violet warning when the chat read a
-firewalled domain (here Financial). The public page is shell-less: a steel "shared chat ·
-read-only" band, the transcript, sources, and a footer saying the reader can't reply.
+**Public page** (shell-less, like the research share page).
+- A steel "shared chat · read-only" band: title, "As of <time> · <mode> · N turns", and
+  "Reload for newer turns".
+- The transcript is the shipped `AgentTranscript` inside `.fb-shell`, so Thought, Worked,
+  step rows, inline tool marks, citations and copy behave exactly as in the app. There is
+  no top bar and no omnibox; the page scrolls as one document.
+- Each load serves the whole conversation as it is at that moment. A revoked link shows
+  "This link no longer works".
+- A footer says the reader can't reply, open its notes, or see anything else.
 
-Tokens only, steel = links, amber = research mode (`docs/reference/DESIGN.md`). Prior art:
-`docs/mocks/research-share/`.
+**Rebuilding the mock.** Copy `source/` to `frontend/_mock_chatshare/`, then run
+`npx vite build --config _mock_chatshare/vite.config.ts` from `frontend/` and inline
+`dist/assets/*.{css,js}` into one page. Don't commit the build folder.
