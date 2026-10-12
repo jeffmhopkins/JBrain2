@@ -185,6 +185,10 @@ finding of the 2026-10 adversarial review fixed in one release, with no wrapper 
   and what is drawn are one machine, stepped once per frame; `display.c` only samples, runs the
   effects in order and draws `sm_view_t` (`ui.c`/`ui.h` are gone). `check_no_logic_in_display`
   keeps it that way.
+- **`overlay.c` draws `sm_view_t`** (0.4.1): the notice, the run, the pair, the dot, the grid
+  and the send's outcome, with no ESP dependency. That is what lets `firmware/mock/` build the
+  same pixels for the browser bench, `docs/mocks/jpanel-s3/`: the machine, the engine, the
+  arbiter, the cues, the pet and the overlays compiled to WebAssembly and pressed with a mouse.
 - **`jpanel_core.c` is the engine**: one serial loop that owns every request and publishes one
   seqlocked snapshot; render posts commands and copies the snapshot, nothing else.
 - **`stream.c` owns the speaker**: cues, the pet's reply, silence, the stop word and the message

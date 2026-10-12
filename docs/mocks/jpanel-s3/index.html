@@ -1,0 +1,385 @@
+<meta charset="utf-8">
+<title>Twins' Panel Bench</title>
+<meta name="description" content="The twins' S3 panel firmware running in the browser: press it, send it messages, hear its cues.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a bench — the panel in its case on the left, the rig that drives it on the right,
+   the machine's readout and log underneath. One column on a phone. */
+:root {
+  --bg: #eef0f2;
+  --surface: #ffffff;
+  --ink: #16191d;
+  --muted: #5d6670;
+  --line: #d5dae0;
+  --amber: #c96a00;        /* the panel's own CUE_COLOUR, darkened to read on white */
+  --teal: #0f7a74;
+  --red: #c4302b;
+  --blue: #2457c5;
+  --chip: #e5e9ee;
+  --case: #1b1e22;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121519; --surface: #1a1e23; --ink: #e8ebee; --muted: #9aa4ae; --line: #2c333b;
+    --amber: #ffa63d; --teal: #3cc6bc; --red: #ff6b63; --blue: #7aa2ff; --chip: #252b32;
+    --case: #050607; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121519; --surface: #1a1e23; --ink: #e8ebee; --muted: #9aa4ae; --line: #2c333b;
+  --amber: #ffa63d; --teal: #3cc6bc; --red: #ff6b63; --blue: #7aa2ff; --chip: #252b32;
+  --case: #050607; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 14px; line-height: 1.45; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 40px; display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: 26px; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 70ch; }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; }
+.bench { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 860px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+
+/* The case: 1.8" AMOLED, 368x448, corners hidden by the enclosure (FACE_CASE_CORNER_R = 48). */
+.unit { display: grid; justify-items: center; gap: 10px; }
+.case { background: var(--case); padding: 22px; border-radius: 64px; box-shadow: 0 10px 30px rgba(0,0,0,.25); max-width: 100%; }
+.glass { position: relative; width: 368px; max-width: calc(100vw - 32px - 44px); aspect-ratio: 368 / 448; border-radius: 48px; overflow: hidden; background: #000; touch-action: none; cursor: pointer; }
+.glass canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.glass.dim canvas#fb { filter: brightness(.45); }
+#targets { pointer-events: none; opacity: .55; }
+.boot { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+.unit .hint { font-size: 12px; color: var(--muted); text-align: center; max-width: 380px; }
+
+.rig { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+.group { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 10px; align-content: start; min-width: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: inherit; font-weight: 500; color: var(--ink); background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 7px 11px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+button.hold[aria-pressed="true"], button.on { background: var(--red); border-color: var(--red); color: #fff; }
+button.seg[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+label { display: flex; gap: 8px; align-items: center; justify-content: space-between; color: var(--muted); font-size: 13px; }
+select, input[type="number"] { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-width: 0; }
+input[type="number"] { width: 84px; font-family: var(--font-mono); font-size: 12px; }
+.note { font-size: 12px; color: var(--muted); margin: 0; }
+
+.readout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 14px; }
+@media (max-width: 860px) { .readout { grid-template-columns: minmax(0, 1fr); } }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--font-mono); font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); }
+.chip.lit { background: var(--teal); color: #fff; }
+.chip.warn { background: var(--amber); color: #fff; }
+.chip.mode { background: var(--ink); color: var(--bg); font-weight: 600; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 13px; }
+dt { color: var(--muted); }
+dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.log { font-family: var(--font-mono); font-size: 12px; height: 320px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 0; }
+.log div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.log .t { color: var(--muted); font-variant-numeric: tabular-nums; }
+.log .cue { color: var(--amber); }
+.log .mode { color: var(--teal); font-weight: 600; }
+.log .bug { color: var(--red); font-weight: 600; }
+.log .post, .log .talk { color: var(--blue); }
+.log .http { color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; }
+.legend span { font-family: var(--font-mono); font-size: 11px; padding: 2px 6px; border-radius: 4px; color: #fff; }
+.err { color: var(--red); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Twins' panel bench</h1>
+    <p>This is the S3 panel's own firmware, compiled to WebAssembly: the state machine, the message engine, the speaker arbiter, the cues and every overlay. Press the glass the way a child would; hold for the who-menu; swipe the notice. The box it talks to is a script.</p>
+  </header>
+
+  <section class="bench">
+    <div class="unit">
+      <div class="case">
+        <div class="glass" id="glass" aria-label="The panel's touch screen">
+          <canvas id="fb" width="368" height="448"></canvas>
+          <canvas id="targets" width="368" height="448" hidden></canvas>
+        </div>
+      </div>
+      <div class="boot">
+        <span>BOOT</span>
+        <button id="boot-short" title="Short press: home, back, wake">Press</button>
+        <button id="boot-hold" title="Long press: standby">Hold</button>
+      </div>
+      <p class="hint" id="status">Loading the firmware…</p>
+    </div>
+
+    <div class="rig">
+      <div class="group">
+        <h2>The box</h2>
+        <div class="row">
+          <button class="primary" id="msg-sister">Message from Tamsin</button>
+          <button class="primary" id="msg-dad">Message from Dad</button>
+        </div>
+        <label>Message length
+          <select id="msg-len"><option value="2000">2 s</option><option value="5000" selected>5 s</option><option value="15000">15 s</option><option value="28000">28 s</option></select>
+        </label>
+        <label>Next send
+          <select id="send-status"><option value="200">delivered</option><option value="404">nobody to send to (404)</option><option value="500">box error (500)</option></select>
+        </label>
+        <label>Box reachable <input type="checkbox" id="online" checked></label>
+        <label>Box has the delivery header <input type="checkbox" id="newbox" checked></label>
+        <label>Latency, ms <input type="number" id="latency" value="150" min="0" step="50"></label>
+        <label>Transcribe, ms <input type="number" id="transcribe" value="1500" min="0" step="250"></label>
+        <label>Upload, bytes/s <input type="number" id="upload" value="64000" min="1000" step="8000"></label>
+      </div>
+
+      <div class="group">
+        <h2>Voice</h2>
+        <div class="row">
+          <button id="v-wake">“Hey pet”</button>
+          <button id="v-stop">“Stop”</button>
+          <button id="v-sister">“Tell my sister”</button>
+          <button id="v-dad">“Tell Dad”</button>
+        </div>
+        <button class="hold" id="talking" aria-pressed="false">Hold while she talks</button>
+        <p class="note">The voice detector hears her only while this is held. Let go, and 1.8 s of quiet sends the message.</p>
+        <label>Recogniser started <input type="checkbox" id="speech-ok" checked></label>
+      </div>
+
+      <div class="group">
+        <h2>The pet's answer</h2>
+        <label>Outcome
+          <select id="talk-outcome"><option value="0">it answers</option><option value="1">the request fails</option><option value="2">nothing understood</option></select>
+        </label>
+        <label>Thinks for, ms <input type="number" id="talk-ms" value="4000" min="0" step="500"></label>
+      </div>
+
+      <div class="group">
+        <h2>Bench</h2>
+        <div class="row" role="group" aria-label="Speed">
+          <button class="seg" data-speed="1" aria-pressed="true">1×</button>
+          <button class="seg" data-speed="3" aria-pressed="false">3×</button>
+          <button class="seg" data-speed="10" aria-pressed="false">10×</button>
+          <button id="pause" aria-pressed="false">Pause</button>
+        </div>
+        <div class="row">
+          <button id="sound">Sound on</button>
+          <button id="show-targets" aria-pressed="false">Show touch targets</button>
+        </div>
+        <div class="legend" id="legend" hidden></div>
+        <p class="note">10× skips the waits: the notice shrinks to a badge after 15 s, and the again/reply pair stands after 10 s.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="readout">
+    <div class="group">
+      <h2>What the machine says</h2>
+      <div class="chips" id="chips"></div>
+      <dl id="facts"></dl>
+    </div>
+    <div class="group">
+      <h2>Log</h2>
+      <pre class="log" id="log" aria-live="off"></pre>
+    </div>
+  </section>
+</div>
+
+<script type="module">
+import { createPanel, VOICE, KNOB } from './panel.js';
+
+const $ = (id) => document.getElementById(id);
+const status = $('status');
+const logEl = $('log');
+const lines = [];
+let ac = null, playhead = 0;
+let speed = 1, paused = false;
+let panel;
+try {
+  const bytes = await (await fetch('./sim.wasm')).arrayBuffer();
+  panel = await createPanel(bytes, { onEvent, onAudio });
+} catch (e) {
+  status.innerHTML = '<span class="err">The firmware did not load:</span> ' + String(e);
+  throw e;
+}
+status.textContent = 'Tap the pet. Hold it for the who-menu.';
+
+// ── the log ──
+function onEvent(line) {
+  const sp = line.indexOf(' '), sp2 = line.indexOf(' ', sp + 1);
+  const t = (Number(line.slice(0, sp)) / 1000).toFixed(2).padStart(7);
+  const kind = line.slice(sp + 1, sp2);
+  const div = document.createElement('div');
+  div.className = kind;
+  const ts = document.createElement('span');
+  ts.className = 't';
+  ts.textContent = t + '  ';
+  div.append(ts, kind.padEnd(6) + line.slice(sp2 + 1));
+  lines.push(div);
+}
+function flushLog() {
+  if (!lines.length) return;
+  const stick = logEl.scrollTop + logEl.clientHeight >= logEl.scrollHeight - 8;
+  logEl.append(...lines.splice(0));
+  while (logEl.childElementCount > 400) logEl.firstChild.remove();
+  if (stick) logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ── sound: the codec's own samples, 16 kHz ──
+function onAudio(pcm) {
+  if (!ac || speed !== 1) return;
+  let any = false;
+  for (let i = 0; i < pcm.length; i++) if (pcm[i] !== 0) { any = true; break; }
+  const now = ac.currentTime;
+  if (playhead < now + 0.03) playhead = now + 0.06;
+  if (!any) { playhead += pcm.length / 16000; return; }
+  const buf = ac.createBuffer(1, pcm.length, 16000);
+  const ch = buf.getChannelData(0);
+  for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  src.connect(ac.destination);
+  src.start(playhead);
+  playhead += pcm.length / 16000;
+}
+$('sound').onclick = () => {
+  if (!ac) {
+    ac = new AudioContext({ sampleRate: 16000 });
+    $('sound').textContent = 'Sound off';
+  } else if (ac.state === 'running') {
+    ac.suspend(); $('sound').textContent = 'Sound on';
+  } else {
+    ac.resume(); $('sound').textContent = 'Sound off';
+  }
+};
+
+// ── the glass ──
+const glass = $('glass');
+const fb = $('fb').getContext('2d');
+const img = fb.createImageData(panel.W, panel.H);
+function toPanel(ev) {
+  const r = glass.getBoundingClientRect();
+  return [Math.round((ev.clientX - r.left) * panel.W / r.width), Math.round((ev.clientY - r.top) * panel.H / r.height)];
+}
+let down = false;
+glass.addEventListener('pointerdown', (ev) => {
+  glass.setPointerCapture(ev.pointerId);
+  down = true;
+  panel.touch(0, ...toPanel(ev));
+  ev.preventDefault();
+});
+glass.addEventListener('pointermove', (ev) => { if (down) panel.touch(1, ...toPanel(ev)); });
+const lift = (ev) => { if (!down) return; down = false; panel.touch(2, ...toPanel(ev)); };
+glass.addEventListener('pointerup', lift);
+glass.addEventListener('pointercancel', lift);
+
+// ── the touch targets, by the machine's own hit test ──
+const tcv = $('targets'), tctx = tcv.getContext('2d');
+const TCOL = { pet: '#3a7d44', notice: '#2457c5', exit: '#c4302b', again: '#7b4fc4', reply: '#c96a00', face: '#1f8a8a',
+  pause: '#8a6d1f', tick: '#2d8a2d', cross: '#b33', sister: '#c2477a', dad: '#3d6fd1', cancel: '#777', talk: '#1f9a8a',
+  ignored: '#555', swallowed: '#333' };
+let showTargets = false;
+function drawTargets() {
+  const step = 8, seen = new Set();
+  tctx.clearRect(0, 0, panel.W, panel.H);
+  for (let y = 0; y < panel.H; y += step) for (let x = 0; x < panel.W; x += step) {
+    const n = panel.targetName(panel.target(x + step / 2, y + step / 2));
+    if (!n) continue;
+    seen.add(n);
+    tctx.fillStyle = TCOL[n] || '#999';
+    tctx.fillRect(x, y, step, step);
+  }
+  const legend = $('legend');
+  legend.replaceChildren(...[...seen].map((n) => { const s = document.createElement('span'); s.textContent = n; s.style.background = TCOL[n] || '#999'; return s; }));
+}
+$('show-targets').onclick = (e) => {
+  showTargets = !showTargets;
+  e.target.setAttribute('aria-pressed', String(showTargets));
+  e.target.textContent = showTargets ? 'Hide touch targets' : 'Show touch targets';
+  tcv.hidden = !showTargets;
+  $('legend').hidden = !showTargets;
+};
+
+// ── the rig ──
+const len = () => Number($('msg-len').value);
+$('msg-sister').onclick = () => panel.message(false, len());
+$('msg-dad').onclick = () => panel.message(true, len());
+$('send-status').onchange = (e) => panel.set(KNOB.NEXT_SEND_STATUS, Number(e.target.value));
+$('online').onchange = (e) => panel.set(KNOB.OFFLINE, e.target.checked ? 0 : 1);
+$('newbox').onchange = (e) => panel.set(KNOB.NEW_BOX, e.target.checked ? 1 : 0);
+$('latency').onchange = (e) => panel.set(KNOB.LATENCY, Number(e.target.value));
+$('transcribe').onchange = (e) => panel.set(KNOB.TRANSCRIBE_MS, Number(e.target.value));
+$('upload').onchange = (e) => panel.set(KNOB.UPLOAD_BPS, Number(e.target.value));
+$('speech-ok').onchange = (e) => panel.set(KNOB.SPEECH_OK, e.target.checked ? 1 : 0);
+$('talk-outcome').onchange = (e) => panel.set(KNOB.TALK_OUTCOME, Number(e.target.value));
+$('talk-ms').onchange = (e) => panel.set(KNOB.TALK_MS, Number(e.target.value));
+$('v-wake').onclick = () => panel.voice(VOICE.WAKE);
+$('v-stop').onclick = () => panel.voice(VOICE.STOP);
+$('v-sister').onclick = () => panel.voice(VOICE.SEND_SISTER);
+$('v-dad').onclick = () => panel.voice(VOICE.SEND_DAD);
+$('boot-short').onclick = () => panel.button(false);
+$('boot-hold').onclick = () => panel.button(true);
+const talking = $('talking');
+const hear = (on) => { panel.hearing(on); talking.setAttribute('aria-pressed', String(on)); };
+talking.addEventListener('pointerdown', () => hear(true));
+talking.addEventListener('pointerup', () => hear(false));
+talking.addEventListener('pointerleave', () => hear(false));
+talking.addEventListener('keydown', (e) => { if (e.key === ' ' && !e.repeat) { hear(true); e.preventDefault(); } });
+talking.addEventListener('keyup', (e) => { if (e.key === ' ') hear(false); });
+
+document.querySelectorAll('.seg').forEach((b) => b.onclick = () => {
+  speed = Number(b.dataset.speed);
+  document.querySelectorAll('.seg').forEach((o) => o.setAttribute('aria-pressed', String(o === b)));
+});
+$('pause').onclick = (e) => {
+  paused = !paused;
+  e.target.setAttribute('aria-pressed', String(paused));
+  e.target.textContent = paused ? 'Resume' : 'Pause';
+  e.target.classList.toggle('on', paused);
+};
+
+// ── the readout ──
+const PHASES = ['idle', 'polling', 'fetching', 'sounding', 'acking', 'sending'];
+const NET = ['idle', 'busy', 'spoke', 'failed'];
+const SCREEN = ['awake', 'dim', 'dark'];
+function readout() {
+  const s = panel.state();
+  const flags = [
+    ['think', s.think], ['dash', s.dash, 'warn'], [s.notice_big ? 'notice' : 'badge', s.notice],
+    [s.standing ? 'offer (standing)' : 'offer', s.offer], ['run', s.run_bar], ['transport', s.transport],
+    ['paused', s.paused, 'warn'], ['sending', s.sending], ['grid', s.grid], ['tick/cross', s.confirm],
+    ['mic dot', s.dot, 'warn'], ['exit', s.exit], ['standby', s.standby, 'warn'],
+  ];
+  const chips = [`<span class="chip mode">${s.mode}</span>`];
+  for (const [name, on, cls] of flags) if (on) chips.push(`<span class="chip ${cls || 'lit'}">${name}</span>`);
+  $('chips').innerHTML = chips.join('');
+  const q = s.queue.map((m) => `${m.from} ${(m.ms / 1000).toFixed(0)}s${m.deliveries ? ' ×' + m.deliveries : ''}`).join(', ') || 'empty';
+  $('facts').innerHTML = `
+    <dt>Panel clock</dt><dd>${(s.now / 1000).toFixed(1)} s</dd>
+    <dt>Selected</dt><dd>${s.sel}</dd>
+    <dt>Speaker</dt><dd>${s.speaker ? 'busy' : 'quiet'}${s.out_ms ? `, ${s.out_ms} ms heard` : ''}</dd>
+    <dt>Microphone</dt><dd>${s.capture ? 'open' : 'shut'}${s.leased ? ', buffer leased' : ''}</dd>
+    <dt>Pet turn</dt><dd>${NET[s.net] ?? s.net}</dd>
+    <dt>Engine</dt><dd>${PHASES[s.phase] ?? s.phase}; box says ${s.waiting} waiting</dd>
+    <dt>Box queue</dt><dd>${q}</dd>
+    <dt>Screen</dt><dd>${SCREEN[s.screen] ?? s.screen}</dd>`;
+  glass.classList.toggle('dim', s.screen === 1);
+}
+
+// ── the loop: the panel's clock follows the wall clock ──
+let last = performance.now(), lastRead = 0;
+function tick(t) {
+  const dt = Math.min(t - last, 250);
+  last = t;
+  if (!paused) panel.runTo(panel.now + dt * speed);
+  panel.paint(img.data);
+  fb.putImageData(img, 0, 0);
+  if (showTargets) drawTargets();
+  flushLog();
+  if (t - lastRead > 120) { readout(); lastRead = t; }
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>

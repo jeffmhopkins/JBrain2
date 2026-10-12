@@ -343,6 +343,12 @@ fi
 # LVGL release at configure time. Both already exist in this container, so nothing is
 # installed here for them.
 #
+# The twins' panel has a browser bench (`docs/mocks/jpanel-s3/`): its own UI code compiled to
+# WebAssembly by `firmware/mock/build.sh`. That needs a clang with the wasm32 target (this
+# container's clang 18 has it) and fetches the rest itself — wasi-sdk 24's sysroot and builtins,
+# sha256-pinned, and binaryen's wasm-opt from npm — into ~/.cache/jbrain-wasm on first run, so
+# nothing is installed here for it either. `node firmware/mock/smoke.mjs` drives the result.
+#
 # Mentioned here per the dev-setup single-source-of-truth rule (CLAUDE.md rule #8).
 
 # --- Panel flasher / `endpoint` sidecar (opt-in, NOT bootstrapped here) ---

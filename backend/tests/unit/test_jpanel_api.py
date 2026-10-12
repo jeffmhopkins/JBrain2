@@ -554,9 +554,10 @@ class TestNamingAPanelWithoutACable:
         `(n * FONT_W + (n - 1)) * scale`, the bubble is `bw` wide with the padding
         `draw_popup` subtracts before it decides to shrink — so the longest accepted name has
         to fit at the shrunk scale, or it overruns the box it is centred in. All four numbers
-        are read out of the firmware rather than assumed."""
+        are read out of the firmware rather than assumed. The overlays are `overlay.c`'s since
+        0.4.1, so the browser bench draws them too."""
         display = (
-            Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "overlay.c"
         ).read_text(encoding="utf-8")
         font_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.h").read_text(
             encoding="utf-8"
@@ -713,8 +714,9 @@ class TestNamingAPanelWithoutACable:
             encoding="utf-8"
         )
         assert "waiting.q[" in sm, "the machine no longer reads the described queue"
+        # `overlay.c` draws the view since 0.4.1.
         display = (
-            Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "overlay.c"
         ).read_text(encoding="utf-8")
         assert "view->face" in display, (
             "the drawing no longer asks who the SELECTED message is from"

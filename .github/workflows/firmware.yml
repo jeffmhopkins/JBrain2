@@ -21,11 +21,13 @@ on:
     paths:
       - "firmware/**"
       - "firmware-c6/**"
+      - "docs/mocks/jpanel-s3/**"
       - ".github/workflows/firmware.yml"
   pull_request:
     paths:
       - "firmware/**"
       - "firmware-c6/**"
+      - "docs/mocks/jpanel-s3/**"
       - ".github/workflows/firmware.yml"
   # GitHub starts no workflow runs for a pull request opened through an App, so a PR raised by
   # an assistant carries no checks at all — see the same note in ci.yml. A dispatch is the
@@ -55,6 +57,25 @@ jobs:
       # link fails here rather than on a panel in a bedroom.
       - name: Host tests for the pure-C modules
         run: make -C firmware/host test
+
+      # THE BROWSER BENCH (`docs/mocks/jpanel-s3/`) is the panel's own UI code compiled to
+      # WebAssembly, and the reason it exists is that what it shows is what the glass does. So
+      # the committed module has to be what this source builds — a bench left on last month's
+      # machine would approve behaviour the panel no longer has — and it has to survive a run
+      # through a message, a reply and a send. Clang is pinned by name; the rest of the
+      # toolchain is pinned by `build.sh`.
+      - name: Browser bench is current and runs
+        env:
+          CLANG: clang-18
+        run: |
+          firmware/mock/build.sh "$RUNNER_TEMP/sim.wasm"
+          node firmware/mock/smoke.mjs "$RUNNER_TEMP/sim.wasm"
+          if ! cmp -s "$RUNNER_TEMP/sim.wasm" docs/mocks/jpanel-s3/sim.wasm; then
+            echo "### docs/mocks/jpanel-s3/sim.wasm is not what this source builds" >> "$GITHUB_STEP_SUMMARY"
+            echo 'Rebuild it: `firmware/mock/build.sh` (clang 18), then commit sim.wasm.' >> "$GITHUB_STEP_SUMMARY"
+            echo "MISMATCH: docs/mocks/jpanel-s3/sim.wasm" >&2
+            exit 1
+          fi
 
       # Pinned to the version Waveshare's own examples for this board target, so the vendor
       # drivers we port from in later waves compile against the same headers.
