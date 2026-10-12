@@ -60,7 +60,7 @@ class AgentSession(Base):
     )
     depth: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     no_memory: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
-    # Where an owner chat was started (migration 0238): "panel" (the desk panel's thread), "pwa"
+    # Where an owner chat was started (migration 0239): "panel" (the desk panel's thread), "pwa"
     # (the PWA's New chat), NULL for every other maker (a task, the game door, a sub-agent, a
     # note conversation). The panel's Recent list is the panel's and the PWA's chats only.
     origin: Mapped[str | None] = mapped_column(Text, nullable=True)

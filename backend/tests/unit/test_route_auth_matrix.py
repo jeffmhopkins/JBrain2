@@ -102,6 +102,8 @@ COOKIE_EXEMPT: dict[tuple[str, str], str] = {
     ("GET", "/api/mc-share/{token}/map/players"): "token in path",
     ("GET", "/api/mc-share/{token}/map/structures"): "token in path",
     ("GET", "/api/mc-share/{token}/timeline"): "token in path",
+    ("GET", "/api/chat-share/{token}"): "token in path",
+    ("GET", "/api/chat-share/{token}/favicon"): "token in path",
     ("POST", "/internal/mqtt-auth"): "internal network only (S2.2 authenticates it)",
     ("POST", "/internal/mqtt-acl"): "internal network only (S2.2 authenticates it)",
     ("GET", "/internal/pet"): "internal network only (S2.2 authenticates it)",

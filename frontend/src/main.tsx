@@ -2,6 +2,7 @@ import { registerSW } from "virtual:pwa-register";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { parseChatSharePath } from "./agent/chatShare";
 import { initFontScale } from "./fontScale";
 import { GuidedIntakeApp } from "./intake/GuidedIntakeApp";
 import { parseIntakePath } from "./intake/share";
@@ -10,6 +11,7 @@ import { parseJlaunchSharePath } from "./jlaunch/share";
 import { initLocationCapture } from "./location";
 import { parseMcSharePath } from "./minecraftMapSource";
 import { parseResearchSharePath } from "./research/share";
+import { ChatShareApp } from "./screens/ChatShareApp";
 import { JcodeShareApp } from "./screens/JcodeShareApp";
 import { JlaunchShareApp } from "./screens/JlaunchShareApp";
 import { McShareApp } from "./screens/McShareApp";
@@ -52,6 +54,8 @@ function pickRoot(): JSX.Element {
   if (parseJlaunchSharePath()) return <JlaunchShareApp />;
   // A /mc/s/{token} path is a shared Minecraft map: view-only, nothing else on the box.
   if (parseMcSharePath()) return <McShareApp />;
+  // A /chat/s/{token} path is a shared chat: the one conversation, read-only.
+  if (parseChatSharePath()) return <ChatShareApp />;
   if (parseIntakePath()) return <GuidedIntakeApp />;
   // Owner app only. Warm the geolocation fix here — NOT at module load — so a public
   // share/intake recipient (a scoped surface above) is never prompted for location; only the

@@ -23,7 +23,27 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_EAT] = {1600, FACE_HAPPY, 0},
     [ACT_KICK] = {900, FACE_EXCITED, 0},
     [ACT_SPIN] = {1200, FACE_EXCITED, 0},
+    [ACT_DIZZY] = {3200, FACE_BEWILDERED, 0},
+    [ACT_LOVE] = {2800, FACE_HAPPY, 0},
 };
+
+/* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
+   drop so the feet stay on the floor while the body comes down onto them. */
+#define DIZZY_SPLAY 72.0f
+
+static float sit_amount(float p)
+{
+    if (p < 0.12f) return p / 0.12f;
+    if (p > 0.85f) return (1.0f - p) / 0.15f;
+    return 1.0f;
+}
+
+/* THE HEAD SHAKE of a dizzy pet: wide and fast at first, dying away — the shake of someone
+   clearing their head, not a no. */
+static float dizzy_shake(float p)
+{
+    return sinf(p * (float)M_PI * 11.0f) * (1.0f - p) * (1.0f - p);
+}
 
 const action_spec_t *rig_spec(action_t a)
 {
@@ -164,6 +184,20 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
     case ACT_SPIN:
         out->neck += sinf(p * (float)M_PI * 4.0f) * 10.0f * mag;
         break;
+    case ACT_DIZZY:
+        /* The head droops and swings on the neck; the tail sags. */
+        out->neck += dizzy_shake(p) * 34.0f * mag;
+        out->bob += sit_amount(p) * 10.0f;
+        out->tail -= sit_amount(p) * 12.0f;
+        break;
+    case ACT_LOVE: {
+        /* A slow happy sway, the head nuzzling side to side, tail going. */
+        const float q = sinf(p * (float)M_PI * 4.0f) * mag;
+        out->neck += q * 14.0f;
+        out->bob -= fabsf(q) * 6.0f;
+        out->tail += sinf(p * (float)M_PI * 10.0f) * 14.0f * mag;
+        break;
+    }
     default:
         break;
     }
@@ -274,6 +308,23 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
             out->arm_r = -140.0f;
         }
         break;
+    case ACT_DIZZY: {
+        /* PLONKED DOWN: legs splayed out sideways, arms flopped. `face.c` lowers the body by
+           what the splay takes off this form's legs (`figure_pose_t.sit`). */
+        const float k = sit_amount(p);
+        out->leg_l = 4.0f + (DIZZY_SPLAY - 4.0f) * k;
+        out->leg_r = -out->leg_l;
+        out->arm_l = 12.0f + 30.0f * k;
+        out->arm_r = -out->arm_l;
+        break;
+    }
+    case ACT_LOVE: {
+        /* Arms up and swaying: delighted. A 2D rig cannot hug itself. */
+        const float q = sinf(p * (float)M_PI * 4.0f) * mag;
+        out->arm_l = 120.0f + q * 12.0f;
+        out->arm_r = -120.0f + q * 12.0f;
+        break;
+    }
     case ACT_HIDE:
         /* PEEKABOO. With hands, hide can actually hide — which is squarely on target for a
            four-year-old, and is the difference between this and squatting in a corner. */
@@ -301,6 +352,8 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
     out->tilt = face_tilt;
     out->facing = 1.0f;
     out->extra = EXTRA_NONE;
+    out->extra_p = p;
+    out->sit = 0.0f;
 
     if (a != ACT_NONE && (unsigned)a < (unsigned)ACT_COUNT) {
         switch (a) {
@@ -375,6 +428,15 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
         case ACT_SLEEP:
             out->sy -= fminf(0.1f, p * 0.26f);
             out->oy += fminf(16.0f, p * 36.0f);
+            break;
+        case ACT_DIZZY:
+            out->sit = sit_amount(p);
+            out->tilt += dizzy_shake(p) * 16.0f * mag;
+            out->extra = EXTRA_STARS;
+            break;
+        case ACT_LOVE:
+            out->tilt += sinf(p * (float)M_PI * 4.0f) * 7.0f * mag;
+            out->extra = EXTRA_HEARTS;
             break;
         default:
             break;

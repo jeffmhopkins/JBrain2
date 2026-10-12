@@ -15,13 +15,16 @@ export interface Drag {
   /** Offset at gesture start: 0 closed, -RAIL_WIDTH open. */
   base: number;
   axis: DragAxis;
-  /** Current translateX for the bubble, clamped to [-RAIL_WIDTH, 0]. */
+  /** Current translateX for the bubble, clamped to [-width, 0]. */
   offset: number;
+  /** The open rail's width. A rail whose button count or text-size scaling differs from
+   * the note rail's passes its own, so the bubble opens exactly as far as the rail is wide. */
+  width: number;
 }
 
-export function beginDrag(x: number, y: number, open: boolean): Drag {
-  const base = open ? -RAIL_WIDTH : 0;
-  return { startX: x, startY: y, base, axis: "none", offset: base };
+export function beginDrag(x: number, y: number, open: boolean, width = RAIL_WIDTH): Drag {
+  const base = open ? -width : 0;
+  return { startX: x, startY: y, base, axis: "none", offset: base, width };
 }
 
 export function moveDrag(drag: Drag, x: number, y: number): Drag {
@@ -32,12 +35,12 @@ export function moveDrag(drag: Drag, x: number, y: number): Drag {
     // Ties go vertical: scrolling wins over the rail.
     axis = Math.abs(dx) > Math.abs(dy) ? "h" : "v";
   }
-  const offset = axis === "h" ? Math.min(0, Math.max(-RAIL_WIDTH, drag.base + dx)) : drag.base;
+  const offset = axis === "h" ? Math.min(0, Math.max(-drag.width, drag.base + dx)) : drag.base;
   return { ...drag, axis, offset };
 }
 
 /** Snap decision at release: true = rail open. */
 export function endDrag(drag: Drag): boolean {
-  if (drag.axis !== "h") return drag.base === -RAIL_WIDTH;
-  return drag.offset < -RAIL_WIDTH / 2;
+  if (drag.axis !== "h") return drag.base === -drag.width;
+  return drag.offset < -drag.width / 2;
 }

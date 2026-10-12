@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "../api/client";
 import { SessionsPanel } from "./SessionsPanel";
 import type { AgentSession, SessionCreate } from "./types";
 
@@ -738,5 +739,59 @@ describe("SessionsPanel", () => {
     // The child shows the live glyph + "running" while the fan's parent turn runs.
     expect(document.querySelector(".sa-node .turn-glyph")).toBeInTheDocument();
     expect(screen.getByText("running")).toBeInTheDocument();
+  });
+});
+
+describe("SessionsPanel share", () => {
+  function panel(over: Partial<AgentSession>, onSharesChanged = vi.fn()) {
+    return render(
+      <SessionsPanel
+        sessions={[session(over)]}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+        onSharesChanged={onSharesChanged}
+      />,
+    );
+  }
+  function swipe(): void {
+    const slide = document.querySelector(".session-slide") as HTMLElement;
+    fireEvent.touchStart(slide, { touches: [{ clientX: 200, clientY: 50 }] });
+    fireEvent.touchMove(slide, { touches: [{ clientX: 60, clientY: 52 }] });
+    fireEvent.touchEnd(slide);
+  }
+
+  it("puts share second on a five-action rail and opens the share sheet", async () => {
+    vi.spyOn(api, "chatShares").mockResolvedValue([]);
+    panel({});
+    swipe();
+    const rail = document.querySelector(".session-rail.rail-5") as HTMLElement;
+    expect([...rail.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "rename",
+      "share",
+      "scope",
+      "archive",
+      "delete",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "share" }));
+    expect(await screen.findByRole("button", { name: /Create share link/ })).toBeInTheDocument();
+  });
+
+  it("opens exactly as far as the rail is wide at the text size", () => {
+    panel({});
+    swipe();
+    const slide = document.querySelector(".session-slide") as HTMLElement;
+    // Five 48px actions at the default 75% text size.
+    expect(slide.style.transform).toBe("translateX(-180px)");
+  });
+
+  it("marks a shared chat with a link glyph", () => {
+    panel({ shared: true });
+    expect(document.querySelector(".r-shared")).not.toBeNull();
   });
 });

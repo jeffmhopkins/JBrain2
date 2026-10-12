@@ -41,6 +41,9 @@ typedef enum {
     ACT_EAT,
     ACT_KICK,
     ACT_SPIN,
+    /* Neither is in a poke pool: each answers one thing a child does on purpose. */
+    ACT_DIZZY, /* shaken hard: he sits down hard and shakes his head, stars going round */
+    ACT_LOVE,  /* "I love you": hearts float up and he coos */
     ACT_COUNT,
 } action_t;
 
@@ -113,7 +116,7 @@ typedef struct {
 void rig_walk(rig_walk_t *w, float dlean_px, rig_pose_t *p);
 
 /* Whole-figure transform. `extra` is a one-shot the renderer draws on top. */
-typedef enum { EXTRA_NONE = 0, EXTRA_PUFF, EXTRA_BLUSH } extra_t;
+typedef enum { EXTRA_NONE = 0, EXTRA_PUFF, EXTRA_BLUSH, EXTRA_STARS, EXTRA_HEARTS } extra_t;
 
 typedef struct {
     float ox;
@@ -130,6 +133,10 @@ typedef struct {
        costs one multiply on a scale the renderer already applies. */
     float facing;
     extra_t extra;
+    float extra_p; /* the action's progress 0..1, for an extra that moves (stars, hearts) */
+    /* SITTING, 0..1: the renderer lowers the body by what the legs' splay takes off their
+       height, which only it can know — the two forms' legs are 54 and 92 px long. */
+    float sit;
 } figure_pose_t;
 
 /* Limb pose for `a` at progress `p` (0..1), scaled by `mag` (the repetition penalty), with

@@ -37,6 +37,23 @@ bool screen_moved(int magnitude)
     return magnitude >= SCREEN_MOVE_COUNTS;
 }
 
+bool screen_shaken(shake_t *s, int magnitude, uint32_t now_ms)
+{
+    if (s == NULL || magnitude < SHAKE_JERK_COUNTS) return false;
+    if (s->n > 0 && now_ms - s->at[s->n - 1] < SHAKE_GAP_MS) return false;
+    if (s->n == SHAKE_JERKS) {
+        for (int i = 1; i < SHAKE_JERKS; i++) s->at[i - 1] = s->at[i];
+        s->n--;
+    }
+    s->at[s->n++] = now_ms;
+    if (s->n < SHAKE_JERKS || now_ms - s->at[0] > SHAKE_WINDOW_MS) return false;
+    if (s->fired && now_ms - s->fired_at < SHAKE_REST_MS) return false;
+    s->fired = true;
+    s->fired_at = now_ms;
+    s->n = 0;
+    return true;
+}
+
 bool screen_dozing(screen_stage_t stage, bool conversing, bool speaking)
 {
     return stage == SCREEN_DIM && !conversing && !speaking;

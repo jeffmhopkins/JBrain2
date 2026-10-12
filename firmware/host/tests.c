@@ -866,6 +866,80 @@ static void gravity_at(float deg, int *ax, int *ay)
    through it, so what has to hold is that the mapping IS a quarter turn of the square wherever
    the square has slid: every glass pixel in the window is exactly one frame pixel, the blit's
    per-row step is the one it assumes, and the slide is toward the lean. */
+/* A shake is several jerks back and forth inside a second and a half; a bump, a pick-up or a
+   panel set down is one or two. */
+static void test_a_shake_is_several_jerks_not_one_bump(void)
+{
+    shake_t s;
+    memset(&s, 0, sizeof(s));
+    const int J = SHAKE_JERK_COUNTS + 500;
+    /* A knock spread over two samples, then the panel set down a second later. */
+    CHECK(!screen_shaken(&s, J, 1000) && !screen_shaken(&s, J, 1040), "a knock is not a shake");
+    CHECK(!screen_shaken(&s, J, 2100), "nor is setting it down after");
+    /* Ordinary handling below the jerk size, many times a second. */
+    for (uint32_t t = 3000; t < 6000; t += 40) {
+        CHECK(!screen_shaken(&s, SHAKE_JERK_COUNTS - 1, t), "carrying it about is not a shake");
+    }
+    /* Big jerks, but slow: a panel being turned over and back, once a second. */
+    memset(&s, 0, sizeof(s));
+    for (uint32_t t = 10000; t < 16000; t += 1000) {
+        CHECK(!screen_shaken(&s, J, t), "slow big movements are not a shake");
+    }
+    /* A real shake: a jerk every 160 ms. */
+    memset(&s, 0, sizeof(s));
+    int fired = 0;
+    uint32_t t = 20000;
+    for (; t < 20000 + 4 * 160; t += 160) fired += screen_shaken(&s, J, t);
+    CHECK(fired == 1, "four quick jerks are a shake");
+    /* Keep shaking: one dizzy pet, then a rest, then another. */
+    for (; t < 20000 + SHAKE_REST_MS - 200; t += 160) fired += screen_shaken(&s, J, t);
+    CHECK(fired == 1, "shaking on is the same shake while he recovers");
+    for (; t < 20000 + SHAKE_REST_MS + 2000; t += 160) fired += screen_shaken(&s, J, t);
+    CHECK(fired == 2, "and a new one once he has");
+}
+
+/* Dizzy: he sits DOWN, the feet stay put, and stars go round. Love: hearts. */
+static void test_dizzy_sits_down_and_love_shows_hearts(void)
+{
+    const uint16_t star = rgb565(0xFF, 0xD8, 0x4A), heart = rgb565(0xFF, 0x4F, 0x7B);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        rig_for(ACT_NONE, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_NONE, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        int x0, x1, y0, y1;
+        bbox(&x0, &x1, &y0, &y1);
+        const int rest_top = y0, rest_floor = y1;
+        CHECK(count_colour(star) == 0 && count_colour(heart) == 0, "no stars or hearts at rest");
+
+        rig_for(ACT_DIZZY, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_DIZZY, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(star) > 300, "dizzy: stars go round his head");
+        /* The figure's top without the stars: the first row with anything but star yellow. */
+        int top = -1;
+        for (int y = 0; y < FACE_H && top < 0; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                const uint16_t c = fb[y * FACE_W + x];
+                if (c != 0 && c != star) {
+                    top = y;
+                    break;
+                }
+            }
+        }
+        bbox(&x0, &x1, &y0, &y1);
+        CHECK(top > rest_top + 20, "he sits: his head comes down");
+        CHECK(y1 >= rest_floor - 12 && y1 <= rest_floor + 6, "and his feet stay on the floor");
+
+        rig_for(ACT_LOVE, 0.45f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_LOVE, 0.45f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(heart) > 600, "love: hearts float up beside him");
+    }
+}
+
 static void test_the_square_slides_into_the_bands_with_one_mapping(void)
 {
     static unsigned char seen[FACE_W * FACE_H];
@@ -2890,17 +2964,14 @@ static void test_every_action_has_its_own_voice(void)
 {
     /* The sound follows the ACTION, not the tap — which is why poking the head coos without
        anything special-casing the head: the head's likeliest action is a blush. If an action
-       fell back to the generic blip, that zone would quietly go back to sounding the same. */
-    const int actions[] = {ACT_WIGGLE, ACT_GIGGLE, ACT_BOING,  ACT_BLUSH, ACT_SNEEZE,
-                           ACT_HICCUP, ACT_NOD,    ACT_JUMP,   ACT_WAVE,  ACT_DANCE,
-                           ACT_BOP,    ACT_SHIMMY, ACT_SLEEP,  ACT_HIDE,  ACT_FART,
-                           ACT_BURP,   ACT_EAT,    ACT_KICK,   ACT_SPIN};
-    const int n = (int)(sizeof(actions) / sizeof(actions[0]));
-    for (int i = 0; i < n; i++) {
-        const cue_t cue = cue_for_action(actions[i]);
+       fell back to the generic blip, that zone would quietly go back to sounding the same.
+       Walked over `ACT_COUNT` rather than listed, so an action added later is held to it too:
+       a hand-kept list stopped at ACT_SPIN while DIZZY and LOVE were added after it. */
+    for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+        const cue_t cue = cue_for_action(a);
         CHECK(cue != CUE_BLIP, "every action has a sound of its own, not the generic blip");
-        for (int j = i + 1; j < n; j++) {
-            CHECK(cue != cue_for_action(actions[j]), "and no two actions share one");
+        for (int b = a + 1; b < ACT_COUNT; b++) {
+            CHECK(cue != cue_for_action(b), "and no two actions share one");
         }
     }
     /* ACT_NONE is not an action and must not claim a voice. */
@@ -4550,6 +4621,8 @@ int main(void)
     test_the_zones_follow_the_scaled_figure();
     test_the_lean_limits_are_the_room_that_exists();
     test_the_square_slides_into_the_bands_with_one_mapping();
+    test_a_shake_is_several_jerks_not_one_bump();
+    test_dizzy_sits_down_and_love_shows_hearts();
     test_the_head_rights_itself_against_the_tilt();
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();

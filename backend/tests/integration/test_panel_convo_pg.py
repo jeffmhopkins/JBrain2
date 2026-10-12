@@ -387,8 +387,8 @@ async def test_a_panel_reads_and_writes_no_session_s_origin(maker: Maker) -> Non
 
 
 async def test_the_backfill_marks_only_what_the_rows_can_tell(maker: Maker) -> None:
-    path = Path(__file__).parents[2] / "migrations" / "versions" / "0238_agent_session_origin.py"
-    spec = importlib.util.spec_from_file_location("m0238", path)
+    path = Path(__file__).parents[2] / "migrations" / "versions" / "0239_agent_session_origin.py"
+    spec = importlib.util.spec_from_file_location("m0239", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
