@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "jpanel_types.h"
 #include "cadence.h"
 #include "reach.h"
 #include "calib.h"
@@ -2908,14 +2909,12 @@ static void test_vocab_arguments_are_real(void)
             stops++;
             break;
         case VOCAB_SEND:
-            /* THE ARGUMENT IS A RECIPIENT, and `vocab.c` spells it as a bare 0 or 1 rather
-               than including `jpanel.h` — that file drags in the ESP headers and this one is
-               built on a host. So the values are pinned HERE, which is the only place both
-               spellings can be seen at once. 0 is JPANEL_TO_PANEL, 1 is JPANEL_TO_DAD; the
-               enum in `jpanel.h` declares them in that order and nothing else may be added
-               in front of them. */
-            CHECK(v[i].arg == 0 || v[i].arg == 1, "a send command names a real recipient");
-            if (v[i].arg == 0) to_panel++;
+            /* THE ARGUMENT IS A RECIPIENT, and `vocab.c` spells it as a bare 0 or 1. So the
+               values are pinned HERE, against the enum in `jpanel_types.h`, which is the only
+               place both spellings can be seen at once. */
+            CHECK(v[i].arg == (int)JP_TO_PANEL || v[i].arg == (int)JP_TO_DAD,
+                  "a send command names a real recipient");
+            if (v[i].arg == (int)JP_TO_PANEL) to_panel++;
             else to_dad++;
             break;
         case VOCAB_LISTEN:

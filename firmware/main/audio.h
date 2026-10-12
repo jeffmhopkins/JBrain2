@@ -97,24 +97,6 @@ struct stream_s *audio_stream(void);
    exists to prevent. */
 #define AUDIO_PAUSE_MAX_MS 60000
 
-/* ── TRANSITIONAL (`audio_compat.c`) ────────────────────────────────────────────────────
- *
- * 0.3.x's speaker calls, re-expressed over `stream.h` so the callers not yet moved to the
- * machine, the engine and talk's reply slot keep compiling. Integration deletes this block and
- * that file once `display.c`, `jpanel.c` and `talk.c` stop calling them (plan §15). */
-void audio_cue(cue_t c);
-bool audio_play(const int16_t *pcm, size_t bytes);
-bool audio_playing(void);
-bool audio_stream_begin(void);
-size_t audio_stream_write(const void *pcm, size_t bytes);
-void audio_stream_end(void);
-void audio_stream_abort(void);
-bool audio_stream_active(void);
-bool audio_stream_live(void);
-void audio_stream_pause(bool on);
-bool audio_stream_paused(void);
-void audio_stop(void);
-
 /* How long the current recording is, in milliseconds — for the cap, and for the log line that
    says how much audio a hold actually produced. */
 int audio_capture_ms(void);

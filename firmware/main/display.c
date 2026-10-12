@@ -38,7 +38,6 @@
 #include "calib.h"
 #include "caption.h"
 #include "confirm.h"
-#include "ui.h"
 #include "cfg.h"
 #include "esp_log.h"
 #include "esp_random.h"
@@ -49,6 +48,8 @@
 #include "font.h"
 #include "gesture.h"
 #include "jpanel.h"
+#include "panel_sm.h"
+#include "stream.h"
 #include "rig.h"
 #include "speech.h"
 #include "vocab.h"
@@ -354,9 +355,16 @@ static volatile int s_dim_percent = SCREEN_DIM_PERCENT_DEFAULT;
    rather than a call, for the reason the codec has one: the owner of a peripheral restarts
    it, never a passer-by. */
 static volatile bool s_restart_pending;
+static volatile display_restart_t s_restart_why_req = DISPLAY_RESTART_OTA_PARK;
 
 void display_request_restart(void)
 {
+    display_request_restart_for(DISPLAY_RESTART_OTA_PARK);
+}
+
+void display_request_restart_for(display_restart_t why)
+{
+    s_restart_why_req = why;
     s_restart_pending = true;
 }
 
@@ -434,20 +442,11 @@ void display_set_form(int form)
    stage we are in, what wakes it, and the frame that does not get drawn. */
 static screen_stage_t s_sleep = SCREEN_AWAKE;
 
-/* STANDBY: THE BUTTON'S SHORT PRESS. The owner: *"single press blinks the screen and stops
- * listening. But it keeps looking for incoming messages and will light up if a new message
- * comes in."*
- *
- * It is NOT the idle sleep wearing a different hat, and the difference is the microphone. The
- * idle stages darken a panel nobody is using and leave it listening, because a child walking
- * back into the room says the wake phrase. This is a deliberate "be quiet now" — screen off AND
- * deaf — and the network deliberately stays up, so a message from Dad still lights the room.
- * That combination is the point: the panel stops watching the room without stopping being
- * reachable.
- *
- * ANY WAKE CLEARS IT, including a touch. A screen that came back on but stayed deaf would be a
- * pet looking straight at a child and ignoring her, which is worse than either state alone. */
-static bool s_standby;
+/* STANDBY — the button's short press: *"single press blinks the screen and stops listening. But it
+ * keeps looking for incoming messages and will light up if a new message comes in."* It is the
+ * machine's (`sm_t.standby`, the button's effects); this file only paints it dark and keeps it
+ * dark. It is NOT the idle sleep wearing a different hat: the microphone is off as well, and the
+ * network stays up so a message from Dad still lights the room. */
 /* DARK HAS TO BE PAINTED, NOT SWITCHED OFF, and that is a consequence of the brightness revert
  * rather than a choice. `0x51` is inert on these panels (`nudge.h` and `QSPI_CMD` in this file
  * carry why), so `screen_level()` returning 0 changes nothing on the glass — and "dark" was
@@ -469,7 +468,6 @@ static int s_move_mag;
    `s_brightness_pending` hand-off the box's setting uses, for the reason above it. */
 static void sleep_wake(const char *why)
 {
-    s_standby = false;
     if (s_sleep == SCREEN_AWAKE) return;
     ESP_LOGI(TAG, "screen: waking (%s)", why);
     s_sleep = SCREEN_AWAKE;
@@ -645,7 +643,7 @@ static int s_tap_zone = 0;
    same rhythm as the reboot, a different count — because calibrating is something you do
    standing at the panel, and routing it through a setting on the box would put a round trip
    in the middle of a hands-on job. */
-static calib_t s_cal;
+static calib_t s_touch_cal;
 static bool s_cal_active;
 static int s_cal_i; /* which target, 0 .. CAL_KNOTS*CAL_KNOTS-1 */
 static cal_samples_t s_cal_s; /* repeated taps at the current target */
@@ -771,176 +769,26 @@ static DMA_ATTR uint16_t s_strip[2][METER_W * METER_SPAN];
 /* Off until the box says otherwise — see `display_set_debug_overlay`. */
 static volatile bool s_debug_overlay;
 
-/* PRESS AND HOLD TO TALK — the owner's interaction, in four states.
+/* WHAT A PRESS, A PHRASE OR A MESSAGE DOES IS NOT DECIDED HERE ANY MORE (0.4.0).
  *
- *   "when we long press ... it should make a [sound] when it activates the listening and
- *    then when we release it should show the thinking box"
- *
- * THE HOLD THRESHOLD IS THE WHOLE DESIGN PROBLEM. `gesture.h` records that 4-5 year olds
- * produce ordinary presses lasting up to 4.2 s, which is why the maintenance gestures stopped
- * being a bare hold. A talk gesture cannot wait 4.2 s — nobody holds a button that long
- * before speaking — so it fires at 700 ms, comfortably past the 600 ms that still counts as a
- * tap, and accepts that ordinary play will sometimes start a listen. That is survivable here
- * in a way it was not for "reboot the panel": the cost of a false listen is a beep and a
- * discarded recording, not a toy restarting in a child's hands.
- *
- * It never fires mid-maintenance-gesture: those are taps THEN a hold, so a hold that begins
- * while a tap run is live belongs to them. */
-#define HOLD_TALK_MS 700
-/* AND IT HAS TO LAND ON THE PET. 700 ms is short enough that carrying the panel starts a
- * recording — the owner picked a unit up to photograph it sideways and found the red dot
- * already lit, which is the same false positive the paragraph above waved through as "a beep
- * and a discarded recording". It is not that any more: a listen now uploads six seconds of a
- * child's bedroom and makes the pet answer something nobody asked.
- *
- * The discriminator is free and already computed. A hand carrying a 32 mm panel touches its
- * RIM; a press meant for the pet lands on the pet, which occupies the middle. So the hold has
- * to begin inside an inset rectangle — ~6 mm in on every side, about the half-width of an
- * adult thumb pad, leaving a target of 224x304 that a four-year-old cannot miss. In PANEL
- * coordinates on purpose: the rim is the rim whichever way up the thing is mounted.
- *
- * This is a margin, not a fix for grip contact that lands squarely on the pet's face. The
- * complete answer is the rhythm `gesture.h` uses (slots 1 and 2 are still free, and it was
- * measured at 12 false fires per 20 000 child presses against a bare hold's 1937) — but a
- * rhythm is a thing to teach, and the owner asked for press-and-hold. Teach it only if this
- * is not enough. */
-#define TALK_MARGIN_PX 72
-/* Long enough that a slow answer is not mistaken for a broken one, short enough that a child
-   is not staring at a bubble. Beyond it the panel says it failed rather than returning to
-   idle, because "it didn't hear you" and "it broke" must not look the same (§10.4bc).
- *
- * 25 s, AND 12 WAS A GUESS THAT COST A WORKING REPLY BY 777 MILLISECONDS. The first warm turn
- * ever measured from the room took 12,777 ms end to end — whisper 10,668, the model 1,540,
- * Kokoro 568 — and returned 200 OK with 118 KB of speech. The panel had given up at 12,000,
- * called `talk_clear()`, and shown a failure face. Every part of the system worked and the
- * answer was thrown away three quarters of a second before it landed.
- *
- * The budget this has to clear is now measured rather than hoped for: whisper is a FLAT ~10.7 s
- * (it pads every clip to 30 s regardless of length — 10,715 and 10,668 on two utterances of
- * very different length), and the prompt holds replies to one or two sentences, so the model
- * and the speech together run a few seconds more. ~17 s is a bad-but-real turn; 25 leaves
- * headroom without waiting on something that is never coming.
- *
- * This is a SAFETY NET, NOT A TARGET. A longer net costs nothing when turns are fast; it only
- * matters when they are slow, and a slow turn currently produces NOTHING, which is strictly
- * worse than a late answer. The actual fix for the wait is whisper — 10.7 s of a 12.8 s turn
- * is 83% of it, and no timeout value improves that. */
-/* HOW LONG THE PET WILL WAIT FOR ITS OWN REPLY, and it has to be reasoned from the recording
-   it allows rather than picked. MEASURED ON THE BOX 2026-09-28: transcription costs about half
-   of what was said (17.0 s of child -> 8.0 s of whisper), the model another 1.7 s and the voice
-   1.0 s, so a full `CAPTURE_MAX_MS` question is roughly 20 s of box — before the upload, which
-   is 1.1 MB of PCM over TLS from an ESP32.
- *
-   IT USED TO BE 25 s AGAINST A 30 s CAP, which is the wrong way round: the panel allowed a
-   recording it could never wait long enough to hear back about, so the longest questions — the
-   ones an excited four-year-old actually asks — always ended in the failure dash while the box
-   answered them perfectly into a socket nobody was reading. The owner saw it as *"I'm getting
-   the red dash"* on turns the box logged as 200 OK.
- *
-   60 s at the owner's ask, against a 35 s cap. `TALK_HTTP_TIMEOUT_MS` is deliberately SHORTER
-   (`talk.c`), so the network gives up first and this stays what it was meant to be: a backstop
-   for a task that has stopped answering at all, not the thing that normally fires. */
-#define TALK_TIMEOUT_MS 60000
-#define TALK_FAILED_MS 2500
+ * Press and hold, listening, recording, playing, the again/reply offer, the notice and the chime
+ * are one state machine, `panel_sm.c`, with every timing number and the reason for it in
+ * `panel_sm.h`. Until 0.4.0 that logic lived twice — a chain of `if`s here and a table in `ui.c`
+ * — and every touch fault the owner reported was the two disagreeing. This file now samples the
+ * inputs once per frame, runs the machine's effects in order, and draws its `sm_view_t`.
+ * `make check_no_logic_in_display` fails the host build if a piece of the machine's state, or a
+ * call into the engine or the speaker outside the executor's list, comes back into this file. */
 
-/* HANDS-FREE, AND THE WHOLE PROBLEM IS KNOWING WHEN THEY STOPPED.
- *
- * The owner: *"a wake word that will allow the same interaction as if I held the panel and it
- * was listening ... but we just need a way for emptiness at the end to stop it."*
- *
- * A hold has a release. A name does not, so the end of the sentence has to be FOUND. The
- * signal already exists and already runs: `speech.c` sets `s_hearing` from the front end's
- * own `vad_state`, which is what gates MultiNet and drives the indicator. Nothing new is
- * computed here — the recogniser has been deciding "is someone talking" every frame since
- * bring-up and nobody had asked it.
- *
- * Three ways out, and each is a different sentence to a four-year-old:
- *
- *   HUSH   they finished  -> send it. 1.8 s. It was 900 ms, and 900 ms was wrong: the owner,
- *                            after watching them use it — *"the babies keep getting cut off
- *                            because they're a little bit slow."* A four-year-old assembling
- *                            a sentence stops for longer than an adult does, and every one of
- *                            those pauses ended their turn for them. The old number was
- *                            reasoned from the SIX-SECOND cap rather than from a child: a
- *                            longer hush used to risk the cap eating the tail. The cap is
- *                            thirty-five seconds now (`CAPTURE_MAX_MS`) and the box trims the
- *                            silence
- *                            before whisper sees it, so waiting longer costs nothing at all.
- *   LEAD   they said the name and nothing else -> drop it, silently, back to idle. An
- *                            accidental "hey fish" from the television must not become an
- *                            upload, and this is the branch that stops it.
- *   the cap `audio.c` already enforces -> send what we have rather than truncating to nothing.
- */
-#define LISTEN_HUSH_MS 1800
-#define LISTEN_LEAD_MS 3000
+/* The machine and its two frame structs: static because the render stack is 8 KB and these are
+   kilobytes, and in PSRAM because internal RAM is what the radio and TLS starve for (plan §6a).
+   Nothing here is touched by DMA, an ISR or a compare-and-swap. */
+EXT_RAM_BSS_ATTR static sm_t s_sm;
+EXT_RAM_BSS_ATTR static sm_in_t s_in;
+EXT_RAM_BSS_ATTR static sm_out_t s_out;
+/* The engine's snapshot as render last copied it: a torn read keeps this one (plan §7.2). */
+EXT_RAM_BSS_ATTR static jp_view_t s_snap;
+EXT_RAM_BSS_ATTR static sm_view_t s_drawn;
 
-/* AND THEN IT LISTENS AGAIN, WITHOUT BEING ASKED.
- *
- * The owner: *"after the text-to-speech comes back and finishes talking, we should just turn
- * the microphone on and start recording again, and if I start talking within 2 seconds, just
- * automatically record all that until I stopped talking again and send that as the next turn.
- * That way I can have fluid conversations."*
- *
- * Which is the difference between a toy you operate and one you talk to. The machinery is
- * already here — this is the hands-free listen from `VOCAB_LISTEN` with a different trigger
- * and a shorter lead — so the whole feature is: notice the reply finished, and open the same
- * window the name opens.
- *
- * NO BEEP ON THIS ONE. A tone after every reply is the toy interrupting the conversation it
- * just started; the red indicator is the affordance, and by the second turn a child knows what
- * it means.
- *
- * A CAP, BECAUSE THIS IS A LOOP WITH A LOUDSPEAKER IN IT. Every reply reopens the microphone,
- * and a television talking in the room can therefore hold a conversation with the panel
- * indefinitely — each turn costing whisper, a model and a voice. Six consecutive follow-ups is
- * far more than a four-year-old's exchange and bounds the runaway; after that it wants a
- * deliberate start again, which resets the count. */
-#define FOLLOW_LEAD_MS 2000
-#define FOLLOW_MAX_TURNS 6
-
-/* VOICE POST ON THE GLASS (`docs/plans/JPANEL_PLAN.md`, W3).
- *
- * RECORDING IS A STATE BESIDE LISTENING, NOT A FLAG ON IT, and the three differences are why:
- * where the audio goes, what is drawn, and what ends it. A flag would have every branch of
- * the machine below asking "but which kind" — and the one that forgot would upload a child's
- * message to the pet, which would answer it out loud.
- *
- * WHAT IT SHARES is everything that was tuned for a four-year-old: the same hush (they stop
- * for longer than an adult does), the same lead, the same cap, and the same finger-cancels
- * rule the owner asked for. A second set of numbers would be a second thing to get wrong.
- *
- * A BLUE DOT, NOT THE RED ONE, and that is the owner's actual requirement rather than a
- * palette choice: red means *the robot is listening to you*, and talking to your sister must
- * not look like that. */
-#define RECORD_LEAD_MS 4000
-typedef enum {
-    TALK_IDLE = 0,
-    TALK_LISTENING,
-    TALK_RECORDING,
-    TALK_THINKING,
-    TALK_FAILED
-} talk_t;
-static talk_t s_talk;
-static uint32_t s_talk_since;
-/* WHEN the finger landed, not HOW MANY passes ago. The first cut counted `+= TOUCH_POLL_MS`
-   per iteration, which silently assumes this loop runs every 40 ms — it does not. The delay
-   is 40 ms and then the frame's work happens, so a tally of nominal ticks always lags the
-   wall clock and the hold felt longer than the 700 ms it claimed. A timestamp cannot drift. */
-static uint32_t s_down_since;
-/* Where the current press landed, sampled once at the down edge rather than read from
-   `s_tap_x` at the threshold: the tap coordinates outlive their press, so a finger already
-   down when this loop started would otherwise inherit the last press's position. -1 when
-   the touch gave no point, which the margin test rejects for free. */
-static int s_down_x = -1;
-static int s_down_y = -1;
-/* THIS PRESS HAS ALREADY BEEN A SWIPE — latched for the rest of it, not for a frame. A finger that
-   travelled is not going to become a 700 ms hold by staying down, and without this a drag across
-   the pet would change message AND open the "who?" grid. Mirrors `ui_state_t.swiped`; `ui.c` is
-   where the rule is tested. */
-static bool s_swiped;
-/* WHICH WAITING MESSAGE THE FINGER IS POINTING AT — see `SWIPE_MIN_PX` in `ui.h`. 0 is the oldest,
-   which is where an arriving message and an emptied queue put it back. */
-static int s_sel;
 /* What the last swipe measured, and how many there have been. Telemetry only, and they are here
    because the CST820 reporting a LIVE position while a finger moves is an assumption this firmware
    makes and cannot check from a desk — the same reason the raw tap point already rides telemetry
@@ -948,22 +796,19 @@ static int s_sel;
    only reports edges, and `swipe_dx` says how far it thought the finger got. */
 static uint16_t s_swipes;
 static int s_swipe_dx;
-/* HOW MANY RED DASHES THIS PANEL HAS DRAWN, and which cause the last one had. Reported, because
-   the dash is the one failure a child actually sees and it was the one with no record: see the
-   comment where it is raised. */
-static unsigned s_dashes;
+/* Which cause the last red dash had. The machine counts them (`sm_t.dashes`) because it is the
+   one that raises them; the name is the reason it reported, kept for the report. */
 static const char *s_dash_why = "";
-static uint32_t s_dash_at;
 
 void display_dashes(unsigned *n, const char **why, uint32_t *ago_ms)
 {
-    if (n != NULL) *n = s_dashes;
+    if (n != NULL) *n = s_sm.dashes;
     if (why != NULL) *why = s_dash_why;
-    /* Unsigned, so this stays right across the ~49-day rollover of the millisecond clock — the
-       same argument as `reach.c`, and it matters for the same reason: a panel that has been up
-       seven weeks is exactly the one whose faults nobody has looked at. */
+    /* Unsigned, so this stays right across the ~49-day rollover of the millisecond clock — a
+       panel that has been up seven weeks is exactly the one whose faults nobody has looked at. */
     if (ago_ms != NULL) {
-        *ago_ms = s_dash_at == 0 ? 0 : (uint32_t)((uint32_t)(esp_timer_get_time() / 1000) - s_dash_at);
+        const uint32_t at = s_sm.dash_at;
+        *ago_ms = at == 0 ? 0 : (uint32_t)((uint32_t)(esp_timer_get_time() / 1000) - at);
     }
 }
 
@@ -971,139 +816,53 @@ void display_swipes(unsigned *n, int *last_dx, int *sel)
 {
     if (n != NULL) *n = s_swipes;
     if (last_dx != NULL) *last_dx = s_swipe_dx;
-    if (sel != NULL) *sel = s_sel;
+    if (sel != NULL) *sel = s_sm.sel.index;
 }
-/* The hands-free listen: whether this turn was started by the name rather than by a finger,
-   whether anyone has actually spoken yet, and when the room went quiet. */
-static bool s_listen_voice;
-static bool s_listen_heard;
-static uint32_t s_listen_hush;
-/* How long this particular listen waits for someone to start: the name gives 3 s, a follow-up
-   2 s, and a hold does not use it at all. */
-static uint32_t s_listen_lead;
-/* A reply has finished playing and has not yet been followed up, and how many turns this
-   exchange has run without a deliberate start. */
-static bool s_follow_armed;
-static int s_follow_turns;
-/* Last frame's speaking state, so the follow-up fires on the EDGE where the speaker falls
-   silent rather than on every frame after it. */
-static bool s_was_speaking;
+
+/* The machine's counters for the report's `jp` object (plan §7.7). Written on the render task
+   only; the main task's read of a word is a snapshot, which is all a report is. */
+static volatile uint32_t s_violations;
+static volatile uint32_t s_late_outcomes;
+static volatile uint32_t s_lease_refusals;
+
+void display_jp_stats(jp_stats_t *st)
+{
+    st->sm_violations = s_violations;
+    st->late_outcome = s_late_outcomes;
+    st->lease_refusals += s_lease_refusals;
+    st->cue_expired = stream_facts(audio_stream()).cue_expired;
+}
+
+/* THE EXECUTOR'S ANSWERS FOR THE NEXT FRAME. `in` is sampled before the step and the effects run
+   after it, so a post the queue refused and a capture the lease refused are reported back as the
+   next frame's inputs (`post_failed`, `capture_refused`), never acted on here. */
+static uint32_t s_post_failed_next;
+static bool s_refused_next;
+/* A wake the sleep stage decided AFTER the step (an arrival, activity), handed to the next one:
+   standby is the machine's to clear, through its wake input, so there is one writer. */
+static bool s_wake_next;
+static bool s_dark_wake_next;
+
+/* THE TOUCH SAMPLER'S OWN STATE — where this press landed (panel coordinates, for the rim margin
+   and the swipe's origin), whether a finger is on the glass for the up edge, and whether this
+   press has already been reported as a swipe, so one drag is one swipe however long it lasts. */
+static int s_down_x = -1;
+static int s_down_y = -1;
+static bool s_finger;
+static bool s_swipe_latched;
+
+/* PLACEHOLDERS UNTIL THE F4 MOCKS ARE APPROVED (plan §15 row F): a send in flight and its outcome
+   had nothing on the glass at all (B5) — ten to twenty seconds of a pet that looked as if it had
+   ignored her. Each outcome gets its own word and colour so NOBODY and a failure no longer look
+   alike. The shapes are deliberately plain; F4 replaces them. */
+#define RESULT_SHOW_MS 2500
+static const char *s_result_word;
+static uint16_t s_result_colour;
+static uint32_t s_result_until;
+
 /* Declared here because `tap_to_overlay` below needs it and the orientation block that owns
    it comes later in the file. */
 static bool s_upside_down;
-
-/* Who the message being recorded is for, and the hush machinery for it — separate from the
-   listen's so a message cannot inherit half of a conversation that was in flight. */
-static jpanel_to_t s_rec_to;
-static bool s_rec_heard;
-static uint32_t s_rec_hush;
-/* THE REPEAT ICON, and it is a deadline rather than a flag. It is for *"what did she say?"*,
-   not a permanent control, and a button that never leaves would become another thing on the
-   glass to poke.
-
-   TEN SECONDS, UP FROM FIVE. The owner, watching the children use it: *"the replay button
-   probably needs to stay on there for about 10 seconds after it shows."*
- *
-   IT IS NO LONGER A DEADLINE. Nothing expires `s_repeat_until` any more, so this is the moment
-   the pair went up rather than the moment it comes down, and the variable is really a flag
-   with a timestamp in it. Kept as a timestamp because it costs nothing and a log that can say
-   how long an offer stood is worth more than a bool. The pair leaves on the exit corner, or
-   when a new message displaces it — see the badge below. */
-#define REPEAT_MS 10000
-static uint32_t s_repeat_until;
-/* THE POP-UP SHRINKS RATHER THAN NAGS.
- *
- * The owner: *"the notification on the panel is very large when it shows which is fine, but if
- * it's not acknowledged within say 15 seconds, it should kind of be a smaller one up on the
- * top left."*
- *
- * A box over the pet's face is right for the first fifteen seconds — it has to interrupt, the
- * reader is four and is not auditing the screen. It is wrong for the next hour: a message
- * nobody has come to yet should not hold a child's toy hostage. So it stands down to a badge
- * and the pet is a pet again, with the message still there and still tappable.
- *
- * `s_popup_since` is when the CURRENT run of waiting messages began — reset when the count
- * goes to zero, not on every poll, or a panel that polls every thirty seconds would restart
- * the clock forever and never shrink.
- *
- * `POPUP_BIG_MS` is `ui.h`'s: the state machine decides when the notice shrinks, and one number
- * in two headers is one number that can disagree with itself. */
-static uint32_t s_popup_since;
-
-/* A TOUCH THAT MAKES A SOUND AND STILL PLAYS AT ONCE.
- *
- * The owner asked for a sound on these two controls and the first attempt produced none, on an
- * argument that was simply wrong: the cue was made conditional on nothing already sounding, and
- * once the prefetch landed the message ALWAYS starts on the same frame — so the condition was
- * never true. "The message is its own acknowledgement" is not an answer to a four-year-old who
- * pressed something; the press has to answer.
- *
- * The real constraint is that `audio_play` refuses while anything else sounds, so a cue and a
- * message cannot overlap: an unconditional cue would simply eat the message. So the cue plays
- * and the audio is DEFERRED by one speaker — `CUE_BLIP` is 55 ms, which is under the 100 ms a
- * press and its sound can be apart and still feel like one event, and far under the ~2 s this
- * release removed.
- *
- * A DEADLINE, because a deferral that never fires is a button that did nothing. If the speaker
- * is somehow still busy after this, the action is dropped rather than firing late into silence
- * a child has stopped associating with their finger. */
-/* HOW LONG THE "WHO?" GRID STAYS UP. A menu a child walked away from must not sit on the pet's
-   face forever — the pet is the thing they came back to — and it must not be so brief that
-   opening it and then deciding is a race. Ten seconds is the pop-up's own big-badge window
-   twice over, which is the closest thing here to a measured attention span. */
-#define SENDTO_MS 10000
-/* Non-zero while the grid is up: the moment it closes itself. */
-static uint32_t s_sendto_until;
-
-/* HOW LONG A PRESS WAITS FOR THE SPEAKER BEFORE IT IS GIVEN UP ON. It was 1500 ms, and that
-   is shorter than it sounds: `audio_playing()` counts the panel's own cues, so a press landing
-   while the pet was mid-noise could be dropped with nothing but a log line to show for it —
-   which is the other half of the owner's *"it doesn't really play every single time"*. Eight
-   seconds is long enough to outlast anything the pet does to itself and still short enough that
-   a genuinely stuck speaker does not strand the tap forever. A child's press should not
-   evaporate because the toy happened to be burping. */
-#define PENDING_MS 8000
-typedef enum { PEND_NONE = 0, PEND_PLAY, PEND_REPLAY, PEND_REPLY } pending_t;
-static pending_t s_pending;
-
-/* ARE THE PLAYBACK CONTROLS ON THE GLASS — asked by the drawing AND by the tap dispatcher, from
- * one place, because they used to ask two different questions and disagree for seconds at a time.
- *
- * The drawing said `jpanel_running() || starting`; the dispatcher said `jpanel_running() ||
- * audio_stream_active()`. So through the whole fetch window — the press taken, the controls
- * painted, nothing audible yet — a press on the pause button went down the IDLE table and poked
- * the pet, which is the one thing a child can be certain they did not ask for. And the other way
- * round on a replay: `do_replay` sets no `s_run`, so once the pending flag cleared and the fetch
- * closed, an audibly playing message left this false and the ended-state pair was drawn over it —
- * *"on a replay of a message it doesn't go back to the pause button."* Asking the speaker fixed
- * the icon inside that branch while the branch itself was never entered.
- *
- * Four facts, one answer: a run in progress, a message sounding however it started, a press taken
- * and not yet served, or a fetch in flight. What is drawn is what is pressable. */
-static bool run_controls_up(void)
-{
-    return jpanel_running() || audio_stream_active() || jpanel_fetching() ||
-           s_pending == PEND_PLAY || s_pending == PEND_REPLAY;
-}
-static uint32_t s_pending_until;
-/* WHO THE DEFERRED REPLY IS FOR, captured at the press rather than read when it fires: ending
-   the run is what frees the speaker, and `jpanel_in_from()` is about the message that was
-   playing — which by then is over. */
-static jpanel_to_t s_pend_reply_to;
-/* WHEN THE FINGER PUT IT ON HOLD, 0 when nothing is held. See `AUDIO_PAUSE_MAX_MS`. */
-static uint32_t s_paused_since;
-/* WHEN THE PLAYBACK CONTROLS CAME UP, 0 when they are not — `EXIT_GRACE_MS` in `ui.h`. The exit
-   corner overlaps a quarter of the notice, so the press that STARTS a message lands exactly where
-   cancelling it will be one frame later, and `jpanel_stop()` acknowledges: the message is spent.
-   The owner saw it as *"the pause icon for half a second and then goes back to the other
-   indicator"*. */
-static uint32_t s_controls_since;
-/* WHERE THE NOTICE WAS DRAWN, in the space it was drawn in — which is NOT the space
-   `panel_to_frame` hands back; see `tap_to_overlay` below. -1 in the first slot means not on
-   screen. Armed from `ui_popup_target`, read by `ui_tap_target`: this file no longer hit-tests it,
-   it only carries the rectangle between the drawing and the state machine. */
-static int s_popup_box[4] = {-1, -1, -1, -1};
-
 /* THE OVERLAYS ARE DRAWN BEFORE THE 180 FLIP AND THE TAP MARKER IS DRAWN AFTER IT, so the two
  * live in different coordinate spaces and a hit test has to say which one it means.
  *
@@ -1259,12 +1018,13 @@ static void draw_listening(uint16_t *fb, int y0, int over_h, uint32_t now)
  * cases the box deliberately declines to answer: before the first poll, on a box with one
  * panel, and on a box with three, where "the other one" is a question rather than a name and a
  * guess would put the wrong child on the glass. */
-static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpanel_to_t to)
+static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jp_to_t to,
+                           const char *sibling)
 {
     /* The face first, under the word: whoever cannot read the word can read the face, and
        whoever can read gets both. */
-    draw_who(fb, y0, over_h, to == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
-    if (to == JPANEL_TO_DAD) {
+    draw_who(fb, y0, over_h, to == JP_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
+    if (to == JP_TO_DAD) {
         draw_indicator(fb, y0, now, REC_COLOUR, "TO DAD");
         return;
     }
@@ -1272,12 +1032,11 @@ static void draw_recording(uint16_t *fb, int y0, int over_h, uint32_t now, jpane
        (`font.c`), so a name typed in the PWA has to be shouted here exactly as the pop-up
        shouts it. */
     char who[40];
-    char name[32];
-    if (jpanel_sibling(name, sizeof(name)) <= 0) {
+    if (sibling == NULL || sibling[0] == '\0') {
         draw_indicator(fb, y0, now, REC_COLOUR, "MESSAGE");
         return;
     }
-    snprintf(who, sizeof(who), "TO %s", name);
+    snprintf(who, sizeof(who), "TO %.31s", sibling);
     for (char *q = who; *q != '\0'; q++) {
         if (*q >= 'a' && *q <= 'z') *q = (char)(*q - 'a' + 'A');
     }
@@ -1307,12 +1066,12 @@ static void draw_popup(uint16_t *fb, int y0, int h, const char *from, int count,
        up and icon on the top left show the icons of the person instead of being generic."*
        Both surfaces, and the big one matters most — it is what a child sees FIRST, before the
        badge it shrinks into, and it was four lines of words to a reader who cannot read. */
-    /* THE SAME RECTANGLE THE HIT TEST IS ARMED FROM — `ui.h`. It was two locals here and a
+    /* THE SAME RECTANGLE THE MACHINE HIT-TESTS — `sm_notice_box`. It was two locals here and a
        quadrant over there, and they did not overlap. */
     int box[4];
-    ui_popup_target(y0, h, true, box);
+    sm_notice_box(y0, h, true, box);
     const int bx = box[0], by = box[1];
-    const int bw = UI_POPUP_BIG_W, bh = UI_POPUP_BIG_H;
+    const int bw = SM_NOTICE_BIG_W, bh = SM_NOTICE_BIG_H;
     bubble(fb, bx, by, bw, bh, 22, SWAP16(0x001F));
     bubble(fb, bx + 5, by + 5, bw - 10, bh - 10, 18, SWAP16(0x0010));
 
@@ -1634,58 +1393,6 @@ static bool boot_button_sleep_requested(void)
     return was;
 }
 
-/* START A VOICE POST FOR SOMEBODY, and there is exactly one of these because there are now two
- * ways to ask for it: the spoken phrase, and the grid a button opens. The refusals are the
- * interesting part and they must be identical either way — one microphone, one thing at a time —
- * so a child who presses an icon while the pet is already talking gets the same nothing a child
- * who said the phrase would.
- *
- * Returns whether a recording actually started; the caller owns the cue and the redraw, because
- * a press already sounded for the finger and a phrase had not. */
-/* START A CONVERSATION TURN, and like `start_send_recording` there is exactly one of these
- * because there are now two ways to ask: the wake phrase, and the pet's own icon on the grid.
- * The refusals must be identical either way — one microphone, one thing at a time.
- *
- * Returns whether the turn actually opened; the caller owns the cue and the redraw. */
-static bool start_listening(uint32_t now, bool speaking)
-{
-    if (s_talk != TALK_IDLE || speaking || talk_state() == TALK_NET_BUSY) {
-        ESP_LOGI(TAG, "talk: busy — not listening");
-        return false;
-    }
-    s_talk = TALK_LISTENING;
-    s_talk_since = now;
-    s_listen_voice = true;
-    s_listen_heard = false;
-    s_listen_hush = 0;
-    s_listen_lead = LISTEN_LEAD_MS;
-    s_follow_turns = 0; /* a deliberate start is a fresh exchange */
-    audio_capture_open();
-    ESP_LOGI(TAG, "talk: listening");
-    return true;
-}
-
-static bool start_send_recording(jpanel_to_t to, uint32_t now, bool speaking)
-{
-    if (s_talk != TALK_IDLE || speaking || talk_state() == TALK_NET_BUSY ||
-        jpanel_state() == JPANEL_BUSY) {
-        ESP_LOGI(TAG, "jpanel: busy — not recording");
-        return false;
-    }
-    s_talk = TALK_RECORDING;
-    s_talk_since = now;
-    s_rec_to = to;
-    s_rec_heard = false;
-    s_rec_hush = 0;
-    /* The follow-up window is closed: a message is not a turn, and the microphone must not
-       reopen after one. */
-    s_follow_armed = false;
-    audio_capture_open();
-    ESP_LOGI(TAG, "jpanel: recording for %s",
-             s_rec_to == JPANEL_TO_DAD ? "dad" : "the other panel");
-    return true;
-}
-
 int display_boot_presses(void)
 {
     return s_boot_presses;
@@ -1883,17 +1590,17 @@ static void update_orientation(void)
        has already been read — `screen.h` says why it is a difference and not a tilt. */
     {
         static bool seen;
-        static int16_t prev[3];
+        static int16_t last_accel[3];
         const int16_t cur[3] = {ax, ay, az};
         if (seen) {
-            const int d = screen_motion(prev, cur);
+            const int d = screen_motion(last_accel, cur);
             if (screen_moved(d)) {
                 s_moved = true;
                 s_move_mag = d;
             }
         }
         seen = true;
-        for (int i = 0; i < 3; i++) prev[i] = cur[i];
+        for (int i = 0; i < 3; i++) last_accel[i] = cur[i];
     }
     /* FOUR WAYS UP, FROM THE TWO AXES THE FLIP ALREADY USED. Gravity on X is portrait and
        its sign says which way; gravity on Y is landscape, mounted with the cable out the
@@ -2131,6 +1838,8 @@ static void phase_init(void)
         case DISPLAY_RESTART_BLIT_HEAL: s_restart_why_at_boot = "blit-heal"; break;
         case DISPLAY_RESTART_GESTURE:   s_restart_why_at_boot = "gesture";   break;
         case DISPLAY_RESTART_OTA_PARK:  s_restart_why_at_boot = "ota-park";  break;
+        case DISPLAY_RESTART_WD_ENGINE: s_restart_why_at_boot = "wd-engine"; break;
+        case DISPLAY_RESTART_WD_ARBITER: s_restart_why_at_boot = "wd-arbiter"; break;
         default:                        s_restart_why_at_boot = "";          break;
         }
         /* Consumed, so the NEXT restart has to say so for itself — otherwise a power cycle
@@ -2191,93 +1900,205 @@ static void reassert_panel(void)
     apply_brightness();
 }
 
-/* THE ARBITRATION IS `ui.c`'S, AND ONLY THE ARBITRATION — for now.
+/* ── THE EXECUTOR ─────────────────────────────────────────────────────────────────────────────
  *
- * WHY THIS EXISTS AT ALL. Which control a press reaches is a question about overlapping
- * rectangles and which overlay outranks which, and every touch fault the owner reported was an
- * answer to it: a notice armed over a quadrant it was not drawn in; an exit that could not end a
- * message while the message was audible; a pause button painted through a fetch that dispatched
- * to the pet; a menu that stopped being modal when a message started under it. Each was found
- * twice — once in a chain of `if`s here, once in a table over there — and fixed twice, which is
- * the arrangement that produced them.
- *
- * So the chain below no longer decides. `ui_tap_target` does, from `UI_TAP_ORDER` and
- * `UI_TAP_ORDER_PLAYING`, and 361 host checks walk those tables against every overlay combination
- * that can be constructed. Each branch here now asks one question — "did it pick me" — and the
- * order they appear in is nothing but readability.
- *
- * WHAT IS NOT DELEGATED: the bodies. Starting a microphone, holding a ring, posting a reply and
- * ending a run are this file's, because they touch peripherals the state machine deliberately
- * cannot see (`ui.h`). The full cutover — `ui_frame` and `ui_overlay` driving a pass, with an
- * action executor instead of inline bodies — is the next step and is worth doing on its own,
- * where a regression in it cannot be confused with a regression in a behaviour fix.
- *
- * EVERY FIELD THIS FILE CAN HONESTLY ANSWER IS FILLED, which is most of them, because a struct
- * populated only where arbitration happens to look today is a trap: a field added to `target_live`
- * would silently read zero and nothing would fail. Two are deliberately left at zero rather than
- * filled with something close, which would be the worse trap: `gest_taps`, because `gesture_poll`
- * runs LATER in this pass and the count here is the previous frame's, and `capture_ms`, which this
- * file does not track. Neither is read by the arbitration, and the `..._LEN` assertions plus 361
- * host checks are what notices if that stops being true. */
-static ui_target_t tap_target_now(int ox, int oy, int over_h_tap, bool down, uint32_t now)
+ * The machine's effects, run in the order it emitted them, after the step that emitted them. The
+ * only calls into the engine and the speaker this file makes are here (and the per-frame copies
+ * the sampler takes); `check_no_logic_in_display` holds the list. */
+
+/* A SEND takes the capture into the post: the buffer is what the engine uploads, and lease 1 —
+   taken BEFORE the post, released by the engine at every end of the SEND, or here if the post
+   fails — is what stops a recording opening over it (A5). A PLAY or REPLAY is stamped with the
+   stop gen it was posted under, so a STOP that follows makes it stale. */
+static void post_cmd(stream_t *st, const jp_cmd_t *posted)
 {
-    /* THE TWO ENUMS ARE MIRRORS AND NOTHING IN THE COMPILER KNOWS IT. `ui.h` declares its own so
-       the state machine can be built and tested without a radio, a codec or a panel; that is the
-       point of it, and it also means a value reordered on either side would go unnoticed until a
-       press did the wrong thing in a bedroom. Pinned per value rather than by count, because
-       swapping two entries keeps the count. */
-    _Static_assert((int)UI_TO_PANEL == (int)JPANEL_TO_PANEL, "UI_TO_PANEL mirrors jpanel");
-    _Static_assert((int)UI_TO_DAD == (int)JPANEL_TO_DAD, "UI_TO_DAD mirrors jpanel");
-    _Static_assert((int)UI_JP_IDLE == (int)JPANEL_IDLE, "UI_JP_IDLE mirrors jpanel");
-    _Static_assert((int)UI_JP_BUSY == (int)JPANEL_BUSY, "UI_JP_BUSY mirrors jpanel");
-    _Static_assert((int)UI_JP_SENT == (int)JPANEL_SENT, "UI_JP_SENT mirrors jpanel");
-    _Static_assert((int)UI_JP_PLAYING == (int)JPANEL_PLAYING, "UI_JP_PLAYING mirrors jpanel");
-    _Static_assert((int)UI_JP_NOBODY == (int)JPANEL_NOBODY, "UI_JP_NOBODY mirrors jpanel");
-    _Static_assert((int)UI_JP_FAILED == (int)JPANEL_FAILED, "UI_JP_FAILED mirrors jpanel");
-    _Static_assert((int)UI_NET_IDLE == (int)TALK_NET_IDLE, "UI_NET_IDLE mirrors talk");
-    _Static_assert((int)UI_NET_BUSY == (int)TALK_NET_BUSY, "UI_NET_BUSY mirrors talk");
-    _Static_assert((int)UI_NET_SPOKE == (int)TALK_NET_SPOKE, "UI_NET_SPOKE mirrors talk");
-    _Static_assert((int)UI_NET_FAILED == (int)TALK_NET_FAILED, "UI_NET_FAILED mirrors talk");
-    _Static_assert((int)UI_TALK_IDLE == (int)TALK_IDLE, "UI_TALK_IDLE mirrors this file's");
-    _Static_assert((int)UI_TALK_LISTENING == (int)TALK_LISTENING, "UI_TALK_LISTENING mirrors");
-    _Static_assert((int)UI_TALK_RECORDING == (int)TALK_RECORDING, "UI_TALK_RECORDING mirrors");
-    _Static_assert((int)UI_TALK_THINKING == (int)TALK_THINKING, "UI_TALK_THINKING mirrors");
-    _Static_assert((int)UI_TALK_FAILED == (int)TALK_FAILED, "UI_TALK_FAILED mirrors");
-    _Static_assert((int)UI_PEND_NONE == (int)PEND_NONE, "UI_PEND_NONE mirrors this file's");
-    _Static_assert((int)UI_PEND_PLAY == (int)PEND_PLAY, "UI_PEND_PLAY mirrors");
-    _Static_assert((int)UI_PEND_REPLAY == (int)PEND_REPLAY, "UI_PEND_REPLAY mirrors");
-    _Static_assert((int)UI_PEND_REPLY == (int)PEND_REPLY, "UI_PEND_REPLY mirrors");
+    jp_cmd_t c = *posted;
+    if (c.kind == JP_CMD_SEND) {
+        size_t bytes = 0;
+        const int16_t *pcm = audio_capture_close(&bytes);
+        if (pcm == NULL || bytes < sizeof(int16_t)) {
+            ESP_LOGW(TAG, "jpanel: nothing recorded to send");
+            s_post_failed_next = c.seq;
+            return;
+        }
+        if (!stream_lease_take(st, STREAM_LEASE_SEND)) {
+            s_lease_refusals++;
+            ESP_LOGW(TAG, "jpanel: capture lease held — not sending");
+            s_post_failed_next = c.seq;
+            return;
+        }
+        c.pcm = pcm;
+        c.bytes = bytes;
+        ESP_LOGI(TAG, "jpanel: sending %u bytes to %s", (unsigned)bytes,
+                 c.to == JP_TO_DAD ? "dad" : "the other panel");
+        if (!jpanel_post(&c)) {
+            stream_lease_release(st, STREAM_LEASE_SEND);
+            s_post_failed_next = c.seq;
+        }
+        return;
+    }
+    c.gen = stream_gen(st);
+    if (!jpanel_post(&c)) {
+        ESP_LOGW(TAG, "jpanel: post refused (queue full or no task)");
+        s_post_failed_next = c.seq;
+    }
+}
 
-    ui_state_t st = {0};
-    st.talk = (ui_talk_t)s_talk;
-    st.listen_voice = s_listen_voice;
-    st.sendto_until = s_sendto_until;
-    st.repeat_until = s_repeat_until;
-    st.pending = (ui_pending_t)s_pending;
-    st.controls_since = s_controls_since;
-    for (int i = 0; i < 4; i++) st.popup_box[i] = s_popup_box[i];
+/* Lease 2 before `talk_send` (plan §7.3): talk uploads straight out of the capture buffer, and
+   releases the lease when its request returns. Refused here, the machine's turn reads the idle
+   talk state on the next frame and clears itself. */
+static void send_talk(stream_t *st)
+{
+    size_t bytes = 0;
+    const int16_t *pcm = audio_capture_close(&bytes);
+    if (pcm == NULL || bytes < sizeof(int16_t)) {
+        ESP_LOGI(TAG, "talk: nothing recorded");
+        return;
+    }
+    if (!stream_lease_take(st, STREAM_LEASE_TALK)) {
+        s_lease_refusals++;
+        ESP_LOGW(TAG, "talk: capture lease held — not sending");
+        return;
+    }
+    if (!talk_send(pcm, bytes)) {
+        stream_lease_release(st, STREAM_LEASE_TALK);
+        ESP_LOGW(TAG, "talk: a turn is already in flight");
+    } else {
+        ESP_LOGI(TAG, "talk: sent %u bytes", (unsigned)bytes);
+    }
+}
 
-    ui_in_t in = {0};
-    in.now = now;
-    in.tapped = true; /* this is only asked about a press that happened */
-    in.ox = ox;
-    in.oy = oy;
-    in.over_y0 = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0;
-    in.over_h = over_h_tap;
-    in.down = down;
-    in.waiting = jpanel_waiting(NULL, 0);
-    in.waiting_from_dad = jpanel_waiting_from_dad();
-    in.in_from = (ui_to_t)jpanel_in_from();
-    in.jrunning = jpanel_running();
-    in.jfetching = jpanel_fetching();
-    in.jstate = (ui_jstate_t)jpanel_state();
-    in.stream_active = audio_stream_active();
-    in.stream_paused = audio_stream_paused();
-    in.speaking = audio_playing();
-    in.audio_playing = audio_playing();
-    in.net = (ui_net_t)talk_state();
-    in.standby = s_standby;
-    return ui_tap_target(&st, &in);
+/* PLACEHOLDER (F4): what a send's outcome looks like, read off the cue the machine chose for it. */
+static void show_result(cue_t c, bool nobody, uint32_t now)
+{
+    if (c == CUE_SENT) {
+        s_result_word = "SENT";
+        s_result_colour = SWAP16(0x07E0);
+    } else if (nobody) {
+        s_result_word = "NOBODY";
+        s_result_colour = SWAP16(0xFD20);
+    } else if (c == CUE_STOP) {
+        s_result_word = "DROPPED";
+        s_result_colour = SWAP16(0x8410);
+    } else {
+        s_result_word = "NOT SENT";
+        s_result_colour = SWAP16(0xF800);
+    }
+    s_result_until = now + RESULT_SHOW_MS;
+}
+
+/* Returns whether the pet should nod (a reply arrived). */
+static bool execute(stream_t *st, bool sound, uint32_t now)
+{
+    const sm_out_t *o = &s_out;
+    bool nod = false;
+    /* THE STOP WORD GOES OUT BEFORE THE SILENCE IT PAIRS WITH (plan §7.3): an arbiter that saw
+       the silence without the new gen would discard the stream once and then play on whatever the
+       producer wrote next. The machine lists SILENCE first because that is the order a child
+       hears; a STOP later in the same frame is therefore hoisted to the silence. */
+    bool hoisted[SM_FX_MAX] = {false};
+    for (int i = 0; i < o->n; i++) {
+        const sm_fx_t *f = &o->fx[i];
+        switch (f->kind) {
+        case SM_FX_SILENCE: {
+            bool any = false, heard = false;
+            for (int j = i + 1; j < o->n; j++) {
+                if (o->fx[j].kind != SM_FX_STOP || hoisted[j]) continue;
+                any = true;
+                heard |= o->fx[j].arg != 0;
+                hoisted[j] = true;
+            }
+            if (any) stream_stop(st, heard);
+            stream_silence(st);
+            break;
+        }
+        case SM_FX_STOP:
+            if (!hoisted[i]) stream_stop(st, f->arg != 0);
+            break;
+        case SM_FX_CUE:
+            if (sound) stream_cue_play(st, (stream_slot_t)f->slot, (cue_t)f->arg);
+            if (f->slot == STREAM_SLOT_SEND_RESULT) show_result((cue_t)f->arg, o->say != NULL, now);
+            break;
+        case SM_FX_PAUSE:
+            stream_pause_req(st, (uint8_t)f->slot, f->arg != 0);
+            break;
+        case SM_FX_CAPTURE_OPEN:
+            if (!audio_capture_open()) {
+                ESP_LOGW(TAG, "capture refused (leased, or no buffer)");
+                s_refused_next = true;
+            }
+            break;
+        case SM_FX_CAPTURE_DROP: {
+            size_t dropped = 0;
+            (void)audio_capture_close(&dropped);
+            ESP_LOGI(TAG, "capture dropped, %u bytes discarded", (unsigned)dropped);
+            break;
+        }
+        case SM_FX_POST:
+            post_cmd(st, &o->post);
+            break;
+        case SM_FX_SEND_TALK:
+            send_talk(st);
+            break;
+        case SM_FX_TALK_CLEAR:
+            talk_clear();
+            break;
+        case SM_FX_POLL_SOON:
+            jpanel_poll_soon();
+            break;
+        case SM_FX_STANDBY:
+            if (f->arg) {
+                s_sleep = SCREEN_DARK;
+                s_brightness_pending = true;
+                ESP_LOGI(TAG, "standby: screen off, microphone off, still reachable");
+            } else {
+                sleep_wake("button");
+            }
+            break;
+        case SM_FX_BLANK:
+            s_blank_pending = true;
+            break;
+        case SM_FX_DEEP_SLEEP:
+            s_power_off = true;
+            break;
+        case SM_FX_NOD:
+            nod = true;
+            break;
+        case SM_FX_FLINCH:
+            s_flinch = 1.0f;
+            break;
+        case SM_FX_MUTE_COMMANDS:
+            /* Derived by the machine every frame (recording, listening, standby), so no exit can
+               leave the recogniser deaf; `speech_mute_commands` logs only on a change. */
+            speech_mute_commands(f->arg != 0);
+            break;
+        }
+    }
+    return nod;
+}
+
+static sm_net_t net_now(void)
+{
+    switch (talk_state()) {
+    case TALK_NET_BUSY: return SM_NET_BUSY;
+    case TALK_NET_SPOKE: return SM_NET_SPOKE;
+    case TALK_NET_FAILED: return SM_NET_FAILED;
+    case TALK_NET_IDLE:
+    default: return SM_NET_IDLE;
+    }
+}
+
+/* Panel pixels to the overlay space every target is drawn in: the quarter turn, then the 180. */
+static void panel_to_overlay(int px, int py, int *ox, int *oy)
+{
+    int fx = 0, fy = 0;
+    panel_to_frame(px, py, &fx, &fy);
+    tap_to_overlay(fx, fy, ox, oy);
+}
+
+static sendto_hit_t who_face(const jp_who_t *w)
+{
+    return w->from_dad ? SENDTO_DAD : SENDTO_SISTER;
 }
 
 static void face_task(void *arg)
@@ -2308,7 +2129,7 @@ static void face_task(void *arg)
     {
         uint8_t blob[CAL_BLOB_BYTES];
         const int n = cfg_calibration_load(blob, sizeof(blob));
-        if (n > 0 && calib_load(blob, n, &s_cal)) {
+        if (n > 0 && calib_load(blob, n, &s_touch_cal)) {
             ESP_LOGI(TAG, "touch calibration loaded");
         } else if (n > 0) {
             /* Stored but unusable. Saying so matters: a silently ignored calibration and a
@@ -2317,16 +2138,14 @@ static void face_task(void *arg)
             ESP_LOGW(TAG, "stored touch calibration rejected — running uncalibrated");
         }
     }
-    /* Silence is a failure mode with no symptom, so it is logged rather than inferred: a
-       beep that never comes could be the codec, the amplifier pin, the volume, or a tap
-       that was never registered, and only the first of those is visible from here. */
+    /* Silence is a failure mode with no symptom, so it is logged rather than inferred. With no
+       codec the speaker state is the all-zero instance: no arbiter, every slot write a no-op, so
+       nothing waits on a speaker that is not there and the arbiter watchdog never arms. */
     const bool sound = audio_start();
     if (!sound) ESP_LOGW(TAG, "no codec — taps will be silent");
-    /* THE RECOGNISER IS NOT STARTED HERE, and that is deliberate rather than tidy. This
-       task runs ~1.5 s into boot and `net_connect` runs at ~3.0 s, so starting ESP-SR here
-       meant it won the race for internal RAM and the radio never came up (0.2.37). `main.c`
-       starts it once the panel is settled and updatable; this loop just asks whether it is
-       live, which is false until then and false forever if it could not have the memory. */
+    stream_t *const st = audio_stream();
+    /* THE RECOGNISER IS NOT STARTED HERE: `main.c` starts it once the panel is settled and
+       updatable (it lost the race for internal RAM to the radio when it started here, 0.2.37). */
     caption_t cap;
     caption_reset(&cap);
     int colour = 0;
@@ -2334,14 +2153,9 @@ static void face_task(void *arg)
     int since_draw = FACE_FLOOR_MS; /* draw immediately */
     int since_beat = 0;
     /* The rig's running state. `st` persists between frames because the emotion TWEENS: a
-       pose system that snaps is a slide show, and the halving approach in `emotion.c` is what
-       turns one into an animation system. */
-    face_state_t st;
-    face_rest(&st);
-    /* Whatever the box said before this task started; -1 until it has said anything, in which
-       case `face_rest` has already chosen the shipped default. Left PENDING rather than cleared:
-       the loop below takes it on the first pass and logs it, so a boot and a later change read
-       the same way in the log. */
+       pose system that snaps is a slide show. */
+    face_state_t fst;
+    face_rest(&fst);
     action_t action = ACT_NONE;
     uint32_t action_start = 0;
     float action_mag = 1.0f;
@@ -2351,742 +2165,296 @@ static void face_task(void *arg)
     for (int i = 0; i < POOL_COUNT; i++) variants_reset(&mem[i]);
     float s_open = 1.0f;
     int s_drawn_lean = 0;
-    /* The shuffle's own state, and the lean it last saw — the walk is driven by how far the
-       figure MOVED this frame, so it needs the previous position rather than the current one
-       (`rig.h`). */
+    /* The shuffle's own state, and the lean it last saw (`rig.h`). */
     rig_walk_t walk = {0};
     int walked_from = 0;
     int since_reassert = 0;
     int since_sample = 0;
     int level = 0;
-    /* THE DELAY, WHICH IS NOT THE SAME THING AS THE FRAME. Decided at the end of a pass and
-       read at the start of the next, so a stage change never mis-counts the pass that carried
-       it — but it is only the sleep, and a pass that composes a face spends far longer awake
-       than asleep. */
+    /* The delay, decided at the end of a pass and read at the start of the next. */
     int poll_ms = TOUCH_POLL_MS;
-    /* HOW LONG THE LAST PASS ACTUALLY TOOK, which is what every accumulator here wants.
-     *
-       They all used to add `poll_ms`, and this loop's real period is roughly twice that when it
-       is drawing — so every duration measured in this task ran at about half speed. The one that
-       mattered is `gesture_poll`: GESTURE_HOLD_MS 5000 needed ten or twelve real seconds to
-       arrive, GESTURE_TAP_MAX_MS let a slow press still count as a tap, and GESTURE_GAP_MS held
-       a half-finished maintenance count open for twice as long as designed — on the gesture that
-       reboots the panel. A clock that is wrong by a factor is worse than a slow one, because
-       every constant tuned against it is silently wrong too.
-     *
-       Measured from `esp_timer`, so it is right whatever the frame costs, and zero on the first
-       pass because nothing has elapsed yet. */
+    /* HOW LONG THE LAST PASS ACTUALLY TOOK, from `esp_timer`, which is what every accumulator
+       here wants: they used to add `poll_ms`, and this loop's real period is roughly twice that
+       when it is drawing, so every duration measured in this task ran at half speed. */
     uint32_t last_pass = 0;
     int dt_ms = 0;
+    /* IDLE IS MEASURED FROM HERE: the last frame anything counted as the panel being used. */
+    uint32_t active_ms = 0;
+    memset(&s_snap, 0, sizeof(s_snap));
+    memset(&s_drawn, 0, sizeof(s_drawn));
+    sm_init(&s_sm, (uint32_t)(esp_timer_get_time() / 1000));
 
     while (true) {
         PHASE(1);
         bool dirty = false;
-        /* Set where the recogniser is drained, read by the sleep timer far below. */
-        bool heard_voice = false;
-        /* And the touch that woke the screen, which has to be remembered rather than read:
-           it is cleared out of `tapped` below so nothing else acts on it, and the idle timer
-           further down would otherwise see a frame with no activity in it and put the panel
-           straight back to sleep on the same pass. */
-        bool woke_by_touch = false;
-        /* One clock read per frame, shared by the rig, the pools and the cooldowns, so every
-           part of a frame agrees about when it is. */
         const uint32_t now = (uint32_t)(esp_timer_get_time() / 1000);
         dt_ms = (last_pass == 0) ? 0 : (int)(now - last_pass);
         last_pass = now;
         PHASE(2);
-        /* DRAIN A PRESS, DO NOT SAMPLE FOR ONE. `touch.c` samples the controller on its own
-           task now, so a press that began and ended while this loop was composing a frame is
-           waiting here rather than having never happened — which is the whole of the owner's
-           *"the touch response is awful"*. One per pass is deliberate: each press gets its own
-           frame to be answered in, so two that arrive together still read as two presses
-           rather than one that skipped a state.
-
-           The point comes back WITH the press. Taking it from `touch_point()` here would hand
-           every queued press the coordinates of the most recent one — a press aimed at the
-           notification acted on as a press somewhere else entirely. */
+        /* DRAIN A PRESS, DO NOT SAMPLE FOR ONE. `touch.c` samples the controller on its own task,
+           so a press that began and ended while this loop was composing a frame is waiting here
+           rather than having never happened. One per pass: each press gets its own frame, so two
+           that arrive together still read as two presses. The point comes back WITH the press. */
         int raw_x = -1, raw_y = -1;
         bool tapped = touch && touch_take(&raw_x, &raw_y);
         bool down = touch && touch_is_down();
-        /* A FINGER ON A DARK SCREEN BUYS THE SCREEN, AND NOTHING ELSE. The child cannot see
-           what they are aiming at, so letting that touch also poke the pet, arm a gesture or
-           acknowledge a message would make the first tap after a nap do something nobody
-           chose. It wakes, it is spent, and the next tap — aimed at a face that is now
-           visible — lands normally. Dim is not included: the pet is still on screen there,
-           and a tap that hits what you can see should do what it looks like it does. */
+        bool wake = s_wake_next;
+        bool dark_wake = s_dark_wake_next;
+        s_wake_next = false;
+        s_dark_wake_next = false;
+        /* A FINGER ON A DARK SCREEN BUYS THE SCREEN, AND NOTHING ELSE. The child cannot see what
+           they are aiming at, so letting that touch also poke the pet or play a message would make
+           the first tap after a nap do something nobody chose. In standby it is also the wake the
+           machine is told about: a screen that came back on but stayed deaf would be a pet looking
+           straight at a child and ignoring her. Dim is not included: the pet is visible there. */
+        bool woke_by_touch = false;
         if (s_sleep == SCREEN_DARK && (tapped || down)) {
-            sleep_wake("touch");
             woke_by_touch = true;
+            dark_wake = true;
+            if (s_sm.standby) wake = true;
+            sleep_wake("touch");
             tapped = false;
             down = false;
         }
-        /* SPEAKING, AND IT OUTRANKS THE TOY. The owner, after the first real conversation:
-           "when the agent is talking we should prohibit beeps from cutting it off, and we
-           should also stop poke interactions making other animations."
-         *
-           Both of those are the same rule — a reply is the panel's one sustained utterance and
-           everything else on this device is an interjection. A beep over it is a toy talking
-           over a person; a new action mid-sentence throws away the talking animation that is
-           the only thing on screen explaining the sound. Decided once a frame so every branch
-           below agrees about it. */
-        const bool speaking = audio_playing();
-        const bool msg_sounding = audio_stream_active();
-        /* THE EXCHANGE CONTINUES ITSELF. Armed when a reply starts playing, fired on the edge
-           where the speaker falls silent — not on a timer, because a long reply must not have
-           the microphone opened underneath it. `audio.c` stays deaf for six chunks after the
-           speaker runs, which conveniently keeps the tail of our own voice out of the front of
-           the next recording. */
-        if (s_was_speaking && !speaking && s_follow_armed) {
-            s_follow_armed = false;
-            if (s_talk == TALK_IDLE && talk_state() != TALK_NET_BUSY &&
-                s_follow_turns < FOLLOW_MAX_TURNS) {
-                s_talk = TALK_LISTENING;
-                s_talk_since = now;
-                s_listen_voice = true;
-                s_listen_heard = false;
-                s_listen_hush = 0;
-                s_listen_lead = FOLLOW_LEAD_MS;
-                s_follow_turns++;
-                audio_capture_open();
-                ESP_LOGI(TAG, "talk: listening (follow-up %d)", s_follow_turns);
-                dirty = true;
-            } else if (s_follow_turns >= FOLLOW_MAX_TURNS) {
-                ESP_LOGW(TAG, "talk: %d follow-ups without a deliberate start — stopping",
-                         s_follow_turns);
-            }
-        }
-        s_was_speaking = speaking;
-        /* WHERE THE FINGER LANDED, RESOLVED FOR *BOTH* DISPATCHERS.
-         *
-         * THIS LIVED INSIDE THE `!speaking` BRANCH, AND THAT IS WHY THE CONTROLS OVER A PLAYING
-         * MESSAGE DID NOTHING. There are two tap dispatchers here, chosen by whether sound is
-         * coming out: the full precedence chain when the panel is quiet, and a short one for
-         * pause and reply while a message plays. Only the first resolved the coordinates — so
-         * the second tested `s_fig_x`/`s_fig_y` from THE LAST TIME THE PANEL WAS SILENT, and on
-         * the first tap of a session `s_fig_x` is still -1 and could not match anything at all.
-         * The owner: *"nothing responds to it."*
-         *
-         * Resolved once, above the fork, so both speak the same coordinates. A press is a press
-         * wherever the panel happens to be in its own sentence. */
+        /* WHERE THE FINGER IS, IN THE SPACE THE TARGETS WERE DRAWN IN. Anything drawn before
+           `flip_frame` is in frame order and then reversed, so a touch has to be reversed the same
+           way before it is compared with it (MEASURED 2026-09-25, upside down: a press on the tick
+           at frame (276,368) arrived as (91,79) and missed by 289 px). The tap MARKER is drawn after
+           the flip and uses `s_fig` directly. */
         if (tapped) {
-            calib_apply(&s_cal, raw_x, raw_y, &s_tap_x, &s_tap_y);
+            calib_apply(&s_touch_cal, raw_x, raw_y, &s_tap_x, &s_tap_y);
             panel_to_frame(s_tap_x, s_tap_y, &s_fig_x, &s_fig_y);
+            s_down_x = s_tap_x;
+            s_down_y = s_tap_y;
+            s_swipe_latched = false;
         }
-        /* WHICH DISPATCHER A PRESS REACHES, AND WHETHER THE NOTICE IS PAINTED, and the test
-           used to be `speaking` — which is `audio_playing()`, true for the panel's own cues.
-         *
-           THREE FAULTS CAME OUT OF THAT ONE WORD. The arrival beep is 440 ms and fires on the
-           frame the notice appears, so every press in the half-second a child actually reaches
-           for it went to the short table, matched nothing, and vanished. The top-right exit
-           lives in the LONG table, so it could not end a message while the message was audible
-           — the only state it was ever asked for. And a poke at the pet and a press on a
-           transport control were being separated by the same flag that separates a cue from
-           silence, which is not the distinction either of them cares about.
-         *
-           A MESSAGE playing is the thing that changes what the controls mean. A cue is the
-           panel clearing its throat. `audio_stream_active()` is the message ring alone
-           (`audio.h`), so it answers the question actually being asked — but it is not quite the
-           question either. `run_controls_up()` is: the transport exists in the second table
-           ALONE, so a press has to reach that table for as long as the transport is on the
-           glass, which is from the moment the press is taken and through the whole fetch. Audible
-           is a subset of drawn.
-         *
-           AND AN OPEN MENU COMES BEFORE BOTH OF THEM. The grid is modal and it is drawn last of
-           all, on top of the transport, because a child asked for it; the branch that serves it
-           lives below, so a message starting under an open menu would otherwise hand the menu's
-           presses to the transport covering nothing. `ui.h`'s two tables begin the same way for
-           the same reason, and a host test walks them. */
-        /* WHERE THE FINGER LANDED, RESOLVED ONCE, BEFORE ANY BRANCH READS IT.
-         *
-         * It used to be resolved down in the poke block, which was fine while the poke
-         * was the only branch that cared. It is not any more: the pop-up and the repeat
-         * icon are hit-tested, and a branch that returns before the poke block would have
-         * left `s_fig_x` holding the PREVIOUS tap — so the recoil ring would appear where
-         * the last finger was, which is the same class of bug `s_down_x` exists to
-         * document. Resolved above the dispatcher fork now, so the pause-and-reply branch
-         * that runs while a message plays gets the same answer rather than a stale one. */
-        /* OVERLAY COORDINATES, RESOLVED ONCE BESIDE THE FRAME ONES, because every hit test
-           below wants these and one of them forgot. Anything drawn BEFORE `flip_frame` —
-           the pop-up, the repeat icon, the label, the caption, the tick and the cross — is
-           written in frame order and then reversed, so its rectangle has to be compared
-           against a touch reversed the same way. The tap MARKER is the exception and the
-           reason this is easy to get wrong: it is drawn AFTER the flip, so it sits under
-           the finger using `s_fig` directly, which makes a panel look like it is tracking
-           touch correctly while every pre-flip target on it is 180 degrees away.
-           MEASURED 2026-09-25, upside down: a press on the tick at frame (276,368) arrives
-           here as (91,79) and missed by 289 px. */
         int ox = -1, oy = -1;
         tap_to_overlay(s_fig_x, s_fig_y, &ox, &oy);
-        /* The overlay BAND, resolved here for the same reason the coordinates are: the
-           centred controls are placed against it and a hit test that guessed a different
-           band would miss by the difference. */
-        const int over_h_tap = (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 + SQ : FACE_H;
-        /* THE EDGE THE EXIT'S GRACE IS MEASURED FROM. Read by `tap_target_now` below, so it is
-           sampled BEFORE the dispatcher: the press that raises the controls is served by the
-           notice on this pass and cannot also be served by the exit, and every pass after this
-           one sees a stamp to measure from. */
-        if (run_controls_up()) {
-            if (s_controls_since == 0) s_controls_since = now == 0 ? 1 : now;
-        } else {
-            s_controls_since = 0;
-        }
-        /* AND WHICH CONTROL IT REACHES IS `ui.c`'S ANSWER — see `tap_target_now`. The chain below
-           does not arbitrate any more; each branch asks whether it was chosen, and the order they
-           appear in is readability alone. The fork is the same question: the transport exists in
-           the playing table only, so a press that resolved to it is the one this file serves in
-           the second branch. */
-        const ui_target_t hit = tapped ? tap_target_now(ox, oy, over_h_tap, down, now)
-                                       : UI_TARGET_PET;
-        if (tapped && hit != UI_TARGET_TRANSPORT) {
-            /* THE POP-UP AND THE REPEAT ICON OUTRANK EVERYTHING, tested before the cancels
-             * and the poke for exactly the reason the label is: a tap that both played a
-             * message and made the pet fart reads as two things happening, and the child
-             * cannot tell which one they asked for.
-             *
-             * Against overlay coordinates, not frame ones — see `tap_to_overlay`. */
-            /* THE GRID OUTRANKS EVERYTHING WHILE IT IS UP, and it has to: a child pressed a
-             * button to put it there, so this is the one overlay on the panel that was asked
-             * for explicitly rather than offered. A waiting-message pop-up winning a press
-             * aimed at a sister's icon would answer a question nobody asked.
-             *
-             * EVERY PRESS IS CONSUMED while it is open, including the empty corner and the
-             * dead bands, which is what makes it modal: the pet cannot be poked through a
-             * menu, so a miss costs a press rather than a fart. */
-            if (hit == UI_TARGET_GRID) {
-                const sendto_hit_t who = sendto_hit(ox, oy, over_h_tap);
-                if (who == SENDTO_SISTER || who == SENDTO_DAD) {
-                    s_sendto_until = 0;
-                    /* ONE CUE, AND IT IS THE ONE THE SPOKEN PHRASE ALREADY PLAYS. A press sound
-                       followed by the listen sound would be two noises for one action and a new
-                       pattern to learn; `CUE_LISTEN` is what "start talking now" has always
-                       meant on this panel. A refusal says so instead of going quiet — a control
-                       that answers with silence is the thing the repeat icon's cue was added to
-                       stop. */
-                    if (start_send_recording(who == SENDTO_DAD ? JPANEL_TO_DAD : JPANEL_TO_PANEL,
-                                             now, speaking)) {
-                        if (sound) audio_cue(CUE_LISTEN);
-                    } else if (sound) {
-                        audio_cue(CUE_STOP);
-                    }
-                    s_flinch = 1.0f;
-                    dirty = true;
-                    goto tap_done;
-                }
-                if (who == SENDTO_PET) {
-                    s_sendto_until = 0;
-                    if (start_listening(now, speaking)) {
-                        if (sound) audio_cue(CUE_LISTEN);
-                    } else if (sound) {
-                        audio_cue(CUE_STOP);
-                    }
-                    s_flinch = 1.0f;
-                    dirty = true;
-                    goto tap_done;
-                }
-                if (who == SENDTO_CANCEL) {
-                    s_sendto_until = 0;
-                    s_flinch = 1.0f;
-                    if (sound) audio_cue(CUE_STOP);
-                    ESP_LOGI(TAG, "sendto: cancelled");
-                    dirty = true;
-                    goto tap_done;
-                }
-                /* A miss inside the menu keeps it up: closing on a stray finger would make the
-                   grid something a child has to aim at twice. */
-                s_flinch = 1.0f;
-                dirty = true;
-                goto tap_done;
-            }
-            /* THE WAY OUT, AND IT HAD BEEN MISSING SINCE 0.3.19. Replacing the lone STOP disc
-               with pause-and-reply took away the only way to leave a message early, and the
-               owner found the gap from the other side: *"when it does play and I want to exit
-               it, I should be able to click on the top right where there's no icon and have it
-               exit out."* That corner is the one quadrant this screen does not use — the
-               sender's face has the top left, the pair has the bottom — so it costs no target a
-               child has already learned.
-             *
-               TESTED HERE, WITH THE OVERLAYS THAT OUTRANK THE PET, and not down among the taps
-               that missed it: the pet is drawn centred and its head reaches into that corner,
-               so a finger aimed at the exit can land ON it. Left there, the gesture would work
-               or make the pet blink depending on where exactly a four-year-old put her finger,
-               which is indistinguishable from it not working. */
-            /* WHEN IT IS LIVE, AND THAT IT DOES NOT EAT THE NOTICE, is `ui.c`'s — `UI_TARGET_EXIT`
-               in `ui.h` carries the arithmetic and the reasoning: the exit region and the centred
-               notice OVERLAP, exactly at the sender's face a child is told to press, which is the
-               whole of *"playback doesn't seem to work most of the time"*. A message being offered
-               outranks a message being ended, and a host test walks the pair. */
-            if (hit == UI_TARGET_EXIT) {
-                jpanel_stop();
-                audio_stream_pause(false); /* never leave the ring held after a stop */
-                s_paused_since = 0;
-                s_pending = PEND_NONE; /* a deferred play must not resurrect what she ended */
-                s_repeat_until = 0;
-                s_flinch = 1.0f;
-                dirty = true;
-                ESP_LOGI(TAG, "jpanel: ended by the top-right corner");
-                /* IT SAYS SO NOW. This was silent on the argument that the sound stopping IS
-                   the answer — true, and not enough: reply stops the sound too, so from a
-                   child's side the two controls were the same press. `CUE_STOP` already meant
-                   exactly this, and it falls where `CUE_PLAY` rises. */
-                if (sound) audio_cue(CUE_STOP);
-                goto tap_done;
-            }
-            /* ── PRESS THE SENDER'S FACE TO CHANGE MESSAGE ──────────────────────────────
-             *
-               The owner: *"instead of swiping if we just press the icon on the top left it should
-               cycle through the numbers of messages that we have"*, and on where: *"it should be
-               the top left icon after that playback menu is up"*.
+        const bool up = (tapped && !down) || (!tapped && s_finger && !down);
+        s_finger = tapped ? down : (s_finger && down);
+        const bool side = (s_quarter == 1 || s_quarter == 3);
+        const int over_y0 = side ? SQ_Y0 : 0;
+        const int over_h = side ? SQ_Y0 + SQ : FACE_H;
 
-               A SWIPE IS THE WRONG GESTURE FOR THIS AUDIENCE, which is why `swipes` and
-               `swipe_dx` ride telemetry at all: a four-year-old jabs. The face is the one thing on
-               this screen that already answers "which message is this?", so pressing it to change
-               the answer is the shortest possible explanation of the control.
-
-               SAME EFFECT AS A SWIPE, and it goes through the same lines for that reason: stop
-               what is sounding, drop a deferred play aimed at the message she just left, sound the
-               acknowledgement. `ui.c` holds the rule (`select_step`) and is tested on it. */
-            if (hit == UI_TARGET_FACE) {
-                const int have = jpanel_waiting(NULL, 0);
-                const int n = have < JPANEL_QUEUE_MAX ? have : JPANEL_QUEUE_MAX;
-                if (n > 1) {
-                    s_sel = (s_sel + 1) % n;
-                    audio_stream_pause(false);
-                    s_paused_since = 0;
-                    jpanel_stop();
-                    s_pending = PEND_NONE;
-                    if (sound) audio_cue(CUE_HEARD);
-                    ESP_LOGI(TAG, "face: message %d of %d", s_sel + 1, n);
-                }
-                s_flinch = 1.0f;
-                dirty = true;
-                goto tap_done;
-            }
-            if (hit == UI_TARGET_POPUP) {
-                s_flinch = 1.0f;
-                /* Cleared the moment it is pressed, not when the audio arrives: a box
-                   that stays up through a fetch invites a second press, and
-                   `jpanel_play_next` refuses that one — so the child would be pressing a
-                   button that had stopped working. */
-                s_popup_box[0] = -1;
-                /* The press sounds FIRST and the message follows it — see `PENDING_MS`. */
-                if (sound) audio_cue(CUE_PLAY);
-                s_pending = PEND_PLAY;
-                s_pending_until = now + PENDING_MS;
-                dirty = true;
-                goto tap_done;
-            }
-            /* REPLAY AND REPLY, the two halves that replace a lone centred repeat icon.
-               Hit through `confirm_hit` — the same halves the tick and cross use — rather
-               than a third geometry: the places a child has learned are the places, and a
-               second set of rules for the same two corners is how a press once landed
-               289 px from the icon it was aimed at. */
-            if (hit == UI_TARGET_PAIR) {
-                const confirm_hit_t half = confirm_hit(ox, oy, over_h_tap);
-                if (half == CONFIRM_CANCEL) {
-                    s_flinch = 1.0f;
-                    /* IT ASKS THE BOX NOW. The message was replayed from this panel's own
-                       buffer until 0.2.96; streaming discards the audio as it plays, so
-                       "again" is a fetch and it needs the link to be up. Reported through
-                       `jpanel_state()` like any other fetch rather than being silent,
-                       because a control that answers with nothing is the thing the cue
-                       below was added to stop. A sound for the finger, then the audio. */
-                    if (sound) audio_cue(CUE_PLAY);
-                    s_pending = PEND_REPLAY;
-                    s_pending_until = now + PENDING_MS;
-                    s_repeat_until = now + REPEAT_MS; /* still asking; keep it up */
-                    dirty = true;
-                    goto tap_done;
-                }
-                if (half == CONFIRM_SEND) {
-                    /* THE REPLY, AND IT NEEDS NO CHOICE MADE. The recipient is whoever
-                       just spoke, which the panel already knows from
-                       `X-Jpanel-From-Kind` — answering a message used to mean opening the
-                       menu and picking the person who had this second finished talking.
-                       That is the difference between a message and a conversation, and it
-                       is the whole reason the owner asked for this. */
-                    s_repeat_until = 0; /* the pair is gone; the tick and cross take over */
-                    /* `CUE_REPLY` rather than `CUE_LISTEN`: the same disc in the same place
-                       must sound the same whether the message is still playing or has ended, and
-                       here the microphone opens at once, so the press and the opening are one
-                       event. The deferred path keeps `CUE_LISTEN` for the later moment the
-                       microphone really opens, which is a second event because time passed. */
-                    if (start_send_recording(jpanel_in_from(), now, speaking)) {
-                        if (sound) audio_cue(CUE_REPLY);
-                    } else if (sound) {
-                        audio_cue(CUE_OOPS);
-                    }
-                    s_flinch = 1.0f;
-                    dirty = true;
-                    goto tap_done;
-                }
-            }
-            /* THE TICK AND THE CROSS, AND THEY REPLACE "A TOUCH ANYWHERE CANCELS".
-             *
-             * That rule was right while it was the only way out — the owner asked for it
-             * ("when it's listening, if I touch the screen it should stop and discard") when a
-             * hands-free listen had no other exit for someone who was not going to speak. It
-             * is the wrong rule the moment there is somewhere deliberate to press: the same
-             * finger that means "send this" is one bad aim away from destroying it, and the
-             * reader is four. So the cross cancels, the tick sends, and ANYTHING ELSE ON THE
-             * GLASS DOES NOTHING — including the pet, which cannot be poked mid-message.
-             *
-             * GOING QUIET STILL SENDS (see the hush branch below). The tick is "I am done, do
-             * not wait it out", not a button the child has to find every time.
-             *
-             * ONLY THE HANDS-FREE TURNS. A held listen ends on the release of the finger that
-             * started it, so it never reaches here and keeps its gesture intact. */
-            if (hit == UI_TARGET_CONFIRM) {
-                const confirm_hit_t pressed = confirm_hit(ox, oy, over_h_tap);
-                const bool recording = (s_talk == TALK_RECORDING);
-                const char *who = recording ? "jpanel" : "talk";
-                if (pressed == CONFIRM_CANCEL) {
-                    /* Exactly what "stop stop" and the old touch-anywhere did, so the two ways
-                       to say stop still behave identically: the capture dropped, the follow-up
-                       window closed, and the turn counter parked at its cap. */
-                    size_t dropped = 0;
-                    (void)audio_capture_close(&dropped);
-                    s_talk = TALK_IDLE;
-                    s_listen_voice = false;
-                    if (!recording) {
-                        s_follow_armed = false;
-                        s_follow_turns = FOLLOW_MAX_TURNS;
-                    }
-                    s_flinch = 1.0f;
-                    if (sound) audio_cue(CUE_STOP);
-                    ESP_LOGI(TAG, "%s: cancelled by cross, %u bytes discarded", who,
-                             (unsigned)dropped);
-                    dirty = true;
-                    goto tap_done;
-                }
-                if (pressed == CONFIRM_SEND) {
-                    /* NOTHING HEARD IS NOT A SEND. The hush branch already refuses to send a
-                       room nobody spoke into, and a tick pressed into that same silence must
-                       refuse too — otherwise the one exit that skips the silence check becomes
-                       the way six seconds of a bedroom reaches dad. Said out loud, because a
-                       child who pressed the tick and heard nothing has been told it went. */
-                    if (!(recording ? s_rec_heard : s_listen_heard)) {
-                        size_t got = 0;
-                        (void)audio_capture_close(&got);
-                        s_talk = TALK_IDLE;
-                        s_listen_voice = false;
-                        s_flinch = 1.0f;
-                        if (sound) audio_cue(CUE_OOPS);
-                        ESP_LOGI(TAG, "%s: tick pressed but nobody spoke — dropped", who);
-                        dirty = true;
-                        goto tap_done;
-                    }
-                    /* A SOUND FOR THE FINGER, THEN THE OUTCOME — the pop-up's rule, and the
-                       tick needed it more than the pop-up did. `CUE_SENT` exists and is played,
-                       but only when the BOX confirms (`JPANEL_SENT`), which is a network round
-                       trip away; the cross answers instantly with `CUE_STOP`. So the two
-                       targets felt different in the hand, and the owner reported exactly that:
-                       *"there is a sound effect when hitting cancel, but not the check mark"* —
-                       while the messages were arriving the whole time. The one control a child
-                       presses to send their voice must not be the one that answers with
-                       silence. */
-                    if (sound) audio_cue(CUE_HEARD);
-                    size_t got = 0;
-                    const int16_t *pcm = audio_capture_close(&got);
-                    s_listen_voice = false;
-                    ESP_LOGI(TAG, "%s: sent by tick after %u ms (%u bytes)", who,
-                             (unsigned)audio_capture_ms(), (unsigned)got);
-                    if (recording) {
-                        s_talk = TALK_IDLE;
-                        if (pcm == NULL || !jpanel_send(pcm, got, s_rec_to)) {
-                            if (sound) audio_cue(CUE_OOPS);
-                            ESP_LOGW(TAG, "jpanel: nothing to send");
-                        }
-                    } else if (pcm == NULL || !talk_send(pcm, got)) {
-                        s_talk = TALK_IDLE;
-                    } else {
-                        s_talk = TALK_THINKING;
-                        s_talk_since = now;
-                    }
-                    s_flinch = 1.0f;
-                    dirty = true;
-                    goto tap_done;
-                }
-                /* Off both targets: CONSUMED, and deliberately without a flinch. Every other
-                   tap on this glass answers somehow, and that is exactly what must not happen
-                   here — a pet that twitches while a child is talking to it is the panel
-                   inviting the next poke mid-sentence.
-                 *
-                 * BUT IT SAYS SO, and the first version of this did not. A miss that is silent
-                 * on the glass AND silent in the log is a control that cannot be diagnosed
-                 * without a cable: 0.3.07 shipped with the coordinates 180 degrees out on an
-                 * upside-down panel and the only symptom available to the owner was "it does
-                 * not respond". One line here would have named it. Both pairs, for the same
-                 * reason the poke logs both: frame and overlay agreeing places the fault in
-                 * calibration, disagreeing places it in the flip. */
-                ESP_LOGI(TAG, "%s: tap at frame (%d,%d) overlay (%d,%d) hit neither target "
-                              "(tick %d, cross %d, cy %d)",
-                         who, s_fig_x, s_fig_y, ox, oy, CONFIRM_CX_SEND, CONFIRM_CX_CANCEL,
-                         confirm_cy(over_h_tap));
-                goto tap_done;
-            }
-            /* AND THE POKE ALONE STILL DEFERS TO THE PET'S OWN VOICE. The dispatcher no
-               longer forks on `speaking`, but this branch is the one that always did care:
-               cutting across the pet mid-sentence with a colour change and a new sound is the
-               one thing the old guard was genuinely protecting. The flinch stays, because
-               ignoring a finger entirely reads as a frozen pet. */
-            if (speaking) {
-                s_flinch = 1.0f;
-                dirty = true;
-                goto tap_done;
-            }
-            colour = (colour + 1) % face_colour_count();
-            s_flinch = 1.0f;
-            /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
-               pool; the pool picks the reaction, weighted, cooled-down, and softened if you
-               are hammering it (`variants.c`). The colour cycle stays, because it is the one
-               thing a child can steer deliberately. The coordinates were corrected at the top
-               of this block, so the zones, the marker and the telemetry all speak the same
-               ones. */
-            /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass
-               that says something cannot also be a poke. It sits above the pet's head where
-               `face_zone` returns nothing anyway, so no reaction is lost — and a tap that both
-               flipped the label and made the pet sneeze would read as two things happening. */
-            if (label_hit(ox, oy, (s_quarter == 1 || s_quarter == 3) ? SQ_Y0 : 0)) {
-                s_show_version = !s_show_version;
-                ESP_LOGI(TAG, "label -> %s", s_show_version ? "version" : "name");
-                if (sound) audio_cue(CUE_TOGGLE);
-                dirty = true;
-                goto tap_done;
-            }
-            s_tap_zone = (int)face_zone(st.form, s_fig_x, s_fig_y, s_upside_down, s_lean);
-            const pool_t pool = ZONE_POOL[s_tap_zone];
-            action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
-            action_mag = variants_penalty(pool, &mem[pool], now);
-            action_start = now;
-            /* BOTH PAIRS, because they agree only when the panel is upright and a
-               disagreement is the whole diagnosis: a tap the glass and the figure place
-               differently is a rotation fault, one they place identically but in the wrong
-               zone is a calibration fault, and the owner has no terminal to tell them apart
-               with. */
-            ESP_LOGI(TAG, "tap glass (%d,%d) figure (%d,%d) zone %d -> colour %d, action %d, "
-                          "mag %.2f",
-                     s_tap_x, s_tap_y, s_fig_x, s_fig_y, s_tap_zone, colour, (int)action,
-                     (double)action_mag);
-            /* Before the repaint, not after: the cue is ~90 ms and a full frame is ~330 KB
-               over QSPI, and the tap feels answered by whichever lands first.
-               THE SOUND FOLLOWS THE ACTION, which is what makes poking the head coo: the
-               head's pool is weighted towards a blush, and CUE_BLUSH is the warm one. No zone
-               is special-cased, so the sound and the animation cannot drift apart and they
-               stay in step for free the next time `variants.c` is re-weighted. */
-            PHASE(3);
-            if (sound) audio_cue(cue_for_action((int)action));
-            dirty = true;
-        tap_done:;
-        } else if (tapped) {
-            /* THE TRANSPORT, AND NOTHING ELSE REACHES HERE. `UI_TARGET_TRANSPORT` appears in one
-               table (`ui.h`), so the fork above sends a press this way only when the state machine
-               resolved it to these two discs — which is why there is no guard and no `else` on
-               this branch any more. The menu and the exit are offered before it and are served by
-               the chain above; a poke at the pet mid-sentence is served there too, by the branch
-               that still defers to `speaking`. Everything left is a press on a sounding run. */
-            /* THE SAME TWO HALVES THE ENDED STATE USES, because they are now the same pair
-               of controls — see `confirm.h`. A tap anywhere used to end the run, and the
-               owner replaced that with a hold and an answer: stopping is what pausing does
-               to the sound, and the queue waits rather than being thrown away.
-
-               The coordinates are the pass's, resolved once above the fork: these targets
-               can only be tested in overlay ones, and a hit test against frame ones on an
-               upside-down panel misses by 289 px (`tap_to_overlay`).
-
-               AND THE EXIT IS NOT TESTED HERE, although the corner works while a message
-               plays — it is *"the top right where there's no icon"* the owner asked for, and
-               the reason it now works is that `UI_TAP_ORDER_PLAYING` offers EXIT before
-               TRANSPORT. Reaching this branch at all means the exit was already considered
-               and missed, so a second test for it would be a second opinion. */
-            /* ── BUT NOT WHILE A PLAY OR REPLAY IS STILL PENDING ─────────────────────────
-             *
-               The owner, on 0.3.35: *"it played through once and has stopped and has the play
-               button again, but when we click the play button sometimes it just pauses ...
-               usually just on the first time."*
-
-               WHAT THE FINGER IS ON CHANGES UNDER IT. When a message ends the pair comes up and
-               the arbitration uses the IDLE table, where that left disc is `UI_TARGET_PAIR` —
-               replay. Pressing it arms `PEND_REPLAY`, which makes `run_controls_up()` true, which
-               swaps the table to `UI_TAP_ORDER_PLAYING` — where the same disc in the same place
-               is now the TRANSPORT. A replay waits out its own cue before any sound, so for those
-               few hundred milliseconds nothing has happened; a child presses again and the second
-               press pauses a message that never started. "Usually just the first time" is the
-               press that flips the table.
-
-               THE PRESS IS CLAIMED AND IGNORED, not refused: a transport that stopped being live
-               would let the press fall through the playing table to the pet, which is a poke the
-               child certainly did not ask for. Bounded by the PENDING rather than by a clock —
-               `EXIT_GRACE_MS` was tried and 700 ms of dead pause button is a real cost to a child
-               who wants the sound to stop the moment it starts. While a play is pending there is
-               nothing sounding to pause, so refusing costs nothing; the instant the audio starts
-               the pending clears and the button works. `ui.c` holds the rule and is tested on it
-               (`test_pressing_replay_twice_does_not_pause_what_never_started`).
-
-               SPELLED AS `CONFIRM_NONE` rather than an early exit, because that is what the value
-               already means — *"not on either target: consumed, and nothing happens"* — and a
-               `goto` out of this branch would jump into the one above it to reach its label. */
-            const bool unserved = s_pending == PEND_PLAY || s_pending == PEND_REPLAY;
-            const confirm_hit_t half = unserved ? CONFIRM_NONE : confirm_hit(ox, oy, over_h_tap);
-            if (half == CONFIRM_CANCEL) {
-                const bool hold = !audio_stream_paused();
-                audio_stream_pause(hold);
-                s_paused_since = hold ? now : 0;
-                s_flinch = 1.0f;
-                dirty = true;
-                ESP_LOGI(TAG, "jpanel: run %s by touch", hold ? "held" : "resumed");
-                /* AND IT SAYS WHICH. These were silent on the argument below; the owner
-                   overrode it, and he is right that a four-year-old pressing a disc wants to
-                   hear that the press landed rather than infer it from what the audio does.
-                   Lower and shorter for the hold, higher and wider for starting again — see
-                   `cue.h`, where a mirrored pair was MEASURED as indistinguishable and rejected.
-                   The old argument, kept because it is still why these two are the quietest
-                   things on the screen: a beep on top of the sentence it is holding, or on
-                   the first instant of the one it is resuming, is the panel talking over
-                   itself — so these two stay short and quiet where `CUE_PLAY` and `CUE_STOP`
-                   can be open. */
-                if (sound) audio_cue(hold ? CUE_PAUSE : CUE_RESUME);
-            } else if (half == CONFIRM_SEND) {
-                /* ANSWER THE PERSON TALKING, without waiting for them to finish. The
-                   recipient is the message being played, so it is read BEFORE the run
-                   ends. Deferred rather than started here: the fetch is still unwinding
-                   and `start_send_recording` would refuse a microphone it cannot have
-                   yet — silently, which is the one outcome a child cannot interpret. */
-                /* THE PRESS SOUNDS NOW, and the microphone follows it — see `ui.c`. Without
-                   it, this and the exit corner are indistinguishable at the press: both stop the
-                   sound and say nothing, so answering your father and dismissing him feel
-                   identical until a microphone does or does not open. */
-                if (sound) audio_cue(CUE_REPLY);
-                s_pend_reply_to = jpanel_in_from();
-                audio_stream_pause(false); /* never end a run holding the ring */
-                s_paused_since = 0;
-                jpanel_stop();
-                s_pending = PEND_REPLY;
-                s_pending_until = now + PENDING_MS;
-                s_flinch = 1.0f;
-                dirty = true;
-            } else {
-                /* Off both targets: the flinch alone, and deliberately nothing else. This
-                   is where a tap used to end the run, so the one thing it must not do now
-                   is end it by accident. */
-                s_flinch = 1.0f;
-                dirty = true;
-            }
-        }
-        /* WHAT THE PANEL HEARD. Popped once a frame, so a phrase cannot arrive between two
-           frames and be lost, and acted on in exactly the way a tap is — the voice is
-           another way to ask, never a second animation path. */
+        /* WHAT THE PANEL HEARD, popped once a frame. The four phrases the machine owns (the
+           name, stop, tell sister, tell dad) go to it; forms, colours and actions are the pet
+           being a pet and stay here. */
+        sm_voice_t voice = SM_VOICE_NONE;
         char said[64];
         int said_id = -1;
         if (speech_live() && speech_take(said, sizeof(said), &said_id)) {
-            /* A WORD UNDERSTOOD IS THE PANEL BEING USED, even when it resolves to nothing
-               this frame can draw. The recogniser stays live while the screen is dark — a
-               panel that cannot hear its name in the dark is a panel that is OFF, and the
-               owner asked for a screen timer rather than a power switch. */
-            heard_voice = true;
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
-                /* Understanding a word is not the same event as a finger landing, and used
-                   to sound identical. `stop` gets the falling gesture, the name gets the
-                   rising one that means the microphone is open, and everything else gets the
-                   coin. */
-                cue_t heard_cue = CUE_HEARD;
+                cue_t heard_cue = CUE_COUNT;
                 switch (v->kind) {
+                case VOCAB_LISTEN:
+                    voice = SM_VOICE_WAKE;
+                    break;
+                case VOCAB_STOP:
+                    voice = SM_VOICE_STOP;
+                    break;
+                case VOCAB_SEND:
+                    voice = v->arg == (int)JP_TO_DAD ? SM_VOICE_SEND_DAD : SM_VOICE_SEND_PANEL;
+                    break;
                 case VOCAB_FORM:
-                    st.form = (face_form_t)v->arg;
+                    fst.form = (face_form_t)v->arg;
+                    heard_cue = CUE_HEARD;
                     break;
                 case VOCAB_COLOUR:
                     /* A named colour lands on its index; "pick a new color" still steps. */
                     colour = v->arg < 0 ? (colour + 1) % face_colour_count()
                                         : v->arg % face_colour_count();
-                    break;
-                case VOCAB_STOP:
-                    /* THE WAY OUT OF A CONVERSATION THAT CONTINUES ITSELF. The owner: "now
-                       that it auto continues for six turns, it wants to keep going even if I
-                       say stop."
-                     *
-                       Three states to leave, because "stop" has to mean stop wherever it is
-                       said: a recording in progress is dropped rather than sent, a reply
-                       already in flight is abandoned rather than spoken, and the follow-up
-                       window is closed so the microphone does not reopen. The turn counter
-                       goes to its cap rather than to a separate flag — the next deliberate
-                       start (the name, or a finger) resets it, which is exactly the rule that
-                       already governs the loop. */
-                    if (s_talk == TALK_LISTENING || s_talk == TALK_RECORDING) {
-                        size_t dropped = 0;
-                        (void)audio_capture_close(&dropped);
-                    } else if (s_talk != TALK_IDLE) {
-                        talk_clear();
-                    }
-                    s_talk = TALK_IDLE;
-                    s_listen_voice = false;
-                    s_follow_armed = false;
-                    s_follow_turns = FOLLOW_MAX_TURNS;
-                    ESP_LOGI(TAG, "talk: stopped by voice");
-                    heard_cue = CUE_STOP;
-                    break;
-                case VOCAB_SEND:
-                    /* VOICE POST. The same capture machinery a conversation uses, pointed
-                       somewhere else — which is the whole design: a second recorder with its
-                       own buffer, its own hush and its own cap would be a second thing to get
-                       wrong for a four-year-old, and the numbers here were tuned against one.
-                     *
-                       A LONGER LEAD THAN A CONVERSATION GETS (`RECORD_LEAD_MS`). Asking the
-                       pet something is a sentence already formed; telling your sister
-                       something is one being composed, out loud, by a four-year-old who has
-                       just watched a blue dot appear. Four seconds rather than three, and the
-                       silent branch below still throws away a message nobody spoke into.
-                     *
-                       Refused while a turn is in flight or while the pet is speaking, exactly
-                       as the name is: one microphone, one thing at a time. */
-                    if (start_send_recording(v->arg == (int)JPANEL_TO_DAD ? JPANEL_TO_DAD
-                                                                          : JPANEL_TO_PANEL,
-                                             now, speaking)) {
-                        heard_cue = CUE_LISTEN;
-                        dirty = true;
-                    }
-                    break;
-                case VOCAB_LISTEN:
-                    /* THE SAME STATE A HOLD REACHES, deliberately: one path to the box, not
-                       two. Everything after this — the bubble, the upload, the reply, the
-                       failure face — is the press-and-hold machine, and the only difference is
-                       how the turn ends (`LISTEN_HUSH_MS`). Refused while a turn is in flight
-                       or while we are speaking, for the same reasons the hold is. */
-                    if (start_listening(now, speaking)) heard_cue = CUE_LISTEN;
+                    heard_cue = CUE_HEARD;
                     break;
                 case VOCAB_ACTION:
                 default:
+                    /* ASKING FOR A THING SOUNDS LIKE THE THING: the acknowledgement IS the
+                       action's cue, not a bleep followed by one. */
                     action = (action_t)v->arg;
                     action_mag = 1.0f;
                     action_start = now;
-                    /* ASKING FOR A THING SOUNDS LIKE THE THING. The acknowledgement IS the
-                       action's cue, not a bleep followed by one — "can you burp" answering
-                       with a tone and then a burp is the toy answering twice, and that was
-                       already true of the two rude ones before the other seventeen had
-                       voices of their own. One rule now covers all nineteen. */
                     heard_cue = cue_for_action((int)action);
                     break;
                 }
-                if (sound) audio_cue(heard_cue);
+                if (heard_cue != CUE_COUNT && sound) {
+                    stream_cue_play(st, STREAM_SLOT_PRESS, heard_cue);
+                }
                 dirty = true;
             }
         }
         if (speech_live() && !caption_idle(&cap)) dirty = true;
         caption_tick(&cap, now, FACE_W);
 
+        /* The calibration routine owns the frame and the button while it runs; the machine is
+           told once and then left alone (it drops an open recording silently, keeps the offer
+           and any send, and reads the pet turn on the first frame back). */
+        const bool calibrating = s_cal_active || s_cal_note_ms > 0;
+        bool btn_short = false, btn_hold = false;
+        int swipe = 0;
+        float cue = 0.0f;
+        int prev_taps = gest.taps;
+        float prev_cue = 0.0f;
+        gesture_action_t act = GESTURE_NONE;
+        if (!calibrating) {
+            PHASE(4);
+            s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
+            PHASE(5);
+            update_orientation();
+            boot_button_poll();
+            btn_short = boot_button_take();
+            btn_hold = boot_button_sleep_requested();
+            prev_taps = gest.taps;
+            prev_cue = gesture_cue(&gest);
+            /* BEFORE THE STEP, so the hold reads this frame's tap count: the maintenance gestures
+               are taps THEN a hold, and a hold that begins while a tap run is live is theirs. */
+            act = gesture_poll(&gest, tapped, down, dt_ms);
+            /* ONE STEP PER PRESS, MEASURED IN THE SPACE THE SCREEN IS DRAWN IN. "Left" has to
+               mean left as the CHILD sees it, so both points go through the same pair the hit
+               test uses; upside down, `panel_to_frame` alone returns the touch unchanged and a
+               swipe would have the right magnitude and the WRONG SIGN. */
+            int drag_x = 0, drag_y = 0;
+            if (down && !s_swipe_latched && s_down_x >= 0 && touch_drag(&drag_x, &drag_y)) {
+                int cx = 0, cy = 0, ox0 = 0, oy0 = 0, ox1 = 0, oy1 = 0;
+                calib_apply(&s_touch_cal, drag_x, drag_y, &cx, &cy);
+                panel_to_overlay(s_down_x, s_down_y, &ox0, &oy0);
+                panel_to_overlay(cx, cy, &ox1, &oy1);
+                const int dx = ox1 - ox0, dy = oy1 - oy0;
+                const int adx = dx < 0 ? -dx : dx, ady = dy < 0 ? -dy : dy;
+                if (adx >= SWIPE_MIN_PX && adx > ady) {
+                    swipe = dx > 0 ? 1 : -1;
+                    s_swipe_latched = true;
+                    s_swipe_dx = dx;
+                    if (s_swipes < 65535) s_swipes++;
+                    ESP_LOGI(TAG, "swipe %s (dx %d)", swipe > 0 ? "right" : "left", dx);
+                }
+            }
+            /* The finger's current point, for the hold: it fires where the finger is NOW (a
+               finger may drift up to 59 px without becoming a swipe). */
+            if (down && !tapped && touch_drag(&drag_x, &drag_y)) {
+                int cx = 0, cy = 0;
+                calib_apply(&s_touch_cal, drag_x, drag_y, &cx, &cy);
+                panel_to_overlay(cx, cy, &ox, &oy);
+            }
+            cue = gesture_cue(&gest);
+        }
+
+        /* ── SAMPLE, STEP, EXECUTE ─────────────────────────────────────────────────────────── */
+        (void)jpanel_snapshot(&s_snap); /* a torn read keeps the last good copy */
+        const stream_facts_t facts = stream_facts(st);
+        memset(&s_in, 0, sizeof(s_in));
+        s_in.now = now;
+        s_in.snap = s_snap;
+        s_in.post_failed = s_post_failed_next;
+        s_in.capture_refused = s_refused_next;
+        s_post_failed_next = JP_SEQ_NONE;
+        s_refused_next = false;
+        s_in.audio = facts;
+        if (!calibrating) {
+            s_in.down = tapped;
+            s_in.up = up;
+            s_in.x = ox;
+            s_in.y = oy;
+            /* On the pet, in PANEL coordinates on purpose: the rim is the rim whichever way up
+               the thing is mounted. -1 (no point) fails the margin for free. */
+            s_in.on_pet = s_down_x >= TALK_MARGIN_PX && s_down_x < FACE_W - TALK_MARGIN_PX &&
+                          s_down_y >= TALK_MARGIN_PX && s_down_y < FACE_H - TALK_MARGIN_PX;
+            s_in.gest_taps = gest.taps;
+            s_in.swipe = swipe;
+            s_in.voice = voice;
+            s_in.btn_short = btn_short;
+            s_in.btn_hold = btn_hold;
+        }
+        s_in.over_y0 = over_y0;
+        s_in.over_h = over_h;
+        s_in.wake = wake;
+        s_in.hearing = speech_hearing();
+        s_in.capture_ms = audio_capture_ms();
+        s_in.leased = stream_leased(st);
+        s_in.net = net_now();
+        s_in.speech_ok = speech_live();
+        s_in.calibrating = calibrating;
+        s_in.dark_wake = dark_wake;
+        s_in.sound = sound;
+        sm_step(&s_sm, &s_in, &s_out);
+        const sm_view_t *const view = &s_out.view;
+        if (execute(st, sound, now)) {
+            action = ACT_NOD;
+            action_mag = 1.0f;
+            action_start = now;
+        }
+        if (s_out.n > 0) dirty = true;
+        if (s_out.say != NULL) caption_say(&cap, s_out.say);
+        if (s_out.dash_why != SM_DASH_NONE) {
+            /* COUNTED AND NAMED, at the owner's ask: *"anytime we get a red – I want you to make
+               sure that it's logged"*. "net" has its reason in the talk reach row; "timeout" has
+               no other record anywhere. */
+            s_dash_why = sm_dash_name(s_out.dash_why);
+            ESP_LOGW(TAG, "talk: no reply (%s)", s_dash_why);
+        }
+        if (s_out.rim_hold) {
+            /* Once per press: a margin that is too wide looks exactly like a menu that stopped
+               working unless the panel says which it is. */
+            ESP_LOGI(TAG, "hold at (%d,%d) is on the rim, not the pet", s_down_x, s_down_y);
+        }
+        if (s_out.tap_missed) {
+            /* A press the machine claimed and ignored (a grace, the transport before the message
+               is audible, a stray touch while recording). Both pairs, because frame and overlay
+               agreeing places a fault in calibration and disagreeing places it in the flip. */
+            ESP_LOGI(TAG, "tap at frame (%d,%d) overlay (%d,%d) ignored", s_fig_x, s_fig_y, ox,
+                     oy);
+        }
+        if (s_out.backstop) ESP_LOGW(TAG, "jpanel: the UI backstop fired");
+        if (s_out.late_outcome) {
+            s_late_outcomes++;
+            ESP_LOGW(TAG, "jpanel: an outcome arrived after its backstop — not sounded");
+        }
+        if (s_out.violations != 0) {
+            s_violations++;
+            ESP_LOGW(TAG, "panel_sm: invariants 0x%02x", (unsigned)s_out.violations);
+        }
+
+        /* THE POKE, which the machine hands back when a press reached the pet. SPEAKING, AND IT
+           OUTRANKS THE TOY: *"when the agent is talking we should prohibit beeps from cutting it
+           off, and we should also stop poke interactions making other animations."* A poke over
+           sound only flinches, because ignoring a finger entirely reads as a frozen pet. */
+        if (s_out.pet_press) {
+            s_flinch = 1.0f;
+            dirty = true;
+            if (facts.speaker_busy) {
+                /* the flinch alone */
+            } else if (label_hit(ox, oy, over_y0)) {
+                /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass
+                   that says something cannot also be a poke. */
+                s_show_version = !s_show_version;
+                ESP_LOGI(TAG, "label -> %s", s_show_version ? "version" : "name");
+                if (sound) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_TOGGLE);
+            } else {
+                /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
+                   pool; the pool picks the reaction, weighted, cooled down and softened if you are
+                   hammering it (`variants.c`). THE SOUND FOLLOWS THE ACTION. */
+                colour = (colour + 1) % face_colour_count();
+                s_tap_zone = (int)face_zone(fst.form, s_fig_x, s_fig_y, s_upside_down, s_lean);
+                const pool_t pool = ZONE_POOL[s_tap_zone];
+                action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
+                action_mag = variants_penalty(pool, &mem[pool], now);
+                action_start = now;
+                ESP_LOGI(TAG, "tap glass (%d,%d) figure (%d,%d) zone %d -> colour %d, action %d, "
+                              "mag %.2f",
+                         s_tap_x, s_tap_y, s_fig_x, s_fig_y, s_tap_zone, colour, (int)action,
+                         (double)action_mag);
+                PHASE(3);
+                if (sound) stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+            }
+        }
+
         /* THE CALIBRATION ROUTINE OWNS THE FRAME while it runs. It deliberately bypasses the
            rig rather than drawing over it: a robot reacting to the taps being measured would
            move the thing the owner is aiming at. */
-        if (s_cal_active || s_cal_note_ms > 0) {
-            /* AND THE BUTTON STILL WORKS, which until now it did not. The `continue` at the end
-               of this branch skips the button poll along with everything else, so the only way
-               out of calibration was to finish it: sixteen targets at three to six taps each,
-               forty-eight presses at best. That is a fine bargain for an owner who meant to
-               start it and a trap for anyone else — and this gesture lives on a panel in a
-               four-year-old's bedroom, where the person holding it may not know what the
-               crosshair is for. One press abandons the run and the previous calibration, if any,
-               is untouched. The hold still powers the panel down, because a way out that depends
-               on the touchscreen is no use in the one mode where the touchscreen is suspect. */
+        if (calibrating) {
+            /* AND THE BUTTON STILL WORKS: one press abandons the run and the previous calibration,
+               if any, is untouched. The hold still powers the panel down, because a way out that
+               depends on the touchscreen is no use in the one mode where it is suspect. */
             boot_button_poll();
             if (boot_button_take() || boot_button_sleep_requested()) {
                 s_cal_active = false;
@@ -3094,17 +2462,11 @@ static void face_task(void *arg)
                 calib_sample_reset(&s_cal_s);
                 s_cal_last_tap = 0;
                 ESP_LOGW(TAG, "calibration abandoned by the button — keeping the old");
-                if (sound) audio_cue(CUE_OOPS);
-                /* No `dirty`: it is a local this pass is about to discard. The pet returns on
-                   the next one, within FACE_FLOOR_MS. */
+                if (sound) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_OOPS);
                 continue;
             }
-            /* AND IT GIVES UP ON ITS OWN. Six taps and a hold is a gesture a child can find by
-               accident, and the state it lands in draws nothing but a crosshair — no pet, no
-               notice, no messages, because this branch owns the frame. A panel that has been
-               shown a target and ignored for half a minute has not been abandoned mid-
-               calibration by its owner; it has been left like that by somebody who did not mean
-               to start it. */
+            /* AND IT GIVES UP ON ITS OWN. A crosshair ignored for half a minute was left like that
+               by somebody who did not mean to start it. */
             if (s_cal_active) {
                 if (s_cal_last_tap == 0) s_cal_last_tap = now;
                 if (tapped) s_cal_last_tap = now;
@@ -3118,9 +2480,6 @@ static void face_task(void *arg)
                 }
             }
             if (s_cal_note_ms > 0) {
-                /* MEASURED, like every other duration in this loop: `TOUCH_POLL_MS` is the delay
-                   and this branch's pass is longer than that, so the note outstayed its welcome
-                   by about a factor of two. */
                 s_cal_note_ms -= dt_ms;
                 cal_note(fb, s_cal_ok);
             } else {
@@ -3131,11 +2490,10 @@ static void face_task(void *arg)
                     /* RAW, not corrected: a calibration measured through the previous
                        calibration would fit the correction on top of itself. */
                     calib_sample_add(&s_cal_s, rx, ry);
-                    if (sound) audio_cue(CUE_TICK);
+                    if (sound) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_TICK);
                 }
-                /* Advance when the taps AGREE, or when this target has had its cap — a
-                   target that will not settle must not trap the owner on it, so past the cap
-                   it contributes its median and the run continues. */
+                /* Advance when the taps AGREE, or when this target has had its cap — a target
+                   that will not settle must not trap the owner on it. */
                 const bool settled = calib_sample_settled(&s_cal_s);
                 const bool capped = s_cal_s.n >= CAL_SAMPLES_MAX;
                 if (settled || capped) {
@@ -3145,23 +2503,22 @@ static void face_task(void *arg)
                                  s_cal_i, calib_sample_spread(&s_cal_s));
                     }
                     calib_sample_reset(&s_cal_s);
-                    s_cal_last_tap = now; /* a target completed is progress, not idling */
+                    s_cal_last_tap = now;
                     s_cal_i++;
                     if (s_cal_i >= CAL_TARGETS) {
                         s_cal_active = false;
-                        s_cal_ok = calib_build(s_cal_mx, s_cal_my, &s_cal);
+                        s_cal_ok = calib_build(s_cal_mx, s_cal_my, &s_touch_cal);
                         if (s_cal_ok) {
                             uint8_t blob[CAL_BLOB_BYTES];
-                            const int n = calib_save(&s_cal, blob, sizeof(blob));
+                            const int n = calib_save(&s_touch_cal, blob, sizeof(blob));
                             if (n > 0) cfg_calibration_save(blob, n);
                             ESP_LOGI(TAG, "calibration accepted: x %d %d %d %d, y %d %d %d %d",
-                                     s_cal.raw_x[0], s_cal.raw_x[1], s_cal.raw_x[2],
-                                     s_cal.raw_x[3], s_cal.raw_y[0], s_cal.raw_y[1],
-                                     s_cal.raw_y[2], s_cal.raw_y[3]);
+                                     s_touch_cal.raw_x[0], s_touch_cal.raw_x[1], s_touch_cal.raw_x[2],
+                                     s_touch_cal.raw_x[3], s_touch_cal.raw_y[0], s_touch_cal.raw_y[1],
+                                     s_touch_cal.raw_y[2], s_touch_cal.raw_y[3]);
                         } else {
                             /* Refused rather than stored: a non-monotone map folds the panel
-                               onto itself, and the only way out of that is the touchscreen it
-                               just broke. The previous calibration, if any, is untouched. */
+                               onto itself. The previous calibration, if any, is untouched. */
                             ESP_LOGW(TAG, "calibration refused — not monotone, keeping the old");
                         }
                         s_cal_note_ms = CAL_NOTE_MS;
@@ -3179,661 +2536,50 @@ static void face_task(void *arg)
             continue;
         }
 
-        PHASE(4);
-        s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
-        PHASE(5);
-        update_orientation();
-        /* DEAF TO COMMANDS WHILE A MESSAGE IS BEING RECORDED. A message is a sentence spoken at
-           a panel whose vocabulary is short words children say, so without this the pet acts on
-           words from inside the message — the owner watched farts and spins going off while a
-           four-year-old was talking to her sister.
-
-           DERIVED FROM THE STATE, NOT SET AT THE EDGES. Recording ends five ways — the tick, the
-           cross, going quiet, the cap, and a failure — and a mute armed on entry would be left
-           on forever by whichever exit someone forgets. This cannot be wrong for longer than a
-           frame, and `speech_mute_commands` only logs on a change, so it costs nothing to say
-           every time. */
-        /* Deaf while recording (a message must not also be a command), deaf while LISTENING to
-           a conversation turn, and deaf in standby (the child asked it to stop listening).
-           Derived per frame rather than armed at the edges, so no state can leave the microphone
-           muted after it ends.
-
-           LISTENING WAS MISSING AND IT IS THE HALF THAT HAPPENS MOST. The owner: *"there are
-           still occasional times when we are talking and recording a message that commands get
-           recognized and sound effects come through."* Only `TALK_RECORDING` was muted — a
-           message to a sibling — while `TALK_LISTENING`, the pet conversation, left the whole
-           command graph live for the entire turn. So a child telling the robot about her day and
-           using one of the nineteen action words got the action fired mid-sentence, and the word
-           went to the box as well: one utterance, two readers, neither told about the other.
-
-           "Occasional" is exactly the shape a vocabulary collision has — it needs the sentence to
-           contain one of the words, which is why this survived every deliberate test and only
-           showed up in a four-year-old's actual talking. */
-        speech_mute_commands(s_talk == TALK_RECORDING || s_talk == TALK_LISTENING || s_standby);
-        boot_button_poll();
-        /* THE BUTTON TOGGLES THE GRID: press to show, press to hide. Safe as a toggle only
-           because `boot_button_poll` debounces — a raw edge would close on the same press that
-           opened it. The cross and the timeout still work; this is a third way out for a child
-           who has changed their mind and is already holding the button.
-
-           REFUSED MID-RECORDING, for the reason every other control here is: the microphone is
-           already committed to a message, and a menu over a recording offers a second recipient
-           for audio being captured for the first. Closing is never refused — getting OUT of
-           something must not depend on the state you are in. */
-        /* THE BUTTON IS THE POWER CONTROL NOW, not the menu. It opened the "who?" grid until
-           a long press on the pet could do that — and one gesture per job is worth more than a
-           second way to reach the same menu, because the button is the only control on this
-           unit that can turn it off and that is not something to share. */
-        if (boot_button_take()) {
-            if (s_standby) {
-                sleep_wake("button");
-                if (sound) audio_cue(CUE_HEARD);
-                dirty = true;
-            } else {
-                /* IT BLINKS FIRST, which is the owner's word for it and the right behaviour:
-                   the screen going dark is indistinguishable from the screen having crashed
-                   unless something acknowledges the press. The cue is that acknowledgement,
-                   and it sounds BEFORE the dark rather than into it. */
-                if (sound) audio_cue(CUE_STOP);
-                s_sendto_until = 0;   /* nothing modal survives being told to be quiet */
-                s_repeat_until = 0;
-                if (s_talk != TALK_IDLE) {
-                    s_talk = TALK_IDLE;
-                    audio_capture_close(NULL);
-                }
-                jpanel_stop();
-                s_standby = true;
-                s_sleep = SCREEN_DARK;
-                s_blank_pending = true;
-                s_brightness_pending = true;
-                dirty = true;
-                ESP_LOGI(TAG, "standby: screen off, microphone off, still reachable");
-            }
-        }
-        /* THE HOLD, AND IT LEAVES FROM THE SAME PLACE A REBOOT DOES — see the restart block
-           below for why: this is the one point in the firmware where a frame has just finished
-           and nothing is in flight on the QSPI bus. A panel that went to sleep mid-transfer is
-           a panel that may not come back, and the whole point of this gesture is that the only
-           way out is the button. */
-        if (boot_button_sleep_requested()) s_power_off = true;
-        /* Closed by its own clock. The pet is what a child came back to, so a menu nobody
-           answered gets out of the way rather than waiting forever. */
-        if (s_sendto_until != 0 && now >= s_sendto_until) {
-            s_sendto_until = 0;
-            ESP_LOGI(TAG, "sendto: grid timed out");
-            dirty = true;
-        }
         s_open = blink_open(dt_ms);
         s_flinch *= FLINCH_DECAY;
         if (s_flinch < 0.02f) s_flinch = 0.0f;
-        /* Animating means every poll is a frame. A blink at the 200 ms idle floor would be one
-           frame long and read as a glitch; the floor is for a face that is holding still. */
+        /* Animating means every poll is a frame: a blink at the 200 ms idle floor would be one
+           frame long and read as a glitch, and a wave drawn five times a second is a twitch. */
         if (s_flinch > 0.0f || s_open < 1.0f) dirty = true;
-        /* A running action animates at the poll rate; the idle floor is for a face holding
-           still, and a wave drawn five times a second is a twitch. */
         if (action != ACT_NONE) dirty = true;
-        /* A moved figure is a new frame, so tilting redraws at the poll rate rather than
-           waiting out the idle floor — but only once it has moved enough to see, or every
-           frame would be a full 322 KB blit for a pixel of accelerometer noise. */
+        /* A moved figure is a new frame — once it has moved enough to see. */
         if (s_lean - s_drawn_lean > 2 || s_drawn_lean - s_lean > 2) dirty = true;
-        /* AND WHILE HE IS STILL PUTTING HIS FEET DOWN. The lean stops changing the moment it
-           reaches its target, so without this the loop drops to the 200 ms idle floor while
-           the stride is still settling — five frames a second, which turns a half-second
-           settle into nearly three and leaves the pet standing on a shelf with one leg out.
-           That is what the owner saw. Same rule as the flinch and the blink above: animating
-           means every poll is a frame. */
+        /* And while he is still putting his feet down (`rig.h`). */
         if (walk.amp > 0.0f) dirty = true;
-
-        const int prev_taps = gest.taps;
-        const float prev_cue = gesture_cue(&gest);
-        /* Decided before the draw, acted on after it: the frame carrying a full-width cue has
-           to reach the glass first, or a reboot is indistinguishable from the fault we are
-           chasing. */
-        const gesture_action_t act = gesture_poll(&gest, tapped, down, dt_ms);
-
-        /* PRESS AND HOLD TO TALK. After `gesture_poll`, so `gest.taps` is this frame's count:
-           the maintenance gestures are taps THEN a hold, so a hold that begins while a tap
-           run is live belongs to them and must not also start a listen. */
-        if (!down) {
-            s_down_since = 0;
-        } else if (s_down_since == 0) {
-            s_down_since = now;
-            /* Same frame as the edge that set them, so this is THIS press's origin. */
-            s_down_x = tapped ? s_tap_x : -1;
-            s_down_y = tapped ? s_tap_y : -1;
-        }
-        if (!down) s_swiped = false;
-        const uint32_t held = (down && s_down_since != 0) ? now - s_down_since : 0;
-        const bool on_the_pet =
-            s_down_x >= TALK_MARGIN_PX && s_down_x < FACE_W - TALK_MARGIN_PX &&
-            s_down_y >= TALK_MARGIN_PX && s_down_y < FACE_H - TALK_MARGIN_PX;
-
-        /* ── SWIPE LEFT AND RIGHT TO CHANGE WHICH WAITING MESSAGE THIS IS ABOUT ──────────
-         *
-         * The owner, after two messages arrived at once: *"maybe we can add a new gesture which is
-         * swipe left and swipe right to change between the messages ... we again need to make sure
-         * that the icon on the top left updates, as well as the number in the middle. And that we
-         * handle stopping the current playing message if it's playing."*
-         *
-         * BEFORE THE HOLD, AND IT TAKES THE PRESS AWAY FROM IT (`s_swiped`). A swipe is a finger
-         * down for as long as a hold and travelling, so without the latch a drag across the pet
-         * would also open the recipient grid — a menu a child never asked for, on top of the
-         * message they were choosing.
-         *
-         * MEASURED IN THE SPACE THE SCREEN IS DRAWN IN, THROUGH BOTH TRANSFORMS. "Left" has to
-         * mean left as the CHILD sees it, and the controller reports where the finger is on the
-         * GLASS — assuming those agree is exactly the mistake §10.4af spent three releases making
-         * about the accelerometer. So each point goes through the same pair the hit test uses:
-         * `panel_to_frame` for the quarter turns, then `tap_to_overlay` for the 180.
-         *
-         * BOTH, NOT JUST THE FIRST. `panel_to_frame` deliberately stops at the quarter turns —
-         * the tap marker is plotted AFTER `flip_frame` and needs it to — so on an upside-down
-         * panel it returns the touch unchanged while everything drawn is mirrored. A drag measured
-         * there would have had the right magnitude and the WRONG SIGN on exactly the mounting the
-         * owner uses in one of the two bedrooms: swipe right, go left. `tap_to_overlay` is the
-         * half that answers for the flip, which is why it exists.
-         *
-         * ONE STEP PER PRESS. A long drag is one decision, not four, and a finger that wobbles
-         * back over the threshold must not undo itself.
-         *
-         * `ui.c` HOLDS THE RULES AND IS TESTED ON THEM — `waiting > 1`, the clamp, the stop, the
-         * cue. This is the shipping half: it resolves a distance into a direction and then does
-         * what that module says. */
-        int swipe = 0;
-        int drag_x = 0;
-        int drag_y = 0;
-        if (down && !s_swiped && s_down_x >= 0 && touch_drag(&drag_x, &drag_y)) {
-            int fx = 0;
-            int fy = 0;
-            int ox0 = 0;
-            int oy0 = 0;
-            int ox1 = 0;
-            int oy1 = 0;
-            panel_to_frame(s_down_x, s_down_y, &fx, &fy);
-            tap_to_overlay(fx, fy, &ox0, &oy0);
-            panel_to_frame(drag_x, drag_y, &fx, &fy);
-            tap_to_overlay(fx, fy, &ox1, &oy1);
-            const int dx = ox1 - ox0;
-            const int dy = oy1 - oy0;
-            const int adx = dx < 0 ? -dx : dx;
-            const int ady = dy < 0 ? -dy : dy;
-            if (adx >= SWIPE_MIN_PX && adx > ady) {
-                swipe = dx > 0 ? 1 : -1;
-                s_swipe_dx = dx;
-                if (s_swipes < 65535) s_swipes++;
-            }
-        }
-        /* ONE READ OF THE QUEUE, USED BY THE GUARD AND BY THE CLAMP. It is written on another task,
-           so asking twice is asking two different questions — and the pair "there is something to
-           swipe between" and "here is where the end is" must be about the same answer. */
-        const int have = jpanel_waiting(NULL, 0);
-        if (swipe != 0 && have > 1) {
-            s_swiped = true;
-            const int was = s_sel;
-            int want = s_sel + swipe;
-            /* CLAMPED TO WHAT IS DESCRIBED, not to what is counted: past `JPANEL_QUEUE_MAX` the
-               box sends a total and no sender, so there is no face to draw and nothing the index
-               could mean. The ninth message is reachable by listening to the eight ahead of it. */
-            const int last = (have < JPANEL_QUEUE_MAX ? have : JPANEL_QUEUE_MAX) - 1;
-            if (want < 0) want = 0;
-            if (want > last) want = last;
-            s_sel = want;
-            if (want != was) {
-                /* STOP WHAT IS SOUNDING, which the owner asked for and which is also what makes
-                   this gesture safe to leave live during playback: every press on this panel fires
-                   on the DOWN edge, so a swipe that STARTED on the notice or the pause button has
-                   already triggered it by the time the travel is visible. Un-paused first, like
-                   every other stop here — a run ended while the ring is held never drains. */
-                audio_stream_pause(false);
-                s_paused_since = 0;
-                jpanel_stop();
-                /* A deferred play must not fire for the message she just left. */
-                s_pending = PEND_NONE;
-                if (sound) audio_cue(CUE_HEARD);
-                ESP_LOGI(TAG, "swipe: message %d of %d (dx %d)", want + 1, have, s_swipe_dx);
-                dirty = true;
-            }
-        }
-        /* NOT WHILE A TURN IS STILL IN FLIGHT, and this is a lifetime rule rather than a
-           politeness one. `talk.c` uploads straight out of the capture buffer, and this
-           renderer gives up at 12 s while the HTTP timeout is 20 — so without this guard a
-           child who holds again after a failure face would call `audio_capture_open()` and
-           overwrite the bytes still being read by the socket. A five-second window, on the
-           one path a frustrated four-year-old is most likely to take. */
-        /* NOT WHILE WE ARE SPEAKING, and this one is measured rather than tidy: the owner
-           held the panel to ask a second question while the first reply was still playing and
-           the recording came back EMPTY (`heard: ""`, 2026-09-22 01:53:54). `audio.c` goes
-           deaf for six chunks whenever the speaker runs — the codec routes the DAC into the
-           ADC, so without that the pet would transcribe itself — which means a hold taken over
-           our own voice can only ever capture silence. Refusing it costs nothing and saves a
-           child from being ignored by a toy that looked like it was listening. */
-        /* A HOLD ON THE PET OPENS THE MENU NOW, RATHER THAN TALKING TO IT.
-         *
-         * The owner: *"change long press on the screen to actually pull up the same thing as
-         * the menu instead of just talking to the robot."*
-         *
-         * The hold used to be the ONLY way in, so it went straight to the one destination that
-         * existed. It is not any more: the grid offers her sister, her dad and the pet, and the
-         * pet is one of its four icons — so a hold that still went straight to a conversation
-         * would be the one gesture on this panel that could not reach the other three people.
-         * Nothing is lost; the pet is one press further on, and the two children who could not
-         * get `tell sister` recognised gain a second way to reach each other that needs no
-         * button on the case at all. */
-        /* ANY COUNT THE MAINTENANCE GESTURES HAVE NOT CLAIMED, which used to be zero alone.
-           A hold is how a child reaches the grid, and children do not hold from a standing
-           start — they poke the pet, it does something, they poke it again, and then they hold.
-           Every one of those attempts did nothing, and the owner asked for it directly: *"make
-           sure long press will pull up the menu even if it's after multiple presses"*. The
-           counts moved to five and six in the same change so that there is almost nothing left
-           for this to lose to (`gesture.h`). */
-        /* `msg_sounding`, NOT `speaking`, and this is the same fault as the dispatcher's in the
-           place it hurts most. A poke plays `CUE_TOGGLE`; the sentence above says children poke
-           and then hold; and `speaking` is true while that cue sounds. So the one gesture path
-           written for how a four-year-old actually behaves was gated on the noise their own poke
-           had just made. `ui.c` was corrected first and a host test stands on it
-           (`test_a_hold_after_a_poke_still_opens_the_menu`) — this is the shipping half. */
-        /* ── AND NOT WHILE A MENU IS UP: A LONG PRESS ON ONE IS JUST A PRESS ─────────────
-         *
-         * The owner: *"in the menu we need to disable the long press and have long press treated
-         * as a normal press of menu items. I think this is the cause of the girl icon showing up
-         * on the top left."*
-         *
-         * HE IS RIGHT, AND THE REASON IS `TALK_MARGIN_PX`. `on_the_pet` is everything more than
-         * 72 px from an edge — a 224x224 square in the middle of a 368x368 face — which is where
-         * the notice, the again/reply pair and the grid's own icons are all drawn. So a press on
-         * a menu item was BOTH: the target fired on the down edge, and then the same unmoved
-         * finger opened the sendto grid over the top of it. A child who held the reply button
-         * armed a reply AND opened a "who to send to?" menu, and both of those put a person's
-         * face on the glass.
-         *
-         * `msg_sounding` and `s_sendto_until` were already excluded, which is why this only ever
-         * showed up on the two menus that can be up while nothing is playing. `ui.c` holds the
-         * whole set (`ui_menu_up`) and is tested on it; this is the shipping half.
-         *
-         * NOTHING IS LOST: the hold opens the grid from the BARE PET, which is where a child
-         * reaching for "I want to send something" starts. What goes away is a second, invisible
-         * meaning for a press that had already done something. */
-        const bool menu_up = s_sendto_until != 0 || s_repeat_until != 0 || s_popup_box[0] >= 0 ||
-                             run_controls_up();
-        if (s_talk == TALK_IDLE && down && on_the_pet && !msg_sounding && !menu_up &&
-            !gesture_reserved(gest.taps) && !s_swiped && held >= HOLD_TALK_MS &&
-            talk_state() != TALK_NET_BUSY && s_sendto_until == 0) {
-            s_sendto_until = now + SENDTO_MS;
-            /* The same cue the button's press makes, because it is the same event: something
-               has appeared and it is waiting to be pressed. */
-            if (sound) audio_cue(CUE_HEARD);
-            ESP_LOGI(TAG, "sendto: grid opened by hold");
-            dirty = true;
-        } else if (s_talk == TALK_IDLE && down && !on_the_pet && !gesture_reserved(gest.taps) &&
-                   !s_swiped && held >= HOLD_TALK_MS && held < HOLD_TALK_MS + dt_ms) {
-            /* Once per press, on the frame the threshold passes — the owner has no terminal
-               but does have the log, and a margin that is too wide looks exactly like a
-               microphone that stopped working unless the panel says which it is. */
-            ESP_LOGI(TAG, "talk: hold at (%d,%d) is on the rim, not the pet", s_down_x,
-                     s_down_y);
-        } else if (s_talk == TALK_LISTENING && s_listen_voice) {
-            /* WAITING FOR THE ROOM TO GO QUIET. A held turn ends when the finger lifts; this
-               one has to be read off the front end's VAD, which `speech.c` has been computing
-               all along. */
-            const bool voice = speech_hearing();
-            if (voice) {
-                s_listen_heard = true;
-                s_listen_hush = 0;
-            } else if (s_listen_heard && s_listen_hush == 0) {
-                s_listen_hush = now;
-            }
-            const bool hushed =
-                s_listen_heard && s_listen_hush != 0 && now - s_listen_hush >= LISTEN_HUSH_MS;
-            const bool full = audio_capture_ms() >= audio_capture_cap_ms();
-            const bool nothing = !s_listen_heard && now - s_talk_since > s_listen_lead;
-            if (nothing) {
-                /* The name and then silence — a television, or a child who changed their mind.
-                   Dropped without a bubble: an accidental wake must cost nothing, which is the
-                   whole reason this branch exists rather than sending six seconds of a room. */
-                size_t got = 0;
-                (void)audio_capture_close(&got);
-                s_talk = TALK_IDLE;
-                s_listen_voice = false;
-                ESP_LOGI(TAG, "talk: named but nobody spoke — dropped");
-            } else if (hushed || full) {
-                size_t got = 0;
-                const int16_t *pcm = audio_capture_close(&got);
-                ESP_LOGI(TAG, "talk: %s after %u ms (%u bytes)", full ? "full" : "hushed",
-                         (unsigned)audio_capture_ms(), (unsigned)got);
-                s_listen_voice = false;
-                if (pcm == NULL || !talk_send(pcm, got)) {
-                    s_talk = TALK_IDLE;
-                } else {
-                    s_talk = TALK_THINKING;
-                    s_talk_since = now;
-                }
-                dirty = true;
-            }
-        } else if (s_talk == TALK_RECORDING) {
-            /* THE SAME THREE WAYS OUT A HANDS-FREE LISTEN HAS, and deliberately the same
-               numbers: hush sends, silence drops it, the cap sends what there is. The only
-               difference is where it goes. */
-            const bool voice = speech_hearing();
-            if (voice) {
-                s_rec_heard = true;
-                s_rec_hush = 0;
-            } else if (s_rec_heard && s_rec_hush == 0) {
-                s_rec_hush = now;
-            }
-            const bool hushed =
-                s_rec_heard && s_rec_hush != 0 && now - s_rec_hush >= LISTEN_HUSH_MS;
-            const bool full = audio_capture_ms() >= audio_capture_cap_ms();
-            const bool nothing = !s_rec_heard && now - s_talk_since > RECORD_LEAD_MS;
-            if (nothing) {
-                size_t got = 0;
-                (void)audio_capture_close(&got);
-                s_talk = TALK_IDLE;
-                ESP_LOGI(TAG, "jpanel: asked to send but nobody spoke — dropped");
-                dirty = true;
-            } else if (hushed || full) {
-                size_t got = 0;
-                const int16_t *pcm = audio_capture_close(&got);
-                ESP_LOGI(TAG, "jpanel: %s after %u ms (%u bytes)", full ? "full" : "hushed",
-                         (unsigned)audio_capture_ms(), (unsigned)got);
-                s_talk = TALK_IDLE;
-                if (pcm == NULL || !jpanel_send(pcm, got, s_rec_to)) {
-                    /* Nothing recorded, or something already in flight. Said out loud, not
-                       swallowed: a child who has just spoken into a blue dot and hears
-                       nothing has been told the message went. */
-                    if (sound) audio_cue(CUE_OOPS);
-                    ESP_LOGW(TAG, "jpanel: nothing to send");
-                }
-                dirty = true;
-            }
-        } else if (s_talk == TALK_LISTENING && !down) {
-            size_t got = 0;
-            const int16_t *pcm = audio_capture_close(&got);
-            /* HELD LENGTH AND CAPTURED LENGTH ARE DIFFERENT NUMBERS, and printing only the
-               first is how a dead microphone looks like a working one. They diverge when the
-               capture buffer failed to allocate, when the six-second cap bites, or when the
-               deaf window after the beep ate the start — and each of those is a different
-               bug. The length BEFORE the timestamp is reused, or the hold reads as zero. */
-            ESP_LOGI(TAG, "talk: held %u ms, captured %u ms (%u bytes)",
-                     (unsigned)(now - s_talk_since), (unsigned)audio_capture_ms(),
-                     (unsigned)got);
-            if (pcm == NULL || !talk_send(pcm, got)) {
-                /* Nothing recorded, or a turn already in flight. Either way the pet goes
-                   straight back to being a pet rather than showing a bubble that cannot
-                   resolve — a thinking box with nothing behind it is the silent hang this
-                   whole state machine exists to avoid. */
-                s_talk = TALK_IDLE;
-            } else {
-                s_talk = TALK_THINKING;
-                s_talk_since = now;
-            }
-        } else if (s_talk == TALK_THINKING && talk_state() == TALK_NET_SPOKE) {
-            /* Speaking. The bubble goes and the pet reacts, and the state is held on
-               `audio_playing()` rather than a timer so a long reply cannot end on screen
-               mid-sentence. */
-            s_talk = TALK_IDLE;
-            talk_clear();
-            /* Armed, not opened: the reply has not started coming out of the speaker yet, let
-               alone finished. The edge above does the opening. */
-            s_follow_armed = true;
-            action = ACT_NOD;
-            action_mag = 1.0f;
-            action_start = now;
-        } else if (s_talk == TALK_THINKING && talk_state() == TALK_NET_IDLE) {
-            s_talk = TALK_IDLE; /* the box heard silence; nothing to say about it */
-            talk_clear();
-        } else if (s_talk == TALK_THINKING &&
-                   (talk_state() == TALK_NET_FAILED || now - s_talk_since > TALK_TIMEOUT_MS)) {
-            talk_clear();
-            /* NOT a silent return to idle. On a panel whose owner has no terminal, "it did
-               not hear you" and "it is broken" must not look identical (§10.4bc).
-               AND NOT A SILENT ONE TO A CHILD EITHER, which it was: the bewildered face
-               arrived with no sound at all, and to a four-year-old who has just spoken to a
-               toy, silence IS the failure — it is what a broken one does. A low falling pair
-               says try again. It is deliberately gentle; it must not read as being told off. */
-            /* COUNTED AND NAMED, at the owner's ask: *"anytime we get a red – I want you to
-               make sure that it's logged, so we can make sure and resolve it in the future."*
-
-               THE TWO CAUSES ARE TOLD APART BECAUSE THEY NEED OPPOSITE FIXES. `net` means the
-               request failed and `reach.c` already holds the reason (`talk_err`). `timeout`
-               means it did not fail — it simply never answered inside `TALK_TIMEOUT_MS`, while
-               `talk.c` may still be on a socket that succeeds later. Nothing on this panel
-               recorded that, so the commonest shape of "it didn't work" was the one with no
-               evidence anywhere. `ui.c` holds the rule and is tested on it. */
-            s_dash_why = talk_state() == TALK_NET_FAILED ? "net" : "timeout";
-            s_dashes++;
-            s_dash_at = now == 0 ? 1 : now;
-            s_talk = TALK_FAILED;
-            s_talk_since = now;
-            if (sound) audio_cue(CUE_OOPS);
-            ESP_LOGW(TAG, "talk: no reply (%s)", s_dash_why);
-        } else if (s_talk == TALK_FAILED && now - s_talk_since > TALK_FAILED_MS) {
-            s_talk = TALK_IDLE;
-        }
-        /* THE DEFERRED HALF OF A TOUCH: the cue has finished, so the audio it announced starts
-           now. Checked every frame rather than on a timer, so it fires on the first frame the
-           speaker is free — the 55 ms cue and this are what a child experiences as one press. */
-        /* A HOLD IS NOT FOREVER. A paused stream is an HTTP response held open on the box, and
-           a four-year-old who put the pet down mid-message would otherwise hold it until the
-           panel rebooted. It RESUMES rather than aborting: a message playing out to an empty
-           room costs nothing and is recoverable, where discarding one they had not finished
-           hearing is the outcome the queue exists to prevent (`audio.h`). */
-        if (s_paused_since != 0 && now - s_paused_since > AUDIO_PAUSE_MAX_MS) {
-            ESP_LOGI(TAG, "jpanel: held %u ms — resuming", (unsigned)(now - s_paused_since));
-            audio_stream_pause(false);
-            s_paused_since = 0;
+        /* What the machine says to draw changed, or it animates: the dot pulses, the dots cycle,
+           the run's numeral moves. */
+        if (memcmp(view, &s_drawn, sizeof(*view)) != 0) dirty = true;
+        if (view->mode != SM_PET || view->think || view->sending) dirty = true;
+        if (s_result_word != NULL && jp_due(now, s_result_until)) {
+            s_result_word = NULL;
             dirty = true;
         }
-        if (s_pending != PEND_NONE) {
-            if (s_pending == PEND_REPLY) {
-                /* WAITS FOR THE FETCH AS WELL AS THE SPEAKER, which is the whole reason this
-                   is deferred: `jpanel_stop()` returns before the run has finished letting go,
-                   and a recording refused in that window would be a press that did nothing. */
-                if (!audio_playing() && jpanel_state() != JPANEL_BUSY) {
-                    if (start_send_recording(s_pend_reply_to, now, false)) {
-                        if (sound) audio_cue(CUE_LISTEN);
-                    } else if (sound) {
-                        audio_cue(CUE_OOPS);
-                    }
-                    s_pending = PEND_NONE;
-                    dirty = true;
-                } else if (now > s_pending_until) {
-                    /* SAID OUT LOUD, unlike the dropped play above. That one loses a message
-                       still sitting in the queue with a badge to prove it; this one loses a
-                       child's answer, and they would stand there having pressed reply and been
-                       given neither a microphone nor a reason. */
-                    ESP_LOGW(TAG, "jpanel: never settled — dropping the reply");
-                    if (sound) audio_cue(CUE_OOPS);
-                    s_pending = PEND_NONE;
-                    dirty = true;
-                }
-            } else if (!audio_playing()) {
-                if (s_pending == PEND_PLAY) {
-                    /* THE SELECTED ONE, READ HERE RATHER THAN CAPTURED AT THE PRESS. A pending
-                       play waits out its own cue, and the child may have swiped in between — a
-                       swipe clears `s_pending` when it moves, so the two cannot disagree about
-                       which message was asked for; this reads the current answer for the ordinary
-                       case where nothing moved. */
-                    if (!jpanel_play_at(s_sel)) ESP_LOGW(TAG, "jpanel: busy, not fetching");
-                } else if (!jpanel_replay()) {
-                    ESP_LOGW(TAG, "jpanel: nothing to replay");
-                }
-                s_pending = PEND_NONE;
-                dirty = true;
-            } else if (now > s_pending_until) {
-                ESP_LOGW(TAG, "jpanel: speaker never freed — dropping the tap");
-                s_pending = PEND_NONE;
-            }
-        }
-        /* WHAT THE BOX SAID ABOUT THE MESSAGE, answered in sound because the child who sent
-           it is four and the screen is showing a pet. Each outcome gets its OWN cue: "it
-           went", "there is nobody to send it to", and "it did not go" are three different
-           sentences, and a single beep for all three would teach that pressing makes a noise
-           rather than that the message arrived. */
-        switch (jpanel_state()) {
-        case JPANEL_SENT:
-            jpanel_clear();
-            if (sound) audio_cue(CUE_SENT);
-            jpanel_poll_soon(); /* the twin may already have answered */
-            ESP_LOGI(TAG, "jpanel: sent");
-            break;
-        case JPANEL_NOBODY:
-            jpanel_clear();
-            if (sound) audio_cue(CUE_OOPS);
-            caption_say(&cap, "nobody to send to");
-            ESP_LOGW(TAG, "jpanel: no one to send to");
-            dirty = true;
-            break;
-        case JPANEL_FAILED:
-            jpanel_clear();
-            if (sound) audio_cue(CUE_OOPS);
-            ESP_LOGW(TAG, "jpanel: failed");
-            break;
-        case JPANEL_PLAYING:
-            /* Held until the speaker stops, so the repeat window starts when the message
-               ENDS rather than when it began — the window measured from the wrong end
-               would expire before a twenty-second message finished.
-             *
-               `audio_playing()` READ AGAIN HERE, not the frame's `speaking`. That flag is
-               sampled at the top of the frame and a tap LATER in the same frame is what starts
-               the message, so on exactly the frame a child presses the pop-up `speaking` still
-               says false — and this branch would fire the instant playback began. It used to
-               clear the state that armed the acknowledgement, which is how one message came
-               back every thirty seconds forever. */
-            if (!audio_playing()) {
-                jpanel_clear();
-                s_repeat_until = now + REPEAT_MS;
-                dirty = true;
-            }
-            break;
-        default:
-            break;
-        }
-        /* A MESSAGE ARRIVING IS A FRAME, and it would otherwise not be one. The render loop
-           repaints on `dirty`, and nothing about a poll on another task sets it — so the
-           pop-up would appear whenever the pet next happened to blink, which is a wait a
-           child would spend looking at a panel that knows something and is not saying it. */
-        {
-            static int s_waiting_shown = -1;
-            const int waiting_now = jpanel_waiting(NULL, 0);
-            if (waiting_now != s_waiting_shown) {
-                /* A SOUND ON THE WAY UP ONLY. The count falls when a message is played, and
-                   announcing that would be the panel telling a child about the thing they
-                   just did. It also has to survive the first poll after a boot, where -1
-                   becomes whatever was already waiting — that IS news to a child who has just
-                   turned the panel on, so the initial value is deliberately not 0. */
-                if (sound && waiting_now > 0 && waiting_now > s_waiting_shown) {
-                    audio_cue(CUE_MESSAGE);
-                }
-                /* THE CLOCK STARTS WHEN THE WAIT DOES, not when the count last moved. A
-                   second message arriving while the first is still unheard must not restore
-                   the big box — the child has already been interrupted once and has chosen
-                   not to come yet. It restarts only from nothing waiting to something. */
-                if (waiting_now > 0 && s_waiting_shown <= 0) s_popup_since = now;
-                /* AND THE SELECTION GOES HOME WHENEVER THE QUEUE CHANGES SHAPE. A finger pointing
-                   at "the second one" is pointing at a POSITION, and the thing at that position is
-                   different the moment anything is added or played. Holding the index would
-                   silently re-aim it at a message the child never chose; the oldest is the one
-                   answer that cannot be wrong, because it is the one they would have got anyway. */
-                s_sel = 0;
-                s_waiting_shown = waiting_now;
-                dirty = true;
-            }
-            /* CLAMPED EVERY FRAME, NOT ONLY WHERE IT MOVES. The queue shortens on another task —
-               by a fetch here, by the box retiring something — and an index past the end would
-               draw a face for nothing and ask `/next` for a message that is not there. */
-            if (s_sel >= waiting_now) s_sel = waiting_now > 0 ? waiting_now - 1 : 0;
-            if (s_sel < 0) s_sel = 0;
-            if (s_sel >= JPANEL_QUEUE_MAX) s_sel = JPANEL_QUEUE_MAX - 1;
-        }
-        /* THE SHRINK IS A FRAME NOBODY ELSE ASKS FOR. The count has not changed, no finger has
-           landed and the pet may be perfectly still — so without this the big box would sit
-           there until the next blink happened to repaint it. */
-        {
-            static bool s_popup_was_big;
-            const bool big = jpanel_waiting(NULL, 0) > 0 && now - s_popup_since < POPUP_BIG_MS;
-            if (big != s_popup_was_big) {
-                s_popup_was_big = big;
-                dirty = true;
-            }
-        }
-        /* IT WAITS FOR HER NOW, rather than for a clock. The pair used to stand down after
-           `REPEAT_MS`, which meant a child who looked away, or thought about it, or was simply
-           slower than ten seconds, came back to a screen that had quietly withdrawn the offer.
-           The owner: *"no more waiting for it to time out and making it disappear. Have it
-           only disappear if we click out into the top right."* There is a visible way out in
-           that corner now, so there is nothing left for a timer to be protecting against —
-           and a control that vanishes while you are deciding is the same fault as one you
-           cannot press, wearing a different face. */
-        if (jpanel_running()) dirty = true; /* the count in the run bar has to stay true */
-        if (s_talk != TALK_IDLE) dirty = true; /* the dot pulses and the dots cycle */
         const bool rebooting = act == GESTURE_REBOOT;
         if (act == GESTURE_CALIBRATE) cal_begin();
         if (act == GESTURE_FORM) {
-            /* Until "change into merc" exists — the command list needs ESP-SR, which is not
-               wired up yet — seven taps and a hold is how the twins get the other body. */
-            st.form = st.form == FORM_OSTRICH ? FORM_ROBOT : FORM_OSTRICH;
+            fst.form = fst.form == FORM_OSTRICH ? FORM_ROBOT : FORM_OSTRICH;
             dirty = true;
-            ESP_LOGI(TAG, "form -> %s", st.form == FORM_OSTRICH ? "ostrich" : "robot");
+            ESP_LOGI(TAG, "form -> %s", fst.form == FORM_OSTRICH ? "ostrich" : "robot");
         }
-        const float cue = gesture_cue(&gest);
         if (cue != prev_cue || gest.taps != prev_taps) dirty = true;
 
         /* ── AWAKE OR NOT, DECIDED ONCE, AFTER EVERYTHING THAT COULD COUNT AS ALIVE ──
          *
-         * Idle is not "nobody touched it". A reply playing, a listening turn, a message
-         * waiting to be acknowledged, a running animation and a finger mid-gesture are all
-         * the panel being USED, and a screen that dimmed under any of them would be a bug
-         * with a very visible symptom. So the test reads the same signals the frame above
-         * was drawn from, and it reads them here — below every branch that sets them. */
+         * Idle is not "nobody touched it": a reply playing, a turn, a message being played or
+         * sent, a running animation and a finger mid-gesture are all the panel being USED. The
+         * machine's part of that is `sm_busy`; the rest is this file's own. */
         {
-            /* Zero is the never-been-active value and `now` passes through it once a boot, so
-               the first frame claims the millisecond after it rather than carrying a second
-               flag around all night. */
-            static uint32_t active_ms;
-            /* Read before anything below can clear it — and `woke_by_touch` is the same fact
-               from the branch far above, which has already put the stage back to awake. */
             const bool was_dark = s_sleep == SCREEN_DARK || woke_by_touch;
             if (active_ms == 0) active_ms = now == 0 ? 1 : now;
-            /* A MESSAGE ARRIVING WAKES THE SCREEN; A MESSAGE WAITING DOES NOT HOLD IT.
-               Counting the queue as activity would mean one unacknowledged good-night left
-               the panel lit until morning — the exact thing this feature exists to stop. The
-               pop-up is still there when the child touches it awake, because nothing about
-               sleeping drops the queue. */
-            static int prev_wait;
-            const int waiting = jpanel_waiting(NULL, 0);
-            const bool arrived = waiting > prev_wait;
-            prev_wait = waiting;
-            /* VOICE DOES NOT HOLD THE SCREEN AWAKE. The owner: *"the time out should not
-               consider voice to be something that extends the activity... You should only be
-               on longer from a poke or accelerometer data saying that it was moved."*
-
-               `speech_hearing()` is the VAD — ANY speech in the room. In a bedroom that is a
-               parent in the hall, a sibling, a television: all of it held the panel lit, which
-               is the opposite of what a sleep timer is for. `heard_voice` went with it, because
-               a recognised word is still voice rather than a finger.
-
-               WHAT STAYS IS THE PET ANSWERING, and that is the owner's call between two shapes
-               he was offered: ambient speech is ignored, but `speaking` and a live `s_talk`
-               hold the screen while a reply is actually coming out. A child who asks a question
-               and watches the screen dim mid-sentence reads that as broken, not as asleep. An
-               action holds it for the same reason — it is the pet doing the thing it was asked
-               to do, and the asking is the part being discounted, not the doing. */
-            const bool used = tapped || down || woke_by_touch || s_moved ||
-                              gest.taps > 0 || cue > 0.0f || action != ACT_NONE ||
-                              speaking || s_talk != TALK_IDLE ||
-                              /* NOT `s_repeat_until` ANY MORE. It stopped expiring in 0.3.25,
-                                 and it sits in the IDLE test — so from the first message ever
-                                 played the panel counted itself as permanently in use and
-                                 could never dim or darken again. The again-and-reply pair
-                                 waiting patiently for a child is precisely the case where the
-                                 screen SHOULD be allowed to go to sleep around it. */
-                              arrived || jpanel_running() ||
-                              jpanel_state() != JPANEL_IDLE;
-            (void)heard_voice; /* still set for the caption; no longer extends the timer */
+            /* A MESSAGE ARRIVING WAKES THE SCREEN; A MESSAGE WAITING DOES NOT HOLD IT — counting
+               the queue would leave one unacknowledged good-night lighting the room till
+               morning. VOICE DOES NOT HOLD IT EITHER (*"you should only be on longer from a poke
+               or accelerometer data"*); the pet answering does. */
+            const bool used = tapped || down || woke_by_touch || s_moved || gest.taps > 0 ||
+                              cue > 0.0f || action != ACT_NONE || facts.speaker_busy ||
+                              s_out.arrived || sm_busy(&s_sm, &s_snap);
             if (s_moved) {
-                /* Logged only where it MATTERS — a waking nudge — and with the number that
-                   would justify moving the threshold. A panel awake and being played with
-                   trips this constantly and has nothing to say about it. */
                 if (s_sleep != SCREEN_AWAKE) {
                     ESP_LOGI(TAG, "screen: movement %d counts (threshold %d)", s_move_mag,
                              SCREEN_MOVE_COUNTS);
@@ -3842,33 +2588,25 @@ static void face_task(void *arg)
             }
             if (used) {
                 active_ms = now == 0 ? 1 : now;
-                /* STANDBY ENDS ON A PERSON OR A MESSAGE, AND ON NOTHING ELSE.
-                 *
-                   `used` is the IDLE timer's question — "is anything happening?" — and it is
-                   deliberately broad: it counts a lingering `JPANEL_FAILED`, a cue still
-                   sounding, an accelerometer twitch. Letting that same test end standby would
-                   mean a child pressed the button, the screen went dark, and then a failed
-                   fetch thirty seconds later quietly turned the panel back on. The owner asked
-                   for two ways back — the button, and a message arriving — so those are the
-                   two, plus a finger on the glass, which is a person saying the same thing. */
-                const bool wanted_back = arrived || tapped || down || woke_by_touch;
-                if (s_sleep != SCREEN_AWAKE && (!s_standby || wanted_back)) {
-                    sleep_wake(arrived ? "message" : "activity");
-                    dirty = true; /* the first frame back is a whole one, not a delta */
+                /* STANDBY ENDS ON A PERSON OR A MESSAGE, AND ON NOTHING ELSE: the owner asked for
+                   two ways back — the button, and a message arriving — plus a finger on the
+                   glass, which is a person saying the same thing. */
+                const bool wanted_back = s_out.arrived || tapped || down || woke_by_touch;
+                if (s_sleep != SCREEN_AWAKE && (!s_sm.standby || wanted_back)) {
+                    if (s_sm.standby) s_wake_next = true;
+                    if (was_dark) s_dark_wake_next = true;
+                    sleep_wake(s_out.arrived ? "message" : "activity");
+                    dirty = true;
                 }
-            } else if (s_standby) {
-                /* PINNED, NOT COUNTED DOWN TO. The idle timer must not be allowed to promote
-                   this back to DIM or AWAKE the way it would for an ordinary dark screen — the
-                   child asked for off, and off does not expire. */
+            } else if (s_sm.standby) {
+                /* PINNED, NOT COUNTED DOWN TO: the child asked for off, and off does not expire. */
                 s_sleep = SCREEN_DARK;
             } else {
                 const uint32_t idle = now - active_ms;
                 const screen_stage_t want = screen_stage(idle);
                 if (want != s_sleep) {
-                    /* The same black frame the standby press paints. Without it the fifteen
-                       minute stage has never actually darkened anything — it stopped drawing
-                       and left the pet sitting there, which is what the owner has been
-                       reporting as "it never changes brightness" since before it was a knob. */
+                    /* The same black frame the standby press paints: on an AMOLED "dark" was only
+                       ever "stop blitting", which leaves the last frame there. */
                     if (want == SCREEN_DARK) s_blank_pending = true;
                     s_sleep = want;
                     s_brightness_pending = true;
@@ -3877,32 +2615,10 @@ static void face_task(void *arg)
                              (unsigned)(idle / 60000u));
                 }
             }
-            /* WAKING TO A MESSAGE LEFT OVERNIGHT SHOWS THE BIG BOX AGAIN.
-             *
-             * The pop-up stands down to a badge after fifteen seconds and deliberately does
-             * NOT come back when another message arrives: the child has been interrupted once
-             * and has chosen not to come. A night is not that. Whoever is looking at this
-             * panel now was not in the room when it shrank, and a corner badge is not how a
-             * four-year-old finds out their sister sent them something.
-             *
-             * Only out of DARK. At dim the screen was visible the whole time, so the reason
-             * the badge shrank still holds. And no sound: a message that chirped every time
-             * somebody walked past the table would be the panel nagging, which is the thing
-             * the stand-down exists to prevent. */
-            if (was_dark && s_sleep == SCREEN_AWAKE && waiting > 0) {
-                s_popup_since = now;
-                dirty = true;
-            }
-            /* Pinned rather than left to accumulate: the gate below cannot fire while dark,
-               so an unbounded counter would be a counter nothing ever reads — and the frame
-               that wakes wants it already over the floor so the face comes straight back. */
             if (s_sleep == SCREEN_DARK) since_draw = FACE_FLOOR_MS;
             poll_ms = s_sleep == SCREEN_DARK ? SCREEN_POLL_MS : TOUCH_POLL_MS;
         }
 
-        /* DARK SKIPS THE DRAW AS WELL AS THE LIGHT. Brightness 0 already hides the picture;
-           composing and shipping 322 KB to a screen nobody can see is the part that actually
-           costs something, and it is the part worth not doing all night. */
         /* BEFORE THE GATE BELOW, because that gate is exactly what stops a dark screen being
            redrawn — so a blank queued by going dark would never be painted from inside it. */
         if (s_blank_pending) {
@@ -3910,13 +2626,11 @@ static void face_task(void *arg)
             memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
             const esp_err_t berr = blit_frame(fb);
             if (berr != ESP_OK) ESP_LOGW(TAG, "blank: %s", esp_err_to_name(berr));
-            dirty = true; /* whatever wakes next composes a whole frame, not a delta */
+            dirty = true;
         }
         if (s_sleep != SCREEN_DARK && (dirty || since_draw >= FACE_FLOOR_MS)) {
             s_drawn_lean = s_lean;
-            /* Where we are in the running action, and what face it wears. An action that has
-               run out returns to ACT_NONE, whose face is happy — so the robot always settles
-               rather than holding the last frame of a sneeze forever. */
+            s_drawn = *view;
             float p = 0.0f;
             if (action != ACT_NONE) {
                 const int dur = rig_spec(action)->dur_ms;
@@ -3927,105 +2641,56 @@ static void face_task(void *arg)
                     p = (float)el / (float)dur;
                 }
             }
-            /* The face follows the conversation when there is one: attentive while it is
-               listening, bewildered when it has nothing to say. A pet that keeps grinning
-               through a failure is a pet that looks like it did not notice. */
-            /* DIM MEANS ASLEEP, NOT MERELY DARKER. The owner: *"as the unit starts to time
-               out and goes into the dim mode, the robot should go to sleep and should have a
-               zzz animation with eyes closed."* Before this the pet carried on with its idle
-               loop at a quarter brightness, which reads as neither awake nor asleep.
-
-               Only DIM wears it. At DARK the render loop stops blitting entirely, so there is
-               nothing to see and nothing to spend frames on — the zzz lives in the five-to-
-               fifteen-minute window and the night is simply dark.
-
-               It defers to a live conversation on purpose: the screen can still be dim while
-               the pet answers something asked of it (voice no longer resets the timer), and a
-               pet that replied with its eyes shut would look broken rather than sleepy. */
-            const bool dozing = screen_dozing(s_sleep, s_talk != TALK_IDLE, speaking);
+            const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD ||
+                                    view->think;
+            const bool speaking = facts.speaker_busy;
+            /* DIM MEANS ASLEEP, NOT MERELY DARKER (*"the robot should go to sleep and should have
+               a zzz animation with eyes closed"*), deferring to a live conversation. */
+            const bool dozing = screen_dozing(s_sleep, conversing, speaking);
             face_params_t target;
-            emotion_resolve(dozing                    ? FACE_SLEEPY
-                            : s_talk == TALK_LISTENING  ? FACE_CURIOUS
-                            : s_talk == TALK_FAILED   ? FACE_BEWILDERED
+            emotion_resolve(dozing                      ? FACE_SLEEPY
+                            : view->mode == SM_LISTEN ? FACE_CURIOUS
+                            : view->dash              ? FACE_BEWILDERED
                                                       : rig_spec(action)->face,
                             &target);
-            /* TWICE PER FRAME, ON PURPOSE. `emotion_approach` halves per FRAME, and it was
-               written against a 50 fps surface; this panel renders at 25. Applying it once
-               here would make every emotion arrive at half its intended speed, and speed is
-               part of the emotion — sleepy and excited differ by `rate` alone. Two steps of a
-               20 ms tween is exactly one 40 ms frame. */
-            emotion_approach_face(&st.eyes, &target, target.rate);
-            emotion_approach_face(&st.eyes, &target, target.rate);
-            rig_for(action, p, action_mag, now, &st.rig);
-            /* AFTER the action posed the limbs and before anything reads them: the shuffle
-               rides on top, the way the lean itself does, so a pet tilted mid-wave keeps
-               waving and moves its feet. */
-            rig_walk(&walk, (float)(s_lean - walked_from), &st.rig);
+            /* TWICE PER FRAME: `emotion_approach` halves per frame and was written against 50 fps;
+               this panel renders at 25. */
+            emotion_approach_face(&fst.eyes, &target, target.rate);
+            emotion_approach_face(&fst.eyes, &target, target.rate);
+            rig_for(action, p, action_mag, now, &fst.rig);
+            rig_walk(&walk, (float)(s_lean - walked_from), &fst.rig);
             walked_from = s_lean;
-            rig_figure(action, p, action_mag, now, st.eyes.face_ang, &st.fig);
-            st.bob = bob_step(frame++);
-            st.lean = s_lean;
-            /* TWEENED SHUT RATHER THAN SNAPPED, so falling asleep is something you can watch
-               happen: the same halving `emotion_approach` uses everywhere else, twice per frame
-               for the 25 fps reason given above. The blink value is left alone underneath, so
-               waking restores it without a seam. */
-            st.open = dozing ? emotion_approach(emotion_approach(st.open, 0.0f, 0.12f), 0.0f, 0.12f)
-                             : s_open;
-            st.startle = s_flinch;
-            /* THE MOUTH, WHILE THERE IS SOUND COMING OUT OF IT.
-             *
-             * TWO FREQUENCIES, NOT ONE, for the reason the blink is jittered: a mouth opening
-             * and closing on a single sine is a metronome, and the regularity is exactly what
-             * gives away a machine. 6.3 Hz carries the syllable rate and 2.7 Hz the phrase,
-             * and the product never quite repeats — so it reads as speech rather than as a
-             * hinge. Never fully shut while talking (the 0.25 floor), because a beak that
-             * closes completely between syllables reads as chewing.
-             *
-             * NOT DRIVEN BY THE ACTUAL AUDIO, and that is a deliberate limit rather than an
-             * oversight: `audio.c` deafens the microphone whenever the speaker runs, so the
-             * one signal that could give a real envelope is the one signal this panel throws
-             * away on purpose (it would otherwise transcribe itself). An honest fake at the
-             * right rate beats a real envelope the hardware cannot supply. */
+            rig_figure(action, p, action_mag, now, fst.eyes.face_ang, &fst.fig);
+            fst.bob = bob_step(frame++);
+            fst.lean = s_lean;
+            fst.open = dozing ? emotion_approach(emotion_approach(fst.open, 0.0f, 0.12f), 0.0f, 0.12f)
+                              : s_open;
+            fst.startle = s_flinch;
+            /* THE MOUTH, WHILE THERE IS SOUND COMING OUT OF IT: two frequencies, so it reads as
+               speech rather than a hinge. Not driven by the audio, which the panel deafens itself
+               to while it speaks. */
             if (speaking) {
                 const float t = (float)now * 0.001f;
                 const float syll = sinf(t * 6.3f), phrase = sinf(t * 2.7f + 1.1f);
                 float open = 0.55f + 0.30f * syll + 0.15f * phrase;
                 if (open < 0.25f) open = 0.25f;
                 if (open > 1.0f) open = 1.0f;
-                st.talk = open;
-                dirty = true; /* a mouth redrawn five times a second is a glitch, not speech */
+                fst.talk = open;
+                dirty = true;
             } else {
-                st.talk = 0.0f;
+                fst.talk = 0.0f;
             }
-            /* The poke recoil rides on top of whatever the action is already doing. */
-            st.fig.oy += FLINCH_DIP * s_flinch;
+            fst.fig.oy += FLINCH_DIP * s_flinch;
             PHASE(6);
-            face_draw(fb, colour, &st);
+            face_draw(fb, colour, &fst);
             PHASE(7);
-            const bool side = (s_quarter == 1 || s_quarter == 3);
-            /* EVERYTHING OVERLAID HAS TO LAND IN THE SQUARE TOO, and both of these sat
-               outside it: the version label at y=6 is above the square, the caption is
-               anchored to the bottom of the frame and is below it. A quarter turn simply
-               would not carry them, so the first thing lost on a side-mounted panel would
-               have been the caption — the one piece of feedback that says a command was
-               heard. Both take the square's bounds instead of the frame's. */
-            const int over_y0 = side ? SQ_Y0 : 0;
-            const int over_h = side ? SQ_Y0 + SQ : FACE_H;
             font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
                       s_show_version ? ota_running_version() : s_name_up, LABEL_COLOUR);
-            /* THE ZZZ, and it drifts rather than blinks. Three Z's rising one after another on
-               a slow cycle reads as breathing; all three appearing at once reads as an icon,
-               and an icon is a status light rather than a sleeping animal.
-               Drawn from the pet's own head rather than a fixed corner, so it follows the
-               quarter turn the way the label and the caption do. */
             if (dozing) {
-                const uint32_t phase = (now / 700u) % 4u;   /* 0..3: one Z, two, three, rest */
+                const uint32_t phase = (now / 700u) % 4u; /* 0..3: one Z, two, three, rest */
                 char z[4] = {0};
                 for (uint32_t i = 0; i < phase && i < 3; i++) z[i] = 'Z';
                 if (z[0] != '\0') {
-                    /* Each Z a little higher and to the right than the last would need per-
-                       glyph placement; the font draws a run, so the RUN climbs instead — one
-                       step per phase, which gives the same lift for a fraction of the code. */
                     const int zx = FACE_W / 2 + 26 + (int)phase * 4;
                     const int zy = over_y0 + 40 - (int)phase * 6;
                     font_draw(fb, FACE_W, FACE_H, zx, zy, 2, z, LABEL_COLOUR);
@@ -4033,208 +2698,50 @@ static void face_task(void *arg)
             }
             draw_meter(fb, level);
             caption_draw(&cap, fb, FACE_W, over_h, CAPTION_COLOUR);
-            if (s_talk == TALK_LISTENING) draw_listening(fb, over_y0, over_h, now);
-            else if (s_talk == TALK_RECORDING) draw_recording(fb, over_y0, over_h, now, s_rec_to);
-            /* ONLY WHERE THERE IS SOMETHING TO CONFIRM, and a HELD listen is not it: that turn
-               ends on the release of the finger that started it, so a tick would be a second
-               way to finish a gesture that already has one, and a cross would be a target the
-               finger is not free to reach. Voice-started listens ("hey fish") and messages to
-               dad or a sister are the two that run hands-free and need somewhere to press. */
-            if ((s_talk == TALK_LISTENING && s_listen_voice) || s_talk == TALK_RECORDING) {
+            /* EVERYTHING BELOW IS `sm_view_t`, AND ONLY THAT: what is drawn is what the machine's
+               targets are (I3), and the face top left is `sm_face` (I2). */
+            const sendto_hit_t who = view->face_none ? SENDTO_SISTER : who_face(&view->face);
+            if (view->mode == SM_LISTEN) draw_listening(fb, over_y0, over_h, now);
+            if (view->mode == SM_RECORD) {
+                draw_recording(fb, over_y0, over_h, now, view->rec_to, s_snap.waiting.sibling);
+            }
+            if (view->confirm) {
                 confirm_draw(fb, FACE_W, FACE_H, over_h);
+            } else if (view->think) {
+                draw_thinking(fb, over_y0, over_h - over_y0, now, view->dash);
             }
-            else if (s_talk != TALK_IDLE) {
-                draw_thinking(fb, over_y0, over_h - over_y0, now, s_talk == TALK_FAILED);
-            }
-            /* THE POP-UP LAST, OVER EVERYTHING, and only when the panel is otherwise idle.
-               A box announcing a message on top of a pet that is mid-sentence, or mid-
-               recording, would be two demands on a four-year-old at once — and the one it
-               covers is the one they are already doing. It is not lost: the count lives on
-               the box and the next idle frame draws it. */
-            s_popup_box[0] = -1;
-            /* THE TARGET IS A FACT ABOUT WHAT IS WAITING, NOT ABOUT WHAT WAS DRAWN, and tying
-               the two together is why the owner reported that a notification *"doesn't really
-               play every single time"*.
-             *
-               The rectangle used to be set only where the pop-up was PAINTED, inside the same
-               guard. So any frame that skipped the painting — the panel mid-cue, so `speaking`;
-               the fetch in flight, so BUSY — also cleared the target, while the glass went on
-               showing the notice from the previous frame. A child pressed exactly what they
-               could see and nothing happened, intermittently, depending on what the pet
-               happened to be doing at that instant. A control you can see is a control you
-               can press; the two must not be able to disagree.
-             *
-               So the hit test is armed here, from the queue, and only the PICTURE stays behind
-               the idle guard. Pressing while busy is harmless — it becomes a pending tap, which
-               waits for the speaker exactly as the first one did.
-             *
-               AND NOTHING ELSE ARMS IT. Both drawing functions used to write this rectangle
-               too, which made the target whichever of the three ran last. The big bubble wrote
-               its own bounds — x[36,332) y[117,331) — so on a frame that painted the bubble the
-               generous quadrant the owner asked for silently shrank to the artwork, and the
-               margin around it went dead. Drawing decides what a notice LOOKS like; this decides
-               what it IS. One writer, so the two cannot drift apart again.
-             *
-               THE WHOLE QUADRANT, because the owner said so twice — on the grid first and then
-               here: *"capture everything in that top left quadrant as far as clicks to play
-               it"*, the same reason the 2x2 menu stopped hit-testing discs. These readers are
-               four; a press near the picture is a press ON the picture as far as they are
-               concerned. */
-            char from[32];
-            const int waiting = jpanel_waiting(from, sizeof(from));
-            /* THE SELECTED ENTRY, NOT THE HEAD. A finger can point at one of the queue now, and
-               the notice has to be about the one it is pointing at or the swipe has no visible
-               answer. Falls back to the head's two fields — which is what `jpanel_waiting` and
-               `jpanel_waiting_from_dad` already gave us — on a box too old to describe a queue, or
-               for an index past what it described. */
-            bool sel_from_dad = jpanel_waiting_from_dad();
-            (void)jpanel_waiting_at(s_sel, from, sizeof(from), &sel_from_dad);
-            /* ONE CONDITION FOR THE PICTURE AND THE TARGET. Arming it from the queue while the
-               painting sat behind a fuller guard left the notice armed and invisible; arming it
-               INSIDE the painting, as it was before that, left it visible and dead. Neither is
-               fixed by moving the arming somewhere better — it is fixed by there being one answer
-               to "is there a notice", used twice. `ui.c` says the same thing and is tested. */
-            /* AND NOT WHILE THE PLAYBACK CONTROLS ARE UP, WHICH IS NEW AND IS TWO BUGS.
-             *
-               The top-left quadrant means exactly one thing on this screen — who this is from —
-               and it had two writers: the notice drew the NEXT sender's face there, and the run
-               drew THIS message's. The run is painted second so it usually won, and "usually" is
-               the tell. `msg_sounding` is false for the whole window between a press and the first
-               byte, and false again in the gap where one message has drained and the panel is
-               chaining into the next — so in both of those a notice for the queue behind painted
-               straight through the playback screen. The owner, with two waiting: *"When playing
-               back the first message, the second message notification showed in the background of
-               the menu."* And then the corner: *"it still ended up having the little girl icon."*
-             *
-               The tap table was already right about this — `UI_TAP_ORDER_PLAYING` has no notice in
-               it — so the notice was also UNPRESSABLE for as long as it was visible, which is the
-               fault class the arming above was rewritten to kill. This makes the picture agree
-               with the arbitration, and leaves the quadrant with one writer, which is what stops
-               the next version of this being possible at all.
-             *
-               NOTHING IS LOST: the count lives on the box, and the frame after the run ends draws
-               it. `ui.c` says the same thing and is tested
-               (`test_a_notice_does_not_show_through_the_playback_screen`). */
-            const bool notice_up = waiting > 0 && s_talk == TALK_IDLE && !msg_sounding &&
-                                   jpanel_state() != JPANEL_BUSY && !run_controls_up();
-            const bool notice_big = now - s_popup_since < POPUP_BIG_MS;
-            if (notice_up) ui_popup_target(over_y0, over_h, notice_big, s_popup_box);
-            /* `msg_sounding`, NOT `speaking`, IS IN `notice_up` ABOVE, and that is the other
-               half of the same fault: the arrival cue is 440 ms and fires on the frame the notice
-               appears, so the old guard blanked the picture for the first half-second of its life.
-               A tone is the panel clearing its throat; only a message sounding is a reason to hold
-               the notice back. */
-            if (notice_up) {
-                /* Big for the first fifteen seconds, then a badge — `notice_big`, the same
-                   answer the target above was armed from. The AGAIN button owns the same
-                   corner for its ten seconds and wins there: it is transient and it answers a
-                   question the child is asking right now ("what did she say?"), where the
-                   badge answers one they have already declined. */
-                if (notice_big) {
-                    draw_popup(fb, over_y0, over_h, from, waiting, s_sel,
-                               sel_from_dad ? SENDTO_DAD : SENDTO_SISTER);
+            if (view->notice) {
+                /* Big for the first fifteen seconds of a wait, then the badge, which is the same
+                   quadrant meaning the same thing: who is waiting. */
+                if (view->notice_big) {
+                    draw_popup(fb, over_y0, over_h, view->face.from, view->sel_m, view->sel_n - 1,
+                               who);
                 } else {
-                    /* OVER THE PAIR, NOT DEFERRED BEHIND IT. This used to wait for
-                       `s_repeat_until` to lapse, which was fine while that was a ten-second
-                       deadline and is a bug now that the pair waits for a finger instead:
-                       a message arriving while the last one's again-and-reply stood would
-                       have been hidden for as long as nobody pressed the exit — which
-                       could be all night. The new message outranks the finished one, and
-                       taking the corner from the old sender's face is the right way round:
-                       it is the same quadrant meaning the same thing, updated to whoever
-                       is waiting now. */
-                    draw_popup_badge(fb, over_y0, over_h, from,
-                                     sel_from_dad ? SENDTO_DAD : SENDTO_SISTER);
+                    draw_popup_badge(fb, over_y0, over_h, view->face.from, who);
                 }
             }
-            /* Drawn over everything else while a run is sounding, including the caption: a
-               control that can end what the child is hearing outranks a ticker telling them
-               what it heard. */
-            /* FROM THE PRESS, NOT FROM THE STREAM. The controls used to appear only once
-               `jpanel_running()` went true, which is after the cue has finished AND the fetch
-               has opened AND the preroll has landed — seconds in which a child who has just
-               pressed something sees nothing happen. The owner: *"there is a big delay from
-               when I click the icon to when the next icons show up... as soon as I click it
-               and it's registered it should show right away."* A pending tap IS the press
-               being registered, so that is when they appear. */
-            /* FETCHING, NOT MERELY BUSY. `JPANEL_BUSY` covers a SEND as well, so this read
-               "the panel is doing something" and put the playback controls over an outgoing
-               message — a pause button and a sender's face for audio that did not exist, with
-               a tap handler that correctly refused to honour any of it. */
-            const bool starting = s_pending == PEND_PLAY || s_pending == PEND_REPLAY ||
-                                  jpanel_fetching();
-            if (run_controls_up()) {
-                /* PLAYING IS AN AUDIO FACT, NOT A QUEUE FACT, which is the whole of the replay
-                   bug: `do_replay` deliberately sets no `s_run` (the message was acknowledged
-                   the first time), so a replay left `jpanel_running()` false and the pair fell
-                   through to the ended state — a play triangle over a message that was
-                   audibly playing. The owner: *"on a replay of a message it doesn't go back to
-                   the pause button."* Ask the speaker instead, and a message is a message
-                   however it came to be sounding. While STARTING, show pause: the press has
-                   been taken and sound is coming, so a play icon would invite a second press
-                   at exactly the moment the first is still being served. */
-                const bool playing = starting || (audio_playing() && !audio_stream_paused());
-                /* ONE FACT, ONE READER, AND THAT IS THE FIX RATHER THAN A FOURTH CASE.
-                 *
-                   This was a three-way choice between `jpanel_in_from()` and the queue's head,
-                   arbitrated on whether anything was sounding yet, and it went wrong twice for
-                   the same underlying reason: `jpanel_in_from()` was CLEARED at the start of every
-                   fetch, and cleared means the sister. Reading the queue instead covered that up
-                   while nothing was sounding and could not while something was — so with two
-                   messages queued the panel finished one, chained into the next with
-                   `jpanel_running()` still true, and put a little girl over a second message from
-                   Dad for the whole of that fetch.
-                 *
-                   `jpanel.c` now SEEDS the sender from the queue entry it is about to fetch (see
-                   `seed_sender`), so the response header only ever confirms it and there is
-                   nothing left to arbitrate once a fetch has been ASKED FOR.
-                 *
-                   THE ONE WINDOW BEFORE THAT IS `PEND_PLAY`, and it is a different rule rather
-                   than the old one renamed: a pending play is a press that has been taken and not
-                   yet served — it waits out its own cue — so for those few hundred milliseconds no
-                   fetch exists and `jpanel_in_from()` is definitionally about the message BEFORE
-                   this one. The selection is what the child pointed at, so it is the answer. The
-                   old rule keyed on `jpanel_fetching()`, which stays true for the whole download
-                   and therefore covered the message itself; this ends exactly where the fetch
-                   begins. */
-                const bool from_dad = s_pending == PEND_PLAY
-                                          ? sel_from_dad
-                                          : (jpanel_in_from() == JPANEL_TO_DAD);
-                draw_run(fb, over_y0, over_h, waiting, s_sel,
-                         from_dad ? SENDTO_DAD : SENDTO_SISTER, playing);
-                confirm_draw_exit(fb, FACE_W, FACE_H, over_y0, over_h);
-            } else if (s_repeat_until != 0) {
-                /* THE FACE STAYS FOR THE WHOLE EXCHANGE, and this branch used to drop it: the
-                   message ended, the pause became a play, and Dad vanished from the corner in
-                   the same frame. The owner: *"the face goes away. That is unintentional. The
-                   face should stay there the entire time."*
-                 *
-                   He is right, and the reason is stronger than consistency. The two buttons
-                   underneath are AGAIN and REPLY, and both of them are about a person — the
-                   one who just spoke. Taking their face away at exactly the moment those
-                   appear removes the answer to "reply to whom?" from the one screen that asks
-                   it. The picture and the buttons are one thing; only the glyph may change. */
-                draw_sender_face(fb, over_y0, over_h,
-                                 jpanel_in_from() == JPANEL_TO_DAD ? SENDTO_DAD : SENDTO_SISTER);
+            if (view->run_bar) {
+                draw_run(fb, over_y0, over_h, view->sel_m, view->sel_n - 1, who,
+                         view->playing_glyph);
+            } else if (view->pair) {
+                /* THE FACE STAYS FOR THE WHOLE EXCHANGE: AGAIN and REPLY are about the person who
+                   just spoke, so their face is the answer to "reply to whom?". */
+                draw_sender_face(fb, over_y0, over_h, who);
                 confirm_draw_transport(fb, FACE_W, FACE_H, over_h,
-                                       audio_playing() && !audio_stream_paused());
-                confirm_draw_exit(fb, FACE_W, FACE_H, over_y0, over_h);
+                                       view->transport && view->playing_glyph);
             }
-            /* THE GRID LAST OF ALL, over the pop-up and over the run control, because it is
-               the one overlay here that a child asked for by pressing a button. Everything
-               under it is something the panel offered; a menu that could be covered by an
-               offer would be a question answered by an interruption.
-               Drawn BEFORE the flip like every other overlay, which is what makes
-               `tap_to_overlay` the right space to hit test it in. */
-            if (s_sendto_until != 0) {
-                sendto_draw(fb, FACE_W, FACE_H, over_h);
+            if (view->exit_corner) confirm_draw_exit(fb, FACE_W, FACE_H, over_y0, over_h);
+            /* PLACEHOLDERS (F4): a send in flight, then its outcome, top right. */
+            if (view->sending && !view->confirm && !view->think) {
+                draw_indicator(fb, over_y0, now, SWAP16(0x001F), "SENDING");
+            } else if (s_result_word != NULL && !view->confirm && !view->think) {
+                draw_indicator(fb, over_y0, now, s_result_colour, s_result_word);
             }
+            /* THE GRID LAST OF ALL: the one overlay a child asked for by pressing. */
+            if (view->grid) sendto_draw(fb, FACE_W, FACE_H, over_h);
             PHASE(8);
             if (s_upside_down) flip_frame(fb);
-            /* In FRAME coordinates (`panel_to_frame`), and after the flip: upside down that
-               mapping is the identity precisely because `flip_frame` has already run, and on
-               the side there is no flip to be after. Rides the flinch, so it fades with the
-               recoil instead of leaving a dot on the glass. */
+            /* The tap marker, in FRAME coordinates and after the flip; it fades with the recoil. */
             if (s_flinch > 0.25f && s_fig_x >= 0) {
                 for (int dy = -9; dy <= 9; dy++) {
                     for (int dx = -9; dx <= 9; dx++) {
@@ -4247,25 +2754,14 @@ static void face_task(void *arg)
                 }
             }
             if (cue > 0.0f) {
-                /* Grows left to right across the top edge, full width at the moment it
-                   reboots. Drawn into the frame rather than flashed separately so it cannot
-                   outlive the finger.
-                 *
-                 * `over_y0`, like the label and the caption above — rows 0..3 are outside the
-                 * square a quarter turn carries, so on a side-mounted panel this bar and the
-                 * tap pips below it were simply never blitted. A maintenance gesture with no
-                 * feedback is one an owner cannot tell from a dead panel, which is the exact
-                 * thing `gesture.h` added the pips to prevent. */
+                /* The maintenance hold's bar, growing across the top of the square. */
                 int w = (int)(FACE_W * cue);
                 if (w > FACE_W) w = FACE_W;
                 for (int y = over_y0; y < over_y0 + 4; y++) {
                     for (int x = 0; x < w; x++) fb[y * FACE_W + x] = CUE_COLOUR;
                 }
             } else if (gest.taps > 0) {
-                /* One pip per counted tap. Without it the taps are invisible until the
-                   hold succeeds, and a gesture with no feedback until it works is one an
-                   owner cannot tell from a broken panel. They clear themselves half a second
-                   after the rhythm lapses, so ordinary play leaves nothing on screen. */
+                /* One pip per counted tap, so the sequence is visible while it is entered. */
                 for (int i = 0; i < gest.taps && i < GESTURE_TAPS_MAX; i++) {
                     const int x0 = i * (PIP_W + PIP_GAP);
                     for (int y = over_y0; y < over_y0 + 4; y++) {
@@ -4275,43 +2771,25 @@ static void face_task(void *arg)
                     }
                 }
             }
-            /* A stripe loop, not one full-window write — see `blit_frame()` for which of
-               the three ways to get the frame out of PSRAM actually survives contention. */
             PHASE(9);
             const esp_err_t err = blit_frame(fb);
             if (err != ESP_OK) {
-                /* ONCE, THEN EVERY HUNDREDTH, AND ALWAYS WITH THE HEAP. A frame fails 25
-                   times a second, so logging each one buried the boot in 150 identical
-                   lines and said nothing about WHY — the failure is nearly always
-                   ESP_ERR_NO_MEM for a DMA buffer, and the number that explains it is the
-                   largest free INTERNAL block, which `mem_log` prints. Diagnosing 0.2.38
-                   needed a host toolchain because the panel would not say this itself. */
+                /* ONCE, THEN EVERY HUNDREDTH, AND ALWAYS WITH THE HEAP: the number that explains a
+                   failed blit is the largest free internal block, which `mem_log` prints. */
                 s_blit_fail_total++;
                 if (s_blit_fails++ % 100 == 0) {
-                    ESP_LOGE(TAG, "blit: %s (failure %d)", esp_err_to_name(err),
-                             s_blit_fails);
+                    ESP_LOGE(TAG, "blit: %s (failure %d)", esp_err_to_name(err), s_blit_fails);
                     mem_log("blit-fail");
                 }
                 s_blit_ok = 0;
-                /* SELF-HEAL, BECAUSE THE OWNER CANNOT REACH THIS PANEL.
-                 *
-                 * A DMA underflow leaves the SPI driver holding transactions it never
-                 * recycles, and from then on EVERY call returns ESP_ERR_INVALID_STATE —
-                 * permanently, until someone power-cycles the unit. 0.2.46 removes the cause,
-                 * but "the display can enter a state only a human with hands on the hardware
-                 * can leave" is a property worth removing on its own: this panel lives in a
-                 * child's bedroom and its owner has no terminal.
-                 *
-                 * A reboot costs about four seconds of colour bars and is recoverable. A
-                 * black screen is not. The uptime guard is what keeps that trade honest — a
-                 * fault present from boot would otherwise cycle forever, and a reboot loop is
-                 * no better than a freeze. Past the guard, a panel that cannot draw for ten
-                 * seconds has nothing to lose by starting over. */
+                /* SELF-HEAL, BECAUSE THE OWNER CANNOT REACH THIS PANEL: a DMA underflow leaves the
+                   SPI driver poisoned until a power cycle. The uptime guard keeps a fault present
+                   from boot from becoming a reboot loop. */
                 if (now > BLIT_HEAL_AFTER_MS && s_blit_fails >= BLIT_HEAL_FAILS) {
                     ESP_LOGE(TAG, "%d consecutive blit failures — restarting", s_blit_fails);
                     mem_log("blit-heal");
                     display_note_restart(DISPLAY_RESTART_BLIT_HEAL);
-                    vTaskDelay(pdMS_TO_TICKS(150)); /* let the log drain */
+                    vTaskDelay(pdMS_TO_TICKS(150));
                     esp_restart();
                 }
             } else {
@@ -4324,45 +2802,20 @@ static void face_task(void *arg)
             }
             since_draw = 0;
         }
-        /* BOTH REBOOTS LEAVE FROM HERE, and that is the point. This is the one place in the
-           firmware where a frame has just finished and nothing is in flight on the QSPI bus,
-           which is the difference between a panel that comes back and one the owner has to
-           power-cycle by hand (`display.h`). The gesture has always left from here; the OTA
-           used to restart from its own task, mid-transfer. */
-            /* OFF, AND IT LEAVES FROM HERE FOR THE REASON THE REBOOTS DO: a frame has just
-               finished and nothing is in flight on the QSPI bus. The difference is that this
-               one cannot be recovered from remotely — a unit in deep sleep answers nothing but
-               its own button — so leaving mid-transfer is not a four-second colour-bar cost
-               here, it is a panel somebody has to find and hold a button on. */
+        /* OFF, AND IT LEAVES FROM HERE FOR THE REASON THE REBOOTS DO: a frame has just finished
+           and nothing is in flight on the QSPI bus. A unit in deep sleep answers nothing but its
+           own button, so leaving mid-transfer is a panel somebody has to find. */
         if (s_power_off) {
             ESP_LOGW(TAG, "power: deep sleep — the button is the only way back");
-            /* Dark BEFORE the sleep rather than as a side effect of it: an AMOLED holds its
-               last frame with no clock running, so a panel that slept mid-face would sit there
-               showing a pet that is not there any more. */
             s_sleep = SCREEN_DARK;
             memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
             (void)blit_frame(fb); /* painted, not switched off — see `s_blank_pending` */
             apply_brightness();
-            audio_stop();
-            /* LOW, because the button is active-low and pulled up: it reads 0 pressed. EXT0
-               rather than a timer — nothing is to wake this but a finger. */
-            /* WAIT FOR THE FINGER TO ACTUALLY LEAVE, and this is the whole bug rather than a
-               nicety. EXT0 is a LEVEL trigger: arming it on GPIO0-low while GPIO0 IS low means
-               the wake condition is already satisfied at the moment of sleeping, so the chip
-               wakes instantly and boots. The hold fires deliberately while the finger is still
-               down (see `boot_button_poll`), and 150 ms of hoping was all that stood between
-               that and `esp_deep_sleep_start()`.
-             *
-               It was not even a one-shot: `s_boot_down_at` and friends are statics that the
-               boot zeroes, so a finger still on the button when it came back started a fresh
-               five-second count. Hold the button and the panel reboots, over and over. That is
-               the owner's *"long press seems to just reset the device"* — and it is a genuine
-               reboot loop rather than a misread, which is why this is fixed before anything
-               cosmetic.
-             *
-               Bounded, because a stuck or shorted button must not strand the panel awake in a
-               loop here either: past the cap it sleeps anyway, wakes immediately, and at least
-               does so once rather than forever. */
+            stream_stop(st, false);
+            stream_silence(st);
+            /* WAIT FOR THE FINGER TO ACTUALLY LEAVE: EXT0 is a LEVEL trigger, so arming it while
+               the button is still down wakes the chip at once — the owner's *"long press seems to
+               just reset the device"*. Bounded, so a stuck button cannot strand the panel. */
             const uint32_t wait_from = (uint32_t)(esp_timer_get_time() / 1000);
             while (gpio_get_level(BOOT_BTN) == 0) {
                 if ((uint32_t)(esp_timer_get_time() / 1000) - wait_from > POWER_RELEASE_MAX_MS) {
@@ -4372,18 +2825,17 @@ static void face_task(void *arg)
                 }
                 vTaskDelay(pdMS_TO_TICKS(20));
             }
-            /* And a moment past the release for the contact to stop bouncing, or the bounce is
-               itself a low edge and wakes what it just put to sleep. */
             vTaskDelay(pdMS_TO_TICKS(BOOT_DEBOUNCE_MS));
             esp_sleep_enable_ext0_wakeup(BOOT_BTN, 0);
             esp_deep_sleep_start(); /* never returns */
         }
+        /* BOTH REBOOTS LEAVE FROM HERE: the one place a frame has just finished and nothing is
+           in flight on the QSPI bus (`display.h`). */
         if (rebooting || s_restart_pending) {
+            const display_restart_t why = rebooting ? DISPLAY_RESTART_GESTURE : s_restart_why_req;
             ESP_LOGW(TAG, "%s — parking the renderer and restarting",
                      rebooting ? "reboot gesture completed" : "restart requested");
-            /* The two paths through here are the child's gesture and the OTA's parked
-               restart, and they are the two the box could not tell apart. */
-            display_note_restart(rebooting ? DISPLAY_RESTART_GESTURE : DISPLAY_RESTART_OTA_PARK);
+            display_note_restart(why);
             vTaskDelay(pdMS_TO_TICKS(150));
             esp_restart();
         }
@@ -4393,16 +2845,13 @@ static void face_task(void *arg)
             PHASE(14);
             apply_brightness();
         }
-        /* A settings refresh lands every three seconds, so a body chosen from the PWA reaches
-           a panel on a wall without anyone touching it. Taken on the RENDER task, which is the
-           only one allowed to write `st`, and only when it actually differs — assigning every
-           cycle would fight the four-tap toggle, snapping a child's live choice back before she
-           had finished the gesture. */
+        /* A body chosen from the PWA, taken on the render task (the only writer of `fst`) and
+           only when the box's answer changed, so it never fights a child's live choice. */
         if (s_form_pending >= 0) {
-            st.form = (face_form_t)s_form_pending;
+            fst.form = (face_form_t)s_form_pending;
             s_form_pending = -1;
             dirty = true;
-            ESP_LOGI(TAG, "form <- box: %s", st.form == FORM_OSTRICH ? "ostrich" : "robot");
+            ESP_LOGI(TAG, "form <- box: %s", fst.form == FORM_OSTRICH ? "ostrich" : "robot");
         }
         if (since_reassert >= REASSERT_MS) {
             PHASE(12);
@@ -4414,34 +2863,20 @@ static void face_task(void *arg)
             pmu_sample();
             since_sample = 0;
         }
-        /* THE CAPTURE USED TO BE THIS LOOP'S CLOCK, and it is not any more: `audio.c` owns
-           the codec on its own task (see its header — two tasks on one `esp_codec_dev` handle
-           is the race that cost a panic). So the pacing is an honest delay, and the level is
-           whatever the audio task last measured. */
+        /* The pacing is an honest delay: `audio.c` owns the codec on its own task. */
         PHASE(10);
         vTaskDelay(pdMS_TO_TICKS(poll_ms));
         if (sound) {
             level = audio_level();
             if (level > s_mic_peak) s_mic_peak = level;
-            /* Every frame, not every face: 8.8 KB against 322 KB is what makes the one part
-               of the screen with something new to say affordable at this rate. */
             PHASE(11);
             blit_meter(level);
         }
-        /* A RENDER HEARTBEAT, BECAUSE A STOPPED RENDER TASK LOOKED EXACTLY LIKE A QUIET ONE.
-           0.2.44 logged one blit failure and then nothing — and the nothing WAS the symptom:
-           the loop had stopped attempting blits, so the every-hundredth rate limit never
-           fired again and the panel sat frozen behind a clean-looking log. It took a photo
-           from the owner to find out. Anything that can stop has to say so on a timer, and
-           the largest free internal block comes along because it is the number that has
-           explained this fault twice. */
+        /* A RENDER HEARTBEAT, BECAUSE A STOPPED RENDER TASK LOOKED EXACTLY LIKE A QUIET ONE. The
+           stage is on the line because a sleeping screen stops blitting on purpose. */
         since_beat += dt_ms;
         if (since_beat >= BEAT_MS) {
             since_beat = 0;
-            /* THE STAGE IS ON THIS LINE BECAUSE OF WHAT THE LINE IS FOR. It exists so that a
-               loop which has stopped blitting says so rather than going quiet — and a
-               sleeping screen stops blitting ON PURPOSE. Without the stage here the two are
-               the same log. */
             ESP_LOGI(TAG, "render: %d frames ok, %d failed | screen %s | internal largest %u",
                      s_blit_ok, s_blit_fails, display_screen(),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
