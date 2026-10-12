@@ -454,7 +454,7 @@ def _gate(data: Any) -> dict[str, Any] | None:
         return None
     raw = data.get("target")
     target = _spot(raw)
-    if target is not None:
+    if target is not None and isinstance(raw, dict):
         place = _text(raw.get("place")).strip()
         target = {"place": place, **target} if place else None
     return {
