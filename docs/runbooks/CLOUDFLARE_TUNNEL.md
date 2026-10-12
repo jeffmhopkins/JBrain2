@@ -1,6 +1,6 @@
 # Home-network access via Cloudflare Tunnel
 
-> **Status:** Living · **Last verified:** 2026-08-23
+> **Status:** Living · **Last verified:** 2026-10-12
 
 This is the recommended way to reach JBrain from outside your house when the box
 sits on a home network with a **dynamic IP** and possibly **CGNAT** (carrier-grade
@@ -115,8 +115,15 @@ env and never creates the `cloudflared` container or re-reads the changed
 **`<slug>-preview.<host>`** under *this same tunnel* — no per-session TryCloudflare
 quick-tunnel. The api proxies the preview by slug to the internal control server
 (`/__jcode_preview/{slug}` → jcode `/preview/{slug}`, HTTP + the HMR WebSocket), so the
-sandbox stays isolated. The Caddy side is rendered automatically from the env (below);
-the one thing you do by hand is the Cloudflare wildcard:
+sandbox stays isolated. That hop carries a preview-only bearer, `HMAC-SHA256(JCODE_TOKEN,
+"jcode-preview")`, derived on both sides (nothing to configure): the control server's
+preview routes accept only it, and its session API and terminal refuse it. The api 404s
+any preview path with a `.`/`..` segment (in any percent-encoding), a backslash, a control
+character, a `?`/`#` or an encoded slash, and any path that would leave `/preview/{slug}/`
+once normalised; dotted names such as `main.js` and `node_modules/.vite/…` are untouched.
+
+The Caddy side is rendered automatically from the env (below); the one thing you do by hand
+is the Cloudflare wildcard:
 
 1. **One wildcard published hostname.** In **Networks → Connectors → your tunnel →
    Published application routes**, add **Subdomain `*`, Domain `<your-host>`**, Service

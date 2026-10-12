@@ -81,4 +81,17 @@ describe("theme manager", () => {
     media.fireChange(true);
     expect(document.documentElement.dataset.theme).toBe("light");
   });
+
+  it("uses an unpersisted fallback only while nothing is stored", () => {
+    const media = stubMatchMedia(false);
+    initTheme("dark-bright");
+    expect(document.documentElement.dataset.theme).toBe("dark-bright");
+    expect(localStorage.getItem("jbrain.theme")).toBeNull();
+    media.fireChange(true);
+    expect(document.documentElement.dataset.theme).toBe("dark-bright");
+
+    localStorage.setItem("jbrain.theme", "light");
+    initTheme("dark-bright");
+    expect(document.documentElement.dataset.theme).toBe("light");
+  });
 });

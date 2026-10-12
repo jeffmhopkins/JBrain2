@@ -26,6 +26,7 @@ from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import AuthRepoDep, OwnerDep, PrincipalDep, SettingsDep
+from jbrain.api.session_cookie import set_session_cookie
 from jbrain.db.session import SessionContext, intake_context
 from jbrain.intake import service, turn
 from jbrain.intake.materialize import materialize_submission
@@ -56,6 +57,13 @@ async def _intake_session(principal: PrincipalDep, repo: IntakeRepoDep) -> Intak
     if state is None:
         raise HTTPException(status_code=403, detail="no intake session")
     return state
+
+
+async def _intake_kind(principal: PrincipalDep) -> None:
+    """The kind check alone, as a route dependency: it runs before the body is validated,
+    so any other cookie is a 403 rather than a 422 that tells it the route's schema."""
+    if principal.kind != "intake_link":
+        raise HTTPException(status_code=403, detail="not an intake session")
 
 
 def _owner_ctx(principal_id: str) -> SessionContext:
@@ -393,13 +401,8 @@ async def redeem(
     # first-party to that origin and `lax` both permits that navigation and the subsequent
     # same-origin XHR while still refusing cross-site POSTs (CSRF). `strict` would drop the
     # cookie on the very top-level navigation that opens the link. httponly keeps it off JS.
-    response.set_cookie(
-        settings.session_cookie,
-        result.cookie_token,
-        httponly=True,
-        secure=settings.secure_cookies,
-        samesite="lax",
-        max_age=max(remaining, 0),
+    set_session_cookie(
+        response, settings, result.cookie_token, samesite="lax", max_age=max(remaining, 0)
     )
     snap = result.config_snapshot
     return RedeemOut(
@@ -431,7 +434,7 @@ def _draft_from_transcript(transcript: list) -> dict:
     return {"summary": ""}
 
 
-@router.post("/intake/chat")
+@router.post("/intake/chat", dependencies=[Depends(_intake_kind)])
 async def intake_chat(
     body: ChatTurnRequest,
     request: Request,
@@ -510,7 +513,7 @@ async def intake_chat(
     )
 
 
-@router.post("/intake/confirm", status_code=201)
+@router.post("/intake/confirm", status_code=201, dependencies=[Depends(_intake_kind)])
 async def intake_confirm(
     body: ConfirmRequest, principal: PrincipalDep, repo: IntakeRepoDep
 ) -> ConfirmOut:

@@ -134,3 +134,15 @@ def test_tile_miss_is_404(client: TestClient, repo: FakeAuthRepo, tiles: FakeTil
     login(client, repo)
     tiles.data = None  # disabled / out of range / upstream failure
     assert client.get("/api/tiles/dark/5/1/1.png").status_code == 404
+
+
+@pytest.mark.parametrize("kind", ["jcode_share_link", "intake_link"])
+def test_a_share_or_intake_session_cannot_spend_the_tile_proxy(
+    client: TestClient, repo: FakeAuthRepo, tiles: FakeTileService, kind: str
+) -> None:
+    # Every fetch spends upstream quota and cache disk; only the two map surfaces get it.
+    repo.principals.append(FakePrincipal(id="p-x", kind=kind, key_hash="k", label="x"))
+    asyncio.run(repo.create_session("p-x", keys.hash_token("tok-x"), "x"))
+    resp = client.get("/api/tiles/dark/5/1/1.png", headers={"cookie": "jbrain_session=tok-x"})
+    assert resp.status_code == 403
+    assert tiles.calls == []

@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
+from jbrain.api.session_cookie import session_token, set_session_cookie
 from jbrain.auth import service
 
 router = APIRouter()
@@ -133,7 +134,7 @@ async def redeem_share(
     share = await service.validate_jcode_share(repo, body.token)
     if share is None:
         raise HTTPException(status_code=401, detail="invalid or expired share link")
-    existing = await service.authenticate(repo, request.cookies.get(settings.session_cookie, ""))
+    existing = await service.authenticate(repo, session_token(request, settings))
     bound_here = (
         existing is not None
         and existing.kind == "jcode_share_link"
@@ -145,12 +146,5 @@ async def redeem_share(
     if redeemed is None:  # validated above, so None here means another browser just claimed it
         raise HTTPException(status_code=401, detail="this share link has already been opened")
     token, session_id = redeemed
-    response.set_cookie(
-        settings.session_cookie,
-        token,
-        httponly=True,
-        secure=settings.secure_cookies,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,
-    )
+    set_session_cookie(response, settings, token, samesite="lax", max_age=60 * 60 * 24 * 30)
     return RedeemOut(session_id=session_id)

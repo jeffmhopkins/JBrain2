@@ -15,6 +15,7 @@ import type {
 } from "../api/client";
 import { ApiError, api } from "../api/client";
 import { inertText, isBodylessPost, outboxBody, outboxPreview } from "../moltbookSafe";
+import { safeHref } from "../safeHref";
 
 // jmolt's own launcher screen (docs/plans/JMOLT_PLAN.md): the account + operating switches,
 // the review queue of everything it staged, and the nightly-run schedule. Everything is
@@ -498,9 +499,14 @@ export function JmoltScreen() {
               this agent tied to:
             </p>
             <p>
-              <a href={moltClaim.claim_url} target="_blank" rel="noreferrer">
-                {moltClaim.claim_url}
-              </a>
+              {/* Moltbook's API returns this URL, so its scheme is not ours to trust. */}
+              {safeHref(moltClaim.claim_url) ? (
+                <a href={safeHref(moltClaim.claim_url)} target="_blank" rel="noreferrer">
+                  {moltClaim.claim_url}
+                </a>
+              ) : (
+                moltClaim.claim_url
+              )}
             </p>
             <p>
               Reference code: <code>{moltClaim.verification_code}</code>
@@ -995,10 +1001,10 @@ export function JmoltScreen() {
                         <div className="molt-act-detail">
                           {a.body && <p className="molt-act-body">{inertText(a.body)}</p>}
                           {a.error && <p className="molt-act-error">{inertText(a.error)}</p>}
-                          {a.link && (
+                          {safeHref(a.link) && (
                             <a
                               className="molt-act-link"
-                              href={a.link}
+                              href={safeHref(a.link)}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
