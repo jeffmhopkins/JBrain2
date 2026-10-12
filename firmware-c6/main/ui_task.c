@@ -27,6 +27,7 @@
 #include "svc_rtc_drv.h"
 #include "svc_settings.h"
 #include "svc_settings_drv.h"
+#include "svc_siblings_drv.h"
 #include "svc_touch.h"
 
 static const char *TAG = "ui";
@@ -94,6 +95,8 @@ static void ui_loop(void *arg)
     svc_display_set_brightness((uint8_t)svc_settings_get(SET_BRIGHTNESS));
     svc_messages_init();
     svc_messages_fake_clear();
+    /* Before the apps: a thread is drawn with the name the box last sent (the cache). */
+    svc_siblings_init();
     svc_alarms_init();
     svc_notice_init();
     char err[96];
@@ -108,6 +111,7 @@ static void ui_loop(void *arg)
         svc_rtc_poll();
         svc_settings_service(now);
         svc_audio_service();
+        svc_siblings_service();
         dbg_sys_crumb(ST_PUMP);
         shell_pump();
         dbg_sys_crumb(ST_RENDER);

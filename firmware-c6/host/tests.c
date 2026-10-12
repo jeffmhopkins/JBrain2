@@ -16,13 +16,15 @@
 #include "dbg_json.h"
 #include "disp_guard.h"
 #include "disp_logic.h"
-#include "jerv_model.h"
+#include "convo_model.h"
 #include "minutes.h"
 #include "notice_policy.h"
 #include "settings_model.h"
 #include "shell_core.h"
 #include "shell_evq.h"
 #include "settings_store.h"
+#include "sib_logic.h"
+#include "sib_port_fake.h"
 #include "svc_audio_fake.h"
 #include "talk_core.h"
 #include "svc_box_fake.h"
@@ -32,6 +34,7 @@
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
+#include "svc_siblings_drv.h"
 #include "thread_model.h"
 #include "time_logic.h"
 #include "tp_logic.h"
@@ -418,9 +421,9 @@ static void test_conversation_rules(void)
     thread_bubble(&theirs, 4, 40, &b);
     CHECK(!b.unplayed && b.playing && b.prog == 40, "the dot goes the moment it starts");
     msg_t reply = {.id = 9};
-    CHECK(jerv_shows_listen(&reply, false, 0), "text only: a reply has Listen");
-    CHECK(!jerv_shows_listen(&reply, true, 0), "read aloud: no Listen");
-    CHECK(!jerv_shows_listen(&reply, false, 9), "not while it is being spoken");
+    CHECK(convo_shows_listen(&reply, false, 0), "text only: a reply has Listen");
+    CHECK(!convo_shows_listen(&reply, true, 0), "read aloud: no Listen");
+    CHECK(!convo_shows_listen(&reply, false, 9), "not while it is being spoken");
     CHECK(talk_policy_end(599, true) == TALK_TOO_SHORT && talk_policy_end(600, true) == TALK_SENT,
           "under 0.6 s is a knock, not a message");
     CHECK(talk_policy_end(5000, false) == TALK_CANCELLED, "a tap cancels whatever the length");
@@ -991,9 +994,18 @@ static void test_the_clock_face_keeps_notices_as_a_badge(void)
     CHECK(clock_badge_count(1, 2) == 3 && clock_badge_count(0, 0) == 0,
           "the badge counts notices and unheard messages, and hides at zero");
     CHECK(clock_badge_opa(true) == 255 && clock_badge_opa(false) == 204, "urgent at full strength");
+    /* The image ships no sample messages; the suite brings its own, as the sim does. */
+    svc_messages_fake_clear();
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_1,
+                          &(msg_t){.id = 4, .voice = true, .dur_s = 5, .text = "When are you home?"});
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_2, &(msg_t){.id = 5, .voice = true, .played = true,
+                                                          .dur_s = 3, .text = "I made a drawing."});
+    svc_messages_fake_add("jerv", &(msg_t){.id = 2, .text = "Added milk to your shopping list."});
     CHECK(svc_messages_unplayed_total() == 1, "Quorra's unheard message is counted, Jerv's text is not");
     char who[16] = "";
-    CHECK(svc_messages_first_unplayed(who) && !strcmp(who, "quorra"), "and a tap opens her thread");
+    CHECK(svc_messages_first_unplayed(who) && !strcmp(who, SVC_MESSAGES_THREAD_1),
+          "and a tap opens her thread");
+    svc_messages_fake_clear();
 }
 
 static void test_day_and_date_read_like_the_mock(void)
@@ -1626,7 +1638,7 @@ static void test_a_talk_on_the_glass_end_to_end(void)
     svc_messages_fake_clear();
     svc_audio_init();
     svc_settings_set(SET_TTS, 1);
-    CHECK(svc_audio_talk_begin(TALK_TO_JERV, "jerv") && svc_audio_talking(), "KEY down records");
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv") && svc_audio_talking(), "KEY down records");
     svc_rtc_fake_advance_ms(3200);
     CHECK(svc_audio_talk_end(true) == TALK_SENT, "a three-second hold is sent");
     msg_t m = last_jerv();
@@ -1646,7 +1658,7 @@ static void test_a_talk_on_the_glass_end_to_end(void)
     CHECK(svc_audio_stop_reply() && svc_audio_playing() == 0 && !svc_audio_replying(),
           "BOOT stops the voice; the words stay");
     svc_audio_service();
-    CHECK(svc_audio_talk_begin(TALK_TO_JERV, "jerv"), "the next hold may start");
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "the next hold may start");
     svc_rtc_fake_advance_ms(2000);
     svc_audio_talk_end(true);
     CHECK(svc_audio_stop_reply(), "BOOT while Jerv thinks");
@@ -1661,10 +1673,10 @@ static void test_a_talk_on_the_glass_end_to_end(void)
 static void test_a_hold_that_cannot_reach_jerv_is_refused_up_front(void)
 {
     svc_net_fake_set(NET_OFF);
-    CHECK(!svc_audio_talk_begin(TALK_TO_JERV, "jerv") && strstr(svc_audio_talk_refused(), "Wi-Fi"),
+    CHECK(!svc_audio_talk_begin(TALK_TO_AGENT, "jerv") && strstr(svc_audio_talk_refused(), "Wi-Fi"),
           "offline, KEY says why instead of recording into nothing");
     svc_net_fake_set(NET_CONNECTED);
-    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, "quorra"), "a hold to a person still starts");
+    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1), "a hold to a person still starts");
     svc_rtc_fake_advance_ms(1500);
     CHECK(svc_audio_talk_end(true) == TALK_SENT, "and still ends honestly unsent");
 }
@@ -1700,8 +1712,8 @@ static void test_the_speaker_settings(void)
               svc_settings_clamp(SET_MIC_GAIN, -3) == 0,
           "whoever writes them, volume and microphone gain stay in range");
     CHECK(!strcmp(svc_settings_name(SET_VOLUME), "volume") && !strcmp(svc_settings_name(SET_MIC_GAIN), "mic_gain") &&
-              svc_settings_default(SET_VOLUME) == 80 && svc_settings_default(SET_MIC_GAIN) == 30,
-          "saved under short NVS keys, defaulting to the middle of the vendor's range");
+              svc_settings_default(SET_VOLUME) == 80 && svc_settings_default(SET_MIC_GAIN) == 24,
+          "saved under short NVS keys; the microphone 6 dB under 0.0.10's near-clipping 30");
     bool spk;
     CHECK(!strcmp(settings_jerv_note(true, "ok", &spk), "Replies are spoken and shown as text.") && spk,
           "with sound working the card says what a reply does");
@@ -1715,6 +1727,303 @@ static void test_play_tone_is_whitelisted_and_harmless(void)
 {
     const dbg_cmd_info_t *c = dbg_cmd_find("play_tone");
     CHECK(c && !c->destructive && c->idempotent, "the box may ask for a tone and retry it");
+}
+
+/* ---- 0.0.11: the conversation menu, two agents, the siblings ---- */
+
+static void test_a_still_finger_is_a_long_press_once_and_a_scroll_never(void)
+{
+    sh_lp_t lp = {0};
+    CHECK(!sh_long_press(&lp, true, 100, 200, 1000), "a finger lands");
+    CHECK(!sh_long_press(&lp, true, 105, 204, 1000 + SH_LONG_PRESS_MS - 1), "not before the threshold");
+    CHECK(sh_long_press(&lp, true, 108, 206, 1000 + SH_LONG_PRESS_MS), "held still past it: a long press");
+    CHECK(!sh_long_press(&lp, true, 108, 206, 1000 + 3 * SH_LONG_PRESS_MS), "once per stroke");
+    CHECK(!sh_long_press(&lp, false, 0, 0, 5000), "lifted");
+    CHECK(!sh_long_press(&lp, true, 100, 200, 6000), "the next stroke starts over");
+    CHECK(!sh_long_press(&lp, true, 100, 200 + SH_TAP_SLOP, 6100), "it moves a scroll's distance");
+    CHECK(!sh_long_press(&lp, true, 100, 200, 6000 + 2 * SH_LONG_PRESS_MS),
+          "and coming back to rest does not make a scroll a long press");
+    sh_long_press(&lp, false, 0, 0, 9000);
+    CHECK(!sh_long_press(&lp, true, 300, 300, 10000) && !sh_long_press(&lp, false, 0, 0, 10300),
+          "a tap is never one");
+}
+
+static void test_the_menu_opens_only_over_a_clear_conversation(void)
+{
+    sh_facts_t f = in_app();
+    CHECK(sh_menu_may_open(&f, true), "over a conversation, a long press opens it");
+    CHECK(!sh_menu_may_open(&f, false), "over Settings, the Clock or the Minecraft menu, never");
+    CHECK(!sh_menu_may_open(&(sh_facts_t){0}, true), "nor on home");
+    f.talking = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor under a hold");
+    f = in_app();
+    f.dark = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor on a dark screen");
+    f = in_app();
+    f.notices = 1;
+    CHECK(!sh_menu_may_open(&f, true), "nor under a notice");
+    f.notices_held = true;
+    CHECK(sh_menu_may_open(&f, true), "a notice the face holds as a badge covers nothing");
+    f = in_app();
+    f.alarm_ringing = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor under a ringing alarm");
+    f = in_app();
+    f.menu_open = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor twice");
+}
+
+static void test_clear_chat_takes_two_taps_within_three_seconds(void)
+{
+    sh_menu_t m = {0};
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 0) == SH_MENU_DO_NOTHING, "a closed menu does nothing");
+    sh_menu_open(&m);
+    CHECK(!sh_menu_armed(&m, 0), "it opens unarmed");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 1000) == SH_MENU_DO_ARM && sh_menu_armed(&m, 1000),
+          "the first tap arms it: Tap again to clear");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 1000 + SH_MENU_ARM_MS - 1) == SH_MENU_DO_CLEAR &&
+              m.state == SH_MENU_CLOSED,
+          "the second inside the window clears and closes");
+    sh_menu_open(&m);
+    sh_menu_input(&m, SH_MENU_IN_CLEAR, 5000);
+    CHECK(!sh_menu_armed(&m, 5000 + SH_MENU_ARM_MS), "the arm lapses");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 5000 + SH_MENU_ARM_MS) == SH_MENU_DO_ARM,
+          "and a tap after it only arms again");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CANCEL, 9000) == SH_MENU_DO_CLOSE && m.state == SH_MENU_CLOSED,
+          "Cancel closes, clearing nothing");
+    sh_menu_open(&m);
+    sh_menu_input(&m, SH_MENU_IN_CLEAR, 10000);
+    CHECK(sh_menu_input(&m, SH_MENU_IN_OUTSIDE, 10100) == SH_MENU_DO_CLOSE, "a tap outside closes, even armed");
+    sh_menu_open(&m);
+    CHECK(!m.armed, "and the next opening starts unarmed");
+}
+
+static void test_buttons_over_the_menu_only_close_it(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.menu_open = true;
+    sh_route_t r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_CLOSE_MENU && st.key_owner == SH_KEY_FREE,
+          "KEY closes the menu and starts no recording");
+    f.menu_open = false;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_UP).first == SH_ACT_NONE, "so its release sends nothing");
+    f.menu_open = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_CLOSE_MENU, "BOOT closes it, not the app");
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_CLOSE_MENU,
+          "BOOT held closes it rather than jumping to the Clock under it");
+    f.replying = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_CLOSE_MENU,
+          "over a reply too, the menu is what KEY reaches first");
+    f.replying = false;
+    f.notices = 1;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_NONE, "a notice waits for the menu to close");
+    f.alarm_ringing = true;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_ALARM &&
+              sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_TO_APP,
+          "a ringing alarm outranks it");
+}
+
+static void test_jerv_and_dave_are_two_threads_and_two_conversations(void)
+{
+    char path[96];
+    tk_converse_path(TK_AGENT_JERV, true, false, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/converse?persona=jerv&voice=true"), "Jerv's talk, as 0.0.10 sent it");
+    tk_converse_path(TK_AGENT_DAVE, false, true, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/converse?persona=dave&voice=false&new_thread=true"),
+          "Dave's, text only, after Clear chat");
+    tk_agent_t a = TK_AGENT_JERV;
+    CHECK(tk_agent_from("dave", &a) && a == TK_AGENT_DAVE && !tk_agent_from("thread1", &a),
+          "an agent is named by its thread; a person's thread is not one");
+    CHECK(!strcmp(tk_agent_id((tk_agent_t)9), "jerv"), "an unknown agent is never sent as one");
+
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_settings_set(SET_TTS, 0);
+    svc_messages_fake_add("jerv", &(msg_t){.id = 7, .text = "Jerv said this."});
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "dave"), "KEY in Dave's thread talks to Dave");
+    CHECK(strstr(svc_audio_fake_last_path(), "persona=dave") != NULL, "the box is asked for Dave");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    svc_audio_fake_reply("where is my base", "North of spawn.", false);
+    svc_audio_service();
+    msg_t m;
+    CHECK(svc_messages_count("dave") == 2 && svc_messages_get("dave", 1, &m) &&
+              !strcmp(m.text, "North of spawn."),
+          "Dave's answer is in Dave's thread");
+    CHECK(svc_messages_count("jerv") == 1 && svc_messages_get("jerv", 0, &m) &&
+              !strcmp(m.text, "Jerv said this."),
+          "and Jerv's thread is exactly as it was");
+
+    CHECK(svc_messages_clear("dave") && svc_messages_count("dave") == 0 &&
+              svc_messages_count("jerv") == 1,
+          "clearing Dave's thread never touches Jerv's");
+    CHECK(!svc_messages_clear("quorra"), "there is no thread by a name");
+    for (uint32_t i = 0; i < 20; i++) svc_messages_fake_add("dave", &(msg_t){.id = 100 + i});
+    CHECK(svc_messages_count("dave") == 8 && svc_messages_count("jerv") == 1,
+          "Dave's eight are his own: a busy Dave pushes out none of Jerv's");
+    for (uint32_t i = 0; i < 9; i++) svc_messages_fake_add(SVC_MESSAGES_THREAD_1, &(msg_t){.id = 200 + i});
+    CHECK(svc_messages_count(SVC_MESSAGES_THREAD_1) == 4, "a person's thread keeps four");
+    svc_messages_fake_clear();
+    svc_settings_set(SET_TTS, 1);
+}
+
+static void test_clear_chat_asks_that_agent_alone_for_a_new_conversation(void)
+{
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_audio_fresh("jerv");
+    CHECK(svc_audio_fresh_pending("jerv") && !svc_audio_fresh_pending("dave"), "Jerv's, not Dave's");
+    svc_audio_fresh(SVC_MESSAGES_THREAD_1);
+    CHECK(!svc_audio_fresh_pending(SVC_MESSAGES_THREAD_1), "a person's thread has no box conversation");
+
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "dave"), "a talk to Dave");
+    CHECK(strstr(svc_audio_fake_last_path(), "new_thread") == NULL, "carries no new_thread");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    svc_audio_fake_reply("hi", "Hello.", false);
+    svc_audio_service();
+
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "the next talk to Jerv");
+    CHECK(strstr(svc_audio_fake_last_path(), "persona=jerv") &&
+              strstr(svc_audio_fake_last_path(), "&new_thread=true"),
+          "asks the box for a new conversation");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    talk_net_nothing();
+    talk_net_end(0, 0, 0);
+    svc_audio_service();
+    CHECK(svc_audio_fresh_pending("jerv"), "a hold the box heard nothing in keeps the request");
+
+    svc_audio_talk_begin(TALK_TO_AGENT, "jerv");
+    CHECK(strstr(svc_audio_fake_last_path(), "&new_thread=true") != NULL, "so the next one asks again");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    svc_audio_fake_reply("start over", "Fresh start.", false);
+    svc_audio_service();
+    CHECK(!svc_audio_fresh_pending("jerv"), "answered, the box has started it");
+    svc_audio_talk_begin(TALK_TO_AGENT, "jerv");
+    CHECK(strstr(svc_audio_fake_last_path(), "new_thread") == NULL, "and the talk after continues it");
+    svc_rtc_fake_advance_ms(100);
+    svc_audio_talk_end(false);
+    svc_audio_service();
+    svc_messages_fake_clear();
+}
+
+static const char BOX_JSON[] =
+    "{\"siblings\": [{\"device_id\": \"11111111-aaaa-4bbb-8ccc-000000000001\", \"name\": \"Quorra\"},"
+    " {\"name\": \"Tamsin\", \"extra\": {\"a\": [1, 2]}, \"device_id\": \"22222222-aaaa-4bbb-8ccc-000000000002\"}]}";
+
+static void test_the_box_s_siblings_json_is_read_as_the_box_writes_it(void)
+{
+    sib_list_t l;
+    CHECK(sib_parse(BOX_JSON, sizeof BOX_JSON - 1, &l) && l.n == 2, "two siblings");
+    CHECK(!strcmp(l.s[0].name, "Quorra") && !strcmp(l.s[1].name, "Tamsin") &&
+              !strcmp(l.s[1].device_id, "22222222-aaaa-4bbb-8ccc-000000000002"),
+          "names and ids, whatever the key order, past keys it does not know");
+    const char empty[] = "{\"siblings\":[]}";
+    CHECK(sib_parse(empty, sizeof empty - 1, &l) && l.n == 0, "an empty list is a list");
+    const char five[] =
+        "{\"siblings\":[{\"device_id\":\"a\",\"name\":\"A\"},{\"device_id\":\"b\",\"name\":\"B\"},"
+        "{\"device_id\":\"c\",\"name\":\"C\"},{\"device_id\":\"d\",\"name\":\"D\"},"
+        "{\"device_id\":\"e\",\"name\":\"E\"},{\"name\":\"no id\"}]}";
+    CHECK(sib_parse(five, sizeof five - 1, &l) && l.n == SIB_MAX && !strcmp(l.s[3].name, "D"),
+          "at most four, the box's first four");
+    const char escaped[] = "{\"siblings\":[{\"device_id\":\"x\",\"name\":\"Zo\\u00eb \\\"Z\\\"\"}]}";
+    CHECK(sib_parse(escaped, sizeof escaped - 1, &l) && !strcmp(l.s[0].name, "Zo? \"Z\""),
+          "escapes decoded; a letter the font lacks drawn as ?");
+    const char raw[] = "{\"siblings\":[{\"device_id\":\"x\",\"name\":\"Ren\xc3\xa9\xe2\x98\x85\"}]}";
+    CHECK(sib_parse(raw, sizeof raw - 1, &l) && !strcmp(l.s[0].name, "Ren??"),
+          "raw UTF-8 too: one ? per character, not per byte");
+    static const char *const BAD[] = {"", "[]", "{}", "{\"siblings\":{}}", "{\"siblings\":[1]}",
+                                      "{\"siblings\":[{\"device_id\":\"x\"", "{\"other\":1}", "not json"};
+    for (size_t i = 0; i < sizeof BAD / sizeof *BAD; i++)
+        CHECK(!sib_parse(BAD[i], strlen(BAD[i]), &l), "anything else is refused, never half-read");
+}
+
+static void test_a_name_is_what_the_panel_can_draw(void)
+{
+    char out[SIB_NAME_BYTES + 1];
+    sib_clean_name("  Big   Room \t", out, sizeof out);
+    CHECK(!strcmp(out, "Big Room"), "spaces folded and trimmed");
+    sib_clean_name("A name far longer than twenty-four bytes", out, sizeof out);
+    CHECK(strlen(out) == SIB_NAME_BYTES, "cut at 24 bytes");
+    CHECK(sib_initial("quorra") == 'Q' && sib_initial("  2nd") == '2' && sib_initial("??") == '?',
+          "the tile's letter: the first letter or digit, upper-cased");
+    const uint8_t a = sib_accent_for("Quorra", 0);
+    CHECK(a < SIB_MAX && sib_accent_for("Quorra", 0) == a, "a colour from the name, the same every boot");
+    CHECK(sib_accent_for("Quorra", (uint8_t)(1u << a)) != a, "and never one a sibling already has");
+    CHECK(sib_accent_for("Quorra", 0x0F) < SIB_MAX, "with all four taken, still a colour");
+}
+
+static void test_a_thread_follows_its_panel_not_its_slot(void)
+{
+    sib_slots_t s = {0};
+    sib_list_t l = {0};
+    bool renamed;
+    l.n = 2;
+    snprintf(l.s[0].device_id, SIB_ID_LEN, "dev-a");
+    snprintf(l.s[0].name, sizeof l.s[0].name, "Quorra");
+    snprintf(l.s[1].device_id, SIB_ID_LEN, "dev-b");
+    snprintf(l.s[1].name, sizeof l.s[1].name, "Tamsin");
+    CHECK(sib_merge(&s, &l, &renamed) == 0x3 && s.used[0] && s.used[1], "the first list fills slots 0 and 1");
+    CHECK(s.s[0].accent != s.s[1].accent, "in two different colours");
+    /* The box's order changes and a panel is renamed: nobody moves. */
+    sibling_t a = l.s[0];
+    l.s[0] = l.s[1];
+    l.s[1] = a;
+    snprintf(l.s[1].name, sizeof l.s[1].name, "Q");
+    CHECK(sib_merge(&s, &l, &renamed) == 0 && renamed && !strcmp(s.s[0].name, "Q") &&
+              !strcmp(s.s[0].device_id, "dev-a"),
+          "a renamed panel keeps its thread; the list's order moves nothing");
+    CHECK(sib_merge(&s, &l, &renamed) == 0 && !renamed, "the same list again changes nothing");
+    /* dev-a is retired and a new unit appears. */
+    l.n = 2;
+    snprintf(l.s[1].device_id, SIB_ID_LEN, "dev-c");
+    snprintf(l.s[1].name, sizeof l.s[1].name, "Spare");
+    CHECK(sib_merge(&s, &l, &renamed) == 0x1 && !strcmp(s.s[0].device_id, "dev-c") &&
+              !strcmp(s.s[1].device_id, "dev-b"),
+          "a new panel takes the freed slot, and that thread is cleared for it");
+    l.n = 0;
+    CHECK(sib_merge(&s, &l, &renamed) == 0x3 && !s.used[0] && !s.used[1], "an empty list frees both");
+}
+
+static void test_the_threads_show_the_box_s_names_and_survive_a_reboot(void)
+{
+    sib_port_fake_wipe();
+    svc_messages_fake_clear();
+    svc_siblings_init();
+    char name[32];
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Panel 1") && svc_siblings_initial(0) == '1' && svc_siblings_initial(1) == '2',
+          "before the box answers, a first boot says Panel 1 / Panel 2 — never a compiled-in name");
+    CHECK(!strcmp(svc_siblings_thread(0), SVC_MESSAGES_THREAD_1) && svc_siblings_thread(2) == NULL,
+          "two threads, bound to slots 0 and 1");
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_1, &(msg_t){.id = 1, .mine = true, .text = "to nobody"});
+    CHECK(svc_siblings_offer(BOX_JSON, sizeof BOX_JSON - 1), "the box's answer, as the main task gets it");
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Panel 1"), "nothing changes until the UI task applies it");
+    svc_siblings_service();
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Quorra") && svc_siblings_initial(0) == 'Q', "then the thread is hers");
+    svc_siblings_name(1, name, sizeof name);
+    CHECK(!strcmp(name, "Tamsin") && svc_siblings_initial(1) == 'T', "and the other's");
+    CHECK(svc_messages_count(SVC_MESSAGES_THREAD_1) == 0, "what was in the unbound thread is cleared");
+    CHECK(svc_siblings_accent(0) != svc_siblings_accent(1), "two colours");
+    CHECK(!svc_siblings_offer("{\"siblings\":", 12), "a cut-off answer is refused");
+    svc_siblings_service();
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Quorra"), "and changes nothing");
+    char note[96];
+    svc_siblings_note(note, sizeof note);
+    CHECK(strstr(note, "sib=box,box:1,bad:1") != NULL, "telemetry says where the names came from");
+
+    svc_siblings_init(); /* a reboot: the cache is all there is until the box answers */
+    svc_siblings_name(1, name, sizeof name);
+    CHECK(!strcmp(name, "Tamsin"), "after a reboot the names are back before the box answers");
+    sibling_t s;
+    CHECK(svc_siblings_slot(0, &s) && !strcmp(s.device_id, "11111111-aaaa-4bbb-8ccc-000000000001"),
+          "bound to the same device");
+    sib_port_fake_wipe();
 }
 
 int main(void)
@@ -1796,6 +2105,16 @@ int main(void)
     test_key_or_boot_over_a_reply_is_the_shells_stop();
     test_the_speaker_settings();
     test_play_tone_is_whitelisted_and_harmless();
+    test_a_still_finger_is_a_long_press_once_and_a_scroll_never();
+    test_the_menu_opens_only_over_a_clear_conversation();
+    test_clear_chat_takes_two_taps_within_three_seconds();
+    test_buttons_over_the_menu_only_close_it();
+    test_jerv_and_dave_are_two_threads_and_two_conversations();
+    test_clear_chat_asks_that_agent_alone_for_a_new_conversation();
+    test_the_box_s_siblings_json_is_read_as_the_box_writes_it();
+    test_a_name_is_what_the_panel_can_draw();
+    test_a_thread_follows_its_panel_not_its_slot();
+    test_the_threads_show_the_box_s_names_and_survive_a_reboot();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

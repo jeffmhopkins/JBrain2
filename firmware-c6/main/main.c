@@ -42,6 +42,8 @@
 #include "svc_rtc_drv.h"
 #include "svc_settings_drv.h"
 #include "svc_touch.h"
+#include "sib_link.h"
+#include "svc_siblings_drv.h"
 #include "talk_link.h"
 #include "ui_task.h"
 
@@ -180,7 +182,7 @@ static bool report(const cfg_t *cfg)
     void (*const parts[])(char *, size_t) = {
         svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
         svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
-        svc_audio_note,   dbg_link_note,  box_http_note, secrets_note};
+        svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -375,6 +377,8 @@ void app_main(void)
     start_panel(&cfg);
     if (fresh) svc_box_set_phase(FW_DONE, NULL, 0, NULL);
     if (reachable && manifest.date) svc_rtc_box_time(manifest.date);
+    /* The names before the first talk: the cache already shows the last ones. */
+    if (reachable) sib_link_poll();
 
     uint32_t last_report_ms = 0;
     bool reported = false;
@@ -444,6 +448,7 @@ void app_main(void)
             if (joined) ESP_LOGI(TAG, "network recovered");
         }
         reachable = joined && fetch_manifest(&cfg, &manifest);
+        if (reachable) sib_link_poll();
         if (asked && update_now(&cfg, &manifest, reachable, &ota_last_try_ms)) reported = false;
     }
 }

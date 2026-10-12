@@ -2,5 +2,6 @@
 
 #include "app_api.h"
 
-/* Reserved: a tile and a "not built yet" page until the Minecraft wave (C4) is scoped. */
+/* Minecraft: a menu of Dave (the box's Minecraft_Dave, in a conversation of his own) and Compass
+ * (a work in progress). The rest of the Minecraft wave (C4) is still to be scoped. */
 extern app_t app_minecraft;

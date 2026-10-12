@@ -62,6 +62,16 @@ typedef enum {
 typedef enum { TK_NET_UPLOAD, TK_NET_FINISH, TK_NET_ABORT } tk_net_t;
 typedef enum { TK_AUDIO_OFF, TK_AUDIO_MIC, TK_AUDIO_SPK } tk_audio_t;
 
+/* Who a talk is with: the box's real Jerv or Minecraft_Dave (backend `panel_agent`). Each has its
+ * own thread on the panel and its own conversation on the box. */
+typedef enum { TK_AGENT_JERV, TK_AGENT_DAVE, TK_AGENT__COUNT } tk_agent_t;
+/* "jerv" / "dave": the svc_messages thread and the box's `persona=`, which are the same word. */
+const char *tk_agent_id(tk_agent_t a);
+/* The agent a thread id names. False for anything else (a person's thread). */
+bool tk_agent_from(const char *id, tk_agent_t *out);
+/* `/endpoint/converse?persona=<id>&voice=<v>`, and `&new_thread=true` after Clear chat. */
+void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t cap);
+
 typedef struct {
     tk_phase_t phase;
     uint32_t since_ms;
@@ -74,6 +84,8 @@ typedef struct {
     bool mic_on;      /* the audio task's own word for what it has open */
     bool spk_on;
     tk_res_t res;
+    uint8_t agent; /* tk_agent_t: whose thread the bubbles land in, which persona the box runs */
+    bool fresh;    /* this exchange asks the box for a new conversation (Clear chat) */
     char why[40];
 } tk_t;
 
@@ -84,6 +96,8 @@ void tk_copy(char *dst, size_t cap, const char *src);
 
 /* UI task. */
 tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id);
+/* Right after a TK_BEGIN_OK, under the same lock: who the hold is with. */
+void tk_set_agent(tk_t *t, tk_agent_t agent, bool fresh);
 /* The hold's end. A send that the box was already failed for is TALK_FAILED (the result says
  * why); anything short of a message lets go of everything. */
 talk_outcome_t tk_end(tk_t *t, uint32_t now_ms, bool send);

@@ -32,8 +32,9 @@ bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why);
 void svc_audio_note(char *out, size_t len);
 
 /* ---- the main task's half of an exchange ---- */
-/* True once per hold: the exchange is this task's now, and must end with talk_net_end. */
-bool talk_net_claim(bool *voice);
+/* True once per hold: the exchange is this task's now, and must end with talk_net_end. Who it is
+ * with, and whether it asks the box for a new conversation. */
+bool talk_net_claim(bool *voice, tk_agent_t *agent, bool *fresh);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);

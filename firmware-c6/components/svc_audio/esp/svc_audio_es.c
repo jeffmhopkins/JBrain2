@@ -54,9 +54,11 @@ static const char *TAG = "audio";
 /* The reply starts once this much is queued, so a radio that hiccups in the first 100 ms is not
  * a gap in the first word. */
 #define PREROLL_BYTES 4096
-/* 3.5 KB: the deepest call is esp_codec_dev_open through the I2S reconfig and its log lines;
- * the high-water mark is in the snapshot (`stack_free`) so it can be cut from a measurement. */
-#define TASK_STACK 3584
+/* 4.25 KB. 0.0.10's 3.5 KB measured `stack_free` 1,524 B after the first two talks on the glass
+ * (2,060 B used: esp_codec_dev_open through the I2S reconfig and its log lines), under the 2 KB
+ * of headroom a task that logs from a driver call wants. +768 B of internal RAM buys ~2.3 KB
+ * free at that depth; `stack_free` in the snapshot stays the measure. */
+#define TASK_STACK 4352
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static TaskHandle_t s_task;

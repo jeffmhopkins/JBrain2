@@ -47,6 +47,7 @@ typedef enum {
     SH_ACT_DARK,
     SH_ACT_OPEN_CLOCK,     /* BOOT held: the clock app, over home or any app */
     SH_ACT_STOP_REPLY,     /* KEY or BOOT while Jerv thinks or speaks: drop the reply */
+    SH_ACT_CLOSE_MENU,     /* KEY or BOOT over the conversation menu: close it, nothing else */
 } sh_act_t;
 
 typedef struct {
@@ -64,6 +65,7 @@ typedef struct {
     bool talking;      /* the shell's own talk to Jerv is up */
     bool clock_open;   /* the open app is the clock */
     bool replying;     /* Jerv is thinking about, or speaking, an answer */
+    bool menu_open;    /* the conversation menu (long press) is up */
 } sh_facts_t;
 
 /* SH_KEY_SHELL: the hold is the shell's talk to Jerv, so its release sends to Jerv whatever
@@ -113,6 +115,52 @@ typedef struct {
     bool down, swallow;
 } sh_gate_t;
 bool sh_gate(sh_gate_t *g, bool pressed, bool dark, bool *wake);
+
+/* ---- the conversation menu (owner, 2026-10-12: "a long press in a chat window pulls up a
+ * menu") ----
+ *
+ * A finger held still on a conversation for SH_LONG_PRESS_MS opens a small menu: Clear chat,
+ * Cancel. "Still" is the tap's own slop, so a scroll — which moves past it first — never opens
+ * it, and a long press is decided while the finger is still down, once. */
+#define SH_LONG_PRESS_MS 600
+typedef struct {
+    bool down, done;
+    int x0, y0;
+    uint32_t t0;
+} sh_lp_t;
+/* Every pointer sample: true exactly once per stroke, on the sample that crosses the threshold
+ * with the finger still within SH_TAP_SLOP of where it landed. */
+bool sh_long_press(sh_lp_t *lp, bool pressed, int x, int y, uint32_t now_ms);
+
+/* Whether a long press opens the menu now: only over a conversation that can be cleared, and
+ * only when nothing is covering it (a dark screen, a hold, an overlay, the menu itself). */
+bool sh_menu_may_open(const sh_facts_t *f, bool conversation);
+
+/* Clear chat takes two taps, no more than SH_MENU_ARM_MS apart — the Wi-Fi Disconnect pattern:
+ * the first arms it ("Tap again to clear"), the second clears. A history is not coming back. */
+#define SH_MENU_ARM_MS 3000
+typedef enum { SH_MENU_CLOSED, SH_MENU_OPEN } sh_menu_state_t;
+typedef struct {
+    sh_menu_state_t state;
+    bool armed;
+    uint32_t armed_ms;
+} sh_menu_t;
+typedef enum {
+    SH_MENU_IN_CLEAR,   /* the Clear chat button */
+    SH_MENU_IN_CANCEL,  /* the Cancel button */
+    SH_MENU_IN_OUTSIDE, /* a tap on the dim around the card */
+} sh_menu_in_t;
+typedef enum {
+    SH_MENU_DO_NOTHING,
+    SH_MENU_DO_ARM,   /* redraw: "Tap again to clear" */
+    SH_MENU_DO_CLEAR, /* clear the thread, close */
+    SH_MENU_DO_CLOSE,
+} sh_menu_do_t;
+void sh_menu_open(sh_menu_t *m);
+sh_menu_do_t sh_menu_input(sh_menu_t *m, sh_menu_in_t in, uint32_t now_ms);
+/* Armed and not yet lapsed: what the Clear button says. */
+bool sh_menu_armed(const sh_menu_t *m, uint32_t now_ms);
+void sh_menu_close(sh_menu_t *m);
 
 typedef struct {
     const char *id;

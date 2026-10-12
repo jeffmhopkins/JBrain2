@@ -1,6 +1,6 @@
-/* In-memory conversations seeded with the mock's, until the box client lands (C3). The device
- * starts them empty (svc_messages_fake_clear): a sample message on the glass would read as a
- * real one. */
+/* In-memory conversations, until the box client for messages lands (C3). They start empty on
+ * the device and in the sim alike; the sim and the host suite add their own sample messages
+ * through svc_messages_fake_add, so no sample text ships in the image. */
 #pragma once
 
 #include "svc_messages.h"

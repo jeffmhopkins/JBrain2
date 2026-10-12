@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Every app stands alone (JPANEL_C6_PLAN.md §1): an app_* component may depend on app_api,
-ui_kit and LVGL and on nothing else — not the shell, not another app, not a service's
-implementation, not a chip. Two ways in, both checked:
+ui_kit, the shared conversation view (convo) and LVGL and on nothing else — not the shell, not
+another app, not a service's implementation, not a chip. Two ways in, both checked:
 
 - its CMakeLists REQUIRES / PRIV_REQUIRES, which is what ESP-IDF links;
 - its #includes, because the host sim compiles every component with every include path and
@@ -16,8 +16,8 @@ import re
 import sys
 import tempfile
 
-ALLOWED_COMPONENTS = {"app_api", "ui_kit", "lvgl", "lvgl__lvgl"}
-SHARED_INCLUDE_DIRS = ("app_api/include", "ui_kit/include")
+ALLOWED_COMPONENTS = {"app_api", "ui_kit", "convo", "lvgl", "lvgl__lvgl"}
+SHARED_INCLUDE_DIRS = ("app_api/include", "ui_kit/include", "convo/include")
 REQ_RE = re.compile(r"\b(?:PRIV_)?REQUIRES\b([^)]*?)(?=\b[A-Z_]{4,}\b|\))", re.S)
 INC_RE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
 
@@ -107,7 +107,7 @@ def main(argv):
         print("DEPENDENCY RULE:", p, file=sys.stderr)
     if problems:
         return 1
-    print(f"{len(apps)} apps depend only on app_api, ui_kit and LVGL: {', '.join(apps)}")
+    print(f"{len(apps)} apps depend only on app_api, ui_kit, convo and LVGL: {', '.join(apps)}")
     return 0
 
 

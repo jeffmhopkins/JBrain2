@@ -62,6 +62,31 @@ uint32_t tk_ring_read(tk_ring_t *r, void *dst, uint32_t n)
     return n;
 }
 
+/* ---- the agents ---- */
+
+static const char *const AGENT_IDS[TK_AGENT__COUNT] = {"jerv", "dave"};
+
+const char *tk_agent_id(tk_agent_t a)
+{
+    return a < TK_AGENT__COUNT ? AGENT_IDS[a] : AGENT_IDS[TK_AGENT_JERV];
+}
+
+bool tk_agent_from(const char *id, tk_agent_t *out)
+{
+    for (int a = 0; id && a < TK_AGENT__COUNT; a++)
+        if (!strcmp(id, AGENT_IDS[a])) {
+            *out = (tk_agent_t)a;
+            return true;
+        }
+    return false;
+}
+
+void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t cap)
+{
+    snprintf(out, cap, "/endpoint/converse?persona=%s&voice=%s%s", tk_agent_id(a),
+             voice ? "true" : "false", fresh ? "&new_thread=true" : "");
+}
+
 /* ---- the exchange ---- */
 
 void tk_init(tk_t *t)
@@ -96,6 +121,12 @@ tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id)
     t->res = TK_RES_NONE;
     t->why[0] = '\0';
     return TK_BEGIN_OK;
+}
+
+void tk_set_agent(tk_t *t, tk_agent_t agent, bool fresh)
+{
+    t->agent = (uint8_t)(agent < TK_AGENT__COUNT ? agent : TK_AGENT_JERV);
+    t->fresh = fresh;
 }
 
 talk_outcome_t tk_end(tk_t *t, uint32_t now_ms, bool send)

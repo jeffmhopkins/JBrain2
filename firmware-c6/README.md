@@ -622,7 +622,7 @@ the two personas' memories kept apart, a minute-long hold heard whole, a cut-off
 | `main/talk_link.c` | The talk on the box connection: a chunked POST filled from the ring as the microphone fills it, then the reply read in slices — headers in 500 ms slices, the body in 250 ms ones — so a drop on the glass is let go within one, the words handed to the glass the moment they are in, the speech into the ring at the speaker's pace. |
 | `main/box_http.c` | A stream may now ride the kept session (`reuse`) when it carried a request in the last 20 s — a talk cannot wait out a handshake while the microphone fills its ring, and the 3 s pickups keep the session warm; if opening on it fails before a byte of body is sent it is retried fresh. The reply-in-slices calls are new. |
 | `app_jerv`, `shell` | The thread's bubbles, "Speaking…", and a redraw that keeps the reader where they were; `sh_route_button` gives KEY and BOOT over a reply to `SH_ACT_STOP_REPLY` (host-tested); a refused hold says why. |
-| `svc_settings` | Two keys: `volume` (10-100, default 80, Settings slider) and `mic_gain` (0-37 dB, default 30, debug `set` only). |
+| `svc_settings` | Two keys: `volume` (10-100, default 80, Settings slider) and `mic_gain` (0-37 dB, default 30 — 24 since 0.0.11 — debug `set` only). |
 
 ### The network: who goes first
 
@@ -645,7 +645,7 @@ on any of it**: it reads the talk's state and writes bubbles from what the main 
 
 | Task | Priority | Stack | Why |
 | --- | --- | --- | --- |
-| `audio` (new) | **1**, the update loop's own | 3.5 KB | It blocks on the I2S DMA for each 20 ms chunk, so it takes its round-robin share and no more; at priority 1 nothing new can starve the loop that takes the next image. Four 20 ms DMA buffers each way give it 80 ms of slack against the UI, the main task's TLS and touch at the same priority. Its high-water mark is in the snapshot (`audio.stack_free`), to be cut from a measurement. |
+| `audio` (new) | **1**, the update loop's own | 3.5 KB (4.25 KB since 0.0.11) | It blocks on the I2S DMA for each 20 ms chunk, so it takes its round-robin share and no more; at priority 1 nothing new can starve the loop that takes the next image. Four 20 ms DMA buffers each way give it 80 ms of slack against the UI, the main task's TLS and touch at the same priority. Its high-water mark is in the snapshot (`audio.stack_free`), to be cut from a measurement. |
 
 The UI, main, power, buttons and touch tasks are unchanged; every task is still priority 1.
 
@@ -762,6 +762,120 @@ Each is reported so it can be settled remotely:
 - **The audio task's stack** (3.5 KB): `stack_free` after a talk and a tone.
 - **The memory** (above): `int_free` / `int_min` before and after the first talks.
 
+## What 0.0.11 adds: the real Jerv and Dave, Clear chat, the panels' names
+
+Four owner decisions of 2026-10-12, one image (plan §1, "Jerv on the panel is the real Jerv" and
+the decisions after it; `../docs/mocks/jpanel-c6/README.md`).
+
+### On the glass
+
+- **Jerv is the owner's real Jerv.** The same talk as 0.0.10 — hold KEY, speak, let go — but the
+  box now runs it through the PWA's own agent, as the owner, with every tool and memory, into a
+  "Desk panel" chat in his Jerv history. A turn that needs his OK says so ("It's waiting for your
+  OK in the app"); a long one says "Still working on that. The answer will be in the app." The
+  voice is the PWA read-aloud's.
+- **Minecraft is a menu: Dave and Compass.** The tile opens a second level. **Dave** is the box's
+  Minecraft_Dave in a conversation exactly like Jerv's: hold KEY inside it to talk to Dave,
+  spoken replies with the read-aloud switch, the long-press menu. **Compass** says "Work in
+  progress". BOOT (or the back arrow) climbs a level: Dave or Compass to the menu, the menu home.
+  KEY outside Dave's thread — the menu, Compass, anywhere else — is still the shell's talk to Jerv.
+- **Clear chat.** A finger held still for 600 ms anywhere in a conversation (Jerv, Dave, either
+  person's thread) opens a small card: **Clear chat** and **Cancel**. Clear takes two taps within
+  3 s ("Tap again to clear"); BOOT, a tap on the dim around it, or KEY closes it — and KEY then
+  records nothing. Cleared, the thread is empty on this panel, and Jerv's or Dave's next talk
+  starts a new chat on the box (the old one stays in the PWA). Clearing one never touches the
+  other: Jerv and Dave are two instances with two histories. A scroll never opens it: the finger
+  must stay within the tap's 20 px, which is also where LVGL starts scrolling.
+- **The people's threads carry the panels' real names**, from the box (`GET /endpoint/siblings`):
+  the name the owner gave each panel in the PWA, its tile letter, and a colour from the name. A
+  thread is bound to that panel's device id, not to a slot name, so a renamed panel keeps its
+  thread and a replaced one starts empty. Until the box has answered once — and with nothing
+  cached from an earlier boot — they read **Panel 1** and **Panel 2**. No name is compiled in, and
+  the image ships no sample messages.
+
+### The protocol
+
+`POST /endpoint/converse?persona=jerv|dave&voice=true|false[&new_thread=true]` — the same route,
+body and reply frame as 0.0.10 (`tk_converse_path`, host-tested). `persona=dave` is new, and
+`new_thread=true` rides the first talk to an agent after Clear chat; the panel keeps asking until
+a talk is answered, so a hold the box heard nothing in does not lose it. The box answers with the
+real agent only for this panel (a `display` the owner switched on, server-side; the twins'
+panels never), and otherwise with 0.0.10's spoken persona for Jerv and a 403 for Dave.
+
+The reply's words fit the 255 bytes a bubble keeps: the box condenses the agent's answer to whole
+sentences within 240 bytes (" More in the app." when cut) and speaks exactly that, so no firmware
+buffer grew. **The panel waits 130 s for the answer** (`ANSWER_LIMIT_MS`, was 60): the box gives
+the agent 100 s, then answers "still working" and lets the turn finish into the chat.
+
+`GET /endpoint/siblings` (device key; only a `display` panel is answered) is fetched once a boot,
+right after the first manifest, then every fifteen minutes on the manifest pass, and after a
+failure on the next pass (a minute). `{"siblings":[{"device_id","name"}]}`, at most four. The
+panel keeps up to four (`SIB_MAX`), two of which have tiles, each name cut to 24 bytes on a
+character, every character the fonts lack drawn as `?` (`sib_parse`, `sib_clean_name`).
+
+### The pieces
+
+| Piece | What it is |
+| --- | --- |
+| `components/convo` | **One** conversation view for every agent — the bubbles, hold-KEY-to-talk, "Speaking…", Clear — parameterised by thread, title, icon and colour. `app_jerv` and `app_minecraft` each own an instance; neither includes the other. `tools/check_app_deps.py` lets an app require it beside `app_api` and `ui_kit`. `convo_model.c` (was `jerv_model.c`) is host-tested. |
+| `svc_audio` | A talk names its agent (`tk_set_agent`) and whether it asks for a new chat; bubbles land in that agent's thread. `svc_audio_fresh` is Clear chat's half, per agent. |
+| `svc_messages` | Four threads, each its own buffer: Jerv and Dave keep eight messages, the two people's threads four (they hold only "not sent" placeholders until messaging lands). Same static RAM as 0.0.10's three threads of eight. `svc_messages_clear`. |
+| `svc_siblings` | The siblings list: the box's JSON parsed and cleaned (`sib_logic.c`, host-tested), slots bound by device id (`sib_merge`), a hand-over from the main task to the UI task with no lock (a sequence count), an NVS blob cache (`esp/sib_port_nvs.c`, namespace `jpanel`, key `siblings`) so names show before the box answers after a reboot. |
+| `main/sib_link.c` | The fetch, on the main task like every box request. |
+| `shell` | The long press (`sh_long_press`), the menu's state and two-tap confirm (`sh_menu_*`) and the button routing over it (`SH_ACT_CLOSE_MENU`) in `shell_core.c`, host-tested; the card is `ui_menu`. A notice waits while the menu is up; an alarm closes it. |
+| `app_minecraft` | The menu, Dave (a `convo` instance on thread `dave`), Compass. |
+| `ui_kit` | `ui_menu`, the compass glyph, four people's colours (`UI_ACCENT_PERSON_A`–`D`) in place of two named ones. |
+
+### Debugging it
+
+- The snapshot's `shell` gains `menu` (`closed` / `open` / `armed`), `menus` and `clears`; an open
+  conversation's `app` section says `thread` and `new_chat_next`; Minecraft's says `view`
+  (`menu` / `dave` / `compass`); `messages` lists four threads with `keeps`; and a new
+  **`siblings`** section lists the slots — `device_id`, `name`, `accent`, `thread` — with
+  `source` (`none`, `cache`, `box`), `fetched`, `unreadable`, `failed` and `last_status`.
+- **`inject` takes `hold`**: `{"cmd":"inject","event":"hold","x":240,"y":240,"value":800}` is a
+  finger held still at x,y for `value` ms (default 800) — the long press that opens a
+  conversation's menu. Then `inject touch` on the card's buttons drives Clear chat, exactly as a
+  finger would. No `clear` command: the menu is reachable this way.
+- Telemetry's note gains `sib=<source>,box:N,bad:N,fails:N,last:<status>`.
+
+```sh
+scripts/debug-connect.sh panel-cmd c6 open --arg app=jerv
+scripts/debug-connect.sh panel-cmd c6 inject --arg event=hold --arg x=240 --arg y=240 --arg value=800
+scripts/debug-connect.sh panel-shot c6 menu.png                       # the card
+scripts/debug-connect.sh panel-cmd c6 snapshot                        # shell.menu, siblings
+```
+
+### From the first talks on 0.0.10
+
+- **The audio task's stack** is 4.25 KB (was 3.5): 0.0.10 reported `stack_free` 1,524 B after two
+  talks — 2,060 B used — and 2 KB of headroom wants ~4.1 KB. Cost: 768 B of internal RAM from
+  boot.
+- **Microphone gain defaults to 24 dB** (was 30): the two talks peaked at 24,816 and 28,889 of
+  32,767, 1–2 dB from clipping, and the box heard both. 6 dB down halves the peaks. A panel that
+  was given `set mic_gain` keeps its own value (NVS holds only what was set).
+- **`int_min` fell to 56.6 KB** after those talks (the estimate was 60–67). This image moves it by
+  about **−2.5 KB**: the stack (+768 B) and +1,716 B of static DIRAM (263,704 → 265,420 B,
+  measured from the two ELFs: the siblings slots and their hand-over, the fetch's 768 B body, the
+  menu; the messages are the same bytes, moved from `.data` to `.bss` with the sample text gone).
+  So expect `int_min` ≈ 54 KB after a talk. No reply buffer grew, so no lever from 0.0.10's list
+  is pulled; the first one to pull if `int_min` reads under ~45 KB is (2), an 8 KB talk ring.
+
+### What to check on the glass
+
+1. Hold KEY and ask Jerv something only the real one can answer ("what's on my calendar
+   today?"). The answer is spoken in the PWA's voice, and the PWA's Jerv list has a "Desk panel"
+   chat with the exchange.
+2. Ask something long ("research …"): after up to ~100 s the panel says the answer will be in the
+   app, and it arrives there.
+3. Long-press in Jerv's thread: the card. Clear chat, tap again: the thread empties. The next
+   question starts a new "Desk panel" chat in the PWA; the old one is still there.
+4. Minecraft → Dave: hold KEY and ask Dave something. Back, Compass: "Work in progress".
+   Back, back: home. Jerv's thread does not show Dave's exchange.
+5. Home: the bottom tiles show the twins' panels by the names in the PWA's Panels screen.
+6. After a talk, the snapshot's `audio.stack_free` (want ≥ 2 KB), `mic_peak_l`/`r` (want well under
+   32,767), and telemetry's `int_min`.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -780,9 +894,12 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **`GET {api}/endpoint/debug/next?board=c6-amoled-216`** and **`POST
   {api}/endpoint/debug/{id}`** (since 0.0.9) are the debug relay's pickup and answer ("What
   0.0.9 adds"). The only routes that are the C6's own; the S3 panels never call them.
-- **`POST {api}/endpoint/converse?persona=jerv&voice=…`** (since 0.0.10) is a talk to Jerv: the
-  S3s' conversation route with the persona and the reply frame added ("What 0.0.10 adds", The
-  protocol). Uploaded chunked, as it is recorded.
+- **`POST {api}/endpoint/converse?persona=jerv|dave&voice=…[&new_thread=true]`** (since 0.0.10;
+  Dave and `new_thread` since 0.0.11) is a talk to Jerv or Dave: the S3s' conversation route with
+  the persona and the reply frame added ("What 0.0.10 adds", The protocol; "What 0.0.11 adds").
+  Uploaded chunked, as it is recorded; the answer is waited for up to 130 s.
+- **`GET {api}/endpoint/siblings`** (since 0.0.11) is the twins' panels' ids and names, for the
+  two message threads ("What 0.0.11 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -891,15 +1008,18 @@ components/
   svc_*/            one per chip or box route; in-memory implementations until each driver lands.
                     svc_power, svc_display, svc_buttons, svc_touch, svc_settings (NVS), svc_rtc
                     (PCF85063 + the box's clock), svc_net, svc_box and svc_audio (ES8311 + ES7210,
-                    the talk to Jerv) are real: the device builds their esp/ file and pure logic,
-                    the sim and host the top-level files
+                    the talk to Jerv and Dave) and svc_siblings (the twins' panels' names, NVS-cached)
+                    are real: the device builds their esp/ file and pure logic, the sim and host
+                    the top-level files
+  convo/            the one conversation view every agent's app instantiates (Jerv, Dave)
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
   app_jerv/ app_thread/ app_clock/ app_settings/ app_minecraft/
                     each a descriptor + a pure *_model.c + a view; app_thread is one component
-                    instantiated per person by config
+                    instantiated per sibling panel by slot; app_jerv and app_minecraft (Dave)
+                    are each an instance of convo
 host/               the pure modules' suite
 sim/                every component against LVGL on the host, headless to PNG
-tools/check_app_deps.py   an app may require app_api, ui_kit and LVGL and nothing else
+tools/check_app_deps.py   an app may require app_api, ui_kit, convo and LVGL and nothing else
 ```
 
 **How it is in the image.** LVGL `==9.2.2` (the sim's pin) is a managed component declared in
@@ -948,8 +1068,11 @@ Fonts are LVGL's Montserrat plus the generated clock digits and punctuation fall
 `components/ui_kit/fonts/` ("What 0.0.8 adds", Fonts). States the mock has no board for:
 `settings-end`, `settings-armed` (the first Disconnect tap), `settings-usb`, `clock-badge`,
 `clock-alarms-end`, `rec-anywhere` (KEY from Settings), `jerv-after-key` (the hold waiting for
-its transcript), `jerv-reply` and `jerv-reply-text` (the box's answer, spoken and text-only) and
-`boot-long` (BOOT held in Settings). Each render also
+its transcript), `jerv-reply` and `jerv-reply-text` (the box's answer, spoken and text-only),
+`boot-long` (BOOT held in Settings), and from 0.0.11 `home-unnamed` / `thread-unnamed` (before the
+box has sent the panels' names), `dave`, `rec-dave`, `dave-reply`, `compass`, `chat-menu`,
+`chat-menu-armed`, `chat-cleared` and `dave-menu`. The sim feeds the panels' names through the
+box's own JSON and the panel's own path (`svc_siblings_offer`), with placeholder names. Each render also
 prints LVGL's pool peak (64-bit pointers; the device's pool is 64 KB with 32-bit ones).
 
 ### Debugging a panel with no cable
@@ -961,7 +1084,8 @@ page, overlay, key owner, queue depth and drops, the last events, widget and tim
 the open app's own `describe`), each service, and `system` (heap, low-water mark, largest block,
 reset reason, crash breadcrumb, coredump present, watched tasks' stack high-water marks). The
 **log ring** keeps the last ~3 KB of `ESP_LOGx` lines. **Commands** are a whitelist: `help`,
-`snapshot`, `logs`, `log_level`, `open`, `home`, `set`, `inject` (KEY/BOOT/BOOT held/PWR, touch, swipe),
+`snapshot`, `logs`, `log_level`, `open`, `home`, `set`, `inject` (KEY/BOOT/BOOT held/PWR, touch, swipe,
+and since 0.0.11 `hold` — a finger held still, the long press),
 `ota_check`, `report_now`, `screenshot`, and `reboot` — the only destructive one, refused
 without `"confirm": true`. **Secrets cannot leave:** the writer every byte goes through refuses
 the provisioning keys (`pass`, `token`, `ca`, any `*_key`/`*_token`…) and scrubs the registered
@@ -995,7 +1119,9 @@ LVGL's pool peaks at 39 KB in the sim's busiest state (Settings under the talk r
 0.0.10: app 1.91 MB (+78 KB, esp_codec_dev and the I2S driver most of it; 55% of the slot
 free), 264 KB of DIRAM static (+9.4 KB); at runtime the audio task (3.5 KB stack) and ~9 KB of
 I2S DMA and codec objects from boot, and the 16 KB talk ring per exchange ("What 0.0.10 adds",
-The memory budget).
+The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB of DIRAM static
+(+1.7 KB), the audio stack
++768 B ("What 0.0.11 adds", From the first talks).
 
 ## Recovery
 

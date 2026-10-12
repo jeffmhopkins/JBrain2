@@ -6,13 +6,15 @@ CC ?= cc
 # language the device never compiles (firmware/host/Makefile has the same rule and the reason).
 C := ../components
 INC := $(addprefix -I,$(wildcard $(C)/*/include)) -I$(C)/app_clock -I$(C)/app_settings \
-       -I$(C)/app_thread -I$(C)/app_jerv
+       -I$(C)/app_thread
 CFLAGS ?= -std=gnu11 -O1 -g -Wall -Wextra -Werror $(INC)
 
 SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/shell/shell_core.c $(C)/shell/shell_evq.c \
       $(C)/app_clock/clock_model.c $(C)/app_settings/settings_model.c \
-      $(C)/app_thread/thread_model.c $(C)/app_jerv/jerv_model.c $(C)/ui_kit/ui_pin.c \
+      $(C)/app_thread/thread_model.c $(C)/convo/convo_model.c $(C)/ui_kit/ui_pin.c \
+      $(C)/svc_siblings/sib_logic.c $(C)/svc_siblings/svc_siblings.c \
+      $(C)/svc_siblings/sib_port_fake.c \
       $(C)/svc_notice/notice_policy.c $(C)/svc_notice/svc_notice_fake.c \
       $(C)/svc_audio/talk_policy.c $(C)/svc_audio/talk_core.c \
       $(C)/svc_audio/svc_audio_talk.c $(C)/svc_audio/svc_audio_fake.c \
