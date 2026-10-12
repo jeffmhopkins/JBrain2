@@ -1,6 +1,6 @@
 # Security review fixes — third-party access hardening
 
-> **Status:** Scheduled · **Last verified:** 2026-10-12 · **Waves:** S1◻️ S2◻️ S3◻️ S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2◻️ S3◻️ S4◻️ S5◻️
 
 A whole-codebase security review (2026-10-12; six independent reviewers, the serious
 findings re-verified by hand) looked for programming errors and structural mistakes that
@@ -83,7 +83,7 @@ Each wave is one PR off the session branch, built task-by-task with an independe
 reviewer per task and a wave-level red-team review (PROCESS.md). Every task: failing test
 first, then the fix, then the package's full gate set (`CLAUDE.md` #11).
 
-### S1 — close the critical web holes ◻️
+### S1 — close the critical web holes ✅
 
 **S1.1 Preview proxy path containment (F1).**
 - `api/jcode_preview.py` (HTTP and WS) refuses a path any of whose `/`-segments, after
@@ -147,8 +147,13 @@ first, then the fix, then the package's full gate set (`CLAUDE.md` #11).
   re-issued as `__Host-jbrain_session` and the legacy cookie deleted; once the `__Host-`
   cookie is present the legacy name is ignored. No device has to log in again. *(rev 2)* The
   migration runs only for an `owner`/`device_key` principal and only when exactly one legacy
-  value is in the raw Cookie header (a tossed parent-domain cookie can't be promoted); the
-  legacy name has a sunset setting; one helper sets *and deletes* both names, with
+  value is in the raw Cookie header (a tossed parent-domain cookie can't be promoted). *(As
+  built)* only an `owner` session is promoted — a member session is mintable by its holder,
+  and the dashboard mints a `__Host-` cookie on every launch anyway; the legacy name has no
+  sunset, because the Android owner app's OkHttp notification relay never sees the
+  migration response; and the guard passes `/__jcode_preview/*` through, since those routes
+  read no cookie and a planted one must not 403 every preview. One helper sets *and deletes*
+  both names, with
   `Secure; Path=/` on the `__Host-` deletion (browsers ignore it otherwise). When
   `secure_cookies` is off (dev/tests) the legacy name stays. Every cookie reader
   (`deps.py`, `live.py`, `jcode_terminal.py`, `jlaunch_terminal.py`, Android's
@@ -373,6 +378,14 @@ relies on it for owner "all devices" fences).
 - **`update-inner.sh` self-update lag.** The updater runs its pre-reset copy, so new mint steps
   take two updates. S2.2 avoids depending on it; fixing the updater itself is its own change.
 - **Stream fetches** (yt-dlp/ffmpeg) keep check-once SSRF guarding (S2.3).
+- **Browsers without fetch metadata** (Safari before 16.4) send neither `Sec-Fetch-Site` nor
+  `Origin` on a top-level GET, so a cross-site navigation from such a browser can still reach
+  a side-effecting GET (`/settings/gmail/connect`, `/brain/tts`) with the Lax cookie (S1.3).
+- **Cookie bomb.** A preview can set enough large cookies on the parent domain to overflow the
+  owner's Cookie header until they are cleared; only a separate registrable domain for
+  previews prevents it (D2, not planned).
+- **A lone planted legacy cookie** on a browser with no session of its own is believed (as
+  its own kind, never promoted) until the owner signs in.
 
 ## Provenance
 

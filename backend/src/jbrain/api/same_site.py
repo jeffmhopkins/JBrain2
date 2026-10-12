@@ -104,12 +104,20 @@ def refusal_reason(headers: Headers, method: str | None, path: str) -> str | Non
     return None
 
 
+PREVIEW_PREFIX = "/__jcode_preview/"
+
+
 class SameSiteGuard:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+        # The jcode preview proxy reads no cookie and strips it before the sandbox; a cookie
+        # planted on the parent domain by one preview must not 403 every preview load.
+        if scope["path"].startswith(PREVIEW_PREFIX):
             await self.app(scope, receive, send)
             return
         settings = cast(Settings, scope["app"].state.settings)

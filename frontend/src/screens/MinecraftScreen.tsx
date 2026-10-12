@@ -49,9 +49,9 @@ import {
 } from "../minecraft";
 import type { MapIntent } from "../minecraftMapNav";
 import { slotName } from "../minecraftWorlds";
+import { safeHref } from "../safeHref";
 import { useForeground } from "../visibility";
 import { DaveSection } from "./MinecraftDave";
-import { safeHref } from "../safeHref";
 import { MapEntry, MapLayer } from "./MinecraftMap";
 import { AllowlistSection, ServerSettingsSection } from "./MinecraftServerSettings";
 import { WorldModals } from "./MinecraftWorldSheets";

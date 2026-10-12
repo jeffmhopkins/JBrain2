@@ -5,18 +5,19 @@ prefix makes the browser refuse it unless it is Secure, Path=/ and host-only, so
 a sibling subdomain (a jcode preview at `<slug>-preview.<host>`) can neither set nor
 shadow it with a parent-domain `jbrain_session` of its own (cookie tossing).
 
-Cookies minted before the rename still carry the legacy name and keep working: an owner or
-member request that authenticates by the
-legacy cookie alone is marked here, and `SameSiteGuard` re-issues the same token under the
-`__Host-` name and deletes the legacy one on the way out, so no device signs in again.
+Cookies minted before the rename still carry the legacy name and keep working: an owner
+request that authenticates by the legacy cookie alone is marked here, and `SameSiteGuard`
+re-issues the same token under the `__Host-` name and deletes the legacy one on the way out,
+so no device signs in again.
 
 The legacy name is exactly what a sibling subdomain CAN set, so it is read defensively:
 - once the `__Host-` cookie is present the legacy name is never read;
 - two legacy values in one Cookie header mean one was tossed onto the parent domain (a
   host-only delete cannot remove that one), so neither is trusted;
-- only an owner or member session is promoted to `__Host-`. Share and intake sessions are
-  what an attacker can mint for themselves, so promoting one would pin the victim's browser
-  to the attacker's session (fixation); they keep the legacy name until they lapse.
+- only an owner session is promoted to `__Host-`. Share, intake and member sessions are
+  what their holder can mint for themselves, so promoting one would pin the victim's browser
+  to the planter's session (fixation); they keep the legacy name until they lapse, and the
+  member dashboard mints a `__Host-` cookie on every launch anyway.
 """
 
 from dataclasses import dataclass
@@ -35,7 +36,7 @@ _HOST_PREFIX = "__Host-"
 # Both migratable kinds were first issued for a year (api/auth.py, api/session_bridge.py).
 _YEAR = 60 * 60 * 24 * 365
 _MIGRATION_KEY = "session_cookie_migration"
-_MIGRATABLE: dict[str, SameSite] = {"owner": "lax", "device_key": "strict"}
+_MIGRATABLE: dict[str, SameSite] = {"owner": "lax"}
 
 
 @dataclass(frozen=True)
@@ -116,7 +117,7 @@ def delete_session_cookies(response: Response, settings: Settings) -> None:
 def mark_for_migration(
     conn: HTTPConnection, settings: Settings, token: str, principal: PrincipalInfo
 ) -> None:
-    """Record that this request authenticated an owner or member by the legacy cookie
+    """Record that this request authenticated the owner by the legacy cookie
     alone, so the response re-issues it under the `__Host-` name. `session_token` has
     already refused an ambiguous (duplicated) legacy cookie, so `token` is the only one."""
     samesite = _MIGRATABLE.get(principal.kind)

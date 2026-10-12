@@ -353,14 +353,25 @@ def test_legacy_owner_cookie_migrates_silently(
     assert "max-age=0" in deleted.lower()
 
 
-def test_legacy_member_cookie_migrates_as_strict(
+def test_legacy_member_cookie_keeps_working_but_is_not_promoted(
     secure_client: TestClient, repo: FakeAuthRepo
 ) -> None:
+    # A device key's holder can mint their own member session and plant it from a preview,
+    # so it is never promoted; the dashboard mints a `__Host-` cookie on every launch anyway.
     token = _device_token(repo)
     resp = secure_client.get("/api/auth/me", headers=_cookie(token))
     assert resp.json()["kind"] == "device_key"
-    reissued = next(c for c in _set_cookies(resp) if c.startswith(f"{_HOST}="))
-    assert "samesite=strict" in reissued.lower()
+    assert _set_cookies(resp) == []
+
+
+def test_preview_traffic_is_not_judged_by_a_planted_session_cookie(
+    secure_client: TestClient,
+) -> None:
+    # The preview routes read no cookie and strip it; a parent-domain cookie planted by one
+    # preview must not 403 every preview load the PWA makes (a same-site navigation).
+    headers = {**_cookie("planted"), "sec-fetch-site": "same-site"}
+    resp = secure_client.get("/__jcode_preview/0123456789abcdef/index.html", headers=headers)
+    assert resp.status_code != 403
 
 
 def test_failed_auth_does_not_migrate(secure_client: TestClient) -> None:
