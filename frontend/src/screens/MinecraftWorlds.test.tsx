@@ -1131,6 +1131,22 @@ describe("Minecraft worlds and backups", () => {
     expect(off).not.toHaveTextContent("pending");
   });
 
+  it("the switch shows the new value the moment the flip lands, even if the re-read fails", async () => {
+    transportWorld("slot2", true, "now");
+    await openWorld(/^Castle Hill/);
+    // After the PUT, the worlds list can't be read: the PUT's own answer has to carry it.
+    const write = world.write;
+    world.write = (method, path, body) => {
+      const res = write?.(method, path, body);
+      world.read = (p) =>
+        p === "/api/minecraft/worlds" ? json({ detail: "sidecar unreachable" }, 503) : undefined;
+      return res;
+    };
+    fireEvent.click(tpSwitch("Castle Hill"));
+    expect(await screen.findByText("Applied live — teleport off")).toBeInTheDocument();
+    expect(tpSwitch("Castle Hill")).toHaveAttribute("aria-checked", "false");
+  });
+
   it("turned off on a world that isn't loaded, it's pending until that world loads", async () => {
     transportWorld("slot4", true, "next load");
     await openWorld(/^Skyblock run/);

@@ -492,7 +492,13 @@ export function useWorlds({
       const t = slotOf(slot);
       if (!t) return null;
       try {
-        const live = (await api.minecraftSetTransport(slot, on)).applies === "now";
+        const { applies, ...rec } = await api.minecraftSetTransport(slot, on);
+        const live = applies === "now";
+        // The route answers with the slot as written: show it at once, so the switch never
+        // snaps back to the old value while the list is re-read (or if that read fails).
+        setWorlds((w) =>
+          w ? { ...w, slots: w.slots.map((x) => (x.id === slot ? { ...x, ...rec } : x)) } : w,
+        );
         setNextLoad((p) => withPend(p, slot, "transport", !live));
         toast(transportSavedToast(on, t, live));
         return null;
