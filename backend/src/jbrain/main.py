@@ -87,6 +87,7 @@ from jbrain.api import (
     chat_attachments,
     debug,
     debug_minecraft,
+    debug_panel,
     debug_tokens,
     devices,
     external_llm,
@@ -116,6 +117,7 @@ from jbrain.api import (
     ops,
     owntracks,
     pairing,
+    panel_debug,
     plans,
     proposals,
     research_library,
@@ -1829,8 +1831,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.debug_access_enabled:
         app.include_router(debug.router, prefix="/api")
         app.include_router(debug_minecraft.router, prefix="/api")
+        app.include_router(debug_panel.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
+    # The panel's half of the debug relay. Mounted with or without debug access: with it
+    # off nothing can queue a request, so a pickup is always an empty 204.
+    app.include_router(panel_debug.router, prefix="/api")
     # The owner's Minecraft screen (MINECRAFT_BEDROCK_PLAN §M1). Owner-gated; a box
     # whose sidecar is stopped or unconfigured answers with that state, not a 500.
     app.include_router(minecraft_api.router, prefix="/api")
