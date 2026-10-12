@@ -15,9 +15,10 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from jbrain.agent import chat_shares
 from jbrain.agent.agents import DEFAULT_AGENT, OWNER_AGENTS, is_owner_agent
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, EngineSessionRescope
-from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.agent.transcript_store import AgentTranscript, TurnRecord
 from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 
@@ -73,6 +74,8 @@ class SessionOut(BaseModel):
     # This chat's plan status (not_approved | approved | in_work), for the Chats-card
     # planning badge; null when the chat has no plan (JERV_PLANNING_TOOL_PLAN.md).
     plan_status: str | None = None
+    # A live public share link points at this chat (the Chats row's link glyph).
+    shared: bool = False
 
 
 def session_out(info: AgentSessionInfo) -> SessionOut:
@@ -94,6 +97,7 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
         context_tokens=info.context_tokens,
         context_window=info.context_window,
         plan_status=info.plan_status,
+        shared=info.shared,
     )
 
 
@@ -250,22 +254,88 @@ async def session_transcript(
 ) -> list[TurnOut]:
     """Replay a session's stored conversation so reopening it shows the same chat."""
     turns = await get_agent_transcript(request).load(ctx_for(principal), session_id)
-    return [
-        TurnOut(
-            role=t.role,
-            content=t.content,
-            tools=t.tools,
-            reasoning=t.reasoning,
-            elapsed_ms=t.elapsed_ms,
-            attachments=[
-                TurnAttachmentOut(
-                    id=a.id,
-                    filename=a.filename,
-                    media_type=a.media_type,
-                    size_bytes=a.size_bytes,
-                )
-                for a in t.attachments
-            ],
-        )
-        for t in turns
-    ]
+    return [turn_out(t) for t in turns]
+
+
+def turn_out(t: TurnRecord) -> TurnOut:
+    """One stored turn in the wire shape the PWA replays — shared with the public chat share,
+    so a shared chat renders from exactly what the owner's reopen does."""
+    return TurnOut(
+        role=t.role,
+        content=t.content,
+        tools=t.tools,
+        reasoning=t.reasoning,
+        elapsed_ms=t.elapsed_ms,
+        attachments=[
+            TurnAttachmentOut(
+                id=a.id,
+                filename=a.filename,
+                media_type=a.media_type,
+                size_bytes=a.size_bytes,
+            )
+            for a in t.attachments
+        ],
+    )
+
+
+# --- share links -----------------------------------------------------------------------
+# Owner mint / list / revoke for public chat share links (migration 0238). The public read
+# side is a SEPARATE, unauthenticated router (api/chat_share.py).
+
+
+class ChatShareOut(BaseModel):
+    """A chat's live share link: usage only, never the secret."""
+
+    id: str
+    created_at: datetime
+    last_viewed_at: datetime | None
+    view_count: int
+
+
+class MintedChatShareOut(ChatShareOut):
+    # The bearer secret — shown EXACTLY once; the client builds `${origin}/chat/s/${token}`.
+    token: str
+
+
+def _share_out(link: chat_shares.ChatShareLink) -> ChatShareOut:
+    return ChatShareOut(
+        id=link.id,
+        created_at=link.created_at,
+        last_viewed_at=link.last_viewed_at,
+        view_count=link.view_count,
+    )
+
+
+@router.post("/{session_id}/shares", status_code=201)
+async def mint_chat_share(
+    request: Request, principal: PrincipalDep, session_id: str
+) -> MintedChatShareOut:
+    """Mint a public read link to this chat. 404 when the chat doesn't exist."""
+    minted = await chat_shares.mint_share(
+        request.app.state.session_maker, ctx_for(principal), session_id
+    )
+    if minted is None:
+        raise HTTPException(status_code=404, detail="no such session")
+    token, link = minted
+    return MintedChatShareOut(**_share_out(link).model_dump(), token=token)
+
+
+@router.get("/{session_id}/shares")
+async def list_chat_shares(
+    request: Request, principal: PrincipalDep, session_id: str
+) -> list[ChatShareOut]:
+    """This chat's live share links, newest first."""
+    links = await chat_shares.list_shares(
+        request.app.state.session_maker, ctx_for(principal), session_id
+    )
+    return [_share_out(link) for link in links]
+
+
+@router.delete("/shares/{share_id}", status_code=204)
+async def revoke_chat_share(request: Request, principal: PrincipalDep, share_id: str) -> None:
+    """Revoke a chat share link; it stops working at once. 404 on an unknown or already
+    revoked id."""
+    if not await chat_shares.revoke_share(
+        request.app.state.session_maker, ctx_for(principal), share_id
+    ):
+        raise HTTPException(status_code=404, detail="no such share link")
