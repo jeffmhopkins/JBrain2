@@ -215,7 +215,15 @@ const SHARE_TTL_OPTIONS: { hours: number; label: string }[] = [
 // minting UX: create a single-use, time-boxed link, copy the secret once, and see / revoke
 // the live links. "Single-use" = the link binds to the FIRST browser that opens it; the
 // list flags each as opened or still unused so a stale link is easy to spot and revoke.
-function JcodeShareManager({ sid, onClose }: { sid: string; onClose: () => void }) {
+function JcodeShareManager({
+  sid,
+  onClose,
+  onRevoked,
+}: {
+  sid: string;
+  onClose: () => void;
+  onRevoked?: () => void;
+}) {
   const [shares, setShares] = useState<JcodeShare[] | null>(null);
   const [label, setLabel] = useState("");
   const [ttl, setTtl] = useState(24);
@@ -253,6 +261,9 @@ function JcodeShareManager({ sid, onClose }: { sid: string; onClose: () => void 
   async function revoke(id: string) {
     try {
       await api.jcodeRevokeShare(sid, id);
+      // Revoking rotates the preview's address server-side, so the one this screen holds
+      // is dead now; the parent drops it and re-reads the new one.
+      onRevoked?.();
     } finally {
       reload();
     }
@@ -822,7 +833,11 @@ export function JcodeSessionScreen({
       </div>
 
       {shareOpen && !shared && (
-        <JcodeShareManager sid={session.id} onClose={() => setShareOpen(false)} />
+        <JcodeShareManager
+          sid={session.id}
+          onClose={() => setShareOpen(false)}
+          onRevoked={() => setPreview(null)}
+        />
       )}
     </section>
   );

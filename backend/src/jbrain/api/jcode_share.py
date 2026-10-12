@@ -116,8 +116,8 @@ async def revoke_share(
     """Revoke a share link (owner only). 404 on an unknown / already-revoked / wrong-session id.
 
     The share's open sockets (its terminal) close now, and the session's preview slug is
-    rotated so a preview URL the recipient kept stops resolving; the owner's preview pane
-    shows the new URL the next time it reads the preview status (reopening the session).
+    rotated so a preview URL the recipient kept stops resolving; the owner's PWA re-reads
+    the preview status after a revoke, so its own pane moves to the new URL.
     The session's processes are left running: owner and recipient type into one
     reattached shell, so the recipient's can't be told from the owner's (security plan
     S3.1)."""
