@@ -211,7 +211,7 @@ export class Player {
   }
 }
 
-const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [] };
+const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [], leave: [] };
 const intervals = [];
 let queued = [];
 // runTimeout's clock: nothing due runs until a test advances it (sim.advance).
@@ -227,6 +227,7 @@ export const world = {
   afterEvents: {
     entityDie: { subscribe: (fn) => subs.die.push(fn) },
     playerSpawn: { subscribe: (fn) => subs.spawn.push(fn) },
+    playerLeave: { subscribe: (fn) => subs.leave.push(fn) },
     playerInteractWithBlock: { subscribe: (fn) => subs.interact.push(fn) },
     playerBreakBlock: { subscribe: (fn) => subs.break.push(fn) },
     // The No-Spawn Beacon's (beacon.test.mjs drives it with its own stand-in); its
@@ -295,6 +296,12 @@ export const sim = {
       for (const t of due) t.fn();
       sim.flush();
     }
+  },
+  // As the game: the entity goes invalid, then the after-event names who left.
+  leave(player) {
+    player.isValid = false;
+    players = players.filter((p) => p !== player);
+    for (const fn of subs.leave) fn({ playerId: player.id, playerName: player.name });
   },
   spawn(player, initialSpawn) {
     for (const fn of subs.spawn) fn({ player, initialSpawn });

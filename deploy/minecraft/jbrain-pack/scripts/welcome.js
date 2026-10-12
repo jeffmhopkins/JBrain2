@@ -48,18 +48,38 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
 
   // A one-off beat (a death, a planted gate) that comes while Dave is mid-speech waits for
   // him to finish rather than cutting in (#1683); the beats a look re-checks each second
-  // just stay unheard until then.
+  // just stay unheard until then. Each takes the player it plays to, so one whose player
+  // left first is kept (in memory) for their next join instead (#1698).
   const waiting = new Map();
+  const unheard = new Map();
   const whenQuiet = (player, beat) => {
-    if (!busy(talking, player)) return beat();
-    waiting.set(player.id, [...(waiting.get(player.id) ?? []), { player, beat }]);
+    if (!busy(talking, player)) return beat(player);
+    waiting.set(player.id, [...(waiting.get(player.id) ?? []), beat]);
   };
+  const left = (id) => {
+    welcoming.delete(id);
+    talking.delete(id);
+    const queued = [...(unheard.get(id) ?? []), ...(waiting.get(id) ?? [])];
+    waiting.delete(id);
+    if (queued.length) unheard.set(id, queued);
+  };
+  // Only the telling that holds the floor hands it on: a left player's old timeline
+  // finishing late never drains the queue of the entity that rejoined.
   const quiet = (player) => {
-    release(talking, player);
+    if (talking.get(player.id) !== player) return;
+    if (!alive(player)) return left(player.id);
+    talking.delete(player.id);
     const next = waiting.get(player.id) ?? [];
     waiting.delete(player.id);
-    for (const w of next) if (alive(w.player)) whenQuiet(w.player, w.beat);
+    for (const beat of next) whenQuiet(player, beat);
   };
+  // On a join, after anything Dave must say first (the welcome holds the floor).
+  const rejoined = (player) => {
+    const queued = unheard.get(player.id) ?? [];
+    unheard.delete(player.id);
+    for (const beat of queued) whenQuiet(player, beat);
+  };
+  world.afterEvents.playerLeave.subscribe((ev) => left(ev.playerId));
 
   const beatsOf = (player) => parseBeats(world.getDynamicProperty(beatsKey(player.id)));
   const has = (player, beat) => beatsOf(player).includes(beat);
@@ -156,7 +176,7 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
   // A death mid-welcome waits for the welcome, which hands over the Tricorder. Dave is
   // speaking while the lines play, so nothing else cuts in either.
   const firstDeath = (player, savedByPack) =>
-    whenQuiet(player, () => {
+    whenQuiet(player, (player) => {
       if (has(player, BEAT.firstDeath)) return;
       record(player, BEAT.firstDeath);
       talking.set(player.id, player);
@@ -165,12 +185,15 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
     });
 
   // The first gate a player plants (§M12's beat, owner 2026-10-12), just after the
-  // planted line, and only through their own Tricorder.
+  // planted line, and only through their own Tricorder. Dave holds the floor while the
+  // line waits its 1.5 s, so a hello or a queued beat doesn't cut in (#1698).
   const firstWormhole = (player) =>
-    whenQuiet(player, () => {
+    whenQuiet(player, (player) => {
       if (has(player, BEAT.firstWormhole) || tricorderOn(player) !== "own") return;
       record(player, BEAT.firstWormhole);
-      play(player, [{ at: 30, step: "dave", text: LINES.firstWormhole }], (s) => dave(player, s.text), () => {});
+      talking.set(player.id, player);
+      const steps = [{ at: 30, step: "dave", text: LINES.firstWormhole }];
+      play(player, steps, (s) => dave(player, s.text), () => quiet(player));
     });
 
   // The first time a player holds 8 Power Packs (§M15's beat, owner 2026-10-12), on any
@@ -205,6 +228,9 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
     for (const line of lines) dave(player, line);
   };
 
+  // How many beats wait on Dave for a player still here: for the sim's tests.
+  const waitingFor = (id) => waiting.get(id)?.length ?? 0;
+
   // `/dave hello`: the welcome's Dave lines again, no darkness and no Tricorder. Asked
   // again while Dave is still speaking, it waits for the first telling to end.
   const hello = (player) => {
@@ -226,5 +252,6 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
 
   return {
     needsWelcome, welcome, inWelcome, firstDeath, firstWormhole, firstReplicator, onUnlocks, hello,
+    rejoined, waitingFor,
   };
 };

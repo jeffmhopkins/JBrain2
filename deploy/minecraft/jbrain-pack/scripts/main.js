@@ -181,6 +181,7 @@ const onWaking = (player, initialSpawn) => {
   // The welcome hands over the Tricorder itself, at its 5 s mark.
   if (initialSpawn && story.needsWelcome(player)) {
     story.welcome(player);
+    story.rejoined(player);
     return;
   }
   if (!story.inWelcome(player)) {
@@ -192,7 +193,8 @@ const onWaking = (player, initialSpawn) => {
       dave(player, LINES.rebeamed);
     }
   }
-  if (!initialSpawn) story.firstDeath(player, savedByPack);
+  if (initialSpawn) story.rejoined(player);
+  else story.firstDeath(player, savedByPack);
 };
 
 // --- the item guide's unlocks (§M19) ----------------------------------------------------
