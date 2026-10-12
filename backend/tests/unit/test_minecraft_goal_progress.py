@@ -13,6 +13,7 @@ marked. The writes themselves run against real Postgres in test_minecraft_dave_p
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -103,10 +104,13 @@ def sidecar(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         " z=0: minecraft:iron_block=5; shulker boxes=0",
         "age_s": 30,
         "down": set(),
+        "raise": {},
     }
 
     async def call(_cfg: Any, method: str, path: str, **kw: Any) -> dict[str, Any]:
         what = kw["json"]["command"] if path == "/command" else path
+        if path in state["raise"]:
+            raise state["raise"][path]
         if path in state["down"]:
             raise HTTPException(status_code=503, detail="the server is stopped")
         state["sent"].append(what)
@@ -336,6 +340,16 @@ async def test_a_down_server_counts_nothing_and_refunds_the_scan(world, book, si
     sidecar["down"].add("/map/stock")
     out = await ask(book, {"goal": 1})
     assert "can't answer right now" in out and book.used(STEVE, 7) == 0
+
+
+async def test_a_count_cut_short_still_refunds_the_scan(world, book, sidecar) -> None:
+    """A cancelled turn, or any failure mid-count, gives the scan back (review of #1701):
+    the player never loses one of their two for a count that didn't finish."""
+    world["places"].append(_place("mine", 500, 0))
+    sidecar["raise"]["/map/stock"] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await ask(book, {"goal": 1})
+    assert book.used(STEVE, 7) == 0
 
 
 async def test_no_saved_places_says_so_and_counts_around_them(world, book, sidecar) -> None:

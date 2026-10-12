@@ -1942,9 +1942,17 @@ def build_minecraft_handlers(
         counted: list[tuple[str, int]] = []
         age: Any = None
         if centres:
-            got_chests = await chest_counts(centres, item)
+            # A count that doesn't finish (an error, a cancelled turn) gives the scan back,
+            # as `scans.deep_scan` does: a player never pays for nothing.
+            spent = paid is not None and paid[0] == "spent" and asker is not None
+            try:
+                got_chests = await chest_counts(centres, item)
+            except BaseException:
+                if spent and asker is not None:
+                    await book.refund(asker.world, asker.key, day)
+                raise
             if isinstance(got_chests, str):
-                if paid is not None and paid[0] == "spent" and asker is not None:
+                if spent and asker is not None:
                     await book.refund(asker.world, asker.key, day)
                 return got_chests
             counted, age = got_chests

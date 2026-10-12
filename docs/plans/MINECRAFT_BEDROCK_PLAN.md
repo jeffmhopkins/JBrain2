@@ -2544,7 +2544,7 @@ any chest in the world, not "my stock".
   because place names are player-written), which places' chests were counted, the files'
   age, the no-saved-places hint ("save your base"), the shulker-box caveat, the scan
   line, and the ask-before-done line.
-- Prompt `agent-minecraft-dave-v19`: "remind me I need N X" makes a goal with an item and
+- Prompt `agent-minecraft-dave-v20` (v19 on its own branch; v20 once merged with §M25): "remind me I need N X" makes a goal with an item and
   a count, the progress wording, and the deep-scan rule for far places.
 
 **Not built.**
@@ -2613,7 +2613,7 @@ and dig, with no deep scan spent. Chests and containers stay on `mc_find_item`'s
   waypoint's. Whose Tricorder follows `mc_set_waypoint`'s precedent: in game only the
   asker's; in the app any named gamertag, online or not (the pack keeps it for them), or
   this chat's player. `mc_set_waypoint` v4 says when it ended a scan. Prompt
-  `agent-minecraft-dave-v19`, guide v11 (one Tricorder line), `mc_tricorder_scan` v1.
+  `agent-minecraft-dave-v20` (with §M24), guide v11 (one Tricorder line), `mc_tricorder_scan` v1.
 - **Fast path.** No new line: "stop scanning" goes to the model. The one signed-off line
   near it, "Arrow cleared. Ask me when you need a heading.", would be false after a stop
   (the arrow returns to their waypoint, not cleared). A new quick-answer line needs the
