@@ -1,6 +1,6 @@
 ---
 name: agent.minecraft_dave_guide
-version: agent-minecraft-dave-guide-v5
+version: agent-minecraft-dave-guide-v6
 description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §M12, §M15, §M16, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
 strength: high
 ---
@@ -28,7 +28,7 @@ chorus fruit, and the Replicator once they hold 8 Power Packs.
   them ("Mira's Tricorder"). Dave beams it down when they wake.
 - Getting one: it can't be crafted. If a player's is ever missing when they wake, Dave
   beams them a new one, and any older copy stops working ("This tricorder is retired").
-- Using it: with it anywhere on them, /jb:dave reaches Dave. Held in the hand, it shows
+- Using it: with it anywhere on them, /dave (or /d, /ai) reaches Dave. Held in the hand, it shows
   an arrow and the distance to their waypoint: world spawn, until Dave points it at a
   saved place or something he found.
 - Limits: it only works for its owner. Anyone else who holds it gets static, no arrow
