@@ -1390,8 +1390,10 @@ amount and everything else. Every pack gets the same single line (an older wordi
 rewritten too), because Bedrock stacks only identical lore. A fresh craft lands apart
 from a lored stack, and Bedrock never merges two stacks already in separate slots, so the
 look folds a newly lored inventory pack into any lored stack with room (to 16); only what
-doesn't fit keeps its own slot, and nothing is lost (#1694). A pack in a chest gets it when
-it's next carried. Transport shipped later, below.
+doesn't fit keeps its own slot, and nothing is lost (#1694). The fold writes the source slot
+first and the top-ups after it; a write that throws (a player mid-leave) puts the source's
+unmoved packs back as they were, so a failure never makes a pack and the next look folds
+them again (#1698). A pack in a chest gets it when it's next carried. Transport shipped later, below.
 **Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
 `entityDie`, `spawnItem` keeping enchantments, names and durability, and what one
@@ -2317,7 +2319,9 @@ map link was turned off*.
   `/map/structures` and `/timeline` under it. The token picks the slot; the visitor never
   names one. Every route, tiles included, 404s once the slot holds another world: the
   token works outside the viewer, so an old link must never draw the new world (#1664).
-  Tiles cache the slot's checked folder for 5 s, one sidecar read per view's burst.
+  Tiles cache the slot's folder (or that it's empty) for 5 s whichever world it is, so a
+  view's burst, a stale link's included, costs one sidecar read (#1698). A slot record with
+  no folder is a broken sidecar: a 502, never cached, never called a gone world.
   Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`, `noindex`.
 - Storage and RLS (migration `0230_mc_share_links`): `app.mc_share_links` keeps only the
   token's SHA-256, the slot, its world folder at mint, and the player. A visitor reads under
@@ -2992,12 +2996,15 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   after the owner turns one on. The pearl and pack beats wait for their own Tricorder
   on them, like every other Dave line (a respawn always has it, or is re-beamed one): an
   unlock made without it leaves the beat unheard for a later look, never spent (#1684).
-- **Beats never cut into Dave's speech** (#1683): while the welcome, a `/dave hello` or
-  the first-death lines are playing, no other beat speaks. The ones a look re-checks
+- **Beats never cut into Dave's speech** (#1683): while the welcome, a `/dave hello`, the
+  first-death lines or the first-wormhole line (from the plant, through its 1.5 s wait)
+  are playing, no other beat speaks, and a `/dave hello` asked then is dropped. The ones a look re-checks
   (pearl, pack, Replicator) stay unheard until a look after he's done; a death or a
   planted gate waits and plays once he's done. So a death mid-welcome gets its lines
   after the welcome, with the Tricorder it handed over, and a pre-DW1 player carrying
-  packs hears their beats after it, not over the darkness.
+  packs hears their beats after it, not over the darkness. A player who leaves before a
+  queued beat plays keeps it (in the script's memory, so not across a server restart): it
+  plays once on their next join, after anything Dave says first (#1698).
 - **`/dave hello`** (also `/d`, `/ai`; exactly "hello", any case) replays the six lines at
   the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
   question reaches the backend. It still needs their own Tricorder. "hello there" is a

@@ -158,6 +158,26 @@ test("a gate planted mid-welcome: Dave's line waits for the welcome to end (#168
   assert.equal(dave().length, LINES.welcome("Mira", false).length + 1);
 });
 
+test("Dave's first-gate line holds the floor: a hello or a death inside it doesn't cut in (#1698)", () => {
+  const mira = crew("Mira", "-1");
+  sim.spawn(mira, true);
+  sim.advance(500);
+  mira.messages.length = 0;
+  const first = build();
+  mira.selectedSlotIndex = 1;
+  mira.inventory.setItem(1, new ItemStack("jbrain:wormhole_seed", 1));
+  plant(mira, first.ring[0]);
+  sim.advance(5); // inside the line's 30 ticks
+  sim.startup(); // registers /dave
+  sim.command("jb:dave").cb({ sourceEntity: mira }, "hello");
+  sim.flush();
+  sim.die(mira);
+  sim.spawn(mira, false);
+  sim.advance(200);
+  const dave = mira.messages.filter((m) => m.startsWith("§b[Dave]§r ")).map((m) => m.slice(11));
+  assert.deepEqual(dave, [LINES.firstWormhole, ...LINES.firstDeath]);
+});
+
 test("either axis, with or without corners, from a top or a side block", () => {
   const along = { axis: "z", x: 20, y: 70, z: 5 };
   const cells = build(along, { corners: true });

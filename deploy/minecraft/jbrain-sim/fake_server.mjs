@@ -79,6 +79,11 @@ class Container {
   constructor(size) {
     this.size = size;
     this.slots = new Array(size).fill(undefined);
+    this.failing = new Set();
+  }
+  // The next write to slot i throws, as Bedrock's can for a player mid-leave.
+  failNextWrite(i) {
+    this.failing.add(i);
   }
   get emptySlotsCount() {
     return this.slots.filter((s) => !s).length;
@@ -87,6 +92,7 @@ class Container {
     return this.slots[i]?.clone();
   }
   setItem(i, item) {
+    if (this.failing.delete(i)) throw new Error(`setItem(${i}) failed`);
     this.slots[i] = item && item.amount > 0 ? item.clone() : undefined;
   }
   // As Bedrock: tops up matching stacks first, then the first empty slot; the remainder
@@ -243,7 +249,7 @@ export class Player {
   }
 }
 
-const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [] };
+const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [], leave: [] };
 const intervals = [];
 let queued = [];
 // runTimeout's clock: nothing due runs until a test advances it (sim.advance).
@@ -259,6 +265,7 @@ export const world = {
   afterEvents: {
     entityDie: { subscribe: (fn) => subs.die.push(fn) },
     playerSpawn: { subscribe: (fn) => subs.spawn.push(fn) },
+    playerLeave: { subscribe: (fn) => subs.leave.push(fn) },
     playerInteractWithBlock: { subscribe: (fn) => subs.interact.push(fn) },
     playerBreakBlock: { subscribe: (fn) => subs.break.push(fn) },
     // The No-Spawn Beacon's (beacon.test.mjs drives it with its own stand-in); its
@@ -328,11 +335,15 @@ export const sim = {
       sim.flush();
     }
   },
-  // The player leaves; sim.join (or sim.player) brings someone back as a new entity.
+  // As the game: the entity goes invalid, then the after-event names who left.
   leave(player) {
+    player.isValid = false;
     players = players.filter((p) => p !== player);
+    for (const fn of subs.leave) fn({ playerId: player.id, playerName: player.name });
   },
+  // sim.join brings a player who left back, valid again.
   join(player) {
+    player.isValid = true;
     players.push(player);
   },
   spawn(player, initialSpawn) {
