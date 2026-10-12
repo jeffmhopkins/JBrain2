@@ -36,14 +36,16 @@ BOOT_ID = uuid.uuid4().hex
 # after that prefix, never searched for: the pack logs a player's raw `/jb:dave` text
 # inside its own line, so `Player connected: Me, xuid: <victim>` anywhere else in a line
 # would otherwise hand Me the victim's xuid, and with it their Dave (N3).
-_BDS = r"\[[^\[\]]* INFO\] "
+_BDS = r"(?:NO LOG FILE! - )?\[[^\[\]]* INFO\] "
 _CONNECTED = re.compile(_BDS + r"Player connected: ([^,]+), xuid: ?(\d*)")
 _DISCONNECTED = re.compile(_BDS + r"Player disconnected: ([^,]+), xuid")
 # Script output, `[… INFO] [Scripting] [jbrain] {"ev": "death", …}`: read as the pack's
 # and never as a BDS lifecycle line, whatever text it quotes. A gamertag can't hold
 # `[`, so no line BDS writes about a player carries the pack's `[jbrain] ` tag either.
 _SCRIPTING = re.compile(r"(?:\[[^\[\]]*\] )?\[Scripting\] ")
-_PACK_LINE = re.compile(r"\[jbrain\] (\{.*\})\s*$")
+# Anchored: the event's JSON must be the WHOLE pack line, so a `say` line that quotes
+# player-influenced text ending in a `[jbrain] {...}` can't pass as an event.
+_PACK_LINE = re.compile(r"(?:\[[^\[\]]*\] )?(?:\[Scripting\] )?\[jbrain\] (\{.*\})\s*$")
 # `wreck` is the spawn wreck reporting its build (plan §SW1): loaded, pod, ship, done.
 PACK_EVENTS = ("death", "respawn", "dave", "wreck")
 # A `/jb:dave` question as the pack cuts it (§M5); anything longer was not the pack's.
@@ -180,7 +182,7 @@ class Bds:
             self._seq += 1
             self._lines.append(Line(self._seq, time.time(), time.monotonic(), text))
             if _SCRIPTING.match(text) or "[jbrain] " in text:
-                if m := _PACK_LINE.search(text):
+                if m := _PACK_LINE.match(text):
                     self._pack_event(m.group(1))
             elif _STARTED.fullmatch(text):
                 self.state = "running"

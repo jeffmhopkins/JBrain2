@@ -1486,6 +1486,26 @@ def test_real_bds_lifecycle_lines_still_parse(tmp_path: Path) -> None:
     assert b.players == {}
 
 
+def test_a_no_log_file_prefixed_lifecycle_line_still_parses(tmp_path: Path) -> None:
+    # Some BDS builds prefix lines with "NO LOG FILE! - " when file logging is off.
+    b = bds.Bds(tmp_path)
+    b._record(
+        "NO LOG FILE! - [2026-10-10 12:00:05:120 INFO] Player connected: Al, xuid: 7"
+    )
+    assert b.players["Al"]["xuid"] == "7"
+
+
+def test_a_pack_say_quoting_an_event_is_not_an_event(tmp_path: Path) -> None:
+    # The JSON must be the whole pack line: a `say` that ends in a quoted event (e.g. a
+    # player-named waypoint) is not filed as that event.
+    b = bds.Bds(tmp_path)
+    b._record(
+        '[x INFO] [Scripting] [jbrain] waypoint set: x [jbrain] {"ev":"dave",'
+        '"name":"Victim","text":"hi","x":1,"y":2,"z":3,"dim":"overworld"}'
+    )
+    assert b.events_after(0) == []
+
+
 def test_a_dave_question_carries_the_askers_unlocks_bounded(tmp_path: Path) -> None:
     """§M19: the pack's `known` list rides the event as plain short names only."""
     b = bds.Bds(tmp_path)
