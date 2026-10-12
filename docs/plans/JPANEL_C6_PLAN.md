@@ -402,7 +402,9 @@ no request.
 **The panel** (`svc_post`; `svc_audio`'s `TK_KIND_POST` / `TK_KIND_LISTEN`): hers on the left with
 ▶ and her length, his on the right with Sent / Played; a tap streams it through the reply's ring
 and speaker start and marks it played (here, then on the box) only when it played to its end with
-its digest checked; KEY in her thread records up to 30 s to her, uploaded as it is recorded with the
+its digest checked — the stamp to the box waits in an NVS-kept list of up to eight, retried at 5 s,
+15 s, 60 s then every five minutes until the box answers 204 (a 404 drops it), so neither a reboot
+nor an outage brings the badge back; KEY in her thread records up to 30 s to her, uploaded as it is recorded with the
 digest after it. New: her tile's badge, the clock face's corner badge (never a pop-up), the thread
 live if open, one chime with the chime switch on and outside the night window, never over a hold,
 an answer, a play or an alarm. **No auto-play** — the owner's default: a message is heard when he

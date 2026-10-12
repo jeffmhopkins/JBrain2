@@ -42,6 +42,7 @@
 #include "svc_siblings_drv.h"
 #include "svc_convo.h"
 #include "svc_convo_drv.h"
+#include "post_port_fake.h"
 #include "svc_post_drv.h"
 #include "thread_model.h"
 #include "time_logic.h"
@@ -3616,6 +3617,7 @@ static void test_the_people_s_threads_end_to_end(void)
     sib_port_fake_wipe();
     svc_messages_fake_clear();
     svc_siblings_init();
+    post_port_fake_wipe();
     svc_post_init();
     svc_net_fake_set(NET_CONNECTED);
     svc_siblings_offer(POST_SIBS, sizeof POST_SIBS - 1);
@@ -3705,7 +3707,16 @@ static void test_the_people_s_threads_end_to_end(void)
     post_answer(Q_NEWEST);
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
     CHECK(m.played, "a list from before the box heard keeps it played");
-    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED, "and the lost stamp is asked for again");
+    CHECK(!svc_post_take(&r), "the failed stamp waits out its backoff rather than riding the list");
+    svc_rtc_fake_advance_ms(5000);
+    svc_post_service();
+    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED && strstr(r.path, M5),
+          "after 5 s it is asked for again");
+    svc_post_done(&r, 204, NULL, 0);
+    svc_post_service();
+    svc_rtc_fake_advance_ms(400000);
+    svc_post_service();
+    CHECK(!svc_post_take(&r), "confirmed, it is never sent again");
     CHECK(svc_audio_play(m.id) && (svc_audio_fake_listen(false, false, false), svc_audio_service(), true) &&
               !svc_audio_playing(),
           "a play the box refuses ends quietly");
@@ -3767,6 +3778,122 @@ static void test_the_people_s_threads_end_to_end(void)
     }
     svc_messages_fake_clear();
     sib_port_fake_wipe();
+}
+
+/* Review of 0.0.16: a "played" the box did not take is retried on a backoff, kept across a reboot
+ * and past two plays, and dropped only when the box says the message is gone. */
+static void stamp_answer(int status, const char *expect_id, const char *what)
+{
+    post_req_t r;
+    bool got = svc_post_take(&r);
+    CHECK(got && r.kind == POST_RQ_PLAYED && strstr(r.path, expect_id), what);
+    if (got) svc_post_done(&r, status, NULL, 0);
+    svc_post_service();
+}
+
+static void hear(uint16_t at)
+{
+    msg_t m;
+    svc_messages_get(SVC_MESSAGES_THREAD_1, at, &m);
+    svc_post_heard(SVC_MESSAGES_THREAD_1, m.id);
+}
+
+static void test_played_stamps_survive_failures_reboots_and_many_plays(void)
+{
+    static const char FOUR[] =
+        "{\"messages\":[{\"id\":\"" M1 "\",\"mine\":false},{\"id\":\"" M2 "\",\"mine\":false},"
+        "{\"id\":\"" M3 "\",\"mine\":false},{\"id\":\"" M4 "\",\"mine\":false}]}";
+    sib_port_fake_wipe();
+    post_port_fake_wipe();
+    svc_messages_fake_clear();
+    svc_siblings_init();
+    svc_post_init();
+    svc_siblings_offer(POST_SIBS, sizeof POST_SIBS - 1);
+    svc_siblings_service();
+    svc_post_service();
+    post_answer(FOUR);
+    post_req_t r;
+    while (svc_post_take(&r)) {
+    }
+    CHECK(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == 4, "four of hers, unplayed");
+
+    /* The box is down: three plays, more than 0.0.16's first cut kept. */
+    hear(0);
+    stamp_answer(-1, M1, "the first stamp goes at once");
+    hear(1);
+    hear(2);
+    CHECK(!svc_post_take(&r), "one stamp at a time: the others wait behind the failed head");
+    CHECK(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == 1, "all three are played here, the badge says 1");
+    svc_rtc_fake_advance_ms(4900);
+    svc_post_service();
+    CHECK(!svc_post_take(&r), "not before 5 s");
+    svc_rtc_fake_advance_ms(200);
+    svc_post_service();
+    stamp_answer(503, M1, "after 5 s, again");
+    svc_rtc_fake_advance_ms(14000);
+    svc_post_service();
+    CHECK(!svc_post_take(&r), "then not before 15 s");
+    svc_rtc_fake_advance_ms(1100);
+    svc_post_service();
+    stamp_answer(-1, M1, "after 15 s, again");
+    CHECK(post_backoff_ms(3) == 60000 && post_backoff_ms(4) == 300000 && post_backoff_ms(40) == 300000,
+          "then a minute, then every five");
+    const unsigned saves = post_port_fake_saves();
+
+    /* A reboot with three stamps waiting: the box's list still says unplayed. */
+    svc_messages_fake_clear();
+    svc_siblings_init();
+    svc_post_init();
+    svc_post_service();
+    bool sent = false;
+    while (svc_post_take(&r)) {
+        if (r.kind == POST_RQ_PLAYED) {
+            sent = strstr(r.path, M1) != NULL;
+            svc_post_done(&r, 204, NULL, 0);
+            continue;
+        }
+        char *b = malloc(sizeof FOUR);
+        memcpy(b, FOUR, sizeof FOUR);
+        svc_post_done(&r, 200, b, sizeof FOUR - 1);
+    }
+    svc_post_service();
+    CHECK(saves >= 1 && svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == 1,
+          "after a reboot the three heard ones stay played, whatever the box's list says");
+    CHECK(sent, "and the waiting stamp is sent at once");
+    stamp_answer(404, M2, "the next one follows at once");
+    stamp_answer(204, M3, "a message the box no longer has (404) is dropped, and the third goes");
+    svc_rtc_fake_advance_ms(400000);
+    svc_post_service();
+    CHECK(!svc_post_take(&r), "nothing is retried forever");
+    svc_rtc_fake_advance_ms(3000);
+    svc_post_service();
+    svc_post_init();
+    svc_post_service();
+    bool stamped = false;
+    while (svc_post_take(&r)) stamped |= r.kind == POST_RQ_PLAYED;
+    CHECK(!stamped, "and once confirmed, a reboot sends none of them again");
+
+    /* More than the list holds: the oldest gives way, the newest eight are kept. */
+    post_stamps_t l = {0};
+    char id[POST_ID_BYTES];
+    for (int i = 0; i < POST_STAMPS + 2; i++) {
+        snprintf(id, sizeof id, "6b000000-0000-4000-8000-0000000000%02d", i);
+        post_stamps_add(&l, Q_DEV, id);
+    }
+    CHECK(l.n == POST_STAMPS && strstr(l.s[0].id, "02") && !post_stamps_add(&l, Q_DEV, l.s[3].id),
+          "eight kept, deduplicated");
+    l.s[1].id[0] = 'X';
+    l.n = 9;
+    post_stamps_clean(&l);
+    CHECK(l.n == POST_STAMPS - 1, "a list from flash that is not box ids is cleaned");
+    CHECK(post_stamp_done(204) && post_stamp_done(404) && !post_stamp_done(-1) && !post_stamp_done(503) &&
+              !post_stamp_done(403),
+          "done is 204 or 404; no answer, a 5xx or a 403 is retried");
+    while (svc_post_take(&r)) {
+    }
+    svc_messages_fake_clear();
+    sib_port_fake_wipe();
+    post_port_fake_wipe();
 }
 
 int main(void)
@@ -3895,6 +4022,7 @@ int main(void)
     test_tk_listen_claims_without_a_hold();
     test_a_person_thread_keeps_the_panels_own_bubbles();
     test_the_people_s_threads_end_to_end();
+    test_played_stamps_survive_failures_reboots_and_many_plays();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

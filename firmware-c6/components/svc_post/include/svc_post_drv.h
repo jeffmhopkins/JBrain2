@@ -21,7 +21,7 @@ typedef struct {
     char path[POST_PATH_BYTES];
 } post_req_t;
 
-/* Its section of the debug snapshot ("post"). */
+/* Its section of the debug snapshot ("post"), and the stamps a reboot left waiting. */
 void svc_post_init(void);
 /* Called when the glass asks: notifies the main task (it must only notify). */
 void svc_post_set_wake(void (*wake)(void));
@@ -49,12 +49,17 @@ bool svc_post_send_path(const char *thread, char *out, size_t cap);
 bool svc_post_pcm_path(uint32_t local_id, char thread[16], char *out, size_t cap);
 /* A send landed: the thread is fetched so its bubble carries the box's id. */
 void svc_post_sent(const char *thread);
-/* `local_id` played to its end with its digest checked: played here at once, and on the box. */
+/* `local_id` played to its end with its digest checked: played here at once, and on the box —
+ * its stamp waits in the NVS-kept list until the box confirms it, retried with a backoff. */
 void svc_post_heard(const char *thread, uint32_t local_id);
 
 /* `post=rq:N,ok:N,fail:N,new:N,chimes:N,tag:<tag>,last:<status>` for telemetry. */
 void svc_post_note(char *out, size_t len);
 
-/* ---- what each build supplies: a critical section on the device ---- */
+/* ---- what each build supplies: a critical section and the stamps' NVS blob on the device ---- */
 void post_port_lock(void);
 void post_port_unlock(void);
+/* The unconfirmed "played" stamps, kept across a reboot (namespace `jpanel`, key `post_stamps`).
+ * False when there is nothing readable. */
+bool post_port_load(post_stamps_t *out);
+void post_port_save(const post_stamps_t *in);

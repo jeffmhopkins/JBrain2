@@ -95,3 +95,30 @@ typedef struct {
     char last[POST_TAG_BYTES];
 } post_tag_t;
 bool post_tag_feed(post_tag_t *t, const char *tag);
+
+/* ---- "played" stamps the box has not confirmed (review of 0.0.16) ----
+ * A message heard here is played on the panel at once; its stamp to the box waits in this list
+ * until the box answers 204 (or 404: the message is gone), retried with a bounded backoff, and
+ * the list is kept in NVS so neither a reboot nor an outage longer than a few plays loses one.
+ * While a stamp waits, every list from the box shows that message played. */
+#define POST_STAMPS 8
+typedef struct {
+    char device[POST_ID_BYTES];
+    char id[POST_ID_BYTES];
+} post_stamp_t;
+typedef struct {
+    uint8_t n;
+    post_stamp_t s[POST_STAMPS]; /* oldest first */
+} post_stamps_t;
+/* Adds one (a repeat is not added twice); full, the oldest gives way. False for a repeat. */
+bool post_stamps_add(post_stamps_t *l, const char *device, const char *id);
+bool post_stamps_has(const post_stamps_t *l, const char *device, const char *id);
+/* True when it was there. */
+bool post_stamps_remove(post_stamps_t *l, const char *device, const char *id);
+/* After a list read from flash: entries that are not two box ids are dropped, strings ended. */
+void post_stamps_clean(post_stamps_t *l);
+/* What a stamp's answer means: done (204, or 404 — the message is gone, never retried), or try
+ * again later (no answer, a 5xx, a 403 while the owner's switch is off, anything else). */
+bool post_stamp_done(int status);
+/* The wait before the next try after `fails` failures: 5 s, 15 s, 60 s, then every 5 min. */
+uint32_t post_backoff_ms(uint8_t fails);

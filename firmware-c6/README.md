@@ -1370,8 +1370,13 @@ messages with the twins").
 - **A tap on ▶ plays it** through the speaker, streamed from the box as it plays (no clip is held
   in RAM), with the reply's speaker start from 0.0.12 so its first word is not clipped. ⏸ (or KEY,
   or BOOT, the shell's stop) stops it. Played to its end with its digest checked, it is marked
-  played here and on the box, so the PWA shows it played too; a play stopped part way, or cut off
-  by the radio, leaves it unplayed on both.
+  played here at once and its "played" stamp goes to the box, so the PWA shows it played too; a
+  play stopped part way, or cut off by the radio, leaves it unplayed on both. A stamp the box does
+  not take (no Wi-Fi, a box restart, a 5xx) waits in a list of up to eight kept in NVS (namespace
+  `jpanel`, key `post_stamps`, written at most every 2 s), sent one at a time and retried after
+  5 s, 15 s, 60 s and then every five minutes until the box answers 204; a 404 (the message is
+  gone) is dropped. A reboot or a long outage loses none of them, and while one waits the message
+  stays played on the panel whatever the box's list says, so its badge never comes back.
 - **Hold KEY in her thread** to send her a voice message: the ring says "Message to Quorra", "0:30
   max" (the box keeps 30 s); let go and the bubble says "Sending…", then her panel has it exactly
   as if Dad had spoken into the PWA, and the bubble shows the box's transcript and "Sent". A
@@ -1410,7 +1415,7 @@ the glass within a pickup or two, and an idle panel makes no extra request.
 
 | Where | What |
 | --- | --- |
-| `svc_post` (new) | The service: the person threads from the box, each message's box id against its bubble, the "heard here, stamp on its way" list (a lost stamp is asked for again), the pickup's tag, the chime decision. `post_logic.c` (host-tested): the paths (only a box id reaches one), the two answers' readers, the bubble, `post_arrivals` (new = hers, unplayed, not in the last list; the first list of a boot counts none), `post_chime`, `post_tag_feed`, `post_upload_room` (the upload stops at the box's 30 s). |
+| `svc_post` (new) | The service: the person threads from the box, each message's box id against its bubble, the unconfirmed "played" stamps (`post_stamps_*`: eight kept in NVS, deduplicated, one in flight, retried on `post_backoff_ms`, dropped only on 204 or 404), the pickup's tag, the chime decision. `post_logic.c` (host-tested): the paths (only a box id reaches one), the two answers' readers, the bubble, `post_arrivals` (new = hers, unplayed, not in the last list; the first list of a boot counts none), `post_chime`, `post_tag_feed`, `post_upload_room` (the upload stops at the box's 30 s). |
 | `main/post_link.c` (new) | A thread's fetch and a "played" on the main loop, after a talk and the conversations. |
 | `svc_audio` | Two new kinds of exchange through the same `tk_t`: `TK_KIND_POST` (recorded and uploaded like a talk, answered with an id and a transcript, no speech) and `TK_KIND_LISTEN` (no hold: `tk_listen` starts at the send, the audio goes through the reply's ring and speaker start). `svc_audio_play` and `svc_audio_chime` are real; 0.0.11's "Not sent" placeholder is gone. |
 | `main/talk_link.c` | `post_exchange` (the digest kept with mbedTLS as the audio goes up, then sent as the trailer) and `listen_exchange` (a GET read in slices into the ring, hashed as it plays and compared with `X-Jpanel-Sha256`). |
@@ -1421,10 +1426,10 @@ the glass within a pickup or two, and an idle panel makes no extra request.
 ### Debugging it
 
 - The snapshot gains a **`post`** section: `tag`, `queued`, `arrivals`, `chimes`, `heard`,
-  `last_status`, and per thread `device_id`, `loaded`, `listed`, `unplayed`. `audio` gains `kind`
+  `stamps_waiting`, `stamp_fails`, `stamp_retries`, `stamps_dropped`, `last_status`, and per thread `device_id`, `loaded`, `listed`, `unplayed`. `audio` gains `kind`
   (`agent` / `message` / `play`), `playing`, `plays`, `play_failed`, `posted`, and the codec's
   `chimes`; an open thread's `app` section says `loaded`.
-- Telemetry's note gains `post=rq:N,ok:N,fail:N,new:N,chimes:N,tag:<tag>,last:<status>`.
+- Telemetry's note gains `post=rq:N,ok:N,fail:N,new:N,chimes:N,stamps:N,retries:N,tag:<tag>,last:<status>`.
 
 ```sh
 scripts/debug-connect.sh panel-cmd c6 open --arg app=thread1
@@ -1435,20 +1440,20 @@ scripts/debug-connect.sh panel-shot c6 thread.png
 ### The memory budget
 
 Static DIRAM (`.dram0.data` + `.dram0.bss`; 0.0.15 rebuilt from its source to the byte of its
-`dist/`, app `00b4074a…`): 149,800 → 151,744 B, **+1,944 B** (all `.bss`; `.data` and `.iram0.text`
-unchanged): `svc_post`'s two slots (560 B: each its panel's id, the last list's four box ids and
-their bubble ids, and two heard-but-unconfirmed ids), its queue of four requests and four answers
+`dist/`, app `00b4074a…`): 149,800 → 152,208 B, **+2,408 B** (all `.bss`; `.data` and `.iram0.text`
+unchanged): `svc_post`'s two slots (each its panel's id, the last list's four box ids and their
+bubble ids), the eight unconfirmed "played" stamps (594 B, a box id and its panel's each), its queue of four requests and four answers
 (968 B, each carrying its 112-byte path), the send's or play's box path on each side of the talk
 (224 B), the SHA-256 context (116 B), counters. The person threads still keep four messages each in `svc_messages`' existing buffers, so
 nothing grew there. The send's answer is read into the talk's own 1 KB slice buffer once the upload
-is over. App: 1,963,008 → 1,975,344 B (+12 KB; 53% of the slot free).
+is over. App: 1,963,008 → 1,976,880 B (+14 KB; 53% of the slot free).
 
 **On the heap, only while it is needed:** a thread's reply buffer, 3,074 B, from its fetch until
 the UI task has applied it, and the parsed list, ~1.2 KB, for that moment; a play uses the talk's
 16 KB ring, allocated when it starts and freed when it ends, exactly as a talk does — never both,
 since one exchange runs at a time. No new task, no new stack. LVGL's pool peaks at 22.0 KB in the
 sim's busiest new state (`quorra-sending`, 64-bit host), under Settings' 36.6 KB. **`int_min` should
-read about 2 KB lower than 0.0.15's**; the worst transient is a play's ring (16 KB, the same as a
+read about 2.5 KB lower than 0.0.15's**; the worst transient is a play's ring (16 KB, the same as a
 talk's) and nothing else.
 
 ### What to check on the glass
@@ -1729,8 +1734,8 @@ free), 264 KB of DIRAM static (+9.4 KB); at runtime the audio task (3.5 KB stack
 I2S DMA and codec objects from boot, and the 16 KB talk ring per exchange ("What 0.0.10 adds",
 The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB of DIRAM static
 (+1.7 KB), the audio stack
-+768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+12 KB; 53% of the slot
-free), 152 KB of DIRAM static (+1.9 KB; "What 0.0.16 adds", The memory budget).
++768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+14 KB; 53% of the slot
+free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget).
 
 ## Recovery
 

@@ -5,5 +5,5 @@ idf_component_register(
     SRCS "esp/post_port_esp.c" "post_logic.c" "svc_post.c"
     INCLUDE_DIRS "include"
     REQUIRES app_api svc_messages
-    PRIV_REQUIRES svc_debug svc_siblings svc_settings svc_rtc
+    PRIV_REQUIRES svc_debug svc_siblings svc_settings svc_rtc nvs_flash
 )

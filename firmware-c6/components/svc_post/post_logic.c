@@ -410,3 +410,62 @@ bool post_tag_feed(post_tag_t *t, const char *tag)
     snprintf(t->last, sizeof t->last, "%s", tag);
     return true;
 }
+
+/* ---- unconfirmed stamps ---- */
+
+static int stamp_at(const post_stamps_t *l, const char *device, const char *id)
+{
+    for (uint8_t i = 0; i < l->n; i++)
+        if (!strcmp(l->s[i].device, device) && !strcmp(l->s[i].id, id)) return i;
+    return -1;
+}
+
+bool post_stamps_has(const post_stamps_t *l, const char *device, const char *id)
+{
+    return stamp_at(l, device, id) >= 0;
+}
+
+bool post_stamps_add(post_stamps_t *l, const char *device, const char *id)
+{
+    if (!post_id_ok(device) || !post_id_ok(id) || post_stamps_has(l, device, id)) return false;
+    if (l->n == POST_STAMPS) {
+        memmove(l->s, l->s + 1, sizeof l->s[0] * (POST_STAMPS - 1));
+        l->n--;
+    }
+    memcpy(l->s[l->n].device, device, POST_ID_BYTES);
+    memcpy(l->s[l->n].id, id, POST_ID_BYTES);
+    l->n++;
+    return true;
+}
+
+bool post_stamps_remove(post_stamps_t *l, const char *device, const char *id)
+{
+    const int i = stamp_at(l, device, id);
+    if (i < 0) return false;
+    memmove(l->s + i, l->s + i + 1, sizeof l->s[0] * (size_t)(l->n - i - 1));
+    l->n--;
+    return true;
+}
+
+void post_stamps_clean(post_stamps_t *l)
+{
+    uint8_t k = 0;
+    const uint8_t n = l->n > POST_STAMPS ? POST_STAMPS : l->n;
+    for (uint8_t i = 0; i < n; i++) {
+        l->s[i].device[POST_ID_BYTES - 1] = l->s[i].id[POST_ID_BYTES - 1] = '\0';
+        if (post_id_ok(l->s[i].device) && post_id_ok(l->s[i].id)) l->s[k++] = l->s[i];
+    }
+    l->n = k;
+}
+
+bool post_stamp_done(int status)
+{
+    return status == 204 || status == 200 || status == 404;
+}
+
+uint32_t post_backoff_ms(uint8_t fails)
+{
+    static const uint32_t STEPS[] = {5000, 15000, 60000};
+    if (!fails) return 0;
+    return fails <= 3 ? STEPS[fails - 1] : 300000;
+}

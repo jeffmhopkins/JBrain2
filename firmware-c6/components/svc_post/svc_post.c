@@ -19,8 +19,8 @@
 /* Box messages' bubble ids: past svc_convo's switched bubbles (500000 up) and the talks' (1000
  * up, by two), so an id names one bubble wherever it is. */
 #define LOCAL_ID0 700000u
-/* Messages heard here whose "played" the box has not confirmed yet, per thread. */
-#define HEARD_KEEP 2
+/* The stamps' list goes to flash at most this often: a burst of plays is one write. */
+#define STAMPS_SAVE_MS 2000
 
 typedef struct {
     char device[POST_ID_BYTES]; /* the twin's panel this thread is bound to; "" none */
@@ -29,7 +29,6 @@ typedef struct {
     /* The last list's box ids (what is new is judged against them) ... */
     post_seen_t seen;
     uint32_t local[POST_KEEP]; /* ... and their bubbles' */
-    char heard[HEARD_KEEP][POST_ID_BYTES];
 } slot_t;
 
 static slot_t s_slot[SIB_THREADS];
@@ -50,9 +49,18 @@ static uint8_t s_ndone;
 static post_tag_t s_tag;
 static bool s_tag_moved;
 
+/* "Played" stamps the box has not confirmed: kept in NVS, sent one at a time, the head retried
+ * after post_backoff_ms. The UI task's alone. */
+static post_stamps_t s_stamps;
+static bool s_stamp_out;      /* one is with the main task */
+static uint8_t s_stamp_fails; /* the head's failures in a row */
+static uint32_t s_stamp_due;  /* uptime ms the head may go */
+static bool s_stamps_dirty;
+static uint32_t s_stamps_changed;
+
 static uint8_t s_arrived;
 static struct {
-    uint32_t asked, ok, failed, arrivals, chimes, heard;
+    uint32_t asked, ok, failed, arrivals, chimes, heard, stamp_retries, stamps_dropped;
     int last;
 } s_st;
 
@@ -80,6 +88,8 @@ static void ask(post_rq_t kind, uint8_t slot, const char *path)
     for (uint8_t i = 0; i < s_queued; i++)
         if (!strcmp(s_queue[i].path, r.path)) at = i;
     if (at == QUEUE) {
+        /* The stamp in flight, if it is the one giving way, is sent again on the next pass. */
+        if (s_queue[0].kind == POST_RQ_PLAYED) s_stamp_out = false;
         memmove(s_queue, s_queue + 1, sizeof s_queue[0] * (QUEUE - 1));
         at = QUEUE - 1;
     } else if (at == s_queued) {
@@ -168,17 +178,20 @@ void svc_post_sent(const char *thread)
     svc_post_open(thread);
 }
 
-static bool was_heard(const slot_t *sl, const char *id)
+static void stamps_changed(void)
 {
-    for (uint8_t h = 0; h < HEARD_KEEP; h++)
-        if (!strcmp(sl->heard[h], id)) return true;
-    return false;
+    s_stamps_dirty = true;
+    s_stamps_changed = svc_rtc_uptime_ms();
 }
 
-static void ask_played(uint8_t s, const char *id)
+/* The head of the stamps' list to the main task, when it is due and none is out. */
+static void send_stamp(void)
 {
+    if (s_stamp_out || !s_stamps.n || (int32_t)(svc_rtc_uptime_ms() - s_stamp_due) < 0) return;
     char path[POST_PATH_BYTES];
-    if (post_played_path(s_slot[s].device, id, path, sizeof path)) ask(POST_RQ_PLAYED, s, path);
+    if (!post_played_path(s_stamps.s[0].device, s_stamps.s[0].id, path, sizeof path)) return;
+    s_stamp_out = true;
+    ask(POST_RQ_PLAYED, SIB_THREADS, path);
 }
 
 void svc_post_heard(const char *thread, uint32_t local_id)
@@ -190,11 +203,9 @@ void svc_post_heard(const char *thread, uint32_t local_id)
     if (i < 0) return;
     s_st.heard++;
     svc_messages_mark_played(thread, local_id);
-    if (!was_heard(sl, sl->seen.id[i])) {
-        memmove(sl->heard[1], sl->heard[0], sizeof sl->heard[0] * (HEARD_KEEP - 1));
-        memcpy(sl->heard[0], sl->seen.id[i], POST_ID_BYTES);
-    }
-    ask_played((uint8_t)s, sl->seen.id[i]);
+    if (s_stamps.n == POST_STAMPS) s_st.stamps_dropped++;
+    if (post_stamps_add(&s_stamps, sl->device, sl->seen.id[i])) stamps_changed();
+    send_stamp();
 }
 
 /* ---- applying the box's answers ---- */
@@ -213,24 +224,15 @@ static void apply_thread(uint8_t s, const post_thread_t *t)
     uint32_t local[POST_KEEP];
     for (uint8_t i = 0; i < t->n; i++) {
         post_line_t l = t->line[i];
-        /* Heard here, and the box's stamp still on its way (or lost): it stays played, and
-           the stamp is asked for again. Once the box lists it played it is forgotten. */
-        if (!l.mine && was_heard(sl, l.id)) {
-            if (!l.played) ask_played(s, l.id);
-            l.played = true;
-        }
+        /* Heard here and its stamp not yet confirmed: it stays played, whatever this list says
+           (the stamp list retries on its own clock). */
+        if (!l.mine && post_stamps_has(&s_stamps, sl->device, l.id)) l.played = true;
         /* A message already listed keeps its bubble's id: a refresh never restarts a play. */
         local[i] = 0;
         for (uint8_t k = 0; k < sl->seen.n; k++)
             if (!strcmp(sl->seen.id[k], l.id)) local[i] = sl->local[k];
         if (!local[i]) local[i] = s_next_local++;
         post_to_msg(&l, local[i], &m[i]);
-    }
-    for (uint8_t h = 0; h < HEARD_KEEP; h++) {
-        bool listed_unplayed = false;
-        for (uint8_t i = 0; i < t->n; i++)
-            if (!strcmp(t->line[i].id, sl->heard[h]) && !t->line[i].played) listed_unplayed = true;
-        if (!listed_unplayed) sl->heard[h][0] = '\0';
     }
     /* After the ids were matched: this makes the new list the one judged against next time. */
     const uint8_t arrived = post_arrivals(&sl->seen, t);
@@ -241,12 +243,38 @@ static void apply_thread(uint8_t s, const post_thread_t *t)
     if (thread) svc_messages_fake_set(thread, m, t->n);
 }
 
+/* A stamp's answer: confirmed (or the message gone) leaves the list; anything else is tried
+ * again after the backoff. The answer is the head's, the only one ever out. */
+static void apply_stamp(const done_t *d)
+{
+    s_stamp_out = false;
+    if (!s_stamps.n) return;
+    char head[POST_PATH_BYTES];
+    const bool is_head = post_played_path(s_stamps.s[0].device, s_stamps.s[0].id, head, sizeof head) &&
+                         !strcmp(head, d->req.path);
+    if (!is_head) return;
+    if (post_stamp_done(d->status)) {
+        post_stamps_remove(&s_stamps, s_stamps.s[0].device, s_stamps.s[0].id);
+        s_stamp_fails = 0;
+        s_stamp_due = 0;
+        stamps_changed();
+        return;
+    }
+    if (s_stamp_fails < 255) s_stamp_fails++;
+    s_st.stamp_retries++;
+    s_stamp_due = svc_rtc_uptime_ms() + post_backoff_ms(s_stamp_fails);
+}
+
 static void apply(const done_t *d)
 {
     s_st.last = d->status;
     const bool ok = d->req.kind == POST_RQ_PLAYED ? d->status == 204 : d->status == 200;
     if (ok) s_st.ok++;
     else s_st.failed++;
+    if (d->req.kind == POST_RQ_PLAYED) {
+        apply_stamp(d);
+        return;
+    }
     if (d->req.kind != POST_RQ_THREAD || d->req.slot >= SIB_THREADS) return;
     slot_t *sl = &s_slot[d->req.slot];
     char want[POST_PATH_BYTES];
@@ -293,9 +321,14 @@ void svc_post_service(void)
             s_ndone--;
         }
         post_port_unlock();
-        if (!any) return;
+        if (!any) break;
         apply(&d);
         free(d.body);
+    }
+    send_stamp();
+    if (s_stamps_dirty && svc_rtc_uptime_ms() - s_stamps_changed >= STAMPS_SAVE_MS) {
+        s_stamps_dirty = false;
+        post_port_save(&s_stamps);
     }
 }
 
@@ -326,6 +359,10 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "arrivals", s_st.arrivals);
     dbg_json_int(w, "chimes", s_st.chimes);
     dbg_json_int(w, "heard", s_st.heard);
+    dbg_json_int(w, "stamps_waiting", s_stamps.n);
+    dbg_json_int(w, "stamp_fails", s_stamp_fails);
+    dbg_json_int(w, "stamp_retries", s_st.stamp_retries);
+    dbg_json_int(w, "stamps_dropped", s_st.stamps_dropped);
     dbg_json_int(w, "last_status", s_st.last);
     for (uint8_t s = 0; s < SIB_THREADS; s++) {
         const char *thread = svc_siblings_thread(s);
@@ -342,6 +379,19 @@ static void describe(void *ctx, dbg_json_t *w)
 void svc_post_init(void)
 {
     svc_debug_register("post", describe, NULL);
+    /* A boot's state (the host suite boots it more than once). */
+    memset(s_slot, 0, sizeof s_slot);
+    for (uint8_t i = 0; i < s_ndone; i++) free(s_done[i].body);
+    s_queued = s_ndone = 0;
+    memset(&s_tag, 0, sizeof s_tag);
+    s_tag_moved = false;
+    /* Stamps a reboot interrupted: their messages stay played here and go to the box first. */
+    memset(&s_stamps, 0, sizeof s_stamps);
+    if (post_port_load(&s_stamps)) post_stamps_clean(&s_stamps);
+    else s_stamps.n = 0;
+    s_stamp_out = s_stamps_dirty = false;
+    s_stamp_fails = 0;
+    s_stamp_due = 0;
 }
 
 void svc_post_note(char *out, size_t len)
@@ -350,8 +400,8 @@ void svc_post_note(char *out, size_t len)
     char tag[POST_TAG_BYTES];
     memcpy(tag, s_tag.last, sizeof tag);
     post_port_unlock();
-    snprintf(out, len, "post=rq:%lu,ok:%lu,fail:%lu,new:%lu,chimes:%lu,tag:%s,last:%d",
+    snprintf(out, len, "post=rq:%lu,ok:%lu,fail:%lu,new:%lu,chimes:%lu,stamps:%u,retries:%lu,tag:%s,last:%d",
              (unsigned long)s_st.asked, (unsigned long)s_st.ok, (unsigned long)s_st.failed,
-             (unsigned long)s_st.arrivals, (unsigned long)s_st.chimes, tag[0] ? tag : "-",
-             s_st.last);
+             (unsigned long)s_st.arrivals, (unsigned long)s_st.chimes, (unsigned)s_stamps.n,
+             (unsigned long)s_st.stamp_retries, tag[0] ? tag : "-", s_st.last);
 }
