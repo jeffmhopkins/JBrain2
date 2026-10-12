@@ -5,8 +5,8 @@
 
 #include "svc_buttons.h"
 
-/* Starts the UI task: LVGL, the CO5300, the shell and the apps over the fake services. Only
- * after the rollback gate. A failure anywhere leaves a headless panel that still updates.
+/* Starts the UI task: LVGL, the CO5300, the shell and the apps. Only after the rollback gate,
+ * and after svc_settings has loaded. A failure anywhere leaves a headless panel that still updates.
  * `notify` is woken once the UI has settled (or stopped), for a report that shows it. */
 void ui_task_start(TaskHandle_t notify);
 

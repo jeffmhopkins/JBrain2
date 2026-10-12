@@ -47,6 +47,7 @@ static void fill_list(jerv_t *j)
                          .listen = jerv_shows_listen(&m, tts, 0), .tag = m.id};
         ui_bubble(j->list, &b, UI_ACCENT_JERV, listen, NULL);
     }
+    if (!n) ui_label_wrap(j->list, "No messages yet. Conversations arrive in a later update.", 18, UI_C_MUTED);
     if (ui_pin_should(&j->pin, n ? m.id : 0)) ui_page_pin_bottom(j->list);
 }
 

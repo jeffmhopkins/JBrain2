@@ -10,7 +10,9 @@ sh_overlay_t sh_top_overlay(const sh_state_t *st, const sh_facts_t *f)
     if (f->alarm_ringing) return SH_OV_ALARM;
     /* A notice waits for a hold to end rather than burying the talk ring: the person is
      * mid-sentence, and the notice is still there when they let go. */
-    if (f->notices && st->key_owner != SH_KEY_APP) return SH_OV_NOTICE;
+    if (f->notices && !f->notices_held && st->key_owner != SH_KEY_APP &&
+        st->key_owner != SH_KEY_SHELL)
+        return SH_OV_NOTICE;
     return SH_OV_NONE;
 }
 
@@ -34,12 +36,17 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
         sh_key_owner_t owner = st->key_owner;
         st->key_owner = SH_KEY_FREE;
         if (owner == SH_KEY_APP && f->app_open) return r(SH_ACT_TO_APP, SH_ACT_NONE);
+        if (owner == SH_KEY_SHELL) return r(SH_ACT_SEND_JERV, SH_ACT_NONE);
         return r(SH_ACT_NONE, SH_ACT_NONE);
     }
 
     /* A press on a dark screen only wakes it: a recording started blind is a message nobody
      * meant to send. */
     if (f->dark) return r(SH_ACT_WAKE, SH_ACT_NONE);
+
+    /* The talk ring covers everything: BOOT is its cancel, and a second KEY_DOWN (a debug
+     * inject; a finger cannot) must not start another. */
+    if (f->talking) return r(b == SH_BTN_BOOT ? SH_ACT_CANCEL_TALK : SH_ACT_NONE, SH_ACT_NONE);
 
     switch (sh_top_overlay(st, f)) {
     case SH_OV_ALARM:
@@ -56,12 +63,21 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
     if (f->app_open) {
         if (b == SH_BTN_KEY_DOWN) {
             st->key_owner = SH_KEY_APP;
-            return r(SH_ACT_TO_APP, SH_ACT_NONE);
+            return r(SH_ACT_TO_APP, SH_ACT_TALK_JERV);
         }
         return r(SH_ACT_TO_APP, SH_ACT_GO_HOME);
     }
-    if (b == SH_BTN_KEY_DOWN) return r(SH_ACT_HINT_TALK, SH_ACT_NONE);
+    if (b == SH_BTN_KEY_DOWN) {
+        st->key_owner = SH_KEY_SHELL;
+        return r(SH_ACT_TALK_JERV, SH_ACT_NONE);
+    }
     return r(f->page ? SH_ACT_PAGE_FIRST : SH_ACT_NONE, SH_ACT_NONE);
+}
+
+sh_act_t sh_declined(sh_state_t *st, sh_route_t rt)
+{
+    if (rt.fallback == SH_ACT_TALK_JERV) st->key_owner = SH_KEY_SHELL;
+    return rt.fallback;
 }
 
 unsigned sh_route_event(const sh_facts_t *f, app_event_type_t type)
@@ -69,7 +85,8 @@ unsigned sh_route_event(const sh_facts_t *f, app_event_type_t type)
     (void)f;
     switch (type) {
     case APP_EV_ALARM_DUE: return SH_DO_WAKE | SH_DO_OPEN_ALARM_APP | SH_DO_DELIVER;
-    case APP_EV_NOTICE_ARRIVED: return SH_DO_WAKE | SH_DO_REFRESH_OVERLAY;
+    /* Delivered too, so an app holding notices (the clock face) can redraw its badge. */
+    case APP_EV_NOTICE_ARRIVED: return SH_DO_WAKE | SH_DO_REFRESH_OVERLAY | SH_DO_DELIVER;
     case APP_EV_MSG_ARRIVED:
     case APP_EV_NET_UP:
     case APP_EV_NET_DOWN:

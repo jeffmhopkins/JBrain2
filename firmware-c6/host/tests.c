@@ -5,8 +5,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <time.h>
+
 #include "app_event.h"
 #include "axp_logic.h"
+#include "box_logic.h"
 #include "btn_logic.h"
 #include "clock_model.h"
 #include "dbg_core.h"
@@ -19,13 +22,17 @@
 #include "settings_model.h"
 #include "shell_core.h"
 #include "shell_evq.h"
+#include "settings_store.h"
+#include "svc_audio_fake.h"
 #include "svc_box_fake.h"
+#include "svc_messages_fake.h"
 #include "svc_net_fake.h"
 #include "svc_notice_fake.h"
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
 #include "thread_model.h"
+#include "time_logic.h"
 #include "tp_logic.h"
 #include "ui_pin.h"
 #include "ui_theme.h"
@@ -133,8 +140,8 @@ static void test_boot_is_back_then_home(void)
     CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_PAGE_FIRST, "BOOT on page 2 goes to page 1");
     f.page = 0;
     CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_NONE, "BOOT on page 1 does nothing");
-    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_HINT_TALK,
-          "KEY on home says to open a conversation");
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_TALK_JERV,
+          "KEY on home talks to Jerv");
 }
 
 static void test_a_dark_screen_only_wakes(void)
@@ -157,8 +164,8 @@ static void test_events_route_as_the_plan_says(void)
     CHECK((a & SH_DO_WAKE) && (a & SH_DO_OPEN_ALARM_APP) && (a & SH_DO_DELIVER),
           "an alarm wakes, opens Clock and tells it");
     a = sh_route_event(&f, APP_EV_NOTICE_ARRIVED);
-    CHECK((a & SH_DO_WAKE) && (a & SH_DO_REFRESH_OVERLAY) && !(a & SH_DO_DELIVER),
-          "a notice wakes and is the shell's, not the app's");
+    CHECK((a & SH_DO_WAKE) && (a & SH_DO_REFRESH_OVERLAY) && (a & SH_DO_DELIVER),
+          "a notice wakes, is the shell's to draw, and is told to the app so a face can badge it");
     CHECK(sh_route_event(&f, APP_EV_MSG_ARRIVED) & SH_DO_REFRESH_TILES, "a message refreshes badges");
     CHECK(sh_route_event(&f, APP_EV_KEY_DOWN) == 0, "a button is never routed as an event");
 }
@@ -258,11 +265,11 @@ static void test_alarm_text_reads_like_the_mock(void)
     char s[64];
     alarm_t a = al(1, 6, 45, 0x1F, true);
     clock_fmt_next(&a, 9 * 60 + 4, s, sizeof s);
-    CHECK(!strcmp(s, "Next 06:45 - in 9 h 4 min"), "hours and minutes");
+    CHECK(!strcmp(s, "Next 06:45 · in 9 h 4 min"), "hours and minutes");
     clock_fmt_next(&a, 12, s, sizeof s);
-    CHECK(!strcmp(s, "Next 06:45 - in 12 min"), "minutes alone under an hour");
+    CHECK(!strcmp(s, "Next 06:45 · in 12 min"), "minutes alone under an hour");
     clock_fmt_days(0x1F, "Work", s, sizeof s);
-    CHECK(!strcmp(s, "Weekdays - Work"), "weekdays with a label");
+    CHECK(!strcmp(s, "Weekdays · Work"), "weekdays with a label");
     clock_fmt_days(0x60, "", s, sizeof s);
     CHECK(!strcmp(s, "Sat, Sun"), "a weekend lists its days");
     clock_fmt_days(0x7F, NULL, s, sizeof s);
@@ -353,19 +360,34 @@ static void test_settings_cards_say_what_the_mock_says(void)
 {
     net_info_t n = {NET_CONNECTED, "x", -58, "", 0};
     settings_wifi_t w;
-    settings_wifi(&n, &w);
-    CHECK(!strcmp(w.button, "Disconnect") && w.button_live && w.bars == 3, "connected, three bars");
+    settings_wifi(&n, false, &w);
+    CHECK(!strcmp(w.button, "Disconnect") && w.button_live && w.bars == 3 && w.kind == WIFI_BTN_SECONDARY,
+          "connected, three bars, a quiet Disconnect");
     n.state = NET_CONNECTING;
-    settings_wifi(&n, &w);
-    CHECK(!w.button_live, "nothing to press while connecting");
-    fw_info_t fw = {"0.0.1", "0.0.2", FW_DOWNLOADING, 64};
+    settings_wifi(&n, false, &w);
+    CHECK(!w.button_live && !strcmp(w.button, "Connecting…"), "nothing to press while connecting");
+    n.state = NET_OFF;
+    settings_wifi(&n, false, &w);
+    CHECK(w.button_live && w.kind == WIFI_BTN_PRIMARY && !strcmp(w.button, "Connect"), "off: Connect");
+    fw_info_t fw = {"0.0.8", "0.0.9", FW_DOWNLOADING, 64, ""};
     char note[96];
     settings_fw_t f;
     settings_fw(&fw, true, &f, note, sizeof note);
-    CHECK(!f.button_live && f.show_bar && strstr(note, "64%"), "downloading: bar up, button dead");
+    CHECK(!f.button_live && f.show_bar && !strcmp(note, "Downloading 0.0.9 · 64%"),
+          "downloading: bar up, button dead");
+    settings_fw(&fw, false, &f, note, sizeof note);
+    CHECK(f.show_bar && strstr(note, "64%"), "a download under way is still reported with the radio down");
     fw.phase = FW_IDLE;
     settings_fw(&fw, false, &f, note, sizeof note);
     CHECK(!f.button_live && strstr(note, "Connect Wi-Fi"), "offline: Update now is dead and says why");
+    fw.phase = FW_FAILED;
+    snprintf(fw.err, sizeof fw.err, "wrong-board");
+    settings_fw(&fw, true, &f, note, sizeof note);
+    CHECK(f.button_live && !strcmp(note, "Update failed (wrong-board). The panel stays on 0.0.8."),
+          "a failed update says why and that nothing changed");
+    fw.phase = FW_CHECKING;
+    settings_fw(&fw, true, &f, note, sizeof note);
+    CHECK(!strcmp(f.button, "Checking…") && !strcmp(note, "Asking the box…"), "checking");
     power_info_t p = {.fitted = true, .pct = 12, .mv = 3520};
     settings_power_t pv;
     settings_power(&p, &pv);
@@ -373,10 +395,13 @@ static void test_settings_cards_say_what_the_mock_says(void)
     p.fitted = false;
     p.usb_mv = 5020;
     settings_power(&p, &pv);
-    CHECK(!pv.bar && !strcmp(pv.title, "Power") && strstr(pv.line, "5.02 V"), "no battery: USB");
+    CHECK(!pv.bar && !strcmp(pv.title, "Power") && !strcmp(pv.line, "No battery fitted · USB 5.02 V"),
+          "no battery: USB, as the mock words it");
     char s[200];
     settings_notif_note(true, true, 21 * 60 + 30, 6 * 60 + 30, s, sizeof s);
-    CHECK(strstr(s, "21:30-06:30") != NULL, "the quiet note names the window");
+    CHECK(strstr(s, "Refused 21:30–06:30 — ") == s, "the quiet note names the window");
+    CHECK(strstr(settings_rotate_note(true), "later update") && !strcmp(settings_rotate_note(false), "Locked upright"),
+          "auto-rotate says it is not turning anything yet");
     CHECK(!settings_notif_row_live(1, false) && settings_notif_row_live(0, false),
           "with messages refused only the accept switch is live");
 }
@@ -464,6 +489,7 @@ static void test_a_snapshot_never_contains_a_secret(void)
     svc_net_init();
     svc_box_init();
     svc_notice_init();
+    svc_messages_init();
     dbg_sys_init();
     /* A careless log line, the way a token actually leaks. */
     svc_debug_log("net", "auth header Bearer %s", SETTINGS_FAKE_TOKEN);
@@ -886,6 +912,279 @@ static void test_a_finger_on_a_dark_screen_buys_the_screen_and_nothing_else(void
     CHECK(st.key_owner == SH_KEY_APP, "it leaves a KEY hold where it was");
 }
 
+
+/* ---- KEY outside a conversation (owner, 2026-10-12) ---- */
+
+static void test_key_outside_a_conversation_talks_to_jerv(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = home();
+    sh_route_t r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_TALK_JERV && st.key_owner == SH_KEY_SHELL,
+          "KEY on home starts the shell's own talk to Jerv, with every app closed");
+    f.talking = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_UP).first == SH_ACT_SEND_JERV,
+          "its release sends to Jerv");
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_UP).first == SH_ACT_NONE,
+          "and a second release has nothing behind it");
+
+    st = (sh_state_t){0};
+    f = in_app();
+    r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_TO_APP && r.fallback == SH_ACT_TALK_JERV,
+          "in an app KEY is offered to it first, Jerv if it declines");
+    CHECK(sh_declined(&st, r) == SH_ACT_TALK_JERV && st.key_owner == SH_KEY_SHELL,
+          "Settings, the clock face or Minecraft decline it, and the shell takes the hold");
+    sh_app_closed(&st);
+    f = home();
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_UP).first == SH_ACT_SEND_JERV,
+          "an app closing under the shell's hold does not lose its release");
+
+    st = (sh_state_t){0};
+    f = in_app();
+    sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(st.key_owner == SH_KEY_APP, "a thread that consumes KEY keeps it for its own recipient");
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_UP).first == SH_ACT_TO_APP, "and gets its release");
+
+    st = (sh_state_t){0};
+    f = in_app();
+    f.alarm_ringing = true;
+    r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(sh_declined(&st, r) == SH_ACT_SNOOZE_ALARM && st.key_owner == SH_KEY_ALARM,
+          "a ringing alarm takes KEY as snooze, never as talk");
+}
+
+static void test_the_talk_ring_takes_boot_and_holds_notices_back(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.talking = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_CANCEL_TALK, "BOOT cancels the talk");
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_NONE,
+          "a second press cannot start a second recording");
+    st.key_owner = SH_KEY_SHELL;
+    f.notices = 1;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_NONE, "a notice waits for the shell's hold to end too");
+    f = home();
+    f.dark = true;
+    st = (sh_state_t){0};
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_WAKE && st.key_owner == SH_KEY_FREE,
+          "on a dark screen KEY only wakes: no recording started blind");
+}
+
+static void test_the_clock_face_keeps_notices_as_a_badge(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.notices = 1;
+    f.notices_held = true;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_NONE, "the face is never covered by a notice");
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_TO_APP,
+          "BOOT on the face is the face's, not a dismissal of what it holds");
+    f.alarm_ringing = true;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_ALARM, "an alarm still takes the whole screen");
+    CHECK(clock_holds_notices(true, 2, 7, 0), "on the face, notices wait");
+    CHECK(!clock_holds_notices(true, 2, 7, 7), "the one whose badge was tapped opens");
+    CHECK(clock_holds_notices(true, 1, 8, 7), "and the next one waits again");
+    CHECK(!clock_holds_notices(false, 2, 7, 0), "off the face (the alarm list) they pop up as anywhere");
+    CHECK(clock_badge_count(1, 2) == 3 && clock_badge_count(0, 0) == 0,
+          "the badge counts notices and unheard messages, and hides at zero");
+    CHECK(clock_badge_opa(true) == 255 && clock_badge_opa(false) == 204, "urgent at full strength");
+    CHECK(svc_messages_unplayed_total() == 1, "Quorra's unheard message is counted, Jerv's text is not");
+    char who[16] = "";
+    CHECK(svc_messages_first_unplayed(who) && !strcmp(who, "quorra"), "and a tap opens her thread");
+}
+
+static void test_day_and_date_read_like_the_mock(void)
+{
+    char s[24];
+    rtc_time_t t = {.valid = true, .h = 9, .m = 41, .wday = 0, .mday = 12, .mon = 10, .year = 2026};
+    clock_fmt_daydate(&t, s, sizeof s);
+    CHECK(!strcmp(s, "Mon 12 Oct"), "en-GB short: weekday, day, month");
+    t.wday = 6, t.mday = 1, t.mon = 3;
+    clock_fmt_daydate(&t, s, sizeof s);
+    CHECK(!strcmp(s, "Sun 1 Mar"), "no leading zero on the day");
+    char hm[6];
+    clock_fmt_face(&t, hm);
+    CHECK(!strcmp(hm, "09:41"), "the face is the 24-hour time");
+    t.valid = false;
+    clock_fmt_daydate(&t, s, sizeof s);
+    clock_fmt_face(&t, hm);
+    CHECK(s[0] == '\0' && !strcmp(hm, "--:--"), "with no time yet: dashes and no date, never 00:00");
+    clock_fmt_window(21 * 60 + 30, 6 * 60 + 30, s, sizeof s);
+    CHECK(!strcmp(s, "21:30 – 06:30"), "the night window, with the mock's en dash");
+    clock_face_t day = clock_face(true, 21 * 60 + 30, 6 * 60 + 30, 0, 12 * 60, false);
+    clock_face_t night = clock_face(true, 21 * 60 + 30, 6 * 60 + 30, 0, 23 * 60, false);
+    CHECK(day.date_opa == 140 && night.date_opa == 98 && night.date_opa < night.opa,
+          "the date is fainter than the digits, and dims with the night clock");
+}
+
+/* ---- time ---- */
+
+static void test_calendar_dates_round_trip_through_unix_time(void)
+{
+    civil_t c = {.year = 2026, .mon = 10, .mday = 12, .h = 13, .m = 41, .s = 7};
+    const int64_t e = civil_to_epoch(&c);
+    CHECK(e == 1791812467, "2026-10-12 13:41:07 UTC");
+    civil_t back;
+    epoch_to_civil(e, &back);
+    CHECK(back.year == 2026 && back.mon == 10 && back.mday == 12 && back.h == 13 && back.m == 41 &&
+              back.s == 7 && back.wday == 0,
+          "and back, a Monday");
+    civil_t leap = {.year = 2028, .mon = 2, .mday = 29};
+    epoch_to_civil(civil_to_epoch(&leap) + 86400, &back);
+    CHECK(back.mon == 3 && back.mday == 1, "the day after 29 February 2028 is 1 March");
+    epoch_to_civil(0, &back);
+    CHECK(back.year == 1970 && back.wday == 3, "1970 began on a Thursday");
+}
+
+static void test_the_clock_chip_registers(void)
+{
+    CHECK(bcd_to_bin(0x59) == 59 && bin_to_bcd(59) == 0x59, "BCD both ways");
+    civil_t c = {.year = 2026, .mon = 10, .mday = 12, .h = 23, .m = 5, .s = 9}, out;
+    epoch_to_civil(civil_to_epoch(&c), &c);
+    uint8_t r[7];
+    pcf_encode(&c, r);
+    CHECK(r[0] == 0x09 && r[2] == 0x23 && r[4] == 1 && r[6] == 0x26,
+          "seconds with OS clear, 24-hour hours, Monday as the chip's 1, two-digit year");
+    CHECK(pcf_decode(r, &out) && out.h == 23 && out.mday == 12 && out.wday == 0, "and read back");
+    r[0] |= 0x80;
+    CHECK(!pcf_decode(r, &out), "an oscillator that stopped holds no time to show");
+    pcf_encode(&c, r);
+    r[6] = 0x00;
+    CHECK(!pcf_decode(r, &out), "2000 is a chip nobody set");
+    pcf_encode(&c, r);
+    r[5] = 0x13;
+    CHECK(!pcf_decode(r, &out), "month 13 is garbage, not a date");
+}
+
+static void test_the_box_date_header(void)
+{
+    int64_t e = 0;
+    CHECK(http_date_parse("Mon, 12 Oct 2026 13:41:07 GMT", &e) && e == 1791812467,
+          "IMF-fixdate, as every current server sends it");
+    CHECK(!http_date_parse("Monday, 12-Oct-26 13:41:07 GMT", &e), "the obsolete RFC 850 form is refused");
+    CHECK(!http_date_parse("Mon Oct 12 13:41:07 2026", &e), "so is asctime's");
+    CHECK(!http_date_parse("Mon, 12 Oct 2026 13:41:07 UTC", &e), "and anything not GMT");
+    CHECK(!http_date_parse("Mon, 12 Foo 2026 13:41:07 GMT", &e), "and a month that is not one");
+    CHECK(!http_date_parse(NULL, &e) && !http_date_parse("", &e), "and nothing at all");
+}
+
+static void test_when_the_box_time_replaces_the_panels(void)
+{
+    const int64_t box = 1791812467;
+    CHECK(time_should_step(false, 0, box), "no time yet: take the box's");
+    CHECK(!time_should_step(true, box + 1, box), "a second off is the header's own resolution: leave it");
+    CHECK(time_should_step(true, box - 2, box) && time_should_step(true, box + 90, box),
+          "two seconds or more either way is drift: step");
+    CHECK(!time_should_step(false, 0, 1000), "a box with no clock of its own is never believed");
+    CHECK(time_should_write_rtc(false, false, 10), "a chip that held no time is written");
+    CHECK(time_should_write_rtc(true, true, 10), "so is one the panel had to correct");
+    CHECK(time_should_write_rtc(true, false, -1), "and one never written this boot");
+    CHECK(!time_should_write_rtc(true, false, 3600), "a good chip is left alone");
+    CHECK(time_should_write_rtc(true, false, TIME_RTC_REWRITE_S), "until a day has passed");
+}
+
+static void test_the_zone_table_keeps_daylight_saving(void)
+{
+    CHECK(!strcmp(svc_rtc_tz_label(TZ_DEFAULT), "New York"), "New York by default");
+    CHECK(!strcmp(svc_rtc_tz_label(99), "New York") && !strcmp(tz_posix(-1), tz_posix(TZ_DEFAULT)),
+          "an index from nowhere falls back to it");
+    struct tm tm;
+    const time_t july = 1783000000, january = 1767600000; /* 2026-07-02, 2026-01-05 */
+    setenv("TZ", tz_posix(TZ_DEFAULT), 1);
+    tzset();
+    localtime_r(&july, &tm);
+    const int summer = tm.tm_hour;
+    struct tm utc;
+    gmtime_r(&july, &utc);
+    CHECK((utc.tm_hour - summer + 24) % 24 == 4, "New York in July is UTC-4");
+    localtime_r(&january, &tm);
+    gmtime_r(&january, &utc);
+    CHECK((utc.tm_hour - tm.tm_hour + 24) % 24 == 5, "and UTC-5 in January");
+    setenv("TZ", tz_posix(8), 1);
+    tzset();
+    localtime_r(&july, &tm);
+    gmtime_r(&july, &utc);
+    CHECK(!strcmp(svc_rtc_tz_label(8), "London") && (tm.tm_hour - utc.tm_hour + 24) % 24 == 1,
+          "London is an hour ahead in summer");
+    setenv("TZ", "UTC0", 1);
+    tzset();
+}
+
+/* ---- settings persistence ---- */
+
+static void test_settings_are_written_once_the_panel_is_left_alone(void)
+{
+    settings_store_t s;
+    settings_store_defaults(&s);
+    CHECK(settings_store_due(&s, 100000) == 0, "defaults owe flash nothing");
+    CHECK(settings_store_set(&s, SET_BRIGHTNESS, 70, 1000), "a change is a change");
+    CHECK(settings_store_set(&s, SET_BRIGHTNESS, 75, 1500), "and the slider's next tick");
+    CHECK(settings_store_due(&s, 3000) == 0, "nothing is written while the slider still moves");
+    CHECK(settings_store_due(&s, 3500) == 1u << SET_BRIGHTNESS, "two quiet seconds: just brightness");
+    settings_store_mark_saved(&s, SET_BRIGHTNESS);
+    CHECK(settings_store_due(&s, 9000) == 0, "and once written, nothing more");
+    CHECK(!settings_store_set(&s, SET_BRIGHTNESS, 75, 9000), "the same value is no change at all");
+    settings_store_set(&s, SET_TTS, 0, 10000);
+    settings_store_set(&s, SET_TTS, 1, 10100);
+    CHECK(settings_store_due(&s, 20000) == 0, "a switch flipped and flipped back owes nothing");
+    settings_store_set(&s, SET_BRIGHTNESS, 2, 20000);
+    CHECK(s.val[SET_BRIGHTNESS] == BRIGHTNESS_FLOOR, "the store clamps like the service");
+    settings_store_defaults(&s);
+    settings_store_loaded(&s, SET_BRIGHTNESS, 400);
+    CHECK(s.val[SET_BRIGHTNESS] == 100 && settings_store_due(&s, 5000) == 1u << SET_BRIGHTNESS,
+          "an out-of-range saved value loads clamped and is written back corrected");
+    settings_store_loaded(&s, SET_TZ, 40);
+    CHECK(s.val[SET_TZ] == TZ_DEFAULT, "an unknown zone loads as the default");
+    CHECK(svc_settings_default(SET_SHOW_DATE) == 1 && svc_settings_default(SET_AUTO_ROTATE) == 1 &&
+              svc_settings_default(SET_NIGHT_COLOR) == 0 && svc_settings_default(SET_BRIGHTNESS) == 50,
+          "date on, auto-rotate on, red, and the brightness the glass has run at since 0.0.4");
+    for (int k = 0; k < SET__COUNT; k++)
+        CHECK(strlen(svc_settings_name((setting_t)k)) <= 15 && svc_settings_name((setting_t)k)[0],
+              "every key is a valid NVS key");
+}
+
+static void test_disconnect_takes_two_taps_within_three_seconds(void)
+{
+    CHECK(settings_wifi_tap(NET_CONNECTED, false, 0, 5000) == WIFI_TAP_ARM, "the first tap only arms");
+    CHECK(settings_wifi_tap(NET_CONNECTED, true, 5000, 7999) == WIFI_TAP_DISCONNECT,
+          "a second inside three seconds disconnects");
+    CHECK(settings_wifi_tap(NET_CONNECTED, true, 5000, 8000) == WIFI_TAP_ARM,
+          "at three seconds the first has lapsed and this one arms again");
+    CHECK(!settings_wifi_armed(NET_CONNECTED, true, 5000, 8000) &&
+              settings_wifi_armed(NET_CONNECTED, true, 5000, 6000),
+          "the rose button lasts three seconds");
+    CHECK(settings_wifi_tap(NET_OFF, true, 5000, 6000) == WIFI_TAP_CONNECT, "off, one tap connects");
+    CHECK(settings_wifi_tap(NET_CONNECTING, false, 0, 6000) == WIFI_TAP_NONE, "connecting, nothing");
+    net_info_t n = {NET_CONNECTED, "x", -58, "", 0};
+    settings_wifi_t w;
+    settings_wifi(&n, true, &w);
+    CHECK(!strcmp(w.button, "Tap again to disconnect") && w.kind == WIFI_BTN_ARMED,
+          "armed, the button says so in rose");
+}
+
+static void test_update_now_is_live_only_online_and_idle(void)
+{
+    CHECK(box_may_update(NET_CONNECTED, FW_IDLE) && box_may_update(NET_CONNECTED, FW_UPTODATE) &&
+              box_may_update(NET_CONNECTED, FW_FAILED),
+          "online and idle, a check can start");
+    CHECK(!box_may_update(NET_OFF, FW_IDLE), "offline there is no box to ask");
+    CHECK(!box_may_update(NET_CONNECTED, FW_CHECKING) && !box_may_update(NET_CONNECTED, FW_DOWNLOADING),
+          "a check or download under way is already the answer");
+}
+
+static void test_a_hold_that_cannot_be_sent_says_so(void)
+{
+    msg_t m;
+    CHECK(talk_placeholder(TALK_SENT, 3400, 1000, &m) && m.mine && m.voice && m.dur_s == 3 &&
+              !strcmp(m.status, "Not sent") && strstr(m.text, "later update"),
+          "a finished hold leaves an honest bubble, not a made-up transcript");
+    CHECK(talk_placeholder(TALK_CAPPED, 61000, 1001, &m) && m.dur_s == 60, "the cap is a minute");
+    CHECK(!talk_placeholder(TALK_TOO_SHORT, 300, 1, &m) && !talk_placeholder(TALK_CANCELLED, 5000, 1, &m),
+          "a knock or a cancel leaves nothing");
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -931,6 +1230,19 @@ int main(void)
     test_the_touch_ring_keeps_every_edge_and_coalesces_moves();
     test_a_tap_a_swipe_and_a_drag_are_told_apart();
     test_a_finger_on_a_dark_screen_buys_the_screen_and_nothing_else();
+    test_key_outside_a_conversation_talks_to_jerv();
+    test_the_talk_ring_takes_boot_and_holds_notices_back();
+    test_the_clock_face_keeps_notices_as_a_badge();
+    test_day_and_date_read_like_the_mock();
+    test_calendar_dates_round_trip_through_unix_time();
+    test_the_clock_chip_registers();
+    test_the_box_date_header();
+    test_when_the_box_time_replaces_the_panels();
+    test_the_zone_table_keeps_daylight_saving();
+    test_settings_are_written_once_the_panel_is_left_alone();
+    test_disconnect_takes_two_taps_within_three_seconds();
+    test_update_now_is_live_only_online_and_idle();
+    test_a_hold_that_cannot_be_sent_says_so();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

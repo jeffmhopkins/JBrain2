@@ -65,6 +65,7 @@ static void fill_list(app_t *self)
                          .text = m.text, .dur = tb.dur, .status = m.status, .tag = m.id};
         ui_bubble(t->list, &b, self->accent, play, self);
     }
+    if (!n) ui_label_wrap(t->list, "No messages yet. Conversations arrive in a later update.", 18, UI_C_MUTED);
     if (ui_pin_should(&t->pin, n ? m.id : 0)) ui_page_pin_bottom(t->list);
 }
 
@@ -85,7 +86,7 @@ static void end_talk(app_t *self, bool send)
     if (!ui_talk_up(&t->talk)) return;
     ui_talk_close(&t->talk);
     talk_outcome_t o = svc_audio_talk_end(send);
-    if (o == TALK_CANCELLED) self->host->toast("Cancelled - nothing sent");
+    if (o == TALK_CANCELLED) self->host->toast("Cancelled — nothing sent");
     if (o == TALK_TOO_SHORT) self->host->toast("Hold KEY the whole time you talk");
 }
 

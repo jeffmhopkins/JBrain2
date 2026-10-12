@@ -1,6 +1,6 @@
 # Waveshare ESP32-C6-Touch-AMOLED-2.16: hardware facts for ESP-IDF v5.5.5 firmware
 
-> **Status:** Living · **Last verified:** 2026-10-11
+> **Status:** Living · **Last verified:** 2026-10-12
 
 The board facts the C2 drivers are built on, each with its source and a Confirmed / Unconfirmed
 mark. Facts still open are settled on the real board by the 0.0.3 probe (`main/probe.c`); when
@@ -197,6 +197,8 @@ Caveat [U]: the meaning of page-0x20 registers 0x19 and 0x1C is not documented i
 |---|---|---|
 | PCF85063A address | **0x51** | [C] BSP header `:78`; IDF `03_I2C_PCF85063` uses `PCF85063A_ADDRESS` (component `waveshare/pcf85063a ^1.1.1`) |
 | PCF85063 supply | VCC-RTC (AXP2101 RTCLDO, battery-backed). 32.768 kHz crystal Y1. | [C] SCH p1 RTC block |
+| PCF85063 with no cell fitted | VBACKUP is only a 2.2 µF capacitor, so RTCLDO's backing is the battery: with no cell the chip keeps time across a reset but not across a power cut. 0.0.8 treats the seconds register's bit 7 (OS, oscillator stopped) as "no time" and reports `rtc=unset`. | [U] SCH p1 (inferred from the rail); 0.0.8 telemetry `rtc=` settles it |
+| PCF85063 registers as driven (0.0.8) | Control_1 0x00 (bit 5 STOP, bit 1 12/24 — the only bits ever written, both cleared); time 0x04-0x0A in BCD: seconds (bit 7 OS), minutes, hours (24-hour), day, weekday (0 = Sunday), month, year 00-99. One 11-byte read from 0x00; one 8-byte write from 0x04. The chip holds UTC. | [C] `components/svc_rtc/time_logic.c`, `esp/svc_rtc_pcf85063.c`, host-tested |
 | RTC INT | `RTC_INT` → **test pad only**, not wired to the MCU. BSP's GPIO18 claim conflicts (see §4). | [U, conflict] SCH p1 vs BSP header `:79` |
 | QMI8658 address | **0x6B** (SDO/SA0 pulled high, schematic note "0X6B") | [C] SCH p1; IDF `02_I2C_QMI8658/main/main.cpp:39` (`QMI8658_ADDRESS_HIGH`); BSP header `:75` |
 | QMI8658 INT1 / INT2 | **GPIO16 / GPIO17** via R4/R5 0 Ω, shared with UART0 TX/RX (see headline 6) | [C] SCH p1; BSP header `:76-77` |

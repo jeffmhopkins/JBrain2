@@ -17,27 +17,51 @@ uint32_t ui_accent_color(ui_accent_t a)
     }
 }
 
+LV_FONT_DECLARE(ui_font_clock_92)
+LV_FONT_DECLARE(ui_font_clock_124)
+LV_FONT_DECLARE(ui_glyphs_14)
+LV_FONT_DECLARE(ui_glyphs_16)
+LV_FONT_DECLARE(ui_glyphs_18)
+LV_FONT_DECLARE(ui_glyphs_20)
+LV_FONT_DECLARE(ui_glyphs_22)
+LV_FONT_DECLARE(ui_glyphs_24)
+LV_FONT_DECLARE(ui_glyphs_26)
+LV_FONT_DECLARE(ui_glyphs_28)
+LV_FONT_DECLARE(ui_glyphs_30)
+
+#define N_FONTS 10
+
+/* The built-in fonts are const, so each size is a copy of its descriptor (a few dozen bytes,
+ * pointing at the same glyph data in flash) with the punctuation fallback hung on it. */
+static lv_font_t s_fonts[N_FONTS];
+static const struct {
+    int px;
+    const lv_font_t *base, *glyphs;
+} FONTS[N_FONTS] = {
+    {14, &lv_font_montserrat_14, &ui_glyphs_14}, {16, &lv_font_montserrat_16, &ui_glyphs_16},
+    {18, &lv_font_montserrat_18, &ui_glyphs_18}, {20, &lv_font_montserrat_20, &ui_glyphs_20},
+    {22, &lv_font_montserrat_22, &ui_glyphs_22}, {24, &lv_font_montserrat_24, &ui_glyphs_24},
+    {26, &lv_font_montserrat_26, &ui_glyphs_26}, {28, &lv_font_montserrat_28, &ui_glyphs_28},
+    {30, &lv_font_montserrat_30, &ui_glyphs_30}, {48, &lv_font_montserrat_48, &ui_glyphs_30},
+};
+
 const lv_font_t *ui_font(int px)
 {
-    static const struct {
-        int px;
-        const lv_font_t *f;
-    } fonts[] = {
-        {14, &lv_font_montserrat_14}, {16, &lv_font_montserrat_16}, {18, &lv_font_montserrat_18},
-        {20, &lv_font_montserrat_20}, {22, &lv_font_montserrat_22}, {24, &lv_font_montserrat_24},
-        {26, &lv_font_montserrat_26}, {28, &lv_font_montserrat_28}, {30, &lv_font_montserrat_30},
-        {48, &lv_font_montserrat_48},
-    };
-    const lv_font_t *best = fonts[0].f;
-    int dist = 1000;
-    for (size_t i = 0; i < sizeof fonts / sizeof *fonts; i++) {
-        int d = px > fonts[i].px ? px - fonts[i].px : fonts[i].px - px;
-        if (d < dist) {
-            dist = d;
-            best = fonts[i].f;
+    if (!s_fonts[0].get_glyph_dsc) {
+        for (int i = 0; i < N_FONTS; i++) {
+            s_fonts[i] = *FONTS[i].base;
+            s_fonts[i].fallback = FONTS[i].glyphs;
         }
     }
-    return best;
+    int best = 0, dist = 1000;
+    for (int i = 0; i < N_FONTS; i++) {
+        int d = px > FONTS[i].px ? px - FONTS[i].px : FONTS[i].px - px;
+        if (d < dist) {
+            dist = d;
+            best = i;
+        }
+    }
+    return &s_fonts[best];
 }
 
 static lv_obj_t *bare(lv_obj_t *parent)
@@ -83,12 +107,11 @@ lv_obj_t *ui_label_wrap(lv_obj_t *parent, const char *text, int px, uint32_t col
 
 lv_obj_t *ui_label_big(lv_obj_t *parent, const char *text, int px, uint32_t color)
 {
-    lv_obj_t *l = ui_label(parent, text, 48, color);
-    if (px > 48) {
-        lv_obj_set_style_transform_scale(l, 256 * px / 48, 0);
-        lv_obj_set_style_transform_pivot_x(l, LV_PCT(50), 0);
-        lv_obj_set_style_transform_pivot_y(l, LV_PCT(50), 0);
-    }
+    lv_obj_t *l = ui_label(parent, text, px, color);
+    if (px == 124) lv_obj_set_style_text_font(l, &ui_font_clock_124, 0);
+    if (px == 92) lv_obj_set_style_text_font(l, &ui_font_clock_92, 0);
+    /* The mock's letter-spacing: -0.02em. */
+    if (px >= 92) lv_obj_set_style_text_letter_space(l, -px / 50, 0);
     return l;
 }
 
@@ -321,6 +344,73 @@ lv_obj_t *ui_switch_row(lv_obj_t *parent, const char *label, bool on, bool enabl
     return sw;
 }
 
+lv_obj_t *ui_switch_row_sub(lv_obj_t *parent, const char *title, int px, const char *sub, bool on,
+                            bool enabled, lv_event_cb_t cb, void *user)
+{
+    lv_obj_t *sw = ui_switch_row(parent, title, on, enabled, cb, user);
+    lv_obj_t *r = lv_obj_get_parent(sw);
+    lv_obj_t *l = lv_obj_get_child(r, 0);
+    lv_obj_set_style_text_font(l, ui_font(px), 0);
+    if (!sub) return sw;
+    /* The title becomes the first line of a column, with the muted line under it. */
+    lv_obj_t *col = bare(r);
+    lv_obj_move_to_index(col, 0);
+    lv_obj_set_height(col, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(col, 1);
+    lv_obj_set_flex_flow(col, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(col, 2, 0);
+    lv_obj_set_parent(l, col);
+    lv_obj_set_width(l, LV_PCT(100));
+    lv_obj_set_flex_grow(l, 0);
+    ui_label_wrap(col, sub, 16, UI_C_MUTED);
+    return sw;
+}
+
+lv_obj_t *ui_divider(lv_obj_t *parent)
+{
+    lv_obj_t *d = bare(parent);
+    lv_obj_set_size(d, LV_PCT(100), 1);
+    fill(d, UI_C_LINE, LV_OPA_COVER, 0);
+    return d;
+}
+
+lv_obj_t *ui_choice(lv_obj_t *parent, const char *text, uint32_t color, bool picked, bool enabled,
+                    lv_event_cb_t cb, void *user)
+{
+    lv_obj_t *b = bare(parent);
+    lv_obj_set_height(b, UI_BUTTON_H);
+    lv_obj_set_flex_grow(b, 1);
+    fill(b, 0x0A0A0A, LV_OPA_COVER, 16);
+    border(b, picked ? UI_C_STEEL : UI_C_LINE, 2);
+    lv_obj_t *l = ui_label(b, text, 22, color);
+    lv_obj_center(l);
+    if (!enabled) lv_obj_set_style_opa(b, LV_OPA_50, 0);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+    return b;
+}
+
+lv_obj_t *ui_corner_badge(lv_obj_t *parent, const char *count, uint32_t color, uint8_t opa,
+                          lv_event_cb_t cb, void *user)
+{
+    lv_obj_t *b = bare(parent);
+    lv_obj_set_size(b, LV_SIZE_CONTENT, UI_TOUCH_MIN);
+    lv_obj_set_style_min_width(b, UI_TOUCH_MIN, 0);
+    lv_obj_set_style_pad_hor(b, 12, 0);
+    fill(b, 0x0A0A0A, LV_OPA_COVER, UI_TOUCH_MIN / 2);
+    border(b, UI_C_LINE, 1);
+    lv_obj_set_style_opa(b, opa, 0);
+    lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(b, 6, 0);
+    ui_label(b, LV_SYMBOL_BELL, 16, color);
+    ui_label(b, count, 18, color);
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(b, 10);
+    if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+    return b;
+}
+
 lv_obj_t *ui_slider_row(lv_obj_t *parent, int min, int max, int value, lv_event_cb_t cb,
                         void *user)
 {
@@ -486,7 +576,7 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
         lv_obj_t *lt = ui_label(l, LV_SYMBOL_VOLUME_MAX " Listen", 16, UI_C_JERV);
         lv_obj_center(lt);
     }
-    if (b->speaking) ui_label(wrap, LV_SYMBOL_VOLUME_MAX " Speaking...", 16, UI_C_JERV);
+    if (b->speaking) ui_label(wrap, LV_SYMBOL_VOLUME_MAX " Speaking…", 16, UI_C_JERV);
     if (b->status && b->status[0]) ui_label(wrap, b->status, 16, UI_C_MUTED);
     return line;
 }
@@ -539,7 +629,7 @@ void ui_talk_open(ui_talk_t *t, lv_obj_t *parent, uint32_t color, const char *ti
     t->time = ui_label(t->ring, "0:00", 48, UI_C_TEXT);
     lv_obj_center(t->time);
     ui_label(t->root, "Let go of KEY to send", 22, UI_C_TEXT);
-    ui_label(t->root, "Tap the screen to cancel - 1:00 max", 18, UI_C_MUTED);
+    ui_label(t->root, "Tap the screen to cancel · 1:00 max", 18, UI_C_MUTED);
     t->timer = lv_timer_create(talk_tick, 100, t);
     ui_talk_refresh(t);
 }
