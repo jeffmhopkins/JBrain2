@@ -277,3 +277,36 @@ export const itemsLines = (q, who, here, stacks) => {
     .slice(0, ITEMS_LINES)
     .map((p) => `items ground: ${p.amount} ${p.typeId} at x=${p.x} y=${p.y} z=${p.z}, ${away(p)} blocks from ${who} (${dim})`);
 };
+
+// A count of what a player carries, from `scriptevent jb:carry {json}` (Dave's
+// mc_goal_progress, §M24): whose pockets and which item types (1-8, namespaced). Their own
+// only — the backend sends the asker's name, never another's. Throws on anything malformed.
+export const parseCarry = (message) => {
+  const q = JSON.parse(message);
+  if (typeof q !== "object" || q === null) throw new Error("not an object");
+  if (typeof q.player !== "string" || !q.player) throw new Error("no player");
+  const types = Array.isArray(q.types) ? q.types : [];
+  if (!types.length || types.length > 8 || !types.every((t) => typeof t === "string" && ITEM_ID.test(t))) {
+    throw new Error("not 1-8 item types");
+  }
+  return { player: q.player, types: types.map((t) => (t.includes(":") ? t : `minecraft:${t}`)) };
+};
+
+// Every shulker box colour's id ends so; "minecraft:shulker_box" is the undyed one.
+export const isShulkerBox = (typeId) => typeId.endsWith("shulker_box");
+
+// The console line answering a carry count: where they stand (so the backend can look
+// around them from the app too), each asked type's total (0 when none), and how many
+// shulker boxes they carry, whose contents stable 2.0.0 can't read.
+export const carryLine = (q, who, here, stacks) => {
+  const dim = Object.keys(DIMS).find((k) => DIMS[k] === here.dim) ?? here.dim;
+  const counts = new Map(q.types.map((t) => [t, 0]));
+  let boxes = 0;
+  for (const s of stacks) {
+    if (counts.has(s.typeId)) counts.set(s.typeId, counts.get(s.typeId) + s.amount);
+    if (isShulkerBox(s.typeId)) boxes += s.amount;
+  }
+  const [x, y, z] = [here.x, here.y, here.z].map(Math.floor);
+  const each = [...counts].map(([t, n]) => `${t}=${n}`).join(" ");
+  return `carry counted for ${who} in ${dim} at x=${x} y=${y} z=${z}: ${each}; shulker boxes=${boxes}`;
+};

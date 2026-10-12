@@ -168,3 +168,33 @@ test("an item search answers one line per kind per block, nearest first, capped"
     "items none: no minecraft:apple on the ground within 48 blocks of Steve",
   ]);
 });
+
+test("a carry count names 1-8 namespaced types for one player", () => {
+  assert.deepEqual(r.parseCarry('{"player":"Steve 42","types":["iron_block","jbrain:power_pack"]}'), {
+    player: "Steve 42",
+    types: ["minecraft:iron_block", "jbrain:power_pack"],
+  });
+  const nine = JSON.stringify({ player: "a", types: Array(9).fill("apple") });
+  for (const bad of ['{"types":["apple"]}', '{"player":"a","types":[]}', '{"player":"a","types":"apple"}',
+    '{"player":"a","types":["Apple!"]}', '{"player":"","types":["apple"]}', nine, "null"]) {
+    assert.throws(() => r.parseCarry(bad), bad);
+  }
+});
+
+test("a carry count totals each asked type, says 0 for none, and counts shulker boxes", () => {
+  const q = { types: ["minecraft:iron_block", "minecraft:diamond"] };
+  const here = { dim: "minecraft:nether", x: 10.7, y: 64.2, z: -3.4 };
+  const stacks = [
+    { typeId: "minecraft:iron_block", amount: 3 },
+    { typeId: "minecraft:dirt", amount: 64 },
+    { typeId: "minecraft:iron_block", amount: 2 },
+    { typeId: "minecraft:red_shulker_box", amount: 1 },
+    { typeId: "minecraft:shulker_box", amount: 1 },
+  ];
+  assert.equal(
+    r.carryLine(q, "Steve 42", here, stacks),
+    "carry counted for Steve 42 in nether at x=10 y=64 z=-4: minecraft:iron_block=5 minecraft:diamond=0; shulker boxes=2",
+  );
+  assert.equal(r.isShulkerBox("minecraft:shulker_box"), true);
+  assert.equal(r.isShulkerBox("minecraft:shulker_shell"), false);
+});
