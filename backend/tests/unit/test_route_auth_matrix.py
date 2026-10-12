@@ -218,6 +218,17 @@ def test_allow_and_exempt_lists_name_real_routes(
     assert not set(ALLOWED) & set(COOKIE_EXEMPT)
 
 
+@pytest.mark.parametrize("kind", ["device_key", "jcode_share_link", "intake_link"])
+def test_the_harness_cookies_really_authenticate(
+    harness: tuple[FastAPI, TestClient, dict[str, str]], kind: str
+) -> None:
+    # The positive control: if the cookie name or the fake drifted, every probe below would
+    # 401 and the matrix would pass while checking nothing.
+    _, client, tokens = harness
+    resp = client.get("/api/auth/me", headers={"cookie": f"{_COOKIE}={tokens[kind]}"})
+    assert resp.status_code == 200
+
+
 def test_no_route_admits_a_non_owner_cookie_it_was_not_built_for(
     harness: tuple[FastAPI, TestClient, dict[str, str]],
 ) -> None:

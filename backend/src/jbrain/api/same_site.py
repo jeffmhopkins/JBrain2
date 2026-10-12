@@ -22,7 +22,6 @@ from jbrain.api.session_cookie import apply_migration, session_cookie_names
 from jbrain.config import Settings
 
 _REFUSED = json.dumps({"detail": "cross-site request refused"}).encode()
-_FOREIGN_SITES = frozenset({"same-site", "cross-site"})
 _DEFAULT_PORTS = frozenset({"80", "443"})
 # Routes an outside site redirects the owner's browser to, so they arrive as a cross-site
 # navigation carrying the Lax cookie: Google's OAuth consent → the Gmail callback.
@@ -81,7 +80,8 @@ def refusal_reason(headers: Headers, method: str | None, path: str) -> str | Non
     site = headers.get("sec-fetch-site")
     if site is not None:
         site = site.strip().lower()
-        if site not in _FOREIGN_SITES:
+        # Only the two values that mean "this origin" pass; anything unrecognised is foreign.
+        if site in ("same-origin", "none"):
             return None
         # The api serves no HTML: links into the PWA land on Caddy's static shell, never
         # here. So a cross-site top-level navigation is legitimate only on a callback an

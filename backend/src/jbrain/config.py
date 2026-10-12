@@ -1,5 +1,3 @@
-from datetime import date
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,9 +65,9 @@ class Settings(BaseSettings):
     public_base_url: str = ""
     # The Origins allowed to open the live WebSocket (CSWSH defense, plan B8): a
     # comma-separated allow-list. A browser always sends `Origin` on the WS
-    # handshake, so a cross-site page on a victim's machine is rejected. Empty =
-    # unset (dev / native clients that send no Origin); when set, a present Origin
-    # MUST match. See `allowed_ws_origins`.
+    # handshake, so a cross-site page on a victim's machine is rejected. Empty = a
+    # present Origin must equal the request Host; when set, it must be on the list.
+    # Native clients send no Origin and pass either way. See `origin_allowed`.
     dashboard_allowed_origins: str = ""
 
     @property
@@ -368,11 +366,10 @@ class Settings(BaseSettings):
     external_geocoder_url: str = ""
     # Cookies require HTTPS in production; tests and local dev run plain HTTP.
     secure_cookies: bool = True
-    # With secure_cookies on, the session cookie is `__Host-<session_cookie>` and a request
-    # still carrying the legacy name is migrated silently (api/session_cookie.py). After this
-    # day the legacy name is ignored outright, so a cookie tossed onto the parent domain by a
-    # sibling subdomain is never read; a device not seen for the whole window signs in again.
-    legacy_session_cookie_until: date = date(2026, 11, 11)
+    # With secure_cookies on, the session cookie is `__Host-<session_cookie>`; a request still
+    # carrying the legacy name is migrated silently (api/session_cookie.py). The legacy name
+    # has no cut-off: a migrated browser never reads it again, and a client that never sees
+    # the migration response (the owner app's OkHttp notification relay) must keep working.
 
     # One-time install reset (W3.3 cutover): when set, the `jbrain.install_wipe`
     # one-shot drops + rebuilds the schema, clears blob/backup storage, and

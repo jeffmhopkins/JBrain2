@@ -8,7 +8,6 @@ the victim's cookies — even Strict ones — and only the request's metadata gi
 
 import asyncio
 from collections.abc import Iterator
-from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -66,12 +65,7 @@ def client(repo: FakeAuthRepo) -> Iterator[TestClient]:
 @pytest.fixture
 def secure_client(repo: FakeAuthRepo) -> Iterator[TestClient]:
     # https so the jar returns Secure cookies, as a real browser on the deploy would.
-    # The sunset is pinned far out so these tests do not start failing on a calendar date.
-    app = create_app(
-        Settings(
-            secure_cookies=True, database_url=_DB, legacy_session_cookie_until=date(2099, 1, 1)
-        )
-    )
+    app = create_app(Settings(secure_cookies=True, database_url=_DB))
     with TestClient(app, base_url="https://testserver") as c:
         app.state.auth_repo = repo
         yield c
@@ -426,19 +420,6 @@ def test_duplicated_legacy_cookie_authenticates_nobody(
     assert _set_cookies(resp) == []
 
 
-def test_legacy_name_is_ignored_after_the_sunset(repo: FakeAuthRepo) -> None:
-    app = create_app(
-        Settings(
-            secure_cookies=True, database_url=_DB, legacy_session_cookie_until=date(2026, 1, 1)
-        )
-    )
-    with TestClient(app, base_url="https://testserver") as c:
-        app.state.auth_repo = repo
-        token = _owner_token(repo)
-        assert c.get("/api/auth/me", headers=_cookie(token)).status_code == 401
-        assert c.get("/api/auth/me", headers=_cookie(token, _HOST)).status_code == 200
-
-
 def test_logout_deletes_both_names(secure_client: TestClient, repo: FakeAuthRepo) -> None:
     token = _owner_token(repo)
     resp = secure_client.delete("/api/auth/session", headers=_cookie(token, _HOST))
@@ -474,9 +455,7 @@ def test_dashboard_mint_emits_exactly_one_cookie(
 
 
 def test_a_route_that_writes_the_session_cookie_itself_wins_over_migration() -> None:
-    settings = Settings(
-        secure_cookies=True, database_url=_DB, legacy_session_cookie_until=date(2099, 1, 1)
-    )
+    settings = Settings(secure_cookies=True, database_url=_DB)
     scope = {"type": "http", "headers": [(b"cookie", f"{_LEGACY}=old".encode())]}
     owner = PrincipalInfo(id="o", kind="owner", label="")
     mark_for_migration(HTTPConnection(scope), settings, "old", owner)

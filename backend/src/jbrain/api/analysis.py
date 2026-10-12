@@ -294,10 +294,9 @@ async def resolve_review(
     except AlreadyResolved:
         raise HTTPException(status_code=409, detail="review item is not open") from None
     except MergeScopeError as exc:
-        # Unreachable over HTTP today (the router is owner-only, so ctx_for is the
-        # owner's full context), but the guard exists
-        # for a future narrowed surface and a 500 would read as a server fault rather
-        # than the refusal it is.
+        # Unreachable over HTTP today (the router is owner-only, so ctx_for is the owner's
+        # full context), but the guard exists for a future narrowed surface, and a 500
+        # would read as a server fault rather than the refusal it is.
         raise HTTPException(status_code=403, detail=str(exc)) from None
     if item is None:
         raise HTTPException(status_code=404, detail="review item not found")

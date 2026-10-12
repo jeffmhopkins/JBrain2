@@ -5,8 +5,8 @@ prefix makes the browser refuse it unless it is Secure, Path=/ and host-only, so
 a sibling subdomain (a jcode preview at `<slug>-preview.<host>`) can neither set nor
 shadow it with a parent-domain `jbrain_session` of its own (cookie tossing).
 
-Cookies minted before the rename still carry the legacy name and keep working until the
-`legacy_session_cookie_until` sunset: an owner or member request that authenticates by the
+Cookies minted before the rename still carry the legacy name and keep working: an owner or
+member request that authenticates by the
 legacy cookie alone is marked here, and `SameSiteGuard` re-issues the same token under the
 `__Host-` name and deletes the legacy one on the way out, so no device signs in again.
 
@@ -20,7 +20,6 @@ The legacy name is exactly what a sibling subdomain CAN set, so it is read defen
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Literal
 
 from starlette.datastructures import MutableHeaders
@@ -59,12 +58,6 @@ def session_cookie_names(settings: Settings) -> tuple[str, str]:
     return host_cookie_name(settings), settings.session_cookie
 
 
-def _legacy_honoured(settings: Settings) -> bool:
-    if not settings.secure_cookies:
-        return True
-    return datetime.now(UTC).date() <= settings.legacy_session_cookie_until
-
-
 def _raw_count(conn: HTTPConnection, name: str) -> int:
     # `conn.cookies` keeps one value per name, hiding a duplicate; the raw header does not.
     raw = conn.headers.get("cookie", "")
@@ -73,11 +66,11 @@ def _raw_count(conn: HTTPConnection, name: str) -> int:
 
 def session_token(conn: HTTPConnection, settings: Settings) -> str:
     """The session token on a request or WS handshake: the `__Host-` cookie when present,
-    else a single, unambiguous legacy cookie while the legacy name is honoured."""
+    else a single, unambiguous legacy cookie."""
     token = conn.cookies.get(host_cookie_name(settings))
     if token is not None:
         return token
-    if not _legacy_honoured(settings) or _raw_count(conn, settings.session_cookie) != 1:
+    if _raw_count(conn, settings.session_cookie) != 1:
         return ""
     return conn.cookies.get(settings.session_cookie, "")
 

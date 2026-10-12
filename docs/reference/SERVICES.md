@@ -99,8 +99,8 @@ React 18 + TypeScript on **Vite**, an installable **offline-first PWA** (Workbox
 service worker, `autoUpdate`; hourly foreground update check). Auth is an
 httpOnly session cookie (`__Host-jbrain_session` whenever cookies are Secure, so a
 sibling subdomain such as a jcode preview can't set or shadow it; an older
-`jbrain_session` cookie is re-issued under the new name on its next request until the
-`JBRAIN_LEGACY_SESSION_COOKIE_UNTIL` sunset). The api's `SameSiteGuard`
+`jbrain_session` cookie is re-issued under the new name on its next request; two legacy
+values in one request — a tossed duplicate — authenticate nothing). The api's `SameSiteGuard`
 (`api/same_site.py`) refuses any cookie-bearing request or WS handshake whose
 `Sec-Fetch-Site` is `same-site` / `cross-site` (only the Gmail OAuth callback admits a
 cross-site navigation) or, without fetch metadata, whose `Origin` differs from `Host`;

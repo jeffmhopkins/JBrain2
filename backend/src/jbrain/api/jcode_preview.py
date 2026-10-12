@@ -99,8 +99,9 @@ def _path_is_contained(path: str) -> bool:
     """False for any path that could step out of the session's preview prefix: a dot
     segment (also as `..;`, which some servers treat as `..`), a backslash, a control
     character, a `?`/`#` (decoded, it would split the upstream URL so the server sees a
-    different path from the one checked here), or an encoded separator — checked at every decoding depth, since httpx and the servers
-    behind it resolve what this layer forwards. Dotted names (`main.js`, `.vite`) pass."""
+    different path from the one checked here), or an encoded separator — checked at every
+    decoding depth, since httpx and the servers behind it resolve what this layer forwards.
+    Dotted names (`main.js`, `.vite`) pass."""
     for _ in range(_MAX_DECODE_ROUNDS):
         if "\\" in path or _ENCODED_SEPARATOR.search(path) or _UNSAFE_CHAR.search(path):
             return False
