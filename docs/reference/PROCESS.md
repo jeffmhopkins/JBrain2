@@ -70,9 +70,12 @@ merged PR #N"), with the files and lines, a repro and a suggested fix.
 
 So every working session owns the findings on **its own** PRs:
 - **Before merging, read the PR's comments and reviews, not just CI.** A finding there is
-  fixed in that PR, and the thread is answered, before it merges. The reviewer may not
-  have finished by the time CI is green; that's fine: don't hold the merge for it (the
-  post-merge checks below catch what lands after).
+  fixed in that PR, and the thread is answered, before it merges.
+- **Give the reviewer time before merging** (owner, 2026-10-12): merge only once its
+  comment on the PR's current head is in, or **10 minutes** after that head was pushed
+  with no comment. Its reviews take a few minutes (2 to 4 on 2026-10-12), and twice a PR
+  merged seconds before its comment landed, so the findings became issues instead of
+  fixes in the PR. A push that fixes findings is a new head: wait again for its review.
 - **Merge the latest main into the branch right before merging**, then let CI run on that
   head. Two PRs can each pass alone and still break main together: on 2026-10-12 two
   migrations both numbered `0236` merged minutes apart, main had two alembic heads, and
