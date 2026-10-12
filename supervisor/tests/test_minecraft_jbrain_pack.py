@@ -104,6 +104,8 @@ def test_daves_lines_live_in_one_block_marked_with_their_sign_off() -> None:
     assert "Signed off by the owner (2026-10-11): every line here." in block
     main = (PACK / "scripts" / "main.js").read_text()
     assert "kssht" not in main and "nearly lost you" not in main  # only via LINES
+    welcome = (PACK / "scripts" / "welcome.js").read_text()
+    assert "where am I" not in welcome and "there you are" not in welcome
 
 
 def _node_root(tmp_path: Path) -> Path:
@@ -127,7 +129,7 @@ def _node_root(tmp_path: Path) -> Path:
                 }
             )
         )
-    for test in ("pack.test.mjs", "transport.test.mjs"):
+    for test in ("pack.test.mjs", "transport.test.mjs", "welcome.test.mjs"):
         shutil.copy(MC / "jbrain-sim" / test, root / test)
     return root
 
@@ -161,3 +163,13 @@ def test_transport_on_request_follows_the_rules(tmp_path: Path) -> None:
     one console line the tool reads."""
     root = _node_root(tmp_path)
     _node_test(root / "transport.test.mjs", cwd=root)
+
+
+def test_daves_welcome_and_first_time_beats(tmp_path: Path) -> None:
+    """welcome.js against the fakes (§DW1): the lore table's welcome with the crash-site
+    or no-wreck pair, once per player (players from before it included, keeping their
+    own Tricorder), a clean end when they leave, first death (only the first line when
+    a Power Pack saved their things), first Ender Pearl, first Power Pack only for what
+    the world's switches built, and `/dave hello` answered in the pack."""
+    root = _node_root(tmp_path)
+    _node_test(root / "welcome.test.mjs", cwd=root)

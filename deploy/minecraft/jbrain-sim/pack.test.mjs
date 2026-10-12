@@ -17,11 +17,20 @@ const ask = (p, ...words) => {
   sim.flush();
 };
 
+// A first join plays Dave's welcome (welcome.test.mjs); these tests start after it.
+const WELCOME_TICKS = 500;
+const wake = (p) => {
+  sim.spawn(p, true);
+  sim.advance(WELCOME_TICKS);
+  p.messages.length = 0;
+  p.sounds.length = 0;
+};
+
 beforeEach(() => sim.reset());
 
-test("a first-ever waking gets a Tricorder quietly, bound to its owner (DW1's hook)", () => {
+test("the welcome's Tricorder is bound to its owner", () => {
   const p = sim.player("Steve 42", "-111");
-  sim.spawn(p, true);
+  wake(p);
   const [t] = tricorders(p);
   assert.ok(t, "beamed");
   assert.equal(t.lockMode, ItemLockMode.inventory);
@@ -29,12 +38,11 @@ test("a first-ever waking gets a Tricorder quietly, bound to its owner (DW1's ho
   assert.equal(t.nameTag, "Steve 42's Tricorder");
   assert.deepEqual(t.lore, ["Points where Dave says"]);
   assert.equal(t.getDynamicProperty("jb:owner"), "-111");
-  assert.deepEqual(p.messages, []); // the welcome is DW1's, not this wave's
 });
 
 test("waking without your own Tricorder re-beams one with Dave's line; with it, nothing", () => {
   const p = sim.player("Alex", "-2");
-  sim.spawn(p, true);
+  wake(p);
   sim.spawn(p, false);
   assert.equal(tricorders(p).length, 1);
   assert.deepEqual(p.messages, []);
@@ -62,14 +70,14 @@ test("a full inventory still gets the Tricorder; the selected stack makes room",
   const p = sim.player("Full", "-4");
   for (let i = 0; i < 36; i++) p.inventory.setItem(i, new ItemStack("minecraft:dirt", 64));
   p.selectedSlotIndex = 3;
-  sim.spawn(p, true);
+  wake(p);
   assert.equal(p.inventory.slots[3].typeId, "jbrain:tricorder");
   assert.equal(sim.overworld.spawned[0].item.typeId, "minecraft:dirt");
 });
 
 test("only the owner sees the arrow; anyone else gets static", () => {
   const owner = sim.player("Owner", "-10");
-  sim.spawn(owner, true);
+  wake(owner);
   const tricorder = tricorders(owner)[0];
   const slot = owner.inventory.slots.indexOf(tricorder);
   owner.selectedSlotIndex = slot;
@@ -94,7 +102,7 @@ test("no Tricorder, no Dave: static lines and no question reaches the backend", 
   assert.deepEqual(p.messages, ["§7§o" + LINES.noSignal]);
 
   const other = sim.player("Other", "-21");
-  sim.spawn(other, true);
+  wake(other);
   p.inventory.setItem(5, tricorders(other)[0]);
   ask(p, "hello");
   assert.equal(p.messages.at(-1), "§7§o" + LINES.notTuned);
@@ -108,7 +116,7 @@ test("no Tricorder, no Dave: static lines and no question reaches the backend", 
 
 test("/d and /ai are the same door as /dave, and an empty ask names /dave", () => {
   const p = sim.player("Shorty", "-30");
-  sim.spawn(p, true);
+  wake(p);
   for (const name of ["jb:d", "jb:ai"]) {
     const res = sim.command(name).cb({ sourceEntity: p }, "point", "me", name);
     sim.flush();
@@ -119,7 +127,7 @@ test("/d and /ai are the same door as /dave, and an empty ask names /dave", () =
 });
 
 const kit = (p) => {
-  sim.spawn(p, true);
+  wake(p);
   p.inventory.setItem(1, new ItemStack("minecraft:diamond_sword", 1));
   const cursed = new ItemStack("minecraft:carved_pumpkin", 1);
   cursed.enchants = ["vanishing"];
@@ -223,8 +231,8 @@ const knownOf = (line) => JSON.parse(line.slice(line.indexOf("{"))).known;
 
 test("each /dave question carries the asker's unlocks, first held and then kept", () => {
   const p = sim.player("Learner", "-80");
-  sim.spawn(p, true);
-  ask(p, "hello");
+  wake(p);
+  ask(p, "what", "now");
   assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
 
   // The loop notices a first Ender Pearl within a second (every fourth frame).
@@ -234,26 +242,26 @@ test("each /dave question carries the asker's unlocks, first held and then kept"
 
   // Asking checks too, so a pack made a moment ago counts at once.
   p.inventory.setItem(4, new ItemStack("jbrain:power_pack", 1));
-  ask(p, "hello");
+  ask(p, "what", "now");
   assert.deepEqual(knownOf(daveEvents().at(-1)), ["power_pack", "power_pack_uses", "tricorder"]);
 
   // Once unlocked, always: spending the pack forgets nothing.
   p.inventory.setItem(4, undefined);
-  ask(p, "hello");
+  ask(p, "what", "now");
   assert.deepEqual(knownOf(daveEvents().at(-1)), ["power_pack", "power_pack_uses", "tricorder"]);
 
   // Per player: someone else's pearl unlocks nothing for this one.
   const other = sim.player("Other", "-81");
-  sim.spawn(other, true);
-  ask(other, "hello");
+  wake(other);
+  ask(other, "what", "now");
   assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
 });
 
 test("a pearl in a shulker box isn't held; an unreadable record starts fresh", () => {
   const p = sim.player("Boxed", "-82");
-  sim.spawn(p, true);
+  wake(p);
   sim.props.set("jb:known:-82", "not json");
   p.inventory.setItem(6, new ItemStack("minecraft:shulker_box", 1));
-  ask(p, "hello");
+  ask(p, "what", "now");
   assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
 });

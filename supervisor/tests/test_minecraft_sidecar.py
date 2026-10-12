@@ -973,7 +973,7 @@ def test_a_loaded_world_gets_its_saved_rules_once_it_is_up(
         "gamerule keepInventory true",
         # The jbrain pack's copy of the switch, last.
         'scriptevent jb:config {"power_pack_keep": false,'
-        ' "power_pack_transport": true}',
+        ' "power_pack_transport": true, "wreck": true}',
     ]
 
 
@@ -1144,7 +1144,7 @@ def test_saved_rules_come_back_on_a_plain_start_too(
     assert sent == [
         "gamerule doFireTick false",
         'scriptevent jb:config {"power_pack_keep": false,'
-        ' "power_pack_transport": true}',
+        ' "power_pack_transport": true, "wreck": false}',
     ]
 
 
@@ -1675,7 +1675,8 @@ def test_the_power_pack_switch_is_off_by_default_and_applies_live(
     assert out["power_pack_keep"] is True and out["applies"] == "now"
     assert sent == [
         "gamerule keepInventory true",
-        'scriptevent jb:config {"power_pack_keep": true, "power_pack_transport": true}',
+        'scriptevent jb:config {"power_pack_keep": true,'
+        ' "power_pack_transport": true, "wreck": false}',
     ]
     sent.clear()
     out = rig.set_power_pack("slot1", False)
@@ -1683,7 +1684,7 @@ def test_the_power_pack_switch_is_off_by_default_and_applies_live(
     assert sent == [
         "gamerule keepInventory false",
         'scriptevent jb:config {"power_pack_keep": false,'
-        ' "power_pack_transport": true}',
+        ' "power_pack_transport": true, "wreck": false}',
     ]
     assert rig.slots.get("slot1")["rules"] == {"keepInventory": False}
     with pytest.raises(ValueError):
@@ -1768,7 +1769,7 @@ def test_every_start_tells_the_pack_the_switch_after_the_rules(
     assert sent == [
         "gamerule pvp false",
         'scriptevent jb:config {"power_pack_keep": false,'
-        ' "power_pack_transport": true}',
+        ' "power_pack_transport": true, "wreck": false}',
     ]
     sent.clear()
     rig.slots.update("slot1", power_pack_keep=True)
@@ -1777,7 +1778,8 @@ def test_every_start_tells_the_pack_the_switch_after_the_rules(
     assert sent == [
         "gamerule pvp false",
         "gamerule keepInventory true",
-        'scriptevent jb:config {"power_pack_keep": true, "power_pack_transport": true}',
+        'scriptevent jb:config {"power_pack_keep": true,'
+        ' "power_pack_transport": true, "wreck": false}',
     ]
 
 
