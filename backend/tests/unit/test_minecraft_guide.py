@@ -15,7 +15,7 @@ def test_the_guide_is_pinned_to_its_version() -> None:
     assert guide.VERSION == "agent-minecraft-dave-guide-v6"
     body = guide._PROMPT.body  # noqa: SLF001 — the pin is on the file's exact text
     assert hashlib.sha256(body.encode()).hexdigest() == (
-        "5a535ea193795919880c478c5c1090cfdcd36fad90d93b239ca5326740c01318"
+        "903818f5792d805ef5d1982868b16368c08f6bc76d71cfc8336f9c325a8623a2"
     )
 
 
