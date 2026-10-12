@@ -1,4 +1,4 @@
-"""Migration 0238 against real Postgres: the beacons and gates the map and Dave show (§M26).
+"""Migration 0239 against real Postgres: the beacons and gates the map and Dave show (§M26).
 
 The contract, case by case:
 - the session drain turns the pack's `beacon` / `gate` events into rows, an event patching

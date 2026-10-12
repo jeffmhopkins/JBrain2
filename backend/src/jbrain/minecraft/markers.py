@@ -1,5 +1,5 @@
 """No-Spawn Beacons and wormhole gates as the map and Dave see them (plan §M26,
-`app.mc_world_beacons` / `app.mc_world_gates`, migration 0238).
+`app.mc_world_beacons` / `app.mc_world_gates`, migration 0239).
 
 The pack sends `beacon` / `gate` events when one changes and `beacons` / `gates`
 snapshots after each load; the session drain (`sessions.SessionDrain`) hands each to
