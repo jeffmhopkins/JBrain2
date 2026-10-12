@@ -11,15 +11,15 @@ no count) means nothing to count.
 no policy change: `app.mc_goals` stays owner-only (0226), and its isolation test now
 writes the new columns too.
 
-Revision ID: 0236
-Revises: 0235
+Revision ID: 0237
+Revises: 0236
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0236"
-down_revision = "0235"
+revision = "0237"
+down_revision = "0236"
 branch_labels = None
 depends_on = None
 

@@ -2515,7 +2515,7 @@ any chest in the world, not "my stock".
    to mark the goal done. He marks it only if the player says yes.
 
 **What's built.**
-- **Migration 0236** adds nullable `item` and `item_count` columns to `app.mc_goals`. The
+- **Migration 0237** (renumbered from 0236 after a clash with the panel alarms) adds nullable `item` and `item_count` columns to `app.mc_goals`. The
   item's CHECK is `mc_find_item`'s id pattern, the count's is 1–100,000, and a third
   CHECK makes them a pair (both or neither). There is no new table, and 0226's owner-only
   policy is unchanged. The integration isolation test now writes both columns as a
