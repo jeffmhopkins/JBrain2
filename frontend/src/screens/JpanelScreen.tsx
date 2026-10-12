@@ -45,6 +45,7 @@ import { agoLabel, panelHealth, panelStateWords } from "../panelStatus";
 import { useForeground } from "../visibility";
 import { MAX_MESSAGE_MS, type Recorder, startRecording } from "../voiceMessage";
 import { EndpointsScreen } from "./EndpointsScreen";
+import { PanelAlarms } from "./PanelAlarms";
 import { atLiveEnd, threadItems, threadPanels } from "./jpanelThread";
 import "./jpanel.css";
 
@@ -1263,6 +1264,7 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
       </p>
 
       {panel.role === "display" && <AgentAccessSwitch panel={panel} />}
+      {panel.role === "display" && <PanelAlarms deviceId={panel.device_id} />}
 
       {renaming ? (
         <div className="jp-unit-edit">

@@ -29,6 +29,8 @@ import type {
   MinecraftTimelinePart,
   NoteAnalysis,
   NoteOut,
+  PanelAlarm,
+  PanelAlarmIn,
   PetCommand,
   PetState,
   Principal,
@@ -3811,6 +3813,23 @@ function mockRecordingState(): SdrRecordingState | null {
 // a joke" came back as "There is a joke. There is a joke."), so a fixture of tidy
 // sentences would validate a screen that does not exist. One row has no words at all,
 // which is what a panel pointed at a noisy room produces.
+// The mock's own sample alarms (PwaAlarms.dc.html's three), in the panel's encoding.
+const MOCK_ALARMS: { alarms: PanelAlarm[]; next: number; version: number; changedAt: number } = {
+  alarms: [
+    { id: 1, at: 6 * 60 + 45, days: 0x1f, on: true, label: "Work", sound: "chime" },
+    { id: 2, at: 8 * 60 + 30, days: 0x60, on: false, label: "", sound: "rise" },
+    { id: 3, at: 21 * 60, days: 0x7f, on: true, label: "Girls to bed", sound: "beeps" },
+  ],
+  next: 10,
+  version: 2,
+  changedAt: 0,
+};
+
+function alarmsChanged(): void {
+  MOCK_ALARMS.version++;
+  MOCK_ALARMS.changedAt = Date.now();
+}
+
 let mockJpanelSeq = 1;
 const jpanelAt = (minsAgo: number) => new Date(Date.now() - minsAgo * 60_000).toISOString();
 
@@ -5971,8 +5990,54 @@ export const mockFetch: typeof fetch = async (input, init) => {
             panel_reset: false,
           },
         },
+        // The owner's own desk panel: the one display, so the agent switch and the alarms
+        // editor have somewhere to be drawn.
+        {
+          device_id: "panel-desk",
+          name: "Jeff",
+          role: "display",
+          reported_at: new Date(Date.now() - 30_000).toISOString(),
+          version: "0.0.13",
+          age_s: 30,
+          report: { version: "0.0.13", uptime_ms: 3_600_000, screen: "awake" },
+        },
       ],
     });
+  }
+  if (/^\/api\/endpoint\/panels\/[^/]+\/agent$/.test(path)) {
+    if (method === "PUT") return json(JSON.parse(String(init?.body ?? "{}")));
+    return json({ agent_access: true });
+  }
+  // --- the desk panel's alarms. The panel "fetches" a version a few seconds after it changes,
+  // so the editor's "Sending to panel…" settles to "On the panel" as it would on the box.
+  const alarmOne = /^\/api\/endpoint\/panels\/[^/]+\/alarms\/(\d+)$/.exec(path);
+  if (/^\/api\/endpoint\/panels\/[^/]+\/alarms$/.test(path)) {
+    if (method === "POST") {
+      if (MOCK_ALARMS.alarms.length >= 8) return json({ detail: "the panel holds 8 alarms" }, 409);
+      const made = {
+        id: MOCK_ALARMS.next++,
+        ...(JSON.parse(String(init?.body ?? "{}")) as PanelAlarmIn),
+      };
+      MOCK_ALARMS.alarms.push(made);
+      alarmsChanged();
+      return json(made, 201);
+    }
+    const alarms = [...MOCK_ALARMS.alarms].sort((a, b) => a.at - b.at || a.id - b.id);
+    const etag = `v${MOCK_ALARMS.version}`;
+    const held = Date.now() - MOCK_ALARMS.changedAt > 4_000 ? etag : `v${MOCK_ALARMS.version - 1}`;
+    return json({ etag, alarms, max: 8, panel_etag: held, panel_seen_s: 2 });
+  }
+  if (alarmOne && method === "PUT") {
+    const id = Number(alarmOne[1]);
+    const body = JSON.parse(String(init?.body ?? "{}")) as PanelAlarmIn;
+    MOCK_ALARMS.alarms = MOCK_ALARMS.alarms.map((a) => (a.id === id ? { id, ...body } : a));
+    alarmsChanged();
+    return json({ id, ...body });
+  }
+  if (alarmOne && method === "DELETE") {
+    MOCK_ALARMS.alarms = MOCK_ALARMS.alarms.filter((a) => a.id !== Number(alarmOne[1]));
+    alarmsChanged();
+    return new Response(null, { status: 204 });
   }
   // --- jpanel. `unplayed` is served by the box rather than counted off `messages`,
   // so it survives a truncating `limit`; the fixture keeps that honest by summing the

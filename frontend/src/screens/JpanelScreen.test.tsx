@@ -181,6 +181,10 @@ function box(
       }
       return opts.agent ? opts.agent(path) : json({ agent_access: false });
     }
+    // The display's alarms (PanelAlarms.test.tsx covers them); an empty, settled list here.
+    if (/^\/api\/endpoint\/panels\/[^/]+\/alarms$/.test(path) && method === "GET") {
+      return json({ etag: "e0", alarms: [], max: 8, panel_etag: "e0", panel_seen_s: 5 });
+    }
     if (path === "/api/endpoint/settings") {
       if (method === "PUT") {
         const sent = JSON.parse(String(init?.body));

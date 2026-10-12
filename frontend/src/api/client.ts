@@ -3588,6 +3588,38 @@ export interface PanelAgentAccess {
   agent_access: boolean;
 }
 
+/** The desk panel's alarm sounds: synthesised on the panel, no audio files. */
+export type AlarmSound = "chime" | "beeps" | "rise";
+export const ALARM_SOUNDS: AlarmSound[] = ["chime", "beeps", "rise"];
+/** The panel's own limits (`ALARM_MAX`, `ALARM_LABEL_BYTES`); the box enforces both. */
+export const ALARMS_MAX = 8;
+export const ALARM_LABEL_MAX = 24;
+/** What the panel's font draws. The box refuses anything else, so it is said while typing. */
+export const ALARM_LABEL_CHARS = /^[ -~]*$/;
+
+/** One alarm as the owner sets it. `at` is minutes past midnight in the PANEL's zone; `days`
+ *  is the panel's own mask, bit 0 Monday … bit 6 Sunday, and 0 rings once then switches off. */
+export interface PanelAlarmIn {
+  at: number;
+  days: number;
+  on: boolean;
+  label: string;
+  sound: AlarmSound;
+}
+
+export interface PanelAlarm extends PanelAlarmIn {
+  id: number;
+}
+
+/** The list, and which version the panel last fetched: "On the panel" only when they match. */
+export interface PanelAlarms {
+  etag: string;
+  alarms: PanelAlarm[];
+  max: number;
+  panel_etag: string | null;
+  panel_seen_s: number | null;
+}
+
 /** Letters and spaces only, and short. TWO unrelated systems constrain this and the stricter one
  *  wins: the panel's 5x7 font has no glyph for an apostrophe and draws it as NOTHING, and the
  *  wake word runs through MultiNet, which matches phonemes — so digits and punctuation are not
@@ -6486,6 +6518,33 @@ export const api = {
       body: JSON.stringify({ agent_access: agentAccess }),
     });
     return (await response.json()) as PanelAgentAccess;
+  },
+
+  async panelAlarms(deviceId: string): Promise<PanelAlarms> {
+    const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/alarms`);
+    return (await response.json()) as PanelAlarms;
+  },
+
+  async addPanelAlarm(deviceId: string, body: PanelAlarmIn): Promise<PanelAlarm> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/alarms`,
+      jsonInit("POST", body),
+    );
+    return (await response.json()) as PanelAlarm;
+  },
+
+  async setPanelAlarm(deviceId: string, id: number, body: PanelAlarmIn): Promise<PanelAlarm> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/alarms/${id}`,
+      jsonInit("PUT", body),
+    );
+    return (await response.json()) as PanelAlarm;
+  },
+
+  async deletePanelAlarm(deviceId: string, id: number): Promise<void> {
+    await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/alarms/${id}`, {
+      method: "DELETE",
+    });
   },
 
   // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for
