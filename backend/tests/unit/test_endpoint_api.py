@@ -1527,6 +1527,174 @@ class TestConverse:
         assert len(out) % 2 == 0
 
 
+def _jerv_frame(body: bytes) -> tuple[int, str, str, bytes]:
+    """The desk panel's reading of a reply frame: flags, heard, reply, audio."""
+    import struct
+
+    assert body[:3] == endpoint_api.JERV_FRAME_MAGIC
+    flags = body[3]
+    (hn,) = struct.unpack("<H", body[4:6])
+    heard = body[6 : 6 + hn].decode()
+    at = 6 + hn
+    (rn,) = struct.unpack("<H", body[at : at + 2])
+    reply = body[at + 2 : at + 2 + rn].decode()
+    return flags, heard, reply, body[at + 2 + rn :]
+
+
+class TestJervOnTheDeskPanel:
+    """`persona=jerv`: the owner's C6 panel asks Jerv, over the pet's transport.
+
+    What must hold: the twins' panels see no change; the owner gets the words as well as the
+    voice; a panel set to text costs the box no synthesis; a box that cannot speak still
+    answers in words; and none of it reaches the pet's prompt, memory or diary.
+    """
+
+    URL = "/api/endpoint/converse?persona=jerv"
+
+    @pytest.fixture(autouse=True)
+    def _clean(self) -> Iterator[None]:
+        endpoint_api._panel_memory.clear()
+        yield
+        endpoint_api._panel_memory.clear()
+
+    def _post(self, c: TestClient, key: str, url: str = URL) -> Any:
+        return c.post(url, content=b"\x00\x01" * 1600, headers={"Authorization": f"Bearer {key}"})
+
+    def test_the_reply_carries_what_was_heard_what_jerv_said_and_the_voice(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        model = TestConverse()._wire(
+            c, monkeypatch, heard="what time is sunset", llm=_FakeLlm("About seven tonight.")
+        )
+        r = self._post(c, key)
+        assert r.status_code == 200, r.text
+        assert r.headers["content-type"] == "application/x-jpanel-turn"
+        flags, heard, reply, pcm = _jerv_frame(r.content)
+        assert flags & endpoint_api.JERV_FRAME_AUDIO
+        assert heard == "what time is sunset"
+        assert reply == "About seven tonight."
+        assert len(pcm) > 0 and len(pcm) % 2 == 0
+        # Jerv's prompt on the panels' cheap spoken slot — never the pet's, never the agent's.
+        assert model.calls[0]["task"] == "pet.turn"
+        assert model.calls[0]["system"].startswith("You are Jerv")
+        assert "four-year-old" not in model.calls[0]["system"]
+
+    def test_text_only_never_asks_for_speech(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch)
+        spoke: list[str] = []
+
+        def no_tts(**kw: Any) -> Any:
+            spoke.append("called")
+            raise AssertionError("text-only must not synthesise")
+
+        monkeypatch.setattr(endpoint_api.httpx, "AsyncClient", no_tts)
+        r = self._post(c, key, self.URL + "&voice=false")
+        assert r.status_code == 200, r.text
+        flags, _heard, reply, pcm = _jerv_frame(r.content)
+        assert flags == 0 and pcm == b"" and reply
+        assert spoke == []
+
+    def test_a_box_that_cannot_speak_still_answers_in_words(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, llm=_FakeLlm("Here you go."))
+        cast(FastAPI, c.app).state.settings.brain_tts_url = ""
+        r = self._post(c, key)
+        assert r.status_code == 200, r.text
+        flags, _heard, reply, pcm = _jerv_frame(r.content)
+        assert (flags, reply, pcm) == (0, "Here you go.", b"")
+
+    def test_silence_is_204_as_for_the_pet(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch, heard="  ")
+        assert self._post(c, key).status_code == 204
+
+    def test_a_dead_model_answers_and_is_not_remembered(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        model = TestConverse()._wire(c, monkeypatch, heard="hello", llm=_FakeLlm(boom=True))
+        for _ in range(2):
+            r = self._post(c, key)
+            assert r.status_code == 200, r.text
+            assert _jerv_frame(r.content)[2] == endpoint_api.PANEL_JERV_FALLBACK
+        assert "hello" not in model.calls[1]["system"]
+
+    def test_jerv_s_memory_is_not_the_pet_s(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One device, two personas: neither may read the other's conversation."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        model = TestConverse()._wire(c, monkeypatch, heard="remember the milk")
+        self._post(c, key)
+        self._post(c, key, "/api/endpoint/converse")
+        self._post(c, key)
+        assert "remember the milk" not in model.calls[1]["system"]
+        assert "remember the milk" in model.calls[2]["system"]
+        assert model.calls[2]["system"].startswith("You are Jerv")
+
+    def test_a_minute_long_hold_is_heard_whole(
+        self, client: tuple[TestClient, Path, list[Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pet stops at 35 s; the desk panel's mock caps a hold at 1:00 and the box must
+        take all of it."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        TestConverse()._wire(c, monkeypatch)
+        seen: list[int] = []
+
+        async def measure(settings: Any, audio: bytes) -> tuple[str, int]:
+            seen.append(len(audio))
+            return "ok", 160
+
+        monkeypatch.setattr(endpoint_api, "_panel_transcribe", measure)
+        monkeypatch.setattr(endpoint_api, "_trim_to_speech", lambda pcm, **kw: pcm)
+        minute = endpoint_api.PANEL_RATE * 2 * 60
+        r = c.post(
+            self.URL,
+            content=b"\x00\x01" * (minute // 2),
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert r.status_code == 200, r.text
+        assert seen == [minute]
+
+    def test_the_frame_never_cuts_a_character(self) -> None:
+        reply = "é" * 1500  # 3000 bytes, over the cap
+        flags, heard, got, pcm = _jerv_frame(endpoint_api.jerv_frame("hi", reply, b""))
+        assert (flags, heard, pcm) == (0, "hi", b"")
+        assert got == "é" * 1000
+
+    def test_a_cancelled_upload_is_quietly_nothing(self) -> None:
+        """The desk panel cuts its streamed upload off when the hold is cancelled; that is not
+        a server error."""
+        import asyncio
+
+        from starlette.requests import ClientDisconnect
+
+        class Cut:
+            async def body(self) -> bytes:
+                raise ClientDisconnect()
+
+        principal = endpoint_api.PrincipalInfo(id="p", kind="device_key", label="desk")
+        r = asyncio.run(
+            endpoint_api.converse(principal, cast(Any, Cut()), persona="jerv", voice=True)
+        )
+        assert r.status_code == 204
+
+
 class TestTrimToSpeech:
     """Finding the sentence inside the hold.
 
