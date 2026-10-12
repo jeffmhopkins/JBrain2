@@ -30,9 +30,10 @@ HDR = $(wildcard ../main/*.h)
 # slowed down by. Sequential, not parallel: a suite whose failure output interleaves with
 # another's is a suite nobody reads.
 .PHONY: test clean
-test: run_tests run_ui_tests
+test: run_tests run_ui_tests run_link_tests
 	./run_tests
 	./run_ui_tests
+	./run_link_tests
 
 run_tests: tests.c $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
@@ -40,5 +41,9 @@ run_tests: tests.c $(SRC) $(HDR)
 run_ui_tests: ui_tests.c $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
 
+# `link.c`'s deadline arithmetic (plan §7.5a): its own binary, since it needs only `wsproto.c`.
+run_link_tests: link_tests.c ../main/wsproto.c $(HDR)
+	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
+
 clean:
-	rm -f run_tests run_ui_tests
+	rm -f run_tests run_ui_tests run_link_tests

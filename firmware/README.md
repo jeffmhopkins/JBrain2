@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-10-12
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -437,6 +437,17 @@ not fail, it *aborts* — hence the separate entry point.
 Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls back.
 
 ## One connection to the box, not one per request (0.3.39)
+
+**0.4.0 turns the socket off** (`LINK_PERSISTENT_SOCKET 0` in `main/link.h`; plan
+`JPANEL_MESSAGING_FIXES_PLAN.md` §6a). Its ~48 KB of internal RAM is what made 0.3.39 abort at
+boot once speech started, so `link_start` now comes up in the HTTPS fallback described below — one
+session per request, one at a time under one lock — creates no socket task, and push reaches the
+panel through the nudge and the poll. The socket code is compiled out, not deleted. Every request
+also runs to an absolute `deadline_ms` (plan §7.5a): each wait is cut into 250 ms steps clamped to
+what is left, a request can be cancelled between steps, the head is fetched in steps rather than
+one long read, and a body is bounded by 20 s per network gap. The arithmetic is `wsproto.c`'s and
+is host-tested in `run_link_tests`. The rest of this section is 0.3.39's design, kept for the day
+the socket returns as a budgeted wave of its own.
 
 On 0.3.38 every request — the three-second settings poll, telemetry, the jpanel poll, a talk
 turn, a send — opened its own TLS session (~40 KB of internal RAM, 1-2 s of handshake), and two

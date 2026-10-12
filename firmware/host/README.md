@@ -1,12 +1,13 @@
 # The firmware's host suite
 
-Two binaries, both run by `make -C firmware/host test`. Nothing here needs hardware, an
+Three binaries, all run by `make -C firmware/host test`. Nothing here needs hardware, an
 ESP-IDF toolchain, or a network.
 
 | binary | source | what it is for |
 |---|---|---|
 | `run_tests` | `tests.c` | **Pure functions.** Given these numbers, what comes out: cue contours, face geometry, the rig's cooldowns, calibration fits, the tick-and-cross hit tests, and the panel socket's framing, credit window and fallback (`main/wsproto.c`). ~4.1M checks, most of them swept over every input. |
 | `run_ui_tests` | `ui_tests.c` | **The interaction state machine** (`main/ui.c`), driven one frame at a time: a press, a clock advanced, an overlay arbitrated, a peripheral call recorded. ~440 checks. |
+| `run_link_tests` | `link_tests.c` | **`link.c`'s deadline arithmetic** (`main/wsproto.c`): time left across the clock wrap, the wait step, the open's per-phase split, PROGRESS-mode deadlines, the body's stall bound. `link.c` only runs on a panel, so these helpers are what CI holds its clamping to. |
 
 They are separate because they need different things. The first wants to be a tight loop over
 inputs; the second needs a world — a fake speaker whose cues take time, a fake message queue

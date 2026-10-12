@@ -15,6 +15,7 @@
 
 #include "link.h"
 #include "reach.h"
+#include "wsproto.h"
 
 static const char *TAG = "talk";
 
@@ -24,19 +25,14 @@ static uint32_t now_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
-/* Generous, because the box may be transcribing on a shared GPU behind a chat model. The
-   renderer gives up sooner than this and shows the failure face; that is deliberate — a child
-   should be told "say that again" long before a socket decides it has waited enough. */
-/* ABOVE the renderer's `TALK_TIMEOUT_MS`, always, and that ordering is the point rather than
-   the value: the socket must not die while the face is still willing to wait, or the panel
-   gives up on a turn the box would have finished. The gap is also why the capture buffer is
-   guarded on `TALK_NET_BUSY` — between the renderer giving up and this timeout firing, a
-   frustrated child can hold again while the socket is still reading the last recording. */
-/* SHORTER THAN `TALK_TIMEOUT_MS` ON PURPOSE, and the ordering is the point. That one is the
+/* Generous, because the box may be transcribing on a shared GPU behind a chat model — but
+   SHORTER THAN `TALK_TIMEOUT_MS` ON PURPOSE, and the ordering is the point. That one is the
    renderer's backstop for a task that has stopped answering; this one is the actual wait. If the
    backstop fired first the panel would show the failure dash while this task was still running —
    and then speak the reply into a turn the child had already been told had failed. Letting the
-   network give up first means the failure is reported once, by the thing that knows why. */
+   network give up first means the failure is reported once, by the thing that knows why.
+   Since 0.4.0 it is an absolute deadline from the start of the turn to the reply's head, upload
+   included (plan §7.5a); the reply's body is then bounded by LINK_STALL_MS per network gap. */
 #define TALK_HTTP_TIMEOUT_MS 55000
 /* What the box returns at most, and THE REPLY'S OWN CEILING — `audio.c`'s buffer is bigger
    (it also holds voice-post messages), so this is the only thing bounding a reply here.
@@ -62,7 +58,7 @@ static void turn(void)
                             .content_type = "application/octet-stream",
                             .body = (const uint8_t *)s_pcm,
                             .body_len = s_bytes,
-                            .timeout_ms = TALK_HTTP_TIMEOUT_MS,
+                            .deadline_ms = link_deadline_in(now_ms(), TALK_HTTP_TIMEOUT_MS),
                             .buf = s_reply,
                             .cap = REPLY_MAX_BYTES};
 
