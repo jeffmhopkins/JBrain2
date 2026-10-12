@@ -75,6 +75,15 @@ p.set(KNOB.TILT_DEG, -25);
 p.advance(1000);
 p.set(KNOB.TILT_DEG, 0);
 
+// Shaken, then told it is loved: each starts its action and sounds its cue.
+const pets = events.length;
+p.set(KNOB.PET_ACT, 1);
+p.advance(3400);
+p.set(KNOB.PET_ACT, 2);
+p.advance(3000);
+check(events.slice(pets).some((e) => e.includes('cue DIZZY')), 'a shake makes him dizzy, and says so');
+check(events.slice(pets).some((e) => e.includes('cue LOVE')), '"I love you" makes him coo');
+
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);
 p.advance(200);

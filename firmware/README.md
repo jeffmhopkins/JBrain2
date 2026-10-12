@@ -137,6 +137,22 @@ the one thing on it that answers to that channel.
 height, so the robot's hitboxes would put "head" over empty space — a form whose zones were
 not updated would answer every poke from the wrong pool.
 
+## Shaken, he gets dizzy; told he is loved, he coos (0.4.7)
+
+Two actions that answer one thing each, so neither is in a poke pool:
+
+- **Dizzy, from a shake.** `screen_shaken` (pure, host-tested) watches the same per-sample
+  accelerometer difference the sleep timer uses and calls it a shake at four jerks of about a
+  gravity inside 1.5 s, merging samples closer than 90 ms and resting 6 s after. He sits down
+  hard (`figure_pose_t.sit`: the legs splay and `face.c` lowers the body by what that takes off
+  this form's legs, so the feet stay put), shakes his head with the shake dying away, and three
+  stars go round his head. `CUE_DIZZY` is a slow warble sliding down an octave, sounded only
+  when nothing else owns the speaker.
+- **Love, from `i love you` / `love you`.** Five hearts rise beside his head in turn, he sways,
+  and `CUE_LOVE` is the coo twice, the second a third higher.
+
+The bench has a Shake button and an "I love you" voice button.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,

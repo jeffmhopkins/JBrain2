@@ -466,6 +466,9 @@ static bool s_power_off;
    read is where these numbers already are, so movement costs no extra bus traffic. */
 static bool s_moved;
 static int s_move_mag;
+/* A shake (`screen_shaken`), raised here and taken by the render loop as the dizzy action. */
+static shake_t s_shake;
+static bool s_shaken;
 
 /* Only ever called on the render task: the write itself is deferred to the same
    `s_brightness_pending` hand-off the box's setting uses, for the reason above it. */
@@ -1290,6 +1293,9 @@ static void update_orientation(void)
                 s_moved = true;
                 s_move_mag = d;
             }
+            if (screen_shaken(&s_shake, d, (uint32_t)(esp_timer_get_time() / 1000))) {
+                s_shaken = true;
+            }
         }
         seen = true;
         for (int i = 0; i < 3; i++) last_accel[i] = cur[i];
@@ -2105,6 +2111,19 @@ static void face_task(void *arg)
             action = ACT_NOD;
             action_mag = 1.0f;
             action_start = now;
+        }
+        /* SHAKEN: he sits down hard, dazed. Always the picture; the sound only when nothing
+           else owns the speaker, since a message playing is not the pet's to talk over. */
+        if (s_shaken) {
+            s_shaken = false;
+            action = ACT_DIZZY;
+            action_mag = 1.0f;
+            action_start = now;
+            dirty = true;
+            ESP_LOGI(TAG, "shaken (%d counts)", s_move_mag);
+            if (sound && view->mode == SM_PET && !facts.speaker_busy) {
+                stream_cue_play(st, STREAM_SLOT_PRESS, CUE_DIZZY);
+            }
         }
         /* A FRAME FOR WHAT THE MACHINE DID, not for the fact that it spoke: since 0.4.0 it emits
            MUTE_COMMANDS on every frame (derived, so no exit can leave the recogniser deaf), and
