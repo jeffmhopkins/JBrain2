@@ -127,8 +127,9 @@ class Ask:
 
 
 # What "nearest" may name, in the player's words → the Bedrock id. Structures are the
-# ones `locate` finds in the Overworld (deploy/minecraft/mapping.py STRUCTURES, each
-# checked on a 1.26 server); blocks are ores and spawners `mc_find_block` reads.
+# ones `locate` finds (deploy/minecraft/mapping.py STRUCTURES, each checked on a 1.26
+# server); blocks are ores and spawners `mc_find_block` reads; biomes are `locate biome`'s
+# ids (mapping.py BIOME_NAMES); mobs are entity types the pack's `jb:find` looks for.
 STRUCTURES = {
     "village": "village",
     "mansion": "mansion",
@@ -148,6 +149,63 @@ STRUCTURES = {
     "buried treasure": "buried_treasure",
     "ruined portal": "ruined_portal",
     "mineshaft": "mineshaft",
+    "fortress": "fortress",
+    "nether fortress": "fortress",
+    "bastion": "bastion_remnant",
+    "bastion remnant": "bastion_remnant",
+    "end city": "end_city",
+}
+# The dimension a structure is in, where it isn't the Overworld; a ruined portal is in
+# both, so it's searched wherever the player is.
+STRUCTURE_DIMS = {"fortress": "nether", "bastion_remnant": "nether", "end_city": "the_end"}
+BIOMES = {
+    "plains": "plains",
+    "desert": "desert",
+    "forest": "forest",
+    "birch forest": "birch_forest",
+    "dark forest": "roofed_forest",
+    "flower forest": "flower_forest",
+    "taiga": "taiga",
+    "snowy taiga": "cold_taiga",
+    "jungle": "jungle",
+    "bamboo jungle": "bamboo_jungle",
+    "swamp": "swampland",
+    "mangrove swamp": "mangrove_swamp",
+    "savanna": "savanna",
+    "badlands": "mesa",
+    "mesa": "mesa",
+    "snowy plains": "ice_plains",
+    "ice spikes": "ice_plains_spikes",
+    "mushroom island": "mushroom_island",
+    "mushroom fields": "mushroom_island",
+    "cherry grove": "cherry_grove",
+    "meadow": "meadow",
+    "grove": "grove",
+    "deep dark": "deep_dark",
+    "lush caves": "lush_caves",
+    "dripstone caves": "dripstone_caves",
+    "pale garden": "pale_garden",
+    "beach": "beach",
+    "ocean": "ocean",
+    "warm ocean": "warm_ocean",
+    "crimson forest": "crimson_forest",
+    "warped forest": "warped_forest",
+    "soul sand valley": "soulsand_valley",
+    "basalt deltas": "basalt_deltas",
+    "nether wastes": "hell",
+}
+_MOB_NAMES = (  # noqa: SIM905 — a word list reads better as words
+    "cow pig sheep chicken horse donkey mule llama camel wolf cat fox rabbit goat bee"
+    " axolotl frog turtle panda parrot ocelot sniffer armadillo allay villager iron_golem"
+    " polar_bear mooshroom wandering_trader zombie skeleton creeper spider witch slime"
+    " enderman blaze ghast piglin strider hoglin warden"
+).split()
+_MOB_PLURALS = {"wolf": "wolves", "fox": "foxes", "sheep": "sheep", "enderman": "endermen"}
+MOBS = {
+    **{m.replace("_", " "): m for m in _MOB_NAMES},
+    **{_MOB_PLURALS.get(m, f"{m}s").replace("_", " "): m for m in _MOB_NAMES},
+    "golem": "iron_golem",
+    "trader": "wandering_trader",
 }
 BLOCKS = {
     "diamond": "diamond_ore",
@@ -262,6 +320,10 @@ def match(text: str) -> Ask | None:
                 return Ask("nearest", kind="structure", what=STRUCTURES[thing], label=thing)
             if thing in BLOCKS:
                 return Ask("nearest", kind="block", what=BLOCKS[thing], label=thing)
+            if thing in BIOMES:
+                return Ask("nearest", kind="biome", what=BIOMES[thing], label=thing)
+            if thing in MOBS:
+                return Ask("nearest", kind="mob", what=MOBS[thing], label=MOBS[thing])
             return None
         if action == "where_is":
             tag = check_gamertag(name)
@@ -342,7 +404,7 @@ class FastPath:
         if ask.action == "waypoint":
             out = await self._call("mc_set_waypoint", {"place": ask.name}, ctx, steps)
             if brief(out) == "no such place":
-                return no_such_place(ask.name)
+                return await self._to_player(ask, asker, ctx, steps)
             target: Spot = facts(out)["target"]
             if target.dim != here.dim:
                 raise Unanswered("another dimension")
@@ -403,15 +465,49 @@ class FastPath:
             return await self._nearest(ask, asker, ctx, steps)
         raise Unanswered(ask.action)
 
+    async def _to_player(
+        self, ask: Ask, asker: Asker, ctx: ToolContext, steps: list[dict[str, Any]]
+    ) -> str:
+        """ "Point me to Mira": no saved place by that name, but a player online in the
+        asker's dimension; the arrow goes where they are now."""
+        tag = check_gamertag(ask.name)
+        if tag is None or tag.casefold() == asker.gamertag.casefold():
+            return no_such_place(ask.name)
+        seen = await self._call("mc_players", {"gamertag": tag}, ctx, steps)
+        if not isinstance(seen, Found) or seen.found.get("spot") is None:
+            return no_such_place(ask.name)
+        spot: Spot = seen.found["spot"]
+        if not seen.found.get("online") or spot.dim != asker.at.dim:
+            raise Unanswered("not here to point at")
+        name = str(seen.found.get("gamertag") or tag)
+        args = {"x": spot.x, "z": spot.z, "dimension": spot.dim, "label": name}
+        point = await self._call("mc_set_waypoint", args, ctx, steps)
+        if not isinstance(point, Found):
+            raise Unanswered("not pointed")
+        way, far = bearing(asker.at.x, asker.at.z, spot.x, spot.z)
+        return locked_on(name, far, way)
+
     async def _nearest(
         self, ask: Ask, asker: Asker, ctx: ToolContext, steps: list[dict[str, Any]]
     ) -> str:
         here = asker.at
         if ask.kind == "structure":
-            # `locate` searches the Overworld only; from elsewhere the model explains.
-            if here.dim != "overworld":
-                raise Unanswered("locate is Overworld only")
-            out = await self._call("mc_locate", {"kind": "structure", "id": ask.what}, ctx, steps)
+            # A structure from another dimension ("nearest fortress" in the Overworld) is
+            # the model's to explain.
+            if (
+                STRUCTURE_DIMS.get(
+                    ask.what, here.dim if ask.what == "ruined_portal" else "overworld"
+                )
+                != here.dim
+            ):
+                raise Unanswered("another dimension's structure")
+            args = {"kind": "structure", "id": ask.what, "dimension": here.dim}
+            out = await self._call("mc_locate", args, ctx, steps)
+        elif ask.kind == "biome":
+            args = {"kind": "biome", "id": ask.what, "dimension": here.dim}
+            out = await self._call("mc_locate", args, ctx, steps)
+        elif ask.kind == "mob":
+            out = await self._call("mc_find_mob", {"mob": ask.what}, ctx, steps)
         else:
             out = await self._call("mc_find_block", {"blocks": [ask.what]}, ctx, steps)
         if str(getattr(out, "result_brief", "")) == "out of scans":
@@ -426,7 +522,7 @@ class FastPath:
                 "y": hit.y,
                 "z": hit.z,
                 "dimension": hit.dim,
-                "label": ask.label[:1].upper() + ask.label[1:],
+                "label": (ask.label[:1].upper() + ask.label[1:]).replace("_", " "),
             },
             ctx,
             steps,

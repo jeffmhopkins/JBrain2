@@ -51,9 +51,9 @@ def _tools(targets: MemoryTargets | None = None) -> dict[str, Any]:
 
 
 async def test_locate_builds_one_fixed_command_from_checked_input(sidecar) -> None:
-    sidecar["replies"]["execute positioned 120 64 -40 run locate structure mansion"] = [
-        "[x INFO] The nearest mansion is at block 2312, ~, -1544 (2876 blocks away)"
-    ]
+    sidecar["replies"][
+        "execute in overworld positioned 120 64 -40 run locate structure mansion"
+    ] = ["[x INFO] The nearest mansion is at block 2312, ~, -1544 (2876 blocks away)"]
     out = await _tools()["mc_locate"](
         {"kind": "structure", "id": "mansion", "x": 120, "z": -40}, CTX
     )
@@ -310,3 +310,65 @@ def test_bearings_follow_minecraft_north_is_minus_z() -> None:
     assert mt.bearing(0, 0, -10, 0) == ("west", 10)
     assert mt.place_name("  tree   farm ") == "tree farm"
     assert mt.place_name("x" * 41) == "" and mt.place_name("\n") == ""
+
+
+async def test_find_mob_asks_the_pack_and_reads_its_answer(sidecar) -> None:
+    sent = 'scriptevent jb:find {"player": "Steve 42", "type": "cow", "max": 64}'
+    sidecar["replies"][sent] = [
+        "[x] [Scripting] [jbrain] find found minecraft:cow at x=12 y=64 z=-30,"
+        " 32 blocks from Steve 42 (overworld)"
+    ]
+    out = await _tools()["mc_find_mob"](
+        {"gamertag": "Steve 42", "mob": "Cow", "max_distance": 64}, CTX
+    )
+    assert _commands(sidecar)[-1] == sent
+    assert isinstance(out, mt.Found) and out.found["target"] == Spot(12, 64, -30, "overworld")
+    assert "at x=12 y=64 z=-30, 32 blocks away" in out
+    assert mt.first_hit(out, "overworld") == Spot(12, 64, -30, "overworld")
+
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain] find none: no minecraft:cow within 64"]
+    out = await _tools()["mc_find_mob"](
+        {"gamertag": "Steve 42", "mob": "cow", "max_distance": 64}, CTX
+    )
+    assert out.result_brief == "none nearby" and "No cow within 64 blocks" in out
+    sidecar["replies"][sent] = ["[x] [Scripting] [jbrain] find refused: Steve 42 isn't online"]
+    out = await _tools()["mc_find_mob"](
+        {"gamertag": "Steve 42", "mob": "cow", "max_distance": 64}, CTX
+    )
+    assert out.result_brief == "not searched" and "isn't online" in out
+    sidecar["replies"][sent] = ["[x INFO] ok"]
+    out = await _tools()["mc_find_mob"](
+        {"gamertag": "Steve 42", "mob": "cow", "max_distance": 64}, CTX
+    )
+    assert "didn't answer" in out
+
+    count = len(sidecar["sent"])
+    for bad in (
+        {"gamertag": "Steve 42", "mob": "cow; op @a"},
+        {"gamertag": "Steve 42", "mob": ""},
+        {"gamertag": "Steve 42", "mob": "cow", "max_distance": "far"},
+        {"gamertag": "x" * 40, "mob": "cow"},
+    ):
+        await _tools()["mc_find_mob"](bad, CTX)
+    assert len(sidecar["sent"]) == count
+
+
+async def test_find_mob_in_game_looks_only_around_the_asker(sidecar) -> None:
+    with asking("s1", ASKER):
+        out = await _tools()["mc_find_mob"]({"gamertag": "Mira", "mob": "cow"}, DOOR)
+    assert out.result_brief == "refused"
+    assert _commands(sidecar) == []
+
+
+async def test_locate_searches_the_dimension_asked_or_the_askers(sidecar) -> None:
+    await _tools()["mc_locate"](
+        {"kind": "structure", "id": "bastion_remnant", "x": 10, "z": 20, "dimension": "nether"},
+        CTX,
+    )
+    assert _commands(sidecar)[-1] == (
+        "execute in nether positioned 10 64 20 run locate structure bastion_remnant"
+    )
+    out = await _tools()["mc_locate"](
+        {"kind": "structure", "id": "fortress", "x": 0, "z": 0, "dimension": "moon"}, CTX
+    )
+    assert "dimension must be" in out

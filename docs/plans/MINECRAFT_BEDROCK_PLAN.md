@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -2303,6 +2303,41 @@ the player reaches it, and a map share link shows it too.
 
 Not built: Dave has no mob or animal finder, so "point me to a cow" isn't a target yet;
 and a target is a fixed block, so a moving one would show where it was found.
+
+### M22 — Locate anything: mobs, players, and every dimension (owner, 2026-10-12; shipped 2026-10-12)
+
+**Why.** With the Tricorder's target on the map (§M21), the owner wants Dave able to find
+the nearest of anything and point the Tricorder at it: a mob by type, a player, a
+structure, a biome, a block or an ore.
+
+**What changed.**
+- **Every dimension.** `mc_locate` takes a `dimension` (in game, the asker's own) and runs
+  `execute in <dim> positioned … run locate …`, so Nether fortresses, bastions and End
+  cities, and Nether biomes, are found the way Overworld ones were. A search with no x/z
+  starts from the player's last position in that dimension (for the Nether, else their
+  Overworld one divided by 8, as a portal maps it). The deep-scan key carries the
+  dimension.
+- **Mobs: `mc_find_mob`.** Only the game knows where mobs are, so the jbrain pack answers
+  a new `scriptevent jb:find {"player", "type", "max"}`: it takes that online player's
+  dimension, `getEntities({type, location, closest: 1, maxDistance})` (at most 256 blocks:
+  mobs exist only in the chunks around players) and replies with one line in the shape
+  the block finder already prints (`find found minecraft:cow at x= y= z=, N blocks from
+  <player> (<dim>)`, or `find none` / `find refused`). It is a look around, not a deep
+  scan, and costs none. In game it searches around the asker only. A mob moves: the
+  answer, and a Tricorder pointed at it, is where it was then. Pack 1.5.0; it reaches a
+  world when the server next starts.
+- **Players.** `mc_players` with a gamertag already said where a player is; the fast path's
+  "point me to <name>" now falls back to an online player in the asker's dimension when
+  no saved place has that name, and points the Tricorder at where they are.
+- **Fast path.** "nearest <thing>" now also knows Nether and End structures (searched only
+  from their own dimension; from elsewhere the model explains), 32 biomes by their
+  everyday names, and 42 mobs (singular and plural). Every answer is an existing
+  signed-off line (`found_one`, `locked_on`); a search that finds nothing goes to the
+  model.
+- Prompt `agent-minecraft-dave-v15`; `mc_locate` sidecar v4; `mc_find_mob` v1.
+
+Only checkable on the box: that `getEntities` with `closest` answers within the console's
+3-second reply window on a busy server, and Nether biome ids with `locate biome`.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 

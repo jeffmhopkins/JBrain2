@@ -226,7 +226,7 @@ async def test_each_player_has_their_own_scans_in_each_world(book, sidecar) -> N
 
 async def test_a_search_that_didnt_run_costs_nothing(book, sidecar) -> None:
     tools = _tools(book)
-    locate = "execute positioned 0 64 0 run locate structure mansion"
+    locate = "execute in overworld positioned 0 64 0 run locate structure mansion"
     sidecar["replies"][locate] = ["[x INFO] Unable to find a structure of type mansion"]
     out = await ask(tools, STEVE, "mc_locate", {"kind": "structure", "id": "mansion"})
     assert "left today" not in out and book.used(STEVE, 7) == 0
