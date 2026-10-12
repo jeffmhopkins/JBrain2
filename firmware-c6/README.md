@@ -1197,7 +1197,7 @@ them (plan §1 "KEY routing" and "Progress on the panel, and the whole answer").
   change to the messages rebuilds the list (`convo_redraw`, from `svc_messages_rev`). The spinner's
   angle is read from the tick, so even one made by a rebuild is exactly where the last one was.
 - **KEY outside Jerv's thread starts a new conversation.** Home, the clock, Settings, Minecraft's
-  menu, a person's thread: once the hold is sent the Jerv thread opens holding just the new
+  menu (a person's thread keeps KEY as a message to her): once the hold is sent the Jerv thread opens holding just the new
   exchange, and the talk carries `new_thread=true`, so the box starts a fresh "Desk panel" chat
   (the old ones stay in the PWA). KEY inside Jerv's thread continues it; inside Dave's, Dave's. A
   cancelled or too-short hold changes nothing. One rule, `talk_key_route`, for the conversation

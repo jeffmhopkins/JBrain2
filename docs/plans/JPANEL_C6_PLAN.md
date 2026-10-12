@@ -197,7 +197,8 @@ no recording starts, and the release sends nothing (`SH_ACT_STOP_REPLY`, host-te
 **Inside or outside the conversation decides whether it is a new one (owner, 2026-10-12, built in
 0.0.14):** *"If I start off from not within the Jerv conversation it starts a new one."* KEY held
 **inside** Jerv's thread continues that conversation. KEY held **outside** it — home, the clock
-face, Settings, Minecraft's menu, a person's thread — starts a **new** Jerv conversation: once the
+face, Settings, Minecraft's menu — starts a **new** Jerv conversation (inside Quorra's or Tamsin's
+thread KEY is still a message to her): once the
 hold is sent, the panel's view of Jerv's thread is cleared to just the new exchange and the talk
 carries `new_thread=true`, so the box starts a fresh "Desk panel" session (the old ones stay in the
 PWA). A hold cancelled or too short changes nothing. Dave follows the same rule from his side: KEY
