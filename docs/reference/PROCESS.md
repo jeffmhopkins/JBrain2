@@ -73,6 +73,10 @@ So every working session owns the findings on **its own** PRs:
   fixed in that PR, and the thread is answered, before it merges. The reviewer may not
   have finished by the time CI is green; that's fine: don't hold the merge for it (the
   post-merge checks below catch what lands after).
+- **Merge the latest main into the branch right before merging**, then let CI run on that
+  head. Two PRs can each pass alone and still break main together: on 2026-10-12 two
+  migrations both numbered `0236` merged minutes apart, main had two alembic heads, and
+  every deploy failed until a renumber landed.
 - **Check the open issues periodically, not once:** at the start of a session, about
   **10 and 40 minutes after every merge of your own PR**, and before you report a stretch
   of work as done. Measured 2026-10-12 over eight issues, the reviewer filed 40 s to
