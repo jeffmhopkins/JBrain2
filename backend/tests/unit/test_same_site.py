@@ -10,13 +10,19 @@ import asyncio
 from collections.abc import Iterator
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.requests import HTTPConnection
 from starlette.websockets import WebSocketDisconnect
 
 from jbrain.api.live import origin_allowed
-from jbrain.api.same_site import normalize_authority, origin_matches_host, refusal_reason
+from jbrain.api.same_site import (
+    cookie_free_get,
+    normalize_authority,
+    origin_matches_host,
+    refusal_reason,
+)
 from jbrain.api.session_cookie import apply_migration, mark_for_migration
 from jbrain.auth import keys
 from jbrain.auth import service as auth_service
@@ -24,6 +30,7 @@ from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
+from tests.unit.test_route_auth_matrix import COOKIE_EXEMPT
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
 _LEGACY = "jbrain_session"
@@ -474,3 +481,112 @@ def test_a_route_that_writes_the_session_cookie_itself_wins_over_migration() -> 
     headers = MutableHeaders(scope={"headers": list(own)})
     apply_migration(scope["state"], headers, settings)  # type: ignore[arg-type]
     assert headers.getlist("set-cookie") == [f"{_HOST}=new; Path=/; Secure"]
+
+
+# --- #1706: the allow-list and the cookie-free routes ------------------------
+
+
+def test_a_configured_dashboard_origin_reaches_the_live_feed(repo: FakeAuthRepo) -> None:
+    # The owner-configured allow-list names an origin the guard would otherwise refuse;
+    # the guard must defer to it, as `origin_allowed` does.
+    settings = Settings(
+        secure_cookies=False, database_url=_DB, dashboard_allowed_origins="https://dash.example"
+    )
+    app = create_app(settings)
+    with TestClient(app) as c:
+        app.state.auth_repo = repo
+        token = _owner_token(repo)
+        headers = {
+            **_cookie(token),
+            "origin": "https://dash.example",
+            "sec-fetch-site": "cross-site",
+        }
+        try:
+            with c.websocket_connect("/api/locations/live", headers=headers):
+                pass
+        except WebSocketDisconnect as exc:
+            assert exc.code != 4403
+        # An origin the owner did not list is still refused by the guard.
+        headers["origin"] = "https://evil.example"
+        with (
+            pytest.raises(WebSocketDisconnect) as refused,
+            c.websocket_connect("/api/locations/live", headers=headers),
+        ):
+            pass
+        assert refused.value.code == 4403
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/feed/appointments.ics?token=nope",
+        "/api/research-share/tok",
+        "/api/jlaunch-share/tok",
+        "/api/mc-share/tok",
+    ],
+)
+def test_a_cookie_free_route_opened_from_another_site_is_not_refused(
+    repo: FakeAuthRepo, path: str
+) -> None:
+    # The owner opens a feed or share link from webmail: the browser attaches the Lax
+    # cookie to the top-level GET, but these routes never read it. Past the guard they hit
+    # the (absent) database, so anything but the guard's refusal proves the point.
+    app = create_app(Settings(secure_cookies=False, database_url=_DB))
+    with TestClient(app, raise_server_exceptions=False) as c:
+        app.state.auth_repo = repo
+        token = _owner_token(repo)
+        headers = {**_cookie(token), "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"}
+        resp = c.get(path, headers=headers)
+    assert not (resp.status_code == 403 and resp.json() == _REFUSED)
+
+
+def test_a_cookie_reading_route_beside_the_feed_is_still_guarded(
+    client: TestClient, repo: FakeAuthRepo
+) -> None:
+    token = _owner_token(repo)
+    headers = {**_cookie(token), "sec-fetch-site": "cross-site", "sec-fetch-mode": "navigate"}
+    resp = client.get("/api/feed/appointments", headers=headers)
+    assert resp.status_code == 403 and resp.json() == _REFUSED
+    resp = client.post(
+        "/api/feed/appointments/rotate", headers={**_cookie(token), "sec-fetch-site": "same-site"}
+    )
+    assert resp.status_code == 403 and resp.json() == _REFUSED
+
+
+def test_the_guards_cookie_free_routes_never_read_the_cookie() -> None:
+    # Coupled to the route matrix over every real route: a GET the guard waves through
+    # must be one the matrix has classified as authenticating by something other than
+    # the session cookie, so a new cookie-reading GET under a share prefix fails here.
+    app = create_app(Settings(secure_cookies=False, database_url=_DB))
+    waved = {
+        route.path
+        for route in app.routes
+        if isinstance(route, APIRoute) and "GET" in route.methods and cookie_free_get(route.path)
+    }
+    assert waved, "no route matched; the prefixes have drifted from the routers"
+    exempt_gets = {path for (method, path) in COOKIE_EXEMPT if method == "GET"}
+    assert waved <= exempt_gets, sorted(waved - exempt_gets)
+    assert not cookie_free_get("/api/feed/appointments")
+    assert not cookie_free_get("/api/feed/appointments/rotate")
+
+
+def test_a_listed_dashboard_origin_still_cannot_open_a_shell(repo: FakeAuthRepo) -> None:
+    settings = Settings(
+        secure_cookies=False, database_url=_DB, dashboard_allowed_origins="https://dash.example"
+    )
+    app = create_app(settings)
+    with TestClient(app) as c:
+        app.state.auth_repo = repo
+        token = _owner_token(repo)
+        headers = {
+            **_cookie(token),
+            "origin": "https://dash.example",
+            "sec-fetch-site": "same-site",
+        }
+        for path in ("/api/jcode/sessions/abc/terminal", "/api/jlaunch/jobs/abc/terminal"):
+            with (
+                pytest.raises(WebSocketDisconnect) as exc,
+                c.websocket_connect(path, headers=headers),
+            ):
+                pass
+            assert exc.value.code == 4403, path

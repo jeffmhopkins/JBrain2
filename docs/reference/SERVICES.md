@@ -103,7 +103,9 @@ sibling subdomain such as a jcode preview can't set or shadow it; an older
 values in one request — a tossed duplicate — authenticate nothing). The api's `SameSiteGuard`
 (`api/same_site.py`) refuses any cookie-bearing request or WS handshake whose
 `Sec-Fetch-Site` is `same-site` / `cross-site` (only the Gmail OAuth callback admits a
-cross-site navigation) or, without fetch metadata, whose `Origin` differs from `Host`;
+cross-site navigation) or, without fetch metadata, whose `Origin` differs from `Host` —
+except the token-in-URL GETs that never read the cookie (the ICS feed, the share pages) and,
+for the live location feed only, an origin listed in `DASHBOARD_ALLOWED_ORIGINS` (never the shells);
 the WS `origin_allowed` gate fails closed the same way. Caddy's app sites send
 `frame-ancestors 'self'` / `X-Frame-Options: SAMEORIGIN`. Any 401 drops to login. Mobile-first: a persistent home
 stream + segmented **omnibox** (capture a domain-tagged note *or* talk to an
