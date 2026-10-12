@@ -7,6 +7,9 @@
 
 #include <time.h>
 
+#include "alarm_logic.h"
+#include "alarm_port_fake.h"
+#include "alarm_sound.h"
 #include "app_event.h"
 #include "axp_logic.h"
 #include "box_logic.h"
@@ -34,6 +37,7 @@
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
+#include "svc_alarms_drv.h"
 #include "svc_siblings_drv.h"
 #include "thread_model.h"
 #include "time_logic.h"
@@ -244,35 +248,18 @@ static void test_the_clock_is_twenty_four_hour(void)
     CHECK(!strcmp(s, "21:30"), "no am/pm");
 }
 
-static void test_next_alarm_honours_days_and_wraps(void)
-{
-    uint8_t idx;
-    uint32_t wait;
-    alarm_t a[] = {al(1, 6, 45, 0x1F, true), al(2, 8, 30, 0x60, false), al(3, 21, 0, 0x7F, true)};
-    CHECK(clock_next_alarm(a, 3, 22 * 60, 2, &idx, &wait) && idx == 0 && wait == 8 * 60 + 45,
-          "Wednesday 22:00: the workday alarm, past midnight");
-    CHECK(clock_next_alarm(a, 3, 22 * 60, 4, &idx, &wait) && idx == 2 && wait == 23 * 60,
-          "Friday 22:00: no workday tomorrow, so 21:00 Saturday");
-    CHECK(clock_next_alarm(a, 3, 21 * 60, 2, &idx, &wait) && idx == 0,
-          "exactly 21:00 is ringing now, not next");
-    alarm_t once[] = {al(4, 7, 0, 0, true)};
-    CHECK(clock_next_alarm(once, 1, 8 * 60, 6, &idx, &wait) && wait == 23 * 60,
-          "a one-off already past rings tomorrow");
-    alarm_t sunday[] = {al(5, 9, 0, 1 << 6, true)};
-    CHECK(clock_next_alarm(sunday, 1, 10 * 60, 6, &idx, &wait) && wait == 7 * 1440 - 60,
-          "Sunday-only, missed this Sunday: a week less an hour");
-    alarm_t off[] = {al(6, 9, 0, 0x7F, false)};
-    CHECK(!clock_next_alarm(off, 1, 0, 0, &idx, &wait), "an alarm switched off is never next");
-}
-
 static void test_alarm_text_reads_like_the_mock(void)
 {
     char s[64];
-    alarm_t a = al(1, 6, 45, 0x1F, true);
-    clock_fmt_next(&a, 9 * 60 + 4, s, sizeof s);
+    alarm_next_t n = {.a = al(1, 6, 45, 0x1F, true), .at_h = 6, .at_m = 45, .wait_min = 9 * 60 + 4};
+    clock_fmt_next(&n, s, sizeof s);
     CHECK(!strcmp(s, "Next 06:45 · in 9 h 4 min"), "hours and minutes");
-    clock_fmt_next(&a, 12, s, sizeof s);
+    n.wait_min = 12;
+    clock_fmt_next(&n, s, sizeof s);
     CHECK(!strcmp(s, "Next 06:45 · in 12 min"), "minutes alone under an hour");
+    n = (alarm_next_t){.a = al(1, 6, 45, 0x1F, true), .snoozed = true, .at_h = 6, .at_m = 54, .wait_min = 9};
+    clock_fmt_next(&n, s, sizeof s);
+    CHECK(!strcmp(s, "Snoozed until 06:54 · in 9 min"), "a snooze says so");
     clock_fmt_days(0x1F, "Work", s, sizeof s);
     CHECK(!strcmp(s, "Weekdays · Work"), "weekdays with a label");
     clock_fmt_days(0x60, "", s, sizeof s);
@@ -281,12 +268,6 @@ static void test_alarm_text_reads_like_the_mock(void)
     CHECK(!strcmp(s, "Every day"), "every day");
     clock_fmt_days(0, NULL, s, sizeof s);
     CHECK(!strcmp(s, "Once"), "no days is once");
-}
-
-static void test_snooze_is_nine_minutes_across_midnight(void)
-{
-    CHECK(clock_snooze(6, 45, 9) == 6 * 60 + 54, "06:45 snoozes to 06:54");
-    CHECK(clock_snooze(23, 55, 9) == 4, "23:55 snoozes to 00:04");
 }
 
 static void test_the_night_face_wraps_past_midnight(void)
@@ -2244,6 +2225,469 @@ static void test_the_threads_show_the_box_s_names_and_survive_a_reboot(void)
     sib_port_fake_wipe();
 }
 
+/* ---- alarms (0.0.13): the zone, the schedule, the box's list, the queue, the sound ---- */
+
+static int64_t utc(int y, int mo, int d, int h, int mi)
+{
+    civil_t c = {.year = (uint16_t)y, .mon = (uint8_t)mo, .mday = (uint8_t)d, .h = (uint8_t)h,
+                 .m = (uint8_t)mi};
+    return civil_to_epoch(&c);
+}
+
+static tz_rule_t zone_of(int32_t idx)
+{
+    tz_rule_t z;
+    tz_parse(tz_posix(idx), &z);
+    return z;
+}
+
+#define NEW_YORK 5
+
+static void test_the_zone_rules_agree_with_the_c_library_every_hour_of_two_years(void)
+{
+    /* glibc reads the same POSIX strings: every zone in the table, every hour of 2026 and 2027,
+     * must give the offset localtime gives — the two daylight-saving changes included. */
+    const char *saved = getenv("TZ");
+    char keep[64] = "";
+    if (saved) snprintf(keep, sizeof keep, "%s", saved);
+    int bad = 0;
+    for (int32_t i = 0; i < TZ_ZONES; i++) {
+        tz_rule_t z;
+        CHECK(tz_parse(tz_posix(i), &z), tz_posix(i));
+        setenv("TZ", tz_posix(i), 1);
+        tzset();
+        for (int64_t t = utc(2026, 1, 1, 0, 0); t < utc(2028, 1, 1, 0, 0); t += 3600) {
+            time_t tt = (time_t)t;
+            struct tm tm;
+            localtime_r(&tt, &tm);
+            if (tm.tm_gmtoff != tz_offset_at(&z, t) && bad++ < 3)
+                fprintf(stderr, "  zone %s at %lld: libc %ld, ours %d\n", tz_posix(i), (long long)t,
+                        (long)tm.tm_gmtoff, (int)tz_offset_at(&z, t));
+        }
+    }
+    if (keep[0]) setenv("TZ", keep, 1);
+    else unsetenv("TZ");
+    tzset();
+    CHECK(bad == 0, "every zone's offset matches localtime, hour by hour");
+    tz_rule_t z;
+    CHECK(!tz_parse("EST5EDT", &z), "a daylight name with no rule is refused, not guessed");
+    CHECK(!tz_parse("", &z) && !tz_parse("E5", &z), "nor a name too short to be one");
+}
+
+static void test_wall_time_through_the_gap_and_the_overlap(void)
+{
+    const tz_rule_t z = zone_of(NEW_YORK);
+    int64_t s, e;
+    tz_transitions(&z, 2026, &s, &e);
+    CHECK(s == utc(2026, 3, 8, 7, 0) && e == utc(2026, 11, 1, 6, 0),
+          "New York: 8 March 02:00 EST and 1 November 02:00 EDT");
+    CHECK(tz_wall_to_utc(&z, utc(2026, 3, 8, 2, 30)) == utc(2026, 3, 8, 7, 0),
+          "02:30 on the morning the clocks skip it is the end of the gap, 03:00 EDT");
+    CHECK(tz_wall_to_utc(&z, utc(2026, 11, 1, 1, 30)) == utc(2026, 11, 1, 5, 30),
+          "01:30 on the morning it happens twice is the first one, EDT");
+    CHECK(tz_wall_to_utc(&z, utc(2026, 7, 1, 6, 45)) == utc(2026, 7, 1, 10, 45), "summer: UTC-4");
+    CHECK(tz_wall_to_utc(&z, utc(2026, 12, 1, 6, 45)) == utc(2026, 12, 1, 11, 45), "winter: UTC-5");
+    const tz_rule_t syd = zone_of(11);
+    CHECK(tz_wall_to_utc(&syd, utc(2026, 1, 10, 7, 0)) == utc(2026, 1, 9, 20, 0),
+          "Sydney's summer is January: UTC+11, the date behind");
+}
+
+static alarm_t alarm_at(uint32_t id, int h, int m, uint8_t days)
+{
+    alarm_t a = {.id = id, .h = (uint8_t)h, .m = (uint8_t)m, .days = days, .on = true};
+    return a;
+}
+
+static void test_when_an_alarm_next_rings(void)
+{
+    const tz_rule_t z = zone_of(NEW_YORK);
+    alarm_t gap = alarm_at(1, 2, 30, 0x7F);
+    CHECK(alarm_next_at(&gap, &z, utc(2026, 3, 8, 6, 0)) == utc(2026, 3, 8, 7, 0),
+          "an every-day 02:30 rings at 03:00 on the morning the clocks go forward");
+    CHECK(alarm_next_at(&gap, &z, utc(2026, 3, 8, 7, 0)) == utc(2026, 3, 9, 6, 30),
+          "and the next morning at 02:30 EDT");
+    alarm_t twice = alarm_at(2, 1, 30, 0x7F);
+    const int64_t first = alarm_next_at(&twice, &z, utc(2026, 11, 1, 4, 0));
+    CHECK(first == utc(2026, 11, 1, 5, 30), "01:30 on the morning the clocks go back: the first one");
+    CHECK(alarm_next_at(&twice, &z, first) == utc(2026, 11, 2, 6, 30),
+          "and not again an hour later: next is tomorrow's, EST");
+    alarm_t midnight = alarm_at(3, 0, 0, 0x7F);
+    const int64_t late = tz_wall_to_utc(&z, utc(2026, 10, 12, 23, 59) + 30);
+    CHECK(alarm_next_at(&midnight, &z, late) == late + 30, "00:00 is thirty seconds after 23:59:30");
+    alarm_t once = alarm_at(4, 7, 0, 0);
+    const int64_t monday_8 = tz_wall_to_utc(&z, utc(2026, 10, 12, 8, 0));
+    CHECK(alarm_next_at(&once, &z, monday_8) == tz_wall_to_utc(&z, utc(2026, 10, 13, 7, 0)),
+          "a one-off already past today rings at its next occurrence, tomorrow");
+    CHECK(alarm_next_at(&once, &z, monday_8 - 2 * 3600) == tz_wall_to_utc(&z, utc(2026, 10, 12, 7, 0)),
+          "and today when today's is still ahead");
+    alarm_t every = alarm_at(5, 21, 0, 0x7F);
+    CHECK(alarm_next_at(&every, &z, monday_8) == tz_wall_to_utc(&z, utc(2026, 10, 12, 21, 0)),
+          "an every-day alarm rings today");
+    alarm_t work = alarm_at(6, 6, 45, 0x1F);
+    const int64_t friday_22 = tz_wall_to_utc(&z, utc(2026, 10, 16, 22, 0));
+    CHECK(alarm_next_at(&work, &z, friday_22) == tz_wall_to_utc(&z, utc(2026, 10, 19, 6, 45)),
+          "Friday night: the weekday alarm is Monday's");
+    alarm_t sunday = alarm_at(7, 9, 0, 1u << 6);
+    const int64_t sunday_10 = tz_wall_to_utc(&z, utc(2026, 10, 18, 10, 0));
+    CHECK(alarm_next_at(&sunday, &z, sunday_10) == tz_wall_to_utc(&z, utc(2026, 10, 25, 9, 0)),
+          "Sunday-only, missed this Sunday: next Sunday");
+    alarm_t off = alarm_at(8, 9, 0, 0x7F);
+    off.on = false;
+    CHECK(alarm_next_at(&off, &z, sunday_10) == -1, "an alarm switched off never rings");
+}
+
+static alarm_list_t list_of(const alarm_t *a, uint8_t n)
+{
+    alarm_list_t l = {.n = n};
+    for (uint8_t i = 0; i < n; i++) l.a[i] = a[i];
+    return l;
+}
+
+static void test_the_schedule_rings_once_snoozes_and_stops(void)
+{
+    const tz_rule_t z = zone_of(NEW_YORK);
+    alarm_sched_t s;
+    alarm_sched_init(&s);
+    const alarm_t a[] = {alarm_at(10, 6, 45, 0x1F), alarm_at(11, 7, 0, 0)};
+    alarm_list_t l = list_of(a, 2);
+    alarm_sched_set_list(&s, &l);
+    const int64_t at = tz_wall_to_utc(&z, utc(2026, 10, 12, 6, 45));
+    CHECK(!alarm_sched_tick(&s, &z, at - 600, 0), "ten minutes early: nothing");
+    CHECK(!alarm_sched_tick(&s, &z, at - 1, 1000), "a second early: nothing");
+    CHECK(alarm_sched_tick(&s, &z, at, 2000) && s.ringing && s.ring.id == 10, "06:45: it rings");
+    CHECK(!alarm_sched_tick(&s, &z, at + 1, 3000), "and does not start again a second later");
+    const int64_t until = alarm_sched_snooze(&s, at + 20);
+    CHECK(!s.ringing && s.snoozed && until == at + 20 + 9 * 60, "KEY: snoozed nine minutes");
+    CHECK(!alarm_sched_tick(&s, &z, until - 1, 4000), "quiet until then");
+    CHECK(alarm_sched_tick(&s, &z, until, 5000) && s.ring.id == 10 && !s.snoozed, "then again");
+    uint32_t off;
+    alarm_sched_stop(&s, until + 5, &off);
+    CHECK(!s.ringing && off == 0 && s.dismissed == 1 && s.last_end == ALARM_END_STOPPED,
+          "BOOT: stopped, and a weekday alarm stays on");
+    const int64_t seven = tz_wall_to_utc(&z, utc(2026, 10, 12, 7, 0));
+    CHECK(alarm_sched_tick(&s, &z, seven, 6000) && s.ring.id == 11, "the one-off at 07:00");
+    alarm_sched_stop(&s, seven + 3, &off);
+    CHECK(off == 11 && !s.list.a[1].on, "a one-off switches itself off once answered");
+    CHECK(!alarm_sched_tick(&s, &z, seven + 86400, 7000), "and does not ring tomorrow");
+    CHECK(alarm_sched_snooze(&s, seven) == -1 && !s.snoozed, "KEY with nothing ringing snoozes nothing");
+}
+
+static void test_an_alarm_changed_while_snoozed(void)
+{
+    const tz_rule_t z = zone_of(NEW_YORK);
+    alarm_sched_t s;
+    alarm_t a[] = {alarm_at(20, 6, 45, 0x7F)};
+    snprintf(a[0].label, sizeof a[0].label, "Work");
+    alarm_list_t l = list_of(a, 1);
+    const int64_t at = tz_wall_to_utc(&z, utc(2026, 10, 12, 6, 45));
+
+    alarm_sched_init(&s);
+    alarm_sched_set_list(&s, &l);
+    alarm_sched_tick(&s, &z, at, 0);
+    alarm_sched_snooze(&s, at);
+    snprintf(l.a[0].label, sizeof l.a[0].label, "Gym");
+    l.a[0].sound = ALARM_SOUND_RISE;
+    CHECK(!alarm_sched_set_list(&s, &l) && s.snoozed && !strcmp(s.snooze_of.label, "Gym") &&
+              s.snooze_of.sound == ALARM_SOUND_RISE,
+          "a new label or sound from the box: the snooze keeps going, with them");
+    l.a[0].m = 50;
+    CHECK(alarm_sched_set_list(&s, &l) && !s.snoozed && s.snooze_cancelled == 1,
+          "moved to another time while snoozed: the snooze ends, the new time stands");
+    CHECK(!alarm_sched_tick(&s, &z, at + 9 * 60, 1000), "so nothing rings at the old snooze");
+
+    alarm_sched_init(&s);
+    l = list_of(a, 1);
+    alarm_sched_set_list(&s, &l);
+    alarm_sched_tick(&s, &z, at, 0);
+    alarm_sched_snooze(&s, at);
+    l.n = 0;
+    CHECK(alarm_sched_set_list(&s, &l) && !s.snoozed, "deleted in the PWA while snoozed: gone");
+
+    alarm_sched_init(&s);
+    l = list_of(a, 1);
+    alarm_sched_set_list(&s, &l);
+    alarm_sched_tick(&s, &z, at, 0);
+    alarm_sched_snooze(&s, at);
+    CHECK(alarm_sched_set_on(&s, 20, false) && !s.snoozed, "switched off on the glass: gone");
+    CHECK(!alarm_sched_set_on(&s, 99, false), "an id the panel does not hold is refused");
+}
+
+static void test_a_ring_nobody_answers_stops_at_ten_minutes(void)
+{
+    const tz_rule_t z = zone_of(NEW_YORK);
+    alarm_sched_t s;
+    alarm_sched_init(&s);
+    const alarm_t a[] = {alarm_at(30, 6, 0, 0)};
+    alarm_list_t l = list_of(a, 1);
+    alarm_sched_set_list(&s, &l);
+    const int64_t at = tz_wall_to_utc(&z, utc(2026, 10, 12, 6, 0));
+    alarm_sched_tick(&s, &z, at, 50000);
+    uint32_t off;
+    CHECK(!alarm_sched_cap(&s, at + 599, 50000 + ALARM_RING_CAP_MS - 1, &off), "9:59 in: still ringing");
+    CHECK(alarm_sched_cap(&s, at + 600, 50000 + ALARM_RING_CAP_MS, &off) && !s.ringing &&
+              s.timed_out == 1 && s.last_end == ALARM_END_TIMED_OUT && off == 30,
+          "ten minutes: it stops itself, says it timed out, and a one-off switches off");
+    CHECK(!alarm_sched_cap(&s, at + 700, 50000 + ALARM_RING_CAP_MS * 2, &off), "once");
+}
+
+static void test_reboots_and_clock_steps_never_ring_twice_or_late(void)
+{
+    const tz_rule_t z = zone_of(NEW_YORK);
+    const alarm_t a[] = {alarm_at(40, 6, 45, 0x7F), alarm_at(41, 6, 46, 0x7F)};
+    const alarm_list_t l = list_of(a, 2);
+    const int64_t at = tz_wall_to_utc(&z, utc(2026, 10, 12, 6, 45));
+    alarm_sched_t s;
+
+    alarm_sched_init(&s);
+    alarm_sched_set_list(&s, &l);
+    CHECK(alarm_sched_tick(&s, &z, at + 90, 0) && s.ring.id == 40,
+          "a reboot (an update) across the alarm's minute: rung on the first check, 90 s late");
+
+    alarm_sched_init(&s);
+    alarm_sched_set_list(&s, &l);
+    CHECK(!alarm_sched_tick(&s, &z, at + 1000, 0), "a boot a quarter of an hour later rings nothing");
+
+    alarm_sched_init(&s);
+    alarm_sched_set_list(&s, &l);
+    alarm_sched_tick(&s, &z, at - 3600, 0);
+    CHECK(!alarm_sched_tick(&s, &z, at + 3 * 3600, 1) && s.missed == 2,
+          "the box steps the clock hours forward: counted as missed, never rung late");
+
+    alarm_sched_init(&s);
+    alarm_sched_set_list(&s, &l);
+    alarm_sched_tick(&s, &z, at - 10, 0);
+    CHECK(alarm_sched_tick(&s, &z, at, 1), "rings");
+    uint32_t off;
+    alarm_sched_stop(&s, at + 5, &off);
+    CHECK(!alarm_sched_tick(&s, &z, at - 30, 2) && !alarm_sched_tick(&s, &z, at + 10, 3),
+          "the clock stepped back across it: not rung a second time");
+    CHECK(alarm_sched_tick(&s, &z, at + 60, 4) && s.ring.id == 41, "the 06:46 one still rings");
+
+    alarm_sched_init(&s);
+    alarm_sched_set_list(&s, &l);
+    alarm_sched_tick(&s, &z, at + 3 * 3600, 0);
+    CHECK(!alarm_sched_tick(&s, &z, at - 60, 1) && alarm_sched_tick(&s, &z, at, 2) && s.ring.id == 40,
+          "a clock three hours fast, corrected by the box: the alarm still rings at its real time");
+
+    alarm_sched_init(&s);
+    alarm_sched_set_list(&s, &l);
+    alarm_sched_tick(&s, &z, at - 10, 0);
+    CHECK(alarm_sched_tick(&s, &z, at + 70, 1) && s.ring.id == 40,
+          "two due in one check: the earlier rings first");
+    CHECK(alarm_sched_tick(&s, &z, at + 71, 2) && s.ring.id == 41 && s.taken_over == 1,
+          "and the other on the next pass, taking the ring over");
+}
+
+static const char ALARMS_JSON[] =
+    "{\"etag\":\"3f2a9c\",\"alarms\":["
+    "{\"id\":7,\"at\":1260,\"days\":127,\"on\":true,\"label\":\"Girls to bed\",\"sound\":\"beeps\"},"
+    "{\"id\":3,\"at\":405,\"days\":31,\"on\":true,\"label\":\"Work\",\"sound\":\"chime\",\"x\":[1,{\"y\":null}]},"
+    "{\"id\":5,\"at\":510,\"days\":96,\"on\":false,\"label\":\"Caf\\u00e9 \\\"run\\\"\",\"sound\":\"rise\"},"
+    "{\"at\":600,\"days\":0,\"on\":true},"
+    "{\"id\":9,\"at\":1440,\"days\":0,\"on\":true}"
+    "],\"max\":8}";
+
+static void test_the_box_s_alarms_json_is_read_as_the_box_writes_it(void)
+{
+    alarm_list_t l;
+    CHECK(alarm_parse(ALARMS_JSON, sizeof ALARMS_JSON - 1, &l), "the box's answer parses");
+    CHECK(l.n == 3 && !strcmp(l.etag, "3f2a9c"), "three usable alarms, and the version");
+    CHECK(l.a[0].id == 3 && l.a[0].h == 6 && l.a[0].m == 45 && l.a[0].days == 31 && l.a[0].on &&
+              l.a[0].sound == ALARM_SOUND_CHIME && !strcmp(l.a[0].label, "Work"),
+          "sorted by time of day; unknown keys skipped");
+    CHECK(l.a[1].id == 5 && !l.a[1].on && l.a[1].sound == ALARM_SOUND_RISE &&
+              !strcmp(l.a[1].label, "Caf? \"run\""),
+          "escapes read, a code point the font lacks is one '?'");
+    CHECK(l.a[2].id == 7 && l.a[2].sound == ALARM_SOUND_BEEPS, "and the evening one last");
+    CHECK(!alarm_parse("{\"alarms\":[{\"id\":1,", 20, &l), "a cut-off answer is refused");
+    CHECK(!alarm_parse("{\"etag\":\"x\"}", 12, &l), "an answer with no list is refused");
+    CHECK(alarm_parse("{\"alarms\":[]}", 13, &l) && l.n == 0, "an empty list is a list");
+    char big[2048] = "{\"alarms\":[";
+    for (int i = 1; i <= 10; i++) {
+        char one[96];
+        snprintf(one, sizeof one, "%s{\"id\":%d,\"at\":%d,\"days\":0,\"on\":true}", i > 1 ? "," : "", i, i);
+        strcat(big, one);
+    }
+    strcat(big, "]}");
+    CHECK(alarm_parse(big, strlen(big), &l) && l.n == ALARM_MAX, "more than eight: eight kept");
+    char label[40];
+    alarm_clean_label("a very long label that will not fit at all", label, sizeof label);
+    CHECK(strlen(label) == ALARM_LABEL_BYTES, "a label is at most 24 bytes");
+}
+
+static void test_switches_queue_for_the_box_and_the_last_one_wins(void)
+{
+    alarm_queue_t q = {0};
+    alarm_put_t p;
+    CHECK(!alarm_queue_peek(&q, &p), "empty");
+    alarm_queue_put(&q, 3, false);
+    alarm_queue_put(&q, 5, true);
+    CHECK(alarm_queue_peek(&q, &p) && p.id == 3 && !p.on && alarm_queue_count(&q) == 2,
+          "the oldest goes first");
+    alarm_queue_put(&q, 3, true);
+    CHECK(alarm_queue_count(&q) == 2, "a second switch of one alarm replaces the first");
+    alarm_queue_done(&q, &p, 200);
+    CHECK(alarm_queue_count(&q) == 2, "and the box's 200 for the old write does not clear the new");
+    CHECK(alarm_queue_peek(&q, &p) && p.id == 5, "now alarm 5's is oldest");
+    alarm_queue_done(&q, &p, -1);
+    alarm_queue_done(&q, &p, 503);
+    CHECK(alarm_queue_count(&q) == 2, "no answer, or a 503: kept and retried");
+    alarm_queue_done(&q, &p, 404);
+    CHECK(alarm_queue_count(&q) == 1, "a 404 (the alarm is gone) settles it");
+    alarm_list_t l = {.n = 1};
+    l.a[0] = alarm_at(3, 6, 45, 0x1F);
+    l.a[0].on = false;
+    alarm_queue_overlay(&q, &l);
+    CHECK(l.a[0].on, "a list from before the box heard the switch shows the switch, not the list");
+}
+
+static void test_the_alarm_sounds(void)
+{
+    CHECK(alarm_ramp_q15(0) == ALARM_RAMP_FLOOR_Q15 && alarm_ramp_q15(ALARM_RAMP_MS) == 32768 &&
+              alarm_ramp_q15(ALARM_RAMP_MS / 2) > alarm_ramp_q15(1000),
+          "the volume climbs from 15 % to full over thirty seconds");
+    static int16_t one[32000], two[32000];
+    int32_t sum[ALARM_SOUNDS] = {0};
+    for (uint8_t snd = 0; snd < ALARM_SOUNDS; snd++) {
+        alarm_synth_t a, b;
+        alarm_synth_init(&a, snd);
+        alarm_synth_init(&b, snd);
+        alarm_synth_fill(&a, one, 32000, 32768);
+        for (int k = 0; k < 100; k++) alarm_synth_fill(&b, two + k * 320, 320, 32768);
+        CHECK(!memcmp(one, two, sizeof one), "320-frame chunks are the same sound as one long fill");
+        int peak = 0;
+        for (int i = 0; i < 32000; i++) {
+            const int v = one[i] < 0 ? -one[i] : one[i];
+            if (v > peak) peak = v;
+            sum[snd] += v / 64;
+        }
+        CHECK(peak > ALARM_PEAK / 2 && peak <= ALARM_PEAK, "loud, never past -6 dBFS");
+        const uint32_t period = alarm_synth_period(snd);
+        CHECK(one[period - 10] == 0, "each pattern ends in a pause");
+    }
+    CHECK(sum[0] != sum[1] && sum[1] != sum[2], "three different sounds");
+    alarm_synth_t q;
+    alarm_synth_init(&q, ALARM_SOUND_CHIME);
+    alarm_synth_fill(&q, one, 3200, 4915);
+    int quiet = 0;
+    for (int i = 0; i < 3200; i++) quiet = one[i] > quiet ? one[i] : quiet;
+    CHECK(quiet < ALARM_PEAK / 5, "at the ramp's floor it is a fifth as loud");
+}
+
+static void test_a_ringing_alarm_beats_everything(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.alarm_ringing = true;
+    f.dark = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).fallback == SH_ACT_SNOOZE_ALARM,
+          "on a dark screen KEY still snoozes");
+    st.key_owner = SH_KEY_FREE;
+    CHECK(sh_route_button(&st, &f, SH_BTN_PWR).first == SH_ACT_WAKE, "PWR wakes it");
+    f.dark = false;
+    CHECK(sh_route_button(&st, &f, SH_BTN_PWR).first == SH_ACT_NONE,
+          "and cannot put the glass out from under Snooze and Stop");
+    f.menu_open = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).fallback == SH_ACT_STOP_ALARM, "over the menu: stop");
+    f.menu_open = false;
+    f.talking = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).fallback == SH_ACT_SNOOZE_ALARM,
+          "over the talk ring: snooze, never a recording");
+    st.key_owner = SH_KEY_FREE;
+    f.talking = false;
+    f.speaking = f.replying = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).fallback == SH_ACT_STOP_ALARM,
+          "while Jerv speaks: BOOT stops the alarm");
+    f.speaking = f.replying = false;
+    f.notices = 2;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_ALARM &&
+              sh_route_button(&st, &f, SH_BTN_BOOT).fallback == SH_ACT_STOP_ALARM,
+          "over a notice: the alarm is on top and BOOT stops it, not dismisses the notice");
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).fallback == SH_ACT_STOP_ALARM,
+          "BOOT held is plain BOOT: stop");
+    sh_facts_t h = home();
+    unsigned a = sh_route_event(&h, APP_EV_ALARM_DUE);
+    CHECK((a & SH_DO_ALARM_TAKES_OVER) && (a & SH_DO_WAKE) && (a & SH_DO_OPEN_ALARM_APP),
+          "the alarm takes over: lit, the talk, menu and voice ended, the Clock up");
+    a = sh_route_event(&h, APP_EV_ALARM_ENDED);
+    CHECK((a & SH_DO_ALARM_GIVES_BACK) && (a & SH_DO_DELIVER),
+          "its end gives the brightness back and tells the Clock");
+}
+
+static const char SERVICE_JSON[] =
+    "{\"etag\":\"v1\",\"alarms\":[{\"id\":3,\"at\":405,\"days\":31,\"on\":true,\"label\":\"Work\","
+    "\"sound\":\"rise\"},{\"id\":4,\"at\":420,\"days\":0,\"on\":true,\"label\":\"\",\"sound\":\"beeps\"}]}";
+
+static void test_the_alarms_service_end_to_end(void)
+{
+    alarm_port_fake_wipe();
+    svc_settings_set(SET_TZ, NEW_YORK);
+    svc_alarms_init();
+    svc_rtc_fake_set_date(2026, 10, 12); /* a Monday */
+    svc_rtc_fake_set(6, 44);
+    uint32_t ms = svc_rtc_uptime_ms();
+    char tag[ALARM_ETAG_BYTES];
+    svc_alarms_etag(tag, sizeof tag);
+    CHECK(svc_alarms_count() == 0 && !tag[0], "a first boot holds nothing and asks without an etag");
+    CHECK(svc_alarms_offer(SERVICE_JSON, sizeof SERVICE_JSON - 1), "the main task hands the list over");
+    CHECK(svc_alarms_count() == 0, "nothing changes until the UI task applies it");
+    svc_alarms_service(ms);
+    svc_alarms_etag(tag, sizeof tag);
+    CHECK(svc_alarms_count() == 2 && !strcmp(tag, "v1"), "applied, and the next fetch sends v1");
+    alarm_next_t n;
+    CHECK(svc_alarms_next(&n) && n.a.id == 3 && n.at_h == 6 && n.at_m == 45 && n.wait_min == 1,
+          "next: 06:45, in a minute");
+    svc_rtc_fake_advance_ms(60000);
+    ms += 60000;
+    svc_alarms_service(ms);
+    alarm_t r;
+    CHECK(svc_alarms_ringing(&r) && r.id == 3 && svc_audio_fake_ring_sound() == ALARM_SOUND_RISE,
+          "06:45: ringing, in its own sound");
+    const uint16_t back = svc_alarms_snooze();
+    CHECK(back == 6 * 60 + 54 && !svc_alarms_ringing(NULL) && svc_audio_fake_ring_sound() == -1,
+          "snoozed to 06:54, silent");
+    CHECK(svc_alarms_next(&n) && n.snoozed && n.at_m == 54, "and the list says so");
+    svc_alarms_set_on(3, false);
+    alarm_put_t p;
+    CHECK(svc_alarms_take_put(&p) && p.id == 3 && !p.on, "the switch on the glass waits for the box");
+    CHECK(svc_alarms_next(&n) && !n.snoozed && n.a.id == 4, "switched off while snoozed: no snooze");
+    svc_rtc_fake_advance_ms(15 * 60000);
+    ms += 15 * 60000;
+    svc_alarms_service(ms);
+    CHECK(svc_alarms_ringing(&r) && r.id == 4 && svc_audio_fake_ring_sound() == ALARM_SOUND_BEEPS,
+          "07:00: the one-off");
+    const uint32_t saves = alarm_port_fake_saves();
+    svc_alarms_stop();
+    alarm_t got;
+    svc_alarms_get(1, &got);
+    CHECK(!svc_alarms_ringing(NULL) && got.id == 4 && !got.on, "stopped, and it switched itself off");
+    CHECK(svc_alarms_offer(SERVICE_JSON, sizeof SERVICE_JSON - 1), "a list the box sent before it heard");
+    svc_alarms_service(ms);
+    svc_alarms_get(0, &got);
+    CHECK(!got.on, "the switches still waiting win over it");
+    svc_alarms_service(ms + 1000);
+    CHECK(alarm_port_fake_saves() == saves, "nothing is written while changes are still coming");
+    svc_alarms_service(ms + 5000);
+    CHECK(alarm_port_fake_saves() == saves + 1, "then the burst is one write to flash");
+    svc_alarms_put_done(&p, 200);
+    svc_alarms_service(ms + 10000);
+
+    svc_alarms_init(); /* a reboot with the box unreachable */
+    CHECK(svc_alarms_count() == 2, "after a reboot the alarms are back before the box answers");
+    CHECK(svc_alarms_take_put(&p) && p.id == 4 && !p.on, "and the one-off's switch-off still goes");
+    svc_alarms_etag(tag, sizeof tag);
+    CHECK(!strcmp(tag, "v1"), "with the version it held");
+    char note[192];
+    svc_alarms_note(note, sizeof note);
+    CHECK(strstr(note, "alarm=n:2,") == note && strstr(note, "src:cache"), "telemetry says where they came from");
+    CHECK(svc_alarms_test(ALARM_SOUND_CHIME) && svc_alarms_ringing(&r) && r.id == 0 &&
+              !strcmp(r.label, "Test alarm"),
+          "the debug relay's alarm_test rings now");
+    svc_alarms_stop();
+    CHECK(svc_alarms_count() == 2, "and stopping it switches nothing off");
+    alarm_port_fake_wipe();
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -2259,9 +2703,7 @@ int main(void)
     test_the_registry_refuses_clashes();
     test_the_event_queue_is_fifo_and_counts_what_it_drops();
     test_the_clock_is_twenty_four_hour();
-    test_next_alarm_honours_days_and_wraps();
     test_alarm_text_reads_like_the_mock();
-    test_snooze_is_nine_minutes_across_midnight();
     test_the_night_face_wraps_past_midnight();
     test_the_notice_table();
     test_urgent_always_chimes();
@@ -2338,6 +2780,18 @@ int main(void)
     test_a_name_is_what_the_panel_can_draw();
     test_a_thread_follows_its_panel_not_its_slot();
     test_the_threads_show_the_box_s_names_and_survive_a_reboot();
+    test_the_zone_rules_agree_with_the_c_library_every_hour_of_two_years();
+    test_wall_time_through_the_gap_and_the_overlap();
+    test_when_an_alarm_next_rings();
+    test_the_schedule_rings_once_snoozes_and_stops();
+    test_an_alarm_changed_while_snoozed();
+    test_a_ring_nobody_answers_stops_at_ten_minutes();
+    test_reboots_and_clock_steps_never_ring_twice_or_late();
+    test_the_box_s_alarms_json_is_read_as_the_box_writes_it();
+    test_switches_queue_for_the_box_and_the_last_one_wins();
+    test_the_alarm_sounds();
+    test_a_ringing_alarm_beats_everything();
+    test_the_alarms_service_end_to_end();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

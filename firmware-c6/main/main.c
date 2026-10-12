@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "alarm_link.h"
 #include "box_http.h"
 #include "cfg.h"
 #include "dbg_core.h"
@@ -33,6 +34,7 @@
 #include "nvs_flash.h"
 #include "ota.h"
 #include "shell.h"
+#include "svc_alarms_drv.h"
 #include "svc_audio_drv.h"
 #include "svc_box_drv.h"
 #include "svc_buttons.h"
@@ -182,7 +184,8 @@ static bool report(const cfg_t *cfg)
     void (*const parts[])(char *, size_t) = {
         svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
         svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
-        svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note};
+        svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note,
+        svc_alarms_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -319,6 +322,10 @@ static void start_panel(const cfg_t *cfg)
     svc_rtc_start();
     s_rtc_up = true;
     svc_buttons_start(ui_task_button, xTaskGetCurrentTaskHandle());
+    /* The alarms' cache, read here before the loop's first fetch can hand over a list; a switch
+       on the glass wakes this loop so the box hears it in seconds, not at the next minute. */
+    svc_alarms_set_wake(wake_main);
+    svc_alarms_init();
     if (!may_start) return;
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
@@ -378,7 +385,10 @@ void app_main(void)
     if (fresh) svc_box_set_phase(FW_DONE, NULL, 0, NULL);
     if (reachable && manifest.date) svc_rtc_box_time(manifest.date);
     /* The names before the first talk: the cache already shows the last ones. */
-    if (reachable) sib_link_poll();
+    if (reachable) {
+        sib_link_poll();
+        alarm_link_poll();
+    }
 
     uint32_t last_report_ms = 0;
     bool reported = false;
@@ -448,7 +458,10 @@ void app_main(void)
             if (joined) ESP_LOGI(TAG, "network recovered");
         }
         reachable = joined && fetch_manifest(&cfg, &manifest);
-        if (reachable) sib_link_poll();
+        if (reachable) {
+            sib_link_poll();
+            alarm_link_poll();
+        }
         if (asked && update_now(&cfg, &manifest, reachable, &ota_last_try_ms)) reported = false;
     }
 }

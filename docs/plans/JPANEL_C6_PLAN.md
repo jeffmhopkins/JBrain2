@@ -37,6 +37,13 @@
 > 100 s cut-off; KEY while Jerv works says so; the reply's first word is no longer clipped; the
 > Clock opens its alarms on a two-second hold; Jerv wears the PWA's own icon in its blue
 > (firmware README "What 0.0.12 adds", and the decisions under §1).
+> **0.0.13 (built, awaiting the board) is the alarms wave**: the box's per-panel alarms table and
+> routes (migration 0236, `api/panel_alarms.py` — the owner edits, a `display` panel reads its own
+> and may switch only `on`), the PWA's Alarms section on the desk panel's card, and the panel's
+> `svc_alarms`: the list fetched with an etag on every update-loop pass and cached in NVS, fired in
+> UTC through the zone's daylight saving, the Ringing screen over everything with a synthesised,
+> ramping sound, KEY snooze / BOOT stop / a 10-minute cap, and the switch on the glass queued back
+> to the box (firmware README "What 0.0.13 adds", and "Alarms" under §1).
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -121,15 +128,17 @@ service tasks to the UI task through a queue.
   tasks on one `esp_lcd` or `esp_codec_dev` handle cost a panic that took weeks to find. One
   owner per chip, and an app is never that owner.
 - **Background duties live in services, not apps.** An alarm must ring with the Clock app
-  closed and Wi-Fi down, so the *alarm service* owns the schedule (NVS copy, RTC wake) and
-  raises `ALARM_DUE`; the shell then opens Clock in its ringing view. Likewise the message
+  closed and Wi-Fi down, so the *alarm service* owns the schedule (an NVS copy of the box's
+  list, fired in UTC from the system clock the PCF85063 keeps) and raises `ALARM_DUE`; the shell
+  then opens Clock in its ringing view. Likewise the message
   service owns the waiting count, which is how a Thread tile shows a badge while closed.
 - **Apps never include each other.** Anything two apps share moves down into `ui_kit` or a
   service. CI enforces it (`firmware-c6/tools/check_app_deps.py`): each `app_*` component's
   `REQUIRES` may name only `app_api` (which holds the `svc_*` interfaces), `ui_kit` and LVGL,
   and its sources may include only those headers and its own.
 - **Logic is separate from widgets.** Each app splits into a pure model (`clock_model.c`:
-  next-alarm arithmetic, snooze, 24-hour formatting) and its view. Models are host-tested the
+  24-hour formatting, the night face; a service's own rules likewise, e.g. the alarms' schedule in
+  `svc_alarms/alarm_logic.c`) and its view. Models are host-tested the
   way `firmware/host` tests the S3's `ui.c`, `screen.c` and `gesture.c`.
 
 ### What the framework lays down (C2/C3 groundwork, landed 2026-10-11)
@@ -313,6 +322,32 @@ cancels it quietly. A tap still wakes a dark screen (the shell's pointer gate). 
 conversation menu's own (`ui_kit/ui_hold.c`, one copy with the threshold as an argument),
 host-tested: tap, 1.9 s, 2 s, a drag.
 
+### Alarms (0.0.13)
+
+Set in the PWA, switched on the panel (owner decision, mocks README). The design, all of it
+host-tested or sim-proven since the owner is away from the panel:
+
+- **Box.** `app.endpoint_panel_alarm` (migration 0236): per display panel, at most eight; minute of
+  day in the panel's zone, the firmware's days mask (bit 0 Monday, 0 = once), on, a 24-character
+  ASCII label, a sound (`chime`, `beeps`, `rise`). RLS: the owner everything; a panel reads its own
+  rows and may UPDATE only `enabled` on them (a trigger refuses any other column from a device
+  key); a sibling sees nothing. Owner CRUD under `/endpoint/panels/{device_id}/alarms`; the panel's
+  `GET /endpoint/alarms` (etag, 304) and `PUT /endpoint/alarms/{id}` `{on}`, both 403 to anything
+  but a `display`, so the twins' S3 panels cannot use them. The owner's list carries the version
+  the panel last fetched, so the PWA says "On the panel" only when it is.
+- **Panel.** `svc_alarms` fetches on every update-loop pass (and right after boot), caches the list
+  and the unsent switches in NVS, and fires from the UTC clock with the zone's own rule: a time in
+  the spring-forward gap rings when the gap ends, a time in the fall-back overlap rings once, a due
+  time up to 2 minutes late still rings (a reboot across it), later is `missed`. A snooze ends if
+  its alarm is deleted, switched off or moved.
+- **Precedence: a ringing alarm beats everything** — dark screen, menu, talk ring, notice, a reply
+  being spoken, a test tone: KEY snoozes, BOOT (short or held) stops, PWR cannot darken it; the
+  shell ends the talk, the menu and the voice when it starts, and the audio task gives it the
+  speaker. Stops itself after 10 minutes.
+- **Debug.** `inject event=alarm_test` rings a test alarm through the whole path; the snapshot's
+  `alarms` section and telemetry's `alarm=` token say what is set, what is next, what last rang
+  and how it ended, and how the fetch went.
+
 ### Jerv wears the PWA's icon, in its blue (owner, 2026-10-12)
 
 The home tile, Jerv's header and every Jerv glyph draw the PWA's own mark — the neuron in
@@ -414,7 +449,7 @@ four orientations fit with no relayout of the frame — only the content turns.
 | **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
 | **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **0.0.4 on the glass (measured):** home renders, runtime brightness and PWR dark/wake work, KEY and BOOT route as designed. **0.0.6 (built, awaiting the board):** `svc_touch` — the CST9220 polled every 20 ms over `svc_power`'s bus through a locked transfer API (still one owner), raw→display mapping, failure reported as `touch=failed:<step>`; the shell's real-pointer rules host- and sim-tested (tap within 20 px, sideways swipe ≥ 60 px, a stroke on a dark screen wakes and reaches nothing, a notice appearing under a finger ends its stroke). **Left:** confirming 0.0.5 installs and 0.0.6's taps, swipes and corners on the glass, then the RTC. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
 | **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI). **0.0.9 (built, awaiting the board):** the pickup every 3 s from the update loop (manifest first, backoff to 60 s on a silent box, none while the box is unreachable), one kept-alive session for every box request, commands on the UI task through a one-slot job (3 s, else `ui busy`; inline on a boot with no UI), the screenshot streamed chunked from the renderer (2 × 4 KB, ≤ 2 s of stillness, `net slow` / `capture torn` as JSON), the `esp_log` ring hook with clip-aware secret scrubbing, `dbg=` / `tls=` / `sec=` telemetry. **Left:** proving it on the glass, Ops → Panels buttons. |
-| **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **0.0.10 (built, awaiting the board):** Jerv's streamed hold-to-talk end to end — the ES8311/ES7210 under `svc_audio` (one task, priority 1), the upload chunked while KEY is held, the reply frame (transcript, Jerv's words, then speech) over the S3s' `/endpoint/converse` with `persona=jerv`, the speech streamed through a 16 KB ring, text only when read-aloud is off, KEY/BOOT stops a reply, a speaker-volume slider, `audio=` telemetry, the debug `play_tone`. Jerv here is a tool-less spoken persona, not the owner's agent (§5). **0.0.11 (built, awaiting the board):** Jerv is the owner's real agent, Dave is Minecraft_Dave in a conversation of his own a level under the Minecraft tile (Compass a work-in-progress page), one shared conversation view (`components/convo`) with an instance per agent, Clear chat by a long press, the people's threads named and bound by device id from `GET /endpoint/siblings`, the reply waited for 130 s, the audio stack 4.25 KB and microphone gain 24 dB from the first talks' numbers. **0.0.12 (built, awaiting the board):** the agent turn streamed (JT2: transcript at once, a live status line per tool, keep-alives, no 100 s cut-off, 5-minute cap), the whole answer kept (1,000 bytes) and read in full sentence by sentence (5-minute cap), KEY while Jerv works says so and BOOT leaves the turn running, the speaker's start gated so the first word is never clipped, the Clock's alarms on a 2 s hold, the PWA's icon and blue for Jerv. **Left:** calibration, the alarm service and PWA editor, voice messages to Quorra and Tamsin (the box client for messages), Listen on a stored reply. | Each app's mock states reproduced on the glass and in `sim/`. |
+| **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **0.0.10 (built, awaiting the board):** Jerv's streamed hold-to-talk end to end — the ES8311/ES7210 under `svc_audio` (one task, priority 1), the upload chunked while KEY is held, the reply frame (transcript, Jerv's words, then speech) over the S3s' `/endpoint/converse` with `persona=jerv`, the speech streamed through a 16 KB ring, text only when read-aloud is off, KEY/BOOT stops a reply, a speaker-volume slider, `audio=` telemetry, the debug `play_tone`. Jerv here is a tool-less spoken persona, not the owner's agent (§5). **0.0.11 (built, awaiting the board):** Jerv is the owner's real agent, Dave is Minecraft_Dave in a conversation of his own a level under the Minecraft tile (Compass a work-in-progress page), one shared conversation view (`components/convo`) with an instance per agent, Clear chat by a long press, the people's threads named and bound by device id from `GET /endpoint/siblings`, the reply waited for 130 s, the audio stack 4.25 KB and microphone gain 24 dB from the first talks' numbers. **0.0.12 (built, awaiting the board):** the agent turn streamed (JT2: transcript at once, a live status line per tool, keep-alives, no 100 s cut-off, 5-minute cap), the whole answer kept (1,000 bytes) and read in full sentence by sentence (5-minute cap), KEY while Jerv works says so and BOOT leaves the turn running, the speaker's start gated so the first word is never clipped, the Clock's alarms on a 2 s hold, the PWA's icon and blue for Jerv. **0.0.13 (built, awaiting the board):** alarms end to end — the box's table, RLS and routes, the PWA editor on the desk panel's card, `svc_alarms` (etag fetch, NVS cache, UTC + daylight-saving schedule, snooze, 10-minute cap, the switch queued back to the box), the Ringing screen over everything with three synthesised ramping sounds, `inject event=alarm_test`, `alarm=` telemetry. **Left:** calibration, voice messages to Quorra and Tamsin (the box client for messages), Listen on a stored reply, the night clock's hours from the PWA. | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C2r** | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, LVGL software rotation, touch mapped through it, the Settings switch. After touch is proven on the board. | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
 | **C3b** | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tools, `svc_notice` and the overlay. | Jerv asks a yes/no on the panel and acts on the tap. |
 | **C4** 🟡 | Minecraft. **0.0.11:** the tile is a menu of Dave (the real Minecraft_Dave, a conversation of his own) and Compass (work in progress). **0.0.12:** Dave's talks stream like Jerv's (status line, the whole answer, read in full). | Compass scoped and built. |

@@ -26,6 +26,9 @@ void box_http_init(const cfg_t *cfg);
  * handshake, not a failed request. */
 int box_http_call(const char *path, const char *ctype, const char *body, size_t len, char *out,
                   size_t cap, size_t *got, box_reply_t *reply, int timeout_ms);
+/* A PUT of `len` bytes (the alarm switch, `{on}`); the reply's body is read and dropped. */
+int box_http_put(const char *path, const char *ctype, const char *body, size_t len,
+                 int timeout_ms);
 
 /* A chunked POST whose length is not known up front (the screenshot, a talk to Jerv). A stream
  * cannot be replayed onto a second session if the kept one turns out to be stale, so it opens a

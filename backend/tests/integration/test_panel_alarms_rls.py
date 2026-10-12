@@ -1,6 +1,6 @@
 """`endpoint_panel_alarm` — the owner's alarms, a panel's own switch, a sibling's nothing.
 
-Migration 0235. Each property is held by Postgres, not by a handler that happens to ask for one
+Migration 0236. Each property is held by Postgres, not by a handler that happens to ask for one
 row:
 
 - the owner reads and writes every panel's alarms;

@@ -42,12 +42,6 @@ static const char *const NIGHT_NAMES[] = {"Red", "Amber", "Grey"};
 
 static void show(app_t *self, view_t v);
 
-static uint16_t now_min(rtc_time_t *t)
-{
-    svc_rtc_now(t);
-    return (uint16_t)(t->h * 60 + t->m);
-}
-
 static void rebuild(void *self)
 {
     show(self, ((clock_t_ *)((app_t *)self)->state)->want);
@@ -183,10 +177,12 @@ static void build_face(app_t *self, lv_obj_t *v)
     }
 }
 
+/* The one thing the panel may change about an alarm (owner: set in the PWA, switched here). It
+   takes effect at once and reaches the box when it next answers. */
 static void alarm_toggled(lv_event_t *e)
 {
     lv_obj_t *sw = lv_event_get_current_target(e);
-    svc_alarms_set_on((uint8_t)(uintptr_t)lv_obj_get_user_data(sw), lv_obj_has_state(sw, LV_STATE_CHECKED));
+    svc_alarms_set_on((uint32_t)(uintptr_t)lv_obj_get_user_data(sw), lv_obj_has_state(sw, LV_STATE_CHECKED));
     later(lv_event_get_user_data(e), VIEW_ALARMS);
 }
 
@@ -248,20 +244,20 @@ static void build_alarms(app_t *self, lv_obj_t *v)
 {
     ui_header(v, &ICON, UI_ACCENT_NEUTRAL, "Alarms", back, self);
     lv_obj_t *page = ui_page(v, true, 0);
-    rtc_time_t t;
-    uint16_t now = now_min(&t);
     alarm_t a[ALARM_MAX];
     uint8_t n = 0;
     while (n < ALARM_MAX && svc_alarms_get(n, &a[n])) n++;
-    uint8_t idx;
-    uint32_t wait;
-    if (t.valid && clock_next_alarm(a, n, now, t.wday, &idx, &wait)) {
+    alarm_next_t next;
+    if (svc_alarms_next(&next)) {
         char s[48];
-        clock_fmt_next(&a[idx], wait, s, sizeof s);
+        clock_fmt_next(&next, s, sizeof s);
         lv_obj_t *chip = ui_chip(page, s, UI_C_WARN, true);
         lv_obj_set_style_align(chip, LV_ALIGN_TOP_MID, 0);
     }
     lv_obj_t *list = ui_card(page, NULL);
+    if (!n)
+        ui_label_wrap(list, "No alarms yet. Add them in the PWA: jpanel → Panels → Jeff's.", 18,
+                      UI_C_MUTED);
     for (uint8_t i = 0; i < n; i++) {
         char hm[6], sub[48];
         clock_fmt_hm(a[i].h, a[i].m, hm);
@@ -295,10 +291,9 @@ static void build_alarms(app_t *self, lv_obj_t *v)
                          "the PWA with the alarms.",
                   16, UI_C_MUTED);
     card_time(self, page);
-    ui_label_wrap(page, "These alarms are samples and do not ring yet. Alarms are set in the PWA "
-                        "(jpanel → Panels → Jeff's) from a later update, and ring from the panel's "
-                        "own clock, even with Wi-Fi off.",
-                  16, UI_C_MUTED);
+    char sync[200];
+    svc_alarms_sync_line(sync, sizeof sync);
+    ui_label_wrap(page, sync, 16, UI_C_MUTED);
 }
 
 static void snooze(app_t *self)
@@ -401,6 +396,10 @@ static bool on_event(app_t *self, const app_event_t *ev)
     bool ringing = c->shown == VIEW_RINGING;
     switch (ev->type) {
     case APP_EV_ALARM_DUE: show(self, VIEW_RINGING); return true;
+    /* Snoozed, stopped, or the cap: whoever ended it, the ringing view goes. */
+    case APP_EV_ALARM_ENDED:
+        if (ringing && !svc_alarms_ringing(NULL)) show(self, VIEW_FACE);
+        return true;
     case APP_EV_KEY_DOWN:
         if (!ringing) return false;
         snooze(self);
@@ -443,6 +442,11 @@ static void describe(app_t *self, dbg_json_t *w)
     dbg_json_int(w, "holds", c->holds);
     dbg_json_int(w, "hold_fill", c->ring ? ui_hold_permille(&c->hold, svc_rtc_uptime_ms(), CLOCK_HOLD_MS) : 0);
     dbg_json_bool(w, "holds_notices", holds_notices(self));
+    alarm_t a;
+    if (c->shown == VIEW_RINGING && svc_alarms_ringing(&a)) {
+        dbg_json_int(w, "ringing_id", (int32_t)a.id);
+        dbg_json_str(w, "ringing_label", a.label[0] ? a.label : "Alarm");
+    }
 }
 
 app_t app_clock = {

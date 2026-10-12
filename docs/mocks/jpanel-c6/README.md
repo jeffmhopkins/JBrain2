@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -127,3 +127,15 @@ panel, the others import it at a fixed `start` state).
   answer, which is kept whole on the glass (up to 1,000 bytes) and read aloud in full. KEY while
   he works says "Still working on the last one". The sim's `jerv-working`, `dave-working` and
   `jerv-long` states are the pictures. Firmware 0.0.12.
+- **Alarms, built** (firmware 0.0.13 and the PWA): `ClockAlarms`, `Ringing` and `PwaAlarms` as
+  drawn, with these differences, each on purpose. **A sound per alarm** — the PWA's form gains a
+  Chime / Beeps / Rise picker below the label (the mock has none; the brief asked for a small fixed
+  set), and the list's second line names it. **Delete takes two taps** within 3 s ("Tap again to
+  delete"), Revoke's pattern; the mock deletes on one. **"On the panel" is earned**: the mock flips
+  to it after 1.5 s, the PWA only once the box has seen the panel fetch that version ("Sending to
+  panel…" until then, re-checked every 10 s). **The time field is the phone's own** — `<input
+  type="time">` shows 12-hour on a phone set to 12-hour; the list, the panel and the box are 24-hour.
+  **The night-clock hours are not in the PWA yet** (still the panel's default 21:30–06:30); that
+  half of the mock's card is a later wave. On the panel the ringing screen's second button stays
+  **Stop**, as drawn. The sim's `ringing`, `ringing-dark`, `ringing-over-notice`, `alarm-snoozed`,
+  `alarm-test` and `clock-alarms` states are the panel's pictures, from the box's own JSON.

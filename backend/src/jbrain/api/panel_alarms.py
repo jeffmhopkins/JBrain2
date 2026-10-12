@@ -3,7 +3,7 @@
 docs/mocks/jpanel-c6/README.md (owner decisions): alarms are created and edited in the PWA
 (jpanel → Panels → Jeff's) and only switched on and off on the panel, which keeps its own copy
 and rings from its own clock — so an alarm still sounds with the box unreachable. Table and
-RLS: migration 0235.
+RLS: migration 0236.
 
 Two doors:
 

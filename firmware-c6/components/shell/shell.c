@@ -54,8 +54,10 @@ static unsigned s_recent_n;
 
 static const char *const EV_NAMES[] = {"key_down", "key_up", "boot", "net_up", "net_down",
                                        "msg_arrived", "alarm_due", "notice_arrived",
-                                       "tick_minute", "wake", "pwr", "touch_wake", "boot_long",
-                                       "long_press"};
+                                       "tick_minute", "wake", "alarm_ended", "pwr", "touch_wake",
+                                       "boot_long", "long_press"};
+_Static_assert(sizeof EV_NAMES / sizeof *EV_NAMES == APP_EV__COUNT + 4,
+               "EV_NAMES must name every app event and the shell's four");
 
 /* The conversation menu (long press): its state is shell_core's, its widgets these. */
 static sh_menu_t s_menu;
@@ -584,10 +586,16 @@ static void handle_event(const app_event_t *ev)
     sh_facts_t f = facts();
     unsigned todo = sh_route_event(&f, ev->type);
     if (todo & SH_DO_WAKE) set_dark(false);
-    if (todo & SH_DO_OPEN_ALARM_APP) {
+    if (todo & SH_DO_ALARM_TAKES_OVER) {
         talk_end(false);
-        shell_open(s_alarm_app);
+        menu_drop();
+        svc_audio_stop_reply();
+        if (svc_settings_get(SET_BRIGHTNESS) < ALARM_WAKE_BRIGHTNESS)
+            svc_display_set_brightness(ALARM_WAKE_BRIGHTNESS);
     }
+    if (todo & SH_DO_ALARM_GIVES_BACK && !svc_display_dark())
+        svc_display_set_brightness((uint8_t)svc_settings_get(SET_BRIGHTNESS));
+    if (todo & SH_DO_OPEN_ALARM_APP) shell_open(s_alarm_app);
     if ((todo & SH_DO_DELIVER) && s_open && s_open->on_event) s_open->on_event(s_open, ev);
     if ((todo & SH_DO_REFRESH_TILES) && s_home) build_home();
 }
@@ -824,6 +832,21 @@ static bool cmd_inject(const dbg_req_t *r, dbg_json_t *d, char *err, size_t n)
             dbg_json_str(d, "queued", r->event);
             return true;
         }
+    if (!strcmp(r->event, "alarm_test")) {
+        /* Rings now, as an alarm due this minute would: the whole path — the service, the
+           shell's takeover, the Clock's ringing view, the sound — with no alarm set. `name` picks
+           the sound (chime, beeps, rise); KEY, BOOT or the cap end it as any ring. */
+        static const char *const SOUNDS[] = {"chime", "beeps", "rise"};
+        uint8_t snd = 0;
+        for (uint8_t i = 0; i < 3; i++)
+            if (!strcmp(r->name, SOUNDS[i])) snd = i;
+        if (!svc_alarms_test(snd)) {
+            snprintf(err, n, "no time yet");
+            return false;
+        }
+        dbg_json_str(d, "ringing", SOUNDS[snd]);
+        return true;
+    }
     if (!strcmp(r->event, "hold")) {
         /* A finger held still: `value` ms (default 800, enough to open a conversation's menu). */
         if (r->x < 0 || r->x >= UI_W || r->y < 0 || r->y >= UI_H) {

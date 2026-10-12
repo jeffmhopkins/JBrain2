@@ -3,6 +3,7 @@
 #include "app_event.h"
 #include "svc_debug.h"
 #include "svc_rtc.h"
+#include "svc_settings.h"
 #include "time_logic.h"
 
 /* Monday 12 October 2026, 09:41: a weekday, so the sample "Work" alarm is next. */
@@ -21,6 +22,16 @@ void svc_rtc_now(rtc_time_t *out)
 uint32_t svc_rtc_uptime_ms(void)
 {
     return s_uptime;
+}
+
+/* The fake keeps the WALL clock (what the face shows); the instant is that wall time in the zone
+ * the panel is set to, so the alarms and the face agree as they do on the device. */
+bool svc_rtc_epoch(int64_t *out)
+{
+    tz_rule_t z;
+    const int64_t wall = s_day * 86400 + s_day_ms / 1000;
+    *out = tz_parse(tz_posix(svc_settings_get(SET_TZ)), &z) ? tz_wall_to_utc(&z, wall) : wall;
+    return true;
 }
 
 void svc_rtc_status(rtc_status_t *out)

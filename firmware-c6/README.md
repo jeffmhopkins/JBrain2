@@ -298,9 +298,8 @@ is the natural carrier (an open question for the box side).
   strength when a notice is urgent). A tap opens the notice over the face, or the person's
   thread. The app declares it holds notices (`app_t.holds_notices`); the shell's overlay
   decision reads that, so what is drawn and what takes presses stay one decision.
-- **The alarms** are the in-memory samples, and the page says so: "These alarms are samples and
-  do not ring yet." The panel's NVS copy, the RTC-driven ringing and the PWA editor are the
-  alarms wave.
+- **The alarms** were in-memory samples in 0.0.8-0.0.12; since 0.0.13 they are the box's, set in
+  the PWA, and they ring ("What 0.0.13 adds").
 
 ### KEY talks to Jerv from anywhere (plan "KEY routing")
 
@@ -1025,6 +1024,148 @@ scripts/debug-connect.sh panel-shot c6 alarms.png        # the alarms list, afte
 6. Home: the Jerv tile shows the PWA's mark in its blue.
 7. Telemetry's `int_min` before and after a talk (above).
 
+## What 0.0.13 adds: alarms that ring
+
+The alarms wave (plan §1 "Background duties live in services", C3's "Clock + alarm service + PWA
+alarm editor + box API"). Alarms are **set in the PWA** — jpanel → Panels → the desk panel's card →
+Alarms (`../docs/mocks/jpanel-c6/PwaAlarms.dc.html`): time, repeat days, an optional label and a
+sound — and on the panel they are **only switched on and off** (owner decision, mocks README). The
+panel keeps its own copy and rings from its own clock, so an alarm sounds with the box unreachable.
+
+### On the glass
+
+- **The alarm list** (Clock, hold the face 2 s) is the box's list: each alarm's time, days and label
+  with its switch, and the chip above it says what rings next ("Next 06:45 · in 9 h 4 min", or
+  "Snoozed until 06:54 · in 9 min"). An empty list says where alarms are made. The last line says
+  where the copy came from, and that a switch flipped while the box is away reaches it later.
+- **The switch** takes effect at once (the next alarm moves with it) and is queued for the box: one
+  write per alarm, the last one wins, retried every pass until the box answers, kept through a
+  reboot. A one-off (no days) that has rung switches itself off the same way.
+- **Ringing** is the mock's Ringing screen (bell, the time, the label, **Snooze 9 min** / **Stop**,
+  "KEY snoozes · BOOT stops") over whatever is open — an app, the home pages, a notice, the talk
+  ring, a dark screen. It lights the glass at no less than 40 % (the owner's brightness when that is
+  higher) and gives his brightness back when it ends. **KEY snoozes nine minutes; BOOT — short or
+  held — or Stop ends it.** Nobody answering: it **stops itself after 10 minutes** and the snapshot
+  says `last_end: "timed_out"`.
+- **The sound** is the alarm's own — **chime** (two bell strikes), **beeps** (four short ones) or
+  **rise** (a sweep up) — synthesised a chunk at a time from the tone path's sine table
+  (`svc_audio/alarm_sound.c`): no audio files. It loops with a volume ramp from 15 % to full over
+  30 s, at a speaker volume of at least 70 whatever the reply volume is set to.
+
+### Precedence: a ringing alarm beats everything
+
+One rule in `shell_core.c` (`sh_route_button`, host-tested), checked before every other:
+
+| While an alarm rings | What happens |
+| --- | --- |
+| KEY (down) | Snooze — never a recording; its release sends nothing |
+| BOOT, BOOT held, Stop | Stop |
+| PWR | Wakes a dark screen; never puts the glass out from under the ringing screen |
+| A dark screen | The alarm wakes it; KEY and BOOT still snooze and stop (not "wake only") |
+| The conversation menu | Closed when the alarm starts; any press is the alarm's |
+| The talk ring (KEY held to Jerv) | Ended when the alarm starts (nothing sent); the release sends nothing |
+| Jerv speaking a reply | The voice stops when the alarm starts; the answer stays in the thread |
+| A notice | The alarm is the top overlay; BOOT stops the alarm, it does not dismiss the notice |
+| A test tone or a talk wanting the speaker | The audio task gives the speaker to the alarm at once (`svc_audio_ring`); a talk is refused "An alarm is ringing" |
+
+The shell does the takeover on `ALARM_DUE` (`SH_DO_ALARM_TAKES_OVER`: end the talk, close the menu,
+stop the reply, light the glass, open the Clock's ringing view) and the handback on the new
+`ALARM_ENDED` (snoozed, stopped or capped: the owner's brightness again, the face back).
+
+### When an alarm rings: UTC, the zone, and daylight saving
+
+`svc_alarms` schedules in **UTC** (`svc_rtc_epoch`), from the PCF85063-backed system clock, with the
+zone chosen on the panel (default New York). The zone's POSIX rule is evaluated by the panel's own
+code (`time_logic.c`: `tz_parse`, `tz_offset_at`, `tz_wall_to_utc`), not newlib's `localtime`,
+because an alarm needs the UTC instant of a wall time on days that are not today; the host suite
+checks it against glibc for every zone, every hour of 2026-2027.
+
+- **Repeat days** are the panel's local days (bit 0 Monday … bit 6 Sunday); **0 = once**: the next
+  occurrence, then it switches itself off.
+- **The gap** (clocks forward): a time that does not exist rings when the gap ends — 02:30 rings at
+  03:00. **The overlap** (clocks back): a time that happens twice rings the first time only.
+- **Late is grace, not catch-up.** A check runs every UI pass; an alarm due up to 2 minutes behind the
+  clock still rings (a reboot — an update — across its minute), further behind is counted `missed`,
+  never rung late. A clock the box corrects backwards by up to 10 minutes rings nothing twice; a
+  bigger step back is a clock that was wrong, and the schedule starts over from the corrected time.
+- **Changed while snoozed:** a snooze ends when its alarm is deleted, switched off, or moved to another
+  time or other days (`snooze_cancelled`); a new label or sound is carried into it.
+
+### The protocol
+
+`GET {api}/endpoint/alarms?etag=<what the panel holds>` on every pass of the update loop (the
+manifest's minute; at once after a switch on the glass wakes the loop) and right after boot, on the
+kept-alive session: **304 with no body** when nothing changed, otherwise
+`{"etag":"…","alarms":[{"id","at","days","on","label","sound"}],"max":8}` (`at` minutes past
+midnight in the panel's zone). Before the list, the queued switches go up as
+`PUT {api}/endpoint/alarms/{id}` `{"on":bool}` — a 2xx or a 404 (deleted in the PWA) settles one,
+anything else keeps it. Both routes answer only a panel flashed as a `display` (the twins' S3 panels
+are 403); the box's RLS lets a panel read only its own alarms and write only their `on` flag
+(`../backend/src/jbrain/api/panel_alarms.py`, migration 0236).
+
+### The pieces
+
+| Piece | What it is |
+| --- | --- |
+| `svc_alarms/alarm_logic.c` | Pure, host-tested: the box's JSON (`alarm_parse`), the next occurrence (`alarm_next_at`), the ring / snooze / stop / cap machine (`alarm_sched_*`), the switch queue (`alarm_queue_*`). |
+| `svc_alarms/svc_alarms.c` | The service on the UI task: applies the main task's hand-over (a sequence count, as the siblings'), fires, posts `ALARM_DUE` / `ALARM_ENDED`, starts and stops the sound, saves the cache 2 s after the last change. The queue and the etag are shared with the main task under a critical section. |
+| `svc_alarms/esp/alarm_port_nvs.c` | The cache: one NVS blob (`jpanel`/`alarms`, ~430 B) — the list, its etag and the switches not yet sent. |
+| `svc_rtc/time_logic.c` | The zone rules (`tz_*`) and `svc_rtc_epoch`. |
+| `svc_audio/alarm_sound.c` | The three sounds and the ramp, pure; `esp/svc_audio_es.c` plays them (`play_ring`) ahead of everything else. |
+| `main/alarm_link.c` | The two box requests, main task only; `box_http_put`. |
+| `shell_core.c` / `shell.c` | The precedence above; the takeover and handback; `inject event=alarm_test`. |
+| `app_clock` | The real list, the next/snoozed chip, the ringing view leaving on `ALARM_ENDED`. |
+
+### Debugging it
+
+- The snapshot's **`alarms`** section: `count`, `source` (`none` / `cache` / `box`), `next` (`id`,
+  local `at`, `in_min`, `snoozed`), `ringing` (the id, -1 when silent) with `ring_ms` and
+  `ring_sound`, `ring_cap_min`, `last_fired` / `last_snoozed` / `last_dismissed` (local times),
+  `last_end` (`stopped`, `snoozed`, `timed_out`), counts (`fired`, `snoozes`, `dismissed`,
+  `timed_out`, `missed`, `snooze_cancelled`, `taken_over`), `fetch` (`last` ok/304/fail, `status`,
+  `age_s`, `etag`, `puts`, `put_fails`), `queue` (switches not yet sent) and `alarms` (the list).
+  `audio` gains `rings`, `ring_fail`, `ring_playing`; the Clock's `app` section `ringing_id`.
+- Telemetry's note: `alarm=n:3,next:+545,fired:1,snz:0,stop:1,cap:0,miss:0,q:0,src:box,fetch:304/304`
+  (`next:z9` is a snooze nine minutes away).
+- **Fire one now, with nothing set:** `inject` `event=alarm_test` (`name` = `chime`, `beeps` or
+  `rise`) rings a "Test alarm" through the whole path — the shell's takeover, the ringing view, the
+  sound; KEY, BOOT or the cap end it, and it switches nothing off.
+
+```sh
+scripts/debug-connect.sh panel-cmd c6 inject --arg event=alarm_test --arg name=rise
+scripts/debug-connect.sh panel-shot c6 ringing.png
+scripts/debug-connect.sh panel-cmd c6 inject --arg event=key_down     # snooze
+scripts/debug-connect.sh panel-cmd c6 snapshot                       # alarms.last_end, next.snoozed
+```
+
+### The memory budget
+
+Static DIRAM (from the two ELFs, `.dram0.data` + `.dram0.bss`; 0.0.12 rebuilt from its tag to the
+byte of its `dist/`): 144,952 → 147,192 B, **+2,240 B** (`.bss` +2,472, `.data` −232 — the fake's
+sample alarms are gone). Most of it: the fetch buffer on the main task (1,024), the schedule
+(`s_s`, 496), the hand-over (316), the NVS blob kept static rather than on the UI task's stack
+(420), the switch queue (100), the etag and the parsed zone (52). `.iram0.text` is unchanged. **No
+new task and no heap per ring:** the sound is the audio task's existing chunk buffer, the fetch and
+the PUT ride the kept-alive session, the NVS write is a transient handle. So **`int_min` should read
+about 2.2 KB lower than 0.0.12's** at the same point (≈ 68 KB before a talk, ≈ 50–52 KB after one,
+on 0.0.12's estimate); an alarm ringing adds nothing to it. App: 1,926,224 → 1,941,376 B (+15 KB;
+54 % of the slot still free).
+
+### What to check on the glass
+
+1. In the PWA (jpanel → Panels → the desk panel), add an alarm two minutes ahead, sound Rise. The card
+   says "Sending to panel…", then "On the panel" within about a minute.
+2. Hold the Clock face 2 s: the alarm is in the list and the chip says "Next … · in 2 min".
+3. Put the screen out with PWR. At the minute the glass lights at a readable brightness, the Ringing
+   screen is up and the sweep starts soft and climbs. PWR does not put it out.
+4. KEY: "Snoozed until …", the face comes back; the list's chip says "Snoozed until …". Nine minutes
+   later it rings again; BOOT stops it.
+5. Flip an alarm's switch on the panel with Wi-Fi off (Settings → Wi-Fi → Disconnect), reconnect: the
+   PWA shows the change within a minute.
+6. A one-off (no days): after Stop it is switched off on the panel and in the PWA.
+7. Leave one ringing: it stops by itself at 10 minutes; the snapshot says `timed_out`.
+8. `inject event=alarm_test` over a talk to Jerv: the talk ends, nothing is sent, the alarm rings.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -1049,6 +1190,8 @@ The same protocol as the S3 panels, so the box needs no new route for it:
   The protocol). Uploaded chunked, as it is recorded; read until no byte has come for 45 s.
 - **`GET {api}/endpoint/siblings`** (since 0.0.11) is the twins' panels' ids and names, for the
   two message threads ("What 0.0.11 adds").
+- **`GET {api}/endpoint/alarms?etag=…`** and **`PUT {api}/endpoint/alarms/{id}`** `{"on":bool}`
+  (since 0.0.13) are the owner's alarms and the switch on the glass ("What 0.0.13 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -1157,8 +1300,8 @@ components/
   svc_*/            one per chip or box route; in-memory implementations until each driver lands.
                     svc_power, svc_display, svc_buttons, svc_touch, svc_settings (NVS), svc_rtc
                     (PCF85063 + the box's clock), svc_net, svc_box and svc_audio (ES8311 + ES7210,
-                    the talk to Jerv and Dave) and svc_siblings (the twins' panels' names, NVS-cached)
-                    are real: the device builds their esp/ file and pure logic, the sim and host
+                    the talk to Jerv and Dave, the alarm sounds), svc_siblings (the twins' panels'
+                    names, NVS-cached) and svc_alarms (the box's alarms, NVS-cached) are real: the device builds their esp/ file and pure logic, the sim and host
                     the top-level files
   convo/            the one conversation view every agent's app instantiates (Jerv, Dave)
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
@@ -1220,7 +1363,9 @@ Fonts are LVGL's Montserrat plus the generated clock digits and punctuation fall
 its transcript), `jerv-reply` and `jerv-reply-text` (the box's answer, spoken and text-only),
 `boot-long` (BOOT held in Settings), and from 0.0.11 `home-unnamed` / `thread-unnamed` (before the
 box has sent the panels' names), `dave`, `rec-dave`, `dave-reply`, `compass`, `chat-menu`,
-`chat-menu-armed`, `chat-cleared` and `dave-menu`. The sim feeds the panels' names through the
+`chat-menu-armed`, `chat-cleared` and `dave-menu`, and from 0.0.13 `ringing-dark`,
+`ringing-over-notice`, `alarm-snoozed` and `alarm-test`. The alarms come from the box's own JSON
+through `svc_alarms_offer`, as the siblings' names do. The sim feeds the panels' names through the
 box's own JSON and the panel's own path (`svc_siblings_offer`), with placeholder names. Each render also
 prints LVGL's pool peak (64-bit pointers; the device's pool is 64 KB with 32-bit ones).
 

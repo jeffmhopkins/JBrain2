@@ -22,15 +22,15 @@ RLS — three answers, and the third is the one a policy alone cannot give:
   `device_key` session. A policy decides WHICH rows; it cannot decide which columns, and a
   column GRANT cannot tell the owner from a panel because both connect as `jbrain_app`.
 
-Revision ID: 0235
-Revises: 0234
+Revision ID: 0236
+Revises: 0235
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0235"
-down_revision = "0234"
+revision = "0236"
+down_revision = "0235"
 branch_labels = None
 depends_on = None
 

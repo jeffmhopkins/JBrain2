@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "alarm_sound.h"
 #include "driver/i2s_std.h"
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
@@ -69,6 +70,10 @@ static uint32_t s_i2c_err, s_codec_err;
 static uint8_t s_id8311[2], s_id7210[2];
 static volatile uint16_t s_tone_hz, s_tone_ms;
 static uint32_t s_tones;
+/* An alarm's sound: 0 silent, otherwise the sound + 1. Written by the UI task, read here. */
+static volatile uint8_t s_ring;
+static uint32_t s_rings, s_ring_fail;
+static volatile bool s_ring_playing;
 static int s_vol_set = -1;
 static float s_gain_set = -1;
 static bool s_amp;
@@ -104,6 +109,7 @@ const char *talk_port_refusal(void)
 {
     if (!s_started) return "Sound is not running (Settings → Jerv)";
     if (!s_mic) return "The microphone did not start (Settings → Jerv)";
+    if (s_ring) return "An alarm is ringing";
     if (s_tone_ms) return "One moment: a test tone is playing";
     return NULL;
 }
@@ -136,6 +142,9 @@ void talk_port_describe(dbg_json_t *w)
     dbg_json_int(w, "i2c_errors", s_i2c_err);
     dbg_json_int(w, "codec_errors", s_codec_err);
     dbg_json_int(w, "tones", s_tones);
+    dbg_json_int(w, "rings", s_rings);
+    dbg_json_int(w, "ring_fail", s_ring_fail);
+    dbg_json_bool(w, "ring_playing", s_ring_playing);
     dbg_json_int(w, "spk_settle_ms", s_settle_ms);
     dbg_json_int(w, "spk_start_fill", s_start_fill);
     dbg_json_int(w, "stack_free", s_task ? uxTaskGetStackHighWaterMark(s_task) : 0);
@@ -304,14 +313,13 @@ static bool open_mic(void)
     return true;
 }
 
-static bool open_spk(void)
+static bool open_spk(int vol)
 {
     esp_codec_dev_sample_info_t f = fs(1);
     if (esp_codec_dev_open(s_spk, &f) != ESP_CODEC_DEV_OK) {
         s_codec_err++;
         return false;
     }
-    const int vol = (int)svc_settings_get(SET_VOLUME);
     if (esp_codec_dev_set_out_vol(s_spk, vol) == ESP_CODEC_DEV_OK) s_vol_set = vol;
     else s_codec_err++;
     /* After the DAC is up and unmuted, so the amp never amplifies its start-up. */
@@ -357,7 +365,7 @@ static const int16_t SINE[32] = {0,      6393,   12540,  18205,  23170,  27246, 
 static void play_tone(void)
 {
     const uint32_t hz = s_tone_hz, chunks = s_tone_ms / 20;
-    if (!s_spk || !open_spk()) {
+    if (!s_spk || !open_spk((int)svc_settings_get(SET_VOLUME))) {
         s_tone_ms = 0;
         return;
     }
@@ -365,7 +373,7 @@ static void play_tone(void)
     settle();
     uint32_t phase = 0;
     const uint32_t step = (uint32_t)(((uint64_t)hz << 21) / TALK_RATE); /* 32 steps << 16 */
-    for (uint32_t c = 0; c < chunks && talk_audio_want() == TK_AUDIO_OFF; c++) {
+    for (uint32_t c = 0; c < chunks && talk_audio_want() == TK_AUDIO_OFF && !s_ring; c++) {
         for (int i = 0; i < TALK_CHUNK_FRAMES; i++, phase += step)
             s_mono[i] = (int16_t)(SINE[(phase >> 16) & 31] / 4); /* -12 dBFS */
         esp_codec_dev_write(s_spk, s_mono, TALK_CHUNK_BYTES);
@@ -379,7 +387,7 @@ static void play_tone(void)
 
 static void speak(void)
 {
-    if (!open_spk()) {
+    if (!open_spk((int)svc_settings_get(SET_VOLUME))) {
         talk_audio_drop();
         return;
     }
@@ -389,7 +397,7 @@ static void speak(void)
        box says no more is coming; again after an underrun, so a sentence still being synthesised
        on the box is a pause, not a stutter. */
     bool started = false, waiting = true;
-    while (talk_audio_want() == TK_AUDIO_SPK) {
+    while (talk_audio_want() == TK_AUDIO_SPK && !s_ring) {
         const bool more = talk_audio_more();
         if (waiting) {
             const uint32_t since = started ? TK_SPK_SETTLE_MS : ms_now() - amp_at;
@@ -434,7 +442,7 @@ static void record(void)
         return;
     }
     talk_audio_on(true, false);
-    while (talk_audio_want() == TK_AUDIO_MIC) {
+    while (talk_audio_want() == TK_AUDIO_MIC && !s_ring) {
         if (esp_codec_dev_read(s_mic, s_lr, sizeof s_lr) != ESP_CODEC_DEV_OK) {
             s_codec_err++;
             vTaskDelay(pdMS_TO_TICKS(20));
@@ -451,10 +459,65 @@ static void record(void)
     talk_audio_on(false, false);
 }
 
+/* The alarm volume is never under this, whatever the speaker is set to for Jerv: a bedside panel
+   turned down for replies must still wake its owner. The ramp (alarm_sound.c) is on top. */
+#define ALARM_MIN_VOLUME 70
+
+/* The alarm, looped until it is stopped: the one sound that takes the speaker from anything else
+   (svc_audio.h). The volume climbs over ALARM_RAMP_MS from the ring's start; a different sound
+   asked for mid-ring (another alarm took over) starts its own pattern at once. */
+static void play_ring(void)
+{
+    const int set = (int)svc_settings_get(SET_VOLUME);
+    if (!s_spk || !open_spk(set > ALARM_MIN_VOLUME ? set : ALARM_MIN_VOLUME)) {
+        s_ring_fail++;
+        while (s_ring) vTaskDelay(pdMS_TO_TICKS(100));
+        return;
+    }
+    s_rings++;
+    s_ring_playing = true;
+    settle();
+    alarm_synth_t syn;
+    uint8_t playing = s_ring;
+    alarm_synth_init(&syn, (uint8_t)(playing - 1));
+    const uint32_t t0 = ms_now();
+    while (s_ring) {
+        if (s_ring != playing) {
+            playing = s_ring;
+            alarm_synth_init(&syn, (uint8_t)(playing - 1));
+        }
+        alarm_synth_fill(&syn, s_mono, TALK_CHUNK_FRAMES, alarm_ramp_q15(ms_now() - t0));
+        esp_codec_dev_write(s_spk, s_mono, TALK_CHUNK_BYTES);
+    }
+    silence(TK_SPK_TAIL_MS / 20);
+    close_spk();
+    s_ring_playing = false;
+}
+
+void svc_audio_ring(uint8_t sound)
+{
+    s_ring = (uint8_t)(sound + 1);
+    if (s_task) xTaskNotifyGive(s_task);
+}
+
+void svc_audio_ring_stop(void)
+{
+    s_ring = 0;
+}
+
+bool svc_audio_ringing(void)
+{
+    return s_ring != 0;
+}
+
 static void audio_task(void *arg)
 {
     (void)arg;
     for (;;) {
+        if (s_ring) {
+            play_ring();
+            continue;
+        }
         switch (talk_audio_want()) {
         case TK_AUDIO_MIC:
             if (s_mic) record();
@@ -482,6 +545,7 @@ bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why)
     else if (talk_audio_want() != TK_AUDIO_OFF || svc_audio_talking() || svc_audio_replying())
         *why = "busy talking";
     else if (s_tone_ms) *why = "a tone is playing";
+    else if (s_ring) *why = "an alarm is ringing";
     if (*why) return false;
     s_tone_hz = hz;
     s_tone_ms = ms;

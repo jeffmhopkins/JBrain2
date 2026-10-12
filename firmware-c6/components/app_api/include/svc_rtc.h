@@ -16,6 +16,9 @@ typedef struct {
 
 void svc_rtc_now(rtc_time_t *out);
 uint32_t svc_rtc_uptime_ms(void);
+/* The instant in UTC seconds, false while the panel has no time. The alarms schedule in UTC so a
+ * zone change or a daylight-saving step moves the wall clock, never the instant an alarm names. */
+bool svc_rtc_epoch(int64_t *out);
 
 typedef enum { TIME_SRC_NONE, TIME_SRC_RTC, TIME_SRC_BOX } time_src_t;
 

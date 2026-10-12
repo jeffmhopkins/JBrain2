@@ -134,13 +134,12 @@ static void settle(void)
     }
 }
 
-static int once(const char *path, const char *ctype, const char *body, size_t len, char *out,
-                size_t cap, size_t *got, box_reply_t *reply, int timeout_ms, bool *reused)
+static int once(esp_http_client_method_t method, const char *path, const char *ctype,
+                const char *body, size_t len, char *out, size_t cap, size_t *got,
+                box_reply_t *reply, int timeout_ms, bool *reused)
 {
     *reused = false;
-    if (!aim(path, body ? HTTP_METHOD_POST : HTTP_METHOD_GET, body ? ctype : NULL, reply,
-             timeout_ms))
-        return -1;
+    if (!aim(path, method, body ? ctype : NULL, reply, timeout_ms)) return -1;
     if (open_counted(body ? (int)len : 0, reused) != ESP_OK) {
         ESP_LOGW(TAG, "%s: no connection", path);
         drop();
@@ -165,17 +164,31 @@ static int once(const char *path, const char *ctype, const char *body, size_t le
     return status;
 }
 
-int box_http_call(const char *path, const char *ctype, const char *body, size_t len, char *out,
-                  size_t cap, size_t *got, box_reply_t *reply, int timeout_ms)
+static int call(esp_http_client_method_t method, const char *path, const char *ctype,
+                const char *body, size_t len, char *out, size_t cap, size_t *got,
+                box_reply_t *reply, int timeout_ms)
 {
     if (got) *got = 0;
     bool reused;
-    int status = once(path, ctype, body, len, out, cap, got, reply, timeout_ms, &reused);
+    int status = once(method, path, ctype, body, len, out, cap, got, reply, timeout_ms, &reused);
     /* The box (or Caddy) closes an idle connection on its own schedule, and that is only seen
        when the next request on it fails. One retry on a fresh session, never more. */
-    if (status < 0 && reused) status = once(path, ctype, body, len, out, cap, got, reply, timeout_ms,
-                                            &reused);
+    if (status < 0 && reused)
+        status = once(method, path, ctype, body, len, out, cap, got, reply, timeout_ms, &reused);
     return status;
+}
+
+int box_http_call(const char *path, const char *ctype, const char *body, size_t len, char *out,
+                  size_t cap, size_t *got, box_reply_t *reply, int timeout_ms)
+{
+    return call(body ? HTTP_METHOD_POST : HTTP_METHOD_GET, path, ctype, body, len, out, cap, got,
+                reply, timeout_ms);
+}
+
+int box_http_put(const char *path, const char *ctype, const char *body, size_t len,
+                 int timeout_ms)
+{
+    return call(HTTP_METHOD_PUT, path, ctype, body, len, NULL, 0, NULL, NULL, timeout_ms);
 }
 
 bool box_http_stream_open(const char *path, const char *ctype, int timeout_ms, bool reuse)

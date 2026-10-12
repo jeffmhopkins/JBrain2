@@ -30,7 +30,10 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
 {
     /* Lit by the time it is handled (PWR got there first): nothing left to do. */
     if (b == SH_BTN_TOUCH) return r(f->dark ? SH_ACT_WAKE : SH_ACT_NONE, SH_ACT_NONE);
-    if (b == SH_BTN_PWR) return r(f->dark ? SH_ACT_WAKE : SH_ACT_DARK, SH_ACT_NONE);
+    /* A ringing alarm keeps the glass lit: PWR can wake it, never put it out from under Snooze
+     * and Stop. */
+    if (b == SH_BTN_PWR)
+        return r(f->dark ? SH_ACT_WAKE : f->alarm_ringing ? SH_ACT_NONE : SH_ACT_DARK, SH_ACT_NONE);
 
     if (b == SH_BTN_KEY_UP) {
         sh_key_owner_t owner = st->key_owner;
@@ -40,14 +43,25 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
         return r(SH_ACT_NONE, SH_ACT_NONE);
     }
 
+    /* A RINGING ALARM BEATS EVERYTHING (plan §2, "Alarms"): KEY snoozes and BOOT — short or held —
+     * stops, whatever else is up: a dark screen, the conversation menu, the talk ring, a notice, a
+     * reply being spoken. The shell ends the talk, the menu and the voice when the alarm starts;
+     * this is the rule for any press that still finds one of them. */
+    if (f->alarm_ringing) {
+        if (b == SH_BTN_KEY_DOWN) {
+            st->key_owner = SH_KEY_ALARM;
+            return r(SH_ACT_TO_APP, SH_ACT_SNOOZE_ALARM);
+        }
+        return r(SH_ACT_TO_APP, SH_ACT_STOP_ALARM);
+    }
+
     /* A press on a dark screen only wakes it: a recording started blind is a message nobody
      * meant to send. */
     if (f->dark) return r(SH_ACT_WAKE, SH_ACT_NONE);
 
     /* The conversation menu takes every button and does one thing with it: closes. KEY over it
-     * starts no recording and its release sends nothing (owner, 2026-10-12). A ringing alarm
-     * outranks it — the shell closes the menu when one starts — so it is not asked here. */
-    if (f->menu_open && !f->alarm_ringing) {
+     * starts no recording and its release sends nothing (owner, 2026-10-12). */
+    if (f->menu_open) {
         if (b == SH_BTN_KEY_DOWN) st->key_owner = SH_KEY_FREE;
         return r(SH_ACT_CLOSE_MENU, SH_ACT_NONE);
     }
@@ -56,8 +70,7 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
      * included (the face keeps it as its badge). Over the talk ring or a ringing alarm it is
      * just BOOT — cancel, stop — because those are what a hand on BOOT is reaching for. */
     if (b == SH_BTN_BOOT_LONG) {
-        if (!f->talking && !f->alarm_ringing)
-            return r(f->clock_open ? SH_ACT_NONE : SH_ACT_OPEN_CLOCK, SH_ACT_NONE);
+        if (!f->talking) return r(f->clock_open ? SH_ACT_NONE : SH_ACT_OPEN_CLOCK, SH_ACT_NONE);
         b = SH_BTN_BOOT;
     }
 
@@ -65,17 +78,8 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
      * inject; a finger cannot) must not start another. */
     if (f->talking) return r(b == SH_BTN_BOOT ? SH_ACT_CANCEL_TALK : SH_ACT_NONE, SH_ACT_NONE);
 
-    switch (sh_top_overlay(st, f)) {
-    case SH_OV_ALARM:
-        if (b == SH_BTN_KEY_DOWN) {
-            st->key_owner = SH_KEY_ALARM;
-            return r(SH_ACT_TO_APP, SH_ACT_SNOOZE_ALARM);
-        }
-        return r(SH_ACT_TO_APP, SH_ACT_STOP_ALARM);
-    case SH_OV_NOTICE:
+    if (sh_top_overlay(st, f) == SH_OV_NOTICE)
         return b == SH_BTN_BOOT ? r(SH_ACT_DISMISS_NOTICE, SH_ACT_NONE) : r(SH_ACT_NONE, SH_ACT_NONE);
-    case SH_OV_NONE: break;
-    }
 
     /* A hand on KEY or BOOT while Jerv speaks is reaching for "stop", in every app: the voice
      * goes quiet and nothing else happens — no recording starts, and the release that follows
@@ -116,7 +120,12 @@ unsigned sh_route_event(const sh_facts_t *f, app_event_type_t type)
 {
     (void)f;
     switch (type) {
-    case APP_EV_ALARM_DUE: return SH_DO_WAKE | SH_DO_OPEN_ALARM_APP | SH_DO_DELIVER;
+    /* The alarm takes the panel: lit (at least ALARM_WAKE_BRIGHTNESS), the talk and the menu
+     * gone, Jerv's voice stopped, the Clock up in its ringing view. Its end gives the glass back
+     * the owner's brightness. */
+    case APP_EV_ALARM_DUE:
+        return SH_DO_WAKE | SH_DO_ALARM_TAKES_OVER | SH_DO_OPEN_ALARM_APP | SH_DO_DELIVER;
+    case APP_EV_ALARM_ENDED: return SH_DO_ALARM_GIVES_BACK | SH_DO_DELIVER;
     /* Delivered too, so an app holding notices (the clock face) can redraw its badge. */
     case APP_EV_NOTICE_ARRIVED: return SH_DO_WAKE | SH_DO_REFRESH_OVERLAY | SH_DO_DELIVER;
     case APP_EV_MSG_ARRIVED:
