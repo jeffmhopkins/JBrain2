@@ -48,11 +48,13 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from starlette.requests import ClientDisconnect
 
-from jbrain.api import nudge, panel_ws
+from jbrain.api import nudge, panel_agent, panel_ws
 from jbrain.api.deps import OwnerDep, PanelDep, SettingsDep
 from jbrain.api.devices import DeviceRepoDep
 from jbrain.api.notes import ctx_for
+from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext, panel_context, scoped_session
 from jbrain.devices import service as devices
@@ -678,7 +680,7 @@ class TelemetryIn(BaseModel):
     # current state rather than the worst thing that ever happened. Sound reasoning, and it made
     # the field useless: a report only goes out at the end of a cycle, right after a fetch that
     # succeeded, so the string was empty in every report any panel has ever sent. On 2026-09-29,
-    # with the fetch failing for an hour, Lydian's panel reported `set_fails: 3, set_err: ""`.
+    # with the fetch failing for an hour, Tamsin's panel reported `set_fails: 3, set_err: ""`.
     #
     # So the name survives now and the AGE says whether it is current — the question clearing was
     # trying to answer, asked the one way that does not destroy the answer.
@@ -732,7 +734,7 @@ class TelemetryIn(BaseModel):
     #
     # `joined` was set once at boot and never cleared, so the firmware's Wi-Fi retry could only
     # ever run on a panel that failed to join in the FIRST place — not on one whose link went
-    # half-open later, which is the case that happens. Lydian's panel was silent from 04:24 on
+    # half-open later, which is the case that happens. Tamsin's panel was silent from 04:24 on
     # 2026-09-29 for eight and a half hours having reported `wifi_drops: 0`: not one disconnect
     # event the whole time, because the radio's own view was that everything was fine.
     #
@@ -838,6 +840,20 @@ class TelemetryIn(BaseModel):
     # Hex, one sample per entry, oldest first. Empty on a cold boot, which is itself the
     # answer to "did anything survive the restart".
     pmu_history: list[str] = []
+    # WHETHER THE RECOGNISER STARTED. A panel whose free internal RAM was under the floor when
+    # speech came up boots DEAF rather than crash-looping (0.3.39's PHY abort, firmware 0.4.0's
+    # `SPEECH_MIN_INTERNAL`) — and a deaf panel cannot send, because a recording only learns she
+    # spoke from the recogniser. That has to be a fault the owner can see without a cable, so it
+    # is reported. None from firmware older than 0.4.0, which is "unknown", not "deaf".
+    speech_ok: bool | None = None
+    # VOICE POST'S OWN COUNTERS (firmware 0.4.0, plan §7.7): one object of FLAT INTEGER keys —
+    # `ack_owed`, `ack_retries`, `no_refund`, `returned`, `lease_refusals`, `snapshot_retries`,
+    # `post_failed`, `late_outcome`, `cue_expired`, `jpanel_stack_free`, `sm_violations`,
+    # `wd_engine`, `wd_arbiter`, `wd_disarmed`. Deliberately loose here: a key the box does not
+    # know yet must not 422 the report, because a 422 is a FAILED report and this is the panel's
+    # only no-terminal diagnostic. Anything nested or non-integer still fails, which is the
+    # contract the firmware is pinned to (`test_jp_keys_from_main_c_validate_against_telemetry_in`).
+    jp: dict[str, int] | None = None
     note: str = ""
 
 
@@ -2175,35 +2191,9 @@ def _trim_to_speech(
     return samples[start:end].tobytes()
 
 
-@router.post("/converse")
-async def converse(principal: PanelDep, request: Request) -> Response:
-    """A child holds the panel, talks, and the panel answers out loud.
-
-    THE SAME SHAPE AS THE WALL'S `/internal/pet/say`, which is the owner's instruction and
-    also the right call: that route already solved the hard part, which is not the model but
-    the failure behaviour. A slow, unconfigured or broken LLM there degrades to a canned line
-    rather than a 500, so the toy always says something. A pet in a child's bedroom that goes
-    silent when a container is restarting is indistinguishable from a broken pet.
-
-    In, raw 16 kHz mono s16 — no container, no codec, because the panel has neither. Out, the
-    same. Every conversion happens here (see `_to_panel_rate`): the box has CPU to spare and
-    the panel has 31 KB of contiguous internal RAM.
-
-    `PanelDep`, so a panel talks with the device key it already uses for its manifest and
-    telemetry. Nothing is stored — this holds no memories and touches no domain, which keeps
-    a stolen panel key worth exactly one conversation.
-    """
-    started = time.monotonic()
-    audio = await request.body()
-    if not audio:
-        raise HTTPException(status_code=400, detail="no audio")
-    if len(audio) > PANEL_AUDIO_MAX:
-        audio = audio[:PANEL_AUDIO_MAX]
-    held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
-    audio = _trim_to_speech(audio)
-    spoken_ms = len(audio) * 1000 // (PANEL_RATE * 2)
-
-    settings = cast(Settings, request.app.state.settings)
+async def _panel_transcribe(settings: Settings, audio: bytes) -> tuple[str, int]:
+    """What the panel's clip says, and the encoder window it bought. 503 when the box cannot
+    hear: the pet and Jerv turns share this, so a fault in it reads the same on both."""
     if not settings.whisper_url:
         raise HTTPException(status_code=503, detail="speech recognition not configured")
 
@@ -2230,7 +2220,6 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     # which is longer than anything that survives the trim.
     seconds = len(audio) / float(PANEL_RATE * 2)
     audio_ctx = max(160, min(1500, int(seconds * 50 * 1.5)))
-    stt_started = time.monotonic()
     try:
         transcript = await client.transcribe(
             _wav(audio),
@@ -2244,7 +2233,332 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     except Exception as exc:  # noqa: BLE001 — the panel gets an answer or a reason, never a hang
         log.warning("endpoint.converse_stt_error", error=repr(exc))
         raise HTTPException(status_code=503, detail="could not hear") from exc
-    raw_heard = (transcript.text or "").strip()
+    return (transcript.text or "").strip(), audio_ctx
+
+
+async def _panel_speech(
+    settings: Settings, reply: str, ceiling: int, voice: panel_agent.Voice | None = None
+) -> bytes:
+    """`reply` as the panel plays it: 16 kHz mono s16, padding trimmed, cut at `ceiling` bytes
+    with a warning rather than silently. 503 when the box cannot speak. `voice` is the PWA
+    read-aloud's voice and effects (the owner's desk panel); None is Kokoro's default, which
+    is what the twins' pets have always spoken in."""
+    base = (settings.brain_tts_url or "").rstrip("/")
+    if not base:
+        raise HTTPException(status_code=503, detail="speech synthesis not configured")
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as http:
+            resp = await http.get(f"{base}/tts", params=panel_agent.tts_params(voice, reply[:600]))
+        resp.raise_for_status()
+        wav_pcm, wav_rate = _pcm_from_wav(resp.content)
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("endpoint.converse_tts_error", error=repr(exc))
+        raise HTTPException(status_code=503, detail="could not speak") from exc
+    out = _to_panel_rate(wav_pcm, wav_rate)
+    # Kokoro pads. The panel cannot skip it — it plays what it is handed from the first
+    # sample — so every reply starts with a beat of nothing, and that padding also counts
+    # against the ceiling below. 30 ms in front and 120 ms behind keeps the reply from
+    # sounding clipped while giving back the rest.
+    out = _trim_to_speech(out, lead_ms=30, tail_ms=120)
+    if len(out) > ceiling:
+        # NEVER SILENTLY. The panel truncates a long reply mid-word with nothing on screen
+        # and nothing in a log, which is why this took a child complaining to find.
+        log.warning(
+            "endpoint.converse_reply_truncated",
+            reply_bytes=len(out),
+            ceiling=ceiling,
+            lost_ms=(len(out) - ceiling) * 1000 // (PANEL_RATE * 2),
+            reply=reply[:120],
+        )
+        out = out[:ceiling]
+    return out
+
+
+# ---- Jerv on the owner's desk panel (firmware-c6, 0.0.10) --------------------------------
+
+# THE OWNER'S ASSISTANT, SPEAKING — NOT THE PET, AND NOT THE PWA'S JERV EITHER. The C6 panel
+# on the owner's desk talks to Jerv over this same route, because the transport is already the
+# right one: a device key, 16 kHz s16 up, the box doing every conversion. What changes is who
+# answers. The pet's prompt is written for a four-year-old and its turns go into the parents'
+# diary (`app.pet_turn`); neither is right for the owner asking his panel a question.
+#
+# It is NOT the tool-using agent. That one runs as the owner, over his notes and every domain,
+# and a device key that could reach it would make a stolen panel worth far more than "one
+# conversation" — the promise `converse` makes. So this is a plain spoken turn with no tools
+# and no data, and the prompt says so, so the model never claims to have set a reminder it
+# could not set. The owner has since decided (2026-10-12) that HIS panel reaches the real agent:
+# that is `_agent_turn`, behind `panel_agent.agent_allowed`, and this persona is now what every
+# other caller asking for Jerv gets.
+#
+# `pet.turn`'s model slot, not `agent.turn`'s: a spoken reply wants the cheap, snappy slot the
+# panels already use, and a one-off completion on the agent's slot would evict the agent's
+# primed prefix on a local model — the cold prefill that `research.title`'s comment in
+# `llm/router.py` measured at ~100 s for the turn behind it.
+PANEL_JERV_PROMPT = """You are Jerv, the owner's personal assistant, answering him by voice \
+on the small panel on his desk. He held a button and spoke; your reply is shown as text on \
+the panel and may be read aloud through a small speaker.
+
+On this panel you have no tools: you cannot see his notes, calendar, lists, email or \
+messages, and you cannot set reminders, add items, send anything or change any setting. If \
+he asks for something that needs them, say plainly that the panel cannot do that yet and \
+that the Jerv app can — never say or imply you did it.
+
+Answer what he asked, directly. One to three short sentences: it is read on a small screen \
+and spoken aloud. Plain words only — no markdown, no lists, no emoji, no stage directions."""
+
+# What a reply says when the model did not answer. Shown and spoken like any reply, never
+# remembered as one (the pet's rule, `PANEL_BABBLE`).
+PANEL_JERV_FALLBACK = "Sorry, I couldn't come up with an answer just then. Try me again?"
+
+# The C6 records up to a minute (the mock's 1:00 cap) and streams it up as it is recorded, so
+# the box takes all of it; the pet's ceiling stays at its own number.
+PANEL_JERV_AUDIO_MAX = PANEL_RATE * 2 * 61
+# The C6 plays the reply from a small ring as it arrives, so no panel buffer bounds it; this
+# bounds what one turn can make the box synthesise and send.
+PANEL_JERV_REPLY_MAX = PANEL_RATE * 2 * 30
+
+# THE REPLY FRAME, `application/x-jpanel-turn`. The pet's reply is bare PCM because the pet
+# shows no words; the desk panel shows what it heard and what Jerv said, so the text has to
+# ride the same response, ahead of the audio, in a shape a streaming reader on a board with
+# no JSON budget to spare can take apart: magic, flags, two length-prefixed UTF-8 strings,
+# then PCM to the end of the body. Lengths are little-endian u16.
+JERV_FRAME_MAGIC = b"JT1"
+JERV_FRAME_AUDIO = 0x01
+# The panel keeps less than this; the cap only keeps a runaway model from making a frame
+# whose length does not fit its field.
+_JERV_TEXT_MAX = 2000
+
+
+def _utf8_cut(text: str, limit: int) -> bytes:
+    """`text` as UTF-8, at most `limit` bytes, never cut inside a character."""
+    raw = text.encode("utf-8")
+    if len(raw) <= limit:
+        return raw
+    return raw[:limit].decode("utf-8", "ignore").encode("utf-8")
+
+
+def jerv_frame(heard: str, reply: str, pcm: bytes) -> bytes:
+    """The reply frame: `JT1`, flags, heard, reply, then the PCM (none when `pcm` is empty)."""
+    h = _utf8_cut(heard, _JERV_TEXT_MAX)
+    r = _utf8_cut(reply, _JERV_TEXT_MAX)
+    flags = JERV_FRAME_AUDIO if pcm else 0
+    return (
+        JERV_FRAME_MAGIC
+        + bytes([flags])
+        + struct.pack("<H", len(h))
+        + h
+        + struct.pack("<H", len(r))
+        + r
+        + pcm
+    )
+
+
+def _jerv_with_history(turns: list[tuple[str, str]]) -> str:
+    if not turns:
+        return PANEL_JERV_PROMPT
+    said = "\n".join(f"He said: {heard}\nYou answered: {reply}" for heard, reply in turns)
+    return (
+        f"{PANEL_JERV_PROMPT}\n\nThe conversation so far, oldest first:\n{said}\n\n"
+        f"Carry it on; do not repeat yourself."
+    )
+
+
+async def _jerv_turn(
+    principal: PrincipalInfo, request: Request, audio: bytes, started: float, voice: bool
+) -> Response:
+    """One spoken turn with Jerv for the desk panel: 204 when nothing was heard, else the reply
+    frame — with audio only when the panel will play it (`voice`), so a panel set to text
+    costs the box no synthesis and the radio no download."""
+    if len(audio) > PANEL_JERV_AUDIO_MAX:
+        audio = audio[:PANEL_JERV_AUDIO_MAX]
+    held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+    audio = _trim_to_speech(audio)
+    settings = cast(Settings, request.app.state.settings)
+    stt_started = time.monotonic()
+    heard, audio_ctx = await _panel_transcribe(settings, audio)
+    stt_ms = int((time.monotonic() - stt_started) * 1000)
+    if not heard:
+        log.info("endpoint.converse", persona="jerv", heard="", stt_ms=stt_ms, held_ms=held_ms)
+        return Response(status_code=204)
+
+    # Its own key: the owner's history never mixes with a pet's, whatever the device id.
+    key = f"{principal.id}:jerv"
+    reply = ""
+    llm_started = time.monotonic()
+    try:
+        result = await cast(LlmRouter, request.app.state.llm_router).complete(
+            "pet.turn",
+            system=_jerv_with_history(_panel_history(key, started)),
+            user_text=heard[:500],
+            max_tokens=256,
+        )
+        reply = (result.text or "").strip()
+    except Exception as exc:  # noqa: BLE001 — the panel gets an answer, never a hang
+        log.warning("endpoint.converse_llm_error", persona="jerv", error=repr(exc))
+    if reply:
+        _panel_remember(key, started, heard, reply)
+    else:
+        reply = PANEL_JERV_FALLBACK
+    llm_ms = int((time.monotonic() - llm_started) * 1000)
+
+    pcm = b""
+    tts_ms = 0
+    if voice:
+        tts_started = time.monotonic()
+        try:
+            pcm = await _panel_speech(settings, reply, PANEL_JERV_REPLY_MAX)
+        except HTTPException:
+            # THE WORDS STILL GO. A desk panel shows the reply, so a box that cannot speak
+            # costs the owner the voice, not the answer; the frame says no audio follows.
+            pcm = b""
+        tts_ms = int((time.monotonic() - tts_started) * 1000)
+    log.info(
+        "endpoint.converse",
+        persona="jerv",
+        heard=heard[:120],
+        reply=reply[:120],
+        stt_ms=stt_ms,
+        audio_ctx=audio_ctx,
+        held_ms=held_ms,
+        llm_ms=llm_ms,
+        tts_ms=tts_ms,
+        total_ms=int((time.monotonic() - started) * 1000),
+        reply_bytes=len(pcm),
+    )
+    return Response(content=jerv_frame(heard, reply, pcm), media_type="application/x-jpanel-turn")
+
+
+# THE REAL AGENTS, for the one panel the owner allowed (owner decision 2026-10-12; plan §5).
+# `panel_agent` holds the gate, the thread and the voice; this is the audio either side of it.
+# The firmware waits 130 s for an answer (0.0.11); the agent gets `AGENT_WAIT_S` of that and
+# the rest is Whisper and Kokoro.
+async def _agent_turn(
+    principal: PrincipalInfo,
+    request: Request,
+    audio: bytes,
+    started: float,
+    *,
+    agent: panel_agent.PanelAgent,
+    voice: bool,
+    fresh: bool,
+) -> Response:
+    """One spoken turn with the real Jerv or Dave: 204 when nothing was heard, else the same
+    reply frame as the persona's — what was heard, the answer condensed to what the panel
+    keeps, and (unless `voice` is false) that answer spoken in the PWA read-aloud's voice."""
+    if len(audio) > PANEL_JERV_AUDIO_MAX:
+        audio = audio[:PANEL_JERV_AUDIO_MAX]
+    held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+    audio = _trim_to_speech(audio)
+    settings = cast(Settings, request.app.state.settings)
+    stt_started = time.monotonic()
+    heard, audio_ctx = await _panel_transcribe(settings, audio)
+    stt_ms = int((time.monotonic() - stt_started) * 1000)
+    if not heard:
+        log.info("endpoint.converse", persona=agent, agent=True, heard="", stt_ms=stt_ms)
+        return Response(status_code=204)
+
+    answer, owner_ctx = await panel_agent.run_turn(request, principal, agent, heard, fresh=fresh)
+
+    pcm = b""
+    tts_ms = 0
+    if voice:
+        tts_started = time.monotonic()
+        try:
+            spoken_in = await panel_agent.owner_voice(
+                cast(SqlSettingsStore, request.app.state.settings_store), owner_ctx
+            )
+            pcm = await _panel_speech(settings, answer.words, PANEL_JERV_REPLY_MAX, spoken_in)
+        except Exception as exc:  # noqa: BLE001 — the words still go, as on the persona path
+            log.warning("endpoint.converse_agent_tts_error", error=repr(exc))
+            pcm = b""
+        tts_ms = int((time.monotonic() - tts_started) * 1000)
+    log.info(
+        "endpoint.converse",
+        persona=agent,
+        agent=True,
+        session=answer.session_id,
+        fresh=fresh,
+        stop_reason=answer.stop_reason,
+        heard=heard[:120],
+        reply=answer.words[:120],
+        stt_ms=stt_ms,
+        audio_ctx=audio_ctx,
+        held_ms=held_ms,
+        agent_ms=answer.waited_ms,
+        tts_ms=tts_ms,
+        total_ms=int((time.monotonic() - started) * 1000),
+        reply_bytes=len(pcm),
+    )
+    return Response(
+        content=jerv_frame(heard, answer.words, pcm), media_type="application/x-jpanel-turn"
+    )
+
+
+@router.post("/converse")
+async def converse(
+    principal: PanelDep,
+    request: Request,
+    persona: Literal["pet", "jerv", "dave"] = "pet",
+    voice: bool = True,
+    new_thread: bool = False,
+) -> Response:
+    """A child holds the panel, talks, and the panel answers out loud.
+
+    THE SAME SHAPE AS THE WALL'S `/internal/pet/say`, which is the owner's instruction and
+    also the right call: that route already solved the hard part, which is not the model but
+    the failure behaviour. A slow, unconfigured or broken LLM there degrades to a canned line
+    rather than a 500, so the toy always says something. A pet in a child's bedroom that goes
+    silent when a container is restarting is indistinguishable from a broken pet.
+
+    In, raw 16 kHz mono s16 — no container, no codec, because the panel has neither. Out, the
+    same. Every conversion happens here (see `_to_panel_rate`): the box has CPU to spare and
+    the panel has 31 KB of contiguous internal RAM.
+
+    `PanelDep`, so a panel talks with the device key it already uses for its manifest and
+    telemetry. Nothing is stored — this holds no memories and touches no domain, which keeps
+    a stolen panel key worth exactly one conversation.
+
+    `persona=jerv` is the owner's desk panel (`firmware-c6`): the same upload, answered by
+    Jerv rather than the pet, as the reply frame `jerv_frame` builds — what was heard, what
+    Jerv said and, unless `voice=false`, the speech. Without it nothing here changes, so the
+    twins' panels never see a difference.
+
+    The panel the owner allowed (`panel_agent.agent_allowed`: a `display` with
+    `agent_access`, both set server-side) gets the REAL agent instead: `persona=jerv` runs the
+    owner's Jerv and `persona=dave` his Minecraft_Dave, each in that panel's own thread, with
+    `new_thread=true` (the panel's Clear chat) starting a fresh one. Any other caller asking for
+    Jerv keeps the tool-less persona above, and asking for Dave is refused: no limited Dave
+    exists to fall back to.
+    """
+    started = time.monotonic()
+    try:
+        audio = await request.body()
+    except ClientDisconnect:
+        # The desk panel streams its recording up as it is made, so a hold cancelled on the
+        # glass (BOOT, a tap, too short) arrives as an upload cut off mid-body. Nothing was
+        # said, and the panel is no longer listening for an answer.
+        log.info("endpoint.converse_cancelled", persona=persona)
+        return Response(status_code=204)
+    if not audio:
+        raise HTTPException(status_code=400, detail="no audio")
+    if persona != "pet":
+        if await panel_agent.agent_allowed(request.app.state.session_maker, principal):
+            return await _agent_turn(
+                principal, request, audio, started, agent=persona, voice=voice, fresh=new_thread
+            )
+        if persona == "dave":
+            log.warning("endpoint.converse_agent_refused", persona=persona, device=principal.id)
+            raise HTTPException(status_code=403, detail="this panel cannot talk to Dave")
+        return await _jerv_turn(principal, request, audio, started, voice)
+    if len(audio) > PANEL_AUDIO_MAX:
+        audio = audio[:PANEL_AUDIO_MAX]
+    held_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+    audio = _trim_to_speech(audio)
+    spoken_ms = len(audio) * 1000 // (PANEL_RATE * 2)
+
+    settings = cast(Settings, request.app.state.settings)
+    stt_started = time.monotonic()
+    raw_heard, audio_ctx = await _panel_transcribe(settings, audio)
     # THE NAME THIS PANEL ANSWERS TO, not the one the firmware shipped with. The owner can
     # rename the pet (migration 0212) and the wake word changes with it, so a box stripping a
     # constant would leave `hey pip` on the front of every question and send it to the model.
@@ -2295,34 +2609,7 @@ async def converse(principal: PanelDep, request: Request) -> Response:
     llm_ms = int((time.monotonic() - llm_started) * 1000)
 
     tts_started = time.monotonic()
-    base = (settings.brain_tts_url or "").rstrip("/")
-    if not base:
-        raise HTTPException(status_code=503, detail="speech synthesis not configured")
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            resp = await http.get(f"{base}/tts", params={"text": reply[:600]})
-        resp.raise_for_status()
-        wav_pcm, wav_rate = _pcm_from_wav(resp.content)
-    except (httpx.HTTPError, ValueError) as exc:
-        log.warning("endpoint.converse_tts_error", error=repr(exc))
-        raise HTTPException(status_code=503, detail="could not speak") from exc
-    out = _to_panel_rate(wav_pcm, wav_rate)
-    # Kokoro pads. The panel cannot skip it — it plays what it is handed from the first
-    # sample — so every reply starts with a beat of nothing, and that padding also counts
-    # against the ceiling below. 30 ms in front and 120 ms behind keeps the reply from
-    # sounding clipped while giving back the rest.
-    out = _trim_to_speech(out, lead_ms=30, tail_ms=120)
-    if len(out) > PANEL_REPLY_MAX:
-        # NEVER SILENTLY. The panel truncates a long reply mid-word with nothing on screen
-        # and nothing in a log, which is why this took a child complaining to find.
-        log.warning(
-            "endpoint.converse_reply_truncated",
-            reply_bytes=len(out),
-            ceiling=PANEL_REPLY_MAX,
-            lost_ms=(len(out) - PANEL_REPLY_MAX) * 1000 // (PANEL_RATE * 2),
-            reply=reply[:120],
-        )
-        out = out[:PANEL_REPLY_MAX]
+    out = await _panel_speech(settings, reply, PANEL_REPLY_MAX)
     tts_ms = int((time.monotonic() - tts_started) * 1000)
 
     # THE THREE NUMBERS THAT DECIDE WHETHER THIS IS USABLE, on every turn. Whisper was

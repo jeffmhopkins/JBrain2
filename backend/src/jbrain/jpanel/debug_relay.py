@@ -53,6 +53,7 @@ COMMANDS: dict[str, CommandInfo] = {
         CommandInfo("report_now", False, True),
         CommandInfo("screenshot", False, True),
         CommandInfo("reboot", True, False),
+        CommandInfo("play_tone", False, True),
     )
 }
 

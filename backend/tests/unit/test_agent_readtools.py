@@ -1830,10 +1830,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "363a6a9fcc0a832b00a82f9aa5aa44747f814d44cc12c9d19dabb0290f8b4ab6",
         ),
         # v3: in game, one of the player's daily deep scans (§M17).
+        # v4: `dimension`, so Nether and End structures and biomes can be found (§M22).
         "mc_locate.tool": (
             "mc_locate",
-            3,
-            "5a161a7e726ac89e9badff28db91fd3fe1121c4d4cb4cc262d79c8c4b601e42e",
+            4,
+            "a7307f55955b2cafcc6b4611653099702c5bc047ee20c78253ba8d4af514dac6",
+        ),
+        "mc_find_mob.tool": (
+            "mc_find_mob",
+            1,
+            "d7c0b6b987cc9165aaad2dd1a70c1e8a29202cecce205d33b7b490c087b24a84",
         ),
         # v2: in game, one of the player's daily deep scans (§M17).
         "mc_nearby.tool": (

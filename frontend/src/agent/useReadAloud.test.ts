@@ -401,3 +401,62 @@ describe("useReadAloud piper engine", () => {
     expect(synth.speak).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("useReadAloud story-by-story (report player)", () => {
+  it("speaks each story from the start index and tracks which one is playing", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["First story.", "Second story.", "Third."], 1));
+    // Native voices each story as one utterance, starting at the chosen one.
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual(["Second story.", "Third."]);
+    expect(result.current.playing).toBe("r");
+    expect(result.current.progress).toEqual({ key: "r", section: 1, fraction: 0 });
+
+    act(() => synth.speak.mock.calls[0]?.[0].onend());
+    expect(result.current.progress).toEqual({ key: "r", section: 2, fraction: 0 });
+
+    act(() => synth.speak.mock.calls[1]?.[0].onend());
+    // The brief ran out: playback clears but the place pins to the last story, fully done.
+    expect(result.current.playing).toBeNull();
+    expect(result.current.progress).toEqual({ key: "r", section: 2, fraction: 1 });
+  });
+
+  it("keeps its place when paused, and a plain turn doesn't move it", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One.", "Two."], 1));
+    act(() => result.current.toggle("r", ""));
+    expect(result.current.playing).toBeNull();
+    expect(result.current.progress).toEqual({ key: "r", section: 1, fraction: 0 });
+
+    act(() => result.current.toggle("turn", "Something else."));
+    act(() => synth.speak.mock.calls.at(-1)?.[0].onend());
+    expect(result.current.progress).toEqual({ key: "r", section: 1, fraction: 0 });
+  });
+
+  it("plays nothing when every story from the start index is empty", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One.", "  "], 1));
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.playing).toBeNull();
+    expect(result.current.progress).toBeNull();
+  });
+
+  it("measures a piper story's progress by its rendered clips", async () => {
+    Reflect.deleteProperty(window, "speechSynthesis");
+    getSettings.mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "kokoro-am_michael",
+      brain_read_aloud_engine: "piper",
+    });
+    brainVoices.mockResolvedValue(["kokoro-am_michael"]);
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.playSections("r", ["One. Two.", "Three."], 0));
+    await waitFor(() => expect(audios).toHaveLength(1));
+    expect(result.current.progress).toEqual({ key: "r", section: 0, fraction: 0 });
+    await act(async () => audios[0]?.onended?.());
+    expect(result.current.progress).toEqual({ key: "r", section: 0, fraction: 0.5 });
+    await waitFor(() => expect(audios).toHaveLength(2));
+    await act(async () => audios[1]?.onended?.());
+    expect(result.current.progress).toEqual({ key: "r", section: 1, fraction: 0 });
+  });
+});

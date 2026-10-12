@@ -55,7 +55,7 @@ async def maker(database_url: str) -> AsyncIterator[Maker]:  # noqa: F811
     async with scoped_session(sessions, OWNER) as s:
         await s.execute(text("DELETE FROM app.panel_debug_request"))
         await s.execute(text("DELETE FROM app.principals WHERE kind = 'device_key'"))
-        for pid, label in ((PANEL, "panel Ellie"), (SIBLING, "panel Nora")):
+        for pid, label in ((PANEL, "panel Quorra"), (SIBLING, "panel Nora")):
             await s.execute(
                 text(
                     "INSERT INTO app.principals (id, kind, key_hash, label)"

@@ -24,6 +24,11 @@ void shell_button(sh_button_t b);
 /* A synthetic press through a virtual pointer, so a debug command reaches widgets exactly as a
  * finger would. dx != 0 drags that far to the right (negative: left) before lifting. */
 void shell_touch(int x, int y, int dx);
+/* A finger held still at x,y for `ms` before lifting: how a debug session (and the sim) makes the
+ * long press that opens a conversation's menu. */
+void shell_touch_hold(int x, int y, uint32_t ms);
+/* Whether the conversation menu is up, and whether its Clear is armed (sim, tests). */
+bool shell_menu_open(void);
 
 /* A real pointer, polled from LVGL's read on the UI task: true when it produced the next sample
  * of its queue (and may have more), false to leave the last one standing. Every sample, virtual
@@ -38,7 +43,7 @@ bool shell_open(const char *id);
 void shell_home(void);
 const app_t *shell_open_app(void);
 
-/* Where KEY went since boot: `key=jerv:N,app:N,snz:N,sent:N,short:N,cxl:N`. Any task may read it;
+/* Where KEY went since boot: `key=jerv:N,app:N,snz:N,sent:N,short:N,cxl:N,fail:N,stop:N`. Any task may read it;
  * a torn count is a telemetry blemish, not a fault. */
 void shell_key_note(char *out, size_t len);
 

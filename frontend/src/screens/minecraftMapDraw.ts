@@ -470,6 +470,60 @@ export function line(
   ctx.restore();
 }
 
+/** A player's bearing to their Tricorder target: a dashed line from where they stand to
+ *  it, in their colour over a halo, so it reads apart from the solid trails. */
+export function bearingLine(
+  ctx: CanvasRenderingContext2D,
+  v: MapView,
+  f: Frame,
+  from: [number, number],
+  to: [number, number],
+  col: string,
+  t: Tokens,
+) {
+  const [ax, ay] = toScreen(v, f, from[0], from[1]);
+  const [bx, by] = toScreen(v, f, to[0], to[1]);
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.setLineDash([8, 6]);
+  ctx.beginPath();
+  ctx.moveTo(ax, ay);
+  ctx.lineTo(bx, by);
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 5;
+  ctx.stroke();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** The Tricorder's target: two rings and a centre dot in the player's colour. */
+export function targetMark(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  col: string,
+  t: Tokens,
+) {
+  ctx.save();
+  for (const r of [11, 5]) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = t.halo;
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
+  ctx.beginPath();
+  ctx.arc(x, y, 1.5, 0, Math.PI * 2);
+  ctx.fillStyle = col;
+  ctx.fill();
+  ctx.restore();
+}
+
 /** Explored by: a veil over every chunk the chosen player (or anyone) hadn't come near by
  *  `until` — each visible chunk they had is cut out of it. */
 export function veil(

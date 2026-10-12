@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-10-12
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -167,15 +167,44 @@ Run it before every firmware push. It found three real defects the ESP build had
 cleanly — two missing includes that IDF supplied transitively, and a zero-init bug that made the
 variant pool repeat itself on the first pokes after boot (§10.4ao).
 
-**There are two suites now, and the second one drives the interface.** `main/ui.c` is the panel's
-interaction state machine — which overlay is up, and what a finger at (x, y) means given
-everything else that is happening — lifted out of `display.c`'s `face_task()` into a module that
-takes a struct and returns a struct. `run_ui_tests` steps it one frame at a time against a fake
-speaker, a fake message queue and a real framebuffer, so a notification, a press, a five-second
-hold and a deep-sleep request can all be asserted without a panel. That matters because *every*
-fault the owner reported on the evening of 2026-09-28 was an arbitration fault, and arbitration
-was the one part of this firmware with no test at all. `firmware/host/README.md` says how to add a
-scenario, and lists the behaviours the extraction preserved on purpose and believes are wrong.
+**There are several suites (see `host/README.md`), and the second one drives the interface.** `main/panel_sm.c` is the
+panel's one state machine — which mode it is in, what a finger at (x, y) means, what sounds, and
+what is drawn — a module that takes a frame's facts and returns ordered effects and a view.
+`run_sm_tests` steps it one frame at a time against a fake engine, speaker and microphone, so a
+notification, a press, a stop, a reply and a deep-sleep request can all be asserted without a
+panel, and `test_storm` runs it through 300k randomised frames checking its invariants on every
+one. That matters because *every* fault the owner reported on the evening of 2026-09-28 was an
+arbitration fault. `firmware/host/README.md` says how to add a scenario.
+
+## 0.4.0: one state machine, one engine, one speaker owner
+
+**0.4.0 is the voice-post rewrite** (`../docs/plans/JPANEL_MESSAGING_FIXES_PLAN.md` §15): every
+finding of the 2026-10 adversarial review fixed in one release, with no wrapper layer.
+
+- **`panel_sm.c` is the interface.** Which mode the panel is in, what a finger means, what sounds
+  and what is drawn are one machine, stepped once per frame; `display.c` only samples, runs the
+  effects in order and draws `sm_view_t` (`ui.c`/`ui.h` are gone). `check_no_logic_in_display`
+  keeps it that way.
+- **`jpanel_core.c` is the engine**: one serial loop that owns every request and publishes one
+  seqlocked snapshot; render posts commands and copies the snapshot, nothing else.
+- **`stream.c` owns the speaker**: cues, the pet's reply, silence, the stop word and the message
+  ring are decided there, host-tested tick by tick; `audio.c` is codec I/O.
+- **Leases.** A SEND holds lease 1 from before its post to its end; a pet turn holds lease 2 for
+  its upload. The microphone cannot open over a buffer being uploaded. Talk plays its reply from
+  its own buffer through the reply slot and waits for it to finish before reading the next.
+- **The persistent socket is off** (below) and **`SPEECH_MIN_INTERNAL` is 96 KB**, provisional
+  until measured: a panel short of RAM boots deaf and says so (`speech_ok: false`) instead of
+  looping.
+- **Two watchdogs** (engine: heartbeat stalled and past its published deadline; arbiter: no tick
+  for 10 s, only when the audio task exists), both off during an OTA, capped at three reboots by
+  RTC words that a version change re-arms. The report's `restart_why` says `wd-engine` or
+  `wd-arbiter`.
+- **The report gains** `speech_ok` and a flat-integer `jp` object (voice post's counters) after
+  `pmu_history`.
+- **Placeholders until the F4 mocks are approved:** a blue `SENDING` dot while a message goes,
+  then `SENT` / `NOBODY` / `NOT SENT` / `DROPPED` for 2.5 s; every refusal sounds `CUE_BUSY`.
+
+Static internal RAM (`.data` + `.bss`) is gated in `firmware.yml` against 0.3.39's 97,144 B.
 
 ## The robot stays upright, and the meter keeps up
 
@@ -437,6 +466,17 @@ not fail, it *aborts* — hence the separate entry point.
 Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls back.
 
 ## One connection to the box, not one per request (0.3.39)
+
+**0.4.0 turns the socket off** (`LINK_PERSISTENT_SOCKET 0` in `main/link.h`; plan
+`JPANEL_MESSAGING_FIXES_PLAN.md` §6a). Its ~48 KB of internal RAM is what made 0.3.39 abort at
+boot once speech started, so `link_start` now comes up in the HTTPS fallback described below — one
+session per request, one at a time under one lock — creates no socket task, and push reaches the
+panel through the nudge and the poll. The socket code is compiled out, not deleted. Every request
+also runs to an absolute `deadline_ms` (plan §7.5a): each wait is cut into 250 ms steps clamped to
+what is left, a request can be cancelled between steps, the head is fetched in steps rather than
+one long read, and a body is bounded by 20 s per network gap. The arithmetic is `wsproto.c`'s and
+is host-tested in `run_link_tests`. The rest of this section is 0.3.39's design, kept for the day
+the socket returns as a budgeted wave of its own.
 
 On 0.3.38 every request — the three-second settings poll, telemetry, the jpanel poll, a talk
 turn, a send — opened its own TLS session (~40 KB of internal RAM, 1-2 s of handshake), and two

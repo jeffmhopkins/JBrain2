@@ -1,6 +1,6 @@
 // ONE CHILD, ONE THREAD — the merge behind the jpanel conversation view.
 //
-// The owner: *"if I select lydian or Elora up there it should show those two as conversations
+// The owner: *"if I select tamsin or Quorra up there it should show those two as conversations
 // ... kind of like a normal conversation does with jerv or the other ones in the pwa where
 // there's an omnibox at the bottom and a left and right conversation bubble."*
 //

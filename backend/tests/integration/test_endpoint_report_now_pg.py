@@ -66,7 +66,7 @@ async def _panel_and_debug(
     owner_key = await service.rotate_owner_key(SqlAuthRepo(maker))
     debug_key, _ = await service.mint_capability(SqlAuthRepo(maker), "claude", ttl_hours=1)
     client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
-    panel = client.post("/api/devices", json={"label": "panel Elora", "device_role": "jpet"}).json()
+    panel = client.post("/api/devices", json={"label": "panel Nova", "device_role": "jpet"}).json()
     return {"Authorization": f"Bearer {panel['key']}"}, {"Authorization": f"Bearer {debug_key}"}
 
 
@@ -87,7 +87,7 @@ async def test_raising_the_counter_reaches_a_panel_and_the_ring_reads_back_named
     with TestClient(app) as client:
         client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
         panel = client.post(
-            "/api/devices", json={"label": "panel Elora", "device_role": "jpet"}
+            "/api/devices", json={"label": "panel Nova", "device_role": "jpet"}
         ).json()
         dbg = {"Authorization": f"Bearer {debug_key}"}
         pk = {"Authorization": f"Bearer {panel['key']}"}
@@ -130,7 +130,7 @@ async def test_raising_the_counter_reaches_a_panel_and_the_ring_reads_back_named
         assert body["telemetry_seq"] == 1, "the read should say which raise it reflects"
         assert len(body["panels"]) == 1
         ring = body["panels"][0]
-        assert ring["label"] == "panel Elora"
+        assert ring["label"] == "panel Nova"
         assert ring["version"] == "0.3.14"
 
         # NAMED, WHICH IS THE POINT OF THE ROUTE. The wire is a positional tuple and this is
@@ -150,7 +150,7 @@ async def test_the_box_can_say_why_a_panel_cannot_reach_it(
 ) -> None:
     """ANSWERING "WHY DID THE PET NOT ANSWER HER?" WITHOUT READING THE ACCESS LOG BY HAND.
 
-    On 2026-09-29 the owner pressed the pet on Lydian's panel, got the failure dash immediately,
+    On 2026-09-29 the owner pressed the pet on Tamsin's panel, got the failure dash immediately,
     and asked why. The box's evidence was entirely NEGATIVE — no `POST /endpoint/converse` had
     arrived, no `GET /endpoint/settings` for the hour before, nothing at all for the last thirty
     minutes. All true, and all of it invisible except by paging back through two thousand log
@@ -201,7 +201,7 @@ async def test_the_box_can_say_why_a_panel_cannot_reach_it(
         got = client.get("/api/debug/endpoint/reach", headers=dbg)
         assert got.status_code == 200, got.text
         panel = got.json()["panels"][0]
-        assert panel["label"] == "panel Elora"
+        assert panel["label"] == "panel Nova"
         assert panel["box_quiet_s"] == 1860, (
             "the one number that says the panel is not talking to this box at all"
         )

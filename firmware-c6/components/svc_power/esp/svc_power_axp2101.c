@@ -9,7 +9,8 @@
  * are already what the BSP programs, and a wrong voltage write is the one mistake that survives
  * an OTA rollback (the PMIC keeps its registers across an ESP reset), so none is rewritten. The
  * VBUS input limit and the charge voltage stay at the chip's defaults too; they are reported
- * instead. ALDO3 is switched only as the panel's reset pulse.
+ * instead. ALDO3 is switched only as the panel's reset pulse, ALDO2 only as the speaker amp's
+ * enable (svc_power_amp) — both 3.3 V rails whose voltage is never written.
  */
 
 #include <stdio.h>
@@ -55,6 +56,7 @@ static const char *TAG = "power";
 #define R_LDO_EN 0x90
 #define R_GAUGE 0xA4
 
+#define ALDO2_BIT 0x02
 #define ALDO3_BIT 0x04
 /* Battery, VBUS and VSYS voltage channels (bits 0, 2, 3). */
 #define ADC_CHANNELS 0x0D
@@ -263,6 +265,15 @@ esp_err_t svc_power_lcd_reset(void)
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     vTaskDelay(pdMS_TO_TICKS(100));
+    return e;
+}
+
+esp_err_t svc_power_amp(bool on)
+{
+    if (!s_writable) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    const esp_err_t e = update(R_LDO_EN, ALDO2_BIT, on ? ALDO2_BIT : 0);
+    xSemaphoreGive(s_lock);
     return e;
 }
 

@@ -13,6 +13,8 @@
 void svc_box_start(const char *version, void (*wake)(void));
 /* Main task: true once per press. */
 bool svc_box_take_update_request(void);
+/* Main task: true once per svc_box_report_now (the debug `report_now`). */
+bool svc_box_take_report_request(void);
 /* Main task. `next` and `err` may be NULL to leave them as they are. */
 void svc_box_set_phase(fw_phase_t phase, const char *next, uint8_t pct, const char *err);
 /* Main task: a request reached the box. */

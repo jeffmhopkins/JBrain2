@@ -39,6 +39,19 @@ FOUND = {
 }
 
 
+class MemoryTargets:
+    """The Tricorder targets the map draws, kept in memory: (world, gamertag) → (spot, label)."""
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, str], tuple[Spot, str]] = {}
+
+    async def set(self, world: str, gamertag: str, spot: Spot, label: str) -> None:
+        self.rows[(world, gamertag)] = (spot, label)
+
+    async def clear(self, world: str, gamertag: str) -> None:
+        self.rows.pop((world, gamertag), None)
+
+
 class MemoryBook:
     """`ScanBook` in a dict, with the SQL book's semantics: a write drops the world's
     other days, and a reservation past the limit spends nothing."""
@@ -117,6 +130,7 @@ def _tools(book: MemoryBook) -> dict[str, Any]:
         object(),
         None,
         scan_book=lambda _ctx: book,
+        target_book=lambda _ctx: MemoryTargets(),
     )
 
 
@@ -212,7 +226,7 @@ async def test_each_player_has_their_own_scans_in_each_world(book, sidecar) -> N
 
 async def test_a_search_that_didnt_run_costs_nothing(book, sidecar) -> None:
     tools = _tools(book)
-    locate = "execute positioned 0 64 0 run locate structure mansion"
+    locate = "execute in overworld positioned 0 64 0 run locate structure mansion"
     sidecar["replies"][locate] = ["[x INFO] Unable to find a structure of type mansion"]
     out = await ask(tools, STEVE, "mc_locate", {"kind": "structure", "id": "mansion"})
     assert "left today" not in out and book.used(STEVE, 7) == 0

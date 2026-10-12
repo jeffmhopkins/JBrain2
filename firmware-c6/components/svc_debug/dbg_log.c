@@ -7,8 +7,9 @@
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
-#define LOCK() portENTER_CRITICAL(&s_mux)
-#define UNLOCK() portEXIT_CRITICAL(&s_mux)
+/* _SAFE: one lock whether the caller is a task or an ISR, so the ring never has to know. */
+#define LOCK() portENTER_CRITICAL_SAFE(&s_mux)
+#define UNLOCK() portEXIT_CRITICAL_SAFE(&s_mux)
 #else
 #define LOCK()
 #define UNLOCK()
@@ -39,24 +40,39 @@ uint32_t dbg_log_evicted(void)
     return s_evicted;
 }
 
-void dbg_log_line(const char *line)
+static void store(const char *line, bool clipped)
 {
-    char clipped[DBG_LOG_LINE_MAX + 1];
+    char kept[DBG_LOG_LINE_MAX + 1];
     size_t n = strlen(line);
     while (n && (line[n - 1] == '\n' || line[n - 1] == '\r')) n--;
-    if (n > DBG_LOG_LINE_MAX) n = DBG_LOG_LINE_MAX;
-    memcpy(clipped, line, n);
-    clipped[n] = '\0';
+    if (n > DBG_LOG_LINE_MAX) {
+        n = DBG_LOG_LINE_MAX;
+        clipped = true;
+    }
+    memcpy(kept, line, n);
+    kept[n] = '\0';
+    dbg_secret_scrub(kept, sizeof kept, clipped);
+    n = strlen(kept);
     LOCK();
-    while (s_used + n + 1 > DBG_LOG_BYTES && s_used) {
-        size_t first = strlen(s_ring) + 1;
-        memmove(s_ring, s_ring + first, s_used - first);
-        s_used -= first;
+    /* Find the first line boundary that leaves room, then move once: interrupts are off for
+       one copy of at most the ring, not one per evicted line. */
+    size_t drop = 0;
+    while (s_used - drop + n + 1 > DBG_LOG_BYTES && drop < s_used) {
+        drop += strlen(s_ring + drop) + 1;
         s_evicted++;
     }
-    memcpy(s_ring + s_used, clipped, n + 1);
+    if (drop) {
+        memmove(s_ring, s_ring + drop, s_used - drop);
+        s_used -= drop;
+    }
+    memcpy(s_ring + s_used, kept, n + 1);
     s_used += n + 1;
     UNLOCK();
+}
+
+void dbg_log_line(const char *line)
+{
+    store(line, false);
 }
 
 void svc_debug_log(const char *tag, const char *fmt, ...)
@@ -67,9 +83,9 @@ void svc_debug_log(const char *tag, const char *fmt, ...)
     if (k < 0 || (size_t)k >= sizeof line) k = 0;
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(line + k, sizeof line - (size_t)k, fmt, ap);
+    const int w = vsnprintf(line + k, sizeof line - (size_t)k, fmt, ap);
     va_end(ap);
-    dbg_log_line(line);
+    store(line, w >= (int)(sizeof line - (size_t)k));
 }
 
 static dbg_vprintf_t s_prev;
@@ -84,10 +100,12 @@ int dbg_log_vprintf(const char *fmt, va_list ap)
     char line[DBG_LOG_LINE_MAX + 1];
     va_list copy;
     va_copy(copy, ap);
-    vsnprintf(line, sizeof line, fmt, copy);
+    const int n = vsnprintf(line, sizeof line, fmt, copy);
     va_end(copy);
-    dbg_log_line(line);
-    return s_prev ? s_prev(fmt, ap) : (int)strlen(line);
+    /* Every esp_log line ends in a newline; losing only that is not a clip. */
+    const size_t fits = DBG_LOG_LINE_MAX + (fmt[0] && fmt[strlen(fmt) - 1] == '\n');
+    store(line, n > 0 && (size_t)n > fits);
+    return s_prev ? s_prev(fmt, ap) : (n > 0 ? n : 0);
 }
 
 void dbg_log_write(dbg_json_t *w, const char *key)

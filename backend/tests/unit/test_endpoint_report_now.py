@@ -195,7 +195,7 @@ class TestTheVolumeCeilingWasTheBugReport:
         anything — and ESP-IDF fires no disconnect event for it, so the event handler's own
         reconnect never ran either. Both recovery paths idle while every request failed.
 
-        Lydian's panel, 2026-09-29: silent from 04:24 for eight and a half hours, last report
+        Tamsin's panel, 2026-09-29: silent from 04:24 for eight and a half hours, last report
         `wifi_drops: 0`. Not one disconnect the whole time.
 
         So the BOX is the link test now — `reach_quiet_ms`, which already existed for the
@@ -234,7 +234,7 @@ class TestTheVolumeCeilingWasTheBugReport:
         a report that failed to send was never retried — the panel had already recorded that it
         had seen the request, the next poll compared equal, and the box's ask was lost for good.
 
-        MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine. Lydian's had made 122
+        MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine. Tamsin's had made 122
         successful settings polls in the window, the box had asked twice (seq 15 → 16 → 17), and
         its last stored report was 23 minutes old — each ask adopted and then dropped on a POST
         that could not connect. The one surface the owner has for a panel's insides went blind
@@ -282,12 +282,15 @@ class TestTheVolumeCeilingWasTheBugReport:
         THE FIRST VERSION OF THIS TEST PASSED THROUGHOUT, because it asserted that a
         `while (!audio_stream_begin())` existed somewhere in the file. It did — in the one
         function that had been fixed. So this walks every call site instead: any bare
-        `audio_stream_begin()` outside the single waiting helper is the bug coming back."""
+        `stream_begin()` outside the single waiting helper is the bug coming back.
+
+        Since 0.4.0 the engine is `jpanel_core.c`, and a fetch and a replay share one head
+        callback, so the helper has exactly one caller."""
         import pathlib
         import re
 
         jpanel = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_core.c"
         ).read_text(encoding="utf-8")
 
         helper = re.search(r"static bool stream_begin_waiting\(.*?\n\}", jpanel, re.S)
@@ -300,59 +303,53 @@ class TestTheVolumeCeilingWasTheBugReport:
         callers = [
             line.strip()
             for line in jpanel.splitlines()
-            if "audio_stream_begin()" in line and not line.strip().startswith("*")
+            if re.search(r"\bstream_begin\(", line) and not line.strip().startswith(("*", "/*"))
         ]
         outside = [c for c in callers if c not in helper.group(0)]
         assert not outside, (
-            f"a bare audio_stream_begin() outside the waiting helper: {outside}. Every way of "
+            f"a bare stream_begin() outside the waiting helper: {outside}. Every way of "
             "starting a message has to wait out the press cue, or that one is intermittent in "
             "exactly the way the notice and replay both were"
         )
-        assert jpanel.count("stream_begin_waiting(") >= 3, (
-            "the definition plus a call from each of do_fetch and do_replay"
+        head = re.search(r"static int on_head\(void \*ctx, int status\)\n\{.*?\n\}", jpanel, re.S)
+        assert head and "stream_begin_waiting()" in head.group(0), (
+            "the head callback every fetch and replay goes through no longer waits for the speaker"
+        )
+        assert jpanel.count(".on_head = on_head") == 1, (
+            "a second way of starting a stream exists; route it through on_head"
         )
         # And the wait is REPORTED: "it works now" and "it works now BECAUSE we wait" are
         # different facts, and only the second says the wait is load-bearing.
+        assert "msg_waited_ms" in jpanel
         from jbrain.api.endpoint import TelemetryIn
 
         assert TelemetryIn(version="0.3.33", uptime_ms=1, msg_waited_ms=120).msg_waited_ms == 120
 
     def test_a_replay_that_ends_re_arms_the_buttons(self) -> None:
-        """PLAYBACK ENDED IS A STATE, AND REPLAY WAS NOT REACHING IT.
+        """PLAYBACK ENDED IS AN OUTCOME, AND REPLAY MUST REACH IT.
 
-        `display.c`'s `case JPANEL_PLAYING` is the only place that notices a message has
-        finished: when `audio_playing()` goes false it clears the state and re-arms
-        `s_repeat_until`, which is what puts the "again" and "reply" pair back on the glass.
+        The again/reply pair is re-armed when a replay ends by itself (JP 0.3.36). In 0.3.39 that
+        hung on `do_replay` setting `JPANEL_PLAYING`, which it once forgot, so a replay longer than
+        what was left of the pair's window took the buttons away mid-sentence.
 
-        `do_fetch` set `JPANEL_PLAYING`; `do_replay` did not. So a replay was audible and then
-        simply over — the pair kept counting down from the end of the FIRST play, and a replay
-        longer than what was left of that window took the buttons away mid-sentence, leaving a
-        child who wanted to hear it once more with nothing to press.
-
-        The two states replay deliberately does NOT join are argued in its own comment
-        (`s_owed`, `s_run`); this one was not on that list, it was missed."""
+        Since 0.4.0 a replay ends like every command: one `play_outcome` with `replay` set, in the
+        same write as `done_seq`, which the panel machine reads to re-stamp the offer. The two
+        things a replay must still NOT do — acknowledge a second listen, or walk on into the next
+        unheard message — are behaviour, so they are asserted where behaviour can be: the host
+        suite's scripted box (`firmware/host/jpanel_tests.c`), which `make test` runs in CI."""
         import pathlib
-        import re
 
-        jpanel = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
-        ).read_text(encoding="utf-8")
-        # Since 0.3.39 the speaker is claimed in `replay_head`, the callback `link.c` runs once the
-        # answer's status is in and before its first byte — so the replay is that and `do_replay`.
-        replay = re.search(r"static void do_replay\(void\)\n\{.*?\n\}", jpanel, re.S)
-        head = re.search(
-            r"static int replay_head\(void \*ctx, int status\)\n\{.*?\n\}", jpanel, re.S
+        fw = pathlib.Path(__file__).resolve().parents[3] / "firmware"
+        core = (fw / "main" / "jpanel_core.c").read_text(encoding="utf-8")
+        assert '"/message/%s/pcm"' in core, "a replay no longer uses its own route"
+        assert "s_v.play.replay = s_f.replay;" in core, (
+            "a replay's end is no longer published as a replay outcome, so the pair is not re-armed"
         )
-        assert replay and head, "do_replay or replay_head moved; re-pin this test"
-        body = replay.group(0) + head.group(0)
-        assert "s_state = JPANEL_PLAYING;" in body, (
-            "a replay no longer reaches the state that ends a playback, so the again/reply pair "
-            "is never re-armed after one"
-        )
-        # The two it must still NOT join, or "again" would acknowledge a second listen and walk
-        # on into the next unheard message.
-        assert "s_owed = true" not in body, "a replay must not re-acknowledge the message"
-        assert "s_run = true" not in body, "a replay must not join the run"
+        tests = (fw / "host" / "jpanel_tests.c").read_text(encoding="utf-8")
+        for name in ("test_replay_never_continues_a_run", "test_last_begun_only_at_first_byte"):
+            assert f"    {name}();" in tests, f"{name} is no longer run"
+        makefile = (fw / "host" / "Makefile").read_text(encoding="utf-8")
+        assert "./run_jpanel_tests" in makefile, "make test no longer runs the engine suite"
 
     def test_an_open_microphone_is_deaf_to_commands(self) -> None:
         """ONE UTTERANCE, ONE READER. The owner: *"there are still occasional times when we are
@@ -368,17 +365,22 @@ class TestTheVolumeCeilingWasTheBugReport:
 
         Pinned as the CONDITION, because the bug was a missing term in it rather than a missing
         call — a test that only checked `speech_mute_commands` is called would have passed
-        throughout."""
+        throughout. Since 0.4.0 the machine derives it every frame (`SM_FX_MUTE_COMMANDS`) and
+        `display.c` executes it."""
         import pathlib
         import re
 
-        display = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
-        ).read_text(encoding="utf-8")
-        call = re.search(r"speech_mute_commands\(([^;]+)\);", display)
+        main = pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main"
+        call = re.search(
+            r"fx\(out, SM_FX_MUTE_COMMANDS,([^;]+)\);", (main / "panel_sm.c").read_text("utf-8")
+        )
         assert call, "the command mute is gone"
         cond = call.group(1)
-        for state in ("TALK_RECORDING", "TALK_LISTENING", "s_standby"):
+        display = (main / "display.c").read_text(encoding="utf-8")
+        assert re.search(
+            r"case SM_FX_MUTE_COMMANDS:.*?speech_mute_commands\(f->arg != 0\);", display, re.S
+        ), "the machine's mute no longer reaches the recogniser"
+        for state in ("SM_RECORD", "SM_LISTEN", "sm->standby"):
             assert state in cond, (
                 f"{state} is no longer muted. Every one of these is a microphone open for "
                 "something other than commands: a message to a sibling, a conversation turn, and "
@@ -391,30 +393,43 @@ class TestTheVolumeCeilingWasTheBugReport:
         same SPI or whatever?"*
 
         Not a shared bus — the codec routes its DAC into its ADC by design, so the panel genuinely
-        hears its own cues, and `s_deaf` exists to stop it answering its own beep. The defect was
-        that the deaf path `continue`d past the capture copy, so those samples were not silenced
-        but DELETED and the ends spliced. `s_deaf` is re-armed on every written chunk, so a 300 ms
-        cue cost the cue plus `DEAF_CHUNKS` — about 540 ms — out of the middle of a recording,
-        with the join inaudible. A child saying "I went to the park today" through a cue came back
-        shorter than she spoke, and the transcript read as though she had said the shorter thing.
+        hears its own cues, and the deaf window exists to stop it answering its own beep. The
+        defect was that the deaf path `continue`d past the capture copy, so those samples were not
+        silenced but DELETED and the ends spliced. The window is re-armed on every written chunk,
+        so a 300 ms cue cost the cue plus the deaf tail — about 540 ms — out of the middle of a
+        recording, with the join inaudible. A child saying "I went to the park today" through a
+        cue came back shorter than she spoke, and the transcript read as though she had said the
+        shorter thing.
 
         A gap sounds like a gap and transcribes as a pause. What was said during the cue is lost
-        either way; inventing a sentence she never said is the part that is fixable."""
+        either way; inventing a sentence she never said is the part that is fixable.
+
+        Two halves since 0.4.0: `stream.c` decides deafness and must answer SILENCE (never NONE)
+        for a deaf chunk, and `audio.c` must write that silence into an open recording."""
         import pathlib
         import re
 
-        audio = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "audio.c"
-        ).read_text(encoding="utf-8")
-        deaf = re.search(r"if \(s_deaf > 0\) \{(.+?)\n            \}", audio, re.S)
-        assert deaf, "the self-deafening block moved; re-pin this test"
-        body = deaf.group(1)
-        assert "s_cap_on" in body and "memset" in body, (
-            "the deaf branch no longer writes silence into the capture buffer, so a cue during a "
-            "recording deletes that span instead of silencing it and the message comes back "
-            "shorter than the child spoke"
+        main = pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main"
+        stream = (main / "stream.c").read_text(encoding="utf-8")
+        deaf = re.search(r"if \(s->deaf > 0\) \{(.+?)\n    \}", stream, re.S)
+        assert deaf, "the self-deafening block moved in stream.c; re-pin this test"
+        assert "STREAM_CAPTURE_SILENCE" in deaf.group(1), (
+            "a deaf chunk no longer reaches the capture as silence, so a cue during a recording "
+            "deletes that span and the message comes back shorter than the child spoke"
         )
-        assert "s_cap_used +=" in body, "the capture cursor is not advanced, so nothing is kept"
+        audio = (main / "audio.c").read_text(encoding="utf-8")
+        branch = re.search(
+            r"if \(t\.capture == STREAM_CAPTURE_SILENCE\) \{(.+?)\n        \}", audio, re.S
+        )
+        assert branch, "audio.c's deaf branch moved; re-pin this test"
+        assert "capture_keep(s_chunk, true)" in branch.group(1), (
+            "the deaf branch no longer writes silence into the capture buffer"
+        )
+        start = audio.index("static void capture_keep(")
+        keep = audio[start : audio.index("\n}\n", start)]
+        assert "memset" in keep and "s_cap_used +=" in keep, (
+            "capture_keep no longer writes silence and advances the cursor, so nothing is kept"
+        )
 
     def test_every_talk_failure_the_firmware_can_hit_carries_a_name(self) -> None:
         """THE RED DASH THE OWNER SAW, AND WHY IT SAID NOTHING. `talk.c` had six ways to fail and
@@ -474,21 +489,32 @@ class TestTheButtonGridIsWiredToRealActions:
         src = self._fw("display.c")
         assert "#define BOOT_DEBOUNCE_MS 250" in src, "the debounce window is gone"
         assert "s_boot_last_ms" in src, "nothing rejects a bounced edge any more"
-        assert "if (boot_button_take()) {" in src, "the short press reaches nothing"
+        # Since 0.4.0 the press is an input to the machine (`btn_short`), which owns standby.
+        assert "btn_short = boot_button_take();" in src, "the short press reaches nothing"
+        assert "s_in.btn_short = btn_short;" in src, "the short press never reaches the machine"
         # Both halves: into standby, and back out of it.
-        assert "s_standby = true;" in src and 'sleep_wake("button")' in src, (
+        sm = self._fw("panel_sm.c")
+        assert "sm->standby = true;" in sm and "sm->standby = false;" in sm, (
             "the button no longer both enters and leaves standby"
         )
+        assert 'sleep_wake("button")' in src, "leaving standby no longer lights the screen"
         # And the hold is a separate edge, or the power-off would fire on every press.
         assert "boot_button_sleep_requested()" in src, "the five-second hold reaches nothing"
 
     def test_every_icon_reaches_the_same_path_the_voice_does(self) -> None:
-        src = self._fw("display.c")
-        # One helper each, so a refusal is identical however it was asked for.
-        assert "start_send_recording(who == SENDTO_DAD" in src, "the people icons do not record"
-        assert "who == SENDTO_PET" in src and "start_listening(now, speaking)" in src, (
+        """One helper each, behind one mic gate, so a refusal is identical however it was asked
+        for. The machine's since 0.4.0 (`panel_sm.c`)."""
+        src = self._fw("panel_sm.c")
+        cells = src[src.index("case SM_T_CELL_SISTER:") : src.index("case SM_T_CELL_CANCEL:")]
+        assert "mic_gate(sm, in, false)" in cells, "the icons skip the mic gate"
+        assert "open_record(sm, in, out, &w, true)" in cells, "the people icons do not record"
+        assert "open_listen(sm, in, out, false, true)" in cells, (
             "the pet icon does not start a conversation"
         )
+        voice = src[src.index("static void voice(") : src.index("static bool button(")]
+        assert voice.count("mic_gate(sm, in, false)") >= 2, "a phrase skips the mic gate"
+        assert "open_record(sm, in, out, &w, false)" in voice, "tell sister/dad does not record"
+        assert "open_listen(sm, in, out, false, false)" in voice, "the name does not listen"
 
     def test_commands_are_muted_while_a_message_is_recorded(self) -> None:
         """The pet acting on words from inside a message is what put farts into a four-year-old's
@@ -500,9 +526,9 @@ class TestTheButtonGridIsWiredToRealActions:
         # as an equality, went red on `main` rather than noticing a deliberate widening. What
         # must not change is that the argument is computed from `s_talk` every frame — an
         # armed-at-the-edges mute leaks, because recording ends five ways.
-        mute = re.search(r"speech_mute_commands\(([^;]*)\);", self._fw("display.c"))
+        mute = re.search(r"fx\(out, SM_FX_MUTE_COMMANDS,([^;]*)\);", self._fw("panel_sm.c"))
         assert mute is not None, "nothing mutes the commands any more"
-        assert "s_talk == TALK_RECORDING" in mute.group(1), (
+        assert "sm->mode == SM_RECORD" in mute.group(1), (
             "the mute is no longer derived from the state and can leak"
         )
         # The ring must still fill: a recording is when what it hears is most interesting.
@@ -637,6 +663,54 @@ class TestEveryFieldThePanelSendsIsDeclaredHere:
             "will never reach a log"
         )
 
+    def test_jp_keys_from_main_c_validate_against_telemetry_in(self) -> None:
+        """VOICE POST'S COUNTERS RIDE ONE OBJECT, AND ITS SHAPE IS A CONTRACT ON BOTH SIDES
+        (plan §7.7). `TelemetryIn.jp` is `dict[str, int]`, so the panel may add a key without a
+        box change — but anything nested or non-integer would 422 the whole report, and a 422 is
+        a FAILED report: the panel's only no-terminal diagnostic, lost. So the keys are read out
+        of `main.c`'s format string, every one is checked to be written as a bare integer, and a
+        worst case built from them is validated against the model. It is emitted AFTER
+        `pmu_history`, outside the span the field scan above reads, which is why it is pinned
+        separately."""
+        import pathlib
+        import re
+
+        import pytest
+        from pydantic import ValidationError
+
+        from jbrain.api.endpoint import TelemetryIn
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+        start = src.index('",\\"jp\\":{')
+        block = src[start : src.index('}",', start)]
+        keys = re.findall(r'\\"([a-z_0-9]+)\\":(%[a-z]+)', block)
+        names = [k for k, _ in keys]
+        assert len(names) >= 14, "the jp object moved; re-pin this test"
+        assert all(fmt == "%u" for _, fmt in keys), "every jp value must be a flat integer"
+        for want in ("ack_owed", "lease_refusals", "sm_violations", "wd_engine", "wd_disarmed"):
+            assert want in names, f"the report lost jp.{want}"
+        assert src.index('\\"pmu_history\\":[') < start, "jp must follow pmu_history"
+        report = TelemetryIn.model_validate(
+            {"version": "0.4.0", "uptime_ms": 1, "jp": dict.fromkeys(names, 4294967295)}
+        )
+        assert report.jp is not None and set(report.jp) == set(names)
+        with pytest.raises(ValidationError):
+            TelemetryIn.model_validate({"version": "0.4.0", "uptime_ms": 1, "jp": {"a": {"b": 1}}})
+
+    def test_the_panel_reports_whether_it_can_hear(self) -> None:
+        """`speech_ok` is how a panel that booted deaf (under `SPEECH_MIN_INTERNAL`) says so."""
+        import pathlib
+
+        from jbrain.api.endpoint import TelemetryIn
+
+        src = (
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c"
+        ).read_text(encoding="utf-8")
+        assert '\\"speech_ok\\":%s' in src and 'speech_live() ? "true" : "false"' in src
+        assert "speech_ok" in TelemetryIn.model_fields
+
     def test_the_scan_found_a_realistic_number_of_fields(self) -> None:
         """Guards the guard: if the format string is restructured and the slice above stops
         matching, `_telemetry_keys` would return a handful of keys and the test above would
@@ -661,11 +735,14 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
     """
 
     def _do_send_once(self) -> str:
-        """The DEFINITION, not the forward declaration above `do_send`, which shares its opening
-        line and whose body is the retry loop. Matching the wrong one silently hands these tests
-        a function with no reach calls in it at all — as it did on the first run."""
-        src = _fw("jpanel.c")
-        start = src.index("static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)\n{")
+        """The DEFINITION (in the engine, `jpanel_core.c`, since 0.4.0). Matching a declaration
+        instead silently hands these tests a function with no reach calls in it at all — as it
+        did on the first run."""
+        src = _fw("jpanel_core.c")
+        start = src.index(
+            "static jp_send_kind_t do_send_once(const jp_cmd_t *c, const char *hex, bool *corrupt)"
+            "\n{"
+        )
         return src[start : src.index("\n}\n", start)]
 
     def test_every_failing_exit_from_a_send_names_itself(self) -> None:
@@ -682,13 +759,13 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
             # The two lines above it, which is where `why` (or `out`, for the one non-fault)
             # is set in every branch as written.
             above = " ".join(lines[max(0, n - 3) : n])
-            assert "why = " in above or "out = JPANEL_NOBODY" in above, (
+            assert "why = " in above, (
                 f"a branch jumps to done without naming itself:\n{above}\n{line}"
             )
 
-        # Four since 0.3.39: connect, upload-stall and no-headers became ONE transport branch that
-        # names `link.c`'s real reason (`res.err`), beside 409, 422 and any other status.
-        assert body.count("goto done;") >= 4, "the branches were restructured; re-read this test"
+        # Since 0.4.0: the path, the transport (naming `link.c`'s reason or the deadline), 409,
+        # 400, 413, 422 and any other status.
+        assert body.count("goto done;") >= 7, "the branches were restructured; re-read this test"
 
     def test_a_send_that_failed_is_counted_and_a_house_with_one_panel_is_not(self) -> None:
         """NOBODY-TO-SEND-TO IS NOT A FAULT. The box answered; there is simply no second panel
@@ -699,7 +776,7 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
 
         assert "reach_ok(REACH_SEND" in body, "a successful send no longer clears the streak"
         assert "reach_fail(REACH_SEND, why" in body, "the reason no longer reaches the report"
-        assert "out != JPANEL_NOBODY" in body, (
+        assert "out != JP_SEND_NOBODY" in body, (
             "JPANEL_NOBODY is being counted as a send failure — a one-panel house would report "
             "a permanent fault on the path that matters most"
         )
@@ -711,15 +788,18 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
         may still succeed. Nothing failed, so nothing was recorded, and the commonest shape of
         "it didn't work" was the one with no evidence.
 
-        Both halves of the firmware raise this dash — `ui.c` is the tested model, `display.c`
-        the shipping mirror — and a counter in only one of them is a counter that reports zero
-        from the panel on the wall."""
-        for name, why in (("ui.c", "in->net == UI_NET_FAILED"), ("display.c", "talk_state() ==")):
-            src = _fw(name)
-            assert '"timeout"' in src and '"net"' in src, f"{name} no longer tells them apart"
-            assert why in src, f"{name} no longer decides the reason from the live state"
-        assert "st->dashes++" in _fw("ui.c"), "the model stopped counting"
-        assert "s_dashes++" in _fw("display.c"), "the shipping half stopped counting"
+        Since 0.4.0 one half raises it: the machine (`panel_sm.c`) counts it and names the cause
+        from the live state, and `display.c` — which only executes the machine's effects — hands
+        both to the report. A counter the report does not read is one that reports zero from the
+        panel on the wall."""
+        sm = _fw("panel_sm.c")
+        assert '"timeout"' in sm and '"net"' in sm, "the machine no longer tells them apart"
+        assert "in->net == SM_NET_FAILED" in sm, "the reason is no longer read from the live state"
+        assert "sm->dashes++" in sm, "the machine stopped counting"
+        display = _fw("display.c")
+        assert "sm_dash_name(s_out.dash_why)" in display, "the reason never reaches the report"
+        assert "*n = s_sm.dashes" in display, "the count never reaches the report"
+        assert "display_dashes(&dashes, &dash_err, &dash_ago);" in _fw("main.c")
 
     def test_the_route_surfaces_both(self) -> None:
         """A number the firmware reports into a model that declares it and a route that never

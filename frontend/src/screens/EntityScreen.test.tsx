@@ -297,13 +297,13 @@ describe("EntityScreen", () => {
       object_entity_id: id,
       object_entity_name: name,
     });
-    const summer = child("ent-summer", "Summer Hopkins");
-    const harmony = child("ent-harmony", "Harmony Hopkins");
+    const hazel = child("ent-hazel", "Hazel Doe");
+    const opal = child("ent-opal", "Opal Doe");
     const dad: EntityOut = {
       ...SARAH,
       predicates: [
-        { predicate: "children", qualifier: null, current: summer, history: [summer] },
-        { predicate: "children", qualifier: null, current: harmony, history: [harmony] },
+        { predicate: "children", qualifier: null, current: hazel, history: [hazel] },
+        { predicate: "children", qualifier: null, current: opal, history: [opal] },
       ],
       inbound: [],
     };
@@ -314,8 +314,8 @@ describe("EntityScreen", () => {
     setup();
     await screen.findByRole("heading", { name: "Sarah Hopkins" });
 
-    expect(screen.getByRole("button", { name: "Summer Hopkins" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Harmony Hopkins" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Hazel Doe" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Opal Doe" })).toBeInTheDocument();
     // No child is demoted to a history disclosure.
     expect(screen.queryByRole("button", { name: /earlier →/ })).not.toBeInTheDocument();
   });

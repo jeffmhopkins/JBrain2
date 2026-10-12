@@ -13383,13 +13383,161 @@ button.small {
 .fb-shell .tv-dr-act.done {
   color: var(--green, #8fbc9a);
 }
-/* Speaking now — the report's read-aloud button lit in the research amber accent. */
-.fb-shell .tv-dr-act.playing {
-  color: var(--amber, #c9a36a);
-}
 .fb-shell .tv-dr-act svg {
   width: calc(15px * var(--font-scale));
   height: calc(15px * var(--font-scale));
+}
+/* The drive-mode report player (agent/ReportPlayer.tsx; owner-chosen variant C2 in
+   docs/mocks/research-drive-play/compare-c.html), shared by the deep-research card and the
+   Research Library report. Built to be hit at a glance in the car: an amber round play/pause,
+   steel square story-skip buttons as tall as it (a different colour AND shape, so skip never
+   reads as pause), and a progress bar split into one tappable segment per story. Its text follows
+   the Text size setting like the rest of the card; its buttons don't — they're sized for a glance
+   from the driver's seat, not for reading. */
+.rp-idle {
+  margin-top: 11px;
+  width: 100%;
+  height: 52px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--amber);
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  font: inherit;
+  font-size: calc(15px * var(--font-scale));
+  font-weight: 650;
+  cursor: pointer;
+}
+.rp-idle svg {
+  width: 20px;
+  height: 20px;
+}
+.rp {
+  margin-top: 11px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  padding: 14px 12px 6px;
+}
+.rp-now {
+  font-size: calc(10px * var(--font-scale));
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+.rp-title {
+  margin-top: 3px;
+  font-size: calc(15px * var(--font-scale));
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-segs {
+  display: flex;
+  gap: 4px;
+  margin: 12px 0 4px;
+}
+/* Each segment is a tap target taller than it looks: the visible bar is the ::before. */
+.rp-seg {
+  flex-basis: 0;
+  min-width: 10px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  position: relative;
+  cursor: pointer;
+}
+.rp-seg::before,
+.rp-seg i {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  height: 8px;
+  border-radius: 999px;
+}
+.rp-seg::before {
+  right: 0;
+  background: var(--surface);
+}
+.rp-seg i {
+  background: var(--amber);
+  transition: width 0.3s linear;
+}
+.rp-seg.cur::before {
+  box-shadow: 0 0 0 2px var(--amber-tint);
+}
+.rp-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: calc(11px * var(--font-scale));
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.rp-ctrls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.rp-pp {
+  flex: none;
+  width: 84px;
+  height: 84px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--amber);
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.rp-pp svg {
+  width: 34px;
+  height: 34px;
+}
+.rp-skip {
+  flex: 1;
+  height: 84px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--steel-tint);
+  color: var(--steel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font: inherit;
+  font-size: calc(11px * var(--font-scale));
+  font-weight: 600;
+  cursor: pointer;
+}
+.rp-skip svg {
+  width: 28px;
+  height: 28px;
+}
+.rp-skip:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.rp-stop {
+  display: block;
+  margin: 4px auto 0;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font: inherit;
+  font-size: calc(12px * var(--font-scale));
+  cursor: pointer;
 }
 /* The report-body disclosure (collapsed by default), a touch of room above it. */
 .fb-shell .tv-dr-report-toggle {
@@ -25187,33 +25335,6 @@ button.task-band:active {
   flex: 1;
   min-width: 0;
 }
-/* Read-aloud (TTS) toggle for the opened report — mirrors the deep-research card's play button,
-   lit in the research amber accent while speaking (DESIGN.md: amber = research). */
-.rl-play {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-2);
-  color: var(--text-2);
-  cursor: pointer;
-}
-.rl-play:hover {
-  color: var(--text);
-}
-.rl-play.playing {
-  color: var(--amber, #c9a36a);
-  border-color: var(--amber, #c9a36a);
-}
-.rl-play svg {
-  width: 17px;
-  height: 17px;
-}
 .rl-report-q {
   margin: 0 0 12px;
   font-size: 20px;
@@ -32566,6 +32687,27 @@ button.wf-sigpill {
 /* The map share (DESIGN.md "Minecraft map share"): the owner's Share sheet, and the
    view-only chrome a /mc/s/{token} visitor gets in place of the back button. Amber is the
    system's read-only colour. */
+/* The selected player's Tricorder target (DESIGN.md "Minecraft map"): one line on the
+   player card; the marker and dashed bearing are drawn on the canvas. */
+.mc-map-det-tri {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+
+.mc-map-det-tri svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.mc-map-det-tri b {
+  color: var(--text);
+  font-weight: 500;
+}
+
 span.mc-map-world {
   cursor: default;
 }

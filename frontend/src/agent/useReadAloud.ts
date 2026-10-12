@@ -36,6 +36,15 @@ const PROSE_TRAIL_MS = 220;
 const paceFor = (md: string): { speed?: number; trail?: number } =>
   readingProfile(md) === "prose" ? { speed: PROSE_SPEED, trail: PROSE_TRAIL_MS } : {};
 
+/** Where a story-by-story playback (`playSections`) is: the story speaking now and how
+ * much of it has been spoken (0–1, by rendered clip). Kept after playback stops, so a
+ * paused player still shows its place. */
+export interface ReadAloudProgress {
+  key: string;
+  section: number;
+  fraction: number;
+}
+
 export interface ReadAloud {
   /** Read-aloud is on AND an engine can speak (the device's native voice, or piper
    * voices on the box) — gates whether the bubbles show a play control at all. */
@@ -60,6 +69,12 @@ export interface ReadAloud {
   feed: (key: string, textSoFar: string, done: boolean) => void;
   /** Stop any in-flight speech at once. */
   stop: () => void;
+  /** Play a report story by story (the drive-mode player): `sections` are Markdown
+   * stories spoken back-to-back from index `start`, so skipping is just playing again
+   * from another index. Pause it with `toggle(key, …)` like any other key. */
+  playSections: (key: string, sections: string[], start: number) => void;
+  /** The last `playSections` run's place, or null before any has started. */
+  progress: ReadAloudProgress | null;
 }
 
 const canPlayPiper = (): boolean => typeof window !== "undefined" && "Audio" in window;
@@ -82,6 +97,7 @@ export function useReadAloud(): ReadAloud {
   const [hasVoices, setHasVoices] = useState(false);
   const [engine, setEngine] = useState<ReadAloudEngine>("piper");
   const [playing, setPlaying] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ReadAloudProgress | null>(null);
   const [autoPlay, setAutoPlay] = useState<boolean>(() => {
     try {
       return localStorage.getItem(AUTOPLAY_KEY) === "1";
@@ -122,6 +138,9 @@ export function useReadAloud(): ReadAloud {
   const suppressedRef = useRef<Set<string>>(new Set());
   // A manual play is in flight — auto-play's `feed` defers so the two don't overlap.
   const manualRef = useRef(false);
+  // The active story-by-story run: which story each enqueued chunk belongs to, and how
+  // many chunks have finished — settle() turns that into `progress`. Null for a plain turn.
+  const playlistRef = useRef<{ key: string; unitSection: number[]; done: number } | null>(null);
 
   // --- piper engine state ---------------------------------------------------------
   // A generation token bumped by every stop()/beginQueue so an in-flight piper fetch or
@@ -252,6 +271,11 @@ export function useReadAloud(): ReadAloud {
       const q = queueRef.current;
       if (q.key !== key) return;
       q.pending = Math.max(0, q.pending - 1);
+      const pl = playlistRef.current;
+      if (pl && pl.key === key) {
+        pl.done += 1;
+        setProgress(playlistProgress(pl));
+      }
       if (q.pending === 0 && q.finalized && playingRef.current === key) {
         manualRef.current = false;
         feedKeyRef.current = null;
@@ -447,6 +471,7 @@ export function useReadAloud(): ReadAloud {
     (key: string) => {
       teardown();
       queueRef.current = { key, pending: 0, finalized: false };
+      playlistRef.current = null;
       spokenLenRef.current = 0;
       feedKeyRef.current = key;
       setPlay(key);
@@ -482,6 +507,42 @@ export function useReadAloud(): ReadAloud {
         } else {
           speakChunk(key, speakable(markdown, speakEngine));
         }
+      } catch {
+        stop();
+      }
+    },
+    [beginQueue, speakChunk, stop, usePiper, canVoice],
+  );
+
+  const playSections = useCallback(
+    (key: string, sections: string[], start: number) => {
+      if (!canVoice()) return;
+      const speakEngine = engineForVoice(answerVoiceRef.current);
+      const piper = usePiper();
+      // Piper renders sentence-sized clips; native speaks each story as one utterance, so a
+      // story is still the unit native progress (and skipping) moves by.
+      const units: { section: number; text: string }[] = [];
+      for (let i = Math.max(0, start); i < sections.length; i++) {
+        const md = sections[i] ?? "";
+        if (piper) {
+          for (const c of chunkStream(md, true, speakEngine).chunks)
+            units.push({ section: i, text: c });
+        } else {
+          const text = speakable(md, speakEngine);
+          if (text.trim()) units.push({ section: i, text });
+        }
+      }
+      if (!units.length) return;
+      paceRef.current = paceFor(sections.join("\n\n"));
+      suppressedRef.current.delete(key);
+      try {
+        beginQueue(key);
+        manualRef.current = true;
+        queueRef.current.finalized = true;
+        const pl = { key, unitSection: units.map((u) => u.section), done: 0 };
+        playlistRef.current = pl;
+        setProgress(playlistProgress(pl));
+        for (const u of units) speakChunk(key, u.text);
       } catch {
         stop();
       }
@@ -557,5 +618,30 @@ export function useReadAloud(): ReadAloud {
   // Leaving the surface (unmount) stops speech too — "off mid-stream stops it".
   useEffect(() => stop, [stop]);
 
-  return { available, playing, autoPlay, toggle, toggleAutoPlay, feed, stop };
+  return {
+    available,
+    playing,
+    autoPlay,
+    toggle,
+    toggleAutoPlay,
+    feed,
+    stop,
+    playSections,
+    progress,
+  };
+}
+
+// The story the next unfinished chunk belongs to, and the share of that story's chunks
+// already spoken. Once everything has played it pins to the last story, fully done.
+function playlistProgress(pl: {
+  key: string;
+  unitSection: number[];
+  done: number;
+}): ReadAloudProgress {
+  const total = pl.unitSection.length;
+  const at = Math.min(pl.done, total - 1);
+  const section = pl.unitSection[at] ?? 0;
+  const inSection = pl.unitSection.filter((s) => s === section).length;
+  const doneInSection = pl.unitSection.slice(0, pl.done).filter((s) => s === section).length;
+  return { key: pl.key, section, fraction: inSection ? doneInSection / inSection : 1 };
 }

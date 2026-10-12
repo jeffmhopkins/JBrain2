@@ -227,6 +227,10 @@ describe("the shared map, as the visitor sees it", () => {
     // The shared player is selected: their card is open, with Follow.
     expect(await screen.findByRole("button", { name: /Follow/ })).toBeInTheDocument();
     expect(document.querySelector(".mc-map-sel")).toHaveTextContent("BlockyFox");
+    // Dave has their Tricorder on something: the card says how far and which way.
+    expect(document.querySelector(".mc-map-det-tri")).toHaveTextContent(
+      /Tricorder · Diamonds · \d+ blocks north-east · y -58/,
+    );
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Share this map" })).toBeNull();
     expect(screen.queryByRole("button", { name: /World: .* change/ })).toBeNull();

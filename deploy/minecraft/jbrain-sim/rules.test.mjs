@@ -105,3 +105,26 @@ test("unlocks come from the key ingredient held, never shrink, and stay sorted",
   assert.deepEqual(r.parseKnown('{"a": 1}'), []);
   assert.deepEqual(r.parseKnown(undefined), []);
 });
+
+test("a mob search names a namespaced type, and its reach is clamped to what's loaded", () => {
+  assert.deepEqual(r.parseFind('{"player":"Steve 42","type":"cow"}'), {
+    player: "Steve 42",
+    type: "minecraft:cow",
+    max: r.FIND_MAX,
+  });
+  assert.equal(r.parseFind('{"player":"a","type":"minecraft:pig","max":2}').max, 8);
+  assert.equal(r.parseFind('{"player":"a","type":"pig","max":9999}').max, r.FIND_MAX);
+  for (const bad of ['{"type":"cow"}', '{"player":"a","type":"cow; op @a"}', "[]", "null"]) {
+    assert.throws(() => r.parseFind(bad), bad);
+  }
+});
+
+test("a mob search answers in the hit shape the backend reads, or says none", () => {
+  const q = { type: "minecraft:cow", max: 256 };
+  const here = { dim: "minecraft:nether", x: 0.5, z: 0.5 };
+  assert.equal(
+    r.findLine(q, "Steve", here, { x: 30.7, y: 64.2, z: -40.1 }),
+    "find found minecraft:cow at x=30 y=64 z=-41, 51 blocks from Steve (nether)",
+  );
+  assert.equal(r.findLine(q, "Steve", here, undefined), "find none: no minecraft:cow within 256 blocks of Steve");
+});

@@ -346,6 +346,14 @@ static const cue_def_t DEF[CUE_COUNT] = {
        the sound stopping or starting: it is a turn arriving. Major, open, and it does not
        resolve downward — a question, not a full stop. */
     [CUE_REPLY] = {SH_STEPS, 260, 587.33f, 0.5f, 0, 0, {0, 4, 7, END}, 2, 5},
+
+    /* -- placeholders (F4 replaces the contours) --------------------------------------- */
+    /* No contour, because a refusal is not an ending (that is `CUE_STOP`, falling) and not a
+       question (rising): the same note twice, a narrow duty so it reads as a signal. */
+    [CUE_BUSY] = {SH_STEPS, 220, 415.30f, 0.25f, 0, 0, {0, 0, END}, 2, 10},
+    /* The message chime's shape turned sadder: a triangle, slow attack, a falling MINOR third
+       a fourth below where `CUE_MESSAGE` rings, so the two are never the same news. */
+    [CUE_NOBODY] = {SH_STEPS, 380, 698.46f, 0.0f, 0, 0, {0, -3, END}, 6, 0},
 };
 
 /* The longest any variant stretches a cue. Kept beside `variant_stretch` in spirit; declared

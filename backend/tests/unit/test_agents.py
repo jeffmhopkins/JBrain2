@@ -955,9 +955,11 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v12: `mc_transport` (§M10), and "transport beacon" once the guide describes it.
         # v13: `mc_replicator_program`, in game only, for the asker's held Replicator (§M15).
         # v14: `mc_wormhole_aim` (§M12), only once the guide describes wormholes.
+        # v15–v16: the in-game door moved to /dave, /d and /ai, and Dave's story (lore canon).
+        # v17: `mc_find_mob`, and `mc_locate` in every dimension (§M22).
         "minecraft_dave": (
-            "agent-minecraft-dave-v16",
-            "e5cdee2ec248b844b07a66ee60f243708a534132fb075eec1e8c07f0927544fb",
+            "agent-minecraft-dave-v17",
+            "766d688c3b0131227d600ce8ed5c165e7a0ab190779789640b5c7a894cecb857",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

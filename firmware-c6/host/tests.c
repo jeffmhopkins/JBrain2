@@ -16,14 +16,17 @@
 #include "dbg_json.h"
 #include "disp_guard.h"
 #include "disp_logic.h"
-#include "jerv_model.h"
+#include "convo_model.h"
 #include "minutes.h"
 #include "notice_policy.h"
 #include "settings_model.h"
 #include "shell_core.h"
 #include "shell_evq.h"
 #include "settings_store.h"
+#include "sib_logic.h"
+#include "sib_port_fake.h"
 #include "svc_audio_fake.h"
+#include "talk_core.h"
 #include "svc_box_fake.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
@@ -31,6 +34,7 @@
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
+#include "svc_siblings_drv.h"
 #include "thread_model.h"
 #include "time_logic.h"
 #include "tp_logic.h"
@@ -417,9 +421,9 @@ static void test_conversation_rules(void)
     thread_bubble(&theirs, 4, 40, &b);
     CHECK(!b.unplayed && b.playing && b.prog == 40, "the dot goes the moment it starts");
     msg_t reply = {.id = 9};
-    CHECK(jerv_shows_listen(&reply, false, 0), "text only: a reply has Listen");
-    CHECK(!jerv_shows_listen(&reply, true, 0), "read aloud: no Listen");
-    CHECK(!jerv_shows_listen(&reply, false, 9), "not while it is being spoken");
+    CHECK(convo_shows_listen(&reply, false, 0), "text only: a reply has Listen");
+    CHECK(!convo_shows_listen(&reply, true, 0), "read aloud: no Listen");
+    CHECK(!convo_shows_listen(&reply, false, 9), "not while it is being spoken");
     CHECK(talk_policy_end(599, true) == TALK_TOO_SHORT && talk_policy_end(600, true) == TALK_SENT,
           "under 0.6 s is a knock, not a message");
     CHECK(talk_policy_end(5000, false) == TALK_CANCELLED, "a tap cancels whatever the length");
@@ -990,9 +994,18 @@ static void test_the_clock_face_keeps_notices_as_a_badge(void)
     CHECK(clock_badge_count(1, 2) == 3 && clock_badge_count(0, 0) == 0,
           "the badge counts notices and unheard messages, and hides at zero");
     CHECK(clock_badge_opa(true) == 255 && clock_badge_opa(false) == 204, "urgent at full strength");
+    /* The image ships no sample messages; the suite brings its own, as the sim does. */
+    svc_messages_fake_clear();
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_1,
+                          &(msg_t){.id = 4, .voice = true, .dur_s = 5, .text = "When are you home?"});
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_2, &(msg_t){.id = 5, .voice = true, .played = true,
+                                                          .dur_s = 3, .text = "I made a drawing."});
+    svc_messages_fake_add("jerv", &(msg_t){.id = 2, .text = "Added milk to your shopping list."});
     CHECK(svc_messages_unplayed_total() == 1, "Quorra's unheard message is counted, Jerv's text is not");
     char who[16] = "";
-    CHECK(svc_messages_first_unplayed(who) && !strcmp(who, "quorra"), "and a tap opens her thread");
+    CHECK(svc_messages_first_unplayed(who) && !strcmp(who, SVC_MESSAGES_THREAD_1),
+          "and a tap opens her thread");
+    svc_messages_fake_clear();
 }
 
 static void test_day_and_date_read_like_the_mock(void)
@@ -1185,6 +1198,834 @@ static void test_a_hold_that_cannot_be_sent_says_so(void)
           "a knock or a cancel leaves nothing");
 }
 
+/* ---- 0.0.9: the debug relay's pickup, and BOOT held ---- */
+
+/* The buttons task in miniature: one raw sample every 10 ms through the debounce and the hold. */
+static void boot_samples(btn_db_t *db, btn_hold_t *h, uint32_t *t, bool pressed, int n, int *shorts, int *longs)
+{
+    for (int i = 0; i < n; i++, *t += 10) {
+        const btn_hold_ev_t e = btn_hold_step(h, btn_db_step(db, pressed), *t);
+        *shorts += e == BTN_HOLD_SHORT;
+        *longs += e == BTN_HOLD_LONG;
+    }
+}
+
+static void test_boot_short_is_back_on_release_and_long_is_the_clock_once(void)
+{
+    btn_db_t db = {0};
+    btn_hold_t h = {0};
+    uint32_t t = 1000;
+    int s = 0, l = 0;
+    boot_samples(&db, &h, &t, true, 30, &s, &l);
+    CHECK(s == 0 && l == 0, "a press held 0.3 s has done nothing yet: it might still be long");
+    boot_samples(&db, &h, &t, false, 5, &s, &l);
+    CHECK(s == 1 && l == 0, "its release is one home/back");
+
+    s = l = 0;
+    boot_samples(&db, &h, &t, true, BTN_LONG_MS / 10 + 3, &s, &l);
+    CHECK(l == 1 && s == 0, "held past the threshold, the clock fires while still held");
+    boot_samples(&db, &h, &t, false, 5, &s, &l);
+    CHECK(l == 1 && s == 0, "and its release is not also a home/back");
+
+    s = l = 0;
+    boot_samples(&db, &h, &t, true, 6000, &s, &l);
+    CHECK(l == 1 && s == 0, "held for a minute it fires once, not on repeat");
+    boot_samples(&db, &h, &t, false, 5, &s, &l);
+
+    s = l = 0;
+    for (int i = 0; i < 50; i++) {
+        boot_samples(&db, &h, &t, true, BTN_DB_SAMPLES - 1, &s, &l);
+        boot_samples(&db, &h, &t, false, 1, &s, &l);
+    }
+    CHECK(s == 0 && l == 0, "a chattering contact below the debounce is nothing at all");
+
+    btn_hold_t w = {0};
+    CHECK(btn_hold_step(&w, 1, 0xFFFFFF00u) == BTN_HOLD_NONE &&
+              btn_hold_step(&w, 0, 0xFFFFFF00u + BTN_LONG_MS) == BTN_HOLD_LONG,
+          "the threshold holds across the 49-day wrap");
+    btn_hold_t z = {0};
+    CHECK(btn_hold_step(&z, -1, 5) == BTN_HOLD_NONE, "a release with no press before it is nothing");
+}
+
+static void test_boot_held_opens_the_clock_from_anywhere_but_the_clock(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = {0};
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_OPEN_CLOCK, "from home");
+    f.app_open = true;
+    sh_route_t r = sh_route_button(&st, &f, SH_BTN_BOOT_LONG);
+    CHECK(r.first == SH_ACT_OPEN_CLOCK && r.fallback == SH_ACT_NONE, "from an app, which is not asked");
+    f.clock_open = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_NONE, "on the clock it does nothing");
+    f.clock_open = false;
+    f.notices = 1;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_OPEN_CLOCK,
+          "over a notice too: the face keeps it as its badge");
+    f.notices = 0;
+    f.talking = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_CANCEL_TALK,
+          "over the talk ring it is BOOT: cancel");
+    f.talking = false;
+    f.alarm_ringing = true;
+    r = sh_route_button(&st, &f, SH_BTN_BOOT_LONG);
+    CHECK(r.first == SH_ACT_TO_APP && r.fallback == SH_ACT_STOP_ALARM, "on a ringing alarm it is BOOT: stop");
+    f.alarm_ringing = false;
+    f.dark = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_WAKE, "on a dark screen it only wakes");
+}
+
+static void test_the_pickup_waits_three_seconds_backs_off_and_never_jumps_the_manifest(void)
+{
+    dbg_sched_t s;
+    uint32_t sleep = 0;
+    dbg_sched_init(&s, 1000);
+    CHECK(dbg_sched_next(&s, 1000, 61000, true, &sleep) == DBG_NEXT_POLL, "the first pickup is at once");
+    dbg_sched_done(&s, 1000, DBG_POLL_EMPTY);
+    CHECK(dbg_sched_next(&s, 1000, 61000, true, &sleep) == DBG_NEXT_SLEEP && sleep == DBG_POLL_MS,
+          "nothing waiting: three seconds");
+    dbg_sched_done(&s, 4000, DBG_POLL_CMD);
+    CHECK(dbg_sched_next(&s, 4000, 61000, true, &sleep) == DBG_NEXT_SLEEP && sleep == DBG_POLL_AFTER_CMD_MS,
+          "after a command, sooner: the session is likely to ask again");
+    uint32_t gaps[7];
+    for (int i = 0; i < 7; i++) {
+        dbg_sched_done(&s, 0, DBG_POLL_FAIL);
+        gaps[i] = s.due_ms;
+    }
+    CHECK(gaps[0] == 6000 && gaps[1] == 12000 && gaps[2] == 24000 && gaps[3] == 48000 &&
+              gaps[4] == DBG_POLL_MAX_MS && gaps[6] == DBG_POLL_MAX_MS,
+          "a dead box is asked at 6, 12, 24, 48, then every 60 s");
+    dbg_sched_done(&s, 0, DBG_POLL_EMPTY);
+    CHECK(s.due_ms == DBG_POLL_MS && s.fails == 0, "one answer and it is back to three seconds");
+
+    dbg_sched_init(&s, 0);
+    CHECK(dbg_sched_next(&s, 5000, 5000, true, &sleep) == DBG_NEXT_CHECK,
+          "a due manifest goes before a due pickup");
+    CHECK(dbg_sched_next(&s, 5000, 6000, false, &sleep) == DBG_NEXT_SLEEP && sleep == 1000,
+          "offline, nothing but the manifest check is scheduled");
+    dbg_sched_init(&s, 0xFFFFF000u);
+    dbg_sched_done(&s, 0xFFFFF000u, DBG_POLL_EMPTY);
+    CHECK(dbg_sched_next(&s, 0xFFFFF000u, 0x00010000u, true, &sleep) == DBG_NEXT_SLEEP && sleep == DBG_POLL_MS,
+          "across the 49-day wrap the pickup is still three seconds out");
+    CHECK(dbg_sched_next(&s, 0x00001000u, 0x00010000u, true, &sleep) == DBG_NEXT_POLL, "and due after it");
+}
+
+static void test_the_relay_reports_itself_in_one_token(void)
+{
+    dbg_stats_t s = {.polls_ok = 1200, .polls_err = 3, .cmds = 4, .last_cmd = "screenshot",
+                     .last_status = 204, .shot_bytes = 31012, .shot_ms = 240};
+    char out[96];
+    dbg_stats_note(&s, out, sizeof out);
+    CHECK(!strcmp(out, "dbg=ok:1200,err:3,cmds:4,last:screenshot/204,shot:31012/240"), "dbg= as the README reads it");
+    dbg_stats_t z = {.last_status = -1};
+    dbg_stats_note(&z, out, sizeof out);
+    CHECK(!strcmp(out, "dbg=ok:0,err:0,cmds:0,last:-/-1,shot:0/0"), "and before any command");
+}
+
+static void test_a_request_id_is_uuid_text_or_it_is_dropped(void)
+{
+    CHECK(dbg_req_id_ok("0b6c2a7e-41d3-4f0a-9a51-3d2e8c1f7b90"), "the box's ids pass");
+    CHECK(!dbg_req_id_ok(""), "an empty id does not");
+    CHECK(!dbg_req_id_ok("../telemetry"), "a path does not");
+    CHECK(!dbg_req_id_ok("abc?x=1"), "a query does not");
+    CHECK(!dbg_req_id_ok("0b6c2a7e-41d3-4f0a-9a51-3d2e8c1f7b90-0000"), "nor one longer than the request holds");
+}
+
+static void test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short(void)
+{
+    static const char token[] = "dk_live_9f8e7d6c5b4a39281706f5e4";
+    static const char pass[] = "correct horse";
+    dbg_secret_clear();
+    dbg_secret_add(token);
+    dbg_secret_add(pass);
+    CHECK(dbg_secret_registered(token) && dbg_secret_registered(pass) && !dbg_secret_registered("dk_live"),
+          "registration is by exact value");
+    dbg_log_reset();
+    dbg_log_line("auth Bearer dk_live_9f8e7d6c5b4a39281706f5e4 ok");
+    char line[200];
+    snprintf(line, sizeof line, "I (5) wifi: joining with '%s' then '%s'\n", pass, pass);
+    dbg_log_line(line);
+    /* The line limit lands inside the token: what is left is still most of it. */
+    char fmt[DBG_LOG_LINE_MAX + 64];
+    memset(fmt, '.', DBG_LOG_LINE_MAX - 12);
+    snprintf(fmt + DBG_LOG_LINE_MAX - 12, sizeof fmt - (DBG_LOG_LINE_MAX - 12), "%s\n", token);
+    log_via_hook("%s", fmt);
+    static char buf[4096];
+    dbg_json_t w;
+    dbg_json_init(&w, buf, sizeof buf);
+    dbg_json_obj_begin(&w, NULL);
+    dbg_log_write(&w, "lines");
+    dbg_json_obj_end(&w);
+    CHECK(!strstr(buf, "dk_live_9f8e") && !strstr(buf, "horse"), "neither secret, whole or cut, is in the dump");
+    CHECK(strstr(buf, "\"auth Bearer " DBG_REDACTED " ok\""), "a whole one is replaced and the line kept");
+    CHECK(strstr(buf, "joining with '" DBG_REDACTED "' then '" DBG_REDACTED "'"), "every occurrence of it");
+    CHECK(strstr(buf, "......" DBG_REDACTED "\""), "a clipped one is cut at its start and marked");
+    char plain[] = "a line that merely ends in dk_l";
+    CHECK(!dbg_secret_scrub(plain, sizeof plain, false), "an unclipped line ending like a secret is left alone");
+    char tiny[12] = "x correct h";
+    dbg_secret_scrub(tiny, sizeof tiny, true);
+    CHECK(strlen(tiny) < sizeof tiny && !strstr(tiny, "corr"), "the marker never overruns the buffer");
+    dbg_secret_clear();
+}
+
+static void test_the_stream_is_byte_for_byte_what_the_box_decodes(void)
+{
+    /* The box's own vectors (backend/tests/unit/test_panel_debug_relay.py, `jps1()`), as bytes. */
+    static uint8_t out[256];
+    mem_t m = {out, 0, sizeof out, 0};
+    dbg_shot_t s;
+    const uint16_t two[] = {0xFFFF, 0x8410};
+    dbg_shot_begin(&s, 2, 1, mem_sink, &m);
+    dbg_shot_stripe(&s, 0, 1, two);
+    CHECK(dbg_shot_end(&s), "a 2x1 frame encodes");
+    static const uint8_t WANT2[] = {'J', 'P', 'S', '1', 2, 0, 1, 0, 0, 0, 1, 0, 6, 0, 0, 0,
+                                    0, 0xFF, 0xFF, 0, 0x10, 0x84, 0xFF, 0xFF};
+    CHECK(m.n == sizeof WANT2 && !memcmp(out, WANT2, sizeof WANT2),
+          "white and mid-grey: little-endian RGB565, not byte-swapped for the glass");
+
+    m.n = 0;
+    const uint16_t px[] = {1, 1, 2, 2, 3, 3, 4, 4};
+    dbg_shot_begin(&s, 4, 2, mem_sink, &m);
+    dbg_shot_stripe(&s, 0, 1, px);
+    dbg_shot_stripe(&s, 1, 1, px + 4);
+    dbg_shot_end(&s);
+    static const uint8_t WANT4[] = {'J', 'P', 'S', '1', 4, 0, 2, 0, 0, 0, 1, 0, 6, 0, 0, 0, 1, 1, 0, 1,
+                                    2, 0, 1, 0, 1, 0, 6, 0, 0, 0, 1, 3, 0, 1, 4, 0, 0xFF, 0xFF};
+    CHECK(m.n == sizeof WANT4 && !memcmp(out, WANT4, sizeof WANT4), "the box's one-row-stripe vector, exactly");
+
+    static uint16_t row[300];
+    static uint8_t big[2048];
+    mem_t b = {big, 0, sizeof big, 0};
+    for (int i = 0; i < 300; i++) row[i] = 0x1234;
+    dbg_shot_begin(&s, 128, 1, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_end(&s);
+    CHECK(big[16] == 127 && b.n == 8 + 8 + 3 + 2, "128 alike is one run of the most a byte says");
+    b.n = 0;
+    dbg_shot_begin(&s, 129, 1, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_end(&s);
+    CHECK(big[16] == 127 && big[19] == 0 && b.n == 8 + 8 + 6 + 2, "129 is that and a run of one");
+    b.n = 0;
+    dbg_shot_begin(&s, 100, 3, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 3, row);
+    dbg_shot_end(&s);
+    CHECK(big[16] == 127 && big[19] == 127 && big[22] == 43 && b.n == 8 + 8 + 9 + 2,
+          "a run carries on across rows inside a stripe");
+    b.n = 0;
+    dbg_shot_begin(&s, 4, 2, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_stripe(&s, 1, 1, row);
+    dbg_shot_end(&s);
+    CHECK(b.n == 8 + 2 * (8 + 3) + 2 && big[16] == 3 && big[27] == 3, "but never across a stripe");
+    for (int i = 0; i < 300; i++) row[i] = (uint16_t)(i & 1 ? 0xF800 : 0x001F);
+    b.n = 0;
+    dbg_shot_begin(&s, 64, 1, mem_sink, &b);
+    dbg_shot_stripe(&s, 0, 1, row);
+    dbg_shot_end(&s);
+    CHECK(b.n == 8 + 8 + 64 * 3 + 2 && big[12] == 192, "alternating pixels cost 3 bytes each, as the length says");
+    uint16_t back[64];
+    CHECK(dbg_shot_decode(big, b.n, back, 64, 1) && !memcmp(back, row, sizeof back), "and decode back");
+    dbg_shot_begin(&s, 64, 1, mem_sink, &b);
+    CHECK(!dbg_shot_stripe(&s, 0, 0, row), "a stripe of no rows fails the capture rather than send one");
+}
+
+/* ---- 0.0.10: sound, and the talk to Jerv ---- */
+
+static void test_the_ring_never_overwrites_and_wraps(void)
+{
+    uint8_t mem[8], out[8];
+    tk_ring_t r;
+    tk_ring_init(&r, mem, sizeof mem);
+    CHECK(tk_ring_write(&r, "abcdef", 6) == 6 && tk_ring_used(&r) == 6, "it takes what fits");
+    CHECK(tk_ring_write(&r, "ghij", 4) == 2 && tk_ring_free(&r) == 0,
+          "a full ring takes no more: the producer never overwrites unread bytes");
+    CHECK(tk_ring_read(&r, out, 5) == 5 && !memcmp(out, "abcde", 5), "the oldest come out first");
+    CHECK(tk_ring_write(&r, "KLMN", 4) == 4, "freed room is reused across the end");
+    CHECK(tk_ring_read(&r, out, 8) == 7 && !memcmp(out, "fghKLMN", 7),
+          "and reads back in order across the wrap");
+    CHECK(tk_ring_read(&r, out, 4) == 0, "the consumer never reads past the producer");
+}
+
+static void test_a_hold_records_sends_and_hears_back(void)
+{
+    tk_t t;
+    tk_init(&t);
+    CHECK(tk_begin(&t, 1000, true, 7) == TK_BEGIN_OK && tk_audio_want(&t) == TK_AUDIO_MIC,
+          "KEY down opens the microphone");
+    CHECK(tk_net_claim(&t) && !tk_net_claim(&t), "the main task takes the exchange once");
+    CHECK(tk_net_next(&t) == TK_NET_UPLOAD, "while KEY is held the recording goes up");
+    t.mic_on = true;
+    CHECK(tk_end(&t, 4500, true) == TALK_SENT && t.held_ms == 3500, "the release sends");
+    CHECK(tk_net_next(&t) == TK_NET_FINISH && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "the upload finishes and the microphone closes");
+    CHECK(tk_replying(&t) && tk_begin(&t, 4600, true, 9) == TK_BEGIN_BUSY,
+          "a press while Jerv thinks starts nothing");
+    t.mic_on = false;
+    tk_net_reply(&t, true);
+    CHECK(t.phase == TK_PLAY && tk_audio_want(&t) == TK_AUDIO_SPK && tk_net_wants_audio(&t),
+          "the words come back and the speech plays");
+    char why[40];
+    CHECK(tk_take(&t, why, sizeof why) == TK_RES_REPLY && tk_take(&t, why, sizeof why) == TK_RES_NONE,
+          "the glass hears of the reply once");
+    tk_audio_drained(&t);
+    CHECK(t.phase == TK_PLAY, "the speaker is not done while the network may still send");
+    tk_net_end(&t);
+    tk_audio_drained(&t);
+    CHECK(t.phase == TK_IDLE && tk_take(&t, why, sizeof why) == TK_RES_SPOKEN,
+          "once all of it has played, the reply is spoken");
+    CHECK(tk_quiet(&t), "and nothing touches the ring any more");
+}
+
+static void test_a_knock_or_a_cancel_lets_go_of_everything(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    CHECK(tk_end(&t, 300, true) == TALK_TOO_SHORT && t.abort && tk_net_next(&t) == TK_NET_ABORT,
+          "a knock drops the upload, so the box hears no turn");
+    tk_net_end(&t);
+    CHECK(tk_begin(&t, 1000, true, 3) == TK_BEGIN_OK && !t.abort, "and the next hold starts clean");
+    CHECK(tk_end(&t, 9000, false) == TALK_CANCELLED && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "a tap on the glass cancels however long the hold");
+    t.mic_on = true;
+    CHECK(tk_begin(&t, 9100, true, 5) == TK_BEGIN_BUSY,
+          "a hold waits for the microphone a dropped one still has open");
+}
+
+static void test_key_or_boot_over_a_reply_stops_it(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    tk_net_reply(&t, true);
+    CHECK(tk_begin(&t, 3000, true, 3) == TK_BEGIN_STOPPED && t.phase == TK_IDLE && t.abort,
+          "KEY while Jerv speaks stops the speech and records nothing");
+    CHECK(!tk_net_wants_audio(&t) && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "the network stops sending it and the speaker closes");
+    tk_net_end(&t);
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    CHECK(tk_stop(&t) && !tk_replying(&t), "BOOT while Jerv thinks drops the wait");
+    tk_net_reply(&t, true);
+    CHECK(t.phase == TK_IDLE && t.res == TK_RES_NONE, "and an answer arriving after is not shown");
+    CHECK(!tk_stop(&t), "with nothing to stop, BOOT is BOOT again");
+}
+
+static void test_a_box_that_drops_mid_hold_is_told_at_the_release(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_net_fail(&t, "the upload failed");
+    CHECK(tk_audio_want(&t) == TK_AUDIO_OFF, "the microphone stops when nothing is listening");
+    CHECK(tk_end(&t, 5000, true) == TALK_FAILED && t.res == TK_RES_FAILED && !strcmp(t.why, "the upload failed"),
+          "the release learns it was not sent, and why");
+}
+
+static void test_text_only_never_opens_the_speaker(void)
+{
+    tk_t t;
+    tk_init(&t);
+    tk_begin(&t, 0, false, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    tk_net_reply(&t, true);
+    CHECK(t.phase == TK_IDLE && t.res == TK_RES_REPLY && tk_audio_want(&t) == TK_AUDIO_OFF,
+          "with read-aloud off the words come and the speaker stays shut");
+    tk_init(&t);
+    tk_begin(&t, 0, true, 1);
+    tk_net_claim(&t);
+    tk_end(&t, 2000, true);
+    tk_net_nothing(&t);
+    CHECK(t.phase == TK_IDLE && t.res == TK_RES_NOTHING, "silence is its own answer, not a failure");
+}
+
+static void frame_bytes(uint8_t *b, size_t *n, uint8_t flags, const char *heard, const char *reply,
+                        const char *pcm)
+{
+    size_t k = 0;
+    memcpy(b, "JT1", 3);
+    k = 3;
+    b[k++] = flags;
+    const size_t hl = strlen(heard), rl = strlen(reply);
+    b[k++] = (uint8_t)hl;
+    b[k++] = (uint8_t)(hl >> 8);
+    memcpy(b + k, heard, hl);
+    k += hl;
+    b[k++] = (uint8_t)rl;
+    b[k++] = (uint8_t)(rl >> 8);
+    memcpy(b + k, reply, rl);
+    k += rl;
+    memcpy(b + k, pcm, strlen(pcm));
+    *n = k + strlen(pcm);
+}
+
+static void test_the_reply_frame_reads_in_any_split(void)
+{
+    uint8_t b[1200];
+    size_t n;
+    frame_bytes(b, &n, TF_FLAG_AUDIO, "what time is sunset", "About seven tonight.", "PCMPCM");
+    tk_frame_t f;
+    tk_frame_init(&f);
+    const size_t used = tk_frame_feed(&f, b, n);
+    CHECK(tk_frame_done(&f) && used == n - 6 && !strcmp(f.heard, "what time is sunset") &&
+              !strcmp(f.reply, "About seven tonight.") && (f.flags & TF_FLAG_AUDIO),
+          "whole, the words come out and the speech is what is left");
+    tk_frame_init(&f);
+    size_t head = 0;
+    for (size_t i = 0; i < n && !tk_frame_done(&f); i++) head += tk_frame_feed(&f, b + i, 1);
+    CHECK(tk_frame_done(&f) && head == n - 6 && !strcmp(f.reply, "About seven tonight."),
+          "a byte at a time, the same");
+    frame_bytes(b, &n, 0, "hi", "", "");
+    tk_frame_init(&f);
+    CHECK(tk_frame_feed(&f, b, n) == n && tk_frame_done(&f) && f.reply[0] == '\0' && !(f.flags & TF_FLAG_AUDIO),
+          "an empty reply and no speech is still a whole frame");
+    tk_frame_init(&f);
+    CHECK(tk_frame_feed(&f, (const uint8_t *)"<html>", 6) <= 6 && tk_frame_bad(&f),
+          "anything else — an error page — is refused at the first byte");
+    /* 300 two-byte letters: more than a bubble holds. */
+    char longr[601];
+    for (int i = 0; i < 300; i++) memcpy(longr + 2 * i, "\xC3\xA9", 2);
+    longr[600] = '\0';
+    frame_bytes(b, &n, 0, "x", longr, "");
+    tk_frame_init(&f);
+    tk_frame_feed(&f, b, n);
+    const size_t len = strlen(f.reply);
+    CHECK(tk_frame_done(&f) && len < sizeof f.reply && !strcmp(f.reply + len - 3, "…") &&
+              (len - 3) % 2 == 0,
+          "a reply too long for a bubble is cut on a character, with an ellipsis");
+}
+
+static void test_two_microphones_average_and_each_peak_is_kept(void)
+{
+    const int16_t lr[] = {1000, 3000, -32768, 0, 10, -20};
+    int16_t mono[3];
+    uint16_t pl, pr;
+    talk_mono(lr, 3, mono, &pl, &pr);
+    CHECK(mono[0] == 2000 && mono[1] == -16384 && mono[2] == -5, "the box gets the two averaged");
+    CHECK(pl == 32767 && pr == 3000, "and each microphone's peak is kept, so a dead one shows");
+    CHECK(talk_level(0) == 0 && talk_level(31) == 0 && talk_level(32767) == 100 &&
+              talk_level(4000) > talk_level(500),
+          "the ring pulses with the voice, quiet at -60 dB and full at full scale");
+}
+
+static void test_the_audio_token(void)
+{
+    tk_stats_t s = {.talks = 3, .sent = 2, .replies = 1, .failed = 1, .up_bytes = 65536,
+                    .down_bytes = 2048, .reply_ms = 2400, .reply_ms_max = 5100, .underruns = 4};
+    char out[200];
+    tk_stats_note(&s, "ok", out, sizeof out);
+    CHECK(!strcmp(out, "audio=ok,talks:3,sent:2,heard:1,none:0,fail:1,stop:0,up:64K,down:2K,"
+                       "ms:2400/5100,under:4,over:0"),
+          "telemetry says what the codecs did and what each talk cost");
+}
+
+static msg_t last_jerv(void)
+{
+    msg_t m = {0};
+    svc_messages_get("jerv", (uint16_t)(svc_messages_count("jerv") - 1), &m);
+    return m;
+}
+
+static void test_a_talk_on_the_glass_end_to_end(void)
+{
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_settings_set(SET_TTS, 1);
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv") && svc_audio_talking(), "KEY down records");
+    svc_rtc_fake_advance_ms(3200);
+    CHECK(svc_audio_talk_end(true) == TALK_SENT, "a three-second hold is sent");
+    msg_t m = last_jerv();
+    CHECK(m.mine && m.voice && m.pending && m.dur_s == 3 && !strcmp(m.text, TALK_HEARING),
+          "the bubble says it is being heard, never a made-up transcript");
+    CHECK(svc_audio_replying(), "and Jerv is thinking");
+    svc_audio_fake_reply("what time is sunset", "About seven tonight.", true);
+    svc_audio_service();
+    CHECK(svc_messages_count("jerv") == 2, "the reply arrives as a second bubble");
+    msg_t heard;
+    svc_messages_get("jerv", 0, &heard);
+    m = last_jerv();
+    CHECK(!heard.pending && !strcmp(heard.text, "what time is sunset"),
+          "the voice bubble now holds what the box heard");
+    CHECK(!m.mine && !strcmp(m.text, "About seven tonight.") && svc_audio_playing() == m.id,
+          "Jerv's words are shown while its voice plays");
+    CHECK(svc_audio_stop_reply() && svc_audio_playing() == 0 && !svc_audio_replying(),
+          "BOOT stops the voice; the words stay");
+    svc_audio_service();
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "the next hold may start");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    CHECK(svc_audio_stop_reply(), "BOOT while Jerv thinks");
+    m = last_jerv();
+    CHECK(!m.pending && !strcmp(m.status, "Stopped"), "leaves the bubble saying it was stopped");
+    svc_audio_fake_reply("late", "too late", false);
+    svc_audio_service();
+    CHECK(svc_messages_count("jerv") == 3, "and an answer arriving after is never drawn");
+    svc_settings_set(SET_TTS, 1);
+}
+
+static void test_a_hold_that_cannot_reach_jerv_is_refused_up_front(void)
+{
+    svc_net_fake_set(NET_OFF);
+    CHECK(!svc_audio_talk_begin(TALK_TO_AGENT, "jerv") && strstr(svc_audio_talk_refused(), "Wi-Fi"),
+          "offline, KEY says why instead of recording into nothing");
+    svc_net_fake_set(NET_CONNECTED);
+    CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1), "a hold to a person still starts");
+    svc_rtc_fake_advance_ms(1500);
+    CHECK(svc_audio_talk_end(true) == TALK_SENT, "and still ends honestly unsent");
+}
+
+static void test_key_or_boot_over_a_reply_is_the_shells_stop(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.replying = true;
+    sh_route_t r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_STOP_REPLY && st.key_owner == SH_KEY_FREE,
+          "KEY over a reply stops it, in any app, and takes no hold");
+    r = sh_route_button(&st, &f, SH_BTN_KEY_UP);
+    CHECK(r.first == SH_ACT_NONE, "so its release sends nothing");
+    r = sh_route_button(&st, &f, SH_BTN_BOOT);
+    CHECK(r.first == SH_ACT_STOP_REPLY, "BOOT over a reply stops it rather than going back");
+    f = home();
+    f.replying = true;
+    f.alarm_ringing = true;
+    r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.fallback == SH_ACT_SNOOZE_ALARM, "a ringing alarm still takes KEY first");
+    f = home();
+    r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_TALK_JERV, "with no reply, KEY is Jerv's again");
+}
+
+static void test_the_speaker_settings(void)
+{
+    CHECK(settings_volume_from_slider(3) == VOLUME_FLOOR && settings_volume_from_slider(73) == 75 &&
+              settings_volume_from_slider(100) == 100,
+          "the volume slider snaps to fives and never reaches silence");
+    CHECK(svc_settings_clamp(SET_VOLUME, 0) == VOLUME_FLOOR && svc_settings_clamp(SET_MIC_GAIN, 99) == MIC_GAIN_MAX &&
+              svc_settings_clamp(SET_MIC_GAIN, -3) == 0,
+          "whoever writes them, volume and microphone gain stay in range");
+    CHECK(!strcmp(svc_settings_name(SET_VOLUME), "volume") && !strcmp(svc_settings_name(SET_MIC_GAIN), "mic_gain") &&
+              svc_settings_default(SET_VOLUME) == 80 && svc_settings_default(SET_MIC_GAIN) == 24,
+          "saved under short NVS keys; the microphone 6 dB under 0.0.10's near-clipping 30");
+    bool spk;
+    CHECK(!strcmp(settings_jerv_note(true, "ok", &spk), "Replies are spoken and shown as text.") && spk,
+          "with sound working the card says what a reply does");
+    CHECK(strstr(settings_jerv_note(true, "failed:i2c", &spk), "cannot record") && !spk,
+          "a codec that did not start is said plainly");
+    CHECK(strstr(settings_jerv_note(true, "mic-only:es8311", &spk), "text only") && !spk,
+          "a silent speaker means text-only replies, and no volume slider");
+}
+
+static void test_play_tone_is_whitelisted_and_harmless(void)
+{
+    const dbg_cmd_info_t *c = dbg_cmd_find("play_tone");
+    CHECK(c && !c->destructive && c->idempotent, "the box may ask for a tone and retry it");
+}
+
+/* ---- 0.0.11: the conversation menu, two agents, the siblings ---- */
+
+static void test_a_still_finger_is_a_long_press_once_and_a_scroll_never(void)
+{
+    sh_lp_t lp = {0};
+    CHECK(!sh_long_press(&lp, true, 100, 200, 1000), "a finger lands");
+    CHECK(!sh_long_press(&lp, true, 105, 204, 1000 + SH_LONG_PRESS_MS - 1), "not before the threshold");
+    CHECK(sh_long_press(&lp, true, 108, 206, 1000 + SH_LONG_PRESS_MS), "held still past it: a long press");
+    CHECK(!sh_long_press(&lp, true, 108, 206, 1000 + 3 * SH_LONG_PRESS_MS), "once per stroke");
+    CHECK(!sh_long_press(&lp, false, 0, 0, 5000), "lifted");
+    CHECK(!sh_long_press(&lp, true, 100, 200, 6000), "the next stroke starts over");
+    CHECK(!sh_long_press(&lp, true, 100, 200 + SH_TAP_SLOP, 6100), "it moves a scroll's distance");
+    CHECK(!sh_long_press(&lp, true, 100, 200, 6000 + 2 * SH_LONG_PRESS_MS),
+          "and coming back to rest does not make a scroll a long press");
+    sh_long_press(&lp, false, 0, 0, 9000);
+    CHECK(!sh_long_press(&lp, true, 300, 300, 10000) && !sh_long_press(&lp, false, 0, 0, 10300),
+          "a tap is never one");
+}
+
+static void test_the_menu_opens_only_over_a_clear_conversation(void)
+{
+    sh_facts_t f = in_app();
+    CHECK(sh_menu_may_open(&f, true), "over a conversation, a long press opens it");
+    CHECK(!sh_menu_may_open(&f, false), "over Settings, the Clock or the Minecraft menu, never");
+    CHECK(!sh_menu_may_open(&(sh_facts_t){0}, true), "nor on home");
+    f.talking = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor under a hold");
+    f = in_app();
+    f.dark = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor on a dark screen");
+    f = in_app();
+    f.notices = 1;
+    CHECK(!sh_menu_may_open(&f, true), "nor under a notice");
+    f.notices_held = true;
+    CHECK(sh_menu_may_open(&f, true), "a notice the face holds as a badge covers nothing");
+    f = in_app();
+    f.alarm_ringing = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor under a ringing alarm");
+    f = in_app();
+    f.menu_open = true;
+    CHECK(!sh_menu_may_open(&f, true), "nor twice");
+}
+
+static void test_clear_chat_takes_two_taps_within_three_seconds(void)
+{
+    sh_menu_t m = {0};
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 0) == SH_MENU_DO_NOTHING, "a closed menu does nothing");
+    sh_menu_open(&m);
+    CHECK(!sh_menu_armed(&m, 0), "it opens unarmed");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 1000) == SH_MENU_DO_ARM && sh_menu_armed(&m, 1000),
+          "the first tap arms it: Tap again to clear");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 1000 + SH_MENU_ARM_MS - 1) == SH_MENU_DO_CLEAR &&
+              m.state == SH_MENU_CLOSED,
+          "the second inside the window clears and closes");
+    sh_menu_open(&m);
+    sh_menu_input(&m, SH_MENU_IN_CLEAR, 5000);
+    CHECK(!sh_menu_armed(&m, 5000 + SH_MENU_ARM_MS), "the arm lapses");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 5000 + SH_MENU_ARM_MS) == SH_MENU_DO_ARM,
+          "and a tap after it only arms again");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CANCEL, 9000) == SH_MENU_DO_CLOSE && m.state == SH_MENU_CLOSED,
+          "Cancel closes, clearing nothing");
+    sh_menu_open(&m);
+    sh_menu_input(&m, SH_MENU_IN_CLEAR, 10000);
+    CHECK(sh_menu_input(&m, SH_MENU_IN_OUTSIDE, 10100) == SH_MENU_DO_CLOSE, "a tap outside closes, even armed");
+    sh_menu_open(&m);
+    CHECK(!m.armed, "and the next opening starts unarmed");
+}
+
+static void test_buttons_over_the_menu_only_close_it(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.menu_open = true;
+    sh_route_t r = sh_route_button(&st, &f, SH_BTN_KEY_DOWN);
+    CHECK(r.first == SH_ACT_CLOSE_MENU && st.key_owner == SH_KEY_FREE,
+          "KEY closes the menu and starts no recording");
+    f.menu_open = false;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_UP).first == SH_ACT_NONE, "so its release sends nothing");
+    f.menu_open = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_CLOSE_MENU, "BOOT closes it, not the app");
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT_LONG).first == SH_ACT_CLOSE_MENU,
+          "BOOT held closes it rather than jumping to the Clock under it");
+    f.replying = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_CLOSE_MENU,
+          "over a reply too, the menu is what KEY reaches first");
+    f.replying = false;
+    f.notices = 1;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_NONE, "a notice waits for the menu to close");
+    f.alarm_ringing = true;
+    CHECK(sh_top_overlay(&st, &f) == SH_OV_ALARM &&
+              sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_TO_APP,
+          "a ringing alarm outranks it");
+}
+
+static void test_jerv_and_dave_are_two_threads_and_two_conversations(void)
+{
+    char path[96];
+    tk_converse_path(TK_AGENT_JERV, true, false, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/converse?persona=jerv&voice=true"), "Jerv's talk, as 0.0.10 sent it");
+    tk_converse_path(TK_AGENT_DAVE, false, true, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/converse?persona=dave&voice=false&new_thread=true"),
+          "Dave's, text only, after Clear chat");
+    tk_agent_t a = TK_AGENT_JERV;
+    CHECK(tk_agent_from("dave", &a) && a == TK_AGENT_DAVE && !tk_agent_from("thread1", &a),
+          "an agent is named by its thread; a person's thread is not one");
+    CHECK(!strcmp(tk_agent_id((tk_agent_t)9), "jerv"), "an unknown agent is never sent as one");
+
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_settings_set(SET_TTS, 0);
+    svc_messages_fake_add("jerv", &(msg_t){.id = 7, .text = "Jerv said this."});
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "dave"), "KEY in Dave's thread talks to Dave");
+    CHECK(strstr(svc_audio_fake_last_path(), "persona=dave") != NULL, "the box is asked for Dave");
+    svc_rtc_fake_advance_ms(2000);
+    svc_audio_talk_end(true);
+    svc_audio_fake_reply("where is my base", "North of spawn.", false);
+    svc_audio_service();
+    msg_t m;
+    CHECK(svc_messages_count("dave") == 2 && svc_messages_get("dave", 1, &m) &&
+              !strcmp(m.text, "North of spawn."),
+          "Dave's answer is in Dave's thread");
+    CHECK(svc_messages_count("jerv") == 1 && svc_messages_get("jerv", 0, &m) &&
+              !strcmp(m.text, "Jerv said this."),
+          "and Jerv's thread is exactly as it was");
+
+    CHECK(svc_messages_clear("dave") && svc_messages_count("dave") == 0 &&
+              svc_messages_count("jerv") == 1,
+          "clearing Dave's thread never touches Jerv's");
+    CHECK(!svc_messages_clear("quorra"), "there is no thread by a name");
+    for (uint32_t i = 0; i < 20; i++) svc_messages_fake_add("dave", &(msg_t){.id = 100 + i});
+    CHECK(svc_messages_count("dave") == 8 && svc_messages_count("jerv") == 1,
+          "Dave's eight are his own: a busy Dave pushes out none of Jerv's");
+    for (uint32_t i = 0; i < 9; i++) svc_messages_fake_add(SVC_MESSAGES_THREAD_1, &(msg_t){.id = 200 + i});
+    CHECK(svc_messages_count(SVC_MESSAGES_THREAD_1) == 4, "a person's thread keeps four");
+    svc_messages_fake_clear();
+    svc_settings_set(SET_TTS, 1);
+}
+
+static void test_clear_chat_asks_that_agent_alone_for_a_new_conversation(void)
+{
+    svc_messages_fake_clear();
+    svc_audio_init();
+    svc_audio_fresh("jerv");
+    CHECK(svc_audio_fresh_pending("jerv") && !svc_audio_fresh_pending("dave"), "Jerv's, not Dave's");
+    svc_audio_fresh(SVC_MESSAGES_THREAD_1);
+    CHECK(!svc_audio_fresh_pending(SVC_MESSAGES_THREAD_1), "a person's thread has no box conversation");
+
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "dave"), "a talk to Dave");
+    CHECK(strstr(svc_audio_fake_last_path(), "new_thread") == NULL, "carries no new_thread");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    svc_audio_fake_reply("hi", "Hello.", false);
+    svc_audio_service();
+
+    CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv"), "the next talk to Jerv");
+    CHECK(strstr(svc_audio_fake_last_path(), "persona=jerv") &&
+              strstr(svc_audio_fake_last_path(), "&new_thread=true"),
+          "asks the box for a new conversation");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    talk_net_nothing();
+    talk_net_end(0, 0, 0);
+    svc_audio_service();
+    CHECK(svc_audio_fresh_pending("jerv"), "a hold the box heard nothing in keeps the request");
+
+    svc_audio_talk_begin(TALK_TO_AGENT, "jerv");
+    CHECK(strstr(svc_audio_fake_last_path(), "&new_thread=true") != NULL, "so the next one asks again");
+    svc_rtc_fake_advance_ms(1500);
+    svc_audio_talk_end(true);
+    svc_audio_fake_reply("start over", "Fresh start.", false);
+    svc_audio_service();
+    CHECK(!svc_audio_fresh_pending("jerv"), "answered, the box has started it");
+    svc_audio_talk_begin(TALK_TO_AGENT, "jerv");
+    CHECK(strstr(svc_audio_fake_last_path(), "new_thread") == NULL, "and the talk after continues it");
+    svc_rtc_fake_advance_ms(100);
+    svc_audio_talk_end(false);
+    svc_audio_service();
+    svc_messages_fake_clear();
+}
+
+static const char BOX_JSON[] =
+    "{\"siblings\": [{\"device_id\": \"11111111-aaaa-4bbb-8ccc-000000000001\", \"name\": \"Quorra\"},"
+    " {\"name\": \"Tamsin\", \"extra\": {\"a\": [1, 2]}, \"device_id\": \"22222222-aaaa-4bbb-8ccc-000000000002\"}]}";
+
+static void test_the_box_s_siblings_json_is_read_as_the_box_writes_it(void)
+{
+    sib_list_t l;
+    CHECK(sib_parse(BOX_JSON, sizeof BOX_JSON - 1, &l) && l.n == 2, "two siblings");
+    CHECK(!strcmp(l.s[0].name, "Quorra") && !strcmp(l.s[1].name, "Tamsin") &&
+              !strcmp(l.s[1].device_id, "22222222-aaaa-4bbb-8ccc-000000000002"),
+          "names and ids, whatever the key order, past keys it does not know");
+    const char empty[] = "{\"siblings\":[]}";
+    CHECK(sib_parse(empty, sizeof empty - 1, &l) && l.n == 0, "an empty list is a list");
+    const char five[] =
+        "{\"siblings\":[{\"device_id\":\"a\",\"name\":\"A\"},{\"device_id\":\"b\",\"name\":\"B\"},"
+        "{\"device_id\":\"c\",\"name\":\"C\"},{\"device_id\":\"d\",\"name\":\"D\"},"
+        "{\"device_id\":\"e\",\"name\":\"E\"},{\"name\":\"no id\"}]}";
+    CHECK(sib_parse(five, sizeof five - 1, &l) && l.n == SIB_MAX && !strcmp(l.s[3].name, "D"),
+          "at most four, the box's first four");
+    const char escaped[] = "{\"siblings\":[{\"device_id\":\"x\",\"name\":\"Zo\\u00eb \\\"Z\\\"\"}]}";
+    CHECK(sib_parse(escaped, sizeof escaped - 1, &l) && !strcmp(l.s[0].name, "Zo? \"Z\""),
+          "escapes decoded; a letter the font lacks drawn as ?");
+    const char raw[] = "{\"siblings\":[{\"device_id\":\"x\",\"name\":\"Ren\xc3\xa9\xe2\x98\x85\"}]}";
+    CHECK(sib_parse(raw, sizeof raw - 1, &l) && !strcmp(l.s[0].name, "Ren??"),
+          "raw UTF-8 too: one ? per character, not per byte");
+    static const char *const BAD[] = {"", "[]", "{}", "{\"siblings\":{}}", "{\"siblings\":[1]}",
+                                      "{\"siblings\":[{\"device_id\":\"x\"", "{\"other\":1}", "not json"};
+    for (size_t i = 0; i < sizeof BAD / sizeof *BAD; i++)
+        CHECK(!sib_parse(BAD[i], strlen(BAD[i]), &l), "anything else is refused, never half-read");
+}
+
+static void test_a_name_is_what_the_panel_can_draw(void)
+{
+    char out[SIB_NAME_BYTES + 1];
+    sib_clean_name("  Big   Room \t", out, sizeof out);
+    CHECK(!strcmp(out, "Big Room"), "spaces folded and trimmed");
+    sib_clean_name("A name far longer than twenty-four bytes", out, sizeof out);
+    CHECK(strlen(out) == SIB_NAME_BYTES, "cut at 24 bytes");
+    CHECK(sib_initial("quorra") == 'Q' && sib_initial("  2nd") == '2' && sib_initial("??") == '?',
+          "the tile's letter: the first letter or digit, upper-cased");
+    const uint8_t a = sib_accent_for("Quorra", 0);
+    CHECK(a < SIB_MAX && sib_accent_for("Quorra", 0) == a, "a colour from the name, the same every boot");
+    CHECK(sib_accent_for("Quorra", (uint8_t)(1u << a)) != a, "and never one a sibling already has");
+    CHECK(sib_accent_for("Quorra", 0x0F) < SIB_MAX, "with all four taken, still a colour");
+}
+
+static void test_a_thread_follows_its_panel_not_its_slot(void)
+{
+    sib_slots_t s = {0};
+    sib_list_t l = {0};
+    bool renamed;
+    l.n = 2;
+    snprintf(l.s[0].device_id, SIB_ID_LEN, "dev-a");
+    snprintf(l.s[0].name, sizeof l.s[0].name, "Quorra");
+    snprintf(l.s[1].device_id, SIB_ID_LEN, "dev-b");
+    snprintf(l.s[1].name, sizeof l.s[1].name, "Tamsin");
+    CHECK(sib_merge(&s, &l, &renamed) == 0x3 && s.used[0] && s.used[1], "the first list fills slots 0 and 1");
+    CHECK(s.s[0].accent != s.s[1].accent, "in two different colours");
+    /* The box's order changes and a panel is renamed: nobody moves. */
+    sibling_t a = l.s[0];
+    l.s[0] = l.s[1];
+    l.s[1] = a;
+    snprintf(l.s[1].name, sizeof l.s[1].name, "Q");
+    CHECK(sib_merge(&s, &l, &renamed) == 0 && renamed && !strcmp(s.s[0].name, "Q") &&
+              !strcmp(s.s[0].device_id, "dev-a"),
+          "a renamed panel keeps its thread; the list's order moves nothing");
+    CHECK(sib_merge(&s, &l, &renamed) == 0 && !renamed, "the same list again changes nothing");
+    /* dev-a is retired and a new unit appears. */
+    l.n = 2;
+    snprintf(l.s[1].device_id, SIB_ID_LEN, "dev-c");
+    snprintf(l.s[1].name, sizeof l.s[1].name, "Spare");
+    CHECK(sib_merge(&s, &l, &renamed) == 0x1 && !strcmp(s.s[0].device_id, "dev-c") &&
+              !strcmp(s.s[1].device_id, "dev-b"),
+          "a new panel takes the freed slot, and that thread is cleared for it");
+    l.n = 0;
+    CHECK(sib_merge(&s, &l, &renamed) == 0x3 && !s.used[0] && !s.used[1], "an empty list frees both");
+}
+
+static void test_the_threads_show_the_box_s_names_and_survive_a_reboot(void)
+{
+    sib_port_fake_wipe();
+    svc_messages_fake_clear();
+    svc_siblings_init();
+    char name[32];
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Panel 1") && svc_siblings_initial(0) == '1' && svc_siblings_initial(1) == '2',
+          "before the box answers, a first boot says Panel 1 / Panel 2 — never a compiled-in name");
+    CHECK(!strcmp(svc_siblings_thread(0), SVC_MESSAGES_THREAD_1) && svc_siblings_thread(2) == NULL,
+          "two threads, bound to slots 0 and 1");
+    svc_messages_fake_add(SVC_MESSAGES_THREAD_1, &(msg_t){.id = 1, .mine = true, .text = "to nobody"});
+    CHECK(svc_siblings_offer(BOX_JSON, sizeof BOX_JSON - 1), "the box's answer, as the main task gets it");
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Panel 1"), "nothing changes until the UI task applies it");
+    svc_siblings_service();
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Quorra") && svc_siblings_initial(0) == 'Q', "then the thread is hers");
+    svc_siblings_name(1, name, sizeof name);
+    CHECK(!strcmp(name, "Tamsin") && svc_siblings_initial(1) == 'T', "and the other's");
+    CHECK(svc_messages_count(SVC_MESSAGES_THREAD_1) == 0, "what was in the unbound thread is cleared");
+    CHECK(svc_siblings_accent(0) != svc_siblings_accent(1), "two colours");
+    CHECK(!svc_siblings_offer("{\"siblings\":", 12), "a cut-off answer is refused");
+    svc_siblings_service();
+    svc_siblings_name(0, name, sizeof name);
+    CHECK(!strcmp(name, "Quorra"), "and changes nothing");
+    char note[96];
+    svc_siblings_note(note, sizeof note);
+    CHECK(strstr(note, "sib=box,box:1,bad:1") != NULL, "telemetry says where the names came from");
+
+    svc_siblings_init(); /* a reboot: the cache is all there is until the box answers */
+    svc_siblings_name(1, name, sizeof name);
+    CHECK(!strcmp(name, "Tamsin"), "after a reboot the names are back before the box answers");
+    sibling_t s;
+    CHECK(svc_siblings_slot(0, &s) && !strcmp(s.device_id, "11111111-aaaa-4bbb-8ccc-000000000001"),
+          "bound to the same device");
+    sib_port_fake_wipe();
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -1243,6 +2084,37 @@ int main(void)
     test_disconnect_takes_two_taps_within_three_seconds();
     test_update_now_is_live_only_online_and_idle();
     test_a_hold_that_cannot_be_sent_says_so();
+    test_boot_short_is_back_on_release_and_long_is_the_clock_once();
+    test_boot_held_opens_the_clock_from_anywhere_but_the_clock();
+    test_the_pickup_waits_three_seconds_backs_off_and_never_jumps_the_manifest();
+    test_the_relay_reports_itself_in_one_token();
+    test_a_request_id_is_uuid_text_or_it_is_dropped();
+    test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short();
+    test_the_stream_is_byte_for_byte_what_the_box_decodes();
+    test_the_ring_never_overwrites_and_wraps();
+    test_a_hold_records_sends_and_hears_back();
+    test_a_knock_or_a_cancel_lets_go_of_everything();
+    test_key_or_boot_over_a_reply_stops_it();
+    test_a_box_that_drops_mid_hold_is_told_at_the_release();
+    test_text_only_never_opens_the_speaker();
+    test_the_reply_frame_reads_in_any_split();
+    test_two_microphones_average_and_each_peak_is_kept();
+    test_the_audio_token();
+    test_a_talk_on_the_glass_end_to_end();
+    test_a_hold_that_cannot_reach_jerv_is_refused_up_front();
+    test_key_or_boot_over_a_reply_is_the_shells_stop();
+    test_the_speaker_settings();
+    test_play_tone_is_whitelisted_and_harmless();
+    test_a_still_finger_is_a_long_press_once_and_a_scroll_never();
+    test_the_menu_opens_only_over_a_clear_conversation();
+    test_clear_chat_takes_two_taps_within_three_seconds();
+    test_buttons_over_the_menu_only_close_it();
+    test_jerv_and_dave_are_two_threads_and_two_conversations();
+    test_clear_chat_asks_that_agent_alone_for_a_new_conversation();
+    test_the_box_s_siblings_json_is_read_as_the_box_writes_it();
+    test_a_name_is_what_the_panel_can_draw();
+    test_a_thread_follows_its_panel_not_its_slot();
+    test_the_threads_show_the_box_s_names_and_survive_a_reboot();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

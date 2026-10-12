@@ -119,6 +119,7 @@ import {
   timeStatus,
   toScreen,
   toWorld,
+  tricorderLine,
   visibleTiles,
   zoomAt,
 } from "../minecraftMap";
@@ -136,6 +137,7 @@ import {
   type TileEntry,
   type Tokens,
   asSurvey,
+  bearingLine,
   clusterBadge,
   colorOf,
   drawScale,
@@ -152,6 +154,7 @@ import {
   scaleRect,
   spotMark,
   stars,
+  targetMark,
   veil,
 } from "./minecraftMapDraw";
 
@@ -376,6 +379,11 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     ...sessions.map((x) => ({ xuid: x.xuid, gamertag: x.gamertag })),
   ]);
   const timeTravel = tl.on && !tl.live;
+  const aimer =
+    sel?.kind === "player" && !timeTravel
+      ? players?.players.find((q) => q.xuid === sel.p.xuid)
+      : undefined;
+  const tricorder = aimer?.target ? tricorderLine(aimer, aimer.target) : null;
 
   // Everything the draw loop reads, current as of the last render.
   const view = useRef<MapView>(
@@ -1212,6 +1220,21 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       }
     }
 
+    // The selected player's Tricorder target, with a dashed bearing from where they stand
+    // (live view only: the target is where Dave has it pointed now, not then).
+    const aimed = sel?.kind === "player" && !replay ? sel.p.xuid : null;
+    const aimer = aimed ? st.players?.players.find((q) => q.xuid === aimed) : undefined;
+    const aim = aimer?.target;
+    if (aimer && aim && aim.dim === st.dim) {
+      const col = colorOf(t, tokenOf(aimer.xuid));
+      const tx = aim.x + 0.5;
+      const tz = aim.z + 0.5;
+      if (aimer.dim === st.dim) bearingLine(ctx, v, f, [aimer.x, aimer.z], [tx, tz], col, t);
+      const [sx, sy] = toScreen(v, f, tx, tz);
+      targetMark(ctx, sx, sy, col, t);
+      labels.push({ txt: aim.label, x: sx, y: sy - 14, pr: -1 });
+    }
+
     // players: never clustered; online ones pulse. On the replay, each shown player is
     // where the travel log puts them at the moment, interpolated between samples.
     let animate = false;
@@ -1708,6 +1731,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                 onFollow={followPlayer}
                 onSessions={(x) => setList({ who: x })}
                 onReplay={sessions.length ? replayBefore : null}
+                tricorder={tricorder}
                 playerToken={
                   sel.kind === "player"
                     ? (roster.find((r) => r.xuid === sel.p.xuid)?.token ?? "--steel")
@@ -1879,6 +1903,7 @@ function Detail({
   onFollow,
   onSessions,
   onReplay,
+  tricorder,
   playerToken: tok,
 }: {
   sel: Sel;
@@ -1892,6 +1917,8 @@ function Detail({
   onFollow: (xuid: string) => void;
   onSessions: (xuid: string) => void;
   onReplay: ((e: MinecraftTimelineEvent) => void) | null;
+  /** The selected player's Tricorder line, when Dave has it pointed somewhere. */
+  tricorder: string | null;
   playerToken: string;
 }) {
   let icon: ReactNode;
@@ -2078,6 +2105,14 @@ function Detail({
             X {ox} · Z {oz}
           </b>
         </div>
+      )}
+      {tricorder && !compact && (
+        <p className="mc-map-det-tri">
+          <CrosshairIcon size={16} />
+          <span>
+            <b>Tricorder</b> · {tricorder}
+          </span>
+        </p>
       )}
       {sel.kind === "player" && (
         <div className="mc-btnrow mc-map-det-acts">

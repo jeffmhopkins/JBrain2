@@ -49,7 +49,7 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker[AsyncSess
     async with scoped_session(sessions, OWNER) as s:
         await s.execute(text("DELETE FROM app.endpoint_status"))
         await s.execute(text("DELETE FROM app.principals WHERE kind = 'device_key'"))
-        for pid, label in ((ONE, "panel Ellie"), (TWO, "panel Nora")):
+        for pid, label in ((ONE, "panel Quorra"), (TWO, "panel Nora")):
             await s.execute(
                 text(
                     """

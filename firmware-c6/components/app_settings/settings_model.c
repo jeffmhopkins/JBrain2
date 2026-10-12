@@ -5,6 +5,31 @@
 
 #include "svc_settings.h"
 
+int32_t settings_volume_from_slider(int32_t raw)
+{
+    int32_t v = (raw + VOLUME_STEP / 2) / VOLUME_STEP * VOLUME_STEP;
+    return v < VOLUME_FLOOR ? VOLUME_FLOOR : v > VOLUME_MAX ? VOLUME_MAX : v;
+}
+
+static bool starts(const char *s, const char *p)
+{
+    return strncmp(s, p, strlen(p)) == 0;
+}
+
+const char *settings_jerv_note(bool tts, const char *audio_state, bool *speaker)
+{
+    *speaker = false;
+    if (starts(audio_state, "failed:"))
+        return "Sound did not start, so holding KEY cannot record. The box's snapshot says which "
+               "step failed.";
+    if (starts(audio_state, "off")) return "Sound is off this boot: the last one ended in a fault.";
+    if (starts(audio_state, "speaker-only:"))
+        return "The microphone did not start, so holding KEY cannot record.";
+    if (starts(audio_state, "mic-only:")) return "The speaker did not start: replies are text only.";
+    *speaker = true;
+    return tts ? "Replies are spoken and shown as text." : "Replies are text only.";
+}
+
 int32_t settings_brightness_from_slider(int32_t raw)
 {
     int32_t snapped = (raw + BRIGHTNESS_STEP / 2) / BRIGHTNESS_STEP * BRIGHTNESS_STEP;

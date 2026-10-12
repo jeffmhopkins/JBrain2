@@ -91,7 +91,7 @@ function unheard(m: JpanelMessage): boolean {
 /* ── ONE CHILD, ONE CONVERSATION ───────────────────────────────────────────────────────────
  *
  * The owner: *"I want there to be a separate selection underneath the top where you can select
- * ... that'll be the panel's names. So if I select lydian or Elora up there it should show
+ * ... that'll be the panel's names. So if I select tamsin or Quorra up there it should show
  * those two as conversations ... kind of like a normal conversation does with jerv or the other
  * ones in the pwa where there's an omnibox at the bottom and a left and right conversation
  * bubble."*
@@ -1113,6 +1113,61 @@ function PetEditor({
   );
 }
 
+/** THE OWNER'S DESK PANEL REACHING THE REAL AGENTS. A display only: the box refuses a pet panel,
+ *  and this switch is never drawn for one. On, the panel's talks run as the owner through the
+ *  same Jerv (and Minecraft_Dave) as this app, into a "Desk panel" chat in each one's history. */
+function AgentAccessSwitch({ panel }: { panel: PanelStatusOut }) {
+  const [on, setOn] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const got = await api.panelAgentAccess(panel.device_id);
+        if (!cancelled) setOn(got.agent_access);
+      } catch {
+        if (!cancelled) setError("Could not read whether this panel reaches Jerv.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [panel.device_id]);
+
+  async function flip(next: boolean): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      setOn((await api.setPanelAgentAccess(panel.device_id, next)).agent_access);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not change it.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="jp-unit-agent">
+      <label className="jp-radio">
+        <input
+          type="checkbox"
+          checked={on === true}
+          disabled={on === null || busy}
+          onChange={(e) => void flip(e.target.checked)}
+        />
+        <span>Talks to the full Jerv and Dave</span>
+      </label>
+      <p className="jp-unit-hint">
+        Its spoken questions run as you, with every tool and memory, into a &ldquo;Desk panel&rdquo;
+        chat. Anything that needs your OK still waits for it here.
+      </p>
+      {error !== null && <p className="jp-unit-error">{error}</p>}
+    </div>
+  );
+}
+
 /** How long a revoke stays armed. It never disarmed at all: an owner who tapped "revoke",
  *  thought better of it and put the phone down left a panel one stray tap from being retired —
  *  and the next tap on that card, minutes later, would not have looked like a confirmation of
@@ -1206,6 +1261,8 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
           </>
         ) : null}
       </p>
+
+      {panel.role === "display" && <AgentAccessSwitch panel={panel} />}
 
       {renaming ? (
         <div className="jp-unit-edit">

@@ -88,6 +88,16 @@ export class Dimension {
   spawnParticle(id, loc) {
     (this.particles ??= []).push({ id, loc: { ...loc } });
   }
+  // The game's query, for the options the pack passes: a type, the nearest `closest`
+  // within `maxDistance` of `location`.
+  getEntities({ type, location, closest, maxDistance } = {}) {
+    const d = (e) => Math.hypot(e.loc.x - location.x, e.loc.y - location.y, e.loc.z - location.z);
+    return this.entities
+      .filter((e) => (!type || e.id === type) && (!maxDistance || d(e) <= maxDistance))
+      .sort((a, b) => d(a) - d(b))
+      .slice(0, closest ?? Infinity)
+      .map((e) => ({ typeId: e.id, location: { ...e.loc } }));
+  }
 }
 
 export class Player {

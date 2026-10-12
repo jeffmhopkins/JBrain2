@@ -207,8 +207,8 @@ function baseMock(input: RequestInfo | URL): Response | null {
 const PANELS = {
   panels: [
     {
-      device_id: "panel-ellie",
-      name: "Ellie",
+      device_id: "panel-quorra",
+      name: "Quorra",
       role: "jpet",
       reported_at: "2026-09-23T17:00:00Z",
       version: "0.2.94",
@@ -251,7 +251,7 @@ describe("OpsScreen panels", () => {
       await screen.findByRole("button", { name: /^Panels: 1 not reporting/ }),
     ).toBeInTheDocument();
     await openTile("Panels");
-    expect(await screen.findByText("Ellie")).toBeInTheDocument();
+    expect(await screen.findByText("Quorra")).toBeInTheDocument();
     expect(screen.getByText("the other one")).toBeInTheDocument();
     expect(screen.getByText("9 hours ago")).toBeInTheDocument();
     unmount();

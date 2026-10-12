@@ -15,6 +15,13 @@
 
 /* The slider's raw value to a setting: snapped to the step, never below the floor. */
 int32_t settings_brightness_from_slider(int32_t raw);
+#define VOLUME_STEP 5
+int32_t settings_volume_from_slider(int32_t raw);
+
+/* The Jerv card's line, from the read-aloud switch and svc_audio_state(): what a reply will do,
+ * or plainly why there is no sound. `speaker` false when replies cannot be spoken at all, so the
+ * card hides the switch's volume slider. */
+const char *settings_jerv_note(bool tts, const char *audio_state, bool *speaker);
 
 /* Disconnect takes two taps no more than this apart: going offline stops messages, Jerv and
  * updates, so one brush of a finger must not do it (owner, 2026-10-11). */

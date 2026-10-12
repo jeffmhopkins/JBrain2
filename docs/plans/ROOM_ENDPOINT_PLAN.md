@@ -632,7 +632,7 @@ reached uvicorn. Caddy runs in **Cloudflare Tunnel mode**, where its own site ad
 internal hop and the wrong thing about the world.
 
 **The same value is written into a panel's NVS at flash time** as the address it calls
-home on, so the consequence is not only a failed update: Elora's panel had been polling
+home on, so the consequence is not only a failed update: Quorra's panel had been polling
 the box over plain HTTP with its bearer token on the wire. Treat that key as exposed —
 a re-flash issues a new `device_key` and revokes the old one, which is exactly the
 remediation and exactly what re-flashing already did.
@@ -4724,7 +4724,7 @@ ways to ask (`can you burp`, `can you fart`, `do a big jump`, `have a snack`, `g
 
 ###### The samples arrived, and "a confidence problem" was the wrong frame
 
-**2026-09-24, firmware 0.3.00, one 15-minute window on Lydian's panel** — the capture that entry
+**2026-09-24, firmware 0.3.00, one 15-minute window on Tamsin's panel** — the capture that entry
 was waiting for. Every phrase that fired: `eat` 13, `eat` 16, `stop stop` 23, `fart` 13,
 `laugh` 19, `spin` 26. Alongside them, **81 `?` entries** — decodes that timed out without
 resolving to any command.
@@ -5141,8 +5141,8 @@ seen doing.
 `send a message` goes to the other panel; `send dad a message` goes to the PWA. Neither is a
 prefix of the other — they diverge at `a` against `d` — and that is the whole margin rule 3
 leaves. The shape is what protects it: every send phrase names its recipient BEFORE the noun,
-so a third one (`send ellie a message`) is safe for the same reason, where the natural-sounding
-`send a message to ellie` would make the short form its prefix and take the feature down. A host
+so a third one (`send quorra a message`) is safe for the same reason, where the natural-sounding
+`send a message to quorra` would make the short form its prefix and take the feature down. A host
 test pins the shape rather than the two strings.
 
 ##### Recording is a state, not a flag on listening
@@ -5243,7 +5243,7 @@ whole principal table, `key_hash` column included, to answer a question it shoul
 been asking.
 
 **And every `/flash` mints a key that nothing retires.** The box carried **thirteen** unrevoked
-principals labelled `panel Elora` — one physical panel, re-flashed — plus two unnamed. Fifteen
+principals labelled `panel Quorra` — one physical panel, re-flashed — plus two unnamed. Fifteen
 candidates where the route needs exactly one, so even with the policy fixed it would have stayed
 at 409. The roster keeps one row per NAME now, newest `created_at` winning, which is right
 rather than tidy: `/flash` rewrites the unit's NVS, so the newest key for a name is the one that
@@ -5914,7 +5914,7 @@ none of the four borrows another's.
 
 ##### The queue stops being a number (0.3.33)
 
-The owner, with Lydian's panel awake and two messages sitting on it, reported four things at once.
+The owner, with Tamsin's panel awake and two messages sitting on it, reported four things at once.
 They are one story: **the panel had a queue and a user interface that only understood its head.**
 
 **1. A message took a long time to appear.** Measured from the box's own log: the message was
@@ -6201,7 +6201,7 @@ than a preference:**
 | | **0.3.14 keeps the interval and adds a doorbell.** Measuring recognition means saying a phrase and reading the decode ring, and at fifteen minutes that loop is unusable — while rebooting to force a report WIPES `s_decode`, so the fast path returns the empty ring it was asked for. `endpoint_settings.telemetry_seq` is a counter the settings poll carries: the panel adopts what it first sees and posts when the number CHANGES. A counter rather than a flag because two panels poll independently and a flag consumed by the first is one the second never sees; adopt-before-acting because "never seen this number" must not read as a change, or every boot posts twice. `POST /api/debug/endpoint/report-now` raises it, `GET /api/debug/endpoint/heard` reads the rings back named. |
 | the wake phrase as the only way in | **0.3.15 gives the button a menu, because the phrase does not work.** Measured 2026-09-27 on 0.3.14, phonemes registered and nothing refused: `tell dad` fired 9/9 and `tell sister` never fired ONCE. Holding the BOOT button for a second opens a 2×2 grid — sister, dad, cancel, and the pet — and every icon reaches the same helper the spoken phrase does, so the refusals are identical. HIT AS QUADRANTS, NOT DISCS: the owner watched the twins and the constraint is their aim, so a quarter of the glass each and no dead bands. The tick and cross split the bottom half the same way, but the TOP half stays inert — the pet is up there and a palm must not send a half-finished message. |
 | commands firing inside a recording | **Muted in 0.3.15.** The pet was genuinely recognising `fart` and `spin` from inside a four-year-old's message to her sister — a real decode at the wrong moment, not a false trigger. Publishing stops while `TALK_RECORDING`; the decode ring keeps filling, because a recording is when what this panel hears is most interesting. Derived from the state each frame rather than armed on entry: recording ends five ways and a mute left armed is a panel that has silently stopped listening. |
-| the volume slider | **The ceiling was the bug report.** `VOLUME_MAX` was 85 and the stored value already was, so every increase clamped back and the control read as dead. 100 now, default 95 (migration 0217). It does not by itself make a panel louder: the box's value had never reached Lydian at all (`levels` empty at 941 s of uptime), so the firmware's own default goes 90 → 95 and `set_err`/`set_fails` now report why the fetch failed — a failure that happens ON the panel and never reaches this box's log. |
+| the volume slider | **The ceiling was the bug report.** `VOLUME_MAX` was 85 and the stored value already was, so every increase clamped back and the control read as dead. 100 now, default 95 (migration 0217). It does not by itself make a panel louder: the box's value had never reached Tamsin at all (`levels` empty at 941 s of uptime), so the firmware's own default goes 90 → 95 and `set_err`/`set_fails` now report why the fetch failed — a failure that happens ON the panel and never reaches this box's log. |
 | the brightness slider, and the dim that never dimmed | **The command was never framed for QSPI.** The panel is opened with `lcd_cmd_bits = 32`, where a command is a 32-bit prologue — CO5300 datasheet V0.01 p.21: instruction `02h`, then `AD[23:0] = {8'h00, CMD[7:0], 8'h00}`. The vendor driver wraps every command it sends, so the init array's `0x51 = 0xFF` always landed; `display.c`'s two DIRECT calls did not, so a bare `0x51` went out as instruction `0x00`, the controller discarded it, and the SPI layer returned `ESP_OK`. Every panel has sat at boot brightness since August. Found from the one symptom that ruled out the settings fetch: the dim-on-sleep stage is entirely local and was equally dead. Fixed in 0.3.16 (`QSPI_CMD`). **Acquitted by the datasheet, so do not "fix" them later on the same reasoning:** `0x53 = 0x20` is sufficient (bit 5 BCTRL gates `0x51`; the CO5300 is emissive and has no backlight bit, p.186), `0x51` takes one byte (p.184), and `0x63` is HBM brightness, inert while `0x66`'s HBM_EN stays 0 as nothing writes it (p.196, p.199). |
 | ~~the 30 s display-on re-assert proved the controller was not dropping `0x29`~~ | **VOID, and reopened.** §10.4's `REASSERT_MS` experiment re-sent `0x29` and `0x51` through the same unframed path, so neither ever reached the controller and its negative result says nothing about the OLED rail or the AXP2101. That suspect is live again. |
 | ~~this panel does not answer reads over QSPI~~ | **VOID, and probably wrong.** Concluded from `0x0A` and `0x52` returning zeros — read through the same unframed path, and a QSPI read needs its own opcode (`03h`, datasheet p.28). The zeros were the bus, not the panel. `0x52` (RDDISBV) framed correctly would read brightness back and become the instrument this feature has never had. |
@@ -6550,12 +6550,12 @@ the gap. `panel_context()` is that context — deliberately not `device_context`
 passed for the whole life of the bug.
 
 **WHAT THIS DOES NOT FIX, stated so the next step is not mis-scoped.** CMUdict is a dictionary,
-not a model. Measured: `fish`, `blink`, `merc`, `nessa` and `bluey` are present; **`elora` and
-`lydian` are NOT** — the twins' own names, and the obvious thing to call a panel. An invented
+not a model. Measured: `fish`, `blink`, `merc`, `nessa` and `bluey` are present; **`quorra` and
+`tamsin` are NOT** — the twins' own names, and the obvious thing to call a panel. An invented
 name is not a word, gets "", and converts on-chip exactly as before. Closing that needs a real
 G2P with out-of-vocabulary handling (`g2p_en` carries a neural net for it, and could not be
 installed here — its `distance` dependency will not build), which is also what per-panel sibling
-names ("tell Elora") would need. Worth doing deliberately rather than as a rider on this.
+names ("tell Quorra") would need. Worth doing deliberately rather than as a rider on this.
 
 **AND A SECOND BUG, CAUGHT BY CI ON THIS PR RATHER THAN BY A PANEL.** §10.4dc added a fifth
 field to each telemetry decode — the decoder's RAW phoneme string, the only thing that can
@@ -6664,7 +6664,7 @@ the flasher.
 ## A report the box asked for, adopted and then dropped (0.3.34)
 
 **Found by the instrumentation from 0.3.33, twenty minutes after it shipped.** `GET
-/endpoint/reach` showed Lydian's panel with a `stale_s` of 1412 — a healthy-looking row that was
+/endpoint/reach` showed Tamsin's panel with a `stale_s` of 1412 — a healthy-looking row that was
 23 minutes old — while the access log showed **122 successful settings polls** in the same window
 and the box had asked for a report twice (`telemetry_seq` 15 → 16 → 17). A panel that was talking
 to the box the whole time, and the one surface the owner has for its insides had gone blind.
@@ -6728,7 +6728,7 @@ lands on `GET /api/debug/endpoint/reach` beside the other paths.
 
 ## The panel that went quiet, and the three reasons nobody could see (0.3.33)
 
-**The owner:** *"I also just had a red – show up on lydian's ... This is when I was trying to talk
+**The owner:** *"I also just had a red – show up on tamsin's ... This is when I was trying to talk
 to the large language model. It didn't time out so I'm a little curious on what caused it."*
 
 **The box could barely answer.** `POST /endpoint/converse` had not been called since 02:52; the
@@ -6743,7 +6743,7 @@ worked and the failures are exactly what is not in it.
 1. **`set_err` was cleared on every success.** The reasoning was sound — report the current state,
    not the worst thing that ever happened — and the effect was that the field was empty in every
    report any panel has ever sent, because a report only goes out at the end of a cycle, right
-   after a fetch that succeeded. Lydian's 03:27 report: `set_fails: 3, set_err: ""`. The count
+   after a fetch that succeeded. Tamsin's 03:27 report: `set_fails: 3, set_err: ""`. The count
    survived; the name did not. Reasons now survive, and `*_ago_s` says whether they are current,
    which is the question clearing was trying to answer.
 
@@ -6756,7 +6756,7 @@ worked and the failures are exactly what is not in it.
 3. **`joined` was set once at boot and never cleared,** so `net_retry` could only ever run on a
    panel that failed to join in the first place. The case that happens is the half-open link —
    associated, holding an IP, no route to anything — for which ESP-IDF fires no disconnect event,
-   so the handler's own reconnect never ran either. Lydian's panel was silent for **eight and a
+   so the handler's own reconnect never ran either. Tamsin's panel was silent for **eight and a
    half hours** having reported `wifi_drops: 0`: not one disconnect the whole time. The box is the
    link test now (`reach_quiet_ms`), and a panel that cannot reach it for ten minutes stops
    believing its radio and re-joins.
@@ -6770,7 +6770,7 @@ gone silent shows a healthy row with an old timestamp, so the staleness is the f
 
 ## One socket for everything (0.3.39, 2026-10-04)
 
-**Measured on Elora's panel, 0.3.38:** after about two talk turns every request failed with
+**Measured on Quorra's panel, 0.3.38:** after about two talk turns every request failed with
 `connect` — the talk turn, the settings poll, the jpanel poll, a send. Internal heap sat near
 75 KB free with a 25.6 KB largest block. Every request was its own mbedTLS session (~40 KB of
 internal RAM, 1-2 s of handshake): the main task's three-second settings poll, the jpanel task's

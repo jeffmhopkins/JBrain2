@@ -9,8 +9,10 @@ uint32_t ui_accent_color(ui_accent_t a)
 {
     switch (a) {
     case UI_ACCENT_JERV: return UI_C_JERV;
-    case UI_ACCENT_QUORRA: return UI_C_QUORRA;
-    case UI_ACCENT_TAMSIN: return UI_C_TAMSIN;
+    case UI_ACCENT_PERSON_A: return UI_C_PERSON_A;
+    case UI_ACCENT_PERSON_B: return UI_C_PERSON_B;
+    case UI_ACCENT_PERSON_C: return UI_C_PERSON_C;
+    case UI_ACCENT_PERSON_D: return UI_C_PERSON_D;
     case UI_ACCENT_MINECRAFT: return UI_C_MINECRAFT;
     case UI_ACCENT_STEEL: return UI_C_STEEL;
     default: return UI_C_TEXT;
@@ -139,6 +141,8 @@ static const path_t CUBE[] = {{7, {{24, 5}, {41, 14}, {41, 33}, {24, 43}, {7, 33
                               {3, {{7, 14}, {24, 24}, {41, 14}}},
                               {2, {{24, 24}, {24, 43}}}};
 static const path_t HANDS[] = {{3, {{24, 13}, {24, 24}, {31, 28}}}};
+/* A compass: the clock's ring, and a needle as a diamond tilted to the north-east. */
+static const path_t NEEDLE[] = {{5, {{32, 12}, {27, 27}, {16, 36}, {21, 21}, {32, 12}}}};
 static const path_t SPOKES[] = {{2, {{24, 5}, {24, 11}}},  {2, {{24, 37}, {24, 43}}},
                                 {2, {{5, 24}, {11, 24}}},  {2, {{37, 24}, {43, 24}}},
                                 {2, {{11, 11}, {15, 15}}}, {2, {{33, 33}, {37, 37}}},
@@ -206,6 +210,10 @@ lv_obj_t *ui_icon(lv_obj_t *parent, const ui_icon_t *icon, ui_accent_t accent, i
         draw_ring(box, g, 18, color, stroke);
         draw_path(box, HANDS, g, color, stroke);
         break;
+    case UI_GLYPH_COMPASS:
+        draw_ring(box, g, 18, color, stroke);
+        draw_path(box, NEEDLE, g, color, stroke);
+        break;
     case UI_GLYPH_GEAR:
         draw_ring(box, g, 6, color, stroke);
         draw_ring(box, g, 13, color, stroke);
@@ -215,6 +223,35 @@ lv_obj_t *ui_icon(lv_obj_t *parent, const ui_icon_t *icon, ui_accent_t accent, i
     default: break;
     }
     return disc;
+}
+
+/* Main.dc.html's mic on the 48-unit grid (its 24-unit SVG doubled): a capsule, the cradle's
+ * half circle (r 14 about 24,22, every 30°) and the stem. */
+static const path_t MIC_CRADLE[] = {{7, {{10, 22}, {12, 29}, {17, 34}, {24, 36}, {31, 34}, {36, 29}, {38, 22}}}};
+static const path_t MIC_STEM[] = {{2, {{24, 36}, {24, 42}}}};
+
+lv_obj_t *ui_mic(lv_obj_t *parent, int px, uint32_t color)
+{
+    lv_obj_t *box = bare(parent);
+    lv_obj_set_size(box, px, px);
+    const int sw = px * 5 / 48 < 2 ? 2 : px * 5 / 48;
+    lv_obj_t *cap = bare(box);
+    lv_obj_set_pos(cap, 18 * px / 48 - sw / 2, 6 * px / 48 - sw / 2);
+    lv_obj_set_size(cap, 12 * px / 48 + sw, 22 * px / 48 + sw);
+    lv_obj_set_style_radius(cap, LV_RADIUS_CIRCLE, 0);
+    border(cap, color, sw);
+    draw_path(box, MIC_CRADLE, px, color, sw);
+    draw_path(box, MIC_STEM, px, color, sw);
+    return box;
+}
+
+lv_obj_t *ui_talk_hint(lv_obj_t *root)
+{
+    lv_obj_t *row = ui_box(root, LV_FLEX_FLOW_ROW, 10);
+    ui_mic(row, 20, UI_C_MUTED);
+    ui_label(row, "Hold KEY to talk", 18, UI_C_MUTED);
+    lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -20);
+    return row;
 }
 
 lv_obj_t *ui_header(lv_obj_t *root, const ui_icon_t *icon, ui_accent_t accent, const char *title,
@@ -541,7 +578,7 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
     uint32_t accent_c = ui_accent_color(accent);
     if (b->voice && b->mine) {
         lv_obj_t *r = ui_box(body, LV_FLEX_FLOW_ROW, 8);
-        ui_label(r, LV_SYMBOL_AUDIO, 18, UI_C_STEEL);
+        ui_mic(r, 18, UI_C_STEEL);
         ui_label(r, b->dur, 18, UI_C_STEEL);
     } else if (b->voice) {
         lv_obj_t *r = ui_box(body, LV_FLEX_FLOW_ROW, 10);
@@ -591,6 +628,24 @@ lv_obj_t *ui_overlay(lv_obj_t *parent)
     lv_obj_set_flex_flow(o, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(o, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     return o;
+}
+
+lv_obj_t *ui_menu(lv_obj_t *parent, const char *title, lv_event_cb_t on_outside, void *user)
+{
+    lv_obj_t *dim = bare(parent);
+    lv_obj_set_size(dim, UI_W, UI_H);
+    lv_obj_set_pos(dim, 0, 0);
+    fill(dim, UI_C_BG, LV_OPA_70, 0);
+    lv_obj_add_flag(dim, LV_OBJ_FLAG_CLICKABLE);
+    if (on_outside) lv_obj_add_event_cb(dim, on_outside, LV_EVENT_CLICKED, user);
+    lv_obj_t *card = ui_card(dim, title);
+    lv_obj_set_width(card, UI_W - 2 * 60);
+    lv_obj_set_style_pad_ver(card, 22, 0);
+    lv_obj_set_style_pad_row(card, UI_GAP, 0);
+    /* A press on the card is the card's, not the backdrop's: it must not close the menu. */
+    lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(card);
+    return card;
 }
 
 static void talk_tick(lv_timer_t *tm)

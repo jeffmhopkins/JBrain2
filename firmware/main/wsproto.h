@@ -22,6 +22,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "link_types.h"
+
 #define WSP_VERSION 1
 #define WSP_ID_BYTES 4
 /* Both ends beat this often; the box drops a socket that has been silent for 75 s, so three
@@ -110,3 +112,38 @@ int wsp_ws_uri(char *out, size_t cap, const char *api, const char *route);
    fields are left out, so a refused upgrade reads "hs=403" and a dead route "tls=0x8006 sock=113". */
 int wsp_err_str(char *out, size_t cap, const char *what, int tls_err, int stack_err,
                 int sock_errno, int hs_status);
+
+/* ── DEADLINES (plan §7.5a) ─────────────────────────────────────────────────────────────────
+ *
+ * The arithmetic every `link.c` wait runs on, here so the clamps are host-tested: `link.c`
+ * itself only runs on a panel. All clocks are u32 ms compared by signed difference, so they
+ * survive the 49.7-day wrap; a deadline more than 2^31 ms away reads as already due. */
+
+/* Milliseconds left before `deadline_ms`; 0 once it is due. */
+uint32_t link_left(uint32_t now_ms, uint32_t deadline_ms);
+
+/* `now + in_ms`, never 0: a request's `deadline_ms == 0` means "legacy timeout_ms", so a sum
+   that lands on 0 at the wrap is moved a millisecond later rather than misread. */
+uint32_t link_deadline_in(uint32_t now_ms, uint32_t in_ms);
+
+/* The deadline a request runs to: its own, or (legacy, `deadline_ms == 0`) now + `timeout_ms`.
+   A legacy request with no timeout is due at once rather than unbounded. */
+uint32_t link_req_deadline(uint32_t now_ms, uint32_t deadline_ms, int timeout_ms);
+
+/* How long the next blocking step may wait: the time left, cut to `step_ms`. 0 means due, which
+   every caller treats as the end of the wait — never as "block without a bound". */
+uint32_t wsp_wait_step(uint32_t left_ms, uint32_t step_ms);
+
+/* `esp_http_client_open`'s timeout, which esp-tls applies to each of its phases (TCP connect,
+   then each handshake read) rather than in total: a third of what is left, so three phases fit.
+   At least 1, since 0 there means "the default", not "none". DNS is not bounded by it (§13). */
+int link_open_timeout_ms(uint32_t left_ms);
+
+/* PROGRESS mode moves the deadline with the upload: LINK_STALL_MS after each frame, then
+   `head_budget_ms` once the body is out. ABSOLUTE mode leaves it where the caller put it. */
+uint32_t link_after_frame(link_upload_mode_t mode, uint32_t now_ms, uint32_t deadline_ms);
+uint32_t link_after_upload(link_upload_mode_t mode, uint32_t now_ms, uint32_t deadline_ms,
+                           uint32_t head_budget_ms);
+
+/* Whether a wait loop owes the engine a TICK: LINK_STEP_MS since its last progress call. */
+bool link_tick_due(uint32_t now_ms, uint32_t last_beat_ms);

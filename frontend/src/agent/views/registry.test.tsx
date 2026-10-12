@@ -1522,58 +1522,26 @@ describe("ToolView registry", () => {
     expect(onOpenSession).toHaveBeenCalledWith("s9");
   });
 
-  it("offers a read-aloud play button on the report that speaks the report markdown", () => {
-    const onToggle = vi.fn();
-    const { getByLabelText, queryByLabelText, rerender } = render(
+  it("puts the drive-mode player on the report, keyed apart from the turn", () => {
+    const playSections = vi.fn();
+    const data = {
+      question: "Q",
+      complexity: "deep",
+      report_md: "## One\nFirst.\n## Two\nSecond.",
+      rounds: 1,
+    };
+    const { getByRole, queryByRole, rerender } = render(
       <ToolView
-        readAloud={{ playing: null, onToggle }}
-        payload={payload({
-          view: "deep_research_report",
-          data: {
-            question: "Q",
-            complexity: "deep",
-            report_md: "The full report body.",
-            rounds: 1,
-          },
-        })}
+        readAloud={{ playing: null, onToggle: vi.fn(), playSections, progress: null }}
+        payload={payload({ view: "deep_research_report", data })}
       />,
     );
-    // Tapping Play speaks the report body under a report-specific key (distinct from the turn).
-    fireEvent.click(getByLabelText("Read the report aloud"));
-    expect(onToggle).toHaveBeenCalledWith("dr-report:Q", "The full report body.");
+    fireEvent.click(getByRole("button", { name: /Play brief/ }));
+    expect(playSections).toHaveBeenCalledWith("dr-report:Q", ["First.", "Second."], 0);
 
-    // When that key is the one playing, the control becomes Pause (matching the turn).
-    rerender(
-      <ToolView
-        readAloud={{ playing: "dr-report:Q", onToggle }}
-        payload={payload({
-          view: "deep_research_report",
-          data: {
-            question: "Q",
-            complexity: "deep",
-            report_md: "The full report body.",
-            rounds: 1,
-          },
-        })}
-      />,
-    );
-    expect(getByLabelText("Pause reading the report aloud")).toBeInTheDocument();
-
-    // No read-aloud capability → no play control at all.
-    rerender(
-      <ToolView
-        payload={payload({
-          view: "deep_research_report",
-          data: {
-            question: "Q",
-            complexity: "deep",
-            report_md: "The full report body.",
-            rounds: 1,
-          },
-        })}
-      />,
-    );
-    expect(queryByLabelText(/read the report aloud/i)).toBeNull();
+    // No read-aloud capability → no player at all.
+    rerender(<ToolView payload={payload({ view: "deep_research_report", data })} />);
+    expect(queryByRole("button", { name: /Play brief/ })).toBeNull();
   });
 
   it("badges a library-scoped run and reads its corpus children as their base role", () => {

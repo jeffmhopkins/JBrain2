@@ -1,6 +1,6 @@
 # Jeff's jpanel — the ESP32-C6 panel as a set of small apps
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C3🟡 C3b◻️ C4◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C3🟡 C3b◻️ C4🟡
 > — C0 and C1 are proven on the board (2026-10-11): USB-flashed 0.0.1 from the PWA's board
 > picker, it joined Wi-Fi 6, reached the box over TLS, and took 0.0.2 over the air and kept it
 > across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
@@ -16,7 +16,20 @@
 > adds").
 > **C2d's box side is built (2026-10-12)** — the table, its RLS, the command/result routes,
 > the `JPS1` → PNG decoder and `debug-connect.sh panel-cmd` / `panel-shot` (§4 "The box
-> side"); the panel's pickup lands in firmware 0.0.9.
+> side"). **0.0.9 (built, awaiting the board)** is the panel's half: the 3 s pickup over one
+> kept-alive HTTPS session, every command on the UI task, the screenshot streamed from the
+> renderer through two 4 KB chunks, the `esp_log` hook and the boot's secret check — plus BOOT
+> held for the Clock and the mock's microphone (firmware README "What 0.0.9 adds").
+> **0.0.10 (built, awaiting the board)** brings sound: `svc_audio` owns I2S0, the ES8311 and the
+> ES7210 (esp_codec_dev over `svc_power`'s bus, the amp on ALDO2), and KEY really talks to Jerv —
+> the recording streamed up `POST /endpoint/converse?persona=jerv` while KEY is held, the reply's
+> transcript and words shown in the Jerv thread and its speech streamed to the speaker unless
+> read-aloud is off; KEY or BOOT over a reply stops it (firmware README "What 0.0.10 adds"). The
+> first two talks worked on the glass. **0.0.11 (built, awaiting the board)** carries four owner
+> decisions of 2026-10-12: Jerv is the owner's REAL Jerv (and Dave his real Minecraft_Dave), in the
+> PWA's voice, behind a server-side per-panel allow; a long press in any conversation offers Clear
+> chat; the twins' threads carry their panels' real names from the box; and Minecraft is a menu of
+> Dave and Compass (firmware README "What 0.0.11 adds", and the decisions under §1).
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -156,8 +169,94 @@ works with every app closed. Release sends, and the shell opens the Jerv thread 
 answer. A Thread app consumes KEY for its own recipient; a ringing alarm consumes it as snooze;
 the talk overlay keeps the rule that a release goes where its press went. Built in 0.0.8
 (`shell_core.c`: `sh_route_button` offers KEY to the open app with Jerv as the fallback, and
-`sh_declined` hands the hold to the shell); until audio lands the release shows a "Not sent"
-bubble rather than a transcript.
+`sh_declined` hands the hold to the shell); 0.0.10 records and sends it. While Jerv is thinking
+about or speaking a reply, **KEY or BOOT stops the reply** in every app and does nothing else —
+no recording starts, and the release sends nothing (`SH_ACT_STOP_REPLY`, host-tested).
+
+### BOOT held opens the Clock (owner, 2026-10-12)
+
+A **long press of BOOT (800 ms) opens the Clock from anywhere**, fired once the moment the
+threshold is crossed while still held. A short press keeps home / back but now fires on the
+**release** (only then is it known to be short), so a long press is never also a back. On the
+Clock it is a no-op; over the talk ring or a ringing alarm it is plain BOOT (cancel, stop); over a
+notice it opens the Clock, whose face keeps the notice as its badge; on a dark screen it only
+wakes. The timing is `btn_hold_step` (`svc_buttons/btn_logic.c`), the routing `sh_route_button`
+(`SH_BTN_BOOT_LONG` → `SH_ACT_OPEN_CLOCK`), both host-tested; built in 0.0.9.
+
+### Jerv on the panel is the real Jerv (owner, 2026-10-12)
+
+The owner, after the first talks on 0.0.10: *"Chat is working. Note: it should be using the same
+tts voice as my pwa. Also, it should be the full jerv with full tool access. I'm explicitly
+permitting this."* That closes §5's question and supersedes 0.0.10's tool-less persona.
+
+- **The same agent.** A talk from this panel runs through the PWA's own `/chat` handler as the
+  owner (`backend/src/jbrain/api/panel_agent.py`, `run_turn`): the same prompt, tools, memory,
+  approvals and transcript. It lands in one rolling **"Desk panel"** thread in the owner's Jerv
+  history (`app.endpoint_panel_thread`), so he reads and continues it in the PWA.
+- **Nothing is approved from the panel.** A Proposal waits for his tap in the PWA and an
+  `ask_owner` question for his answer there; the panel says *"It's waiting for your OK in the
+  app"* / *"I've put a question for you in the app"*.
+- **Only this panel.** The box answers with the agent only when the caller was flashed as a
+  `display` AND the owner switched **agent access** on for it (`endpoint_panel.agent_access`,
+  migration 0233; PWA → Panels → "Talks to the full Jerv and Dave", or `PUT
+  /api/debug/panel/{id}/agent`). Both are server-side; a panel reads its own row and writes none.
+  The twins' `jpet` panels never reach it, whatever they send. Migration 0233 switches it on for
+  the one live display panel named Jeff.
+- **The PWA's voice.** The reply is spoken by the box's Kokoro in the PWA read-aloud's voice and
+  effects (`brain_answer_voice`, speed, pitch, chorus, robot) with the owner's pronunciation
+  lexicon, resampled to the panel's 16 kHz s16 mono. When the PWA is set to the phone's own
+  voice ("native") there is no box voice to match and the panel keeps the chosen Kokoro voice.
+- **Long turns.** The box waits up to 100 s for the agent and the panel 130 s for the box (0.0.11);
+  a turn still running then is left running and the panel says the answer will be in the app.
+  The panel keeps 255 bytes of a message, so the box sends the answer as plain prose condensed to
+  whole sentences within 240 bytes (" More in the app." when cut), and speaks exactly that.
+
+### Dave on the panel, under a Minecraft menu (owner, 2026-10-12)
+
+*"When you click Minecraft it should go to a next layer of a menu, options will be Dave or
+Compass. Make Dave connect to Minecraft. Dave chat kind of the same as Jerv is getting built out.
+Make Compass a work in progress."* — and then: *"I don't want Dave and Jerv to share the same
+screen. Code-wise that's fine, but they should be separate instances with separate history."*
+
+- The Minecraft tile opens a second level with **Dave** and **Compass**. BOOT climbs one level.
+- **Dave is the real Minecraft_Dave** on the box (`persona=dave`), behind the same per-panel
+  allow as Jerv, in a "Desk panel" chat in the owner's Minecraft_Dave history. His words are
+  governed by his own system prompt (the lore is canon in the Bleepbloop_City repo); nothing on
+  the panel writes lines for him. There is no voice configured for Dave anywhere on the box, so he
+  speaks in the PWA read-aloud's voice, as Jerv does.
+- **Shared code, separate instances.** One conversation view (`firmware-c6/components/convo`),
+  instantiated by `app_jerv` and by `app_minecraft`: separate screens, separate on-panel
+  histories (each its own eight-message buffer), separate scroll positions, separate box threads;
+  clearing one never touches the other (host- and sim-tested). KEY inside Dave's thread talks to
+  Dave; KEY anywhere outside a conversation is still Jerv's.
+- **Compass** is a "Work in progress" page.
+
+### Clear chat by a long press (owner, 2026-10-12)
+
+*"Find a way to clear the chat. Maybe a long press in a chat window pulls up a menu?"* A finger
+held still for 600 ms (within the tap's 20 px slop, so a scroll never does it) anywhere in a
+conversation — Jerv's, Dave's, either person's thread — opens a small card: Clear chat, Cancel.
+Clear takes two taps within 3 s (the Wi-Fi Disconnect pattern). BOOT, a tap outside, or KEY
+closes it, and KEY then records nothing. Clearing empties that thread on the panel; for Jerv or
+Dave it also starts a fresh conversation on the box on the next talk (`new_thread=true` on that
+`/converse`, kept until a talk is answered). Nothing is deleted on the box; the old chat stays in
+the PWA. The people's threads only clear the panel's view. One shell decision for every
+conversation (`shell_core.c`: `sh_long_press`, `sh_menu_*`), host-tested; a debug session drives it
+with `inject` `hold` at x,y.
+
+### The threads carry the panels' real names (owner, 2026-10-12)
+
+*"Quorra and Tamsin are also placeholder names, it should pull the panel name from the panel
+config."* Each person's thread is bound to a sibling panel's **device id** and shows the name the
+owner gave that panel on the box — the PWA Panels screen's name — with the tile's letter and colour
+from it. The box serves `GET /endpoint/siblings` (device key; only a `display` panel is
+answered; ids and names only, the caller excluded, at most four); the panel fetches it once a
+boot and every fifteen minutes, keeps it in RAM and in an NVS cache so names show after a reboot
+before the box answers, and says "Panel 1" / "Panel 2" until it has ever had an answer. No name
+is compiled into the image; Quorra and Tamsin remain only in the mocks, docs, host tests and sim
+fixtures, and the sim feeds its names through the box's JSON and the panel's own path. The
+history behind a thread is RAM-only on the panel (the box keeps the agents' full history; paging
+it back onto the panel is a later change).
 
 ## 2. The push path: the box can tap the owner on the shoulder
 
@@ -250,11 +349,11 @@ four orientations fit with no relayout of the frame — only the content turns.
 | **C0** ✅ | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Proven on the board 2026-10-11. |
 | **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
 | **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **0.0.4 on the glass (measured):** home renders, runtime brightness and PWR dark/wake work, KEY and BOOT route as designed. **0.0.6 (built, awaiting the board):** `svc_touch` — the CST9220 polled every 20 ms over `svc_power`'s bus through a locked transfer API (still one owner), raw→display mapping, failure reported as `touch=failed:<step>`; the shell's real-pointer rules host- and sim-tested (tap within 20 px, sideways swipe ≥ 60 px, a stroke on a dark screen wakes and reaches nothing, a notice appearing under a finger ends its stroke). **Left:** confirming 0.0.5 installs and 0.0.6's taps, swipes and corners on the glass, then the RTC. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
-| **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI); left: the panel's pickup and upload (0.0.9), the stripe handoff, Ops → Panels buttons. |
-| **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **Left:** calibration, the alarm service and PWA editor, audio, the box client for messages. | Each app's mock states reproduced on the glass and in `sim/`. |
+| **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI). **0.0.9 (built, awaiting the board):** the pickup every 3 s from the update loop (manifest first, backoff to 60 s on a silent box, none while the box is unreachable), one kept-alive session for every box request, commands on the UI task through a one-slot job (3 s, else `ui busy`; inline on a boot with no UI), the screenshot streamed chunked from the renderer (2 × 4 KB, ≤ 2 s of stillness, `net slow` / `capture torn` as JSON), the `esp_log` ring hook with clip-aware secret scrubbing, `dbg=` / `tls=` / `sec=` telemetry. **Left:** proving it on the glass, Ops → Panels buttons. |
+| **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **0.0.10 (built, awaiting the board):** Jerv's streamed hold-to-talk end to end — the ES8311/ES7210 under `svc_audio` (one task, priority 1), the upload chunked while KEY is held, the reply frame (transcript, Jerv's words, then speech) over the S3s' `/endpoint/converse` with `persona=jerv`, the speech streamed through a 16 KB ring, text only when read-aloud is off, KEY/BOOT stops a reply, a speaker-volume slider, `audio=` telemetry, the debug `play_tone`. Jerv here is a tool-less spoken persona, not the owner's agent (§5). **0.0.11 (built, awaiting the board):** Jerv is the owner's real agent, Dave is Minecraft_Dave in a conversation of his own a level under the Minecraft tile (Compass a work-in-progress page), one shared conversation view (`components/convo`) with an instance per agent, Clear chat by a long press, the people's threads named and bound by device id from `GET /endpoint/siblings`, the reply waited for 130 s, the audio stack 4.25 KB and microphone gain 24 dB from the first talks' numbers. **Left:** calibration, the alarm service and PWA editor, voice messages to Quorra and Tamsin (the box client for messages), Listen on a stored reply. | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C2r** | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, LVGL software rotation, touch mapped through it, the Settings switch. After touch is proven on the board. | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
 | **C3b** | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tools, `svc_notice` and the overlay. | Jerv asks a yes/no on the panel and acts on the tap. |
-| **C4** | Minecraft. | Parked until scoped. |
+| **C4** 🟡 | Minecraft. **0.0.11:** the tile is a menu of Dave (the real Minecraft_Dave, a conversation of his own) and Compass (work in progress). | Compass scoped and built. |
 
 ## 4. Debugging a panel through the box
 
@@ -294,7 +393,10 @@ screen, nothing can press a button.
   existing draw buffer is run-length encoded as it is flushed (`JPS1`: per strip `y0, rows, len`,
   then `(len-1, rgb565)` runs). Extra RAM is the encoder (~0.6 KB) plus a 2×4 KB handoff to the
   network task — the UI task never blocks on the network; if the handoff is full for 50 ms the
-  capture aborts with `net slow` rather than stall a frame. On the wire the mock's screens are
+  capture aborts with `net slow` rather than stall a frame. (As built in 0.0.9: the UI is inside
+  one render for the whole capture, so the bound is the total — 2 s — with 250 ms per wait,
+  because one TCP ACK held by Wi-Fi power save can take ~100 ms; power save is off while the
+  stream goes up.) On the wire the mock's screens are
   17-46 KB (measured in the sim); the worst case, noise, is 3 bytes a pixel. The box decodes to
   PNG. The sim's every render goes through this exact path.
 
@@ -334,7 +436,9 @@ the same routes, so the owner can look without a session too.
 - Thread messages from this panel: do they reach the girls as **Dad** (the owner's
   principal), or as a third panel? The twins' "send a message → the other panel" rule
   assumes exactly two panels and must become addressed either way.
-- Jerv on the panel: a session of its own, or the owner's current Jerv chat in the PWA?
+- ~~Jerv on the panel: a session of its own, or the owner's current Jerv chat in the PWA?~~
+  **Closed 2026-10-12 by the owner** — the full agent, in a thread of its own ("Jerv on the panel
+  is the real Jerv", §1).
 - Fonts: settled in 0.0.8 — the 92/124 px clock digits and the missing punctuation are generated
   with `lv_font_conv` and vendored (`firmware-c6/tools/gen_fonts.sh`).
 - The panel's time zone: the box keeps the owner's (`owner_timezone`) but does not tell the panel;

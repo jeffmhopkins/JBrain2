@@ -120,17 +120,16 @@ static vocab_t VOCAB[] = {
      *
      * "sister" HARDCODES A RELATIONSHIP, which is a known cost rather than an oversight. The box
      * already knows each panel's sibling by name — it is what the pop-up says out loud — and
-     * `endpoint_panel` can now carry per-panel strings to the firmware, so "tell Lydian" on one
-     * unit and "tell Elora" on the other is the better shape once there is evidence this one
+     * `endpoint_panel` can now carry per-panel strings to the firmware, so "tell Tamsin" on one
+     * unit and "tell Quorra" on the other is the better shape once there is evidence this one
      * fires at all. That is the next step, not this one.
      *
-     * THE ARGUMENT IS A `jpanel_to_t`, not a face or an action, and it is the first entry in
-     * this table whose `arg` means something outside `face.h` and `rig.h`. Spelled as the
-     * literal rather than by including `jpanel.h`: this file is pure C and built on the host,
-     * and `jpanel.h` drags in `cfg.h` and the ESP headers behind it. The host suite pins the
-     * two values together so the spelling cannot drift. */
-    {"tell sister", "TfL SgSTk", VOCAB_SEND, 0}, /* JPANEL_TO_PANEL — the twin's unit */
-    {"tell dad", "TfL DaD", VOCAB_SEND, 1},    /* JPANEL_TO_DAD — the owner's PWA */
+     * THE ARGUMENT IS A `jp_to_t` (`jpanel_types.h`), not a face or an action, and it is the
+     * first entry in this table whose `arg` means something outside `face.h` and `rig.h`.
+     * Spelled as the literal so this table stays a plain list; the host suite pins the two
+     * values to the enum so the spelling cannot drift. */
+    {"tell sister", "TfL SgSTk", VOCAB_SEND, 0}, /* JP_TO_PANEL — the twin's unit */
+    {"tell dad", "TfL DaD", VOCAB_SEND, 1},    /* JP_TO_DAD — the owner's PWA */
 
     /* The ask that started this: one of the twins wanted the robot to be M.E.R.C. Two ways
        to say it, because a four-year-old will say the one you did not think of. */

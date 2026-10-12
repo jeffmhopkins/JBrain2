@@ -4,7 +4,8 @@
  * 0.0.4 is the first image that drives the screen: the AXP2101 (svc_power), the buttons
  * (svc_buttons), the CO5300 under LVGL (svc_display) and the shell (ui_task.c). 0.0.6 adds the
  * CST9220 (svc_touch); 0.0.8 the saved settings (svc_settings), the PCF85063 and the box's clock
- * (svc_rtc), and the real Wi-Fi and Firmware cards (svc_net, svc_box). ALL OF IT STARTS AFTER
+ * (svc_rtc), and the real Wi-Fi and Firmware cards (svc_net, svc_box); 0.0.10 the ES8311 and
+ * ES7210 (svc_audio) and the talk to Jerv on the box connection (talk_link.c). ALL OF IT STARTS AFTER
  * THE ROLLBACK GATE, and the boot after a panic or a watchdog leaves the display off
  * (disp_guard.c), so no fault in the new code can stop this loop reaching the box and taking the
  * image that fixes it (README "What 0.0.4 adds").
@@ -15,8 +16,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "box_http.h"
 #include "cfg.h"
 #include "dbg_core.h"
+#include "dbg_link.h"
 #include "disp_guard.h"
 #include "esp_chip_info.h"
 #include "esp_core_dump.h"
@@ -30,6 +33,7 @@
 #include "nvs_flash.h"
 #include "ota.h"
 #include "shell.h"
+#include "svc_audio_drv.h"
 #include "svc_box_drv.h"
 #include "svc_buttons.h"
 #include "svc_display_drv.h"
@@ -38,6 +42,9 @@
 #include "svc_rtc_drv.h"
 #include "svc_settings_drv.h"
 #include "svc_touch.h"
+#include "sib_link.h"
+#include "svc_siblings_drv.h"
+#include "talk_link.h"
 #include "ui_task.h"
 
 static const char *TAG = "jpanel-c6";
@@ -73,18 +80,57 @@ static TaskHandle_t s_main;
 /* The box's clock is applied only once svc_rtc has started, after the rollback gate. */
 static bool s_rtc_up;
 
+/* `sec=ok`, or `sec=fixed:<keys>` when provisioning had not registered a credential as a debug
+   secret and this boot did it instead: a svc_settings regression the box should hear about. */
+static char s_sec[40] = "sec=-";
+
+static void secrets_note(char *out, size_t len)
+{
+    snprintf(out, len, "%s", s_sec);
+}
+
+/* The debug relay sends snapshots and logs off the panel, so the device key, the Wi-Fi password
+   and the CA must be on the writer's scrub list before anything can be asked for. svc_settings
+   registers them from the provisioning table; this checks it did, by value, and closes the gap
+   if not. Values under 4 bytes cannot be registered (dbg_secret_add) and are skipped. */
+static void check_secrets(const cfg_t *cfg)
+{
+    const struct {
+        const char *name, *value;
+    } want[] = {{"token", cfg->token}, {"pass", cfg->pass}, {"ca", cfg->ca}};
+    char fixed[24] = "";
+    for (size_t i = 0; i < sizeof want / sizeof *want; i++) {
+        const char *v = want[i].value;
+        if (!v || strlen(v) < 4 || dbg_secret_registered(v)) continue;
+        dbg_secret_add(v);
+        strlcat(fixed, fixed[0] ? "," : "", sizeof fixed);
+        strlcat(fixed, want[i].name, sizeof fixed);
+    }
+    if (fixed[0]) {
+        snprintf(s_sec, sizeof s_sec, "sec=fixed:%s", fixed);
+        ESP_LOGE(TAG, "provisioning left %s unregistered as debug secrets — registered here", fixed);
+    } else {
+        snprintf(s_sec, sizeof s_sec, "sec=ok");
+    }
+}
+
 /* What the UI hands this loop (Update now, Connect): a notification, nothing more. */
 static void wake_main(void)
 {
     if (s_main) xTaskNotifyGive(s_main);
 }
 
-static bool fetch_manifest(const cfg_t *cfg, ota_manifest_t *m)
+static void box_reached(void)
 {
-    if (ota_fetch_manifest(cfg, m) != ESP_OK) return false;
     s_box_ms = now_ms();
     s_box_ever = true;
     svc_box_reached();
+}
+
+static bool fetch_manifest(const cfg_t *cfg, ota_manifest_t *m)
+{
+    if (ota_fetch_manifest(cfg, m) != ESP_OK) return false;
+    box_reached();
     if (s_rtc_up && m->date) svc_rtc_box_time(m->date);
     return true;
 }
@@ -131,11 +177,12 @@ static bool report(const cfg_t *cfg)
     /* Bounded on its own, so however long a service's tokens grow the body still fits and the
        report still goes: a truncated note is a smaller loss than no heartbeat. Static, as is
        the body, because this task then runs a TLS handshake on the same 8 KB stack. */
-    static char note[960], part[256];
+    static char note[1408], part[256];
     size_t used = 0;
-    void (*const parts[])(char *, size_t) = {svc_display_note, ui_task_note,   svc_power_note,
-                                             svc_buttons_note, svc_touch_note, svc_settings_note,
-                                             svc_rtc_note,     shell_key_note};
+    void (*const parts[])(char *, size_t) = {
+        svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
+        svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
+        svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -143,7 +190,7 @@ static bool report(const cfg_t *cfg)
         if (k > 0) used += (size_t)k < sizeof note - used ? (size_t)k : sizeof note - used - 1;
     }
 
-    static char body[1536];
+    static char body[2048];
     const int n = snprintf(
         body, sizeof(body),
         "{\"version\":\"%s\",\"uptime_ms\":%" PRIu32 ",\"reset_reason\":\"%s\","
@@ -250,6 +297,12 @@ static void start_panel(const cfg_t *cfg)
     prov[6] = (settings_kv_t){"role", cfg->role};
     svc_settings_provisioning(prov, 7);
     svc_settings_init();
+    /* In this order: the secrets are on the scrub list before the log hook can store a line, and
+       the commands are bound before the UI or the loop can run one. */
+    check_secrets(cfg);
+    dbg_log_set_clock(now_ms);
+    dbg_log_chain(esp_log_set_vprintf(dbg_log_vprintf));
+    dbg_link_start();
     const int reset = (int)esp_reset_reason();
     const bool may_start = dg_may_start(reset);
     if (!may_start) {
@@ -270,6 +323,8 @@ static void start_panel(const cfg_t *cfg)
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
     svc_touch_start();
+    /* Likewise: a codec that does not answer is a panel without sound, saying so in Settings. */
+    svc_audio_start(wake_main);
 }
 
 void app_main(void)
@@ -299,6 +354,10 @@ void app_main(void)
         ota_confirm_health(false);
         return;
     }
+    /* Before the gate on purpose: the kept session is how the manifest travels now, so the gate
+       proves it. Its first request is a fresh session, exactly 0.0.8's, and any later request
+       that fails on a kept one is retried on a fresh one — at worst this is 0.0.8's transport. */
+    box_http_init(&cfg);
 
     /* A failed join is a retry, not an exit: returning here would end the update loop, and a
        panel that booted while the router was down would need hands. */
@@ -318,10 +377,14 @@ void app_main(void)
     start_panel(&cfg);
     if (fresh) svc_box_set_phase(FW_DONE, NULL, 0, NULL);
     if (reachable && manifest.date) svc_rtc_box_time(manifest.date);
+    /* The names before the first talk: the cache already shows the last ones. */
+    if (reachable) sib_link_poll();
 
     uint32_t last_report_ms = 0;
     bool reported = false;
     uint32_t ota_last_try_ms = 0;
+    dbg_sched_t pickup;
+    dbg_sched_init(&pickup, now_ms());
     while (true) {
         if (reachable) {
             if (!reported || (uint32_t)(now_ms() - last_report_ms) >= REPORT_PERIOD_MS) {
@@ -335,10 +398,37 @@ void app_main(void)
             if (maybe_install(&cfg, &manifest, &ota_last_try_ms)) reported = false;
         }
 
-        /* A PWR press, or the UI settling, wakes the loop early so the box hears it in seconds. */
-        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CHECK_PERIOD_MS));
-        /* Both asked, both cleared: `|`, not `||`. */
-        if (svc_buttons_take_dirty() | ui_task_take_dirty()) reported = false;
+        /* Until the next manifest check: debug pickups while the box answers (dbg_sched.c). A
+           PWR press, the UI settling, Update now, Connect, or a debug command that needs this
+           loop (ota_check, report_now) wakes it early, so the box hears it in seconds.
+           A talk to Jerv outranks all of it (talk_link.h): it is taken the moment KEY wakes this
+           loop, and afterwards the loop makes its regular pass, so a manifest check or a
+           heartbeat that fell due meanwhile is the next thing on the connection. */
+        const uint32_t check_due = now_ms() + CHECK_PERIOD_MS;
+        for (;;) {
+            if (talk_link_run()) break;
+            uint32_t sleep_ms = 0;
+            const dbg_next_t next = dbg_sched_next(&pickup, now_ms(), check_due,
+                                                   reachable && !svc_net_user_off(), &sleep_ms);
+            if (next == DBG_NEXT_CHECK) break;
+            if (next == DBG_NEXT_SLEEP) {
+                if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms))) {
+                    talk_link_run();
+                    break;
+                }
+                continue;
+            }
+            const dbg_poll_t got = dbg_link_poll();
+            if (got != DBG_POLL_FAIL) box_reached();
+            dbg_sched_done(&pickup, now_ms(), got);
+            if (ulTaskNotifyTake(pdTRUE, 0)) {
+                talk_link_run();
+                break;
+            }
+        }
+        /* All asked, all cleared: `|`, not `||`. */
+        if (svc_buttons_take_dirty() | ui_task_take_dirty() | svc_box_take_report_request())
+            reported = false;
         const bool asked = svc_box_take_update_request();
 
         /* The owner's Disconnect holds until Connect or a restart: no re-join, no box. */
@@ -351,11 +441,14 @@ void app_main(void)
             s_relinks++;
             joined = false;
         }
+        /* A kept session does not survive the radio going away. */
+        if (!joined) box_http_close();
         if (!joined && !svc_net_user_off()) {
             joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;
             if (joined) ESP_LOGI(TAG, "network recovered");
         }
         reachable = joined && fetch_manifest(&cfg, &manifest);
+        if (reachable) sib_link_poll();
         if (asked && update_now(&cfg, &manifest, reachable, &ota_last_try_ms)) reported = false;
     }
 }

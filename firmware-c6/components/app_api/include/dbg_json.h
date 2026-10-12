@@ -37,3 +37,9 @@ bool dbg_json_key_is_secret(const char *key);
 void dbg_secret_add(const char *value);
 void dbg_secret_clear(void);
 bool dbg_secret_in(const char *text);
+/* Whether exactly this value is registered: the boot's check that provisioning did it. */
+bool dbg_secret_registered(const char *value);
+/* In place, within `cap` bytes: every registered secret in `s` becomes [redacted]; when the
+ * text was `clipped`, a tail of 4+ characters that starts a secret does too. True if anything
+ * changed. The log ring's store, so a line keeps its context and loses only the secret. */
+bool dbg_secret_scrub(char *s, size_t cap, bool clipped);

@@ -36,6 +36,7 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.minecraft import client as mc
 from jbrain.minecraft import scans
 from jbrain.minecraft import sessions as mc_sessions
+from jbrain.minecraft import targets as tricorder
 from jbrain.minecraft.asker import Asker, Spot, asker_for
 from jbrain.minecraft.sessions import check_gamertag
 
@@ -89,6 +90,11 @@ class Found(ToolOutput):
 # Read off the text, not `Found`, because a free repeat (§M17) answers from the stored text.
 _LOCATE_HIT = re.compile(r"\bis at block (-?\d+), (?:~|\(y\?\)|(-?\d+)), (-?\d+)")
 _BLOCK_HIT = re.compile(r"\bat x=(-?\d+) y=(-?\d+) z=(-?\d+), ")
+# The pack's answer to a mob search (rules.js `findLine`).
+_MOB_HIT = re.compile(
+    r"\bfind found (?P<type>[a-z_:]+) at x=(?P<x>-?\d+) y=(?P<y>-?\d+) z=(?P<z>-?\d+),"
+    r" (?P<blocks>\d+) blocks from .+ \((?P<dim>overworld|nether|the_end)\)"
+)
 
 
 def first_hit(result: str, dim: str) -> Spot | None:
@@ -415,16 +421,23 @@ def build_minecraft_handlers(
     settings_store: SqlSettingsStore | None,
     *,
     scan_book: Callable[[SessionContext], scans.ScanBook] | None = None,
+    target_book: Callable[[SessionContext], tricorder.TargetBook] | None = None,
 ) -> dict[str, ToolHandler]:
     """Minecraft_Dave's tools, bound to the app's sessionmaker, its config (the sidecar's
     address and token) and the settings store (the owner's gamertag). Each DB handler runs
     under `ctx.session`, so the owner-only RLS on the Minecraft tables is the gate.
-    `scan_book` replaces the deep-scan ledger (unit tests keep it in memory)."""
+    `scan_book` replaces the deep-scan ledger and `target_book` the Tricorder targets the
+    map draws (unit tests keep both in memory)."""
 
     def book_for(ctx: ToolContext) -> scans.ScanBook:
         if scan_book is not None:
             return scan_book(ctx.session)
         return scans.SqlScanBook(maker, ctx.session)
+
+    def targets_for(ctx: ToolContext) -> tricorder.TargetBook:
+        if target_book is not None:
+            return target_book(ctx.session)
+        return tricorder.SqlTargetBook(maker, ctx.session)
 
     async def chat_player(s: AsyncSession, ctx: ToolContext) -> Player | None:
         # In game the player is whoever the server says typed the command, whatever the
@@ -704,24 +717,29 @@ def build_minecraft_handlers(
             # also holds every other slot the player has walked.
             worlds = await sidecar("GET", "/worlds")
             loaded = worlds.get("active") if isinstance(worlds, dict) else None
+            last = None
             async with scoped_session(maker, ctx.session) as s:
                 player = await chat_player(s, ctx)
-                last = (
-                    (
-                        await s.execute(
-                            text(
-                                "SELECT x, z FROM app.mc_player_track WHERE xuid = :k"
-                                " AND world = :w AND dim = 'overworld'"
-                                " ORDER BY at DESC LIMIT 1"
-                            ),
-                            {"k": player.key, "w": loaded},
-                        )
-                    ).first()
-                    if player is not None and loaded
-                    else None
-                )
+                if player is not None and loaded:
+                    # In the dimension searched; for the Nether, else the Overworld spot
+                    # scaled down, the way a portal maps it.
+                    for d in (dim, "overworld") if dim == "nether" else (dim,):
+                        row = (
+                            await s.execute(
+                                text(
+                                    "SELECT x, z FROM app.mc_player_track WHERE xuid = :k"
+                                    " AND world = :w AND dim = :d"
+                                    " ORDER BY at DESC LIMIT 1"
+                                ),
+                                {"k": player.key, "w": loaded, "d": d},
+                            )
+                        ).first()
+                        if row is not None:
+                            scale = 8 if d != dim else 1
+                            last = (row.x / scale, row.z / scale)
+                            break
             if last is not None:
-                x, z, origin = last.x, last.z, "the player's last known position"
+                (x, z), origin = last, "the player's last known position"
             else:
                 x, z, origin = 0, 0, "world spawn (0, 0)"
         try:
@@ -741,23 +759,76 @@ def build_minecraft_handlers(
             return "That isn't a Bedrock id — e.g. mansion, village, ancient_city, cherry_grove."
         if kind == "biome" and not what.startswith("minecraft:"):
             what = f"minecraft:{what}"  # biomes need the namespace; structures don't (M0b)
-        at = await where(arguments, ctx)
+        dim = dimension_of(arguments, ctx)
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        at = await where(arguments, ctx, dim)
         if isinstance(at, str):
             return at
         xi, zi, origin = at
 
         async def run() -> tuple[str, bool]:
-            got = await console(f"execute positioned {xi} 64 {zi} run locate {kind} {what}")
+            # From the console `locate` runs in the Overworld unless told the dimension.
+            got = await console(
+                f"execute in {dim} positioned {xi} 64 {zi} run locate {kind} {what}"
+            )
             if isinstance(got, str):
                 return got, False
             reply = _reply(got)
+            place = "" if dim == "overworld" else f" in the {_DIMENSION_NAMES[dim]}"
             out = ToolOutput(
-                f"Searching from {origin} ({xi}, {zi}): {fence(reply)}", result_brief=what
+                f"Searching{place} from {origin} ({xi}, {zi}): {fence(reply)}", result_brief=what
             )
             return out, bool(_LOCATED.search(reply))
 
-        search = scans.Search("mc_locate", f"{kind}:{what}", "overworld", xi, zi)
+        search = scans.Search("mc_locate", f"{kind}:{what}", dim, xi, zi)
         return await scanned(ctx, search, run, needs_server=True)
+
+    async def mc_find_mob(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """The nearest mob of a type around a player, asked of the game itself (the pack's
+        `jb:find`): mobs exist only in the chunks around online players, so this is a
+        look around, not a deep scan, and costs none."""
+        mob = str(arguments.get("mob") or "").strip().lower().replace(" ", "_")
+        if not _GAME_ID.fullmatch(mob):
+            return "That isn't a Bedrock mob id — e.g. cow, sheep, horse, villager, zombie."
+        reach = _int(arguments.get("max_distance"), 256, 8, 256)
+        if reach is None:
+            return "max_distance must be a number of blocks."
+        who = await waypoint_player(arguments, ctx)
+        if isinstance(who, str):
+            return ToolOutput(who, result_brief="refused") if who == only_you else who
+        _, gamertag = who
+        query = {"player": gamertag, "type": mob, "max": reach}
+        got = await console(f"scriptevent jb:find {json.dumps(query)}")
+        if isinstance(got, str):
+            return got
+        reply = _reply(got)
+        if "find refused" in reply:
+            return ToolOutput(
+                f"The search couldn't run: {fence(reply)}", result_brief="not searched"
+            )
+        if "find none" in reply:
+            return ToolOutput(
+                f"No {mob.removeprefix('minecraft:').replace('_', ' ')} within {reach} blocks"
+                f" of {fence(gamertag)}. Mobs only exist in the chunks around online players,"
+                " so this looked nearby only.",
+                result_brief="none nearby",
+            )
+        m = _MOB_HIT.search(reply)
+        if m is None:
+            return (
+                "The server took the command, but the jbrain pack didn't answer — it may not"
+                " have loaded in this world yet (it updates when the server restarts)."
+            )
+        spot = Spot(int(m["x"]), int(m["y"]), int(m["z"]), m["dim"])
+        return Found(
+            f"The nearest {m['type'].removeprefix('minecraft:').replace('_', ' ')} to"
+            f" {fence(gamertag)} is at x={spot.x} y={spot.y} z={spot.z}, {m['blocks']} blocks"
+            f" away (in the {_DIMENSION_NAMES[spot.dim]}). Mobs wander: this is where it is"
+            " now. Point their Tricorder at it with mc_set_waypoint if they want to go.",
+            m["type"].removeprefix("minecraft:"),
+            target=spot,
+        )
 
     def dimension_of(arguments: dict, ctx: ToolContext) -> str:
         # In game, "here" is the dimension the asker is standing in.
@@ -996,6 +1067,15 @@ def build_minecraft_handlers(
                 " box's own jbrain pack may not have loaded in this world (check the server"
                 " log for its `[jbrain]` lines)."
             )
+        # The map's copy of the target (the pack's own can't be read back): what it draws,
+        # and what the track drain clears when the player gets there.
+        world = await loaded_world(ctx)
+        if world:
+            book = targets_for(ctx)
+            if target is None:
+                await book.clear(world, gamertag)
+            else:
+                await book.set(world, gamertag, target, str(event["label"]))
         if clear or target is None:
             return ToolOutput(
                 f"Cleared {fence(gamertag)}'s tricorder waypoint; it points at spawn again.",
@@ -1447,6 +1527,7 @@ def build_minecraft_handlers(
         "mc_what_is_at": mc_what_is_at,
         "mc_nearby": mc_nearby,
         "mc_find_block": mc_find_block,
+        "mc_find_mob": mc_find_mob,
         "mc_set_waypoint": mc_set_waypoint,
         "mc_place_save": mc_place_save,
         "mc_places": mc_places,

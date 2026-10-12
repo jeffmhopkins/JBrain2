@@ -21,7 +21,7 @@ from jbrain.api import jpanel
 
 class TestDisplayName:
     def test_a_named_panel_keeps_its_name(self) -> None:
-        assert jpanel._display_name("panel Ellie") == "Ellie"
+        assert jpanel._display_name("panel Quorra") == "Quorra"
         assert jpanel._display_name("panel  Rae ") == "Rae"
 
     def test_an_unnamed_panel_is_still_sayable(self) -> None:
@@ -46,7 +46,7 @@ class TestDisplayName:
         asserting is that they compose: whatever `/flash` writes, the addressing reads back.
         """
         # The named branch, and the unnamed one, through the pair as the routes use them.
-        assert jpanel._display_name(endpoint_api.panel_label("Ellie")) == "Ellie"
+        assert jpanel._display_name(endpoint_api.panel_label("Quorra")) == "Quorra"
         assert jpanel._display_name(endpoint_api.panel_label("")) == "the other one"
         assert endpoint_api.panel_label("") == jpanel._UNNAMED_LABEL
         # And `/flash` really does write it through that function rather than its own literal,
@@ -71,7 +71,7 @@ class TestNameOf:
         assert jpanel._name_of({}, "panel", "gone") == "the other one"
 
     def test_a_known_panel_is_named(self) -> None:
-        assert jpanel._name_of({"p1": "Ellie"}, "panel", "p1") == "Ellie"
+        assert jpanel._name_of({"p1": "Quorra"}, "panel", "p1") == "Quorra"
 
 
 class TestMessageShape:
@@ -102,7 +102,7 @@ class TestMessageShape:
     def test_direction_is_relative_to_the_owner(self) -> None:
         """ "in" and "out" are the PWA's axis, and the owner is the other end of MOST
         conversations he can see — so those two are decided by whether a panel sent it."""
-        names = {"p1": "Ellie"}
+        names = {"p1": "Quorra"}
         assert jpanel._row_to_message(self._row("panel", "p1"), names).direction == "in"
         assert jpanel._row_to_message(self._row("owner", None), names).direction == "out"
 
@@ -111,25 +111,25 @@ class TestMessageShape:
         OWNER. So the PWA drew a message from one four-year-old to the other with only its
         sender's name, exactly like one addressed to him, and its unplayed badge counted it as
         something HE had failed to deal with. The owner saw both: *"my pwa is showing messages
-        between the girls ... make sure the pwa is correctly listing that it was lydian to
-        elora, not kid to Dad."*
+        between the girls ... make sure the pwa is correctly listing that it was tamsin to
+        quorra, not kid to Dad."*
 
         `to_name` was already on the wire. Nothing said the message was not his, so nothing
         drew it."""
-        names = {"p1": "Lydian", "p2": "Elora"}
+        names = {"p1": "Tamsin", "p2": "Quorra"}
         msg = jpanel._row_to_message(
             self._row("panel", "p1", recipient_kind="panel", recipient_device="p2"), names
         )
         assert msg.direction == "between"
         # Both ends named, so the PWA can say who it was actually between.
-        assert (msg.from_name, msg.to_name) == ("Lydian", "Elora")
+        assert (msg.from_name, msg.to_name) == ("Tamsin", "Quorra")
 
     def test_an_unplayed_message_reports_no_played_at(self) -> None:
         """`played_at is None` is the entire inbox query and the PWA's unplayed badge; a
         serialisation that turned it into a string would make every message look heard."""
-        msg = jpanel._row_to_message(self._row("panel", "p1"), {"p1": "Ellie"})
+        msg = jpanel._row_to_message(self._row("panel", "p1"), {"p1": "Quorra"})
         assert msg.played_at is None
-        assert msg.from_name == "Ellie"
+        assert msg.from_name == "Quorra"
         assert msg.to_name == "Dad"
 
     def test_a_message_the_box_gave_up_on_is_not_merely_waiting(self) -> None:
@@ -142,12 +142,12 @@ class TestMessageShape:
 
         `played_at` is deliberately NOT written when the box gives up: the row is unplayed
         because it IS unplayed, and stamping it would be the box telling the owner a lie."""
-        waiting = jpanel._row_to_message(self._row("owner", None, deliveries=1), {"p1": "Ellie"})
+        waiting = jpanel._row_to_message(self._row("owner", None, deliveries=1), {"p1": "Quorra"})
         assert waiting.undelivered is False, "one try is a message waiting, not a failure"
 
         gave_up = jpanel._row_to_message(
             self._row("owner", None, deliveries=jpanel.JPANEL_MAX_DELIVERIES),
-            {"p1": "Ellie"},
+            {"p1": "Quorra"},
         )
         assert gave_up.undelivered is True
         assert gave_up.played_at is None, (
@@ -159,10 +159,11 @@ class TestMessageShape:
 class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
     """THE FIRMWARE HARDCODES THESE FOUR PATHS AND NOTHING ELSE COULD CATCH A MOVE.
 
-    `firmware/main/jpanel.c` builds `<api>/jpanel/<path>` with `snprintf`. Nothing on the panel
-    can be tested on a host (the file needs the ESP HTTP client), and the box cannot tell a
-    panel it is knocking on the wrong door — a 404 from `GET /waiting` is indistinguishable
-    from "nobody sent me anything", so the whole feature reads as merely quiet.
+    `firmware/main/jpanel_core.c` builds `<api>/jpanel/<path>` with `snprintf`. The engine is
+    host-tested against a scripted box, but that box is the firmware's own idea of these routes,
+    and the box cannot tell a panel it is knocking on the wrong door — a 404 from
+    `GET /waiting` is indistinguishable from "nobody sent me anything", so the whole feature
+    reads as merely quiet.
 
     That is not hypothetical. W3 was written against `JPANEL_PLAN.md` §3b, which put these
     under the device surface at `/api/endpoint/jpanel/*` beside `/endpoint/converse`; W2 had
@@ -192,11 +193,11 @@ class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
     def test_the_firmware_builds_exactly_that_base(self) -> None:
         """Read out of the firmware, so the two cannot drift without one of them failing."""
         # parents[3] is the repo root — one further out than the backend-local reads above.
-        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
-            encoding="utf-8"
-        )
+        src = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_core.c"
+        ).read_text(encoding="utf-8")
         assert '"/jpanel%s", path' in src, (
-            "firmware/main/jpanel.c no longer builds /jpanel/<path>; "
+            "firmware/main/jpanel_core.c no longer builds /jpanel/<path>; "
             "the routes above moved with it or the panel is about to 404"
         )
         # And `link.c` puts every path under the api base, on both transports: the HTTPS fallback
@@ -208,9 +209,9 @@ class TestThePanelFacingRoutesAreWhereTheFirmwareLooks:
         assert '"/api" + req.path' in (
             Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api" / "panel_ws.py"
         ).read_text(encoding="utf-8")
-        # And the four suffixes it passes to that helper. `/next` carries a query string now —
-        # `?at=` names which queued message to play — so it is pinned as a prefix, which is what
-        # the route actually depends on: FastAPI matches the path and reads `at` as a parameter.
+        # And the suffixes it passes to that helper. `/next` carries a query string — `?at=` names
+        # which queued message to play — so it is pinned as a prefix, which is what the route
+        # actually depends on: FastAPI matches the path and reads `at` as a parameter.
         for suffix in ('"/send?to=%s"', '"/waiting"', '"/next?at=%d"', '"/played"'):
             assert suffix in src, f"the firmware stopped asking for {suffix}"
 
@@ -272,6 +273,21 @@ class TestTheOwnerFacingRoutesAreWhereThePwaLooks:
             "the PWA's recording cap no longer matches MAX_MESSAGE_MS, so a long message "
             "would be truncated on arrival with nothing said about it"
         )
+
+    def test_a_full_panel_recording_is_one_the_box_accepts(self) -> None:
+        """A3: the panel's recording cap must not exceed the box's `/send` cap.
+
+        `/send` refuses anything over `MAX_MESSAGE_BYTES` with a 413, checked on the raw
+        length, and a 413 is final on the panel — so a cap the box does not accept loses every
+        long message a child records. 0.4.0's first cut had 35 s against 30."""
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "stream.h").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"^#define CAPTURE_MAX_MS (\d+)$", src, re.M)
+        assert m, "firmware/main/stream.h no longer defines CAPTURE_MAX_MS"
+        cap_ms = int(m.group(1))
+        assert cap_ms <= jpanel.MAX_MESSAGE_MS, (cap_ms, jpanel.MAX_MESSAGE_MS)
+        assert jpanel.PANEL_RATE * 2 * cap_ms // 1000 <= jpanel.MAX_MESSAGE_BYTES
 
 
 class TestDadsVoice:
@@ -431,7 +447,7 @@ class TestTheHeardRingCrossesThePackageBoundary:
         )
 
     def test_a_repeat_count_past_the_old_ceiling_still_validates(self) -> None:
-        """THE CEILING WAS REACHED IN THE FIELD. Elora's panel reported a run of exactly 255
+        """THE CEILING WAS REACHED IN THE FIELD. Quorra's panel reported a run of exactly 255
         on 2026-09-26 — a saturated `uint8_t`, not a measurement — and the count is widened to
         16 bits precisely because "at least 255" is the reading that matters least. A count
         the box then refused would trade a clipped number for no report at all, which is the
@@ -520,14 +536,14 @@ class TestNamingAPanelWithoutACable:
         holds the whole queue rather than only its head — and is drawn from there. A name that
         overruns it arrives truncated, and a name cut in half names nobody, which is the same reason
         `draw_popup` shrinks rather than clips."""
-        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
-            encoding="utf-8"
-        )
-        # Inside `wait_one_t`, the queue entry: the single `s_wait_from[N]` this used to read became
-        # an array of these when the panel started holding a sender per message.
-        entry = re.search(r"typedef struct \{\s*char from\[(\d+)\];", src)
-        assert entry is not None, "the panel's per-message from-name buffer moved; re-pin this test"
-        match = entry
+        src = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_types.h"
+        ).read_text(encoding="utf-8")
+        # `jp_who_t`, the queue entry and every sender the engine publishes, holds the name in
+        # `char from[JP_NAME_MAX]`.
+        assert "char from[JP_NAME_MAX];" in src, "the per-message from-name buffer moved; re-pin"
+        match = re.search(r"#define JP_NAME_MAX (\d+)", src)
+        assert match is not None, "JP_NAME_MAX moved; re-pin this test"
         assert int(match.group(1)) > jpanel.MAX_PANEL_NAME, (
             f"names up to {jpanel.MAX_PANEL_NAME} characters are accepted into a "
             f"{match.group(1)}-byte buffer"
@@ -545,25 +561,26 @@ class TestNamingAPanelWithoutACable:
         font_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "font.h").read_text(
             encoding="utf-8"
         )
-        # THE BOX'S WIDTH IS IN `ui.h` NOW, not in a local in `draw_popup`, and that is the
-        # fix rather than a complication: the notice's picture and its tap target used to be
-        # different rectangles, so 0.3.29 gave the geometry one home and both read it from
-        # there. This pin follows it — reading the literal out of `draw_popup` would go stale
-        # the moment the drawing stops owning the number, which is exactly what happened.
+        # THE BOX'S WIDTH IS THE STATE MACHINE'S (`panel_sm.h`, since 0.4.0; `ui.h` before it),
+        # not a local in `draw_popup`, and that is the fix rather than a complication: the
+        # notice's picture and its tap target used to be different rectangles, so the geometry
+        # has one home and both read it from there. This pin follows it — reading the literal
+        # out of `draw_popup` would go stale the moment the drawing stops owning the number.
         start = display.index("static void draw_popup(")
         popup = display[start : display.index("\n}", start)]
-        ui_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "ui.h").read_text(
+        sm_h = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "panel_sm.h").read_text(
             encoding="utf-8"
         )
         scale = re.search(r"#define POPUP_SCALE (\d+)", display)
-        box = re.search(r"#define UI_POPUP_BIG_W (\d+)", ui_h)
+        box = re.search(r"#define SM_NOTICE_BIG_W (\d+)", sm_h)
         pad = re.search(r"w > bw - (\d+) \?", popup)
         width = re.search(r"#define FONT_W (\d+)", font_h)
         assert scale and box and pad and width, "the pop-up's geometry moved; re-pin this test"
         # And the drawing really does take its width from there, or the number above is just a
         # constant nothing uses.
-        assert "const int bw = UI_POPUP_BIG_W" in popup, (
-            "draw_popup stopped taking its width from ui.h; the picture can drift from the target"
+        assert "const int bw = SM_NOTICE_BIG_W" in popup, (
+            "draw_popup stopped taking its width from panel_sm.h; the picture can drift from the "
+            "target"
         )
         n = jpanel.MAX_PANEL_NAME
         drawn = (n * int(width.group(1)) + (n - 1)) * int(scale.group(1))
@@ -583,10 +600,16 @@ class TestNamingAPanelWithoutACable:
             encoding="utf-8"
         )
         assert '"sibling"' in src, "the panel stopped reading the sibling name off the poll"
+        # Since 0.4.0 the name rides the engine's snapshot (`jp_waiting_t.sibling`), and the
+        # recording indicator draws it from the copy render takes each frame.
+        types = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_types.h"
+        ).read_text(encoding="utf-8")
+        assert re.search(r"char sibling\[JP_NAME_MAX\];", types), "the snapshot lost the name"
         display = (
             Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
         ).read_text(encoding="utf-8")
-        assert "jpanel_sibling(" in display, (
+        assert "waiting.sibling" in display, (
             "the recording indicator no longer asks who the message is going to"
         )
 
@@ -599,9 +622,9 @@ class TestNamingAPanelWithoutACable:
 
         Read out of the firmware rather than transcribed, in both directions: the panel must
         SEND it on an upload and READ it on a download."""
-        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
-            encoding="utf-8"
-        )
+        src = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_core.c"
+        ).read_text(encoding="utf-8")
         assert src.count('"X-Jpanel-Sha256"') >= 2, (
             "the panel must both send this header when uploading and read it when downloading"
         )
@@ -619,12 +642,20 @@ class TestNamingAPanelWithoutACable:
         permanent or already reported, and hammering it would only delay the child's answer.
 
         Pinned because the number is chosen HERE and acted on THERE, and a panel that retried
-        a 409 would ask for a sibling that does not exist until it gave up."""
-        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
-            encoding="utf-8"
-        )
+        a 409 would ask for a sibling that does not exist until it gave up.
+
+        Since 0.4.0 the retry is inside one claimed SEND, which is never re-checked against its
+        expiry (plan §7.3), and its behaviour is `test_422_retry_restarts_first_frame_bound` in
+        `firmware/host/jpanel_tests.c`."""
+        src = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_core.c"
+        ).read_text(encoding="utf-8")
         assert "status == 422" in src, "the panel no longer recognises a failed verification"
         assert "SEND_ATTEMPTS" in src, "the retry is gone"
+        tests = (
+            Path(__file__).resolve().parents[3] / "firmware" / "host" / "jpanel_tests.c"
+        ).read_text(encoding="utf-8")
+        assert "test_422_retry_restarts_first_frame_bound();" in tests
 
     def test_the_route_is_where_the_pwa_will_look(self) -> None:
         paths = {
@@ -643,22 +674,23 @@ class TestNamingAPanelWithoutACable:
         entries to a panel with room for eight would hand out an index the panel cannot draw a face
         for, and a panel that clamped to a smaller number would make the last messages unreachable
         by swipe with nothing to say so."""
-        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.h").read_text(
-            encoding="utf-8"
-        )
+        src = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_types.h"
+        ).read_text(encoding="utf-8")
         m = re.search(r"#define JPANEL_QUEUE_MAX\s+(\d+)", src)
-        assert m, "firmware/main/jpanel.h no longer defines JPANEL_QUEUE_MAX"
+        assert m, "firmware/main/jpanel_types.h no longer defines JPANEL_QUEUE_MAX"
         assert int(m.group(1)) == jpanel.JPANEL_QUEUE_MAX, (
             f"the panel holds {m.group(1)} queue entries and the box describes "
             f"{jpanel.JPANEL_QUEUE_MAX}"
         )
-        ui = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "ui.h").read_text(
-            encoding="utf-8"
-        )
-        u = re.search(r"#define UI_QUEUE_MAX\s+(\d+)", ui)
-        assert u, "firmware/main/ui.h no longer defines UI_QUEUE_MAX"
+        # The state machine and the engine share one definition, in `jpanel_types.h`.
+        types = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_types.h"
+        ).read_text(encoding="utf-8")
+        u = re.search(r"#define JPANEL_QUEUE_MAX\s+(\d+)", types)
+        assert u, "firmware/main/jpanel_types.h no longer defines JPANEL_QUEUE_MAX"
         assert int(u.group(1)) == jpanel.JPANEL_QUEUE_MAX, (
-            "the interaction module and the box disagree about how long the queue can be"
+            "the state machine and the box disagree about how long the queue can be"
         )
 
     def test_the_panel_reads_the_queue_this_poll_serves(self) -> None:
@@ -673,10 +705,18 @@ class TestNamingAPanelWithoutACable:
         )
         assert '"queue"' in src, "the panel stopped reading the queue off the poll"
         assert '"from_owner"' in src, "and it still needs each entry's sender kind"
+        # And each entry's id, when the box sends one (W3): the run and `/next?id=` work by id.
+        assert '"id"' in src, "the panel stopped reading the queue's ids"
+        # Since 0.4.0 the selected entry is the state machine's (`sm_face`, plan §8.2 I2) and
+        # the drawing takes it from the machine's view rather than asking the queue itself.
+        sm = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "panel_sm.c").read_text(
+            encoding="utf-8"
+        )
+        assert "waiting.q[" in sm, "the machine no longer reads the described queue"
         display = (
             Path(__file__).resolve().parents[3] / "firmware" / "main" / "display.c"
         ).read_text(encoding="utf-8")
-        assert "jpanel_waiting_at(" in display, (
+        assert "view->face" in display, (
             "the drawing no longer asks who the SELECTED message is from"
         )
 
@@ -687,10 +727,13 @@ class TestNamingAPanelWithoutACable:
         sig = inspect.signature(jpanel.next_message)
         assert "at" in sig.parameters, "GET /next no longer takes a position"
         assert sig.parameters["at"].default == 0, "the oldest must stay the default"
-        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
-            encoding="utf-8"
-        )
+        src = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_core.c"
+        ).read_text(encoding="utf-8")
         assert "/next?at=%d" in src, "the panel no longer asks for a position"
+        # 0.4.0 asks by id when the poll carried ids, and keeps `at` beside it, because a
+        # rolled-back box honours `at` and ignores `id` (plan §6).
+        assert "/next?id=%s&at=%d" in src, "the panel no longer asks by id with a position"
 
     def test_what_the_box_offers_is_what_the_box_will_serve(self) -> None:
         """THE COUNT AND THE QUEUE AND `/next` MUST ALL MEAN THE SAME LIST.
@@ -759,7 +802,8 @@ class TestNamingAPanelWithoutACable:
         """A TRUNCATED POLL RESPONSE READS AS AN EMPTY HOUSE, which is why this is a test and not a
         generous constant.
 
-        `do_poll` reads `GET /waiting` into a fixed `static char body[N]` and hands it to cJSON. A
+        `do_poll` (`jpanel_core.c`) reads `GET /waiting` into a fixed `static char body[N]` and
+        hands it to cJSON (`jpanel.c`). A
         body cut off mid-object parses as NOTHING — not as a partial answer — so the panel would
         report zero waiting messages on every poll forever, and the symptom is a quiet panel. That
         is indistinguishable from the box having nothing to say, which is exactly the failure this
@@ -769,9 +813,9 @@ class TestNamingAPanelWithoutACable:
         `JPANEL_QUEUE_MAX`, `MAX_PANEL_NAME`, and the field names themselves. Recomputed here from
         the model rather than asserted as a magic number, so raising any of them fails HERE, where
         somebody is reading, rather than on a panel in a bedroom."""
-        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c").read_text(
-            encoding="utf-8"
-        )
+        src = (
+            Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_core.c"
+        ).read_text(encoding="utf-8")
         m = re.search(r"static char body\[(\d+)\];", src)
         assert m, "the panel's poll buffer moved; re-pin this test"
         held = int(m.group(1))

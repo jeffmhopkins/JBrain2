@@ -23,6 +23,11 @@ lv_obj_t *ui_box(lv_obj_t *parent, lv_flex_flow_t flow, int gap);
 
 lv_obj_t *ui_icon(lv_obj_t *parent, const ui_icon_t *icon, ui_accent_t accent, int disc_px,
                   bool dim);
+/* The mock's microphone, `px` square, drawn as strokes: LVGL's symbol font has no microphone,
+ * and LV_SYMBOL_AUDIO, the nearest, is a music note. */
+lv_obj_t *ui_mic(lv_obj_t *parent, int px, uint32_t color);
+/* A conversation's footer: the microphone and "Hold KEY to talk", centred along the bottom. */
+lv_obj_t *ui_talk_hint(lv_obj_t *root);
 
 /* Back + icon + title, 76 px, the top of every page but the clock face. */
 lv_obj_t *ui_header(lv_obj_t *root, const ui_icon_t *icon, ui_accent_t accent, const char *title,
@@ -88,6 +93,10 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
 /* Full-screen black base for everything modal: the talk ring, the push pop-up, the alarm. It
  * takes every press inside it, so nothing under it can be reached while it is drawn. */
 lv_obj_t *ui_overlay(lv_obj_t *parent);
+/* A small menu over a dimmed screen: a card titled `title`, centred, that the caller fills with
+ * buttons. A tap on the dim around it reaches `on_outside`; nothing under it can be reached.
+ * Returns the card; its parent (the dim) is what to delete. */
+lv_obj_t *ui_menu(lv_obj_t *parent, const char *title, lv_event_cb_t on_outside, void *user);
 
 /* The hold-to-talk ring, shared by every app that talks. The app supplies the clock and the
  * level (from svc_audio) and what a tap and the cap mean; the ring owns its timer, and
