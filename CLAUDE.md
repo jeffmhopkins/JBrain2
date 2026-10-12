@@ -70,11 +70,14 @@ they disagree the code and docs here are fixed to match it.
     that skipped the third one is exactly how a green local run turned CI red. And `cd`
     persists between commands here: prefer `(cd pkg && …)` or absolute paths. See
     `docs/reference/DEVELOPMENT.md` "Verifying a change".
-12. **A reviewer agent files issues against merged PRs; the PR's session fixes them.**
-    The owner runs a separate agent whose only job is to review merged PRs for bugs and
-    file GitHub issues ("Introduced in #N"). Check the open issues at session start,
-    about **10 and 40 minutes after each of your own merges** (it files within 40 s to
-    35 min of a merge), and before calling work done. The checks never hold up a PR, a
-    merge or a deploy: they run alongside. Any issue naming a PR you opened is yours to
-    fix as a new PR (failing test first, `Fixes #N`, merge, deploy, verify), commenting
-    on the issue as you go: when you start, when the PR is open, and when it's closed. See `docs/reference/PROCESS.md` "Post-merge review issues".
+12. **A reviewer agent reviews your PRs; the PR's session fixes what it finds.** The
+    owner runs a separate agent that comments its findings on open PRs, and files a
+    GitHub issue ("Introduced in #N") for anything still open at merge or found after.
+    Read a PR's comments before merging it and fix findings there. Check the open issues
+    at session start, about **10 and 40 minutes after each of your own merges** (it
+    files within 40 s to 35 min of a merge), and before calling work done. The checks
+    never hold up a PR, a merge or a deploy: they run alongside. Any issue naming a PR
+    you opened is yours to fix as a new PR (failing test first, `Fixes #N`, merge,
+    deploy, verify), commenting on the issue as you go: when you start, when the PR is
+    open, and when it's closed. See `docs/reference/PROCESS.md` "Post-merge review
+    issues".
