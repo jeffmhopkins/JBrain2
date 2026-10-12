@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import re
 import struct
 import time
 
@@ -191,6 +192,15 @@ def _png_size(png: bytes) -> tuple[int, int]:
     return int(width), int(height)
 
 
+# A regex rather than a glob, so catching every `ws://`/`wss://` URL does not depend on how
+# a glob treats their scheme.
+_EVERY_URL = re.compile(r".*")
+
+
+async def _refuse_socket(ws: object) -> None:
+    await ws.close()  # type: ignore[attr-defined]
+
+
 @app.post("/render")
 async def render(body: RenderRequest) -> RenderResponse:
     if len(body.html.encode("utf-8")) > MAX_HTML_BYTES:
@@ -223,6 +233,9 @@ async def render(body: RenderRequest) -> RenderResponse:
                 await route.abort()  # type: ignore[attr-defined]
 
         await page.route("**/*", _block)
+        # `page.route` does not intercept WebSockets. A socket routed here and never connected
+        # to a server is answered by Playwright itself; closing it leaves the page nothing.
+        await page.route_web_socket(_EVERY_URL, _refuse_socket)
         await page.set_content(_document(body), wait_until="load", timeout=RENDER_TIMEOUT_MS)
         if body.wait_ms:
             await page.wait_for_timeout(body.wait_ms)
@@ -274,8 +287,12 @@ def _document(body: RenderRequest) -> str:
     # Only an opaque render pins a text colour. A transparent overlay keeps the browser
     # default, so the canvas's html blocks composite exactly as they always have.
     colour = f"color: {ink};" if not body.transparent else ""
+    # `connect-src 'none'` is the lock on what `page.route` never sees on its own: a WebSocket
+    # (and fetch/XHR/EventSource/beacons, which the route already aborts). It sits in the head,
+    # before the caller's fragment, and a later policy can only tighten it, never loosen it.
     return f"""<!doctype html>
-<html><head><meta charset="utf-8"><style>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="connect-src 'none'"><style>
   *, *::before, *::after {{ box-sizing: border-box; }}
   html, body {{ margin: 0; padding: 0; width: {body.width}px; background: {ground}; }}
   body {{ padding: {body.pad}px; {box} {colour}

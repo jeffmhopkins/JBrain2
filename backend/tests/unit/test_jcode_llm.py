@@ -93,6 +93,10 @@ def test_requires_the_shared_token() -> None:
     client = TestClient(_app())
     assert client.get(_MODELS).status_code == 401
     assert client.get(_MODELS, headers={"Authorization": "Bearer no"}).status_code == 401
+    # Latin-1 bytes decode to a non-ASCII str: still a plain 401 under the constant-time
+    # compare, never a 500.
+    bad = {"Authorization": "Bearer n\xf6".encode("latin-1")}
+    assert client.get(_MODELS, headers=bad).status_code == 401
     body = {"model": "qwen3-coder-next", "messages": []}
     assert client.post(_COMPLETIONS, json=body).status_code == 401
 

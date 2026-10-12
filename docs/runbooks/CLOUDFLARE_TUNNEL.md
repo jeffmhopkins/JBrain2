@@ -121,6 +121,9 @@ preview routes accept only it, and its session API and terminal refuse it. The a
 any preview path with a `.`/`..` segment (in any percent-encoding), a backslash, a control
 character, a `?`/`#` or an encoded slash, and any path that would leave `/preview/{slug}/`
 once normalised; dotted names such as `main.js` and `node_modules/.vite/…` are untouched.
+The control server proxies only while every socket listening on the session's port belongs
+to that session's own uid — another session squatting the port gets the preview a 404, and
+with nothing listening it answers 502 without connecting.
 
 The Caddy side is rendered automatically from the env (below); the one thing you do by hand
 is the Cloudflare wildcard:

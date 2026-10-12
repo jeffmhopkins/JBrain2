@@ -178,7 +178,8 @@ fi
 # unit tests and linters don't need Docker.
 HARNESS_IMAGE="timescale/timescaledb-ha:pg17"  # prod Postgres image, also used by the harness
 SEARXNG_IMAGE="${SEARXNG_IMAGE:-docker.io/searxng/searxng:2026.10.2-19ffbcd30}"  # jerv web search (stock stack service)
-MQTT_IMAGE="${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest}"  # opt-in JBrain360 broker (`mqtt` profile); pin by digest for deploy
+# Opt-in JBrain360 broker (`mqtt` profile), the same digest-pinned build compose runs.
+MQTT_IMAGE="${MQTT_IMAGE:-iegomez/mosquitto-go-auth:latest@sha256:acd65f8566f22126e3bf3b72fe5bee8a5002ca57695f211b1904013953560c3f}"
 BYPARR_IMAGE="${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr@sha256:874f719518f617d03a60e03411fc5d090647e1a877041e81f8dc965927c7deb6}"  # bot-challenge solver (stock stack service)
 # Base image for the locally-built `htmlrender` sidecar (HTML -> PNG). Pre-pulled because
 # it carries Chromium plus its ~80 runtime apt packages, so a cold build on first

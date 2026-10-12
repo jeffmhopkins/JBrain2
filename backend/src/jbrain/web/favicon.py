@@ -26,6 +26,7 @@ import httpx
 import structlog
 
 from jbrain.web.fetch import BROWSER_HEADERS, WebFetchError, guard_public_host
+from jbrain.web.netguard import pinned_transport
 
 log = structlog.get_logger()
 
@@ -117,7 +118,9 @@ class FaviconFetcher:
         origin = f"https://{normalized}"
         try:
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
+                timeout=_TIMEOUT,
+                transport=pinned_transport(self._transport),
+                follow_redirects=False,
             ) as client:
                 html = await self._homepage(client, origin)
                 candidates = _icon_candidates(html, origin=origin)

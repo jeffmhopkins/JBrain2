@@ -5,10 +5,15 @@ the Host so an allowlisting framework accepts it, and 502s when nothing's listen
 
 from __future__ import annotations
 
+import asyncio
+import socket
+from typing import ClassVar
+
 import httpx
 import pytest
 from starlette.requests import Request
 
+from jcode_ctl import preview_proxy
 from jcode_ctl.preview_proxy import proxy_http
 
 
@@ -157,3 +162,76 @@ async def test_dotted_names_still_proxy(path: str) -> None:
     resp = await proxy_http(5187, path, _request(), client_factory=_factory(handler))
     assert resp.status_code == 200
     assert tried == [f"/{path}"]
+
+
+# --- The container's egress proxy env must never catch loopback (S2.4) ----------------
+
+
+def _ipv6_loopback() -> bool:
+    try:
+        with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+            s.bind(("::1", 0))
+        return True
+    except OSError:
+        return False
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "127.0.0.1",
+        pytest.param(
+            "::1",
+            marks=pytest.mark.skipif(not _ipv6_loopback(), reason="no IPv6 loopback"),
+        ),
+    ],
+)
+async def test_the_dev_server_is_reached_directly_with_the_proxy_env_set(
+    host: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """jcode runs with HTTP_PROXY pointing at squid, which refuses loopback. NO_PROXY
+    here names neither loopback, so the request only arrives if the proxy env is
+    ignored — which keeps a dev server bound to `::1` (Vite's default) previewable."""
+
+    async def serve(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.readuntil(b"\r\n\r\n")
+        writer.write(
+            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok"
+        )
+        await writer.drain()
+        writer.close()
+
+    server = await asyncio.start_server(serve, host, 0)
+    port = server.sockets[0].getsockname()[1]
+    for var in ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        monkeypatch.setenv(var, "http://127.0.0.1:9")  # a proxy that refuses everything
+    for var in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(var, "api")
+    async with server:
+        resp = await proxy_http(port, "", _request())
+    assert resp.status_code == 200
+    assert resp.body == b"ok"
+
+
+async def test_the_hmr_socket_never_uses_the_proxy_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def connect(url: str, **kwargs: object) -> object:
+        calls.append({"url": url, **kwargs})
+        raise OSError("refused")
+
+    class _Browser:
+        scope: ClassVar[dict[str, object]] = {"subprotocols": []}
+        closed: int | None = None
+
+        async def close(self, code: int) -> None:
+            self.closed = code
+
+    monkeypatch.setattr(preview_proxy.websockets, "connect", connect)
+    browser = _Browser()
+    await preview_proxy.proxy_ws(browser, 5173, "", "")  # type: ignore[arg-type]
+    assert [c["url"] for c in calls] == ["ws://127.0.0.1:5173/", "ws://[::1]:5173/"]
+    assert all("proxy" in c and c["proxy"] is None for c in calls)
+    assert browser.closed == 1011

@@ -1,6 +1,6 @@
 # Security review fixes — third-party access hardening
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2◻️ S3◻️ S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2✅ S3◻️ S4◻️ S5◻️
 
 A whole-codebase security review (2026-10-12; six independent reviewers, the serious
 findings re-verified by hand) looked for programming errors and structural mistakes that
@@ -177,7 +177,23 @@ link) used wherever an `href` comes from data (`CalendarScreen` `onlineUrl`, web
 FullBrainSurface sources); the backend drops a non-http(s) `online_url` at projection.
 *Tests:* unit for `safeHref`; projection rejects `javascript:`.
 
-### S2 — sandboxes and the internal network ◻️
+### S2 — sandboxes and the internal network ✅
+
+*As built (after five reviews):* jcode shells also get `closerange(3, …)` (a later shell
+inherited earlier sessions' pty masters — the critical find), umask 077 and `TMPDIR=~/.tmp`,
+`RLIMIT_NPROC` 256, SysV IPC and `/run/lock`/`/dev/mqueue` swept on uid reuse, grok's
+instructions seeded at `~/.grok/AGENTS.md` (grok never read `/work/AGENTS.md`), and the
+container runs `init: true` and `no-new-privileges`. byparr is proxied by `PROXY_SERVER` +
+`X-Proxy-Server` (its API has no body field), reader by `X-Proxy-Url` + env, and the
+ctl's preview hop never uses the env proxy (`::1` dev servers).
+
+**On-box gate after merge** (the box deploys `main` only, so it cannot precede the merge):
+`POST /api/debug/fetch` `tier=reader` and `tier=solver`; in a jcode session clone /
+`npm install` / `pip install --user` / `curl` / Node `fetch` / a Vite preview with HMR;
+fence probes (`local-llm` direct, metadata, LAN, and the fenced bridge's gateway on host
+ports such as `:8800`/`:22`, which squid cannot see). If reader fails through squid, the
+reader network move is reverted alone; if the bridge gateway answers host ports, it is
+recorded below and fenced in the stack, never by a host step.
 
 **S2.1 jcode: per-session users, no root, no control token (F5, F6, F15, N1).** Owner
 decision D1: **per-session unprivileged uids**.
@@ -378,6 +394,10 @@ relies on it for owner "all devices" fences).
 - **`update-inner.sh` self-update lag.** The updater runs its pre-reset copy, so new mint steps
   take two updates. S2.2 avoids depending on it; fixing the updater itself is its own change.
 - **Stream fetches** (yt-dlp/ffmpeg) keep check-once SSRF guarding (S2.3).
+- **MQTT on the first update** (S2.2): profile services are `start`ed, not recreated, so an
+  enabled broker keeps its pre-token config until **Ops → Rebuild `mqtt`** (OPERATIONS.md).
+- **Git hooks run by the ctl** (reset/clean, as the session uid) don't get the shells'
+  `RLIMIT_NPROC`; only the container `pids_limit` bounds them (S2.1).
 - **Browsers without fetch metadata** (Safari before 16.4) send neither `Sec-Fetch-Site` nor
   `Origin` on a top-level GET, so a cross-site navigation from such a browser can still reach
   a side-effecting GET (`/settings/gmail/connect`, `/brain/tts`) with the Lax cookie (S1.3).
