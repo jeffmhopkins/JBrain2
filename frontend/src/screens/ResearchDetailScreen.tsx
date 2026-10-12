@@ -7,8 +7,8 @@
 // the list's consolidated ⋯ menu (ResearchScreen), not here — this layer is pure reading.
 
 import { useEffect, useRef, useState } from "react";
+import { ReportPlayer, type ReportReadAloud } from "../agent/ReportPlayer";
 import { type CiteTarget, Markdown } from "../agent/markdown";
-import { reportToSpeech } from "../agent/speakable.js";
 import { useReadAloud } from "../agent/useReadAloud";
 import { type ReportDetail, type VideoDetail, api } from "../api/client";
 import { transcriptWords } from "../components/AudioTranscript";
@@ -16,15 +16,6 @@ import { TopBar } from "../components/TopBar";
 import { VideoAnalysis } from "../components/VideoAnalysis";
 import type { SyncStatus } from "../notes/useNotes";
 import type { ResearchKind } from "./ResearchScreen";
-
-/** Read-aloud (TTS) control passed into the report body: `onToggle(key, text)` speaks that
- * text (or pauses it if the same key already plays); `playing` is the key speaking now. Shaped
- * like the deep-research tool-view's control (registry.tsx) so the button behaves identically.
- * Absent (e.g. the public share app) = no play control. */
-export interface ReportReadAloud {
-  playing: string | null;
-  onToggle: (key: string, markdown: string) => void;
-}
 
 const SWIPE_DOWN_PX = 112;
 
@@ -107,7 +98,12 @@ export function ResearchDetailScreen({ kind, id, syncStatus, onClose }: Research
             report={state.report}
             readAloud={
               readAloud.available
-                ? { playing: readAloud.playing, onToggle: readAloud.toggle }
+                ? {
+                    playing: readAloud.playing,
+                    onToggle: readAloud.toggle,
+                    playSections: readAloud.playSections,
+                    progress: readAloud.progress,
+                  }
                 : undefined
             }
           />
@@ -134,7 +130,12 @@ export function citedSourceCount(reportMd: string, reached: number): number {
 export function ReportDetailBody({
   report,
   readAloud,
-}: { report: ReportDetail; readAloud?: ReportReadAloud | undefined }) {
+}: {
+  report: ReportDetail;
+  /** The drive-mode player's read-aloud capability (the same one the deep-research card
+   * uses). Absent (e.g. the public share app) = no player. */
+  readAloud?: ReportReadAloud | undefined;
+}) {
   // The report's `[^n]` markers map positionally to its stored source registry, so each
   // renders as a tappable favicon citation — the same rendering the deep_research_report
   // tool-view uses (registry.tsx builds these from the identical `sources` list), not a
@@ -148,26 +149,20 @@ export function ReportDetailBody({
   // than it cites); show both when they differ so the count isn't misread.
   const reached = report.sources.length;
   const cited = citedSourceCount(report.report_md, reached);
-  // A per-report play key distinct from any chat turn's, so pausing the report doesn't collide
-  // with (or get mistaken for) a turn's audio — the same convention the tool-view button uses.
-  const playKey = `rl-report:${report.id}`;
-  const isPlaying = readAloud?.playing === playKey;
   return (
     <article className="rl-report">
       <div className="rl-report-head">
         <h2 className="rl-report-q">{report.question}</h2>
-        {readAloud && (
-          <button
-            type="button"
-            className={`rl-play${isPlaying ? " playing" : ""}`}
-            onClick={() => readAloud.onToggle(playKey, reportToSpeech(report.report_md))}
-            aria-label={isPlaying ? "Pause reading the report aloud" : "Read the report aloud"}
-            title={isPlaying ? "Pause" : "Read aloud"}
-          >
-            {isPlaying ? <PauseIcon /> : <PlayIcon />}
-          </button>
-        )}
       </div>
+      {/* A per-report key distinct from any chat turn's, so the report's audio never collides
+          with (or is mistaken for) a turn's — the same convention the deep-research card uses. */}
+      {readAloud && (
+        <ReportPlayer
+          playKey={`rl-report:${report.id}`}
+          reportMd={report.report_md}
+          readAloud={readAloud}
+        />
+      )}
       <div className="rl-prov">
         <span className={`rl-cx rl-cx-${report.complexity}`}>{report.complexity}</span>
         <span className="rl-chip">{report.sub_agents} agents</span>
@@ -223,23 +218,5 @@ function VideoDetailBody({ video }: { video: VideoDetail }) {
       transcriptText={transcriptText}
       transcriptSource={video.transcript_source}
     />
-  );
-}
-
-// The report read-aloud glyphs — a single triangle that becomes two bars while speaking, the same
-// pair the chat turn (FullBrainSurface) and the deep-research card (registry.tsx) use.
-function PlayIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-      <path d="M8 5v14l11-7z" />
-    </svg>
-  );
-}
-function PauseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true">
-      <rect x="6" y="5" width="4" height="14" rx="1" />
-      <rect x="14" y="5" width="4" height="14" rx="1" />
-    </svg>
   );
 }

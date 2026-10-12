@@ -22,4 +22,7 @@ glance. `compare-c.html` tries three ways to make *skip story* clearly different
 | **C2 — Chapter bar** | Progress split into one segment per story (tap a segment to jump); skip buttons are big steel-blue squares labelled "Prev story" / "Next story", as tall as pause. |
 | **C3 — Story list** | The player is the list of stories: the current story expands into an amber row with its own pause button, finished ones get a ✓, and a full-width "Next story" button sits at the bottom. |
 
-**Chosen:** pending owner review.
+**Chosen: C2 — Chapter bar** (owner, 2026-10-12). Built as `frontend/src/agent/ReportPlayer.tsx`
+(`.rp-*` styles), on both the deep-research card and the Research Library report; the spec is
+folded into `docs/reference/DESIGN.md` §"`deep_research_report` tool-view". Both HTML files stay
+as the record of the review.

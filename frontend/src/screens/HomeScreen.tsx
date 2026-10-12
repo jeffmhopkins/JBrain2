@@ -448,6 +448,8 @@ export function HomeScreen({
                   autoPlay: readAloud.autoPlay,
                   onToggle: readAloud.toggle,
                   onToggleAuto: readAloud.toggleAutoPlay,
+                  playSections: readAloud.playSections,
+                  progress: readAloud.progress,
                 }
               : undefined
           }
@@ -471,6 +473,8 @@ export function HomeScreen({
                   autoPlay: readAloud.autoPlay,
                   onToggle: readAloud.toggle,
                   onToggleAuto: readAloud.toggleAutoPlay,
+                  playSections: readAloud.playSections,
+                  progress: readAloud.progress,
                 }
               : undefined
           }
