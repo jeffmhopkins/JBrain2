@@ -63,24 +63,37 @@ async def _link(request: Request, token: str, *, count_view: bool = False) -> Sh
     return link
 
 
-async def _world(settings: Any, link: ShareLink) -> dict[str, Any]:
-    """The link's slot record, or 404 when the slot no longer holds the shared world."""
+_GONE = "the shared world is gone"
+
+
+async def _slot(settings: Any, slot: str) -> dict[str, Any] | None:
+    """The slot's record, or None for an empty slot. A record without a folder is a broken
+    sidecar, a 502, never read as some other world and called gone (#1698)."""
     try:
-        rec = await mc.slot_record(settings, link.slot)
+        rec = await mc.slot_record(settings, slot)
     except HTTPException as exc:
         if exc.status_code == 404:
-            raise HTTPException(status_code=404, detail="the shared world is gone") from exc
+            return None
         raise
-    if str(rec.get("folder")) != link.world:
-        raise HTTPException(status_code=404, detail="the shared world is gone")
+    if "folder" not in rec:
+        raise HTTPException(status_code=502, detail=f"the sidecar's record of {slot} has no folder")
     return rec
 
 
-# Tiles arrive by the dozen, so each slot's checked folder is kept this long: a map view's
-# burst costs one sidecar read, and a world swapped into the slot is gone within it.
+async def _world(settings: Any, link: ShareLink) -> dict[str, Any]:
+    """The link's slot record, or 404 when the slot no longer holds the shared world."""
+    rec = await _slot(settings, link.slot)
+    if rec is None or str(rec["folder"]) != link.world:
+        raise HTTPException(status_code=404, detail=_GONE)
+    return rec
+
+
+# Tiles arrive by the dozen, so each slot's folder is kept this long, whichever world it
+# is: a map view's burst costs one sidecar read, a stale link's burst too (#1698), and a
+# world swapped into the slot is gone within it.
 FOLDER_TTL = 5.0
-# slot -> (expires at, on `_clock`; the folder `_world` last confirmed there)
-_folders: dict[str, tuple[float, str]] = {}
+# slot -> (expires at, on `_clock`; the folder last read there, None for an empty slot)
+_folders: dict[str, tuple[float, str | None]] = {}
 _clock = time.monotonic
 
 
@@ -90,11 +103,13 @@ async def _tile_world(settings: Any, link: ShareLink) -> None:
     now = _clock()
     cached = _folders.get(link.slot)
     if cached is not None and cached[0] > now:
-        if cached[1] != link.world:
-            raise HTTPException(status_code=404, detail="the shared world is gone")
-        return
-    rec = await _world(settings, link)
-    _folders[link.slot] = (now + FOLDER_TTL, str(rec.get("folder")))
+        folder = cached[1]
+    else:
+        rec = await _slot(settings, link.slot)
+        folder = None if rec is None else str(rec["folder"])
+        _folders[link.slot] = (now + FOLDER_TTL, folder)
+    if folder != link.world:
+        raise HTTPException(status_code=404, detail=_GONE)
 
 
 Token = Annotated[str, Path(min_length=1, max_length=128)]
