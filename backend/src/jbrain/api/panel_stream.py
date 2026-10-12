@@ -329,22 +329,32 @@ async def _follow(
     pumper = asyncio.ensure_future(pump())
     progress = Progress()
     deadline = time.monotonic() + cap_s
+    # Measured from the last record SENT: frames that make no status line (reasoning, a
+    # sub-agent's tokens) still arrive, and would otherwise starve the panel's idle timeout.
+    last_sent = time.monotonic()
     try:
         while True:
-            left = deadline - time.monotonic()
+            now = time.monotonic()
+            left = deadline - now
             if left <= 0:
                 stats["capped"] = True
                 return
+            wait = max(0.0, min(ALIVE_S - (now - last_sent), left))
             try:
-                frame = await asyncio.wait_for(queue.get(), timeout=min(ALIVE_S, left))
+                frame = await asyncio.wait_for(queue.get(), timeout=wait)
             except TimeoutError:
                 yield record(ALIVE)
+                last_sent = time.monotonic()
                 continue
             if frame is None:
                 return
             line = progress.feed(frame)
             if line:
                 yield status_record(line)
+                last_sent = time.monotonic()
+            elif time.monotonic() - last_sent >= ALIVE_S:
+                yield record(ALIVE)
+                last_sent = time.monotonic()
     finally:
         stats["statuses"] = len(progress.lines)
         stats["tools"] = progress.tools
