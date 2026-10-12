@@ -192,6 +192,37 @@ async def test_a_dead_address_falls_through_to_the_next_validated_one() -> None:
     assert net.dialled == [(_PUBLIC, 80), ("8.8.8.8", 80)]
 
 
+async def test_every_validated_address_dead_is_a_connect_error() -> None:
+    net = _Net({})
+
+    async def resolve(host: str, port: int) -> list[str]:
+        return [_PUBLIC, "8.8.8.8"]
+
+    with pytest.raises(httpcore.ConnectError):
+        await PinnedBackend(resolver=resolve, inner=net).connect_tcp("site.example", 80)
+    assert net.dialled == [(_PUBLIC, 80), ("8.8.8.8", 80)]
+
+
+@pytest.mark.parametrize("answer", [[], ["not-an-address"]])
+async def test_an_empty_or_unparseable_answer_is_refused(answer: list[str]) -> None:
+    async def resolve(host: str, port: int) -> list[str]:
+        return answer
+
+    with pytest.raises(NonPublicAddressError):
+        await PinnedBackend(resolver=resolve, inner=_Net({})).connect_tcp("odd.example", 80)
+
+
+async def test_sleep_is_the_inner_backends() -> None:
+    slept: list[float] = []
+
+    class _Sleepy(_Net):
+        async def sleep(self, seconds: float) -> None:
+            slept.append(seconds)
+
+    await PinnedBackend(inner=_Sleepy({})).sleep(0.5)
+    assert slept == [0.5]
+
+
 async def test_a_unix_socket_is_refused() -> None:
     with pytest.raises(NonPublicAddressError):
         await PinnedBackend(inner=_Net({})).connect_unix_socket("/var/run/docker.sock")
