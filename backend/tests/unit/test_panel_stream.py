@@ -431,3 +431,28 @@ def test_a_turn_that_never_starts_is_an_answer_too() -> None:
     recs = _run(turn)
     assert recs[-1][0] == panel_stream.END and recs[-1][1][0] == panel_stream.END_FAILED
     assert next(p for k, p in recs if k == panel_stream.ANSWER)[1:] == panel_agent.FAILED.encode()
+
+
+def test_frames_that_say_nothing_still_get_keep_alives(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A sub-agent fan or a long reasoning phase streams frames that make no status line; the
+    gap between records SENT must stay near ALIVE_S or the panel's idle timeout fires (#1687)."""
+    monkeypatch.setattr(panel_stream, "ALIVE_S", 0.05)
+    chatter = _frame({"type": "subagent_delta", "child_id": "c1", "text": "x"})
+    live = _Live([chatter] * 150, _acc("done"), gap=0.004)
+
+    async def go() -> list[float]:
+        started = panel_agent.Started(
+            panel_agent.SessionContext(), "session-1", asyncio.get_running_loop().time()
+        )
+        started.live = live
+        loop = asyncio.get_running_loop()
+        stamps = [loop.time()]
+        async for _ in panel_stream._follow(started, 5.0, {}):
+            stamps.append(loop.time())
+        stamps.append(loop.time())
+        return stamps
+
+    stamps = asyncio.run(go())
+    gaps = [b - a for a, b in zip(stamps, stamps[1:], strict=False)]
+    assert len(stamps) > 6, "keep-alives flow while non-status frames stream"
+    assert max(gaps) < 0.05 * 2.5
