@@ -83,7 +83,7 @@ const carried = (player) => {
   if (inv) {
     for (let i = 0; i < inv.size; i++) {
       const item = inv.getItem(i);
-      if (item) out.push({ item, put: (v) => inv.setItem(i, v) });
+      if (item) out.push({ item, put: (v) => inv.setItem(i, v), inv, slot: i });
     }
   }
   const eq = player.getComponent("minecraft:equippable");
@@ -197,16 +197,39 @@ const onWaking = (player, initialSpawn) => {
 
 // --- the item guide's unlocks (§M19) ----------------------------------------------------
 
+// Bedrock never merges two stacks already in separate slots, so a crafted pack lored
+// where it landed would sit apart from the lored stack for good (#1694): it tops up any
+// lored stack with room, and only what doesn't fit stays in its own slot. Folded by hand,
+// not re-added, so a pack with nowhere to merge never jumps to another slot.
+const fold = (inv, slot, item) => {
+  let left = item.amount;
+  for (let j = 0; j < inv.size && left > 0; j++) {
+    const other = j === slot ? undefined : inv.getItem(j);
+    if (!other?.isStackableWith(item)) continue;
+    const n = Math.min(other.maxAmount - other.amount, left);
+    if (n <= 0) continue;
+    other.amount += n;
+    // The top-up is written first: a failure between the two writes doubles a pack
+    // rather than losing one.
+    inv.setItem(j, other);
+    left -= n;
+  }
+  if (left === 0) return inv.setItem(slot, undefined);
+  item.amount = left;
+  inv.setItem(slot, item);
+};
+
 // What the player has unlocked, after a look at what they carry now; written back only
 // when something new was unlocked. The same look lores their Power Packs (§M10): a
 // crafted one comes without, and only a stack written back keeps it.
 const learn = (player) => {
   const before = parseKnown(world.getDynamicProperty(knownKey(player.id)));
   const stacks = carried(player);
-  for (const { item, put } of stacks) {
+  for (const { item, put, inv, slot } of stacks) {
     if (!packLoreStale(item.typeId, item.getLore())) continue;
     item.setLore([LINES.powerPackLore]);
-    put(item);
+    if (inv) fold(inv, slot, item);
+    else put(item);
   }
   const held = stacks.map((c) => c.item.typeId);
   const after = unlocksFrom(before, held);

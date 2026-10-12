@@ -1381,8 +1381,10 @@ once-a-second look at each player's inventory (main.js `learn()`) writes
 `LINES.powerPackLore`, *"The same fuel the Old Makers' ships ran on."* (owner,
 2026-10-12), on every Power Pack they carry that lacks exactly that line, keeping its
 amount and everything else. Every pack gets the same single line (an older wording is
-rewritten too), because Bedrock stacks only identical lore: a fresh craft sits apart
-from a lored stack for at most a second, then matches it. A pack in a chest gets it when
+rewritten too), because Bedrock stacks only identical lore. A fresh craft lands apart
+from a lored stack, and Bedrock never merges two stacks already in separate slots, so the
+look folds a newly lored inventory pack into any lored stack with room (to 16); only what
+doesn't fit keeps its own slot, and nothing is lost (#1694). A pack in a chest gets it when
 it's next carried. Transport shipped later, below.
 **Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
