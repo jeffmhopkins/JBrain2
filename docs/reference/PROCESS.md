@@ -68,9 +68,18 @@ issues say which PR introduced the bug ("Introduced in #N" or "Found while revie
 merged PR #N"), with the files and lines, a repro and a suggested fix.
 
 So every working session owns the issues filed against **its own** PRs:
-- **Check the open issues periodically, not once:** at the start of a session, after
-  every merge of your own PR (the reviewer runs after merge), and before you report a
-  stretch of work as done. List the open issues and match each one's
+- **Check the open issues periodically, not once:** at the start of a session, about
+  **10 and 40 minutes after every merge of your own PR**, and before you report a stretch
+  of work as done. Measured 2026-10-12 over eight issues, the reviewer filed 40 s to
+  35 min after the merge it reviewed: most within 7 min, the slow ones when several PRs
+  merged close together. So 10 min catches most and 40 min catches the rest. Schedule
+  both (e.g. `send_later`) right after merging.
+- **Keep the issue current while you work on it** (owner, 2026-10-12): a comment when
+  you start ("fixing in this session"), one when the fix PR is open (link it), and the
+  closing comment once it's merged, deployed and verified. Whoever reads the issue sees
+  where it stands without asking.
+- **The checks never block.** Creating, merging and deploying a PR doesn't wait for them;
+  they run alongside, and anything they find is fixed as a new PR. List the open issues and match each one's
   "Introduced in" / "while reviewing" PR against the PRs this session (or the work you
   continued) opened.
 - **One that names your PR is yours:** fix it the usual way — a failing test first, the

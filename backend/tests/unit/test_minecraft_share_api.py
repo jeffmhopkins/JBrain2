@@ -122,6 +122,10 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(timeline, "timeline", tl)
     monkeypatch.setattr(targets, "for_world", locks)
+    # Each test starts with no slot folder cached, at a clock it can move.
+    monkeypatch.setattr(minecraft_share, "_folders", {})
+    state["now"] = 1000.0
+    monkeypatch.setattr(minecraft_share, "_clock", lambda: state["now"])
     return state
 
 
@@ -189,11 +193,50 @@ def test_an_unknown_or_revoked_token_reads_nothing(fake, path: str) -> None:
 def test_a_slot_now_holding_another_world_is_gone(fake) -> None:
     fake["worlds"] = {"slots": [{**WORLDS["slots"][1], "folder": "castle-reset-2"}]}
     client = _client()
-    for path in ("", "/map/info", "/map/players", "/timeline?from=0&to=10"):
+    for path in (
+        "",
+        "/map/info",
+        "/map/players",
+        "/timeline?from=0&to=10",
+        "/map/tile/overworld/0/0/0.png",
+    ):
         resp = client.get(f"/api/mc-share/good{path}")
         assert resp.status_code == 404 and resp.json()["detail"] == "the shared world is gone"
     fake["worlds"] = {"slots": []}
     assert client.get("/api/mc-share/good").json()["detail"] == "the shared world is gone"
+    tile = client.get("/api/mc-share/good/map/tile/overworld/0/0/0.png")
+    assert tile.status_code == 404 and tile.json()["detail"] == "the shared world is gone"
+    assert fake["images"] == []  # no other world's tile ever leaves the box
+
+
+def _worlds_read(fake: dict[str, Any]) -> int:
+    return sum(1 for c in fake["calls"] if c[1] == "/worlds")
+
+
+def test_tiles_check_the_world_once_per_burst_and_again_after_it_lapses(fake) -> None:
+    client = _client()
+    tile = "/api/mc-share/good/map/tile/overworld/0/{}/0.png"
+    for x in range(5):
+        assert client.get(tile.format(x)).status_code == 200
+    assert _worlds_read(fake) == 1 and len(fake["images"]) == 5
+
+    # Another world in the slot: still the cached answer until it lapses, then gone.
+    fake["worlds"] = {"slots": [{**WORLDS["slots"][1], "folder": "castle-reset-2"}]}
+    fake["now"] += minecraft_share.FOLDER_TTL - 0.1
+    assert client.get(tile.format(9)).status_code == 200
+    fake["now"] += 0.1
+    assert client.get(tile.format(9)).status_code == 404
+    assert _worlds_read(fake) == 2 and len(fake["images"]) == 6
+
+
+def test_a_cached_slot_holding_another_world_answers_gone_without_the_sidecar(fake) -> None:
+    client = _client()
+    assert client.get("/api/mc-share/good/map/tile/overworld/0/0/0.png").status_code == 200
+    # An older link to the same slot, minted for the world that was there before.
+    fake["link"] = ShareLink(**{**LINK.__dict__, "world": "castle-old"})
+    resp = client.get("/api/mc-share/good/map/tile/overworld/0/0/0.png")
+    assert resp.status_code == 404 and resp.json()["detail"] == "the shared world is gone"
+    assert _worlds_read(fake) == 1 and len(fake["images"]) == 1
 
 
 def test_the_sidecar_reads_are_pinned_to_the_links_slot(fake) -> None:
