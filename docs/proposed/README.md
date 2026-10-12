@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-10-10
+> **Status:** Living · **Last verified:** 2026-10-12
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -14,6 +14,14 @@ non-negotiables (LLM adapter, storage abstraction, RLS + isolation tests, etc.),
 given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
+
+- `GMAIL_MCP_MIGRATION_PLAN.md` — **contingency only:** what to do if Google ever forces AI
+  agents onto its Workspace MCP servers instead of the Gmail REST API (Google's Oct 2026
+  `is_agentic` OAuth-client change). Gmail stays on REST by owner decision. The plan swaps
+  the transport behind the existing `GmailApi` Protocol and leaves the 10 archivist tools
+  unchanged, so the model never sees Google's tool list: an allowlist keeps send/delete
+  unreachable. The switch is owner-operable from Settings, since the credential swap and
+  OAuth Connect flow already exist. Lists the triggers that would justify scheduling it.
 
 - `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
   owner's gesture, and the research answer that both hard halves already ship: whisper.cpp and
