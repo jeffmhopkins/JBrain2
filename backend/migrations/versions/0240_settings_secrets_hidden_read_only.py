@@ -22,15 +22,15 @@ The key list is frozen here because a migration can't follow live code; it mirro
 `settings_store.SECRET_SETTING_KEYS` and `tests/integration/test_debug_sql_secrets_pg.py`
 walks that set against this policy, so a secret added there and not here fails CI.
 
-Revision ID: 0239
-Revises: 0238
+Revision ID: 0240
+Revises: 0239
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0239"
-down_revision = "0238"
+revision = "0240"
+down_revision = "0239"
 branch_labels = None
 depends_on = None
 
@@ -42,6 +42,7 @@ SECRET_KEYS = (
     "brave_api_key",
     "moltbook_api_key",
     "endpoint_wifi",
+    "gmail_oauth_state",
 )
 
 

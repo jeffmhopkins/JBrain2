@@ -33,6 +33,7 @@ from jbrain.api.settings import SettingsStoreDep
 from jbrain.auth.keys import secrets_equal
 from jbrain.config import Settings
 from jbrain.gmail import GmailClientProvider, GmailError
+from jbrain.settings_store import GMAIL_OAUTH_STATE_KEY
 
 log = structlog.get_logger()
 
@@ -45,7 +46,7 @@ router = APIRouter(dependencies=[Depends(owner_only)])
 # single-use CSRF state across the round-trip.
 _AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _SCOPE = "https://www.googleapis.com/auth/gmail.modify"
-_STATE_KEY = "gmail_oauth_state"
+_STATE_KEY = GMAIL_OAUTH_STATE_KEY
 
 
 def get_gmail_provider(request: Request) -> GmailClientProvider:

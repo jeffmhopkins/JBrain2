@@ -207,6 +207,8 @@ SDR_RADIO_ROLE_MAX = 40
 GMAIL_CLIENT_ID_KEY = "gmail_client_id"
 GMAIL_CLIENT_SECRET_KEY = "gmail_client_secret"
 GMAIL_REFRESH_TOKEN_KEY = "gmail_refresh_token"
+# The single-use OAuth CSRF nonce: whoever reads it mid-consent could link their own mailbox.
+GMAIL_OAUTH_STATE_KEY = "gmail_oauth_state"
 
 # Tavily Extract — the HOSTED fourth web_fetch recovery tier (docs/plans/TAVILY_FETCH_TIER_PLAN.md).
 # The API key + an on/off toggle are set from the PWA Settings panel, mirroring the Gmail
@@ -257,7 +259,7 @@ MOLTBOOK_KILL_DEFAULT = False
 # The panel network remembered for a re-flash (api/endpoint.py): {"ssid", "password"}.
 ENDPOINT_WIFI_KEY = "endpoint_wifi"
 
-# Every row whose value is a credential. Migration 0238's restrictive policy hides these
+# Every row whose value is a credential. Migration 0240's restrictive policy hides these
 # rows from any READ-ONLY transaction — the debug SQL console's — and its integration test
 # walks this set, so a secret added here without the policy learning it fails CI. The Gmail
 # client id is left out: an OAuth client id is not a secret and the console is how it's
@@ -271,6 +273,7 @@ SECRET_SETTING_KEYS = frozenset(
         BRAVE_API_KEY_KEY,
         MOLTBOOK_API_KEY_KEY,
         ENDPOINT_WIFI_KEY,
+        GMAIL_OAUTH_STATE_KEY,
     }
 )
 MOLTBOOK_DISCLOSURE_KEY = "moltbook_disclosure"

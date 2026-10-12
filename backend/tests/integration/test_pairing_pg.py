@@ -2,7 +2,7 @@
 
 Proves the SECURITY DEFINER `app.redeem_pairing_code` flow: minting (owner-only)
 then redeeming creates a real device that authenticates, is one-time, rejects
-expired/unknown codes, and that the `pairing_code` table is owner-only. Since 0238 the
+expired/unknown codes, and that the `pairing_code` table is owner-only. Since 0239 the
 table holds only the code's sha256, and a code minted before that migration still redeems.
 """
 
@@ -171,14 +171,14 @@ async def test_the_code_is_stored_only_as_its_digest(maker: async_sessionmaker) 
 
 
 _MIGRATION = (
-    Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0238_pairing_code_hashed.py"
+    Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0239_pairing_code_hashed.py"
 )
 
 
 @pytest.fixture
-def run_0238(_pg_cluster: _Cluster, database_url: str) -> Iterator[object]:  # noqa: F811
-    """Run 0238's upgrade as the superuser the deploy's `migrate` service uses."""
-    spec = importlib.util.spec_from_file_location("migration_0238_pg", _MIGRATION)
+def run_0239(_pg_cluster: _Cluster, database_url: str) -> Iterator[object]:  # noqa: F811
+    """Run 0239's upgrade as the superuser the deploy's `migrate` service uses."""
+    spec = importlib.util.spec_from_file_location("migration_0239_pg", _MIGRATION)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -194,7 +194,7 @@ def run_0238(_pg_cluster: _Cluster, database_url: str) -> Iterator[object]:  # n
 
 
 async def test_a_code_minted_before_the_migration_still_redeems(
-    maker: async_sessionmaker, run_0238: object
+    maker: async_sessionmaker, run_0239: object
 ) -> None:
     # The QR open on someone's screen during the upgrade: a plaintext row, as the old
     # mint wrote it, next to one already in digest form.
@@ -210,8 +210,8 @@ async def test_a_code_minted_before_the_migration_still_redeems(
     repo = SqlPairingRepo(maker)
     new_code, _ = await repo.mint_code(OWNER, label="New QR", monitoring=1)
 
-    run_0238()  # type: ignore[operator]
-    run_0238()  # type: ignore[operator]  # idempotent: a digest is never re-hashed
+    run_0239()  # type: ignore[operator]
+    run_0239()  # type: ignore[operator]  # idempotent: a digest is never re-hashed
 
     async with scoped_session(maker, OWNER) as session:
         stored = {r[0] for r in await session.execute(text("SELECT code FROM app.pairing_code"))}

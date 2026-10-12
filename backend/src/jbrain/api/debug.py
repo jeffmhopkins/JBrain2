@@ -1544,7 +1544,7 @@ def _jsonable(value: Any) -> Any:
 # is redacted by name. And `app.settings` is one row per key, so a row whose key names a
 # secret has its `value` redacted — the column there is called `value` and carries everything.
 # Both are by NAME, so an alias walks past them; since S3.3 the settings credentials are
-# hidden by relation in Postgres (migration 0239) and this is the backstop for everything else.
+# hidden by relation in Postgres (migration 0240) and this is the backstop for everything else.
 _SECRET_NAME_RE = re.compile(
     r"(?:^|_)(?:api_key|secret|password|passwd|credential|bearer)s?(?:_|$)"
     r"|_key$|_token$|^token$|^key$",
@@ -1591,7 +1591,7 @@ def _redact_row(columns: list[str], row: list[Any]) -> list[Any]:
 # would let any of these names past a text match. A text match is crude — it also refuses a
 # string literal that merely mentions one — but none of these belong in a diagnostic read,
 # and EXPLAIN carries its inner statement verbatim, so it is checked by the same match.
-# The secret rows of app.settings are NOT this list's job: migration 0239 hides them from
+# The secret rows of app.settings are NOT this list's job: migration 0240 hides them from
 # any read-only transaction in Postgres itself, which no alias or expression gets around.
 _REFUSED_SQL_RE = re.compile(
     r"\w*_to_xml\w*|\bset_config\b|\bpg_read_(?:binary_)?file\b|\bpg_ls_dir\b|\blo_\w+"

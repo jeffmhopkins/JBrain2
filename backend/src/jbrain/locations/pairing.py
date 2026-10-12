@@ -5,7 +5,7 @@
 validates the code and mints the device subject + `device_key` principal — so it
 needs no scope; a bare session suffices. The plaintext key is generated here and
 returned exactly once; only its hash reaches the DB. The pairing code is likewise stored
-only as `code_digest(code)` (migration 0238), so a reader of the table can't redeem it.
+only as `code_digest(code)` (migration 0239), so a reader of the table can't redeem it.
 """
 
 import base64
