@@ -458,6 +458,45 @@ def test_a_done_with_a_cause_is_a_world_passed_over(tmp_path: Path) -> None:
     assert rig.slots.get("slot2")["wreck"] == "skipped"
 
 
+def test_the_jbrain_pack_is_told_whether_the_world_has_a_crash_site() -> None:
+    """Dave's welcome (§DW1) swaps two lines for a crash-site world. An armed world
+    is building its wreck on this load, so it counts; a skipped or never-armed one
+    doesn't."""
+
+    def flag(rec: dict[str, Any] | None) -> Any:
+        return json.loads(server.pack_config(rec).split(" ", 2)[2])["wreck"]
+
+    for state, want in (("armed", True), ("done", True), ("skipped", False)):
+        assert flag({"wreck": state}) is want
+    assert flag({"wreck": None}) is False
+    assert flag(None) is False
+
+
+def test_a_passed_over_world_takes_back_its_wreck_flag_at_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Loaded armed, the pack heard "wreck": true; a skip tells it the world has none
+    before anyone's welcome picks the crash-site lines."""
+    rig = _rig()
+    real = bds.Bds(tmp_path)
+    rig.bds = real
+    sent: list[str] = []
+    monkeypatch.setattr(real, "command", lambda c, **_k: sent.append(c) or [])
+    real.state = "running"
+    rig.slots.update("slot1", wreck="armed")
+    real.world = rig.active_folder()
+    real._record('[Scripting] [jbrain] {"ev":"wreck","phase":"done"}')
+    rig.note_wreck()
+    assert sent == []  # built: the flag it already has is right
+    rig.slots.update("slot1", wreck="armed")
+    real._record(
+        '[Scripting] [jbrain] {"ev":"wreck","phase":"done","cause":"not a new world"}'
+    )
+    rig.note_wreck()
+    assert rig.slots.get("slot1")["wreck"] == "skipped"
+    assert [json.loads(c.split(" ", 2)[2])["wreck"] for c in sent] == [False]
+
+
 def test_an_armed_worlds_build_phase_reaches_its_slot(tmp_path: Path) -> None:
     rig = _rig()
     real = bds.Bds(tmp_path)

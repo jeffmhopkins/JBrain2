@@ -85,6 +85,9 @@ export class Dimension {
   spawnEntity(id, loc) {
     this.entities.push({ id, loc: { ...loc } });
   }
+  spawnParticle(id, loc) {
+    (this.particles ??= []).push({ id, loc: { ...loc } });
+  }
   // The game's query, for the options the pack passes: a type, the nearest `closest`
   // within `maxDistance` of `location`.
   getEntities({ type, location, closest, maxDistance } = {}) {
@@ -114,7 +117,18 @@ export class Player {
     this.messages = [];
     this.sounds = [];
     this.actionbar = [];
-    this.onScreenDisplay = { setActionBar: (t) => this.actionbar.push(t) };
+    this.titles = []; // {title, subtitle, ...}
+    this.fades = [];
+    this.particles = [];
+    this.isValid = true; // false once they leave, as 2.0.0's property
+    this.onScreenDisplay = {
+      setActionBar: (t) => this.actionbar.push(t),
+      setTitle: (title, opts = {}) => this.titles.push({ title, ...opts }),
+    };
+    this.camera = { fade: (opts) => this.fades.push(opts) };
+  }
+  spawnParticle(id, loc) {
+    this.particles.push({ id, loc: { ...loc } });
   }
   getComponent(name) {
     if (name === "minecraft:inventory") return { container: this.inventory };
@@ -155,6 +169,9 @@ export class Player {
 const subs = { die: [], spawn: [], script: [], startup: [], interact: [], break: [] };
 const intervals = [];
 let queued = [];
+// runTimeout's clock: nothing due runs until a test advances it (sim.advance).
+let now = 0;
+let timers = [];
 const props = new Map();
 let players = [];
 let commands = new Map();
@@ -186,6 +203,10 @@ export const system = {
   beforeEvents: { startup: { subscribe: (fn) => subs.startup.push(fn) } },
   run: (fn) => queued.push(fn),
   runInterval: (fn) => intervals.push(fn),
+  runTimeout: (fn, ticks = 1) => timers.push({ due: now + Math.max(1, ticks), fn }),
+  get currentTick() {
+    return now;
+  },
 };
 
 /** Test-side controls, not part of the game API. */
@@ -196,6 +217,7 @@ export const sim = {
     props.clear();
     players = [];
     queued = [];
+    timers = [];
     rules.keepInventory = false;
     sim.logs.length = 0;
     sim.overworld = new Dimension();
@@ -218,6 +240,16 @@ export const sim = {
   },
   flush() {
     while (queued.length) queued.shift()();
+  },
+  // Tick by tick, so a timeout set by a timeout lands on its own tick.
+  advance(ticks) {
+    for (let i = 0; i < ticks; i++) {
+      now += 1;
+      const due = timers.filter((t) => t.due <= now);
+      timers = timers.filter((t) => t.due > now);
+      for (const t of due) t.fn();
+      sim.flush();
+    }
   },
   spawn(player, initialSpawn) {
     for (const fn of subs.spawn) fn({ player, initialSpawn });

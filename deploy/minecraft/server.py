@@ -1255,7 +1255,13 @@ class Rig:
             if e["at"] < float(rec.get("created_at") or 0):
                 continue
             # A done with a cause is the pack passing the world over, not building it.
-            self.slots.update(rec["id"], wreck="skipped" if e.get("cause") else "done")
+            skipped = bool(e.get("cause"))
+            rec = self.slots.update(rec["id"], wreck="skipped" if skipped else "done")
+            if skipped and folder == self.active_folder() and self.bds.state == "running":
+                # Loaded as armed, so the pack was told there's a crash site; there isn't.
+                # A console fault here is fine: the next start tells it.
+                with contextlib.suppress(bds.ConsoleError):
+                    self.bds.command(pack_config(rec))
 
     def sample_positions(self) -> int:
         """One travel-log pass: ask the console where each online player is. A player
@@ -1672,10 +1678,13 @@ def managed_rules(rec: dict[str, Any] | None) -> dict[str, bool | int | str]:
 
 def pack_config(rec: dict[str, Any] | None) -> str:
     """The console line that tells the jbrain pack the world's settings. JSON-escaped
-    by json.dumps, one line, as every scriptevent the wrapper sends."""
+    by json.dumps, one line, as every scriptevent the wrapper sends. `wreck` picks
+    Dave's welcome lines (§DW1): an armed world is building its crash site on this very
+    load, so it counts; a skipped one never got it."""
     cfg = {
         "power_pack_keep": bool((rec or {}).get("power_pack_keep")),
         "power_pack_transport": (rec or {}).get("power_pack_transport") is not False,
+        "wreck": (rec or {}).get("wreck") in ("armed", "done"),
     }
     return f"scriptevent jb:config {json.dumps(cfg)}"
 
