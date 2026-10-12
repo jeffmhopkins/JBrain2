@@ -269,7 +269,7 @@ const learnReplicator = () => {
     try {
       const raw = world.getDynamicProperty(knownKey(player.id));
       const known = typeof raw === "string" ? JSON.parse(raw) : [];
-      if (!Array.isArray(known) || known.includes("replicator")) continue;
+      if (!Array.isArray(known)) continue;
       const inv = player.getComponent("minecraft:inventory")?.container;
       const stacks = [];
       for (let i = 0; i < (inv?.size ?? 0); i++) {
@@ -278,7 +278,11 @@ const learnReplicator = () => {
       }
       if (!unlocksReplicator(stacks)) continue;
       // main.js keeps every name it finds here and adds the Tricorder if it's missing.
-      world.setDynamicProperty(knownKey(player.id), JSON.stringify([...known, "replicator"].sort()));
+      if (!known.includes("replicator")) {
+        world.setDynamicProperty(knownKey(player.id), JSON.stringify([...known, "replicator"].sort()));
+      }
+      // Every look while they hold 8, not only the unlocking one: Dave's beat waits for
+      // their own Tricorder (#1684), and welcome.js plays it once.
       onUnlocked(player);
     } catch {
       // A player mid-join is looked at again next second.

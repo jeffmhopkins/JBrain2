@@ -15,6 +15,7 @@ const WRECK = "jb:wreck";
 const KEEP_SWITCH = "jb:power_pack_keep";
 const TRANSPORT_SWITCH = "jb:power_pack_transport";
 const HOTBAR = 9;
+const ENDER_PEARL = "minecraft:ender_pearl";
 
 const SPARKLE = "minecraft:endrod";
 const CHIME = "note.chime";
@@ -152,18 +153,22 @@ export const initWelcome = ({ beam, ownSlot, tricorderOn, say, dave }) => {
     play(player, [{ at: 30, step: "dave", text: LINES.firstWormhole }], (s) => dave(player, s.text), () => {});
   };
 
-  // The first time a player holds 8 Power Packs (§M15's beat, owner 2026-10-12), once
-  // replicator.js records the unlock.
+  // The first time a player holds 8 Power Packs (§M15's beat, owner 2026-10-12), on any
+  // look of replicator.js's while they do: without their own Tricorder it stays unheard
+  // for a later look, not spent with the unlock (#1684).
   const firstReplicator = (player) => {
     if (has(player, BEAT.firstReplicator) || tricorderOn(player) !== "own") return;
     record(player, BEAT.firstReplicator);
     dave(player, LINES.firstReplicator);
   };
 
-  // After the item guide's look at what they carry (main.js's learn): `added` are the
-  // unlocks just recorded, `known` all of them, `held` the item ids on them now.
-  const onUnlocks = (player, { added, known, held }) => {
-    if (added.includes("power_pack") && !has(player, BEAT.firstEnderPearl) && tricorderOn(player) === "own") {
+  // After the item guide's look at what they carry (main.js's learn): `known` are all
+  // their unlocks, `held` the item ids on them now.
+  const onUnlocks = (player, { known, held }) => {
+    // Any look with a pearl on them, not just the unlocking one: a pearl first held
+    // without their own Tricorder keeps the line for later (#1684).
+    const pearl = known.includes("power_pack") && held.includes(ENDER_PEARL);
+    if (pearl && !has(player, BEAT.firstEnderPearl) && tricorderOn(player) === "own") {
       record(player, BEAT.firstEnderPearl);
       dave(player, LINES.firstEnderPearl);
     }

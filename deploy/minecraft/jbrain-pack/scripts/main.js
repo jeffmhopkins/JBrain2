@@ -237,7 +237,7 @@ const learn = (player) => {
     world.setDynamicProperty(knownKey(player.id), JSON.stringify(after));
   }
   try {
-    story.onUnlocks(player, { added: after.filter((k) => !before.includes(k)), known: after, held });
+    story.onUnlocks(player, { known: after, held });
   } catch (e) {
     say(`story beat failed for ${player.name}: ${e}`);
   }

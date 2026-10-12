@@ -2741,12 +2741,13 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   over (`skipped`) sends the line again at once with `false`.
 - **First death** (the first respawn, beat `first_death`): Dave's two lines; when a Power
   Pack saved their things on that death, only the first, so he never says they're where
-  they fell. **First Ender Pearl** (`first_ender_pearl`): the moment M19's `power_pack`
-  unlock is first recorded. **First Power Pack** (`first_power_pack`): the field line only
+  they fell. **First Ender Pearl** (`first_ender_pearl`): the first look with a pearl on
+  them once M19's `power_pack` unlock is recorded. **First Power Pack** (`first_power_pack`): the field line only
   with the keep switch on, the saved-places line only with the transport switch on;
   neither on, nothing is said or recorded, so it comes the next time they hold a pack
   after the owner turns one on. The pearl and pack beats wait for their own Tricorder
-  on them, like every other Dave line (a respawn always has it, or is re-beamed one).
+  on them, like every other Dave line (a respawn always has it, or is re-beamed one): an
+  unlock made without it leaves the beat unheard for a later look, never spent (#1684).
 - **`/dave hello`** (also `/d`, `/ai`; exactly "hello", any case) replays the six lines at
   the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
   question reaches the backend. It still needs their own Tricorder. "hello there" is a
@@ -2756,9 +2757,10 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   it should lead." Beat `first_wormhole`, through their own Tricorder only; `wormhole.js`
   calls it through `initWormholes({ onPlanted })`.
 - **First Replicator** (owner, 2026-10-12, with the panel signed off): when
-  `replicator.js` records the unlock (8 Power Packs held), Dave says "Eight Power Packs…
+  `replicator.js` sees 8 Power Packs held, Dave says "Eight Power Packs…
   that's enough to wake a Replicator. …". Beat `first_replicator`, own Tricorder only,
-  through `initReplicator({ onUnlocked })`.
+  through `initReplicator({ onUnlocked })`, which is called on every look while they hold
+  8 (not only the unlocking one), so a player without their Tricorder hears it later.
 - **Not here:** the chests' beat; it comes with M11 and lines on the lore page.
 
 **Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)

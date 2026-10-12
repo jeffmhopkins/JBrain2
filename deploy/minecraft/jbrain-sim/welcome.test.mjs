@@ -224,6 +224,50 @@ test("first Replicator: Dave's line once a player holds 8 Power Packs, once", ()
   assert.equal(said(p).length, heard);
 });
 
+// Takes their own Tricorder off them (left in a chest), and gives back a way to return it.
+const setDown = (p) => {
+  const i = p.inventory.slots.findIndex((s) => s?.typeId === "jbrain:tricorder");
+  const own = p.inventory.slots[i];
+  p.inventory.setItem(i, undefined);
+  return () => p.inventory.setItem(i, own);
+};
+
+test("first Ender Pearl unlocked without their Tricorder: heard once it's back (#1684)", () => {
+  const p = sim.player("Pocketless", "-15");
+  wake(p);
+  const putBack = setDown(p);
+  p.inventory.setItem(4, new ItemStack("minecraft:ender_pearl", 1));
+  look();
+  assert.ok(sim.props.get("jb:known:-15").includes("power_pack")); // the unlock is kept
+  assert.deepEqual(said(p), []);
+  assert.ok(!beats(p).includes("first_ender_pearl"));
+
+  putBack();
+  look();
+  assert.deepEqual(said(p), [LINES.firstEnderPearl]);
+  assert.ok(beats(p).includes("first_ender_pearl"));
+  look();
+  assert.equal(said(p).length, 1);
+});
+
+test("first Replicator unlocked without their Tricorder: heard once it's back (#1684)", () => {
+  const p = sim.player("Stasher", "-16");
+  wake(p);
+  const putBack = setDown(p);
+  p.inventory.setItem(4, new ItemStack("jbrain:power_pack", 8));
+  look();
+  assert.ok(sim.props.get("jb:known:-16").includes("replicator"));
+  assert.ok(!said(p).includes(LINES.firstReplicator));
+  assert.ok(!beats(p).includes("first_replicator"));
+
+  putBack();
+  look();
+  assert.equal(said(p).filter((l) => l === LINES.firstReplicator).length, 1);
+  assert.ok(beats(p).includes("first_replicator"));
+  look();
+  assert.equal(said(p).filter((l) => l === LINES.firstReplicator).length, 1);
+});
+
 for (const [keep, transport, want] of [
   [true, true, [LINES.firstPowerPack.keep, LINES.firstPowerPack.transport]],
   [true, false, [LINES.firstPowerPack.keep]],
