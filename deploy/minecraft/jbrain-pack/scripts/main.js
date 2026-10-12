@@ -200,23 +200,37 @@ const onWaking = (player, initialSpawn) => {
 // Bedrock never merges two stacks already in separate slots, so a crafted pack lored
 // where it landed would sit apart from the lored stack for good (#1694): it tops up any
 // lored stack with room, and only what doesn't fit stays in its own slot. Folded by hand,
-// not re-added, so a pack with nowhere to merge never jumps to another slot.
-const fold = (inv, slot, item) => {
-  let left = item.amount;
+// not re-added, so a pack with nowhere to merge never jumps to another slot. The source
+// slot is written first and each top-up after it: a write that throws (a player mid-leave,
+// a stale look) can then only leave packs out of the source, and those are put back
+// unless that write fails too — a failure never makes a pack (#1698). They go back as they
+// were (`was`, before the lore), so the next look folds them in again.
+const fold = (inv, slot, item, was) => {
+  const whole = item.amount;
+  const tops = [];
+  let left = whole;
   for (let j = 0; j < inv.size && left > 0; j++) {
     const other = j === slot ? undefined : inv.getItem(j);
     if (!other?.isStackableWith(item)) continue;
     const n = Math.min(other.maxAmount - other.amount, left);
     if (n <= 0) continue;
     other.amount += n;
-    // The top-up is written first: a failure between the two writes doubles a pack
-    // rather than losing one.
-    inv.setItem(j, other);
+    tops.push({ j, other, n });
     left -= n;
   }
-  if (left === 0) return inv.setItem(slot, undefined);
   item.amount = left;
-  inv.setItem(slot, item);
+  inv.setItem(slot, left === 0 ? undefined : item);
+  let moved = 0;
+  try {
+    for (const { j, other, n } of tops) {
+      inv.setItem(j, other);
+      moved += n;
+    }
+  } catch (e) {
+    was.amount = whole - moved;
+    inv.setItem(slot, was);
+    throw e;
+  }
 };
 
 // What the player has unlocked, after a look at what they carry now; written back only
@@ -227,8 +241,9 @@ const learn = (player) => {
   const stacks = carried(player);
   for (const { item, put, inv, slot } of stacks) {
     if (!packLoreStale(item.typeId, item.getLore())) continue;
+    const was = item.clone();
     item.setLore([LINES.powerPackLore]);
-    if (inv) fold(inv, slot, item);
+    if (inv) fold(inv, slot, item, was);
     else put(item);
   }
   const held = stacks.map((c) => c.item.typeId);

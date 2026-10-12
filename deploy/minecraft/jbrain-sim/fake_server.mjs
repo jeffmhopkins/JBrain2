@@ -67,6 +67,11 @@ class Container {
   constructor(size) {
     this.size = size;
     this.slots = new Array(size).fill(undefined);
+    this.failing = new Set();
+  }
+  // The next write to slot i throws, as Bedrock's can for a player mid-leave.
+  failNextWrite(i) {
+    this.failing.add(i);
   }
   get emptySlotsCount() {
     return this.slots.filter((s) => !s).length;
@@ -75,6 +80,7 @@ class Container {
     return this.slots[i]?.clone();
   }
   setItem(i, item) {
+    if (this.failing.delete(i)) throw new Error(`setItem(${i}) failed`);
     this.slots[i] = item && item.amount > 0 ? item.clone() : undefined;
   }
   // As Bedrock: tops up matching stacks first, then the first empty slot; the remainder

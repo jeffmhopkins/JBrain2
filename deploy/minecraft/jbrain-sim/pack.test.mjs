@@ -308,6 +308,24 @@ test("folding a crafted pack in stops at 16 and loses none, even in a full inven
   assert.ok(packs(full).every((s) => s.lore[0] === LINES.powerPackLore));
 });
 
+const packCount = (p) => packs(p).reduce((n, s) => n + s.amount, 0);
+
+test("a write that fails mid-fold never makes a Power Pack, and loses none (#1698)", () => {
+  // Slot 2 is the lored stack topped up; slot 7 the crafted pack folded in from.
+  for (const failing of [2, 7]) {
+    const p = sim.player(`Glitch${failing}`, `-9${failing}`);
+    wake(p);
+    p.inventory.setItem(2, lored(1));
+    p.inventory.setItem(7, new ItemStack("jbrain:power_pack", 1));
+    p.inventory.failNextWrite(failing);
+    sim.tick(); // one look, the one that fails
+    for (let i = 0; i < 3; i++) sim.tick();
+    assert.equal(packCount(p), 2, `a failed write to slot ${failing}`);
+    for (let i = 0; i < 4; i++) sim.tick(); // the next look folds it after all
+    assert.deepEqual(packs(p).map((s) => s.amount), [2]);
+  }
+});
+
 const knownOf = (line) => JSON.parse(line.slice(line.indexOf("{"))).known;
 
 test("each /dave question carries the asker's unlocks, first held and then kept", () => {
