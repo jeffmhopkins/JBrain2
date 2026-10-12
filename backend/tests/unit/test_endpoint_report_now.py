@@ -282,12 +282,15 @@ class TestTheVolumeCeilingWasTheBugReport:
         THE FIRST VERSION OF THIS TEST PASSED THROUGHOUT, because it asserted that a
         `while (!audio_stream_begin())` existed somewhere in the file. It did — in the one
         function that had been fixed. So this walks every call site instead: any bare
-        `audio_stream_begin()` outside the single waiting helper is the bug coming back."""
+        `stream_begin()` outside the single waiting helper is the bug coming back.
+
+        Since 0.4.0 the engine is `jpanel_core.c`, and a fetch and a replay share one head
+        callback, so the helper has exactly one caller."""
         import pathlib
         import re
 
         jpanel = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
+            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel_core.c"
         ).read_text(encoding="utf-8")
 
         helper = re.search(r"static bool stream_begin_waiting\(.*?\n\}", jpanel, re.S)
@@ -300,59 +303,53 @@ class TestTheVolumeCeilingWasTheBugReport:
         callers = [
             line.strip()
             for line in jpanel.splitlines()
-            if "audio_stream_begin()" in line and not line.strip().startswith("*")
+            if re.search(r"\bstream_begin\(", line) and not line.strip().startswith(("*", "/*"))
         ]
         outside = [c for c in callers if c not in helper.group(0)]
         assert not outside, (
-            f"a bare audio_stream_begin() outside the waiting helper: {outside}. Every way of "
+            f"a bare stream_begin() outside the waiting helper: {outside}. Every way of "
             "starting a message has to wait out the press cue, or that one is intermittent in "
             "exactly the way the notice and replay both were"
         )
-        assert jpanel.count("stream_begin_waiting(") >= 3, (
-            "the definition plus a call from each of do_fetch and do_replay"
+        head = re.search(r"static int on_head\(void \*ctx, int status\)\n\{.*?\n\}", jpanel, re.S)
+        assert head and "stream_begin_waiting()" in head.group(0), (
+            "the head callback every fetch and replay goes through no longer waits for the speaker"
+        )
+        assert jpanel.count(".on_head = on_head") == 1, (
+            "a second way of starting a stream exists; route it through on_head"
         )
         # And the wait is REPORTED: "it works now" and "it works now BECAUSE we wait" are
         # different facts, and only the second says the wait is load-bearing.
+        assert "msg_waited_ms" in jpanel
         from jbrain.api.endpoint import TelemetryIn
 
         assert TelemetryIn(version="0.3.33", uptime_ms=1, msg_waited_ms=120).msg_waited_ms == 120
 
     def test_a_replay_that_ends_re_arms_the_buttons(self) -> None:
-        """PLAYBACK ENDED IS A STATE, AND REPLAY WAS NOT REACHING IT.
+        """PLAYBACK ENDED IS AN OUTCOME, AND REPLAY MUST REACH IT.
 
-        `display.c`'s `case JPANEL_PLAYING` is the only place that notices a message has
-        finished: when `audio_playing()` goes false it clears the state and re-arms
-        `s_repeat_until`, which is what puts the "again" and "reply" pair back on the glass.
+        The again/reply pair is re-armed when a replay ends by itself (JP 0.3.36). In 0.3.39 that
+        hung on `do_replay` setting `JPANEL_PLAYING`, which it once forgot, so a replay longer than
+        what was left of the pair's window took the buttons away mid-sentence.
 
-        `do_fetch` set `JPANEL_PLAYING`; `do_replay` did not. So a replay was audible and then
-        simply over — the pair kept counting down from the end of the FIRST play, and a replay
-        longer than what was left of that window took the buttons away mid-sentence, leaving a
-        child who wanted to hear it once more with nothing to press.
-
-        The two states replay deliberately does NOT join are argued in its own comment
-        (`s_owed`, `s_run`); this one was not on that list, it was missed."""
+        Since 0.4.0 a replay ends like every command: one `play_outcome` with `replay` set, in the
+        same write as `done_seq`, which the panel machine reads to re-stamp the offer. The two
+        things a replay must still NOT do — acknowledge a second listen, or walk on into the next
+        unheard message — are behaviour, so they are asserted where behaviour can be: the host
+        suite's scripted box (`firmware/host/jpanel_tests.c`), which `make test` runs in CI."""
         import pathlib
-        import re
 
-        jpanel = (
-            pathlib.Path(__file__).resolve().parents[3] / "firmware" / "main" / "jpanel.c"
-        ).read_text(encoding="utf-8")
-        # Since 0.3.39 the speaker is claimed in `replay_head`, the callback `link.c` runs once the
-        # answer's status is in and before its first byte — so the replay is that and `do_replay`.
-        replay = re.search(r"static void do_replay\(void\)\n\{.*?\n\}", jpanel, re.S)
-        head = re.search(
-            r"static int replay_head\(void \*ctx, int status\)\n\{.*?\n\}", jpanel, re.S
+        fw = pathlib.Path(__file__).resolve().parents[3] / "firmware"
+        core = (fw / "main" / "jpanel_core.c").read_text(encoding="utf-8")
+        assert '"/message/%s/pcm"' in core, "a replay no longer uses its own route"
+        assert "s_v.play.replay = s_f.replay;" in core, (
+            "a replay's end is no longer published as a replay outcome, so the pair is not re-armed"
         )
-        assert replay and head, "do_replay or replay_head moved; re-pin this test"
-        body = replay.group(0) + head.group(0)
-        assert "s_state = JPANEL_PLAYING;" in body, (
-            "a replay no longer reaches the state that ends a playback, so the again/reply pair "
-            "is never re-armed after one"
-        )
-        # The two it must still NOT join, or "again" would acknowledge a second listen and walk
-        # on into the next unheard message.
-        assert "s_owed = true" not in body, "a replay must not re-acknowledge the message"
-        assert "s_run = true" not in body, "a replay must not join the run"
+        tests = (fw / "host" / "jpanel_tests.c").read_text(encoding="utf-8")
+        for name in ("test_replay_never_continues_a_run", "test_last_begun_only_at_first_byte"):
+            assert f"    {name}();" in tests, f"{name} is no longer run"
+        makefile = (fw / "host" / "Makefile").read_text(encoding="utf-8")
+        assert "./run_jpanel_tests" in makefile, "make test no longer runs the engine suite"
 
     def test_an_open_microphone_is_deaf_to_commands(self) -> None:
         """ONE UTTERANCE, ONE READER. The owner: *"there are still occasional times when we are
@@ -661,11 +658,14 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
     """
 
     def _do_send_once(self) -> str:
-        """The DEFINITION, not the forward declaration above `do_send`, which shares its opening
-        line and whose body is the retry loop. Matching the wrong one silently hands these tests
-        a function with no reach calls in it at all — as it did on the first run."""
-        src = _fw("jpanel.c")
-        start = src.index("static jpanel_state_t do_send_once(jpanel_to_t to, bool *corrupt)\n{")
+        """The DEFINITION (in the engine, `jpanel_core.c`, since 0.4.0). Matching a declaration
+        instead silently hands these tests a function with no reach calls in it at all — as it
+        did on the first run."""
+        src = _fw("jpanel_core.c")
+        start = src.index(
+            "static jp_send_kind_t do_send_once(const jp_cmd_t *c, const char *hex, bool *corrupt)"
+            "\n{"
+        )
         return src[start : src.index("\n}\n", start)]
 
     def test_every_failing_exit_from_a_send_names_itself(self) -> None:
@@ -682,13 +682,13 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
             # The two lines above it, which is where `why` (or `out`, for the one non-fault)
             # is set in every branch as written.
             above = " ".join(lines[max(0, n - 3) : n])
-            assert "why = " in above or "out = JPANEL_NOBODY" in above, (
+            assert "why = " in above, (
                 f"a branch jumps to done without naming itself:\n{above}\n{line}"
             )
 
-        # Four since 0.3.39: connect, upload-stall and no-headers became ONE transport branch that
-        # names `link.c`'s real reason (`res.err`), beside 409, 422 and any other status.
-        assert body.count("goto done;") >= 4, "the branches were restructured; re-read this test"
+        # Since 0.4.0: the path, the transport (naming `link.c`'s reason or the deadline), 409,
+        # 400, 413, 422 and any other status.
+        assert body.count("goto done;") >= 7, "the branches were restructured; re-read this test"
 
     def test_a_send_that_failed_is_counted_and_a_house_with_one_panel_is_not(self) -> None:
         """NOBODY-TO-SEND-TO IS NOT A FAULT. The box answered; there is simply no second panel
@@ -699,7 +699,7 @@ class TestTheTwoFailuresThatUsedToLeaveNoRecord:
 
         assert "reach_ok(REACH_SEND" in body, "a successful send no longer clears the streak"
         assert "reach_fail(REACH_SEND, why" in body, "the reason no longer reaches the report"
-        assert "out != JPANEL_NOBODY" in body, (
+        assert "out != JP_SEND_NOBODY" in body, (
             "JPANEL_NOBODY is being counted as a send failure — a one-panel house would report "
             "a permanent fault on the path that matters most"
         )

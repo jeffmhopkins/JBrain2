@@ -2,8 +2,9 @@
 
 /* The voice-post engine (plan §7.3): one serial loop that owns every network request and the
  * ring's producer side, and publishes one snapshot. Plain C behind `jpanel_io_t`, so the host
- * tests drive it against a scripted box, a fake clock and the real `stream.c`; `jpanel.c` keeps
- * the FreeRTOS task, the queue, cJSON, mbedTLS and the real io.
+ * tests drive it against a scripted box, a fake clock and an arbiter built from `stream.h`
+ * (`host/fake_stream.c`; the end-to-end suite runs the real `stream.c`); `jpanel.c` keeps the
+ * FreeRTOS task, the queue, cJSON, mbedTLS and the real io.
  *
  * SINGLE WRITERS. The engine task is the only caller of `jpanel_core_step` and the only writer
  * of the snapshot. Render is the only caller of `jpanel_core_snapshot`. The poll flag may be
@@ -28,6 +29,9 @@ typedef struct {
     bool (*take)(void *ctx, jp_cmd_t *out, uint32_t wait_ms);
     bool (*queue_empty)(void *ctx);
     uint32_t (*now_ms)(void *ctx);
+    /* Blocks the engine task: the speaker wait before a stream begins, the ring-full wait in the
+       sink, and the drain poll. The host fake advances its clock and ticks the arbiter. */
+    void (*sleep_ms)(void *ctx, uint32_t ms);
     /* `/waiting` is JSON; cJSON stays on the device, so parsing is io's. False on a bad body. */
     bool (*parse_waiting)(void *ctx, const uint8_t *body, size_t n, jp_waiting_t *out);
     /* One running digest at a time (the engine verifies one stream at a time). */
@@ -35,9 +39,13 @@ typedef struct {
     void (*sha_update)(void *ctx, const uint8_t *data, size_t n);
     void (*sha_finish)(void *ctx, uint8_t out[JP_SHA256_LEN]);
     /* Host-only interleave hooks; NULL on the device. Named points: "claimed", "head",
-       "chunk", "classified", "acked", "published". */
+       "chunk", "classified", "acked", "publishing" (inside the seqlock's odd window) and
+       "published". */
     void (*yield)(void *ctx, const char *point);
     stream_t *stream;
+    /* The first `/waiting` poll waits this long, so two panels on one Wi-Fi never ask in
+       lockstep (the device passes a random 0..30 s). */
+    uint32_t poll_first_ms;
 } jpanel_io_t;
 
 /* Resets all engine state. One instance; host tests call it per test. */
@@ -57,3 +65,6 @@ void jpanel_core_poll_soon(void);
 bool jpanel_core_snapshot(jp_view_t *out);
 
 void jpanel_core_stats(jp_stats_t *out);
+
+/* The last failure's reason, for the report's `msg_err`. A static string; never NULL. */
+const char *jpanel_core_err(void);

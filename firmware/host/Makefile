@@ -30,9 +30,10 @@ HDR = $(wildcard ../main/*.h)
 # slowed down by. Sequential, not parallel: a suite whose failure output interleaves with
 # another's is a suite nobody reads.
 .PHONY: test clean
-test: run_tests run_ui_tests
+test: run_tests run_ui_tests run_jpanel_tests
 	./run_tests
 	./run_ui_tests
+	./run_jpanel_tests
 
 run_tests: tests.c $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
@@ -40,5 +41,12 @@ run_tests: tests.c $(SRC) $(HDR)
 run_ui_tests: ui_tests.c $(SRC) $(HDR)
 	$(CC) $(CFLAGS) -o $@ $(filter-out %.h,$^) $(LDLIBS)
 
+# THE ENGINE AGAINST A SCRIPTED BOX (plan §10). Its own source list, not SRC: the fake arbiter
+# stands in for `stream.c`, and both would define the same symbols. The end-to-end suite links the
+# real one. -pthread for the seqlock's concurrent-reader test.
+JPANEL_SRC = ../main/jpanel_core.c ../main/reach.c fake_stream.c
+run_jpanel_tests: jpanel_tests.c $(JPANEL_SRC) fake_stream.h $(HDR)
+	$(CC) $(CFLAGS) -pthread -o $@ $(filter-out %.h,$^) $(LDLIBS)
+
 clean:
-	rm -f run_tests run_ui_tests
+	rm -f run_tests run_ui_tests run_jpanel_tests
