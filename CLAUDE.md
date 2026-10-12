@@ -73,6 +73,8 @@ they disagree the code and docs here are fixed to match it.
 12. **A reviewer agent files issues against merged PRs; the PR's session fixes them.**
     The owner runs a separate agent whose only job is to review merged PRs for bugs and
     file GitHub issues ("Introduced in #N"). Check the open issues at session start,
-    after each of your own merges, and before calling work done; any issue naming a PR
-    you opened is yours to fix (failing test first, `Fixes #N`, merge, deploy, verify,
-    closing comment). See `docs/reference/PROCESS.md` "Post-merge review issues".
+    about **10 and 40 minutes after each of your own merges** (it files within 40 s to
+    35 min of a merge), and before calling work done. The checks never hold up a PR, a
+    merge or a deploy: they run alongside. Any issue naming a PR you opened is yours to
+    fix as a new PR (failing test first, `Fixes #N`, merge, deploy, verify, closing
+    comment). See `docs/reference/PROCESS.md` "Post-merge review issues".

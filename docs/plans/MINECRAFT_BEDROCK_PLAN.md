@@ -1387,8 +1387,10 @@ once-a-second look at each player's inventory (main.js `learn()`) writes
 `LINES.powerPackLore`, *"The same fuel the Old Makers' ships ran on."* (owner,
 2026-10-12), on every Power Pack they carry that lacks exactly that line, keeping its
 amount and everything else. Every pack gets the same single line (an older wording is
-rewritten too), because Bedrock stacks only identical lore: a fresh craft sits apart
-from a lored stack for at most a second, then matches it. A pack in a chest gets it when
+rewritten too), because Bedrock stacks only identical lore. A fresh craft lands apart
+from a lored stack, and Bedrock never merges two stacks already in separate slots, so the
+look folds a newly lored inventory pack into any lored stack with room (to 16); only what
+doesn't fit keeps its own slot, and nothing is lost (#1694). A pack in a chest gets it when
 it's next carried. Transport shipped later, below.
 **Box checks:** home
 test rows 3, 4, 13–16, which also answer the checks above (the inventory writable at
@@ -2313,8 +2315,10 @@ map link was turned off*.
   world and the player it opens on; the only read that counts as a view), then
   `/map/info`, `/map/tile/{dim}/{zoom}/{tx}/{tz}.png`, `/map/point`, `/map/players`,
   `/map/structures` and `/timeline` under it. The token picks the slot; the visitor never
-  names one. Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`,
-  `noindex`.
+  names one. Every route, tiles included, 404s once the slot holds another world: the
+  token works outside the viewer, so an old link must never draw the new world (#1664).
+  Tiles cache the slot's checked folder for 5 s, one sidecar read per view's burst.
+  Rate-limited per IP (tiles in their own, wider bucket), `no-referrer`, `noindex`.
 - Storage and RLS (migration `0230_mc_share_links`): `app.mc_share_links` keeps only the
   token's SHA-256, the slot, its world folder at mint, and the player. A visitor reads under
   `mc_share_context(link_id)`; the `*_share` policies on `mc_player_track`,
@@ -2829,12 +2833,19 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   over (`skipped`) sends the line again at once with `false`.
 - **First death** (the first respawn, beat `first_death`): Dave's two lines; when a Power
   Pack saved their things on that death, only the first, so he never says they're where
-  they fell. **First Ender Pearl** (`first_ender_pearl`): the moment M19's `power_pack`
-  unlock is first recorded. **First Power Pack** (`first_power_pack`): the field line only
+  they fell. **First Ender Pearl** (`first_ender_pearl`): the first look with a pearl on
+  them once M19's `power_pack` unlock is recorded. **First Power Pack** (`first_power_pack`): the field line only
   with the keep switch on, the saved-places line only with the transport switch on;
   neither on, nothing is said or recorded, so it comes the next time they hold a pack
   after the owner turns one on. The pearl and pack beats wait for their own Tricorder
-  on them, like every other Dave line (a respawn always has it, or is re-beamed one).
+  on them, like every other Dave line (a respawn always has it, or is re-beamed one): an
+  unlock made without it leaves the beat unheard for a later look, never spent (#1684).
+- **Beats never cut into Dave's speech** (#1683): while the welcome, a `/dave hello` or
+  the first-death lines are playing, no other beat speaks. The ones a look re-checks
+  (pearl, pack, Replicator) stay unheard until a look after he's done; a death or a
+  planted gate waits and plays once he's done. So a death mid-welcome gets its lines
+  after the welcome, with the Tricorder it handed over, and a pre-DW1 player carrying
+  packs hears their beats after it, not over the darkness.
 - **`/dave hello`** (also `/d`, `/ai`; exactly "hello", any case) replays the six lines at
   the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
   question reaches the backend. It still needs their own Tricorder. "hello there" is a
@@ -2844,9 +2855,10 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   it should lead." Beat `first_wormhole`, through their own Tricorder only; `wormhole.js`
   calls it through `initWormholes({ onPlanted })`.
 - **First Replicator** (owner, 2026-10-12, with the panel signed off): when
-  `replicator.js` records the unlock (8 Power Packs held), Dave says "Eight Power Packs…
+  `replicator.js` sees 8 Power Packs held, Dave says "Eight Power Packs…
   that's enough to wake a Replicator. …". Beat `first_replicator`, own Tricorder only,
-  through `initReplicator({ onUnlocked })`.
+  through `initReplicator({ onUnlocked })`, which is called on every look while they hold
+  8 (not only the unlocking one), so a player without their Tricorder hears it later.
 - **Not here:** the chests' beat; it comes with M11 and lines on the lore page.
 
 **Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)

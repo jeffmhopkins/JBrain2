@@ -142,6 +142,22 @@ test("Dave speaks up at a player's first planted gate, through their own Tricord
   assert.deepEqual(mira.messages, [`§7${L.planted}`]);
 });
 
+test("a gate planted mid-welcome: Dave's line waits for the welcome to end (#1683)", () => {
+  const mira = crew("Mira", "-1");
+  sim.spawn(mira, true);
+  sim.advance(170); // the Tricorder is theirs, and Dave's welcome has begun
+  const first = build();
+  mira.selectedSlotIndex = 1;
+  mira.inventory.setItem(1, new ItemStack("jbrain:wormhole_seed", 1));
+  plant(mira, first.ring[0]);
+  sim.advance(40);
+  const dave = () => mira.messages.filter((m) => m.startsWith("§b[Dave]§r "));
+  assert.ok(!dave().includes(`§b[Dave]§r ${LINES.firstWormhole}`));
+  sim.advance(500);
+  assert.equal(dave().at(-1), `§b[Dave]§r ${LINES.firstWormhole}`);
+  assert.equal(dave().length, LINES.welcome("Mira", false).length + 1);
+});
+
 test("either axis, with or without corners, from a top or a side block", () => {
   const along = { axis: "z", x: 20, y: 70, z: 5 };
   const cells = build(along, { corners: true });

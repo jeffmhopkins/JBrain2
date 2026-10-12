@@ -13,6 +13,9 @@ export const CustomCommandStatus = { Success: 0, Failure: 1 };
 // No block types here; replicator_fake.mjs has the blocks the Replicator's tests need.
 export const BlockTypes = { get: () => undefined };
 
+// Stack caps from the items' max_stack_size, and vanilla's for the ones the tests carry.
+const MAX = { "jbrain:power_pack": 16, "jbrain:tricorder": 1, "minecraft:ender_pearl": 16 };
+
 export class ItemStack {
   constructor(typeId, amount = 1) {
     this.typeId = typeId;
@@ -40,6 +43,16 @@ export class ItemStack {
     if (name !== "minecraft:enchantable") return undefined;
     return { hasEnchantment: (id) => this.enchants.includes(id) };
   }
+  get maxAmount() {
+    return MAX[this.typeId] ?? 64;
+  }
+  // As Bedrock: everything but the amount must match.
+  isStackableWith(other) {
+    const a = this.clone();
+    const b = other.clone();
+    a.amount = b.amount = 1;
+    return JSON.stringify(a) === JSON.stringify(b) && a.maxAmount > 1;
+  }
   clone() {
     const c = new ItemStack(this.typeId, this.amount);
     Object.assign(c, { nameTag: this.nameTag, lockMode: this.lockMode, keepOnDeath: this.keepOnDeath });
@@ -64,10 +77,27 @@ class Container {
   setItem(i, item) {
     this.slots[i] = item && item.amount > 0 ? item.clone() : undefined;
   }
+  // As Bedrock: tops up matching stacks first, then the first empty slot; the remainder
+  // comes back.
   addItem(item) {
-    const i = this.slots.findIndex((s) => !s);
-    if (i < 0) return item;
-    this.slots[i] = item.clone();
+    let left = item.amount;
+    for (const s of this.slots) {
+      if (!s || left === 0 || !s.isStackableWith(item)) continue;
+      const n = Math.min(s.maxAmount - s.amount, left);
+      if (n > 0) {
+        s.amount += n;
+        left -= n;
+      }
+    }
+    while (left > 0) {
+      const i = this.slots.findIndex((s) => !s);
+      const rest = item.clone();
+      rest.amount = left;
+      if (i < 0) return rest;
+      rest.amount = Math.min(left, rest.maxAmount);
+      this.slots[i] = rest;
+      left -= rest.amount;
+    }
     return undefined;
   }
 }
