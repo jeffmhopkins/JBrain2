@@ -471,6 +471,23 @@ Probation is unchanged: a pending image with no Wi-Fi still gives up and rolls b
 
 ## One connection to the box, not one per request (0.3.39)
 
+**0.4.3 makes the animation run at the speed it was tuned for.** A cold review of the render
+path found four things, all confirmed against the code:
+- The loop slept a fixed 40 ms *after* each frame, so while animating a frame took draw + blit + 40 ms
+  (about 12 fps against the 25 every per-frame tween assumes). It now tops the pass up to 40 ms,
+  with at least one tick so the idle tasks still run.
+- A reply's talking mouth was drawn at the 200 ms floor (5 fps), because the flag asking for a
+  frame was set after the gate that reads it. A body change from the PWA had the same bug.
+- The project builds at ESP-IDF's default -Og, and nothing set the CPU clock, so it ran at 160 MHz.
+  The drawing files (`face.c`, `rig.c`, `emotion.c`, `font.c`, `overlay.c`, `confirm.c`,
+  `caption.c`, `display.c`) now compile at -O2. They are flash-resident, so the internal RAM
+  budget is unchanged. The CPU runs at 240 MHz, as esp-sr recommends for the S3.
+- The report's `note` carries `frames=N work=avg/max gap=avg/max` (ms), so the real frame rate
+  is readable through the debug API. A `gap` near 40 is 25 fps.
+
+Not done yet, and next if `work` stays above ~40 ms: the limb rasteriser stamps a whole circle per
+pixel of limb (about 6x overdraw), which a row-span fill can replace pixel-for-pixel.
+
 **0.4.2 keeps one HTTPS connection between requests** (`link_keep_alive`). 0.4.0's
 one-session-per-request meant a full TLS handshake every 3 s for the settings poll alone, and the
 first 0.4.0 panel's animation visibly lost its smoothness to them. The connection is still one at

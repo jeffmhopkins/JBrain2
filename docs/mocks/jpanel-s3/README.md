@@ -1,6 +1,6 @@
 # The twins' panels (ESP32-S3-Touch-AMOLED-1.8): the bench
 
-Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.2's own UI code** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.3's own UI code** · Last verified: 2026-10-12
 
 An interactive mock of the twins' panel, with one difference from Jeff's C6 set
 (`../jpanel-c6/`): nothing here is a drawing of the panel. `sim.wasm` is the firmware's own UI
@@ -33,7 +33,7 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
 
 - **Messaging flows end to end.** Send a message, then tap the notice. Let it play, stop it
   early, or swipe the queue. Then AGAIN, REPLY, and the recording and its outcome. Turn the box
-  off, or make the next send come back NOBODY (404) or an error.
+  off, or make the next send come back NOBODY (409, as the box answers it) or an error.
 - **Touch targets.** "Show touch targets" paints the machine's own hit test (`sm_target`) over the
   glass at 8 px resolution, so a control drawn where its target is not (invariant I3) shows up
   at a glance.

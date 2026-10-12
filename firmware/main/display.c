@@ -195,6 +195,7 @@ static bool paint(void)
 
 /* Defined with the rest of the breadcrumb machinery, below the render loop it instruments. */
 static void phase_init(void);
+static void frame_note(uint32_t pass_start);
 
 bool display_start(void)
 {
@@ -1519,6 +1520,38 @@ static void phase_init(void)
     s_phase = 0;
 }
 
+/* FRAME TIMING, for the report: how many frames were drawn since the last read, how long one took
+   to draw and blit, and the gap between them. What a person calls smooth is the gap. */
+static uint32_t s_fr_n, s_fr_work_sum, s_fr_work_max, s_fr_gap_sum, s_fr_gap_max, s_fr_last;
+
+static void frame_note(uint32_t pass_start)
+{
+    const uint32_t t = (uint32_t)(esp_timer_get_time() / 1000);
+    const uint32_t work = t - pass_start;
+    s_fr_work_sum += work;
+    if (work > s_fr_work_max) s_fr_work_max = work;
+    /* A gap over a second is the screen resting at its floor, not a dropped frame. */
+    if (s_fr_last != 0 && t - s_fr_last < 1000) {
+        const uint32_t gap = t - s_fr_last;
+        s_fr_gap_sum += gap;
+        if (gap > s_fr_gap_max) s_fr_gap_max = gap;
+        s_fr_n++;
+    }
+    s_fr_last = t;
+}
+
+void display_frame_stats(unsigned *frames, unsigned *work_avg, unsigned *work_max,
+                         unsigned *gap_avg, unsigned *gap_max)
+{
+    const uint32_t n = s_fr_n;
+    *frames = n;
+    *work_avg = n ? s_fr_work_sum / n : 0;
+    *work_max = s_fr_work_max;
+    *gap_avg = n ? s_fr_gap_sum / n : 0;
+    *gap_max = s_fr_gap_max;
+    s_fr_n = s_fr_work_sum = s_fr_work_max = s_fr_gap_sum = s_fr_gap_max = 0;
+}
+
 int display_stack_free(void)
 {
     return s_stack_free;
@@ -1947,7 +1980,6 @@ static void face_task(void *arg)
         gesture_action_t act = GESTURE_NONE;
         if (!calibrating) {
             PHASE(4);
-            s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
             PHASE(5);
             update_orientation();
             boot_button_poll();
@@ -2277,6 +2309,20 @@ static void face_task(void *arg)
             if (berr != ESP_OK) ESP_LOGW(TAG, "blank: %s", esp_err_to_name(berr));
             dirty = true;
         }
+        /* A body chosen from the PWA, taken on the render task (the only writer of `fst`) and
+           only when the box's answer changed, so it never fights a child's live choice. BEFORE
+           the gate (0.4.3): after it, its `dirty` was never read, and the new body waited for the
+           200 ms floor. */
+        if (s_form_pending >= 0) {
+            fst.form = (face_form_t)s_form_pending;
+            s_form_pending = -1;
+            dirty = true;
+            ESP_LOGI(TAG, "form <- box: %s", fst.form == FORM_OSTRICH ? "ostrich" : "robot");
+        }
+        /* THE MOUTH MOVES WHILE IT SPEAKS, so every frame of a reply is a new frame. This was set
+           inside the draw below, after the gate had already read `dirty`, so a reply's mouth was
+           drawn at the 200 ms floor: five frames a second (0.4.3). */
+        if (facts.speaker_busy) dirty = true;
         if (s_sleep != SCREEN_DARK && (dirty || since_draw >= FACE_FLOOR_MS)) {
             s_drawn_lean = s_lean;
             s_drawn = *view;
@@ -2325,7 +2371,6 @@ static void face_task(void *arg)
                 if (open < 0.25f) open = 0.25f;
                 if (open > 1.0f) open = 1.0f;
                 fst.talk = open;
-                dirty = true;
             } else {
                 fst.talk = 0.0f;
             }
@@ -2417,6 +2462,7 @@ static void face_task(void *arg)
                 }
                 s_blit_ok++;
             }
+            frame_note(now);
             since_draw = 0;
         }
         /* OFF, AND IT LEAVES FROM HERE FOR THE REASON THE REBOOTS DO: a frame has just finished
@@ -2462,14 +2508,6 @@ static void face_task(void *arg)
             PHASE(14);
             apply_brightness();
         }
-        /* A body chosen from the PWA, taken on the render task (the only writer of `fst`) and
-           only when the box's answer changed, so it never fights a child's live choice. */
-        if (s_form_pending >= 0) {
-            fst.form = (face_form_t)s_form_pending;
-            s_form_pending = -1;
-            dirty = true;
-            ESP_LOGI(TAG, "form <- box: %s", fst.form == FORM_OSTRICH ? "ostrich" : "robot");
-        }
         if (since_reassert >= REASSERT_MS) {
             PHASE(12);
             reassert_panel();
@@ -2480,9 +2518,18 @@ static void face_task(void *arg)
             pmu_sample();
             since_sample = 0;
         }
-        /* The pacing is an honest delay: `audio.c` owns the codec on its own task. */
+        /* THE PACING IS A DEADLINE, NOT A DELAY (0.4.3). It slept `poll_ms` after the work, so
+           while animating a pass took draw + blit + 40 ms: about twelve frames a second against
+           the 25 every per-frame tween here was tuned for. Now the pass is topped up to
+           `poll_ms`. At least one tick always, so the idle tasks, and the watchdog that feeds on
+           them, still run after a pass that overran. */
         PHASE(10);
-        vTaskDelay(pdMS_TO_TICKS(poll_ms));
+        {
+            const int spent = (int)((uint32_t)(esp_timer_get_time() / 1000) - now);
+            int wait = poll_ms - spent;
+            if (wait < (int)portTICK_PERIOD_MS) wait = (int)portTICK_PERIOD_MS;
+            vTaskDelay(pdMS_TO_TICKS(wait));
+        }
         if (sound) {
             level = audio_level();
             if (level > s_mic_peak) s_mic_peak = level;
@@ -2494,6 +2541,8 @@ static void face_task(void *arg)
         since_beat += dt_ms;
         if (since_beat >= BEAT_MS) {
             since_beat = 0;
+            /* Every beat, not every pass: it walks the whole stack to find the untouched words. */
+            s_stack_free = (int)uxTaskGetStackHighWaterMark(NULL);
             ESP_LOGI(TAG, "render: %d frames ok, %d failed | screen %s | internal largest %u",
                      s_blit_ok, s_blit_fails, display_screen(),
                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL |
