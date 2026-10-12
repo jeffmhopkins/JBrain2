@@ -50,9 +50,19 @@ static const char *TAG = "speech";
 /* Core 1. Core 0 carries Wi-Fi, and a MultiNet pass that lands on the same core as the radio
    is the classic way to make both stutter. */
 /* Below this much free INTERNAL heap the recogniser does not start at all. Internal RAM is
-   what Wi-Fi's DMA descriptors and mbedTLS's handshake buffers must come from, and there is
-   only 140 KB of it on this board. */
-#define SPEECH_MIN_INTERNAL (48 * 1024)
+   what Wi-Fi's DMA descriptors, the PHY's timers and mbedTLS's handshake buffers must come from.
+ *
+ * 48 KB WAS WRONG FOR ANY FIRMWARE, and 0.3.39 proved it (plan §6a): speech started at 70,535 B
+ * free beside the persistent socket, the AFE came up, and the Wi-Fi PHY then failed its own
+ * `esp_timer_create` with ESP_ERR_NO_MEM — an abort 3-4 s into every boot. With the socket off
+ * (0.4.0) the console's `mem: wifi` line read ~119,000 B free after Wi-Fi.
+ *
+ * 96 KB sits between those two: above the free heap that crashed, below the pre-speech free a
+ * healthy socket-off panel should have, so a healthy panel always starts speech and a starved one
+ * boots DEAF (logged, `speech_ok: false` in the report) instead of looping. PROVISIONAL UNTIL
+ * MEASURED ON HARDWARE: the boot log's `mem: pre-speech` / `post-speech` lines give the real cost
+ * `S`, and the plan's floor is `S + T + P` (speech, one TLS handshake, the PHY's margin). */
+#define SPEECH_MIN_INTERNAL (96 * 1024)
 
 /* How often the detect loop says what it is hearing. Often enough to watch someone talk to
    it over a console, rare enough not to bury the log. */

@@ -187,6 +187,12 @@ bool jpanel_snapshot(jp_view_t *out)
     return jpanel_core_snapshot(out);
 }
 
+bool jpanel_health(jp_health_t *out)
+{
+    if (s_task == NULL) return false;
+    return jpanel_core_health(out);
+}
+
 void jpanel_poll_soon(void)
 {
     jpanel_core_poll_soon();

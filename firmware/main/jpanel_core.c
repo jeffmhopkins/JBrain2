@@ -1251,6 +1251,22 @@ bool jpanel_core_snapshot(jp_view_t *out)
     return false;
 }
 
+bool jpanel_core_health(jp_health_t *out)
+{
+    for (int tries = 0; tries < 4; tries++) {
+        const uint32_t s1 = atomic_load_explicit(&s_lock, memory_order_acquire);
+        if (s1 & 1u) continue;
+        const jp_health_t h = {.hb = s_pub.hb, .deadline_ms = s_pub.deadline_ms,
+                               .idle = s_pub.phase == JP_IDLE};
+        atomic_thread_fence(memory_order_acquire);
+        if (atomic_load_explicit(&s_lock, memory_order_relaxed) == s1) {
+            *out = h;
+            return true;
+        }
+    }
+    return false;
+}
+
 void jpanel_core_stats(jp_stats_t *out)
 {
     *out = s_stats;

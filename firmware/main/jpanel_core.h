@@ -64,6 +64,16 @@ void jpanel_core_poll_soon(void);
    the previous copy, which the caller must already hold. */
 bool jpanel_core_snapshot(jp_view_t *out);
 
+/* What the engine watchdog (§7.5d) reads, from any task: the three words copied under the same
+   seqlock into the caller's locals, because `jpanel_core_snapshot`'s scratch belongs to render
+   and a second reader would tear it. False after four torn tries. */
+typedef struct {
+    uint32_t hb;
+    uint32_t deadline_ms;
+    bool idle;
+} jp_health_t;
+bool jpanel_core_health(jp_health_t *out);
+
 void jpanel_core_stats(jp_stats_t *out);
 
 /* The last failure's reason, for the report's `msg_err`. A static string; never NULL. */

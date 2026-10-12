@@ -290,6 +290,16 @@ void ota_apply_faults(const char **err, int *tries)
     if (tries != NULL) *tries = s_apply_tries;
 }
 
+/* Set before the link is suspended and cleared on every failure path, so both watchdogs
+   (`main.c`, plan §7.5d) stand down while the partition erase may starve the audio task and the
+   engine's requests are held off; the OTA has its own rollback gate. */
+static volatile bool s_ota_running;
+
+bool ota_running(void)
+{
+    return s_ota_running;
+}
+
 esp_err_t ota_apply(const cfg_t *cfg, const char *url)
 {
     ESP_LOGI(TAG, "installing %s", url);
@@ -310,11 +320,13 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
     /* ONE TLS SESSION AT A TIME, the OTA included. The image comes down its own HTTPS session
        (`esp_https_ota` writes app slots and wants its own client), so the socket is closed first
        and its ~40 KB returned, and every other request is held off until this is over. */
+    s_ota_running = true;
     link_suspend();
     esp_err_t err = esp_https_ota(&oc);
     free(auth);
     if (err != ESP_OK) link_resume();
     if (err != ESP_OK) {
+        s_ota_running = false;
         ESP_LOGE(TAG, "install failed: %s — staying on the current image", esp_err_to_name(err));
         /* REMEMBERED, because nobody reads the return. `main.c` calls this and discards the
            result — reasonably, since there is nothing it can do — so a panel that CANNOT

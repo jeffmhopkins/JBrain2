@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "cfg.h"
+#include "jpanel_core.h"
 #include "jpanel_types.h"
 #include "stream.h"
 
@@ -33,6 +34,9 @@ bool jpanel_post(const jp_cmd_t *cmd);
 /* Render only, once per frame. False after four torn tries; `out` then keeps the caller's
    previous copy. */
 bool jpanel_snapshot(jp_view_t *out);
+
+/* The engine watchdog's view (§7.5d), safe from any task. False with no task, or torn. */
+bool jpanel_health(jp_health_t *out);
 
 /* "Come and ask": the next `/waiting` poll happens now rather than up to 30 s from now. Any
    task: the settings poll's waiting count, the nudge, the socket's event. */
