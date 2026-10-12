@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-11
+> **Status:** Living · **Last verified:** 2026-10-12
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3704,6 +3704,19 @@ opens this screen on its spot.
 - **Absolute sizes:** the canvas and its floating chrome (`.mc-map*` over the picture) don't
   scale with the text-size setting (see "Theming"); the panel, the Sheet and their words use
   the type tokens. The pulse stops under `prefers-reduced-motion` and while the tab is hidden.
+
+### The Tricorder target on the Minecraft map (owner, 2026-10-12; plan §M21)
+
+With a player selected on the live map, the spot Dave has their Tricorder pointed at is
+drawn as two rings and a centre dot in the player's colour over a halo, labelled with
+Dave's label, with a dashed bearing line (8 on, 6 off, the player's colour over a halo, so
+it never reads as a solid trail) from the player's disc to it. The line is drawn only when
+the player and the target are both in the dimension shown; a target in the shown
+dimension is marked either way. The player card gets one line under the coordinates,
+`.mc-map-det-tri`: a crosshair glyph, **Tricorder** then *Diamonds · 330 blocks north-east
+· y -58* (a compass word, north being −z as in game; *y* only when the target has a
+depth), or *Diamonds · in the Nether* across a portal. Hidden on the compact (timeline)
+card and on the replay. Shared maps show it the same way.
 
 ### The Minecraft map share (owner, 2026-10-11 — mock reviewed in chat; plan §M20)
 

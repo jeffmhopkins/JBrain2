@@ -257,3 +257,22 @@ test("a pearl in a shulker box isn't held; an unreadable record starts fresh", (
   ask(p, "hello");
   assert.deepEqual(knownOf(daveEvents().at(-1)), ["tricorder"]);
 });
+
+test("Dave's mob search finds the nearest of a type around an online player", () => {
+  const p = sim.player("Steve 42", "-60");
+  p.location = { x: 10, y: 64, z: 10 };
+  sim.overworld.spawnEntity("minecraft:cow", { x: 200, y: 64, z: 10 });
+  sim.overworld.spawnEntity("minecraft:cow", { x: 40, y: 70, z: 50 });
+  sim.overworld.spawnEntity("minecraft:pig", { x: 11, y: 64, z: 11 });
+  sim.scriptevent("jb:find", JSON.stringify({ player: "steve 42", type: "cow" }));
+  assert.equal(
+    sim.logs.at(-1),
+    "[jbrain] find found minecraft:cow at x=40 y=70 z=50, 50 blocks from Steve 42 (overworld)",
+  );
+  sim.scriptevent("jb:find", JSON.stringify({ player: "Steve 42", type: "sheep" }));
+  assert.equal(sim.logs.at(-1), "[jbrain] find none: no minecraft:sheep within 256 blocks of Steve 42");
+  sim.scriptevent("jb:find", JSON.stringify({ player: "Nobody", type: "cow" }));
+  assert.equal(sim.logs.at(-1), "[jbrain] find refused: Nobody isn't online");
+  sim.scriptevent("jb:find", JSON.stringify({ player: "Steve 42", type: "cow\"; op @a" }));
+  assert.match(sim.logs.at(-1), /^\[jbrain\] find refused: Error: not a mob type/);
+});

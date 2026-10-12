@@ -5,9 +5,9 @@
 // canon gives them. Stable @minecraft/server only. The rules themselves are in rules.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, packToBurn, parseConfig,
-  parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom,
-  xpToDrop } from "./rules.js";
+import { LINES, LORE, POWER_PACK, TRICORDER, deathPlan, dropSpot, findLine, packToBurn,
+  parseConfig, parseFind, parseKnown, parseWaypoint, slotFate, trackerLine, tricorderStatus,
+  unlocksFrom, xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
@@ -314,6 +314,27 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
       }
     } catch (e) {
       say(`waypoint refused: ${e}`);
+    }
+  } else if (ev.id === "jb:find") {
+    // Dave's nearest-mob search: only the game knows where mobs are, and only near players.
+    try {
+      const q = parseFind(ev.message);
+      const who = q.player.toLowerCase();
+      const p = world.getAllPlayers().find((pl) => pl.name.toLowerCase() === who);
+      if (!p) {
+        say(`find refused: ${q.player} isn't online`);
+        return;
+      }
+      const [mob] = p.dimension.getEntities({
+        type: q.type,
+        location: p.location,
+        closest: 1,
+        maxDistance: q.max,
+      });
+      const here = { dim: p.dimension.id, x: p.location.x, z: p.location.z };
+      say(findLine(q, p.name, here, mob?.location));
+    } catch (e) {
+      say(`find refused: ${e}`);
     }
   } else if (ev.id === "jb:config") {
     try {

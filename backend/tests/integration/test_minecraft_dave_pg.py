@@ -363,8 +363,26 @@ async def test_locate_searches_from_the_last_point_in_the_loaded_world(
     monkeypatch.setattr(mc, "call", call)
     ctx = await _chat(maker, owner)
     out = await _tools(maker, "Walker")["mc_locate"]({"kind": "structure", "id": "village"}, ctx)
-    assert sent == ["execute positioned 120 64 -40 run locate structure village"]
+    assert sent == ["execute in overworld positioned 120 64 -40 run locate structure village"]
     assert "last known position" in out
+
+    # The Nether: from their Overworld spot scaled down, as a portal maps it, until they
+    # have been seen in the Nether itself.
+    nether = {"kind": "structure", "id": "fortress", "dimension": "nether"}
+    out = await _tools(maker, "Walker")["mc_locate"](nether, ctx)
+    assert sent[-1] == "execute in nether positioned 15 64 -5 run locate structure fortress"
+    assert "in the Nether" in out
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.mc_player_track (world, xuid, gamertag, boot_id, sample_id,"
+                " at, dim, x, y, z) VALUES ('world', '444', 'Walker', :b, 1, now(), 'nether',"
+                " 30, 70, -12)"
+            ),
+            {"b": str(uuid.uuid4())},
+        )
+    await _tools(maker, "Walker")["mc_locate"](nether, ctx)
+    assert sent[-1] == "execute in nether positioned 30 64 -12 run locate structure fortress"
 
 
 async def test_play_history_lists_this_players_sessions(maker) -> None:
