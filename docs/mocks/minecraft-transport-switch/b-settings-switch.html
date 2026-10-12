@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Minecraft Power Pack teleport · B — a switch in Settings</title>
+<!-- GUI gate mock — docs/mocks/minecraft-transport-switch/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M10
+     ("Teleport to a known place, one Power Pack per trip", "Shipped (wave mc-transport)"). Built on the binding Worlds
+     mock (docs/mocks/minecraft-worlds/b-worlds-subscreen.html) and the binding keep-inventory row
+     (docs/mocks/minecraft-keep-inventory/a-segmented-row.html, as shipped in frontend/src/screens/MinecraftWorlds.tsx).
+     Self-contained and offline; tokens per docs/reference/DESIGN.md. -->
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+    --ok-text:var(--green); --warn-text:var(--amber); --danger-text:var(--rose); --steel-text:var(--steel);
+    --frame:#2A2C30; --page:#000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+    --scrim:rgba(247,247,245,.6); --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --ok-text:color-mix(in srgb, var(--green) 46%, var(--text));
+    --warn-text:color-mix(in srgb, var(--amber) 50%, var(--text));
+    --danger-text:color-mix(in srgb, var(--rose) 54%, var(--text));
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --frame:#C9C9C4; --page:#DADAD6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;width:20px;height:20px;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .mono{font-family:var(--font-mono);}
+
+  /* ===== reviewer chrome — OUTSIDE the design ===== */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);width:62px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+  body.shot .caption, body.shot .sim{display:none;}
+  body.shot{padding:0;gap:0;}
+
+  /* ===== the phone ===== */
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  body.shot .phone{border-radius:0;border:0;width:100vw;height:100vh;}
+  @media (max-width:430px){ .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;} }
+  .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px 0 4px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{appearance:none;background:none;border:none;color:var(--text-2);width:44px;height:44px;display:flex;align-items:center;justify-content:center;}
+  .bar .ttl{font-size:var(--fs-title);font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .bar .ttl small{display:block;font-size:var(--fs-micro);color:var(--text-2);font-weight:400;}
+  .scroll{flex:1;overflow-y:auto;padding:12px 16px 28px;}
+
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);margin:0 2px 8px;display:flex;align-items:baseline;gap:8px;}
+  .sect .r{margin-left:auto;text-transform:none;letter-spacing:0;font-size:var(--fs-micro);}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);margin-bottom:20px;overflow:hidden;box-shadow:var(--shadow-card);}
+  .pad{padding:14px;display:flex;flex-direction:column;gap:12px;}
+  .note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .note.live{color:var(--ok-text);}
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-micro);border-radius:999px;padding:2px 9px;white-space:nowrap;}
+  .badge.ok{color:var(--ok-text);background:var(--green-tint);}
+  .pend,.chg{display:inline-flex;align-items:center;font-size:var(--fs-micro);border-radius:999px;padding:1px 7px;white-space:nowrap;}
+  .pend{color:var(--warn-text);background:var(--amber-tint);font-weight:500;}
+  .chg{color:var(--steel-text);background:var(--steel-tint);}
+
+  .facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:var(--fs-micro);}
+  .facts dt{color:var(--text-2);} .facts dd{color:var(--text);}
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 14px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;}
+  .btn.primary{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+  .btn:disabled{color:var(--text-2);}
+  .navrow{appearance:none;width:100%;display:flex;align-items:center;gap:12px;background:none;border:0;border-top:1px solid var(--border);padding:10px 14px;min-height:56px;text-align:left;}
+  .navrow .tx{flex:1;min-width:0;}
+  .navrow .nm{display:block;font-size:var(--fs-secondary);font-weight:500;}
+  .navrow .sm{display:block;font-size:var(--fs-micro);color:var(--text-2);margin-top:2px;}
+  .navrow .sm .pp{color:var(--steel-text);}
+  .navrow > svg{color:var(--text-2);width:18px;height:18px;}
+
+  /* segmented — a real 44px per segment (DESIGN "Segmented control") */
+  .set{display:flex;flex-direction:column;gap:6px;}
+  .set-l{display:flex;align-items:center;gap:8px;font-size:var(--fs-micro);color:var(--text-2);font-weight:500;}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;gap:2px;}
+  .seg button{appearance:none;flex:1;min-width:0;min-height:44px;border:0;border-radius:9px;background:transparent;color:var(--text-2);font-size:var(--fs-secondary);font-weight:500;padding:0 4px;white-space:nowrap;}
+  .seg button[aria-checked="true"]{background:var(--steel-tint);color:var(--text);}
+  .seg button.wide{flex:1.6;}
+
+  /* switch row (Cheats / Crash site at spawn) */
+  .sw-row{display:flex;align-items:center;gap:10px;}
+  .sw-l{flex:1;min-width:0;font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+  .sw-l b{color:var(--text);font-weight:500;}
+  .switch{appearance:none;width:44px;height:26px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);position:relative;flex:none;}
+  .switch::after{content:"";position:absolute;inset:-9px 0;}
+  .switch .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:var(--text-3);transition:left .15s ease-out;}
+  .switch.on{background:var(--steel-tint);border-color:transparent;} .switch.on .knob{left:21px;background:var(--steel);}
+  .switch.busy .knob{background:transparent;border:2px solid var(--warn);border-top-color:transparent;animation:spin .9s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* the rules editor */
+  .rules-note{position:sticky;top:-12px;z-index:1;background:var(--bg);padding:10px 2px;border-bottom:1px solid var(--border);margin:-12px -2px 10px;}
+  .search{width:100%;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:0 12px;font:inherit;font-size:var(--fs-body);color:var(--text-2);display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+  .search svg{width:18px;height:18px;}
+  .rgroups{display:flex;flex-direction:column;gap:8px;}
+  .rgrp{border:1px solid var(--border);border-radius:var(--r-input);background:var(--surface);overflow:hidden;}
+  .rgrp > summary{list-style:none;display:flex;align-items:center;gap:8px;min-height:48px;padding:6px 12px;cursor:pointer;}
+  .rgrp > summary::-webkit-details-marker{display:none;}
+  .rgrp .gt{font-size:var(--fs-secondary);font-weight:500;}
+  .rgrp .gm{margin-left:auto;font-size:var(--fs-micro);color:var(--text-2);text-align:right;}
+  .rgrp .gm .pp{color:var(--steel-text);}
+  .rgrp > summary svg{width:16px;height:16px;color:var(--text-2);}
+  .rgrp[open] > summary svg{transform:rotate(90deg);}
+  .rbody{border-top:1px solid var(--border);display:flex;flex-direction:column;}
+  .rule{display:flex;align-items:center;gap:12px;padding:10px 12px;border-top:1px solid var(--border);min-height:56px;}
+  .rbody > .rule:first-child{border-top:0;}
+  .rl{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .rt{font-size:var(--fs-secondary);color:var(--text);}
+  .rid{font-size:var(--fs-micro);color:var(--text-2);overflow-wrap:anywhere;}
+  .rtags{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px;}
+  .rule.col{flex-direction:column;align-items:stretch;gap:8px;}
+  .rule.col .top{display:flex;align-items:center;gap:12px;}
+  .now{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;display:flex;gap:7px;align-items:center;}
+  .help{padding:8px 10px;border-radius:var(--r-input);background:var(--surface-2);font-size:var(--fs-micro);line-height:1.45;color:var(--text-2);}
+  .help b{color:var(--text);font-weight:500;}
+  .errline{display:flex;gap:9px;align-items:flex-start;border-radius:var(--r-input);padding:10px 4px 10px 12px;font-size:var(--fs-micro);line-height:1.45;background:var(--rose-tint);color:var(--text);}
+  .errline > svg{width:16px;height:16px;margin-top:1px;color:var(--danger-text);}
+  .errline span{flex:1;}
+  .errline .x{appearance:none;background:none;border:0;width:44px;height:44px;margin:-12px 0 -12px;display:flex;align-items:center;justify-content:center;color:var(--text-2);}
+  .errline .x svg{width:18px;height:18px;}
+  .spin{width:14px;height:14px;border-radius:999px;border:2px solid var(--warn);border-top-color:transparent;animation:spin .9s linear infinite;flex:none;}
+
+  /* the Power Pack card (variant C) */
+  .ppk-head{display:flex;gap:10px;align-items:flex-start;}
+  .ppk-ico{width:36px;height:36px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;flex:none;color:var(--text-2);}
+  .ppk-ico svg{width:20px;height:20px;}
+
+  /* the sheet */
+  .scrim{position:absolute;inset:0;background:var(--scrim);z-index:20;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;z-index:21;padding:0 16px 16px;max-height:92%;overflow:auto;}
+  .grip{width:32px;height:4px;border-radius:999px;background:var(--border);margin:10px auto 12px;}
+  .sheet h3{font-size:var(--fs-title);font-weight:500;}
+  .shbody{display:flex;flex-direction:column;gap:14px;margin-top:12px;}
+  .fld{display:flex;flex-direction:column;gap:6px;}
+  .fld > .fl{font-size:var(--fs-micro);color:var(--text-2);font-weight:500;}
+  .inp{width:100%;min-height:44px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:0 12px;font:inherit;font-size:var(--fs-body);color:var(--text);display:flex;align-items:center;}
+  details.rules-new{border:1px solid var(--border);border-radius:var(--r-input);}
+  details.rules-new > summary{list-style:none;display:flex;align-items:center;gap:8px;min-height:48px;padding:6px 12px;font-size:var(--fs-secondary);font-weight:500;}
+  details.rules-new > summary::-webkit-details-marker{display:none;}
+  details.rules-new > summary .note{margin-left:auto;font-weight:400;}
+  details.rules-new > summary svg{width:16px;height:16px;color:var(--text-2);}
+  details.rules-new[open] > summary svg{transform:rotate(90deg);}
+  .rules-in{padding:0 10px 10px;}
+  .foot{display:flex;gap:8px;justify-content:flex-end;padding-top:4px;}
+  #toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:10px 16px;font-size:var(--fs-micro);color:var(--text);z-index:30;text-align:center;max-width:88%;display:none;}
+  #toast.show{display:block;}
+  @media (prefers-reduced-motion: reduce){ *,*::before,*::after{animation:none !important;transition:none !important;} }
+</style>
+</head>
+<body>
+<div class="caption"><b>B — a switch in Settings</b> — the switch joins Cheats on the world page, built like Crash site at spawn. Reviewer chrome (the dashed strip) is not design. States open by hash, e.g. <span class="mono">#scr=world&amp;tp=off&amp;where=other&amp;fb=toast&amp;theme=light</span>.</div>
+<div class="sim" id="sim"></div>
+<div class="phone" id="phone"></div>
+
+<script>
+const VARIANT = "b";
+const I = {
+  back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
+  alert:'<svg viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>',
+  x:'<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  search:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+  zap:'<svg viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>',
+};
+const DEF = {scr: VARIANT === "a" ? "rules" : "world", tp:"on", where:"live", fb:"none", theme:""};
+let S = {...DEF};
+function readHash(){
+  S = {...DEF};
+  for (const kv of location.hash.slice(1).split("&")) { const [k,v] = kv.split("="); if (k && v !== undefined) S[k] = decodeURIComponent(v); }
+  if (S.shot) document.body.classList.add("shot");
+  const sys = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  document.documentElement.dataset.theme = S.theme || sys;
+}
+const W = () => S.where === "other"
+  ? {name:"Skyblock run", slot:4, active:false, running:false}
+  : {name:"Castle Hill", slot:2, active:true, running:S.where === "live"};
+const on = () => S.tp === "on";
+
+/* ---- the words (identical in every variant) ---- */
+const LABEL = "Power Pack teleport";
+const MEANING_ON = "On — players can ask Dave to take them to their own saved places; each trip burns a Power Pack.";
+const MEANING_OFF = "Off — Dave won't teleport anyone in this world. Saved places still work with the Tricorder.";
+const HELP = "<b>Power Pack teleport:</b> a player asks Dave for one of their own saved places, then says Yes on a form. One Power Pack burns only if they arrive, and they need their own Tricorder. Wormhole gates aren't affected by this switch.";
+function settingsLine(w){
+  if (!w.active) return `Not loaded — a change is saved and applied when ${w.name} next loads.`;
+  if (!w.running) return "Loaded, server stopped — a change is applied when the server starts.";
+  return VARIANT === "b" ? "Loaded and running — difficulty and Power Pack teleport change live; game mode and cheats apply at the next restart." : "Loaded and running — difficulty changes live; game mode and cheats apply at the next restart.";
+}
+function toastText(w){
+  const what = `Power Pack teleport ${on() ? "on" : "off"}`;
+  if (w.active && w.running) return `Applied live — ${what}`;
+  return w.active ? `Saved — ${what} when the server starts` : `Saved — ${what} from ${w.name}'s next load`;
+}
+const pending = (w) => S.fb === "toast" && !(w.active && w.running);
+const ERR = (w) => `Couldn't turn Power Pack teleport ${on() ? "off" : "on"} — the server is restoring a backup. Nothing changed; it's still ${on() ? "on" : "off"}.`;
+
+function sw(id){
+  const busy = S.fb === "busy";
+  return `<button class="switch${on() || busy ? " on" : ""}${busy ? " busy" : ""}" role="switch" aria-checked="${on()}" aria-label="${LABEL} in ${W().name}" id="${id}" data-act="tp"><span class="knob"></span></button>`;
+}
+function errline(w){
+  return S.fb === "err" ? `<div class="errline" role="alert">${I.alert}<span>${ERR(w)}</span><button class="x" aria-label="Dismiss" data-act="dismiss">${I.x}</button></div>` : "";
+}
+function nowLine(){
+  if (S.fb === "busy") return `<output class="now"><span class="spin"></span>Turning Power Pack teleport ${on() ? "off" : "on"}…</output>`;
+  return `<output class="now">${on() ? MEANING_ON : MEANING_OFF}</output>`;
+}
+
+/* ---- the world page ---- */
+function worldPage(){
+  const w = W();
+  const st = w.active ? (w.running ? '<span class="badge ok">loaded · running · 2 on</span>' : '<span class="badge ok">loaded · server stopped</span>') : '<span class="note">not loaded</span>';
+  const glance = `39 rules · 2 changed · keep inventory <span class="pp">Power Pack</span>${VARIANT === "a" && !on() ? " · teleport off" : ""}`;
+  const bRow = `
+      <div class="sw-row" id="tp-row">
+        <span class="sw-l"><b>${LABEL}</b> ${pending(w) ? '<span class="pend">pending</span>' : ""}<br>${S.fb === "busy" ? `Turning it ${on() ? "off" : "on"}…` : (on() ? MEANING_ON : MEANING_OFF).replace(/^On — /, "on — ").replace(/^Off — /, "off — ")}</span>
+        ${sw("tp-sw")}
+      </div>
+      ${errline(w)}
+      <p class="help">${HELP}</p>`;
+  const cCard = `
+    <h2 class="sect">Power Pack <span class="r">8 Ender Pearls round a Blaze Powder</span></h2>
+    <div class="card" id="tp-row">
+      <div class="pad">
+        <p class="note">What a Power Pack can be spent on in this world. Players need their own Tricorder for either.</p>
+        <div class="sw-row">
+          <span class="sw-l"><b>Teleport to saved places</b> ${pending(w) ? '<span class="pend">pending</span>' : ""}<br>${S.fb === "busy" ? `Turning it ${on() ? "off" : "on"}…` : (on() ? "on — ask Dave, say Yes on the form, one pack burns on arrival" : "off — Dave won't teleport anyone here")}</span>
+          ${sw("tp-sw")}
+        </div>
+        ${errline(w)}
+      </div>
+      <button class="navrow" data-go="rules"><span class="tx"><span class="nm">Keeping things on death</span><span class="sm">Keep inventory is on <span class="pp">Power Pack</span> — set in Game rules, under Players</span></span>${I.chev}</button>
+      <div class="pad" style="padding-top:0"><p class="help">Wormhole gates aren't switched here: a gate's planter always pays one pack per re-aim.</p></div>
+    </div>`;
+  return `
+  <div class="bar"><button class="back" aria-label="Back to Worlds">${I.back}</button><span class="ttl">${w.name}<small>Slot ${w.slot}</small></span></div>
+  <div class="scroll" id="scroll">
+    <div class="card"><div class="pad">
+      <div style="display:flex;align-items:center;gap:8px">${st}</div>
+      <dl class="facts"><dt>Origin</dt><dd>${w.active ? "generated · Sep 28" : "generated · Oct 9"}</dd><dt>Seed</dt><dd class="mono">${w.active ? "-48211907733" : "7130062"}</dd><dt>Size</dt><dd>${w.active ? "214 MB" : "—"}</dd><dt>Played</dt><dd>${w.active ? "41 h" : "not yet"}</dd></dl>
+      <button class="btn" ${w.active ? "disabled" : ""}>${w.active ? "Loaded" : "Load this world"}</button>
+    </div></div>
+    <h2 class="sect">Settings — this world only</h2>
+    <div class="card">
+      <div class="pad">
+        <p class="note${w.active && w.running ? " live" : ""}">${settingsLine(w)}</p>
+        <div class="set"><div class="set-l">Game mode</div><div class="seg" role="radiogroup" aria-label="Game mode"><button role="radio" aria-checked="true">Survival</button><button role="radio" aria-checked="false">Creative</button><button role="radio" aria-checked="false">Adventure</button></div></div>
+        <div class="set"><div class="set-l">Difficulty</div><div class="seg" role="radiogroup" aria-label="Difficulty"><button role="radio" aria-checked="false">Peaceful</button><button role="radio" aria-checked="false">Easy</button><button role="radio" aria-checked="true">Normal</button><button role="radio" aria-checked="false">Hard</button></div></div>
+        <div class="sw-row"><span class="sw-l"><b>Cheats</b><br>off — no commands in game</span><button class="switch" role="switch" aria-checked="false" aria-label="Cheats"><span class="knob"></span></button></div>
+        ${VARIANT === "b" ? bRow : ""}
+      </div>
+      <button class="navrow" data-go="rules"><span class="tx"><span class="nm">Game rules</span><span class="sm">${glance}</span></span>${I.chev}</button>
+    </div>
+    ${VARIANT === "c" ? cCard : ""}
+    <h2 class="sect">Backups <span class="r">6 of 20 kept</span></h2>
+    <div class="card"><div class="pad"><p class="note">Automatic · before loading Creative test · 212 MB · Oct 11</p></div></div>
+  </div>`;
+}
+
+/* ---- the rules page (and the New world draft editor) ---- */
+const PLAYERS = [["naturalRegeneration","Health comes back on its own",true],["pvp","Players can hurt each other",true],["fallDamage","Fall damage",true],["fireDamage","Fire damage",true]];
+function keepRow(draft){
+  if (draft) return `<div class="rule col"><span class="rl"><span class="rt" id="nw-keep-l">Keep inventory on death</span><span class="rid mono">keepInventory</span></span><div class="seg" role="radiogroup" aria-labelledby="nw-keep-l"><button role="radio" aria-checked="true">Off</button><button role="radio" aria-checked="false">On</button></div><output class="now">Everyone drops their things where they die.</output></div>`;
+  return `<div class="rule col"><span class="rl"><span class="rt" id="keep-l">Keep inventory on death</span><span class="rid mono">keepInventory</span><span class="rtags"><span class="chg">held on by the Power Pack</span></span></span>
+    <div class="seg" role="radiogroup" aria-labelledby="keep-l"><button role="radio" aria-checked="false">Off</button><button role="radio" aria-checked="false">On</button><button role="radio" aria-checked="true" class="wide">Power Pack</button></div>
+    <output class="now">Underneath it's Off — that comes back if Power Pack is turned off.</output>
+    <p class="help">Power Pack: players keep their things only while carrying a Power Pack and their own Tricorder; one pack burns each time. Without both, they drop everything.</p></div>`;
+}
+function tpRuleRow(draft){
+  const w = W();
+  const tags = [];
+  tags.push('<span class="chg">a world switch · not a game rule</span>');
+  if (!draft && pending(w)) tags.unshift('<span class="pend">pending</span>');
+  if (draft && !on()) tags.push('<span class="chg">changed · default on</span>');
+  if (!draft && !on()) tags.push('<span class="chg">changed · default on</span>');
+  return `<div class="rule col" id="tp-row"><div class="top"><span class="rl"><span class="rt" id="${draft ? "nw-" : ""}tp-l">${LABEL}</span><span class="rtags">${tags.join("")}</span></span>${sw(draft ? "nw-tp-sw" : "tp-sw")}</div>
+    ${nowLine()}${draft ? "" : errline(w)}
+    <p class="help">${HELP}</p></div>`;
+}
+function playersGroup(draft){
+  const extra = VARIANT === "a" ? tpRuleRow(draft) : "";
+  const rows = PLAYERS.map(([id,l]) => `<div class="rule"><span class="rl"><span class="rt">${l}</span><span class="rid mono">${id}</span></span><button class="switch on" role="switch" aria-checked="true" aria-label="${l}"><span class="knob"></span></button></div>`).join("");
+  const n = VARIANT === "a" ? "13 rules + teleport" : "13 rules";
+  const gm = draft ? n : `${n} · <span class="pp">Power Pack</span>${VARIANT === "a" && !on() ? " · teleport off" : ""}`;
+  return `<details class="rgrp" open><summary><span class="gt">Players</span><span class="gm">${gm}</span>${I.chev}</summary><div class="rbody">${keepRow(draft)}${extra}${rows}</div></details>`;
+}
+function rulesPage(){
+  const w = W();
+  const closed = ["World","Time &amp; weather"].map((t,i) => `<details class="rgrp"><summary><span class="gt">${t}</span><span class="gm">${["8 rules","4 rules · 1 changed"][i]}</span>${I.chev}</summary></details>`).join("");
+  const after = ["Mobs &amp; drops","Crafting","Commands","Display"].map((t,i) => `<details class="rgrp"><summary><span class="gt">${t}</span><span class="gm">${["4 rules","3 rules","5 rules","1 rule"][i]}</span>${I.chev}</summary></details>`).join("");
+  return `
+  <div class="bar"><button class="back" aria-label="Back to ${w.name}">${I.back}</button><span class="ttl">Game rules<small>${w.name}</small></span></div>
+  <div class="scroll" id="scroll">
+    <p class="rules-note note${w.active && w.running ? " live" : ""}">${w.active && w.running ? "Live — a change applies in the game at once." : w.active ? "The server is stopped — changes apply when it starts." : `Saved — applied when ${w.name} next loads.`}</p>
+    <div class="search">${I.search}Search 39 rules</div>
+    <div class="rgroups">${closed}${playersGroup(false)}${after}</div>
+  </div>`;
+}
+
+/* ---- New world ---- */
+function newWorld(){
+  const draftTp = `<div class="sw-row" id="nw-tp"><span class="sw-l"><b>${LABEL}</b><br>${on() ? "on — players can ask Dave to take them to their saved places; each trip burns a Power Pack" : "off — Dave won't teleport anyone in this world"}</span>${sw("nw-tp-sw")}</div>`;
+  const inForm = VARIANT !== "a" ? draftTp : "";
+  return worldPage() + `
+  <div class="scrim"></div>
+  <div class="sheet" role="dialog" aria-label="New world" id="sheet">
+    <div class="grip"></div>
+    <h3>New world</h3>
+    <p class="note">Goes into slot 4 · generated the first time it loads</p>
+    <div class="shbody">
+      <div class="fld"><span class="fl">Name</span><div class="inp">Skyblock run</div></div>
+      <div class="set"><div class="set-l">Game mode</div><div class="seg"><button role="radio" aria-checked="true">Survival</button><button role="radio" aria-checked="false">Creative</button><button role="radio" aria-checked="false">Adventure</button></div></div>
+      <div class="sw-row"><span class="sw-l"><b>Cheats</b><br>off — no commands in game</span><button class="switch" role="switch" aria-checked="false" aria-label="Cheats"><span class="knob"></span></button></div>
+      <div class="sw-row"><span class="sw-l"><b>Crash site at spawn</b><br>on — an escape pod crashed at spawn, its mothership overhead</span><button class="switch on" role="switch" aria-checked="true" aria-label="Crash site at spawn"><span class="knob"></span></button></div>
+      ${inForm}
+      ${VARIANT === "c" ? '<p class="help">Keep inventory\'s Power Pack mode is set once the world exists, under Game rules.</p>' : ""}
+      <details class="rules-new" ${VARIANT === "a" ? "open" : ""}><summary><span>World rules</span><span class="note">${VARIANT === "a" && !on() ? "teleport off" : "defaults"}</span>${I.chev}</summary>
+        ${VARIANT === "a" ? `<div class="rules-in"><p class="note" style="margin:4px 2px 8px">Set before the world is generated. Leave them and it starts with the defaults below.</p><div class="rgroups">${playersGroup(true)}</div></div>` : ""}
+      </details>
+      <div class="foot"><button class="btn">Cancel</button><button class="btn primary">Create world</button></div>
+    </div>
+  </div>`;
+}
+
+function render(){
+  readHash();
+  const ph = document.getElementById("phone");
+  ph.innerHTML = (S.scr === "rules" ? rulesPage() : S.scr === "new" ? newWorld() : worldPage()) + `<div id="toast" class="${S.fb === "toast" ? "show" : ""}">${toastText(W())}</div>`;
+  const tgt = document.getElementById(S.scr === "new" ? (VARIANT === "a" ? "nw-tp-sw" : "nw-tp") : "tp-row");
+  if (tgt && S.scr !== "new") tgt.scrollIntoView({block:"center"});
+  if (S.scr === "new" && tgt) tgt.scrollIntoView({block:"center"});
+  sim();
+}
+function sim(){
+  const opt = (k, vals) => `<div class="srow"><span class="sl">${k}</span>${vals.map(([v,l]) => `<button aria-pressed="${S[k] === v}" data-k="${k}" data-v="${v}">${l}</button>`).join("")}</div>`;
+  document.getElementById("sim").innerHTML = `<div class="stitle">Mock controls</div>` +
+    opt("scr", [["world","World page"],["rules","Game rules"],["new","New world"]]) +
+    opt("tp", [["on","Teleport on"],["off","Teleport off"]]) +
+    opt("where", [["live","Loaded · running"],["stopped","Loaded · stopped"],["other","Not loaded"]]) +
+    opt("fb", [["none","Settled"],["busy","Applying"],["toast","Just saved"],["err","Refused (409)"]]) +
+    opt("theme", [["","System"],["dark","Dark"],["light","Light"]]);
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  const set = (k, v) => { const o = {...S, [k]: v}; delete o.shot; location.hash = Object.entries(o).filter(([k2,v2]) => v2 !== DEF[k2]).map(([k2,v2]) => `${k2}=${v2}`).join("&"); };
+  if (b.dataset.k) return set(b.dataset.k, b.dataset.v);
+  if (b.dataset.act === "tp") { S.tp = on() ? "off" : "on"; return set("fb", "toast"); }
+  if (b.dataset.act === "dismiss") return set("fb", "none");
+  if (b.dataset.go) return set("scr", b.dataset.go);
+});
+addEventListener("hashchange", render);
+render();
+</script>
+</body>
+</html>

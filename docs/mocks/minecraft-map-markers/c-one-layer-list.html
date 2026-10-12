@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Minecraft map markers · C — one layer, listed</title>
+<!-- GUI gate mock — docs/mocks/minecraft-map-markers/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M12 (gates
+     "show on the M8 map"), §M16 (protected areas "show on the M8 map"), §M8/P3 (the map and its chat card), §M21 (the
+     Tricorder's marker grammar). Built on the binding map (docs/mocks/minecraft-map/a-full-bleed.html, shipped as
+     frontend/src/screens/MinecraftMap.tsx + minecraftMapDraw.ts): tokens, panel, floating chrome and marker grammar
+     (a dark halo tile with an accent ring, ink glyph) are copied from it. The map picture is drawn procedurally; terrain
+     colours are raw RGB inside the image, as the renderer's biome table is. Self-contained and offline. -->
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13); --amber-tint:rgba(201,163,106,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+    --ok-text:var(--green); --warn-text:var(--amber); --steel-text:var(--steel);
+    --violet-text:var(--violet);
+    --map-void:#141518; --map-fog:#0b0c0e; --map-halo:rgba(8,9,11,.9); --map-plate:rgba(23,24,27,.9);
+    --map-ink:#f2f2f2; --map-ink-on:#0e0f11;
+    --frame:#2A2C30; --page:#000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+    --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --ok-text:color-mix(in srgb, var(--green) 46%, var(--text));
+    --warn-text:color-mix(in srgb, var(--amber) 50%, var(--text));
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --violet-text:color-mix(in srgb, var(--violet) 52%, var(--text));
+    --map-void:#1e2024; --map-halo:rgba(8,9,11,.85); --map-plate:rgba(255,255,255,.92);
+    --frame:#C9C9C4; --page:#DADAD6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;width:18px;height:18px;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+  .num{font-variant-numeric:tabular-nums;}
+
+  /* reviewer chrome — OUTSIDE the design */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);width:62px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+  body.shot .caption, body.shot .sim{display:none;}
+  body.shot{padding:0;gap:0;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;}
+  body.shot .phone{border-radius:0;border:0;width:100vw;height:100vh;}
+  @media (max-width:430px){ .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;} }
+
+  /* ===== the map (absolute sizes: the .mc-map* exemption) ===== */
+  .map{position:absolute;inset:0;}
+  .map canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;}
+  .top{position:absolute;top:12px;left:12px;right:12px;display:flex;gap:8px;align-items:center;z-index:5;}
+  .fab{appearance:none;width:44px;height:44px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-input);background:var(--surface);border:1px solid var(--border);color:var(--text);box-shadow:var(--shadow-card);}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;gap:2px;}
+  .seg button{appearance:none;flex:1;min-width:0;min-height:44px;border:0;border-radius:9px;background:transparent;color:var(--text-2);font-size:13px;font-weight:500;padding:0 6px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+  .seg button[aria-selected="true"],.seg button[aria-checked="true"]{background:var(--steel-tint);color:var(--text);}
+  .dims{flex:1;max-width:280px;margin-left:auto;background:var(--surface);}
+  .fabs{position:absolute;right:12px;top:68px;z-index:5;display:flex;flex-direction:column;gap:8px;}
+  .scale{position:absolute;left:12px;z-index:5;display:flex;align-items:center;gap:8px;background:var(--map-plate);border-radius:8px;padding:3px 8px;font-size:11px;color:var(--text);}
+  .scale i{display:block;width:40px;height:6px;border:1.5px solid var(--text);border-top:0;}
+
+  /* ===== the persistent panel ===== */
+  .panel{position:absolute;left:0;right:0;bottom:0;z-index:10;display:flex;flex-direction:column;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;box-shadow:var(--shadow-card);overflow:hidden;}
+  .grip{width:32px;height:4px;margin:7px auto 4px;border-radius:999px;background:var(--border);flex:none;}
+  .head{display:flex;align-items:center;gap:8px;padding:0 12px 0 8px;flex:none;}
+  .world{appearance:none;display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 8px;border:0;background:none;font-size:var(--fs-title);font-weight:500;white-space:nowrap;}
+  .world svg{color:var(--text-2);width:16px;height:16px;}
+  .tabs{margin-left:auto;flex:none;}
+  .tabs button{padding:0 10px;font-size:var(--fs-head);}
+  .tabs svg{width:16px;height:16px;}
+  @media (max-width:360px){ .tabs svg{display:none;} .tabs button{padding:0 8px;} }
+  .stat{display:flex;align-items:center;gap:8px;min-height:44px;padding:2px 16px 0;font-size:var(--fs-micro);color:var(--text-2);line-height:1.35;flex:none;}
+  .stat .dot{width:8px;height:8px;border-radius:999px;background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);flex:none;}
+  .stat b{display:block;color:var(--text);font-weight:500;}
+  .stat.old .dot{background:var(--text-3);box-shadow:none;}
+  .pbody{flex:1;overflow:auto;padding:4px 16px 20px;display:flex;flex-direction:column;gap:12px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);margin-top:6px;}
+  .note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+
+  /* what you tapped */
+  .det{display:flex;flex-direction:column;gap:10px;padding:2px 16px 16px;flex:none;}
+  .det-h{display:flex;align-items:flex-start;gap:10px;}
+  .det-ic{width:36px;height:36px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:10px;border:1px solid transparent;}
+  .det-ic.gate{background:var(--violet-tint);color:var(--violet-text);}
+  .det-ic.bea{background:var(--green-tint);color:var(--ok-text);}
+  .det-tx{flex:1;min-width:0;}
+  .det-t{font-size:var(--fs-body);font-weight:500;overflow-wrap:anywhere;}
+  .det-s{margin-top:2px;font-size:var(--fs-micro);line-height:1.4;color:var(--text-2);}
+  .det-s b{color:var(--text);font-weight:500;}
+  .state{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-micro);border-radius:999px;padding:1px 8px;white-space:nowrap;font-weight:500;}
+  .state.open{color:var(--violet-text);background:var(--violet-tint);}
+  .state.dorm{color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);}
+  .state.prot{color:var(--ok-text);background:var(--green-tint);}
+  .x{appearance:none;width:44px;height:44px;margin:-6px -10px 0 0;border:0;background:none;color:var(--text-2);display:flex;align-items:center;justify-content:center;flex:none;}
+  .coord{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-input);}
+  .xyz{flex:1;font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .lnk{appearance:none;background:none;border:0;color:var(--steel-text);font-size:var(--fs-micro);font-weight:500;min-height:44px;padding:0 8px;display:inline-flex;align-items:center;gap:5px;}
+  .lead{display:flex;align-items:center;gap:8px;font-size:var(--fs-secondary);color:var(--text-2);}
+  .lead svg{color:var(--violet-text);width:18px;height:18px;}
+  .lead b{color:var(--text);font-weight:500;}
+  .btnrow{display:flex;gap:8px;}
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 14px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;flex:1;}
+  .btn.primary{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+
+  /* layers tab */
+  .ly-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .ly{appearance:none;display:flex;align-items:center;gap:10px;min-height:56px;padding:8px 10px;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);}
+  .ly[aria-checked="true"]{border-color:var(--steel);background:var(--steel-tint);}
+  .ly .sw{width:32px;height:32px;border-radius:8px;border:1px solid var(--border);flex:none;}
+  .ly-t{display:block;font-size:var(--fs-secondary);font-weight:500;}
+  .ly-s{display:block;font-size:var(--fs-micro);color:var(--text-2);line-height:1.3;}
+  .ov{display:flex;align-items:center;gap:12px;min-height:48px;padding:2px 0;}
+  .ov + .ov{border-top:1px solid var(--border);}
+  .ov-gl{width:28px;height:28px;flex:none;display:flex;align-items:center;justify-content:center;color:var(--text-2);}
+  .ov-gl.gate{color:var(--violet-text);} .ov-gl.bea{color:var(--ok-text);}
+  .ov-t{flex:1;min-width:0;font-size:var(--fs-secondary);}
+  .ov-t small{display:block;font-size:var(--fs-micro);color:var(--text-2);}
+  .ov.later .ov-t{color:var(--text-2);}
+  .badge{display:inline-flex;font-size:var(--fs-micro);border-radius:999px;padding:2px 9px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);}
+  .switch{appearance:none;width:44px;height:26px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);position:relative;flex:none;}
+  .switch::after{content:"";position:absolute;inset:-9px 0;}
+  .switch .knob{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:var(--text-3);}
+  .switch.on{background:var(--steel-tint);border-color:transparent;} .switch.on .knob{left:21px;background:var(--steel);}
+  .sub-seg{margin:0 0 6px 40px;}
+  .sub-seg button{font-size:var(--fs-micro);}
+  .lg{display:flex;flex-direction:column;gap:8px;}
+  .lg-row{display:flex;flex-wrap:wrap;gap:6px 14px;}
+  .lg-i{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);}
+  .lg-i canvas{width:22px;height:22px;flex:none;}
+  .list{display:flex;flex-direction:column;}
+  .li{appearance:none;display:flex;align-items:center;gap:10px;min-height:52px;padding:6px 0;border:0;border-top:1px solid var(--border);background:none;text-align:left;width:100%;}
+  .li:first-child{border-top:0;}
+  .li .lt{flex:1;min-width:0;}
+  .li .lt b{display:block;font-size:var(--fs-secondary);font-weight:500;}
+  .li .lt span{display:block;font-size:var(--fs-micro);color:var(--text-2);}
+  .li > svg{color:var(--text-2);}
+  .li .det-ic{width:30px;height:30px;}
+
+  /* ===== the chat (the minecraft_map card) ===== */
+  .chat{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);}
+  .chat .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px 0 4px;border-bottom:1px solid var(--border);flex:none;}
+  .chat .bar .ttl{font-size:var(--fs-title);font-weight:500;}
+  .chat .bar .back{appearance:none;background:none;border:0;width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--text-2);}
+  .msgs{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;}
+  .you{align-self:flex-end;background:var(--surface-2);border-radius:16px;padding:9px 13px;font-size:var(--fs-body);max-width:80%;}
+  .dave{font-size:var(--fs-body);line-height:1.5;}
+  .tv{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;}
+  .tv-h{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;font-size:var(--fs-secondary);}
+  .tv-h svg{color:var(--text-2);}
+  .tv-h .s{color:var(--text-2);font-size:var(--fs-micro);}
+  .tv-h .fab{margin-left:auto;border:0;background:none;}
+  .tv-map{position:relative;height:220px;}
+  .tv-map canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:pan-y;}
+  .tv-b{padding:10px 12px 12px;display:flex;flex-direction:column;gap:10px;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{appearance:none;position:relative;min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:var(--fs-micro);font-weight:500;}
+  .chip::after{content:"";position:absolute;inset:-4px 0;}
+  .chip[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);}
+</style>
+</head>
+<body>
+<div class="caption"><b>C — one layer, listed</b> — one Beacons & gates layer: areas as outlines, gates labelled with where they lead, and a list in the panel that flies to each. Reviewer chrome (the dashed strip) is not design. States open by hash, e.g. <span style="font-family:var(--font-mono)">#view=gate&amp;theme=light</span>.</div>
+<div class="sim" id="sim"></div>
+<div class="phone" id="phone"></div>
+<script>
+const V = "c";
+const I = {
+  back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  down:'<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>',
+  plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  minus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
+  users:'<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  layers:'<svg viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg>',
+  clock:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  x:'<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  copy:'<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  portal:'<svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="1"/><path d="M10 7c2 1 2 3 0 5s-2 4 0 5M14 7c-2 1-2 3 0 5s2 4 0 5"/></svg>',
+  shield:'<svg viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>',
+  pin:'<svg viewBox="0 0 24 24"><path d="M20 10c0 4.99-5.54 10.19-7.4 11.8a1 1 0 0 1-1.2 0C9.54 20.19 4 14.99 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></svg>',
+  arrow:'<svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>',
+  map:'<svg viewBox="0 0 24 24"><path d="M14.1 6.3 9.9 4.2a2 2 0 0 0-1.8 0L3.6 6.5A1 1 0 0 0 3 7.4v12.2a1 1 0 0 0 1.4.9l3.7-1.8a2 2 0 0 1 1.8 0l4.2 2.1a2 2 0 0 0 1.8 0l4.5-2.3a1 1 0 0 0 .6-.9V5.4a1 1 0 0 0-1.4-.9l-3.7 1.8a2 2 0 0 1-1.8 0zM15 5.8v15M9 3.2v15"/></svg>',
+  expand:'<svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
+  user:'<svg viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  skull:'<svg viewBox="0 0 24 24"><path d="m12.5 17-.5-1-.5 1h1z"/><path d="M15 22a1 1 0 0 0 1-1v-1a2 2 0 0 0 1.56-3.25 8 8 0 1 0-11.12 0A2 2 0 0 0 8 20v1a1 1 0 0 0 1 1z"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="12" r="1"/></svg>',
+  castle:'<svg viewBox="0 0 24 24"><path d="M22 20v-9H2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2ZM18 11V4H6v7M15 22v-4a3 3 0 0 0-3-3a3 3 0 0 0-3 3v4M22 11V9M2 11V9M6 4V2M18 4V2M10 4V2M14 4V2"/></svg>',
+};
+const GLYPH = {
+  shield:"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+  portal:"M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
+  swirl:"M10 7c2 1 2 3 0 5s-2 4 0 5M14 7c-2 1-2 3 0 5s2 4 0 5",
+  pin:"M20 10c0 4.99-5.54 10.19-7.4 11.8a1 1 0 0 1-1.2 0C9.54 20.19 4 14.99 4 10a8 8 0 0 1 16 0",
+};
+
+/* ---- the world's data (what the backend would hold; see README "Data path") ---- */
+const BEACONS = [
+  {id:"overworld@60,72,-40", x:60, y:72, z:-40, by:"Mira_P", at:"Oct 11, 6:12 pm", n:2},
+  {id:"overworld@90,74,-10", x:90, y:74, z:-10, by:"BlockyFox", at:"Oct 12, 9:40 am", n:2},
+  {id:"overworld@-150,210,96", x:-150, y:210, z:96, by:"BlockyFox", at:"Oct 12, 4:05 pm", n:1},
+];
+const GATES = [
+  {id:1, x:30, y:71, z:14, by:"BlockyFox", open:true, to:{place:"Tree farm", x:-160, y:68, z:-140, dim:"overworld"}, at:"Oct 11", aimed:"Oct 12"},
+  {id:2, x:-70, y:66, z:62, by:"Mira_P", open:false, to:null, at:"Oct 12"},
+  {id:3, x:4, y:70, z:-78, by:"BlockyFox", open:true, to:{place:"Nether base", x:-20, y:72, z:40, dim:"nether"}, at:"Oct 12", aimed:"Oct 12"},
+];
+const PLAYERS = [{n:"BlockyFox", tok:"--steel", x:44, z:22}, {n:"Mira_P", tok:"--green", x:74, z:-28}];
+const chunk = (v) => Math.floor(v / 16);
+const area = (b) => ({x0:(chunk(b.x) - 1) * 16, z0:(chunk(b.z) - 1) * 16, x1:(chunk(b.x) + 2) * 16, z1:(chunk(b.z) + 2) * 16});
+const dist = (a, b) => Math.round(Math.hypot(a.x - b.x, a.z - b.z));
+function compass(from, to){
+  const dx = to.x - from.x, dz = to.z - from.z; const a = (Math.atan2(dx, -dz) * 180 / Math.PI + 360) % 360;
+  return ["north","north-east","east","south-east","south","south-west","west","north-west"][Math.round(a / 45) % 8];
+}
+
+let S = {};
+const DEF = {view:"map", theme:""};
+function readHash(){
+  S = {...DEF};
+  for (const kv of location.hash.slice(1).split("&")) { const [k,v] = kv.split("="); if (k && v !== undefined) S[k] = decodeURIComponent(v); }
+  if (S.shot) document.body.classList.add("shot");
+  const sys = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  document.documentElement.dataset.theme = S.theme || sys;
+}
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---- terrain: value noise, explored in full colour inside the travelled ground, survey dimmed outside ---- */
+function hash2(x, z){ let h = (x * 374761393 + z * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177 | 0; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
+function vnoise(x, z){
+  const xi = Math.floor(x), zi = Math.floor(z), xf = x - xi, zf = z - zi;
+  const s = (t) => t * t * (3 - 2 * t);
+  const a = hash2(xi, zi), b = hash2(xi + 1, zi), c = hash2(xi, zi + 1), d = hash2(xi + 1, zi + 1);
+  return (a + (b - a) * s(xf)) + ((c + (d - c) * s(xf)) - (a + (b - a) * s(xf))) * s(zf);
+}
+const fbm = (x, z) => 0.55 * vnoise(x / 90, z / 90) + 0.3 * vnoise(x / 34, z / 34) + 0.15 * vnoise(x / 11, z / 11);
+function terrain(x, z){
+  const h = fbm(x + 400, z + 900), m = vnoise((x + 77) / 60, (z - 31) / 60);
+  let c;
+  if (h < 0.36) c = [52, 84, 138];
+  else if (h < 0.39) c = [206, 196, 140];
+  else if (h > 0.68) c = [128, 128, 122];
+  else if (m > 0.58) c = [64, 104, 52];
+  else c = [118, 156, 84];
+  const shade = 0.9 + 0.2 * (fbm(x - 1, z - 1) - fbm(x + 1, z + 1)) * 6;
+  c = c.map((v) => Math.max(0, Math.min(255, v * shade)));
+  const explored = Math.hypot(x - 10, (z + 10) * 1.1) < 190 + 30 * vnoise(x / 40, z / 40);
+  if (!explored) { const g = (c[0] + c[1] + c[2]) / 3; c = c.map((v) => (v * 0.5 + g * 0.5) * 0.62); }
+  return c;
+}
+function drawTerrain(ctx, W, H, view, dpr){
+  const img = ctx.createImageData(W * dpr, H * dpr);
+  const step = 1 / (view.k * dpr);
+  for (let py = 0; py < H * dpr; py++) {
+    const z = Math.floor(view.cz + (py / dpr - view.my) / view.k);
+    for (let px = 0; px < W * dpr; px++) {
+      const x = Math.floor(view.cx + (px / dpr - view.mx) / view.k);
+      const c = terrain(x, z), o = (py * W * dpr + px) * 4;
+      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/* ---- marker grammar: a dark halo tile, an accent ring, an ink glyph (as structures) ---- */
+function tile(ctx, x, y, ring, dashed){
+  ctx.save();
+  ctx.fillStyle = T.halo; ctx.beginPath(); ctx.roundRect(x - 12, y - 12, 24, 24, 7); ctx.fill();
+  ctx.strokeStyle = ring; ctx.lineWidth = 1.5; if (dashed) ctx.setLineDash([3, 2.5]);
+  ctx.beginPath(); ctx.roundRect(x - 10.5, y - 10.5, 21, 21, 6); ctx.stroke();
+  ctx.restore();
+}
+function glyph(ctx, x, y, d, fill){
+  ctx.save(); ctx.translate(x - 7.5, y - 7.5); ctx.scale(15 / 24, 15 / 24);
+  ctx.lineWidth = 2.2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  for (const p of [].concat(d)) { const path = new Path2D(GLYPH[p]); if (fill && p === "portal") { ctx.fillStyle = fill; ctx.fill(path); } ctx.strokeStyle = T.ink; ctx.stroke(path); }
+  ctx.restore();
+}
+function beaconMark(ctx, x, y){ tile(ctx, x, y, T.green); glyph(ctx, x, y, "shield"); }
+function gateMark(ctx, x, y, open){ tile(ctx, x, y, T.violet, !open); glyph(ctx, x, y, open ? ["portal", "swirl"] : ["portal"], open ? T.violet : null); }
+function ring(ctx, x, y, r){ ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.strokeStyle = T.halo; ctx.lineWidth = 5; ctx.stroke(); ctx.strokeStyle = T.ink; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
+function protArea(ctx, view, b, mode){
+  const a = area(b); const [x0, y0] = toS(view, a.x0, a.z0), [x1, y1] = toS(view, a.x1, a.z1);
+  ctx.save();
+  if (mode !== "outline") { ctx.fillStyle = "rgba(143,188,154,.16)"; ctx.fillRect(x0, y0, x1 - x0, y1 - y0); }
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = T.halo; ctx.lineWidth = 4; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.strokeStyle = T.green; ctx.lineWidth = 2; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.restore();
+}
+function link(ctx, view, g){
+  const [ax, ay] = toS(view, g.x, g.z), [bx, by] = toS(view, g.to.x, g.to.z);
+  const len = Math.hypot(bx - ax, by - ay), ux = (bx - ax) / len, uy = (by - ay) / len;
+  const sx = ax + ux * 15, sy = ay + uy * 15, ex = bx - ux * 15, ey = by - uy * 15;
+  ctx.save(); ctx.lineCap = "round";
+  ctx.setLineDash([1, 6]);
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+  ctx.strokeStyle = T.halo; ctx.lineWidth = 6; ctx.stroke();
+  ctx.strokeStyle = T.violet; ctx.lineWidth = 3; ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(ex - ux * 9 - uy * 6, ey - uy * 9 + ux * 6); ctx.lineTo(ex, ey); ctx.lineTo(ex - ux * 9 + uy * 6, ey - uy * 9 - ux * 6);
+  ctx.strokeStyle = T.halo; ctx.lineWidth = 6; ctx.stroke(); ctx.strokeStyle = T.violet; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.restore();
+}
+function placeMark(ctx, x, y){
+  ctx.save(); ctx.fillStyle = T.halo; ctx.beginPath(); ctx.arc(x, y, 12, 0, 7); ctx.fill();
+  ctx.strokeStyle = T.violet; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, 10.5, 0, 7); ctx.stroke(); ctx.restore();
+  glyph(ctx, x, y, "pin");
+}
+function playerDisc(ctx, x, y, p){
+  ctx.save(); ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.fillStyle = T.halo; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.fillStyle = css(p.tok); ctx.fill();
+  ctx.fillStyle = T.inkOn; ctx.font = "700 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(p.n[0], x, y + .5);
+  ctx.restore();
+}
+function label(ctx, txt, x, y, left){
+  ctx.save(); ctx.font = "500 12px system-ui, sans-serif";
+  const w = ctx.measureText(txt).width + 12, cw = ctx.canvas.width / (devicePixelRatio || 1);
+  // right of the marker, else left, else below; a label that still hits the edge, a floating
+  // control, the panel or the scale bar is dropped, never drawn under it (DESIGN "Markers")
+  const right = left ? [x - w, y] : [x, y], other = left ? [x + 28, y] : [x - w - 34, y];
+  const below = [(left ? x + 14 : x - 17) - w / 2, y + 24];
+  const fits = ([lx, ly]) => lx >= 6 && lx + w <= cw - 6 && !CHROME.some((r) => lx < r[2] && lx + w > r[0] && ly - 10 < r[3] && ly + 10 > r[1]);
+  const at = [right, other, below].find(fits);
+  if (!at) { ctx.restore(); return; }
+  ctx.fillStyle = T.plate; ctx.beginPath(); ctx.roundRect(at[0], at[1] - 10, w, 20, 6); ctx.fill();
+  ctx.fillStyle = T.text; ctx.textBaseline = "middle"; ctx.fillText(txt, at[0] + 6, at[1] + .5);
+  ctx.restore();
+}
+const toS = (v, x, z) => [v.mx + (x - v.cx) * v.k, v.my + (z - v.cz) * v.k];
+let T = {};
+let CHROME = [];
+function readT(){ T = {halo:css("--map-halo"), ink:css("--map-ink"), inkOn:css("--map-ink-on"), plate:css("--map-plate"), text:css("--text"), green:css("--green"), violet:css("--violet")}; }
+
+/* ---- what each variant draws ---- */
+function drawMarkers(ctx, view, sel, card){
+  const selB = sel && sel.kind === "beacon" ? BEACONS[sel.i] : null, selG = sel && sel.kind === "gate" ? GATES[sel.i] : null;
+  // areas under everything
+  for (const b of BEACONS) {
+    if (V === "a") protArea(ctx, view, b, "fill");
+    else if (V === "b") { if (b === selB) protArea(ctx, view, b, "fill"); }
+    else protArea(ctx, view, b, b === selB ? "fill" : "outline");
+  }
+  for (const g of GATES) {
+    if (!g.open || g.to.dim !== "overworld") continue;
+    if (V === "a" || g === selG) link(ctx, view, g);
+  }
+  for (const g of GATES) {
+    if (!g.open || g.to.dim !== "overworld") continue;
+    if (V === "a" || g === selG) { const [x, y] = toS(view, g.to.x, g.to.z); placeMark(ctx, x, y); label(ctx, g.to.place, x + 16, y); }
+  }
+  if (!card) for (const p of PLAYERS) { const [x, y] = toS(view, p.x, p.z); playerDisc(ctx, x, y, p); }
+  for (const b of BEACONS) { const [x, y] = toS(view, b.x, b.z); beaconMark(ctx, x, y); if (b === selB) ring(ctx, x, y, 18); }
+  for (const g of GATES) {
+    const [x, y] = toS(view, g.x, g.z); gateMark(ctx, x, y, g.open); if (g === selG) ring(ctx, x, y, 18);
+    if (V === "b" && g.open && g !== selG) { // a small arrow notch: this gate leads somewhere
+      ctx.save(); ctx.fillStyle = T.halo; ctx.beginPath(); ctx.arc(x + 11, y - 11, 7, 0, 7); ctx.fill();
+      ctx.strokeStyle = T.violet; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x + 8, y - 11); ctx.lineTo(x + 14, y - 11); ctx.moveTo(x + 11.5, y - 14); ctx.lineTo(x + 14, y - 11); ctx.lineTo(x + 11.5, y - 8); ctx.stroke(); ctx.restore();
+    }
+    if (g.open && g.to.dim !== "overworld" && (V !== "b" || g === selG)) label(ctx, `→ ${g.to.place} · Nether`, x + 17, y);
+    if (V === "c" && g.open && g.to.dim === "overworld" && g !== selG) label(ctx, `→ ${g.to.place}`, x + 17, y);
+  }
+  if (!card) for (const p of PLAYERS) { const [x, y] = toS(view, p.x, p.z); label(ctx, p.n, x - 14, y + 18, true); }
+}
+
+/* ---- the panel ---- */
+function head(){
+  return `<div class="grip"></div><div class="head"><button class="world" aria-label="World: Castle Hill — change">Castle Hill ${I.down}</button>
+  <div class="seg tabs" role="tablist" aria-label="Panel"><button role="tab" aria-selected="true">${I.layers}Layers</button><button role="tab" aria-selected="false">${I.clock}Timeline</button></div></div>`;
+}
+const STAT = `<div class="stat"><span class="dot"></span><span><b>Live · 2 on</b>Up to a minute behind the world · positions live</span></div>`;
+function gateDet(g){
+  const sub = g.open
+    ? `<span class="state open">open</span> · ${g.by}'s · planted ${g.at}, aimed ${g.aimed}`
+    : `<span class="state dorm">dormant</span> · ${g.by}'s · planted ${g.at}`;
+  let lead;
+  if (!g.open) lead = `<p class="note">Not open yet. ${g.by} can ask Dave to open it to one of their saved places, standing within 4 blocks.</p>`;
+  else if (g.to.dim === "overworld") lead = `<div class="lead">${I.arrow}<span>Leads to <b>${g.to.place}</b> · ${dist(g, g.to)} blocks ${compass(g, g.to)} · X ${g.to.x} · Z ${g.to.z}</span></div>`;
+  else lead = `<div class="lead">${I.arrow}<span>Leads to <b>${g.to.place}</b> · in the Nether · X ${g.to.x} · Z ${g.to.z}</span></div>`;
+  const btn = g.open ? `<div class="btnrow"><button class="btn primary">${g.to.dim === "overworld" ? `Show ${g.to.place}` : "Show it in the Nether"}</button></div>` : "";
+  return `<div class="det"><div class="det-h"><span class="det-ic gate">${I.portal}</span><div class="det-tx"><div class="det-t">Wormhole gate ${g.id}</div><div class="det-s">${sub}</div></div><button class="x" aria-label="Close">${I.x}</button></div>
+    <div class="coord"><span class="xyz">X ${g.x} · Y ${g.y} · Z ${g.z}</span><button class="lnk">${I.copy}Copy X Z</button></div>${lead}${btn}</div>`;
+}
+function beaconDet(b){
+  const a = area(b);
+  const over = b.n > 1 ? " · overlaps 1 other beacon" : "";
+  return `<div class="det"><div class="det-h"><span class="det-ic bea">${I.shield}</span><div class="det-tx"><div class="det-t">No-Spawn Beacon</div><div class="det-s"><span class="state prot">protecting</span> · placed by ${b.by}, ${b.at}</div></div><button class="x" aria-label="Close">${I.x}</button></div>
+    <div class="coord"><span class="xyz">X ${b.x} · Y ${b.y} · Z ${b.z}</span><button class="lnk">${I.copy}Copy X Z</button></div>
+    <p class="note"><b style="color:var(--text);font-weight:500">48 × 48 blocks, floor to sky</b> — X ${a.x0} to ${a.x1 - 1}, Z ${a.z0} to ${a.z1 - 1} (the 3 × 3 chunks round it)${over}. Wild and hostile mobs vanish there; tamed, named, fed and bred ones stay.</p></div>`;
+}
+function swatch(kind){ return `<canvas data-sw="${kind}" width="44" height="44"></canvas>`; }
+function overlays(){
+  const ov = (gl, t, s, on, cls) => `<div class="ov"><span class="ov-gl ${cls || ""}">${gl}</span><span class="ov-t">${t}<small>${s}</small></span><button class="switch${on ? " on" : ""}" role="switch" aria-checked="${on}" aria-label="${t}"><span class="knob"></span></button></div>`;
+  const base = [ov(I.user, "Players", "last positions · live while on", true), ov(I.skull, "Deaths", "the last week's · tap a skull for the cause", true), ov(I.castle, "Structures", "from the server's locate · exact", true)].join("");
+  let ours;
+  if (V === "a") ours = ov(I.shield, "No-Spawn Beacons", "3 in this world · each with its 48 × 48 protected area", true, "bea") + ov(I.portal, "Wormhole gates", "2 open · 1 dormant · a dotted line to where each leads", true, "gate");
+  else if (V === "b") ours = ov(I.shield, "No-Spawn Beacons", "3 in this world · tap one for its protected area", true, "bea")
+      + `<div class="seg sub-seg" role="radiogroup" aria-label="Protected areas"><button role="radio" aria-checked="true">Areas when tapped</button><button role="radio" aria-checked="false">All areas</button></div>`
+      + ov(I.portal, "Wormhole gates", "2 open · 1 dormant · tap one for where it leads", true, "gate");
+  else ours = ov(I.portal, "Beacons &amp; gates", "3 beacons · 3 wormhole gates · listed below", true, "gate");
+  const later = `<div class="ov later"><span class="ov-gl">${I.pin}</span><span class="ov-t">Saved places<small>with Minecraft_Dave's places</small></span><span class="badge">later</span></div>`;
+  const list = V === "c" ? `<h3 class="sect">In this world</h3><div class="list">${
+    BEACONS.map((b) => `<button class="li"><span class="det-ic bea">${I.shield}</span><span class="lt"><b>No-Spawn Beacon · ${b.by}</b><span>X ${b.x} · Z ${b.z}${b.y > 150 ? " · up at Y " + b.y : ""} · placed ${b.at.split(",")[0]}</span></span>${I.chev}</button>`).join("") +
+    GATES.map((g) => `<button class="li"><span class="det-ic gate">${I.portal}</span><span class="lt"><b>Gate ${g.id} · ${g.by}</b><span>${g.open ? `open → ${g.to.place}${g.to.dim !== "overworld" ? " (Nether)" : ""}` : "dormant"} · X ${g.x} · Z ${g.z}</span></span>${I.chev}</button>`).join("")
+  }</div>` : "";
+  const legend = `<h3 class="sect">Legend</h3><div class="lg"><div class="lg-row">
+     <span class="lg-i">${swatch("beacon")}No-Spawn Beacon</span><span class="lg-i">${swatch("area")}Protected (48 × 48)</span></div>
+     <div class="lg-row"><span class="lg-i">${swatch("open")}Gate · open</span><span class="lg-i">${swatch("dorm")}Gate · dormant</span>${V !== "c" ? `<span class="lg-i">${swatch("link")}Where it leads</span>` : ""}</div>
+     <p class="note">Positions are the pack's own records, sent when a beacon or gate changes and again at every start.</p></div>`;
+  return `<div class="pbody"><h3 class="sect">On the map</h3><div>${base}${ours}${later}</div>${list}${legend}</div>`;
+}
+
+function mapScreen(){
+  const view = S.view;
+  const sel = view === "gate" ? {kind:"gate", i:0} : view === "gate3" ? {kind:"gate", i:2} : view === "beacon" ? {kind:"beacon", i:0} : null;
+  const ph = document.getElementById("phone");
+  const H = ph.clientHeight, W = ph.clientWidth;
+  let panelH = view === "layers" ? Math.round(H * 0.8) : 150;
+  ph.innerHTML = `<div class="map"><canvas id="cv"></canvas>
+    <div class="top"><button class="fab" aria-label="Back">${I.back}</button><div class="seg dims" role="radiogroup" aria-label="Dimension"><button role="radio" aria-checked="true">Overworld</button><button role="radio" aria-checked="false">Nether</button><button role="radio" aria-checked="false">End</button></div></div>
+    <div class="fabs"><button class="fab" aria-label="Zoom in">${I.plus}</button><button class="fab" aria-label="Zoom out">${I.minus}</button><button class="fab" aria-label="Show everyone">${I.users}</button></div>
+    <div class="scale" style="bottom:${panelH + 10}px"><i></i><span>32 blocks · N↑</span></div></div>
+    <div class="panel" style="height:${sel ? "auto" : panelH + "px"}">${head()}${STAT}${sel ? (sel.kind === "gate" ? gateDet(GATES[sel.i]) : beaconDet(BEACONS[sel.i])) : ""}${view === "layers" ? overlays() : ""}</div>`;
+  if (sel) { panelH = ph.querySelector(".panel").offsetHeight; ph.querySelector(".scale").style.bottom = panelH + 10 + "px"; }
+  const cv = document.getElementById("cv"), dpr = devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d");
+  const mapH = H - panelH;
+  let v = {k:1.25, cx:-30, cz:-30, mx:W / 2, my:mapH / 2 + 30};
+  if (sel && sel.kind === "beacon") v = {k:2.5, cx:72, cz:-30, mx:W / 2, my:mapH / 2 + 26};
+  if (sel && sel.kind === "gate" && sel.i === 0) v = {k:1.25, cx:-62, cz:-62, mx:W / 2, my:mapH / 2 + 30};
+  if (sel && sel.kind === "gate" && sel.i === 2) v = {k:2, cx:20, cz:-60, mx:W / 2, my:mapH / 2 + 30};
+  if (view === "layers") v = {k:1.25, cx:-30, cz:-40, mx:W / 2, my:mapH / 2 + 30};
+  CHROME = [[0, 0, W, 70], [W - 64, 70, W, 236], [0, H - panelH - 44, 170, H], [0, H - panelH, W, H]];
+  const sc = ph.querySelector(".scale span"); sc.textContent = `${Math.round(40 / v.k)} blocks · N↑`;
+  drawTerrain(ctx, W, H, v, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawMarkers(ctx, v, sel, false);
+  drawSwatches();
+}
+
+function chatScreen(){
+  const ph = document.getElementById("phone");
+  ph.innerHTML = `<div class="chat"><div class="bar"><button class="back" aria-label="Back">${I.back}</button><span class="ttl">Minecraft_Dave</span></div>
+   <div class="msgs"><div class="you">Where's BlockyFox's wormhole gate, and where does it go?</div>
+   <div class="dave">BlockyFox has one gate open in Castle Hill: gate 1, at X 30 · Z 14. It leads to their Tree farm, ${dist(GATES[0], GATES[0].to)} blocks north-west. Their gate 3 goes to the Nether base.</div>
+   <div class="tv"><div class="tv-h">${I.map}<span>Castle Hill · Overworld</span><span class="s">Surface</span><button class="fab" aria-label="Open the full map">${I.expand}</button></div>
+     <div class="tv-map"><canvas id="cv"></canvas><div class="scale" style="bottom:8px"><i></i><span>64 blocks · N↑</span></div></div>
+     <div class="tv-b"><div class="note">Live · 2 on · Up to a minute behind the world</div>
+       <div class="det-h"><span class="det-ic gate">${I.portal}</span><div class="det-tx"><div class="det-t">Wormhole gate 1</div><div class="det-s"><span class="state open">open</span> · BlockyFox's → <b>Tree farm</b></div></div></div>
+       <div class="coord"><span class="xyz">X 30 · Y 71 · Z 14</span><button class="lnk">${I.copy}Copy X Z</button></div>
+       <div class="chips"><button class="chip" aria-pressed="false">Trail</button><button class="chip" aria-pressed="true">Deaths</button><button class="chip" aria-pressed="true">Structures</button><button class="chip" aria-pressed="false">Players</button>${V === "c" ? '<button class="chip" aria-pressed="true">Beacons &amp; gates</button>' : '<button class="chip" aria-pressed="true">Beacons</button><button class="chip" aria-pressed="true">Gates</button>'}</div>
+     </div></div></div></div>`;
+  const cv = document.getElementById("cv"), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d");
+  const v = {k:0.82, cx:-65, cz:-50, mx:W / 2, my:H / 2};
+  CHROME = [[0, H - 40, 170, H]];
+  ph.querySelector(".scale span").textContent = `${Math.round(40 / v.k)} blocks · N↑`;
+  drawTerrain(ctx, W, H, v, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawMarkers(ctx, v, {kind:"gate", i:0}, true);
+}
+
+function drawSwatches(){
+  for (const c of document.querySelectorAll("canvas[data-sw]")) {
+    const ctx = c.getContext("2d"); ctx.scale(2, 2); ctx.fillStyle = "#4f6b3e"; ctx.beginPath(); ctx.roundRect(0, 0, 22, 22, 5); ctx.fill();
+    const k = c.dataset.sw;
+    ctx.save(); ctx.translate(11, 11); ctx.scale(.78, .78); ctx.translate(-11, -11);
+    if (k === "beacon") beaconMark(ctx, 11, 11);
+    if (k === "open") gateMark(ctx, 11, 11, true);
+    if (k === "dorm") gateMark(ctx, 11, 11, false);
+    ctx.restore();
+    if (k === "area") { ctx.fillStyle = "rgba(143,188,154,.16)"; ctx.fillRect(3, 3, 16, 16); ctx.setLineDash([4, 2.5]); ctx.strokeStyle = T.green; ctx.lineWidth = 2; ctx.strokeRect(3, 3, 16, 16); }
+    if (k === "link") { ctx.lineCap = "round"; ctx.setLineDash([1, 4.5]); ctx.strokeStyle = T.violet; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(3, 18); ctx.lineTo(17, 5); ctx.stroke(); }
+  }
+}
+
+function render(){
+  readHash(); readT();
+  if (S.view === "card") chatScreen(); else mapScreen();
+  const opt = (k, vals) => `<div class="srow"><span class="sl">${k}</span>${vals.map(([v, l]) => `<button aria-pressed="${S[k] === v}" data-k="${k}" data-v="${v}">${l}</button>`).join("")}</div>`;
+  document.getElementById("sim").innerHTML = `<div class="stitle">Mock controls</div>` +
+    opt("view", [["map","Map"],["gate","Tap gate 1"],["gate3","Tap gate 3 (Nether)"],["beacon","Tap a beacon"],["layers","Layers tab"],["card","Dave's chat card"]]) +
+    opt("theme", [["","System"],["dark","Dark"],["light","Light"]]);
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-k]"); if (!b) return;
+  const o = {...S, [b.dataset.k]: b.dataset.v}; delete o.shot;
+  location.hash = Object.entries(o).filter(([k, v]) => v !== DEF[k]).map(([k, v]) => `${k}=${v}`).join("&");
+});
+addEventListener("hashchange", render);
+addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>
