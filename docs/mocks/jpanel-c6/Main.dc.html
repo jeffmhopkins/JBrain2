@@ -750,12 +750,11 @@ class Component extends DCLogic {
     const s = this.base(this.state);
     if (s.ring) { this.snooze(); return; }
     if (s.off) return;
-    if (s.screen === 'home' || s.screen === 'minecraft' || s.screen === 'settings') {
-      this.say('Open a conversation, then hold KEY');
-      return;
-    }
+    // KEY outside a conversation is "talk to Jerv" from anywhere (owner, 2026-10-12); inside
+    // Quorra's or Tamsin's thread it is a message to her.
+    const to = s.threads[s.screen] ? s.screen : 'jerv';
     clearInterval(this.recTimer);
-    this.put({ rec: { to: s.screen, secs: 0 }, toast: '' });
+    this.put({ rec: { to: to, secs: 0, from: s.screen }, toast: '' });
     this.recTimer = setInterval(() => {
       this.put((b) => {
         if (!b.rec || b.rec.frozen) return {};
@@ -782,7 +781,7 @@ class Component extends DCLogic {
     const id = s.nextId;
     const text = said[s.said % said.length];
     const mine = { id: id, from: 'me', kind: 'voice', durS: Math.round(secs), text: 'Transcribing…', pending: true, status: to === 'jerv' ? '' : 'Sending…' };
-    this.put((b) => ({ rec: null, nextId: b.nextId + 2, said: b.said + 1, threads: Object.assign({}, b.threads, { [to]: b.threads[to].concat([mine]) }) }));
+    this.put((b) => ({ rec: null, screen: to === 'jerv' ? 'jerv' : b.screen, nextId: b.nextId + 2, said: b.said + 1, threads: Object.assign({}, b.threads, { [to]: b.threads[to].concat([mine]) }) }));
     setTimeout(() => {
       this.put((b) => {
         const list = b.threads[to].map((m) => (m.id === id ? Object.assign({}, m, { text: text, pending: false, status: to === 'jerv' ? '' : 'Delivered' }) : m));

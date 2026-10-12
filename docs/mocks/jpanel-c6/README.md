@@ -74,3 +74,7 @@ panel, the others import it at a fixed `start` state).
   "down" down, from the QMI8658's gravity vector. A switch under Brightness ("Auto-rotate",
   on by default; off = locked upright). The live panel's **tilt** tweak turns the device to
   show it. Firmware rules: plan §2b.
+- **KEY is "talk to Jerv" from anywhere** (owner, 2026-10-12): held outside a conversation —
+  home, clock face, Settings, Minecraft — it records to Jerv, and on release the panel opens the
+  Jerv thread so the transcript and the answer are seen. Inside Quorra's or Tamsin's thread it
+  is still a message to her. A ringing alarm still takes KEY as snooze.

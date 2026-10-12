@@ -140,6 +140,14 @@ at 480×480 or headless to PNG. So the Clock can be built and iterated on a lapt
 board, no box and no other app compiled in — and CI renders each app's states to PNG beside
 the mock it was approved from, so a drift from `../mocks/jpanel-c6/` is visible in review.
 
+### KEY routing (owner, 2026-10-12)
+
+KEY held outside a conversation goes to **Jerv**, wherever the panel is (home, clock face,
+Settings, any app that does not consume KEY): the shell, not an app, owns that default, so it
+works with every app closed. Release sends, and the shell opens the Jerv thread to show the
+answer. A Thread app consumes KEY for its own recipient; a ringing alarm consumes it as snooze;
+the talk overlay keeps the rule that a release goes where its press went.
+
 ## 2. The push path: the box can tap the owner on the shoulder
 
 The owner: *"an API … that just shows a pop-up of a message … so the machine can send this
