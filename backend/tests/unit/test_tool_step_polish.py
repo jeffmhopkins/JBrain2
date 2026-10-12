@@ -174,6 +174,7 @@ _AUTHORS_BRIEF = {
     "journal",
     "mc_goal_create",
     "mc_goal_update",
+    "mc_goal_progress",
     "mc_goals",
     "mc_locate",
     "mc_nearby",

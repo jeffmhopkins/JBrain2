@@ -195,6 +195,20 @@ describe("the note-conversation write tools", () => {
     ).toBe("Dana Whitfield · Dana W");
   });
 
+  it("labels a goal count and shows what a counted goal collects", () => {
+    const progress = toolStep(tool({ name: "mc_goal_progress", args: { goal: 3 } }));
+    expect(progress.label).toBe("Counted toward a goal");
+    expect(progress.inline).toBeUndefined();
+    expect(
+      toolStep(
+        tool({
+          name: "mc_goal_create",
+          args: { title: "Get 23 iron blocks", item: "iron_block", count: 23 },
+        }),
+      ).inline,
+    ).toBe("Get 23 iron blocks · iron_block");
+  });
+
   it("names a BATCHED argument elementwise, capped with a +N", () => {
     // `entities`, not `surfaces` — the key `resolve_entity.tool` actually declares. The
     // polish landed before the sidecar did (the old `_FORWARD` window), and named the

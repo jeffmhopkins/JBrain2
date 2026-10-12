@@ -232,6 +232,7 @@ const STEP_LABELS: Record<string, string> = {
   mc_goals: "Read the goals",
   mc_goal_create: "Added a goal",
   mc_goal_update: "Updated a goal",
+  mc_goal_progress: "Counted toward a goal",
   mc_log: "Logged progress",
   mc_log_read: "Read the progress log",
   mc_memory_read: "Read memory",
@@ -388,8 +389,8 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   mc_worlds: ["slot"],
   mc_backups: ["slot"],
   mc_goals: ["status"],
-  mc_goal_create: ["title"],
-  mc_goal_update: ["status", "title"],
+  mc_goal_create: ["title", "item"],
+  mc_goal_update: ["status", "title", "item"],
   mc_log: ["text"],
   mc_memory_add: ["text"],
   mc_memory_replace: ["text"],
@@ -408,6 +409,8 @@ const NO_INLINE: ReadonlySet<string> = new Set([
   "mc_server_config",
   // the player's saved places take no argument
   "mc_places",
+  // a goal number says nothing on its own; the count in the brief is the row
+  "mc_goal_progress",
   // the snippet is multi-line source; a collapsed row is the wrong place for it, and the
   // expanded view is where the code belongs
   "run_python",
