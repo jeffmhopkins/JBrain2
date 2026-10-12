@@ -18,6 +18,7 @@
 #include "display.h"
 #include "link.h"
 #include "reach.h"
+#include "wsproto.h"
 
 static const char *TAG = "ota";
 
@@ -38,6 +39,8 @@ bool ota_boot_is_new_image(void)
 
 
 #define MANIFEST_MAX 1024
+/* Each request's whole budget, lock to head (an absolute deadline since 0.4.0, plan §7.5a);
+   `ota_apply`'s own client takes it per operation. */
 #define HTTP_TIMEOUT_MS 15000
 /* How long to let the renderer park before restarting anyway. One frame plus its own 150 ms
    drain is about 200 ms, so a second is generous — and the fallback is not optional: the
@@ -85,8 +88,8 @@ static esp_err_t attach_auth(esp_http_client_handle_t client)
 
 /* WHY THE SETTINGS FETCH LAST FAILED, AND HOW MANY TIMES IT HAS.
  *
- * MEASURED 2026-09-27: Lydian's panel reported `levels` EMPTY at 941 seconds of uptime while
- * Elora's, on older firmware, reported `70/30`. `levels` is what the codec last ACCEPTED, so an
+ * MEASURED 2026-09-27: Tamsin's panel reported `levels` EMPTY at 941 seconds of uptime while
+ * Quorra's, on older firmware, reported `70/30`. `levels` is what the codec last ACCEPTED, so an
  * empty one means `audio_set_levels` had never run — which means `apply_settings` had never
  * succeeded in a quarter of an hour, on a panel that was otherwise online and carrying
  * messages. The owner saw the same thing from the other end: *"the volume doesn't actually
@@ -119,7 +122,7 @@ esp_err_t ota_fetch_settings(const cfg_t *cfg, ota_settings_t *out)
     char body[MANIFEST_MAX];
     const link_req_t req = {.method = "GET",
                             .path = "/endpoint/settings",
-                            .timeout_ms = HTTP_TIMEOUT_MS,
+                            .deadline_ms = link_deadline_in(now_ms(), HTTP_TIMEOUT_MS),
                             .buf = (uint8_t *)body,
                             .cap = sizeof(body) - 1};
     const link_res_t res = link_request(&req);
@@ -210,7 +213,7 @@ esp_err_t ota_report(const cfg_t *cfg, const char *body)
                             .content_type = "application/json",
                             .body = (const uint8_t *)body,
                             .body_len = strlen(body),
-                            .timeout_ms = HTTP_TIMEOUT_MS};
+                            .deadline_ms = link_deadline_in(now_ms(), HTTP_TIMEOUT_MS)};
     const link_res_t res = link_request(&req);
     if (res.status < 0) {
         ESP_LOGW(TAG, "telemetry unreachable: %s", res.err);
@@ -235,7 +238,7 @@ esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
     char body[MANIFEST_MAX];
     const link_req_t req = {.method = "GET",
                             .path = "/endpoint/firmware",
-                            .timeout_ms = HTTP_TIMEOUT_MS,
+                            .deadline_ms = link_deadline_in(now_ms(), HTTP_TIMEOUT_MS),
                             .buf = (uint8_t *)body,
                             .cap = sizeof(body) - 1};
     const link_res_t res = link_request(&req);
@@ -287,6 +290,16 @@ void ota_apply_faults(const char **err, int *tries)
     if (tries != NULL) *tries = s_apply_tries;
 }
 
+/* Set before the link is suspended and cleared on every failure path, so both watchdogs
+   (`main.c`, plan §7.5d) stand down while the partition erase may starve the audio task and the
+   engine's requests are held off; the OTA has its own rollback gate. */
+static volatile bool s_ota_running;
+
+bool ota_running(void)
+{
+    return s_ota_running;
+}
+
 esp_err_t ota_apply(const cfg_t *cfg, const char *url)
 {
     ESP_LOGI(TAG, "installing %s", url);
@@ -307,11 +320,13 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
     /* ONE TLS SESSION AT A TIME, the OTA included. The image comes down its own HTTPS session
        (`esp_https_ota` writes app slots and wants its own client), so the socket is closed first
        and its ~40 KB returned, and every other request is held off until this is over. */
+    s_ota_running = true;
     link_suspend();
     esp_err_t err = esp_https_ota(&oc);
     free(auth);
     if (err != ESP_OK) link_resume();
     if (err != ESP_OK) {
+        s_ota_running = false;
         ESP_LOGE(TAG, "install failed: %s — staying on the current image", esp_err_to_name(err));
         /* REMEMBERED, because nobody reads the return. `main.c` calls this and discards the
            result — reasonably, since there is nothing it can do — so a panel that CANNOT

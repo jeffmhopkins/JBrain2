@@ -456,23 +456,23 @@ file on the box.
 ## Voice notes between the twins
 
 The owner: *"since we're sending audio I think we should be able to say a command like
-'send to Elora helloooo' and her audio play on Elora when they click on a bubble that shows.
+'send to Quorra helloooo' and her audio play on Quorra when they click on a bubble that shows.
 Essentially, a bubble shows up as a notification that a message came in and then when it's
 touched it'll play the audio message."*
 
 **The best part of this is free, and it decides the design.** `WhisperCppClient` already
 returns **word-level timings** — `Word.start_ms` / `Word.end_ms`
-(`backend/src/jbrain/transcribe.py:34`). So the box transcribes *"send to Elora helloooo"*,
+(`backend/src/jbrain/transcribe.py:34`). So the box transcribes *"send to Quorra helloooo"*,
 finds where the addressee's name ends, and **cuts the original recording at that offset**.
 
 That means the message that arrives is **the sibling's own voice**, not a text-to-speech
-rendition of it — and without the "send to Elora" preamble attached. For twins this is the
+rendition of it — and without the "send to Quorra" preamble attached. For twins this is the
 whole feature: a four-year-old wants to hear their sister, not a robot quoting her. Synthesis
 would have been the obvious implementation and much the worse one.
 
 ### The shape
 
-1. A child holds the panel and says *"send to Elora, …"*. It uploads as any other turn.
+1. A child holds the panel and says *"send to Quorra, …"*. It uploads as any other turn.
 2. The box transcribes. A classifier — the jpet's `classify()` shape — matches
    `send to <name>` against the known panel names before anything reaches an LLM.
 3. The audio is trimmed at the end of the name using the word timings, stored, and queued for
@@ -498,17 +498,17 @@ would have been the obvious implementation and much the worse one.
 ### Three recipients, not two
 
 The owner, extending it: *"Another route should be 'tell Dad' where my pwa can play them. And
-pwa gets 'tell Elora' and 'Lydian' buttons to send them messages."*
+pwa gets 'tell Quorra' and 'Tamsin' buttons to send them messages."*
 
-So the directory is **Elora's panel, Lydian's panel, and Dad's PWA**, and messages move in
+So the directory is **Quorra's panel, Tamsin's panel, and Dad's PWA**, and messages move in
 every direction between them. That is a better feature than panel-to-panel and it is also a
 different one, because the third recipient is not a device.
 
-| | Elora / Lydian | Dad |
+| | Quorra / Tamsin | Dad |
 |---|---|---|
 | what it is | a panel, a `device_key` principal | the owner, a session — and possibly no session at all when the message is sent |
 | how it arrives | a bubble on the glass, tapped to play | a list in the PWA |
-| how it is sent | *"tell Dad …"*, spoken | a **button**, because Dad is not going to hold a phone down and say "tell Elora" |
+| how it is sent | *"tell Dad …"*, spoken | a **button**, because Dad is not going to hold a phone down and say "tell Quorra" |
 
 **The asymmetry is the point.** A panel is always on and always the same person; a PWA is a
 session that may not exist when the message is sent, on a device that may be asleep. A message
@@ -524,7 +524,7 @@ and "played" are different states for Dad and effectively the same for a panel.
 - **A route the owner can reach.** `/endpoint/*` is `PanelDep`; a PWA list and a send button
   are `OwnerDep`. Same store, two doors.
 - **Names that are load-bearing.** Already flagged, and now worse: a directory of three makes
-  *"tell Dad"* vs *"tell Elora"* a routing decision taken from a transcript, and the bench
+  *"tell Dad"* vs *"tell Quorra"* a routing decision taken from a transcript, and the bench
   panel is still provisioned as `''`. A name that does not match is a message that silently
   goes nowhere, which is the worst possible failure for a four-year-old who thinks they just
   spoke to their sister.
@@ -558,11 +558,11 @@ proposed, for three reasons.
 
 **One reserved word, not a vocabulary.** Everything hinges on whether the transcript begins
 with `send`. There is no list of names to keep in step with the panels that exist, no
-disambiguation between "Elora" and "a Laura", and nothing to relearn when a third panel
+disambiguation between "Quorra" and "a Laura", and nothing to relearn when a third panel
 arrives. The recogniser question shrinks to: did the first word come back as `send`?
 
-**The default is the useful one.** A panel in Elora's room has exactly one obvious other
-robot, and it is Lydian's. Making that the no-argument case means the common message — one
+**The default is the useful one.** A panel in Quorra's room has exactly one obvious other
+robot, and it is Tamsin's. Making that the no-argument case means the common message — one
 twin to the other — costs the shorter sentence, and the rarer one (to a parent, who is not a
 device) costs the longer. The sketch above had this backwards by treating all three
 recipients as equals.

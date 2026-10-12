@@ -67,7 +67,7 @@ typedef enum {
     VOCAB_COLOUR,     /* `arg` < 0: next colour in the palette; otherwise that palette index */
     VOCAB_LISTEN,     /* the panel's NAME: start a conversation turn, hands-free */
     VOCAB_STOP,       /* end the conversation: no reply, no follow-up */
-    VOCAB_SEND,       /* record a message for someone else; `arg` is a `jpanel_to_t` */
+    VOCAB_SEND,       /* record a message for someone else; `arg` is a `jp_to_t` */
 } vocab_kind_t;
 
 typedef struct {
@@ -87,7 +87,7 @@ typedef struct {
        honest. */
     const char *phonemes;
     vocab_kind_t kind;
-    int arg;             /* action_t, face_form_t, jpanel_to_t, or a palette index (VOCAB_COLOUR) */
+    int arg;             /* action_t, face_form_t, jp_to_t, or a palette index (VOCAB_COLOUR) */
 } vocab_t;
 
 /* The table and its length. */

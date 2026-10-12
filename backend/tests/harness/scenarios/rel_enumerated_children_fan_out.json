@@ -1,27 +1,27 @@
 {
   "name": "an enumerated relationship fans out to one edge per named child",
-  "description": "The four-daughters discrepancy (field report): 'I have four daughters, Summer, Harmony, Lydian and Elora' came back with only Summer wired as a child — the other three were bare people with birthdates. v10 teaches ONE relationship edge per enumerated individual, so all four children edges land, and the kinship reciprocity registry mirrors each onto the daughter's `parent` stream. The model emits only the four directed Me.children edges; the reciprocals are the pipeline's job.",
+  "description": "The four-daughters discrepancy (field report): 'I have four daughters, Hazel, Opal, Tamsin and Quorra' came back with only Hazel wired as a child — the other three were bare people with birthdates. v10 teaches ONE relationship edge per enumerated individual, so all four children edges land, and the kinship reciprocity registry mirrors each onto the daughter's `parent` stream. The model emits only the four directed Me.children edges; the reciprocals are the pipeline's job.",
   "xfail": "The arbiter does not run on the tool path, so `arbiter.derive_kinship_gender` \u2014 which reads \u2018four daughters\u2019 out of the note and emits one `gender` fact per child object \u2014 emits nothing. Main wrote 12 facts here (4 children + 4 parent inverses + 4 derived genders); this path writes 8, and until the four gender assertions below were added nothing in the corpus noticed. The scenario's own description is about the four-daughters field report, whose reported symptom was children arriving as \u2018bare people with birthdates\u2019 \u2014 exactly the recall this derivation restores. Closing it means the recall lives somewhere the note conversation reaches, or the plan accepts losing it and says so.",
   "steps": [
     {
       "domain": "general",
       "created_at": "2026-06-12T22:05:00-06:00",
-      "body": "I have four daughters: Summer, Harmony, Lydian and Elora.",
+      "body": "I have four daughters: Hazel, Opal, Tamsin and Quorra.",
       "extraction": {
         "title": "My four daughters",
         "tags": ["family", "daughters", "children"],
         "mentions": [
           {"name": "Me", "kind": "Person", "surface_text": "I"},
-          {"name": "Summer", "kind": "Person", "surface_text": "Summer"},
-          {"name": "Harmony", "kind": "Person", "surface_text": "Harmony"},
-          {"name": "Lydian", "kind": "Person", "surface_text": "Lydian"},
-          {"name": "Elora", "kind": "Person", "surface_text": "Elora"}
+          {"name": "Hazel", "kind": "Person", "surface_text": "Hazel"},
+          {"name": "Opal", "kind": "Person", "surface_text": "Opal"},
+          {"name": "Tamsin", "kind": "Person", "surface_text": "Tamsin"},
+          {"name": "Quorra", "kind": "Person", "surface_text": "Quorra"}
         ],
         "facts": [
-          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Summer is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Summer", "temporal": null, "domain": "general", "confidence": 1.0},
-          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Harmony is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Harmony", "temporal": null, "domain": "general", "confidence": 1.0},
-          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Lydian is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Lydian", "temporal": null, "domain": "general", "confidence": 1.0},
-          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Elora is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Elora", "temporal": null, "domain": "general", "confidence": 1.0}
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Hazel is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Hazel", "temporal": null, "domain": "general", "confidence": 1.0},
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Opal is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Opal", "temporal": null, "domain": "general", "confidence": 1.0},
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Tamsin is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Tamsin", "temporal": null, "domain": "general", "confidence": 1.0},
+          {"predicate": "children", "qualifier": "", "kind": "relationship", "statement": "Quorra is my daughter.", "value_json": null, "assertion": "asserted", "entity_ref": "Me", "object_entity_ref": "Quorra", "temporal": null, "domain": "general", "confidence": 1.0}
         ],
         "temporal_tokens": []
       }
@@ -30,24 +30,24 @@
   "expect": {
     "facts": [
       {"entity": "Me", "predicate": "children", "kind": "relationship", "status": "active", "count": 4},
-      {"entity": "Me", "predicate": "children", "value_contains": "Summer", "status": "active"},
-      {"entity": "Me", "predicate": "children", "value_contains": "Harmony", "status": "active"},
-      {"entity": "Me", "predicate": "children", "value_contains": "Lydian", "status": "active"},
-      {"entity": "Me", "predicate": "children", "value_contains": "Elora", "status": "active"},
-      {"entity": "Summer", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
-      {"entity": "Harmony", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
-      {"entity": "Lydian", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
-      {"entity": "Elora", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
-      {"entity": "Summer", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
-      {"entity": "Harmony", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
-      {"entity": "Lydian", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
-      {"entity": "Elora", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1}
+      {"entity": "Me", "predicate": "children", "value_contains": "Hazel", "status": "active"},
+      {"entity": "Me", "predicate": "children", "value_contains": "Opal", "status": "active"},
+      {"entity": "Me", "predicate": "children", "value_contains": "Tamsin", "status": "active"},
+      {"entity": "Me", "predicate": "children", "value_contains": "Quorra", "status": "active"},
+      {"entity": "Hazel", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Opal", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Tamsin", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Quorra", "predicate": "parent", "kind": "relationship", "value_contains": "Me", "status": "active"},
+      {"entity": "Hazel", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
+      {"entity": "Opal", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
+      {"entity": "Tamsin", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1},
+      {"entity": "Quorra", "predicate": "gender", "value_contains": "female", "status": "active", "count": 1}
     ],
     "entities": [
-      {"name": "Summer", "kind": "Person", "status": "provisional"},
-      {"name": "Harmony", "kind": "Person", "status": "provisional"},
-      {"name": "Lydian", "kind": "Person", "status": "provisional"},
-      {"name": "Elora", "kind": "Person", "status": "provisional"}
+      {"name": "Hazel", "kind": "Person", "status": "provisional"},
+      {"name": "Opal", "kind": "Person", "status": "provisional"},
+      {"name": "Tamsin", "kind": "Person", "status": "provisional"},
+      {"name": "Quorra", "kind": "Person", "status": "provisional"}
     ]
   }
 }

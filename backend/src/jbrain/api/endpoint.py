@@ -678,7 +678,7 @@ class TelemetryIn(BaseModel):
     # current state rather than the worst thing that ever happened. Sound reasoning, and it made
     # the field useless: a report only goes out at the end of a cycle, right after a fetch that
     # succeeded, so the string was empty in every report any panel has ever sent. On 2026-09-29,
-    # with the fetch failing for an hour, Lydian's panel reported `set_fails: 3, set_err: ""`.
+    # with the fetch failing for an hour, Tamsin's panel reported `set_fails: 3, set_err: ""`.
     #
     # So the name survives now and the AGE says whether it is current — the question clearing was
     # trying to answer, asked the one way that does not destroy the answer.
@@ -732,7 +732,7 @@ class TelemetryIn(BaseModel):
     #
     # `joined` was set once at boot and never cleared, so the firmware's Wi-Fi retry could only
     # ever run on a panel that failed to join in the FIRST place — not on one whose link went
-    # half-open later, which is the case that happens. Lydian's panel was silent from 04:24 on
+    # half-open later, which is the case that happens. Tamsin's panel was silent from 04:24 on
     # 2026-09-29 for eight and a half hours having reported `wifi_drops: 0`: not one disconnect
     # event the whole time, because the radio's own view was that everything was fine.
     #
@@ -838,6 +838,20 @@ class TelemetryIn(BaseModel):
     # Hex, one sample per entry, oldest first. Empty on a cold boot, which is itself the
     # answer to "did anything survive the restart".
     pmu_history: list[str] = []
+    # WHETHER THE RECOGNISER STARTED. A panel whose free internal RAM was under the floor when
+    # speech came up boots DEAF rather than crash-looping (0.3.39's PHY abort, firmware 0.4.0's
+    # `SPEECH_MIN_INTERNAL`) — and a deaf panel cannot send, because a recording only learns she
+    # spoke from the recogniser. That has to be a fault the owner can see without a cable, so it
+    # is reported. None from firmware older than 0.4.0, which is "unknown", not "deaf".
+    speech_ok: bool | None = None
+    # VOICE POST'S OWN COUNTERS (firmware 0.4.0, plan §7.7): one object of FLAT INTEGER keys —
+    # `ack_owed`, `ack_retries`, `no_refund`, `returned`, `lease_refusals`, `snapshot_retries`,
+    # `post_failed`, `late_outcome`, `cue_expired`, `jpanel_stack_free`, `sm_violations`,
+    # `wd_engine`, `wd_arbiter`, `wd_disarmed`. Deliberately loose here: a key the box does not
+    # know yet must not 422 the report, because a 422 is a FAILED report and this is the panel's
+    # only no-terminal diagnostic. Anything nested or non-integer still fails, which is the
+    # contract the firmware is pinned to (`test_jp_keys_from_main_c_validate_against_telemetry_in`).
+    jp: dict[str, int] | None = None
     note: str = ""
 
 

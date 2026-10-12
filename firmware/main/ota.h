@@ -23,6 +23,10 @@ const char *ota_running_version(void);
    on success. The new image is on probation until it, in turn, reaches the manifest. */
 esp_err_t ota_apply(const cfg_t *cfg, const char *url);
 
+/* True from just before an install suspends the link until it fails (a success reboots). The
+   watchdogs are disarmed while it is, and restart their clocks when it clears. */
+bool ota_running(void);
+
 /* Why the last update REFUSED to install, and how many have refused since boot — "" and 0
    when none has.
  *

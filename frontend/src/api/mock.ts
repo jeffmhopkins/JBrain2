@@ -3816,13 +3816,13 @@ const jpanelAt = (minsAgo: number) => new Date(Date.now() - minsAgo * 60_000).to
 
 const MOCK_JPANEL: JpanelThread[] = [
   {
-    device_id: "panel-ellie",
-    name: "Ellie",
+    device_id: "panel-quorra",
+    name: "Quorra",
     unplayed: 2,
     messages: [
       {
         id: "jp-1",
-        from_name: "Ellie",
+        from_name: "Quorra",
         to_name: "Dad",
         direction: "in",
         transcript: "There is a joke. There is a joke.",
@@ -3833,7 +3833,7 @@ const MOCK_JPANEL: JpanelThread[] = [
       },
       {
         id: "jp-2",
-        from_name: "Ellie",
+        from_name: "Quorra",
         to_name: "Dad",
         direction: "in",
         transcript: "",
@@ -3845,7 +3845,7 @@ const MOCK_JPANEL: JpanelThread[] = [
       {
         id: "jp-3",
         from_name: "Dad",
-        to_name: "Ellie",
+        to_name: "Quorra",
         direction: "out",
         transcript: "Five more minutes then teeth. I love you.",
         composed: "text",
@@ -3855,7 +3855,7 @@ const MOCK_JPANEL: JpanelThread[] = [
       },
       {
         id: "jp-4",
-        from_name: "Ellie",
+        from_name: "Quorra",
         to_name: "Dad",
         direction: "in",
         transcript:
@@ -5930,8 +5930,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({
       panels: [
         {
-          device_id: "panel-ellie",
-          name: "Ellie",
+          device_id: "panel-quorra",
+          name: "Quorra",
           reported_at: new Date(Date.now() - 240_000).toISOString(),
           version: "0.2.94",
           age_s: 240,

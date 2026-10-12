@@ -11,7 +11,7 @@
  * shelf, so variety is not a content problem — it is an engine problem. Vector layers five
  * independent anti-repetition systems; the three cheap ones are here.
  *
- * THE AGE-SPECIFIC TENSION, DELIBERATELY RESOLVED. Preschoolers love repetition; Elora will
+ * THE AGE-SPECIFIC TENSION, DELIBERATELY RESOLVED. Preschoolers love repetition; Quorra will
  * ask for the same gag a hundred times. So recency is suppressed WITHIN a pool — you get a
  * different wiggle — and nothing here can ever refuse to react.
  *

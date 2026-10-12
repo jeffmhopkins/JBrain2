@@ -32,7 +32,7 @@ field is just a nullable string.
 
 **Gap 2 — worked examples are owner-centric and possess-or-move only.**  
 Both worked examples in the prompt (lines 114–132) have the author ("Me") or a
-named secondary (`Summer`) as the grammatical *subject*, and the object is
+named secondary (`Hazel`) as the grammatical *subject*, and the object is
 either a place (`Denver`) or an animal (`Bella`, `Ricky`). In every example
 the object entity that has `object_entity_ref` set is NOT a `Person`; it is a
 `Place`, a `dog`, or a `rat`. There is no worked example where the object of a

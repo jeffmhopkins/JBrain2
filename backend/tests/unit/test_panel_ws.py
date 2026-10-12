@@ -49,7 +49,7 @@ def client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[TestClie
         app.state.device_repo = FakeDeviceRepo()
         asyncio.run(
             app.state.auth_repo.create_principal(
-                "device_key", keys.hash_key(PANEL_KEY), "panel Elora"
+                "device_key", keys.hash_key(PANEL_KEY), "panel Quorra"
             )
         )
         yield c

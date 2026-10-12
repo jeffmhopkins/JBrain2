@@ -34,13 +34,13 @@ def test_unknown_word_returns_none() -> None:
     # An INVENTED NAME is the normal case for this branch — CMUdict is a dictionary of words.
     # None is the contract that keeps the panel on its own converter instead of registering a
     # guess, so this is the behaviour a future richer G2P has to preserve or deliberately change.
-    assert phonemes_for("elora") is None
+    assert phonemes_for("quorra") is None
 
 
 def test_one_unknown_word_discards_the_whole_phrase() -> None:
     # ALL OR NOTHING. Half a phrase converted is worse than none of it: the panel would be
     # listening for a pronunciation of the first word and a guess at the second.
-    assert phonemes_for("hey elora") is None
+    assert phonemes_for("hey quorra") is None
 
 
 def test_blank_input_returns_none() -> None:

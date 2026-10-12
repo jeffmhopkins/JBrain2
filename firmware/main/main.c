@@ -28,6 +28,7 @@
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_attr.h"
 #include "mem.h"
 #include "nudge.h"
 #include "ota.h"
@@ -36,6 +37,7 @@
 #include "speech.h"
 #include "talk.h"
 #include "pmu.h"
+#include "stream.h"
 
 static const char *TAG = "endpoint";
 
@@ -130,6 +132,146 @@ static unsigned s_relinks;
    predates this change and fixing it needs the attempt written to NVS, which is its own
    decision, not a rider on a cadence change. */
 #define OTA_RETRY_BACKOFF_MS CHECK_PERIOD_MS
+
+/* ── THE WATCHDOGS (plan §7.5d) ──────────────────────────────────────────────────────────────
+ *
+ * Two, each a reboot through the renderer's safe restart, logged with its reason. Neither covers
+ * a panic — the update-first order of `app_main` is what recovers that — and both stand down while
+ * an OTA runs, because the partition erase can starve the audio task and the OTA has its own
+ * rollback gate.
+ *
+ *   ENGINE   wedged only when BOTH hold: its heartbeat has not moved for a minute, AND (outside
+ *            IDLE, which publishes no deadline) the deadline it published is a minute and the UI
+ *            margin past. So it can never pre-empt a wait the engine said it was in — the 75 s
+ *            head of a long send's transcription included, which does not tick.
+ *   ARBITER  `arb_hb` has not moved for ten seconds. The audio task is also the capture and the
+ *            recogniser's clock, so a dead arbiter is a deaf, mute panel. ARMED ONLY IF THE AUDIO
+ *            TASK EXISTS, and counted from the first change seen: a codec that did not answer at
+ *            boot would otherwise turn one I2C glitch into a reboot every ten seconds that the
+ *            owner cannot reach.
+ *
+ * A CAP, BECAUSE A DETERMINISTIC WEDGE MUST NOT BECOME A BOOT LOOP. RTC words, validated by a
+ * magic as `display.c`'s are, count watchdog reboots; they survive `esp_restart` and not a power
+ * cycle or a brownout, which simply reset the count. After three the watchdogs disarm and the
+ * report says so (`wd_disarmed`). The count decays by one per hour of uptime, and a VERSION CHANGE
+ * re-arms them, so an OTA fix restores them without a power cycle the owner cannot perform. */
+#define WD_CHECK_MS 1000
+#define WD_ENGINE_STALL_MS 60000u
+#define WD_REBOOTS_MAX 3u
+#define WD_DECAY_MS (60u * 60u * 1000u)
+/* How long the renderer gets to park before the watchdog restarts from its own task. */
+#define WD_PARK_MS 3000u
+#define WD_MAGIC 0x57444731u
+
+static RTC_NOINIT_ATTR uint32_t s_wd_magic;
+static RTC_NOINIT_ATTR uint32_t s_wd_count;
+static RTC_NOINIT_ATTR uint32_t s_wd_version;
+static RTC_NOINIT_ATTR uint32_t s_wd_engine;
+static RTC_NOINIT_ATTR uint32_t s_wd_arbiter;
+
+static uint32_t s_wd_eng_hb, s_wd_eng_at, s_wd_decay_at, s_wd_fired_at;
+static display_restart_t s_wd_why;
+static bool s_wd_ota;
+static stream_wd_t s_wd_arb;
+
+static uint32_t wd_now(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+static uint32_t version_hash(const char *v)
+{
+    uint32_t h = 5381;
+    while (*v != '\0') h = h * 33u + (uint8_t)*v++;
+    return h;
+}
+
+static bool wd_armed(void)
+{
+    return s_wd_magic != WD_MAGIC || s_wd_count < WD_REBOOTS_MAX;
+}
+
+static void wd_fire(display_restart_t why, const char *what, uint32_t now)
+{
+    s_wd_count++;
+    if (why == DISPLAY_RESTART_WD_ENGINE) s_wd_engine++;
+    if (why == DISPLAY_RESTART_WD_ARBITER) s_wd_arbiter++;
+    ESP_LOGE(TAG, "watchdog: %s — rebooting (%u of %u before they disarm)", what,
+             (unsigned)s_wd_count, (unsigned)WD_REBOOTS_MAX);
+    s_wd_why = why;
+    s_wd_fired_at = now == 0 ? 1 : now;
+    display_request_restart_for(why);
+}
+
+static void wd_tick(void *arg)
+{
+    (void)arg;
+    const uint32_t now = wd_now();
+    if (s_wd_fired_at != 0) {
+        /* The renderer had its chance to leave with nothing in flight on the QSPI bus. */
+        if (now - s_wd_fired_at >= WD_PARK_MS) {
+            display_note_restart(s_wd_why);
+            esp_restart();
+        }
+        return;
+    }
+    if (s_wd_count > 0 && now - s_wd_decay_at >= WD_DECAY_MS) {
+        s_wd_count--;
+        s_wd_decay_at = now;
+    }
+    /* Both clocks restart when an OTA that failed clears, so a long erase does not trip them on
+       its first second back. */
+    const bool ota = ota_running();
+    if (ota != s_wd_ota) {
+        s_wd_ota = ota;
+        s_wd_eng_at = now;
+    }
+    jp_health_t h;
+    if (jpanel_health(&h)) {
+        if (h.hb != s_wd_eng_hb || ota) {
+            s_wd_eng_hb = h.hb;
+            s_wd_eng_at = now;
+        }
+        const bool stalled = jp_due(now, s_wd_eng_at + WD_ENGINE_STALL_MS);
+        const bool overdue =
+            h.idle || jp_due(now, h.deadline_ms + JP_UI_MARGIN_MS + WD_ENGINE_STALL_MS);
+        if (stalled && overdue && wd_armed()) {
+            wd_fire(DISPLAY_RESTART_WD_ENGINE, "the voice-post engine is wedged", now);
+            return;
+        }
+    }
+    const stream_facts_t f = stream_facts(audio_stream());
+    if (stream_wd_check(&s_wd_arb, f.arbiter && !ota && wd_armed(), f.arb_hb, now)) {
+        wd_fire(DISPLAY_RESTART_WD_ARBITER, "the audio arbiter is wedged", now);
+    }
+}
+
+/* Validates the RTC words, re-arms on a version change, and starts the check. After the tasks
+   it watches, so the arbiter's first change and the engine's first heartbeat are real ones. */
+static void wd_start(void)
+{
+    const uint32_t v = version_hash(ota_running_version());
+    if (s_wd_magic != WD_MAGIC) {
+        s_wd_magic = WD_MAGIC;
+        s_wd_count = s_wd_engine = s_wd_arbiter = 0;
+        s_wd_version = v;
+    }
+    if (s_wd_version != v) {
+        s_wd_version = v;
+        s_wd_count = 0;
+    }
+    s_wd_eng_at = s_wd_decay_at = wd_now();
+    if (!wd_armed()) {
+        ESP_LOGW(TAG, "watchdog: %u reboots — disarmed until an hour passes or the version changes",
+                 (unsigned)s_wd_count);
+    }
+    const esp_timer_create_args_t args = {.callback = wd_tick, .name = "wd"};
+    esp_timer_handle_t t = NULL;
+    if (esp_timer_create(&args, &t) != ESP_OK ||
+        esp_timer_start_periodic(t, (uint64_t)WD_CHECK_MS * 1000u) != ESP_OK) {
+        ESP_LOGW(TAG, "watchdog: no timer — running without one");
+    }
+}
 
 /* Tries the manifest repeatedly, and reports both whether the box was reachable at all and
    what it offered. Reachability is the rollback criterion; the manifest is the payload. */
@@ -404,13 +546,13 @@ static bool report(const cfg_t *cfg)
        that is also what a message that played perfectly looks like. See `jpanel.h`: `msg_ms`
        against `msg_bytes / 32` is the test, and the owner's *"it doesn't play"* of 2026-09-29 is
        the report it was added for. */
-    int msg_bytes = 0;
-    int msg_ms = 0;
-    unsigned msg_ok = 0;
-    unsigned msg_bad = 0;
-    const char *msg_err = "";
-    int msg_waited = 0;
-    jpanel_message_stats(&msg_bytes, &msg_ms, &msg_ok, &msg_bad, &msg_err, &msg_waited);
+    jp_stats_t jp;
+    jpanel_stats(&jp);
+    display_jp_stats(&jp);
+    jp.wd_engine = s_wd_magic == WD_MAGIC ? s_wd_engine : 0;
+    jp.wd_arbiter = s_wd_magic == WD_MAGIC ? s_wd_arbiter : 0;
+    jp.wd_disarmed = wd_armed() ? 0 : 1;
+    const char *msg_err = jpanel_msg_err();
     /* THE ONE SOCKET, and the two heap numbers that say whether it fits. `int_min` is the
        low-water mark since boot: `int_free` is a snapshot taken while nothing is happening, and a
        handshake that did not fit failed at the bottom of a dip only this remembers. `int_big` is
@@ -455,14 +597,14 @@ static bool report(const cfg_t *cfg)
                      "\"send_err\":\"%s\",\"send_fails\":%d,\"send_ago_s\":%u,"
                      "\"dashes\":%u,\"dash_err\":\"%s\",\"dash_ago_s\":%u,"
                      "\"box_quiet_s\":%d,\"relinks\":%u,"
-                     "\"msg_bytes\":%d,\"msg_ms\":%d,\"msg_ok\":%u,\"msg_bad\":%u,"
-                     "\"msg_err\":\"%s\",\"msg_waited_ms\":%d,"
+                     "\"msg_bytes\":%u,\"msg_ms\":%u,\"msg_ok\":%u,\"msg_bad\":%u,"
+                     "\"msg_err\":\"%s\",\"msg_waited_ms\":%u,"
                      "\"nudges\":%u,\"nudge_drop\":%u,"
                      "\"push\":%s,\"push_events\":%u,\"push_drops\":%u,"
                      "\"int_min\":%u,\"int_big\":%u,\"ws\":\"%s\",\"ws_err\":\"%s\","
                      "\"ws_connects\":%u,\"ws_drops\":%u,"
                      "\"tap\":[%d,%d,%d],\"swipes\":%u,\"swipe_dx\":%d,\"msg_sel\":%d,"
-                     "\"panel_reset\":%s,\"screen\":\"%s\","
+                     "\"panel_reset\":%s,\"screen\":\"%s\",\"speech_ok\":%s,"
                      "\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
@@ -482,7 +624,8 @@ static bool report(const cfg_t *cfg)
                      talk_err, talk_fails, (unsigned)(talk_ago / 1000),
                      send_err, send_fails, (unsigned)(send_ago / 1000),
                      dashes, dash_err, (unsigned)(dash_ago / 1000),
-                     quiet_s, s_relinks, msg_bytes, msg_ms, msg_ok, msg_bad, msg_err, msg_waited,
+                     quiet_s, s_relinks, (unsigned)jp.msg_bytes, (unsigned)jp.msg_ms,
+                     (unsigned)jp.msg_ok, (unsigned)jp.msg_bad, msg_err, (unsigned)jp.msg_waited_ms,
                      nudge_count(), nudge_dropped(),
                      link_live() ? "true" : "false", ws_events, ws_drops,
                      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
@@ -490,11 +633,33 @@ static bool report(const cfg_t *cfg)
                                                                MALLOC_CAP_8BIT),
                      link_mode(), ws_err, ws_connects, ws_drops,
                      tap_x, tap_y, tap_zone, swipes, swipe_dx, msg_sel,
-                     display_panel_reset() ? "true" : "false", display_screen());
+                     display_panel_reset() ? "true" : "false", display_screen(),
+                     speech_live() ? "true" : "false");
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }
     if (w > 0 && w < (int)sizeof(body) - 4) w += snprintf(body + w, sizeof(body) - (size_t)w, "]");
+    /* VOICE POST'S OWN COUNTERS, ONE FLAT OBJECT OF INTEGERS (plan §7.7): `TelemetryIn.jp` is a
+       `dict[str, int]`, so anything nested or non-integer would be a 422 — a failed report, which
+       is the only no-terminal diagnostic a panel has. AFTER `pmu_history` and before the tails
+       that stop on room, so it is outside the span the field-scan test reads and it is never the
+       thing that runs out of room: the heard ring below gives way to it. Every value is at most
+       ten digits, which `JP_WORST_BYTES` reserves. */
+#define JP_WORST_BYTES 420
+    if (w > 0 && w < (int)sizeof(body) - JP_WORST_BYTES) {
+        w += snprintf(body + w, sizeof(body) - (size_t)w,
+                      ",\"jp\":{\"ack_owed\":%u,\"ack_retries\":%u,\"no_refund\":%u,"
+                      "\"returned\":%u,\"lease_refusals\":%u,\"snapshot_retries\":%u,"
+                      "\"post_failed\":%u,\"late_outcome\":%u,\"cue_expired\":%u,"
+                      "\"jpanel_stack_free\":%u,\"sm_violations\":%u,\"wd_engine\":%u,"
+                      "\"wd_arbiter\":%u,\"wd_disarmed\":%u}",
+                      (unsigned)jp.ack_owed, (unsigned)jp.ack_retries, (unsigned)jp.no_refund,
+                      (unsigned)jp.returned, (unsigned)jp.lease_refusals,
+                      (unsigned)jp.snapshot_retries, (unsigned)jp.post_failed,
+                      (unsigned)jp.late_outcome, (unsigned)jp.cue_expired,
+                      (unsigned)jp.jpanel_stack_free, (unsigned)jp.sm_violations,
+                      (unsigned)jp.wd_engine, (unsigned)jp.wd_arbiter, (unsigned)jp.wd_disarmed);
+    }
     /* The NAMES, not just the count. A number says the panel is deaf to something; a name
        says to what, and only the name can be acted on. */
     if (w > 0 && w < (int)sizeof(body) - 24) {
@@ -737,7 +902,7 @@ void app_main(void)
                it saves a task, 6 KB of stack and a request every thirty seconds forever. */
             if (!cfg_is_jpet(&cfg)) {
                 ESP_LOGI(TAG, "display — no voice post");
-            } else if (!jpanel_start(&cfg)) {
+            } else if (!jpanel_start(&cfg, audio_stream())) {
                 ESP_LOGW(TAG, "no voice post — messages will not arrive");
             }
             /* AFTER the poll task, because the nudge's whole job is to hurry that task along
@@ -747,6 +912,8 @@ void app_main(void)
             nudge_wake_settings_from(xTaskGetCurrentTaskHandle());
             nudge_start();
             mem_log("post-speech");
+            /* Last, once everything they watch has started. */
+            wd_start();
         }
         /* Offline panels come back faster than settled ones check for updates: a router
            reboot should cost a minute, not a quarter of an hour. */
@@ -823,7 +990,7 @@ void app_main(void)
                          * box's ask was lost for good.
                          *
                          * MEASURED 2026-09-29 16:08, on a panel that was demonstrably fine.
-                         * Lydian's had made 122 successful settings polls in the window, the
+                         * Tamsin's had made 122 successful settings polls in the window, the
                          * box had asked twice (`telemetry_seq` 15 → 16 → 17), and its last
                          * stored report was 23 minutes old — because each ask was adopted and
                          * then dropped on a `POST` that could not connect, the same
@@ -862,7 +1029,7 @@ void app_main(void)
          * the radio's own view is correct and useless — so `on_event`'s reconnect never runs
          * either, and BOTH recovery paths sit idle while every request fails.
          *
-         * MEASURED, NOT ARGUED: Lydian's panel went silent at 04:24 on 2026-09-29 and was still
+         * MEASURED, NOT ARGUED: Tamsin's panel went silent at 04:24 on 2026-09-29 and was still
          * silent eight and a half hours later, having reported `wifi_drops: 0` — not one
          * disconnect the whole time. A panel in a four-year-old's bedroom that needs an adult to
          * unplug it is the failure this whole file is written against.

@@ -416,20 +416,20 @@ def test_compute_signals_named_object_rescues_an_inferred_relationship_edge():
     intent = _intent(
         entity_resolutions=[
             _res("Me"),
-            _res("lydian", mode="new", new_kind="Person", new_name="lydian"),
+            _res("tamsin", mode="new", new_kind="Person", new_name="tamsin"),
         ],
         facts=[
             _fact(
                 entity_ref="Me",
                 predicate="children",
                 kind="relationship",
-                object_entity_ref="lydian",
+                object_entity_ref="tamsin",
                 attested_span=None,
                 inferred=True,
             )
         ],
     )
-    note = "I have four daughters named summer lydian Harmony and Elora"
+    note = "I have four daughters named hazel tamsin Opal and Quorra"
     assert compute_signals(intent, [note])[0].surface_attested is True
 
 
@@ -471,7 +471,7 @@ def test_compute_signals_gender_grounded_by_a_kinship_term_attests():
             )
         ],
     )
-    note = "I have four daughters named summer lydian Harmony and Elora"
+    note = "I have four daughters named hazel tamsin Opal and Quorra"
     assert compute_signals(intent, [note])[0].surface_attested is True
 
 
@@ -490,7 +490,7 @@ def test_compute_signals_gender_not_grounded_without_a_kinship_term():
             )
         ],
     )
-    assert compute_signals(intent, ["Summer came over today."])[0].surface_attested is False
+    assert compute_signals(intent, ["Hazel came over today."])[0].surface_attested is False
 
 
 def test_compute_signals_gender_value_must_match_the_terms_gender():

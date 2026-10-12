@@ -15,7 +15,7 @@ being asked. 85 is the one value that cannot have been chosen deliberately in pr
 something higher, because nothing higher was reachable.
 
 It does not by itself make a panel louder: measured the same day, the box's volume had never
-reached Lydian's panel at all (`levels` empty at 941 s of uptime), which is a separate fault
+reached Tamsin's panel at all (`levels` empty at 941 s of uptime), which is a separate fault
 instrumented in the same release.
 
 Revision ID: 0217
