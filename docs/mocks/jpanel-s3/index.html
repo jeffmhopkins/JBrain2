@@ -87,6 +87,7 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
 .log .bug { color: var(--red); font-weight: 600; }
 .log .post, .log .talk { color: var(--blue); }
 .log .http { color: var(--muted); }
+.log .note, .log .voice { color: var(--amber); font-size: inherit; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px; }
 .legend span { font-family: var(--font-mono); font-size: 11px; padding: 2px 6px; border-radius: 4px; color: #fff; }
 .err { color: var(--red); font-weight: 600; }
@@ -143,8 +144,11 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
           <button id="v-sister">“Tell my sister”</button>
           <button id="v-dad">“Tell Dad”</button>
         </div>
+        <label>When the microphone opens
+          <select id="autotalk"><option value="2500" selected>she talks for 2.5 s</option><option value="6000">she talks for 6 s</option><option value="0">she says nothing</option></select>
+        </label>
         <button class="hold" id="talking" aria-pressed="false">Hold while she talks</button>
-        <p class="note">The voice detector hears her only while this is held. Let go, and 1.8 s of quiet sends the message.</p>
+        <p class="note">The panel sends a message after 1.8 s of quiet. If it hears nothing in the first 4 s, it drops the recording and shows DROPPED. Hold the button (or Space) to talk for longer.</p>
         <label>Recogniser started <input type="checkbox" id="speech-ok" checked></label>
       </div>
 
@@ -314,6 +318,7 @@ $('transcribe').onchange = (e) => panel.set(KNOB.TRANSCRIBE_MS, Number(e.target.
 $('upload').onchange = (e) => panel.set(KNOB.UPLOAD_BPS, Number(e.target.value));
 $('speech-ok').onchange = (e) => panel.set(KNOB.SPEECH_OK, e.target.checked ? 1 : 0);
 $('talk-outcome').onchange = (e) => panel.set(KNOB.TALK_OUTCOME, Number(e.target.value));
+$('autotalk').onchange = (e) => panel.set(KNOB.AUTOTALK_MS, Number(e.target.value));
 $('talk-ms').onchange = (e) => panel.set(KNOB.TALK_MS, Number(e.target.value));
 $('v-wake').onclick = () => panel.voice(VOICE.WAKE);
 $('v-stop').onclick = () => panel.voice(VOICE.STOP);
@@ -326,8 +331,10 @@ const hear = (on) => { panel.hearing(on); talking.setAttribute('aria-pressed', S
 talking.addEventListener('pointerdown', () => hear(true));
 talking.addEventListener('pointerup', () => hear(false));
 talking.addEventListener('pointerleave', () => hear(false));
-talking.addEventListener('keydown', (e) => { if (e.key === ' ' && !e.repeat) { hear(true); e.preventDefault(); } });
-talking.addEventListener('keyup', (e) => { if (e.key === ' ') hear(false); });
+// Space anywhere but a form field, so a hand can stay on the mouse over the glass.
+const typing = (e) => /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
+document.addEventListener('keydown', (e) => { if (e.key === ' ' && !e.repeat && !typing(e)) { hear(true); e.preventDefault(); } });
+document.addEventListener('keyup', (e) => { if (e.key === ' ' && !typing(e)) { hear(false); e.preventDefault(); } });
 
 document.querySelectorAll('.seg').forEach((b) => b.onclick = () => {
   speed = Number(b.dataset.speed);
@@ -369,11 +376,15 @@ function readout() {
 }
 
 // ── the loop: the panel's clock follows the wall clock ──
-let last = performance.now(), lastRead = 0;
+let last = performance.now(), lastRead = 0, target = 0;
 function tick(t) {
   const dt = Math.min(t - last, 250);
   last = t;
-  if (!paused) panel.runTo(panel.now + dt * speed);
+  if (!paused) {
+    // A target of its own, so the panel's 40 ms steps cannot ratchet it ahead of the wall clock.
+    target = Math.max(target, panel.now - 250) + dt * speed;
+    panel.runTo(target);
+  }
   panel.paint(img.data);
   fb.putImageData(img, 0, 0);
   if (showTargets) drawTargets();

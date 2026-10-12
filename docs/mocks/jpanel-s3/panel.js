@@ -8,7 +8,7 @@
 export const VOICE = { WAKE: 1, STOP: 2, SEND_SISTER: 3, SEND_DAD: 4 };
 export const KNOB = {
   OFFLINE: 0, LATENCY: 1, UPLOAD_BPS: 2, TRANSCRIBE_MS: 3, NEXT_SEND_STATUS: 4,
-  SPEECH_OK: 5, TALK_OUTCOME: 6, TALK_MS: 7, NEW_BOX: 8,
+  SPEECH_OK: 5, TALK_OUTCOME: 6, TALK_MS: 7, NEW_BOX: 8, AUTOTALK_MS: 9,
 };
 
 export async function createPanel(bytes, hooks = {}) {
@@ -28,13 +28,13 @@ export async function createPanel(bytes, hooks = {}) {
 
   const imports = {
     env: {
-      js_frame(step) {
+      js_frame(now) {
         if (rewinding) {
           ex.asyncify_stop_rewind();
           rewinding = false;
           return;
         }
-        simMs += step;
+        simMs = now;
         if (hooks.onFrame) hooks.onFrame(simMs);
         if (simMs >= stopAt) {
           const at = ex.sim_async();
@@ -73,7 +73,11 @@ export async function createPanel(bytes, hooks = {}) {
   const W = ex.sim_w();
   const H = ex.sim_h();
 
+  // THE PANEL'S CLOCK IS THE ONLY CLOCK. It moves in 40 ms frames, so a call for 16 ms more
+  // used to run a whole frame every screen refresh — 2.5x real time at 60 Hz. A target the panel
+  // has already reached now runs nothing, and the next one picks up where it left off.
   function runTo(t) {
+    if (started && simMs >= t) return;
     stopAt = t;
     if (!started) {
       started = true;

@@ -51,8 +51,10 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
 
 - the render frame's input sampling and the executor (copies of `display.c`'s);
 - the pet's talk turn (a timer standing in for `talk.c`'s request);
-- the recogniser (the voice buttons stand in for the phrases, and "Hold while she talks"
-  stands in for the voice detector);
+- the recogniser (the voice buttons stand in for the phrases). The voice detector hears her
+  for a set time each time a microphone opens (2.5 s by default), and while "Hold while she
+  talks" or Space is held. With "she says nothing", a recording is dropped after 4 s, as on
+  the glass;
 - the screen's dim and dark stages.
 
 It does not model orientation, calibration, the maintenance gestures, voice actions or colours.

@@ -15,7 +15,7 @@
  *
  * TIME IS THE SCRIPTED BOX'S CLOCK. Everything — the engine's waits, the box's latency, the
  * render frame — advances through `advance()`, which ticks the arbiter and calls the frame every
- * 40 ms of fake time. The frame calls `js_frame`, which Asyncify turns into a suspension: the page
+ * 40 ms of fake time. The frame calls `js_frame(now)`, which Asyncify turns into a suspension: the page
  * resumes it when the wall clock has caught up, so the panel runs at real speed (or faster). */
 
 #define JP_E2E 1
@@ -47,7 +47,7 @@ static int16_t mock_voice(bool dad, uint32_t i);
 #define EXPORT(name) __attribute__((export_name(#name)))
 #define IMPORT(name) __attribute__((import_module("env"), import_name(#name)))
 
-IMPORT(js_frame) void js_frame(uint32_t step_ms);
+IMPORT(js_frame) void js_frame(uint32_t now_ms);
 IMPORT(js_audio) void js_audio(const int16_t *pcm, uint32_t n);
 IMPORT(js_event) void js_event(const char *line);
 
@@ -71,6 +71,11 @@ static uint8_t s_async[64 * 1024] __attribute__((aligned(8)));
 /* ── what the page sets ────────────────────────────────────────────────────────────────────── */
 
 static bool p_down_edge, p_up_edge, p_finger, p_hearing;
+/* She talks for this long each time a microphone opens, then goes quiet; 0 leaves it to the
+   page's hold button. On by default: a recording that hears nothing for RECORD_LEAD_MS is
+   dropped, which is right on the glass and baffling on a bench nobody told. */
+static uint32_t p_autotalk_ms = 2500;
+static uint32_t r_frame_at;
 static int p_x = -1, p_y = -1, p_down_x = -1, p_down_y = -1;
 static bool p_swipe_latched;
 static sm_voice_t p_voice;
@@ -216,6 +221,7 @@ static bool execute(uint32_t now)
             } else {
                 r_capture = true;
                 r_capture_at = now;
+                if (p_autotalk_ms) say("voice", "she talks for %u ms", (unsigned)p_autotalk_ms);
                 say("fx", "microphone open");
             }
             break;
@@ -330,6 +336,12 @@ static void sweep_box(void)
 
 static void frame(void)
 {
+    /* ONE RENDER FRAME PER 40 ms OF PANEL TIME, as `display.c` runs. The box's waits advance the
+       clock in steps that are not multiples of 40, and a frame on each of them ran every per-frame
+       animation (the bob, the flinch, the eyes' easing) up to twice as fast. Presses wait in their
+       latches for the next frame, as they do on the glass. */
+    if (r_frame_at != 0 && !jp_due(g_now, r_frame_at + 40)) return;
+    r_frame_at = g_now;
     const uint32_t now = g_now;
     talk_tick();
     sweep_box();
@@ -389,7 +401,7 @@ static void frame(void)
     s_in.over_y0 = 0;
     s_in.over_h = FACE_H;
     s_in.wake = wake;
-    s_in.hearing = p_hearing && r_capture;
+    s_in.hearing = r_capture && (p_hearing || (p_autotalk_ms && now - r_capture_at < p_autotalk_ms));
     s_in.capture_ms = r_capture ? (int)(now - r_capture_at) : 0;
     s_in.leased = stream_leased(&g_st);
     s_in.net = r_net;
@@ -406,6 +418,13 @@ static void frame(void)
     if (s_out.say != NULL) {
         caption_say(&r_cap, s_out.say);
         say("say", "%s", s_out.say);
+    }
+    if ((r_mode_was == SM_RECORD || r_mode_was == SM_LISTEN) && s_sm.mode == SM_PET && !s_in.hearing &&
+        r_capture && !s_out.view.sending) {
+        bool posted = false;
+        for (int i = 0; i < s_out.n; i++) posted |= s_out.fx[i].kind == SM_FX_POST || s_out.fx[i].kind == SM_FX_SEND_TALK;
+        if (!posted) say("note", "nothing was heard, so it was dropped (the panel waits %d s for a first word)",
+                         (r_mode_was == SM_RECORD ? RECORD_LEAD_MS : LISTEN_LEAD_MS) / 1000);
     }
     if (s_sm.mode != r_mode_was) {
         say("mode", "%s -> %s", MODE_NAMES[r_mode_was], MODE_NAMES[s_sm.mode]);
@@ -441,7 +460,7 @@ static void frame(void)
     const sm_view_t *view = &s_out.view;
     if (r_sleep == SCREEN_DARK) {
         memset(s_fb, 0, sizeof(s_fb));
-        js_frame(40);
+        js_frame(g_now);
         return;
     }
     float p = 0.0f;
@@ -502,7 +521,7 @@ static void frame(void)
         .result_colour = r_result_colour,
     };
     overlay_draw(s_fb, view, &oc);
-    js_frame(40);
+    js_frame(g_now);
 }
 
 /* ── the page's entry points ──────────────────────────────────────────────────────────────── */
@@ -596,6 +615,7 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 6: p_talk_outcome = value; break;
     case 7: p_talk_ms = (uint32_t)value; break;
     case 8: g_mode = value ? BOX_NEW : BOX_TODAY; break;
+    case 9: p_autotalk_ms = (uint32_t)value; break;
     }
 }
 
