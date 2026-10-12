@@ -10,6 +10,7 @@ import asyncio
 from collections.abc import Iterator
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.requests import HTTPConnection
@@ -553,22 +554,39 @@ def test_a_cookie_reading_route_beside_the_feed_is_still_guarded(
 
 
 def test_the_guards_cookie_free_routes_never_read_the_cookie() -> None:
-    # Coupled to the route matrix: a path the guard waves through must be one the matrix
-    # has classified as authenticating by something other than the session cookie.
-    exempt_gets = [path for (method, path) in COOKIE_EXEMPT if method == "GET"]
-    for probe in (
-        "/api/feed/appointments.ics",
-        "/api/research-share/t",
-        "/api/mc-share/t/map/info",
-    ):
-        assert cookie_free_get(probe)
-        assert any(_matches(template, probe) for template in exempt_gets), probe
+    # Coupled to the route matrix over every real route: a GET the guard waves through
+    # must be one the matrix has classified as authenticating by something other than
+    # the session cookie, so a new cookie-reading GET under a share prefix fails here.
+    app = create_app(Settings(secure_cookies=False, database_url=_DB))
+    waved = {
+        route.path
+        for route in app.routes
+        if isinstance(route, APIRoute) and "GET" in route.methods and cookie_free_get(route.path)
+    }
+    assert waved, "no route matched; the prefixes have drifted from the routers"
+    exempt_gets = {path for (method, path) in COOKIE_EXEMPT if method == "GET"}
+    assert waved <= exempt_gets, sorted(waved - exempt_gets)
     assert not cookie_free_get("/api/feed/appointments")
     assert not cookie_free_get("/api/feed/appointments/rotate")
 
 
-def _matches(template: str, path: str) -> bool:
-    parts, probe = template.strip("/").split("/"), path.strip("/").split("/")
-    return len(parts) == len(probe) and all(
-        p.startswith("{") or p == q for p, q in zip(parts, probe, strict=True)
+def test_a_listed_dashboard_origin_still_cannot_open_a_shell(repo: FakeAuthRepo) -> None:
+    settings = Settings(
+        secure_cookies=False, database_url=_DB, dashboard_allowed_origins="https://dash.example"
     )
+    app = create_app(settings)
+    with TestClient(app) as c:
+        app.state.auth_repo = repo
+        token = _owner_token(repo)
+        headers = {
+            **_cookie(token),
+            "origin": "https://dash.example",
+            "sec-fetch-site": "same-site",
+        }
+        for path in ("/api/jcode/sessions/abc/terminal", "/api/jlaunch/jobs/abc/terminal"):
+            with (
+                pytest.raises(WebSocketDisconnect) as exc,
+                c.websocket_connect(path, headers=headers),
+            ):
+                pass
+            assert exc.value.code == 4403, path

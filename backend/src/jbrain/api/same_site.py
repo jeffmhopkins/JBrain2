@@ -113,6 +113,10 @@ _COOKIE_FREE_GET_PATHS = frozenset({"/api/feed/appointments.ics"})
 _COOKIE_FREE_GET_PREFIXES = ("/api/research-share/", "/api/jlaunch-share/", "/api/mc-share/")
 
 
+# The WebSocket feeds a DASHBOARD_ALLOWED_ORIGINS origin may open.
+DASHBOARD_FEEDS = frozenset({"/api/locations/live"})
+
+
 def cookie_free_get(path: str) -> bool:
     return path in _COOKIE_FREE_GET_PATHS or path.startswith(_COOKIE_FREE_GET_PREFIXES)
 
@@ -141,9 +145,14 @@ class SameSiteGuard:
         if method in ("GET", "HEAD") and cookie_free_get(scope["path"]):
             await self.app(scope, receive, send)
             return
-        # An origin the owner listed in DASHBOARD_ALLOWED_ORIGINS is trusted for the
-        # WebSocket feeds by name; `origin_allowed` then applies the same list at the route.
-        if is_ws and headers.get("origin") in settings.allowed_ws_origins:
+        # DASHBOARD_ALLOWED_ORIGINS names the origins the owner trusts with the live
+        # location feed, and nothing else: the shells (jcode/jlaunch terminals) also run
+        # `origin_allowed`, so the guard is what keeps a listed origin off them.
+        if (
+            is_ws
+            and scope["path"] in DASHBOARD_FEEDS
+            and headers.get("origin") in settings.allowed_ws_origins
+        ):
             await self.app(scope, receive, send)
             return
         if refusal_reason(headers, method, scope["path"]) is not None:
