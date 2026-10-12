@@ -59,6 +59,13 @@ async def _intake_session(principal: PrincipalDep, repo: IntakeRepoDep) -> Intak
     return state
 
 
+async def _intake_kind(principal: PrincipalDep) -> None:
+    """The kind check alone, as a route dependency: it runs before the body is validated,
+    so any other cookie is a 403 rather than a 422 that tells it the route's schema."""
+    if principal.kind != "intake_link":
+        raise HTTPException(status_code=403, detail="not an intake session")
+
+
 def _owner_ctx(principal_id: str) -> SessionContext:
     # Full owner (owner_scoped=False): is_full_owner() is true, so the management
     # routes see every link/session/submission.
@@ -427,7 +434,7 @@ def _draft_from_transcript(transcript: list) -> dict:
     return {"summary": ""}
 
 
-@router.post("/intake/chat")
+@router.post("/intake/chat", dependencies=[Depends(_intake_kind)])
 async def intake_chat(
     body: ChatTurnRequest,
     request: Request,
@@ -506,7 +513,7 @@ async def intake_chat(
     )
 
 
-@router.post("/intake/confirm", status_code=201)
+@router.post("/intake/confirm", status_code=201, dependencies=[Depends(_intake_kind)])
 async def intake_confirm(
     body: ConfirmRequest, principal: PrincipalDep, repo: IntakeRepoDep
 ) -> ConfirmOut:

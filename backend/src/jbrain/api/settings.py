@@ -11,7 +11,7 @@ from typing import Annotated, Literal, cast
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from jbrain.api.deps import PrincipalDep
+from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.llm import local_catalog
 from jbrain.minecraft.sessions import check_gamertag
@@ -50,7 +50,9 @@ from jbrain.settings_store import (
     is_valid_timezone,
 )
 
-router = APIRouter()
+# Owner-only at the router, so a route added here cannot admit a member, share or intake
+# cookie by being written against bare PrincipalDep (tests/unit/test_route_auth_matrix.py).
+router = APIRouter(dependencies=[Depends(owner_only)])
 
 
 def get_settings_store(request: Request) -> SqlSettingsStore:

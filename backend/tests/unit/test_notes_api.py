@@ -13,6 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jbrain.auth import keys
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
@@ -27,7 +28,7 @@ from jbrain.notes.service import (
     UnknownDomain,
 )
 from jbrain.storage import FsBlobStore
-from tests.unit.fakes import FakeAuthRepo
+from tests.unit.fakes import FakeAuthRepo, FakePrincipal
 
 KNOWN_DOMAINS = {"general", "health", "finance", "location"}
 
@@ -396,6 +397,44 @@ def test_attachment_to_missing_note_404(
     assert resp.status_code == 404
 
 
+def _files(root: Path) -> set[Path]:
+    return {p for p in root.rglob("*") if p.is_file()}
+
+
+def test_an_upload_to_an_invisible_note_stores_no_blob(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue], tmp_path: Path
+) -> None:
+    # The note is resolved before the blob is written; a refused upload left the bytes
+    # orphaned on disk.
+    c, _, _ = client
+    before = _files(tmp_path)
+    resp = c.post(
+        f"/api/notes/{uuid.uuid4()}/attachments",
+        files={"file": ("x.txt", b"never stored", "text/plain")},
+    )
+    assert resp.status_code == 404
+    assert _files(tmp_path) == before
+
+
+@pytest.mark.parametrize("kind", ["device_key", "jcode_share_link", "intake_link"])
+def test_a_non_owner_session_cannot_upload_and_stores_no_blob(
+    client: tuple[TestClient, FakeNotesRepo, FakeJobQueue], tmp_path: Path, kind: str
+) -> None:
+    c, _, _ = client
+    note = c.post("/api/notes", json={"client_id": f"up-{kind}", "body": "x"}).json()
+    before = _files(tmp_path)
+    auth_repo = cast(FakeAuthRepo, cast(FastAPI, c.app).state.auth_repo)
+    auth_repo.principals.append(FakePrincipal(id="p-x", kind=kind, key_hash="k", label="x"))
+    asyncio.run(auth_repo.create_session("p-x", keys.hash_token("tok-x"), "x"))
+    resp = c.post(
+        f"/api/notes/{note['id']}/attachments",
+        files={"file": ("x.txt", b"never stored", "text/plain")},
+        headers={"cookie": "jbrain_session=tok-x"},
+    )
+    assert resp.status_code == 403
+    assert _files(tmp_path) == before
+
+
 def test_remove_attachment_reingests_note(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
@@ -637,9 +676,12 @@ def test_note_out_strips_location_for_non_owner() -> None:
     assert scoped_view.accuracy_m is None
 
 
-def test_non_owner_responses_omit_note_location(
+def test_non_owner_principals_never_reach_a_note_read(
     client: tuple[TestClient, FakeNotesRepo, FakeJobQueue],
 ) -> None:
+    """Note GPS rides every domain, so the serializer strips it for non-owners
+    (`test_note_out_strips_location_for_non_owner`); the router's owner gate now refuses
+    such a principal before any read path runs at all."""
     from jbrain.api.deps import current_principal
 
     c, _, _ = client
@@ -649,16 +691,13 @@ def test_non_owner_responses_omit_note_location(
     ).json()
     assert created["latitude"] == 47.6  # owner sees it on write
 
-    # A non-owner capability principal never receives coordinates on any read path.
     app = cast(FastAPI, c.app)
     app.dependency_overrides[current_principal] = lambda: auth_service.PrincipalInfo(
         id="cap-1", kind="capability_token", label="scoped"
     )
     try:
-        one = c.get(f"/api/notes/{created['id']}").json()
-        assert one["latitude"] is None and one["longitude"] is None and one["accuracy_m"] is None
-        listed = c.get("/api/notes").json()["notes"][0]
-        assert listed["latitude"] is None and listed["longitude"] is None
+        assert c.get(f"/api/notes/{created['id']}").status_code == 403
+        assert c.get("/api/notes").status_code == 403
     finally:
         app.dependency_overrides.clear()
 
