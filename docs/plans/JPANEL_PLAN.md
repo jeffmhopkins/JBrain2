@@ -1,6 +1,10 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** In progress · **Last verified:** 2026-09-29 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> — **voice post's panel side was rewritten in firmware 0.4.0** after the 2026-10 adversarial
+> review (`JPANEL_MESSAGING_FIXES_PLAN.md`): the interaction below is now one state machine
+> (`panel_sm.c`), the engine one host-tested core and the speaker one arbiter. What this plan says
+> a child sees still holds; where it names `ui.c` or `display.c`'s logic, read `panel_sm.c`.
 > — W2 and W4 shipped together in #1498; W3 shipped across #1504/#1508/#1511/#1513 and is
 > **confirmed working on a panel** (voice post both ways, the pop-up, the queue).
 >

@@ -1,6 +1,11 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** Scheduled · **Last verified:** 2026-10-12 · **Waves:** FW◻️ (firmware 0.4.0, §15) W1◻️ W2◻️ W3◻️ P1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0, §15) W1◻️ W2◻️ W3◻️ P1◻️
+>
+> **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
+> until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs
+> measure `S`, `T` and `P` (§6a), and the first reports' `int_min` and `speech_ok` must clear it
+> (§15 step 5). F4's visuals ship as placeholders. What remains is listed in §15 "Status".
 
 Voice post between the twins' panels and the owner's PWA works on the happy path. It fails on
 the paths a four-year-old actually takes: pressing again while it loads, walking away
@@ -422,6 +427,12 @@ API, it records:
 
 The report keeps `int_min` (0.3.39 already sends it) and gains a `speech_ok` flag, with
 `TelemetryIn` and the field-scan test updated in F0's PR.
+
+**0.4.0 ships a provisional floor of 96 KB, before the measurement (set at integration,
+2026-10-12).** It sits above the 70,535 B free at which 0.3.39's PHY failed and below the
+~119,000 B the `mem: wifi` line reads with the socket off, so a healthy panel starts speech and a
+starved one boots deaf (`speech_ok: false`) instead of looping. The measurement below still decides
+the floor; 0.4.x replaces 96 KB with `S + T + P` once the boot logs are in.
 
 **Only then, `SPEECH_MIN_INTERNAL = S + T + P`.** The plan records the arithmetic. It must sit
 **below** the measured pre-speech free with the socket off (~119 KB after Wi-Fi), so a healthy
@@ -2453,6 +2464,44 @@ test`) and with the ESP32-S3 toolchain:
 - `audio.c`'s `s_play`, ring and cue mixing (into `stream.c`);
 - `host/iface_check.c`;
 - the F2 characterisation tests (`test_f2_*`), which only guarded the wrapper layer.
+
+### Status (2026-10-12, integration)
+
+**Landed in 0.4.0 (FW 🟡, pending hardware):** A (link, socket off, deadlines), B (`stream.c`,
+`audio.c` cut to I/O), C (`jpanel_core.c`), D (`panel_sm.c`; `ui.c`/`ui.h`/`ui_tests.c` deleted),
+E (integration):
+
+- `display.c` samples, executes the machine's effects in order (the stop word hoisted before its
+  silence, the gen stamped on each PLAY, lease 1 before a SEND's post, lease 2 before
+  `talk_send`, a refused capture or post reported back as the next frame's input) and draws
+  `sm_view_t`; its duplicated state is deleted and `check_no_logic_in_display` gates it.
+- `talk.c` plays through the reply slot with a changing id, waits for `reply_done` before reusing
+  its buffer, and releases lease 2 when its upload returns.
+- `main.c`: `jpanel_start(&cfg, stream)`; the report's `msg_*` from the engine's counters,
+  `speech_ok`, and the flat `jp` object after `pmu_history`; both watchdogs (§7.5d) on a 1 s
+  timer with the RTC cap; `ota.c`'s `ota_running`. `test_update_check_precedes_task_starts` pins
+  the update-first order.
+- `audio_compat.c`, the transitional block of `audio.h` and `host/iface_check.c` are deleted.
+- `run_e2e_tests` drives the machine against the real engine and arbiter, including
+  `test_selection_held_while_stop_outcome_pending`. Its first run found a seam bug the per-module
+  suites could not: `stream_facts` read `stream_live` off the arbiter's last tick, so a short
+  body landing whole between two ticks was classified heard before it sounded. It now reads the
+  ring itself.
+- `firmware.yml` gates static DIRAM (`.data` + `.bss`) at 0.3.39's 97,144 B + 1,024 B; 0.4.0
+  measures 93,536 B.
+- Backend: `TelemetryIn.jp` and `speech_ok`, `test_jp_keys_from_main_c_validate_against_telemetry_in`,
+  the payload-fits test extended with a worst-case `jp`, and the census rows that read
+  `display.c`/`ui.h` retargeted to `panel_sm.{c,h}`.
+
+**Remaining:**
+
+- **Hardware (FW → ✅):** read the boot log's `mem: pre-speech`/`post-speech` and a send's low-water
+  through the debug API, record `S`, `T`, `P` in §6a and set the floor; confirm `speech_ok` and
+  `int_min` on both panels.
+- **F4:** the mocks in `docs/mocks/jpanel-panel-messaging/`, then the overlay, pips and contours
+  replacing 0.4.0's placeholders (`SENDING`, `SENT`/`NOBODY`/`NOT SENT`/`DROPPED`; `CUE_NOBODY`
+  is still sounded as `CUE_OOPS`) — 0.4.1.
+- **W1–W3, P1** as §12 orders them; 0.4.0 already degrades to today's box as §6 says.
 
 ---
 
