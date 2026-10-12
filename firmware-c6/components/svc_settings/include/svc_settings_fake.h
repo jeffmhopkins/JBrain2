@@ -1,6 +1,6 @@
-/* In-memory settings and provisioning: the sim's, the host suite's, and the device's until C3
- * reads NVS. The provisioning values are fakes shaped like the real ones, secrets included, so
- * the redaction test has something real to catch. */
+/* In-memory settings and provisioning: the sim's and the host suite's (the device's is
+ * esp/svc_settings_nvs.c). The provisioning values are fakes shaped like the real ones, secrets
+ * included, so the redaction test has something real to catch. */
 #pragma once
 
 #define SETTINGS_FAKE_PASS "fake-wifi-passphrase"

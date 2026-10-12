@@ -1,6 +1,6 @@
 /* What each Settings card says, apart from drawing it. Pure C, host-tested. The clamps
  * themselves are svc_settings' (the one authority for every writer); this is the glass's half:
- * the slider's step, and which control is live when. */
+ * the slider's step, which control is live when, and the copy. */
 #pragma once
 
 #include <stdbool.h>
@@ -16,15 +16,26 @@
 /* The slider's raw value to a setting: snapped to the step, never below the floor. */
 int32_t settings_brightness_from_slider(int32_t raw);
 
+/* Disconnect takes two taps no more than this apart: going offline stops messages, Jerv and
+ * updates, so one brush of a finger must not do it (owner, 2026-10-11). */
+#define WIFI_ARM_MS 3000
+
+typedef enum { WIFI_TAP_NONE, WIFI_TAP_ARM, WIFI_TAP_DISCONNECT, WIFI_TAP_CONNECT } wifi_tap_t;
+/* `armed` with `armed_ms` is the first tap; it lapses after WIFI_ARM_MS. */
+wifi_tap_t settings_wifi_tap(net_state_t state, bool armed, uint32_t armed_ms, uint32_t now_ms);
+bool settings_wifi_armed(net_state_t state, bool armed, uint32_t armed_ms, uint32_t now_ms);
+
+typedef enum { WIFI_BTN_SECONDARY, WIFI_BTN_PRIMARY, WIFI_BTN_ARMED } wifi_btn_t;
+
 typedef struct {
     const char *state;  /* "Connected" */
     const char *button; /* "Disconnect" */
     bool button_live;
-    bool primary;       /* Connect is the action; Disconnect is secondary */
+    wifi_btn_t kind;
     const char *note;
     uint8_t bars;       /* 0-4 */
 } settings_wifi_t;
-void settings_wifi(const net_info_t *n, settings_wifi_t *out);
+void settings_wifi(const net_info_t *n, bool armed, settings_wifi_t *out);
 
 typedef struct {
     const char *note;
@@ -49,3 +60,7 @@ void settings_power(const power_info_t *p, settings_power_t *out);
 void settings_notif_note(bool accept, bool quiet, uint16_t from, uint16_t to, char *buf, size_t len);
 /* With messages refused, the other two switches are moot and are drawn dead. */
 bool settings_notif_row_live(int row, bool accept);
+
+/* The Auto-rotate row's line. The switch is stored now; turning the content arrives with the
+ * auto-rotate wave (plan §2b), and until then the line says so. */
+const char *settings_rotate_note(bool on);

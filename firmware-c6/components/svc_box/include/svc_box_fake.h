@@ -1,4 +1,4 @@
-/* In-memory box client until main/ota.c is wrapped as this service (C2). */
+/* In-memory box client: the sim's and the host suite's (the device's is esp/svc_box_esp.c). */
 #pragma once
 
 #include "svc_box.h"

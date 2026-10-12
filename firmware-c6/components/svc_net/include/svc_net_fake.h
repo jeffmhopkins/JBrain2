@@ -1,5 +1,5 @@
-/* In-memory Wi-Fi until main/net.c is wrapped as this service (C2). Connect completes when the
- * sim says so, which is what lets "Connecting" be rendered at all. */
+/* In-memory Wi-Fi: the sim's and the host suite's (the device's is esp/svc_net_esp.c). Connect
+ * completes when the sim says so, which is what lets "Connecting" be rendered at all. */
 #pragma once
 
 #include "svc_net.h"

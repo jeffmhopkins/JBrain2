@@ -2,10 +2,12 @@
  * join, reach the box, mark itself good, report, and install what the box offers.
  *
  * 0.0.4 is the first image that drives the screen: the AXP2101 (svc_power), the buttons
- * (svc_buttons), the CO5300 under LVGL (svc_display) and the shell with every app over fake
- * services (ui_task.c). 0.0.6 adds the CST9220 (svc_touch). ALL OF IT STARTS AFTER THE ROLLBACK GATE, and the boot after a panic or a
- * watchdog leaves the display off (disp_guard.c), so no fault in the new code can stop this
- * loop reaching the box and taking the image that fixes it (README "What 0.0.4 adds").
+ * (svc_buttons), the CO5300 under LVGL (svc_display) and the shell (ui_task.c). 0.0.6 adds the
+ * CST9220 (svc_touch); 0.0.8 the saved settings (svc_settings), the PCF85063 and the box's clock
+ * (svc_rtc), and the real Wi-Fi and Firmware cards (svc_net, svc_box). ALL OF IT STARTS AFTER
+ * THE ROLLBACK GATE, and the boot after a panic or a watchdog leaves the display off
+ * (disp_guard.c), so no fault in the new code can stop this loop reaching the box and taking the
+ * image that fixes it (README "What 0.0.4 adds").
  */
 
 #include <inttypes.h>
@@ -27,9 +29,14 @@
 #include "net.h"
 #include "nvs_flash.h"
 #include "ota.h"
+#include "shell.h"
+#include "svc_box_drv.h"
 #include "svc_buttons.h"
 #include "svc_display_drv.h"
+#include "svc_net_drv.h"
 #include "svc_power_drv.h"
+#include "svc_rtc_drv.h"
+#include "svc_settings_drv.h"
 #include "svc_touch.h"
 #include "ui_task.h"
 
@@ -62,12 +69,23 @@ static uint32_t now_ms(void)
 static uint32_t s_box_ms;
 static bool s_box_ever;
 static unsigned s_relinks;
+static TaskHandle_t s_main;
+/* The box's clock is applied only once svc_rtc has started, after the rollback gate. */
+static bool s_rtc_up;
+
+/* What the UI hands this loop (Update now, Connect): a notification, nothing more. */
+static void wake_main(void)
+{
+    if (s_main) xTaskNotifyGive(s_main);
+}
 
 static bool fetch_manifest(const cfg_t *cfg, ota_manifest_t *m)
 {
     if (ota_fetch_manifest(cfg, m) != ESP_OK) return false;
     s_box_ms = now_ms();
     s_box_ever = true;
+    svc_box_reached();
+    if (s_rtc_up && m->date) svc_rtc_box_time(m->date);
     return true;
 }
 
@@ -113,10 +131,11 @@ static bool report(const cfg_t *cfg)
     /* Bounded on its own, so however long a service's tokens grow the body still fits and the
        report still goes: a truncated note is a smaller loss than no heartbeat. Static, as is
        the body, because this task then runs a TLS handshake on the same 8 KB stack. */
-    static char note[720], part[256];
+    static char note[960], part[256];
     size_t used = 0;
-    void (*const parts[])(char *, size_t) = {svc_display_note, ui_task_note, svc_power_note,
-                                             svc_buttons_note, svc_touch_note};
+    void (*const parts[])(char *, size_t) = {svc_display_note, ui_task_note,   svc_power_note,
+                                             svc_buttons_note, svc_touch_note, svc_settings_note,
+                                             svc_rtc_note,     shell_key_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -124,7 +143,7 @@ static bool report(const cfg_t *cfg)
         if (k > 0) used += (size_t)k < sizeof note - used ? (size_t)k : sizeof note - used - 1;
     }
 
-    static char body[1280];
+    static char body[1536];
     const int n = snprintf(
         body, sizeof(body),
         "{\"version\":\"%s\",\"uptime_ms\":%" PRIu32 ",\"reset_reason\":\"%s\","
@@ -151,6 +170,18 @@ static bool report(const cfg_t *cfg)
     return ota_report(cfg, body) == ESP_OK;
 }
 
+static void ota_progress(uint8_t pct)
+{
+    svc_box_set_phase(FW_DOWNLOADING, NULL, pct, NULL);
+}
+
+static void ota_restarting(void)
+{
+    svc_box_set_phase(FW_RESTARTING, NULL, 100, NULL);
+}
+
+static const ota_hooks_t OTA_HOOKS = {ota_progress, ota_restarting};
+
 /* True when an install was attempted, which on return means it failed. */
 static bool maybe_install(const cfg_t *cfg, const ota_manifest_t *m, uint32_t *last_try_ms)
 {
@@ -162,8 +193,33 @@ static bool maybe_install(const cfg_t *cfg, const ota_manifest_t *m, uint32_t *l
     if (*last_try_ms != 0 && (uint32_t)(now - *last_try_ms) < OTA_RETRY_BACKOFF_MS) return false;
     ESP_LOGI(TAG, "update offered: %s -> %s", running, m->version);
     *last_try_ms = now == 0 ? 1 : now;
-    ota_apply(cfg, m->url); /* reboots on success */
+    svc_box_set_phase(FW_DOWNLOADING, m->version, 0, "");
+    ota_apply(cfg, m->url, &OTA_HOOKS); /* reboots on success */
+    const char *err = "";
+    ota_apply_faults(&err, NULL);
+    svc_box_set_phase(FW_FAILED, NULL, 0, err);
     return true;
+}
+
+/* Update now: the manifest was fetched on this pass, so its answer is the check's. The owner
+   asked, so the retry backoff a failed install earned does not apply. */
+static bool update_now(const cfg_t *cfg, const ota_manifest_t *m, bool reachable,
+                       uint32_t *last_try_ms)
+{
+    if (!reachable) {
+        svc_box_set_phase(FW_FAILED, NULL, 0, "box not reached");
+        return false;
+    }
+    if (strcmp(m->version, ota_running_version()) == 0) {
+        svc_box_set_phase(FW_UPTODATE, NULL, 0, NULL);
+        return false;
+    }
+    if (ota_refused(m->version)) {
+        svc_box_set_phase(FW_FAILED, NULL, 0, "wrong-board");
+        return false;
+    }
+    *last_try_ms = 0;
+    return maybe_install(cfg, m, last_try_ms);
 }
 
 /* disp_guard.c is pure and host-tested with its own copy of these numbers. */
@@ -179,9 +235,21 @@ _Static_assert((int)DG_RST_PANIC == (int)ESP_RST_PANIC &&
 
 /* After the rollback gate, never before it: this image has already proved it can reach the box
    and take the next one, whatever the new code below does. */
-static void start_panel(void)
+static void start_panel(const cfg_t *cfg)
 {
     dbg_sys_init();
+    /* Read on every boot, a fault boot included: an NVS read cannot leave anything changed, and
+       a failed one is the defaults. The pairs point into `cfg`, which app_main never frees. */
+    static settings_kv_t prov[7];
+    prov[0] = (settings_kv_t){"ssid", cfg->ssid};
+    prov[1] = (settings_kv_t){"pass", cfg->pass};
+    prov[2] = (settings_kv_t){"api", cfg->api};
+    prov[3] = (settings_kv_t){"token", cfg->token};
+    prov[4] = (settings_kv_t){"ca", cfg->ca};
+    prov[5] = (settings_kv_t){"name", cfg->name};
+    prov[6] = (settings_kv_t){"role", cfg->role};
+    svc_settings_provisioning(prov, 7);
+    svc_settings_init();
     const int reset = (int)esp_reset_reason();
     const bool may_start = dg_may_start(reset);
     if (!may_start) {
@@ -193,6 +261,10 @@ static void start_panel(void)
        write is the one fault a rollback would not undo. */
     const esp_err_t pmu = svc_power_start(may_start, svc_buttons_pek);
     if (pmu != ESP_OK) ESP_LOGE(TAG, "PMIC: %s", esp_err_to_name(pmu));
+    /* The clock chip is read on a fault boot too: the time is what lets the box's logs line up
+       with what the panel did. */
+    svc_rtc_start();
+    s_rtc_up = true;
     svc_buttons_start(ui_task_button, xTaskGetCurrentTaskHandle());
     if (!may_start) return;
     ui_task_start(xTaskGetCurrentTaskHandle());
@@ -203,6 +275,11 @@ static void start_panel(void)
 void app_main(void)
 {
     ESP_LOGI(TAG, "jbrain jpanel (ESP32-C6), version %s", ota_running_version());
+    s_main = xTaskGetCurrentTaskHandle();
+    /* Two pointers each and nothing else before the gate: the Wi-Fi card's state is a store
+       from net.c's handler, and neither touches flash, a bus or another task. */
+    svc_net_start(wake_main);
+    svc_box_start(ota_running_version(), wake_main);
 
     esp_err_t err = nvs_flash_init();
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -232,13 +309,15 @@ void app_main(void)
     }
 
     ota_manifest_t manifest = {0};
-    bool reachable = false;
+    bool reachable = false, fresh = false;
     if (joined) {
         reachable = reach_box(&cfg, &manifest);
-        ota_confirm_health(reachable);
+        fresh = ota_confirm_health(reachable);
         if (!reachable) ESP_LOGE(TAG, "on Wi-Fi but the box did not answer");
     }
-    start_panel();
+    start_panel(&cfg);
+    if (fresh) svc_box_set_phase(FW_DONE, NULL, 0, NULL);
+    if (reachable && manifest.date) svc_rtc_box_time(manifest.date);
 
     uint32_t last_report_ms = 0;
     bool reported = false;
@@ -260,7 +339,10 @@ void app_main(void)
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(CHECK_PERIOD_MS));
         /* Both asked, both cleared: `|`, not `||`. */
         if (svc_buttons_take_dirty() | ui_task_take_dirty()) reported = false;
+        const bool asked = svc_box_take_update_request();
 
+        /* The owner's Disconnect holds until Connect or a restart: no re-join, no box. */
+        if (svc_net_user_off()) joined = false;
         if (joined && s_box_ever && (uint32_t)(now_ms() - s_box_ms) > LINK_SUSPECT_MS) {
             /* Never-reached is excluded: a wrong key or URL is not fixed by a re-join, and
                thrashing the radio at it only adds a second fault. */
@@ -269,10 +351,11 @@ void app_main(void)
             s_relinks++;
             joined = false;
         }
-        if (!joined) {
+        if (!joined && !svc_net_user_off()) {
             joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;
             if (joined) ESP_LOGI(TAG, "network recovered");
         }
         reachable = joined && fetch_manifest(&cfg, &manifest);
+        if (asked && update_now(&cfg, &manifest, reachable, &ota_last_try_ms)) reported = false;
     }
 }

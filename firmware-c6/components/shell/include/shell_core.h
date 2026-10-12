@@ -32,7 +32,9 @@ typedef enum {
     SH_ACT_STOP_ALARM,
     SH_ACT_GO_HOME,
     SH_ACT_PAGE_FIRST,
-    SH_ACT_HINT_TALK,      /* KEY on home: there is nobody to talk to yet */
+    SH_ACT_TALK_JERV,      /* KEY outside a conversation: the shell's own talk to Jerv */
+    SH_ACT_SEND_JERV,      /* its release: send, then open the Jerv thread */
+    SH_ACT_CANCEL_TALK,    /* BOOT during it */
     SH_ACT_WAKE,
     SH_ACT_DARK,
 } sh_act_t;
@@ -45,12 +47,16 @@ typedef struct {
 typedef struct {
     bool alarm_ringing;
     uint8_t notices;
+    bool notices_held; /* the open app keeps them as a badge: the clock face (plan §2) */
     bool app_open;
     uint8_t page;
     bool dark;
+    bool talking;      /* the shell's own talk to Jerv is up */
 } sh_facts_t;
 
-typedef enum { SH_KEY_FREE, SH_KEY_APP, SH_KEY_ALARM } sh_key_owner_t;
+/* SH_KEY_SHELL: the hold is the shell's talk to Jerv, so its release sends to Jerv whatever
+ * opened or closed in between. */
+typedef enum { SH_KEY_FREE, SH_KEY_APP, SH_KEY_ALARM, SH_KEY_SHELL } sh_key_owner_t;
 
 /* The only state the decisions need across calls. */
 typedef struct {
@@ -61,6 +67,9 @@ sh_overlay_t sh_top_overlay(const sh_state_t *st, const sh_facts_t *f);
 /* KEY_UP always goes where its KEY_DOWN went, whatever arrived in between: a hold whose
  * release is swallowed by a pop-up is a microphone left open. */
 sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b);
+/* The open app was offered `r.first` and did not consume it: the fallback to run. KEY held in an
+ * app that is not a conversation is Jerv's (owner, 2026-10-12), and the shell takes the hold. */
+sh_act_t sh_declined(sh_state_t *st, sh_route_t r);
 /* The app is gone (closed, or the shell went home): its hold is over. */
 void sh_app_closed(sh_state_t *st);
 

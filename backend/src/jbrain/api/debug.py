@@ -223,6 +223,9 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
             # console, snapshots and server.properties. Game-scoped — no shell, no file
             # path, no world download. Listed for the same reason as the rest.
             "minecraft.control",
+            # Asking a live C6 panel something (`/panel/*`): snapshot, logs, a screenshot,
+            # an injected tap, and `reboot` behind `confirm`. Listed for the same reason.
+            "panel.debug",
         ],
     )
 

@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved, not yet built** · Last verified: 2026-10-11
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -74,3 +74,7 @@ panel, the others import it at a fixed `start` state).
   "down" down, from the QMI8658's gravity vector. A switch under Brightness ("Auto-rotate",
   on by default; off = locked upright). The live panel's **tilt** tweak turns the device to
   show it. Firmware rules: plan §2b.
+- **KEY is "talk to Jerv" from anywhere** (owner, 2026-10-12): held outside a conversation —
+  home, clock face, Settings, Minecraft — it records to Jerv, and on release the panel opens the
+  Jerv thread so the transcript and the answer are seen. Inside Quorra's or Tamsin's thread it
+  is still a message to her. A ringing alarm still takes KEY as snooze.

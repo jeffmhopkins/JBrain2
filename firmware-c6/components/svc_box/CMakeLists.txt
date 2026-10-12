@@ -1,7 +1,8 @@
-# The in-memory implementation behind the svc_box.h interface, until its driver lands.
+# The box client's face to the apps. The device builds esp/ (fed by main's update loop) and the
+# pure rule; the sim and the host suite compile the top-level files, svc_box_fake.c among them.
 idf_component_register(
-    SRCS "svc_box_fake.c"
+    SRCS "esp/svc_box_esp.c" "box_logic.c"
     INCLUDE_DIRS "include"
     REQUIRES app_api svc_debug
-    PRIV_REQUIRES svc_net
+    PRIV_REQUIRES svc_net esp_timer
 )

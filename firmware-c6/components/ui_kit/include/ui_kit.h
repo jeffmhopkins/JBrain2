@@ -10,11 +10,13 @@
 #include "lvgl.h"
 #include "ui_theme.h"
 
-/* LVGL ships Montserrat in even sizes up to 48. A mock size maps to the nearest one; the
- * clock's 92/124 px digits are 48 scaled (see ui_label_big) until C3 generates digit fonts. */
+/* LVGL ships Montserrat in even sizes up to 48, without · – — … →; each size carries those as a
+ * generated fallback. A mock size maps to the nearest one. */
 const lv_font_t *ui_font(int px);
 lv_obj_t *ui_label(lv_obj_t *parent, const char *text, int px, uint32_t color);
 lv_obj_t *ui_label_wrap(lv_obj_t *parent, const char *text, int px, uint32_t color);
+/* The clock's digits: 124 and 92 px are generated bitmap fonts holding only 0-9, ':' and '-'
+ * (components/ui_kit/fonts/); any other size is the nearest built-in. */
 lv_obj_t *ui_label_big(lv_obj_t *parent, const char *text, int px, uint32_t color);
 /* A bare container: no style, no scroll, sized to content. */
 lv_obj_t *ui_box(lv_obj_t *parent, lv_flex_flow_t flow, int gap);
@@ -41,8 +43,19 @@ lv_obj_t *ui_chip(lv_obj_t *parent, const char *text, uint32_t color, bool tinte
  * switch is not clickable: the picture and the target are one decision. */
 lv_obj_t *ui_switch_row(lv_obj_t *parent, const char *label, bool on, bool enabled,
                         lv_event_cb_t cb, void *user);
+/* A switch row with a title at `px` and, when `sub` is not NULL, a muted line under it. */
+lv_obj_t *ui_switch_row_sub(lv_obj_t *parent, const char *title, int px, const char *sub, bool on,
+                            bool enabled, lv_event_cb_t cb, void *user);
 lv_obj_t *ui_slider_row(lv_obj_t *parent, int min, int max, int value, lv_event_cb_t cb,
                         void *user);
+/* A hairline across a card, between rows. */
+lv_obj_t *ui_divider(lv_obj_t *parent);
+/* One of a row of choices: its own colour for the text, a steel ring when picked. */
+lv_obj_t *ui_choice(lv_obj_t *parent, const char *text, uint32_t color, bool picked, bool enabled,
+                    lv_event_cb_t cb, void *user);
+/* The clock face's corner badge: a bell and a count on a dark pill, in `color` at `opa`. */
+lv_obj_t *ui_corner_badge(lv_obj_t *parent, const char *count, uint32_t color, uint8_t opa,
+                          lv_event_cb_t cb, void *user);
 lv_obj_t *ui_progress(lv_obj_t *parent, int pct, uint32_t color, int h);
 
 typedef enum { UI_BTN_PRIMARY, UI_BTN_SECONDARY, UI_BTN_DESTRUCTIVE } ui_btn_kind_t;

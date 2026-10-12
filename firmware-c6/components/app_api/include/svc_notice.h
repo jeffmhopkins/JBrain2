@@ -19,6 +19,8 @@ typedef struct {
 
 uint8_t svc_notice_count(void);
 bool svc_notice_head(notice_t *out);
+/* Any queued notice is urgent: the clock face's badge shows it at full strength. */
+bool svc_notice_urgent_waiting(void);
 void svc_notice_answer(uint8_t choice);
 /* BOOT: gone without an answer. */
 void svc_notice_dismiss(void);

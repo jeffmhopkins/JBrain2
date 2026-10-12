@@ -6,6 +6,7 @@
 #include "dbg_core.h"
 #include "shell_evq.h"
 #include "svc_alarms.h"
+#include "svc_audio.h"
 #include "svc_display.h"
 #include "svc_notice.h"
 #include "svc_rtc.h"
@@ -22,6 +23,7 @@
 static app_t *s_apps[APPS_MAX];
 static unsigned s_napps;
 static const char *s_alarm_app = "clock";
+static const char *s_talk_app = "jerv";
 static uint8_t s_pages = 1;
 
 static sh_evq_t s_q;
@@ -33,6 +35,12 @@ static lv_indev_t *s_indev;
 static uint32_t s_notice_id;
 static uint8_t s_notice_n;
 static bool s_started;
+
+/* KEY held outside a conversation: the shell's own talk ring, over whatever is open. */
+static ui_talk_t s_talk;
+static struct {
+    uint32_t jerv, app, snooze, sent, too_short, cancelled;
+} s_keys;
 
 static struct {
     app_event_type_t type;
@@ -46,7 +54,9 @@ static const char *const EV_NAMES[] = {"key_down", "key_up", "boot", "net_up", "
 
 static void host_home(void);
 static void host_toast(const char *t);
-static const app_host_t HOST = {host_home, host_toast};
+static bool host_open(const char *id);
+static const app_host_t HOST = {host_home, host_toast, host_open};
+static void talk_end(bool send);
 
 /* ---- registry ---- */
 
@@ -82,9 +92,11 @@ static sh_facts_t facts(void)
     sh_facts_t f = {0};
     f.alarm_ringing = svc_alarms_ringing(NULL);
     f.notices = svc_notice_count();
+    f.notices_held = s_open && s_open->holds_notices && s_open->holds_notices(s_open);
     f.app_open = s_open != NULL;
     f.page = s_page;
     f.dark = svc_display_dark();
+    f.talking = ui_talk_up(&s_talk);
     return f;
 }
 
@@ -205,6 +217,8 @@ bool shell_open(const char *id)
 
 void shell_home(void)
 {
+    /* Going home abandons a hold the way BOOT does: nothing is left listening. */
+    talk_end(false);
     close_current();
     build_home();
 }
@@ -217,6 +231,55 @@ static void host_home(void)
 static void host_toast(const char *t)
 {
     ui_toast(t, 2200);
+}
+
+static bool host_open(const char *id)
+{
+    return shell_open(id);
+}
+
+/* ---- KEY outside a conversation: talk to Jerv ---- */
+
+static void talk_tapped(void *user)
+{
+    (void)user;
+    talk_end(false);
+    ui_toast("Cancelled — nothing sent", 2200);
+}
+
+static void talk_capped(void *user)
+{
+    (void)user;
+    talk_end(true);
+}
+
+static void talk_begin(void)
+{
+    if (!svc_audio_talk_begin(TALK_TO_JERV, s_talk_app)) return;
+    s_keys.jerv++;
+    s_talk = (ui_talk_t){.cap_ms = TALK_MAX_MS, .ms = svc_audio_talk_ms, .level = svc_audio_level,
+                         .on_tap = talk_tapped, .on_cap = talk_capped};
+    ui_talk_open(&s_talk, lv_layer_top(), UI_C_ROSE, "Jerv is listening");
+}
+
+/* `send` false is silent: the caller (a tap, BOOT, home, PWR, an alarm) says what happened. On a
+ * send the Jerv thread opens, so what was said and the answer are seen where they belong. */
+static void talk_end(bool send)
+{
+    if (!ui_talk_up(&s_talk)) return;
+    ui_talk_close(&s_talk);
+    switch (svc_audio_talk_end(send)) {
+    case TALK_SENT:
+    case TALK_CAPPED:
+        s_keys.sent++;
+        shell_open(s_talk_app);
+        break;
+    case TALK_TOO_SHORT:
+        s_keys.too_short++;
+        ui_toast("Hold KEY the whole time you talk", 2200);
+        break;
+    case TALK_CANCELLED: s_keys.cancelled++; break;
+    }
 }
 
 /* ---- overlays: the notice (a dark screen has none; sh_gate holds its presses) ---- */
@@ -252,7 +315,7 @@ static void build_notice(const notice_t *n, uint8_t count)
     lv_obj_t *head = ui_box(s_notice, LV_FLEX_FLOW_ROW, 10);
     lv_obj_set_width(head, LV_PCT(100));
     char from[40];
-    snprintf(from, sizeof from, LV_SYMBOL_BELL "  %s%s", n->source, n->urgent ? " - urgent" : "");
+    snprintf(from, sizeof from, LV_SYMBOL_BELL "  %s%s", n->source, n->urgent ? " · urgent" : "");
     lv_obj_t *src = ui_label(head, from, 18, accent);
     lv_obj_set_flex_grow(src, 1);
     if (count > 1) {
@@ -276,7 +339,7 @@ static void build_notice(const notice_t *n, uint8_t count)
         lv_obj_set_style_radius(b, UI_R_CHOICE, 0);
     }
     lv_obj_t *hint = ui_label(s_notice,
-                              n->n_choices ? "Your answer goes back to the sender - BOOT answers nothing"
+                              n->n_choices ? "Your answer goes back to the sender · BOOT answers nothing"
                                            : "BOOT dismisses",
                               16, UI_C_MUTED);
     lv_obj_set_width(hint, LV_PCT(100));
@@ -328,7 +391,7 @@ static void act(sh_act_t a)
     switch (a) {
     case SH_ACT_DISMISS_NOTICE:
         svc_notice_dismiss();
-        ui_toast("Dismissed - no answer sent", 2200);
+        ui_toast("Dismissed — no answer sent", 2200);
         break;
     case SH_ACT_SNOOZE_ALARM: {
         uint16_t at = svc_alarms_snooze();
@@ -342,9 +405,17 @@ static void act(sh_act_t a)
         break;
     case SH_ACT_GO_HOME: s_page = 0; shell_home(); break;
     case SH_ACT_PAGE_FIRST: s_page = 0; build_home(); break;
-    case SH_ACT_HINT_TALK: ui_toast("Open a conversation, then hold KEY", 2200); break;
+    case SH_ACT_TALK_JERV: talk_begin(); break;
+    case SH_ACT_SEND_JERV: talk_end(true); break;
+    case SH_ACT_CANCEL_TALK:
+        if (ui_talk_up(&s_talk)) ui_toast("Cancelled — nothing sent", 2200);
+        talk_end(false);
+        break;
     case SH_ACT_WAKE: set_dark(false); break;
-    case SH_ACT_DARK: set_dark(true); break;
+    case SH_ACT_DARK:
+        talk_end(false);
+        set_dark(true);
+        break;
     default: break;
     }
 }
@@ -354,7 +425,12 @@ static void handle_button(sh_button_t b, app_event_type_t as)
     sh_facts_t f = facts();
     sh_route_t r = sh_route_button(&s_st, &f, b);
     if (r.first == SH_ACT_TO_APP) {
-        if (!offer(as)) act(r.fallback);
+        const bool took = offer(as);
+        if (b == SH_BTN_KEY_DOWN) {
+            if (took) s_keys.app++;
+            else if (r.fallback == SH_ACT_SNOOZE_ALARM) s_keys.snooze++;
+        }
+        if (!took) act(sh_declined(&s_st, r));
     } else {
         act(r.first);
     }
@@ -365,7 +441,10 @@ static void handle_event(const app_event_t *ev)
     sh_facts_t f = facts();
     unsigned todo = sh_route_event(&f, ev->type);
     if (todo & SH_DO_WAKE) set_dark(false);
-    if (todo & SH_DO_OPEN_ALARM_APP) shell_open(s_alarm_app);
+    if (todo & SH_DO_OPEN_ALARM_APP) {
+        talk_end(false);
+        shell_open(s_alarm_app);
+    }
     if ((todo & SH_DO_DELIVER) && s_open && s_open->on_event) s_open->on_event(s_open, ev);
     if ((todo & SH_DO_REFRESH_TILES) && s_home) build_home();
 }
@@ -498,8 +577,18 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "page", s_page);
     dbg_json_str(w, "overlay", OVERLAY[sh_top_overlay(&s_st, &f)]);
     dbg_json_bool(w, "dark", f.dark);
-    dbg_json_str(w, "key_owner", s_st.key_owner == SH_KEY_APP ? "app"
-                                 : s_st.key_owner == SH_KEY_ALARM ? "alarm" : "free");
+    static const char *const OWNER[] = {"free", "app", "alarm", "shell"};
+    dbg_json_str(w, "key_owner", OWNER[s_st.key_owner]);
+    dbg_json_bool(w, "talking", f.talking);
+    dbg_json_bool(w, "notices_held", f.notices_held);
+    dbg_json_obj_begin(w, "keys");
+    dbg_json_int(w, "jerv", s_keys.jerv);
+    dbg_json_int(w, "app", s_keys.app);
+    dbg_json_int(w, "snooze", s_keys.snooze);
+    dbg_json_int(w, "sent", s_keys.sent);
+    dbg_json_int(w, "too_short", s_keys.too_short);
+    dbg_json_int(w, "cancelled", s_keys.cancelled);
+    dbg_json_obj_end(w);
     dbg_json_int(w, "queue_depth", s_q.count);
     dbg_json_int(w, "queue_dropped", s_q.dropped);
     dbg_json_int(w, "objects", shell_obj_count());
@@ -568,6 +657,14 @@ static bool cmd_inject(const dbg_req_t *r, dbg_json_t *d, char *err, size_t n)
 static void sink(const app_event_t *ev)
 {
     shell_post(ev);
+}
+
+void shell_key_note(char *out, size_t len)
+{
+    snprintf(out, len, "key=jerv:%lu,app:%lu,snz:%lu,sent:%lu,short:%lu,cxl:%lu",
+             (unsigned long)s_keys.jerv, (unsigned long)s_keys.app, (unsigned long)s_keys.snooze,
+             (unsigned long)s_keys.sent, (unsigned long)s_keys.too_short,
+             (unsigned long)s_keys.cancelled);
 }
 
 bool shell_start(char *err, size_t err_len)

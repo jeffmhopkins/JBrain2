@@ -1,6 +1,6 @@
 # Jeff's jpanel — the ESP32-C6 panel as a set of small apps
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** C0✅ C1✅ C2🟡 C2d◻️ C3◻️ C3b◻️ C4◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C3🟡 C3b◻️ C4◻️
 > — C0 and C1 are proven on the board (2026-10-11): USB-flashed 0.0.1 from the PWA's board
 > picker, it joined Wi-Fi 6, reached the box over TLS, and took 0.0.2 over the air and kept it
 > across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
@@ -8,7 +8,15 @@
 > **0.0.4 switches it into the image** with the first real drivers — the AXP2101, the buttons and
 > the CO5300 under LVGL, the shell over fake services — now running on the glass (firmware README
 > "What 0.0.4 adds"). **0.0.6 adds touch** (the CST9220 and the shell's real-pointer rules), built
-> and in `dist/`, not yet felt on the glass (firmware README "What 0.0.6 adds").
+> and in `dist/`, not yet felt on the glass (firmware README "What 0.0.6 adds"). **0.0.7** (touch
+> mapping) is proven on the glass. **0.0.8** (built, awaiting the board) starts C3: Settings and
+> the Clock as the mock agreed, filled from the real services — saved settings in NVS, the
+> PCF85063 and the box's `Date` header for the time, the radio and the update loop behind the
+> Wi-Fi and Firmware cards — and KEY routed to Jerv from anywhere (firmware README "What 0.0.8
+> adds").
+> **C2d's box side is built (2026-10-12)** — the table, its RLS, the command/result routes,
+> the `JPS1` → PNG decoder and `debug-connect.sh panel-cmd` / `panel-shot` (§4 "The box
+> side"); the panel's pickup lands in firmware 0.0.9.
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -140,6 +148,17 @@ at 480×480 or headless to PNG. So the Clock can be built and iterated on a lapt
 board, no box and no other app compiled in — and CI renders each app's states to PNG beside
 the mock it was approved from, so a drift from `../mocks/jpanel-c6/` is visible in review.
 
+### KEY routing (owner, 2026-10-12)
+
+KEY held outside a conversation goes to **Jerv**, wherever the panel is (home, clock face,
+Settings, any app that does not consume KEY): the shell, not an app, owns that default, so it
+works with every app closed. Release sends, and the shell opens the Jerv thread to show the
+answer. A Thread app consumes KEY for its own recipient; a ringing alarm consumes it as snooze;
+the talk overlay keeps the rule that a release goes where its press went. Built in 0.0.8
+(`shell_core.c`: `sh_route_button` offers KEY to the open app with Jerv as the fallback, and
+`sh_declined` hands the hold to the shell); until audio lands the release shows a "Not sent"
+bubble rather than a transcript.
+
 ## 2. The push path: the box can tap the owner on the shoulder
 
 The owner: *"an API … that just shows a pop-up of a message … so the machine can send this
@@ -231,8 +250,8 @@ four orientations fit with no relayout of the frame — only the content turns.
 | **C0** ✅ | Bring-up image (Wi-Fi, box, OTA, rollback, telemetry) + the box flashing/serving two boards (`?board=c6-amoled-216`). | Proven on the board 2026-10-11. |
 | **C1** ✅ | First USB flash from the PWA (Flash tab **board picker** from `GET /api/endpoint/boards` — built 2026-10-11, nothing preselected because both boards enumerate as the same USB device); prove one OTA (0.0.1 → 0.0.2) and one rollback on the real board. Answer the bring-up questions in the firmware README from telemetry. | The panel updated itself over Wi-Fi, twice, once refusing a bad image. |
 | **C2** 🟡 | Display (CO5300, strip rendering into internal RAM), touch, buttons, PMIC, RTC — each a `svc_*`; `ui_kit`; `shell` with the home pages; `sim/`. Brightness is tested on the glass first: the S3's runtime brightness write is discarded by the same controller. **Landed 2026-10-11:** the framework (`ui_kit`, `shell`, `app_api`, fake `svc_*`, `svc_debug`, `sim/`, `host/`, the dependency check). **0.0.4 (built, awaiting the board):** the framework in the image; `svc_power` (AXP2101, PEK polled), `svc_buttons` (BOOT/KEY/PWR, PWR by GPIO18 or the PMIC), `svc_display` (CO5300 via `esp_lcd_sh8601`, 480×40 strips, runtime brightness tested between frames); the boot after a fault runs headless. **0.0.4 on the glass (measured):** home renders, runtime brightness and PWR dark/wake work, KEY and BOOT route as designed. **0.0.6 (built, awaiting the board):** `svc_touch` — the CST9220 polled every 20 ms over `svc_power`'s bus through a locked transfer API (still one owner), raw→display mapping, failure reported as `touch=failed:<step>`; the shell's real-pointer rules host- and sim-tested (tap within 20 px, sideways swipe ≥ 60 px, a stroke on a dark screen wakes and reaches nothing, a notice appearing under a finger ends its stroke). **Left:** confirming 0.0.5 installs and 0.0.6's taps, swipes and corners on the glass, then the RTC. | Home grid on the glass, tiles open and close an empty app, BOOT goes home, swipe pages. |
-| **C2d** | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. |
-| **C3** | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). | Each app's mock states reproduced on the glass and in `sim/`. |
+| **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI); left: the panel's pickup and upload (0.0.9), the stripe handoff, Ops → Panels buttons. |
+| **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **Left:** calibration, the alarm service and PWA editor, audio, the box client for messages. | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C2r** | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, LVGL software rotation, touch mapped through it, the Settings switch. After touch is proven on the board. | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
 | **C3b** | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tools, `svc_notice` and the overlay. | Jerv asks a yes/no on the panel and acts on the tap. |
 | **C4** | Minecraft. | Parked until scoped. |
@@ -288,15 +307,23 @@ tunnel (`../../firmware/main/link.c`, `panel_ws.py`), the request arrives as a f
 result rides the same socket — `svc_debug` is JSON in, JSON (or a byte stream) out, and does
 not change.
 
-**The box side** (wave C2d; nothing built yet):
+**The box side** (wave C2d; **built 2026-10-12**, the panel half lands in 0.0.9). As built,
+which differs from the sketch above in three places: the pickup is a route of its own rather
+than a field on the settings poll, because the C6 has no settings poll yet (it polls the
+manifest every 60 s, too slow for a debug session) — 0.0.9 calls it on a short interval, and it
+can fold into the settings poll when the C6 grows one; the request is columns rather than one
+`cmd` jsonb; and the screenshot is stored decoded (a PNG digest in the blob store, CLAUDE.md #2),
+not as the raw stream.
 
 | | |
 |---|---|
-| `panel_debug_request` | `id`, `device_id`, `token_id` (who asked), `cmd` (jsonb), `destructive`, `state` `queued` → `sent` → `done` / `expired`, `result` (jsonb), `blob` (a screenshot stream, ≤ 1 MB), `created_at`, `sent_at`, `done_at`. A request not picked up in 60 s expires; results are deleted after 15 minutes. |
-| RLS | The owner and debug-scoped capability tokens insert and read. A panel (`device_key`) reads only its own `queued` rows and may write `result`/`blob`/`done_at` only on its own `sent` rows. The isolation test pins: panel A cannot read B's request, cannot write B's result, cannot insert a request at all (CLAUDE.md #3). |
-| `POST /api/debug/panel/{device_id}/command` | debug token → `202 {request_id}`; `409 {reason: "needs_confirm"}` for a destructive command without `confirm` (checked at the box too, from the same whitelist); `503 {reason: "offline", last_seen_s}` when the panel has not polled for 30 s (§2's rule) — refused at the door, never queued for later. |
-| `GET /api/debug/panel/{device_id}/result/{request_id}?wait=` | long-poll ≤ 25 s → `{state, result}`; a screenshot's result links `GET …/screenshot/{request_id}.png`, decoded on the box. |
-| panel-facing | the settings poll gains `debug` (one queued request; marks it `sent`); `POST /api/endpoint/debug/{request_id}` (device key) with the result JSON, or the `JPS1` stream as the body for `screenshot`. |
+| `panel_debug_request` (migration 0231) | `id`, `device_id` (the panel's principal), `command`, `args` (flat jsonb, ≤ 512 B), `confirm`, `created_by` (the token's label and id), `created_at`, `expires_at`, `picked_up_at`, `state` `queued` → `sent` → `done` / `expired`, `result` (jsonb), `png_sha256`, `result_at`. A request not picked up in 60 s expires; once picked up the panel has 120 s to answer; finished rows and their PNGs are swept 15 minutes on (lazily, by the owner routes, through `blob_refs`). |
+| RLS + trigger | The owner (and the debug console, which runs as the owner) does everything. A panel (`device_key`) reads only its own `queued`/`sent` rows inside their deadline and may move them only `queued` → `sent` → `done`; it has no INSERT or DELETE policy. A trigger holds what RLS cannot: for a panel the request columns are immutable and the timestamps are the box's (pickup sets the answer deadline). `test_panel_debug_request_rls.py` pins owner / self / sibling. |
+| `GET /api/debug/panel` | every live panel: `board` it last picked up as, `last_seen_s`, `online`, the commands its last `help` published. |
+| `POST /api/debug/panel/{device_id}/command` | `{command, args, confirm}` → `202 {request_id}`; `409 needs_confirm`, `503 offline` (+ `last_seen_s`), `422 unknown_command`/`bad_arg`, `409 unavailable` (its `help` says unbound), `409 no_debug_surface`, `429 busy`. The whitelist is checked at the box from a copy a unit test pins to `dbg_cmd.c`. |
+| `GET /api/debug/panel/{device_id}/result/{request_id}?wait=` | long-poll ≤ 25 s → `{state, result, screenshot}`; `GET …/screenshot/{request_id}.png`. |
+| `GET /api/endpoint/debug/next?board=` | panel key → `200` the flat request `dbg_cmd_run` takes (`{"id", "cmd", …args, "confirm"?}`), marked `sent`; `204` when nothing waits. Calling it is the panel's proof of life for the 30 s offline rule. |
+| `POST /api/endpoint/debug/{request_id}` | panel key → `204`. `application/json` (≤ 64 KiB): `dbg_cmd_run`'s output. `application/octet-stream` (≤ 1 MiB, chunked fine), `screenshot` only: the `JPS1` stream; one that does not decode is recorded as `ok:false, err:"bad_stream"` and answered `422`. `404` for anything not this panel's request in `sent`. |
 
 Every command is logged with the token's label (`debug.panel_command`), so what a session did to
 the panel is on the record. The PWA's **Ops → Panels** gets Snapshot and Screenshot buttons on
@@ -308,7 +335,9 @@ the same routes, so the owner can look without a session too.
   principal), or as a third panel? The twins' "send a message → the other panel" rule
   assumes exactly two panels and must become addressed either way.
 - Jerv on the panel: a session of its own, or the owner's current Jerv chat in the PWA?
-- Fonts: LVGL ships Montserrat at one weight up to 48 px, without `·`, `–` or `…`. C3 generates
-  the 92/124 px clock digits and those glyphs (`lv_font_conv`), or the mock adapts.
+- Fonts: settled in 0.0.8 — the 92/124 px clock digits and the missing punctuation are generated
+  with `lv_font_conv` and vendored (`firmware-c6/tools/gen_fonts.sh`).
+- The panel's time zone: the box keeps the owner's (`owner_timezone`) but does not tell the panel;
+  0.0.8 sets it on the glass (default New York). Should the manifest carry it?
 - The hardware list in `../../firmware-c6/README.md` (PMIC rails for LCD reset and the speaker
   amplifier, which button is which, strapping pins).
