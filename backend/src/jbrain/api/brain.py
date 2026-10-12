@@ -35,7 +35,7 @@ router = APIRouter()
 _TTS_TEXT_CAP = 1000
 
 
-def _apply_pronunciation(text: str, lexicon: dict[str, str]) -> str:
+def apply_pronunciation(text: str, lexicon: dict[str, str]) -> str:
     """Whole-word, case-insensitive respelling from the owner's lexicon ("Titusville" -> "Tight us
     ville"). Plain text, so it fixes a word on Kokoro's misaki OR espeak path. No-op when empty."""
     if not lexicon:
@@ -125,7 +125,7 @@ async def brain_tts(
     if store is not None:
         try:
             lexicon = await store.pronunciation_lexicon(ctx_for(principal))
-            clipped = _apply_pronunciation(clipped, lexicon)
+            clipped = apply_pronunciation(clipped, lexicon)
         except Exception as exc:  # noqa: BLE001 — respelling is a nicety, never a render blocker
             log.warning("brain_tts.lexicon_unavailable", error=str(exc))
     params: dict[str, str] = {"text": clipped, "voice": voice}

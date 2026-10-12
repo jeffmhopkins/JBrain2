@@ -117,6 +117,7 @@ from jbrain.api import (
     ops,
     owntracks,
     pairing,
+    panel_agent,
     panel_debug,
     plans,
     proposals,
@@ -1832,8 +1833,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(debug.router, prefix="/api")
         app.include_router(debug_minecraft.router, prefix="/api")
         app.include_router(debug_panel.router, prefix="/api")
+        app.include_router(panel_agent.debug_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
+    # The desk panel's reach into the real agents: the owner's switch and the siblings list.
+    app.include_router(panel_agent.router, prefix="/api")
     # The panel's half of the debug relay. Mounted with or without debug access: with it
     # off nothing can queue a request, so a pickup is always an empty 204.
     app.include_router(panel_debug.router, prefix="/api")
