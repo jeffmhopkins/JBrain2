@@ -2748,6 +2748,12 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   after the owner turns one on. The pearl and pack beats wait for their own Tricorder
   on them, like every other Dave line (a respawn always has it, or is re-beamed one): an
   unlock made without it leaves the beat unheard for a later look, never spent (#1684).
+- **Beats never cut into Dave's speech** (#1683): while the welcome, a `/dave hello` or
+  the first-death lines are playing, no other beat speaks. The ones a look re-checks
+  (pearl, pack, Replicator) stay unheard until a look after he's done; a death or a
+  planted gate waits and plays once he's done. So a death mid-welcome gets its lines
+  after the welcome, with the Tricorder it handed over, and a pre-DW1 player carrying
+  packs hears their beats after it, not over the darkness.
 - **`/dave hello`** (also `/d`, `/ai`; exactly "hello", any case) replays the six lines at
   the welcome's pace, with no darkness and no Tricorder, answered in the pack; no
   question reaches the backend. It still needs their own Tricorder. "hello there" is a

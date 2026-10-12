@@ -302,6 +302,50 @@ test("first Power Pack with neither switch on: nothing said, nothing recorded, h
   assert.ok(beats(p).includes("first_power_pack"));
 });
 
+test("a pre-DW1 player's beats wait for the welcome to finish, then play once (#1683)", () => {
+  config({ power_pack_keep: true, power_pack_transport: true });
+  const p = sim.player("Veteran", "-17");
+  wake(p);
+  sim.props.delete("jb:beats:-17"); // from before DW1: their own Tricorder, no beats
+  p.inventory.setItem(3, new ItemStack("jbrain:power_pack", 8));
+  p.inventory.setItem(4, new ItemStack("minecraft:ender_pearl", 2));
+
+  sim.spawn(p, true); // the welcome starts
+  for (let t = 0; t < 470; t += 20) {
+    sim.advance(20);
+    look();
+  }
+  const welcome = LINES.welcome("Veteran", false);
+  const lines = said(p);
+  assert.deepEqual(lines.slice(0, welcome.length), welcome); // nothing cut in
+  const rest = lines.slice(welcome.length);
+  for (const line of [LINES.firstEnderPearl, LINES.firstReplicator, LINES.firstPowerPack.keep,
+    LINES.firstPowerPack.transport]) {
+    assert.equal(rest.filter((l) => l === line).length, 1, line);
+  }
+  assert.equal(rest.length, 4);
+  look();
+  assert.equal(said(p).length, lines.length);
+});
+
+test("a death mid-welcome: the first-death lines come after it, with the Tricorder (#1683)", () => {
+  const p = sim.player("Unlucky", "-18");
+  sim.spawn(p, true);
+  sim.advance(40); // before the Tricorder's 5 s
+  sim.die(p);
+  sim.spawn(p, false);
+  sim.advance(100);
+  assert.deepEqual(said(p), []); // the welcome is still dark, Dave not yet on
+  assert.equal(tricorders(p).length, 1);
+  sim.advance(WELCOME_TICKS);
+  assert.deepEqual(said(p), [...LINES.welcome("Unlucky", false), ...LINES.firstDeath]);
+  assert.ok(beats(p).includes("first_death"));
+  sim.die(p);
+  sim.spawn(p, false);
+  sim.advance(WELCOME_TICKS);
+  assert.equal(said(p).length, LINES.welcome("Unlucky", false).length + 2); // heard once
+});
+
 test("/dave hello replays the welcome's lines, no darkness, no Tricorder, no backend", () => {
   config({ wreck: true });
   const p = sim.player("Hi", "-13");
