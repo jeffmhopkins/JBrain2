@@ -4,6 +4,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "app_event.h"
@@ -45,6 +46,14 @@ struct app {
      * this panel, and for an agent a fresh conversation on the box. Called only while open. */
     bool (*can_clear)(app_t *self);
     void (*clear)(app_t *self);
+    /* Optional, together (0.0.15, owner 2026-10-12): an AGENT's conversation, whose long-press
+     * menu is New conversation and Recent conversations in place of Clear chat. `convo_menu`
+     * says whether the screen now showing is one and writes the menu's line ("Jerv · Shopping
+     * list") and the agent's accent; `convo_new` starts a new conversation and returns what the
+     * toast says; `convo_recent` opens the agent's Recent list. Called only while open. */
+    bool (*convo_menu)(app_t *self, char *sub, size_t cap, ui_accent_t *accent);
+    const char *(*convo_new)(app_t *self);
+    void (*convo_recent)(app_t *self);
 
     /* Set by shell_register(); never by the app. */
     const app_host_t *host;

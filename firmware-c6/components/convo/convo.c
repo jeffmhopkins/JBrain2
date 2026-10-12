@@ -5,6 +5,7 @@
 
 #include "convo_model.h"
 #include "svc_audio.h"
+#include "svc_convo.h"
 #include "svc_messages.h"
 #include "svc_settings.h"
 
@@ -25,7 +26,9 @@ static convo_sig_t sig_now(const convo_t *c, svc_work_t *w)
                          .tts = svc_settings_get(SET_TTS) != 0,
                          .can_speak = svc_audio_can_speak(),
                          .working = working,
-                         .work_seq = working ? w->seq : 0};
+                         .work_seq = working ? w->seq : 0,
+                         .meta = svc_convo_rev(),
+                         .fresh = svc_audio_fresh_pending(who)};
 }
 
 /* ---- the working view: built once per question, then changed where it stands ---- */
@@ -124,6 +127,13 @@ static void fill_list(convo_t *c, const convo_sig_t *sig, const svc_work_t *work
     const char *who = c->cfg->thread;
     const uint16_t n = svc_messages_count(who);
     msg_t m = {0};
+    /* A switched-to conversation shows its last few exchanges; the rest are in the app. */
+    if (n && !sig->fresh && svc_convo_earlier(who)) {
+        lv_obj_t *row = ui_box(c->list, LV_FLEX_FLOW_ROW, 0);
+        lv_obj_set_width(row, LV_PCT(100));
+        lv_obj_set_flex_align(row, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        ui_app_chip(row, "Earlier messages are in the app");
+    }
     for (uint16_t i = 0; i < n; i++) {
         if (!svc_messages_get(who, i, &m)) continue;
         char dur[8];
@@ -138,7 +148,23 @@ static void fill_list(convo_t *c, const convo_sig_t *sig, const svc_work_t *work
                          .tag = m.id};
         ui_bubble(c->list, &b, c->cfg->accent, listen, NULL);
     }
-    if (!n) ui_label_wrap(c->list, c->cfg->empty, 18, UI_C_MUTED);
+    if (!n && sig->fresh) {
+        /* A new conversation, not yet begun: said in the middle of the glass (the mock's
+           ConvoNew board). */
+        lv_obj_t *col = ui_box(c->list, LV_FLEX_FLOW_COLUMN, 10);
+        lv_obj_set_size(col, LV_PCT(100), LV_PCT(100));
+        lv_obj_set_style_pad_hor(col, 24, 0);
+        lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        ui_label(col, "New conversation", 22, UI_C_TEXT);
+        char line[120];
+        snprintf(line, sizeof line,
+                 "Hold KEY and ask %s something. The last one is in Recent conversations.",
+                 c->cfg->title);
+        lv_obj_t *l = ui_label_wrap(col, line, 18, UI_C_MUTED);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    } else if (!n) {
+        ui_label_wrap(c->list, c->cfg->empty, 18, UI_C_MUTED);
+    }
     /* What the agent is doing while the answer is on its way (JT2): under the question, where the
        answer will land. */
     if (sig->working) {
@@ -154,10 +180,18 @@ static void fill_list(convo_t *c, const convo_sig_t *sig, const svc_work_t *work
     }
 }
 
+static void draw_title(convo_t *c, const convo_sig_t *now)
+{
+    set_text(c->sub, convo_subtitle(now->fresh, svc_convo_title(c->cfg->thread)));
+}
+
 void convo_refresh(convo_t *c)
 {
     svc_work_t work;
     const convo_sig_t now = sig_now(c, &work);
+    /* An answer has landed: the box may have named the conversation in that turn. */
+    if (c->drawn.working && !now.working) svc_convo_refresh_title(c->cfg->thread);
+    draw_title(c, &now);
     switch (convo_redraw(&c->drawn, &now)) {
     case CONVO_REBUILD: fill_list(c, &now, &work); break;
     case CONVO_WORK: {
@@ -179,12 +213,16 @@ void convo_open(convo_t *c, const convo_config_t *cfg, const app_host_t *host, l
 {
     *c = (convo_t){.cfg = cfg, .host = host, .root = root};
     snprintf(c->listening, sizeof c->listening, "%s is listening", cfg->title);
-    ui_header(root, cfg->icon, cfg->accent, cfg->title, on_back, back_user);
-    c->list = ui_page(root, true, 60);
-    ui_talk_hint(root);
     svc_work_t work;
     const convo_sig_t now = sig_now(c, &work);
+    ui_header_sub(root, cfg->icon, cfg->accent, cfg->title, "", on_back, back_user, &c->sub);
+    draw_title(c, &now);
+    c->list = ui_page(root, true, 60);
+    ui_talk_hint(root);
     fill_list(c, &now, &work);
+    /* What the box calls the conversation now: the PWA may have named it, or the panel's last
+       switch moved it on. A new one has none yet. */
+    if (!now.fresh) svc_convo_refresh_title(cfg->thread);
 }
 
 static void end_talk(convo_t *c, bool send)
@@ -208,10 +246,15 @@ static void capped(void *user)
 void convo_close(convo_t *c)
 {
     end_talk(c, false);
+    convo_recent_close(c);
 }
 
 bool convo_event(convo_t *c, const app_event_t *ev)
 {
+    /* Over Recent, KEY closes it and talks in the thread; BOOT only closes it. */
+    if ((ev->type == APP_EV_KEY_DOWN || ev->type == APP_EV_BOOT) && convo_recent_up(c) &&
+        convo_recent_button(c, ev->type))
+        return true;
     switch (ev->type) {
     case APP_EV_KEY_DOWN: {
         /* Inside this conversation: KEY continues it (plan "KEY routing"). */
@@ -233,17 +276,41 @@ bool convo_event(convo_t *c, const app_event_t *ev)
         end_talk(c, false);
         return true;
     case APP_EV_MSG_ARRIVED:
-        if (!strcmp(ev->u.principal, c->cfg->thread)) convo_refresh(c);
+        if (!strcmp(ev->u.principal, c->cfg->thread)) {
+            convo_refresh(c);
+            if (convo_recent_up(c)) convo_recent_update(c);
+        }
         return false;
     default: return false;
     }
 }
 
-void convo_clear(convo_t *c)
+bool convo_menu(const convo_t *c, char *sub, size_t cap, ui_accent_t *accent)
 {
+    if (!c->root || convo_recent_up(c) || ui_talk_up(&c->talk)) return false;
+    const char *who = c->cfg->thread;
+    snprintf(sub, cap, "%s · %s", c->cfg->title,
+             convo_subtitle(svc_audio_fresh_pending(who), svc_convo_title(who)));
+    *accent = c->cfg->accent;
+    return true;
+}
+
+const char *convo_new(convo_t *c)
+{
+    const char *who = c->cfg->thread;
+    if (convo_new_decide(svc_audio_fresh_pending(who), svc_messages_count(who)) ==
+        CONVO_NEW_ALREADY)
+        return CONVO_TOAST_ALREADY;
     svc_audio_stop_reply();
-    svc_messages_clear(c->cfg->thread);
-    svc_audio_fresh(c->cfg->thread);
+    svc_messages_clear(who);
+    svc_audio_fresh(who);
+    svc_convo_new(who);
+    return CONVO_TOAST_NEW;
+}
+
+void convo_recent(convo_t *c)
+{
+    convo_recent_open(c);
 }
 
 void convo_describe(const convo_t *c, dbg_json_t *w)
@@ -255,4 +322,7 @@ void convo_describe(const convo_t *c, dbg_json_t *w)
     dbg_json_int(w, "speaking", svc_audio_playing());
     dbg_json_bool(w, "new_chat_next", svc_audio_fresh_pending(c->cfg->thread));
     dbg_json_bool(w, "working", c->work.root != NULL);
+    static const char *const RC[] = {"closed", "loading", "list", "empty", "failed", "opening"};
+    dbg_json_str(w, "recent", RC[c->recent.rc.mode]);
+    dbg_json_str(w, "subtitle", c->sub ? lv_label_get_text(c->sub) : "");
 }

@@ -20,6 +20,7 @@
 #include "disp_guard.h"
 #include "disp_logic.h"
 #include "convo_model.h"
+#include "convo_wire.h"
 #include "minutes.h"
 #include "notice_policy.h"
 #include "settings_model.h"
@@ -39,6 +40,8 @@
 #include "svc_settings_fake.h"
 #include "svc_alarms_drv.h"
 #include "svc_siblings_drv.h"
+#include "svc_convo.h"
+#include "svc_convo_drv.h"
 #include "thread_model.h"
 #include "time_logic.h"
 #include "tp_logic.h"
@@ -1983,24 +1986,24 @@ static void test_clear_chat_takes_two_taps_within_three_seconds(void)
 {
     sh_menu_t m = {0};
     CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 0) == SH_MENU_DO_NOTHING, "a closed menu does nothing");
-    sh_menu_open(&m);
+    sh_menu_open(&m, SH_MENU_CLEAR);
     CHECK(!sh_menu_armed(&m, 0), "it opens unarmed");
     CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 1000) == SH_MENU_DO_ARM && sh_menu_armed(&m, 1000),
           "the first tap arms it: Tap again to clear");
     CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 1000 + SH_MENU_ARM_MS - 1) == SH_MENU_DO_CLEAR &&
               m.state == SH_MENU_CLOSED,
           "the second inside the window clears and closes");
-    sh_menu_open(&m);
+    sh_menu_open(&m, SH_MENU_CLEAR);
     sh_menu_input(&m, SH_MENU_IN_CLEAR, 5000);
     CHECK(!sh_menu_armed(&m, 5000 + SH_MENU_ARM_MS), "the arm lapses");
     CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 5000 + SH_MENU_ARM_MS) == SH_MENU_DO_ARM,
           "and a tap after it only arms again");
     CHECK(sh_menu_input(&m, SH_MENU_IN_CANCEL, 9000) == SH_MENU_DO_CLOSE && m.state == SH_MENU_CLOSED,
           "Cancel closes, clearing nothing");
-    sh_menu_open(&m);
+    sh_menu_open(&m, SH_MENU_CLEAR);
     sh_menu_input(&m, SH_MENU_IN_CLEAR, 10000);
     CHECK(sh_menu_input(&m, SH_MENU_IN_OUTSIDE, 10100) == SH_MENU_DO_CLOSE, "a tap outside closes, even armed");
-    sh_menu_open(&m);
+    sh_menu_open(&m, SH_MENU_CLEAR);
     CHECK(!m.armed, "and the next opening starts unarmed");
 }
 
@@ -3029,6 +3032,411 @@ static void test_other_tasks_read_the_alarms_the_ui_task_published(void)
     alarm_port_fake_wipe();
 }
 
+/* ---- 0.0.15: New conversation, Recent, switching (owner, 2026-10-12) ---- */
+
+static void test_an_agent_s_menu_is_new_recent_and_cancel(void)
+{
+    sh_menu_t m = {0};
+    sh_menu_open(&m, SH_MENU_CONVO);
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 0) == SH_MENU_DO_NOTHING && m.state == SH_MENU_OPEN,
+          "an agent's menu has no Clear chat to reach");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_NEW, 10) == SH_MENU_DO_NEW && m.state == SH_MENU_CLOSED,
+          "New conversation is one tap, no confirm, and closes the menu");
+    sh_menu_open(&m, SH_MENU_CONVO);
+    CHECK(sh_menu_input(&m, SH_MENU_IN_RECENT, 20) == SH_MENU_DO_RECENT && m.state == SH_MENU_CLOSED,
+          "Recent conversations closes the menu and opens the list");
+    sh_menu_open(&m, SH_MENU_CONVO);
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CANCEL, 30) == SH_MENU_DO_CLOSE, "Cancel closes");
+    sh_menu_open(&m, SH_MENU_CONVO);
+    CHECK(sh_menu_input(&m, SH_MENU_IN_OUTSIDE, 40) == SH_MENU_DO_CLOSE, "so does a tap outside");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_NEW, 50) == SH_MENU_DO_NOTHING, "a closed menu does nothing");
+    sh_menu_open(&m, SH_MENU_CLEAR);
+    CHECK(sh_menu_input(&m, SH_MENU_IN_NEW, 60) == SH_MENU_DO_NOTHING &&
+              sh_menu_input(&m, SH_MENU_IN_RECENT, 60) == SH_MENU_DO_NOTHING && m.state == SH_MENU_OPEN,
+          "a person's thread keeps Clear chat and has neither");
+    CHECK(sh_menu_input(&m, SH_MENU_IN_CLEAR, 70) == SH_MENU_DO_ARM, "its Clear still arms first");
+}
+
+static void test_new_conversation_is_one_tap_and_does_nothing_when_already_new(void)
+{
+    CHECK(convo_new_decide(false, 4) == CONVO_NEW_START, "a conversation with messages: a new one");
+    CHECK(convo_new_decide(true, 2) == CONVO_NEW_START,
+          "a new one already begun (KEY from outside) can be left for another");
+    CHECK(convo_new_decide(false, 0) == CONVO_NEW_START,
+          "an empty thread after a restart is still the box's last conversation: a new one");
+    CHECK(convo_new_decide(true, 0) == CONVO_NEW_ALREADY, "new and empty: nothing, and it says so");
+    CHECK(!strcmp(CONVO_TOAST_ALREADY, "Already a new conversation"), "the mock's words");
+    CHECK(!strcmp(CONVO_TOAST_NEW, "New conversation — the last one is in Recent"), "the mock's words");
+
+    CHECK(!strcmp(convo_subtitle(false, "Shopping list"), "Shopping list"), "the box's title");
+    CHECK(!strcmp(convo_subtitle(false, NULL), "Desk panel"), "Desk panel until the box has said");
+    CHECK(!strcmp(convo_subtitle(false, ""), "New conversation"), "no conversation on the box yet");
+    CHECK(!strcmp(convo_subtitle(true, "Shopping list"), "New conversation"),
+          "a new one asked for: not the old one's title");
+    CHECK(convo_row_is_current(true, false) && !convo_row_is_current(true, true) &&
+              !convo_row_is_current(false, false),
+          "the box's current row is Current unless a new conversation was asked for since");
+}
+
+static void test_a_row_s_time_reads_like_the_mock(void)
+{
+    /* Monday 12 Oct 2026, 18:00 in New York (UTC-4): 22:00 UTC. */
+    const int64_t now = 1791842400;
+    const int32_t ny = -4 * 3600;
+    char s[24];
+    convo_when(now - 20, now, ny, s, sizeof s);
+    CHECK(!strcmp(s, "Just now"), "under a minute");
+    convo_when(now + 30, now, ny, s, sizeof s);
+    CHECK(!strcmp(s, "Just now"), "a box clock a little ahead is not the future");
+    convo_when(now - 12 * 60, now, ny, s, sizeof s);
+    CHECK(!strcmp(s, "12 min ago"), "under an hour");
+    convo_when(now - 9 * 3600 - 48 * 60, now, ny, s, sizeof s);
+    CHECK(!strcmp(s, "Today 08:12"), "earlier today, 24-hour");
+    convo_when(now - (22 * 3600 + 20 * 60), now, ny, s, sizeof s);
+    CHECK(!strcmp(s, "Yesterday 19:40"), "yesterday");
+    convo_when(now - (2 * 86400 + 7 * 3600 + 55 * 60), now, ny, s, sizeof s);
+    CHECK(!strcmp(s, "Sat 10:05"), "this week: the day");
+    convo_when(now - 7 * 86400, now, ny, s, sizeof s);
+    CHECK(!strcmp(s, "5 Oct"), "older: the date");
+    convo_when(now - 3 * 3600, now, 5 * 3600 + 1800, s, sizeof s);
+    CHECK(!strcmp(s, "Today 00:30"), "the zone decides the day: 03:30 local, three hours back");
+    convo_when(now - 4 * 3600, now, 5 * 3600 + 1800, s, sizeof s);
+    CHECK(!strcmp(s, "Yesterday 23:30"), "and across its midnight");
+}
+
+static void test_recent_opens_lists_switches_and_closes_as_the_mock_does(void)
+{
+    rc_t r = {0};
+    CHECK(rc_step(&r, RC_IN_KEY, 0, false) == RC_DO_NOTHING, "closed, KEY is the thread's");
+    CHECK(rc_step(&r, RC_IN_OPEN, 0, false) == RC_DO_FETCH && r.mode == RC_LOADING,
+          "opened: Loading… while the box is asked");
+    CHECK(rc_step(&r, RC_IN_OPEN, 0, false) == RC_DO_NOTHING, "asked once");
+    CHECK(rc_step(&r, RC_IN_TAP, 0, false) == RC_DO_NOTHING, "no row to tap while loading");
+    CHECK(rc_step(&r, RC_IN_LISTED, 4, false) == RC_DO_DRAW && r.mode == RC_LIST, "the rows");
+    CHECK(rc_step(&r, RC_IN_LISTED, 4, false) == RC_DO_NOTHING, "a late second answer changes nothing");
+    CHECK(rc_step(&r, RC_IN_TAP, 0, true) == RC_DO_CLOSE && r.mode == RC_CLOSED,
+          "the current row: back to the thread, nothing fetched");
+
+    r = (rc_t){0};
+    rc_step(&r, RC_IN_OPEN, 0, false);
+    rc_step(&r, RC_IN_LISTED, 4, false);
+    CHECK(rc_step(&r, RC_IN_TAP, -1, false) == RC_DO_NOTHING, "a row that is not there");
+    CHECK(rc_step(&r, RC_IN_TAP, 2, false) == RC_DO_SWITCH && r.mode == RC_OPENING && r.opening == 2,
+          "another row: Opening… on it, and the switch asked");
+    CHECK(rc_step(&r, RC_IN_TAP, 1, false) == RC_DO_NOTHING, "one switch at a time");
+    CHECK(rc_step(&r, RC_IN_KEY, 0, false) == RC_DO_WAIT && r.mode == RC_OPENING,
+          "KEY mid-switch says so and starts nothing");
+    CHECK(rc_step(&r, RC_IN_NEW, 0, false) == RC_DO_WAIT, "nor does New");
+    CHECK(rc_step(&r, RC_IN_SWITCH_FAILED, 0, false) == RC_DO_NOT_OPENED && r.mode == RC_LIST,
+          "a switch that failed: back to the list, saying so");
+    rc_step(&r, RC_IN_TAP, 2, false);
+    CHECK(rc_step(&r, RC_IN_SWITCHED, 0, false) == RC_DO_CLOSE && r.mode == RC_CLOSED,
+          "landed: the thread, now that conversation");
+    CHECK(rc_step(&r, RC_IN_SWITCHED, 0, false) == RC_DO_NOTHING, "once");
+
+    r = (rc_t){0};
+    rc_step(&r, RC_IN_OPEN, 0, false);
+    CHECK(rc_step(&r, RC_IN_LISTED, 0, false) == RC_DO_DRAW && r.mode == RC_EMPTY, "none: the empty state");
+    CHECK(rc_step(&r, RC_IN_KEY, 0, false) == RC_DO_CLOSE_TALK && r.mode == RC_CLOSED,
+          "KEY closes Recent and talks in the current conversation");
+    rc_step(&r, RC_IN_OPEN, 0, false);
+    CHECK(rc_step(&r, RC_IN_FAILED, 0, false) == RC_DO_DRAW && r.mode == RC_FAILED, "no answer");
+    CHECK(rc_step(&r, RC_IN_OPEN, 0, false) == RC_DO_FETCH, "Try again asks again");
+    CHECK(rc_step(&r, RC_IN_BACK, 0, false) == RC_DO_CLOSE && r.mode == RC_CLOSED, "BOOT goes back");
+    CHECK(rc_step(&r, RC_IN_BACK, 0, false) == RC_DO_NOTHING, "and closed, BOOT is not Recent's");
+    rc_step(&r, RC_IN_OPEN, 0, false);
+    CHECK(rc_step(&r, RC_IN_NEW, 0, false) == RC_DO_CLOSE_NEW && r.mode == RC_CLOSED,
+          "the + row starts a new conversation from Recent too");
+    CHECK(rc_step(&r, RC_IN_NEW, 0, false) == RC_DO_NOTHING, "not when closed");
+}
+
+static const char RECENT_JSON[] =
+    "{\"items\":[{\"id\":\"11111111-2222-4333-8444-555555555555\",\"title\":\"Shopping list\","
+    "\"at\":1791841800,\"origin\":\"panel\",\"snippet\":\"Added milk to your list.\",\"current\":true},"
+    "{\"current\":false,\"snippet\":\"You: Good for rock pools later?\",\"origin\":\"pwa\",\"future\":"
+    "{\"a\":[1,2,{\"b\":null}]},\"at\":1791841000,\"title\":\"Tides at Port St John\","
+    "\"id\":\"22222222-2222-4333-8444-555555555555\"}],\"etag\":\"x\"}";
+
+static void test_the_box_s_recent_json_is_read_as_the_box_writes_it(void)
+{
+    convo_list_t l;
+    CHECK(convo_parse_recent(RECENT_JSON, sizeof RECENT_JSON - 1, &l) && l.n == 2, "two rows");
+    CHECK(!strcmp(l.row[0].title, "Shopping list") && l.row[0].current &&
+              l.row[0].origin == CONVO_FROM_PANEL && l.row[0].at == 1791841800,
+          "the current one, started at the panel");
+    CHECK(!strcmp(l.row[1].id, "22222222-2222-4333-8444-555555555555") &&
+              l.row[1].origin == CONVO_FROM_PWA && !l.row[1].current &&
+              !strcmp(l.row[1].snippet, "You: Good for rock pools later?"),
+          "fields in any order, an unknown one skipped whole");
+
+    static const char EMPTY[] = "{\"items\": []}";
+    CHECK(convo_parse_recent(EMPTY, sizeof EMPTY - 1, &l) && l.n == 0, "an empty list is a list");
+    static const char *const BAD[] = {"", "[]", "{\"items\":{}}", "{\"rows\":[]}",
+                                      "{\"items\":[{\"id\":\"x\"", "{\"items\":[{\"at\":1.5}]}",
+                                      "{\"items\":[{\"title\":\"no end}]}"};
+    for (size_t i = 0; i < sizeof BAD / sizeof *BAD; i++)
+        CHECK(!convo_parse_recent(BAD[i], strlen(BAD[i]), &l) && l.n == 0, "not the shape: no rows");
+
+    static const char DROPPED[] =
+        "{\"items\":[{\"title\":\"no id\",\"origin\":\"pwa\"},"
+        "{\"id\":\"33333333-2222-4333-8444-555555555555\",\"origin\":\"game\"},"
+        "{\"id\":\"\",\"origin\":\"pwa\"},"
+        "{\"id\":\"44444444-2222-4333-8444-555555555555\",\"origin\":\"pwa\",\"title\":null,"
+        "\"at\":null,\"current\":null}]}";
+    CHECK(convo_parse_recent(DROPPED, sizeof DROPPED - 1, &l) && l.n == 1 &&
+              !strcmp(l.row[0].id, "44444444-2222-4333-8444-555555555555") && !l.row[0].title[0],
+          "a row with no id or an origin the panel has no glyph for is dropped; nulls are empty");
+
+    /* Oversize: a title three times a row's and a last line with a character across the cut. */
+    char big[1200];
+    int o = snprintf(big, sizeof big, "{\"items\":[{\"id\":\"55555555-2222-4333-8444-555555555555\","
+                                       "\"origin\":\"pwa\",\"title\":\"");
+    for (int i = 0; i < 120; i++) big[o++] = 'T';
+    o += snprintf(big + o, sizeof big - (size_t)o, "\",\"snippet\":\"");
+    for (int i = 0; i < 39; i++) o += snprintf(big + o, sizeof big - (size_t)o, "\xC3\xA9");
+    o += snprintf(big + o, sizeof big - (size_t)o, "\\u00e9\\ud83d\\ude00 tail\\n\\\"q\\\"\"}]}");
+    CHECK(convo_parse_recent(big, (size_t)o, &l) && l.n == 1, "an oversize row still reads");
+    CHECK(strlen(l.row[0].title) == CONVO_TITLE_BYTES - 1 &&
+              !strcmp(l.row[0].title + CONVO_TITLE_BYTES - 4, "\xE2\x80\xA6"),
+          "a title cut to its 40 bytes, the last three the ellipsis");
+    const size_t sn = strlen(l.row[0].snippet);
+    CHECK(sn < CONVO_SNIPPET_BYTES && !strcmp(l.row[0].snippet + sn - 3, "\xE2\x80\xA6"),
+          "a last line cut to fit, with the ellipsis");
+    CHECK((sn - 3) % 2 == 0, "and never through the middle of a character");
+
+    /* Eleven rows: the panel keeps ten. */
+    char many[4096];
+    o = snprintf(many, sizeof many, "{\"items\":[");
+    for (int i = 0; i < 11; i++)
+        o += snprintf(many + o, sizeof many - (size_t)o,
+                      "%s{\"id\":\"%08d-2222-4333-8444-555555555555\",\"origin\":\"panel\"}",
+                      i ? "," : "", i);
+    o += snprintf(many + o, sizeof many - (size_t)o, "]}");
+    CHECK(convo_parse_recent(many, (size_t)o, &l) && l.n == CONVO_ROWS &&
+              !strcmp(l.row[9].id, "00000009-2222-4333-8444-555555555555"),
+          "past ten rows are ignored");
+    CHECK(sizeof(convo_list_t) <= 2000, "the list the heap holds while Recent is open stays small");
+}
+
+typedef struct {
+    int n;
+    bool mine[8];
+    char text[8][MSG_LONG_TEXT];
+} got_msgs_t;
+
+static void got_msg(void *user, bool mine, const char *text)
+{
+    got_msgs_t *g = user;
+    if (g->n >= 8) return;
+    g->mine[g->n] = mine;
+    snprintf(g->text[g->n], sizeof g->text[g->n], "%s", text);
+    g->n++;
+}
+
+static void test_a_switched_thread_s_json_is_read_as_the_box_writes_it(void)
+{
+    static const char T[] =
+        "{\"id\":\"22222222-2222-4333-8444-555555555555\",\"title\":\"Tides at Port St John\","
+        "\"messages\":[{\"mine\":true,\"text\":\"When's low tide today?\"},"
+        "{\"mine\":false,\"text\":\"Low 14:52, high 21:07.\",\"extra\":[true]},"
+        "{\"mine\":false,\"text\":\"\"},{\"text\":\"no mine field\"}],\"more\":true}";
+    char title[CONVO_TITLE_BYTES], scratch[MSG_LONG_TEXT];
+    bool more = false;
+    got_msgs_t *g = calloc(1, sizeof *g);
+    CHECK(convo_parse_thread(T, sizeof T - 1, title, sizeof title, &more, scratch, sizeof scratch,
+                             got_msg, g),
+          "reads");
+    CHECK(!strcmp(title, "Tides at Port St John") && more, "the title, and older messages in the app");
+    CHECK(g->n == 3 && g->mine[0] && !g->mine[1] && !strcmp(g->text[1], "Low 14:52, high 21:07.") &&
+              !g->mine[2],
+          "each message in order; an empty one is skipped; no `mine` is the agent's");
+
+    char shortbuf[8];
+    memset(g, 0, sizeof *g);
+    CHECK(convo_parse_thread(T, sizeof T - 1, title, sizeof title, &more, shortbuf, sizeof shortbuf,
+                             got_msg, g) &&
+              strlen(g->text[0]) <= 7,
+          "a text cut to the caller's buffer");
+    static const char BAD[] = "{\"messages\":[{\"mine\":true,\"text\":\"a\"},{\"mine\":tru}]}";
+    memset(g, 0, sizeof *g);
+    CHECK(!convo_parse_thread(BAD, sizeof BAD - 1, title, sizeof title, &more, scratch, sizeof scratch,
+                              got_msg, g) &&
+              g->n == 1,
+          "a fault stops the reading where it is");
+    CHECK(!convo_parse_thread(T, sizeof T - 1, title, sizeof title, &more, scratch, 0, got_msg, g),
+          "no buffer, no reading");
+    static const char NONE[] = "{\"id\":\"\",\"title\":\"\",\"messages\":[],\"more\":false}";
+    CHECK(convo_parse_thread(NONE, sizeof NONE - 1, title, sizeof title, &more, scratch, sizeof scratch,
+                             got_msg, g) &&
+              !title[0] && !more,
+          "no thread on the box: an empty title");
+    free(g);
+
+    char path[64], body[64];
+    convo_path(CONVO_RQ_RECENT, "jerv", false, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/convo/jerv/recent"), "Recent's path");
+    convo_path(CONVO_RQ_SWITCH, "dave", false, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/convo/dave/select"), "a switch, first");
+    convo_path(CONVO_RQ_SWITCH, "dave", true, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/convo/dave/messages?limit=3"), "then its last exchanges");
+    convo_path(CONVO_RQ_TITLE, "jerv", false, path, sizeof path);
+    CHECK(!strcmp(path, "/endpoint/convo/jerv/messages?limit=0"), "the title alone");
+    CHECK(convo_select_body("22222222-2222-4333-8444-555555555555", body, sizeof body) &&
+              !strcmp(body, "{\"session_id\":\"22222222-2222-4333-8444-555555555555\"}"),
+          "the switch's body");
+    CHECK(!convo_select_body("22222222-2222-4333-8444-55555555555\"", body, sizeof body) &&
+              !convo_select_body("short", body, sizeof body) && !convo_select_body(NULL, body, sizeof body),
+          "anything but a session id is never sent");
+    CHECK(convo_agent_ok("jerv") && convo_agent_ok("dave") && !convo_agent_ok(SVC_MESSAGES_THREAD_1) &&
+              !convo_agent_ok(NULL),
+          "only the agents have conversations on the box");
+    char fit[8];
+    convo_fit(fit, sizeof fit, "abcdefghij", 10);
+    CHECK(!strcmp(fit, "abcd\xE2\x80\xA6"), "convo_fit cuts with the ellipsis");
+    convo_fit(fit, sizeof fit, "abc", 3);
+    CHECK(!strcmp(fit, "abc"), "and keeps what fits");
+}
+
+static char *heap(const char *s)
+{
+    char *b = malloc(strlen(s) + 1);
+    strcpy(b, s);
+    return b;
+}
+
+static void test_the_conversation_service_end_to_end(void)
+{
+    svc_messages_fake_clear();
+    svc_audio_init();
+    convo_req_t r;
+    while (svc_convo_take(&r)) {
+    }
+    svc_convo_service();
+
+    /* Recent: asked, fetched by the main task, applied by the UI task. */
+    CHECK(svc_convo_recent(NULL) == CONVO_IDLE, "nothing open");
+    CHECK(!svc_convo_recent_open(SVC_MESSAGES_THREAD_1), "a person's thread has no Recent");
+    CHECK(svc_convo_recent_open("jerv") && svc_convo_recent(NULL) == CONVO_WAITING, "asked");
+    CHECK(svc_convo_take(&r) && r.kind == CONVO_RQ_RECENT && !strcmp(r.agent, "jerv"),
+          "the main task takes it");
+    CHECK(!svc_convo_take(&r) || r.kind != CONVO_RQ_RECENT, "once");
+    svc_convo_done(&r, 200, heap(RECENT_JSON), sizeof RECENT_JSON - 1);
+    CHECK(svc_convo_recent(NULL) == CONVO_WAITING, "not until the UI task applies it");
+    svc_convo_service();
+    const convo_list_t *l = NULL;
+    CHECK(svc_convo_recent(&l) == CONVO_READY && l && l->n == 2, "the list");
+    svc_convo_recent_close();
+    CHECK(svc_convo_recent(&l) == CONVO_IDLE && !l, "closed: freed");
+
+    /* An answer for a list closed meanwhile is dropped, not applied to the next. */
+    svc_convo_recent_open("dave");
+    convo_req_t old;
+    svc_convo_take(&old);
+    svc_convo_recent_close();
+    svc_convo_recent_open("dave");
+    svc_convo_done(&old, 200, heap(RECENT_JSON), sizeof RECENT_JSON - 1);
+    svc_convo_service();
+    CHECK(svc_convo_recent(NULL) == CONVO_WAITING, "a stale answer is dropped");
+    svc_convo_take(&r);
+    svc_convo_done(&r, 503, NULL, 0);
+    svc_convo_service();
+    CHECK(svc_convo_recent(NULL) == CONVO_FAILED, "the box's refusal: Try again");
+    svc_convo_recent_close();
+
+    /* A switch: the box's last exchanges replace the panel's view; the title and the chip. */
+    msg_t m = {.id = 7, .mine = true};
+    snprintf(m.text, sizeof m.text, "Add milk.");
+    svc_messages_fake_add("jerv", &m);
+    svc_audio_fresh("jerv");
+    svc_convo_switch("jerv", "22222222-2222-4333-8444-555555555555");
+    CHECK(svc_convo_switching() == CONVO_WAITING, "Opening…");
+    CHECK(svc_convo_take(&r) && r.kind == CONVO_RQ_SWITCH &&
+              !strcmp(r.id, "22222222-2222-4333-8444-555555555555"),
+          "the switch, with the conversation it names");
+    char long_answer[1100];
+    memset(long_answer, 'w', 999);
+    long_answer[999] = '\0';
+    char thread[1400];
+    snprintf(thread, sizeof thread,
+             "{\"id\":\"x\",\"title\":\"Tides at Port St John\",\"messages\":[{\"mine\":true,"
+             "\"text\":\"When's low tide?\"},{\"mine\":false,\"text\":\"%s\"}],\"more\":true}",
+             long_answer);
+    svc_convo_done(&r, 200, heap(thread), strlen(thread));
+    svc_convo_service();
+    CHECK(svc_convo_switching() == CONVO_READY, "landed");
+    CHECK(svc_messages_count("jerv") == 2, "the thread is that conversation's, not the old one's");
+    msg_t got;
+    svc_messages_get("jerv", 1, &got);
+    CHECK(!got.mine && strlen(svc_messages_text("jerv", &got)) == 999 && strlen(got.text) < 256,
+          "its newest answer is kept whole, its bubble cut");
+    CHECK(!strcmp(svc_convo_title("jerv"), "Tides at Port St John") && svc_convo_earlier("jerv"),
+          "its title, and earlier messages in the app");
+    CHECK(!svc_audio_fresh_pending("jerv"), "the next talk continues it, not a new one");
+    CHECK(svc_convo_title("dave") == NULL && !svc_convo_earlier("dave"), "Dave's is untouched");
+
+    /* The title, asked again: the same one changes nothing; a new conversation forgets it. */
+    const uint32_t rev = svc_convo_rev();
+    svc_convo_refresh_title("jerv");
+    svc_convo_take(&r);
+    static const char SAME[] = "{\"title\":\"Tides at Port St John\",\"messages\":[]}";
+    svc_convo_done(&r, 200, heap(SAME), sizeof SAME - 1);
+    svc_convo_service();
+    CHECK(svc_convo_rev() == rev, "the same title draws nothing");
+    svc_audio_fresh("jerv");
+    svc_convo_service();
+    CHECK(svc_convo_title("jerv") == NULL && !svc_convo_earlier("jerv") && svc_convo_rev() != rev,
+          "a new conversation, asked for anywhere, forgets the old title and the chip");
+    svc_convo_refresh_title("jerv");
+    svc_convo_take(&r);
+    svc_convo_done(&r, 200, heap(SAME), sizeof SAME - 1);
+    svc_convo_service();
+    CHECK(svc_convo_title("jerv") == NULL, "an old title arriving after it is not this one's");
+    svc_audio_continue("jerv");
+    svc_convo_new("jerv");
+
+    /* A switch the box refuses changes nothing on the panel. */
+    const uint16_t before = svc_messages_count("jerv");
+    svc_convo_switch("jerv", "33333333-2222-4333-8444-555555555555");
+    svc_convo_take(&r);
+    svc_convo_done(&r, 404, NULL, 0);
+    svc_convo_service();
+    CHECK(svc_convo_switching() == CONVO_FAILED && svc_messages_count("jerv") == before,
+          "refused: the thread stays as it was");
+    /* Switched, but its messages did not come: an empty thread, and the title asked for. */
+    svc_convo_switch("dave", "44444444-2222-4333-8444-555555555555");
+    svc_convo_take(&r);
+    svc_convo_done(&r, 200, NULL, 0);
+    svc_convo_service();
+    CHECK(svc_convo_switching() == CONVO_READY && svc_messages_count("dave") == 0 &&
+              svc_convo_earlier("dave"),
+          "the switch held: the rest is in the app");
+    CHECK(svc_convo_take(&r) && r.kind == CONVO_RQ_TITLE && !strcmp(r.agent, "dave"),
+          "and its title is asked for");
+
+    /* A burst of the same ask is one fetch; a full queue drops the oldest. */
+    for (int i = 0; i < 3; i++) svc_convo_refresh_title("jerv");
+    CHECK(svc_convo_take(&r) && r.kind == CONVO_RQ_TITLE && !svc_convo_take(&r), "three asks, one fetch");
+    svc_convo_refresh_title("jerv");
+    svc_convo_refresh_title("dave");
+    svc_convo_recent_open("jerv");
+    svc_convo_switch("dave", "55555555-2222-4333-8444-555555555555");
+    svc_convo_recent_open("dave");
+    int n = 0;
+    while (svc_convo_take(&r)) n++;
+    CHECK(n == 4, "four wait at most");
+    for (int i = 0; i < 6; i++) {
+        convo_req_t stale = {.kind = CONVO_RQ_TITLE, .seq = 1};
+        snprintf(stale.agent, sizeof stale.agent, "jerv");
+        svc_convo_done(&stale, 200, heap(SAME), sizeof SAME - 1);
+    }
+    svc_convo_service();
+    svc_convo_recent_close();
+    char note[96];
+    svc_convo_note(note, sizeof note);
+    CHECK(strncmp(note, "convo=rq:", 9) == 0, "its telemetry token");
+    svc_messages_fake_clear();
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -3140,6 +3548,13 @@ int main(void)
     test_a_ringing_alarm_beats_everything();
     test_the_alarms_service_end_to_end();
     test_other_tasks_read_the_alarms_the_ui_task_published();
+    test_an_agent_s_menu_is_new_recent_and_cancel();
+    test_new_conversation_is_one_tap_and_does_nothing_when_already_new();
+    test_a_row_s_time_reads_like_the_mock();
+    test_recent_opens_lists_switches_and_closes_as_the_mock_does();
+    test_the_box_s_recent_json_is_read_as_the_box_writes_it();
+    test_a_switched_thread_s_json_is_read_as_the_box_writes_it();
+    test_the_conversation_service_end_to_end();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }
