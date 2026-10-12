@@ -778,6 +778,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             reader_url=settings.reader_url,
             solver_url=settings.solver_url,
             solver_proxy_url=settings.solver_proxy_url,
+            reader_proxy_url=settings.reader_proxy_url,
             solver_first_domains=settings.solver_first_domains,
             tavily_url=settings.tavily_url,
             tavily_extract_depth=settings.tavily_extract_depth,

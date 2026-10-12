@@ -671,7 +671,8 @@ services:
       # the service refuses to start). Shared with the api via JBRAIN_JCODE_TOKEN.
       JCODE_TOKEN: ${JCODE_TOKEN:-}
       JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      JCODE_MODEL_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
+      # Logged only (the ctl never calls it): grok reaches its models through the api.
+      JCODE_MODEL_BASE_URL: ${JCODE_MODEL_URL:-http://api:8000/api/jcode/llm/v1}
       # Grok Build (`grok`, xAI's official CLI) is the session harness. A login-shell hook
       # (/etc/profile.d/grok-config.sh) renders ~/.grok/config.toml from these vars so
       # `grok` targets the on-box models over an OpenAI-compatible base_url. base_url
@@ -727,21 +728,25 @@ services:
       # The sandbox's ONLY way out (S2.4): `jcode_fenced` has no gateway, so these are not a
       # preference but the route. Both spellings, because curl (and so git) reads only the
       # lowercase `http_proxy`, while npm/pip read either. JCODE_EGRESS_PROXY still overrides
-      # when the owner sets it (another proxy reachable on `jcode_fenced`); an EMPTY value
-      # falls back to squid, since no proxy here means no outbound at all.
+      # when the owner sets it, but it must be reachable ON `jcode_fenced` — a proxy on the
+      # LAN or the host is not, so pointing it there leaves sessions with no outbound at all.
+      # An EMPTY value falls back to squid.
       HTTP_PROXY: ${JCODE_EGRESS_PROXY:-http://egress:3128}
       HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-http://egress:3128}
       http_proxy: ${JCODE_EGRESS_PROXY:-http://egress:3128}
       https_proxy: ${JCODE_EGRESS_PROXY:-http://egress:3128}
       # Never proxy the on-box peer: `api` serves grok's models (the residency-aware jcode
-      # proxy), the web tools and OCR, and squid refuses compose names anyway.
-      NO_PROXY: ${JCODE_NO_PROXY:-api,localhost,127.0.0.1}
-      no_proxy: ${JCODE_NO_PROXY:-api,localhost,127.0.0.1}
+      # proxy), the web tools and OCR, and squid refuses compose names anyway. `::1` too:
+      # a dev server bound to IPv6 loopback must not be sent to the proxy.
+      NO_PROXY: ${JCODE_NO_PROXY:-api,localhost,127.0.0.1,::1}
+      no_proxy: ${JCODE_NO_PROXY:-api,localhost,127.0.0.1,::1}
       # Node's built-in fetch ignores the proxy env without this (Node >= 22.21).
       NODE_USE_ENV_PROXY: "1"
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
+    # Its only way out; egress is stock stack, so a profiled service may depend on it.
+    depends_on: [egress]
     networks: [jcode_fenced]
     # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
     # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
@@ -857,8 +862,9 @@ services:
   # FENCED (S2.3): its Chromium follows redirects and runs page JS after only the first URL
   # was checked, so it sits ONLY on `fetchers` (`internal: true`), whose one way out is the
   # squid `egress` proxy — it cannot reach comfyui, the model servers, the wall, the api's
-  # `/internal` routes or metadata. The proxy env points Chromium at squid; the network is
-  # the guarantee either way.
+  # `/internal` routes or metadata. The proxy env and the api's per-request `X-Proxy-Url`
+  # point it at squid; whether this image's Chromium honours them is verified on the box
+  # (the plan's on-box gate). The network is the guarantee either way.
   # Pinned by digest (the repo publishes only `latest`, and the update never re-pulls a
   # floating tag — the SearXNG lesson). Resolved 2026-10-04; re-resolve to upgrade.
   reader:
@@ -890,7 +896,7 @@ services:
   # at a non-serving endpoint — an EMPTY value does NOT disable it (env_ignore_empty falls back
   # to the on-box default). It holds no owner data (only jerv reaches it, like the reader),
   # and is FENCED like the reader: ONLY on `fetchers`, out through squid. The api names the
-  # proxy in every FlareSolverr request (`proxy: {"url": "http://egress:3128"}`).
+  # proxy in every solve request too (`X-Proxy-Server`).
   # Pinned by digest for the same reason as `reader`: `latest` froze at install. Resolved
   # 2026-10-04 from ghcr's `latest`; re-resolve to upgrade the stealth browser.
   byparr:
@@ -899,9 +905,10 @@ services:
     restart: unless-stopped
     mem_limit: ${BYPARR_MEM_LIMIT:-2g}  # a stealth browser is heavier than the reader's Chromium
     shm_size: 2gb  # headless browser crashes on the default 64m /dev/shm
-    # Belt to the per-request proxy: Firefox on Linux reads the proxy env as its "system"
-    # setting, and anything else in the image that goes out does too.
+    # PROXY_SERVER is Byparr's own default proxy for its browser (the api also sends it per
+    # request as `X-Proxy-Server`); the standard variables cover anything else in the image.
     environment:
+      PROXY_SERVER: http://egress:3128
       HTTP_PROXY: http://egress:3128
       HTTPS_PROXY: http://egress:3128
       http_proxy: http://egress:3128

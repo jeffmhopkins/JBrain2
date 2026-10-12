@@ -187,6 +187,9 @@ def test_the_proxy_denies_every_non_public_range() -> None:
         "::ffff:0:0/96",
         "2002::/16",
         "2001::/32",
+        "::/96",
+        "fec0::/10",
+        "64:ff9b::/96",
     } <= _denied_ranges()
 
 
@@ -261,6 +264,9 @@ def test_the_reader_and_solver_browsers_are_pointed_at_the_proxy() -> None:
             assert env[var] == _EGRESS, (name, var)
     config = (_DEPLOY.parent / "backend" / "src" / "jbrain" / "config.py").read_text()
     assert f'solver_proxy_url: str = "{_EGRESS}"' in config
+    assert f'reader_proxy_url: str = "{_EGRESS}"' in config
+    # Byparr's own proxy knob; its request model has no body `proxy` field.
+    assert services["byparr"]["environment"]["PROXY_SERVER"] == _EGRESS
 
 
 def test_code_mode_shares_its_network_with_only_the_api_and_the_proxy() -> None:
@@ -288,7 +294,8 @@ def test_code_mode_goes_out_through_the_proxy_by_default() -> None:
         # The owner's JCODE_EGRESS_PROXY still wins; unset or empty means squid.
         assert env[var] == "${JCODE_EGRESS_PROXY:-" + _EGRESS + "}", var
     for var in ("NO_PROXY", "no_proxy"):
-        assert env[var] == "${JCODE_NO_PROXY:-api,localhost,127.0.0.1}", var
+        assert env[var] == "${JCODE_NO_PROXY:-api,localhost,127.0.0.1,::1}", var
+    assert "egress" in _compose()["services"]["jcode"]["depends_on"]
     assert env["NODE_USE_ENV_PROXY"] == "1"
 
 

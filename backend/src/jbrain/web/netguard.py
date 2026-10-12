@@ -19,6 +19,7 @@ import socket
 import ssl
 from collections.abc import Awaitable, Callable, Iterable
 
+import anyio
 import httpcore
 import httpx
 
@@ -93,19 +94,28 @@ class PinnedBackend(httpcore.AsyncNetworkBackend):
         local_address: str | None = None,
         socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
     ) -> httpcore.AsyncNetworkStream:
+        # One deadline for the whole connect: resolving and every address tried share the
+        # caller's budget, so a slow resolver or a list of dead addresses cannot multiply it.
+        deadline = None if timeout is None else anyio.current_time() + timeout
         try:
-            addresses = await self._resolve(host, port)
+            with anyio.fail_after(timeout):
+                addresses = await self._resolve(host, port)
+        except TimeoutError as exc:
+            raise httpcore.ConnectTimeout(f"resolving {host} timed out") from exc
         except OSError as exc:
             raise httpcore.ConnectError(f"could not resolve {host}") from exc
         if not addresses or not _all_public(addresses):
             raise NonPublicAddressError("that URL points at a non-public address")
         last: Exception | None = None
         for address in addresses:
+            remaining = None if deadline is None else deadline - anyio.current_time()
+            if remaining is not None and remaining <= 0:
+                raise httpcore.ConnectTimeout(f"connecting to {host} timed out")
             try:
                 return await self._inner.connect_tcp(
                     address,
                     port,
-                    timeout=timeout,
+                    timeout=remaining,
                     local_address=local_address,
                     socket_options=socket_options,
                 )
@@ -138,10 +148,13 @@ class PinnedTransport(httpx.AsyncHTTPTransport):
         inner: httpcore.AsyncNetworkBackend | None = None,
         ssl_context: ssl.SSLContext | None = None,
     ) -> None:
-        super().__init__()
+        context = ssl_context or httpx.create_ssl_context()
+        super().__init__(verify=context)
         limits = httpx.Limits(max_connections=100, max_keepalive_connections=20)
+        # `_pool` is httpx-private (hence the `httpx<0.29` pin); test_netguard's end-to-end
+        # fetches fail loudly if a release renames it.
         self._pool = httpcore.AsyncConnectionPool(
-            ssl_context=ssl_context or httpx.create_ssl_context(),
+            ssl_context=context,
             max_connections=limits.max_connections,
             max_keepalive_connections=limits.max_keepalive_connections,
             keepalive_expiry=limits.keepalive_expiry,

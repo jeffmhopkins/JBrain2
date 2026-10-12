@@ -83,7 +83,9 @@ UNREACHABLE = "The dev server isn't reachable on this port."
 
 
 def _default_client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=_TIMEOUT)
+    # The container's proxy env (S2.4) is for the sessions' outbound; the dev server is
+    # loopback, and httpx would send `[::1]` to squid, which refuses it.
+    return httpx.AsyncClient(timeout=_TIMEOUT, trust_env=False)
 
 
 # httpx returns the DECODED body, so the upstream's framing/encoding headers no longer
@@ -238,6 +240,7 @@ async def proxy_ws(  # pragma: no cover - opens a live upstream socket, deploy-o
                 subprotocols=requested or None,
                 open_timeout=5,
                 max_size=None,
+                proxy=None,  # loopback, never the container's egress proxy
             )
             break
         except Exception as exc:

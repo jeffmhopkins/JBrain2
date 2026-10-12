@@ -884,6 +884,7 @@ class WebFetcher:
         reader_url: str = "",
         solver_url: str = "",
         solver_proxy_url: str = "",
+        reader_proxy_url: str = "",
         solver_first_domains: Sequence[str] = (),
         tavily_url: str = "",
         tavily_extract_depth: str = "advanced",
@@ -907,6 +908,7 @@ class WebFetcher:
         # to when the reader itself returns a challenge interstitial. Empty = tier disabled.
         self._solver_url = solver_url.rstrip("/")
         self._solver_proxy_url = solver_proxy_url
+        self._reader_proxy_url = reader_proxy_url
         # Domains whose fetches go straight to the solver, skipping the direct+reader legs that
         # only fail on them (a hard bot-wall that 401s the fetch and 429s the reader). Lowercased
         # for a case-insensitive host suffix match.
@@ -1604,9 +1606,12 @@ class WebFetcher:
             async with httpx.AsyncClient(
                 timeout=_TIMEOUT, transport=self._transport, follow_redirects=True
             ) as client:
-                resp = await client.get(
-                    target, headers={**BROWSER_HEADERS, "X-Respond-With": "markdown"}
-                )
+                headers = {**BROWSER_HEADERS, "X-Respond-With": "markdown"}
+                if self._reader_proxy_url:
+                    # The reader's network has no gateway; this is its per-request proxy knob,
+                    # beside the proxy env compose gives its Chromium.
+                    headers["X-Proxy-Url"] = self._reader_proxy_url
+                resp = await client.get(target, headers=headers)
                 resp.raise_for_status()
                 raw, body_truncated = await _read_capped(resp)
                 text = raw.decode(
@@ -1669,13 +1674,16 @@ class WebFetcher:
             "url": url,
             "maxTimeout": _SOLVER_MAX_TIMEOUT_MS,
         }
+        headers: dict[str, str] = {}
         if self._solver_proxy_url:
             # byparr's network has no gateway: its browser reaches the page through squid or not
-            # at all, so the proxy rides in every request rather than trusting the image's env.
+            # at all. Byparr reads a per-request proxy from `X-Proxy-Server` (its request model
+            # drops a body `proxy`); FlareSolverr proper reads the body field, so send both.
+            headers["X-Proxy-Server"] = self._solver_proxy_url
             payload["proxy"] = {"url": self._solver_proxy_url}
         try:
             async with httpx.AsyncClient(timeout=_SOLVER_TIMEOUT, transport=self._transport) as c:
-                resp = await c.post(f"{self._solver_url}/v1", json=payload)
+                resp = await c.post(f"{self._solver_url}/v1", json=payload, headers=headers)
                 resp.raise_for_status()
                 body = resp.json()
             solution = body.get("solution") if isinstance(body, dict) else None

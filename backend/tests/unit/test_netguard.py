@@ -14,6 +14,7 @@ import ssl
 from collections.abc import Iterable
 from typing import Any
 
+import anyio
 import httpcore
 import pytest
 
@@ -105,6 +106,7 @@ class _Net(httpcore.AsyncNetworkBackend):
         self.responses = responses
         self.dialled: list[tuple[str, int]] = []
         self.streams: list[_Stream] = []
+        self.budgets: list[float | None] = []
 
     async def connect_tcp(
         self,
@@ -115,6 +117,7 @@ class _Net(httpcore.AsyncNetworkBackend):
         socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
     ) -> httpcore.AsyncNetworkStream:
         self.dialled.append((host, port))
+        self.budgets.append(timeout)
         if host not in self.responses:
             raise httpcore.ConnectError(f"nothing at {host}")
         stream = _Stream(self.responses[host])
@@ -221,6 +224,41 @@ async def test_sleep_is_the_inner_backends() -> None:
 
     await PinnedBackend(inner=_Sleepy({})).sleep(0.5)
     assert slept == [0.5]
+
+
+async def test_a_slow_resolver_is_a_connect_timeout() -> None:
+    async def resolve(host: str, port: int) -> list[str]:
+        await anyio.sleep(5)
+        return [_PUBLIC]
+
+    with pytest.raises(httpcore.ConnectTimeout):
+        await PinnedBackend(resolver=resolve, inner=_Net({})).connect_tcp(
+            "slow.example", 80, timeout=0.05
+        )
+
+
+async def test_the_addresses_share_one_deadline_not_one_each() -> None:
+    net = _Net({"8.8.8.8": b""})
+
+    async def resolve(host: str, port: int) -> list[str]:
+        await anyio.sleep(0.05)
+        return [_PUBLIC, "8.8.8.8"]
+
+    await PinnedBackend(resolver=resolve, inner=net).connect_tcp("site.example", 80, timeout=1.0)
+    first, second = net.budgets
+    assert first is not None and second is not None
+    assert second <= first < 1.0  # what resolving spent is gone from every dial
+
+
+async def test_a_spent_deadline_dials_nothing_more() -> None:
+    net = _Net({})
+
+    async def resolve(host: str, port: int) -> list[str]:
+        return [_PUBLIC]
+
+    with pytest.raises(httpcore.ConnectTimeout):
+        await PinnedBackend(resolver=resolve, inner=net).connect_tcp("site.example", 80, timeout=0)
+    assert net.dialled == []
 
 
 async def test_a_unix_socket_is_refused() -> None:
