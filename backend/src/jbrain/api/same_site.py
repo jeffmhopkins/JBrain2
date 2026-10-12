@@ -105,6 +105,20 @@ def refusal_reason(headers: Headers, method: str | None, path: str) -> str | Non
 
 
 PREVIEW_PREFIX = "/__jcode_preview/"
+# GETs whose handlers authenticate by a token in the URL and never read the session cookie.
+# The owner opening one from webmail sends the Lax cookie on a cross-site navigation, and
+# there is nothing for the guard to protect. Kept in step with the route matrix's
+# COOKIE_EXEMPT by a test, so a cookie-reading route can't be waved through by accident.
+_COOKIE_FREE_GET_PATHS = frozenset({"/api/feed/appointments.ics"})
+_COOKIE_FREE_GET_PREFIXES = ("/api/research-share/", "/api/jlaunch-share/", "/api/mc-share/")
+
+
+# The WebSocket feeds a DASHBOARD_ALLOWED_ORIGINS origin may open.
+DASHBOARD_FEEDS = frozenset({"/api/locations/live"})
+
+
+def cookie_free_get(path: str) -> bool:
+    return path in _COOKIE_FREE_GET_PATHS or path.startswith(_COOKIE_FREE_GET_PREFIXES)
 
 
 class SameSiteGuard:
@@ -128,6 +142,19 @@ class SameSiteGuard:
             return
         is_ws = scope["type"] == "websocket"
         method = None if is_ws else scope["method"]
+        if method in ("GET", "HEAD") and cookie_free_get(scope["path"]):
+            await self.app(scope, receive, send)
+            return
+        # DASHBOARD_ALLOWED_ORIGINS names the origins the owner trusts with the live
+        # location feed, and nothing else: the shells (jcode/jlaunch terminals) also run
+        # `origin_allowed`, so the guard is what keeps a listed origin off them.
+        if (
+            is_ws
+            and scope["path"] in DASHBOARD_FEEDS
+            and headers.get("origin") in settings.allowed_ws_origins
+        ):
+            await self.app(scope, receive, send)
+            return
         if refusal_reason(headers, method, scope["path"]) is not None:
             if is_ws:
                 await send({"type": "websocket.close", "code": 4403, "reason": ""})
