@@ -1,7 +1,8 @@
-# The in-memory implementation behind the svc_audio.h interface, until its driver lands.
+# The in-memory implementation behind the svc_audio.h interface, until its driver lands: a hold
+# is timed and its place in the conversation marked, but nothing is recorded.
 idf_component_register(
     SRCS "svc_audio_fake.c" "talk_policy.c"
     INCLUDE_DIRS "include"
     REQUIRES app_api svc_debug
-    PRIV_REQUIRES svc_rtc
+    PRIV_REQUIRES svc_rtc svc_messages
 )

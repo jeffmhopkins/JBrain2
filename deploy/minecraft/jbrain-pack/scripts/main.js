@@ -446,10 +446,18 @@ const askDave = (player, text) => {
   player.sendMessage("§7Dave is thinking…");
 };
 
+// Bedrock also answers each name without its namespace, so players type /dave, /d or /ai;
+// the short ones are the owner's ask (2026-10-12), and all share one handler.
+const DAVE_COMMANDS = ["jb:dave", "jb:d", "jb:ai"];
+
 system.beforeEvents.startup.subscribe((ev) => {
-  ev.customCommandRegistry.registerCommand(
+  for (const name of DAVE_COMMANDS) registerDave(ev.customCommandRegistry, name);
+});
+
+const registerDave = (registry, name) => {
+  registry.registerCommand(
     {
-      name: "jb:dave",
+      name,
       description: "Ask Dave",
       permissionLevel: CommandPermissionLevel.Any,
       optionalParameters: Array.from({ length: WORDS }, (_, i) => ({
@@ -466,7 +474,7 @@ system.beforeEvents.startup.subscribe((ev) => {
       if (!text) {
         return {
           status: CustomCommandStatus.Success,
-          message: 'Ask Dave something, like: /jb:dave point me home (use "quotes" for commas or numbers)',
+          message: 'Ask Dave something, like: /dave point me home (use "quotes" for commas or numbers)',
         };
       }
       // A command callback runs read-only; reading the inventory and the spawn point and
@@ -475,6 +483,6 @@ system.beforeEvents.startup.subscribe((ev) => {
       return { status: CustomCommandStatus.Success };
     },
   );
-});
+};
 
 initReplicator();

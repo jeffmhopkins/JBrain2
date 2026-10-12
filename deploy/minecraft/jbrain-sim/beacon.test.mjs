@@ -24,8 +24,8 @@ test("hostile, neutral and wild passive mobs go, the Warden and teleporting ende
 });
 
 test("the crew, villagers, golems and the great bosses always stay", () => {
-  for (const t of ["player", "villager", "villager_v2", "wandering_trader", "iron_golem",
-    "snow_golem", "copper_golem", "ender_dragon", "wither"]) {
+  for (const t of ["player", "villager", "villager_v2", "iron_golem", "snow_golem",
+    "copper_golem", "ender_dragon", "wither"]) {
     assert.equal(b.keepReason(wild(mc(t))), "always kept", t);
   }
   assert.ok(!b.ALWAYS_KEPT.has(mc("warden")));
@@ -38,13 +38,22 @@ test("tamed, name-tagged, leashed, interacted-with and bred mobs stay", () => {
   assert.equal(b.keepReason(wild(mc("sheep"), { kept: true })), "a player looked after it");
 });
 
+test("the wandering trader and his llamas are banished, even after a trade", () => {
+  for (const t of ["wandering_trader", "trader_llama"]) {
+    assert.equal(b.keepReason(wild(mc(t))), null, t);
+    assert.equal(b.keepReason(wild(mc(t), { kept: true })), null, t);
+  }
+  assert.equal(b.keepReason(wild(mc("trader_llama"), { leashed: true })), "on a lead");
+  assert.equal(b.keepReason(wild(mc("wandering_trader"), { named: true })), "name tag");
+});
+
 test("anything that isn't a listed mob is never touched", () => {
   for (const t of ["item", "xp_orb", "arrow", "boat", "minecart", "armor_stand",
     "ender_crystal", "painting"]) {
     assert.equal(b.keepReason(wild(mc(t))), "not a mob the beacon removes", t);
   }
   assert.equal(b.keepReason(wild("jbrain:something")), "not a mob the beacon removes");
-  const overlap = [...b.HOSTILE, ...b.NEUTRAL, ...b.PASSIVE].filter((t) => b.ALWAYS_KEPT.has(t));
+  const overlap = [...b.REMOVABLE].filter((t) => b.ALWAYS_KEPT.has(t));
   assert.deepEqual(overlap, []);
 });
 

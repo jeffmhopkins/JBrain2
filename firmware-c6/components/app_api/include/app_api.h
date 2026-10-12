@@ -19,6 +19,8 @@ typedef struct app app_t;
 typedef struct {
     void (*go_home)(void);
     void (*toast)(const char *text);
+    /* Another app by id: the clock face's badge opens the thread that is waiting. */
+    bool (*open)(const char *id);
 } app_host_t;
 
 struct app {
@@ -35,6 +37,9 @@ struct app {
     void (*tile_state)(app_t *self, ui_tile_state_t *out);
     /* Optional. Writes the open app's state into a debug snapshot. Called only while open. */
     void (*describe)(app_t *self, dbg_json_t *w);
+    /* Optional. True while the open app's screen must not be covered by an arriving notice: the
+     * clock face, where it waits as a corner badge until tapped (plan §2). */
+    bool (*holds_notices)(app_t *self);
 
     /* Set by shell_register(); never by the app. */
     const app_host_t *host;

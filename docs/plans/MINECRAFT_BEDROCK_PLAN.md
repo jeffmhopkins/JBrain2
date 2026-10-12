@@ -638,6 +638,10 @@ house by typing the address.
   startup, so the wrapper writes the name into the pack's config before starting BDS.
   Renaming is a restart, not a pack rebuild. The script logs one structured line carrying the asker, the text, and the asker's position, dimension
   and facing. The wrapper parses it and queues a `question` event.
+  - **Players type `/dave`, `/d` or `/ai`** (owner, 2026-10-12). Bedrock answers every custom
+    command without its namespace too (box check: `dave hi` reaches the handler, an
+    unknown `zzdave` doesn't), so the pack registers `jb:dave`, `jb:d` and `jb:ai` on one handler,
+    and everything players read names `/dave`. The namespaced forms keep working.
 - **Live queries (backend asks the world)**: the wrapper sends
   `scriptevent jb:q <id> <json>`. The script runs it against **loaded** chunks (for example
   `dimension.getEntities({type, location, closest: 1})`) and logs the result tagged with
@@ -1959,8 +1963,10 @@ decided while building it:
 - **Kept is a list, removed is a list.** The beacon removes only the vanilla hostile,
   neutral and passive mob types it names (`REMOVABLE`); any other entity (items, XP,
   arrows, boats, armor stands, another pack's entities, a mob the game adds later) is
-  never touched. Always kept: players, villagers (both ids) and the wandering trader,
-  iron, snow and copper golems, the Ender Dragon and the Wither. Any removable mob stays
+  never touched. Always kept: players, villagers (both ids), iron, snow and copper
+  golems, the Ender Dragon and the Wither. The wandering trader and his llamas are
+  `VISITORS` (owner, 2026-10-12): banished like wild mobs, and a trade (an interaction)
+  doesn't keep one; only a lead or a name tag does. Any removable mob stays
   when tamed (`minecraft:is_tamed`), name-tagged, on a lead, or marked `jb:kept`.
 - **`jb:kept`** is set on a removable mob by any `playerInteractWithEntity` (feeding,
   trading, a name tag being put on), and on every removable mob born (`entitySpawn` cause
@@ -2280,7 +2286,7 @@ the player reaches it, and a map share link shows it too.
 
 **How.**
 - `mc_set_waypoint` (the only writer of a Tricorder waypoint, fast path included) also
-  records the target in `app.mc_tricorder_targets` (migration `0231`), one row per player
+  records the target in `app.mc_tricorder_targets` (migration `0232`), one row per player
   per world, keyed by the lowercased gamertag as the pack's own copy is; a clear deletes
   it. The pack's copy is a world dynamic property nothing outside the game can read, so
   this is the map's only source; targets set before this shipped don't show until Dave
@@ -2334,7 +2340,7 @@ structure, a biome, a block or an ore.
   everyday names, and 42 mobs (singular and plural). Every answer is an existing
   signed-off line (`found_one`, `locked_on`); a search that finds nothing goes to the
   model.
-- Prompt `agent-minecraft-dave-v15`; `mc_locate` sidecar v4; `mc_find_mob` v1.
+- Prompt `agent-minecraft-dave-v17`; `mc_locate` sidecar v4; `mc_find_mob` v1.
 
 Only checkable on the box: that `getEntities` with `closest` answers within the console's
 3-second reply window on a busy server, and Nether biome ids with `locate biome`.
@@ -2665,11 +2671,20 @@ on every waking with the "nearly lost you" line, retiring older copies. A player
 first-ever waking in a world gets theirs quietly: `firstWaking()` in the pack's
 `main.js` is the hook the welcome sequence replaces. Dave's lines are one constants
 block, `LINES` in `jbrain-pack/scripts/rules.js`, copied verbatim from the lore page.
-Not built: the welcome and the first-time beats, `/jb:dave hello`, and the prompt's
-story section. Until it is, the model answers `hello`; once the welcome's lines exist,
+Not built: the welcome and the first-time beats, and `/dave hello`. Until they are, the model answers `hello`; once the welcome's lines exist,
 M18's fast path (`minecraft/fastpath.py`) is where `hello` belongs. The first-time beats'
 record can sit beside M19's unlocks (`jb:known:<id>`), which are recorded at the same
 moments.
+
+**Shipped (2026-10-12): Dave's story.** `minecraft_dave.prompt` (`agent-minecraft-dave-v16`)
+carries a story section copied from the lore page's canon: Dave, the Old Makers, the
+ship and the crew, death as the transporter, their ruins and the tie-ins (both promoted
+to canon by the owner, 2026-10-12). Why the Old Makers vanished is sealed: Dave says so
+in the canon's words and never guesses. The ores table and "three ways it knows the
+world" stay proposals and are left out. It rides the persona, so the app and the game
+both have it; the items stay gated by the guide (§M19). The guide (`v7`) now says a
+Tricorder can't be lost and drops the "someone else's" static, which stays only as the
+pack's safety net.
 
 Every line the pack uses is signed off on the lore page (owner, 2026-10-11), including
 "This tricorder is retired" (§M9) and "Your Power Pack burnt out…" (§M10).

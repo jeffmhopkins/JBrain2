@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <string.h>
 
 #include "app_event.h"
@@ -57,6 +58,29 @@ void svc_messages_mark_played(const char *principal, uint32_t id)
     thread_t *t = find(principal);
     for (uint16_t i = 0; t && i < t->n; i++)
         if (t->m[i].id == id) t->m[i].played = true;
+}
+
+uint16_t svc_messages_unplayed_total(void)
+{
+    uint16_t n = 0;
+    for (int i = 0; i < THREADS; i++)
+        if (strcmp(s_t[i].principal, "jerv")) n += svc_messages_unplayed(s_t[i].principal);
+    return n;
+}
+
+bool svc_messages_first_unplayed(char principal[16])
+{
+    for (int i = 0; i < THREADS; i++)
+        if (strcmp(s_t[i].principal, "jerv") && svc_messages_unplayed(s_t[i].principal)) {
+            snprintf(principal, 16, "%s", s_t[i].principal);
+            return true;
+        }
+    return false;
+}
+
+void svc_messages_fake_clear(void)
+{
+    for (int i = 0; i < THREADS; i++) s_t[i].n = 0;
 }
 
 bool svc_messages_fake_add(const char *principal, const msg_t *m)

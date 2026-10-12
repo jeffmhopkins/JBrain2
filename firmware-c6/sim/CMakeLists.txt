@@ -21,7 +21,7 @@ FetchContent_Declare(lvgl
 FetchContent_MakeAvailable(lvgl)
 
 set(C ${CMAKE_CURRENT_SOURCE_DIR}/../components)
-file(GLOB FW_SRC ${C}/*/*.c)
+file(GLOB FW_SRC ${C}/*/*.c ${C}/ui_kit/fonts/*.c)
 file(GLOB FW_INC LIST_DIRECTORIES true ${C}/*/include)
 
 # The device's app set (main/apps.c), so the sim registers exactly the apps the glass shows.

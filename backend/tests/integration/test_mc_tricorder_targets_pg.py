@@ -1,4 +1,4 @@
-"""Migration 0231 against real Postgres: the Tricorder targets the map draws.
+"""Migration 0232 against real Postgres: the Tricorder targets the map draws.
 
 The contract, case by case:
 - a target is one row per player per world, replaced by the next and dropped by a clear;

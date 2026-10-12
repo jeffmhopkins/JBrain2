@@ -2,6 +2,7 @@
 
 #include "svc_audio_fake.h"
 #include "svc_debug.h"
+#include "svc_messages_fake.h"
 #include "svc_rtc.h"
 
 static bool s_talking;
@@ -11,6 +12,7 @@ static uint32_t s_since;
 static uint32_t s_playing;
 static uint32_t s_spoke;
 static unsigned s_sent;
+static uint32_t s_next_id = 1000;
 
 bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
 {
@@ -30,8 +32,14 @@ uint32_t svc_audio_talk_ms(void)
 
 talk_outcome_t svc_audio_talk_end(bool send)
 {
-    talk_outcome_t o = talk_policy_end(svc_audio_talk_ms(), send);
-    if (s_talking && (o == TALK_SENT || o == TALK_CAPPED)) s_sent++;
+    const uint32_t held = svc_audio_talk_ms();
+    talk_outcome_t o = talk_policy_end(held, send);
+    msg_t m;
+    if (s_talking && talk_placeholder(o, held, s_next_id, &m)) {
+        s_sent++;
+        s_next_id++;
+        svc_messages_fake_add(s_to, &m);
+    }
     s_talking = false;
     return o;
 }

@@ -1,6 +1,6 @@
 ---
 name: agent.minecraft_dave_guide
-version: agent-minecraft-dave-guide-v5
+version: agent-minecraft-dave-guide-v8
 description: Minecraft_Dave's item guide — one entry per Old Maker item that is built, from the Bleepbloop_City lore page and MINECRAFT_BEDROCK_PLAN.md (§M9, §M10, §M12, §M15, §M16, §DW1, §M19). Not a prompt by itself; jbrain.minecraft.guide appends the entries a turn may see to Minecraft_Dave's system prompt.
 strength: high
 ---
@@ -28,12 +28,12 @@ chorus fruit, and the Replicator once they hold 8 Power Packs.
   them ("Mira's Tricorder"). Dave beams it down when they wake.
 - Getting one: it can't be crafted. If a player's is ever missing when they wake, Dave
   beams them a new one, and any older copy stops working ("This tricorder is retired").
-- Using it: with it anywhere on them, /jb:dave reaches Dave. Held in the hand, it shows
+- Using it: with it anywhere on them, /dave (or /d, /ai) reaches Dave. Held in the hand, it shows
   an arrow and the distance to their waypoint: world spawn, until Dave points it at a
   saved place or something he found.
-- Limits: it only works for its owner. Anyone else who holds it gets static, no arrow
-  and no Dave. It's bound to its owner: it can't be dropped, thrown, put in a chest or
-  taken, and it stays with them when they die.
+- Limits: it's bound to its owner: it can't be dropped, thrown, put in a chest or taken,
+  and it stays with them when they die, so it can't be lost. It only ever works for
+  them.
 
 [entry: power_pack]
 ### The Power Pack
@@ -86,7 +86,8 @@ chorus fruit, and the Replicator once they hold 8 Power Packs.
   3×3 of chunks around it (48 by 48 blocks), from bedrock to the sky. Any hostile or
   neutral mob there, and any wild animal nobody has looked after, is beamed away by Dave:
   it vanishes in a puff, with nothing left behind. Endermen that teleport in go the same
-  way, and so does the Warden.
+  way, and so does the Warden. The wandering trader and his llamas go too, even after a
+  trade; only a lead or a name tag keeps one.
 - What it leaves alone: players, pets, anything with a name tag or on a lead, animals
   they've fed or bred, villagers, golems (the copper golems are Old Maker helpers), and
   the great bosses, the Ender Dragon and the Wither.

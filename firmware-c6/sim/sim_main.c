@@ -217,7 +217,7 @@ static notice_t notice(uint32_t id, const char *src, const char *title, const ch
 
 static void push_info(void)
 {
-    notice_t n = notice(1, "Ops", "Disk 91% full", "The box is running low on space. Ops > Disk shows what is using it.", 0,
+    notice_t n = notice(1, "Ops", "Disk 91% full", "The box is running low on space. Ops → Disk shows what is using it.", 0,
                         NULL, NULL, NULL);
     svc_notice_fake_push(&n);
 }
@@ -232,19 +232,31 @@ static void push_question(void)
 
 static void night(void)
 {
-    svc_rtc_fake_set(23, 12, 2);
+    svc_rtc_fake_set(23, 12);
+}
+
+static void night_badge(void)
+{
+    night();
+    push_question();
 }
 
 static void ring(void)
 {
-    svc_rtc_fake_set(6, 45, 1);
+    svc_rtc_fake_set(6, 45);
     svc_alarms_fake_ring(1);
 }
 
 static void downloading(void)
 {
-    fw_info_t fw = {"0.0.1", "0.0.2", FW_DOWNLOADING, 64};
+    fw_info_t fw = {"0.0.8", "0.0.9", FW_DOWNLOADING, 64, ""};
     svc_box_fake_set(&fw);
+}
+
+static void no_battery(void)
+{
+    power_info_t p = {.fitted = false, .usb = true, .usb_mv = 5020};
+    svc_power_fake_set(&p);
 }
 
 static void session(void)
@@ -260,6 +272,10 @@ typedef struct {
 } state_t;
 
 #define OPEN(a) "{\"cmd\":\"open\",\"app\":\"" a "\"}"
+#define TAP(x, y) "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":" #x ",\"y\":" #y "}"
+/* Not a debug command: the sim scrolls the open page to its end, as a finger would. */
+#define SCROLL_END "scroll end"
+#define SCROLL(px) "scroll " #px
 #define KEY_DOWN "{\"cmd\":\"inject\",\"event\":\"key_down\"}"
 #define KEY_UP "{\"cmd\":\"inject\",\"event\":\"key_up\"}"
 #define WAIT(ms) "wait " #ms
@@ -275,17 +291,50 @@ static const state_t STATES[] = {
     {"tamsin", NULL, {OPEN("tamsin")}},
     {"minecraft", NULL, {OPEN("minecraft")}},
     {"settings", NULL, {OPEN("settings")}},
-    {"updating", downloading, {OPEN("settings")}},
+    {"settings-end", NULL, {OPEN("settings"), SCROLL_END}},
+    {"settings-usb", no_battery, {OPEN("settings")}},
+    /* The first tap on Disconnect: rose, "Tap again to disconnect". */
+    {"settings-armed", NULL, {OPEN("settings"), SCROLL_END, TAP(240, 418), WAIT(300)}},
+    {"updating", downloading, {OPEN("settings"), SCROLL(560)}},
     {"clock", NULL, {OPEN("clock")}},
     {"clock-night", night, {OPEN("clock")}},
-    {"clock-alarms", NULL, {OPEN("clock"), "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":240,\"y\":240}", WAIT(300)}},
+    {"clock-badge", night_badge, {OPEN("clock")}},
+    {"clock-alarms", NULL, {OPEN("clock"), TAP(240, 240), WAIT(300)}},
+    {"clock-alarms-end", NULL, {OPEN("clock"), TAP(240, 240), WAIT(800), SCROLL_END}},
     {"ringing", ring, {WAIT(100)}},
     {"notify-info", push_info, {WAIT(100)}},
     {"notify-question", push_question, {WAIT(100)}},
+    /* KEY from Settings: the shell's talk to Jerv, over whatever is open. */
+    {"rec-anywhere", NULL, {OPEN("settings"), KEY_DOWN, WAIT(3400)}},
+    /* Its release: the Jerv thread, with the bubble that says nothing was recorded. */
+    {"jerv-after-key", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300)}},
     /* Not a mock board: a short session whose snapshot shows the debug surface. */
     {"session", session, {OPEN("quorra"), KEY_DOWN, WAIT(2000), KEY_UP, OPEN("tamsin"), WAIT(100)}},
 };
 #define NSTATES (sizeof STATES / sizeof *STATES)
+
+/* The open page: of everything that scrolls, the one with the most below the glass (a label can
+ * carry the scrollable flag and a pixel of overhang). */
+static void scroller(lv_obj_t *o, lv_obj_t **best, int32_t *most)
+{
+    int32_t below = lv_obj_get_scroll_bottom(o);
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE) && below > *most) {
+        *best = o;
+        *most = below;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++)
+        scroller(lv_obj_get_child(o, (int32_t)i), best, most);
+}
+
+static void scroll_to(int32_t y)
+{
+    lv_obj_t *s = NULL;
+    int32_t most = 0;
+    lv_obj_update_layout(lv_screen_active());
+    scroller(lv_screen_active(), &s, &most);
+    if (s) lv_obj_scroll_to_y(s, y, LV_ANIM_OFF);
+    step(100);
+}
 
 static int render(const char *name, const char *png, const char *snap)
 {
@@ -301,6 +350,10 @@ static int render(const char *name, const char *png, const char *snap)
     for (int i = 0; i < 6 && st->cmds[i]; i++) {
         if (!strncmp(st->cmds[i], "wait ", 5)) {
             step((uint32_t)atoi(st->cmds[i] + 5));
+            continue;
+        }
+        if (!strncmp(st->cmds[i], "scroll ", 7)) {
+            scroll_to(!strcmp(st->cmds[i], SCROLL_END) ? LV_COORD_MAX : atoi(st->cmds[i] + 7));
             continue;
         }
         const char *res = run(st->cmds[i]);
@@ -329,7 +382,12 @@ static int render(const char *name, const char *png, const char *snap)
         FILE *f = fopen(snap, "w");
         if (!f || fprintf(f, "%s\n", res) < 0 || fclose(f)) return 1;
     }
-    printf("%s: %u stripes, %u bytes on the wire\n", name, (unsigned)s_cap.shot.stripes, (unsigned)s_cap.shot.bytes);
+    /* LVGL's pool peak, with this host's 64-bit pointers: the device's is a static 64 KB pool
+     * with 32-bit ones, so a state near 64 KB here is the one to measure there. */
+    lv_mem_monitor_t mon;
+    lv_mem_monitor(&mon);
+    printf("%s: %u stripes, %u bytes on the wire, lvgl peak %u B\n", name, (unsigned)s_cap.shot.stripes,
+           (unsigned)s_cap.shot.bytes, (unsigned)mon.max_used);
     return 0;
 }
 
@@ -457,6 +515,57 @@ static int touch_checks(void)
     finger(134, 126, false);
     step(100);
     expect(!shell_open_app(), "a notice that appears under a finger takes its release");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"overlay\":\"none\"") != NULL, "BOOT dismissed it");
+
+    /* The clock face is never covered: a notice waits as the corner badge, opens on its tap. */
+    run(OPEN("clock"));
+    step(100);
+    push_info();
+    step(300);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"overlay\":\"none\"") != NULL,
+           "a notice arriving on the clock face does not cover it");
+    expect(shell_open_app() && !strcmp(shell_open_app()->id, "clock"), "and the face stays up");
+    finger(426, 48, true);
+    finger(426, 48, false);
+    step(1200);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"overlay\":\"notice\"") != NULL,
+           "a tap on the badge opens it");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(100);
+
+    /* KEY outside a conversation is Jerv's, wherever the panel is. */
+    run(OPEN("settings"));
+    run(KEY_DOWN);
+    step(300);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"talking\":true") != NULL,
+           "KEY in Settings starts the shell's talk to Jerv");
+    run(KEY_UP);
+    step(100);
+    expect(shell_open_app() && !strcmp(shell_open_app()->id, "settings"),
+           "released under 0.6 s it is a knock: nothing opens");
+    unsigned before = svc_messages_count("jerv");
+    run(KEY_DOWN);
+    step(1500);
+    run(KEY_UP);
+    step(100);
+    expect(shell_open_app() && !strcmp(shell_open_app()->id, "jerv"),
+           "a real hold opens the Jerv thread on release");
+    msg_t last = {0};
+    svc_messages_get("jerv", (uint16_t)(svc_messages_count("jerv") - 1), &last);
+    expect(svc_messages_count("jerv") == before + 1 && !strcmp(last.status, "Not sent"),
+           "where the hold is shown as not sent, not as a transcript");
+    run("{\"cmd\":\"home\"}");
+    run(KEY_DOWN);
+    step(300);
+    finger(240, 240, true);
+    finger(240, 240, false);
+    step(100);
+    run(KEY_UP);
+    step(100);
+    expect(!shell_open_app() && svc_messages_count("jerv") == before + 1,
+           "a tap during the hold cancels it, and the release sends nothing");
     return s_touch_bad;
 }
 

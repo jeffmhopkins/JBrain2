@@ -19,23 +19,19 @@
 #include "shell.h"
 #include "svc_alarms_fake.h"
 #include "svc_audio_fake.h"
-#include "svc_box_fake.h"
 #include "svc_display.h"
 #include "svc_display_drv.h"
 #include "svc_messages_fake.h"
-#include "svc_net_fake.h"
 #include "svc_notice_fake.h"
-#include "svc_rtc_fake.h"
+#include "svc_rtc_drv.h"
 #include "svc_settings.h"
-#include "svc_settings_fake.h"
+#include "svc_settings_drv.h"
 #include "svc_touch.h"
 
 static const char *TAG = "ui";
 
 /* 0.0.4 reports the high-water mark so the next image can size this from a measurement. */
 #define UI_STACK 12288
-/* A moderate default: the init table lights the panel at full, and this is where it settles. */
-#define BRIGHTNESS_DEFAULT 50
 #define HEAP_AFTER_MS 5000
 
 /* Breadcrumb stages (dbg_sys_crumb). svc_display writes 101-109 during the panel's init. */
@@ -91,13 +87,11 @@ static void ui_loop(void *arg)
     if (!svc_display_start(&step)) stop(step);
 
     dbg_sys_crumb(ST_SHELL);
-    svc_settings_init();
-    svc_settings_set(SET_BRIGHTNESS, BRIGHTNESS_DEFAULT);
-    svc_display_set_brightness(BRIGHTNESS_DEFAULT);
-    svc_rtc_init();
-    svc_net_init();
-    svc_box_init();
+    /* The saved brightness (svc_settings, loaded before this task started): the init table
+       lights the panel at full, and this is where it settles. */
+    svc_display_set_brightness((uint8_t)svc_settings_get(SET_BRIGHTNESS));
     svc_messages_init();
+    svc_messages_fake_clear();
     svc_audio_init();
     svc_alarms_init();
     svc_notice_init();
@@ -108,13 +102,10 @@ static void ui_loop(void *arg)
     ESP_LOGI(TAG, "shell up");
 
     const uint32_t started = now_ms();
-    uint32_t last = started;
     for (;;) {
         const uint32_t now = now_ms();
-        /* The fake clock is the shell's uptime and the apps' wall clock until the PCF85063
-           driver lands; it advances by real time. */
-        svc_rtc_fake_advance_ms(now - last);
-        last = now;
+        svc_rtc_poll();
+        svc_settings_service(now);
         dbg_sys_crumb(ST_PUMP);
         shell_pump();
         dbg_sys_crumb(ST_RENDER);

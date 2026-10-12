@@ -7,12 +7,30 @@
 #include "svc_display.h"
 #include "svc_net.h"
 #include "svc_power.h"
+#include "svc_rtc.h"
 #include "svc_settings.h"
 #include "ui_kit.h"
+
+/* What the live cards show. The page is rebuilt when this changes — a download's percentage, the
+ * radio, the battery — so the cards report the panel as it is, not as it was when opened. */
+typedef struct {
+    net_state_t net;
+    uint8_t bars;
+    bool armed;
+    fw_phase_t phase;
+    uint8_t pct;
+    bool fitted, charging, usb;
+    uint8_t bat_pct;
+    uint16_t mv10, usb_mv10;
+} live_t;
 
 typedef struct {
     lv_obj_t *root, *page;
     lv_obj_t *bright_label;
+    lv_timer_t *tick;
+    live_t live;
+    bool wifi_armed;
+    uint32_t wifi_armed_ms;
 } settings_t;
 
 static settings_t s_set;
@@ -23,6 +41,36 @@ static const char *const NOTIF_LABELS[] = {"Accept messages from the box", "Refu
 
 static void build(app_t *self);
 
+static bool armed_now(const settings_t *s, net_state_t net)
+{
+    return settings_wifi_armed(net, s->wifi_armed, s->wifi_armed_ms, svc_rtc_uptime_ms());
+}
+
+static live_t live_now(const settings_t *s)
+{
+    net_info_t n;
+    svc_net_info(&n);
+    settings_wifi_t w;
+    const bool armed = armed_now(s, n.state);
+    settings_wifi(&n, armed, &w);
+    fw_info_t fw;
+    svc_box_fw(&fw);
+    power_info_t p;
+    svc_power_info(&p);
+    return (live_t){.net = n.state, .bars = w.bars, .armed = armed, .phase = fw.phase,
+                    .pct = fw.pct, .fitted = p.fitted, .charging = p.charging, .usb = p.usb,
+                    .bat_pct = p.pct, .mv10 = (uint16_t)(p.mv / 10),
+                    .usb_mv10 = (uint16_t)(p.usb_mv / 10)};
+}
+
+static bool live_eq(const live_t *a, const live_t *b)
+{
+    return a->net == b->net && a->bars == b->bars && a->armed == b->armed && a->phase == b->phase &&
+           a->pct == b->pct && a->fitted == b->fitted && a->charging == b->charging &&
+           a->usb == b->usb && a->bat_pct == b->bat_pct && a->mv10 == b->mv10 &&
+           a->usb_mv10 == b->usb_mv10;
+}
+
 /* A switch changes what other cards say, so the page is rebuilt — after the event, because the
  * switch being pressed is part of it — and put back where it was scrolled to. */
 static void rebuild(void *self)
@@ -32,6 +80,17 @@ static void rebuild(void *self)
     build(self);
     lv_obj_update_layout(s->page);
     lv_obj_scroll_to_y(s->page, y, LV_ANIM_OFF);
+}
+
+/* Never under a finger: a rebuild mid-drag would drop the slider or the scroll it holds. */
+static void tick(lv_timer_t *tm)
+{
+    app_t *self = lv_timer_get_user_data(tm);
+    settings_t *s = self->state;
+    lv_indev_t *in = lv_indev_get_next(NULL);
+    if (in && lv_indev_get_state(in) == LV_INDEV_STATE_PRESSED) return;
+    live_t now = live_now(s);
+    if (!live_eq(&now, &s->live)) rebuild(self);
 }
 
 static void back(lv_event_t *e)
@@ -49,26 +108,39 @@ static void toggled(lv_event_t *e)
 
 static void wifi_pressed(lv_event_t *e)
 {
+    app_t *self = lv_event_get_user_data(e);
+    settings_t *s = self->state;
     net_info_t n;
     svc_net_info(&n);
-    if (n.state == NET_CONNECTED)
+    const uint32_t now = svc_rtc_uptime_ms();
+    switch (settings_wifi_tap(n.state, s->wifi_armed, s->wifi_armed_ms, now)) {
+    case WIFI_TAP_ARM:
+        s->wifi_armed = true;
+        s->wifi_armed_ms = now;
+        break;
+    case WIFI_TAP_DISCONNECT:
+        s->wifi_armed = false;
         svc_net_disconnect();
-    else
-        svc_net_connect();
-    lv_async_call(rebuild, lv_event_get_user_data(e));
+        break;
+    case WIFI_TAP_CONNECT: svc_net_connect(); break;
+    default: break;
+    }
+    lv_async_call(rebuild, self);
 }
 
 static void update_pressed(lv_event_t *e)
 {
     app_t *self = lv_event_get_user_data(e);
-    if (!svc_box_update_now()) self->host->toast("Connect Wi-Fi first");
+    net_info_t n;
+    svc_net_info(&n);
+    if (!svc_box_update_now() && n.state != NET_CONNECTED) self->host->toast("Connect Wi-Fi first");
     lv_async_call(rebuild, self);
 }
 
 static void calibrate_pressed(lv_event_t *e)
 {
     app_t *self = lv_event_get_user_data(e);
-    self->host->toast("Calibration arrives with the touch driver");
+    self->host->toast("Calibration is coming in a later update");
 }
 
 static void bright_changed(lv_event_t *e)
@@ -76,6 +148,8 @@ static void bright_changed(lv_event_t *e)
     app_t *self = lv_event_get_user_data(e);
     settings_t *s = self->state;
     int32_t v = settings_brightness_from_slider(lv_slider_get_value(lv_event_get_current_target(e)));
+    /* Every tick reaches the glass at once (svc_display records, the UI task sends between
+       frames); flash is written only once the slider has been left alone. */
     svc_settings_set(SET_BRIGHTNESS, v);
     svc_display_set_brightness((uint8_t)svc_settings_get(SET_BRIGHTNESS));
     lv_label_set_text_fmt(s->bright_label, "%ld%%", (long)svc_settings_get(SET_BRIGHTNESS));
@@ -90,37 +164,22 @@ static lv_obj_t *title_row(lv_obj_t *card, const char *title)
     return r;
 }
 
-static void card_wifi(app_t *self, lv_obj_t *page)
+static void card_brightness(app_t *self, lv_obj_t *page)
 {
-    net_info_t n;
-    svc_net_info(&n);
-    settings_wifi_t v;
-    settings_wifi(&n, &v);
+    settings_t *s = self->state;
     lv_obj_t *c = ui_card(page, NULL);
-    lv_obj_t *r = title_row(c, "Wi-Fi");
-    uint32_t chip = n.state == NET_CONNECTED ? UI_C_OK : n.state == NET_CONNECTING ? UI_C_WARN : UI_C_MUTED;
-    ui_chip(r, v.state, chip, n.state != NET_OFF);
-    lv_obj_t *net = ui_box(c, LV_FLEX_FLOW_ROW, 12);
-    lv_obj_set_width(net, LV_PCT(100));
-    lv_obj_t *bars = ui_box(net, LV_FLEX_FLOW_ROW, 3);
-    lv_obj_set_flex_align(bars, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
-    for (int i = 0; i < 4; i++) {
-        lv_obj_t *b = lv_obj_create(bars);
-        lv_obj_remove_style_all(b);
-        lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_size(b, 5, 6 + 4 * i);
-        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(i < v.bars ? UI_C_TEXT : UI_C_LINE_STRONG), 0);
-    }
-    lv_obj_t *ssid = ui_label(net, n.ssid, 20, UI_C_TEXT);
-    lv_obj_set_flex_grow(ssid, 1);
-    if (n.state == NET_CONNECTED) {
-        char rssi[12];
-        snprintf(rssi, sizeof rssi, "%d dBm", n.rssi);
-        ui_label(net, rssi, 16, UI_C_MUTED);
-    }
-    ui_label_wrap(c, v.note, 16, UI_C_MUTED);
-    ui_button(c, v.button, v.primary ? UI_BTN_PRIMARY : UI_BTN_SECONDARY, v.button_live, wifi_pressed, self);
+    lv_obj_t *r = title_row(c, "Brightness");
+    char pct[16];
+    snprintf(pct, sizeof pct, "%ld%%", (long)svc_settings_get(SET_BRIGHTNESS));
+    s->bright_label = ui_label(r, pct, 20, UI_C_TEXT);
+    ui_slider_row(c, BRIGHTNESS_FLOOR, BRIGHTNESS_MAX, svc_settings_get(SET_BRIGHTNESS), bright_changed, self);
+    ui_label_wrap(c, "10% is the floor, so the screen can never be set to look switched off.", 16,
+                  UI_C_MUTED);
+    ui_divider(c);
+    const bool rot = svc_settings_get(SET_AUTO_ROTATE) != 0;
+    lv_obj_t *sw = ui_switch_row_sub(c, "Auto-rotate", 20, settings_rotate_note(rot), rot, true,
+                                     toggled, self);
+    lv_obj_set_user_data(sw, (void *)(uintptr_t)SET_AUTO_ROTATE);
 }
 
 static void card_power(lv_obj_t *page)
@@ -145,7 +204,7 @@ static void card_notifications(app_t *self, lv_obj_t *page)
                                      settings_notif_row_live(i, accept), toggled, self);
         lv_obj_set_user_data(sw, (void *)(uintptr_t)NOTIF_KEYS[i]);
     }
-    char note[160];
+    char note[192];
     settings_notif_note(accept, svc_settings_get(SET_NOTIF_QUIET), (uint16_t)svc_settings_get(SET_NIGHT_FROM),
                         (uint16_t)svc_settings_get(SET_NIGHT_TO), note, sizeof note);
     ui_label_wrap(c, note, 16, UI_C_MUTED);
@@ -179,19 +238,6 @@ static void card_firmware(app_t *self, lv_obj_t *page)
     ui_button(c, v.button, UI_BTN_PRIMARY, v.button_live, update_pressed, self);
 }
 
-static void card_brightness(app_t *self, lv_obj_t *page)
-{
-    settings_t *s = self->state;
-    lv_obj_t *c = ui_card(page, NULL);
-    lv_obj_t *r = title_row(c, "Brightness");
-    char pct[16];
-    snprintf(pct, sizeof pct, "%ld%%", (long)svc_settings_get(SET_BRIGHTNESS));
-    s->bright_label = ui_label(r, pct, 20, UI_C_TEXT);
-    ui_slider_row(c, BRIGHTNESS_FLOOR, BRIGHTNESS_MAX, svc_settings_get(SET_BRIGHTNESS), bright_changed, self);
-    ui_label_wrap(c, "10% is the floor, so the screen can never be set to look switched off.", 16,
-                  UI_C_MUTED);
-}
-
 static void card_touch(app_t *self, lv_obj_t *page)
 {
     lv_obj_t *c = ui_card(page, NULL);
@@ -201,36 +247,81 @@ static void card_touch(app_t *self, lv_obj_t *page)
     ui_button(c, "Calibrate", UI_BTN_PRIMARY, true, calibrate_pressed, self);
 }
 
+static void card_wifi(app_t *self, lv_obj_t *page)
+{
+    settings_t *s = self->state;
+    net_info_t n;
+    svc_net_info(&n);
+    settings_wifi_t v;
+    settings_wifi(&n, armed_now(s, n.state), &v);
+    lv_obj_t *c = ui_card(page, NULL);
+    lv_obj_t *r = title_row(c, "Wi-Fi");
+    uint32_t chip = n.state == NET_CONNECTED ? UI_C_OK : n.state == NET_CONNECTING ? UI_C_WARN : UI_C_MUTED;
+    ui_chip(r, v.state, chip, n.state != NET_OFF);
+    lv_obj_t *net = ui_box(c, LV_FLEX_FLOW_ROW, 12);
+    lv_obj_set_width(net, LV_PCT(100));
+    lv_obj_t *bars = ui_box(net, LV_FLEX_FLOW_ROW, 3);
+    lv_obj_set_flex_align(bars, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+    for (int i = 0; i < 4; i++) {
+        lv_obj_t *b = lv_obj_create(bars);
+        lv_obj_remove_style_all(b);
+        lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(b, 5, 6 + 4 * i);
+        lv_obj_set_style_radius(b, 1, 0);
+        lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(i < v.bars ? UI_C_TEXT : UI_C_LINE_STRONG), 0);
+    }
+    lv_obj_t *ssid = ui_label(net, n.ssid[0] ? n.ssid : "No network saved", 20, UI_C_TEXT);
+    lv_label_set_long_mode(ssid, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(ssid, LV_SIZE_CONTENT);
+    lv_obj_set_flex_grow(ssid, 1);
+    if (n.state == NET_CONNECTED) {
+        char rssi[16];
+        snprintf(rssi, sizeof rssi, "%s%d dBm", n.rssi < 0 ? "−" : "", n.rssi < 0 ? -n.rssi : n.rssi);
+        ui_label(net, rssi, 16, UI_C_MUTED);
+    }
+    ui_label_wrap(c, v.note, 16, UI_C_MUTED);
+    static const ui_btn_kind_t KIND[] = {UI_BTN_SECONDARY, UI_BTN_PRIMARY, UI_BTN_DESTRUCTIVE};
+    ui_button(c, v.button, KIND[v.kind], v.button_live, wifi_pressed, self);
+}
+
+/* The mock's order (owner, 2026-10-11): brightness first because it is the one reached for
+ * most, Wi-Fi last so a scroll or a stray tap near the top cannot reach it. */
 static void build(app_t *self)
 {
     settings_t *s = self->state;
     lv_obj_clean(s->root);
+    s->live = live_now(s);
     ui_header(s->root, &ICON, UI_ACCENT_NEUTRAL, "Settings", back, self);
     s->page = ui_page(s->root, true, 0);
-    card_wifi(self, s->page);
+    card_brightness(self, s->page);
     card_power(s->page);
     card_notifications(self, s->page);
     card_jerv(self, s->page);
     card_firmware(self, s->page);
-    card_brightness(self, s->page);
     card_touch(self, s->page);
+    card_wifi(self, s->page);
 }
 
 static void settings_open(app_t *self, lv_obj_t *root)
 {
     settings_t *s = self->state;
     *s = (settings_t){.root = root};
+    s->tick = lv_timer_create(tick, 500, self);
     build(self);
 }
 
 static void settings_close(app_t *self)
 {
+    settings_t *s = self->state;
     lv_async_call_cancel(rebuild, self);
+    if (s->tick) lv_timer_delete(s->tick);
+    s->tick = NULL;
 }
 
 static bool on_event(app_t *self, const app_event_t *ev)
 {
-    if (ev->type == APP_EV_NET_UP || ev->type == APP_EV_NET_DOWN) rebuild(self);
+    (void)self, (void)ev;
     return false;
 }
 
@@ -238,6 +329,7 @@ static void describe(app_t *self, dbg_json_t *w)
 {
     settings_t *s = self->state;
     dbg_json_int(w, "scroll_y", s->page ? lv_obj_get_scroll_y(s->page) : 0);
+    dbg_json_bool(w, "wifi_armed", s->live.armed);
 }
 
 app_t app_settings = {

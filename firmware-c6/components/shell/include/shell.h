@@ -38,6 +38,10 @@ bool shell_open(const char *id);
 void shell_home(void);
 const app_t *shell_open_app(void);
 
+/* Where KEY went since boot: `key=jerv:N,app:N,snz:N,sent:N,short:N,cxl:N`. Any task may read it;
+ * a torn count is a telemetry blemish, not a fault. */
+void shell_key_note(char *out, size_t len);
+
 /* Counts every widget and timer that exists now — the proof that closing an app freed it. */
 unsigned shell_obj_count(void);
 unsigned shell_timer_count(void);

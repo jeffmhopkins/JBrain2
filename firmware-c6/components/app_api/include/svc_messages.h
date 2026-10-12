@@ -19,4 +19,8 @@ typedef struct {
 uint16_t svc_messages_count(const char *principal);
 bool svc_messages_get(const char *principal, uint16_t idx, msg_t *out);
 uint16_t svc_messages_unplayed(const char *principal);
+/* Across every person's thread: the clock face's badge, and which thread a tap on it opens.
+ * False, with `principal` untouched, when nothing waits. */
+uint16_t svc_messages_unplayed_total(void);
+bool svc_messages_first_unplayed(char principal[16]);
 void svc_messages_mark_played(const char *principal, uint32_t id);

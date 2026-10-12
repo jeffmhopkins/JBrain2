@@ -3,18 +3,19 @@
 #include "app_event.h"
 #include "svc_debug.h"
 #include "svc_rtc.h"
+#include "time_logic.h"
 
+/* Monday 12 October 2026, 09:41: a weekday, so the sample "Work" alarm is next. */
+static int64_t s_day = 20738;
 static uint32_t s_day_ms = (9 * 60 + 41) * 60000u;
-static uint8_t s_wday = 2;
 static uint32_t s_uptime;
 
 void svc_rtc_now(rtc_time_t *out)
 {
-    uint32_t s = s_day_ms / 1000;
-    out->h = (uint8_t)(s / 3600);
-    out->m = (uint8_t)(s / 60 % 60);
-    out->s = (uint8_t)(s % 60);
-    out->wday = s_wday;
+    civil_t c;
+    epoch_to_civil(s_day * 86400 + s_day_ms / 1000, &c);
+    *out = (rtc_time_t){.valid = true, .h = c.h, .m = c.m, .s = c.s, .wday = c.wday,
+                        .mday = c.mday, .mon = c.mon, .year = c.year};
 }
 
 uint32_t svc_rtc_uptime_ms(void)
@@ -22,10 +23,20 @@ uint32_t svc_rtc_uptime_ms(void)
     return s_uptime;
 }
 
-void svc_rtc_fake_set(uint8_t h, uint8_t m, uint8_t wday)
+void svc_rtc_status(rtc_status_t *out)
+{
+    *out = (rtc_status_t){.source = TIME_SRC_BOX, .synced_s = (int32_t)(s_uptime / 1000), .rtc_ok = true};
+}
+
+void svc_rtc_fake_set(uint8_t h, uint8_t m)
 {
     s_day_ms = (h * 60u + m) * 60000u;
-    s_wday = wday % 7;
+}
+
+void svc_rtc_fake_set_date(uint16_t year, uint8_t mon, uint8_t mday)
+{
+    civil_t c = {.year = year, .mon = mon, .mday = mday};
+    s_day = civil_to_epoch(&c) / 86400;
 }
 
 void svc_rtc_fake_advance_ms(uint32_t ms)
@@ -35,7 +46,7 @@ void svc_rtc_fake_advance_ms(uint32_t ms)
     s_day_ms += ms;
     if (s_day_ms >= 86400000u) {
         s_day_ms -= 86400000u;
-        s_wday = (s_wday + 1) % 7;
+        s_day++;
     }
     if (s_day_ms / 60000 != before) app_events_post_type(APP_EV_TICK_MINUTE);
 }

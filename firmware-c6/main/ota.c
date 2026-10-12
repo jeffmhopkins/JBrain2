@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "cJSON.h"
 #include "esp_app_desc.h"
@@ -12,6 +13,9 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "time_logic.h"
 
 static const char *TAG = "ota";
 
@@ -42,13 +46,28 @@ static char *bearer(const cfg_t *cfg)
     return v;
 }
 
+/* The reply's Date header, caught as the headers arrive: esp_http_client keeps only the request's
+   headers for later lookup. */
+typedef struct {
+    char date[32];
+} reply_t;
+
+static esp_err_t on_http(esp_http_client_event_t *e)
+{
+    reply_t *r = e->user_data;
+    if (e->event_id == HTTP_EVENT_ON_HEADER && r && e->header_key && e->header_value &&
+        strcasecmp(e->header_key, "Date") == 0)
+        snprintf(r->date, sizeof r->date, "%s", e->header_value);
+    return ESP_OK;
+}
+
 /* One request, one TLS session, closed before returning. The S3 panels moved to a shared
    WebSocket (firmware/main/link.c) because talk turns and polls overlapped; this image makes
    one request at a time on one task, so there is nothing to share and the plain HTTPS twin of
    each route is the simpler thing to trust. Returns the HTTP status, or -1 when no response
    arrived at all. */
 static int box_call(const cfg_t *cfg, const char *path, const char *body, char *out, size_t cap,
-                    size_t *got)
+                    size_t *got, reply_t *reply)
 {
     if (got != NULL) *got = 0;
     char url[320];
@@ -60,6 +79,8 @@ static int box_call(const cfg_t *cfg, const char *path, const char *body, char *
         .url = url,
         .timeout_ms = HTTP_TIMEOUT_MS,
         .method = body != NULL ? HTTP_METHOD_POST : HTTP_METHOD_GET,
+        .event_handler = reply != NULL ? on_http : NULL,
+        .user_data = reply,
     };
     trust(&hc, cfg);
     esp_http_client_handle_t c = esp_http_client_init(&hc);
@@ -102,8 +123,11 @@ esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
 {
     char body[MANIFEST_MAX];
     size_t got = 0;
-    const int status =
-        box_call(cfg, "/endpoint/firmware?board=" BOARD_ID, NULL, body, sizeof(body) - 1, &got);
+    reply_t reply = {{0}};
+    const int status = box_call(cfg, "/endpoint/firmware?board=" BOARD_ID, NULL, body,
+                                sizeof(body) - 1, &got, &reply);
+    out->date = 0;
+    if (!http_date_parse(reply.date, &out->date)) out->date = 0;
     if (status != 200) {
         ESP_LOGW(TAG, "manifest: HTTP %d", status);
         return ESP_FAIL;
@@ -134,7 +158,7 @@ esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
 
 esp_err_t ota_report(const cfg_t *cfg, const char *body)
 {
-    const int status = box_call(cfg, "/endpoint/telemetry", body, NULL, 0, NULL);
+    const int status = box_call(cfg, "/endpoint/telemetry", body, NULL, 0, NULL, NULL);
     if (status != 204) {
         ESP_LOGW(TAG, "telemetry: HTTP %d", status);
         return ESP_FAIL;
@@ -178,7 +202,7 @@ static esp_err_t failed(esp_err_t err, const char *why)
     return err;
 }
 
-esp_err_t ota_apply(const cfg_t *cfg, const char *url)
+esp_err_t ota_apply(const cfg_t *cfg, const char *url, const ota_hooks_t *hooks)
 {
     ESP_LOGI(TAG, "installing %s", url);
     char *auth = bearer(cfg);
@@ -224,7 +248,13 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
         return failed(ESP_ERR_INVALID_VERSION, "wrong-board");
     }
 
+    const int total = esp_https_ota_get_image_size(h);
+    int shown = -1;
     while ((err = esp_https_ota_perform(h)) == ESP_ERR_HTTPS_OTA_IN_PROGRESS) {
+        const int read = esp_https_ota_get_image_len_read(h);
+        const int pct = total > 0 && read > 0 ? (int)((int64_t)read * 100 / total) : 0;
+        if (pct != shown && hooks && hooks->progress) hooks->progress((uint8_t)(pct > 100 ? 100 : pct));
+        shown = pct;
     }
     if (err == ESP_OK && !esp_https_ota_is_complete_data_received(h)) err = ESP_ERR_INVALID_SIZE;
     if (err != ESP_OK) {
@@ -236,27 +266,31 @@ esp_err_t ota_apply(const cfg_t *cfg, const char *url)
     free(auth);
     if (err != ESP_OK) return failed(err, esp_err_to_name(err));
 
-    /* Nothing is drawing on this image, so unlike the S3 there is no transfer to park first. */
+    /* A flush is synchronous and a strip is ~2 ms on the wire, so a reset lands between strips at
+       worst; the next boot resets the panel through ALDO3 before drawing. The pause lets the
+       Firmware card say "Restarting" first. */
     ESP_LOGI(TAG, "installed %s; rebooting into it", incoming.version);
+    if (hooks && hooks->restarting) hooks->restarting();
+    vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
     return ESP_OK;
 }
 
-void ota_confirm_health(bool reachable)
+bool ota_confirm_health(bool reachable)
 {
     const esp_partition_t *running = esp_ota_get_running_partition();
     esp_ota_img_states_t state;
-    if (esp_ota_get_state_partition(running, &state) != ESP_OK) return;
-    if (state != ESP_OTA_IMG_PENDING_VERIFY) return;
+    if (esp_ota_get_state_partition(running, &state) != ESP_OK) return false;
+    if (state != ESP_OTA_IMG_PENDING_VERIFY) return false;
 
     if (reachable) {
         ESP_LOGI(TAG, "reached the box — marking this image good");
-        esp_ota_mark_app_valid_cancel_rollback();
-        return;
+        return esp_ota_mark_app_valid_cancel_rollback() == ESP_OK;
     }
     ESP_LOGE(TAG, "could not reach the box — reverting to the previous image");
     const esp_err_t err = esp_ota_mark_app_invalid_rollback_and_reboot();
     /* Only reached with nothing to fall back to, i.e. the first flash, where the cable is
        already attached. */
     ESP_LOGE(TAG, "rollback unavailable (%s)", esp_err_to_name(err));
+    return false;
 }

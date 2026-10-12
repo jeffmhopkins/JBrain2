@@ -123,6 +123,7 @@ BLOB_REFERENCES: tuple[BlobRef, ...] = (
     # ACTUALLY, not just as a row pointing at a file something else unlinked.
     BlobRef("app.jpanel_message", "blob_sha256 = :sha", "a voice message between the twins"),
     BlobRef("app.entities", "image_sha = :sha", "an entity's portrait"),
+    BlobRef("app.panel_debug_request", "png_sha256 = :sha", "a panel debug screenshot (decoded)"),
     BlobRef("app.wiki_articles", "image_sha = :sha", "a wiki article's portrait"),
 )
 

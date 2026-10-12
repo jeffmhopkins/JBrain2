@@ -9,6 +9,7 @@
 #include "esp_wifi.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "svc_net_drv.h"
 
 static const char *TAG = "net";
 static EventGroupHandle_t s_events;
@@ -28,19 +29,29 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
     (void)arg;
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START) {
-        esp_wifi_connect();
+        if (!svc_net_user_off()) esp_wifi_connect();
         return;
     }
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *e = data;
         s_last_reason = (int)e->reason;
         s_drops++;
+        /* The owner's Disconnect: stay down, and release a join that was waiting on this. */
+        if (svc_net_user_off()) {
+            svc_net_set_state(NET_OFF);
+            xEventGroupSetBits(s_events, FAILED);
+            return;
+        }
         if (s_retries < MAX_RETRY) {
+            svc_net_set_state(NET_CONNECTING);
             s_retries++;
             ESP_LOGW(TAG, "disconnected (reason %d), retry %d/%d", e->reason, s_retries, MAX_RETRY);
             esp_wifi_connect();
         } else {
             ESP_LOGE(TAG, "giving up after %d retries, last reason %d", MAX_RETRY, e->reason);
+            /* Off rather than Connecting: Connect on the glass is then live and tries at once,
+               instead of waiting for the update loop's next minute. */
+            svc_net_set_state(NET_OFF);
             xEventGroupSetBits(s_events, FAILED);
         }
         return;
@@ -49,6 +60,7 @@ static void on_event(void *arg, esp_event_base_t base, int32_t id, void *data)
         const ip_event_got_ip_t *e = data;
         ESP_LOGI(TAG, "got " IPSTR, IP2STR(&e->ip_info.ip));
         s_retries = 0;
+        svc_net_set_state(NET_CONNECTED);
         xEventGroupSetBits(s_events, GOT_IP);
     }
 }
@@ -92,6 +104,7 @@ esp_err_t net_connect(const cfg_t *cfg, int timeout_ms)
     err = esp_wifi_start();
     if (err != ESP_OK) return err;
 
+    svc_net_set_state(NET_CONNECTING);
     ESP_LOGI(TAG, "joining '%s' (2.4 GHz only — this radio has no 5 GHz)", cfg->ssid);
     EventBits_t bits = xEventGroupWaitBits(s_events, GOT_IP | FAILED, pdFALSE, pdFALSE,
                                            pdMS_TO_TICKS(timeout_ms));
@@ -104,8 +117,9 @@ esp_err_t net_connect(const cfg_t *cfg, int timeout_ms)
 esp_err_t net_retry(int timeout_ms)
 {
     /* Nothing to retry on a radio that never started; the caller has a bigger problem. */
-    if (s_events == NULL) return ESP_ERR_INVALID_STATE;
+    if (s_events == NULL || svc_net_user_off()) return ESP_ERR_INVALID_STATE;
     xEventGroupClearBits(s_events, GOT_IP | FAILED);
+    svc_net_set_state(NET_CONNECTING);
     /* The handler gives up after MAX_RETRY disconnects and latches FAILED. A fresh attempt
        gets a fresh budget, or the first bad minute after boot would be permanent. */
     s_retries = 0;

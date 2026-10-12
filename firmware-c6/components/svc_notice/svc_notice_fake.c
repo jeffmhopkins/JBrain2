@@ -14,6 +14,13 @@ uint8_t svc_notice_count(void)
     return s_n;
 }
 
+bool svc_notice_urgent_waiting(void)
+{
+    for (uint8_t i = 0; i < s_n; i++)
+        if (s_q[i].urgent) return true;
+    return false;
+}
+
 bool svc_notice_head(notice_t *out)
 {
     if (!s_n) return false;

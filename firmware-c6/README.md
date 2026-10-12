@@ -1,6 +1,6 @@
 # Jeff's jpanel firmware — ESP32-C6-Touch-AMOLED-2.16
 
-> **Status:** Living · **Last verified:** 2026-10-11
+> **Status:** Living · **Last verified:** 2026-10-12
 
 Plan: `../docs/plans/JPANEL_C6_PLAN.md` — the waves, and the app-module architecture every
 later image follows (§1). Approved screens: `../docs/mocks/jpanel-c6/`.
@@ -212,6 +212,174 @@ cap with room to spare):
 | `tp_rd=` | a few hundred µs | the longest transfer, waiting for the lock included. ≥ 20000: timeouts. |
 | `tp_drop=` | `0` | > 0: eight edges piled up unread, the UI task stalled. |
 
+## What 0.0.8 adds: the agreed screens, with the panel's real state
+
+0.0.7 put a finger on the glass; 0.0.8 makes the screens it reaches the ones the mock agreed
+(`../docs/mocks/jpanel-c6/Main.dc.html`), filled from the hardware and the box wherever they
+already answer, and saying plainly where they do not yet.
+
+### Settings, card by card
+
+In the mock's final order: Brightness, Battery, Notifications, Jerv, Firmware, Touch screen,
+Wi-Fi last.
+
+| Card | Real now | Still not real |
+| --- | --- | --- |
+| Brightness | The slider (10-100 %, 10 % floor, 5 % steps) reaches the glass on every tick through `svc_display` (the UI task records, sends between frames) and is **saved** and **restored at boot**. Auto-rotate is a saved switch. | Auto-rotate turns nothing yet (plan §2b); its line says "from a later update". |
+| Battery | The AXP2101's readings: percent, voltage and charging when a cell is fitted, otherwise "No battery fitted · USB x.xx V". | — |
+| Notifications | Three saved switches; the quiet-hours note names the night window. | Nothing polls the box for notices yet, so they decide nothing (C3b). |
+| Jerv | "Read replies aloud", saved. | No audio, so nothing is read aloud. |
+| Firmware | The running version (the app descriptor's). **Update now** really checks: it raises a request and wakes the update loop, which fetches the manifest at once and shows Checking → Already on the newest version, or Downloading x · N % → Restarting into x, or Update failed (why) — each from what the loop is actually doing. The boot after an install that marked itself good says "Updated". | — |
+| Touch screen | — | Calibrate says it is coming in a later update. |
+| Wi-Fi | The network the radio is on and its signal (`esp_wifi`), the state (Connected / Connecting / Off) from the driver's events. **Disconnect takes two taps within 3 s** (the first turns it rose: "Tap again to disconnect") and drops the radio at once; nothing re-joins until **Connect** or a restart. Connect is carried to the update loop, which re-joins. | — |
+
+**Why the UI never touches the box or the radio's join itself.** The box connection belongs to
+the update loop on the main task: one TLS session at a time, the S3's hardest-won rule. Update
+now and Connect only set a flag and notify that task (`svc_box_update_now`,
+`svc_net_connect`), and the loop reports back through `svc_box_set_phase` / the Wi-Fi events,
+so the card shows what happened, not what was asked. Update now also skips the 15-minute retry
+backoff a failed install earns — the owner asked. Disconnect is the one direct call:
+`esp_wifi_disconnect` is safe from any task, and the flag it raises first is what stops
+`net.c`'s handler re-joining.
+
+### Settings are saved
+
+`svc_settings` keeps every setting in NVS namespace **`jpanel`**, one `i32` per key named as
+`svc_settings_name` (`brightness`, `tts`, `notif_accept`, `notif_quiet`, `notif_chime`,
+`night_on`, `night_color`, `night_from`, `night_to`, `show_date`, `auto_rotate`, `tz`). The box's
+provisioning (`jbrain`) is never written.
+
+- **One writer.** Loaded on the main task before the UI starts; written only from the UI task,
+  where every setter runs (the glass and the debug commands).
+- **No flash wear from a slider.** A change only marks the key; the keys are written once the
+  panel has been left alone for 2 s, and only those whose value differs from what flash holds
+  (`settings_store.c`, host-tested). A slider dragged for a minute is one write.
+- **Never a reason not to boot.** A missing namespace is "fresh" (every image before this one),
+  an unreadable one is the defaults, a failed write is counted and reported. A value saved by a
+  later image with a wider range loads clamped and is written back corrected.
+
+### The time: the box's clock and the PCF85063
+
+**Where the time comes from.** The box serves no NTP (nothing in `deploy/` runs a time server),
+and a public pool is a peer this panel is not guaranteed to reach. What it always reaches is the
+box, every minute, for the manifest — and every reply carries an HTTP `Date` header. So
+`ota.c` catches the manifest reply's `Date` (RFC 9110 IMF-fixdate only; anything else is
+refused) and `svc_rtc` steps the system clock when it is 2 s or more off, which is the header's
+own resolution plus a request's latency. No new connection, no new port, no new failure mode.
+
+**The PCF85063 (0x51)** holds UTC, reached through `svc_power`'s bus API (one owner) and only
+from the main task. At boot, before Wi-Fi, it sets the system clock — so the face is right
+before the box answers. It is rewritten when it held no time (its oscillator-stopped flag), when
+the box had to correct the panel, or once a day. Only the two control bits that would stop the
+clock or put it in 12-hour mode are ever written. Its supply is the AXP2101's RTCLDO, backed by
+the battery: **with no cell fitted, a power cut loses the time** and the face shows `--:--` until
+the box answers (a reset or an OTA reboot does not).
+
+**Time zone.** The chip and the box speak UTC; local time is newlib's `localtime` with the POSIX
+rule of the zone chosen on the panel, so daylight saving is computed on the panel. The zone is
+a saved setting from a short table (`time_logic.c`: Honolulu … New York … London, Paris, Athens,
+Sydney), **default New York**. **Setting it needs no terminal:** Clock → tap the face → the
+**Time** card → **Time zone: …** steps to the next zone (a toast names it). The box keeps the
+owner's IANA zone (`owner_timezone`) but does not send it to the panel yet; a manifest `tz` field
+is the natural carrier (an open question for the box side).
+
+### The clock
+
+- **The face** is the mock's: a giant 24-hour time in Montserrat Bold at 124 px — a generated
+  font, not 48 px scaled — with the **day and date** ("Mon 12 Oct", en-GB short) 40 px from the
+  bottom at the face's colour and lower opacity. Its switch is on the Clock → alarms page, on by
+  default, saved.
+- **The night clock**: inside the night hours (21:30–06:30 by default) the digits drop to the
+  chosen colour (red by default, amber, grey) at the mock's opacity, and the date dims with them.
+  On/off and colour are saved switches on the alarms page. The hours are not settable yet (the
+  PWA editor is a later wave), and the page says so.
+- **The corner badge** (plan §2): while the face is up, a notice or an unheard message from a
+  person waits as a bell and a count in the top-right corner, in the night colour at night (full
+  strength when a notice is urgent). A tap opens the notice over the face, or the person's
+  thread. The app declares it holds notices (`app_t.holds_notices`); the shell's overlay
+  decision reads that, so what is drawn and what takes presses stay one decision.
+- **The alarms** are the in-memory samples, and the page says so: "These alarms are samples and
+  do not ring yet." The panel's NVS copy, the RTC-driven ringing and the PWA editor are the
+  alarms wave.
+
+### KEY talks to Jerv from anywhere (plan "KEY routing")
+
+KEY held outside a conversation — home, the clock face, Settings, Minecraft — is the **shell's**:
+it opens the talk ring ("Jerv is listening", the timer, "Tap the screen to cancel · 1:00 max")
+over whatever is open, with every app closed if need be. Inside Quorra's or Tamsin's thread KEY
+is that thread's; on a ringing alarm it snoozes; in the Jerv thread it is Jerv's own. The routing
+is `shell_core.c` (`sh_route_button`, `sh_declined`), host-tested; the release goes where the
+press went whatever opened or closed in between, and a notice waits for the hold to end. BOOT,
+PWR, going home or an alarm cancel the hold.
+
+**There is no microphone yet**, so nothing is recorded. On release the panel opens the Jerv
+thread and adds a voice bubble of the length held that says **"Not sent: this panel cannot
+record yet. Voice arrives in a later update."** — never a made-up transcript. A hold under 0.6 s
+is a knock ("Hold KEY the whole time you talk"); a tap cancels ("Cancelled — nothing sent"). The
+sample conversations the sim draws are not loaded on the device: its threads start empty and say
+so.
+
+### Fonts
+
+LVGL's built-in Montserrat stops at 48 px and has none of `·` `–` `—` `…` `→` `−`. 0.0.8 vendors
+generated bitmap fonts in `components/ui_kit/fonts/`, cut with `lv_font_conv` 1.5.3 from the TTFs
+in LVGL v9.2.2's own tree:
+
+```sh
+npm install lv_font_conv@1.5.3            # or let npx fetch it
+firmware-c6/tools/gen_fonts.sh firmware-c6/sim/build/_deps/lvgl-src
+```
+
+The script holds the exact commands: Montserrat Bold at 124 and 92 px with only `0-9 : -`
+(`--bpp 4 --no-compress --format lvgl`), and Montserrat Medium at every built-in size (14-30) with
+only the six marks, each hung off the built-in font of its size as an LVGL fallback
+(`ui_kit.c`, `ui_font`). Flash cost: 32.6 KB (124 px), 18.1 KB (92 px), ~0.3 KB per fallback —
+54 KB in all.
+
+### The safety rules, again
+
+- **Nothing new before the rollback gate** but bookkeeping: `svc_net_start`/`svc_box_start`
+  store two pointers and the Wi-Fi handler records a state. NVS settings, the RTC and everything
+  on screen start in `start_panel`, after `ota_confirm_health`.
+- **No new task**: the settings writer and the clock poll ride the UI task; the RTC and the box's
+  time ride the update loop. Every task is still priority 1.
+- **Persistence degrades, never blocks**: see "Settings are saved".
+- **NVS writes from one owner**: `svc_settings`, on the UI task.
+- **The PMIC is still read-only on a fault boot.** The clock chip is read on every boot (a read
+  cannot leave anything changed) and written only from the box's time.
+
+### Reading 0.0.8 from the box
+
+The note grew three parts; its cap went from 720 to 960 bytes (the body from 1280 to 1536), and
+a long note is still cut rather than costing the report.
+
+| Token | Good | Bad, and what it means |
+| --- | --- | --- |
+| `set=` | `fresh:0` on the first boot of 0.0.8, `ok:N` after a setting was changed | `defaults:<err>`: NVS would not open, every setting is its default. `partial:<err>`: some keys did not read. |
+| `bri=V/nvs` | `nvs` once the slider was moved and left | `dflt` after it was: the write did not land (read `set_err`). |
+| `set_w=` / `set_err=n/<err>` | climbing by one per change / `0` | errors: a write or commit failed; the setting comes back at its old value after a restart. |
+| `time=src:age` | `box:N` with N under ~60 (seconds since the box last set the time) | `rtc:-1`: the box has not been reached this boot, the chip's time is shown. `none:-1`: no time at all, the face shows `--:--`. |
+| `step=n/s` | `1/0` after the first boot's sync, then rare | many steps, or large `s`: the panel's clock drifts or the box's does. |
+| `rtc=` | `ok` | `unset`: the chip held no time (first boot, or a power cut with no cell) — it is written at the next sync. `absent:<err>`: no answer at 0x51. |
+| `rtc_w=` / `rtc_err=` | `1` then about one a day / `0` | `rtc_err` climbing: writes to the chip fail. |
+| `tz=` | the zone index (5 = New York) | not the owner's: set it on the Clock page's Time card. |
+| `key=` | `jerv:N,app:N,snz:N,sent:N,short:N,cxl:N` — where KEY went | `jerv` stuck at 0 after holding KEY on home: the routing is broken. |
+
+### What to check on the glass
+
+1. Settings opens on Brightness; the slider dims the glass as it moves; set it, wait 3 s, power
+   the panel off and on: it comes back at that brightness (`bri=…/nvs`).
+2. Battery reads "No battery fitted · USB 5.xx V" on USB with no cell.
+3. Firmware shows 0.0.8; **Update now** says "Already on the newest version" within a few
+   seconds.
+4. Wi-Fi (scroll to the bottom) shows the home network and a signal in dBm; one tap on
+   Disconnect turns it rose, a second within 3 s goes Off; Connect comes back to Connected.
+5. The clock face shows the right local time and "Mon 12 Oct"-style date; turn the date off on
+   the alarms page; check the Time card says "Set from the box".
+6. Hold KEY on the home screen: "Jerv is listening" with a running timer; let go after a few
+   seconds: the Jerv thread opens with the "Not sent" bubble. A quick tap of KEY says "Hold KEY
+   the whole time you talk".
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -222,7 +390,8 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **Auth** is the unit's `device_key`, sent as `Authorization: Bearer …`.
 - **TLS** trusts exactly one thing: the box's Caddy root when `ca` is present (LAN name), the
   public CA bundle when it is absent (public hostname). Never both.
-- **`GET {api}/endpoint/firmware?board=c6-amoled-216`** is the manifest and the health signal.
+- **`GET {api}/endpoint/firmware?board=c6-amoled-216`** is the manifest and the health signal,
+  and since 0.0.8 the panel's clock: its reply's `Date` header sets the time ("What 0.0.8 adds").
   The image URL it returns carries the same board id and is fetched exactly as given. The id is
   one constant, `BOARD_ID` in `main/ota.c`; the box's per-board table must use the same string.
   Without it the box answers for the S3 panels.
@@ -329,8 +498,9 @@ components/
   shell/            home pages, the one open app, button routing, overlays
                     (shell_core.c: every decision, no LVGL, host-tested; shell.c: carries it out)
   svc_*/            one per chip or box route; in-memory implementations until each driver lands.
-                    svc_power, svc_display, svc_buttons and svc_touch are real: the device builds
-                    their esp/ driver and pure *_logic.c, the sim and host the top-level files
+                    svc_power, svc_display, svc_buttons, svc_touch, svc_settings (NVS), svc_rtc
+                    (PCF85063 + the box's clock), svc_net and svc_box are real: the device builds
+                    their esp/ file and pure logic, the sim and host the top-level files
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
   app_jerv/ app_thread/ app_clock/ app_settings/ app_minecraft/
                     each a descriptor + a pure *_model.c + a view; app_thread is one component
@@ -382,8 +552,11 @@ the mock boards' `start` names. Each is reached the way the box would reach a li
 services set the world and **debug commands** (`open`, `inject`) drive the UI, and the picture
 is the debug `screenshot` command's stripe stream decoded to PNG — so every render also tests
 the debug path. `--only <app>` registers a single app, for working on one with no other present.
-Fonts are LVGL's Montserrat; the 92/124 px clock digits are 48 px scaled, and `·`, `–`, `…`
-are ASCII, until C3 generates the glyphs.
+Fonts are LVGL's Montserrat plus the generated clock digits and punctuation fallbacks in
+`components/ui_kit/fonts/` ("What 0.0.8 adds", Fonts). States the mock has no board for:
+`settings-end`, `settings-armed` (the first Disconnect tap), `settings-usb`, `clock-badge`,
+`clock-alarms-end`, `rec-anywhere` (KEY from Settings) and `jerv-after-key`. Each render also
+prints LVGL's pool peak (64-bit pointers; the device's pool is 64 KB with 32-bit ones).
 
 ### Debugging a panel with no cable
 
@@ -404,7 +577,7 @@ check a snapshot for the fake provisioning's password, device key and CA.
 
 ```sh
 IDF_TARGETS=esp32c6 scripts/firmware-setup.sh     # once — ESP-IDF v5.5.5 + the RISC-V toolchain
-echo 0.0.6 > firmware-c6/version.txt               # bump FIRST: the version is compiled in
+echo 0.0.8 > firmware-c6/version.txt               # bump FIRST: the version is compiled in
 . ~/esp-idf/export.sh && (cd firmware-c6 && idf.py fullclean && idf.py build)
 scripts/firmware-dist.sh firmware-c6               # copies the built set into dist/ — it ships
 ```
@@ -420,7 +593,10 @@ Bring-up image 0.0.1: app 1.08 MB in a 4 MB slot (73% free); 149 KB of the 442 K
 statically, before Wi-Fi and TLS allocate at runtime. 0.0.4, with LVGL and the framework: app
 1.74 MB (58% of the slot free); 239 KB of DIRAM static, 64 KB of it LVGL's heap. At runtime the
 UI adds a 38.4 KB strip buffer and a 12 KB task stack. 0.0.6 adds 3.3 KB of app and, at runtime,
-the touch task's 3 KB stack.
+the touch task's 3 KB stack. 0.0.8: app 1.82 MB (+73 KB, 54 KB of it the fonts; 57% of the slot
+free), 243 KB of DIRAM static (+1.4 KB); no new task and no new runtime allocation beyond a
+transient NVS handle, so the measured ~116 KB internal-heap minimum should hold within ~2 KB.
+LVGL's pool peaks at 39 KB in the sim's busiest state (Settings under the talk ring, 64-bit).
 
 ## Recovery
 

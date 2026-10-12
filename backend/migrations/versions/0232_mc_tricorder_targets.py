@@ -10,15 +10,15 @@ can be set for a gamertag that has never been sampled.
 Owner-only, plus a SELECT for a map share link pinned to the row's world (the same rule
 as 0230's travel-log policies), so a shared map shows its players' targets too.
 
-Revision ID: 0231
-Revises: 0230
+Revision ID: 0232
+Revises: 0231
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0231"
-down_revision = "0230"
+revision = "0232"
+down_revision = "0231"
 branch_labels = None
 depends_on = None
 

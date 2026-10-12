@@ -12,10 +12,10 @@ from jbrain.minecraft import guide
 
 def test_the_guide_is_pinned_to_its_version() -> None:
     """The entries are prompt material: a wording change bumps the version with it."""
-    assert guide.VERSION == "agent-minecraft-dave-guide-v5"
+    assert guide.VERSION == "agent-minecraft-dave-guide-v8"
     body = guide._PROMPT.body  # noqa: SLF001 — the pin is on the file's exact text
     assert hashlib.sha256(body.encode()).hexdigest() == (
-        "5a535ea193795919880c478c5c1090cfdcd36fad90d93b239ca5326740c01318"
+        "406553f8e69a164fc1bd417c44962e27ad96fb8dbf36841599be288dd2e90248"
     )
 
 
@@ -37,7 +37,9 @@ def test_only_built_items_have_entries() -> None:
     }
     # The canon's recipe and rules, as the lore page says them.
     assert "eight Ender Pearls in a ring around one Blaze Powder" in guide.ENTRIES["power_pack"]
-    assert "only works for its owner" in guide.ENTRIES["tricorder"]
+    # Bound to its owner, so the "someone else's" static is a safety net Dave never explains.
+    assert "can't be lost" in guide.ENTRIES["tricorder"]
+    assert "static" not in guide.ENTRIES["tricorder"]
     assert "their own Tricorder" in guide.ENTRIES["power_pack_keep"]
     beacon = guide.ENTRIES["no_spawn_beacon"]
     assert "a Power Pack in the middle of a crafting table, surrounded by eight echo" in beacon
@@ -147,3 +149,17 @@ def test_the_wormhole_seed_opens_its_entry_and_a_pack_is_then_never_useless() ->
     ]
     assert "wormhole" not in guide.for_player({"power_pack_uses"}, keep_switch=True).lower()
     assert "### The Wormhole Seed" in guide.for_owner()
+
+
+def test_dave_tells_the_story_canon_and_keeps_the_mystery_sealed() -> None:
+    """The lore page's canon (2026-10-12) rides in Dave's persona, in game and in the app:
+    the ruins and the tie-ins, and why the Old Makers vanished stays sealed."""
+    from jbrain.agent.agents import AGENTS
+
+    persona = " ".join(AGENTS["minecraft_dave"].prompt.split())
+    assert "That part of my memory is sealed, crew. Maybe one day." in persona
+    assert "Ancient cities were their deepest archive" in persona
+    assert "Copper golems are their little helpers" in persona
+    # Proposals stay out until the owner promotes them.
+    assert "copper castle" not in persona
+    assert "Memory crystals" not in persona
