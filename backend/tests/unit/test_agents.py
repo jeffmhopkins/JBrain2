@@ -960,9 +960,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v15–v16: the in-game door moved to /dave, /d and /ai, and Dave's story (lore canon).
         # v17: `mc_find_mob`, and `mc_locate` in every dimension (§M22).
         # v18: `mc_find_item`, chests and the ground; near is free, wider a deep scan (§M23).
+        # v19: `mc_tricorder_scan`, the Tricorder's live 16-block scan (§M25).
         "minecraft_dave": (
-            "agent-minecraft-dave-v18",
-            "bca2e285b2cd75f3b1e6d55520c07984ea666e6d5a8df5f9d0b9c473e4ed2a54",
+            "agent-minecraft-dave-v19",
+            "d6018b08fd86dd373045bb643c95f55e8339a0cc47a598374871bf1ba29c1d13",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

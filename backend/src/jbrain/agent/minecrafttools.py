@@ -99,6 +99,8 @@ _GROUND_HIT = re.compile(
 _ITEM_ID = re.compile(r"^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$")
 # The Tricorder's short-range scan (lore, canon 2026-10-12): about 3 chunks, free in game.
 NEAR_BLOCKS = 48
+# The pack's answer to a scan it took: `scan set for <player>: <label> (<ids>)`.
+_SCAN_SET = re.compile(r"\bscan set for .+?: (?P<label>[a-z0-9 .]+) \((?P<types>[a-z0-9_:., ]+)\)")
 # The pack's answer to a mob search (rules.js `findLine`).
 _MOB_HIT = re.compile(
     r"\bfind found (?P<type>[a-z_:]+) at x=(?P<x>-?\d+) y=(?P<y>-?\d+) z=(?P<z>-?\d+),"
@@ -1243,7 +1245,9 @@ def build_minecraft_handlers(
         target: Spot | None = None
         label = "".join(c for c in str(arguments.get("label") or "") if c.isprintable())
         if clear:
-            event["clear"] = True
+            # Asked for, so a new heading (spawn) that ends a live scan (§M25); the track
+            # drain's clear on arrival sends no end_scan, so reaching a place doesn't.
+            event.update({"clear": True, "end_scan": True})
         elif arguments.get("place"):
             name = place_name(arguments["place"])
             if not name:
@@ -1302,17 +1306,75 @@ def build_minecraft_handlers(
                 await book.clear(world, gamertag)
             else:
                 await book.set(world, gamertag, target, str(event["label"]))
+        ended = " That ended their Tricorder's scan." if "scan ended" in reply else ""
         if clear or target is None:
             return ToolOutput(
-                f"Cleared {fence(gamertag)}'s tricorder waypoint; it points at spawn again.",
+                f"Cleared {fence(gamertag)}'s tricorder waypoint; it points at spawn again."
+                + ended,
                 result_brief="cleared",
             )
         return Found(
             f"{fence(gamertag)}'s tricorder now points to {fence(event['label'])} at"
             f" {spot_text(target)}. They see it when they hold the Tricorder."
+            + ended
             + from_asker(asker_for(ctx.agent_session_id), target),
             str(event["label"]),
             target=target,
+        )
+
+    async def mc_tricorder_scan(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """The Tricorder's live scan (§M25): the pack finds the nearest block of a kind
+        within 16 blocks every 10 s and the held arrow points at it, until a stop or a
+        new waypoint. Its own short-range sense: free, never a deep scan. Whose Tricorder
+        follows mc_set_waypoint: the asker in game, any gamertag in the app."""
+        stop = bool(arguments.get("stop"))
+        block = str(arguments.get("block") or "").strip().lower().replace(" ", "_")
+        if not stop and not _ITEM_ID.fullmatch(block):
+            return (
+                "block is a Bedrock block id, e.g. diamond_ore, ancient_debris, oak_log; or"
+                " set stop to end the scan."
+            )
+        who = await waypoint_player(arguments, ctx)
+        if isinstance(who, str):
+            return ToolOutput(who, result_brief="refused") if who == only_you else who
+        _, gamertag = who
+        event: dict[str, Any] = {"player": gamertag}
+        event.update({"stop": True} if stop else {"block": block})
+        got = await console(f"scriptevent jb:scan {json.dumps(event)}")
+        if isinstance(got, str):
+            return got
+        reply = _reply(got)
+        if "scan refused" in reply:
+            if "isn't a block" in reply:
+                return ToolOutput(
+                    f"There's no block called {fence(block)} in this game, so the Tricorder"
+                    " wasn't changed. Use its Bedrock block id, e.g. diamond_ore, iron_ore,"
+                    " ancient_debris, oak_log.",
+                    result_brief="no such block",
+                )
+            return ToolOutput(f"The Tricorder refused it: {fence(reply)}", result_brief="refused")
+        m = _SCAN_SET.search(reply)
+        if stop and "scan stopped" in reply:
+            if "none was on" in reply:
+                return ToolOutput(
+                    f"{fence(gamertag)}'s Tricorder wasn't scanning.", result_brief="not scanning"
+                )
+            return ToolOutput(
+                f"Stopped {fence(gamertag)}'s Tricorder scan; it points at their waypoint"
+                " again (world spawn if they had none).",
+                result_brief="stopped",
+            )
+        if m is None:
+            return (
+                "The server took the command, but the jbrain pack didn't answer — it may not"
+                " have loaded in this world yet (it updates when the server restarts)."
+            )
+        return ToolOutput(
+            f"{fence(gamertag)}'s Tricorder is scanning for {m['label']} ({m['types']}):"
+            " every 10 seconds its arrow points at the nearest one within 16 blocks, and it"
+            ' reads "none nearby" when there isn\'t one. It keeps scanning, across sessions,'
+            " until they ask you to stop or set a new waypoint. Free: no deep scan.",
+            result_brief=m["label"],
         )
 
     # --- saved places ------------------------------------------------------------------
@@ -1756,6 +1818,7 @@ def build_minecraft_handlers(
         "mc_find_mob": mc_find_mob,
         "mc_find_item": mc_find_item,
         "mc_set_waypoint": mc_set_waypoint,
+        "mc_tricorder_scan": mc_tricorder_scan,
         "mc_place_save": mc_place_save,
         "mc_places": mc_places,
         "mc_place_remove": mc_place_remove,

@@ -127,7 +127,7 @@ async def test_a_waypoint_is_kept_for_the_map_and_a_clear_drops_it(sidecar) -> N
                 '{"player": "Steve42", "x": 12, "y": -62, "z": 18, "dim": "overworld",'
                 ' "label": "Diamonds"}'
                 if verb == "set"
-                else '{"player": "Steve42", "clear": true}'
+                else '{"player": "Steve42", "clear": true, "end_scan": true}'
             )
         ] = [f"[x] [Scripting] [jbrain] waypoint {verb} for Steve42"]
     locks = MemoryTargets()
@@ -351,6 +351,70 @@ async def test_find_mob_asks_the_pack_and_reads_its_answer(sidecar) -> None:
     ):
         await _tools()["mc_find_mob"](bad, CTX)
     assert len(sidecar["sent"]) == count
+
+
+async def test_a_tricorder_scan_is_one_scriptevent_and_its_answer_is_read_back(sidecar) -> None:
+    sent = 'scriptevent jb:scan {"player": "Steve 42", "block": "diamond_ore"}'
+    sidecar["replies"][sent] = [
+        "[x] [Scripting] [jbrain] scan set for Steve 42: diamond"
+        " (minecraft:diamond_ore, minecraft:deepslate_diamond_ore)"
+    ]
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "Steve 42", "block": "Diamond Ore"}, CTX)
+    assert _commands(sidecar)[-1] == sent
+    assert out.result_brief == "diamond"
+    assert "within 16 blocks" in out and "every 10 seconds" in out and "no deep scan" in out
+    assert "minecraft:deepslate_diamond_ore" in out
+
+    sent = 'scriptevent jb:scan {"player": "Steve 42", "block": "diamonds"}'
+    sidecar["replies"][sent] = [
+        "[x] [Scripting] [jbrain] scan refused: minecraft:diamonds isn't a block"
+    ]
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "Steve 42", "block": "diamonds"}, CTX)
+    assert out.result_brief == "no such block" and "diamond_ore" in out
+
+    stop = 'scriptevent jb:scan {"player": "Steve 42", "stop": true}'
+    sidecar["replies"][stop] = ["[x] [Scripting] [jbrain] scan stopped for Steve 42"]
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "Steve 42", "stop": True}, CTX)
+    assert out.result_brief == "stopped" and "points at their waypoint again" in out
+    sidecar["replies"][stop] = ["[x] [Scripting] [jbrain] scan stopped for Steve 42 (none was on)"]
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "Steve 42", "stop": True}, CTX)
+    assert out.result_brief == "not scanning"
+
+    sidecar["replies"][stop] = ["[x INFO] ok"]
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "Steve 42", "stop": True}, CTX)
+    assert "didn't answer" in out
+    sidecar["replies"][stop] = ["[x] [Scripting] [jbrain] scan refused: Error: no player"]
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "Steve 42", "stop": True}, CTX)
+    assert out.result_brief == "refused"
+
+    count = len(sidecar["sent"])
+    for bad in (
+        {"gamertag": "Steve 42", "block": 'stone"; op @a'},
+        {"gamertag": "Steve 42"},
+        {"gamertag": "x" * 40, "block": "stone"},
+    ):
+        await _tools()["mc_tricorder_scan"](bad, CTX)
+    assert len(sidecar["sent"]) == count
+
+
+async def test_a_new_waypoint_or_a_clear_says_it_ended_a_scan(sidecar) -> None:
+    sidecar["replies"]["/worlds"] = {"active": "castle"}
+    sidecar["replies"][
+        'scriptevent jb:waypoint {"player": "Steve42", "clear": true, "end_scan": true}'
+    ] = ["[x] [Scripting] [jbrain] waypoint cleared for Steve42; scan ended"]
+    out = await _tools()["mc_set_waypoint"]({"gamertag": "Steve42", "clear": True}, CTX)
+    assert out.result_brief == "cleared" and "ended their Tricorder's scan" in out
+
+
+async def test_in_game_a_scan_is_only_ever_the_askers_own(sidecar) -> None:
+    with asking("s1", ASKER):
+        out = await _tools()["mc_tricorder_scan"]({"gamertag": "Mira", "block": "stone"}, DOOR)
+        assert out.result_brief == "refused"
+        assert _commands(sidecar) == []
+        await _tools()["mc_tricorder_scan"]({"block": "ancient_debris"}, DOOR)
+    assert _commands(sidecar)[-1] == (
+        'scriptevent jb:scan {"player": "Steve 42", "block": "ancient_debris"}'
+    )
 
 
 async def test_find_mob_in_game_looks_only_around_the_asker(sidecar) -> None:

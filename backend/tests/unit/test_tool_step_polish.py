@@ -182,6 +182,7 @@ _AUTHORS_BRIEF = {
     "mc_find_item",
     "mc_show_map",
     "mc_set_waypoint",
+    "mc_tricorder_scan",
     "mc_place_save",
     "mc_places",
     "mc_place_remove",

@@ -109,6 +109,15 @@ describe("toolStep", () => {
     expect(toolStep(tool({ name: "search", args: { limit: 8 } })).inline).toBeUndefined();
   });
 
+  it("names the block a Tricorder scan is set to, and nothing for a stop", () => {
+    const set = toolStep(tool({ name: "mc_tricorder_scan", args: { block: "diamond_ore" } }));
+    expect(set.label).toBe("Set the tricorder's scan");
+    expect(set.inline).toBe("diamond_ore");
+    expect(
+      toolStep(tool({ name: "mc_tricorder_scan", args: { stop: true } })).inline,
+    ).toBeUndefined();
+  });
+
   it("joins an umbrella tool's action with its target (the jmolt_observe polish)", () => {
     expect(toolStep(tool({ name: "jmolt_observe", args: { action: "sessions" } })).inline).toBe(
       "sessions",
