@@ -956,7 +956,7 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v13: `mc_replicator_program`, in game only, for the asker's held Replicator (§M15).
         # v14: `mc_wormhole_aim` (§M12), only once the guide describes wormholes.
         "minecraft_dave": (
-            "agent-minecraft-dave-v14",
+            "agent-minecraft-dave-v15",
             "676005bcd4694368d3a67046db193b3894a155aae728e1103d9ce64bebccd529",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`

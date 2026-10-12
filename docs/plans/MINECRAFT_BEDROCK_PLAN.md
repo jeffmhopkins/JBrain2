@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-11 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11◻️ M12✅ M13◻️ M14◻️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1◻️
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -638,6 +638,10 @@ house by typing the address.
   startup, so the wrapper writes the name into the pack's config before starting BDS.
   Renaming is a restart, not a pack rebuild. The script logs one structured line carrying the asker, the text, and the asker's position, dimension
   and facing. The wrapper parses it and queues a `question` event.
+  - **Players type `/dave`, `/d` or `/ai`** (owner, 2026-10-12). Bedrock answers every custom
+    command without its namespace too (box check: `dave hi` reaches the handler, an
+    unknown `zzdave` doesn't), so the pack registers `jb:dave`, `jb:d` and `jb:ai` on one handler,
+    and everything players read names `/dave`. The namespaced forms keep working.
 - **Live queries (backend asks the world)**: the wrapper sends
   `scriptevent jb:q <id> <json>`. The script runs it against **loaded** chunks (for example
   `dimension.getEntities({type, location, closest: 1})`) and logs the result tagged with
