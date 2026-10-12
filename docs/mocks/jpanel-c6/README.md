@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12** · Last verified: 2026-10-12
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -37,9 +37,11 @@ panel, the others import it at a fixed `start` state).
   (**Calibrate**: the twins' 16-target, taps-until-they-agree routine; BOOT cancels and
   keeps the old map).
 - **Ground is pure black** (an unlit AMOLED pixel is off); colours are `DESIGN.md`'s accents:
-  Jerv violet, Quorra amber, Tamsin teal, Minecraft green, steel for actions.
-- **Clock:** opens on a **giant 24-hour time** and nothing else. Tapping it opens the alarm
-  list (next alarm, on/off switches only); back returns to the face. Everything is 24-hour,
+  Jerv the PWA's blue (`#7FA7C9`, since 2026-10-12; violet before), Quorra amber, Tamsin teal,
+  Minecraft green, steel for actions.
+- **Clock:** opens on a **giant 24-hour time** and nothing else. A **two-second hold** on it
+  opens the alarm list (next alarm, on/off switches only) — a tap did until 2026-10-12, see
+  below; back returns to the face. Everything is 24-hour,
   on the panel and in the PWA editor. Alarms are **created and edited in the PWA** (jpanel →
   Panels → Jeff's, `PwaAlarms.dc.html`): time, repeat days (none = once, then it switches
   itself off), optional label. The panel keeps its copy and rings from its own clock
@@ -104,3 +106,24 @@ panel, the others import it at a fixed `start` state).
   "Work in progress" page. BOOT climbs one level. KEY outside Dave's thread is still Jerv's.
   Built in firmware 0.0.11; there is no mock board for these, the sim's `minecraft`, `dave`,
   `dave-reply`, `compass`, `chat-menu` and `chat-menu-armed` states are their pictures.
+- **The Clock opens its alarms on a two-second hold** (owner, 2026-10-12: *"when we're on clock
+  and we press the screen and it pulls up the clock menu, I think that needs to be a long press,
+  maybe 2 seconds or more"*): a plain tap on the face does nothing; a finger held still for 2 s
+  opens the alarm list. After 0.3 s a thin ring fills around the finger over the rest of the hold,
+  in the night colour when the night clock is on (steel by day); lifting early or moving cancels
+  quietly. A tap on a dark screen still only wakes it. The mock's face still opens on a click (its
+  runtime has no hold); the sim's `clock-hold`, `clock-hold-night`, `clock-tap` and
+  `clock-alarms` states are the pictures. Firmware 0.0.12.
+- **Jerv wears the PWA's own icon, in the PWA's blue** (owner, 2026-10-12): the home tile, Jerv's
+  header and every Jerv glyph draw the neuron mark of `frontend/public/favicon.svg` (centre disc
+  r 8, branching strokes 3.4 wide with round caps and joins, terminal dots) in `#7FA7C9`, which
+  replaces the purple four-point star and the violet everywhere Jerv's colour is used (his tint,
+  "Speaking…", Listen). `Main.dc.html` carries the same SVG; the firmware rasterises it from the
+  SVG's geometry (`firmware-c6/tools/gen_jerv_mark.py`). Contrast 5.6:1 on the tile's tinted disc,
+  7.1:1 on the tile; Jerv never appears on the night clock's corner badge.
+- **A live status line while Jerv or Dave works** (owner, 2026-10-12: *"I want better updates for
+  tool use and such to come through the panel and not to have it direct me to my app"*): under
+  the waiting question, a small spinner and dim words — "Searching the web: …" — replaced by the
+  answer, which is kept whole on the glass (up to 1,000 bytes) and read aloud in full. KEY while
+  he works says "Still working on the last one". The sim's `jerv-working`, `dave-working` and
+  `jerv-long` states are the pictures. Firmware 0.0.12.

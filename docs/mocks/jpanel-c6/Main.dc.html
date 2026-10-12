@@ -44,7 +44,7 @@ body{margin:0}
               <button onClick="{{t.open}}" aria-label="{{t.aria}}" style="position: relative; height: 196px; border-radius: 28px; background: #17181B; border: 1px solid #26282C; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; cursor: pointer; font-family: inherit; padding: 0;">
                 <span style="width: 96px; height: 96px; border-radius: 48px; background: {{t.tint}}; color: {{t.color}}; opacity: {{t.iconOpacity}}; display: flex; align-items: center; justify-content: center;">
                   <sc-if value="{{t.isJerv}}" hint-placeholder-val="{{false}}">
-                    <svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L28.5 19.5 L43 24 L28.5 28.5 L24 43 L19.5 28.5 L5 24 L19.5 19.5 Z"></path></svg>
+                    <svg width="52" height="52" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M29 27 L22 15"></path><path d="M22 15 L17 9"></path><path d="M22 15 L26 8"></path><path d="M25 31 L13 25"></path><path d="M13 25 L7 21"></path><path d="M13 25 L9 29"></path><path d="M27 38 L16 46"></path><path d="M16 46 L10 50"></path><path d="M16 46 L15 54"></path><path d="M40 32 L54 32"></path><path d="M54 32 L59 27"></path><path d="M54 32 L59 37"></path></g><g fill="currentColor"><circle cx="32" cy="32" r="8"></circle><circle cx="17" cy="9" r="2.4"></circle><circle cx="26" cy="8" r="2.4"></circle><circle cx="7" cy="21" r="2.4"></circle><circle cx="9" cy="29" r="2.4"></circle><circle cx="10" cy="50" r="2.4"></circle><circle cx="15" cy="54" r="2.4"></circle><circle cx="59" cy="27" r="2.7"></circle><circle cx="59" cy="37" r="2.7"></circle></g></svg>
                   </sc-if>
                   <sc-if value="{{t.isCube}}" hint-placeholder-val="{{false}}">
                     <svg width="52" height="52" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L41 14.5 L41 33.5 L24 43 L7 33.5 L7 14.5 Z"></path><path d="M7 14.5 L24 24 L41 14.5"></path><path d="M24 24 L24 43"></path></svg>
@@ -97,7 +97,7 @@ body{margin:0}
             </button>
             <span style="width: 44px; height: 44px; border-radius: 22px; background: {{cur.tint}}; color: {{cur.color}}; display: flex; align-items: center; justify-content: center;">
               <sc-if value="{{cur.isJerv}}" hint-placeholder-val="{{true}}">
-                <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L28.5 19.5 L43 24 L28.5 28.5 L24 43 L19.5 28.5 L5 24 L19.5 19.5 Z"></path></svg>
+                <svg width="26" height="26" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M29 27 L22 15"></path><path d="M22 15 L17 9"></path><path d="M22 15 L26 8"></path><path d="M25 31 L13 25"></path><path d="M13 25 L7 21"></path><path d="M13 25 L9 29"></path><path d="M27 38 L16 46"></path><path d="M16 46 L10 50"></path><path d="M16 46 L15 54"></path><path d="M40 32 L54 32"></path><path d="M54 32 L59 27"></path><path d="M54 32 L59 37"></path></g><g fill="currentColor"><circle cx="32" cy="32" r="8"></circle><circle cx="17" cy="9" r="2.4"></circle><circle cx="26" cy="8" r="2.4"></circle><circle cx="7" cy="21" r="2.4"></circle><circle cx="9" cy="29" r="2.4"></circle><circle cx="10" cy="50" r="2.4"></circle><circle cx="15" cy="54" r="2.4"></circle><circle cx="59" cy="27" r="2.7"></circle><circle cx="59" cy="37" r="2.7"></circle></g></svg>
               </sc-if>
               <sc-if value="{{cur.isCube}}" hint-placeholder-val="{{false}}">
                 <svg width="26" height="26" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="4" stroke-linejoin="round" aria-hidden="true"><path d="M24 5 L41 14.5 L41 33.5 L24 43 L7 33.5 L7 14.5 Z"></path><path d="M7 14.5 L24 24 L41 14.5"></path><path d="M24 24 L24 43"></path></svg>
@@ -143,11 +143,11 @@ body{margin:0}
                     </sc-if>
                     <span style="font-size: 22px; font-weight: 500; line-height: 1.3; color: {{m.textColor}};">{{m.text}}</span>
                     <sc-if value="{{m.canSpeak}}" hint-placeholder-val="{{false}}">
-                      <button onClick="{{m.speak}}" aria-label="Read this reply aloud" style="align-self: flex-start; height: 44px; padding: 0 14px; border-radius: 22px; border: none; background: rgba(164,147,201,0.16); color: #A493C9; display: flex; align-items: center; gap: 8px; font-family: inherit; font-size: 17px; font-weight: 600; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Listen</span></button>
+                      <button onClick="{{m.speak}}" aria-label="Read this reply aloud" style="align-self: flex-start; height: 44px; padding: 0 14px; border-radius: 22px; border: none; background: rgba(127,167,201,0.16); color: #7FA7C9; display: flex; align-items: center; gap: 8px; font-family: inherit; font-size: 17px; font-weight: 600; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Listen</span></button>
                     </sc-if>
                   </div>
                   <sc-if value="{{m.speakingNow}}" hint-placeholder-val="{{false}}">
-                    <span style="display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 500; color: #A493C9; padding-left: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Speaking…</span></span>
+                    <span style="display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 500; color: #7FA7C9; padding-left: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Speaking…</span></span>
                   </sc-if>
                 </div>
               </sc-if>
@@ -444,7 +444,7 @@ body{margin:0}
 class Component extends DCLogic {
   accents() {
     return {
-      jerv: { color: '#A493C9', tint: 'rgba(164,147,201,0.16)', name: 'Jerv', initial: '' },
+      jerv: { color: '#7FA7C9', tint: 'rgba(127,167,201,0.16)', name: 'Jerv', initial: '' },
       quorra: { color: '#C9A36A', tint: 'rgba(201,163,106,0.16)', name: 'Quorra', initial: 'Q' },
       tamsin: { color: '#6FB6B1', tint: 'rgba(111,182,177,0.16)', name: 'Tamsin', initial: 'T' },
       minecraft: { color: '#8FBC9A', tint: 'rgba(143,188,154,0.16)', name: 'Minecraft', initial: '' },
