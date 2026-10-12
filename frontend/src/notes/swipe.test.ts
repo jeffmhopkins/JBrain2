@@ -61,4 +61,14 @@ describe("swipe rail drag", () => {
     expect(endDrag(beginDrag(100, 100, true))).toBe(true);
     expect(endDrag(beginDrag(100, 100, false))).toBe(false);
   });
+
+  it("clamps and snaps against a rail's own width", () => {
+    let drag = beginDrag(400, 100, false, 180);
+    drag = moveDrag(drag, 0, 100);
+    expect(drag.offset).toBe(-180);
+    expect(endDrag(drag)).toBe(true);
+    expect(endDrag(beginDrag(100, 100, true, 180))).toBe(true);
+    drag = moveDrag(beginDrag(400, 100, false, 180), 400 - 89, 100);
+    expect(endDrag(drag)).toBe(false);
+  });
 });

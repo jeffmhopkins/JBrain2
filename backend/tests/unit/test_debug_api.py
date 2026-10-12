@@ -350,6 +350,39 @@ def test_whoami_reports_scopes(debug_client: tuple[TestClient, str]) -> None:
     assert "web.fetch" in body["scopes"]
 
 
+def test_the_page_cache_drop_polls_first_so_a_departed_flash_next_loses_its_engram_cache(
+    debug_client: tuple[TestClient, str], tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-10-12: this route answered every model `null` and `Cached` stayed ~20.6 GiB. The
+    drop reads "resident" from the gateway's last `/running` poll, and a poll from before
+    Flash-Next went away sends it down the range-aware path, which KEEPS the engram pages —
+    the cache the owner was trying to free. The route polls before it drops."""
+    from jbrain.llm import local_gateway, local_weights
+
+    flash = "qwen3.8-flash-next"
+    dropped: list[str] = []
+    monkeypatch.setattr(
+        local_weights, "drop_weights_page_cache", lambda _d, m: dropped.append(m) or 1.0
+    )
+    monkeypatch.setattr(
+        local_weights,
+        "drop_weights_page_cache_except_mapped",
+        lambda _d, m: dropped.append(f"{m}:keep-mapped") or 0.5,
+    )
+    monkeypatch.setattr(local_weights, "drop_kvslot_page_cache", lambda _d, _m: None)
+    gateway = local_gateway.LocalGatewayClient(
+        "http://gw/v1",
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"running": []})),
+        models_dir=str(tmp_path),
+    )
+    gateway._seen_resident = {flash}  # the stale poll: it was serving, then went away
+    client, key = debug_client
+    _state(client).local_gateway = gateway
+    resp = client.post(f"/api/debug/llm/drop-page-cache?models={flash}", headers=_auth(key))
+    assert resp.status_code == 200, resp.text
+    assert dropped == [flash], "a departed Flash-Next kept its engram cache"
+
+
 def test_version_reports_the_baked_build_provenance() -> None:
     # The build args stamped into the image surface verbatim, and started_at is set at
     # lifespan start — so an external assistant reads the deployed revision, not a guess.

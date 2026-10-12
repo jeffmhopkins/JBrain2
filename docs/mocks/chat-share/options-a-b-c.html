@@ -1,0 +1,462 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>
+<title>Chat Share Links</title>
+<style>
+  /* Layout: a control strip over one 390px phone; the phone shows the swipe rail, the owner's share sheet, or the recipient's public page. */
+  :root{
+    --page:#050506;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --steel-text:#7FA7C9; --amber-text:#C9A36A; --rose-text:#CF8A8F; --violet-text:#A493C9;
+    --scrim:rgba(0,0,0,.55); --frame:#2a2c30;
+    --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,monospace;
+    color-scheme:dark;
+  }
+  @media (prefers-color-scheme: light){
+    :root:not([data-theme="dark"]){
+      --page:#E4E4E1; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+      --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --scrim:rgba(20,20,22,.35); --frame:#C9C9C5;
+      --steel-text:#4E6F8C; --amber-text:#86642F; --rose-text:#9A4F55; --violet-text:#665792;
+      color-scheme:light;
+    }
+  }
+  :root[data-theme="light"]{
+    --page:#E4E4E1; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; --scrim:rgba(20,20,22,.35); --frame:#C9C9C5;
+    --steel-text:#4E6F8C; --amber-text:#86642F; --rose-text:#9A4F55; --violet-text:#665792;
+    color-scheme:light;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);font-family:var(--font);display:flex;flex-direction:column;align-items:center;gap:14px;padding-block:18px 48px;padding-inline:16px;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;}
+  button{font:inherit;color:inherit;}
+  button:focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+
+  .head{max-width:420px;width:100%;}
+  .head h1{font-size:17px;font-weight:650;letter-spacing:-.01em;text-wrap:balance;}
+  .head p{color:var(--text-2);font-size:12.5px;line-height:1.5;margin-top:5px;}
+  .controls{display:flex;flex-direction:column;gap:7px;margin-top:11px;}
+  .crow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .clbl{font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);width:52px;flex:none;}
+  .seg{display:inline-flex;flex-wrap:wrap;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;}
+  .seg button{appearance:none;border:none;background:none;color:var(--text-2);font-size:12px;font-weight:500;padding:6px 11px;border-radius:999px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;}
+  .seg button svg{width:14px;height:14px;}
+  .seg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel-text);font-weight:650;}
+  .seg.theme button[aria-pressed="true"]{background:var(--surface-2);color:var(--text);}
+
+  .vlabel{max-width:420px;width:100%;color:var(--text-2);font-size:12px;line-height:1.55;}
+  .vlabel b{color:var(--text);font-weight:600;}
+  .vlabel .pill{display:inline-block;background:var(--steel-tint);color:var(--steel-text);font-size:10.5px;font-weight:650;padding:2px 8px;border-radius:999px;margin-right:6px;vertical-align:1px;}
+
+  .phone{width:390px;max-width:100%;height:812px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  /* ---------- chats list (mirrors .fb-shell sessions panel) ---------- */
+  .apphead{padding:22px 18px 0;display:flex;align-items:baseline;justify-content:space-between;}
+  .apphead .t{font-size:22px;font-weight:600;}
+  .apphead .p{font-size:12px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .chatsbar{display:flex;align-items:center;gap:14px;padding:18px 16px 14px;border-bottom:1px solid var(--border);}
+  .chatsbar .back{color:var(--text-2);display:flex;}
+  .chatsbar .back svg{width:16px;height:16px;}
+  .chatsbar .t{font-size:17px;font-weight:600;}
+  .chatsbar .hint{margin-left:auto;font-size:11.5px;color:var(--text-3);}
+  .listpad{padding:12px 12px 0;display:flex;flex-direction:column;gap:9px;flex:1;overflow:hidden;}
+  .newchat{border:1px dashed var(--border);border-radius:14px;height:42px;display:flex;align-items:center;justify-content:center;gap:6px;color:var(--steel-text);font-size:14px;}
+  .tabs{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);border-radius:14px;overflow:hidden;}
+  .tabs div{height:42px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:13.5px;font-weight:500;color:var(--text-2);}
+  .tabs div+div{border-left:1px solid var(--border);}
+  .tabs .on{background:var(--steel-tint);color:var(--text);font-weight:600;}
+  .tabs .n{font-size:10.5px;background:var(--surface-2);border-radius:999px;padding:2px 7px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .tabs .on .n{color:var(--steel-text);}
+  .search{border:1px solid var(--border);border-radius:14px;height:42px;display:flex;align-items:center;gap:12px;padding:0 14px;color:var(--text-3);font-size:14.5px;}
+  .search svg{width:16px;height:16px;}
+  .rows{border:1px solid var(--border);border-radius:14px;overflow:hidden;background:var(--surface);}
+  .row{position:relative;height:46px;border-top:1px solid var(--border);overflow:hidden;}
+  .row:first-child{border-top:none;}
+  .slide{position:absolute;inset:0;background:var(--surface);display:flex;align-items:center;gap:10px;padding:0 14px 0 16px;transition:transform 180ms ease-out;cursor:grab;}
+  .slide .dot{width:7px;height:7px;border-radius:999px;background:var(--text-3);flex:none;}
+  .slide .tt{flex:1;min-width:0;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .slide .meta{font-size:11px;color:var(--text-3);display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .slide .meta .lk{color:var(--steel-text);display:inline-flex;}
+  .slide .meta .lk svg{width:12px;height:12px;}
+  .slide .chev{color:var(--text-3);display:flex;}
+  .slide .chev svg{width:14px;height:14px;}
+  .rail{position:absolute;inset:0 0 0 auto;display:flex;}
+  .rbtn{width:48px;border:none;border-radius:0;font-size:10.5px;font-weight:500;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;line-height:1;cursor:pointer;}
+  .rbtn svg{width:17px;height:17px;}
+  .r-edit{background:var(--amber-tint);color:var(--amber-text);}
+  .r-scope{background:var(--surface-2);color:var(--text-2);}
+  .r-share{background:var(--steel-tint);color:var(--steel-text);}
+  .r-share.new{box-shadow:inset 0 0 0 1.5px var(--steel);}
+  .r-archive{background:var(--steel-tint);color:var(--steel-text);}
+  .r-delete{background:var(--rose-tint);color:var(--rose-text);}
+  .omni{margin:auto 10px 10px;border:1px solid var(--border);border-radius:16px;overflow:hidden;flex:none;}
+  .omni .segs{display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid var(--border);}
+  .omni .segs div{height:44px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:13.5px;color:var(--text-2);}
+  .omni .segs div+div{border-left:1px solid var(--border);}
+  .omni .segs .on{background:var(--amber-tint);color:var(--text);font-weight:600;}
+  .omni .segs .on svg{color:var(--amber);}
+  .omni .segs svg{width:15px;height:15px;}
+  .omni .in{height:84px;padding:14px 16px;color:var(--text-3);font-size:15px;}
+
+  /* ---------- sheet ---------- */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .18s;z-index:5;}
+  .scrim.on{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;max-height:88%;overflow-y:auto;background:var(--surface);border-top-left-radius:20px;border-top-right-radius:20px;border:1px solid var(--border);border-bottom:none;transform:translateY(100%);transition:transform .22s cubic-bezier(.4,0,.2,1);z-index:6;padding:8px 16px 24px;}
+  .sheet.on{transform:translateY(0);}
+  @media (prefers-reduced-motion: reduce){.sheet,.scrim,.slide,.toast{transition:none;}}
+  .grip{width:38px;height:4px;border-radius:999px;background:var(--border);margin:4px auto 12px;}
+  .sh-title{display:flex;align-items:center;gap:9px;}
+  .sh-title .disc{width:32px;height:32px;border-radius:10px;background:var(--steel-tint);color:var(--steel-text);display:flex;align-items:center;justify-content:center;flex:none;}
+  .sh-title .disc svg{width:17px;height:17px;}
+  .sh-title h3{font-size:15px;font-weight:650;}
+  .sh-title .chat{font-size:12px;color:var(--text-2);margin-top:2px;}
+  .sub{color:var(--text-2);font-size:12.5px;line-height:1.5;margin:12px 0 12px;}
+  .linkbox{display:flex;align-items:center;gap:8px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:0 5px 0 12px;height:46px;margin-bottom:10px;}
+  .linkbox .url{flex:1;min-width:0;font-size:12.5px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--mono);user-select:all;}
+  .btn{flex:none;border:none;font-size:12.5px;font-weight:650;border-radius:9px;padding:8px 12px;cursor:pointer;display:inline-flex;gap:6px;align-items:center;min-height:36px;}
+  .btn svg{width:14px;height:14px;}
+  .btn.steel{background:var(--steel-tint);color:var(--steel-text);}
+  .btn.ghost{background:none;border:1px solid var(--border);color:var(--text-2);}
+  .btn.full{width:100%;justify-content:center;height:46px;font-size:14px;border-radius:12px;}
+  .warnrow{display:flex;gap:9px;background:var(--violet-tint);border-radius:11px;padding:10px 12px;margin-bottom:10px;color:var(--violet-text);font-size:12px;line-height:1.45;}
+  .warnrow svg{width:16px;height:16px;flex:none;margin-top:1px;}
+  .warnrow b{font-weight:650;}
+  .opt{display:flex;align-items:center;gap:11px;padding:12px 2px;border-top:1px solid var(--border);}
+  .opt .ol{flex:1;min-width:0;}
+  .opt .ot{font-size:13.5px;}
+  .opt .od{font-size:11.5px;color:var(--text-3);margin-top:2px;line-height:1.4;}
+  .tog{width:40px;height:24px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);position:relative;flex:none;cursor:pointer;}
+  .tog::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:var(--text-3);transition:left .15s;}
+  .tog[aria-checked="true"]{background:var(--steel-tint);border-color:var(--steel);}
+  .tog[aria-checked="true"]::after{left:18px;background:var(--steel);}
+  .stats{display:flex;align-items:center;gap:8px;color:var(--text-3);font-size:11.5px;padding:12px 2px;border-top:1px solid var(--border);font-variant-numeric:tabular-nums;}
+  .stats svg{width:14px;height:14px;}
+  .stats .live{color:var(--green);display:inline-flex;align-items:center;gap:5px;}
+  .stats .live i{width:6px;height:6px;border-radius:999px;background:var(--green);}
+  .actionrow{display:flex;align-items:center;gap:12px;padding:13px 2px;border-top:1px solid var(--border);cursor:pointer;font-size:14px;background:none;border-left:none;border-right:none;border-bottom:none;width:100%;text-align:left;color:var(--text);}
+  .actionrow svg{width:18px;height:18px;color:var(--text-2);flex:none;}
+  .actionrow.danger{color:var(--rose-text);} .actionrow.danger svg{color:var(--rose-text);}
+  .actionrow .r{margin-left:auto;font-size:11.5px;color:var(--text-3);}
+  .pick{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:12px;}
+  .pk{display:flex;gap:11px;padding:11px 12px;align-items:flex-start;cursor:pointer;background:none;border:none;text-align:left;width:100%;}
+  .pk+.pk{border-top:1px solid var(--border);}
+  .pk .cb{width:20px;height:20px;border-radius:6px;border:1.5px solid var(--text-3);flex:none;display:flex;align-items:center;justify-content:center;margin-top:1px;color:var(--bg);}
+  .pk .cb svg{width:13px;height:13px;stroke-width:2.4;opacity:0;}
+  .pk[aria-checked="true"] .cb{background:var(--steel);border-color:var(--steel);}
+  .pk[aria-checked="true"] .cb svg{opacity:1;}
+  .pk .pn{font-size:10.5px;color:var(--text-3);font-weight:600;letter-spacing:.06em;text-transform:uppercase;}
+  .pk .pq{font-size:13px;line-height:1.4;margin-top:3px;color:var(--text);}
+  .pk .pa{font-size:11.5px;line-height:1.4;margin-top:3px;color:var(--text-2);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+  .toast{position:absolute;left:50%;bottom:22px;transform:translateX(-50%) translateY(20px);background:var(--text);color:var(--bg);font-size:12.5px;font-weight:600;padding:9px 15px;border-radius:999px;opacity:0;pointer-events:none;transition:all .2s;z-index:9;white-space:nowrap;}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  /* ---------- public chat page ---------- */
+  .pub{flex:1;overflow-y:auto;background:var(--bg);}
+  .urlbar{flex:none;display:flex;align-items:center;justify-content:center;gap:6px;height:40px;background:var(--surface-2);border-bottom:1px solid var(--border);font-size:12px;color:var(--text-2);font-family:var(--mono);}
+  .urlbar svg{width:12px;height:12px;}
+  .band{background:var(--steel-tint);border-bottom:1px solid var(--border);padding:14px 18px 13px;}
+  .band .kick{display:flex;align-items:center;gap:7px;color:var(--steel-text);font-size:11px;font-weight:650;text-transform:uppercase;letter-spacing:.07em;}
+  .band .kick svg{width:14px;height:14px;}
+  .band .kick .live{margin-left:auto;display:inline-flex;align-items:center;gap:5px;color:var(--green);letter-spacing:.04em;}
+  .band .kick .live i{width:6px;height:6px;border-radius:999px;background:var(--green);animation:pulse 1.6s ease-in-out infinite;}
+  @keyframes pulse{50%{opacity:.35}}
+  @media (prefers-reduced-motion: reduce){.band .kick .live i{animation:none;}}
+  .band h2{font-size:19px;font-weight:650;letter-spacing:-.01em;margin-top:9px;text-wrap:balance;}
+  .band .who{color:var(--text-2);font-size:11.5px;margin-top:5px;font-variant-numeric:tabular-nums;}
+  .band .who .mode{color:var(--amber-text);}
+  .thread{padding:16px 14px 8px;display:flex;flex-direction:column;gap:14px;}
+  .q{align-self:flex-end;max-width:84%;background:var(--surface-2);border:1px solid var(--border);border-radius:16px 16px 4px 16px;padding:10px 13px;font-size:14.5px;line-height:1.45;}
+  .a{font-size:14.5px;line-height:1.58;padding:0 4px;}
+  .a p+p{margin-top:9px;}
+  .a b{font-weight:600;}
+  .worked{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-3);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 10px;margin:0 4px 8px;cursor:pointer;}
+  .worked svg{width:12px;height:12px;}
+  .steps{margin:0 4px 10px;border-left:2px solid var(--border);padding-left:11px;display:flex;flex-direction:column;gap:6px;}
+  .steps div{font-size:12px;color:var(--text-2);font-family:var(--mono);}
+  .cite{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;background:var(--steel-tint);color:var(--steel-text);font-size:10px;font-weight:700;border-radius:5px;vertical-align:2px;margin:0 1px;}
+  .srcs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 4px 0;}
+  .src{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:4px 10px 4px 5px;}
+  .src .fav{width:14px;height:14px;border-radius:4px;background:var(--surface-2);font-size:8.5px;font-weight:700;display:flex;align-items:center;justify-content:center;color:var(--text-3);}
+  .gap{display:flex;align-items:center;gap:10px;color:var(--text-3);font-size:11.5px;}
+  .gap::before,.gap::after{content:"";flex:1;height:1px;background:repeating-linear-gradient(90deg,var(--border) 0 5px,transparent 5px 9px);}
+  .pubfoot{margin:14px 14px 22px;padding:13px 14px;border:1px solid var(--border);border-radius:12px;color:var(--text-3);font-size:11.5px;line-height:1.5;display:flex;align-items:flex-start;gap:9px;}
+  .pubfoot svg{width:15px;height:15px;flex:none;margin-top:1px;}
+  .wordmark{font-weight:700;color:var(--text-2);}
+  .wordmark span{color:var(--steel);}
+  .revoked{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:40px;text-align:center;}
+  .revoked .disc{width:52px;height:52px;border-radius:16px;background:var(--surface-2);color:var(--text-3);display:flex;align-items:center;justify-content:center;}
+  .revoked .disc svg{width:24px;height:24px;}
+  .revoked h3{font-size:16px;font-weight:600;}
+  .revoked p{font-size:13px;color:var(--text-2);line-height:1.5;max-width:260px;}
+
+  /* ---------- icon spec ---------- */
+  .icons{max-width:420px;width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+  .ic{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 10px;display:flex;flex-direction:column;align-items:center;gap:8px;cursor:pointer;text-align:center;}
+  .ic[aria-pressed="true"]{border-color:var(--steel);}
+  .ic .big{width:56px;height:56px;border-radius:14px;background:var(--steel-tint);color:var(--steel-text);display:flex;align-items:center;justify-content:center;}
+  .ic .big svg{width:26px;height:26px;}
+  .ic .n{font-size:12.5px;font-weight:600;}
+  .ic .d{font-size:11px;color:var(--text-3);line-height:1.35;}
+  .ic .rec{font-size:10px;font-weight:650;color:var(--steel-text);text-transform:uppercase;letter-spacing:.06em;}
+</style>
+
+<div class="head">
+  <h1>Chat share links</h1>
+  <p>Share a chat from its swipe rail. Three directions for what a link carries: <b>A</b> freezes the chat at the moment you share, <b>B</b> follows it as you keep talking, <b>C</b> lets you pick which turns go out. Swipe the top row (or tap it) to open the rail, then tap <b>share</b>. Sample chat content.</p>
+  <div class="controls">
+    <div class="crow"><span class="clbl">Variant</span>
+      <div class="seg" id="variant">
+        <button data-v="a" aria-pressed="true">A · Snapshot</button>
+        <button data-v="b" aria-pressed="false">B · Live</button>
+        <button data-v="c" aria-pressed="false">C · Pick turns</button>
+      </div></div>
+    <div class="crow"><span class="clbl">Screen</span>
+      <div class="seg" id="screen">
+        <button data-s="rail" aria-pressed="true">Swipe rail</button>
+        <button data-s="sheet" aria-pressed="false">Share sheet</button>
+        <button data-s="public" aria-pressed="false">Public view</button>
+        <button data-s="revoked" aria-pressed="false">Revoked</button>
+      </div></div>
+    <div class="crow"><span class="clbl">Theme</span>
+      <div class="seg theme" id="theme">
+        <button data-t="dark" aria-pressed="true">Dark</button>
+        <button data-t="light" aria-pressed="false">Light</button>
+      </div></div>
+  </div>
+</div>
+
+<div class="vlabel" id="vlabel"></div>
+<div class="phone" id="phone"></div>
+
+<div class="head"><p><b>Rail icon.</b> Pick the glyph for the new rail button. It sits between <b>rename</b> and <b>scope</b> so its steel tint never touches archive's.</p></div>
+<div class="icons" id="icons"></div>
+
+<script>
+const G = {
+  link:'<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.4"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"/></svg>',
+  out:'<svg viewBox="0 0 24 24"><path d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7"/><path d="M12 3v12M8 7l4-4 4 4"/></svg>',
+  nodes:'<svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/></svg>',
+  pencil:'<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/></svg>',
+  scope:'<svg viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h10M18 18h2"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="16" cy="18" r="2"/></svg>',
+  archive:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/></svg>',
+  trash:'<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13"/></svg>',
+  back:'<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>',
+  chev:'<svg viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></svg>',
+  search:'<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14M5 12h14"/></svg>',
+  bot:'<svg viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 4v4M9 13h.01M15 13h.01"/></svg>',
+  copy:'<svg viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/></svg>',
+  eye:'<svg viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  lock:'<svg viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>',
+  shield:'<svg viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/></svg>',
+  unlink:'<svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.4"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07l1.33-1.33"/><path d="M3 3l18 18"/></svg>',
+  pause:'<svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg>',
+  check:'<svg viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>',
+  spark:'<svg viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/></svg>',
+};
+const ICONS = [
+  {k:"link", n:"Chain link", d:"Says what you get: a link. Same glyph as report sharing.", rec:true},
+  {k:"out",  n:"Share arrow", d:"The iOS share mark. Reads as “hand to another app”."},
+  {k:"nodes",n:"Share nodes", d:"The Android mark. Less familiar on the owner's iPhone."},
+];
+
+const CHAT = {
+  title:"SpaceX Pretrade",
+  url:"jbrain.app/s/c/7Kq2-mVw9-tRb4",
+  turns:[
+    {q:"Where are SpaceX secondary shares trading right now, and how does that compare to the last tender?",
+     a:"<p>Secondary marketplaces show recent indications in a band <b>above the last company-run tender price</b> <span class=\"cite\">1</span> <span class=\"cite\">2</span>. The spread between bids and asks is wide, so a single “price” overstates the precision.</p><p>Treat the tender as the floor that insiders actually transacted at, and the marketplace band as indications of interest, not fills.</p>",
+     steps:["web_search · “SpaceX secondary share price”","fetch · forgeglobal.com","fetch · cnbc.com"],
+     srcs:[["F","forgeglobal.com"],["C","cnbc.com"]]},
+    {q:"Compare that to what I paid in my pretrade allocation.",
+     a:"<p>Your note from <b>March 4</b> records the allocation price. Against the marketplace band above, the position is up on paper, but there is no liquid exit until the next tender window.</p>",
+     steps:["search_notes · “SpaceX allocation”","read_note · Mar 4 — Pretrade confirm"],
+     srcs:[["N","Your note · Mar 4"]], fin:true},
+  ],
+};
+
+const S = {v:"a", s:"rail", icon:"link", railOpen:true, sheet:false, steps:false, picked:[true,false], live:true, shared:false};
+const $ = (id)=>document.getElementById(id);
+
+function row(t, meta, extra){ return {t, meta, extra}; }
+const ROWS = [
+  row(CHAT.title,"2 turns"), row("Desk panel","8 turns"), row("Desk panel","1 turn"),
+  row("Weather","1 turn","shared"), row("News","1 turn"), row("Email overview","1 turn"),
+  row("This week in space flight","1 turn"),
+];
+
+function railHTML(){
+  const g = G[S.icon];
+  return `<div class="rail">
+    <button class="rbtn r-edit" type="button">${G.pencil}rename</button>
+    <button class="rbtn r-share new" type="button" data-act="share">${g}share</button>
+    <button class="rbtn r-scope" type="button">${G.scope}scope</button>
+    <button class="rbtn r-archive" type="button">${G.archive}archive</button>
+    <button class="rbtn r-delete" type="button">${G.trash}delete</button>
+  </div>`;
+}
+
+function listHTML(){
+  return `
+  <div class="apphead"><span class="t">Research</span><span class="p">0 %</span></div>
+  <div class="chatsbar"><span class="back">${G.back}</span><span class="t">Chats</span><span class="hint">swipe a chat for actions</span></div>
+  <div class="listpad">
+    <div class="newchat">${G.plus} New chat</div>
+    <div class="tabs"><div class="on">Today <span class="n">9</span></div><div>Older <span class="n">1036</span></div><div>Archived <span class="n">13</span></div></div>
+    <div class="search">${G.search} Search chats</div>
+    <div class="rows">
+      ${ROWS.map((r,i)=>{
+        const shared = r.extra==="shared" || (i===0 && S.shared);
+        return `<div class="row">${i===0?railHTML():""}
+          <div class="slide" data-row="${i}" style="transform:translateX(${i===0&&S.railOpen?-240:0}px)">
+            <span class="dot"></span><span class="tt">${r.t}</span>
+            <span class="meta">${shared?`<span class="lk" title="Shared">${G[S.icon]}</span>`:""}${r.meta}</span>
+            <span class="chev">${G.chev}</span>
+          </div></div>`;}).join("")}
+    </div>
+  </div>
+  <div class="omni">
+    <div class="segs"><div>${G.plus} Entry</div><div class="on">${G.search} Research</div><div>${G.bot} Brain</div></div>
+    <div class="in">Ask the web, or work a problem…</div>
+  </div>
+  <div class="scrim ${S.sheet?"on":""}" data-act="close"></div>
+  <div class="sheet ${S.sheet?"on":""}">${sheetHTML()}</div>
+  <div class="toast" id="toast"></div>`;
+}
+
+function sheetHead(sub){
+  return `<div class="grip"></div>
+  <div class="sh-title"><span class="disc">${G[S.icon]}</span><div><h3>Share chat</h3><div class="chat">${CHAT.title} · 2 turns · Research</div></div></div>
+  <p class="sub">${sub}</p>`;
+}
+const WARN = `<div class="warnrow">${G.shield}<span>This chat read your <b>Financial</b> notes. Turn 2 quotes one, and the link would show it to anyone who has it.</span></div>`;
+const LINK = `<div class="linkbox"><span class="url">${CHAT.url}</span><button class="btn steel" type="button" data-act="copy">${G.copy}Copy</button></div>`;
+const STEPS_OPT = `<div class="opt"><div class="ol"><div class="ot">Show tool steps</div><div class="od">Off: readers see answers and sources. On: they can open each turn’s searches and fetches.</div></div><button class="tog" role="switch" aria-checked="${S.steps}" aria-label="Show tool steps" data-act="steps"></button></div>`;
+const REVOKE = `<button class="actionrow danger" type="button" data-act="revoke">${G.unlink}Revoke link<span class="r">stops working at once</span></button>`;
+
+function sheetHTML(){
+  if (S.v==="a") return sheetHead("Anyone with the link can read this chat as it is now. Turns you add later stay private unless you share again.")
+    + WARN + LINK
+    + `<button class="btn ghost full" type="button" data-act="copy">${G.out}Send with…</button>`
+    + `<div style="height:8px"></div>` + STEPS_OPT
+    + `<div class="stats">${G.eye}Opened 3 times · last 2 h ago · snapshot Oct 12, 5:47 PM</div>`
+    + `<button class="actionrow" type="button" data-act="copy">${G.spark}Update snapshot<span class="r">include new turns</span></button>`
+    + REVOKE;
+  if (S.v==="b") return sheetHead("Anyone with the link can read this chat, and new turns appear for them as you add them.")
+    + WARN + LINK
+    + `<button class="btn ghost full" type="button" data-act="copy">${G.out}Send with…</button>`
+    + `<div style="height:8px"></div>`
+    + `<div class="opt"><div class="ol"><div class="ot">Keep updating</div><div class="od">${S.live?"Readers see each new turn when it finishes.":"Frozen at turn 2. Turn it back on to resume."}</div></div><button class="tog" role="switch" aria-checked="${S.live}" aria-label="Keep updating" data-act="live"></button></div>`
+    + STEPS_OPT
+    + `<div class="stats">${S.live?'<span class="live"><i></i>live</span> · ':''}Opened 3 times · last 2 h ago</div>`
+    + REVOKE;
+  const n = S.picked.filter(Boolean).length;
+  const finPicked = S.picked[1];
+  return sheetHead("Choose the turns to share. Readers see only these, with a marker where a turn was left out.")
+    + `<div class="pick">${CHAT.turns.map((t,i)=>`<button class="pk" type="button" role="checkbox" aria-checked="${S.picked[i]}" data-act="pick" data-i="${i}">
+        <span class="cb">${G.check}</span>
+        <span><span class="pn">Turn ${i+1}${t.fin?' · <span style="color:var(--violet-text)">quotes a Financial note</span>':''}</span>
+        <span class="pq" style="display:block">${t.q}</span>
+        <span class="pa">${t.a.replace(/<[^>]+>/g,"").replace(/\s\d\s/g," ")}</span></span></button>`).join("")}</div>`
+    + (finPicked ? WARN : "")
+    + (S.shared
+      ? LINK + `<div class="stats">${G.eye}Opened 3 times · last 2 h ago</div>` + `<button class="actionrow" type="button" data-act="mint">${G.spark}Update link with this selection</button>` + REVOKE
+      : `<button class="btn steel full" type="button" data-act="mint" ${n?"":"disabled style=\"opacity:.45\""}>${G[S.icon]}Create link · ${n} of 2 turns</button>`);
+}
+
+function publicHTML(){
+  const shownTurns = S.v==="c" ? CHAT.turns.map((t,i)=>S.picked[i]?t:null) : CHAT.turns;
+  const kick = S.v==="b" && S.live
+    ? `${G.link.replace('<svg','<svg')}Shared chat · read-only<span class="live"><i></i>LIVE</span>`
+    : `${G.lock}Shared chat · read-only`;
+  const who = S.v==="a" ? `Snapshot of Oct 12, 2026, 5:47 PM · <span class="mode">Research</span> · 2 turns`
+            : S.v==="b" ? (S.live?`Updated 4 min ago · <span class="mode">Research</span> · 2 turns so far`:`Paused at Oct 12, 5:47 PM · <span class="mode">Research</span> · 2 turns`)
+            : `Oct 12, 2026 · <span class="mode">Research</span> · ${S.picked.filter(Boolean).length} of 2 turns shared`;
+  const body = shownTurns.map((t)=>{
+    if(!t) return `<div class="gap">1 turn not shared</div>`;
+    return `<div class="q">${t.q}</div>
+      <div><button class="worked" type="button" data-act="steps-pub" ${S.steps?"":"hidden"}>${G.chev}Worked · ${t.steps.length} steps</button>
+      <div class="steps" hidden>${t.steps.map(s=>`<div>${s}</div>`).join("")}</div>
+      <div class="a">${t.a}</div>
+      <div class="srcs">${t.srcs.map(([f,n])=>`<span class="src"><span class="fav">${f}</span>${n}</span>`).join("")}</div></div>`;
+  }).join("");
+  return `<div class="urlbar">${G.lock}${CHAT.url}</div>
+  <div class="pub">
+    <div class="band"><div class="kick">${kick}</div><h2>${CHAT.title}</h2><div class="who">${who}</div></div>
+    <div class="thread">${body}</div>
+    <div class="pubfoot">${G.lock}<span>Shared from <span class="wordmark">JBrain<span>.</span></span> by its owner. You can read this chat; you can’t reply or see anything else in their account.</span></div>
+  </div>`;
+}
+
+function revokedHTML(){
+  return `<div class="urlbar">${G.lock}${CHAT.url}</div>
+  <div class="revoked"><span class="disc">${G.unlink}</span><h3>This link no longer works</h3><p>The owner stopped sharing this chat. Ask them for a new link if you still need it.</p></div>`;
+}
+
+const LABELS = {
+  a:'<span class="pill">A · Snapshot</span><b>The link freezes the chat at the moment you share.</b> Safest default: a later turn that pulls in private notes never leaks by accident. “Update snapshot” re-publishes when you want readers to see more.',
+  b:'<span class="pill">B · Live</span><b>The link follows the chat.</b> Good for a research thread you’re building for someone. Risk: a later turn can quote private notes; the sheet’s “Keep updating” switch pauses it.',
+  c:'<span class="pill">C · Pick turns</span><b>You choose the turns before the link exists.</b> Most control, one extra step. Turns that quote a firewalled note are flagged, and the public page marks where a turn was left out.',
+};
+
+function render(){
+  $("vlabel").innerHTML = LABELS[S.v];
+  const p = $("phone");
+  if (S.s==="public") p.innerHTML = publicHTML();
+  else if (S.s==="revoked") p.innerHTML = revokedHTML();
+  else p.innerHTML = listHTML();
+  $("icons").innerHTML = ICONS.map(i=>`<button class="ic" type="button" aria-pressed="${S.icon===i.k}" data-icon="${i.k}">
+    <span class="big">${G[i.k]}</span><span class="n">${i.n}</span><span class="d">${i.d}</span>${i.rec?'<span class="rec">Recommended</span>':''}</button>`).join("");
+  document.querySelectorAll("#variant button").forEach(b=>b.setAttribute("aria-pressed", b.dataset.v===S.v));
+  document.querySelectorAll("#screen button").forEach(b=>b.setAttribute("aria-pressed", b.dataset.s===S.s));
+  bindSwipe();
+}
+
+function toast(msg){
+  const t=$("toast"); if(!t) return;
+  t.textContent=msg; t.classList.add("on");
+  clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("on"),1500);
+}
+
+function bindSwipe(){
+  const sl = document.querySelector('.slide[data-row="0"]'); if(!sl) return;
+  let x0=null, base=0, moved=false;
+  sl.addEventListener("pointerdown",e=>{x0=e.clientX;base=S.railOpen?-240:0;moved=false;sl.style.transition="none";sl.setPointerCapture(e.pointerId);});
+  sl.addEventListener("pointermove",e=>{if(x0===null)return;const dx=e.clientX-x0;if(Math.abs(dx)>4)moved=true;sl.style.transform=`translateX(${Math.min(0,Math.max(-240,base+dx))}px)`;});
+  sl.addEventListener("pointerup",e=>{if(x0===null)return;const dx=e.clientX-x0;x0=null;sl.style.transition="";
+    S.railOpen = moved ? (base+dx < -120) : !S.railOpen; render();});
+}
+
+document.addEventListener("click",e=>{
+  const t=e.target.closest("[data-act],[data-v],[data-s],[data-t],[data-icon]"); if(!t) return;
+  if (t.dataset.v){S.v=t.dataset.v;S.shared=false;render();return;}
+  if (t.dataset.s){S.s=t.dataset.s;S.sheet=S.s==="sheet";S.railOpen=S.s==="rail";if(S.s==="sheet"&&S.v!=="c")S.shared=true;render();return;}
+  if (t.dataset.t){document.documentElement.setAttribute("data-theme",t.dataset.t);document.querySelectorAll("#theme button").forEach(b=>b.setAttribute("aria-pressed",b===t));return;}
+  if (t.dataset.icon){S.icon=t.dataset.icon;render();return;}
+  const a=t.dataset.act;
+  if (a==="share"){S.sheet=true;S.railOpen=false;S.s="sheet";if(S.v!=="c")S.shared=true;render();if(S.v!=="c")setTimeout(()=>toast("Link created"),250);}
+  else if (a==="close"){S.sheet=false;S.s="rail";render();}
+  else if (a==="copy"){
+    try{ navigator.clipboard.writeText("https://"+CHAT.url).catch(()=>{}); }catch(_){}
+    toast("Link copied");
+  }
+  else if (a==="steps"){S.steps=!S.steps;render();}
+  else if (a==="live"){S.live=!S.live;render();}
+  else if (a==="pick"){const i=+t.dataset.i;S.picked[i]=!S.picked[i];render();}
+  else if (a==="mint"){S.shared=true;render();toast("Link created");}
+  else if (a==="revoke"){S.shared=false;S.sheet=false;S.s="revoked";render();}
+  else if (a==="steps-pub"){const st=t.nextElementSibling;st.hidden=!st.hidden;}
+});
+
+(function initTheme(){
+  const dark = !window.matchMedia || !window.matchMedia("(prefers-color-scheme: light)").matches;
+  const cur = document.documentElement.getAttribute("data-theme") || (dark?"dark":"light");
+  document.querySelectorAll("#theme button").forEach(b=>b.setAttribute("aria-pressed", b.dataset.t===cur));
+})();
+render();
+</script>
+</body></html>

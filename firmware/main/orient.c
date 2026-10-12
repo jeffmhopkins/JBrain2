@@ -41,3 +41,62 @@ int orient_quarter(int quarter, int ax, int ay)
     }
     return best;
 }
+
+void orient_axes(int quarter, int ax, int ay, int *tilt, int *down)
+{
+    switch (quarter) {
+    case 1:
+        *tilt = -ax;
+        *down = -ay;
+        break;
+    case 2:
+        *tilt = ay;
+        *down = -ax;
+        break;
+    case 3:
+        *tilt = ax;
+        *down = ay;
+        break;
+    default:
+        *tilt = -ay;
+        *down = ax;
+        break;
+    }
+}
+
+int orient_window(int quarter, int lean, int lean_max)
+{
+    if ((quarter != 1 && quarter != 3) || lean_max <= 0) return 0;
+    if (lean > lean_max) lean = lean_max;
+    if (lean < -lean_max) lean = -lean_max;
+    const int v = lean * ORIENT_WIN_MAX / lean_max;
+    return ((quarter == 1 ? -v : v) / 2) * 2;
+}
+
+void orient_panel_to_frame(int quarter, int win, int px, int py, int *fx, int *fy)
+{
+    switch (quarter) {
+    case 1:
+        *fx = ORIENT_SQ_Y0 + win + ORIENT_SQ - 1 - py;
+        *fy = ORIENT_SQ_Y0 + px;
+        break;
+    case 3:
+        *fx = py - ORIENT_SQ_Y0 - win;
+        *fy = ORIENT_SQ_Y0 + ORIENT_SQ - 1 - px;
+        break;
+    default:
+        *fx = px;
+        *fy = py;
+        break;
+    }
+}
+
+float orient_upright(int tilt, int down, float share, float max_deg)
+{
+    /* `down` is gravity's own axis and positive in the quarter that is held; flat or worse,
+       the angle is not this quarter's to give. */
+    float turned = atan2f((float)tilt, (float)(down > 0 ? down : 1)) * 180.0f / (float)M_PI;
+    if (turned > max_deg) turned = max_deg;
+    if (turned < -max_deg) turned = -max_deg;
+    return -turned * share;
+}

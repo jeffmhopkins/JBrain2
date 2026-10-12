@@ -34,3 +34,38 @@
    one currently drawn and a raw accelerometer reading. Returns `quarter` unchanged whenever the
    reading is too flat to trust or has not left the band. */
 int orient_quarter(int quarter, int ax, int ay);
+
+/* ON ITS SIDE the figure renders into a SQUARE of the portrait frame — `ORIENT_SQ` wide, at
+   rows `ORIENT_SQ_Y0`.. — which a quarter turn maps onto itself (`display.c`'s
+   `blit_frame_rotated`). The glass is 448 long, so the square has 40 px of band either side,
+   and it SLIDES into them with the lean, `win` panel rows from centre: the owner's *"his
+   feathers are cutting off before we even get into the left extent of the screen."* */
+#define ORIENT_SQ 368
+#define ORIENT_SQ_Y0 40
+#define ORIENT_WIN_MAX 40
+
+/* The board axes in viewer terms for `quarter`: `tilt` is the component along the viewer's
+   RIGHT (positive = right side down, so the figure slides right), `down` the component along
+   gravity's own axis. Each quarter turn walks the same circle; see `update_orientation`. */
+void orient_axes(int quarter, int ax, int ay, int *tilt, int *down);
+
+/* Where the square sits for a figure leaned `lean` of `lean_max`: signed panel rows, EVEN (the
+   controller takes windows on even rows), zero unless on its side. Viewer-right is panel -Y
+   clockwise and +Y anticlockwise. */
+int orient_window(int quarter, int lean, int lean_max);
+
+/* Panel (px, py) to the portrait frame, for the square at `win`. The ONE mapping: the rotated
+   blit reads its source through it, and a touch is mapped back through it, so the two cannot
+   disagree. Upright and upside down are the identity (`flip_frame` and the panel's own turn
+   cancel). */
+void orient_panel_to_frame(int quarter, int win, int px, int py, int *fx, int *fy);
+
+/* The degrees the head turns back toward true up (+ = clockwise on the glass): `share` of the
+   angle the panel is turned, clamped to `max_deg`. Tilting right side down turns the glass
+   clockwise, so true up appears turned ANTICLOCKWISE on it — hence the sign. */
+float orient_upright(int tilt, int down, float share, float max_deg);
+/* Partial, because a head that stays perfectly level while the body tilts under it reads as a
+   gyroscope, not a bird; past 45 the panel is about to turn a quarter and `orient_quarter`
+   takes over. */
+#define ORIENT_UPRIGHT_SHARE 0.6f
+#define ORIENT_UPRIGHT_MAX_DEG 45.0f

@@ -1935,11 +1935,21 @@ async def drop_page_cache(
     .drop_weights_page_cache_except_mapped`, FLASH_NEXT_ENGINE_PLAN §3): Flash-Next serves its
     engram (PLE) table memory-mapped from disk, so that tensor's pages are the working set and
     stay, while the rest of its shards' cache — the residue of uploading the GPU weights — is
-    dropped. It therefore reports less freed than its size, by design."""
+    dropped. It therefore reports less freed than its size, by design.
+
+    A model NOT resident (read from a fresh `/running` poll) also has its saved KV-slot files'
+    cache (`.kvslots/<id>`) dropped and counted in its figure. A guarded load runs this same
+    non-resident sweep by itself before refusing for host memory
+    (`LocalGatewayClient._relieve_before_admission`), so this is a manual lever, not the only
+    one."""
     request.state.debug_detail = f"drop page cache ({models or 'all'})"
     ids = [m.strip() for m in models.split(",") if m.strip()] if models else None
+    gateway = _gateway(request)
+    # Poll first: the drop reads "resident" from the last poll, and a stale one that still
+    # lists an unloaded Flash-Next keeps its engram pages — the very cache this lever is for.
+    await gateway.running()
     # In a thread: a resident Flash-Next's range-aware drop parses GGUF headers first.
-    freed = await asyncio.to_thread(_gateway(request).drop_page_cache, ids)
+    freed = await asyncio.to_thread(gateway.drop_page_cache, ids)
     measured = [v for v in freed.values() if v is not None]
     return {
         "models": freed,

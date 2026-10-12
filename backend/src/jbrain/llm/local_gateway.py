@@ -917,6 +917,49 @@ class LocalGatewayClient:
         freed = await asyncio.to_thread(self._drop_fn(model), self._models_dir, model.id)
         log.info("local_gateway.host_floor_relief", model=model.id, freed_gb=freed)
 
+    async def _relieve_before_admission(self, served_model: str, resident: set[str]) -> bool:
+        """Drop the page cache of every catalog model NOT resident — weights and saved KV-slot
+        files — before the pre-flight refuses `served_model`. True when a drop ran.
+
+        MEASURED 2026-10-12: Flash-Next unloaded, and every reload for nine minutes was refused
+        "needs ~87.9 GB but only 86.3 GB is safely available" on a box with nothing loaded
+        (GTT 0.1 GB) and ~20.6 GiB in `Cached`, which `host_metrics.read_memory_gb` counts as
+        used. Its own file-backed pages — the engram the catalog already leaves out of the
+        projection — and its slot files' writes were charged against its own return. The
+        load guard's `relieve` could not help: it runs inside `guarded_load`, and this refusal
+        comes first. Only a global `drop_caches` (an owner-run Update) freed the box.
+
+        The model being loaded is in the swept set on purpose: it is not resident, so none of
+        its cache is a working set yet, and the load re-reads whatever it needs. Resident models
+        are spared — their cache may be serving. Page cache is still never counted as free;
+        this only drops it, and the caller re-measures (the 2026-08-19 livelock rule)."""
+        if not self._models_dir:
+            return False
+        models_dir = self._models_dir
+        stale = [m.id for m in local_catalog.CATALOG if m.served_model not in resident]
+
+        def _drop() -> float:
+            total = 0.0
+            for model_id in stale:
+                for got in (
+                    local_weights.drop_weights_page_cache(models_dir, model_id),
+                    local_weights.drop_kvslot_page_cache(models_dir, model_id),
+                ):
+                    total += got or 0.0
+            return total
+
+        cache_before = host_metrics.read_page_cache_gb()
+        freed = await asyncio.to_thread(_drop)
+        log.info(
+            "local_gateway.admission_relief",
+            model=served_model,
+            models=len(stale),
+            freed_gb=round(freed, 2),
+            cache_before_gb=cache_before,
+            cache_after_gb=host_metrics.read_page_cache_gb(),
+        )
+        return True
+
     async def _drop_weights_cache_off_loop(self, model: local_catalog.LocalModel | None) -> None:
         """`_drop_weights_cache`, in a thread for a file-backed model: its range-aware drop parses
         GGUF headers, and the event loop it would block is serving the load's own health probe
@@ -1226,7 +1269,8 @@ class LocalGatewayClient:
         # A stop in flight makes both branches below wrong (see `_settle_a_stopping_model`),
         # and it is read AFTER `config_regen` because a config reload kills every running
         # llama-server — so the state this waits on is the one the load will actually meet.
-        states = await self.running_states() or {}
+        polled = await self.running_states()
+        states = polled or {}
         resident = set(states)
         # `is not None`, NOT `or`: an EMPTY set is the most important answer this can give —
         # the stop landed and the box is now clear — and `or` would discard it for the stale
@@ -1294,7 +1338,17 @@ class LocalGatewayClient:
         # `baseline` is kept rather than discarded: it is the before-half of the device
         # delta that `_record_measured_footprint` compares against the catalog.
         baseline = await self._gpu_probe.sample()
-        gpu_guard.refuse_if_no_device_room(baseline, projected_gb, served_model)
+        try:
+            gpu_guard.refuse_if_no_device_room(baseline, projected_gb, served_model)
+        except gpu_guard.GpuBudgetError as exc:
+            # A refusal no drop can turn round (`permanent`), or one made without a resident
+            # set to spare, stands. Otherwise drop the stale cache and ask again: the re-check
+            # re-reads host memory, so the floor judges the box as it is after the drop.
+            if exc.permanent or polled is None:
+                raise
+            if not await self._relieve_before_admission(served_model, resident):
+                raise
+            gpu_guard.refuse_if_no_device_room(baseline, projected_gb, served_model)
 
         async def _load_then_warm() -> None:
             # The WARM RUNS INSIDE THE WATCHDOG. It used to sit after `guarded_load` returned,
@@ -1664,13 +1718,21 @@ class LocalGatewayClient:
         Safe on a RESIDENT model: `POSIX_FADV_DONTNEED` drops clean page cache, never the
         GTT copy llama-server is serving from, and weights are read-only so nothing can be
         lost. A resident FILE-BACKED model gets the range-aware drop: the engram pages it
-        serves from stay, the residue of its load goes. Synchronous — a handful of
-        `posix_fadvise` calls with no I/O of their own."""
+        serves from stay, the residue of its load goes. A model NOT serving also loses its
+        saved KV-slot files' cache (`local_weights.drop_kvslot_page_cache`), which the weights
+        walk never reached. "Serving" is the last `running()` poll, so a caller that wants a
+        departed model's whole cache gone polls first (the debug route does). Synchronous — a
+        handful of `posix_fadvise` calls with no I/O of their own."""
         if not self._models_dir:
             return {}
         wanted = model_ids if model_ids is not None else [m.id for m in local_catalog.CATALOG]
         freed: dict[str, float | None] = {}
         mapped = self._resident_file_backed()
+        serving = {
+            m.id
+            for served in self._seen_resident | self._loading
+            if (m := local_catalog.get_by_served(served)) is not None
+        }
         for model_id in wanted:
             if model_id in mapped:
                 got = local_weights.drop_weights_page_cache_except_mapped(
@@ -1679,6 +1741,11 @@ class LocalGatewayClient:
                 log.info("local_gateway.page_cache_dropped_keeping_mapped", model=model_id)
             else:
                 got = local_weights.drop_weights_page_cache(self._models_dir, model_id)
+            if model_id not in serving:
+                # A model not serving owns no working set in its slot files' cache either.
+                slots = local_weights.drop_kvslot_page_cache(self._models_dir, model_id)
+                if slots is not None:
+                    got = (got or 0.0) + slots
             # Absent directories return None from the walk too, and reporting those as
             # "unmeasurable" would bury the real ones. Only provisioned models get a row.
             if got is not None or local_catalog.get(model_id) is not None:

@@ -20,8 +20,8 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   `is_agentic` OAuth-client change). Gmail stays on REST by owner decision. The plan swaps
   the transport behind the existing `GmailApi` Protocol and leaves the 10 archivist tools
   unchanged, so the model never sees Google's tool list: an allowlist keeps send/delete
-  unreachable. The switch is owner-operable from Settings, since the credential swap and
-  OAuth Connect flow already exist. Lists the triggers that would justify scheduling it.
+  unreachable. The switch is owner-operable from Settings: per-transport credential slots
+  let the REST client stay intact, so rollback is a toggle. Lists the triggers that would justify scheduling it.
 
 - `PANEL_CONVERSATION_PLAN.md` — **press and hold the panel, talk, get a spoken reply.** The
   owner's gesture, and the research answer that both hard halves already ship: whisper.cpp and

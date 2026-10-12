@@ -2417,6 +2417,12 @@ async def agent_favicon(host: str, owner: OwnerDep, request: Request) -> Respons
     is normalized and the bytes are fetched/validated server-side (raster image only,
     SSRF-guarded, size-capped — see `FaviconFetcher`). A site without a usable favicon
     is a clean 404 the PWA falls back from (a plain initial), never an error."""
+    return await serve_favicon(request, host)
+
+
+async def serve_favicon(request: Request, host: str) -> Response:
+    """The favicon response for `host`, shared by this owner route and the chat-share route
+    (which gates the host on its own allowlist first)."""
     normalized = normalize_host(host)
     if not normalized:
         raise HTTPException(status_code=404, detail="no favicon")

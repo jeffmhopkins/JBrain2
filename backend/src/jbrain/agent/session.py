@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import column, delete, exists, func, select, table, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
@@ -70,6 +70,9 @@ class AgentSessionInfo:
     # This chat's plan status (not_approved | approved | in_work), for the Chats-card
     # planning badge (JERV_PLANNING_TOOL_PLAN.md). None when the chat has no plan.
     plan_status: str | None = None
+    # A live public share link points at this chat (the Chats row's link glyph). Populated
+    # by `list` only.
+    shared: bool = False
 
 
 def _info(
@@ -81,6 +84,7 @@ def _info(
     subagent_count: int = 0,
     last_run_status: str | None = None,
     plan_status: str | None = None,
+    shared: bool = False,
 ) -> AgentSessionInfo:
     return AgentSessionInfo(
         id=str(row.id),
@@ -102,6 +106,7 @@ def _info(
         context_tokens=row.context_tokens,
         context_window=row.context_window,
         plan_status=plan_status,
+        shared=shared,
     )
 
 
@@ -272,6 +277,19 @@ class AgentSessionRepo:
             .limit(1)
             .scalar_subquery()
         )
+        # Whether a live public share link points at this chat (migration 0238). The links
+        # table has no ORM model; a lightweight table construct keeps this one round-trip.
+        links = table(
+            "chat_share_links",
+            column("session_id"),
+            column("revoked_at"),
+            schema="app",
+        )
+        shared = (
+            exists()
+            .where(links.c.session_id == AgentSession.id, links.c.revoked_at.is_(None))
+            .correlate(AgentSession)
+        )
         async with scoped_session(self._maker, ctx) as session:
             rows = await session.execute(
                 select(
@@ -282,6 +300,7 @@ class AgentSessionRepo:
                     subagent_count,
                     last_run_status,
                     plan_status,
+                    shared,
                 ).order_by(AgentSession.last_active_at.desc())
             )
             return [
@@ -293,8 +312,9 @@ class AgentSessionRepo:
                     subagent_count=kc,
                     last_run_status=rs,
                     plan_status=ps,
+                    shared=bool(sh),
                 )
-                for row, tc, pv, sc, kc, rs, ps in rows
+                for row, tc, pv, sc, kc, rs, ps, sh in rows
             ]
 
     async def get(self, ctx: SessionContext, session_id: str) -> AgentSessionInfo | None:

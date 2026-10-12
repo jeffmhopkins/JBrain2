@@ -102,6 +102,8 @@ COOKIE_EXEMPT: dict[tuple[str, str], str] = {
     ("GET", "/api/mc-share/{token}/map/players"): "token in path",
     ("GET", "/api/mc-share/{token}/map/structures"): "token in path",
     ("GET", "/api/mc-share/{token}/timeline"): "token in path",
+    ("GET", "/api/chat-share/{token}"): "token in path",
+    ("GET", "/api/chat-share/{token}/favicon"): "token in path",
     ("POST", "/api/ext/llm/{sid}/v1/chat/completions"): "external-LLM bearer; reads no cookie",
     ("GET", "/api/ext/llm/{sid}/v1/models"): "external-LLM bearer; reads no cookie",
     (_WS, "/__jcode_preview/{slug}"): "unguessable slug in path; cookies stripped",

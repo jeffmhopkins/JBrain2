@@ -190,6 +190,26 @@ def jlaunch_share_context(link_id: str = "") -> SessionContext:
     )
 
 
+def chat_share_context(link_id: str = "") -> SessionContext:
+    """The session a chat-share visitor (an unauthenticated stranger) runs under.
+
+    Identical shape to `research_share_context`: a NON-owner principal kind with NO
+    `subject_id`/`domain_scopes`, so every owner-only table denies it and it reads zero
+    notes/chunks/locations/attachments. Its only grants are the `*_share` policies on the
+    chat's session, turns and runs plus the share-links SELECT (migration 0238), keyed off
+    `auth_context='chat_share'` and `principal_id` — the resolved link id, which pins every
+    read to that link's one chat.
+
+    Called with no `link_id` to resolve a token by hash (the empty pin matches no link),
+    then re-opened pinned to the resolved id. Read-only: no write policy anywhere.
+    """
+    return SessionContext(
+        principal_id=link_id,
+        principal_kind="chat_share",
+        auth_context="chat_share",
+    )
+
+
 def mc_share_context(link_id: str = "") -> SessionContext:
     """The session a Minecraft map-share visitor (an unauthenticated stranger) runs under.
 
