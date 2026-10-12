@@ -112,6 +112,9 @@ static float r_flinch;
 static int r_frame;
 /* The page's tilt slider, in degrees right-side down. Upright only: the bench does not turn. */
 static int r_tilt_deg;
+/* The page's Shake and "I love you" buttons: the action `display.c` starts for a shake and for
+   the phrase, taken on the next frame. */
+static action_t r_pending_act;
 static int r_lean;
 static float r_upright;
 static caption_t r_cap;
@@ -440,6 +443,19 @@ static void frame(void)
         r_action = ACT_NOD;
         r_action_at = now;
     }
+    if (r_pending_act != ACT_NONE) {
+        r_action = r_pending_act;
+        r_action_at = now;
+        r_pending_act = ACT_NONE;
+        /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
+           is a voice command, and those are deaf while a message plays. */
+        if (s_sm.mode == SM_PET && !facts.speaker_busy) {
+            const cue_t c = cue_for_action((int)r_action);
+            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+            say("cue", "%s (press slot)", cue_name(c));
+        }
+        say("pet", "%s", r_action == ACT_DIZZY ? "shaken: dizzy" : "heard \"i love you\"");
+    }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
 
     /* The screen's stages, simplified: standby is pinned dark, anything else dims and darkens on
@@ -641,6 +657,7 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 8: g_mode = value ? BOX_NEW : BOX_TODAY; break;
     case 9: p_autotalk_ms = (uint32_t)value; break;
     case 10: r_tilt_deg = value; break; /* the panel tilted, degrees right-side down */
+    case 11: r_pending_act = value == 1 ? ACT_DIZZY : value == 2 ? ACT_LOVE : ACT_NONE; break;
     }
 }
 

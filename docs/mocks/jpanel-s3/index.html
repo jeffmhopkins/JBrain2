@@ -144,6 +144,7 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
           <button id="v-stop">“Stop”</button>
           <button id="v-sister">“Tell my sister”</button>
           <button id="v-dad">“Tell Dad”</button>
+          <button id="v-love">“I love you”</button>
         </div>
         <label>When the microphone opens
           <select id="autotalk"><option value="2500" selected>she talks for 2.5 s</option><option value="6000">she talks for 6 s</option><option value="0">she says nothing</option></select>
@@ -172,6 +173,7 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
         <div class="row">
           <button id="sound">Sound on</button>
           <button id="show-targets" aria-pressed="false">Show touch targets</button>
+          <button id="shake">Shake the panel</button>
         </div>
         <label>Tilt the panel <input type="range" id="tilt" min="-40" max="40" step="1" value="0"> <output id="tilt-out">0°</output></label>
         <div class="legend" id="legend" hidden></div>
@@ -344,6 +346,12 @@ $('v-wake').onclick = () => panel.voice(VOICE.WAKE);
 $('v-stop').onclick = () => panel.voice(VOICE.STOP);
 $('v-sister').onclick = () => panel.voice(VOICE.SEND_SISTER);
 $('v-dad').onclick = () => panel.voice(VOICE.SEND_DAD);
+$('v-love').onclick = () => panel.set(KNOB.PET_ACT, 2);
+$('shake').onclick = () => {
+  const box = document.querySelector('.case');
+  box.animate([{ translate: '0 0' }, { translate: '-14px 0' }, { translate: '14px 0' }, { translate: '-10px 0' }, { translate: '10px 0' }, { translate: '0 0' }], { duration: 450 });
+  panel.set(KNOB.PET_ACT, 1);
+};
 $('boot-short').onclick = () => panel.button(false);
 $('boot-hold').onclick = () => panel.button(true);
 const talking = $('talking');
