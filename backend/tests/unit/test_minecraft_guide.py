@@ -12,10 +12,10 @@ from jbrain.minecraft import guide
 
 def test_the_guide_is_pinned_to_its_version() -> None:
     """The entries are prompt material: a wording change bumps the version with it."""
-    assert guide.VERSION == "agent-minecraft-dave-guide-v7"
+    assert guide.VERSION == "agent-minecraft-dave-guide-v8"
     body = guide._PROMPT.body  # noqa: SLF001 — the pin is on the file's exact text
     assert hashlib.sha256(body.encode()).hexdigest() == (
-        "c5e27ed9a1be73b4f08422fe0fbc79508bf75bce0f0cf12f74b60f797295ab3c"
+        "406553f8e69a164fc1bd417c44962e27ad96fb8dbf36841599be288dd2e90248"
     )
 
 

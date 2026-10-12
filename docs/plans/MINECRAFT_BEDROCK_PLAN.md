@@ -1963,8 +1963,10 @@ decided while building it:
 - **Kept is a list, removed is a list.** The beacon removes only the vanilla hostile,
   neutral and passive mob types it names (`REMOVABLE`); any other entity (items, XP,
   arrows, boats, armor stands, another pack's entities, a mob the game adds later) is
-  never touched. Always kept: players, villagers (both ids) and the wandering trader,
-  iron, snow and copper golems, the Ender Dragon and the Wither. Any removable mob stays
+  never touched. Always kept: players, villagers (both ids), iron, snow and copper
+  golems, the Ender Dragon and the Wither. The wandering trader and his llamas are
+  `VISITORS` (owner, 2026-10-12): banished like wild mobs, and a trade (an interaction)
+  doesn't keep one; only a lead or a name tag does. Any removable mob stays
   when tamed (`minecraft:is_tamed`), name-tagged, on a lead, or marked `jb:kept`.
 - **`jb:kept`** is set on a removable mob by any `playerInteractWithEntity` (feeding,
   trading, a name tag being put on), and on every removable mob born (`entitySpawn` cause

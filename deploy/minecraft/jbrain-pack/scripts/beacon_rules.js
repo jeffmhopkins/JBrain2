@@ -88,8 +88,8 @@ export const HOSTILE = new Set([
 ].map((t) => `minecraft:${t}`));
 
 export const NEUTRAL = new Set([
-  "bee", "dolphin", "enderman", "goat", "llama", "panda", "piglin", "polar_bear",
-  "trader_llama", "wolf", "zombie_pigman",
+  "bee", "dolphin", "enderman", "goat", "llama", "panda", "piglin", "polar_bear", "wolf",
+  "zombie_pigman",
 ].map((t) => `minecraft:${t}`));
 
 export const PASSIVE = new Set([
@@ -100,13 +100,18 @@ export const PASSIVE = new Set([
   "zombie_horse", "zombie_nautilus",
 ].map((t) => `minecraft:${t}`));
 
-export const REMOVABLE = new Set([...HOSTILE, ...NEUTRAL, ...PASSIVE]);
+// The wandering trader and his llamas are visitors, banished like wild mobs (owner,
+// 2026-10-12). Trading with him is an interaction, so looking after one doesn't keep it;
+// only a lead or a name tag, a deliberate choice, does.
+export const VISITORS = new Set(["wandering_trader", "trader_llama"].map((t) => `minecraft:${t}`));
 
-// Never removed, whatever their state: the crew, villagers (and the trader), the golems
+export const REMOVABLE = new Set([...HOSTILE, ...NEUTRAL, ...PASSIVE, ...VISITORS]);
+
+// Never removed, whatever their state: the crew, villagers, the golems
 // (canon calls the copper golems Old Maker helpers), and the bosses, so a beacon can't
 // skip a fight. The Warden is not a boss here: it goes (owner, 2026-10-11).
 export const ALWAYS_KEPT = new Set([
-  "player", "villager", "villager_v2", "wandering_trader", "iron_golem", "snow_golem",
+  "player", "villager", "villager_v2", "iron_golem", "snow_golem",
   "copper_golem", "ender_dragon", "wither",
 ].map((t) => `minecraft:${t}`));
 
@@ -118,6 +123,6 @@ export const keepReason = (mob) => {
   if (mob.tamed) return "tamed";
   if (mob.named) return "name tag";
   if (mob.leashed) return "on a lead";
-  if (mob.kept) return "a player looked after it";
+  if (mob.kept && !VISITORS.has(mob.typeId)) return "a player looked after it";
   return null;
 };
