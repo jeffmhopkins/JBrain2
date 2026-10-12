@@ -1793,10 +1793,17 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         # v2: `place`, a saved place's name, as an alternative to coordinates.
         # v3: the Tricorder is in every world (the jbrain pack), not the home-test kit.
+        # v4: setting or clearing a waypoint ends a live scan (§M25).
         "mc_set_waypoint.tool": (
             "mc_set_waypoint",
-            3,
-            "6ddd9af8cf28f6316f9c669ac7104fc8944cd4d2d18c62ba4c59e90446200e5d",
+            4,
+            "f1644c136fa45ebf04a38031674250666424c39327884244315552305e71c62e",
+        ),
+        # The Tricorder's live scan (§M25): free, until a stop or a new waypoint.
+        "mc_tricorder_scan.tool": (
+            "mc_tricorder_scan",
+            1,
+            "9f4a29d138ab482581d479f1fb3844628f6ad482b6cf2ce4994f30e73a3be2c9",
         ),
         # v2: no coordinates; a place is only ever where the player is right now.
         "mc_place_save.tool": (

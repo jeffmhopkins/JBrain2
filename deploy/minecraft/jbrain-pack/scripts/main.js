@@ -14,6 +14,7 @@ import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
 import { initBeacon } from "./beacon.js";
 import { initWelcome } from "./welcome.js";
+import { initScan } from "./scan.js";
 import { isHello } from "./welcome_rules.js";
 
 initBeacon(world, system);
@@ -169,6 +170,7 @@ const ownSlot = (player) => {
 const dave = (player, text) => player.sendMessage(DAVE + text);
 
 const story = initWelcome({ beam, ownSlot, tricorderOn, say, dave });
+const scan = initScan({ say });
 
 const onWaking = (player, initialSpawn) => {
   const left = player.getDynamicProperty(BURNT);
@@ -367,17 +369,22 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   if (ev.id === "jb:waypoint") {
     try {
       const wp = parseWaypoint(ev.message);
+      // A new heading replaces a live scan (§M25). The track drain's clear on arrival
+      // sends no end_scan: reaching the old waypoint mustn't end a scan on its own.
+      const ended = (!wp.clear || wp.endScan) && scan.end(wp.player) ? "; scan ended" : "";
       if (wp.clear) {
         world.setDynamicProperty(waypointKey(wp.player), undefined);
-        say(`waypoint cleared for ${wp.player}`);
+        say(`waypoint cleared for ${wp.player}${ended}`);
       } else {
         world.setDynamicProperty(waypointKey(wp.player), JSON.stringify(wp.record));
         const r = wp.record;
-        say(`waypoint set for ${wp.player}: ${r.label} at ${r.x} ${r.z} (${r.dim})`);
+        say(`waypoint set for ${wp.player}: ${r.label} at ${r.x} ${r.z} (${r.dim})${ended}`);
       }
     } catch (e) {
       say(`waypoint refused: ${e}`);
     }
+  } else if (ev.id === "jb:scan") {
+    scan.onEvent(ev.message);
   } else if (ev.id === "jb:find") {
     // Dave's nearest-mob search: only the game knows where mobs are, and only near players.
     try {
@@ -457,7 +464,7 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
 initTransport({ carried, tricorderOn, say });
 initWormholes({ onPlanted: (player) => story.firstWormhole(player) });
 
-// --- the Tricorder's arrow, about four times a second -----------------------------------
+// --- the Tricorder's arrow, about four times a second, and its live scan (§M25) ---------
 
 // Unlocks are looked for once a second, not every frame: the whole inventory is read.
 const LEARN_EVERY = 4;
@@ -465,6 +472,12 @@ let frame = 0;
 
 system.runInterval(() => {
   frame = (frame + 1) % LEARN_EVERY;
+  // Before the arrows, so a scan's find shows on the frame it was made.
+  try {
+    scan.step();
+  } catch (e) {
+    say(`scan step failed: ${e}`);
+  }
   for (const player of world.getAllPlayers()) {
     try {
       if (player.isOnGround && player.location.y >= player.dimension.heightRange.min) {
@@ -478,12 +491,13 @@ system.runInterval(() => {
       const status = statusOf(held, player);
       if (status === "own") {
         player.onScreenDisplay.setActionBar(
-          trackerLine(
-            waypointOf(player.name),
-            { dim: player.dimension.id, x: player.location.x, z: player.location.z },
-            player.getViewDirection(),
-            world.getDefaultSpawnLocation(),
-          ),
+          scan.line(player) ??
+            trackerLine(
+              waypointOf(player.name),
+              { dim: player.dimension.id, x: player.location.x, z: player.location.z },
+              player.getViewDirection(),
+              world.getDefaultSpawnLocation(),
+            ),
         );
       } else if (status === "foreign") {
         player.onScreenDisplay.setActionBar(STATIC + LINES.notTuned);

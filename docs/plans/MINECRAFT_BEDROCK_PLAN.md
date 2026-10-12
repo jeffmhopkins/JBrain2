@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -2550,6 +2550,87 @@ any chest in the world, not "my stock".
 - **Ender chests** are never counted, and neither are minecart chests or chest boats
   (§M23).
 - **No way to clear a goal's item** once it is set. To stop counting, make a new goal.
+
+### M25 — The Tricorder's live scan (owner, 2026-10-12)
+
+**Why.** "Dave, set my Tricorder to scan for diamonds": the Tricorder enters a scan mode
+and its arrow leads to the nearest such block around the player, re-aimed as they move
+and dig, with no deep scan spent. Chests and containers stay on `mc_find_item`'s free
+48-block look (§M23); this is the live 16-block sense. No other cost rule changed.
+
+**Owner decisions (2026-10-12):**
+- **Every 10 seconds** the Tricorder finds the **nearest matching block within 16 blocks**
+  (one chunk) of the player, and the held Tricorder's arrow and distance point at it, the
+  same line as a waypoint's. An ore id brings its deepslate twin (and the reverse), as
+  `mc_find_block` does.
+- **Any block**, not just ores; an id the game doesn't know is refused with a reply Dave
+  can relay.
+- **None within 16:** no arrow; the held Tricorder reads `Scanning: diamond · none
+  nearby` (the block in plain words). The arrow returns at the next scan that finds one.
+- **It ends only** when the player asks Dave to stop ("stop scanning"), when the arrow
+  goes back to the waypoint they had before (or spawn), or when they ask for a new
+  waypoint, which replaces it. Never on its own: it's kept per player in a world dynamic
+  property, like a waypoint, so it lasts across sessions and rejoins.
+- **Free**: the Tricorder's own short-range sense, never a deep scan.
+
+**What's built.**
+- **Pack** (1.9.0, `jbrain-pack/scripts/scan.js`, pure rules in `rules.js`): `scriptevent
+  jb:scan {"player", "block"}` starts a scan, `{"player", "stop": true}` ends it, answered
+  `scan set for <player>: <label> (<ids>)`, `scan stopped for <player>` (`(none was on)`),
+  or `scan refused: …`. A new event rather than a `jb:waypoint` field: the scan has its own
+  state, reply and refusals, and `jb:waypoint` keeps its message shape. The block is checked
+  with `BlockTypes.get`; a bare ore name with no such block ("diamond") is taken as the ore
+  (`diamond_ore`). The twins are the ore, `deepslate_`, `lit_` and `lit_deepslate_` forms,
+  kept only where the game knows the id (redstone's lit ore comes along; nether gold gets
+  no made-up deepslate twin). Stored as `jb:scan:<gamertag>`; the waypoint under it is
+  never touched, so a stop simply drops the scan.
+- **The scan.** `dimension.getBlocks(new BlockVolume(…), { includeTypes }, true)` over a
+  33×33×33 box around the player (y clamped to the dimension), nearest by 3D distance to
+  the block's centre. One call, not sliced with `system.runJob`: it's 35,937 blocks with
+  the type filter applied natively, and only the matches reach the script. The first
+  scan after a start, and any taking 10 ms or more, prints `scan took N ms for <player>
+  (<label>)` on the console, so the real cost shows in the server log.
+- **Cadence and staggering.** The arrow loop (every 5 ticks) runs the scheduler first:
+  at most **one scan a frame**, for the most overdue scanning player, who is next due 40
+  frames (200 ticks) later. Players who start together drift onto frames of their own
+  and stay there, so no two scans share a tick (40 players fit in the 10 s at full
+  cadence). A rejoin or a restart scans at once.
+- **Between scans** the arrow shows the last block found. Each frame it re-checks that
+  block with one `getBlock`: mined (or unloaded), the arrow drops at once and the scan
+  runs again within a second (4 frames, no sooner, so digging through a vein doesn't scan
+  every frame); walked more than 16 blocks from, it's hidden until the next scan.
+- **Ending.** A `jb:waypoint` set ends a scan (`…; scan ended` on its reply). A clear ends
+  it only with `"end_scan": true`, which Dave's `mc_set_waypoint` clear sends ("clear my
+  arrow" is a new heading: spawn); the track drain's arrival clear (§M21) doesn't, so
+  reaching an old waypoint never ends a scan on its own.
+- **`mc_tricorder_scan(block | stop, gamertag?)`** (both Dave tiers): a tool of its own,
+  not `mc_set_waypoint` fields, because the model reaches for it by its ask ("scan for",
+  "stop scanning") and its answers (scanning, none was on, no such block) aren't a
+  waypoint's. Whose Tricorder follows `mc_set_waypoint`'s precedent: in game only the
+  asker's; in the app any named gamertag, online or not (the pack keeps it for them), or
+  this chat's player. `mc_set_waypoint` v4 says when it ended a scan. Prompt
+  `agent-minecraft-dave-v19`, guide v11 (one Tricorder line), `mc_tricorder_scan` v1.
+- **Fast path.** No new line: "stop scanning" goes to the model. The one signed-off line
+  near it, "Arrow cleared. Ask me when you need a heading.", would be false after a stop
+  (the arrow returns to their waypoint, not cleared). A new quick-answer line needs the
+  owner's sign-off on the lore page first.
+- **The map (§M21).** Not shown: a scan's target is found in game every 10 s and never
+  reaches the backend, so showing it would need a new pack-to-backend event and a target
+  row that doesn't overwrite the waypoint the scan returns to. Skipped; during a scan the
+  map keeps showing the player's waypoint.
+- **Lore.** Canon on the lore page as "The Tricorder's live scan" (2026-10-12): "until
+  you ask Dave to stop or ask him for a new heading", which is why Dave's clear (spawn,
+  a new heading) ends a scan too.
+
+**Box checks (after deploy).**
+- The cost of `getBlocks` on the real server: the `scan took N ms` lines in the server log
+  (the debug API's `GET /minecraft/logs?tail=`) for a dense block (stone) and a rare one
+  (diamond ore), with several players online. If a scan is regularly past a few ms,
+  slice the box across frames with `system.runJob`.
+- That the `Scanning: diamond · none nearby` line and the `·` separators render on Xbox and
+  Windows like the waypoint line does, and the arrow re-aims as the player turns.
+- That `BlockTypes.get` knows the ids players ask for (`diamond_ore`, `ancient_debris`,
+  `lit_redstone_ore`) and refuses a made-up one, on 1.26.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 

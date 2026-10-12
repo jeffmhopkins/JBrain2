@@ -153,6 +153,7 @@ STEP_LABELS: dict[str, str] = {
     "mc_find_item": "Looked for items",
     "mc_show_map": "Showed the map",
     "mc_set_waypoint": "Set the tricorder",
+    "mc_tricorder_scan": "Set the tricorder's scan",
     "mc_place_save": "Saved a place",
     "mc_places": "Listed saved places",
     "mc_place_remove": "Forgot a place",

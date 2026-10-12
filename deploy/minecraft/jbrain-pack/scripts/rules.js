@@ -95,12 +95,14 @@ export const trackerLine = (wp, here, view, spawn) => {
 };
 
 // A waypoint from `scriptevent jb:waypoint {json}` (Dave's mc_set_waypoint): a record to
-// store, or {clear: true}. Throws on anything malformed, which the pack logs as refused.
+// store, or {clear: true, endScan} (Dave's clear ends a live scan, §M25; the track
+// drain's arrival clear doesn't). Throws on anything malformed, which the pack logs as
+// refused.
 export const parseWaypoint = (message) => {
   const wp = JSON.parse(message);
   if (typeof wp !== "object" || wp === null) throw new Error("not an object");
   if (typeof wp.player !== "string" || !wp.player) throw new Error("no player");
-  if (wp.clear) return { player: wp.player, clear: true };
+  if (wp.clear) return { player: wp.player, clear: true, endScan: Boolean(wp.end_scan) };
   if (!Number.isFinite(wp.x) || !Number.isFinite(wp.z) || !(wp.dim in DIMS)) {
     throw new Error("x, z and dim are required");
   }
@@ -309,4 +311,89 @@ export const carryLine = (q, who, here, stacks) => {
   const [x, y, z] = [here.x, here.y, here.z].map(Math.floor);
   const each = [...counts].map(([t, n]) => `${t}=${n}`).join(" ");
   return `carry counted for ${who} in ${dim} at x=${x} y=${y} z=${z}: ${each}; shulker boxes=${boxes}`;
+
+// --- the Tricorder's live scan (§M25) ---------------------------------------------------
+// The Tricorder's own short-range sense: while a scan is on, it finds the nearest block of
+// one kind within SCAN_REACH blocks of its owner every SCAN_EVERY ticks. Free, and never
+// over on its own: only a stop or a new waypoint ends it.
+export const SCAN_REACH = 16; // one chunk each way: a 33×33×33 box
+export const SCAN_EVERY = 200; // ticks: 10 s
+const BLOCK_ID = /^([a-z0-9_]{1,32}:)?[a-z0-9_.]{1,64}$/;
+
+// A scan from `scriptevent jb:scan {json}` (Dave's mc_tricorder_scan): {player, block} to
+// start one, {player, stop: true} to end it. The block id is namespaced here; whether it
+// names a real block is the game's to say (main.js asks BlockTypes). Throws on anything
+// malformed.
+export const parseScan = (message) => {
+  const q = JSON.parse(message);
+  if (typeof q !== "object" || q === null) throw new Error("not an object");
+  if (typeof q.player !== "string" || !q.player) throw new Error("no player");
+  if (q.stop) return { player: q.player, stop: true };
+  const raw = typeof q.block === "string" ? q.block.trim().toLowerCase().replace(/ /g, "_") : "";
+  if (!BLOCK_ID.test(raw)) throw new Error("not a block id");
+  return { player: q.player, block: raw.includes(":") ? raw : `minecraft:${raw}` };
+};
+
+// The ids one scan looks for: an ore brings its deepslate twin (and the reverse), and a
+// redstone ore its lit forms, as mc_find_block does. Candidates only: main.js keeps the
+// ones the game knows, so "nether_gold_ore" gets no made-up deepslate twin.
+export const scanTwins = (id) => {
+  const [ns, name] = id.split(":");
+  if (!name.endsWith("_ore")) return [id];
+  const base = name.replace(/^lit_/, "").replace(/^deepslate_/, "");
+  return [...new Set([id, ...[base, `deepslate_${base}`, `lit_${base}`, `lit_deepslate_${base}`].map((n) => `${ns}:${n}`)])];
+};
+
+// The block in plain words, as the Tricorder shows it: "minecraft:deepslate_diamond_ore"
+// is "diamond", "minecraft:oak_log" is "oak log".
+export const scanLabel = (id) => {
+  let name = id.slice(id.indexOf(":") + 1);
+  if (name.endsWith("_ore")) name = name.replace(/^lit_/, "").replace(/^deepslate_/, "").slice(0, -4);
+  return name.replace(/_/g, " ");
+};
+
+// The box one scan reads around the player, its y clamped to the dimension (heightRange's
+// max is exclusive).
+export const scanBox = (at, height, reach = SCAN_REACH) => {
+  const [x, y, z] = [at.x, at.y, at.z].map(Math.floor);
+  const clampY = (v) => Math.min(Math.max(v, height.min), height.max - 1);
+  return {
+    from: { x: x - reach, y: clampY(y - reach), z: z - reach },
+    to: { x: x + reach, y: clampY(y + reach), z: z + reach },
+  };
+};
+
+export const inScanBox = (at, loc, reach = SCAN_REACH) =>
+  ["x", "y", "z"].every((k) => Math.abs(loc[k] - Math.floor(at[k])) <= reach);
+
+// The nearest block to the player by 3D distance to its centre; undefined for none.
+export const nearestBlock = (at, locations) => {
+  let best;
+  let bestD = Infinity;
+  for (const l of locations) {
+    const d = Math.hypot(l.x + 0.5 - at.x, l.y + 0.5 - at.y, l.z + 0.5 - at.z);
+    if (d < bestD) {
+      best = { x: l.x, y: l.y, z: l.z };
+      bestD = d;
+    }
+  }
+  return best;
+};
+
+// Which scanning player's turn it is this frame: the most overdue, at most one a frame,
+// so players who started together drift onto frames of their own and stay there.
+export const pickScan = (due, frame) => {
+  let pick;
+  for (const [key, at] of due) if (at <= frame && (pick === undefined || at < due.get(pick))) pick = key;
+  return pick;
+};
+
+// The held Tricorder's line while a scan is on: the waypoint arrow to the last block
+// found, or a line saying there's none within reach.
+export const scanLine = (scan, target, here, view) => {
+  const label = `Scanning: ${scan.label}`;
+  if (!target) return `${label} · none nearby`;
+  const dim = Object.keys(DIMS).find((k) => DIMS[k] === here.dim) ?? here.dim;
+  // Aimed at the block's centre, so standing on it reads as here.
+  return trackerLine({ x: target.x + 0.5, y: target.y, z: target.z + 0.5, dim, label }, here, view, undefined);
 };

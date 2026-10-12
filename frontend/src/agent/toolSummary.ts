@@ -217,6 +217,7 @@ const STEP_LABELS: Record<string, string> = {
   mc_find_item: "Looked for items",
   mc_show_map: "Showed the map",
   mc_set_waypoint: "Set the tricorder",
+  mc_tricorder_scan: "Set the tricorder's scan",
   mc_place_save: "Saved a place",
   mc_places: "Listed saved places",
   mc_place_remove: "Forgot a place",
@@ -379,6 +380,8 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   mc_show_map: ["label", "focus"],
   // A saved place's name is the destination; coordinates carry a label instead.
   mc_set_waypoint: ["place", "label"],
+  // The block scanned for; a stop has none, and the label says enough.
+  mc_tricorder_scan: ["block"],
   mc_place_save: ["name"],
   mc_place_remove: ["name"],
   mc_wormhole_aim: ["place"],
