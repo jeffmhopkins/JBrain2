@@ -2964,17 +2964,14 @@ static void test_every_action_has_its_own_voice(void)
 {
     /* The sound follows the ACTION, not the tap — which is why poking the head coos without
        anything special-casing the head: the head's likeliest action is a blush. If an action
-       fell back to the generic blip, that zone would quietly go back to sounding the same. */
-    const int actions[] = {ACT_WIGGLE, ACT_GIGGLE, ACT_BOING,  ACT_BLUSH, ACT_SNEEZE,
-                           ACT_HICCUP, ACT_NOD,    ACT_JUMP,   ACT_WAVE,  ACT_DANCE,
-                           ACT_BOP,    ACT_SHIMMY, ACT_SLEEP,  ACT_HIDE,  ACT_FART,
-                           ACT_BURP,   ACT_EAT,    ACT_KICK,   ACT_SPIN};
-    const int n = (int)(sizeof(actions) / sizeof(actions[0]));
-    for (int i = 0; i < n; i++) {
-        const cue_t cue = cue_for_action(actions[i]);
+       fell back to the generic blip, that zone would quietly go back to sounding the same.
+       Walked over `ACT_COUNT` rather than listed, so an action added later is held to it too:
+       a hand-kept list stopped at ACT_SPIN while DIZZY and LOVE were added after it. */
+    for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+        const cue_t cue = cue_for_action(a);
         CHECK(cue != CUE_BLIP, "every action has a sound of its own, not the generic blip");
-        for (int j = i + 1; j < n; j++) {
-            CHECK(cue != cue_for_action(actions[j]), "and no two actions share one");
+        for (int b = a + 1; b < ACT_COUNT; b++) {
+            CHECK(cue != cue_for_action(b), "and no two actions share one");
         }
     }
     /* ACT_NONE is not an action and must not claim a voice. */
