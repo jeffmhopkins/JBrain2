@@ -217,6 +217,35 @@ lv_obj_t *ui_icon(lv_obj_t *parent, const ui_icon_t *icon, ui_accent_t accent, i
     return disc;
 }
 
+/* Main.dc.html's mic on the 48-unit grid (its 24-unit SVG doubled): a capsule, the cradle's
+ * half circle (r 14 about 24,22, every 30°) and the stem. */
+static const path_t MIC_CRADLE[] = {{7, {{10, 22}, {12, 29}, {17, 34}, {24, 36}, {31, 34}, {36, 29}, {38, 22}}}};
+static const path_t MIC_STEM[] = {{2, {{24, 36}, {24, 42}}}};
+
+lv_obj_t *ui_mic(lv_obj_t *parent, int px, uint32_t color)
+{
+    lv_obj_t *box = bare(parent);
+    lv_obj_set_size(box, px, px);
+    const int sw = px * 5 / 48 < 2 ? 2 : px * 5 / 48;
+    lv_obj_t *cap = bare(box);
+    lv_obj_set_pos(cap, 18 * px / 48 - sw / 2, 6 * px / 48 - sw / 2);
+    lv_obj_set_size(cap, 12 * px / 48 + sw, 22 * px / 48 + sw);
+    lv_obj_set_style_radius(cap, LV_RADIUS_CIRCLE, 0);
+    border(cap, color, sw);
+    draw_path(box, MIC_CRADLE, px, color, sw);
+    draw_path(box, MIC_STEM, px, color, sw);
+    return box;
+}
+
+lv_obj_t *ui_talk_hint(lv_obj_t *root)
+{
+    lv_obj_t *row = ui_box(root, LV_FLEX_FLOW_ROW, 10);
+    ui_mic(row, 20, UI_C_MUTED);
+    ui_label(row, "Hold KEY to talk", 18, UI_C_MUTED);
+    lv_obj_align(row, LV_ALIGN_BOTTOM_MID, 0, -20);
+    return row;
+}
+
 lv_obj_t *ui_header(lv_obj_t *root, const ui_icon_t *icon, ui_accent_t accent, const char *title,
                     lv_event_cb_t on_back, void *user)
 {
@@ -541,7 +570,7 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
     uint32_t accent_c = ui_accent_color(accent);
     if (b->voice && b->mine) {
         lv_obj_t *r = ui_box(body, LV_FLEX_FLOW_ROW, 8);
-        ui_label(r, LV_SYMBOL_AUDIO, 18, UI_C_STEEL);
+        ui_mic(r, 18, UI_C_STEEL);
         ui_label(r, b->dur, 18, UI_C_STEEL);
     } else if (b->voice) {
         lv_obj_t *r = ui_box(body, LV_FLEX_FLOW_ROW, 10);

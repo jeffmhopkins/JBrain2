@@ -57,8 +57,7 @@ static void jerv_open(app_t *self, lv_obj_t *root)
     *j = (jerv_t){.root = root};
     ui_header(root, &ICON, UI_ACCENT_JERV, "Jerv", back, self);
     j->list = ui_page(root, true, 60);
-    lv_obj_t *foot = ui_label(root, LV_SYMBOL_AUDIO "  Hold KEY to talk", 18, UI_C_MUTED);
-    lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -20);
+    ui_talk_hint(root);
     fill_list(j);
 }
 

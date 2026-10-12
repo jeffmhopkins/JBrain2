@@ -23,6 +23,11 @@ lv_obj_t *ui_box(lv_obj_t *parent, lv_flex_flow_t flow, int gap);
 
 lv_obj_t *ui_icon(lv_obj_t *parent, const ui_icon_t *icon, ui_accent_t accent, int disc_px,
                   bool dim);
+/* The mock's microphone, `px` square, drawn as strokes: LVGL's symbol font has no microphone,
+ * and LV_SYMBOL_AUDIO, the nearest, is a music note. */
+lv_obj_t *ui_mic(lv_obj_t *parent, int px, uint32_t color);
+/* A conversation's footer: the microphone and "Hold KEY to talk", centred along the bottom. */
+lv_obj_t *ui_talk_hint(lv_obj_t *root);
 
 /* Back + icon + title, 76 px, the top of every page but the clock face. */
 lv_obj_t *ui_header(lv_obj_t *root, const ui_icon_t *icon, ui_accent_t accent, const char *title,

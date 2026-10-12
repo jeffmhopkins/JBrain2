@@ -75,8 +75,7 @@ static void thread_open(app_t *self, lv_obj_t *root)
     *t = (thread_t){.root = root};
     ui_header(root, &cfg(self)->icon, self->accent, cfg(self)->name, back, self);
     t->list = ui_page(root, true, 60);
-    lv_obj_t *foot = ui_label(root, LV_SYMBOL_AUDIO "  Hold KEY to talk", 18, UI_C_MUTED);
-    lv_obj_align(foot, LV_ALIGN_BOTTOM_MID, 0, -20);
+    ui_talk_hint(root);
     fill_list(self);
 }
 
