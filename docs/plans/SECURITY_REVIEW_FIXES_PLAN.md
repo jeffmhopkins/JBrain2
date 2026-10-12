@@ -414,6 +414,8 @@ relies on it for owner "all devices" fences).
   whatever lines arrive in the reply window, so a well-timed `/jb:dave` line could make Dave
   report a false result to another asker. No identity, permission or stored state rides on
   it (transport's write is keyed by an unseen trip id); a per-request nonce would close it.
+- **A pairing code minted mid-update** (S3.3): one the old api mints after the migration ran
+  is stored plaintext and won't redeem on the new api; re-minting from the PWA fixes it.
 - **Debug SQL text guard** is a deny-list and refuses a few harmless statements that merely
   mention a blocked name; the secrets themselves are protected by the RLS policy, not by it.
 - **Git hooks run by the ctl** (reset/clean, as the session uid) don't get the shells'

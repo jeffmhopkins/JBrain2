@@ -52,8 +52,10 @@ class TokenBucket:
 
         for key in [k for k, b in self._buckets.items() if full(b)]:
             del self._buckets[key]
-        overflow = len(self._buckets) - self.max_keys + 1
-        if overflow > 0:
+        # Make room in batches (a tenth of the table), so a spray of fresh keys pays for a
+        # scan and sort once per batch rather than on every request.
+        overflow = len(self._buckets) - self.max_keys + max(1, self.max_keys // 10)
+        if len(self._buckets) >= self.max_keys and overflow > 0:
             stalest = sorted(self._buckets, key=lambda k: self._buckets[k].updated_at)
             for key in stalest[:overflow]:
                 del self._buckets[key]

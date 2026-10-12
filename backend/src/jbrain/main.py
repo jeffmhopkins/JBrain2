@@ -1497,12 +1497,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.research_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
         # Per-IP bound on the unauthenticated jlaunch results-share reads (api/jlaunch_share.py).
         app.state.jlaunch_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
-        # Per-IP bounds on the unauthenticated map-share reads (api/minecraft_share.py):
-        # the viewer polls players and the live log, and a pan pulls a screenful of tiles.
         # Per-IP bounds on the unauthenticated chat-share reads (api/chat_share.py): the page
         # load, and the favicons one load asks for (a dozen citations at once).
         app.state.chat_share_rate_limiter = TokenBucket(capacity=30, refill_per_sec=1.0)
         app.state.chat_share_favicon_rate_limiter = TokenBucket(capacity=120, refill_per_sec=4.0)
+        # Per-IP bounds on the unauthenticated map-share reads (api/minecraft_share.py):
+        # the viewer polls players and the live log, and a pan pulls a screenful of tiles.
         app.state.mc_share_rate_limiter = TokenBucket(capacity=60, refill_per_sec=2.0)
         app.state.mc_share_tile_rate_limiter = TokenBucket(capacity=400, refill_per_sec=20.0)
         # The Automations operator surface: projects the live trigger/schedule/

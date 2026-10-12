@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent import chat_shares
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.agent import serve_favicon
+from jbrain.api.client_ip import client_ip
 from jbrain.api.sessions import TurnOut, turn_out
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.web.favicon import normalize_host
@@ -63,7 +64,7 @@ def _harden(response: Response) -> None:
 
 
 def _rate_limit(request: Request, limiter: TokenBucket) -> None:
-    client = request.client.host if request.client else "unknown"
+    client = client_ip(request) or "unknown"
     if not limiter.allow(client):
         raise HTTPException(status_code=429, detail="rate limited")
 

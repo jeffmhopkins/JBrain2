@@ -80,6 +80,9 @@ def test_a_secret_shape_in_an_unnamed_column_is_still_scrubbed() -> None:
         "SELECT * FROM ts_stat('SELECT to_tsvector(value::text) FROM app.settings')",
         "EXPLAIN SELECT query_to_xml('SELECT 1', true, false, '')",
         "SELECT U&\"query\\005fto_xml\"('SELECT 1', true, false, '')",
+        # pg_settings' rule turns the UPDATE into set_config(); EXPLAIN ANALYZE runs it.
+        "EXPLAIN ANALYZE UPDATE pg_settings SET setting = 'x' WHERE name = 'app.x'",
+        "explain (analyze) delete from app.notes",
     ],
 )
 def test_functions_that_read_around_the_redaction_are_refused(sql: str) -> None:
@@ -96,6 +99,8 @@ def test_functions_that_read_around_the_redaction_are_refused(sql: str) -> None:
         "SELECT current_setting('transaction_read_only')",
         "SELECT xmlparse(content '<a/>')",
         "SELECT 'hello_world', slot_count FROM app.jobs",
+        "SELECT * FROM app.box_events WHERE kind = 'update'",
+        "SELECT name, setting FROM pg_settings WHERE name = 'work_mem'",
     ],
 )
 def test_ordinary_diagnostic_reads_pass_the_guard(sql: str) -> None:

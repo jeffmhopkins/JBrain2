@@ -1599,10 +1599,17 @@ _REFUSED_SQL_RE = re.compile(
 )
 
 
+# `EXPLAIN ANALYZE UPDATE pg_settings …` passes the read-verb check and names no refused
+# function, but the pg_settings rule rewrites it into set_config(); a write verb anywhere
+# after EXPLAIN is refused outright (the transaction is read only anyway).
+_EXPLAINED_WRITE_RE = re.compile(r"^\s*explain\b.*\b(update|insert|delete|merge)\b", re.S)
+
+
 def _refused_sql(sql: str) -> str | None:
     """The refused function the statement names, if any."""
-    found = _REFUSED_SQL_RE.search(sql.lower())
-    return found.group(0) if found else None
+    lowered = sql.lower()
+    found = _REFUSED_SQL_RE.search(lowered) or _EXPLAINED_WRITE_RE.search(lowered)
+    return found.group(found.lastindex or 0) if found else None
 
 
 def _is_single_read(sql: str) -> bool:

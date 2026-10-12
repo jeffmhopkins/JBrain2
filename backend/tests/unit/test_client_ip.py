@@ -7,8 +7,10 @@ resolved trusts nothing. Then the limiters that key on it, which used to share o
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import socket
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -16,8 +18,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from jbrain.agent import chat_shares
+from jbrain.api import chat_share, jlaunch_share
 from jbrain.api import client_ip as cip
-from jbrain.api import jlaunch_share
 from jbrain.config import Settings
 from jbrain.external import jlaunch_shares
 from jbrain.locations.ratelimit import TokenBucket
@@ -169,3 +172,43 @@ class TestLimitersKeyOnTheClient:
             assert get("198.51.100.1") == 404
             assert get("198.51.100.1") == 429
             assert get("198.51.100.2") == 404
+
+    def test_chat_share_keys_on_the_client(self, monkeypatch: Any) -> None:
+        async def _none(*_a: Any, **_k: Any) -> None:
+            return None
+
+        monkeypatch.setattr(chat_shares, "resolve_share", _none)
+        app = FastAPI()
+        app.include_router(chat_share.router, prefix="/api")
+        app.state.session_maker = object()
+        app.state.chat_share_rate_limiter = TokenBucket(capacity=1, refill_per_sec=0.0)
+        c = TestClient(app, client=(PROXY, 40000))
+
+        def get(ip: str) -> int:
+            return c.get("/api/chat-share/tok", headers={"X-Real-IP": ip}).status_code
+
+        with cip.pinned(proxy=(PROXY,)):
+            assert get("203.0.113.1") == 404
+            assert get("203.0.113.1") == 429
+            assert get("203.0.113.2") == 404
+
+
+def test_no_api_module_keys_on_the_raw_socket_address() -> None:
+    # Behind Caddy `request.client.host` is the proxy for every request, so a limiter keyed
+    # on it is one global bucket. Only the helper itself (and the panel tunnel's transport,
+    # which forwards the peer verbatim) may read it.
+    api = Path(__file__).resolve().parents[2] / "src" / "jbrain" / "api"
+    allowed = {"client_ip.py", "panel_ws.py"}
+    offenders = []
+    for path in api.glob("*.py"):
+        if path.name in allowed:
+            continue
+        for node in ast.walk(ast.parse(path.read_text())):
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == "host"
+                and isinstance(node.value, ast.Attribute)
+                and node.value.attr == "client"
+            ):
+                offenders.append(f"{path.name}:{node.lineno}")
+    assert not offenders, offenders
