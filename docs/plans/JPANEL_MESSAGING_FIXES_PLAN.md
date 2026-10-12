@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** Scheduled · **Last verified:** 2026-10-11 · **Waves:** W1◻️ W2◻️ W3◻️ F1◻️ F2◻️ F3◻️ F4◻️ P1◻️
+> **Status:** Scheduled · **Last verified:** 2026-10-11 · **Waves:** W1◻️ W2◻️ W3◻️ F0◻️ F1◻️ F2◻️ F3◻️ F4◻️ P1◻️
 
 Voice post between the twins' panels and the owner's PWA works on the happy path. It fails on
 the paths a four-year-old actually takes: pressing again while it loads, walking away
@@ -23,6 +23,7 @@ mid-message, holding the pet while a message waits, talking over a TV, and a USB
 | Cold review, round 9 | 5 blocking + 33 non-blocking |
 | Cold review, round 10 | 2 blocking + 44 non-blocking (backend and firmware GREEN) |
 | Cold review, round 11 | 4 blocking + 35 non-blocking |
+| Cold review, round 12 | 6 blocking + 43 non-blocking; plus the 0.3.39 boot-loop incident (§6a) |
 
 **What has held since round 3**
 
@@ -159,7 +160,9 @@ Each item is testable and is cited in §3 and in the tests.
     - **gave up**: the box hit its delivery cap and the row is still addressed to a live key;
     - **waiting for re-flash**: the recipient key is not live, but a future re-address can still
       deliver it — the row is inside `READDRESS_WINDOW_DAYS` and its subject still exists and is
-      not a `merged:` tombstone (a revoked panel the owner means to re-flash);
+      not a `merged:` tombstone (a revoked panel the owner means to re-flash). Rows on an
+      older same-name subject that a re-flash did not pick stay in this status until they age
+      out; they need an explicit merge (§13);
     - **keyless**: no future re-address can deliver it — the recipient key is not live **and**
       the row is older than the window, or its subject is NULL, hard-deleted or a `merged:`
       tombstone. A waiting-for-re-flash row becomes keyless when it ages out.
@@ -206,7 +209,7 @@ the table.
 | ID | Verified | Fix | Wave | Proving test(s) |
 |---|---|---|---|---|
 | A1 | ✓ | Stop generation; arbiter discard; sink gen check; network cancel | F2 | `test_stop_at_every_interleave_point`, `stream: test_stop_while_paused_drains` |
-| A2 | ✓ | Every command ends; the UI backstops on the engine's published deadline | F2 | `test_chain_fetch_failure_returns_to_idle` |
+| A2 | ✓ | Every command ends by its published deadline (F2, which relies on that alone); the UI backstops on it (F3, §7.5c) | F2, F3 | `test_chain_fetch_failure_returns_to_idle` |
 | A3 | ✓ | Box accepts the cap (+0.5 s); caps pinned | W1, F2 | `test_send_accepts_exactly_the_capture_cap`, `test_capture_caps_pinned` |
 | A4 | ✓ | Serial engine; ack before the next command; run by id | W3, F2 | `test_lost_ack_is_retried_and_never_replays` |
 | A5 | ✓ | Render leases the capture before posting | F2 | `test_lease_taken_before_post` |
@@ -332,7 +335,8 @@ version, and `main.c` installs any version that **differs**. So:
   keeps refusing.
 - **Old code + new firmware** happens only after a box rollback. Ops → Update runs
   `git reset --hard @{u}` and then `alembic upgrade head`. A rollback reverts code and **never
-  deletes a migration revision file**: W1 adds a CI check that runs on `pull_request` **and**
+  deletes a migration revision file**: W1 adds a step to the **backend job** (an already-required check, so branch protection enforces
+  it) that runs on `pull_request` **and**
   `workflow_dispatch` with no `if:` gate — `ci.yml` notes that an App-opened PR starts no
   `pull_request` run, so a dispatch is how its checks run — checks out with `fetch-depth: 0`, and
   fails if `git diff --diff-filter=D --name-only origin/main...HEAD --
@@ -352,8 +356,8 @@ is missing.
 | Change | New box + 0.3.39 | Old code + new firmware |
 |---|---|---|
 | `/send` ceiling = cap + 0.5 s | A3 fixed for every panel in the field | 413 → `FAILED("too-long")` |
-| `/waiting` `queue[].id` | ignored. `test_waiting_body_fits_0_3_39_buffer` (W3) pins the worst case against 0.3.39's 1,023-byte cap: 8 entries with ids, `from_owner=false`, names at **31 bytes**, a 4-digit `count`, and a sibling — about 1,021 B. The bound is real because W1 gives `FlashIn.name` the rename rule (`MAX_PANEL_NAME` = 14 and `_panel_name`'s charset, none of which grows under JSON escaping) **and** `/waiting` cuts every name so its JSON-escaped form **with `ensure_ascii=True`** (the worst case, and what `panel_ws.py` sends) is at most 31 bytes, on a character boundary — so a name stored before W1, quotes, control or non-ASCII characters included, cannot overflow it. `/next`'s `X-Jpanel-From` gets the same cut and is made printable ASCII (anything else becomes `?`; Starlette refuses a header it cannot encode), and `test_next_head_fits_link_head_max` assumes both. | positional `?at=`; "new" means a count rise |
-| `/next?id=` (still `recipient_device = :me`) + `X-Jpanel-Duration-Ms` / `X-Jpanel-Delivery` (`UPDATE … RETURNING`) | not sent | the firmware also sends `at`, which a rolled-back box honours; with no delivery header a stop acks as today. The head frame stays ≤ 0.3.39's `LINK_HEAD_MAX` (1024 B), pinned by `test_next_head_fits_link_head_max`. |
+| `/waiting` `queue[].id` | ignored. `test_waiting_body_fits_0_3_39_buffer` (W3) pins the worst case against 0.3.39's 1,023-byte cap: 8 entries with ids, `from_owner=false`, names at **31 bytes**, a 4-digit `count`, and a sibling — about 1,021 B. The bound is real because W2 gives the flash name the rename rule (`MAX_PANEL_NAME` = 14 and `_panel_name`'s charset, none of which grows under JSON escaping, §11.1 item 8) **and** W1's `/waiting` cuts every name so that even its `ensure_ascii=True` escaping is at most 31 bytes, on a character boundary. The body itself goes out as UTF-8 (`JSONResponse`, relayed unchanged by `panel_ws`), which is never longer, so the escaped length is a safe upper bound and a name stored before the rule, quotes, control or non-ASCII characters included, cannot overflow it. The worst case leaves 2 bytes of headroom, so the pin test is load-bearing. The sibling comparison uses the **uncut** label and cuts afterwards, so a legacy name over 31 bytes still finds its sibling. `/next`'s `X-Jpanel-From` gets the same cut and is made printable ASCII (anything else becomes `?`; Starlette refuses a header it cannot encode), and `test_next_head_fits_link_head_max` assumes both. | positional `?at=`; "new" means a count rise |
+| `/next?id=` (still `recipient_device = :me AND played_at IS NULL AND deliveries < cap`) + `X-Jpanel-Duration-Ms` / `X-Jpanel-Delivery` (`UPDATE … RETURNING`) | not sent | the firmware also sends `at`, which a rolled-back box honours; with no delivery header a stop acks as today. The head frame stays ≤ 0.3.39's `LINK_HEAD_MAX` (1024 B), pinned by `test_next_head_fits_link_head_max`. |
 | `/played {id, heard_ms}` | `heard_ms` NULL | extra field ignored |
 | `/returned` (tunnelled through `_ALLOWED`) | never called | F3 with no delivery header never calls it. If it is called, the tunnel answers 404 for a path it does not allow: counted `no_refund`, slot cleared. |
 | Re-address, owner grouping, `offered_at` | box-side | the data stays principal-keyed |
@@ -382,9 +386,9 @@ cmd { kind PLAY|REPLAY|SEND, seq (never 0), gen, expires_at, id[48], at, to,
   - PLAY and REPLAY expire 35 s after posting, so they are claimable for 32 s (the claim
     margin below). That still exceeds the longest ordinary predecessor that cannot be cancelled:
     an HTTPS poll (20 s) plus an ack (10 s), with slop. Both are enforced
-    deadlines (§7.5). A SEND is the one longer predecessor (§13), and on the HTTPS fallback a
-    poll's body can stall a further `LINK_STALL_MS` after its head, since cancellation is checked
-    only between steps; a PLAY behind either can expire before claim, audibly (§13).
+    deadlines (§7.5). On the HTTPS fallback a poll's body can stall a further `LINK_STALL_MS`
+    after its head, since cancellation is checked only between steps; a PLAY behind it can expire
+    before claim, audibly (§13). A PLAY never queues behind a SEND (lease 1, §7.7).
   - SEND expires 60 s after posting.
 - **A SEND carries no gen and is never cancelled by STOP.** Only expiry before claim ends it.
 - **Claim margin.** The engine never claims a command once `due(now, expires_at −
@@ -400,10 +404,13 @@ eng_view {
   claimed_seq, deadline_ms               // what it is doing NOW and when that must have ended
   done_seq                               // every command ends here exactly once
   cur  { seq, stream_id, id, from[32], from_dad, replay, run_continues, pos, in_waiting }
+  last_begun { id, from[32], from_dad }  // set at a non-replay stream's first byte
   play_outcome { seq, id, kind heard|heard_unacked|stopped_heard|returned|short|empty
                                 |cancelled|failed, reason }  // a replay uses heard|short|cancelled|failed
-                                // heard_unacked: heard whole, but there is no id to acknowledge
-                                // (an old box's positional fetch), so no ack slot is armed
+                                // heard_unacked: heard whole, but the head carried no
+                                // X-Jpanel-Id, so there is nothing to acknowledge. A positional
+                                // fetch (an old box) still acks the head's X-Jpanel-Id, as 0.3.39
+                                // does (test_old_box_positional_fetch_still_acks_header_id)
   send_outcome { seq, kind SENT|NOBODY|EMPTY|FAILED, reason }
   waiting { count, known, q[8]{ id, from, from_dad }, sibling }
   ack_owed, hb
@@ -420,6 +427,9 @@ eng_view {
   - from the command's `{from, from_dad}`, for a REPLAY.
 
   The `/message/{id}/pcm` route sends no sender headers.
+- **`last_begun {id, from, from_dad}`** is set when a non-replay stream **begins** — 0.3.39's
+  `s_in_id` — and is what F2's `jpanel_replay()` replays. `cur` is published at the claim, so a
+  PLAY that fails before its first byte must not become the replay target.
 - **`cur.pos`** is the index `cur.id` had in `waiting` when it became `cur` (−1 for a REPLAY), and
   **`cur.in_waiting`** says whether the published `waiting` still lists it. The machine's selection
   set is built from both (§8.2), on a new box and an old one alike.
@@ -454,7 +464,9 @@ copy. All large structs are static: the stacks are 8 KB (face) and 6 KB (engine)
 - **A `returned` outcome re-inserts its id into the published `waiting`, at its old position,
   in the same snapshot write as the outcome.** That is safe before `/returned` answers: the box
   has not counted the message played, so it is still waiting there too, and the next poll agrees.
-  The machine therefore never sees a frame in which the stopped message is in neither.
+  The machine therefore never sees a frame in which the stopped message is in neither. The
+  re-insert also bumps `waiting.count`; if `q[8]` is full, the last described entry drops out of
+  `q` (the count still includes it), so `count − |q|` never goes negative.
 - `stream_begin` refuses until classification is done.
 - `run_continues` is true only after `heard` or `heard_unacked`, while ids remain in the run and
   the gen is fresh.
@@ -532,7 +544,10 @@ assumes either; it works over the ordered selection set of §8.2.
 
 - The engine learns the stop's kind from `stream_stop(heard)`. The flag is packed into the same
   32-bit stop word as the gen (`{gen31, heard1}`), so the engine can never read a new gen with an
-  old flag: REPLY passes `heard = true` (§4).
+  old flag: REPLY passes `heard = true` (§4). The bit is **sticky** until the engine publishes
+  that it has classified that stream: a later STOP inside the classification window (standby,
+  calibration, recovery) ORs into it and never clears it. Render writes the stop word **before**
+  `silence`, so the arbiter never sees the silence without the new gen.
 - **Replay outcomes** (never acknowledged): `heard`, `short` (logged only, as today), `failed`
   (`CUE_OOPS`), `cancelled` (a STOP; consumed in PET).
 
@@ -577,6 +592,9 @@ has a single writer: render.
   2. the arbiter reads an even word, copies, then re-reads the word;
   3. if the word was odd or changed, it **skips that slot until the next tick** — bounded, so the
      arbiter (priority 5) never spins against render (priority 4).
+
+  The fences are §7.2's: a release fence after the odd store, an acquire fence before the
+  re-read.
 - A cue therefore never pairs one seq with another's samples.
 - The arbiter writes only its own `*_done` words, and writes `*_done = seq` on **every**
   disposal of a slot's cue: played, dropped, cut or expired — including when it has no `s_play`
@@ -654,7 +672,8 @@ handles the refusal.
 
 **No codec.** When `audio_start()` failed there is no arbiter — or the codec answered but the
 ring or `s_play` PSRAM allocation failed — so `stream_begin` refuses at once and the PLAY ends
-`failed("no-audio")` instead of waiting for `r == w` until the backstop.
+`failed("no-audio")` instead of waiting for `r == w` until the backstop. The "arbiter present"
+flag is set only after `xTaskCreate` succeeds (`audio.c` allocates the ring before the task).
 
 ### 7.5 Deadlines are true by construction
 
@@ -739,10 +758,12 @@ On firing:
   flag, set before `link_suspend` and cleared on every failure path; when it clears, both
   watchdogs restart their last-change clocks, so a failed OTA after a long erase does not trip on
   its first frame back.
-- **A cap on watchdog reboots.** An RTC-retained counter allows at most 3 watchdog reboots an
-  hour. Beyond that the watchdogs disarm until the next power cycle and the report says so
-  (`watchdog_disarmed`), so a deterministic wedge cannot become a boot loop the owner cannot
-  reach.
+- **A cap on watchdog reboots.** RTC-retained words, validated by a magic as `display.c`'s
+  already are, count watchdog reboots. After 3 the watchdogs disarm and the report says so
+  (`wd_disarmed`). The count decays by one per hour of uptime without a watchdog reboot (uptime,
+  because `esp_timer` restarts at each boot), and a **version change re-arms** them, so an OTA fix
+  restores them without a power cycle the owner cannot perform. A deterministic wedge therefore
+  cannot become a boot loop. (A panic is a different class; §6a.)
 - Reboot releases any lease.
 
 **Tests**
@@ -785,9 +806,11 @@ On firing:
 | `reply` slot; `s_reply`; lease 2 release | talk |
 
 - `jpanel_types.h` is split from `jpanel.h`.
-- **Internal RAM.** TLS needs about 75 KB of internal heap free (`link.h`). The new statics that
-  no DMA or ISR touches — both copies of the snapshot, the 1,536-byte `/waiting` buffer, `sm_t` —
-  are `EXT_RAM_BSS_ATTR`, and `int_min` stays in the report.
+- **Internal RAM** (§6a). TLS needs about 75 KB of internal heap free (`link.h`). The new statics
+  that no DMA or ISR touches — both copies of the snapshot, the 1,536-byte `/waiting` buffer,
+  `sm_t`, the slot buffers — are `EXT_RAM_BSS_ATTR`. The lease words and every word used with an
+  atomic compare-and-swap stay in internal RAM (S32C1I does not work on PSRAM on the S3). The
+  attribute is a macro that is empty on the host build, so the shared sources still compile there.
 - **Build lists:** F1 adds `stream.c` and `jpanel_core.c`, and F3 swaps `ui.c` for `panel_sm.c`,
   in **both** the host Makefile's `SRC` and `firmware/main/CMakeLists.txt`'s explicit `SRCS` —
   without the second, `firmware.yml`'s ESP-IDF build fails.
@@ -797,26 +820,35 @@ On firing:
 
 - **Kept:** today's `msg_bytes`, `msg_ms`, `msg_ok`, `msg_bad`, `msg_err` and `msg_waited_ms`,
   now read from the engine's counters.
-- **New**, in one compact `jp` object of short keys (about 140 B): `ack_owed`, `ack_retries`,
-  `no_refund`, `returned`, `lease_refusals`, `snapshot_retries`, `post_failed`, `late_outcome`,
-  `cue_expired`, `jpanel_stack_free`, `sm_violations`, `watchdog_reboots{engine,arbiter}`,
-  `watchdog_disarmed`.
+- **New**, in one compact `jp` object of **flat integer keys only** (about 140 B): `ack_owed`,
+  `ack_retries`, `no_refund`, `returned`, `lease_refusals`, `snapshot_retries`, `post_failed`,
+  `late_outcome`, `cue_expired`, `jpanel_stack_free`, `sm_violations`, `wd_engine`,
+  `wd_arbiter`, `wd_disarmed` (0/1). Anything nested or non-integer would fail `TelemetryIn`
+  with a 422, and a 422 is a failed report: every F2 panel would lose its only no-terminal
+  diagnostic.
+- **Placement.** `jp` is emitted **after** `pmu_history` and before the room-guarded variable
+  tails, outside the span that `test_endpoint_report_now.py` ::
+  `TestEveryFieldThePanelSendsIsDeclaredHere` :: `test_the_model_declares_all_of_them` scans.
 - **Byte budget.** The report's body is a fixed 2,048 bytes and already near full, so F2 measures
-  the worst case and shrinks the heard ring to make room
-  (`test_report_fits_with_jp_counters`, worst-case values in every field).
+  the worst case and shrinks the heard ring to make room. The existing
+  `test_endpoint_api.py` :: `test_the_panel_s_whole_payload_fits_the_buffer_it_is_built_in` is
+  extended to include a worst-case `jp`.
 - **Backend (in F2's PR):** `TelemetryIn` gains `jp: dict[str, int] | None`, stored with the rest
-  and shown by the debug API (`test_telemetry_accepts_and_stores_jp`).
+  and shown by the debug API. `test_jp_keys_from_main_c_validate_against_telemetry_in` reads the
+  `jp` keys from `main.c`'s format string and validates a worst-case `jp` built from them against
+  `TelemetryIn`, so the shape is pinned on both sides.
 
 **F2 changes no intended behaviour.** The old `display.c` and `talk.c` calls become wrappers:
 
 | Old call | F2 wrapper |
 |---|---|
 | `jpanel_state()` / `jpanel_clear()` | derived from the phase and unseen outcome seqs / marks an outcome seen. With a play and a send outcome both unseen, the **send** outcome is returned first (the child's own act) and `jpanel_clear()` marks that one; the next call returns the play outcome (A8) |
-| `jpanel_running`, `jpanel_fetching`, `jpanel_in_from` | read `cur` |
+| `jpanel_running`, `jpanel_in_from` | read `cur` |
+| `jpanel_fetching` | true from the **post** — render's posted seq not yet reached by `done_seq` — through the claim, as 0.3.39 raised `s_fetching` on the render task at the press; so the controls still show from the press (Appendix B, 0.3.24) |
 | `jpanel_waiting`, `jpanel_waiting_at`, `jpanel_waiting_from_dad`, `jpanel_sibling` | read `snap.waiting` (`count`, `q[i]`, `q[i].from_dad`, `sibling`) |
 | `jpanel_message_stats` (`main.c`'s report) | the telemetry counters of this section |
-| `jpanel_play_at(at)` | posts PLAY (with id, `at`, gen); refused while lease 1 is held, and — today's guard, kept — while a command is posted or claimed |
-| `jpanel_replay()` | posts REPLAY with `{id, from, from_dad}` from **`cur`**: the last non-replay message whose stream began, which is 0.3.39's `s_in_id` and the same source `jpanel_in_from` reads. A stopped or short message is replayable, as today. Refused, as today, while `speaker_busy` or a command is posted or claimed. Tests: `test_f2_stop_then_again_replays_stopped_id`, `test_f2_short_then_again_replays_short_id` |
+| `jpanel_play_at(at)` | posts PLAY (with id, `at`, gen); refused while lease 1 is held |
+| `jpanel_replay()` | posts REPLAY with `{id, from, from_dad}` from **`last_begun`** (§7.1): the last non-replay message whose stream began, which is 0.3.39's `s_in_id`. A stopped or short message is replayable, as today. Refused, as today, with no id or while `speaker_busy`; and — **new in F2** — while lease 1 is held, so it never queues behind a send (today's `display.c` already logs a refused replay). Tests: `test_f2_stop_then_again_replays_stopped_id`, `test_f2_short_then_again_replays_short_id` |
 | `jpanel_stop()` | `silence` + `stream_stop()` — today's `audio_stop()`, so a sounding cue or pet reply is still cut, as on 0.3.39 |
 | `jpanel_send()` | lease 1 CAS, then post SEND |
 | `audio_cue(c)` | renders into `press`, or into `send_result`/`fail` for SENT/OOPS; the arbiter applies today's drop-while-a-clip-sounds rule |
@@ -1214,7 +1246,9 @@ is dead code in 0.3.39 and is not ported.
   first).
   - `PENDING_MS` is derived from the worst case of what can hold `speaker_busy` ahead of it: a
     reply (`PLAY_BUF_MS`) plus one cue in each of the five cue slots (`5 × CUE_MAX_MS`) plus 1 s
-    — about 15 s. `_Static_assert` against `stream.h` and `cue.h`.
+    — about 15 s. `CUE_MAX_MS` does not exist today: F3 defines it in `cue.h` from
+    `CUE_MAX_SAMPLES` (12,800 samples, 800 ms). `_Static_assert` against `stream.h` and
+    `cue.h`.
   - When pending expires → outcome `CUE_OOPS`, PET.
   - On `post_failed` → `CUE_OOPS`, PET.
 - **Finished**, meaning `play_outcome.seq == play.seq && !run_continues`, or `done_seq` reached:
@@ -1481,6 +1515,7 @@ applies it through Ops → Update, and the panels OTA on the differing version.
 | Arrivals during a conversation | Chime on the actionable edge; notice clock from first visible | F3 |
 | Pair blocks the hold | Standing offer (owner) | F3 |
 | No stop hint for a recording | Glyphs and a hush ring | F4 |
+| A swipe during playback stops rather than moving to the next message | Kept: the swipe stops and selects (JP 0.3.37) | — |
 
 **C findings**
 
@@ -1491,7 +1526,7 @@ applies it through Ops → Update, and the panels OTA on the differing version.
   - `POST /messages/{id}/retry`, for **gave-up** rows on a live panel. It resets `deliveries`,
     `returns` and `offered_at`, then nudges. Until P1 no PWA calls it, so W3 also adds the debug
     twin `POST /api/debug/jpanel/messages/{id}/retry` (`jpanel-retry` verb, `whoami` scope,
-    `DEBUG_ACCESS.md` row, `test_debug_retry_route`).
+    `DEBUG_ACCESS.md` row, a `jpanel.retry` scope in `whoami`, `test_debug_retry_route`).
   - `DELETE /messages/{id}`, for **any unplayed row** — the explicit owner act of §4, whatever
     the row's state (live, gave-up, keyless, re-addressed). A played row answers 409: clears and
     the sweep own those. It calls `discard_message`, which **lands in W2** with the debug route
@@ -1530,7 +1565,7 @@ applies it through Ops → Update, and the panels OTA on the differing version.
 - **C9** — `kept_for` per recipient.
 - **C10** — the PWA clamps PCM to `MAX_MESSAGE_MS × PANEL_RATE`. The owner route keeps today's
   **truncation**, moved from the cap to cap + 0.5 s: audio up to that is kept whole, anything
-  longer is trimmed to it, never refused. A cached PWA's 30 s stop is a `setTimeout`
+  longer is trimmed to it, never refused, and each trim is logged (`jpanel.owner_audio_trimmed`). A cached PWA's 30 s stop is a `setTimeout`
   (`JpanelScreen.tsx`), which a background or locked tab throttles past 0.5 s; refusing would
   lose Dad's message for a release (`test_owner_audio_at_30_02s_is_accepted`,
   `test_owner_audio_well_over_cap_is_trimmed`). The panel route (E1.1) still refuses, since a
@@ -1595,7 +1630,9 @@ hit is `test_web.py` `"a.c"`. The census was independently verified complete in 
 | `test_endpoint_report_now` :: `test_every_talk_failure_the_firmware_can_hit_carries_a_name` | `talk.c` | F2 |
 | `test_endpoint_report_now` :: `test_an_open_microphone_is_deaf_to_commands`, `test_commands_are_muted_while_a_message_is_recorded`, `test_every_icon_reaches_the_same_path_the_voice_does`, `test_the_button_toggles_and_is_debounced` | `display.c`, `speech.c/h` | F3 |
 | `test_endpoint_report_now` :: `test_both_halves_of_the_dash_are_counted_and_told_apart` | `ui.c`, `display.c` | F3 |
-| `test_endpoint_report_now` :: `main.c`/`ota.c` tests (7) | `main.c`, `ota.c` | none |
+| `test_endpoint_report_now` :: `TestEveryFieldThePanelSendsIsDeclaredHere` :: `test_the_model_declares_all_of_them` | `main.c` | **F2** (the scan span stops before `jp`) |
+| `test_endpoint_api` :: `test_the_panel_s_whole_payload_fits_the_buffer_it_is_built_in` | `main.c` | **F2** (worst-case `jp` added) |
+| `test_endpoint_report_now` :: the other `main.c`/`ota.c` tests | `main.c`, `ota.c` | none |
 | `test_endpoint_api` :: `test_the_ceiling_is_the_panel_s_buffer` | `talk.c` | F2 |
 | `test_endpoint_api` :: `test_the_panel_waits_longer_than_the_question_it_allows`, `test_the_recording_window_outlasts_the_silence_it_waits_for` | `audio.c`, `display.c`, `talk.c`, `ui.h` | F1 (`CAPTURE_MAX_MS` moves to `stream.h`), F2 (`talk.c` deadline), F3 |
 | `test_endpoint_api` :: `main.c`/`vocab.c` tests (4) | — | none |
@@ -1639,7 +1676,8 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 - Callers nudge each moved row's **new** recipient, not the old key.
 - **Called from:**
   - `reflash` and `rotate`, and `merge_subject` (same window);
-  - the retention loop (`sweep.py`), whose first pass runs at start-up;
+  - the retention loop (`sweep.py`), whose first pass runs at start-up. It runs in its own
+    `try`, independent of `sweep_played_messages` and its early `(0, 0)` return;
   - after each insert in `send`, `send_text` and `send_audio` — **in its own owner transaction,
     after the insert has committed** (today's `send` already commits before it nudges). Running it
     inside the panel's transaction would deadlock without Postgres seeing it: the INSERT holds
@@ -1647,7 +1685,8 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
     `ROW EXCLUSIVE` would queue behind the re-flash while the first waits on it in Python.
     **It is best-effort:** any exception is caught and logged (`jpanel.readdress.failed`) and
     never changes the send's response — the message is already stored, and a 500 would make the
-    child re-record a duplicate (E1.2). The sweep's next pass repairs it.
+    child re-record a duplicate (E1.2). The sweep's next pass repairs it — up to the sweep
+    interval (6 h) later.
   - A subject with two live jpet keys moves nothing (the `HAVING count(*) = 1` rule below); its
     revoked-key rows show "waiting for re-flash" until they age out, and each pass logs
     `jpanel.readdress.ambiguous_subject`, visible through the debug API.
@@ -1678,8 +1717,10 @@ red-team scope. `panel_ws` gets only W3's `_ALLOWED` row.
 docstring in `repo.py` to match):
 
 1. the one owning the most recent key (live or revoked) among subjects whose
-   **`subjects.display_name`** matches this name, with this role — as `repo.py` matches today. Not
-   `principals.label`: a rename relabels only live keys, so a revoked key keeps the old label and
+   **`subjects.display_name`** matches this name, with this role — compared **case-insensitively
+   on the normalised name**, as the rename duplicate check already is; the subject's stored name is
+   reused. Not `principals.label`: jpanel's `rename_panel` relabels only live keys (the generic
+   `SqlDeviceRepo.rename` relabels revoked ones too), so a revoked key can keep an old label and
    would steer a flash under an old name onto a renamed subject;
 2. otherwise the oldest;
 3. otherwise a new one.
@@ -1723,7 +1764,8 @@ A waiting-for-re-flash row becomes keyless as it ages out. One SQL fragment, `_K
   once the keys belong to the target — with **the same 14-day window** (older mail stays keyless
   and discardable); tombstone the source as `merged:<into>:<source>`; log the merge.
 - `SqlDeviceRepo.list` hides `merged:` tombstones from W2.
-- **Exposed** as owner `POST /jpanel/panels/{id}/merge`, and in W2 as:
+- **Exposed** as owner `POST /jpanel/panels/{id}/merge`, where `{id}` is the source **subject**
+  id (a retired group's id, §11.1 item 4), and in W2 as:
   - **debug `POST /api/debug/jpanel/panels/{id}/merge`** under `_OWNER_CTX`;
   - `GET /api/debug/jpanel/panels` (subjects, retired groups, ids, row counts);
   - the `debug-connect.sh` verbs `jpanel-panels` and `jpanel-merge`;
@@ -1750,13 +1792,16 @@ revision**, not a call into app code. There is no schema change.
 
   So any message that surfaces can be removed without a terminal before P1 ships (CLAUDE.md #10).
 
-**8. The flash-name rule (W1).** `build_flash` applies the rename rule, so the debug
-`PanelFlashIn` gets it too (today `/flash` accepts any string):
+**8. The flash-name rule (W2, with merge).** `build_flash` applies the rename rule **before**
+`provision_or_reflash`, which revokes every live key for the name, so a refusal never leaves a
+dead key behind. The debug `PanelFlashIn` gets it too (today `/flash` accepts any string). It
+lands in W2 because its copy points at merge, which W2 builds:
 
 - **Empty** stays valid: an unnamed unit.
-- **Whitespace** is normalised as `_panel_name` does. If a subject of this role already exists
-  under the raw, un-normalised name (a pre-W1 label with a doubled space), the flash uses that
-  raw name, so the existing label still matches and the identity does not split.
+- **Whitespace and case** are normalised as `_panel_name` does, and an existing subject of this
+  role is matched case-insensitively on the normalised name (item 3), reusing its stored name —
+  so a pre-rule label with a doubled space or other capitals still matches and the identity does
+  not split.
 - **`_panel_name`'s 409** ("that is what an unnamed panel is called") passes through, with the
   sentence "Leave the name empty to flash an unnamed panel."
 - **Length over 14, or a character the panel's font lacks**, answers 422: *"Rename this panel in
@@ -1768,8 +1813,9 @@ revision**, not a call into app code. There is no schema change.
   while the old live key stays, leaving three live jpet keys and both twins' sends refused with
   409. The merge path needs no live key on the source, which a revoked panel satisfies; merge is
   the debug API from W2 and the PWA from P1.
-- Tests: `test_flash_after_rename_keeps_subject`, `test_flash_name_refusals_say_rename_first`,
-  `test_flash_keeps_existing_unnormalised_label`, `test_debug_flash_applies_name_rule`.
+- Tests: `test_flash_after_rename_keeps_subject`, `test_flash_name_refusals_say_rename_first`
+  (which also asserts that no key was revoked), `test_flash_keeps_existing_unnormalised_label`,
+  `test_flash_matches_name_case_insensitively`, `test_debug_flash_applies_name_rule`.
 
 **Rollback.** None is needed: rows stay principal-keyed, and revision files are never removed. Under
 rolled-back code the `merged:` names appear in the device list; that is cosmetic only.
@@ -1824,7 +1870,8 @@ Each wave is one PR. Each package runs its **whole** gate set, from its own dire
   every firmware wave, because its path filter covers `firmware/main/**`.
 - **frontend:** `npm run lint`, `npm run typecheck`, `npm run test`, `npm run build`.
 - **W1 edits `ci.yml`**, which trips every package's path filter, so W1 also runs the supervisor,
-  `jcode` and `jlaunch` gates.
+  `jcode` and `jlaunch` gates. W1 also corrects `plans/README`'s JP row ("Proposed W1◻ …") to
+  JP's own header.
 - **supervisor:** its full set, triggered by `firmware/dist/**`.
 - **firmware:** `make -C firmware/host test`, plus the job's ESP-IDF build and its `dist/`
   byte-compare. F3 replaces `run_ui_tests` with `run_sm_tests` in the host target.
@@ -1847,8 +1894,8 @@ F3 also updates JP's text on exit, the pair, and refusals.
 
 | Wave | Contents | Depends on | Gates |
 |---|---|---|---|
-| **W1** box/PWA, invisible | A3 box (+ `asyncio.wait_for` inside `_transcribe`'s `try`); C2; C5 (+ a clear releases blobs); C6 (query function + backend `/summary` only — **no badge UI**, which is P1's); C7 audio route; C8 (non-visual); C9; C10; C11; the flash-name rule in `build_flash` (§11.1 item 8); names are cut to 31 escaped bytes on the wire; `ci.yml` edits (the revision-delete job, unfiltered); skew pins; revision-delete CI check | — | backend, frontend, supervisor, `jcode`, `jlaunch` (the `ci.yml` edit trips every filter), docs |
-| **W2** identity | §11 (one-statement `readdress_orphans` with its 14-day window and lock order, grouping, keyless rows cleared by a thread clear (waiting-for-re-flash rows kept), `discard_message` + debug discard, owner and debug merge, listing, tombstones hidden in `SqlDeviceRepo.list`, `whoami` scopes, inline-SQL migration with a pre-merge count); retired chips hidden; JP §3b, §5 and Part B "### Data" updated for the retention change. **Escalation + red-team review.** | W1 | backend, frontend, docs |
+| **W1** box/PWA, invisible | A3 box (+ `asyncio.wait_for` inside `_transcribe`'s `try`); C2; C5 (+ a clear releases blobs); C6 (query function + backend `/summary` only — **no badge UI**, which is P1's); C7 audio route; C8 (non-visual); C9; C10; C11; names are cut to 31 escaped bytes on the wire; `ci.yml` edits (the revision-delete job, unfiltered); skew pins; revision-delete CI check | — | backend, frontend, supervisor, `jcode`, `jlaunch` (the `ci.yml` edit trips every filter), docs |
+| **W2** identity | §11 (one-statement `readdress_orphans` with its 14-day window and lock order, grouping, keyless rows cleared by a thread clear (waiting-for-re-flash rows kept), `discard_message` + debug discard, owner and debug merge, listing, tombstones hidden in `SqlDeviceRepo.list`, `whoami` scopes, inline-SQL migration with a pre-merge count, the flash-name rule of item 8); retired chips hidden; JP §3b, §5 and Part B "### Data" updated for the retention change. **Escalation + red-team review.** | W1 | backend, frontend, docs |
 | **W3** contract | `/waiting` ids + `offered_at`; `/next?id=` + headers; `/played {heard_ms}`; `/returned` + `_ALLOWED` + tunnel test; C3 owner routes; uuid guards; columns `heard_ms`, `offered_at`, `returns NOT NULL DEFAULT 0`; `readdress_orphans` also resets `returns` and `offered_at`; head and buffer pins. **Red-team review**: it adds panel-reachable writes (`/returned`, the `offered_at` stamp, an `_ALLOWED` row). | W2 | backend, docs |
 | **F1** host foundations | §10, no behaviour change | — (parallel) | firmware, backend, supervisor, docs |
 | **F2** engine | §7; defects only; wrappers | F1, W3 | firmware, backend, supervisor, docs |
@@ -1867,13 +1914,12 @@ parallel with the W waves.
 - Cross-core ordering is reviewed, not tested. So is `link.c`'s clamping: on the host it is
   covered only through the `wsproto.c` helpers (`wsp_wait_step`, `link_left`, the `open` split),
   not the real socket and HTTP calls.
-- **A PLAY behind a long SEND expires.** A SEND is never cancelled and can hold the serial
-  engine for about three minutes on a slow link (upload, then the 75 s head), about six with a
-  422 retry, without its own
-  backstop firing, since its deadline moves with progress. A PLAY posted behind it passes its
-  35 s expiry before claim and ends with `CUE_OOPS`. So can a PLAY behind an HTTPS-fallback
-  poll whose body stalls after its head. Both are audible and the child can press again, so they
-  are accepted.
+- **A PLAY behind a stalling HTTPS poll can expire.** On the HTTPS fallback a poll's body can
+  stall a further `LINK_STALL_MS` after its head, and cancellation is checked only between steps,
+  so a PLAY posted behind it can pass its 35 s expiry before claim and end with `CUE_OOPS`. That
+  is audible and the child can press again, so it is accepted. (A PLAY cannot queue behind a long
+  SEND: F2 refuses it while lease 1 is held, and F3's notice and AGAIN answer "busy" during a
+  send.)
 - HTTPS waits last until their enforced deadlines.
 - **DNS and the TLS handshake's internal reads inside `esp_http_client_open` cannot be clamped**
   (lwIP's resolver timeout; the TLS reads each get the full timeout). On the HTTPS
