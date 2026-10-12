@@ -26,7 +26,7 @@ import struct
 import termios
 from typing import TYPE_CHECKING, Any
 
-from jcode_ctl.sandbox import SessionUser, drop_privileges
+from .sandbox import SessionUser, drop_privileges
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
