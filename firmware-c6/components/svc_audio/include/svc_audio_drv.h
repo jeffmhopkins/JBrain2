@@ -35,6 +35,12 @@ void svc_audio_note(char *out, size_t len);
 /* True once per hold: the exchange is this task's now, and must end with talk_net_end. Who it is
  * with, and whether it asks the box for a new conversation. */
 bool talk_net_claim(bool *voice, tk_agent_t *agent, bool *fresh);
+/* Right after the claim: what the exchange is, and for a voice message or a play the box path
+ * it goes to (svc_post's, built on the UI task when it began). */
+tk_kind_t talk_net_kind(char *path, size_t cap);
+/* A play's end: whether every byte arrived and matched the box's digest. Only then is it
+ * marked played. */
+void talk_net_listened(bool verified);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);

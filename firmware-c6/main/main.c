@@ -34,6 +34,7 @@
 #include "net.h"
 #include "nvs_flash.h"
 #include "ota.h"
+#include "post_link.h"
 #include "shell.h"
 #include "svc_alarms_drv.h"
 #include "svc_audio_drv.h"
@@ -42,6 +43,7 @@
 #include "svc_convo_drv.h"
 #include "svc_display_drv.h"
 #include "svc_net_drv.h"
+#include "svc_post_drv.h"
 #include "svc_power_drv.h"
 #include "svc_rtc_drv.h"
 #include "svc_settings_drv.h"
@@ -187,7 +189,7 @@ static bool report(const cfg_t *cfg)
         svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
         svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
         svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note,
-        svc_alarms_note,  svc_convo_note};
+        svc_alarms_note,  svc_convo_note, svc_post_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -330,6 +332,8 @@ static void start_panel(const cfg_t *cfg)
     svc_alarms_init();
     /* Recent and switching (0.0.15): the glass asks, this loop fetches. */
     svc_convo_set_wake(wake_main);
+    /* The people's threads (0.0.16): the glass asks, this loop fetches. */
+    svc_post_set_wake(wake_main);
     if (!may_start) return;
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
@@ -418,11 +422,13 @@ void app_main(void)
            A talk to Jerv outranks all of it (talk_link.h): it is taken the moment KEY wakes this
            loop, and afterwards the loop makes its regular pass, so a manifest check or a
            heartbeat that fell due meanwhile is the next thing on the connection. What the
-           conversation view asked of the box (convo_link.h) comes straight after a talk. */
+           conversation view asked of the box (convo_link.h) comes straight after a talk, and
+           what the people's threads asked (post_link.h) after that. */
         const uint32_t check_due = now_ms() + CHECK_PERIOD_MS;
         for (;;) {
             if (talk_link_run()) break;
             convo_link_run();
+            post_link_run();
             uint32_t sleep_ms = 0;
             const dbg_next_t next = dbg_sched_next(&pickup, now_ms(), check_due,
                                                    reachable && !svc_net_user_off(), &sleep_ms);
@@ -431,6 +437,7 @@ void app_main(void)
                 if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms))) {
                     talk_link_run();
                     convo_link_run();
+                    post_link_run();
                     break;
                 }
                 continue;
@@ -441,6 +448,7 @@ void app_main(void)
             if (ulTaskNotifyTake(pdTRUE, 0)) {
                 talk_link_run();
                 convo_link_run();
+                post_link_run();
                 break;
             }
         }

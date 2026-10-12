@@ -35,9 +35,14 @@ static uint32_t ms_since(int64_t t0_us)
 static esp_err_t on_http(esp_http_client_event_t *e)
 {
     box_reply_t *r = e->user_data;
-    if (e->event_id == HTTP_EVENT_ON_HEADER && r && e->header_key && e->header_value &&
-        strcasecmp(e->header_key, "Date") == 0)
+    if (e->event_id != HTTP_EVENT_ON_HEADER || !r || !e->header_key || !e->header_value)
+        return ESP_OK;
+    if (strcasecmp(e->header_key, "Date") == 0)
         snprintf(r->date, sizeof r->date, "%s", e->header_value);
+    else if (strcasecmp(e->header_key, "X-Jpanel-Post") == 0)
+        snprintf(r->post, sizeof r->post, "%s", e->header_value);
+    else if (strcasecmp(e->header_key, "X-Jpanel-Sha256") == 0)
+        snprintf(r->sha, sizeof r->sha, "%s", e->header_value);
     return ESP_OK;
 }
 
@@ -101,6 +106,9 @@ static bool aim(const char *path, esp_http_client_method_t method, const char *c
         esp_http_client_set_header(s_c, "Content-Type", ctype);
     else
         esp_http_client_delete_header(s_c, "Content-Type");
+    /* The kept client keeps its headers: a voice message's integrity header must not ride the
+       next request. */
+    esp_http_client_delete_header(s_c, "X-Jpanel-Sha256");
     return true;
 }
 
@@ -191,11 +199,13 @@ int box_http_put(const char *path, const char *ctype, const char *body, size_t l
     return call(HTTP_METHOD_PUT, path, ctype, body, len, NULL, 0, NULL, NULL, timeout_ms);
 }
 
-bool box_http_stream_open(const char *path, const char *ctype, int timeout_ms, bool reuse)
+bool box_http_stream_open(const char *path, const char *ctype, int timeout_ms, bool reuse,
+                          const char *integrity)
 {
     if (!reuse || ms_since(s_used_us) > BOX_REUSE_FRESH_MS) drop();
     bool reused;
     if (!aim(path, HTTP_METHOD_POST, ctype, NULL, timeout_ms)) return false;
+    if (integrity) esp_http_client_set_header(s_c, "X-Jpanel-Sha256", integrity);
     esp_err_t err = open_counted(-1, &reused);
     if (err != ESP_OK && reused) {
         drop();
@@ -257,6 +267,21 @@ int box_http_reply_read(void *buf, size_t cap, int slice_ms)
     const int n = esp_http_client_read(s_c, buf, (int)cap);
     if (n == -ESP_ERR_HTTP_EAGAIN) return BOX_HTTP_AGAIN;
     return n < 0 ? -1 : n;
+}
+
+int box_http_get_open(const char *path, box_reply_t *reply, int timeout_ms)
+{
+    for (int attempt = 0; attempt < 2; attempt++) {
+        bool reused;
+        if (!aim(path, HTTP_METHOD_GET, NULL, reply, timeout_ms)) return -1;
+        if (open_counted(0, &reused) != ESP_OK || esp_http_client_fetch_headers(s_c) < 0) {
+            drop();
+            if (reused) continue;
+            return -1;
+        }
+        return esp_http_client_get_status_code(s_c);
+    }
+    return -1;
 }
 
 void box_http_reply_done(void)

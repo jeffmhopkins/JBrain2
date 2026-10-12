@@ -69,6 +69,9 @@ static volatile uint8_t s_level;
 static uint32_t s_i2c_err, s_codec_err;
 static uint8_t s_id8311[2], s_id7210[2];
 static volatile uint16_t s_tone_hz, s_tone_ms;
+/* The tone is a new message's chime (0.0.16): a second, lower note follows the first. */
+static volatile bool s_chime;
+static uint32_t s_chimes;
 static uint32_t s_tones;
 /* An alarm's sound: 0 silent, otherwise the sound + 1. Written by the UI task, read here. */
 static volatile uint8_t s_ring;
@@ -142,6 +145,7 @@ void talk_port_describe(dbg_json_t *w)
     dbg_json_int(w, "i2c_errors", s_i2c_err);
     dbg_json_int(w, "codec_errors", s_codec_err);
     dbg_json_int(w, "tones", s_tones);
+    dbg_json_int(w, "chimes", s_chimes);
     dbg_json_int(w, "rings", s_rings);
     dbg_json_int(w, "ring_fail", s_ring_fail);
     dbg_json_bool(w, "ring_playing", s_ring_playing);
@@ -362,26 +366,38 @@ static const int16_t SINE[32] = {0,      6393,   12540,  18205,  23170,  27246, 
                                  0,      -6393,  -12540, -18205, -23170, -27246, -30274, -32138,
                                  -32767, -32138, -30274, -27246, -23170, -18205, -12540, -6393};
 
-static void play_tone(void)
+/* `chunks` of a sine at `hz`, `shift` quieter than full scale, unless something takes the speaker. */
+static void sine(uint32_t hz, uint32_t chunks, int shift)
 {
-    const uint32_t hz = s_tone_hz, chunks = s_tone_ms / 20;
-    if (!s_spk || !open_spk((int)svc_settings_get(SET_VOLUME))) {
-        s_tone_ms = 0;
-        return;
-    }
-    talk_audio_on(false, true);
-    settle();
     uint32_t phase = 0;
     const uint32_t step = (uint32_t)(((uint64_t)hz << 21) / TALK_RATE); /* 32 steps << 16 */
     for (uint32_t c = 0; c < chunks && talk_audio_want() == TK_AUDIO_OFF && !s_ring; c++) {
         for (int i = 0; i < TALK_CHUNK_FRAMES; i++, phase += step)
-            s_mono[i] = (int16_t)(SINE[(phase >> 16) & 31] / 4); /* -12 dBFS */
+            s_mono[i] = (int16_t)(SINE[(phase >> 16) & 31] >> shift);
         esp_codec_dev_write(s_spk, s_mono, TALK_CHUNK_BYTES);
     }
+}
+
+static void play_tone(void)
+{
+    const uint32_t hz = s_tone_hz, chunks = s_tone_ms / 20;
+    const bool chime = s_chime;
+    if (!s_spk || !open_spk((int)svc_settings_get(SET_VOLUME))) {
+        s_tone_ms = 0;
+        s_chime = false;
+        return;
+    }
+    talk_audio_on(false, true);
+    settle();
+    /* -12 dBFS for the test tone; the chime is a soft E6 then B5 at -18 dBFS, under the voice. */
+    sine(hz, chunks, chime ? 3 : 2);
+    if (chime) sine(988, 220 / 20, 3);
     silence(TK_SPK_TAIL_MS / 20);
     close_spk();
     talk_audio_on(false, false);
-    s_tones++;
+    if (chime) s_chimes++;
+    else s_tones++;
+    s_chime = false;
     s_tone_ms = 0;
 }
 
@@ -551,6 +567,17 @@ bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why)
     s_tone_ms = ms;
     if (s_task) xTaskNotifyGive(s_task);
     return true;
+}
+
+bool svc_audio_chime(void)
+{
+    const char *why;
+    if (s_tone_ms) return false;
+    /* Before the tone is asked for: the audio task reads it the moment it is woken. */
+    s_chime = true;
+    if (svc_audio_tone(1319, 140, &why)) return true;
+    s_chime = false;
+    return false;
 }
 
 void svc_audio_start(void (*wake_net)(void))

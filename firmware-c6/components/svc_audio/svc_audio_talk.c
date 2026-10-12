@@ -11,6 +11,7 @@
 #include "svc_debug.h"
 #include "svc_messages_fake.h"
 #include "svc_net.h"
+#include "svc_post_drv.h"
 #include "svc_rtc.h"
 #include "svc_settings.h"
 
@@ -46,14 +47,13 @@ static bool s_holding;
 static uint32_t s_speaking;
 static const char *s_refused;
 
-/* A hold to a person: timed, never sent (svc_audio_fake.h, TALK_PLACEHOLDER). */
-static struct {
-    bool on;
-    char to[16];
-    uint32_t since;
-} s_person;
+/* A voice message to a twin, or one of hers played (0.0.16): her thread, and the box path the
+ * main task takes (written by the UI task before the exchange is claimable, read under the lock). */
+static char s_person[16];
+static char s_target[POST_PATH_BYTES];
+static bool s_listen_ok;
+/* The message playing, 0 when none: the UI task's. */
 static uint32_t s_playing;
-static uint32_t s_next_person_id = 900000;
 /* Clear chat, per agent: the next talk to it asks the box for a new conversation. UI task's. */
 static bool s_fresh[TK_AGENT__COUNT];
 /* The hold in progress was KEY outside its conversation (TALK_TO_NEW_AGENT): sent, it replaces
@@ -90,35 +90,47 @@ static void unlock(void)
 
 /* ---- the glass ---- */
 
-bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
+/* What stops an exchange before it starts: the codec, the radio, the ring's memory. */
+static const char *refusal(const char *offline)
 {
-    s_refused = NULL;
-    if (s_holding || s_person.on) return false;
-    s_new = false;
-    if (kind == TALK_TO_PERSON) {
-        s_person.on = true;
-        snprintf(s_person.to, sizeof s_person.to, "%s", principal ? principal : "");
-        s_person.since = svc_rtc_uptime_ms();
-        s_playing = 0;
-        return true;
-    }
     const char *why = talk_port_refusal();
     net_info_t n;
     svc_net_info(&n);
-    if (!why && n.state != NET_CONNECTED) why = "Not connected: talking needs Wi-Fi";
+    if (!why && n.state != NET_CONNECTED) why = offline;
     if (!why && !s_ring_mem && !(s_ring_mem = malloc(RING_BYTES))) why = "No memory to record";
+    return why;
+}
+
+bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
+{
+    s_refused = NULL;
+    if (s_holding) return false;
+    s_new = false;
+    const bool person = kind == TALK_TO_PERSON;
+    char target[sizeof s_target] = "";
+    if (person && !svc_post_send_path(principal, target, sizeof target)) {
+        s_refused = "Not sent: her panel is not known yet";
+        return false;
+    }
+    const char *why = refusal(person ? "Not connected: messages need Wi-Fi"
+                                     : "Not connected: talking needs Wi-Fi");
     if (why) {
         s_refused = why;
         return false;
     }
     tk_agent_t agent = TK_AGENT_JERV;
     tk_agent_from(principal, &agent);
-    const bool voice = svc_settings_get(SET_TTS) != 0 && talk_port_speaker();
+    const bool voice = !person && svc_settings_get(SET_TTS) != 0 && talk_port_speaker();
     const uint32_t now = svc_rtc_uptime_ms();
     lock();
     const tk_begin_t b = tk_begin(&s_tk, now, voice, s_next_id);
     if (b == TK_BEGIN_OK) {
         tk_set_agent(&s_tk, agent, s_fresh[agent] || kind == TALK_TO_NEW_AGENT);
+        if (person) {
+            tk_set_post(&s_tk);
+            memcpy(s_target, target, sizeof s_target);
+            snprintf(s_person, sizeof s_person, "%s", principal);
+        }
         tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
         s_heard[0] = s_status[0] = '\0';
         s_heard_seq = s_status_seq = 0;
@@ -148,22 +160,14 @@ const char *svc_audio_talk_refused(void)
     return s_refused;
 }
 
-static talk_outcome_t person_end(bool send)
+/* The thread the exchange's bubbles land in: the agent's, or the twin's. */
+static const char *exchange_thread(void)
 {
-    const uint32_t held = svc_rtc_uptime_ms() - s_person.since;
-    const talk_outcome_t o = talk_policy_end(held, send);
-    msg_t m;
-    if (talk_placeholder(o, held, s_next_person_id, &m)) {
-        s_next_person_id++;
-        svc_messages_fake_add(s_person.to, &m);
-    }
-    s_person.on = false;
-    return o;
+    return s_tk.kind == TK_KIND_AGENT ? THREAD : s_person;
 }
 
 talk_outcome_t svc_audio_talk_end(bool send)
 {
-    if (s_person.on) return person_end(send);
     if (!s_holding) return TALK_CANCELLED;
     s_holding = false;
     char why[40] = "";
@@ -172,6 +176,7 @@ talk_outcome_t svc_audio_talk_end(bool send)
     const talk_outcome_t o = tk_end(&s_tk, now, send);
     const uint32_t held = s_tk.held_ms ? s_tk.held_ms : now - s_tk.since_ms;
     const uint32_t id = s_tk.msg_id;
+    const bool post = s_tk.kind == TK_KIND_POST;
     if (o == TALK_FAILED) tk_take(&s_tk, why, sizeof why);
     unlock();
     talk_port_kick();
@@ -188,6 +193,10 @@ talk_outcome_t svc_audio_talk_end(bool send)
     if (o == TALK_SENT || o == TALK_CAPPED || o == TALK_FAILED) {
         msg_t m;
         talk_bubble_sent(id, held, &m);
+        if (post) {
+            if (held > POST_MAX_MS) m.dur_s = POST_MAX_MS / 1000;
+            snprintf(m.text, sizeof m.text, "%s", TALK_POSTING);
+        }
         if (o == TALK_FAILED) {
             char line[80];
             snprintf(line, sizeof line, "Not sent: %s", why);
@@ -195,19 +204,18 @@ talk_outcome_t svc_audio_talk_end(bool send)
         } else {
             s_st.sent++;
         }
-        svc_messages_fake_add(THREAD, &m);
+        svc_messages_fake_add(post ? s_person : THREAD, &m);
     }
     return o;
 }
 
 bool svc_audio_talking(void)
 {
-    return s_holding || s_person.on;
+    return s_holding;
 }
 
 uint32_t svc_audio_talk_ms(void)
 {
-    if (s_person.on) return svc_rtc_uptime_ms() - s_person.since;
     return s_holding ? svc_rtc_uptime_ms() - s_tk.since_ms : 0;
 }
 
@@ -234,7 +242,7 @@ bool svc_audio_speaking(void)
 
 bool svc_audio_work(const char *thread, svc_work_t *out)
 {
-    if (!thread || strcmp(thread, THREAD) || s_holding) return false;
+    if (!thread || s_tk.kind != TK_KIND_AGENT || strcmp(thread, THREAD) || s_holding) return false;
     const uint32_t now = svc_rtc_uptime_ms();
     lock();
     const bool on = s_tk.phase == TK_SEND && !s_tk.abort && s_heard_seq;
@@ -250,11 +258,24 @@ bool svc_audio_work(const char *thread, svc_work_t *out)
     return on;
 }
 
-static void refresh_thread(void)
+static void refresh(const char *thread)
 {
     app_event_t ev = {.type = APP_EV_MSG_ARRIVED};
-    snprintf(ev.u.principal, sizeof ev.u.principal, "%s", THREAD);
+    snprintf(ev.u.principal, sizeof ev.u.principal, "%s", thread);
     app_events_post(&ev);
+}
+
+static void refresh_thread(void)
+{
+    refresh(exchange_thread());
+}
+
+/* A play is over, however it ended: the bubble's pause goes back to play. */
+static void play_over(void)
+{
+    if (!s_playing) return;
+    s_playing = 0;
+    refresh(s_person);
 }
 
 bool svc_audio_stop_reply(void)
@@ -262,16 +283,23 @@ bool svc_audio_stop_reply(void)
     lock();
     const bool thinking = s_tk.phase == TK_SEND;
     const uint32_t id = s_tk.msg_id;
+    const uint8_t kind = s_tk.kind;
     const bool stopped = tk_stop(&s_tk);
     unlock();
     if (!stopped) return false;
     s_st.stopped++;
     talk_port_kick();
     msg_t m;
-    if (thinking && svc_messages_find(THREAD, id, &m)) {
-        talk_bubble_unsent(&m, "Stopped before the answer");
-        snprintf(m.status, sizeof m.status, "Stopped");
-        svc_messages_fake_add(THREAD, &m);
+    if (kind == TK_KIND_LISTEN) {
+        play_over();
+        return true;
+    }
+    const char *thread = exchange_thread();
+    if (thinking && svc_messages_find(thread, id, &m)) {
+        talk_bubble_unsent(&m, kind == TK_KIND_POST ? "Stopped before it was sent"
+                                                    : "Stopped before the answer");
+        snprintf(m.status, sizeof m.status, kind == TK_KIND_POST ? "Not sent" : "Stopped");
+        svc_messages_fake_add(thread, &m);
     }
     if (s_speaking) {
         s_speaking = 0;
@@ -282,14 +310,47 @@ bool svc_audio_stop_reply(void)
 
 bool svc_audio_play(uint32_t msg_id)
 {
-    if (svc_audio_talking()) return false;
+    s_refused = NULL;
+    char thread[16], target[sizeof s_target];
+    if (s_holding) return false;
+    if (!svc_post_pcm_path(msg_id, thread, target, sizeof target)) {
+        s_refused = "That message is not on the box";
+        return false;
+    }
+    const char *why = talk_port_speaker() ? refusal("Not connected: playing needs Wi-Fi")
+                                          : "No sound: the speaker did not start";
+    if (why) {
+        s_refused = why;
+        return false;
+    }
+    lock();
+    const tk_begin_t b = tk_listen(&s_tk, msg_id);
+    if (b == TK_BEGIN_OK) {
+        memcpy(s_target, target, sizeof s_target);
+        snprintf(s_person, sizeof s_person, "%s", thread);
+        s_listen_ok = false;
+        tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+    }
+    unlock();
+    if (b != TK_BEGIN_OK) {
+        s_refused = "One moment: still finishing the last one";
+        return false;
+    }
     s_playing = msg_id;
+    s_st.plays++;
+    refresh(thread);
+    talk_port_kick();
+    talk_port_net();
     return true;
 }
 
 void svc_audio_stop(void)
 {
-    s_playing = 0;
+    lock();
+    const bool mine = s_tk.kind == TK_KIND_LISTEN;
+    unlock();
+    if (mine) svc_audio_stop_reply();
+    play_over();
 }
 
 uint32_t svc_audio_playing(void)
@@ -314,6 +375,44 @@ const char *svc_audio_state(void)
     return talk_port_state();
 }
 
+static void free_ring(void)
+{
+    if (!s_ring_mem) return;
+    lock();
+    tk_ring_init(&s_ring, NULL, 0);
+    unlock();
+    free(s_ring_mem);
+    s_ring_mem = NULL;
+}
+
+/* A voice message to a twin, or one of hers played: how it ended, as her thread shows it. */
+static void person_service(uint8_t kind, tk_res_t res, const char *why, const char *heard,
+                           bool verified, bool quiet)
+{
+    msg_t m;
+    if (kind == TK_KIND_LISTEN) {
+        if (res == TK_RES_SPOKEN && verified) svc_post_heard(s_person, s_tk.msg_id);
+        if (res == TK_RES_FAILED || res == TK_RES_NOTHING) s_st.play_failed++;
+        if (res == TK_RES_SPOKEN || res == TK_RES_FAILED || res == TK_RES_NOTHING || quiet)
+            play_over();
+    } else if (res != TK_RES_NONE && svc_messages_find(s_person, s_tk.msg_id, &m)) {
+        if (res == TK_RES_REPLY) {
+            talk_bubble_heard(&m, heard[0] ? heard : POST_NO_TEXT);
+            snprintf(m.status, sizeof m.status, "%s", TALK_POSTED);
+            s_st.posted++;
+        } else if (res == TK_RES_NOTHING) {
+            talk_bubble_unsent(&m, "Nothing heard. Hold KEY and speak.");
+        } else if (res == TK_RES_FAILED) {
+            char line[80];
+            snprintf(line, sizeof line, "Not sent: %s", why);
+            talk_bubble_unsent(&m, line);
+        }
+        svc_messages_fake_add(s_person, &m);
+        if (res == TK_RES_REPLY) svc_post_sent(s_person);
+    }
+    if (quiet) free_ring();
+}
+
 /* What the box answered, as bubbles. Not while KEY is still held: a failure mid-hold is the
  * release's to show (tk_end's TALK_FAILED), with the ring still up until then. */
 void svc_audio_service(void)
@@ -322,6 +421,16 @@ void svc_audio_service(void)
     char why[40];
     static char heard[sizeof s_heard];
     lock();
+    const uint8_t kind = s_tk.kind;
+    if (kind != TK_KIND_AGENT) {
+        const tk_res_t res = tk_take(&s_tk, why, sizeof why);
+        const bool quiet = tk_quiet(&s_tk);
+        const bool verified = s_listen_ok;
+        memcpy(heard, s_heard, sizeof heard);
+        unlock();
+        person_service(kind, res, why, heard, verified, quiet);
+        return;
+    }
     const tk_res_t res = tk_take(&s_tk, why, sizeof why);
     const uint32_t id = s_tk.msg_id;
     const bool playing = s_tk.phase == TK_PLAY;
@@ -388,13 +497,7 @@ void svc_audio_service(void)
         s_speaking = 0;
         refresh_thread();
     }
-    if (quiet && s_ring_mem) {
-        lock();
-        tk_ring_init(&s_ring, NULL, 0);
-        unlock();
-        free(s_ring_mem);
-        s_ring_mem = NULL;
-    }
+    if (quiet) free_ring();
 }
 
 /* ---- the main task's half ---- */
@@ -408,6 +511,22 @@ bool talk_net_claim(bool *voice, tk_agent_t *agent, bool *fresh)
     *fresh = s_tk.fresh;
     unlock();
     return mine;
+}
+
+tk_kind_t talk_net_kind(char *path, size_t cap)
+{
+    lock();
+    const tk_kind_t kind = (tk_kind_t)s_tk.kind;
+    tk_copy(path, cap, kind == TK_KIND_AGENT ? "" : s_target);
+    unlock();
+    return kind;
+}
+
+void talk_net_listened(bool verified)
+{
+    lock();
+    s_listen_ok = verified;
+    unlock();
 }
 
 tk_net_t talk_net_next(bool *mic_off)
@@ -605,7 +724,13 @@ static void describe(void *ctx, dbg_json_t *w)
     memcpy(status, s_status, sizeof status);
     unlock();
     dbg_json_str(w, "state", talk_port_state());
+    static const char *const KIND[] = {"agent", "message", "play"};
     dbg_json_str(w, "phase", PHASE[t.phase]);
+    dbg_json_str(w, "kind", KIND[t.kind < 3 ? t.kind : 0]);
+    dbg_json_int(w, "playing", s_playing);
+    dbg_json_int(w, "plays", st.plays);
+    dbg_json_int(w, "play_failed", st.play_failed);
+    dbg_json_int(w, "posted", st.posted);
     dbg_json_bool(w, "talking", svc_audio_talking());
     dbg_json_bool(w, "voice", t.voice);
     dbg_json_bool(w, "mic_on", t.mic_on);
