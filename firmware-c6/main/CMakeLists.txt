@@ -2,6 +2,7 @@
 # without it the header is off the include path even with the bundle enabled in sdkconfig.
 idf_component_register(
     SRCS "main.c" "cfg.c" "net.c" "ota.c" "box_http.c" "dbg_link.c" "talk_link.c" "sib_link.c"
+         "alarm_link.c"
          "ui_task.c"
          "apps.c"
     INCLUDE_DIRS "."

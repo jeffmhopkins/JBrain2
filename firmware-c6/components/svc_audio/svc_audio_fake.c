@@ -62,9 +62,35 @@ const char *talk_port_state(void)
     return "fake";
 }
 
+static uint8_t s_ring;
+
 void talk_port_describe(dbg_json_t *w)
 {
+    static const char *const SOUND[] = {"none", "chime", "beeps", "rise"};
     dbg_json_str(w, "codecs", "none (host)");
+    dbg_json_str(w, "alarm_sound", SOUND[s_ring < 4 ? s_ring : 0]);
+}
+
+/* The alarm's sound, as state only (s_ring, above): what is "playing" is what the snapshot and
+ * the tests read. */
+void svc_audio_ring(uint8_t sound)
+{
+    s_ring = (uint8_t)(sound + 1);
+}
+
+void svc_audio_ring_stop(void)
+{
+    s_ring = 0;
+}
+
+bool svc_audio_ringing(void)
+{
+    return s_ring != 0;
+}
+
+int svc_audio_fake_ring_sound(void)
+{
+    return (int)s_ring - 1;
 }
 
 void svc_audio_fake_progress(const char *heard, const char *status)

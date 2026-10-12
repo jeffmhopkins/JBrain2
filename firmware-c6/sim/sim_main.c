@@ -17,7 +17,8 @@
 #include "lvgl.h"
 #include "shell.h"
 #include "sim_png.h"
-#include "svc_alarms_fake.h"
+#include "alarm_port_fake.h"
+#include "svc_alarms_drv.h"
 #include "svc_audio_fake.h"
 #include "svc_box_fake.h"
 #include "svc_display.h"
@@ -26,6 +27,7 @@
 #include "svc_net_fake.h"
 #include "svc_notice_fake.h"
 #include "svc_power_fake.h"
+#include "svc_rtc.h"
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
@@ -83,6 +85,7 @@ static void step(uint32_t ms)
         svc_rtc_fake_advance_ms(10);
         svc_audio_service();
         svc_siblings_service();
+        svc_alarms_service(svc_rtc_uptime_ms());
         shell_pump();
         lv_timer_handler();
     }
@@ -189,6 +192,7 @@ static void boot(const char *only)
     svc_messages_init();
     svc_siblings_init();
     svc_audio_init();
+    alarm_port_fake_wipe();
     svc_alarms_init();
     svc_notice_init();
     dbg_sys_init();
@@ -214,14 +218,22 @@ static const char SIBLINGS[] =
     "{\"device_id\":\"0b8e5f7a-2222-4c2d-9e3f-5a6b7c8d9e02\",\"name\":\"Tamsin\"}]}";
 static bool s_no_names;
 
+/* The box's own answer to `GET /endpoint/alarms`: the PWA mock's three alarms, through the panel's
+ * own path (svc_alarms_offer, then the UI task's service), as the device takes them. */
+static const char ALARMS[] =
+    "{\"etag\":\"5d1c0e2a9b7f3c11\",\"alarms\":["
+    "{\"id\":1,\"at\":405,\"days\":31,\"on\":true,\"label\":\"Work\",\"sound\":\"chime\"},"
+    "{\"id\":2,\"at\":510,\"days\":96,\"on\":false,\"label\":\"\",\"sound\":\"rise\"},"
+    "{\"id\":3,\"at\":1260,\"days\":127,\"on\":true,\"label\":\"Girls to bed\",\"sound\":\"beeps\"}],"
+    "\"max\":8}";
+
 /* The mock's sample conversations. The image ships none: they are the sim's, added the way the
  * services add any message. */
 static void fixtures(void)
 {
-    if (!s_no_names) {
-        svc_siblings_offer(SIBLINGS, sizeof SIBLINGS - 1);
-        step(20);
-    }
+    svc_alarms_offer(ALARMS, sizeof ALARMS - 1);
+    if (!s_no_names) svc_siblings_offer(SIBLINGS, sizeof SIBLINGS - 1);
+    step(20);
     static const struct {
         const char *thread;
         msg_t m;
@@ -314,10 +326,22 @@ static void night_badge(void)
     push_question();
 }
 
+/* 06:45 on a Monday: the box's "Work" alarm comes due on the panel's own schedule. */
 static void ring(void)
 {
     svc_rtc_fake_set(6, 45);
-    svc_alarms_fake_ring(1);
+}
+
+/* A minute before it, so the state can put the glass out first and let the alarm wake it. */
+static void before_ring(void)
+{
+    svc_rtc_fake_set(6, 44);
+}
+
+static void ring_with_notice(void)
+{
+    ring();
+    push_question();
 }
 
 static void downloading(void)
@@ -370,6 +394,7 @@ typedef struct {
 #define SCROLL(px) "scroll " #px
 #define KEY_DOWN "{\"cmd\":\"inject\",\"event\":\"key_down\"}"
 #define KEY_UP "{\"cmd\":\"inject\",\"event\":\"key_up\"}"
+#define PWR "{\"cmd\":\"inject\",\"event\":\"pwr\"}"
 #define WAIT(ms) "wait " #ms
 /* A finger held still on the conversation: the long press that opens its menu. */
 #define HOLD(x, y) "{\"cmd\":\"inject\",\"event\":\"hold\",\"x\":" #x ",\"y\":" #y ",\"value\":800}"
@@ -427,6 +452,14 @@ static const state_t STATES[] = {
     /* A tap on the face: nothing. */
     {"clock-tap", NULL, {OPEN("clock"), TAP(240, 240), WAIT(300)}},
     {"ringing", ring, {WAIT(100)}},
+    /* 0.0.13: the alarm wakes a dark screen and takes it over at a readable brightness. */
+    {"ringing-dark", before_ring, {PWR, WAIT(61000)}},
+    /* Over a notice: the alarm is on top. */
+    {"ringing-over-notice", ring_with_notice, {WAIT(100)}},
+    /* KEY snoozes; held two seconds, the face opens the list saying until when. */
+    {"alarm-snoozed", ring, {WAIT(100), KEY_DOWN, KEY_UP, WAIT(400), HOLD_MS(240, 240, 2100), WAIT(2400)}},
+    /* The debug relay's `inject event=alarm_test`: the whole ring path, with no alarm set. */
+    {"alarm-test", NULL, {"{\"cmd\":\"inject\",\"event\":\"alarm_test\",\"name\":\"beeps\"}", WAIT(300)}},
     {"notify-info", push_info, {WAIT(100)}},
     {"notify-question", push_question, {WAIT(100)}},
     /* KEY from Settings: the shell's talk to Jerv, over whatever is open. */
@@ -917,6 +950,53 @@ static int touch_checks(void)
     run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
     step(100);
     expect(!shell_open_app(), "and BOOT on the menu goes home");
+
+    /* Alarms (0.0.13): the box's list, the switch on the glass, and a ring that beats a talk. */
+    svc_alarms_offer(ALARMS, sizeof ALARMS - 1);
+    step(100);
+    run(OPEN("clock"));
+    step(100);
+    finger(240, 240, true);
+    step(2200);
+    finger(240, 240, false);
+    step(400);
+    finger(420, 177, true);
+    finger(420, 177, false);
+    step(400);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"queue\":[{\"id\":1,\"on\":false}]") != NULL,
+           "the 06:45 switch on the glass queues its write for the box");
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"next\":{\"id\":3,") != NULL,
+           "and the next alarm is the 21:00 one at once");
+    run("{\"cmd\":\"home\"}");
+    const unsigned talked = svc_messages_count("jerv");
+    run(KEY_DOWN);
+    step(300);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"talking\":true") != NULL, "a talk to Jerv is under way");
+    run("{\"cmd\":\"inject\",\"event\":\"alarm_test\"}");
+    step(100);
+    const char *snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"talking\":false") != NULL && strstr(snap, "\"overlay\":\"alarm\"") != NULL &&
+               strstr(snap, "\"view\":\"ringing\"") != NULL,
+           "an alarm ends the talk and takes the glass");
+    run(KEY_UP);
+    step(100);
+    expect(svc_messages_count("jerv") == talked, "the held KEY's release sends nothing");
+    run("{\"cmd\":\"inject\",\"event\":\"pwr\"}");
+    step(100);
+    expect(!svc_display_dark(), "PWR cannot put out a ringing alarm");
+    run(KEY_DOWN);
+    step(100);
+    run(KEY_UP);
+    step(100);
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"last_end\":\"snoozed\"") != NULL && strstr(snap, "\"view\":\"face\"") != NULL,
+           "KEY snoozes it and the face comes back");
+    run("{\"cmd\":\"inject\",\"event\":\"alarm_test\"}");
+    step(100);
+    run("{\"cmd\":\"inject\",\"event\":\"boot_long\"}");
+    step(100);
+    expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"last_end\":\"stopped\"") != NULL,
+           "BOOT, even held, stops it");
     return s_touch_bad;
 }
 

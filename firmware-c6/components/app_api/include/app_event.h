@@ -15,6 +15,7 @@ typedef enum {
     APP_EV_NOTICE_ARRIVED,
     APP_EV_TICK_MINUTE,
     APP_EV_WAKE,
+    APP_EV_ALARM_ENDED, /* snoozed, stopped or capped: the ringing view goes */
     APP_EV__COUNT,
 } app_event_type_t;
 
@@ -26,7 +27,7 @@ typedef struct {
     uint32_t at_ms;
     union {
         char principal[16]; /* MSG_ARRIVED: whose thread */
-        uint8_t alarm_id;   /* ALARM_DUE */
+        uint32_t alarm_id;  /* ALARM_DUE, ALARM_ENDED */
         uint32_t notice_id; /* NOTICE_ARRIVED */
     } u;
 } app_event_t;

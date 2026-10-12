@@ -18,7 +18,7 @@
 #include "freertos/task.h"
 #include "lvgl.h"
 #include "shell.h"
-#include "svc_alarms_fake.h"
+#include "svc_alarms_drv.h"
 #include "svc_audio_drv.h"
 #include "svc_display.h"
 #include "svc_display_drv.h"
@@ -97,7 +97,6 @@ static void ui_loop(void *arg)
     svc_messages_fake_clear();
     /* Before the apps: a thread is drawn with the name the box last sent (the cache). */
     svc_siblings_init();
-    svc_alarms_init();
     svc_notice_init();
     char err[96];
     shell_set_pointer(touch_feed);
@@ -112,6 +111,8 @@ static void ui_loop(void *arg)
         svc_settings_service(now);
         svc_audio_service();
         svc_siblings_service();
+        /* Before the shell: an alarm due now is raised and taken over in this same pass. */
+        svc_alarms_service(now);
         dbg_sys_crumb(ST_PUMP);
         shell_pump();
         dbg_sys_crumb(ST_RENDER);

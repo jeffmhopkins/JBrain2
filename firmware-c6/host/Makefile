@@ -15,9 +15,10 @@ SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/app_thread/thread_model.c $(C)/convo/convo_model.c $(C)/ui_kit/ui_pin.c $(C)/ui_kit/ui_hold.c \
       $(C)/svc_siblings/sib_logic.c $(C)/svc_siblings/svc_siblings.c \
       $(C)/svc_siblings/sib_port_fake.c \
+      $(C)/svc_alarms/alarm_logic.c $(C)/svc_alarms/svc_alarms.c $(C)/svc_alarms/alarm_port_fake.c \
       $(C)/svc_notice/notice_policy.c $(C)/svc_notice/svc_notice_fake.c \
       $(C)/svc_audio/talk_policy.c $(C)/svc_audio/talk_core.c \
-      $(C)/svc_audio/svc_audio_talk.c $(C)/svc_audio/svc_audio_fake.c \
+      $(C)/svc_audio/svc_audio_talk.c $(C)/svc_audio/svc_audio_fake.c $(C)/svc_audio/alarm_sound.c \
       $(C)/svc_settings/svc_settings_fake.c \
       $(C)/svc_settings/settings_store.c $(C)/svc_rtc/time_logic.c \
       $(C)/svc_rtc/svc_rtc_fake.c $(C)/svc_net/svc_net_fake.c $(C)/svc_box/svc_box_fake.c \

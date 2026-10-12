@@ -78,6 +78,14 @@ uint32_t svc_rtc_uptime_ms(void)
     return now_ms();
 }
 
+bool svc_rtc_epoch(int64_t *out)
+{
+    time_t now;
+    if (!have_time(&now)) return false;
+    *out = (int64_t)now;
+    return true;
+}
+
 void svc_rtc_status(rtc_status_t *out)
 {
     const int64_t box = s_box_us;

@@ -51,6 +51,14 @@ void svc_audio_speak(uint32_t msg_id);
 /* Whether a reply can be listened to on demand: not until the box can speak a stored one. */
 bool svc_audio_can_speak(void);
 
+/* An alarm's sound (svc_alarms.h's alarm_sound_t), looped with a rising volume until
+ * svc_audio_ring_stop. It OUTRANKS every other sound: the microphone, a reply's voice and a test
+ * tone all give way the moment it is asked for, and nothing else may open the speaker while it
+ * plays. Safe from the UI task; the audio task carries it out. */
+void svc_audio_ring(uint8_t sound);
+void svc_audio_ring_stop(void);
+bool svc_audio_ringing(void);
+
 /* "ok", "off" (not started: a fault boot), "mic-only:<why>" or "failed:<step>": what Settings
  * and the snapshot say about the sound. */
 const char *svc_audio_state(void);

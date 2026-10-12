@@ -20,17 +20,11 @@ void clock_fmt_face(const rtc_time_t *t, char out[6]);
  * while there is no time. */
 void clock_fmt_daydate(const rtc_time_t *t, char *buf, size_t len);
 
-/* Minutes until each enabled alarm next rings from (now_min, wday), honouring repeat days;
- * a one-off rings at its next occurrence. False when none is on. Exactly now is not "next". */
-bool clock_next_alarm(const alarm_t *a, uint8_t n, uint16_t now_min, uint8_t wday, uint8_t *idx,
-                      uint32_t *wait_min);
-/* "Next 06:45 · in 9 h 4 min" */
-void clock_fmt_next(const alarm_t *a, uint32_t wait_min, char *buf, size_t len);
+/* "Next 06:45 · in 9 h 4 min", or "Snoozed until 06:54 · in 9 min". When an alarm next rings is
+ * svc_alarms' answer (UTC and the zone's daylight saving), not arithmetic on the face's minute. */
+void clock_fmt_next(const alarm_next_t *n, char *buf, size_t len);
 /* "Weekdays · Work", "Sat, Sun", "Every day", "Once" */
 void clock_fmt_days(uint8_t days, const char *label, char *buf, size_t len);
-
-/* Minute of day a snooze rings again, wrapping past midnight. */
-uint16_t clock_snooze(uint8_t h, uint8_t m, uint8_t minutes);
 
 typedef enum { CLOCK_NIGHT_RED, CLOCK_NIGHT_AMBER, CLOCK_NIGHT_GREY } clock_night_color_t;
 

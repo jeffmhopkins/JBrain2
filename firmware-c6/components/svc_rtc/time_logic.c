@@ -157,3 +157,131 @@ const char *svc_rtc_tz_label(int32_t idx)
 {
     return ZONES[idx >= 0 && idx < TZ_ZONES ? idx : TZ_DEFAULT].label;
 }
+
+/* ---- POSIX zone rules ---- */
+
+static const char *tz_name(const char *p)
+{
+    if (*p == '<') {
+        while (*p && *p != '>') p++;
+        return *p ? p + 1 : NULL;
+    }
+    const char *s = p;
+    while ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z')) p++;
+    return p - s >= 3 ? p : NULL;
+}
+
+/* [+-]hh[:mm[:ss]] as seconds; POSIX counts west as positive, so the caller negates. */
+static const char *tz_hms(const char *p, int32_t *out)
+{
+    int32_t sign = 1;
+    if (*p == '+' || *p == '-') sign = *p++ == '-' ? -1 : 1;
+    int32_t v[3] = {0, 0, 0};
+    for (int i = 0; i < 3; i++) {
+        if (*p < '0' || *p > '9') {
+            if (i == 0) return NULL;
+            break;
+        }
+        while (*p >= '0' && *p <= '9') v[i] = v[i] * 10 + (*p++ - '0');
+        if (i == 2 || *p != ':') break;
+        p++;
+    }
+    *out = sign * (v[0] * 3600 + v[1] * 60 + v[2]);
+    return p;
+}
+
+static const char *tz_num(const char *p, int *out)
+{
+    if (*p < '0' || *p > '9') return NULL;
+    *out = 0;
+    while (*p >= '0' && *p <= '9') *out = *out * 10 + (*p++ - '0');
+    return p;
+}
+
+static const char *tz_rule_when(const char *p, tz_when_t *w)
+{
+    int m, n, d;
+    if (*p++ != 'M' || !(p = tz_num(p, &m)) || *p++ != '.' || !(p = tz_num(p, &n)) ||
+        *p++ != '.' || !(p = tz_num(p, &d)))
+        return NULL;
+    if (m < 1 || m > 12 || n < 1 || n > 5 || d > 6) return NULL;
+    *w = (tz_when_t){(uint8_t)m, (uint8_t)n, (uint8_t)d, 2 * 3600};
+    if (*p == '/' && !(p = tz_hms(p + 1, &w->secs))) return NULL;
+    return p;
+}
+
+bool tz_parse(const char *posix, tz_rule_t *out)
+{
+    *out = (tz_rule_t){0};
+    const char *p = posix ? tz_name(posix) : NULL;
+    int32_t west;
+    if (!p || !(p = tz_hms(p, &west))) return false;
+    out->std_east = out->dst_east = -west;
+    if (!*p) return true;
+    if (!(p = tz_name(p))) return false;
+    out->has_dst = true;
+    out->dst_east = out->std_east + 3600;
+    if (*p && *p != ',') {
+        if (!(p = tz_hms(p, &west))) return false;
+        out->dst_east = -west;
+    }
+    /* A dst name with no rule leaves the dates to the implementation: refused rather than
+       guessed. Nothing in the table is written that way. */
+    if (*p++ != ',' || !(p = tz_rule_when(p, &out->start)) || *p++ != ',' ||
+        !(p = tz_rule_when(p, &out->end)))
+        return false;
+    return *p == '\0';
+}
+
+/* The day (days since 1970) an Mm.w.d rule names in `year`. */
+static int64_t tz_rule_day(int year, const tz_when_t *w)
+{
+    const int64_t first = days_from_civil(year, w->mon, 1);
+    const int64_t next =
+        w->mon == 12 ? days_from_civil(year + 1, 1, 1) : days_from_civil(year, w->mon + 1u, 1);
+    const int wd_first = (int)(((first % 7) + 7 + 3) % 7); /* Monday = 0 */
+    const int want = (w->wday + 6) % 7;
+    int64_t day = first + (want - wd_first + 7) % 7 + (int64_t)(w->week - 1) * 7;
+    while (day >= next) day -= 7;
+    return day;
+}
+
+void tz_transitions(const tz_rule_t *z, int year, int64_t *start, int64_t *end)
+{
+    *start = tz_rule_day(year, &z->start) * 86400 + z->start.secs - z->std_east;
+    *end = tz_rule_day(year, &z->end) * 86400 + z->end.secs - z->dst_east;
+}
+
+int32_t tz_offset_at(const tz_rule_t *z, int64_t utc)
+{
+    if (!z->has_dst) return z->std_east;
+    civil_t c;
+    epoch_to_civil(utc + z->std_east, &c);
+    int64_t s, e;
+    tz_transitions(z, c.year, &s, &e);
+    /* Northern rules start before they end within a year; southern ones (Sydney) wrap it. */
+    const bool dst = s < e ? (utc >= s && utc < e) : !(utc >= e && utc < s);
+    return dst ? z->dst_east : z->std_east;
+}
+
+void tz_local(const tz_rule_t *z, int64_t utc, civil_t *out)
+{
+    epoch_to_civil(utc + tz_offset_at(z, utc), out);
+}
+
+int64_t tz_wall_to_utc(const tz_rule_t *z, int64_t wall)
+{
+    const int64_t as_std = wall - z->std_east, as_dst = wall - z->dst_east;
+    const bool std_ok = tz_offset_at(z, as_std) == z->std_east;
+    const bool dst_ok = z->has_dst && tz_offset_at(z, as_dst) == z->dst_east;
+    if (std_ok && dst_ok) return as_std < as_dst ? as_std : as_dst;
+    if (std_ok) return as_std;
+    if (dst_ok) return as_dst;
+    /* In the gap: the change that opened it is the first instant past this wall time. */
+    civil_t c;
+    epoch_to_civil(wall, &c);
+    int64_t s, e;
+    tz_transitions(z, c.year, &s, &e);
+    const int64_t lo = as_dst < as_std ? as_dst : as_std, hi = as_dst < as_std ? as_std : as_dst;
+    return s >= lo && s <= hi ? s : e;
+}

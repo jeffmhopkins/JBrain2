@@ -12,6 +12,7 @@ import type {
   LlmUsage,
   NoteAnalysis,
   NoteOut,
+  PanelAlarms,
   ReviewItem,
   ReviewQueue,
   SdrRecording,
@@ -655,13 +656,31 @@ describe("mock API", () => {
     const out = (await (await call("/api/endpoint/status")).json()) as {
       panels: { name: string; version: string; age_s: number; report: Record<string, unknown> }[];
     };
-    expect(out.panels).toHaveLength(2);
+    // Two pets and the owner's desk display, which carries the alarms editor.
+    expect(out.panels).toHaveLength(3);
     const [live, stale] = out.panels;
     expect(live?.version).toBe("0.2.94");
     // The reading that stops a sleeping panel being read as a stalled render task.
     expect(live?.report.screen).toBe("dark");
     expect(stale?.age_s).toBeGreaterThan(8 * 3600);
     expect(stale?.report.blit_fail_total).toBeGreaterThan(0);
+  });
+
+  it("keeps the desk panel's alarms and says when the panel has them", async () => {
+    const url = "/api/endpoint/panels/panel-desk/alarms";
+    const first = (await (await call(url)).json()) as PanelAlarms;
+    expect(first.alarms.map((a) => a.at)).toEqual([405, 510, 1260]);
+    expect(first.panel_etag).toBe(first.etag);
+    const made = await call(url, {
+      method: "POST",
+      body: JSON.stringify({ at: 60, days: 0, on: true, label: "", sound: "rise" }),
+    });
+    expect(made.status).toBe(201);
+    const after = (await (await call(url)).json()) as PanelAlarms;
+    expect(after.alarms[0]?.at).toBe(60);
+    expect(after.panel_etag).not.toBe(after.etag);
+    const id = after.alarms[0]?.id;
+    expect((await call(`${url}/${id}`, { method: "DELETE" })).status).toBe(204);
   });
 
   it("serves jpanel messages grouped by panel, newest first", async () => {

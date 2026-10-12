@@ -96,7 +96,12 @@ enum {
     SH_DO_WAKE = 1 << 2,
     SH_DO_REFRESH_TILES = 1 << 3,
     SH_DO_REFRESH_OVERLAY = 1 << 4,
+    SH_DO_ALARM_TAKES_OVER = 1 << 5, /* end the talk, the menu and the voice; light the glass */
+    SH_DO_ALARM_GIVES_BACK = 1 << 6, /* the owner's brightness again */
 };
+/* The least a ringing alarm lights the glass at: readable from the pillow, not the full 100 %
+ * of a panel turned down for the night (owner's brightness kept when it is higher). */
+#define ALARM_WAKE_BRIGHTNESS 40
 unsigned sh_route_event(const sh_facts_t *f, app_event_type_t type);
 
 void sh_tile_pos(uint8_t slot, int *x, int *y);

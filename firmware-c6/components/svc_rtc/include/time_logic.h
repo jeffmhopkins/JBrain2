@@ -43,3 +43,32 @@ bool time_should_write_rtc(bool rtc_ok, bool stepped, int64_t since_write_s);
 /* The zone table behind svc_rtc.h's TZ_ZONES: a short label for the glass and the POSIX rule
  * newlib's localtime computes daylight saving from. */
 const char *tz_posix(int32_t idx);
+
+/* ---- a zone's POSIX rule, evaluated without the C library ----
+ * The alarms must know when a wall-clock time falls in UTC on days that are not today — across a
+ * daylight-saving change, on the host as on the panel — and newlib's localtime only answers for
+ * an instant already in hand. These read the zone table's own rules ("EST5EDT,M3.2.0,M11.1.0"):
+ * std and dst names, offsets, and Mm.w.d[/time] transitions, which is every rule in the table. */
+typedef struct {
+    uint8_t mon, week, wday; /* week 5 = the last; wday 0 = Sunday, POSIX's count */
+    int32_t secs;            /* local time of day of the change, default 02:00 */
+} tz_when_t;
+
+typedef struct {
+    int32_t std_east, dst_east; /* seconds east of UTC */
+    bool has_dst;
+    tz_when_t start, end;
+} tz_rule_t;
+
+bool tz_parse(const char *posix, tz_rule_t *out);
+/* Seconds east of UTC in force at `utc`. */
+int32_t tz_offset_at(const tz_rule_t *z, int64_t utc);
+/* The UTC instants daylight saving starts and ends in `year` (std-time year). */
+void tz_transitions(const tz_rule_t *z, int year, int64_t *start, int64_t *end);
+/* The wall clock at `utc`, as a civil_t (wday Monday = 0). */
+void tz_local(const tz_rule_t *z, int64_t utc, civil_t *out);
+/* The UTC instant a wall-clock time names. Twice (the hour the clocks go back): the FIRST.
+ * Never (the hour they go forward): the instant the gap ends, the first moment the clock has
+ * passed that time — so an alarm set inside the gap rings at 03:00, not an hour late or never.
+ * `wall` is the local date and time written as if it were UTC (civil_to_epoch of it). */
+int64_t tz_wall_to_utc(const tz_rule_t *z, int64_t wall);

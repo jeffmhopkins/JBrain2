@@ -31,43 +31,16 @@ void clock_fmt_daydate(const rtc_time_t *t, char *buf, size_t len)
     snprintf(buf, len, "%s %u %s", D[t->wday], (unsigned)t->mday, M[t->mon - 1]);
 }
 
-static bool rings_on(uint8_t days, uint8_t wday)
-{
-    return days == 0 || (days >> wday & 1);
-}
-
-bool clock_next_alarm(const alarm_t *a, uint8_t n, uint16_t now_min, uint8_t wday, uint8_t *idx,
-                      uint32_t *wait_min)
-{
-    bool found = false;
-    uint32_t best = 0;
-    for (uint8_t i = 0; i < n; i++) {
-        if (!a[i].on) continue;
-        int32_t at = a[i].h * 60 + a[i].m;
-        for (uint8_t d = 0; d <= 7; d++) {
-            int32_t wait = (int32_t)d * MIN_PER_DAY + at - now_min;
-            if (wait <= 0 || !rings_on(a[i].days, (uint8_t)((wday + d) % 7))) continue;
-            if (!found || (uint32_t)wait < best) {
-                found = true;
-                best = (uint32_t)wait;
-                *idx = i;
-            }
-            break;
-        }
-    }
-    if (found) *wait_min = best;
-    return found;
-}
-
-void clock_fmt_next(const alarm_t *a, uint32_t wait_min, char *buf, size_t len)
+void clock_fmt_next(const alarm_next_t *n, char *buf, size_t len)
 {
     char hm[6];
-    clock_fmt_hm(a->h, a->m, hm);
-    uint32_t h = wait_min / 60, m = wait_min % 60;
+    clock_fmt_hm(n->at_h, n->at_m, hm);
+    const char *what = n->snoozed ? "Snoozed until" : "Next";
+    const uint32_t h = n->wait_min / 60, m = n->wait_min % 60;
     if (h)
-        snprintf(buf, len, "Next %s · in %lu h %lu min", hm, (unsigned long)h, (unsigned long)m);
+        snprintf(buf, len, "%s %s · in %lu h %lu min", what, hm, (unsigned long)h, (unsigned long)m);
     else
-        snprintf(buf, len, "Next %s · in %lu min", hm, (unsigned long)m);
+        snprintf(buf, len, "%s %s · in %lu min", what, hm, (unsigned long)m);
 }
 
 void clock_fmt_days(uint8_t days, const char *label, char *buf, size_t len)
@@ -91,11 +64,6 @@ void clock_fmt_days(uint8_t days, const char *label, char *buf, size_t len)
         snprintf(buf, len, "%s · %s", d, label);
     else
         snprintf(buf, len, "%s", d);
-}
-
-uint16_t clock_snooze(uint8_t h, uint8_t m, uint8_t minutes)
-{
-    return min_add((uint16_t)(h * 60 + m), minutes);
 }
 
 clock_face_t clock_face(bool night_on, uint16_t from, uint16_t to, uint8_t color, uint16_t now_min,
