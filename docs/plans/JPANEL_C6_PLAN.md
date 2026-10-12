@@ -333,7 +333,10 @@ current conversation; BOOT or the back arrow returns to the thread. KEY routing 
 `/endpoint/converse`, so a twin's panel never reaches them — acting for the live owner principal
 (`auth/owner.py`) on owner-scoped sessions (`api/panel_convo.py`): `GET
 /endpoint/convo/{agent}/recent`, `POST …/select {session_id}` (a chat that is not the owner's root
-chat with that agent, from the panel or the PWA, is 404) and `GET …/messages?limit=N` (the last N
+chat with that agent, from the panel or the PWA, is 404, and so is an archived or empty one). A
+chat opened with domain or subject scopes (health, finance, location) is never listed or
+selectable: its turns would read behind the firewall and the panel speaks answers aloud at the
+desk, so the panel only ever runs in unscoped chats and `GET …/messages?limit=N` (the last N
 exchanges through `panel_agent.condensed`, the newest answer up to 1,000 bytes and the rest 255;
 `limit=0` is the title alone). New conversation has no route: it is the talk's existing
 `new_thread=true`, so nothing is created on the box until something is said. Where a chat began

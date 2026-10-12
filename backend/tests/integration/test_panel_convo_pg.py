@@ -63,10 +63,11 @@ async def _chat(
     turns: tuple[tuple[str, str], ...] = (("user", "hi"), ("assistant", "Hello.")),
     minutes_ago: int = 0,
     parent: str | None = None,
+    scopes: tuple[str, ...] = (),
 ) -> str:
     made = await AgentSessionRepo(maker).create(
         ctx,
-        domain_scopes=[],
+        domain_scopes=list(scopes),
         title=title,
         agent=agent,
         origin=origin,
@@ -198,6 +199,8 @@ def test_recent_is_the_owner_s_panel_and_pwa_chats_with_that_agent(box: Box) -> 
     box.sql(
         "UPDATE app.agent_sessions SET status = 'archived' WHERE id = CAST(:i AS uuid)", i=archived
     )
+    # Nor a chat behind a domain firewall: the panel speaks its answers aloud at the desk.
+    _run(_chat(m, owner, title="Bloodwork", scopes=("health",), minutes_ago=1))
     _run(_chat(m, _run(_stranger(m)), title="Not his", minutes_ago=1))
     _run(_point(m, subject, "jerv", panel))
 
@@ -285,6 +288,9 @@ def test_select_refuses_what_the_list_would_not_show(box: Box) -> None:
         "a child": _run(_chat(m, owner, title="child", parent=root)),
         "the game door's": _run(_chat(m, owner, title="In game: Steve", origin=None)),
         "another principal's": _run(_chat(m, _run(_stranger(m)), title="Not his")),
+        "a health-scoped one": _run(_chat(m, owner, title="Bloodwork", scopes=("health",))),
+        "a finance-scoped one": _run(_chat(m, owner, title="Taxes", scopes=("finance",))),
+        "an empty one": _run(_chat(m, owner, title="Blank", turns=())),
         "a missing one": str(uuid.uuid4()),
         "not a uuid": "'; DROP TABLE app.agent_sessions; --",
     }

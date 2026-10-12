@@ -175,6 +175,8 @@ async def recent(agent: PanelAgent, principal: PanelDep, request: Request) -> Re
                     ) t ON true
                     WHERE s.principal_id = CAST(:pid AS uuid) AND s.agent = :agent
                       AND s.parent_session_id IS NULL AND s.origin IN ('panel', 'pwa')
+                      AND COALESCE(cardinality(s.domain_scopes), 0) = 0
+                      AND COALESCE(cardinality(s.subject_ids), 0) = 0
                       AND (s.status <> 'archived' OR s.id = CAST(:cur AS uuid))
                     ORDER BY COALESCE(s.id = CAST(:cur AS uuid), false) DESC,
                              s.last_active_at DESC, s.id
@@ -203,7 +205,9 @@ async def _owned(
     maker: async_sessionmaker[AsyncSession], owner: SessionContext, agent_id: str, sid: str
 ) -> Any:
     """The owner's root chat `sid` with this agent, from the panel or the PWA — or None, for an
-    id that is anything else (another agent's, a child, an in-game chat, not a uuid)."""
+    id the Recent list would not show (another agent's, a child, an in-game chat, archived,
+    empty, not a uuid). A chat opened with domain or subject scopes is never the panel's: its
+    turns read health, finance or location data and the panel speaks its answers aloud."""
     try:
         uuid.UUID(sid)
     except ValueError:
@@ -213,10 +217,13 @@ async def _owned(
             await s.execute(
                 text(
                     """
-                    SELECT id::text AS id, title, origin FROM app.agent_sessions
-                    WHERE id = CAST(:sid AS uuid) AND principal_id = CAST(:pid AS uuid)
-                      AND agent = :agent AND parent_session_id IS NULL
-                      AND origin IN ('panel', 'pwa')
+                    SELECT s.id::text AS id, s.title, s.origin FROM app.agent_sessions s
+                    WHERE s.id = CAST(:sid AS uuid) AND s.principal_id = CAST(:pid AS uuid)
+                      AND s.agent = :agent AND s.parent_session_id IS NULL
+                      AND s.origin IN ('panel', 'pwa') AND s.status <> 'archived'
+                      AND COALESCE(cardinality(s.domain_scopes), 0) = 0
+                      AND COALESCE(cardinality(s.subject_ids), 0) = 0
+                      AND EXISTS (SELECT 1 FROM app.agent_turns t WHERE t.session_id = s.id)
                     """
                 ),
                 {"sid": sid, "pid": owner.principal_id, "agent": agent_id},
