@@ -70,6 +70,8 @@ const mockReset = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mcShares: (MinecraftMapShare & { token: string })[] = [];
 
 const mcKeep: Record<string, { pack: boolean; keep: boolean }> = {};
+// Power Pack teleport per slot (§M10), remembered the same way; absent reads on.
+const mcTransport: Record<string, boolean> = {};
 
 const CONTAINERS: ContainerStatus[] = [
   {
@@ -3989,6 +3991,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
       }
       return null;
     };
+    // Power Pack teleport: `?mctp=` (comma-separated): `off` starts Castle Hill off; `hold`,
+    // `busy` and `drop` treat its writes as `?mckeep=` treats keep's.
+    const tpKnobs = (new URLSearchParams(globalThis.location?.search ?? "").get("mctp") ?? "")
+      .split(",")
+      .filter(Boolean);
+    const transportOf = (slot: string) =>
+      mcTransport[slot] ?? !(slot === "slot2" && tpKnobs.includes("off"));
     if (path === "/api/minecraft" && scenario.status.server) {
       // `?mcw=pending`: restart-bound settings saved since the last start.
       const pending =
@@ -4008,6 +4017,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
             ? {
                 ...s,
                 power_pack_keep: keepOf(s.id).pack,
+                power_pack_transport: transportOf(s.id),
                 rules: { keepInventory: keepOf(s.id).keep },
               }
             : s,
@@ -4088,6 +4098,19 @@ export const mockFetch: typeof fetch = async (input, init) => {
         ...s,
         power_pack_keep: k.pack,
         rules: { keepInventory: k.keep },
+        applies: s?.active && running ? "now" : "next load",
+      });
+    }
+    const transport = path.match(/^\/api\/minecraft\/worlds\/(slot\d+)\/power-pack-transport$/);
+    if (transport?.[1] && method === "PUT") {
+      if (tpKnobs.includes("hold")) await new Promise(() => {});
+      if (tpKnobs.includes("drop")) return json({ detail: "upstream unavailable" }, 503);
+      if (tpKnobs.includes("busy")) return json({ detail: "busy: restoring a backup" }, 409);
+      mcTransport[transport[1]] = !!JSON.parse(String(init?.body ?? "{}")).on;
+      const s = slotOf(transport[1]);
+      return json({
+        ...s,
+        power_pack_transport: mcTransport[transport[1]],
         applies: s?.active && running ? "now" : "next load",
       });
     }

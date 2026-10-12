@@ -3464,8 +3464,8 @@ Sheet → Dialog.
   back-layer stack like a Sheet (so the platform Back gesture and a down-swipe climb one
   level, not out of Minecraft), and leaves the page beneath it inert. A pushed page takes
   focus at its back button; popping it returns focus to the row that opened it.
-- **Live means loaded and running**, and every surface says which. Difficulty applies live on
-  the loaded, running world; game mode (the default for new players — anyone who has played
+- **Live means loaded and running**, and every surface says which. Difficulty and Power Pack
+  teleport apply live on the loaded, running world; game mode (the default for new players — anyone who has played
   keeps theirs) and cheats apply at the next restart; on the loaded world with the server
   stopped a change waits for the start; on any other world it waits for its next load. The
   rules page's sticky note follows the API's `live`, and its amber **pending** tags follow the
@@ -3583,6 +3583,50 @@ its row line answers "will this one have it?" from the list. The rivals are kept
   That Save applies at the next restart, while this switch saves at once. It is optimistic, as
   the auto-update switch is, and flips back if it's refused. Turning it off while a world is
   armed says so in the toast: *Skyblock run still gets its crash site — set when made.*
+
+### Power Pack teleport (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-transport-switch/b-settings-switch.html`)
+
+The world's switch for Dave's Power Pack teleport (plan §M10, transport on request; the
+slot's `power_pack_transport`, on by default). The owner chose **B, a switch in Settings**
+(2026-10-12), over A (a row under keep inventory in the rules editor) and C (a Power Pack
+card). It is what the field is, a per-world slot setting and not a game rule, so it sits with
+the other per-world settings in the shape Cheats and Crash site already use, and the rules
+editor keeps meaning *game rules*. The rivals and the independent review are in
+`docs/mocks/minecraft-transport-switch/`.
+
+- **The row** sits under **Cheats** in *Settings — this world only*: the bold label
+  **Power Pack teleport** (*Power&nbsp;Pack* never breaks), the amber *pending* tag while a
+  change waits, the line *on — players can ask Dave to take them to their own saved places;
+  each trip burns a Power Pack.* or *off — Dave won't teleport anyone in this world. Saved
+  places still work with the Tricorder.*, and the shipped switch. The card's status line on
+  the loaded, running world becomes *difficulty and Power Pack teleport change live; game
+  mode and cheats apply at the next restart*, which is true: the pack is told at once.
+- **A help box under a switch row — only when a flip can apply live.** Cheats and Crash site
+  have none. This row does, because a flip can reach the running game at once, so the mode is
+  explained before anyone flips it: *Power Pack teleport: a player asks Dave for one of their
+  own saved places, then says Yes on a form. One Power Pack burns only if they arrive, and
+  they need their own Tricorder. Wormhole gates aren't affected by this switch.* It is the
+  keep-inventory row's help box (`--surface-2`, micro type, the lead words in `--text`). A
+  later switch row doesn't copy it by default: it earns one only by applying live with a
+  meaning the label can't carry.
+- **Applying, refused, saved.** One write at a time. While it runs the switch's knob is the
+  amber in-progress spinner and the line reads *Turning Power Pack teleport off…*. After a
+  failure the slot is re-read and the rose line, between the switch and the help, is worded
+  from what it now reports (keep inventory's rule): *Couldn't turn Power Pack teleport off —
+  the server is restoring a backup. Nothing changed; it's still on.* only for a 400/409 the
+  re-read confirms; a 503 or a dropped connection never says *nothing changed*. The toast
+  follows the route's `applies`: *Applied live — teleport off*, *Saved — teleport off when
+  the server starts*, *Saved — teleport off from {world}'s next load*. *pending* (on another
+  world until it loads, on the stopped loaded world until the server starts) is remembered by
+  the device that made the change, as a setting's is.
+- **New world** has the same switch row under **Crash site at spawn**, on by default, with
+  the line (*their own* saved places) and no help box, as nothing applies live there; under it
+  the one-line *Wormhole gates aren't affected by this switch.* The choice rides the create
+  request.
+- **Glances say it only when it's off**, so a normal world's lines don't grow: the Worlds
+  list row adds *· teleport off* (in `--text`) to its first line.
+- **Not a game rule.** It is never in the rules editor, its changed counts, a group reset or
+  **Reset all**.
 
 ### The Minecraft map (settled in a three-way GUI review — binding mock: `docs/mocks/minecraft-map/a-full-bleed.html`)
 

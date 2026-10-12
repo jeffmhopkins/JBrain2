@@ -2,9 +2,14 @@
 
 > **Status:** Living · **Last verified:** 2026-10-12
 >
-> **Open — awaiting the owner's pick.** The independent review is `REVIEW.md` in this
-> folder: it picks **B** and fails C as first rendered. Revision 2 (below) answers its
-> findings. Behaviour source:
+> **Decision (binding, owner 2026-10-12): B — a switch in Settings**, as Revision 2 renders
+> it (`b-settings-switch.html`, `png/b-*`): the applying line *Turning Power Pack teleport
+> off…*, *their own* saved places on the New world row with *Wormhole gates aren't affected
+> by this switch.* under it, the Worlds-list glance, and the help box recorded in DESIGN.md
+> ("Power Pack teleport"). The off line keeps *Saved places still work with the Tricorder*,
+> and the switch is offered at creation. Built as `TransportRow` in
+> `frontend/src/screens/MinecraftWorlds.tsx`. The independent review is `REVIEW.md` in this
+> folder. Behaviour source:
 > `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M10, "Teleport to a known place, one Power Pack per
 > trip" and its "Shipped (wave mc-transport, 2026-10-11)" note, which ends *Next: the PWA
 > toggle, through its own GUI gate.*
@@ -32,13 +37,13 @@ controls** strip is reviewer chrome. Every state opens by hash, for example
   once to the loaded, running world.
 - **The routes.** The owner's route is `PUT /api/minecraft/worlds/{slot}/power-pack-transport
   {"on": bool}` and the debug route is `PUT /api/debug/minecraft/worlds/{slot}/...`. Both
-  answer `applies: "now" | "next load"`. **There is no PWA control.** Today the debug API is
-  the owner's only way to turn it off.
+  answer `applies: "now" | "next load"`. When this gate ran there was no PWA control; pick B
+  is now that control.
 - **What off does.** With the switch off, `transport.js` refuses every trip Dave offers.
   Dave's guide entry `power_pack_transport` is shown only where the switch is on. **It does
   not touch wormhole gates** (`wormhole.js` never reads it) and changes no game rule.
-- **Create.** The New world route doesn't take the field yet. A New world switch needs
-  `power_pack_transport` added to the create body; the field already defaults to true.
+- **Create.** When this gate ran the New world route didn't take the field. It does now:
+  `power_pack_transport` in the create body, on when left out.
 
 ## Shared words and behaviour (identical in all three)
 

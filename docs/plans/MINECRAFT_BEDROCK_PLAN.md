@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10◻️ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1510,8 +1510,8 @@ keep-inventory charm, so players choose how to spend them.
 - **The switch.** "Power Pack teleport" is the slot's `power_pack_transport`, on by
   default. It travels in the same `jb:config` line as `power_pack_keep`, and an older
   record reads as on. It's set by `PUT /api/minecraft/worlds/{slot}/power-pack-transport`
-  (owner) or `PUT /api/debug/minecraft/worlds/{slot}/power-pack-transport`. **Next: the
-  PWA toggle, through its own GUI gate.**
+  (owner) or `PUT /api/debug/minecraft/worlds/{slot}/power-pack-transport`. The PWA
+  toggle shipped later, below.
 - **Dave's words.** The guide has a `power_pack_transport` entry (guide v3), shown only
   where the switch is on. It reveals that saved places are transport beacons, the
   first-Power-Pack beat's canon. The persona (`agent-minecraft-dave-v12`) says "transport
@@ -1521,11 +1521,15 @@ keep-inventory charm, so players choose how to spend them.
 **Signed off (owner, 2026-10-12):** the form's Yes/No line and Dave's transport replies.
 **Built (2026-10-12):** the Power Pack's item lore (above).
 
-**Remaining:** only the PWA toggle for "Power Pack teleport" (the switch is built and set
-through the API); it is being designed separately, through its own GUI gate. Then the
-box checks below.
+**Shipped (wave mc-teleport-switch, 2026-10-12): the PWA toggle.** Through the GUI gate
+(`docs/mocks/minecraft-transport-switch/`, owner pick **B**) "Power Pack teleport" is a
+switch row under Cheats in the world page's Settings, built as Cheats is, with a fixed help
+box under it; the New world form has the same switch (on by default), so the create body
+takes `power_pack_transport` (left out, it's on). It isn't a game rule: the rules editor's
+counts and resets never touch it. The Worlds list says *teleport off* only for a world that
+has it off. DESIGN.md "Power Pack teleport" has the rest.
 
-**Box checks:**
+**Box checks (after deploy):**
 - The form shows over the game on the Xbox and Windows, and Yes is `selection` 0.
 - `tryTeleport` with `checkForBlocks` refuses a built-over spot.
 - The `tickingarea` preload reaches a far place, and leaves no ticking area behind.
