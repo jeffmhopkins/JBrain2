@@ -2007,12 +2007,16 @@ static void test_a_still_finger_is_a_long_press_once_and_a_scroll_never(void)
 
 /* ---- emoji ---- */
 
+/* emoji_logic.c, compiled with EMOJI_HOST_TEST for this suite only. */
+int emoji_ranges_ok(void);
+
 static void test_emoji_are_drawn_skipped_or_marked_and_text_is_left_alone(void)
 {
     bool sorted = EMOJI_SET_N > 0;
     for (uint16_t i = 1; i < EMOJI_SET_N; i++)
         if (EMOJI_SET[i] <= EMOJI_SET[i - 1]) sorted = false;
     CHECK(sorted, "the set is strictly ascending, so the search finds every entry");
+    CHECK(emoji_ranges_ok(), "the invisible and pictographic ranges are ascending and apart");
     bool found = true;
     for (uint16_t i = 0; i < EMOJI_SET_N; i++) {
         uint16_t at = 0xFFFF;
