@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -243,6 +243,14 @@ body slides downhill, the head turns back toward true up by 0.6 of the panel's a
 (`orient_upright`, `face_state_t.upright`): the ostrich's head swings about its neck and its
 crest, eyes and beak turn about the head's centre; the robot, with no neck, nods its head over a
 little. The browser bench has a tilt slider for it.
+
+**0.4.8: the righted head's eyes and beak turn with it.** 0.4.6 turned where each feature sat
+but drew every one square to the glass, so on a panel held on its side the happy lower lid sat
+beside each eye instead of under it and the beak's four segments stacked into level bars (owner,
+with a photo). Each eye is now drawn turned through `upright` — outline, pupil, glint and both
+lids — and the beak, its line and the cheeks turn about the head's centre with the jaw opening
+along the head's own down. Upright the drawing is unchanged, pixel for pixel; the host test
+turns the upright face and requires the turned one to match it.
 
 ## One task owns the codec, one owns the panel
 

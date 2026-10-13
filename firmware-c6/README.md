@@ -1554,7 +1554,7 @@ the case, and the 8 KB ring is the next lever.
 note **`low=<bytes>@<what>`**: when the internal heap reaches a new low, the first task to see it —
 the main task at each change of work, the UI task every pass — records what the main task was
 doing (`pickup`, `report`, `manifest`, `ota`, `talk`, `message`, `play`, `post`, `convo`,
-`siblings`, `alarms`, `idle`), `+handshake` inside a new connection's TLS handshake, and `+ring`
+`siblings`, `alarms`, `idle`; since 0.0.20 `answer` and `screenshot` for a debug command's reply), `+handshake` inside a new connection's TLS handshake, and `+ring`
 while a talk's or a play's ring is held. A reading of `low=…@play+ring` at or above ~52 KB is this
 image working.
 
@@ -1969,6 +1969,43 @@ scripts/debug-connect.sh panel-cmd c6 snapshot                 # notice, audio, 
    with the rest of its window; past its window it does not (`stale: 1`).
 8. **An outage.** Answer a question with Wi-Fi off (Settings → Disconnect), then Connect: the
    answer still reaches the box.
+
+## What 0.0.20 adds: a debug screenshot's low named as its own
+
+After 0.0.19 booted, `system.int_min` read 57.9 KB at `post`; after a test notice and a
+`panel-shot` it read **50,972 B at `pickup`**, under 0.0.18's 56-60 KB. Measured on the board on
+2026-10-13, from a reboot (`panel-cmd c6 reboot --confirm`, the one way to reset the mark), one
+step at a time:
+
+| Step | `int_min` | `int_min_at` | `int_free` |
+| --- | --- | --- | --- |
+| Booted, 56 s | 60,980 | `post` | 69,544 |
+| Two minutes of idle pickups | 57,656 | `pickup` | 69,564 |
+| One `panel-shot` | **51,448** | `pickup` | 69,564 |
+| One plain test notice, on the glass | 51,448 | `pickup` | 69,564 (`fetch.heap_low` 62,584) |
+| The same, hidden (`expired`) | 51,448 | `pickup` | 69,552 |
+
+So the low was the **screenshot**, ~6.2 KB under the idle pickups' — not the pickup, not
+`X-Notice`, not the overlay (its widgets live in LVGL's own pool) and not littlefs (`mount_heap`
+1,048 B, there from boot). The screenshot is answered inside `dbg_link_poll`, which the main loop
+names `pickup`, so the capture's cost read as the pickup's: its stream opens a fresh session and
+then holds the 8 KB chunk pair while the radio's send queue fills, with Wi-Fi power save off.
+That path is unchanged since 0.0.9; 0.0.19's own permanent cost is ~1.6 KB (the mount and
+552 B of statics), so on 0.0.18 a screenshot would have read ~53 KB too.
+
+It is debug-only: nothing in normal use takes a screenshot, and 51 KB is above the ~45 KB the
+memory notes treat as the line. Shrinking it would mean smaller chunks against the capture's 2 s
+ceiling, so this image changes only the name: **a debug command's reply is its own phase** —
+`screenshot` for the capture's stream, `answer` for every other command's (a snapshot's 6 KB
+POST) — and `pickup` names the GET alone (`dbg_answer_phase`, host-tested). A low at
+`@screenshot` says a debug session took one; a low at `@pickup` or anything else is the panel's
+own. App: 2,054,352 → 2,054,464 B; only the app image and its sum move in `dist/`.
+
+### What to check on the glass
+
+1. After the update, idle pickups and a snapshot or two: `int_min_at` reads `pickup`, `answer` or
+   `post`, at about 0.0.19's 57-61 KB.
+2. One `panel-shot`: `int_min` ≈ 51 KB at **`screenshot`**.
 
 ## How it talks to the box
 

@@ -1373,6 +1373,21 @@ static void test_a_request_id_is_uuid_text_or_it_is_dropped(void)
     CHECK(!dbg_req_id_ok("0b6c2a7e-41d3-4f0a-9a51-3d2e8c1f7b90-0000"), "nor one longer than the request holds");
 }
 
+static void test_a_commands_answer_is_its_own_phase_for_the_heap_low(void)
+{
+    /* 0.0.19's 50,972 B "@pickup" was a screenshot's stream: the pickup's name hid it. */
+    CHECK(!strcmp(dbg_answer_phase("screenshot"), "screenshot"), "a screenshot is named for itself");
+    CHECK(!strcmp(dbg_answer_phase("snapshot"), "answer"), "any other command is an answer");
+    CHECK(!strcmp(dbg_answer_phase(""), "answer"), "so is a request that did not parse");
+    CHECK(dbg_answer_phase("screenshot") == dbg_answer_phase("screenshot"),
+          "a literal, so the pointer alone may cross tasks");
+    dbg_low_t low = {0};
+    dbg_low_feed(&low, 57656, "pickup", false, false);
+    CHECK(dbg_low_feed(&low, 51448, dbg_answer_phase("screenshot"), false, false) &&
+              !strcmp(low.at, "screenshot"),
+          "the low a screenshot sets reads @screenshot, not @pickup");
+}
+
 static void test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short(void)
 {
     static const char token[] = "dk_live_9f8e7d6c5b4a39281706f5e4";
@@ -6143,6 +6158,7 @@ int main(void)
     test_the_pickup_waits_three_seconds_backs_off_and_never_jumps_the_manifest();
     test_the_relay_reports_itself_in_one_token();
     test_a_request_id_is_uuid_text_or_it_is_dropped();
+    test_a_commands_answer_is_its_own_phase_for_the_heap_low();
     test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short();
     test_the_stream_is_byte_for_byte_what_the_box_decodes();
     test_the_ring_never_overwrites_and_wraps();
