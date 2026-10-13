@@ -122,14 +122,14 @@
       "y": 4423,
       "w": 720,
       "h": 720,
-      "title": "15 \u00b7 Push message from the box (tap to hide)"
+      "title": "15 \u00b7 Push message \u2014 hides itself after 20 s by default, or on a tap"
     },
     "NotifyQuestion.dc.html": {
       "x": 1600,
       "y": 4423,
       "w": 720,
       "h": 720,
-      "title": "16 \u00b7 Push question \u2014 answer goes back (1 of 2)"
+      "title": "16 \u00b7 Push question \u2014 answer goes back; a tap elsewhere or BOOT hides it (1 of 2)"
     },
     "ClockBadge.dc.html": {
       "x": 2400,
@@ -143,7 +143,7 @@
       "y": 5263,
       "w": 720,
       "h": 720,
-      "title": "18 \u00b7 Push picture \u2014 the sender's own image, whole glass (hides itself)"
+      "title": "18 \u00b7 Push picture \u2014 the sender\u2019s own image, whole glass (sender picked 8 s)"
     },
     "NotifyBanner.dc.html": {
       "x": 800,
@@ -159,51 +159,65 @@
       "h": 720,
       "title": "20 \u00b7 Push with a sound \u2014 playing, tap or wait to hide"
     },
-    "ConvoMenu.dc.html": {
+    "NotifyQuestionSound.dc.html": {
+      "x": 2400,
+      "y": 5263,
+      "w": 720,
+      "h": 720,
+      "title": "28 \u00b7 Push question with a sound \u2014 played once, tap the speaker row to replay"
+    },
+    "NotifyNight.dc.html": {
       "x": 0,
       "y": 6103,
+      "w": 720,
+      "h": 720,
+      "title": "29 \u00b7 Picture at night \u2014 words on the night palette, Show picture (brightness is the firmware\u2019s call)"
+    },
+    "ConvoMenu.dc.html": {
+      "x": 0,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "21 \u00b7 Long press in Jerv\u2019s thread \u2014 New conversation / Recent (proposal)"
     },
     "ConvoLoading.dc.html": {
       "x": 800,
-      "y": 6103,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "22 \u00b7 Recent conversations \u2014 loading from the box"
     },
     "ConvoRecent.dc.html": {
       "x": 1600,
-      "y": 6103,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "23 \u00b7 Recent conversations \u2014 tap one to switch"
     },
     "ConvoSwitched.dc.html": {
       "x": 2400,
-      "y": 6103,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "24 \u00b7 Switched \u2014 an older conversation, its title under Jerv"
     },
     "ConvoNew.dc.html": {
       "x": 0,
-      "y": 6943,
+      "y": 7783,
       "w": 720,
       "h": 720,
       "title": "25 \u00b7 After New conversation \u2014 a blank thread"
     },
     "ConvoEmpty.dc.html": {
       "x": 800,
-      "y": 6943,
+      "y": 7783,
       "w": 720,
       "h": 720,
       "title": "26 \u00b7 Recent conversations \u2014 nothing earlier yet"
     },
     "DaveRecent.dc.html": {
       "x": 1600,
-      "y": 6943,
+      "y": 7783,
       "w": 720,
       "h": 720,
       "title": "27 \u00b7 Dave\u2019s own recent conversations (per agent)"
@@ -231,6 +245,8 @@
     "NotifyPicture.dc.html",
     "NotifyBanner.dc.html",
     "NotifyAudio.dc.html",
+    "NotifyQuestionSound.dc.html",
+    "NotifyNight.dc.html",
     "ConvoMenu.dc.html",
     "ConvoLoading.dc.html",
     "ConvoRecent.dc.html",
