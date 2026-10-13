@@ -28,6 +28,13 @@ void svc_audio_service(void);
  * talk is under way. False with `why` otherwise. UI task. */
 bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why);
 
+/* A push notice's sound (0.0.19), from its file: `key` is what svc_notice_pcm_stream takes back
+ * on the main task. Refused (false) while an alarm rings, the speaker is not up, or anything else
+ * holds the codec or the radio — it plays once, as the notice appears, or not at all. UI task. */
+bool svc_audio_notice_play(const char *key);
+/* The notice hid: its sound stops, if it is the one playing. UI task. */
+void svc_audio_notice_stop(void);
+
 /* Whether a talk's or a play's ring holds its 16 KB of internal RAM now: what the heap's
  * low-water mark is attributed to (telemetry's `int_min_at`). Any task. */
 bool talk_ring_held(void);

@@ -514,7 +514,7 @@ static void build_notice(const notice_t *n, uint8_t count)
     uint32_t accent = n->urgent ? UI_C_WARN : UI_C_STEEL;
     lv_obj_t *head = ui_box(s_notice, LV_FLEX_FLOW_ROW, 10);
     lv_obj_set_width(head, LV_PCT(100));
-    char from[40];
+    char from[56];
     snprintf(from, sizeof from, LV_SYMBOL_BELL "  %s%s", n->source, n->urgent ? " · urgent" : "");
     lv_obj_t *src = ui_label(head, from, 18, accent);
     lv_obj_set_flex_grow(src, 1);
@@ -560,6 +560,8 @@ static void sync_overlays(void)
     if (sh_top_overlay(&s_st, &f) == SH_OV_NOTICE && svc_notice_head(&n)) {
         if (n.id != s_notice_id || f.notices != s_notice_n) {
             build_notice(&n, f.notices);
+            /* On the glass now: its hide clock and its sound start, and the box hears `shown`. */
+            svc_notice_on_glass(n.id);
             if (s_indev && lv_indev_get_state(s_indev) == LV_INDEV_STATE_PRESSED) {
                 lv_indev_reset(s_indev, NULL);
                 lv_indev_wait_release(s_indev);

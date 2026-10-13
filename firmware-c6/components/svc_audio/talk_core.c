@@ -54,7 +54,7 @@ _Static_assert(TK_RING_PLAY >= TK_SPK_START_BYTES + TK_NET_SLICE,
 
 uint32_t tk_ring_bytes(tk_kind_t kind)
 {
-    return kind == TK_KIND_LISTEN ? TK_RING_PLAY : TK_RING_TALK;
+    return kind == TK_KIND_LISTEN || kind == TK_KIND_NOTICE ? TK_RING_PLAY : TK_RING_TALK;
 }
 
 uint32_t tk_ring_read(tk_ring_t *r, void *dst, uint32_t n)
@@ -160,6 +160,11 @@ tk_begin_t tk_listen(tk_t *t, uint32_t msg_id)
     return TK_BEGIN_OK;
 }
 
+void tk_set_notice(tk_t *t)
+{
+    t->kind = TK_KIND_NOTICE;
+}
+
 void tk_set_agent(tk_t *t, tk_agent_t agent, bool fresh)
 {
     t->agent = (uint8_t)(agent < TK_AGENT__COUNT ? agent : TK_AGENT_JERV);
@@ -209,7 +214,7 @@ bool tk_quiet(const tk_t *t)
 
 bool tk_net_claim(tk_t *t)
 {
-    const bool listen = t->kind == TK_KIND_LISTEN && t->phase == TK_SEND;
+    const bool listen = (t->kind == TK_KIND_LISTEN || t->kind == TK_KIND_NOTICE) && t->phase == TK_SEND;
     if ((t->phase != TK_REC && !listen) || t->net_busy || t->abort) return false;
     t->net_busy = true;
     t->net_done = false;

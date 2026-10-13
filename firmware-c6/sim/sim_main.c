@@ -32,6 +32,7 @@
 #include "svc_orient_drv.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
+#include "svc_notice_drv.h"
 #include "svc_notice_fake.h"
 #include "svc_post_drv.h"
 #include "svc_power_fake.h"
@@ -329,6 +330,7 @@ static void step(uint32_t ms)
         svc_convo_service();
         fake_post_box();
         svc_post_service();
+        svc_notice_service();
         if (svc_post_take_chime(svc_audio_talking() || svc_audio_replying() || svc_audio_playing() ||
                                 svc_audio_ringing()))
             svc_audio_chime();

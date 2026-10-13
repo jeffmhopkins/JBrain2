@@ -78,7 +78,9 @@ void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t ca
  * and uploaded like a talk, answered with the box's id and transcript, no speech); or one of her
  * messages played (LISTEN: no recording — it starts at TK_SEND, asks the box for the audio and
  * plays it through the same ring, the same speaker start and the same stop as a reply). */
-typedef enum { TK_KIND_AGENT, TK_KIND_POST, TK_KIND_LISTEN } tk_kind_t;
+/* NOTICE (0.0.19): a push notice's sound, played once as it is shown — a LISTEN whose bytes come
+ * from the notice's file on `storage` instead of the box, through the same ring and speaker start. */
+typedef enum { TK_KIND_AGENT, TK_KIND_POST, TK_KIND_LISTEN, TK_KIND_NOTICE } tk_kind_t;
 
 typedef struct {
     tk_phase_t phase;
@@ -114,6 +116,8 @@ void tk_set_post(tk_t *t);
 /* A message played: straight to TK_SEND with no hold, its speech wanted. BUSY while anything else
  * holds the radio or the codec, a reply's voice included (KEY or BOOT stops that first). */
 tk_begin_t tk_listen(tk_t *t, uint32_t msg_id);
+/* Right after a TK_BEGIN_OK from tk_listen, under the same lock: it is a notice's sound. */
+void tk_set_notice(tk_t *t);
 /* The hold's end. A send that the box was already failed for is TALK_FAILED (the result says
  * why); anything short of a message lets go of everything. */
 talk_outcome_t tk_end(tk_t *t, uint32_t now_ms, bool send);

@@ -1,6 +1,7 @@
 # The panel's pure-C half, built and run on the host: every decision the shell makes, every
-# app model, the notice policy, and the debug surface (redaction, commands, log ring, the
-# screenshot codec). None of it may include LVGL or ESP-IDF — this link is what checks that.
+# app model, the notice policy and the JN1 reader (against the box's own fixtures), and the
+# debug surface (redaction, commands, log ring, the screenshot codec). None of it may include
+# LVGL or ESP-IDF — this link is what checks that.
 CC ?= cc
 # gnu11, not c11: ESP-IDF builds this code as gnu17, and a stricter host dialect would test a
 # language the device never compiles (firmware/host/Makefile has the same rule and the reason).
@@ -18,7 +19,9 @@ SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/svc_alarms/alarm_logic.c $(C)/svc_alarms/svc_alarms.c $(C)/svc_alarms/alarm_port_fake.c \
       $(C)/svc_convo/convo_wire.c $(C)/svc_convo/svc_convo.c $(C)/svc_convo/convo_port_fake.c \
       $(C)/svc_post/post_logic.c $(C)/svc_post/svc_post.c $(C)/svc_post/post_port_fake.c \
-      $(C)/svc_notice/notice_policy.c $(C)/svc_notice/svc_notice_fake.c \
+      $(C)/svc_notice/notice_policy.c $(C)/svc_notice/svc_notice.c $(C)/svc_notice/jn1.c \
+      $(C)/svc_notice/notice_logic.c $(C)/svc_notice/notice_store.c \
+      $(C)/svc_notice/notice_port_fake.c \
       $(C)/svc_audio/talk_policy.c $(C)/svc_audio/talk_core.c \
       $(C)/svc_audio/svc_audio_talk.c $(C)/svc_audio/svc_audio_fake.c $(C)/svc_audio/alarm_sound.c \
       $(C)/svc_settings/svc_settings_fake.c \
@@ -38,8 +41,9 @@ HDR = $(wildcard $(C)/*/include/*.h $(C)/*/*.h)
 test: run_tests
 	./run_tests
 
-run_tests: tests.c $(SRC) $(HDR)
-	$(CC) $(CFLAGS) -o $@ tests.c $(SRC) -lm
+# sha256.c is the suite's own: the box's notice fixtures name their pixels and sound by digest.
+run_tests: tests.c sha256.c sha256.h $(SRC) $(HDR)
+	$(CC) $(CFLAGS) -o $@ tests.c sha256.c $(SRC) -lm
 
 clean:
 	rm -f run_tests
