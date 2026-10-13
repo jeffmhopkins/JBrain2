@@ -1,14 +1,15 @@
-// The box's own behavior pack (docs/plans/MINECRAFT_BEDROCK_PLAN.md §T1, §M5, §M9, §M10,
-// §DW1): the deaths and respawns BDS never prints and the in-game door to Dave
-// (`/jb:dave …`), as one JSON line each on the console, which the wrapper turns into
-// events; and the crew's items, the Tricorder and the Power Pack, with the rules the
-// canon gives them. Stable @minecraft/server only. The rules themselves are in rules.js;
-// Dave's welcome and first-time beats are welcome.js.
+// The box's own behavior pack (docs/plans/MINECRAFT_BEDROCK_PLAN.md §T1, §M5, §M7, §M9,
+// §M10, §DW1): the deaths and respawns BDS never prints and the in-game door to Dave
+// (`/jb:dave …`, or its quick menu), as one JSON line each on the console, which the
+// wrapper turns into events; and the crew's items, the Tricorder and the Power Pack,
+// with the rules the canon gives them. Stable @minecraft/server and server-ui only. The
+// rules themselves are in rules.js; Dave's welcome and first-time beats are welcome.js.
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
-import { LINES, LORE, POWER_PACK, TRICORDER, carryLine, deathPlan, dropSpot, findLine, itemsLines,
-  packLoreStale, packToBurn, parseCarry, parseConfig, parseFind, parseItems, parseKnown, parseWaypoint,
-  slotFate, trackerLine, tricorderStatus, unlocksFrom, xpToDrop } from "./rules.js";
+import { ActionFormData, FormCancelationReason, ModalFormData } from "@minecraft/server-ui";
+import { LINES, LORE, POWER_PACK, TRICORDER, arrivalChime, carryLine, deathPlan, dropSpot, findLine,
+  itemsLines, packLoreStale, packToBurn, parseCarry, parseConfig, parseFind, parseItems, parseKnown,
+  parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom, waypointId, xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
@@ -380,6 +381,29 @@ world.afterEvents.playerSpawn.subscribe((ev) => {
   });
 });
 
+// --- the arrival chime (§M9) -------------------------------------------------------------
+
+// Quiet and short, to the arriving player only: the XP orb's pickup.
+const ARRIVAL_SOUND = "random.orb";
+const ARRIVAL_VOLUME = 0.6;
+// The waypoint each player last heard it for (waypointId), in memory: a restart can ring
+// once more for a waypoint they're already standing on, which is harmless.
+const heardChime = new Map();
+
+const ring = (player) => player.playSound(ARRIVAL_SOUND, { volume: ARRIVAL_VOLUME });
+
+// The track drain's arrival clear (§M21) reaches a player who carries their Tricorder
+// without holding it, whose arrow never read "You're here" to ring on its own.
+const chimeOnArrivalClear = (name, wp) => {
+  const who = name.toLowerCase();
+  const p = world.getAllPlayers().find((pl) => pl.name.toLowerCase() === who);
+  if (!p) return;
+  const heard = heardChime.get(p.id);
+  heardChime.delete(p.id);
+  if (!wp || heard === waypointId(wp) || scan.active(p.name) || tricorderOn(p) !== "own") return;
+  ring(p);
+};
+
 // --- scriptevents from the wrapper and from Dave's tools --------------------------------
 
 system.afterEvents.scriptEventReceive.subscribe((ev) => {
@@ -390,7 +414,15 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
       // sends no end_scan: reaching the old waypoint mustn't end a scan on its own.
       const ended = (!wp.clear || wp.endScan) && scan.end(wp.player) ? "; scan ended" : "";
       if (wp.clear) {
+        const was = waypointOf(wp.player);
         world.setDynamicProperty(waypointKey(wp.player), undefined);
+        if (!wp.endScan) {
+          try {
+            chimeOnArrivalClear(wp.player, was);
+          } catch {
+            // The chime is a nicety; the clear has happened.
+          }
+        }
         say(`waypoint cleared for ${wp.player}${ended}`);
       } else {
         world.setDynamicProperty(waypointKey(wp.player), JSON.stringify(wp.record));
@@ -507,15 +539,17 @@ system.runInterval(() => {
       if (held?.typeId !== TRICORDER) continue;
       const status = statusOf(held, player);
       if (status === "own") {
+        const scanning = scan.line(player);
+        const wp = waypointOf(player.name);
+        const here = { dim: player.dimension.id, x: player.location.x, z: player.location.z };
         player.onScreenDisplay.setActionBar(
-          scan.line(player) ??
-            trackerLine(
-              waypointOf(player.name),
-              { dim: player.dimension.id, x: player.location.x, z: player.location.z },
-              player.getViewDirection(),
-              world.getDefaultSpawnLocation(),
-            ),
+          scanning ?? trackerLine(wp, here, player.getViewDirection(), world.getDefaultSpawnLocation()),
         );
+        if (scanning === undefined) {
+          const chime = arrivalChime(wp, here, heardChime.get(player.id));
+          heardChime.set(player.id, chime.heard);
+          if (chime.ring) ring(player);
+        }
       } else if (status === "foreign") {
         player.onScreenDisplay.setActionBar(STATIC + LINES.notTuned);
       } else {
@@ -589,6 +623,83 @@ const askDave = (player, text) => {
   player.sendMessage("§7Dave is thinking…");
 };
 
+// --- the quick menu (§M7): /dave with nothing after it ----------------------------------
+
+const HINT = 'Ask Dave something, like: /dave point me home (use "quotes" for commas or numbers)';
+// Each button asks its words exactly as if typed after /dave, so the fast path (§M18) and
+// the model answer as they would; `name` and `ask` buttons ask for words first.
+const MENU = [
+  { label: "Where am I?", text: "Where am I?" },
+  { label: "Point me home", text: "Point me home" },
+  { label: "My last death", text: "My last death" },
+  { label: "Save this spot", name: true },
+  { label: "Ask something else…", ask: true },
+];
+const NAME_FIELD = ["Name this spot", "base"];
+const ASK_FIELD = ["Ask Dave", "where is the nearest village"];
+// A command typed in chat runs with the chat still open, where a form can't show
+// (UserBusy): asked again each second, as the transport offer is, then the hint in chat.
+const MENU_RETRY_TICKS = 20;
+const MENU_TRIES = 10;
+
+const hint = (player) => {
+  try {
+    player.sendMessage(HINT);
+  } catch {
+    // They left; there's no one to tell.
+  }
+};
+
+const showOrHint = (player, form, tries, then) => {
+  let shown;
+  try {
+    shown = form.show(player);
+  } catch {
+    hint(player);
+    return;
+  }
+  shown
+    .then((resp) => {
+      if (resp.canceled && resp.cancelationReason === FormCancelationReason.UserBusy) {
+        if (player.isValid === false) return;
+        if (tries > 1) {
+          system.runTimeout(() => showOrHint(player, form, tries - 1, then), MENU_RETRY_TICKS);
+        } else {
+          hint(player);
+        }
+        return;
+      }
+      if (!resp.canceled) then(resp);
+    })
+    .catch(() => hint(player));
+};
+
+const typedAsk = (player, [label, placeholder], toText) => {
+  const box = new ModalFormData().title("Dave").textField(label, placeholder);
+  showOrHint(player, box, MENU_TRIES, (resp) => {
+    const typed = String(resp.formValues?.[0] ?? "").trim();
+    if (typed) askDave(player, toText(typed));
+  });
+};
+
+const quickMenu = (player) => {
+  // No Tricorder, no Dave: the same static as a typed question gets, and no menu.
+  const tricorder = tricorderOn(player);
+  if (tricorder !== "own") {
+    player.sendMessage(STATIC + (tricorder === "none" ? LINES.noSignal : LINES.notTuned));
+    return;
+  }
+  const form = new ActionFormData().title("Dave");
+  for (const b of MENU) form.button(b.label);
+  showOrHint(player, form, MENU_TRIES, (resp) => {
+    const pick = MENU[resp.selection];
+    if (!pick) return;
+    if (pick.name) typedAsk(player, NAME_FIELD, (name) => `save this spot as ${name}`);
+    else if (pick.ask) typedAsk(player, ASK_FIELD, (text) => text);
+    else askDave(player, pick.text);
+  });
+};
+
 // Bedrock also answers each name without its namespace, so players type /dave, /d or /ai;
 // the short ones are the owner's ask (2026-10-12), and all share one handler.
 const DAVE_COMMANDS = ["jb:dave", "jb:d", "jb:ai"];
@@ -614,15 +725,9 @@ const registerDave = (registry, name) => {
         return { status: CustomCommandStatus.Failure, message: "Only a player can ask Dave." };
       }
       const text = words.filter((w) => typeof w === "string").join(" ").trim();
-      if (!text) {
-        return {
-          status: CustomCommandStatus.Success,
-          message: 'Ask Dave something, like: /dave point me home (use "quotes" for commas or numbers)',
-        };
-      }
-      // A command callback runs read-only; reading the inventory and the spawn point and
-      // messaging the player wait for the next tick.
-      system.run(() => askDave(player, text));
+      // A command callback runs read-only; reading the inventory and the spawn point,
+      // messaging the player and showing a form wait for the next tick.
+      system.run(() => (text ? askDave(player, text) : quickMenu(player)));
       return { status: CustomCommandStatus.Success };
     },
   );

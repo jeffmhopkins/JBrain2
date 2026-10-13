@@ -1,5 +1,5 @@
 // A stand-in for @minecraft/server-ui, enough for the jbrain pack's transport form (plan
-// §M10). The supervisor's test_minecraft_jbrain_pack.py installs it as
+// §M10), the Replicator's panel (§M15) and Dave's quick menu (§M7). The supervisor's test_minecraft_jbrain_pack.py installs it as
 // node_modules/@minecraft/server-ui. A test decides each answer with `forms.answer`.
 
 export const FormCancelationReason = { UserBusy: "UserBusy", UserClosed: "UserClosed" };
@@ -57,6 +57,26 @@ export class ActionFormData {
   }
   button(t) {
     this.form.buttons.push(t);
+    return this;
+  }
+  show(player) {
+    const shown = { player, ...this.form };
+    forms.shown.push(shown);
+    return Promise.resolve().then(() => forms.answer(player, shown));
+  }
+}
+
+// The quick menu's text boxes (§M7): a title and text fields, answered with formValues.
+export class ModalFormData {
+  constructor() {
+    this.form = { title: "", fields: [] };
+  }
+  title(t) {
+    this.form.title = t;
+    return this;
+  }
+  textField(label, placeholder) {
+    this.form.fields.push({ label, placeholder });
     return this;
   }
   show(player) {

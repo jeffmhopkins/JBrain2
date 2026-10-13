@@ -80,6 +80,9 @@ export const arrowFor = (from, view, tx, tz) => {
   };
 };
 
+// Within this many blocks across, the Tricorder reads "You're here".
+export const HERE_BLOCKS = 3;
+
 // The actionbar line for an owner holding their Tricorder. `here` is the holder ({dim
 // id, x, z}), `view` their view direction; with no waypoint it points at world spawn.
 export const trackerLine = (wp, here, view, spawn) => {
@@ -90,8 +93,28 @@ export const trackerLine = (wp, here, view, spawn) => {
   if (here.dim !== DIMS[wp.dim]) return `${wp.label} is in ${DIM_NAMES[wp.dim]}`;
   const { arrow, blocks } = arrowFor(here, view, wp.x, wp.z);
   const depth = wp.y === null || wp.y === undefined ? "" : ` · y ${wp.y}`;
-  const there = blocks < 3 ? "You're here" : `${blocks} blocks`;
+  const there = blocks < HERE_BLOCKS ? "You're here" : `${blocks} blocks`;
   return `${arrow} ${wp.label} · ${there}${depth}`;
+};
+
+// The arrival chime rings again for the same waypoint only after the holder has walked
+// this far back out, so pacing at the edge of "You're here" doesn't ring it each step.
+export const CHIME_REARM_BLOCKS = 8;
+
+// One waypoint, as the arrival chime remembers it: a new heading to the same spot under
+// another name is a new arrival.
+export const waypointId = (wp) => `${wp.dim} ${wp.x} ${wp.z} ${wp.label}`;
+
+// The arrival chime (§M9) for a holder this frame: `heard` is the waypoint they last
+// heard it for (waypointId, or undefined). Rings once on coming within HERE_BLOCKS, and
+// forgets it past CHIME_REARM_BLOCKS; another dimension leaves it as it was.
+export const arrivalChime = (wp, here, heard) => {
+  if (!wp || here.dim !== DIMS[wp.dim]) return { ring: false, heard };
+  const id = waypointId(wp);
+  const blocks = Math.hypot(wp.x - here.x, wp.z - here.z);
+  if (Math.round(blocks) < HERE_BLOCKS) return { ring: heard !== id, heard: id };
+  if (blocks >= CHIME_REARM_BLOCKS && heard === id) return { ring: false, heard: undefined };
+  return { ring: false, heard };
 };
 
 // A waypoint from `scriptevent jb:waypoint {json}` (Dave's mc_set_waypoint): a record to

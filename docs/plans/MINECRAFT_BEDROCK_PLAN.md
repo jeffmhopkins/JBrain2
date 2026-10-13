@@ -8,12 +8,12 @@ owner's call:
 - **R1:** the `mc.hopkinsbrain.com` name and IP updater (put off), a UPnP helper, an
   Internet-play switch with a Test button; a brother joining from his own house is unrecorded.
 - **M4:** an entity index (villagers and trades, pets, named mobs).
-- **M7:** the `/dave` quick menu, a companion NPC, scheduled backups, the other §3b tools.
+- **M7:** a companion NPC, scheduled backups, the other §3b tools.
 - **M8:** beds and saved places on the map, height / slice / changes layers, Dave's in-game
   "map of here" link.
-- **M9:** an arrival chime, and the Nether pointer aiming at a known portal (needs M4).
+- **M9:** the Nether pointer aiming at a known portal (needs M4).
 - **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
-  switch, a latency measurement, and `auto` log entries for deaths and crafting.
+  switch, a latency measurement, and `auto` log entries for crafting.
 - **P1 follow-up:** goals in the PWA, and (§M25) the scan target on the map: both in the mock
   gate.
 - **Box checks:** `docs/runbooks/MINECRAFT_HOME_TEST.md`.
@@ -777,6 +777,22 @@ measured reply latency against the 5 s target.
   `ActionFormData`). The form has buttons for *Where am I*, *Nearest…*, *Guide me home*,
   *My last death*, *Map of here* and *Save this spot*. It is vanilla-safe (§3c), and it is
   optional since everyone has a keyboard.
+  **Built (owner-approved 2026-10-13, pack 1.11.0):** `/dave`, `/d` or `/ai` with nothing
+  after it opens an `ActionFormData` titled "Dave" with *Where am I?*, *Point me home*, *My
+  last death*, *Save this spot* and *Ask something else…*. Each button asks its own words
+  through the same path as typing them after `/dave` (the Tricorder check, the unlocks, the
+  fast path §M18, then the model), so it adds no Dave lines. *Save this spot* asks for a
+  name in a `ModalFormData` box ("Name this spot") and sends "save this spot as <name>";
+  *Ask something else…* sends what's typed in an "Ask Dave" box; closing either does
+  nothing. Without their own Tricorder the player gets the usual static and no menu. A
+  command runs with the chat still open, where a form can't show (`UserBusy`), so the
+  menu is asked again each second, as the transport offer is, and after 10 s the old
+  "Ask Dave something…" hint goes to chat instead. The fast path answers *Where am I?*,
+  *Point me home* and a plain *save this spot as <name>* (a name of up to four plain words
+  without "my", "the" and the like); *My last death* goes to the model, as does a name the
+  fast path won't take. *Nearest…* and *Map of here* are left out: the first needs a
+  second menu of things, the second waits on M8's in-game link. Tested in
+  `jbrain-sim/pack.test.mjs`. Box check: home test row 22.
 - A visible **companion NPC**. A *custom* entity's model and texture ride in the `jbrain`
   resource pack that downloads automatically on join (allowed since 2026-10-10, §3c), at
   the cost of a bigger download. The lighter option is a **vanilla mob** (an allay or
@@ -1199,6 +1215,13 @@ compass that Dave sets.
 - The arrow is relative to where the player is **facing**: eight arrows, from the bearing
   to the target minus the player's view direction. Turning re-points it.
 - Within about 8 blocks: `You're here — Woodland mansion`, plus one vanilla chime.
+  **Built (2026-10-13, pack 1.11.0):** within the "You're here" 3 blocks, the holder alone
+  hears `random.orb` (the XP pickup, at volume 0.6) once per arrival: it rings again for
+  the same waypoint only after they've walked 8 blocks back out (`rules.js`
+  `arrivalChime`). A player carrying their Tricorder without holding it hears it when the
+  track drain's arrival clear (§M21) lands, unless the held arrow already rang for that
+  waypoint. Not during a live scan (§M25): a scan's find isn't an arrival, and Dave's own
+  clear (`end_scan`) never rings.
 - **Target in another dimension:** `Woodland mansion is in the Overworld — take a portal`.
   The Nether pointer can aim at the portal Dave knows from the M4 index.
 - **No target yet:** `Ask Dave where to go: /jb:dave …`.
@@ -1242,7 +1265,7 @@ owner key is the player's entity id, which BDS keeps per player per world. Waypo
 still go by gamertag, as Dave's tool sends them, and its replies are now `[jbrain]
 waypoint …` lines. The rules are pure functions in `jbrain-pack/scripts/rules.js`, tested
 under node (`deploy/minecraft/jbrain-sim/`, run by the supervisor's pytest). Still to
-come: Dave handing one over in the welcome (DW1), the arrival chime, and a target set
+come: Dave handing one over in the welcome (DW1), the arrival chime (both since built), and a target set
 by `guide_me`. **Box checks:** the lock in Bedrock's own UI on Windows and Xbox (the
 drop key, dragging it out, a chest, a death); that `player.id` is stable across
 sessions; the icon download on join; home test rows 5, 10–12.
@@ -1293,9 +1316,9 @@ server) could show Dave's target as a real waypoint marker on screen. It's only 
 switching to once custom waypoints reach the stable script API, which M0b checks. Until
 then the actionbar arrow is the vanilla path.
 
-**Remaining (checked against the code, 2026-10-12):** the item, ownership, the arrow,
+**Remaining (checked against the code, 2026-10-13):** the item, ownership, the arrow,
 waypoints and saved places are built, and DW1 hands it over in the welcome and re-beams
-it. Left: the arrival chime (the "You're here" text shows, with no sound), the Nether
+it. The arrival chime is built (2026-10-13, above). Left: the Nether
 pointer aiming at a known portal (waits on M4's index), and the box checks above. A
 separate `guide_me` is not needed: `mc_set_waypoint` is Dave's target.
 
@@ -3215,7 +3238,9 @@ doesn't lose it.
   - `owner`: written from the PWA agent;
   - `player`: typed in game, e.g. `/jb:dave log got 12 obsidian`;
   - `dave`: Dave's own summary entry, made only when the player asks;
-  - later `auto` (M5): add-on events such as "died in the Nether", "crafted beacon".
+  - `auto` (M5): add-on events: transport trips, and each death (2026-10-13), such as
+    "Died at 12, 64, -31 in the Overworld (fell from a high place)"; crafting is still to
+    come.
 - **Player memory** (`app.mc_player_memory`): short durable facts about one player. How
   it is written is below.
 
@@ -3375,11 +3400,20 @@ log and memory tools reach players in game at player tier, scoped to the asker's
 plus saved places (`mc_place_save`, `mc_places`, `mc_place_remove`; `mc_set_waypoint`'s
 `place`), prompt `agent-minecraft-dave-v7`.
 
-**P2 remaining (checked against the code, 2026-10-12):** goals, the progress log and
+**P2 remaining (checked against the code, 2026-10-13):** goals, the progress log and
 memory reach Dave in game (the door), scoped to the asker's xuid. Left: the index tools
-(they wait on M4), and `auto` log entries from add-on events beyond transport trips
-(the only `auto` writer today is `mc_transport`'s trip log; deaths and crafting write
-none).
+(they wait on M4), and `auto` log entries for crafting.
+
+**P2 auto deaths (built 2026-10-13):** the session drain, which already puts each death
+on the travel log's timeline, also writes an `auto` entry in that player's progress log
+(`app.mc_goal_log`, on no goal, at the death's time, keyed like the timeline by xuid):
+plain words, not Dave's, e.g. "Died at 10, 70, -4 in the Nether (burned in lava)" or
+"Died (killed by a zombie)", from the place and the cause and killer the pack reports
+(`sessions.death_entry`; anything that isn't a game id is dropped, and it fits the
+500-character cap). It is written only when the death is new to the timeline, so the
+drain re-reading events never repeats it, and through the drain's owner-scoped session
+under the table's existing RLS. Tests: `tests/unit/test_mc_death_journal.py` and
+`tests/integration/test_mc_travel_log_pg.py`.
 
 **P3 (2026-10-11):** `mc_show_map` and the `minecraft_map` card in Minecraft_Dave's chat
 (§M8, *Viewer, wave 3*), prompt `agent-minecraft-dave-v8`. Not in game: the in-game tier
