@@ -7,9 +7,10 @@
 import { system, world, CommandPermissionLevel, CustomCommandParamType,
   CustomCommandStatus, EquipmentSlot, ItemLockMode, ItemStack } from "@minecraft/server";
 import { ActionFormData, FormCancelationReason, ModalFormData } from "@minecraft/server-ui";
-import { LINES, LORE, POWER_PACK, TRICORDER, arrivalChime, carryLine, deathPlan, dropSpot, findLine,
+import { LINES, POWER_PACK, TRICORDER, TRICORDER_HINT, TRICORDER_HINT_TICKS, arrivalChime, carryLine, deathPlan, dropSpot, findLine,
   itemsLines, packLoreStale, packToBurn, parseCarry, parseConfig, parseFind, parseItems, parseKnown,
-  parseWaypoint, slotFate, trackerLine, tricorderStatus, unlocksFrom, waypointId, xpToDrop } from "./rules.js";
+  parseWaypoint, slotFate, trackerLine, tricorderLoreStale, tricorderStatus, unlocksFrom, waypointId,
+  xpToDrop } from "./rules.js";
 import { initWormholes } from "./wormhole.js";
 import { initTransport } from "./transport.js";
 import { initReplicator } from "./replicator.js";
@@ -120,11 +121,11 @@ const retire = (item, put) => {
 };
 
 // Bound to its owner (DW1): locked in their inventory, kept through a death, named for
-// them, and carrying their id and a serial that a newer copy outdates.
+// them, and carrying their id and a serial that a newer copy outdates. No lore: see
+// TRICORDER_HINT.
 const makeTricorder = (player, serial) => {
   const item = new ItemStack(TRICORDER, 1);
   item.nameTag = `${player.name}'s Tricorder`;
-  item.setLore([LORE]);
   item.lockMode = ItemLockMode.inventory;
   item.keepOnDeath = true;
   item.setDynamicProperty("jb:owner", player.id);
@@ -240,11 +241,17 @@ const fold = (inv, slot, item, was) => {
 
 // What the player has unlocked, after a look at what they carry now; written back only
 // when something new was unlocked. The same look lores their Power Packs (§M10): a
-// crafted one comes without, and only a stack written back keeps it.
+// crafted one comes without, and only a stack written back keeps it. It clears a
+// Tricorder's old description too; an outdated copy is left for retire(), when held.
 const learn = (player) => {
   const before = parseKnown(world.getDynamicProperty(knownKey(player.id)));
   const stacks = carried(player);
   for (const { item, put, inv, slot } of stacks) {
+    if (tricorderLoreStale(item.typeId, item.getLore()) && statusOf(item, player) !== "retired") {
+      item.setLore([]);
+      put(item);
+      continue;
+    }
     if (!packLoreStale(item.typeId, item.getLore())) continue;
     const was = item.clone();
     item.setLore([LINES.powerPackLore]);
@@ -368,8 +375,14 @@ world.afterEvents.entityDie.subscribe(
   { entityTypes: ["minecraft:player"] },
 );
 
+// When each player's Tricorder hint (TRICORDER_HINT) ends, from their first hold this
+// session; in memory, so a rejoin (or a restart) shows it once more.
+const hintUntil = new Map();
+world.afterEvents.playerLeave.subscribe((ev) => hintUntil.delete(ev.playerId));
+
 world.afterEvents.playerSpawn.subscribe((ev) => {
   const player = ev.player;
+  if (ev.initialSpawn) hintUntil.delete(player.id);
   if (!ev.initialSpawn) emit({ ev: "respawn", name: player.name, ...where(player) });
   // A tick on, so the joining player's inventory is there to read and write.
   system.run(() => {
@@ -539,7 +552,15 @@ system.runInterval(() => {
       const held = inv?.getItem(slot);
       if (held?.typeId !== TRICORDER) continue;
       const status = statusOf(held, player);
+      // Every frame, changed or not: Bedrock's actionbar fades after 2-3 s, and the
+      // held-item pop-up covers it for about 2 s on each (re)select, so the line is
+      // there again as soon as the pop-up clears.
       if (status === "own") {
+        if (!hintUntil.has(player.id)) hintUntil.set(player.id, system.currentTick + TRICORDER_HINT_TICKS);
+        if (system.currentTick < hintUntil.get(player.id)) {
+          player.onScreenDisplay.setActionBar(TRICORDER_HINT);
+          continue;
+        }
         const scanning = scan.line(player);
         const wp = waypointOf(player.name);
         const here = { dim: player.dimension.id, x: player.location.x, z: player.location.z };
@@ -717,6 +738,8 @@ const registerDave = (registry, name) => {
       name,
       description: "Ask Dave",
       permissionLevel: CommandPermissionLevel.Any,
+      // Defaults to true, which shuts Dave out of every world with cheats off.
+      cheatsRequired: false,
       optionalParameters: Array.from({ length: WORDS }, (_, i) => ({
         name: i === 0 ? "question" : `word${i + 1}`,
         type: CustomCommandParamType.String,

@@ -24,6 +24,8 @@
 #define LV_FONT_MONTSERRAT_30 1
 #define LV_FONT_MONTSERRAT_48 1
 #define LV_FONT_DEFAULT &lv_font_montserrat_20
+/* Emoji are image glyphs (ui_emoji.c); the software renderer draws one only with this on. */
+#define LV_USE_IMGFONT 1
 
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN

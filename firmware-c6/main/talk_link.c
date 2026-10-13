@@ -49,6 +49,23 @@ static uint32_t now_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+static uint32_t int_free(void)
+{
+    return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+}
+
+/* A talk's internal heap at its two halves (0.0.22), the snapshot's `audio.talk_*`: the lowest
+   while the recording went up, and while the reply came down. Which half sets `talk+ring` is what
+   says which of the two holds more behind the ring, as `play_low` did for a play. */
+enum { LOW_UP, LOW_REPLY };
+static uint32_t s_low[2];
+
+static void note_low(int half)
+{
+    const uint32_t f = int_free();
+    if (!s_low[half] || f < s_low[half]) s_low[half] = f;
+}
+
 static bool dropped(void)
 {
     bool mic_off;
@@ -73,6 +90,7 @@ static const char *upload(uint32_t *up, bool post)
             if (post && n) mbedtls_sha256_update(&s_sha, s_buf, n);
             if (n && !box_http_stream_write(s_buf, n)) return "the upload failed";
             *up += n;
+            note_low(LOW_UP);
             continue;
         }
         /* The microphone closes before it says so, so its last chunk is already in the ring. */
@@ -183,6 +201,7 @@ static const char *read_reply(uint32_t sent_at, uint32_t *down, uint32_t *reply_
         }
         heard_at = now_ms();
         *down += (uint32_t)n;
+        note_low(LOW_REPLY);
         size_t off = 0;
         while (off < (size_t)n && !why && !r.ended) {
             tk_stream_ev_t ev;
@@ -273,23 +292,27 @@ static const char *exchange(tk_agent_t agent, bool voice, bool fresh, uint32_t *
 {
     char path[112];
     tk_converse_path(agent, voice, fresh, path, sizeof path);
+    const uint32_t before = int_free();
+    s_low[LOW_UP] = s_low[LOW_REPLY] = 0;
     const char *why = send_recording(path, false, up);
-    if (why) return why;
-    const uint32_t sent_at = now_ms();
-    const int status = await_status(sent_at);
-    bool whole = false;
-    if (status == 200) {
-        why = read_reply(sent_at, down, reply_ms, &whole);
-    } else if (status == 204) {
-        talk_net_nothing();
-        whole = true;
-    } else if (status != 0) {
-        why = failed(status);
+    if (!why) {
+        const uint32_t sent_at = now_ms();
+        const int status = await_status(sent_at);
+        bool whole = false;
+        if (status == 200) {
+            why = read_reply(sent_at, down, reply_ms, &whole);
+        } else if (status == 204) {
+            talk_net_nothing();
+            whole = true;
+        } else if (status != 0) {
+            why = failed(status);
+        }
+        if (whole)
+            box_http_reply_done();
+        else
+            box_http_stream_abort();
     }
-    if (whole)
-        box_http_reply_done();
-    else
-        box_http_stream_abort();
+    talk_net_talk_mem(before, s_low[LOW_UP], s_low[LOW_REPLY]);
     return why;
 }
 
@@ -345,11 +368,6 @@ static void hex(const uint8_t *b, size_t n, char *out)
  * hashed as it goes. It is marked heard once the box answers with its audio (talk_net_reply,
  * 0.0.17); the digest judges the audio itself, and a body cut off or not matching counts as a
  * failed play. */
-static uint32_t int_free(void)
-{
-    return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-}
-
 static const char *listen_exchange(const char *path, uint32_t *down)
 {
     box_reply_t rep = {.date = {0}};

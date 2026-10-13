@@ -13,8 +13,9 @@ export const BEAT = {
   firstReplicator: "first_replicator",
 };
 
-// Dave speaks every 3 s, the lore table's pace, so a line can be read before the next.
-export const DAVE_EVERY = 60;
+// Dave speaks every 6 s, the lore table's pace, so a line can be read before the next
+// (owner, 2026-10-13: 3 s went by too fast). `/dave hello` keeps the same pace.
+export const DAVE_EVERY = 120;
 const DAVE_FROM = 160;
 
 // The lore page's table, in ticks (20 a second). Only the gamertag and the crash-site

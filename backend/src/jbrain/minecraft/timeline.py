@@ -3,8 +3,8 @@
 docs/plans/MINECRAFT_BEDROCK_PLAN.md §M8a. The PWA scrubs and replays locally — no
 request per frame — so one answer carries everything the range needs, bounded so a
 phone can hold it: each player's trail is cut to at most `MAX_POINTS`, never across a
-session, a dimension or a respawn, so the client can interpolate inside a segment and
-must not draw a line between two.
+session, a dimension, a death or a respawn, so the client can interpolate inside a
+segment and must not draw a line between two.
 
 Sessions (`mc_player_sessions`) carry no world; a session belongs to the world its join
 event (`mc_player_events`, same boot and event number) was recorded in. Sessions from
@@ -55,6 +55,8 @@ class _Seg:
     session: str | None
     dim: str
     points: list[list[float]] = field(default_factory=list)
+    # Ends on a death: the next sample, even one taken while dead, starts a new piece.
+    died: bool = False
 
 
 def _span_ok(start: float, end: float) -> None:
@@ -107,27 +109,64 @@ def segment(
     rows: Sequence[Any],
     sessions: list[tuple[float, float, str]],
     respawns: list[float],
+    deaths: Sequence[tuple[float, str, float, float, float]] = (),
 ) -> list[_Seg]:
     """One player's samples, in time order, cut into segments: a new one starts with a
-    new session, a new dimension, or after a respawn. `sessions` is (start, end, id) by
-    start; `respawns` the player's respawn times, sorted."""
+    new session, a new dimension, after a respawn or after a death. `sessions` is
+    (start, end, id) by start; `respawns` the player's respawn times and `deaths` their
+    placed deaths (at, dim, x, y, z), both sorted.
+
+    A life ends on its death's own place: sampled every 10 s, a player who respawns at
+    once leaves no sample where they fell, and a trail ending on the last one stops short
+    of the skull."""
     starts = [s[0] for s in sessions]
+
+    def session_at(at: float) -> str | None:
+        i = bisect.bisect_right(starts, at) - 1
+        return sessions[i][2] if i >= 0 and at <= sessions[i][1] else None
+
     segs: list[_Seg] = []
+    dead = 0
+
+    def fall(before: float) -> None:
+        nonlocal dead
+        while dead < len(deaths) and deaths[dead][0] < before:
+            at, dim, x, y, z = deaths[dead]
+            dead += 1
+            last = segs[-1] if segs else None
+            if last is None or last.died or last.dim != dim or last.session != session_at(at):
+                continue
+            seen = last.points[-1][0]
+            if bisect.bisect_right(respawns, at) > bisect.bisect_right(respawns, seen):
+                continue  # a later life's, with no sample yet to end
+            if last.session is None and at - seen > LOOSE_GAP_S:
+                continue
+            last.points.append([round(at, 1), round(x, 1), round(y, 1), round(z, 1)])
+            last.died = True
+
     prev_at: float | None = None
     for r in rows:
         at = float(r.at)
-        i = bisect.bisect_right(starts, at) - 1
-        sid = sessions[i][2] if i >= 0 and at <= sessions[i][1] else None
+        fall(at)
+        sid = session_at(at)
         last = segs[-1] if segs else None
         respawned = prev_at is not None and bisect.bisect_right(respawns, at) > bisect.bisect_right(
             respawns, prev_at
         )
         loose_gap = sid is None and prev_at is not None and at - prev_at > LOOSE_GAP_S
-        if last is None or last.session != sid or last.dim != r.dim or respawned or loose_gap:
+        if (
+            last is None
+            or last.session != sid
+            or last.dim != r.dim
+            or last.died
+            or respawned
+            or loose_gap
+        ):
             last = _Seg(sid, str(r.dim))
             segs.append(last)
         last.points.append([round(at, 1), round(r.x, 1), round(r.y, 1), round(r.z, 1)])
         prev_at = at
+    fall(math.inf)
     return segs
 
 
@@ -311,15 +350,18 @@ async def _trails_and_events(
         for r in got:
             spans.setdefault(r.xuid, []).append((float(r.started), float(r.finished), r.id))
     respawns: dict[str, list[float]] = {}
+    deaths: dict[str, list[tuple[float, str, float, float, float]]] = {}
     for e in raw_events:
         if e.kind == "respawn":
             respawns.setdefault(e.xuid, []).append(float(e.at))
+        elif e.kind == "death" and None not in (e.dim, e.x, e.y, e.z):
+            deaths.setdefault(e.xuid, []).append((float(e.at), e.dim, e.x, e.y, e.z))
 
     trails: list[dict[str, Any]] = []
     flat: dict[str, tuple[list[list[float]], list[str]]] = {}
     derived: list[dict[str, Any]] = []
     for xuid, prs in by_player.items():
-        segs = segment(prs, spans.get(xuid, []), respawns.get(xuid, []))
+        segs = segment(prs, spans.get(xuid, []), respawns.get(xuid, []), deaths.get(xuid, []))
         flat[xuid] = (
             [p for g in segs for p in g.points],
             [g.dim for g in segs for _ in g.points],

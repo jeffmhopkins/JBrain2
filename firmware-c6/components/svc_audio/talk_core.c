@@ -58,6 +58,11 @@ uint32_t tk_ring_bytes(tk_kind_t kind)
                                                                                        : TK_RING_TALK;
 }
 
+uint32_t tk_reply_ring_bytes(uint32_t held)
+{
+    return held > TK_RING_PLAY ? TK_RING_PLAY : held;
+}
+
 uint32_t tk_ring_read(tk_ring_t *r, void *dst, uint32_t n)
 {
     const uint32_t tail = r->tail;
