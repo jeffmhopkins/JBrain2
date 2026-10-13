@@ -3,16 +3,53 @@
 #include <stddef.h>
 #include <stdio.h>
 
-bool convo_shows_listen(const msg_t *m, bool tts_on, uint32_t speaking_id)
+#include "ui_theme.h"
+
+uint8_t convo_listen_state(const msg_t *m, bool working, const svc_speech_t *speech)
 {
-    return !m->mine && !m->voice && !m->pending && !tts_on && m->id != speaking_id;
+    if (speech && speech->msg_id && speech->msg_id == m->id)
+        return speech->starting ? UI_LISTEN_STARTING : UI_LISTEN_PLAYING;
+    if (m->mine || m->voice || m->pending || !m->box_id) return UI_LISTEN_NONE;
+    return working ? UI_LISTEN_DIM : UI_LISTEN_IDLE;
+}
+
+void convo_listen_caption(uint8_t state, uint32_t ms, char *out, size_t cap)
+{
+    if (state == UI_LISTEN_STARTING) {
+        snprintf(out, cap, "Starting… · tap to stop");
+    } else if (state == UI_LISTEN_PLAYING) {
+        char clock[12];
+        talk_clock(ms, clock, sizeof clock);
+        snprintf(out, cap, "%s · tap to stop", clock);
+    } else if (cap) {
+        out[0] = '\0';
+    }
+}
+
+convo_work_lines_t convo_work_lines(const svc_work_t *w)
+{
+    convo_work_lines_t l = {.running = -1};
+    const uint16_t total = (uint16_t)(w->folded + w->n);
+    if (total < 3) return l;
+    l.collapsed = true;
+    l.count = total;
+    for (int i = w->n - 1; i >= 0; i--)
+        if (w->step[i].state == WORK_RUNNING) {
+            l.running = (int8_t)i;
+            break;
+        }
+    return l;
+}
+
+void convo_tools_used(uint16_t count, char *out, size_t cap)
+{
+    snprintf(out, cap, "%u tools used", (unsigned)count);
 }
 
 convo_redraw_t convo_redraw(const convo_sig_t *drawn, const convo_sig_t *now)
 {
-    if (drawn->rev != now->rev || drawn->speaking != now->speaking || drawn->tts != now->tts ||
-        drawn->can_speak != now->can_speak || drawn->working != now->working ||
-        drawn->meta != now->meta || drawn->fresh != now->fresh)
+    if (drawn->rev != now->rev || drawn->speaking != now->speaking ||
+        drawn->working != now->working || drawn->meta != now->meta || drawn->fresh != now->fresh)
         return CONVO_REBUILD;
     return drawn->work_seq != now->work_seq ? CONVO_WORK : CONVO_SAME;
 }

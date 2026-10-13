@@ -348,12 +348,14 @@ typedef struct {
     convo_msg_fn on_msg;
     void *user;
     bool mine, has_text;
+    int64_t id;
 } thread_in_t;
 
 static bool msg_field(cur_t *c, const char *key, void *user)
 {
     thread_in_t *t = user;
     if (!strcmp(key, "mine") && !peek(c, 'n')) return boolean(c, &t->mine);
+    if (!strcmp(key, "id") && !peek(c, 'n') && !peek(c, '"')) return num(c, &t->id);
     if (!strcmp(key, "text") && peek(c, '"')) {
         t->has_text = true;
         return str(c, t->scratch, t->cap);
@@ -361,12 +363,18 @@ static bool msg_field(cur_t *c, const char *key, void *user)
     return skip(c, 1);
 }
 
+static uint32_t id32(int64_t id)
+{
+    return id > 0 && id <= 0xFFFFFFFFLL ? (uint32_t)id : 0;
+}
+
 static bool msg_item(cur_t *c, void *user)
 {
     thread_in_t *t = user;
     t->mine = t->has_text = false;
+    t->id = 0;
     if (!object(c, msg_field, t)) return false;
-    if (t->has_text && t->scratch[0]) t->on_msg(t->user, t->mine, t->scratch);
+    if (t->has_text && t->scratch[0]) t->on_msg(t->user, t->mine, t->scratch, id32(t->id));
     return true;
 }
 
@@ -386,6 +394,118 @@ bool convo_parse_thread(const char *json, size_t len, char *title, size_t title_
     *more = false;
     if (!cap) return false;
     cur_t c = {json, json + len};
-    thread_in_t t = {title, title_cap, more, scratch, cap, on_msg, user, false, false};
+    thread_in_t t = {title, title_cap, more, scratch, cap, on_msg, user, false, false, 0};
     return object(&c, thread_field, &t);
+}
+
+/* ---- Load earlier (0.0.21) ---- */
+
+static bool uuid_ok(const char *id)
+{
+    if (!id || strlen(id) != CONVO_ID_BYTES - 1) return false;
+    for (const char *p = id; *p; p++)
+        if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f') || *p == '-')) return false;
+    return true;
+}
+
+bool convo_hist_path(const char *who, uint8_t side, uint32_t box_id, const char *uuid, char *out,
+                     size_t cap)
+{
+    if (cap) out[0] = '\0';
+    const bool agent = convo_agent_ok(who);
+    if (!agent && !uuid_ok(who)) return false;
+    char anchor[64] = "";
+    const char *dir = side == 2 ? "after" : "before";
+    if (agent && box_id)
+        snprintf(anchor, sizeof anchor, "%s=%lu&", dir, (unsigned long)box_id);
+    else if (!agent && uuid && uuid[0]) {
+        if (!uuid_ok(uuid)) return false;
+        snprintf(anchor, sizeof anchor, "%s=%s&", dir, uuid);
+    } else if (side == 2) {
+        return false; /* newer than nothing is not a page */
+    }
+    const int n = snprintf(out, cap, "/endpoint/%s/%s/history?%slimit=%d",
+                           agent ? "convo" : "messages", who, anchor, side ? HIST_PAGE : 0);
+    return n > 0 && (size_t)n < cap;
+}
+
+typedef struct {
+    convo_page_t *page;
+    char *scratch;
+    size_t cap;
+    convo_item_fn on_item;
+    void *user;
+    hist_in_t item;
+    int64_t num_id, ms;
+    bool has_text, found;
+} page_in_t;
+
+static bool item_field(cur_t *c, const char *key, void *user)
+{
+    page_in_t *p = user;
+    if (!strcmp(key, "id")) {
+        if (peek(c, '"')) return str(c, p->item.uuid, sizeof p->item.uuid);
+        if (!peek(c, 'n')) return num(c, &p->num_id);
+    }
+    if (!strcmp(key, "mine") && !peek(c, 'n')) return boolean(c, &p->item.mine);
+    if (!strcmp(key, "voice") && !peek(c, 'n')) return boolean(c, &p->item.voice);
+    if (!strcmp(key, "played") && !peek(c, 'n')) return boolean(c, &p->item.played);
+    if (!strcmp(key, "ms") && !peek(c, 'n')) return num(c, &p->ms);
+    if (!strcmp(key, "text") && peek(c, '"')) {
+        p->has_text = true;
+        return str(c, p->scratch, p->cap);
+    }
+    return skip(c, 1);
+}
+
+static bool page_item(cur_t *c, void *user)
+{
+    page_in_t *p = user;
+    p->item = (hist_in_t){.played = true};
+    p->num_id = p->ms = 0;
+    p->has_text = false;
+    p->scratch[0] = '\0';
+    if (!object(c, item_field, p)) return false;
+    p->item.box_id = id32(p->num_id);
+    if (p->item.uuid[0] && !uuid_ok(p->item.uuid)) p->item.uuid[0] = '\0';
+    if ((!p->item.box_id && !p->item.uuid[0]) || p->page->n >= HIST_PAGE) return true;
+    const int64_t ms = p->ms < 0 ? 0 : p->ms > 65000 ? 65000 : p->ms;
+    p->item.dur_ms = (uint16_t)ms;
+    p->item.dur_s = (uint16_t)((ms + 999) / 1000);
+    p->item.text = p->scratch;
+    p->page->n++;
+    if (p->on_item) p->on_item(p->user, &p->item);
+    return true;
+}
+
+static bool page_field(cur_t *c, const char *key, void *user)
+{
+    page_in_t *p = user;
+    int64_t v;
+    if (!strcmp(key, "messages") && peek(c, '[')) {
+        p->found = true;
+        return array(c, page_item, p);
+    }
+    if (!strcmp(key, "older") && !peek(c, 'n')) {
+        if (!num(c, &v)) return false;
+        p->page->older = v < 0 ? 0 : (uint32_t)v;
+        return true;
+    }
+    if (!strcmp(key, "newer") && !peek(c, 'n')) {
+        if (!num(c, &v)) return false;
+        p->page->newer = v < 0 ? 0 : (uint32_t)v;
+        return true;
+    }
+    if (!strcmp(key, "start_at") && !peek(c, 'n')) return num(c, &p->page->start_at);
+    return skip(c, 1);
+}
+
+bool convo_parse_page(const char *json, size_t len, convo_page_t *out, char *scratch, size_t cap,
+                      convo_item_fn on_item, void *user)
+{
+    memset(out, 0, sizeof *out);
+    if (!cap) return false;
+    cur_t c = {json, json + len};
+    page_in_t p = {.page = out, .scratch = scratch, .cap = cap, .on_item = on_item, .user = user};
+    return object(&c, page_field, &p) && p.found;
 }

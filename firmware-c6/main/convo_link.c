@@ -12,20 +12,21 @@ static const char *TAG = "convo";
 /* Small answers from a kept session: the alarms' bound. */
 #define CONVO_TIMEOUT_MS 8000
 
-/* The box's answer into a buffer of its own, which passes to the UI task on a 200. */
-static int fetch(const char *path, const char *body, char **out, size_t *len)
+/* The box's answer into a buffer of its own (`max` bytes at most), which passes to the UI task on
+   a 200. */
+static int fetch(const char *path, const char *body, size_t max, char **out, size_t *len)
 {
     *out = NULL;
     *len = 0;
     /* The longest answer, its terminator, and one byte more: a read that fills the buffer is
        taken as cut off. Held only for the request and until the UI task has applied it. */
-    char *buf = malloc(CONVO_BODY_MAX + 2);
+    char *buf = malloc(max + 2);
     if (!buf) return -3;
     size_t got = 0;
     const int status = box_http_call(path, body ? "application/json" : NULL, body,
-                                     body ? strlen(body) : 0, buf, CONVO_BODY_MAX + 1, &got, NULL,
+                                     body ? strlen(body) : 0, buf, max + 1, &got, NULL,
                                      CONVO_TIMEOUT_MS);
-    if (status != 200 || got > CONVO_BODY_MAX) {
+    if (status != 200 || got > max) {
         free(buf);
         return status == 200 ? -4 : status;
     }
@@ -39,9 +40,16 @@ bool convo_link_run(void)
 {
     convo_req_t r;
     if (!svc_convo_take(&r)) return false;
-    char path[64], *body = NULL;
+    char path[HIST_PATH_BYTES], *body = NULL;
     size_t len = 0;
     int status;
+    if (r.kind == CONVO_RQ_HISTORY) {
+        /* Load earlier (0.0.21): a page is at most the box's 4000 bytes of JSON. */
+        status = fetch(r.path, NULL, HIST_BODY_MAX, &body, &len);
+        if (status != 200) ESP_LOGW(TAG, "%s: HTTP %d", r.path, status);
+        svc_convo_done(&r, status, body, body ? len : 0);
+        return true;
+    }
     convo_path((convo_rq_t)r.kind, r.agent, false, path, sizeof path);
     if (r.kind == CONVO_RQ_SWITCH) {
         char sel[64];
@@ -50,16 +58,16 @@ bool convo_link_run(void)
             return true;
         }
         char *ack = NULL;
-        status = fetch(path, sel, &ack, &len);
+        status = fetch(path, sel, CONVO_BODY_MAX, &ack, &len);
         free(ack);
         if (status == 200) {
             /* Switched on the box. Its last exchanges are the second request; if they do not
                come, a 200 with no body still says the switch held. */
             convo_path(CONVO_RQ_SWITCH, r.agent, true, path, sizeof path);
-            if (fetch(path, NULL, &body, &len) != 200) body = NULL;
+            if (fetch(path, NULL, CONVO_BODY_MAX, &body, &len) != 200) body = NULL;
         }
     } else {
-        status = fetch(path, NULL, &body, &len);
+        status = fetch(path, NULL, CONVO_BODY_MAX, &body, &len);
     }
     if (status != 200) ESP_LOGW(TAG, "%s: HTTP %d", path, status);
     svc_convo_done(&r, status, body, body ? len : 0);

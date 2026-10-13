@@ -36,6 +36,7 @@
 #include "nvs_flash.h"
 #include "ota.h"
 #include "post_link.h"
+#include "set_link.h"
 #include "shell.h"
 #include "svc_alarms_drv.h"
 #include "svc_audio_drv.h"
@@ -194,7 +195,7 @@ static bool report(const cfg_t *cfg)
         svc_display_note, ui_task_note,   dbg_sys_low_note, svc_power_note, svc_buttons_note,
         svc_touch_note,   svc_orient_note, svc_settings_note, svc_rtc_note, shell_key_note,
         svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note,
-        svc_alarms_note,  svc_convo_note, svc_post_note, svc_notice_note};
+        svc_alarms_note,  svc_convo_note, svc_post_note, svc_notice_note, set_link_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -460,6 +461,7 @@ void app_main(void)
             doing("convo", convo_link_run);
             doing("post", post_link_run);
             doing("notice", notice_link_run);
+            doing("settings", set_link_run);
             uint32_t sleep_ms = 0;
             const dbg_next_t next = dbg_sched_next(&pickup, now_ms(), check_due,
                                                    reachable && !svc_net_user_off(), &sleep_ms);
