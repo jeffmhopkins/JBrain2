@@ -15,3 +15,9 @@ uint8_t svc_display_brightness(void);
 void svc_display_set_dark(bool dark);
 bool svc_display_dark(void);
 bool svc_display_applied(void);
+
+/* Auto-rotate (0.0.18): the panel turned `quarters` quarter turns clockwise from upright
+ * (disp_logic.h). svc_orient records it; the UI task applies it between frames and redraws the
+ * whole screen. `rotation` is what the glass shows now, which lags a request by a frame. */
+void svc_display_set_rotation(uint8_t quarters);
+uint8_t svc_display_rotation(void);

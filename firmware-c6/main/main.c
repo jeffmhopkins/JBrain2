@@ -43,6 +43,7 @@
 #include "svc_convo_drv.h"
 #include "svc_display_drv.h"
 #include "svc_net_drv.h"
+#include "svc_orient_drv.h"
 #include "svc_post_drv.h"
 #include "svc_power_drv.h"
 #include "svc_rtc_drv.h"
@@ -185,11 +186,13 @@ static bool report(const cfg_t *cfg)
        the body, because this task then runs a TLS handshake on the same 8 KB stack. */
     static char note[1408], part[256];
     size_t used = 0;
+    /* `low=` rides near the front (0.0.18): the note grew `orient=` and `cal=`, and a cut falls
+       on the tail, never on the heap's low-water mark. */
     void (*const parts[])(char *, size_t) = {
-        svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
-        svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
+        svc_display_note, ui_task_note,   dbg_sys_low_note, svc_power_note, svc_buttons_note,
+        svc_touch_note,   svc_orient_note, svc_settings_note, svc_rtc_note, shell_key_note,
         svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note,
-        svc_alarms_note,  svc_convo_note, svc_post_note, dbg_sys_low_note};
+        svc_alarms_note,  svc_convo_note, svc_post_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -349,6 +352,8 @@ static void start_panel(const cfg_t *cfg)
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
     svc_touch_start();
+    /* Likewise: no tilt sensor is a panel that stays upright, its Settings switch dead. */
+    svc_orient_start();
     /* Likewise: a codec that does not answer is a panel without sound, saying so in Settings. */
     svc_audio_start(wake_main);
 }

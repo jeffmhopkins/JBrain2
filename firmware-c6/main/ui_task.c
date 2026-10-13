@@ -20,11 +20,13 @@
 #include "shell.h"
 #include "svc_alarms_drv.h"
 #include "svc_audio_drv.h"
+#include "svc_calib.h"
 #include "svc_convo_drv.h"
 #include "svc_display.h"
 #include "svc_display_drv.h"
 #include "svc_messages_fake.h"
 #include "svc_notice_fake.h"
+#include "svc_orient_drv.h"
 #include "svc_post_drv.h"
 #include "svc_rtc_drv.h"
 #include "svc_settings.h"
@@ -102,6 +104,10 @@ static void ui_loop(void *arg)
     svc_convo_init();
     svc_post_init();
     svc_notice_init();
+    /* The owner's touch calibration from NVS into the touch task's mapping, and the panel's
+       rotation into it as svc_orient turns the screen (0.0.18). */
+    svc_calib_custom();
+    svc_orient_on_change(svc_touch_set_rotation);
     char err[96];
     shell_set_pointer(touch_feed);
     if (!apps_register(NULL) || !shell_start(err, sizeof err)) stop("shell");
@@ -123,6 +129,8 @@ static void ui_loop(void *arg)
             svc_audio_chime();
         /* Before the shell: an alarm due now is raised and taken over in this same pass. */
         svc_alarms_service(now);
+        /* At most 8 Hz of it reads the tilt sensor; a turn is drawn from the next frame. */
+        svc_orient_service(now);
         dbg_sys_crumb(ST_PUMP);
         shell_pump();
         dbg_sys_crumb(ST_RENDER);

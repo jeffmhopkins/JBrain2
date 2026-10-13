@@ -10,6 +10,6 @@ idf_component_register(
              esp_app_format json mbedtls esp_timer espcoredump
              app_api ui_kit shell svc_debug svc_display svc_power svc_buttons svc_touch
              svc_alarms svc_audio svc_box svc_messages svc_net svc_notice svc_rtc svc_settings
-             svc_siblings svc_convo svc_post convo
+             svc_siblings svc_convo svc_post svc_orient convo
              app_jerv app_thread app_clock app_settings app_minecraft lvgl__lvgl
 )

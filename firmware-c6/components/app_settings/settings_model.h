@@ -8,6 +8,7 @@
 #include <stdint.h>
 
 #include "svc_box.h"
+#include "svc_calib.h"
 #include "svc_net.h"
 #include "svc_power.h"
 
@@ -68,6 +69,49 @@ void settings_notif_note(bool accept, bool quiet, uint16_t from, uint16_t to, ch
 /* With messages refused, the other two switches are moot and are drawn dead. */
 bool settings_notif_row_live(int row, bool accept);
 
-/* The Auto-rotate row's line. The switch is stored now; turning the content arrives with the
- * auto-rotate wave (plan §2b), and until then the line says so. */
-const char *settings_rotate_note(bool on);
+/* The Auto-rotate row's line (0.0.18): what the switch does, or, with no tilt sensor, why it is
+ * dead. */
+const char *settings_rotate_note(bool on, bool available);
+
+/* ---- touch calibration (0.0.18, mock Calib.dc.html) ----
+ * A cross at each corner, tapped until three taps agree, BOOT cancelling. The four corners are the
+ * mock's outer knots (44 and 436 px in from the glass's edges): far enough apart to fit a scale
+ * and a shear, inside the bezel's reach. The fit itself is svc_calib's. */
+#define CAL_TARGETS 4
+#define CAL_TAPS 3
+#define CAL_NEAR 44
+#define CAL_FAR 436
+/* A tap further than this from its cross is not counted, and says so: a finger that slipped, not
+ * a panel that is off (the 0.0.7 mapping is within ~20 px at the corners). */
+#define CAL_MISS_PX 64
+/* A cross's three taps must agree within this of their mean, or that cross starts again. */
+#define CAL_AGREE_PX 24
+/* The green cross holds this long before the next one appears. */
+#define CAL_NEXT_MS 350
+
+typedef struct {
+    uint8_t target, taps;
+    int16_t x[CAL_TAPS], y[CAL_TAPS];
+    calib_pair_t done[CAL_TARGETS];
+} calib_flow_t;
+
+typedef enum {
+    CALF_COUNTED,   /* a tap on this cross, more wanted */
+    CALF_MISSED,    /* too far from the cross: not counted */
+    CALF_DISAGREED, /* the cross's taps did not agree: this cross again */
+    CALF_NEXT,      /* this cross done: the next one */
+    CALF_DONE,      /* every cross done: `done` holds the pairs for svc_calib_finish */
+} calib_step_t;
+
+void calib_flow_start(calib_flow_t *f);
+/* Cross `i`, clockwise from the top left. */
+void calib_target(uint8_t i, int16_t *x, int16_t *y);
+calib_step_t calib_flow_tap(calib_flow_t *f, int16_t x, int16_t y);
+/* The prompt over the cross after a step: "Tap the cross", or what went wrong with the last tap. */
+const char *calib_flow_title(calib_step_t last);
+/* The line under it for cross `i`: "2 of 4 · BOOT cancels". */
+void calib_flow_line(uint8_t i, char *out, size_t cap);
+/* The Touch screen card's corner: "Never", "Today", or the day it was done ("12 Oct"). */
+void settings_calib_when(uint32_t saved_ymd, uint32_t today_ymd, char *out, size_t cap);
+/* What the toast says once the fit is done. */
+const char *settings_calib_result(calib_result_t r);

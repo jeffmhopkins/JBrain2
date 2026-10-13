@@ -126,15 +126,50 @@ static bool color_done(esp_lcd_panel_io_handle_t io, esp_lcd_panel_io_event_data
 static svc_display_strip_fn s_tap;
 static void *s_tap_ctx;
 
+/* Auto-rotate (0.0.18, disp_logic.h): asked for by svc_orient from the UI task, applied by the
+   same task between frames. A quarter turn needs the piece buffer, which exists only while the
+   panel is on its side: upright or upside down it is never allocated. */
+#define PIECE_BYTES (DISP_ROT_PIECE_PX * 2)
+static volatile uint8_t s_rot_req;
+static uint8_t s_rot;
+static uint16_t *s_piece;
+static uint32_t s_rot_changes, s_rot_fail;
+
+/* One window to the glass, waited for: the buffer is LVGL's strip or the one piece buffer, and
+   neither may be touched again until the DMA has finished with it. */
+static esp_err_t send(const disp_win_t *g, const uint16_t *px)
+{
+    esp_err_t e = esp_lcd_panel_draw_bitmap(s_panel, g->x1, g->y1, g->x2 + 1, g->y2 + 1, px);
+    if (e == ESP_OK && xSemaphoreTake(s_done, pdMS_TO_TICKS(FLUSH_TIMEOUT_MS)) != pdTRUE)
+        e = ESP_ERR_TIMEOUT;
+    return e;
+}
+
+static esp_err_t send_turned(const lv_area_t *a, uint16_t *px)
+{
+    const disp_win_t l = {a->x1, a->y1, a->x2, a->y2};
+    if (s_rot == 0) return send(&l, px);
+    if (s_rot == 2) {
+        disp_reverse(px, lv_area_get_size(a));
+        const disp_win_t g = disp_rot_area(2, W, l);
+        return send(&g, px);
+    }
+    const int32_t w = a->x2 - a->x1 + 1, k = disp_rot_piece_rows(a->y2 - a->y1 + 1);
+    esp_err_t e = ESP_OK;
+    for (int32_t r0 = 0; r0 < w && e == ESP_OK; r0 += k) {
+        const disp_win_t g = disp_rot_piece(s_rot, W, l, px, r0, k, s_piece);
+        e = send(&g, s_piece);
+    }
+    return e;
+}
+
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
     if (s_ok) {
         if (s_tap) s_tap(s_tap_ctx, a->x1, a->y1, a->x2, a->y2, (const uint16_t *)px);
         const int64_t t0 = esp_timer_get_time();
         lv_draw_sw_rgb565_swap(px, lv_area_get_size(a));
-        esp_err_t e = esp_lcd_panel_draw_bitmap(s_panel, a->x1, a->y1, a->x2 + 1, a->y2 + 1, px);
-        if (e == ESP_OK && xSemaphoreTake(s_done, pdMS_TO_TICKS(FLUSH_TIMEOUT_MS)) != pdTRUE)
-            e = ESP_ERR_TIMEOUT;
+        const esp_err_t e = send_turned(a, (uint16_t *)px);
         s_frame_us += (uint64_t)(esp_timer_get_time() - t0);
         if (e != ESP_OK) {
             s_flush_errs++;
@@ -176,6 +211,9 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "sent", s_sent);
     dbg_json_int(w, "frames", s_frames);
     dbg_json_int(w, "flush_errors", s_flush_errs);
+    dbg_json_int(w, "rotation", s_rot * 90);
+    dbg_json_int(w, "rot_changes", s_rot_changes);
+    dbg_json_int(w, "rot_no_memory", s_rot_fail);
     dbg_json_str(w, "driver", "co5300");
 }
 
@@ -244,8 +282,42 @@ bool svc_display_start(const char **failed_step)
     return true;
 }
 
+/* Between frames: the new turn and a whole screen drawn in it. With no memory for a quarter
+   turn's piece buffer the glass stays as it was and the next pass tries again. */
+static void apply_rotation(void)
+{
+    const uint8_t want = s_rot_req;
+    if (want == s_rot) return;
+    if ((want & 1) && !s_piece) {
+        s_piece = heap_caps_malloc(PIECE_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if (!s_piece) {
+            s_rot_fail++;
+            return;
+        }
+    }
+    s_rot = want;
+    if (!(want & 1)) {
+        heap_caps_free(s_piece);
+        s_piece = NULL;
+    }
+    s_rot_changes++;
+    lv_obj_invalidate(lv_screen_active());
+    ESP_LOGI(TAG, "turned to %u°", (unsigned)want * 90);
+}
+
+void svc_display_set_rotation(uint8_t quarters)
+{
+    s_rot_req = quarters & 3;
+}
+
+uint8_t svc_display_rotation(void)
+{
+    return s_rot;
+}
+
 void svc_display_service(void)
 {
+    if (s_ok) apply_rotation();
     if (!s_ok || !s_pending || !s_first_frame_ms) return;
     if ((uint32_t)(now_ms() - s_first_frame_ms) < BRIGHTNESS_HOLD_MS) return;
     s_pending = false;
@@ -287,10 +359,10 @@ void svc_display_note(char *out, size_t len)
     const char *bri = s_pending ? "pend" : s_bri_err == ESP_OK ? "sent" : "err";
     snprintf(out, len,
              "display=%s lcdrst=%s frames=%lu flush_ms=%lu flush_err=%lu bri=%u/%u/%s bri_n=%lu "
-             "dark=%d",
+             "dark=%d rot=%u",
              s_state, s_lcdrst, (unsigned long)s_frames, (unsigned long)s_last_frame_ms,
              (unsigned long)s_flush_errs, s_req_pct, s_sent, bri, (unsigned long)s_writes,
-             s_dark ? 1 : 0);
+             s_dark ? 1 : 0, (unsigned)s_rot * 90);
 }
 
 /* ---- svc_display.h: any task records, the UI task applies ---- */

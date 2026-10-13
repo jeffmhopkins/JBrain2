@@ -43,6 +43,8 @@ static const char *TAG = "touch";
 static svc_power_i2c_t s_dev;
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static tp_ring_t s_ring;
+/* The mapping (0.0.18): written by the UI task under s_mux, copied by the touch task each poll. */
+static tp_xf_t s_xf = {.cal = {TP_Q16, 0, 0, 0, TP_Q16, 0}};
 static char s_state[20] = "off";
 
 static struct {
@@ -94,8 +96,13 @@ static void touch_task(void *arg)
 {
     (void)arg;
     tp_track_t trk = {0};
+    tp_xf_t xf;
+    trk.xf = &xf;
     unsigned fails = 0, resets_unanswered = 0;
     for (;;) {
+        portENTER_CRITICAL(&s_mux);
+        xf = s_xf;
+        portEXIT_CRITICAL(&s_mux);
         uint8_t d[TP_REPORT_LEN];
         tp_report_t r = {TP_NOACK, 0, 0};
         const tp_report_t *rp = NULL;
@@ -187,6 +194,21 @@ bool svc_touch_start(void)
     return true;
 }
 
+void svc_touch_set_cal(const tp_cal_t *cal, bool on)
+{
+    portENTER_CRITICAL(&s_mux);
+    s_xf.cal = *cal;
+    s_xf.cal_on = on;
+    portEXIT_CRITICAL(&s_mux);
+}
+
+void svc_touch_set_rotation(uint8_t quarters)
+{
+    portENTER_CRITICAL(&s_mux);
+    s_xf.rot = quarters & 3;
+    portEXIT_CRITICAL(&s_mux);
+}
+
 bool svc_touch_next(tp_sample_t *out)
 {
     portENTER_CRITICAL(&s_mux);
@@ -207,6 +229,8 @@ void svc_touch_note(char *out, size_t len)
     memcpy(state, s_state, sizeof state);
     memcpy(taps, s_taps, sizeof taps);
     const uint32_t n = s_tap_n, dropped = s_ring.dropped;
+    const bool cal = s_xf.cal_on;
+    const unsigned rot = s_xf.rot * 90u;
     portEXIT_CRITICAL(&s_mux);
     size_t used = 0;
     for (uint32_t i = n > TAPS_KEPT ? n - TAPS_KEPT : 0; i < n; i++) {
@@ -217,9 +241,9 @@ void svc_touch_note(char *out, size_t len)
     }
     snprintf(out, len,
              "touch=%s taps=%lu tp_last=%s tp_err=%lu tp_rst=%lu tp_noack=%lu/%lu tp_int=%lu/%lu "
-             "tp_lat=%lu/%lu tp_rd=%lu tp_drop=%lu",
+             "tp_lat=%lu/%lu tp_rd=%lu tp_drop=%lu cal=%s tp_rot=%u",
              state, (unsigned long)n, last, (unsigned long)s_errs, (unsigned long)s_resets,
              (unsigned long)s_noack_down, (unsigned long)s_noack, (unsigned long)s_int_lo_down,
              (unsigned long)s_int_lo_up, (unsigned long)s_lat_last, (unsigned long)s_lat_max,
-             (unsigned long)s_rd_us_max, (unsigned long)dropped);
+             (unsigned long)s_rd_us_max, (unsigned long)dropped, cal ? "custom" : "none", rot);
 }

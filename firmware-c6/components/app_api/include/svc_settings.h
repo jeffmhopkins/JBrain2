@@ -16,10 +16,11 @@ typedef enum {
     SET_NIGHT_FROM,   /* minute of day; the same window is the notice quiet hours */
     SET_NIGHT_TO,
     SET_SHOW_DATE,    /* the day and date under the clock face */
-    SET_AUTO_ROTATE,  /* read by the auto-rotate wave (plan §2b); stored now so it survives */
+    SET_AUTO_ROTATE,  /* turn the content with the panel (0.0.18, svc_orient.h); off is upright */
     SET_TZ,           /* index into svc_rtc.h's zone table */
     SET_VOLUME,       /* the speaker, 10-100: off is "Read replies aloud" off, not a zero */
     SET_MIC_GAIN,     /* ES7210 PGA in dB, 0-37; no slider, set from the debug `set` command */
+    SET_IMU_AXES,     /* how the QMI8658 sits against the glass, 0-7 (orient_logic.h); debug `set` */
     SET__COUNT,
 } setting_t;
 
@@ -29,6 +30,8 @@ typedef enum {
 #define VOLUME_MAX 100
 /* The ES7210's PGA steps stop at 37.5 dB (esp_codec_dev es7210.c). */
 #define MIC_GAIN_MAX 37
+/* Three bits: swap the chip's X and Y, flip the glass's x, flip its y (orient_logic.h). */
+#define IMU_AXES_MAX 7
 
 int32_t svc_settings_get(setting_t key);
 void svc_settings_set(setting_t key, int32_t value);
