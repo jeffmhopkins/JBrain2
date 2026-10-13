@@ -405,8 +405,59 @@ static void test_conversation_rules(void)
     thread_bubble_t b;
     thread_bubble(&theirs, 0, 0, &b);
     CHECK(b.unplayed && b.prog == 0 && !strcmp(b.dur, "1:05"), "unheard: dot, empty bar");
-    thread_bubble(&theirs, 4, 40, &b);
+    thread_bubble(&theirs, 4, 26000, &b);
     CHECK(!b.unplayed && b.playing && b.prog == 40, "the dot goes the moment it starts");
+    /* 0.0.17 (owner, 2026-10-13: "I expect to go from left to right"): the bar follows what has
+       played, against the box's milliseconds, and never runs past its end. */
+    msg_t hers = {.id = 7, .voice = true, .dur_s = 5, .dur_ms = 5100};
+    thread_bubble(&hers, 7, 0, &b);
+    CHECK(b.playing && b.prog == 0, "a play starts with an empty bar");
+    thread_bubble(&hers, 7, 2550, &b);
+    CHECK(b.prog == 50, "half of 5.1 s played: half the bar, not half of the rounded 5 s");
+    thread_bubble(&hers, 7, 5000, &b);
+    CHECK(b.prog == 98, "5 s of 5.1: not yet full");
+    thread_bubble(&hers, 7, 9000, &b);
+    CHECK(b.prog == 100, "the speaker's tail past its length: full, not more");
+    hers.played = true;
+    thread_bubble(&hers, 0, 0, &b);
+    CHECK(!b.playing && !b.unplayed && b.prog == 100, "heard and stopped: a full bar, no dot");
+    msg_t old = {.id = 8, .voice = true, .dur_s = 4};
+    CHECK(thread_play_pct(&old, 1000) == 25, "no milliseconds from the box: its seconds");
+    msg_t none = {.id = 9, .voice = true};
+    CHECK(thread_play_pct(&none, 1000) == 0, "no length at all: an empty bar, never a divide by zero");
+
+    /* What a thread's list is built from: a play, a stop or a message heard is not a rebuild. */
+    msg_t a = {.id = 1, .voice = true, .dur_s = 3, .text = "Daddy!"};
+    msg_t a_heard = a;
+    a_heard.played = true;
+    const uint32_t s1 = thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a), 1, true);
+    CHECK(s1 == thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a_heard), 1, true),
+          "heard or not, the same list: the dot changes where it stands");
+    msg_t a_text = a;
+    snprintf(a_text.text, sizeof a_text.text, "Daddy!!");
+    CHECK(s1 != thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a_text), 1, true),
+          "a transcript filled in is a rebuild");
+    msg_t a_status = a;
+    snprintf(a_status.status, sizeof a_status.status, "Played");
+    CHECK(s1 != thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a_status), 1, true),
+          "so is a send's status");
+    CHECK(thread_shape_end(THREAD_SHAPE0, 0, false) != thread_shape_end(THREAD_SHAPE0, 0, true),
+          "and Fetching... giving way to No messages yet");
+    msg_t b2 = {.id = 2, .voice = true, .text = "Bye"};
+    const uint32_t ab = thread_shape_msg(thread_shape_msg(THREAD_SHAPE0, &a), &b2);
+    const uint32_t ba = thread_shape_msg(thread_shape_msg(THREAD_SHAPE0, &b2), &a);
+    CHECK(ab != ba && thread_shape_end(ab, 2, true) != s1, "and a message added, or the order moved");
+
+    /* The heap's low-water mark, named with what the panel was doing when it was set. */
+    dbg_low_t low = {0};
+    CHECK(dbg_low_feed(&low, 60000, "idle", false, false) && !strcmp(low.at, "idle"), "the first reading");
+    CHECK(!dbg_low_feed(&low, 61000, "pickup", true, false) && !strcmp(low.at, "idle"),
+          "a higher reading names nothing");
+    CHECK(dbg_low_feed(&low, 44084, "play", true, true) && low.min == 44084 &&
+              !strcmp(low.at, "play+handshake+ring"),
+          "a new low: the work, inside a handshake, with a ring held");
+    CHECK(!dbg_low_feed(&low, 44084, "report", false, false) && !strcmp(low.at, "play+handshake+ring"),
+          "the same low again keeps who set it");
     msg_t reply = {.id = 9};
     CHECK(convo_shows_listen(&reply, false, 0), "text only: a reply has Listen");
     CHECK(!convo_shows_listen(&reply, true, 0), "read aloud: no Listen");
@@ -3673,35 +3724,75 @@ static void test_the_people_s_threads_end_to_end(void)
     CHECK(svc_post_take_chime(false), "a new one in the day, chime on, speaker free: one chime");
     CHECK(!svc_post_take_chime(false), "once");
 
-    /* Play her newest: streamed, then marked played here and on the box. */
+    /* Play her newest. 0.0.17 (owner, 2026-10-13: "A message should no longer be considered
+       unread if I even hit play once on it"): heard once its audio starts, here and on the box;
+       a play the box never answers with audio leaves it unheard and stamps nothing. */
     msg_t m;
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    const uint16_t badge = svc_messages_unplayed(SVC_MESSAGES_THREAD_1);
+    const uint16_t clock_badge = svc_messages_unplayed_total();
     CHECK(svc_audio_play(m.id) && svc_audio_playing() == m.id, "a tap plays her message");
     CHECK(!strcmp(svc_audio_fake_last_path(), "/endpoint/messages/" Q_DEV "/" M5 "/pcm"),
           "from the box's own PCM route for that message");
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(!m.played && !svc_post_take(&r), "not heard before the box has answered with audio");
+    svc_audio_fake_listen(false, false, false);
+    svc_audio_service();
+    svc_post_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(!svc_audio_playing() && !m.played && svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge &&
+              !svc_post_take(&r),
+          "the box refused the play: still unread, no stamp, the badges as they were");
+    CHECK(svc_audio_play(m.id), "again");
+    CHECK(!talk_ring_held(), "no ring until the box answers the play's GET");
     CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1) == false,
           "a hold waits for the play to finish");
     svc_audio_fake_listen(true, false, false);
     svc_audio_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(m.played && svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge - 1 &&
+              svc_messages_unplayed_total() == clock_badge - 1,
+          "its audio starts: heard, the tile's badge and the clock's drop at once");
+    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED &&
+              !strcmp(r.path, "/endpoint/messages/" Q_DEV "/" M5 "/played"),
+          "and its stamp is queued for the box, so the PWA shows it played too");
+    post_req_t extra;
+    CHECK(!svc_post_take(&extra), "exactly one stamp");
+    svc_post_done(&r, -1, NULL, 0);
+    CHECK(talk_ring_held(), "the ring once the audio arrives");
     CHECK(svc_audio_speaking() && svc_audio_playing() == m.id, "playing through the reply's speaker path");
+    CHECK(svc_audio_played_ms() == 0, "nothing at the speaker yet: the bar is empty");
+    svc_audio_fake_played(1200);
+    CHECK(svc_audio_played_ms() == 1200, "the bar follows the samples the speaker took");
     svc_audio_stop();
     svc_audio_service();
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
-    CHECK(!svc_audio_playing() && !m.played && !svc_post_take(&r), "stopped part way: still unplayed, nothing told");
-    CHECK(svc_audio_play(m.id), "again");
+    CHECK(!svc_audio_playing() && m.played && svc_audio_played_ms() == 0,
+          "stopped part way: still heard, and no play's progress left over");
+    CHECK(!talk_ring_held(), "the ring is given back once nothing plays");
+    char before[200], after[200];
+    /* The first stamp's flash write, two seconds on, before the replays are compared. */
+    svc_rtc_fake_advance_ms(2100);
+    svc_post_service();
+    svc_post_note(before, sizeof before);
+    const unsigned saves = post_port_fake_saves();
+    CHECK(svc_audio_play(m.id), "and again");
+    CHECK(svc_audio_played_ms() == 0, "a new play starts its bar from empty");
     svc_audio_fake_listen(true, true, false);
     svc_audio_service();
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
-    CHECK(!m.played && !svc_post_take(&r), "played to the end but its digest did not match: still unplayed");
+    CHECK(m.played && !svc_audio_playing(), "played to the end but its digest did not match: still heard");
     CHECK(svc_audio_play(m.id), "and again");
     svc_audio_fake_listen(true, true, true);
     svc_audio_service();
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
     CHECK(m.played && !svc_audio_playing(), "heard whole: played here");
-    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED &&
-              !strcmp(r.path, "/endpoint/messages/" Q_DEV "/" M5 "/played"),
-          "and on the box, so the PWA shows it played too");
-    svc_post_done(&r, -1, NULL, 0);
+    svc_rtc_fake_advance_ms(3000);
+    svc_post_service();
+    svc_post_note(after, sizeof after);
+    CHECK(!strcmp(before, after) && post_port_fake_saves() == saves,
+          "replaying a heard message stamps nothing: the list, its counts and flash untouched");
+    CHECK(!svc_post_take(&r), "and queues nothing");
     svc_post_open(SVC_MESSAGES_THREAD_1);
     svc_post_service();
     post_answer(Q_NEWEST);
@@ -3798,6 +3889,21 @@ static void hear(uint16_t at)
     svc_post_heard(SVC_MESSAGES_THREAD_1, m.id);
 }
 
+/* One number from the debug snapshot's `post` section. */
+static long snap_int(const char *key)
+{
+    static char buf[8192];
+    dbg_json_t w;
+    dbg_json_init(&w, buf, sizeof buf);
+    dbg_snapshot(&w);
+    char want[48];
+    snprintf(want, sizeof want, "\"post\":{");
+    const char *post = strstr(dbg_json_text(&w), want);
+    snprintf(want, sizeof want, "\"%s\":", key);
+    const char *at = post ? strstr(post, want) : NULL;
+    return at ? atol(at + strlen(want)) : -1;
+}
+
 static void test_played_stamps_survive_failures_reboots_and_many_plays(void)
 {
     static const char FOUR[] =
@@ -3872,6 +3978,34 @@ static void test_played_stamps_survive_failures_reboots_and_many_plays(void)
     bool stamped = false;
     while (svc_post_take(&r)) stamped |= r.kind == POST_RQ_PLAYED;
     CHECK(!stamped, "and once confirmed, a reboot sends none of them again");
+
+    /* A full list and a message heard again: nothing is pushed out, nothing counted dropped. */
+    sib_port_fake_wipe();
+    post_port_fake_wipe();
+    svc_messages_fake_clear();
+    svc_siblings_init();
+    svc_post_init();
+    svc_siblings_offer(POST_SIBS, sizeof POST_SIBS - 1);
+    svc_siblings_service();
+    svc_post_service();
+    post_answer(FOUR);
+    while (svc_post_take(&r)) {
+    }
+    msg_t hm;
+    for (uint16_t k = 0; k < 4; k++) {
+        svc_messages_get(SVC_MESSAGES_THREAD_1, k, &hm);
+        svc_post_heard(SVC_MESSAGES_THREAD_1, hm.id);
+        svc_messages_get(SVC_MESSAGES_THREAD_2, k, &hm);
+        svc_post_heard(SVC_MESSAGES_THREAD_2, hm.id);
+    }
+    CHECK(snap_int("stamps_waiting") == POST_STAMPS && snap_int("stamps_dropped") == 0,
+          "eight heard with the box away: the list is full, none dropped");
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 0, &hm);
+    svc_post_heard(SVC_MESSAGES_THREAD_1, hm.id);
+    CHECK(snap_int("stamps_waiting") == POST_STAMPS && snap_int("stamps_dropped") == 0,
+          "the same one again is a no-op: every waiting stamp kept, stamps_dropped unchanged");
+    while (svc_post_take(&r)) {
+    }
 
     /* More than the list holds: the oldest gives way, the newest eight are kept. */
     post_stamps_t l = {0};

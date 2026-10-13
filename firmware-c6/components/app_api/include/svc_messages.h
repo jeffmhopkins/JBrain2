@@ -17,6 +17,10 @@ typedef struct {
     /* mine: "Sending", "Delivered", "Played"; an agent's answer: how it was worked out, "2 steps ·
        58 s" (0.0.14), shown dim above it */
     char status[24];
+    /* dur_s to the millisecond, where the box said it (a twin's message, 0.0.17): what a play's
+       progress bar fills against; 0 when unknown. 16 bits hold 65 s (a message is 30 s, a talk
+       60), and last, it sits in what was the struct's padding: no message grew. */
+    uint16_t dur_ms;
 } msg_t;
 
 /* The threads: "jerv" and "dave" (the agents), and the two people's, by slot. A person's thread

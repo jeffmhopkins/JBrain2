@@ -251,6 +251,21 @@ static const char POST_Q_SENT[] =
     ",{\"id\":\"6b000000-0000-4000-8000-000000000006\",\"mine\":true,"
     "\"text\":\"" POSTED_TEXT "\",\"ms\":2600,\"played\":false,\"voice\":true}";
 static bool s_post_sent;
+/* Her four longest, more than the glass holds: the thread scrolls (0.0.17's stability check). */
+static const char POST_Q_LONG[] =
+    "{\"device_id\":\"" SIM_Q "\",\"name\":\"Quorra\",\"tag\":\"5e1d0c2a\",\"messages\":["
+    "{\"id\":\"6b000000-0000-4000-8000-000000000011\",\"mine\":false,\"text\":\"Daddy, we did the "
+    "volcano at school and it fizzed all over the table and Ms Reyes laughed so hard.\",\"ms\":9200,"
+    "\"played\":false,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000012\",\"mine\":false,\"text\":\"And then we had "
+    "pizza for lunch, the square kind, and I traded my apple for a cookie.\",\"ms\":8000,"
+    "\"played\":false,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000013\",\"mine\":true,\"text\":\"That sounds like "
+    "the best day. Save me a cookie next time!\",\"ms\":4100,\"played\":true,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000014\",\"mine\":false,\"text\":\"No way, cookies "
+    "are for kids. When are you coming home? We want to show you the drawing.\",\"ms\":7400,"
+    "\"played\":false,\"voice\":true}]}";
+static bool s_post_long;
 
 static void fake_post_box(void)
 {
@@ -261,7 +276,9 @@ static void fake_post_box(void)
             continue;
         }
         char body[2048];
-        if (strstr(r.path, SIM_Q))
+        if (strstr(r.path, SIM_Q) && s_post_long)
+            snprintf(body, sizeof body, "%s", POST_Q_LONG);
+        else if (strstr(r.path, SIM_Q))
             snprintf(body, sizeof body, POST_Q, s_post_new ? POST_Q_NEW : s_post_sent ? POST_Q_SENT : "");
         else
             snprintf(body, sizeof body, "%s", POST_T);
@@ -439,10 +456,10 @@ static void fixtures(void)
         const char *thread;
         msg_t m;
     } SAMPLES[] = {
-        {"jerv", {1, true, true, true, false, 3, "Add milk to the shopping list.", ""}},
-        {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", ""}},
-        {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", ""}},
-        {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", ""}},
+        {"jerv", {1, true, true, true, false, 3, "Add milk to the shopping list.", "", 0}},
+        {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", "", 0}},
+        {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", "", 0}},
+        {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", "", 0}},
     };
     for (size_t i = 0; i < sizeof SAMPLES / sizeof *SAMPLES; i++)
         svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
@@ -636,6 +653,8 @@ typedef struct {
 #define POST_NEW "post new"
 #define LISTEN "listen"
 #define POSTED "posted"
+/* Not a debug command (0.0.17): half of the message playing has reached the speaker. */
+#define PLAYED_HALF "played half"
 /* Not debug commands (0.0.14): the fake box streams the transcript, "Thinking…" and then six
  * steps, the last still running and one failed; and, after them, the answer. */
 #define STEPS "steps"
@@ -653,6 +672,11 @@ static const state_t STATES[] = {
     /* 0.0.16: her message playing (the pause, the dot gone), a voice message to her on its way
        and filed, a new one's badge on her tile and on the clock face, and live in her thread. */
     {"quorra-playing", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN}},
+    /* 0.0.17: the bar half full at half the message, and a message heard once its audio started —
+       stopped at once, it has no dot and its badge is gone. */
+    {"quorra-mid", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN, PLAYED_HALF}},
+    {"quorra-heard", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN,
+                            TAP_LABEL(LV_SYMBOL_PAUSE)}},
     {"quorra-sending", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300)}},
     {"quorra-sent", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), POSTED}},
     {"home-new", NULL, {POST_NEW, WAIT(300)}},
@@ -786,6 +810,13 @@ static int render(const char *name, const char *png, const char *snap)
         }
         if (!strcmp(st->cmds[i], LISTEN)) {
             svc_audio_fake_listen(true, false, false);
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], PLAYED_HALF)) {
+            msg_t m;
+            if (svc_messages_find(SVC_MESSAGES_THREAD_1, svc_audio_playing(), &m))
+                svc_audio_fake_played(m.dur_ms / 2u);
             step(300);
             continue;
         }
@@ -1020,6 +1051,138 @@ static void spinner_checks(void)
     expect(lag <= 15, "and it turns on the tick's phase, so even a new one would carry on where this one is");
     expect(lv_arc_get_angle_end(spin) - lv_arc_get_angle_start(spin) == 90,
            "a fixed quarter arc, not a sweep that grows and shrinks");
+}
+
+/* The open thread's "rebuilds" count, from its snapshot. */
+static long thread_rebuilds(void)
+{
+    const char *at = strstr(run("{\"cmd\":\"snapshot\"}"), "\"rebuilds\":");
+    return at ? atol(at + 11) : -1;
+}
+
+/* The page scrolled down from its top: a thread pinned to its newest message. */
+static lv_obj_t *scrolled(lv_obj_t *o)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE) && lv_obj_get_scroll_top(o) > 0) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *hit = scrolled(lv_obj_get_child(o, (int32_t)i));
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
+/* A play glyph whose button is on the glass inside the page: the one a finger can reach. */
+static lv_obj_t *visible_play(lv_obj_t *o, const lv_area_t *in)
+{
+    if (lv_obj_check_type(o, &lv_label_class) && !strcmp(lv_label_get_text(o), LV_SYMBOL_PLAY)) {
+        lv_area_t a;
+        lv_obj_get_coords(lv_obj_get_parent(o), &a);
+        /* Clear of the header over the page's top and the hint under its end. */
+        if (a.y1 >= in->y1 + UI_HEADER_H && a.y2 <= in->y2 - 60) return o;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *hit = visible_play(lv_obj_get_child(o, (int32_t)i), in);
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
+static void tap_obj(lv_obj_t *o)
+{
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t a;
+    lv_obj_get_coords(o, &a);
+    char cmd[96];
+    snprintf(cmd, sizeof cmd, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}",
+             (int)(a.x1 + a.x2) / 2, (int)(a.y1 + a.y2) / 2);
+    run(cmd);
+    step(500);
+}
+
+/* 0.0.17 (owner, 2026-10-13: "the screen kind of jumps around depending on when I play"): each
+ * play's start and stop rebuilt her whole thread, and an emptied page clamps its scroll, so the
+ * reader was thrown about. Now a play's start, its progress and its stop change her bubble where
+ * it stands: the list is not rebuilt, its widgets are the same ones, and the scroll stays where
+ * the reader left it. And the bar fills left to right with what has played. */
+static int thread_checks(void)
+{
+    s_post_long = true;
+    run(OPEN(SVC_MESSAGES_THREAD_1));
+    step(500);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *page = scrolled(lv_screen_active());
+    expect(page != NULL, "her four long messages run past the glass, pinned to the newest");
+    if (!page) return 1;
+    /* The reader scrolls up from the newest until one of her earlier messages is in view, and
+       stops short of the top, so a page clamped by a rebuild would show. */
+    lv_area_t in;
+    lv_obj_get_coords(page, &in);
+    lv_obj_t *glyph = NULL;
+    for (int32_t at = lv_obj_get_scroll_y(page) - 40; at > 0 && !glyph; at -= 20) {
+        lv_obj_scroll_to_y(page, at, LV_ANIM_OFF);
+        lv_obj_update_layout(page);
+        glyph = visible_play(page, &in);
+    }
+    step(200);
+    const int32_t y = lv_obj_get_scroll_y(page);
+    expect(glyph != NULL && y > 0, "scrolled part way up, with one of her messages to play in view");
+    if (!glyph) return 1;
+    lv_obj_t *row = lv_obj_get_parent(lv_obj_get_parent(glyph));
+    lv_obj_t *track = lv_obj_get_child(row, 1), *fill = lv_obj_get_child(track, 0);
+    lv_obj_t *dot = lv_obj_get_child(row, 3);
+    const long built = thread_rebuilds();
+    const unsigned objs = shell_obj_count();
+    const uint16_t badge = svc_messages_unplayed(SVC_MESSAGES_THREAD_1);
+    lv_area_t at0;
+    lv_obj_get_coords(lv_obj_get_parent(glyph), &at0);
+    expect(dot && lv_obj_get_style_opa(dot, 0) == LV_OPA_COVER && lv_obj_get_width(fill) == 0,
+           "unheard: its dot, and an empty bar");
+
+    tap_obj(lv_obj_get_parent(glyph));
+    msg_t m = {0};
+    svc_messages_find(SVC_MESSAGES_THREAD_1, svc_audio_playing(), &m);
+    expect(m.id && !strcmp(lv_label_get_text(glyph), LV_SYMBOL_PAUSE),
+           "the press plays it: the same button now says pause");
+    expect(lv_obj_get_style_opa(dot, 0) == LV_OPA_TRANSP &&
+               svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge,
+           "playing, its dot goes; the badge waits for the box's audio");
+    svc_audio_fake_listen(true, false, false);
+    step(300);
+    expect(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge - 1,
+           "its audio starts: heard, one off the badge at once");
+    const int32_t full = lv_obj_get_width(track);
+    expect(lv_obj_get_width(fill) == 0, "the box's audio arrives: the bar starts empty, at the left");
+    svc_audio_fake_played(m.dur_ms / 4u);
+    step(200);
+    const int32_t quarter = lv_obj_get_width(fill);
+    svc_audio_fake_played(m.dur_ms / 4u);
+    step(200);
+    const int32_t half = lv_obj_get_width(fill);
+    expect(quarter > 0 && half > quarter && half >= full / 2 - 2 && half <= full / 2 + 2,
+           "it fills left to right with what has played: a quarter, then half");
+    step(1000);
+    expect(lv_obj_get_width(fill) == half, "an underrun (nothing more played) holds it where it is");
+    expect(lv_obj_get_scroll_y(page) == y, "and the page has not moved through the play");
+    tap_obj(lv_obj_get_parent(glyph));
+    expect(!svc_audio_playing() && !strcmp(lv_label_get_text(glyph), LV_SYMBOL_PLAY),
+           "stopped part way: the same button says play again");
+    expect(lv_obj_get_width(fill) == full && lv_obj_get_style_opa(dot, 0) == LV_OPA_TRANSP,
+           "heard: a full bar and no dot, as every heard message shows");
+    lv_area_t at1;
+    lv_obj_get_coords(lv_obj_get_parent(glyph), &at1);
+    expect(lv_obj_get_scroll_y(page) == y && at1.x1 == at0.x1 && at1.y1 == at0.y1,
+           "the scroll is still where the reader left it, and the button where it was");
+    expect(thread_rebuilds() == built && shell_obj_count() == objs &&
+               lv_obj_get_child(row, 1) == track && lv_obj_get_child(track, 0) == fill,
+           "start, progress and stop rebuilt nothing: the same widgets, the same count");
+    /* Played again to its end: still nothing rebuilt, still nothing moved. */
+    tap_obj(lv_obj_get_parent(glyph));
+    svc_audio_fake_listen(true, true, true);
+    step(300);
+    expect(!svc_audio_playing() && thread_rebuilds() == built && lv_obj_get_scroll_y(page) == y,
+           "a play to its end: the same");
+    s_post_long = false;
+    return s_touch_bad;
 }
 
 /* Every rule a real finger meets that the debug pointer's fixed stroke never did. The first
@@ -1468,6 +1631,11 @@ int main(int argc, char **argv)
             fixtures();
             return lifecycle();
         }
+        if (!strcmp(argv[i], "--thread")) {
+            boot(NULL);
+            fixtures();
+            return thread_checks();
+        }
         if (!strcmp(argv[i], "--touch")) {
             boot(NULL);
             fixtures();
@@ -1480,7 +1648,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--only")) only = argv[++i];
     }
     if (!state) {
-        fprintf(stderr, "usage: jpanel-sim --state NAME [--png F] [--snapshot F] [--only APP] | --list | --lifecycle | --touch\n");
+        fprintf(stderr, "usage: jpanel-sim --state NAME [--png F] [--snapshot F] [--only APP] | --list | --lifecycle | --touch | --thread\n");
         return 2;
     }
     boot(only);

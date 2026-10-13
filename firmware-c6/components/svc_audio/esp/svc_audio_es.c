@@ -446,6 +446,7 @@ static void speak(void)
             }
         }
         esp_codec_dev_write(s_spk, s_mono, TALK_CHUNK_BYTES);
+        talk_audio_played(got);
     }
     close_spk();
     talk_audio_on(false, false);

@@ -1,6 +1,6 @@
 # Jeff's jpanel firmware — ESP32-C6-Touch-AMOLED-2.16
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 Plan: `../docs/plans/JPANEL_C6_PLAN.md` — the waves, and the app-module architecture every
 later image follows (§1). Approved screens: `../docs/mocks/jpanel-c6/`.
@@ -1371,7 +1371,8 @@ messages with the twins").
   in RAM), with the reply's speaker start from 0.0.12 so its first word is not clipped. ⏸ (or KEY,
   or BOOT, the shell's stop) stops it. Played to its end with its digest checked, it is marked
   played here at once and its "played" stamp goes to the box, so the PWA shows it played too; a
-  play stopped part way, or cut off by the radio, leaves it unplayed on both. A stamp the box does
+  play stopped part way, or cut off by the radio, leaves it unplayed on both (0.0.17 changed this
+  at the owner's word: heard once its audio starts, "What 0.0.17 adds"). A stamp the box does
   not take (no Wi-Fi, a box restart, a 5xx) waits in a list of up to eight kept in NVS (namespace
   `jpanel`, key `post_stamps`, written at most every 2 s), sent one at a time and retried after
   5 s, 15 s, 60 s and then every five minutes until the box answers 204; a 404 (the message is
@@ -1468,6 +1469,127 @@ talk's) and nothing else.
 4. KEY outside her thread still talks to Jerv; KEY over a message playing stops it.
 5. In the snapshot: `post.tag` moving with each message, `post.thread1.loaded` true,
    `audio.plays` and `audio.posted` counting.
+
+## What 0.0.17 adds: a thread that holds still, a bar that moves, heard once its audio starts
+
+The owner's first use of 0.0.16 on the panel, 2026-10-13: *"When I play back their audio the
+playback works but the screen kind of jumps around depending on when I play. Also, when I hit play
+the status bar as far as progress, I expect to go from left to right and that does not occur. A
+message should no longer be considered unread if I even hit play once on it."* Three fixes in her
+thread, and one memory change the same session's numbers asked for (`system.int_min` 44,084 B, under
+the ~45 KB line this README has drawn since 0.0.11).
+
+### On the glass
+
+- **The thread holds still.** The cause: every press of ▶ or ⏸ rebuilt her whole thread — once from
+  the button's own handler (`lv_async_call(refill)`) and again from the play's `MSG_ARRIVED` — and a
+  play's end rebuilt it a third time. A rebuild is `lv_obj_clean` and a new list, and an emptied
+  page clamps its scroll, so whoever had scrolled up to an older message was thrown to wherever the
+  new list's scroll happened to land. Now the thread does what 0.0.14 made Jerv's do: it keeps the
+  bubbles it drew (`drawn_t`: the message, its ▶/⏸ glyph, its bar, its dot) and a fingerprint of
+  what the list is built from (`thread_shape_*`: ids, words, status, length, order — not whether a
+  message was heard). A play's start, its progress and its stop change only the glyph, the bar's
+  width and the dot, where they stand. The list is rebuilt only when the messages themselves change
+  (a new one, a transcript, a send's status), and then it keeps the reader's scroll exactly as
+  `convo.c` does, pinning to the end only on opening and when a new message arrives. The heard dot
+  is now made clear rather than removed, so the ▶ does not shift sideways when it goes.
+- **The bar fills left to right.** The cause: the thread passed a constant 0 as the play's progress
+  (`thread_bubble(&m, svc_audio_playing(), 0, &tb)`) and nothing ever updated it, so a playing bar
+  sat empty and jumped full when the play ended. Now `svc_audio_played_ms()` counts the samples the
+  audio task actually wrote to the speaker (not the amp's pre-roll, not an underrun's zeros), and
+  the bubble fills against the message's own length to the millisecond (`msg_t.dur_ms`, from the
+  box's `ms`; the rounded seconds only when the box gave none), ten times a second, from a 100 ms
+  LVGL timer that lives only while the thread is open. An underrun holds the bar where it is;
+  stopped early, played out or failed, the message is heard, so its bar shows full like every heard
+  message (the mock's rule). The time beside it stays the message's length, as the mock draws it.
+- **Heard once its audio starts.** The dot goes as ▶ becomes ⏸; the moment the box answers the
+  play with its audio — a fraction of a second after the tap — the message is heard: her tile's
+  badge and the clock face's corner badge (within its one-second redraw) drop, and the "played"
+  stamp is queued for the box through 0.0.16's NVS-kept retry list, so the PWA shows it played too.
+  The stamp goes out on the main task's one connection right behind the play's stream. Stopped,
+  cut off by the radio or failing its digest after that, it still counts as heard; the digest
+  still judges the audio itself (a mismatch counts in `audio.play_failed`). A play the box never
+  answers with audio (unreachable, not a 200, no memory for the ring) leaves it unread and sends
+  no stamp, and so does a press the panel refuses (no Wi-Fi, a talk under way). A message already
+  heard is never stamped again, so replays cannot fill the stamp list or push a waiting stamp out
+  of it (`stamps_dropped` now counts only a real eviction).
+
+### The memory: where 44 KB came from, and the lever pulled
+
+`int_free` read 72 KB with the box's kept session up (the 3 s pickup keeps it open). The low point
+is 28 KB under that, and a play is the one place two big things could meet:
+
+| What | Internal RAM | When |
+| --- | --- | --- |
+| The play's ring | 16,384 B | 0.0.16: from the tap on ▶ until the play is over |
+| A TLS session (mbedTLS in 16 KB + out 4 KB, context and the peer's certificate) | ~24 KB | while the connection is up; given back when it closes |
+| A handshake's working set above the session (ECDHE, the bundle's chain check) | ~12 KB | for the handshake only |
+| A thread's reply buffer and its parsed list | 3,074 + ~1,200 B | milliseconds, as a list lands |
+
+A play stopped part way aborts its stream, which closes the connection (`box_http_stream_abort`);
+so does the box's own idle close. The next ▶ then held the 16 KB ring from the tap while its GET
+paid a fresh handshake: 72 + 24 (old session gone) − 24 (new session) − 12 (handshake) − 16 (ring)
+≈ **44 KB**, which is what the panel read. Stopping one message and playing the next — the owner's
+way through a thread — is exactly that.
+
+**The lever: a play's ring is allocated after its GET has its answer, not at the tap**
+(`talk_net_ring`, from `listen_exchange` once the box has said 200). The handshake and the ring now
+never hold RAM at once: the play's low is the larger of the two, 72 − 16 ≈ **56 KB** during the
+stream (the session up, the ring held) and ≈ 60 KB during a handshake. It costs nothing at the
+speaker — the ring is still the full 16 KB and the speaker's start still waits for its 150 ms of
+audio — and a GET refused, or a box that does not answer, now allocates nothing at all. The other
+levers were weighed and not pulled: an 8 KB ring (0.0.10's (2)) halves the slack on the radio for
+every talk and play to win 8 KB the ordering wins for free; the thread's 3 KB reply buffer is
+already serialised behind a play (one connection, one request at a time, freed milliseconds after
+it lands); and the new stamp at play start waits in the request queue behind the stream.
+
+**What it does not cover:** a talk's ring must exist at KEY down, because the microphone records
+into it while the upload's connection opens. A hold that starts within a few seconds of a dropped
+connection (just after stopping a play, before the next pickup reconnects) can still meet a
+handshake. If `int_min_at` (below) says `talk+handshake+ring` or `message+handshake+ring`, that is
+the case, and the 8 KB ring is the next lever.
+
+**Which phase set it, from now on.** The snapshot's `system` gains **`int_min_at`**, and telemetry's
+note **`low=<bytes>@<what>`**: when the internal heap reaches a new low, the first task to see it —
+the main task at each change of work, the UI task every pass — records what the main task was
+doing (`pickup`, `report`, `manifest`, `ota`, `talk`, `message`, `play`, `post`, `convo`,
+`siblings`, `alarms`, `idle`), `+handshake` inside a new connection's TLS handshake, and `+ring`
+while a talk's or a play's ring is held. A reading of `low=…@play+ring` at or above ~52 KB is this
+image working.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `app_thread` | `thread.c`: `drawn_t` per bubble, `refresh` (rebuild only on a new shape, else `update` in place), the 100 ms tick, a rebuild that keeps the scroll, `rebuilds` in its debug section. `thread_model.c` (host-tested): `thread_bubble` with the played milliseconds, `thread_play_pct`, `thread_shape_msg` / `thread_shape_end`. |
+| `ui_kit` | `ui_bubble_parts_t` (the glyph, the bar's fill, the dot) filled by `ui_bubble`, and `ui_bubble_set`. |
+| `svc_messages` | `msg_t.dur_ms`, in what was the struct's padding (no message grew). |
+| `svc_audio` | `svc_audio_play` marks the message heard (`svc_post_heard`) as it starts; `svc_audio_played_ms` from `talk_audio_played`, counted by the audio task; `talk_net_ring` and a ring taken and freed under the lock from either task; `talk_ring_held`. |
+| `main/talk_link.c` | The ring after the GET's 200; a play's kind named for the low-water mark. |
+| `svc_debug` / `main` | `dbg_sys_doing`, `dbg_sys_handshake`, `dbg_sys_low_check`, `dbg_low_feed` (host-tested); `box_http` brackets a handshake; the UI task checks every pass. |
+| `sim/` | `quorra-mid` (half way, the bar half full) and `quorra-heard` (one press and a stop: no dot, a full bar); `--thread`, run by `render.sh`: her four long messages, scrolled part way up, ▶ → progress → ⏸ → a play to its end, with the scroll, the button's place, the widgets and the rebuild count unchanged throughout. |
+
+### The memory budget
+
+Static DIRAM (`.dram0.data` + `.dram0.bss`): 152,208 → 152,800 B, **+592 B**: four thread
+instances' drawn bubbles (four `drawn_t` of 28 B each) and their view state (~530 B in all), the
+low-water attribution (~60 B), the play's sample count. `.iram0.text` unchanged. App: 1,976,880 →
+1,979,632 B (+2.7 KB). No new task, no new stack, no new heap; the ring is the same 16 KB, taken
+later. LVGL's pool peaks at 17.6 KB in the new states (`quorra-mid`, `quorra-heard`; 64-bit host),
+under Settings'. **Expect `int_min` ≈ 56 KB after a session of plays** (`low=…@play+ring`), ~12 KB
+better than 0.0.16's 44,084 B; a talk started just after a dropped connection is the case still
+open (above).
+
+### What to check on the glass
+
+1. Open her thread with three or four messages, scroll up to an older one and tap ▶: the page does
+   not move, the button becomes ⏸ in place, the dot and her tile's badge are gone at once.
+2. The bar fills from the left as she speaks and reaches the right as she finishes. Tap ⏸ part way:
+   the bar shows full (heard), the page still has not moved, and the message stays heard after the
+   next list from the box and after a reboot.
+3. The PWA shows the message played within seconds of the play ending.
+4. Stop one, play the next, a few times; then the snapshot: `system.int_min` and `int_min_at`
+   (expect ≈ 56 KB at `play+ring`), and the `app` section's `rebuilds` unchanged by the plays.
 
 ## How it talks to the box
 
@@ -1678,7 +1800,8 @@ box has sent the panels' names), `dave`, `rec-dave`, `dave-reply`, `compass`, an
 person's thread since 0.0.15), from 0.0.15 `jerv-menu`, `jerv-recent`, `jerv-recent-loading`,
 `jerv-recent-end`, `jerv-recent-empty`, `jerv-switched`, `jerv-new`, `dave-menu` and
 `dave-recent` (the box's conversations answered by the sim from the mock's sessions), from 0.0.16
-`quorra-playing`, `quorra-sending`, `quorra-sent`, `quorra-new`, `home-new` and `clock-new` (the
+`quorra-playing`, `quorra-sending`, `quorra-sent`, `quorra-new`, `home-new` and `clock-new`, and
+from 0.0.17 `quorra-mid` and `quorra-heard` (the
 twins' threads answered by the sim as `api/panel_messages.py` does, with placeholder names and
 words — her message playing, a voice message to her on its way and filed, a new one live in her
 thread, on her tile's badge and on the clock face's), and from
@@ -1735,7 +1858,9 @@ I2S DMA and codec objects from boot, and the 16 KB talk ring per exchange ("What
 The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB of DIRAM static
 (+1.7 KB), the audio stack
 +768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+14 KB; 53% of the slot
-free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget).
+free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget). 0.0.17: app
+1.98 MB (+2.7 KB), DIRAM static +592 B, and a play's 16 KB ring taken after its connection's
+handshake rather than before it ("What 0.0.17 adds", The memory).
 
 ## Recovery
 

@@ -602,11 +602,15 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
         lv_obj_t *track = ui_progress(r, b->prog, accent_c, 6);
         lv_obj_set_width(track, 150);
         ui_label(r, b->dur, 18, UI_C_MUTED);
-        if (b->unplayed) {
-            lv_obj_t *dot = bare(r);
+        lv_obj_t *dot = NULL;
+        if (b->unplayed || b->parts) {
+            dot = bare(r);
             lv_obj_set_size(dot, 10, 10);
             fill(dot, UI_C_WARN, LV_OPA_COVER, LV_RADIUS_CIRCLE);
+            /* Clear rather than hidden: the row keeps its width, so ▶ never shifts. */
+            if (!b->unplayed) lv_obj_set_style_opa(dot, LV_OPA_TRANSP, 0);
         }
+        if (b->parts) *b->parts = (ui_bubble_parts_t){g, lv_obj_get_child(track, 0), dot};
     }
     lv_obj_t *t = ui_label(body, b->text, 22, b->pending ? UI_C_MUTED : UI_C_TEXT);
     lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
@@ -625,6 +629,16 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
     if (b->speaking) ui_label(wrap, LV_SYMBOL_VOLUME_MAX " Speaking…", 16, UI_C_JERV);
     if (b->status && b->status[0]) ui_label(wrap, b->status, 16, UI_C_MUTED);
     return line;
+}
+
+void ui_bubble_set(const ui_bubble_parts_t *p, bool playing, uint8_t prog, bool unplayed)
+{
+    if (!p->glyph) return;
+    const char *g = playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY;
+    /* LVGL re-lays a label out on every set, same text or not. */
+    if (strcmp(lv_label_get_text(p->glyph), g)) lv_label_set_text(p->glyph, g);
+    lv_obj_set_width(p->bar, LV_PCT(prog > 100 ? 100 : prog));
+    lv_obj_set_style_opa(p->dot, unplayed ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
 }
 
 lv_obj_t *ui_hold_ring(lv_obj_t *parent, int x, int y, uint32_t color)
