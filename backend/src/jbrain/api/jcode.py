@@ -744,13 +744,21 @@ async def restart_session(sid: str, owner: OwnerDep, request: Request) -> dict[s
 # --- Web preview (Wave J4): proxy the control server's ephemeral-tunnel surface ---
 
 
+def _preview_unavailable(op: str, sid: str, exc: JcodeError) -> HTTPException:
+    """These routes are open to share recipients (JcodeAccessDep), and a control-server
+    error's text carries its internal URL, so they get a fixed detail; the log keeps the
+    real cause for the owner."""
+    log.warning("jcode preview %s failed for %s: %s", op, sid, exc)
+    return HTTPException(status_code=502, detail="web preview is unavailable")
+
+
 @router.get("/jcode/sessions/{sid}/preview")
 async def preview_status(sid: str, _access: JcodeAccessDep, request: Request) -> dict[str, object]:
     _valid_sid(sid)
     try:
         return await _client(request).preview_status(sid)
     except JcodeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise _preview_unavailable("status", sid, exc) from exc
 
 
 @router.post("/jcode/sessions/{sid}/preview")
@@ -761,7 +769,7 @@ async def preview_open(
     try:
         return await _client(request).preview_open(sid, body.port)
     except JcodeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise _preview_unavailable("open", sid, exc) from exc
 
 
 @router.delete("/jcode/sessions/{sid}/preview", status_code=204)

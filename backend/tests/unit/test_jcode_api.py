@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import jcode
 from jbrain.api.deps import current_principal
 from jbrain.auth.service import PrincipalInfo
-from jbrain.jcode import FakeJcodeClient
+from jbrain.jcode import FakeJcodeClient, JcodeError
 
 OWNER = PrincipalInfo(id="owner1", kind="owner", label="owner")
 NON_OWNER = PrincipalInfo(id="cap1", kind="capability_token", label="token")
@@ -120,6 +120,31 @@ def test_preview_open_status_close() -> None:
 def test_preview_reports_disabled() -> None:
     client = TestClient(_app(OWNER, jcode_client=FakeJcodeClient(preview_enabled=False)))
     assert client.get("/api/jcode/sessions/sess1/preview").json()["enabled"] is False
+
+
+class _LeakyPreviewClient(FakeJcodeClient):
+    """A control server that fails the way httpx does: the message names its internal URL."""
+
+    async def preview_status(self, sid: str) -> dict[str, object]:
+        raise JcodeError("jcode control server error: 500 for url 'http://jcode:8800/x'")
+
+    async def preview_open(self, sid: str, port: int | None) -> dict[str, object]:
+        raise JcodeError("jcode control server error: 500 for url 'http://jcode:8800/x'")
+
+
+def test_preview_failure_does_not_leak_the_control_server_url(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A share recipient can call these routes; the 502 must not name the internal host, while
+    # the server log still records the real cause.
+    client = TestClient(_app(OWNER, jcode_client=_LeakyPreviewClient()))
+    for resp in (
+        client.get("/api/jcode/sessions/sess1/preview"),
+        client.post("/api/jcode/sessions/sess1/preview", json={}),
+    ):
+        assert resp.status_code == 502
+        assert resp.json() == {"detail": "web preview is unavailable"}
+    assert "http://jcode:8800/x" in caplog.text
 
 
 def test_preview_is_owner_gated() -> None:
