@@ -1740,7 +1740,7 @@ it can start (`tk_can_begin`), and a play takes its own size.
 - `calib`: `custom`, `capturing`, `date`, `fit` (a,b,c,d,e,f: scales and shears in thousandths,
   offsets in pixels — `1000,0,0,0,1000,0` is none), `fits`, `refused`, `last`. Telemetry's touch
   tokens gain `cal=custom|none` and `tp_rot=`; `tp_last`'s `x,y` are now after both.
-- `display.rotation`, `rot_changes`, `rot_no_memory` (a quarter turn that found no 2.5 KB).
+- `display.rotation`, `rot_changes`, `rot_no_memory` (a quarter turn that found no 2.5 KB; gone in 0.0.22, whose turn needs no memory).
 - `audio.ring` is the ring's real size; `audio.play_before` / `play_answered` / `play_ring_free` /
   `play_low` as above.
 - A calibration can be driven from the box: `open` settings, then `inject` `touch` at each cross
@@ -2006,6 +2006,150 @@ own. App: 2,054,352 → 2,054,464 B; only the app image and its sum move in `dis
 1. After the update, idle pickups and a snapshot or two: `int_min_at` reads `pickup`, `answer` or
    `post`, at about 0.0.19's 57-61 KB.
 2. One `panel-shot`: `int_min` ≈ 51 KB at **`screenshot`**.
+
+## What 0.0.22 adds: a quarter turn at nearly upright speed, and a talk's low lifted to a play's
+
+Two things the owner reported on 2026-10-13: *"The slow refresh is actually only when it's turned
+at 90°"*, and a new heap low, `system.int_min` **38,248 B at `talk+ring`** on 0.0.20 (`int_free`
+~67-69 KB), under the ~45 KB line these notes have drawn since 0.0.11.
+
+### The turn: one window a strip, its pieces streamed and overlapped
+
+**What 0.0.18 did on its side.** Each 480×40 strip was gathered, 1,280 pixels at a time, into a
+2.5 KB piece buffer (32 glass rows × 40), and every piece was its own `esp_lcd_panel_draw_bitmap`:
+CASET and RASET, each a polled command transaction and a polled parameter transaction, then RAMWR
+as a fifth polled transaction before the piece's DMA, which was waited for with nothing gathered
+meanwhile. 15 pieces a strip, **180 a full frame — 900 polled transactions and 180 DMAs**, against
+12 strips (60 polled, 12 DMAs) upright. 180° was and stays one transaction a strip.
+
+**What 0.0.22 does** (`send_sideways`, `disp_rot_step`):
+
+- **One window per strip.** All of a strip's pieces land in the same turned window (h wide, 480
+  tall), so CASET/RASET are sent once and the pieces stream into it: the first as **RAMWR (0x2C)**,
+  the rest as **RAMWRC (0x3C), "Memory Continuous Write"** — CO-DS §7.5.33 writes it "continuing
+  from the pixel location following the previous write", and §5.2 lists 0x002C00 and 0x003C00 as
+  the two addresses of the QSPI pixel opcode 0x32 (HARDWARE.md §2). Each piece goes out through
+  `esp_lcd_panel_io_tx_color` with the sh8601 driver's own framing (`0x32 << 24 | reg << 8`).
+- **Pipelined.** Two piece buffers: piece N+1 is gathered while piece N's DMA runs. A buffer is
+  gathered into only after the transfer that last read it was waited for.
+- **Larger pieces, from no new memory.** On its side LVGL is given only the first **32 rows** of
+  its own 38.4 KB strip buffer, and the 7.5 KB tail it gives up holds the two pieces (1,920 pixels
+  each: 60 glass rows of a full-width strip). Upright and upside down it has all 40 rows again.
+  So the turn needs **no heap at all**: 0.0.18's 2,560 B piece buffer is gone, and with it the
+  only way a turn could be refused (`display.rot_no_memory` is dropped from the snapshot).
+
+| A full frame | Strips | Pieces | Polled transactions | DMAs |
+| --- | --- | --- | --- | --- |
+| Upright / 180° | 12 | — | 60 | 12 |
+| 90° / 270°, 0.0.18 | 12 | 180 × 2.5 KB | 900 | 180 |
+| **90° / 270°, 0.0.22** | **15** | **120 × 3.75 KB** | **180** | **120** |
+
+**The estimate** (the host and the sim cannot time the SPI; the board's numbers come after the
+update). The wire itself is the same in every case: 460.8 KB at 40 MHz × 4 lines (20 MB/s) is
+**23 ms** a full frame. What a rotation adds on top is per-transaction cost, taken here as 15-30
+µs for a polled transaction (IDF's acquire, set-up and spin) and ~15 µs to queue a DMA and wake on
+its end, with a gather at ~25 ns a pixel:
+
+| Flush of a full frame | at 15 µs a polled transaction | at 30 µs |
+| --- | --- | --- |
+| Upright | ~24 ms | ~25 ms |
+| 90° / 270°, 0.0.18 | ~45 ms | ~59 ms |
+| **90° / 270°, 0.0.22** | **~28 ms** | **~31 ms** |
+
+So a sideways flush should be **~1.6-1.9× faster**, from about twice upright's to within ~20% of
+it; the gather is hidden under the DMA (48 µs against 192 µs a piece). LVGL's drawing is the same
+in every orientation, plus a little for three more strips. The sim renders all 80 states
+byte-identically, `home-turned` and `notify-picture-turned` included: its glass is now written the
+device's way, through a model of the controller's window and write pointer.
+
+**Measured on the board from now on.** The snapshot's `display` gains `last_frame_ms` (the last
+frame's flush) and, per rotation as `"0°/90°/180°/270°"` strings (strings because the whole snapshot
+must fit its 6 KB answer): `flush_avg_ms` / `flush_max_ms` over every frame, and over **whole-glass
+frames** alone — a turn, an app opened, the only ones that compare across rotations —
+`full_ms` (mean), `full_max_ms`, `full_n`, and `full_wall_ms`, the last one's drawing and sending
+together (from LVGL's render start). Telemetry's display token gains `full_ms=` and `full_max=`
+in the same order. `flush_ms` is still the last frame's.
+
+### The heap: what a talk holds at `talk+ring`, and the levers pulled
+
+Read from the code and the board's own numbers (0.0.20's snapshot on 2026-10-13: `int_free`
+69,528 with the kept session up; the last play `play_before` 69,492, `play_ring_free` 55,672,
+`play_low` 52,024):
+
+| What | Internal RAM | At `talk+ring` | New since the last fixed low? |
+| --- | --- | --- | --- |
+| The kept TLS session (in 16 KB + out 4 KB, context, the chain) | in the 69.5 KB baseline | yes | no |
+| The talk's ring | **16,384 B** | from KEY down to the exchange's end — **the whole spoken reply** | no: 0.0.18 shrank a play's to 6 KB, a talk kept 16 KB |
+| What the network holds behind the ring | ~11-12 KB | while the reply streams: the box sends synthesised speech faster than it plays, so the receive window sits full, as it does for a play (69,492 − 52,024 − 6,144 = 11.3 KB on the last play) | no |
+| The quarter-turn piece buffer | **2,560 B** | while the panel is on its side | **yes, 0.0.18** |
+| littlefs's mount, 0.0.19's statics | ~1.6 KB | always (already in the baseline) | yes, 0.0.19 |
+| The JT2 reader, its text record, STEP labels | static | — | — |
+| The steps' and the answer's widgets | LVGL's own 64 KB pool | — | — |
+| A thread's or a list's fetch buffer | — | never: the main task does one request at a time | — |
+
+69.5 − 16.4 (ring) − 2.6 (on its side) − ~12 (network) ≈ **38.5 KB**: the board's 38,248 B. So the
+low is a play's low with a talk's ring — a talk's reply was never given 0.0.18's play lever — with
+the panel held sideways on top. The talk was likely long and stepped; that changes how long the
+state lasts, not what it holds.
+
+**The levers, both with nothing the owner sees changed:**
+
+1. **The turn takes no memory** (above): −2,560 B whenever the panel is on its side.
+2. **A talk's ring shrinks to a play's 6 KB when its spoken reply starts** (`tk_reply_ring_bytes`,
+   in `talk_net_reply`): −10,240 B for the whole reply. The 16 KB were for the microphone, which
+   records into the ring while the upload's connection opens; by the reply the microphone is done,
+   the ring has just been emptied for the speaker anyway, and the shrink is the heap's in-place
+   `realloc` (no copy, no second block, no failure that loses the ring). What the speaker has
+   ahead of it is unchanged: a sentence the ring has no room for waits in the box's TCP buffers, a
+   pause comes only when the box has not synthesised the next one, and the speaker's 150 ms start
+   is the same. Only a radio stall longer than the ring plus the window (~0.37 s instead of ~0.68
+   s) would now pause a reply — the margin plays have run on since 0.0.18.
+
+| `int_min` at `talk+ring` | 0.0.20 (measured) | **0.0.22 (expected)** |
+| --- | --- | --- |
+| Free with the session up | 69.5 KB | 69.5 KB |
+| The ring during the reply | − 16.4 KB | **− 6.1 KB** |
+| On its side | − 2.6 KB | **0** |
+| The network behind the ring | − ~12.3 KB | − ~12.3 KB |
+| **The low** | **38.2 KB** | **≈ 51 KB** |
+
+That assumes the reply set the low, as a play's stream does. The upload half (16 KB ring, ~32 KB/s
+up on a LAN with power save off: little unacknowledged) is expected near 50 KB. **The board says
+which**: the snapshot's `audio` gains the last talk's `talk_before` (free as its upload began,
+ring held), `talk_up_low` and `talk_reply_low`. If `talk_up_low` is the lower and under ~45 KB, the
+next lever is the upload's ring (an 8 KB talk ring was weighed in 0.0.10).
+
+### The memory budget
+
+Static DIRAM (`.bss`): **+224 B** (the four rotations' frame costs, the talk's three readings).
+App: 2,054,464 → 2,056,208 B (+1.7 KB; only the app image and its sum move in `dist/` —
+bootloader, partition table and otadata are byte-identical). No new task, stack or heap: the turn
+gives back 2,560 B while sideways and a talk's reply 10,240 B. The snapshot grows by ~230 B, to
+about 5.8 KB of its 6 KB answer (`OUT_MAX`); the next section to grow should look at that first.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_display` | `disp_rot_step` (a piece's rows, its RAMWR/RAMWRC, its buffer), `DISP_SIDE_ROWS`, `disp_stat_*` (pure, host-tested against a model of the controller's window and write pointer); `send_sideways`, the strip height switched between frames, `display.flush_*`/`full_*`, the `full_ms=`/`full_max=` token. |
+| `svc_audio` | `tk_reply_ring_bytes`; the reply's ring shrunk in place; `audio.talk_*`. |
+| `main/talk_link.c` | A talk's free heap as its upload began and its low each way. |
+| `sim/sim_main.c` | The glass written through the same stream. |
+
+### What to check on the glass
+
+1. **The turn's speed.** Upright, open an app or two; turn the panel on its side, open the same
+   apps; then a snapshot: `display.full_ms` and `full_max_ms`, upright first and 90° or 270° second
+   (expect ~24 and ~28-31 ms; 0.0.18-0.0.20's sideways would have read ~45-60). `full_wall_ms` is
+   the whole frame, drawing included. The picture must look the same as before in all four
+   orientations, with no torn or shifted band at a strip's edges — the one thing RAMWRC could get
+   wrong — and touch still lands where it is drawn.
+2. **The talk's low.** Hold the panel on its side and talk to Jerv with a question that takes a
+   few steps and a long spoken answer; then the snapshot: `system.int_min` at `talk+ring` should
+   read **≈ 50-51 KB** (above the 45 KB line either way), `audio.ring` 6144 while the reply plays,
+   and `audio.talk_up_low` / `talk_reply_low` say which half set it.
+3. **The reply sounds as before**: no new pauses mid-sentence (a pause between sentences, while the
+   box synthesises, was always there).
 
 ## How it talks to the box
 
