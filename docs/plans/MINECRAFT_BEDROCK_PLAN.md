@@ -1192,10 +1192,13 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 - **API:** `GET /api/minecraft/timeline?slot&from&to&players&include&dim` (owner-only, the
   slot's world folder resolved like `/map/players`; query logic in
   `backend/src/jbrain/minecraft/timeline.py`). Over one range of at most 92 days it returns:
-  - **trails**: each player's samples cut into *segments* at every session, dimension and
-    respawn, then down to at most 2,000 points a player, keeping each segment's first and
-    last point so nothing is ever drawn or interpolated across a portal, a log-off or a
-    respawn (`downsampled` says when gaps no longer mean "standing still");
+  - **trails**: each player's samples cut into *segments* at every session, dimension,
+    death and respawn, then down to at most 2,000 points a player, keeping each segment's
+    first and last point so nothing is ever drawn or interpolated across a portal, a log-off
+    or a respawn (`downsampled` says when gaps no longer mean "standing still"). A life's
+    segment ends on its death's own place (the pack's position), not the last sample before
+    it: sampled every 10 s, a player who respawns at once leaves no sample where they fell,
+    and the trail stopped short of the skull (fixed 2026-10-13);
   - **events**: joins and leaves (placed at the player's first and last sample, since the
     console gives them no position), deaths with the behavior pack's `cause` and `killer`,
     respawns, and dimension changes derived from the trail (a respawn's jump is not one);

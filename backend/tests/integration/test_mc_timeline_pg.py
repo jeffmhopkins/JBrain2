@@ -219,6 +219,29 @@ async def test_a_respawn_breaks_the_trail_and_is_not_a_portal_trip(maker) -> Non
     assert (leave["x"], leave["dim"]) == (-140.0 + 19 * 10.0, "overworld")
 
 
+async def test_the_trail_reaches_the_death_spot_even_cut_to_the_budget(maker) -> None:
+    # Respawned at once, the player left no sample where they fell: the last one is up to
+    # 10 s of walking short of it. The trail still ends on the skull, budget or not.
+    seed = Seed()
+    seed.session("castle", FOX, T0, T0 + 30_000)
+    seed.walk("castle", FOX, T0, 2_500)  # east 10 blocks a sample, to x=24,990
+    seed.event("castle", FOX, "death", T0 + 24_997, dim="overworld", x=24_997.0, y=60.0,
+               z=0.0, cause="fall", killer="")  # fmt: skip
+    seed.event("castle", FOX, "respawn", T0 + 24_999, dim="overworld", x=0.0, y=64.0, z=0.0)
+    seed.walk("castle", FOX, T0 + 25_005, 10, x0=3.0)
+    await seed.into(maker)
+
+    got = await timeline.timeline(maker, "castle", T0 - 60, T0 + 30_100)
+
+    (trail,) = got["trails"]
+    assert trail["downsampled"] is True
+    first, after = trail["segments"]
+    assert first["points"][-1] == [T0 + 24_997, 24_997.0, 60.0, 0.0]
+    assert after["points"][0][1] == 3.0  # the bed's side, never joined to the skull
+    (death,) = [e for e in got["events"] if e["kind"] == "death"]
+    assert (death["x"], death["z"]) == (first["points"][-1][1], first["points"][-1][3])
+
+
 async def test_only_the_range_and_the_players_asked_for_are_read(maker) -> None:
     seed = Seed()
     seed.session("castle", FOX, T0, T0 + 600)
