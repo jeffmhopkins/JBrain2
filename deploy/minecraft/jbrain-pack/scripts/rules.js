@@ -18,7 +18,7 @@ export const LINES = {
     `Your Power Pack burnt out — you kept your things. ${
       left === 0 ? "No packs left." : left === 1 ? "1 pack left." : `${left} packs left.`
     }`,
-  // The welcome (about 25 s, private to the player). Two lines point at the pod and the
+  // The welcome (about 40 s, private to the player). Two lines point at the pod and the
   // ship, so a world without the crash site gets the no-wreck pair instead.
   whereAmI: "…where am I?",
   whatsThis: "…what's this?",

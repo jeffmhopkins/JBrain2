@@ -3411,7 +3411,11 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   the player: `camera.fade` to black for 2 s with "…where am I?"; end-rod sparkles falling
   in a column onto them (`Player.spawnParticle`) with a climbing `note.chime`; "…what's
   this?"; at 5 s a chime and their Tricorder beamed into the selected slot; a crackle and
-  the **SIGNAL ACQUIRED** title; then Dave's six lines 3 s apart. Each step re-checks the
+  the **SIGNAL ACQUIRED** title; then Dave's six lines 6 s apart, at 8, 14, 20, 26, 32
+  and 38 s (3 s until 2026-10-13, when the owner found it too fast to read; the lore
+  table moved with it), so the welcome runs about 40 s and everything that waits for its
+  end (queued first-time beats, the re-beam stand-down) waits that long; `/dave hello`
+  replays the lines at the same 6 s pace. Each step re-checks the
   player, so leaving mid-welcome ends it quietly.
 - **Who gets it:** once per player per world, on a join with no `welcome` beat, which
   includes **players who joined before it shipped** (owner, 2026-10-12: they see it on

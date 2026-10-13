@@ -8,7 +8,7 @@ import { sim, world } from "@minecraft/server";
 await import("./pack/scripts/main.js");
 sim.startup();
 
-const WELCOME_TICKS = 500;
+const WELCOME_TICKS = 800;
 // main.js's once-a-session hint on first holding the Tricorder (TRICORDER_HINT).
 const HINT_TICKS = 60;
 // main.js's loop runs every 5 ticks; sim.tick() is one of its frames, so 10 s is 40.

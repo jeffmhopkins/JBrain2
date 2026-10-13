@@ -19,7 +19,7 @@ const ask = (p, ...words) => {
 };
 
 // A first join plays Dave's welcome (welcome.test.mjs); these tests start after it.
-const WELCOME_TICKS = 500;
+const WELCOME_TICKS = 800;
 // The once-a-session hint on first holding the Tricorder, past by the time a test looks.
 const TRI_HINT = "Your Tricorder points where Dave says · ask with /dave";
 const HINT_TICKS = 60;
