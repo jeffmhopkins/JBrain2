@@ -18,8 +18,6 @@
 bool svc_orient_start(void);
 /* UI task, every pass. */
 void svc_orient_service(uint32_t now_ms);
-/* UI task: called with each new rotation as it is asked of the display, so touch follows it. */
-void svc_orient_on_change(void (*fn)(uint8_t quarters));
 /* `orient=<state>,rot:<deg>,chg:N,rd:N,err:N,axes:N` */
 void svc_orient_note(char *out, size_t len);
 

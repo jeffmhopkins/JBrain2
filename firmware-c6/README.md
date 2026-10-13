@@ -1673,7 +1673,12 @@ it can start (`tk_can_begin`), and a play takes its own size.
   CO5300's MADCTL has no row/column exchange (HARDWARE.md §2), only mirrors, which would cover 180°
   alone and change the one init table proven on the glass.
 - **Touch turns with it**, in the one place that maps it (`tp_xform`): raw → the 0.0.7 mapping → the
-  calibration → the rotation undone. The buttons do not move: KEY, BOOT and PWR mean what they did.
+  calibration → the rotation undone. It follows the turn the **glass actually took**
+  (`svc_display_on_rotated`), never the request: a quarter turn that finds no 2.5 KB for its piece
+  buffer (most likely mid-play, the heap's low point) leaves the glass as it was and retries every
+  pass, and touch, `svc_orient_rotation` and a calibration made meanwhile all stay with what is
+  showing until it succeeds, then move together. The buttons do not move: KEY, BOOT and PWR mean
+  what they did.
 - **Off** is the panel's own upright, at once. **No sensor** (no answer at 0x6B, or not a QMI8658):
   the panel stays upright for the boot, Settings draws the switch dead with "The tilt sensor did not
   start, so the screen stays upright", and telemetry says `orient=failed:<step>`.
@@ -1720,10 +1725,16 @@ it can start (`tk_can_begin`), and a play takes its own size.
 
 ### Debugging it
 
-- `orient`: `imu` (`ok` / `failed:<step>`), `auto`, `rotation` (degrees) and `down` (the edge showing
-  as the bottom), `seen` (`edge` / `between` / `flat` / `moving`) and `seen_edge`, `raw` (counts) and
-  `raw_mg` (milli-g), `axes`, `axes_if_upright`, `powered`, `held`, `reads`, `read_errors`, `changes`,
-  `chip` and `id` (WHO_AM_I / revision). Telemetry: `orient=ok,rot:90,chg:N,rd:N,err:N,axes:N`.
+- `orient`: `imu` (`ok` / `failed:<step>`), `auto`, `rotation` (degrees, what the glass shows) and
+  `down` (the edge showing as the bottom), `asked` (only while a requested turn waits for memory),
+  `seen` (`edge` / `between` / `flat` / `moving`) and `seen_edge`, `raw` (counts) and `raw_mg`
+  (milli-g), `axes`, `axes_if_upright`, `axes_if_right_edge`, `powered`, `held`, `reads`,
+  `read_errors`, `changes`, `chip` and `id` (WHO_AM_I / revision).
+- **Settling `imu_axes` from the box takes two holds**, because one upright reading cannot tell the
+  glass's x flip (and that bit is what tells 90° from 270°): (1) panel upright, still, a snapshot —
+  `set imu_axes` to its `orient.axes_if_upright`; (2) panel on its **right** edge (turned a quarter turn
+  clockwise, so the edge that was on your right is at the bottom), still, a snapshot — `set imu_axes` to its
+  `orient.axes_if_right_edge`. That value is the whole answer; record it in HARDWARE.md §6. Telemetry: `orient=ok,rot:90,chg:N,rd:N,err:N,axes:N`.
 - `calib`: `custom`, `capturing`, `date`, `fit` (a,b,c,d,e,f: scales and shears in thousandths,
   offsets in pixels — `1000,0,0,0,1000,0` is none), `fits`, `refused`, `last`. Telemetry's touch
   tokens gain `cal=custom|none` and `tp_rot=`; `tp_last`'s `x,y` are now after both.
@@ -1743,7 +1754,7 @@ scripts/debug-connect.sh panel-cmd c6 set --arg name=auto_rotate --arg value=0
 
 Static DIRAM (`.dram0.data` + `.dram0.bss`): 152,800 → 153,104 B, **+304 B**: the orientation state
 and its describer, the calibration's coefficients and bookkeeping, the touch task's mapping, the
-calibration screen's view, the play's heap readings. App: 1,979,632 → 1,992,416 B (+12.5 KB; 52% of
+calibration screen's view, the play's heap readings. App: 1,979,632 → 1,992,656 B (+12.7 KB; 52% of
 the slot free). No new task, no new stack. On the heap: a play's ring is **10 KB smaller** for its
 whole length; the quarter-turn piece buffer is **2,560 B only while the panel is on its side**
 (upright and upside down take none); the calibration's NVS write is a transient handle. CPU: one
@@ -1761,10 +1772,12 @@ strip). LVGL's pool peaks at 38.5 KB in `calib` (the screen over Settings; 64-bi
 2. **Auto-rotate.** With the panel standing on the desk, the screen must stay as it is. Turn it onto
    its right edge and hold it still: within a second the content turns to read upright; the same on
    its left edge and upside down. Lean it at about 45°: nothing flickers. Lay it flat: it keeps the
-   last turn. Tap a tile in each orientation: it opens what is under the finger. If it turns the wrong
-   way, or turns while standing normally, take a snapshot with the panel upright: `orient.raw_mg`
-   and `orient.axes_if_upright` say which `imu_axes` to set (or switch Auto-rotate off in Settings —
-   touch works whichever way the screen shows).
+   last turn. Tap a tile in each orientation: it opens what is under the finger. If it turns while
+   standing normally, or the right and left edges come out swapped (or upside down), settle the
+   axes in two holds (Debugging it, above): **upright** → `set imu_axes` to `orient.axes_if_upright`,
+   then **on its right edge** → `set imu_axes` to `orient.axes_if_right_edge`. Skipping the second
+   hold leaves 90° and 270° swapped. Meanwhile Auto-rotate can be switched off in Settings — touch
+   works whichever way the screen shows.
 3. **Settings → Auto-rotate off**: the screen goes straight back to the panel's own upright.
 4. **Touch calibration.** Settings → Touch screen → Calibrate: tap each cross until it turns green
    (three taps). The card then says Today and offers Reset calibration. Taps near the edges should
@@ -2043,7 +2056,7 @@ The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB 
 +768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+14 KB; 53% of the slot
 free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget). 0.0.17: app
 1.98 MB (+2.7 KB), DIRAM static +592 B, and a play's 16 KB ring taken after its connection's
-handshake rather than before it ("What 0.0.17 adds", The memory). 0.0.18: app 1.99 MB (+12.5 KB;
+handshake rather than before it ("What 0.0.17 adds", The memory). 0.0.18: app 1.99 MB (+12.7 KB;
 52% of the slot free), DIRAM static +304 B, a play's ring 6 KB instead of 16, and a 2.5 KB piece
 buffer only while the panel is on its side ("What 0.0.18 adds", The memory budget).
 

@@ -105,9 +105,10 @@ static void ui_loop(void *arg)
     svc_post_init();
     svc_notice_init();
     /* The owner's touch calibration from NVS into the touch task's mapping, and the panel's
-       rotation into it as svc_orient turns the screen (0.0.18). */
+       rotation into it as the glass actually turns (0.0.18): a turn the display could not take
+       for memory leaves touch where the picture is. */
     svc_calib_custom();
-    svc_orient_on_change(svc_touch_set_rotation);
+    svc_display_on_rotated(svc_touch_set_rotation);
     char err[96];
     shell_set_pointer(touch_feed);
     if (!apps_register(NULL) || !shell_start(err, sizeof err)) stop("shell");

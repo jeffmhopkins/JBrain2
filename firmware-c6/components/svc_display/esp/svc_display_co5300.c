@@ -134,6 +134,7 @@ static volatile uint8_t s_rot_req;
 static uint8_t s_rot;
 static uint16_t *s_piece;
 static uint32_t s_rot_changes, s_rot_fail;
+static void (*s_rotated)(uint8_t quarters);
 
 /* One window to the glass, waited for: the buffer is LVGL's strip or the one piece buffer, and
    neither may be touched again until the DMA has finished with it. */
@@ -302,6 +303,9 @@ static void apply_rotation(void)
     }
     s_rot_changes++;
     lv_obj_invalidate(lv_screen_active());
+    /* Touch turns with the glass, not with the request: a turn refused for memory leaves taps
+       mapped to what is showing. */
+    if (s_rotated) s_rotated(want);
     ESP_LOGI(TAG, "turned to %u°", (unsigned)want * 90);
 }
 
@@ -313,6 +317,11 @@ void svc_display_set_rotation(uint8_t quarters)
 uint8_t svc_display_rotation(void)
 {
     return s_rot;
+}
+
+void svc_display_on_rotated(void (*fn)(uint8_t quarters))
+{
+    s_rotated = fn;
 }
 
 void svc_display_service(void)

@@ -334,6 +334,7 @@ static void step(uint32_t ms)
             svc_audio_chime();
         svc_alarms_service(svc_rtc_uptime_ms());
         svc_orient_service(svc_rtc_uptime_ms());
+        svc_display_fake_service();
         shell_pump();
         lv_timer_handler();
     }

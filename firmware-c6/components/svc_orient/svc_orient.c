@@ -1,6 +1,7 @@
 /* Auto-rotate (0.0.18, plan §2b): the QMI8658 read on the UI task's own passes, the decision in
- * orient_logic.c, the content turned by svc_display and the touch mapping by whoever registered
- * svc_orient_on_change (the device's UI task wires svc_touch). Runs the same in the sim. */
+ * orient_logic.c, the content turned by svc_display. Touch follows the turn the display actually
+ * took (svc_display_on_rotated, wired by the device's UI task), never this service's request.
+ * Runs the same in the sim. */
 #include <stdio.h>
 #include <string.h>
 
@@ -20,8 +21,8 @@ static bool s_powered, s_hold;
 static uint32_t s_next_ms, s_reads, s_errs;
 static int16_t s_raw[3];
 static bool s_have_raw;
-static uint8_t s_applied;
-static void (*s_change)(uint8_t quarters);
+/* The last turn asked of the display; what the glass shows is svc_display_rotation(). */
+static uint8_t s_asked;
 
 static void describe(void *ctx, dbg_json_t *w);
 
@@ -47,7 +48,7 @@ bool svc_orient_available(void)
 
 uint8_t svc_orient_rotation(void)
 {
-    return s_applied;
+    return svc_display_rotation();
 }
 
 void svc_orient_hold(bool hold)
@@ -56,17 +57,11 @@ void svc_orient_hold(bool hold)
     orient_forget(&s_o);
 }
 
-void svc_orient_on_change(void (*fn)(uint8_t quarters))
-{
-    s_change = fn;
-}
-
 static void apply(uint8_t rot)
 {
-    if (rot == s_applied) return;
-    s_applied = rot;
+    if (rot == s_asked) return;
+    s_asked = rot;
     svc_display_set_rotation(rot);
-    if (s_change) s_change(rot);
 }
 
 void svc_orient_service(uint32_t now_ms)
@@ -123,14 +118,32 @@ static int axes_if_upright(uint8_t axes)
     return -1;
 }
 
+/* With the panel on its right edge, and `axes` already right for upright (axes_if_upright): the
+   value with the x flip that reads this reading as "right". One upright reading cannot settle that
+   bit; this one does, and without it 90° and 270° come out swapped. */
+static int axes_if_right_edge(uint8_t axes)
+{
+    if (!s_have_raw) return -1;
+    const uint8_t order[2] = {axes, (uint8_t)(axes ^ 2)};
+    for (int i = 0; i < 2; i++) {
+        orient_t t;
+        orient_init(&t);
+        orient_feed(&t, order[i], s_raw, 0);
+        if (t.seen == ORIENT_SEEN_EDGE && t.edge == 1) return order[i];
+    }
+    return -1;
+}
+
 static void describe(void *ctx, dbg_json_t *w)
 {
     (void)ctx;
     const uint8_t axes = (uint8_t)svc_settings_get(SET_IMU_AXES);
     dbg_json_str(w, "imu", s_state);
     dbg_json_bool(w, "auto", svc_settings_get(SET_AUTO_ROTATE) != 0);
-    dbg_json_int(w, "rotation", s_applied * 90);
-    dbg_json_str(w, "down", orient_edge_name(s_applied));
+    const uint8_t shown = svc_display_rotation();
+    dbg_json_int(w, "rotation", shown * 90);
+    if (shown != s_asked) dbg_json_int(w, "asked", s_asked * 90);
+    dbg_json_str(w, "down", orient_edge_name(shown));
     dbg_json_str(w, "seen", orient_seen_name(s_o.seen));
     if (s_o.seen == ORIENT_SEEN_EDGE) dbg_json_str(w, "seen_edge", orient_edge_name(s_o.edge));
     if (s_have_raw) {
@@ -143,6 +156,7 @@ static void describe(void *ctx, dbg_json_t *w)
     }
     dbg_json_int(w, "axes", axes);
     dbg_json_int(w, "axes_if_upright", axes_if_upright(axes));
+    dbg_json_int(w, "axes_if_right_edge", axes_if_right_edge(axes));
     dbg_json_bool(w, "powered", s_powered);
     dbg_json_bool(w, "held", s_hold);
     dbg_json_int(w, "reads", s_reads);
@@ -154,6 +168,6 @@ static void describe(void *ctx, dbg_json_t *w)
 void svc_orient_note(char *out, size_t len)
 {
     snprintf(out, len, "orient=%s,rot:%u,chg:%lu,rd:%lu,err:%lu,axes:%ld", s_state,
-             (unsigned)s_applied * 90, (unsigned long)s_o.changes, (unsigned long)s_reads,
+             (unsigned)svc_display_rotation() * 90, (unsigned long)s_o.changes, (unsigned long)s_reads,
              (unsigned long)s_errs, (long)svc_settings_get(SET_IMU_AXES));
 }

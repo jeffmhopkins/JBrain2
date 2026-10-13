@@ -43,6 +43,7 @@
 #include "svc_settings_fake.h"
 #include "svc_calib.h"
 #include "svc_display.h"
+#include "svc_display_fake.h"
 #include "svc_orient.h"
 #include "svc_orient_drv.h"
 #include "tp_cal_port.h"
@@ -4257,7 +4258,7 @@ static void test_the_service_reads_only_while_lit_and_on(void)
     svc_display_set_dark(false);
     orient_port_fake_fail(NULL);
     CHECK(svc_orient_start() && svc_orient_available(), "the sensor answers at start");
-    svc_orient_on_change(turned);
+    svc_display_on_rotated(turned);
     int16_t a[3];
     tilt(0, 950, a);
     orient_port_fake_set(a[0], a[1], a[2]);
@@ -4271,7 +4272,7 @@ static void test_the_service_reads_only_while_lit_and_on(void)
     orient_port_fake_set(a[0], a[1], a[2]);
     for (int i = 0; i < 40; i++) svc_orient_service(t += 25);
     CHECK(svc_orient_rotation() == 3 && svc_display_rotation() == 3 && s_turned_to == 3,
-          "turned left: the display is asked to turn, and touch is told");
+          "turned left: the glass turns, and touch is told");
     svc_display_set_dark(true);
     svc_orient_service(t += 25);
     const unsigned dark0 = orient_port_fake_reads();
@@ -4312,7 +4313,124 @@ static void test_the_service_reads_only_while_lit_and_on(void)
           "Settings says what the switch does, or why it is dead");
     orient_port_fake_fail(NULL);
     svc_orient_start();
-    svc_orient_on_change(NULL);
+    svc_display_on_rotated(NULL);
+}
+
+/* A quarter turn the display cannot take (no 2.5 KB for its piece buffer, the play's low-heap
+   case): the glass stays, and touch and calibration stay with the glass, not with the request. */
+static void test_touch_and_calibration_follow_the_glass_not_the_request(void)
+{
+    svc_settings_set(SET_AUTO_ROTATE, 1);
+    svc_settings_set(SET_IMU_AXES, 0);
+    svc_display_set_dark(false);
+    orient_port_fake_fail(NULL);
+    svc_orient_start();
+    svc_orient_hold(false);
+    s_turned_to = 0xFF;
+    svc_display_on_rotated(turned);
+    int16_t a[3];
+    uint32_t t = 2000000;
+    tilt(0, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    CHECK(svc_display_rotation() == 0, "upright to begin with");
+    s_turned_to = 0xFF;
+    svc_display_fake_no_piece(true);
+    tilt(90, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) {
+        svc_orient_service(t += 25);
+        svc_display_fake_service();
+    }
+    CHECK(svc_display_rotation() == 0 && svc_orient_rotation() == 0,
+          "turned right but no memory for the piece buffer: the glass stays upright, and says so");
+    CHECK(s_turned_to == 0xFF, "touch is not told of a turn the glass did not take");
+    /* A calibration made now is turned back into the glass's frame with what is showing. Taps
+       landing 10 px right of every cross on the upright screen are a glass x error of +10; read
+       through the requested quarter turn it would have been a y error. */
+    tp_cal_port_fake_wipe();
+    svc_calib_reset();
+    svc_calib_begin();
+    calib_pair_t pairs[CAL_TARGETS];
+    for (uint8_t i = 0; i < CAL_TARGETS; i++) {
+        int16_t x, y;
+        calib_target(i, &x, &y);
+        pairs[i] = (calib_pair_t){x, y, (int16_t)(x + 10), y};
+    }
+    CHECK(svc_calib_finish(pairs, CAL_TARGETS) == CALIB_SAVED, "the calibration fits");
+    tp_cal_t c;
+    bool on;
+    tp_cal_port_fake_applied(&c, &on);
+    CHECK(on && c.c < -9 * TP_Q16 && c.c > -11 * TP_Q16 && c.f > -TP_Q16 && c.f < TP_Q16,
+          "and corrects the glass's x, the frame that is showing, not the requested turn's");
+    svc_display_fake_no_piece(false);
+    for (int i = 0; i < 4; i++) {
+        svc_orient_service(t += 25);
+        svc_display_fake_service();
+    }
+    CHECK(svc_display_rotation() == 1 && svc_orient_rotation() == 1 && s_turned_to == 1,
+          "the memory back: the glass, orient and touch all turn together");
+    svc_calib_reset();
+    tilt(0, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    svc_display_on_rotated(NULL);
+}
+
+/* The raw reading a chip mounted as `axes` gives for gravity's "down" (dx, dy) on the glass: the
+   inverse of orient_down. */
+static void raw_for(uint8_t axes, int32_t dx, int32_t dy, int16_t a[3])
+{
+    const int32_t u = axes & 2 ? dx : -dx, v = axes & 4 ? dy : -dy;
+    a[0] = (int16_t)(axes & 1 ? v : u);
+    a[1] = (int16_t)(axes & 1 ? u : v);
+    a[2] = 5600;
+}
+
+static int orient_snap_int(const char *key)
+{
+    static char out[8192];
+    dbg_json_t w;
+    dbg_json_init(&w, out, sizeof out);
+    dbg_cmd_run("{\"id\":\"ax\",\"cmd\":\"snapshot\"}", &w);
+    char k[48];
+    snprintf(k, sizeof k, "\"%s\":", key);
+    const char *at = strstr(dbg_json_text(&w), k);
+    return at ? atoi(at + strlen(k)) : -99;
+}
+
+/* Two holds settle the whole `imu_axes` value from the box, whatever way the chip is mounted:
+   upright gives the swap and the y flip, then on its right edge the x flip that tells 90° from
+   270°. */
+static void test_two_holds_settle_the_sensor_s_axes(void)
+{
+    svc_settings_set(SET_AUTO_ROTATE, 1);
+    svc_display_set_dark(false);
+    orient_port_fake_fail(NULL);
+    svc_orient_start();
+    svc_orient_hold(false);
+    uint32_t t = 4000000;
+    bool all = true;
+    for (uint8_t truth = 0; truth <= IMU_AXES_MAX; truth++) {
+        svc_settings_set(SET_IMU_AXES, 0);
+        int16_t a[3];
+        raw_for(truth, 0, 15400, a); /* standing upright */
+        orient_port_fake_set(a[0], a[1], a[2]);
+        svc_orient_service(t += 200);
+        const int up = orient_snap_int("axes_if_upright");
+        svc_settings_set(SET_IMU_AXES, up < 0 ? 0 : up);
+        raw_for(truth, 15400, 0, a); /* on its right edge */
+        orient_port_fake_set(a[0], a[1], a[2]);
+        svc_orient_service(t += 200);
+        const int right = orient_snap_int("axes_if_right_edge");
+        all &= up >= 0 && right == truth;
+    }
+    CHECK(all, "for every way the chip can sit, upright then right edge names its imu_axes");
+    svc_settings_set(SET_IMU_AXES, 0);
+    int16_t a[3];
+    raw_for(0, 0, 15400, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
 }
 
 /* ---- 0.0.18: touch calibration ---- */
@@ -4569,6 +4687,8 @@ int main(void)
     test_the_service_reads_only_while_lit_and_on();
     test_the_fit_finds_a_panel_s_error_and_refuses_nonsense();
     test_calibration_lives_in_the_glass_frame_and_rotation_follows();
+    test_touch_and_calibration_follow_the_glass_not_the_request();
+    test_two_holds_settle_the_sensor_s_axes();
     test_the_calibration_screen_counts_taps_that_agree();
     test_a_hold_records_sends_and_hears_back();
     test_a_knock_or_a_cancel_lets_go_of_everything();
