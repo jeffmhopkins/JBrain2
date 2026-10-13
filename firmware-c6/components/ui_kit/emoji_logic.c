@@ -81,3 +81,20 @@ emoji_kind_t emoji_kind(uint32_t cp, uint16_t *index)
     if (in(PICTOGRAPHIC, sizeof PICTOGRAPHIC / sizeof *PICTOGRAPHIC, cp)) return EMOJI_UNKNOWN;
     return EMOJI_NOT;
 }
+
+#ifdef EMOJI_HOST_TEST
+/* `in` binary-searches both tables, so a hand edit out of order would silently miss code points;
+ * the host suite checks this (review of #1738). Host-only, so the image does not change. */
+static int ascending(const range_t *r, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+        if (r[i].lo > r[i].hi || (i && r[i].lo <= r[i - 1].hi)) return 0;
+    return 1;
+}
+
+int emoji_ranges_ok(void)
+{
+    return ascending(INVISIBLE, sizeof INVISIBLE / sizeof *INVISIBLE) &&
+           ascending(PICTOGRAPHIC, sizeof PICTOGRAPHIC / sizeof *PICTOGRAPHIC);
+}
+#endif

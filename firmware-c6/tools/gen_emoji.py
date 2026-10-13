@@ -92,7 +92,15 @@ def source(cp: int, want: str) -> bytes:
         path.parent.mkdir(parents=True, exist_ok=True)
         with urllib.request.urlopen(URL.format(tag=TAG, cp=cp), timeout=60) as r:
             data = r.read()
-        path.write_bytes(data)
+        got = hashlib.sha256(data).hexdigest()
+        if want and got != want:
+            # Never cached: a torn or wrong download would otherwise fail every later run until
+            # someone deleted it by hand (review of #1738).
+            sys.exit(f"U+{cp:X}: the download has sha256 {got}, emoji_set.txt pins {want}")
+        part = path.with_suffix(".part")
+        part.write_bytes(data)
+        part.replace(path)
+        return data
     data = path.read_bytes()
     got = hashlib.sha256(data).hexdigest()
     if want and got != want:
