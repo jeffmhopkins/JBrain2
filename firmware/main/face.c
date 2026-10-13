@@ -425,17 +425,39 @@ static void draw_star(uint16_t *fb, int cx, int cy, int r, uint16_t c)
  * old already reads as "shaken up". The far side of the orbit is drawn smaller, which is all
  * the depth a flat ellipse needs.
  *
- * HEARTS (love): five, rising from beside the head in turn, swaying as they go and shrinking
+ * HEARTS (love): twelve, rising from beside the head in turn, swaying as they go and shrinking
  * away at the top rather than vanishing. */
+/* TICKLE MARKS: two arcs either side of the body, the way a comic draws a squirm, flickering
+ * out of step side to side so they read as something happening TO him. `cx, cy` is the body's
+ * centre and `half` its half width; both forms' bodies are 144 wide. */
+static void draw_tickle(uint16_t *fb, const face_state_t *st, int cx, int cy, int half, float s)
+{
+    if (st->fig.extra != EXTRA_TICKLE) return;
+    const float p = st->fig.extra_p;
+    if (p > 0.8f) return; /* gone as he gets his breath back */
+    const uint16_t mark = rgb(0xFF, 0xF0, 0xA0);
+    const int w = (int)lrintf(7.0f * s);
+    for (int side = -1; side <= 1; side += 2) {
+        const float flick = sinf(p * (float)M_PI * 34.0f + (side > 0 ? 0.0f : 1.6f));
+        if (flick < -0.3f) continue; /* each side blinks off now and then */
+        const float a0 = side > 0 ? -0.55f : (float)M_PI - 0.55f;
+        for (int k = 0; k < 2; k++) {
+            const int r = half + (int)lrintf((14.0f + 16.0f * (float)k + 4.0f * flick) * s);
+            arc_stroke(fb, cx, cy, r, a0, a0 + 1.1f, w, mark);
+        }
+    }
+}
+
 static void draw_overhead(uint16_t *fb, const face_state_t *st, int cx, int top, int half,
                           float s)
 {
     const float p = st->fig.extra_p;
     if (st->fig.extra == EXTRA_STARS) {
         const uint16_t star = rgb(0xFF, 0xD8, 0x4A);
-        const float in = p < 0.1f ? p / 0.1f : p > 0.88f ? (1.0f - p) / 0.12f : 1.0f;
+        /* Eight turns over 6.4 s: the speed four turns had over 3.2 s (0.4.10). */
+        const float in = p < 0.05f ? p / 0.05f : p > 0.94f ? (1.0f - p) / 0.06f : 1.0f;
         for (int k = 0; k < 3; k++) {
-            const float a = p * 2.0f * (float)M_PI * 4.0f + (float)k * 2.0f * (float)M_PI / 3.0f;
+            const float a = p * 2.0f * (float)M_PI * 8.0f + (float)k * 2.0f * (float)M_PI / 3.0f;
             const float depth = sinf(a);
             const int x = cx + (int)lrintf(cosf(a) * ((float)half + 16.0f * s));
             const int y = top - (int)(10.0f * s) + (int)lrintf(depth * 14.0f * s);
@@ -443,12 +465,14 @@ static void draw_overhead(uint16_t *fb, const face_state_t *st, int cx, int top,
         }
     } else if (st->fig.extra == EXTRA_HEARTS) {
         const uint16_t heart = rgb(0xFF, 0x4F, 0x7B);
-        for (int k = 0; k < 5; k++) {
-            const float t = (p - (float)k * 0.13f) / 0.42f; /* this heart's own life, 0..1 */
+        /* Twelve, each rising for the 1.2 s and following the last by the 0.36 s the five did
+           over 2.8 s: the love lasts twice as long, not twice as slow (0.4.10). */
+        for (int k = 0; k < 12; k++) {
+            const float t = (p - (float)k * 0.065f) / 0.21f; /* this heart's own life, 0..1 */
             if (t <= 0.0f || t >= 1.0f) continue;
             const int side = (k % 2) ? 1 : -1;
             const float grow = t < 0.15f ? t / 0.15f : t > 0.75f ? (1.0f - t) / 0.25f : 1.0f;
-            const float out = ((float)half + 6.0f * s) * (0.75f + 0.1f * (float)k);
+            const float out = ((float)half + 6.0f * s) * (0.75f + 0.1f * (float)(k % 5));
             const int x = cx + side * (int)lrintf(out) +
                           (int)lrintf(sinf(t * 2.0f * (float)M_PI * 1.5f) * 10.0f * s);
             const int y = top + (int)lrintf((90.0f - 190.0f * t) * s);
@@ -678,6 +702,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
         fill_circle(fb, ox + tilt + hx, hyy, hr, limb);
     }
     draw_overhead(fb, st, ox + tilt, hy - SY(HH), SX(HW), s);
+    draw_tickle(fb, st, ox, oy + SY(40), SX(72), s);
 }
 
 static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int ox, int oy,
@@ -857,6 +882,7 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
 
     if (u > 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
     draw_overhead(fb, st, hx, hy, SX(OS_HEAD_W / 2), s);
+    draw_tickle(fb, st, ox, oy + SY(OS_BODY_Y + OS_BODY_H / 2), SX(OS_BODY_W / 2), s);
 #undef RX
 #undef RY
 #undef HC_Y

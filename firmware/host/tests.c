@@ -329,6 +329,8 @@ static void test_every_face_and_action_draws(void)
 /* The renderer's own RGB565-byte-swapped packing, so the test can name a colour. Counting
    non-black pixels cannot see a blink at all: the eye is drawn OVER the head, so shutting it
    swaps one non-black colour for another and the silhouette is identical. */
+#define CUE_RATE 16000
+
 static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
     const uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
@@ -937,6 +939,121 @@ static void test_dizzy_sits_down_and_love_shows_hearts(void)
         rig_figure(ACT_LOVE, 0.45f, 1.0f, 0, 0.0f, &st.fig);
         face_draw(fb, 0, &st);
         CHECK(count_colour(heart) > 600, "love: hearts float up beside him");
+    }
+}
+
+/* THE HEAD SHAKE'S SPEED, in sign changes a second of the figure's tilt. */
+static float dizzy_shakes_per_s(void)
+{
+    const int dur = rig_spec(ACT_DIZZY)->dur_ms;
+    int flips = 0;
+    float last = 0.0f;
+    for (int t = 0; t < dur; t += 5) {
+        figure_pose_t f;
+        rig_figure(ACT_DIZZY, (float)t / (float)dur, 1.0f, 0, 0.0f, &f);
+        if ((f.tilt > 0.0f) != (last > 0.0f) && t > 0) flips++;
+        last = f.tilt;
+    }
+    return (float)flips * 1000.0f / (float)dur;
+}
+
+static void test_dizzy_and_love_last_twice_as_long_at_the_same_speed(void)
+{
+    /* The owner: "the dizziness after being shaken. It should last twice as long. Go ahead and
+       make the love animation twice as long also." Twice as LONG, not twice as slow: their
+       motions are written against progress, so a longer duration on its own would have halved
+       the speed of the head shake, the orbit and the hearts' climb. */
+    CHECK(rig_spec(ACT_DIZZY)->dur_ms == 6400, "dizzy: 3.2 s became 6.4");
+    CHECK(rig_spec(ACT_LOVE)->dur_ms == 5600, "love: 2.8 s became 5.6");
+    const float hz = dizzy_shakes_per_s();
+    CHECK(hz > 3.0f && hz < 3.9f, "the head shakes at 0.4.7's 3.4 flips a second, not half of it");
+
+    /* The hearts: one at a time for most of the 5.6 s, each rising as fast as before. */
+    const uint16_t heart = rgb565(0xFF, 0x4F, 0x7B);
+    face_state_t st;
+    face_rest(&st);
+    int lit = 0;
+    for (float p = 0.05f; p < 0.95f; p += 0.05f) {
+        rig_for(ACT_LOVE, p, 1.0f, 0, &st.rig);
+        rig_figure(ACT_LOVE, p, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        if (count_colour(heart) > 100) lit++;
+    }
+    CHECK(lit >= 16, "hearts rise right through the longer love, with no empty stretch");
+}
+
+static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
+{
+    /* The owner: "I want to say tickle tickle, and have it have an animation of giggling and
+       laughing and being tickled." */
+    int heard = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        const vocab_t *v = vocab_get(i);
+        if (v->kind == VOCAB_ACTION && v->arg == ACT_TICKLE) {
+            heard++;
+            CHECK(strcmp(v->phrase, "tickle tickle") == 0 || strcmp(v->phrase, "tickle me") == 0,
+                  "said as a child says it, never as a bare 'tickle' a television says");
+        }
+    }
+    CHECK(heard == 2, "both ways of asking");
+    CHECK(cue_for_action(ACT_TICKLE) == CUE_TICKLE, "and it sounds like a laugh, its own");
+
+    /* THREE LAUGHS: the first as he hears it, two more as it goes, walked at the panel's 25 fps
+       and at a ragged 7 fps, so a dropped frame cannot drop a laugh. Nothing else re-cues. */
+    for (int step = 40; step <= 140; step += 100) {
+        const int dur = rig_spec(ACT_TICKLE)->dur_ms;
+        int again = 0;
+        float p0 = 0.0f;
+        for (int t = 0; t < dur; t += step) {
+            const float p = (float)t / (float)dur;
+            again += rig_recue(ACT_TICKLE, p0, p);
+            p0 = p;
+        }
+        CHECK(again == 2, "he laughs twice more after the first");
+    }
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a == ACT_TICKLE) continue;
+        CHECK(!rig_recue((action_t)a, 0.0f, 1.0f), "every other action sounds once");
+    }
+
+    /* A LAUGH IS SEPARATE SYLLABLES: count the gaps in its 10 ms envelope. GIGGLE's blips run
+       together; this must not. */
+    static int16_t buf[CUE_MAX_SAMPLES];
+    const int n = cue_render(CUE_TICKLE, buf, CUE_RATE, 100, 0);
+    const int win = CUE_RATE / 100;
+    int peak = 0, sylls = 0;
+    bool loud = false;
+    for (int i = 0; i < n; i++) peak = abs(buf[i]) > peak ? abs(buf[i]) : peak;
+    for (int w0 = 0; w0 + win <= n; w0 += win) {
+        int m = 0;
+        for (int i = w0; i < w0 + win; i++) m = abs(buf[i]) > m ? abs(buf[i]) : m;
+        if (!loud && m > peak / 2) {
+            loud = true;
+            sylls++;
+        } else if (loud && m < peak / 8) {
+            loud = false;
+        }
+    }
+    CHECK(sylls >= 6 && sylls <= 8, "a run of separate 'ha's, not one tone");
+
+    /* And while he laughs, the tickle marks beside him, gone again at the end. */
+    const uint16_t mark = rgb565(0xFF, 0xF0, 0xA0);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        int seen = 0;
+        for (float p = 0.1f; p < 0.7f; p += 0.05f) {
+            rig_for(ACT_TICKLE, p, 1.0f, 0, &st.rig);
+            rig_figure(ACT_TICKLE, p, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            if (count_colour(mark) > 100) seen++;
+        }
+        CHECK(seen >= 6, "tickle marks flicker beside him while it lasts");
+        rig_for(ACT_TICKLE, 0.9f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_TICKLE, 0.9f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(mark) == 0, "and gone as he gets his breath back");
     }
 }
 
@@ -2613,7 +2730,6 @@ static void test_vocab_has_no_ambiguity(void)
  * wrong with generated audio rather than the things that are easy to assert.
  */
 
-#define CUE_RATE 16000
 
 static int cue_fill(cue_t c, int16_t *buf)
 {
@@ -4724,6 +4840,8 @@ int main(void)
     test_the_square_slides_into_the_bands_with_one_mapping();
     test_a_shake_is_several_jerks_not_one_bump();
     test_dizzy_sits_down_and_love_shows_hearts();
+    test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
+    test_tickle_tickle_makes_him_laugh_and_laugh_again();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();

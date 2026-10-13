@@ -1880,6 +1880,8 @@ static void face_task(void *arg)
     face_rest(&fst);
     action_t action = ACT_NONE;
     uint32_t action_start = 0;
+    uint32_t recue_from = 0;
+    float recue_p = 0.0f;
     float action_mag = 1.0f;
     gesture_t gest;
     gesture_reset(&gest);
@@ -2405,6 +2407,18 @@ static void face_task(void *arg)
                     p = (float)el / (float)dur;
                 }
             }
+            /* AN ACTION THAT OUTLASTS ITS SOUND SAYS IT AGAIN (`rig_recue`): the tickle laughs
+               three times. Measured from the last DRAWN frame's progress, so a skipped frame
+               cannot skip a laugh; and only into a speaker nobody else is using. */
+            if (action_start != recue_from) {
+                recue_from = action_start;
+                recue_p = 0.0f;
+            }
+            if (action != ACT_NONE && rig_recue(action, recue_p, p) && sound &&
+                view->mode == SM_PET && !facts.speaker_busy) {
+                stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+            }
+            recue_p = p;
             const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD ||
                                     view->think;
             const bool speaking = facts.speaker_busy;

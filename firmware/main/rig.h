@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -44,6 +45,7 @@ typedef enum {
     /* Neither is in a poke pool: each answers one thing a child does on purpose. */
     ACT_DIZZY, /* shaken hard: he sits down hard and shakes his head, stars going round */
     ACT_LOVE,  /* "I love you": hearts float up and he coos */
+    ACT_TICKLE, /* "tickle tickle": he squirms and laughs, and laughs again */
     ACT_COUNT,
 } action_t;
 
@@ -116,7 +118,14 @@ typedef struct {
 void rig_walk(rig_walk_t *w, float dlean_px, rig_pose_t *p);
 
 /* Whole-figure transform. `extra` is a one-shot the renderer draws on top. */
-typedef enum { EXTRA_NONE = 0, EXTRA_PUFF, EXTRA_BLUSH, EXTRA_STARS, EXTRA_HEARTS } extra_t;
+typedef enum {
+    EXTRA_NONE = 0,
+    EXTRA_PUFF,
+    EXTRA_BLUSH,
+    EXTRA_STARS,
+    EXTRA_HEARTS,
+    EXTRA_TICKLE, /* wiggle marks either side of him: where the tickling is */
+} extra_t;
 
 typedef struct {
     float ox;
@@ -138,6 +147,11 @@ typedef struct {
        height, which only it can know — the two forms' legs are 54 and 92 px long. */
     float sit;
 } figure_pose_t;
+
+/* AN ACTION LONGER THAN ITS SOUND SAYS IT AGAIN. A cue is at most `CUE_MAX_MS` (0.8 s), which a
+   four-second laugh outlasts several times over, so the tickle laughs again as it goes. True on
+   the frame `p` crosses one of the action's re-cue points (from `p0`, the last frame's). */
+bool rig_recue(action_t a, float p0, float p);
 
 /* Limb pose for `a` at progress `p` (0..1), scaled by `mag` (the repetition penalty), with
    `t_ms` driving the idle sway that runs underneath everything: a character that is ever

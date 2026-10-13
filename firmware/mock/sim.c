@@ -108,6 +108,8 @@ static face_state_t r_fst;
 static rig_walk_t r_walk;
 static action_t r_action;
 static uint32_t r_action_at;
+static uint32_t r_recue_from;
+static float r_recue_p;
 static float r_flinch;
 static int r_frame;
 /* The page's tilt slider, in degrees right-side down. Upright only: the bench does not turn. */
@@ -454,7 +456,9 @@ static void frame(void)
             (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
             say("cue", "%s (press slot)", cue_name(c));
         }
-        say("pet", "%s", r_action == ACT_DIZZY ? "shaken: dizzy" : "heard \"i love you\"");
+        say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
+                         : r_action == ACT_LOVE ? "heard \"i love you\""
+                                                : "heard \"tickle tickle\"");
     }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
 
@@ -495,6 +499,18 @@ static void frame(void)
             p = (float)el / (float)dur;
         }
     }
+    /* As the panel does (`display.c`): an action that outlasts its sound says it again. */
+    if (r_action_at != r_recue_from) {
+        r_recue_from = r_action_at;
+        r_recue_p = 0.0f;
+    }
+    if (r_action != ACT_NONE && rig_recue(r_action, r_recue_p, p) && view->mode == SM_PET &&
+        !facts.speaker_busy) {
+        const cue_t c = cue_for_action((int)r_action);
+        (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+        say("cue", "%s (press slot, again)", cue_name(c));
+    }
+    r_recue_p = p;
     const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD || view->think;
     const bool dozing = screen_dozing(r_sleep, conversing, facts.speaker_busy);
     face_params_t target;
@@ -657,7 +673,12 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 8: g_mode = value ? BOX_NEW : BOX_TODAY; break;
     case 9: p_autotalk_ms = (uint32_t)value; break;
     case 10: r_tilt_deg = value; break; /* the panel tilted, degrees right-side down */
-    case 11: r_pending_act = value == 1 ? ACT_DIZZY : value == 2 ? ACT_LOVE : ACT_NONE; break;
+    case 11:
+        r_pending_act = value == 1   ? ACT_DIZZY
+                        : value == 2 ? ACT_LOVE
+                        : value == 3 ? ACT_TICKLE
+                                     : ACT_NONE;
+        break;
     }
 }
 

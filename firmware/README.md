@@ -153,6 +153,15 @@ Two actions that answer one thing each, so neither is in a poke pool:
 
 The bench has a Shake button and an "I love you" voice button.
 
+**0.4.10: tickle tickle, and both of these twice as long.** `tickle tickle` / `tickle me` makes
+him laugh helplessly for 4.8 s: he squirms side to side, bounces on every "ha", tosses his head,
+kicks his legs out in turn, and tickle marks flicker either side of his body. `CUE_TICKLE` is a
+laugh (`SH_LAUGH`: seven breathy "ha"s tumbling down), and because a cue is at most 0.8 s the
+action says it again (`rig_recue`), three laughs in all, each only into a free speaker. The
+dizzy spell is now 6.4 s and the love 5.6 s, twice what they were, with their motions'
+cycle counts doubled so the head shakes and the hearts rise at the speed they did: twelve
+hearts now, not five. The bench has a "Tickle tickle" button.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,

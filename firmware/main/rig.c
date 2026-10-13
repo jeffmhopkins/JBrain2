@@ -23,8 +23,13 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_EAT] = {1600, FACE_HAPPY, 0},
     [ACT_KICK] = {900, FACE_EXCITED, 0},
     [ACT_SPIN] = {1200, FACE_EXCITED, 0},
-    [ACT_DIZZY] = {3200, FACE_BEWILDERED, 0},
-    [ACT_LOVE] = {2800, FACE_HAPPY, 0},
+    /* TWICE AS LONG AS 0.4.7's (owner, 0.4.10: *"the dizziness after being shaken. It should
+       last twice as long. Go ahead and make the love animation twice as long also"*). Their
+       motions are written against progress, so each doubles its cycle count with them: the
+       head shakes and the hearts rise at the speed they did, for longer. */
+    [ACT_DIZZY] = {6400, FACE_BEWILDERED, 0},
+    [ACT_LOVE] = {5600, FACE_HAPPY, 0},
+    [ACT_TICKLE] = {4800, FACE_HAPPY, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -33,8 +38,9 @@ static const action_spec_t SPECS[ACT_COUNT] = {
 
 static float sit_amount(float p)
 {
-    if (p < 0.12f) return p / 0.12f;
-    if (p > 0.85f) return (1.0f - p) / 0.15f;
+    /* The same 0.38 s down and 0.48 s up as at 3.2 s: he plonks, he does not settle. */
+    if (p < 0.06f) return p / 0.06f;
+    if (p > 0.925f) return (1.0f - p) / 0.075f;
     return 1.0f;
 }
 
@@ -42,7 +48,28 @@ static float sit_amount(float p)
    clearing their head, not a no. */
 static float dizzy_shake(float p)
 {
-    return sinf(p * (float)M_PI * 11.0f) * (1.0f - p) * (1.0f - p);
+    return sinf(p * (float)M_PI * 22.0f) * (1.0f - p) * (1.0f - p);
+}
+
+/* THE TICKLE'S INTENSITY: up fast, held while he laughs, and dying away over the last quarter as
+   he gets his breath back. Everything it drives is a fast oscillation times this. */
+static float tickle_env(float p)
+{
+    if (p < 0.08f) return p / 0.08f;
+    if (p > 0.75f) return (1.0f - p) / 0.25f;
+    return 1.0f;
+}
+
+bool rig_recue(action_t a, float p0, float p)
+{
+    if (a != ACT_TICKLE) return false;
+    /* Two more laughs after the first, 1.6 s apart: each a fresh variant, and the last well
+       before he winds down. */
+    static const float AT[] = {0.33f, 0.62f};
+    for (unsigned i = 0; i < sizeof(AT) / sizeof(AT[0]); i++) {
+        if (p0 < AT[i] && p >= AT[i]) return true;
+    }
+    return false;
 }
 
 const action_spec_t *rig_spec(action_t a)
@@ -192,10 +219,21 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         break;
     case ACT_LOVE: {
         /* A slow happy sway, the head nuzzling side to side, tail going. */
-        const float q = sinf(p * (float)M_PI * 4.0f) * mag;
+        const float q = sinf(p * (float)M_PI * 8.0f) * mag;
         out->neck += q * 14.0f;
         out->bob -= fabsf(q) * 6.0f;
-        out->tail += sinf(p * (float)M_PI * 10.0f) * 14.0f * mag;
+        out->tail += sinf(p * (float)M_PI * 20.0f) * 14.0f * mag;
+        break;
+    }
+    case ACT_TICKLE: {
+        /* HELPLESS LAUGHTER: the head tosses, he bounces with every "ha", the tail wags flat
+           out and the feet kick. Each channel at its own rate so it never settles into one
+           rhythm, which is what makes it squirming rather than dancing. */
+        const float k = tickle_env(p) * mag;
+        out->neck += sinf(p * (float)M_PI * 30.0f) * 18.0f * k;
+        out->bob -= fabsf(sinf(p * (float)M_PI * 26.0f)) * 12.0f * k;
+        out->tail += sinf(p * (float)M_PI * 38.0f) * 26.0f * k;
+        out->step += sinf(p * (float)M_PI * 18.0f) * 16.0f * k; /* in time with the kicks */
         break;
     }
     default:
@@ -320,9 +358,20 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
     }
     case ACT_LOVE: {
         /* Arms up and swaying: delighted. A 2D rig cannot hug itself. */
-        const float q = sinf(p * (float)M_PI * 4.0f) * mag;
+        const float q = sinf(p * (float)M_PI * 8.0f) * mag;
         out->arm_l = 120.0f + q * 12.0f;
         out->arm_r = -120.0f + q * 12.0f;
+        break;
+    }
+    case ACT_TICKLE: {
+        /* Arms flailing, out of step with each other; legs kicking OUT in turn, never across
+           (a kick through the middle crossed his legs). */
+        const float k = tickle_env(p) * mag;
+        const float kick = p * (float)M_PI * 18.0f;
+        out->arm_l = 70.0f + sinf(p * (float)M_PI * 26.0f) * 35.0f * k;
+        out->arm_r = -(70.0f + sinf(p * (float)M_PI * 26.0f + 1.3f) * 35.0f * k);
+        out->leg_l = 4.0f + fmaxf(0.0f, sinf(kick)) * 30.0f * k;
+        out->leg_r = -(4.0f + fmaxf(0.0f, -sinf(kick)) * 30.0f * k);
         break;
     }
     case ACT_HIDE:
@@ -435,9 +484,18 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
             out->extra = EXTRA_STARS;
             break;
         case ACT_LOVE:
-            out->tilt += sinf(p * (float)M_PI * 4.0f) * 7.0f * mag;
+            out->tilt += sinf(p * (float)M_PI * 8.0f) * 7.0f * mag;
             out->extra = EXTRA_HEARTS;
             break;
+        case ACT_TICKLE: {
+            /* Wriggling side to side and bouncing on the laughs. */
+            const float k = tickle_env(p) * mag;
+            out->ox += sinf(p * (float)M_PI * 22.0f) * 9.0f * k;
+            out->oy -= fabsf(sinf(p * (float)M_PI * 26.0f)) * 10.0f * k;
+            out->tilt += sinf(p * (float)M_PI * 16.0f) * 10.0f * k;
+            out->extra = EXTRA_TICKLE;
+            break;
+        }
         default:
             break;
         }
