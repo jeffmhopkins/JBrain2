@@ -83,16 +83,44 @@ p.set(KNOB.PET_ACT, 2);
 p.advance(5800);
 check(events.slice(pets).some((e) => e.includes('cue DIZZY')), 'a shake makes him dizzy, and says so');
 check(events.slice(pets).some((e) => e.includes('cue LOVE')), '"I love you" makes him coo');
+// "I'm going to tickle you": he braces; then pokes are tickles, and the fifth gets him.
 const tickled = events.length;
 p.set(KNOB.PET_ACT, 3);
-p.advance(5000);
-check(events.slice(tickled).filter((e) => e.includes('cue TICKLE')).length === 3,
-  '"tickle tickle" makes him laugh, and laugh again, and again');
+p.advance(1800);
+check(events.slice(tickled).some((e) => e.includes('cue BRACE')), 'warned, he braces with a titter');
+for (let i = 0; i < 5; i++) {
+  tap(W / 2, H * 0.62);
+  p.advance(i < 4 ? 1300 : 500);
+}
+// A child tickling keeps poking: a poke mid-fit is a flinch, and the fit runs its course.
+tap(W / 2, H * 0.62);
+p.advance(4600);
+const tk = events.slice(tickled);
+check(tk.filter((e) => e.includes('cue GIGGLE')).length === 4, 'four tickles, a giggle each');
+check(tk.filter((e) => e.includes('cue TICKLE')).length === 3,
+  'and the fifth sets him laughing, and laughing again, and again');
+const later = events.length;
+tap(W / 2, H * 0.62);
+p.advance(1500);
+check(!events.slice(later).some((e) => e.includes('tickled')), 'after which a poke is a poke');
 const fed = events.length;
 p.set(KNOB.PET_ACT, 4);
-p.advance(5000);
-check(events.slice(fed).filter((e) => e.includes('cue EAT')).length === 5,
-  'a snack is five bites, a crunch each');
+p.advance(3200);
+check(events.slice(fed).filter((e) => e.includes('cue EAT')).length === 3,
+  'a snack is three bites, a crunch each');
+const snacks = () => events.slice(fed).filter((e) => e.includes('eats a ')).map((e) => e.split('eats a ')[1]);
+// Two more snacks inside the minute: he has to go, and it plops out after the third.
+p.set(KNOB.PET_ACT, 4);
+p.advance(3200);
+p.set(KNOB.PET_ACT, 4);
+p.advance(3200);
+p.advance(3000);
+const after = events.slice(fed);
+check(after.some((e) => e.includes('three meals in a minute')), 'three snacks in a minute owe one');
+const ate = snacks();
+check(ate.length === 3 && ate[0] !== ate[1] && ate[1] !== ate[2], 'a different snack each time');
+check(after.some((e) => e.includes('plop')) && after.some((e) => e.includes('cue POOP')),
+  'and he poops, with a plop');
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);

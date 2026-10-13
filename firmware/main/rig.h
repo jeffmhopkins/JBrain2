@@ -45,7 +45,9 @@ typedef enum {
     /* Neither is in a poke pool: each answers one thing a child does on purpose. */
     ACT_DIZZY, /* shaken hard: he sits down hard and shakes his head, stars going round */
     ACT_LOVE,  /* "I love you": hearts float up and he coos */
-    ACT_TICKLE, /* "tickle tickle": he squirms and laughs, and laughs again */
+    ACT_TICKLE, /* the fifth tickle (`tickle.h`): he squirms and laughs, and laughs again */
+    ACT_BRACE,  /* "I'm going to tickle you": he braces, giggling nervously */
+    ACT_POOP,   /* three meals in a minute (`poop.h`): he squats, strains, and plop */
     ACT_COUNT,
 } action_t;
 
@@ -164,9 +166,35 @@ bool rig_recue(action_t a, float p0, float p);
    re-cue on the first bite, a quarter of a second in, so every crunch lands on its bite. */
 bool rig_cue_on_start(action_t a);
 
+/* Whether a poke while `a` runs only flinches rather than starting something else. The
+   laughing fit is the payoff for five pokes, and the child doing the tickling keeps poking:
+   the sixth replacing it cut it off after its first laugh. */
+bool rig_holds_pokes(action_t a);
+
 /* EATING: bites taken by progress `p` (0..EAT_BITES), and how long ago the last one was as a
    fraction of a bite's time (for the crumbs), or -1 before the first. */
-#define EAT_BITES 5
+#define EAT_BITES 3
+
+/* WHAT HE EATS (0.4.11, owner: *"Kids are also requesting a random item to eat, maybe one out
+   of eight possibilities"*). Drawn by `face.c`, picked per meal by `food_pick`. */
+typedef enum {
+    FOOD_COOKIE = 0,
+    FOOD_APPLE,
+    FOOD_BANANA,
+    FOOD_PIZZA,
+    FOOD_DONUT,
+    FOOD_CARROT,
+    FOOD_WATERMELON,
+    FOOD_STRAWBERRY,
+    FOOD_COUNT,
+} food_t;
+
+/* The next meal's food, from a random `rnd`: any of the eight but `prev`, so asking for a snack
+   twice never brings the same thing twice running. */
+food_t food_pick(food_t prev, uint32_t rnd);
+
+/* THE PLOP: where in ACT_POOP the poop lands on the floor and its sound plays. */
+#define POOP_AT 0.6f
 int rig_eat_bites(float p, float *since);
 
 /* Limb pose for `a` at progress `p` (0..1), scaled by `mag` (the repetition penalty), with

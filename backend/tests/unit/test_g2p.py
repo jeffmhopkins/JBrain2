@@ -53,6 +53,13 @@ def test_case_is_not_significant() -> None:
     assert phonemes_for("Fish") == phonemes_for("fish")
 
 
+# PHRASES WHOSE TEXT CANNOT SPELL WHAT IS SAID. The firmware's phrase text is a-z and spaces
+# (`vocab.h` rule 1), so "I'm" is written "im" — which CMUdict reads as the start of "him". The
+# flash carries the phonemes of what a child actually says; this names it, entry by entry,
+# rather than loosening the check.
+_SPOKEN: dict[str, str] = {"im going to tickle you": "i'm going to tickle you"}
+
+
 def test_agrees_with_every_phrase_already_in_flash() -> None:
     """The converter and the firmware's committed table must not drift apart.
 
@@ -67,7 +74,7 @@ def test_agrees_with_every_phrase_already_in_flash() -> None:
 
     checked = 0
     for phrase, flashed in entries:
-        ours = phonemes_for(phrase)
+        ours = phonemes_for(_SPOKEN.get(phrase) or phrase)
         if ours is None:
             continue  # a phrase with a word CMUdict lacks; the firmware's stands
         assert ours == flashed, f"{phrase!r}: box says {ours!r}, flash carries {flashed!r}"

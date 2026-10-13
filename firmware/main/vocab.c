@@ -173,11 +173,13 @@ static vocab_t VOCAB[] = {
        happily." Both, because a four-year-old says either; neither is a prefix of the other. */
     {"i love you", "i LcV Yo", VOCAB_ACTION, ACT_LOVE},
     {"love you", "LcV Yo", VOCAB_ACTION, ACT_LOVE},
-    /* The owner: "I want to say tickle tickle, and have it have an animation of giggling and
-       laughing and being tickled." "tickle me" too, the other thing a child says while doing
-       it; never a bare "tickle", which a television says. Phonemes from the box's g2p. */
-    {"tickle tickle", "TgKcL TgKcL", VOCAB_ACTION, ACT_TICKLE},
-    {"tickle me", "TgKcL Mm", VOCAB_ACTION, ACT_TICKLE},
+    /* THE WARNING, NOT THE TICKLE (`tickle.h`). The owner: "let's change tickle, to 'I'm going
+       to tickle you' and then when that happens, pokes make him be tickled". He braces; the
+       fingers do the tickling. No apostrophe (rule 1), so "im" carries the box's phonemes for
+       "I'm"; and "gonna", which is how it is mostly said. Never a bare "tickle", which a
+       television says. */
+    {"im going to tickle you", "iM Gbgl To TgKcL Yo", VOCAB_ACTION, ACT_BRACE},
+    {"gonna tickle you", "GnNc TgKcL Yo", VOCAB_ACTION, ACT_BRACE},
     {"bounce around", "BtNS ktND", VOCAB_ACTION, ACT_BOING},
     {"nod your head", "NnD YeR hfD", VOCAB_ACTION, ACT_NOD},
     {"be silly", "Bm SgLm", VOCAB_ACTION, ACT_WIGGLE},
