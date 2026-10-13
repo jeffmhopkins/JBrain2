@@ -51,6 +51,13 @@ class _Page:
         self.closed = True
 
 
+class _ClosedPage(_Page):
+    """A popup that arrives after the context closed: its own close raises."""
+
+    async def close(self) -> None:
+        raise RuntimeError("Target page, context or browser has been closed")
+
+
 class _Context:
     """Records what the server wires on the context, and fires its `page` listeners the way
     Playwright does: for the render's own page as it is created, and for any popup."""
@@ -78,8 +85,8 @@ class _Context:
             await listener(self.page)
         return self.page
 
-    async def open_popup(self) -> _Page:
-        popup = _Page()
+    async def open_popup(self, popup: _Page | None = None) -> _Page:
+        popup = popup or _Page()
         for listener in self.page_listeners:
             await listener(popup)
         return popup
@@ -184,3 +191,12 @@ async def test_a_popup_is_closed_but_the_render_page_is_not(
     popup = await context.open_popup()
     assert popup.closed
     assert not browser.page.closed
+
+
+async def test_a_popup_landing_after_close_is_swallowed(
+    server: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The `page` handler is fire-and-forget; a late popup whose close fails must not raise
+    # out of it (an unretrieved task exception is all it would produce).
+    _, browser = await _render(server, monkeypatch)
+    await browser.context.open_popup(_ClosedPage())

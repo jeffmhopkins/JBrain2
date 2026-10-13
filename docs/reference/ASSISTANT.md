@@ -1377,6 +1377,8 @@ that refuses every private address and compose service.
 The api's own call to the reader does not follow redirects either: the reader is unguarded and
 the api sits on the internal networks, so a 3xx it returns is treated as a reader miss and the
 ladder moves on, rather than letting a hostile page steer the api at an internal service.
+So a `JBRAIN_READER_URL` that redirects (an `http://` hosted reader bouncing to `https://`)
+now always misses, logged as `web.reader_redirect_refused`: give it the final `https://` URL.
 A bot-wall the reader can't defeat renders a **challenge interstitial** (Cloudflare "Just a
 moment…" / "Update Browser Required", DataDome, etc.) and returns it as a clean 200; that
 junk is detected by content (`_is_challenge_page`) and treated as a blocked fetch — a

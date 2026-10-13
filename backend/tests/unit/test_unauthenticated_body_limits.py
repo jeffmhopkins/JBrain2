@@ -56,7 +56,9 @@ def test_caddy_caps_every_unauthenticated_post_and_nothing_else() -> None:
 
 def test_real_credentials_fit_the_bounds() -> None:
     LoginRequest(owner_key=keys.generate_owner_key(), device_label="Jeff's phone")
-    MintRequest(device_key=keys.generate_capability_key())
+    LoginRequest(owner_key=keys.generate_owner_key(), device_label="d" * 200)
+    # Device keys are minted in the owner-key format (devices/service.py, locations/pairing.py).
+    MintRequest(device_key=keys.generate_owner_key())
     IntakeRedeem(secret=keys.generate_capability_key())
     ShareRedeem(token=keys.generate_capability_key())
     PairingRedeem(code="a" * 256)
@@ -70,8 +72,10 @@ def test_real_credentials_fit_the_bounds() -> None:
         (IntakeRedeem, "secret"),
         (ShareRedeem, "token"),
         (PairingRedeem, "code"),
+        (LoginRequest, "device_label"),
     ],
 )
 def test_an_oversized_credential_is_refused(model: type, field: str) -> None:
     with pytest.raises(ValidationError):
-        model(**{field: "a" * 100_000})
+        fields = {"owner_key": keys.generate_owner_key()} if model is LoginRequest else {}
+        model(**{**fields, field: "a" * 100_000})

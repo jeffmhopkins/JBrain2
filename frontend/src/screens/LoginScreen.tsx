@@ -76,6 +76,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           id="device-label"
           value={deviceLabel}
           onChange={(e) => setDeviceLabel(e.target.value)}
+          maxLength={200}
           required
         />
         {error && (

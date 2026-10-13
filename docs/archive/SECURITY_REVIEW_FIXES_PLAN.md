@@ -586,6 +586,9 @@ Recorded, not changed:
 - **The LAN-only debug-console page is reachable by naming the LAN host.** Caddy serves it
   only on the LAN site, which is routing by `Host`/SNI, not a network fence. Accepted: the
   page is static and every action it takes needs a debug token (`DEBUG_ACCESS.md`).
+- **`mc_player_memory.source` is always `owner`.** The memory tools insert `'owner'` even
+  on an in-game turn (`agent/minecrafttools.py`, `memory_edit`). Nothing reads the column
+  today; label it like `mc_log` before anything does.
 
 ## Provenance
 
