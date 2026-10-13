@@ -1165,7 +1165,9 @@ timeline (DESIGN.md "The Minecraft map"):
   world's page: the full-bleed tile map (zoom 0–4 from the box, then nearest-neighbour up to
   8 px per block), pan, pinch, wheel, + / −, show everyone, the dimension switch, the scale
   bar, and the persistent panel with the world picker, the honest status line and Layers.
-  Tiles are re-fetched after a minute while the world is live. `dev:mock` paints the
+  Tiles are re-fetched after a minute while the world is live, and the ones round a trail's
+  new steps when it has grown, at most once a minute (2026-10-13: explored ground had lagged
+  the trail by up to two minutes). `dev:mock` paints the
   reviewed fixture's world procedurally (`frontend/src/minecraftMapFixtures.ts`).
 - **Tap a spot** → `GET /api/minecraft/map/point?x&z&slot&dim` (the owner twin of the debug
   route, same bounds): biome, y (`~` for the survey), source, **Copy X Z**. **Long-press** pins
@@ -1195,10 +1197,13 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 - **API:** `GET /api/minecraft/timeline?slot&from&to&players&include&dim` (owner-only, the
   slot's world folder resolved like `/map/players`; query logic in
   `backend/src/jbrain/minecraft/timeline.py`). Over one range of at most 92 days it returns:
-  - **trails**: each player's samples cut into *segments* at every session, dimension and
-    respawn, then down to at most 2,000 points a player, keeping each segment's first and
-    last point so nothing is ever drawn or interpolated across a portal, a log-off or a
-    respawn (`downsampled` says when gaps no longer mean "standing still");
+  - **trails**: each player's samples cut into *segments* at every session, dimension,
+    death and respawn, then down to at most 2,000 points a player, keeping each segment's
+    first and last point so nothing is ever drawn or interpolated across a portal, a log-off
+    or a respawn (`downsampled` says when gaps no longer mean "standing still"). A life's
+    segment ends on its death's own place (the pack's position), not the last sample before
+    it: sampled every 10 s, a player who respawns at once leaves no sample where they fell,
+    and the trail stopped short of the skull (fixed 2026-10-13);
   - **events**: joins and leaves (placed at the player's first and last sample, since the
     console gives them no position), deaths with the behavior pack's `cause` and `killer`,
     respawns, and dimension changes derived from the trail (a respawn's jump is not one);
@@ -1229,6 +1234,17 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 - **Overlays made real:** Trails, Deaths, Beds & spawn (the **world spawn**, which the
   sidecar's `/map/info` now reads from `level.dat`) and *Explored by* (Anyone or one player,
   lifting by first-seen time as the timeline plays).
+- **Keeping up (fixed 2026-10-13).** Positions are read every 10 s and the trails every
+  minute, so a disc ran up to a minute past its trail's end, and *Explored by* was read once,
+  when switched on. Now a `/map/players` sample newer than the log the trails came from (its
+  `now`) reads only the stretch since — from the walkers' last drawn point, for the walkers
+  only, trails and events — and joins it on (`mergeGap`: a piece carries on only when the box
+  put the seam point in it, so a death, respawn or portal at the seam starts a new one), once
+  per new sample, live or pinned to now; the minute's full read stays the backstop. When a
+  trail has grown, at most once a minute (the box re-reads the world no oftener), *Explored
+  by* is read again and the tiles within 16 chunks of the new steps are re-fetched,
+  cache-busted. A minute of walking costs at most six small reads, one full read, one fog
+  read and one refresh of the tiles round the steps.
 - **Not yet (the box doesn't record it):** **beds**. The behavior pack reads a player's spawn
   point only when they ask Dave something (`/jb:dave`), and nothing keeps it, so the overlay
   draws the world spawn and says beds aren't recorded. A pack event on a bed or respawn
