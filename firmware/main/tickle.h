@@ -38,3 +38,12 @@ tickle_poke_t tickle_poke(tickle_t *t, uint32_t now);
 
 /* Still waiting for the tickles at `now`. */
 bool tickle_armed(const tickle_t *t, uint32_t now);
+
+/* How hard the tickle just counted squirms (the action's `mag`): rising tickle by tickle, so
+   the four build to the fifth instead of repeating. */
+float tickle_mag(const tickle_t *t);
+
+/* WAITING TO BE TICKLED: while warned and doing nothing else he holds the brace, hunched and
+   shivering, so a child can see the game is on. This is the ACT_BRACE progress to draw at
+   `now` — inside its held stretch, wandering so the shiver keeps going. */
+float tickle_wait_p(uint32_t now);

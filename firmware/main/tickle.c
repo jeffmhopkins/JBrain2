@@ -19,6 +19,16 @@ bool tickle_armed(const tickle_t *t, uint32_t now)
     return t->armed && (int32_t)(t->until - now) > 0;
 }
 
+float tickle_mag(const tickle_t *t)
+{
+    return 0.55f + 0.15f * (float)(t->pokes > 0 ? t->pokes - 1 : 0);
+}
+
+float tickle_wait_p(uint32_t now)
+{
+    return 0.25f + 0.5f * (float)(now % 1600u) / 1600.0f;
+}
+
 tickle_poke_t tickle_poke(tickle_t *t, uint32_t now)
 {
     if (!tickle_armed(t, now)) {

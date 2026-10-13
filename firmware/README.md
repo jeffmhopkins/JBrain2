@@ -190,6 +190,24 @@ laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
 
+**0.4.12: a tickle that looks like a tickle.** Owner: *"when he's in tickle mode if I touch him
+he still acts like I'm poking him versus tickling."* He did: the four tickles were `ACT_GIGGLE`,
+one of the poke pools' own reactions, with the poke's flinch and colour change. Now each is
+`ACT_TICKLED` — the fit's squirm, short, with the tickle marks and `CUE_TICKLED`, a held-in
+"hehehe" — at a magnitude that rises tickle by tickle (`tickle_mag`), and a tickle neither
+flinches him nor changes his colour. And while he is warned and doing nothing else he holds the
+brace, hunched and shivering (`tickle_wait_p`), so the game is visibly on.
+
+**One fart in ten is the long one (0.4.12).** Owner: *"about a 1 in 10 chance that when he
+farts on command, that the fart lasts a good 7 seconds, and make sure the fart sounds funny."*
+A voice `fart` is `rig_fart_pick(esp_random())`: one time in ten it is `ACT_MEGAFART`, 7 s of
+him straining and wobbling, wide-eyed, as a cloud of gas piles up behind him (`EXTRA_GAS`). A
+cue cannot run past 0.8 s, so the noise is `CUE_MEGAFART` re-cued whenever the speaker is free
+(`rig_recue_continuous`) until the release at 0.93, each piece the next of eight characters —
+a rumble, a climb, a sputter, a squeaker, a wet one, a balloon, a putt-putt and a trumpet — so
+seven seconds of it never sounds like one tone looped (and each long one picks up where the
+last left off, so no two start alike). A poke cannot cut it off.
+
 **A different snack every time (0.4.11).** Owner: *"Kids are also requesting a random item to
 eat, maybe one out of eight possibilities."* `food_t`: a cookie, an apple, a banana, a slice of
 pizza, a donut, a carrot, a slice of watermelon or a strawberry, each a per-pixel shape in its
@@ -205,6 +223,17 @@ free on the pet screen. He squats (`figure_pose_t.sit`, as dizzy does), strains,
 with a face and stink lines, behind the figure, and it SLIDES: the unsmoothed tilt pushes it,
 friction slows it, the floor's ends bounce it back, and below a small tilt it does not start
 at all, so it stays put on a table. It plops in, and shrinks away after 20 s.
+
+**Eight poops (0.4.12).** Owner: *"make eight variations of poops also. Maybe we can vary
+graphic, that poops expression, and the amount of stink, and maybe it has flies or not."*
+`poop_drop` picks a kind, never the last one, from `POOP_LOOKS` (`poop.c`): each row a shape
+(the swirl, a four-tier tower, a puddle, a pile of pellets, a log), a face (smiling, cool in
+sunglasses, asleep, shocked, tongue out, grumpy, queasy with a sweat drop, winking), a stink
+of 0–3 (more lines, rising higher and faster) and 0–3 flies on figure-of-eight paths. The
+classic brown swirl, a golden one in shades, a sleepy puddle with flies, surprised bunny
+pellets, a tower blowing a raspberry, a grumpy log in a swarm, a queasy green one and a pink
+unicorn one that does not smell at all. No two are near-twins: every pair differs in at least
+two of the four, which the host test holds the table to.
 
 **A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
 only flinch, which with the meal crunching through two-thirds of its length and the tickle

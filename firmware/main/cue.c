@@ -244,8 +244,30 @@ static const rude_t FARTS[] = {
    it exactly: these are the numbers the single RUDE row used to carry inline. */
 static const rude_t BURP = {560, 140.0f, 65.0f, 0.0f, 27.0f, 0.38f, 0.30f};
 
+/* THE MEGA FART (0.4.12, owner: *"about a 1 in 10 chance that when he farts on command, that
+   the fart lasts a good 7 seconds, and make sure the fart sounds funny"*). A cue is at most
+   0.8 s, so seven seconds is a run of these, back to back (`rig_recue_continuous`), each the
+   next in the list — the play counter steps through it and is never reset, so each long one
+   starts wherever the last left off and no two begin alike. What makes a long one funny is
+   that it will not stay the same noise: it rumbles, climbs, sputters, squeaks, goes wet,
+   deflates like a balloon, putters and trumpets, and the tiny gap between pieces is a catch
+   of breath. */
+static const rude_t MEGA[] = {
+    {700, 95.0f, 30.0f, 0.12f, 17.0f, 0.36f, 0.32f},   /* a rumble */
+    {700, 120.0f, -60.0f, 0.10f, 23.0f, 0.40f, 0.42f}, /* climbing */
+    {650, 160.0f, 60.0f, 0.15f, 11.0f, 0.92f, 0.40f},  /* sputtering: separate bursts */
+    {700, 230.0f, -130.0f, 0.00f, 38.0f, 0.30f, 0.58f}, /* the squeaker, rising high */
+    {700, 115.0f, 45.0f, 0.65f, 29.0f, 0.38f, 0.24f},  /* wet */
+    {650, 330.0f, 230.0f, 0.05f, 46.0f, 0.50f, 0.52f}, /* the balloon letting go */
+    {700, 88.0f, 18.0f, 0.20f, 9.0f, 0.70f, 0.36f},    /* putt... putt... putt */
+    {700, 250.0f, -70.0f, 0.00f, 33.0f, 0.34f, 0.62f}, /* the trumpet */
+};
+
+#define MEGA_COUNT ((int)(sizeof(MEGA) / sizeof(MEGA[0])))
+
 static const rude_t *rude_def(cue_t c, unsigned variant)
 {
+    if (c == CUE_MEGAFART) return &MEGA[variant % (unsigned)MEGA_COUNT];
     return c == CUE_FART ? &FARTS[variant % (unsigned)FART_COUNT] : &BURP;
 }
 
@@ -291,6 +313,7 @@ static const cue_def_t DEF[CUE_COUNT] = {
        per-variant length comes from `cue_ms`. */
     [CUE_FART] = {SH_RUDE, 700, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
     [CUE_BURP] = {SH_RUDE, 560, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
+    [CUE_MEGAFART] = {SH_RUDE, 700, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
     /* CRUNCH, MUNCH, MUNCH: a bite and two chews, sounded on every bite of the meal (0.4.10).
        Noise, low-clocked so it chews rather than hisses; the clock falls across the run, so
        the crunch is crisper than the munches after it. Was two soft bites in 300 ms. */
@@ -315,6 +338,9 @@ static const cue_def_t DEF[CUE_COUNT] = {
     /* UH-OH: the laugh's shape run the other way, three short "hee"s climbing a fourth, higher
        and quicker than the real thing. Anticipation rises; release (CUE_TICKLE) falls. */
     [CUE_BRACE] = {SH_LAUGH, 460, 900.0f, 0.0f, 3.0f, -5.0f, {END}, 4, 0},
+    /* HEHEHE: the real laugh's shape, four "he"s and quick, trying to hold it in — the fit
+       (CUE_TICKLE) is what it sounds like once he cannot. */
+    [CUE_TICKLED] = {SH_LAUGH, 380, 700.0f, 0.0f, 4.0f, 3.0f, {END}, 4, 0},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -384,7 +410,8 @@ static const cue_def_t DEF[CUE_COUNT] = {
    700 ms — and a single `ms` field cannot say that. */
 static float cue_ms(cue_t c, unsigned variant)
 {
-    return c == CUE_FART ? (float)rude_def(c, variant)->ms : (float)DEF[c].ms;
+    return c == CUE_FART || c == CUE_MEGAFART ? (float)rude_def(c, variant)->ms
+                                              : (float)DEF[c].ms;
 }
 
 /* The longest `c` can nominally be, across every variant. Computed rather than read off the
@@ -392,10 +419,10 @@ static float cue_ms(cue_t c, unsigned variant)
    and it has to be the worst case rather than the typical one. */
 static float cue_ms_max(cue_t c)
 {
-    if (c != CUE_FART) return (float)DEF[c].ms;
+    if (c != CUE_FART && c != CUE_MEGAFART) return (float)DEF[c].ms;
     float ms = 0.0f;
-    for (int i = 0; i < FART_COUNT; i++) {
-        if ((float)FARTS[i].ms > ms) ms = (float)FARTS[i].ms;
+    for (unsigned v = 0; v < (unsigned)(FART_COUNT > MEGA_COUNT ? FART_COUNT : MEGA_COUNT); v++) {
+        if ((float)rude_def(c, v)->ms > ms) ms = (float)rude_def(c, v)->ms;
     }
     return ms;
 }
@@ -433,6 +460,8 @@ cue_t cue_for_action(int action)
     case ACT_TICKLE: return CUE_TICKLE;
     case ACT_POOP:   return CUE_POOP;
     case ACT_BRACE:  return CUE_BRACE;
+    case ACT_TICKLED: return CUE_TICKLED;
+    case ACT_MEGAFART: return CUE_MEGAFART;
     default:         return CUE_BLIP;
     }
 }
