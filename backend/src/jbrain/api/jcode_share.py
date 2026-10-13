@@ -67,7 +67,7 @@ class ShareOut(BaseModel):
 
 
 class RedeemRequest(BaseModel):
-    token: str = Field(min_length=1)
+    token: str = Field(min_length=1, max_length=1024)  # unauthenticated, so bounded
 
 
 class RedeemOut(BaseModel):

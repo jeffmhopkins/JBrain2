@@ -15,7 +15,7 @@ kind-gated route dependencies keep member authority off owner routes.
 """
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jbrain.api.deps import AuthRepoDep, SettingsDep
 from jbrain.api.session_cookie import set_session_cookie
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/session")
 
 
 class MintRequest(BaseModel):
-    device_key: str
+    device_key: str = Field(max_length=1024)  # unauthenticated, so bounded
 
 
 @router.post("/mint", status_code=204)

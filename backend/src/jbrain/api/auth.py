@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jbrain.api.deps import AuthRepoDep, PrincipalDep, SettingsDep
 from jbrain.api.session_cookie import delete_session_cookies, session_token, set_session_cookie
@@ -10,7 +10,8 @@ router = APIRouter(prefix="/auth")
 
 
 class LoginRequest(BaseModel):
-    owner_key: str
+    # Unauthenticated: bounded so a caller can't make the api normalize and hash megabytes.
+    owner_key: str = Field(max_length=1024)
     device_label: str = ""
 
 
