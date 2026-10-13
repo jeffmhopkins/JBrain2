@@ -962,11 +962,12 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v18: `mc_find_item`, chests and the ground; near is free, wider a deep scan (§M23).
         # v20: goals with a count and `mc_goal_progress` (§M24), and `mc_tricorder_scan` (§M25).
         # v21: `mc_gates_beacons`, and `mc_show_map`'s gate and beacon focuses (§M26).
-        # v22: `mc_find_villager` and `mc_find_pet` with the lore's two lines, priced by
-        # the chest rule, and the Tricorder pointing through a known portal (§M4e).
+        # v23: v22's two halves merged: the scan's status read and the map's scan focus
+        # (§M25), and `mc_find_villager` / `mc_find_pet` with the lore's two lines and the
+        # Tricorder pointing through a known portal (§M4e).
         "minecraft_dave": (
-            "agent-minecraft-dave-v22",
-            "ec504e092862a9cf2914f61bf515f443b1177c47884c52e381b4f24edbbc7a2f",
+            "agent-minecraft-dave-v23",
+            "2aa99b2b8be2cb0d392e08a5c68cc92a3b0b0060edc7ebfaa6cc1453423b9955",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

@@ -22,7 +22,7 @@ from jbrain.api import minecraft, minecraft_share
 from jbrain.api.deps import owner_only
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import shares, targets, timeline, travel
+from jbrain.minecraft import livescan, shares, targets, timeline, travel
 from jbrain.minecraft.shares import ShareLink
 
 WHEN = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -122,6 +122,13 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(timeline, "timeline", tl)
     monkeypatch.setattr(targets, "for_world", locks)
+
+    async def scans(_m: Any, world: str, ctx: Any = None) -> dict[str, Any]:
+        state["scans"].append((world, ctx))
+        return {}
+
+    state["scans"] = []
+    monkeypatch.setattr(livescan, "for_world", scans)
     # Each test starts with no slot folder cached, at a clock it can move.
     monkeypatch.setattr(minecraft_share, "_folders", {})
     state["now"] = 1000.0
@@ -314,6 +321,10 @@ def test_players_and_the_timeline_read_under_the_shares_context(fake) -> None:
     assert body["players"][0]["target"] is None
     ((_, lock_ctx),) = fake["locks"]
     assert lock_ctx.auth_context == "mc_share" and lock_ctx.principal_id == "link-1"
+    # And their live scans, by the Tricorder target's rule (§M25).
+    ((_, scan_ctx),) = fake["scans"]
+    assert scan_ctx.auth_context == "mc_share" and scan_ctx.principal_id == "link-1"
+    assert body["players"][0]["scan"] is None
     ((world, ctx),) = fake["positions"]
     assert world == "castle"
     assert (ctx.auth_context, ctx.principal_id, ctx.principal_kind) == (

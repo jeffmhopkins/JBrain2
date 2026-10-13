@@ -8,6 +8,7 @@ import {
   drawWorldMarkers,
   gateGlyph,
   placeLabels,
+  scanSquare,
 } from "./minecraftMapDraw";
 
 // Every canvas call is a no-op spy; only what reaches drawImage is under test.
@@ -236,5 +237,68 @@ describe("placing labels round beacons and gates", () => {
     });
     // Above (y 174) would cover the gate's tile; it goes below its disc instead.
     expect(plates(log)).toEqual([[67, 230]]);
+  });
+});
+
+describe("a live scan on the map (§M25)", () => {
+  const texts = (log: [string, unknown[]][]) =>
+    log.filter(([k]) => k === "fillText").map(([, a]) => a[0]);
+
+  it("draws the 33 × 33 blocks the pack searches, to the block, washed only when found", () => {
+    const v = { x: 0, z: 0, s: 2 };
+    const f = { w: 400, h: 400, bottom: 0, top: 0 };
+    const found = recordingCtx();
+    const r = scanSquare(found.ctx, v, f, { x: 32.7, z: -70.2 }, "steel", true, TOK);
+    // Floored to the block they stand in (32, -71), 16 each way and the block itself.
+    expect(r.w).toBe(33 * 2);
+    expect(r.h).toBe(33 * 2);
+    expect([r.x, r.y]).toEqual([200 + (32 - 16) * 2, 200 + (-71 - 16) * 2]);
+    expect(found.log.filter(([k]) => k === "fillRect")).toHaveLength(1);
+    expect(found.log.some(([k, a]) => k === "=globalAlpha" && a[0] === 0.1)).toBe(true);
+    // A hairline and the viewfinder corners: never a dash, so never a beacon's square.
+    expect(found.log.some(([k]) => k === "setLineDash")).toBe(false);
+    const none = recordingCtx();
+    scanSquare(none.ctx, v, f, { x: 0, z: 0 }, "steel", false, TOK);
+    expect(none.log.filter(([k]) => k === "fillRect")).toHaveLength(0);
+  });
+
+  it("a scanner's plate falls back to their name rather than losing it", () => {
+    const { ctx, log } = recordingCtx();
+    // Room for "BlockyFox" between two tiles, not for the whole plate.
+    const avoid = {
+      rects: [
+        { x: 40, y: 150, w: 24, h: 60, own: "g:1" },
+        { x: 136, y: 150, w: 24, h: 60, own: "g:2" },
+        { x: 40, y: 210, w: 120, h: 40, own: "g:3" },
+      ],
+      segs: [],
+    };
+    placeLabels(
+      ctx,
+      [
+        {
+          txt: "BlockyFox · Scanning: diamond",
+          short: "BlockyFox",
+          x: 100,
+          y: 200,
+          pr: 0,
+          own: "p:1",
+        },
+      ],
+      [],
+      FRAME,
+      TOK,
+      avoid,
+    );
+    expect(texts(log)).toEqual(["BlockyFox"]);
+    const open = recordingCtx();
+    placeLabels(
+      open.ctx,
+      [{ txt: "BlockyFox · Scanning: diamond", short: "BlockyFox", x: 100, y: 200, pr: 0 }],
+      [],
+      FRAME,
+      TOK,
+    );
+    expect(texts(open.log)).toEqual(["BlockyFox · Scanning: diamond"]);
   });
 });

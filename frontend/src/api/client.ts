@@ -597,6 +597,20 @@ export interface MinecraftMapPlayer {
   online: boolean;
   /** Where Dave has their Tricorder pointed, until they reach it; null for none. */
   target?: MinecraftTricorderTarget | null;
+  /** The Tricorder's live scan (§M25), kept while they're offline; null for none. While
+   *  it's on, the arrow points at what it found, not at `target`. */
+  scan?: MinecraftLiveScan | null;
+}
+
+/** A live scan as the pack last reported it: `set` (nothing heard yet), `found` with the
+ *  block, or `none` within reach. `at` is the last scan heard (epoch s; the pack resends a
+ *  steady result once a minute, so it stays true). */
+export interface MinecraftLiveScan {
+  label: string;
+  state: "set" | "found" | "none";
+  found: { dim: MinecraftDim; x: number; y: number; z: number } | null;
+  at: number | null;
+  set_at: number | null;
 }
 
 /** A Tricorder target: a block (y when it matters, like an ore) and Dave's label for it. */

@@ -292,8 +292,22 @@ def test_map_players_are_the_travel_logs_latest_with_who_is_on(
     async def locks(_m: Any, world: str, _ctx: Any = None) -> dict[str, Any]:
         return {"steve42": lock} if world == "castle" else {}
 
+    scan = {
+        "gamertag": "BlockyFox",
+        "label": "diamond",
+        "ids": ["minecraft:diamond_ore"],
+        "state": "found",
+        "found": {"dim": "overworld", "x": 9, "y": 50, "z": 2},
+        "at": 8.0,
+        "set_at": 1.0,
+    }
+
+    async def scans(_m: Any, world: str, _ctx: Any = None) -> dict[str, Any]:
+        return {"blockyfox": scan} if world == "castle" else {}
+
     monkeypatch.setattr(api.travel, "latest_positions", latest)
     monkeypatch.setattr(api.targets, "for_world", locks)
+    monkeypatch.setattr(api.livescan, "for_world", scans)
     client.app.state.session_maker = object()
     _players_world(sidecar, active=True)
     got = client.get("/api/minecraft/map/players?slot=slot2").json()
@@ -304,6 +318,11 @@ def test_map_players_are_the_travel_logs_latest_with_who_is_on(
     ]
     # Each player carries the Tricorder target Dave set, matched by gamertag, or null.
     assert [p["target"] for p in got["players"]] == [None, lock]
+    # And the live scan pointing it now (§M25), kept beside the waypoint, never over it.
+    assert [p["scan"] for p in got["players"]] == [
+        {k: scan[k] for k in ("label", "state", "found", "at", "set_at")},
+        None,
+    ]
     _players_world(sidecar, active=True, state="stopped")
     stopped = client.get("/api/minecraft/map/players?slot=slot2").json()
     assert stopped["live"] is False and not any(p["online"] for p in stopped["players"])

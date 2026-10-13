@@ -34,7 +34,7 @@ from jbrain.agent.briefs import FEED_TAG, neutralize_boundary
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import scans
+from jbrain.minecraft import livescan, scans, travel
 from jbrain.minecraft import sessions as mc_sessions
 from jbrain.minecraft import targets as tricorder
 from jbrain.minecraft.asker import Asker, Spot, asker_for
@@ -413,6 +413,89 @@ def from_asker(asker: Asker | None, spot: Spot) -> str:
         return f" It's in the {there}; you're in the {here}."
     way, far = bearing(asker.at.x, asker.at.z, spot.x, spot.z)
     return " You're standing there." if far < 3 else f" From you: {far} blocks {way}."
+
+
+def ago_words(seconds: float) -> str:
+    """How long ago, in the card's own words: "40 s ago", "3 min ago", "2 h ago"."""
+    s = max(0, round(seconds))
+    if s < 60:
+        return f"{s} s ago"
+    if s < 3600:
+        return f"{s // 60} min ago"
+    return f"{s // 3600} h ago"
+
+
+def depth_words(dy: int) -> str:
+    """A found block's height against the player's: what a top-down map can't show."""
+    if dy == 0:
+        return "level with them"
+    n = abs(dy)
+    return f"{n} block{'s' if n != 1 else ''} {'below' if dy < 0 else 'above'} them"
+
+
+_SCAN_LABEL = re.compile(r"[^a-z0-9 .]")
+
+
+def scan_words(
+    gamertag: str,
+    scan: dict[str, Any],
+    here: dict[str, Any] | None,
+    online: bool | None,
+    now: float,
+) -> str:
+    """Dave's read of one player's live scan (§M25): what it scans for, how far it reaches
+    (16 blocks across, and 16 up and down cut at the world's floor and ceiling, from where
+    they stand), and what the last scan found, with the distance the held Tricorder shows
+    (across, to the block's centre) and the depth it can't. `here` is where they are (dim,
+    x, y, z), None when unknown; `online` None when the server can't say."""
+    label = _SCAN_LABEL.sub("", str(scan.get("label") or "").lower()).strip() or "a block"
+    who = fence(gamertag)
+    head = f"{who}'s Tricorder is scanning for {label}."
+    if online is False:
+        return (
+            f"{head} They're offline: the Tricorder remembers the scan and picks it up again"
+            " when they're back on. Nothing is scanned while they're away."
+        )
+    lines = [head]
+    if online is None:
+        lines.append("The server can't say who's on right now, so this is the last report.")
+    if here is not None:
+        lo, hi = livescan.y_range(str(here["dim"]), float(here["y"]))
+        lines.append(
+            f"Every 10 seconds it finds the nearest one within {livescan.REACH} blocks of them:"
+            f" across, and from y {lo} to {hi} up and down (they're at y"
+            f" {math.floor(float(here['y']))}; the box stops at the world's floor and ceiling)."
+        )
+    else:
+        lines.append(
+            f"Every 10 seconds it finds the nearest one within {livescan.REACH} blocks of them,"
+            " across and up and down."
+        )
+    at = scan.get("at")
+    when = f"The last scan, {ago_words(now - float(at))}," if at is not None else "The last scan"
+    found = scan.get("found")
+    if scan.get("state") == "set" or at is None:
+        lines.append("It hasn't reported a scan yet; the first comes within 10 seconds.")
+    elif found is None:
+        lines.append(f"{when} found none in that range.")
+    elif here is not None and here["dim"] == found["dim"]:
+        way, far = bearing(float(here["x"]), float(here["z"]), found["x"] + 0.5, found["z"] + 0.5)
+        across = (
+            "right where they stand"
+            if far < 1
+            else f"{far} block{'s' if far != 1 else ''} {way} of them"
+        )
+        dy = int(found["y"]) - math.floor(float(here["y"]))
+        lines.append(
+            f"{when} found one {across}, at y {found['y']}: {depth_words(dy)}"
+            f" (X {found['x']}, Z {found['z']})."
+        )
+    else:
+        lines.append(
+            f"{when} found one at X {found['x']}, Z {found['z']}, y {found['y']} in the"
+            f" {_DIMENSION_NAMES.get(found['dim'], found['dim'])}."
+        )
+    return " ".join(lines)
 
 
 _ROMAN = ("I", "II", "III", "IV", "V")
@@ -1879,6 +1962,8 @@ def build_minecraft_handlers(
         within 16 blocks every 10 s and the held arrow points at it, until a stop or a
         new waypoint. Its own short-range sense: free, never a deep scan. Whose Tricorder
         follows mc_set_waypoint: the asker in game, any gamertag in the app."""
+        if arguments.get("status"):
+            return await scan_status(arguments, ctx)
         stop = bool(arguments.get("stop"))
         block = str(arguments.get("block") or "").strip().lower().replace(" ", "_")
         if not stop and not _ITEM_ID.fullmatch(block):
@@ -1928,6 +2013,56 @@ def build_minecraft_handlers(
             " until they ask you to stop or set a new waypoint. Free: no deep scan.",
             result_brief=m["label"],
         )
+
+    async def scan_status(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """Is a player's Tricorder scanning, and what did it find: the drain's row (the
+        pack's own report), read under `ctx.session`. In game only the asker's own."""
+        who = await waypoint_player(arguments, ctx)
+        if isinstance(who, str):
+            return ToolOutput(who, result_brief="refused") if who == only_you else who
+        _, gamertag = who
+        world = await loaded_world(ctx)
+        if not world:
+            return "The Minecraft server can't say which world is loaded, so there's no scan."
+        async with scoped_session(maker, ctx.session) as s:
+            got = (await livescan.read(s, world)).get(livescan.key(gamertag))
+        if got is None:
+            return ToolOutput(
+                f"{fence(gamertag)}'s Tricorder isn't scanning.", result_brief="not scanning"
+            )
+        name = str(got["gamertag"] or gamertag)
+        asker = asker_for(ctx.agent_session_id)
+        here: dict[str, Any] | None = None
+        online: bool | None
+        if asker is not None:
+            online = True
+            here = {
+                "dim": asker.at.dim,
+                "x": asker.at.x + 0.5,
+                "y": asker.at.y or 0,
+                "z": asker.at.z + 0.5,
+            }
+        else:
+            status = await sidecar("GET", "/status")
+            online = (
+                any(
+                    str(p.get("name", "")).casefold() == name.casefold()
+                    for p in status.get("players", [])
+                )
+                if isinstance(status, dict)
+                else None
+            )
+            for p in await travel.latest_positions(maker, world, ctx.session):
+                if str(p["gamertag"]).casefold() == name.casefold():
+                    here = p
+        body = scan_words(name, got, here, online, datetime.now(UTC).timestamp())
+        if asker is None:
+            body += (
+                " To show it, mc_show_map with focus scan and this gamertag as the label"
+                " draws the square it searches and the block it found."
+            )
+        brief = "offline" if online is False else ("found one" if got["found"] else got["state"])
+        return ToolOutput(body, result_brief=f"{got['label']} · {brief}")
 
     # --- saved places ------------------------------------------------------------------
 

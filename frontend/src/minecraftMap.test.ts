@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type MinecraftSlot, minecraftTileUrl } from "./api/client";
+import { type MinecraftMapPlayer, type MinecraftSlot, minecraftTileUrl } from "./api/client";
 import {
   type Frame,
   S_MAX,
   S_MIN,
+  agoWords,
   clusterMarkers,
   clusterTarget,
   entryLine,
@@ -13,6 +14,9 @@ import {
   panBy,
   scaleBar,
   scaleOfZoom,
+  scanPlate,
+  scanWords,
+  scanYRange,
   slotLine,
   spotText,
   statusLine,
@@ -294,5 +298,102 @@ describe("the Tricorder line", () => {
     expect(tricorderLine({ ...at, dim: "the_end" }, target(5, 5))).toBe(
       "Diamonds · in the Overworld",
     );
+  });
+});
+
+describe("the Tricorder's live scan in words (§M25)", () => {
+  // The GUI gate's fixture: BlockyFox down a mine at y -52, a diamond at (41, -58, -79).
+  const NOW = 10_000;
+  const fox = (over: Partial<MinecraftMapPlayer> = {}): MinecraftMapPlayer => ({
+    xuid: "1",
+    gamertag: "BlockyFox",
+    dim: "overworld",
+    x: 32,
+    y: -52,
+    z: -70,
+    at: NOW,
+    online: true,
+    target: { dim: "overworld", x: 300, y: null, z: 0, label: "Tree farm", set_at: 0 },
+    scan: {
+      label: "diamond",
+      state: "found",
+      found: { dim: "overworld", x: 41, y: -58, z: -79 },
+      at: NOW - 40,
+      set_at: NOW - 900,
+    },
+    ...over,
+  });
+  const none = { label: "diamond", state: "none" as const, found: null, at: NOW - 40, set_at: 0 };
+  // The words keep numbers and units together with no-break spaces; compared as plain ones.
+  const plain = <T>(v: T): T => JSON.parse(JSON.stringify(v).replace(/\u00a0/g, " "));
+
+  it("says what the held Tricorder says: the distance across, then C's depth line", () => {
+    expect(plain(scanWords(fox(), NOW))).toEqual({
+      line: "Scanning: diamond · 13 blocks north-east · y -58",
+      depth: "↓ 6 blocks below them · y -58",
+      sub: "Within 16 blocks, y -64 to -36. Found 40 s ago. Their waypoint, Tree farm, comes back when the scan stops.",
+    });
+    // The same formatter as the waypoint's line: horizontal distance, never 3D.
+    expect(scanWords(fox(), NOW)?.line).toBe(
+      tricorderLine(fox(), {
+        dim: "overworld",
+        x: 41,
+        y: -58,
+        z: -79,
+        label: "Scanning: diamond",
+        set_at: 0,
+      }),
+    );
+    const up = fox({ y: -60.5 });
+    expect(plain(scanWords(up, NOW)?.depth)).toBe("↑ 3 blocks above them · y -58");
+    expect(plain(scanWords(fox({ y: -58 }), NOW)?.depth)).toBe("Level with them · y -58");
+  });
+
+  it("none nearby says the same reach, and when it last looked", () => {
+    expect(plain(scanWords(fox({ scan: none, target: null }), NOW))).toEqual({
+      line: "Scanning: diamond · none nearby",
+      depth: null,
+      sub: "Nothing within 16 blocks, y -64 to -36. Last scan 40 s ago.",
+    });
+  });
+
+  it("offline, the scan is kept and the card says it resumes; nothing is drawn", () => {
+    const off = fox({ online: false });
+    expect(plain(scanWords(off, NOW))).toEqual({
+      line: "Scanning: diamond — resumes when BlockyFox is back on",
+      depth: null,
+      sub: "",
+    });
+    expect(scanPlate(off)).toBeNull();
+  });
+
+  it("before its first scan, and with no scan at all", () => {
+    const set = { label: "oak log", state: "set" as const, found: null, at: null, set_at: NOW };
+    expect(plain(scanWords(fox({ scan: set, target: null, y: 70 }), NOW))).toEqual({
+      line: "Scanning: oak log",
+      depth: null,
+      sub: "Within 16 blocks, y 54 to 86. The first scan is on its way.",
+    });
+    expect(scanWords(fox({ scan: null }), NOW)).toBeNull();
+  });
+
+  it("one plate per scanner, their name first", () => {
+    expect(scanPlate(fox())).toBe("BlockyFox · Scanning: diamond");
+    expect(scanPlate(fox({ scan: none }))).toBe("BlockyFox · Scanning: diamond · none nearby");
+    expect(scanPlate(fox({ scan: null }))).toBeNull();
+  });
+
+  it("the box's height is cut at the world's floor and ceiling, never shifted", () => {
+    expect(scanYRange("overworld", -40)).toEqual([-56, -24]);
+    expect(scanYRange("overworld", -52)).toEqual([-64, -36]);
+    expect(scanYRange("overworld", 63.9)).toEqual([47, 79]);
+    expect(scanYRange("overworld", 319)).toEqual([303, 319]);
+    expect(scanYRange("nether", 120)).toEqual([104, 127]);
+    expect(scanYRange("the_end", 5)).toEqual([0, 21]);
+    expect(plain([agoWords(0, 40), agoWords(0, 61), agoWords(0, 7300)])).toEqual([
+      "40 s ago",
+      "1 min ago",
+      "2 h ago",
+    ]);
   });
 });

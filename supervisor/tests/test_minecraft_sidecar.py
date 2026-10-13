@@ -1454,6 +1454,72 @@ def test_snapshots_carry_every_valid_record_and_say_when_cut(tmp_path: Path) -> 
     ]
 
 
+def test_scans_become_events_type_checked_and_clamped(tmp_path: Path) -> None:
+    """§M25 on the map: a Tricorder scan's lines ride the M26 pipe — op and dimension
+    from their lists, coordinates clamped, the label cut, at most eight block ids, and
+    a `found` only with a whole block."""
+    b = bds.Bds(tmp_path)
+    b.world = "slot2"
+    ids = ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"]
+    scan = {"ev": "scan", "player": "BlockyFox", "label": "diamond", "ids": ids}
+    _pack(b, {**scan, "op": "set"})
+    _pack(b, {**scan, "op": "found", "dim": "overworld", "x": 41, "y": -58, "z": -79})
+    _pack(b, {**scan, "op": "found", "dim": "the_moon", "x": 1, "y": 2, "z": 3})
+    _pack(b, {**scan, "op": "found", "dim": "overworld", "x": 1, "y": 2})
+    _pack(b, {**scan, "op": "found", "dim": "nether", "x": -9e9, "y": 2, "z": 3})
+    _pack(b, {**scan, "op": "boom"})  # an op it doesn't know
+    _pack(b, {**scan, "op": "none", "player": ""})  # nobody's
+    _pack(b, {**scan, "op": "none", "player": 7})
+    _pack(
+        b,
+        {
+            **scan,
+            "op": "none",
+            "label": "x" * 80,
+            "player": "  Mira_P  ",
+            "ids": [*(f"minecraft:b{i}" for i in range(12)), "bad id!", 3],
+        },
+    )
+    _pack(b, {"ev": "scan", "op": "stop", "player": "BlockyFox", "label": "ignored"})
+    got = b.events_after(0)
+    assert [(e["kind"], e["op"], e["xuid"], e["world"]) for e in got] == [
+        ("scan", "set", "", "slot2"),
+        ("scan", "found", "", "slot2"),
+        ("scan", "found", "", "slot2"),
+        ("scan", "none", "", "slot2"),
+        ("scan", "stop", "", "slot2"),
+    ]
+    set_, found, far, none, stop = got
+    assert (set_["player"], set_["label"], set_["ids"]) == ("BlockyFox", "diamond", ids)
+    assert "dim" not in set_
+    assert (found["dim"], found["x"], found["y"], found["z"]) == (
+        "overworld",
+        41,
+        -58,
+        -79,
+    )
+    assert far["x"] == -bds.COORD_MAX
+    assert none["player"] == "Mira_P"
+    assert none["label"] == "x" * bds.MARKER_TEXT_MAX
+    assert none["ids"] == [f"minecraft:b{i}" for i in range(bds.SCAN_IDS_MAX)]
+    assert set(stop) - {"id", "at", "kind", "name", "xuid", "world"} == {"op", "player"}
+
+
+def test_the_scans_snapshot_keeps_the_valid_ones_and_says_when_cut(
+    tmp_path: Path,
+) -> None:
+    b = bds.Bds(tmp_path)
+    good = {"player": "BlockyFox", "label": "diamond", "ids": ["minecraft:diamond_ore"]}
+    _pack(b, {"ev": "scans", "all": [good, {"label": "no player"}, 7]})
+    many = [{**good, "player": f"P{i}"} for i in range(bds.SNAPSHOT_MAX + 3)]
+    _pack(b, {"ev": "scans", "all": many})
+    _pack(b, {"ev": "scans", "all": "nope"})
+    first, cut = b.events_after(0)
+    assert first["kind"] == "scans"
+    assert first["all"] == [good] and first["truncated"] is False
+    assert len(cut["all"]) == bds.SNAPSHOT_MAX and cut["truncated"] is True
+
+
 def test_a_dave_question_is_an_event_filed_under_the_connected_xuid(
     tmp_path: Path,
 ) -> None:

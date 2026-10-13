@@ -54,10 +54,19 @@ _PACK_LINE = re.compile(
 # `beacon` and `gate` are a No-Spawn Beacon or a wormhole gate changing, `beacons` and
 # `gates` every one of them, sent after each load (§M26): the map's and Dave's record.
 MARKER_EVENTS = ("beacon", "gate", "beacons", "gates")
-PACK_EVENTS = ("death", "respawn", "dave", "wreck", *MARKER_EVENTS)
+# `scan` is a player's Tricorder scan changing, `scans` every kept one after each load
+# (§M25): the map's and Dave's read of what each scan is finding.
+SCAN_EVENTS = ("scan", "scans")
+PACK_EVENTS = ("death", "respawn", "dave", "wreck", *MARKER_EVENTS, *SCAN_EVENTS)
 DIMENSIONS = ("overworld", "nether", "the_end")
 BEACON_OPS = ("on", "off")
 GATE_OPS = ("planted", "opened", "aimed", "dormant", "collapsed")
+SCAN_OPS = ("set", "found", "none", "stop")
+# The block ids one scan looks for (an ore and its twins), as the pack's own parser
+# allows them; a longer list was not the pack's.
+SCAN_IDS_MAX = 8
+_BLOCK_ID = re.compile(r"(?:[a-z0-9_]{1,32}:)?[a-z0-9_.]{1,64}")
+PLAYER_MAX = 32
 # Bedrock's world border: a block coordinate is never further out.
 COORD_MAX = 30_000_000
 MARKER_TEXT_MAX = 40
@@ -251,6 +260,11 @@ class Bds:
             marker = marker_event(data)
             if marker is not None:
                 self._event(str(data["ev"]), "", "", **marker)
+            return
+        if data["ev"] in SCAN_EVENTS:
+            scan = scan_event(data)
+            if scan is not None:
+                self._event(str(data["ev"]), "", "", **scan)
             return
         name = str(data.get("name", ""))[:32]
         extra: dict[str, Any] = _place(data)
@@ -520,6 +534,51 @@ def marker_event(data: dict[str, Any]) -> dict[str, Any] | None:
     else:
         return None
     return None if got is None else {"op": op, **got}
+
+
+def _scan_who(data: Any) -> dict[str, Any] | None:
+    """A scan's player and what it scans for: the gamertag cut short, the label cut to
+    the marker limit, and only the ids shaped like block ids, at most SCAN_IDS_MAX."""
+    if not isinstance(data, dict):
+        return None
+    player = data.get("player")
+    if not isinstance(player, str) or not player.strip():
+        return None
+    ids = data.get("ids")
+    good = (
+        [i for i in ids if isinstance(i, str) and _BLOCK_ID.fullmatch(i)]
+        if isinstance(ids, list)
+        else []
+    )
+    return {
+        "player": player.strip()[:PLAYER_MAX],
+        "label": _text(data.get("label")),
+        "ids": good[:SCAN_IDS_MAX],
+    }
+
+
+def scan_event(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A scan line's fields, type-checked and clamped, or None when the line can't be
+    one. The player is a gamertag the pack heard (or Dave named), passed as text; the api
+    matches it to the roster itself. A `found` without a whole block in a known
+    dimension isn't one."""
+    if data.get("ev") == "scans":
+        items = data.get("all")
+        if not isinstance(items, list):
+            return None
+        kept = (_scan_who(i) for i in items[:SNAPSHOT_MAX])
+        good = [s for s in kept if s is not None]
+        return {"all": good, "truncated": len(items) > SNAPSHOT_MAX}
+    op = data.get("op")
+    who = _scan_who(data)
+    if op not in SCAN_OPS or who is None:
+        return None
+    if op == "stop":
+        return {"op": op, "player": who["player"]}
+    if op == "found":
+        spot = _spot(data)
+        return None if spot is None else {"op": op, **who, **spot}
+    return {"op": op, **who}
 
 
 def _is_file_list(text: str) -> bool:

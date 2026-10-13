@@ -292,6 +292,49 @@ test("the scan box is 33 blocks a side around the player, y clamped to the world
   assert.ok(!r.inScanBox({ x: 0.5, y: 64, z: 0.5 }, { x: 17, y: 64, z: 0 }));
 });
 
+test("the scan's depth limit: 16 above and below, cut at the world's floor and ceiling", () => {
+  const ys = (y, h) => {
+    const b = r.scanBox({ x: 0, y, z: 0 }, h);
+    return [b.from.y, b.to.y];
+  };
+  const over = { min: -64, max: 320 };
+  // Mid-world: the full 33 blocks, y floored first (standing at 63.9 is block 63).
+  assert.deepEqual(ys(-40, over), [-56, -24]);
+  assert.deepEqual(ys(63.9, over), [47, 79]);
+  // Near the floor and ceiling the box is cut, never shifted: still 16 the other way.
+  assert.deepEqual(ys(-52, over), [-64, -36]);
+  assert.deepEqual(ys(-60, over), [-64, -44]);
+  assert.deepEqual(ys(310, over), [294, 319]);
+  // At the build limits themselves: bedrock floor y -64, the last buildable block y 319
+  // (heightRange's max, 320, is exclusive).
+  assert.deepEqual(ys(-64, over), [-64, -48]);
+  assert.deepEqual(ys(319, over), [303, 319]);
+  // Off the world (falling into the void, flying over the roof): clamped inside it.
+  assert.deepEqual(ys(-90, over), [-64, -64]);
+  assert.deepEqual(ys(400, over), [319, 319]);
+  // The Nether is 0 to 127, the End 0 to 255.
+  assert.deepEqual(ys(120, { min: 0, max: 128 }), [104, 127]);
+  assert.deepEqual(ys(5, { min: 0, max: 256 }), [0, 21]);
+});
+
+test("the scan's map line: set, found with its block, none and stop; snapshots carry labels", () => {
+  const scan = { label: "diamond", types: ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"] };
+  assert.deepEqual(r.scanEvent("set", "BlockyFox", scan), {
+    ev: "scan", op: "set", player: "BlockyFox", label: "diamond", ids: scan.types,
+  });
+  assert.deepEqual(r.scanEvent("found", "BlockyFox", scan, { x: 41, y: -58, z: -79 }, "minecraft:overworld"), {
+    ev: "scan", op: "found", player: "BlockyFox", label: "diamond", ids: scan.types,
+    dim: "overworld", x: 41, y: -58, z: -79,
+  });
+  assert.deepEqual(r.scanEvent("none", "BlockyFox", scan, null, "minecraft:nether"), {
+    ev: "scan", op: "none", player: "BlockyFox", label: "diamond", ids: scan.types,
+  });
+  assert.deepEqual(r.scanEvent("stop", "BlockyFox"), { ev: "scan", op: "stop", player: "BlockyFox" });
+  assert.deepEqual(r.scansSnapshot([{ player: "Mira_P", label: "oak log", types: ["minecraft:oak_log"] }]), {
+    ev: "scans", all: [{ player: "Mira_P", label: "oak log", ids: ["minecraft:oak_log"] }],
+  });
+});
+
 test("the nearest block is by 3D distance to its centre", () => {
   const at = { x: 0.5, y: 64, z: 0.5 };
   assert.deepEqual(r.nearestBlock(at, [{ x: 5, y: 64, z: 0 }, { x: 0, y: 60, z: 0 }, { x: 0, y: 70, z: 0 }]), {

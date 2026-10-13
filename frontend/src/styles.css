@@ -33268,6 +33268,30 @@ button.wf-sigpill {
   font-weight: 500;
 }
 
+/* The live scan's lines (DESIGN.md "The Tricorder's live scan on the Minecraft map"): the
+   held Tricorder's line, the depth, then the reach and when it last looked. */
+.mc-map-det-scan {
+  align-items: flex-start;
+  line-height: 1.4;
+}
+
+.mc-map-det-scan svg {
+  margin-top: 1px;
+}
+
+.mc-map-det-depth,
+.mc-map-det-sub {
+  display: block;
+}
+
+.mc-map-det-depth {
+  color: var(--text);
+}
+
+.mc-map-det-sub {
+  font-size: var(--fs-micro);
+}
+
 span.mc-map-world {
   cursor: default;
 }

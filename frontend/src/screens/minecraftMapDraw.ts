@@ -21,6 +21,7 @@ import {
   GLYPHS,
   type MapView,
   type Placed,
+  SCAN_REACH,
   type TileSpot,
   initialOf,
   scaleBar,
@@ -158,6 +159,10 @@ export interface Label {
   /** Placed by the side rule (right, left, below, above, else dropped) round a marker of
    *  this radius, rather than above it (§M26). */
   side?: number | undefined;
+  /** Tried in its place when `txt` would be dropped: a scanning player's plate falls back
+   *  to their name, so it is never dropped where a plain name would fit (§M25). A tapped
+   *  thing's label (pr < 0) is never dropped, so it keeps its whole text. */
+  short?: string | undefined;
 }
 
 export interface Rect {
@@ -804,6 +809,66 @@ export function bearingLine(
   ctx.restore();
 }
 
+/** A live scan's field: the 33 × 33 blocks the pack searches round the player, drawn to the
+ *  block. Viewfinder corners in the player's colour over a halo, joined by a hairline at
+ *  70 %, so it reads as a sensor's field and never as a beacon's dashed square or the chunk
+ *  grid; a 10 % wash while it has found something. Returns the square on screen. */
+export function scanSquare(
+  ctx: CanvasRenderingContext2D,
+  v: MapView,
+  f: Frame,
+  at: { x: number; z: number },
+  col: string,
+  found: boolean,
+  t: Tokens,
+): Rect {
+  const bx = Math.floor(at.x);
+  const bz = Math.floor(at.z);
+  const [x0, y0] = toScreen(v, f, bx - SCAN_REACH, bz - SCAN_REACH);
+  const [x1, y1] = toScreen(v, f, bx + SCAN_REACH + 1, bz + SCAN_REACH + 1);
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const c = Math.min(14, w / 4);
+  ctx.save();
+  if (found) {
+    ctx.globalAlpha = 0.1;
+    ctx.fillStyle = col;
+    ctx.fillRect(x0, y0, w, h);
+    ctx.globalAlpha = 1;
+  }
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 2.5;
+  ctx.strokeRect(x0, y0, w, h);
+  ctx.globalAlpha = 0.7;
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x0, y0, w, h);
+  ctx.globalAlpha = 1;
+  ctx.lineCap = "round";
+  const corners: [number, number, number, number][] = [
+    [x0, y0, 1, 1],
+    [x1, y0, -1, 1],
+    [x0, y1, 1, -1],
+    [x1, y1, -1, -1],
+  ];
+  for (const [lw, stroke] of [
+    [5, t.halo],
+    [2.5, col],
+  ] as const) {
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lw;
+    ctx.beginPath();
+    for (const [cx, cy, sx, sy] of corners) {
+      ctx.moveTo(cx + sx * c, cy);
+      ctx.lineTo(cx, cy);
+      ctx.lineTo(cx, cy + sy * c);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+  return { x: x0, y: y0, w, h };
+}
+
 /** The Tricorder's target: two rings and a centre dot in the player's colour. */
 export function targetMark(
   ctx: CanvasRenderingContext2D,
@@ -971,8 +1036,14 @@ export function placeLabels(
   const visH = f.h - f.bottom;
   ctx.save();
   ctx.font = FONT;
-  for (const l of [...labels].sort((a, b) => a.pr - b.pr)) {
+  const queue = [...labels].sort((a, b) => a.pr - b.pr);
+  for (let i = 0; i < queue.length; i++) {
+    const l = queue[i] as Label;
     if (!l.left && l.y > visH) continue; // its marker is under the panel
+    // Dropped, a label with a shorter form tries that next, in the same place in line.
+    const drop = () => {
+      if (l.short) queue.splice(i + 1, 0, { ...l, txt: l.short, short: undefined });
+    };
 
     const w = ctx.measureText(l.txt).width + 12;
     const h = 20;
@@ -987,7 +1058,10 @@ export function placeLabels(
         placed,
         avoid,
       );
-      if (!r) continue;
+      if (!r) {
+        drop();
+        continue;
+      }
     } else {
       r = l.left ? { x: l.x, y: l.y, w, h } : { x: l.x - w / 2, y: l.y - 26, w, h };
       r.x = Math.min(Math.max(r.x, 4), f.w - w - 4);
@@ -996,7 +1070,10 @@ export function placeLabels(
         const below = { ...r, y: l.y + 30 };
         if (!l.left && below.y + h < visH - 4 && !blocked(below, l.own, keep, placed, avoid))
           r = below;
-        else if (l.pr >= 0) continue;
+        else if (l.pr >= 0) {
+          drop();
+          continue;
+        }
       }
     }
     placed.push({ x: r.x - 2, y: r.y - 2, w: r.w + 4, h: r.h + 4 });
