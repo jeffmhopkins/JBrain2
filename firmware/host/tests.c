@@ -27,6 +27,7 @@
 #include "orient.h"
 #include "ring.h"
 #include "poop.h"
+#include "tickle.h"
 #include "screen.h"
 #include "rig.h"
 #include "variants.h"
@@ -985,19 +986,52 @@ static void test_dizzy_and_love_last_twice_as_long_at_the_same_speed(void)
 
 static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
 {
-    /* The owner: "I want to say tickle tickle, and have it have an animation of giggling and
-       laughing and being tickled." */
-    int heard = 0;
+    /* The owner, first: "I want to say tickle tickle, and have it have an animation of giggling
+       and laughing and being tickled." Then: "let's change tickle, to 'I'm going to tickle
+       you' and then when that happens, pokes make him be tickled ... after five tickles." So
+       the phrases WARN him (ACT_BRACE) and nothing said tickles him: fingers do. */
+    int warned = 0;
     for (int i = 0; i < vocab_count(); i++) {
         const vocab_t *v = vocab_get(i);
-        if (v->kind == VOCAB_ACTION && v->arg == ACT_TICKLE) {
-            heard++;
-            CHECK(strcmp(v->phrase, "tickle tickle") == 0 || strcmp(v->phrase, "tickle me") == 0,
-                  "said as a child says it, never as a bare 'tickle' a television says");
+        if (v->kind != VOCAB_ACTION) continue;
+        CHECK(v->arg != ACT_TICKLE, "no phrase tickles him; the pokes do");
+        if (v->arg == ACT_BRACE) {
+            warned++;
+            CHECK(strcmp(v->phrase, "im going to tickle you") == 0 ||
+                      strcmp(v->phrase, "gonna tickle you") == 0,
+                  "warned as a child warns, never by a bare 'tickle' a television says");
         }
     }
-    CHECK(heard == 2, "both ways of asking");
-    CHECK(cue_for_action(ACT_TICKLE) == CUE_TICKLE, "and it sounds like a laugh, its own");
+    CHECK(warned == 2, "both ways of saying it");
+    CHECK(cue_for_action(ACT_BRACE) == CUE_BRACE && cue_for_action(ACT_TICKLE) == CUE_TICKLE,
+          "the titter of the warning and the laugh of the tickle, each its own");
+
+    /* FIVE TICKLES: four he holds out against, the fifth gets him, and the warning is spent. */
+    tickle_t tk;
+    tickle_reset(&tk);
+    CHECK(tickle_poke(&tk, 1000) == TICKLE_NO, "unwarned, a poke is a poke");
+    tickle_arm(&tk, 2000);
+    for (int i = 1; i < TICKLE_POKES; i++) {
+        CHECK(tickle_poke(&tk, 2000 + (uint32_t)i * 900) == TICKLE_SMALL, "a giggle each");
+    }
+    CHECK(tickle_poke(&tk, 7000) == TICKLE_BIG, "and the fifth sets him off");
+    CHECK(tickle_poke(&tk, 7500) == TICKLE_NO, "after which a poke is a poke again");
+    /* The warning holds for TICKLE_WAIT_MS, renewed by each tickle, then passes. */
+    tickle_arm(&tk, 10000);
+    CHECK(tickle_poke(&tk, 10000 + TICKLE_WAIT_MS - 100) == TICKLE_SMALL, "late, but in time");
+    CHECK(tickle_poke(&tk, 10000 + 2 * TICKLE_WAIT_MS - 200) == TICKLE_SMALL,
+          "each tickle renews the wait");
+    CHECK(!tickle_armed(&tk, 10000 + 3 * TICKLE_WAIT_MS),
+          "and with nobody tickling, the moment passes");
+    CHECK(tickle_poke(&tk, 10000 + 3 * TICKLE_WAIT_MS) == TICKLE_NO, "and pokes are pokes");
+    tickle_arm(&tk, 50000);
+    tickle_poke(&tk, 50100);
+    tickle_poke(&tk, 50200);
+    tickle_arm(&tk, 50300);
+    for (int i = 1; i < TICKLE_POKES; i++) {
+        CHECK(tickle_poke(&tk, 50300 + (uint32_t)i * 100) == TICKLE_SMALL,
+              "warned again, the count starts again");
+    }
 
     /* THREE LAUGHS: the first as he hears it, two more as it goes, walked at the panel's 25 fps
        and at a ragged 7 fps, so a dropped frame cannot drop a laugh. Nothing else re-cues. */

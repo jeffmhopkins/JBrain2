@@ -45,7 +45,8 @@ typedef enum {
     /* Neither is in a poke pool: each answers one thing a child does on purpose. */
     ACT_DIZZY, /* shaken hard: he sits down hard and shakes his head, stars going round */
     ACT_LOVE,  /* "I love you": hearts float up and he coos */
-    ACT_TICKLE, /* "tickle tickle": he squirms and laughs, and laughs again */
+    ACT_TICKLE, /* the fifth tickle (`tickle.h`): he squirms and laughs, and laughs again */
+    ACT_BRACE,  /* "I'm going to tickle you": he braces, giggling nervously */
     ACT_POOP,   /* three meals in a minute (`poop.h`): he squats, strains, and plop */
     ACT_COUNT,
 } action_t;

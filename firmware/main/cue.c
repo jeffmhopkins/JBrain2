@@ -312,6 +312,9 @@ static const cue_def_t DEF[CUE_COUNT] = {
     /* PLOP: a short flat hold, then down most of two octaves, wobbling on the way — the sweep's
        boing run backwards. Played as it lands, not as he squats (`rig_cue_on_start`). */
     [CUE_POOP] = {SH_SWEEP, 300, 640.0f, 0.5f, -1.7f, 25.0f, {END}, 2, 30},
+    /* UH-OH: the laugh's shape run the other way, three short "hee"s climbing a fourth, higher
+       and quicker than the real thing. Anticipation rises; release (CUE_TICKLE) falls. */
+    [CUE_BRACE] = {SH_LAUGH, 460, 900.0f, 0.0f, 3.0f, -5.0f, {END}, 4, 0},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -429,6 +432,7 @@ cue_t cue_for_action(int action)
     case ACT_LOVE:   return CUE_LOVE;
     case ACT_TICKLE: return CUE_TICKLE;
     case ACT_POOP:   return CUE_POOP;
+    case ACT_BRACE:  return CUE_BRACE;
     default:         return CUE_BLIP;
     }
 }

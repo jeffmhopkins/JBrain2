@@ -35,6 +35,7 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_LOVE] = {5600, FACE_HAPPY, 0},
     [ACT_TICKLE] = {4800, FACE_HAPPY, 0},
     [ACT_POOP] = {2600, FACE_SILLY, 0},
+    [ACT_BRACE] = {1600, FACE_EXCITED, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -296,6 +297,12 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         out->tail += sinf(p * (float)M_PI * 20.0f) * 14.0f * mag;
         break;
     }
+    case ACT_BRACE:
+        /* UH-OH: head pulled down into the shoulders, a nervous shiver, tail tucked. */
+        out->bob += squat_amount(p) * 10.0f;
+        out->neck += sinf(p * (float)M_PI * 28.0f) * 5.0f * mag;
+        out->tail -= squat_amount(p) * 10.0f;
+        break;
     case ACT_POOP:
         /* Head down and straining, tail up out of the way; a shake of relief after. */
         out->neck += strain(p) * 6.0f * mag;
@@ -441,6 +448,15 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
         out->arm_r = -120.0f + q * 12.0f;
         break;
     }
+    case ACT_BRACE: {
+        /* HUNCHED: arms pulled in to guard his sides, knees together. */
+        const float k = squat_amount(p);
+        out->arm_l = 12.0f - 22.0f * k + sinf(p * (float)M_PI * 28.0f) * 4.0f * k;
+        out->arm_r = -out->arm_l;
+        out->leg_l = 4.0f - 6.0f * k;
+        out->leg_r = -out->leg_l;
+        break;
+    }
     case ACT_POOP: {
         /* SQUATTING: legs out, arms in tight with the effort. */
         const float k = squat_amount(p);
@@ -580,6 +596,12 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
         case ACT_LOVE:
             out->tilt += sinf(p * (float)M_PI * 8.0f) * 7.0f * mag;
             out->extra = EXTRA_HEARTS;
+            break;
+        case ACT_BRACE:
+            /* Shrinking down and leaning away from the hand that is coming, shivering. */
+            out->sy -= squat_amount(p) * 0.06f;
+            out->oy += squat_amount(p) * 8.0f;
+            out->tilt += sinf(p * (float)M_PI * 28.0f) * 3.0f * mag - squat_amount(p) * 5.0f;
             break;
         case ACT_POOP:
             out->sit = squat_amount(p);

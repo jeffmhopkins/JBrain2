@@ -180,6 +180,14 @@ sample over 740 ms: 7.3 ms on a desktop, the costliest cue in the table, and a m
 on the panel. Its voice is now a triangle and a sawtooth straight off the phase, 0.46 ms for
 the same laugh, cheaper than the giggle.
 
+**"I'm going to tickle you" (0.4.11).** Owner: *"let's change tickle, to 'I'm going to tickle
+you' and then when that happens, pokes make him be tickled ... after five tickles."* The phrase
+(`im going to tickle you`, `gonna tickle you`; `tickle tickle` / `tickle me` are gone) is a
+warning: `ACT_BRACE` hunches him with a nervous titter (`CUE_BRACE`, the laugh's shape run
+upwards). `tickle.c` (pure, host-tested) then holds for 10 s, renewed by each tickle: a poke that
+reaches him is a tickle rather than the zone's pool, the first four a giggle and the fifth the
+laughing fit (`ACT_TICKLE`), after which pokes are pokes again.
+
 **What goes in must come out (0.4.11).** Owner: *"If he eats three times and within 1 minute,
 he should have to poop afterwards. The poop should stay on the screen for say 20 seconds. And
 should slide around with the angle of the device."* `poop.c` (pure, host-tested) counts meals

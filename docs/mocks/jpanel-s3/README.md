@@ -45,7 +45,7 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
   slides the figure's square into the glass's side bands, which the page does not draw.
 - **Shake, love, tickle and a snack.** "Shake the panel" shakes the drawn case and starts the
   dizzy action the panel's shake detector starts; the "I love you" voice button starts the
-  hearts, "Tickle tickle" the laughing and "Have a snack" the cookie (three snacks inside a
+  hearts, "I'm going to tickle you" the warning (then poke him five times) and "Have a snack" the cookie (three snacks inside a
   minute and he poops; tilt the panel to slide it). The bench does not run the
   detector itself.
 - **F4.** The SENDING / SENT / NOBODY / NOT SENT / DROPPED visuals are 0.4.x placeholders until

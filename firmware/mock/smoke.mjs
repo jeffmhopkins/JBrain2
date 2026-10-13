@@ -83,11 +83,23 @@ p.set(KNOB.PET_ACT, 2);
 p.advance(5800);
 check(events.slice(pets).some((e) => e.includes('cue DIZZY')), 'a shake makes him dizzy, and says so');
 check(events.slice(pets).some((e) => e.includes('cue LOVE')), '"I love you" makes him coo');
+// "I'm going to tickle you": he braces; then pokes are tickles, and the fifth gets him.
 const tickled = events.length;
 p.set(KNOB.PET_ACT, 3);
-p.advance(5000);
-check(events.slice(tickled).filter((e) => e.includes('cue TICKLE')).length === 3,
-  '"tickle tickle" makes him laugh, and laugh again, and again');
+p.advance(1800);
+check(events.slice(tickled).some((e) => e.includes('cue BRACE')), 'warned, he braces with a titter');
+for (let i = 0; i < 5; i++) {
+  tap(W / 2, H * 0.62);
+  p.advance(i < 4 ? 1300 : 5000);
+}
+const tk = events.slice(tickled);
+check(tk.filter((e) => e.includes('cue GIGGLE')).length === 4, 'four tickles, a giggle each');
+check(tk.filter((e) => e.includes('cue TICKLE')).length === 3,
+  'and the fifth sets him laughing, and laughing again, and again');
+const later = events.length;
+tap(W / 2, H * 0.62);
+p.advance(1500);
+check(!events.slice(later).some((e) => e.includes('tickled')), 'after which a poke is a poke');
 const fed = events.length;
 p.set(KNOB.PET_ACT, 4);
 p.advance(3200);

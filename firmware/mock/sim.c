@@ -36,6 +36,7 @@ static int16_t mock_voice(bool dad, uint32_t i);
 
 #include "caption.h"
 #include "poop.h"
+#include "tickle.h"
 #include "confirm.h"
 #include "cue_names.gen.h"
 #include "emotion.h"
@@ -112,6 +113,7 @@ static uint32_t r_action_at;
 static uint32_t r_recue_from;
 /* As the panel does: three snacks in a minute and he has to go (`poop.h`). */
 static poop_t r_poop;
+static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
 static uint32_t r_poop_last;
 static float r_recue_p;
 static float r_flinch;
@@ -454,6 +456,7 @@ static void frame(void)
         r_action_at = now;
         r_pending_act = ACT_NONE;
         if (r_action == ACT_EAT && poop_ate(&r_poop, now)) say("pet", "three meals in a minute");
+        if (r_action == ACT_BRACE) tickle_arm(&r_tickle, now);
         /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
            is a voice command, and those are deaf while a message plays. */
         if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
@@ -464,9 +467,22 @@ static void frame(void)
         say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
                          : r_action == ACT_LOVE ? "heard \"i love you\""
                          : r_action == ACT_EAT  ? "heard \"have a snack\""
-                                                : "heard \"tickle tickle\"");
+                                                : "heard \"im going to tickle you\"");
     }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
+    /* As the panel does: warned, a poke is a tickle. The bench has no poke pools, so an
+       unwarned poke stays a flinch. */
+    if (s_out.pet_press && facts.pet_only) {
+        const tickle_poke_t tk = tickle_poke(&r_tickle, now);
+        if (tk != TICKLE_NO) {
+            r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_GIGGLE;
+            r_action_at = now;
+            const cue_t c = cue_for_action((int)r_action);
+            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+            say("cue", "%s (press slot)", cue_name(c));
+            say("pet", "%s", tk == TICKLE_BIG ? "tickled: the fifth gets him" : "tickled");
+        }
+    }
     if (r_poop.owed && r_action == ACT_NONE && s_sm.mode == SM_PET) {
         r_action = ACT_POOP;
         r_action_at = now;
@@ -697,7 +713,7 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 11:
         r_pending_act = value == 1   ? ACT_DIZZY
                         : value == 2 ? ACT_LOVE
-                        : value == 3 ? ACT_TICKLE
+                        : value == 3 ? ACT_BRACE
                         : value == 4 ? ACT_EAT
                                      : ACT_NONE;
         break;

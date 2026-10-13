@@ -56,6 +56,7 @@
 #include "variants.h"
 #include "orient.h"
 #include "poop.h"
+#include "tickle.h"
 #include "screen.h"
 #include "ota.h"
 #include "overlay.h"
@@ -1893,6 +1894,8 @@ static void face_task(void *arg)
     float recue_p = 0.0f;
     poop_t poop;
     poop_reset(&poop);
+    tickle_t tickle;
+    tickle_reset(&tickle);
     uint32_t poop_last = 0;
     float action_mag = 1.0f;
     gesture_t gest;
@@ -2019,6 +2022,7 @@ static void face_task(void *arg)
                     action_mag = 1.0f;
                     action_start = now;
                     heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
+                    if (action == ACT_BRACE) tickle_arm(&tickle, now);
                     if (action == ACT_EAT && poop_ate(&poop, now)) {
                         ESP_LOGI(TAG, "three meals in a minute: a poop is owed");
                     }
@@ -2202,9 +2206,17 @@ static void face_task(void *arg)
                    hammering it (`variants.c`). THE SOUND FOLLOWS THE ACTION. */
                 colour = (colour + 1) % face_colour_count();
                 s_tap_zone = (int)face_zone(fst.form, s_fig_x, s_fig_y, s_upside_down, s_lean);
-                const pool_t pool = ZONE_POOL[s_tap_zone];
-                action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
-                action_mag = variants_penalty(pool, &mem[pool], now);
+                /* WARNED, A POKE IS A TICKLE (`tickle.h`): a giggle for each he holds out
+                   against, and the laughing fit on the fifth. Otherwise the zone's pool. */
+                const tickle_poke_t tk = tickle_poke(&tickle, now);
+                if (tk != TICKLE_NO) {
+                    action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_GIGGLE;
+                    action_mag = 1.0f;
+                } else {
+                    const pool_t pool = ZONE_POOL[s_tap_zone];
+                    action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
+                    action_mag = variants_penalty(pool, &mem[pool], now);
+                }
                 action_start = now;
                 ESP_LOGI(TAG, "tap glass (%d,%d) figure (%d,%d) zone %d -> colour %d, action %d, "
                               "mag %.2f",
