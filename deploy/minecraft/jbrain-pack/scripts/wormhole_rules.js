@@ -151,3 +151,23 @@ export const parseGate = (raw) => {
     return null;
   }
 };
+
+const targetOf = (t) => (t ? { place: t.place, dim: t.dim, x: t.x, y: t.y, z: t.z } : null);
+
+// The structured line the wrapper turns into an event for the map and Dave (§M12): a
+// gate's corner, axis and dimension, its planter, where it leads, and `by`, who did this
+// (the breaker on a collapse, empty when no player broke it).
+export const gateEvent = (op, gate, by) => ({
+  ev: "gate", op, id: gate.id, dim: gate.dim, x: gate.x, y: gate.y, z: gate.z,
+  axis: gate.axis, planter: gate.planter, by, target: targetOf(gate.target),
+});
+
+// Every gate at once, sent after each load so a restore, an import or a missed line can't
+// leave the map out of date.
+export const gatesSnapshot = (gates) => ({
+  ev: "gates",
+  all: gates.map((g) => ({
+    id: g.id, dim: g.dim, x: g.x, y: g.y, z: g.z, axis: g.axis, planter: g.planter,
+    target: targetOf(g.target),
+  })),
+});

@@ -15,6 +15,7 @@ import { useCallback, useRef, useState } from "react";
 import {
   ApiError,
   type MinecraftDim,
+  type MinecraftMapMarkers,
   type MinecraftMapPlayers,
   type MinecraftStructure,
   type MinecraftTimeline,
@@ -28,7 +29,9 @@ import {
   ExpandIcon,
   MapIcon,
   PinIcon,
+  PortalIcon,
   RouteIcon,
+  ShieldCheckIcon,
   SkullIcon,
   UserIcon,
 } from "../../components/icons";
@@ -57,6 +60,13 @@ import {
   visibleTiles,
   zoomAt,
 } from "../../minecraftMap";
+import {
+  type Avoid,
+  beaconKey,
+  beaconWords,
+  gateCenter,
+  gateWords,
+} from "../../minecraftMapMarkers";
 import { openMinecraftMap } from "../../minecraftMapNav";
 import {
   LEGEND,
@@ -65,14 +75,18 @@ import {
   type TileEntry,
   type Tokens,
   asSurvey,
+  beaconGlyph,
   clusterBadge,
   colorOf,
   drawScale,
   drawTiles,
+  drawWorldMarkers,
   fetchTile,
+  gateGlyph,
   line,
   markerGlyph,
   markerLabel,
+  markerOwn,
   placeLabels,
   playerDisc,
   readTokens,
@@ -84,8 +98,8 @@ import {
 
 // ---- the payload: every slot checked, everything else ignored ----
 
-export type McFocusKind = "death" | "player" | "place" | "structure" | "spot";
-export type McOverlay = "trails" | "deaths" | "structures" | "players";
+export type McFocusKind = "death" | "player" | "place" | "structure" | "spot" | "gate" | "beacon";
+export type McOverlay = "trails" | "deaths" | "structures" | "players" | "beacons" | "gates";
 
 export interface McFocus {
   kind: McFocusKind;
@@ -114,8 +128,16 @@ export interface McMapCard {
 }
 
 const DIM_IDS: MinecraftDim[] = ["overworld", "nether", "the_end"];
-const FOCUS_KINDS: McFocusKind[] = ["death", "player", "place", "structure", "spot"];
-const OVERLAY_IDS: McOverlay[] = ["trails", "deaths", "structures", "players"];
+const FOCUS_KINDS: McFocusKind[] = [
+  "death",
+  "player",
+  "place",
+  "structure",
+  "spot",
+  "gate",
+  "beacon",
+];
+const OVERLAY_IDS: McOverlay[] = ["trails", "deaths", "structures", "players", "beacons", "gates"];
 /** The world's edge: Bedrock's ±30 million blocks. */
 const WORLD_MAX = 30_000_000;
 const LABEL_MAX = 40;
@@ -188,7 +210,9 @@ export function parseMinecraftMap(data: Record<string, unknown>): McMapCard | nu
 
 interface Shown {
   icon: ReactNode;
-  tone: "" | "death" | "st";
+  tone: "" | "death" | "st" | "gate" | "bea";
+  /** A gate's or beacon's state, as the full map's panel says it. */
+  pill?: "open" | "dormant" | "protecting" | undefined;
   title: string;
   sub: string;
   x: number;
@@ -222,6 +246,17 @@ function focusShown(f: McFocus, dim: MinecraftDim, who: string, now: number): Sh
       sub: `Saved place · ${dimName(dim)}`,
     };
   }
+  if (f.kind === "gate" || f.kind === "beacon") {
+    // Not in the box's record (yet): what the payload says, and nothing more.
+    const gate = f.kind === "gate";
+    return {
+      ...at,
+      icon: gate ? <PortalIcon size={18} /> : <ShieldCheckIcon size={18} />,
+      tone: gate ? "gate" : "bea",
+      title: f.label || (gate ? "Wormhole gate" : "No-Spawn Beacon"),
+      sub: dimName(dim),
+    };
+  }
   if (f.kind === "structure") {
     return {
       ...at,
@@ -240,7 +275,51 @@ function focusShown(f: McFocus, dim: MinecraftDim, who: string, now: number): Sh
   };
 }
 
-function markerShown(m: Marker, dim: MinecraftDim, now: number): Shown | null {
+/** A gate or beacon as the card's "what it shows" says it (the full map's panel, shorter). */
+function gateShown(g: MinecraftMapMarkers["gates"][number]): Shown {
+  const [cx, cz] = gateCenter(g);
+  const to = g.target;
+  return {
+    icon: <PortalIcon size={18} />,
+    tone: "gate",
+    pill: g.state === "open" ? "open" : "dormant",
+    title: gateWords(g).title,
+    sub: `${g.planter ? `${g.planter}'s` : "planter unknown"}${
+      to ? `, to ${to.place}${to.dim !== g.dim ? ` · ${dimName(to.dim)}` : ""}` : ""
+    }`,
+    x: Math.floor(cx),
+    y: g.y,
+    z: Math.floor(cz),
+    dim: g.dim,
+  };
+}
+
+function beaconShown(
+  b: MinecraftMapMarkers["beacons"][number],
+  all: MinecraftMapMarkers["beacons"],
+): Shown {
+  const w = beaconWords(b, all);
+  return {
+    icon: <ShieldCheckIcon size={18} />,
+    tone: "bea",
+    pill: "protecting",
+    title: w.title,
+    sub: `${w.sub} · 48 × 48 blocks${w.overlaps}`,
+    x: b.x,
+    y: b.y,
+    z: b.z,
+    dim: b.dim,
+  };
+}
+
+function markerShown(
+  m: Marker,
+  dim: MinecraftDim,
+  now: number,
+  marks: MinecraftMapMarkers | null,
+): Shown | null {
+  if (m.type === "gate") return gateShown(m.g);
+  if (m.type === "beacon") return beaconShown(m.b, marks?.beacons ?? []);
   if (m.type === "struct") {
     const s = structureInfo(m.s.structure);
     return {
@@ -284,6 +363,35 @@ function markerShown(m: Marker, dim: MinecraftDim, now: number): Shown | null {
   return null;
 }
 
+/** The gate or beacon a `gate` / `beacon` focus names: the payload says only where, so the
+ *  card finds it in the box's own record — the gate whose ring is within a couple of blocks
+ *  of that spot, the beacon on that block. */
+export function focusedMarker(
+  marks: MinecraftMapMarkers | null,
+  dim: MinecraftDim,
+  focus: McFocus | null,
+): {
+  gate?: MinecraftMapMarkers["gates"][number];
+  beacon?: MinecraftMapMarkers["beacons"][number];
+} {
+  if (!marks || !focus) return {};
+  if (focus.kind === "gate") {
+    const gate = marks.gates.find((g) => {
+      if (g.dim !== dim) return false;
+      const [cx, cz] = gateCenter(g);
+      return Math.abs(cx - focus.x) <= 3 && Math.abs(cz - focus.z) <= 3;
+    });
+    return gate ? { gate } : {};
+  }
+  if (focus.kind === "beacon") {
+    const beacon = marks.beacons.find(
+      (b) => b.dim === dim && Math.abs(b.x - focus.x) <= 1 && Math.abs(b.z - focus.z) <= 1,
+    );
+    return beacon ? { beacon } : {};
+  }
+  return {};
+}
+
 // ---- the card ----
 
 type Hit =
@@ -296,6 +404,8 @@ const CHIPS: { id: McOverlay; label: string }[] = [
   { id: "deaths", label: "Deaths" },
   { id: "structures", label: "Structures" },
   { id: "players", label: "Players" },
+  { id: "beacons", label: "Beacons" },
+  { id: "gates", label: "Gates" },
 ];
 
 const TILES_IN_FLIGHT = 4;
@@ -322,6 +432,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
   const [unreachable, setUnreachable] = useState(false);
   const [structs, setStructs] = useState<MinecraftStructure[]>([]);
   const [log, setLog] = useState<MinecraftTimeline | null>(null);
+  const [marks, setMarks] = useState<MinecraftMapMarkers | null>(null);
   const [tiles, setTiles] = useState({ visible: 0, pending: 0 });
   const [copied, setCopied] = useState<string | null>(null);
   // The card is a picture of a moment: "now" is when it was drawn, for its day words.
@@ -336,14 +447,14 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
   const cache = useRef(new Map<string, TileEntry>());
   const inFlight = useRef(0);
   const tk = useRef<Tokens | null>(null);
-  const state = useRef({ ov, players, structs, log });
-  state.current = { ov, players, structs, log };
+  const state = useRef({ ov, players, structs, log, marks });
+  state.current = { ov, players, structs, log, marks };
 
   const redraw = useCallback(() => {
     dirty.current = true;
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: any change to what's drawn redraws.
-  useEffect(redraw, [ov, players, structs, log]);
+  useEffect(redraw, [ov, players, structs, log, marks]);
 
   // ---- data: the box's own routes, never anything the payload named ----
 
@@ -377,6 +488,25 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
       gone = true;
     };
   }, [slot, dim, ov.structures]);
+
+  // The world's beacons and gates (§M26), from the box's own record, never the payload's.
+  const aboutMarker = focus?.kind === "gate" || focus?.kind === "beacon";
+  const wantMarks = ov.beacons || ov.gates || aboutMarker;
+  useEffect(() => {
+    if (!wantMarks) return;
+    let gone = false;
+    api
+      .minecraftMapMarkers(slot)
+      .then((m) => {
+        if (!gone) setMarks(m);
+      })
+      .catch(() => {
+        if (!gone) setMarks(null);
+      });
+    return () => {
+      gone = true;
+    };
+  }, [slot, wantMarks]);
 
   const wantLog = !!trail && (ov.trails || ov.deaths);
   useEffect(() => {
@@ -505,6 +635,30 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
     }
 
     const markers: Marker[] = [];
+    // Beacons and gates under every tile, in the full map's order; the card's own gate or
+    // beacon is the tapped one, drawn with its line, pin and label (§M26).
+    const mine = focusedMarker(st.marks, dim, focus);
+    const world = drawWorldMarkers(ctx, v, f, t, {
+      beacons: st.marks?.beacons ?? [],
+      gates: st.marks?.gates ?? [],
+      dim,
+      showBeacons: st.ov.beacons || !!mine.beacon,
+      showGates: st.ov.gates || !!mine.gate,
+      selBeacon: mine.beacon ? beaconKey(mine.beacon) : null,
+      selGate: mine.gate ? mine.gate.id : null,
+    });
+    const avoid: Avoid = { rects: [...world.avoid.rects], segs: [...world.avoid.segs] };
+    for (const m of world.markers) if (!off(m.sx, m.sy)) markers.push(m);
+    for (const p of world.pins) {
+      const [x, z] = gateCenter(p.g);
+      next.push({
+        kind: "marker",
+        sx: p.sx,
+        sy: p.sy,
+        m: { type: "gate", g: p.g, x, z, sx: p.sx, sy: p.sy, pr: 2 },
+      });
+    }
+    labels.push(...world.labels);
     if (st.ov.structures) {
       for (const s of st.structs) {
         const [sx, sy] = toScreen(v, f, s.x + 0.5, s.z + 0.5);
@@ -527,6 +681,8 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
         markerGlyph(ctx, one, t, false);
         const txt = markerLabel(one);
         if (txt && v.s >= 0.25) labels.push({ txt, x: one.sx, y: one.sy - 8, pr: one.pr });
+        const own = markerOwn(one);
+        if (own) avoid.rects.push({ x: one.sx - 12, y: one.sy - 12, w: 24, h: 24, own });
         next.push({ kind: "marker", sx: one.sx, sy: one.sy, m: one });
       } else {
         clusterBadge(ctx, cl, t);
@@ -534,17 +690,32 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
       }
     }
 
+    // The card's gate or beacon, ringed — under the players, never over one.
+    if (world.tapped) {
+      const m = world.tapped;
+      markerGlyph(ctx, m, t, true);
+      avoid.rects.push({ x: m.sx - 18, y: m.sy - 18, w: 36, h: 36, own: markerOwn(m) });
+      next.push({ kind: "focus", sx: m.sx, sy: m.sy });
+    } else if (focus && (focus.kind === "gate" || focus.kind === "beacon")) {
+      const [sx, sy] = toScreen(v, f, focus.x + 0.5, focus.z + 0.5);
+      if (focus.kind === "gate") gateGlyph(ctx, sx, sy, true, t, true);
+      else beaconGlyph(ctx, sx, sy, t, true);
+      if (focus.label) labels.push({ txt: focus.label, x: sx, y: sy, pr: -1, side: 18 });
+      next.push({ kind: "focus", sx, sy });
+    }
+
     if (st.ov.players && st.players) {
       for (const p of playersIn(st.players.players, dim)) {
         const [sx, sy] = toScreen(v, f, p.x, p.z);
         if (off(sx, sy)) continue;
         playerDisc(ctx, sx, sy, p, steel, t, false, false);
-        labels.push({ txt: p.gamertag, x: sx, y: sy - 8, pr: 0 });
+        avoid.rects.push({ x: sx - 12, y: sy - 12, w: 24, h: 24, own: `p:${p.xuid}` });
+        labels.push({ txt: p.gamertag, x: sx, y: sy - 8, pr: 0, own: `p:${p.xuid}` });
       }
     }
 
     // The thing the card is about, on top, with its label first in line.
-    if (focus) {
+    if (focus && focus.kind !== "gate" && focus.kind !== "beacon") {
       const [sx, sy] = toScreen(v, f, focus.x + 0.5, focus.z + 0.5);
       if (focus.kind === "death") {
         const e: MinecraftTimelineEvent = {
@@ -582,7 +753,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
     }
 
     const scale = scaleRect(ctx, v.s, f);
-    placeLabels(ctx, labels, [scale], f, t);
+    placeLabels(ctx, labels, [scale], f, t, avoid);
     drawScale(ctx, scale, t);
     hits.current = next;
   }, [want, dim, slot, focus, trail]);
@@ -699,7 +870,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
     const hit = hitTest(hits.current, sx, sy);
     if (hit?.kind === "focus") return setPicked(null);
     if (hit?.kind === "marker") {
-      const shown = markerShown(hit.m, dim, now);
+      const shown = markerShown(hit.m, dim, now, marks);
       if (shown) return setPicked(shown);
     }
     if (hit?.kind === "cluster") {
@@ -728,7 +899,16 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
     return () => clearTimeout(t);
   }, [copied]);
 
-  const shown = picked ?? (focus ? focusShown(focus, dim, trail?.gamertag ?? "", now) : null);
+  const mine = focusedMarker(marks, dim, focus);
+  const shown =
+    picked ??
+    (mine.gate
+      ? gateShown(mine.gate)
+      : mine.beacon
+        ? beaconShown(mine.beacon, marks?.beacons ?? [])
+        : focus
+          ? focusShown(focus, dim, trail?.gamertag ?? "", now)
+          : null);
   // Until the box says who's on, the card claims nothing about being live.
   const status =
     !players && !unreachable
@@ -799,7 +979,19 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
               </span>
               <div className="tv-mc-det-tx">
                 <div className="tv-mc-det-t">{shown.title}</div>
-                <div className="tv-mc-det-s">{shown.sub}</div>
+                <div className="tv-mc-det-s">
+                  {shown.pill && (
+                    <>
+                      <span
+                        className={`mc-map-state ${shown.pill === "open" ? "open" : shown.pill === "dormant" ? "dorm" : "prot"}`}
+                      >
+                        {shown.pill}
+                      </span>
+                      {" · "}
+                    </>
+                  )}
+                  {shown.sub}
+                </div>
               </div>
             </div>
             <div className="tv-mc-coord">
@@ -877,6 +1069,18 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
             <span className="tv-mc-lg-i">
               <UserIcon size={14} />
               Player
+            </span>
+          )}
+          {ov.beacons && (
+            <span className="tv-mc-lg-i bea">
+              <ShieldCheckIcon size={14} />
+              Beacon
+            </span>
+          )}
+          {ov.gates && (
+            <span className="tv-mc-lg-i gate">
+              <PortalIcon size={14} />
+              Gate
             </span>
           )}
         </div>

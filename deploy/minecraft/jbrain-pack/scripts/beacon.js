@@ -4,14 +4,16 @@
 // each loaded area catches what walked, fell, teleported or came through a portal in.
 // The rules are in beacon_rules.js. The game API is passed in, so node tests drive this
 // module with their own stand-in.
-import { BEACON, KEPT, RECORD_PREFIX, REMOVABLE, areaOf, buildIndex, isProtected,
-  keepReason, makeRecord, parseRecord, recordKey } from "./beacon_rules.js";
+import { BEACON, KEPT, RECORD_PREFIX, REMOVABLE, areaOf, beaconEvent, beaconsSnapshot,
+  buildIndex, isProtected, keepReason, makeRecord, parseRecord, recordKey } from "./beacon_rules.js";
 
 const SWEEP_TICKS = 20;
 // "Beamed away by Dave": white sparks up and a puff, never a death (so nothing drops).
 const PARTICLES = ["minecraft:endrod", "minecraft:basic_smoke_particle"];
 
 const say = (msg) => console.log(`[jbrain] ${msg}`);
+// The prose lines stay for people reading the log; this one is the map's and Dave's.
+const emit = (ev) => console.log(`[jbrain] ${JSON.stringify(ev)}`);
 
 export const initBeacon = (world, system) => {
   // Read lazily: the world's properties can't be read while the script first loads.
@@ -29,23 +31,27 @@ export const initBeacon = (world, system) => {
     index = buildIndex(records.values());
   };
 
-  const remember = (dim, at) => {
+  const remember = (dim, at, by) => {
     load();
-    const rec = makeRecord(dim, at);
+    const rec = makeRecord(dim, at, by);
     const key = recordKey(dim, rec);
-    world.setDynamicProperty(key, JSON.stringify({ dim, x: rec.x, y: rec.y, z: rec.z }));
+    world.setDynamicProperty(key, JSON.stringify({ dim, x: rec.x, y: rec.y, z: rec.z, by }));
     records.set(key, rec);
     index = buildIndex(records.values());
+    emit(beaconEvent("on", rec, by));
     say(`no-spawn beacon on at ${rec.x} ${rec.y} ${rec.z} (${dim})`);
   };
 
-  const forget = (dim, at, why) => {
+  // `by` is who broke it; empty when the sweep found it gone (TNT, a piston, a command).
+  const forget = (dim, at, why, by = "") => {
     load();
     const key = recordKey(dim, at);
-    if (!records.has(key)) return;
+    const rec = records.get(key);
+    if (!rec) return;
     world.setDynamicProperty(key, undefined);
     records.delete(key);
     index = buildIndex(records.values());
+    emit(beaconEvent("off", rec, by));
     say(`no-spawn beacon off at ${Math.floor(at.x)} ${Math.floor(at.y)} ${Math.floor(at.z)} (${dim}): ${why}`);
   };
 
@@ -107,20 +113,28 @@ export const initBeacon = (world, system) => {
     }
   });
 
-  world.afterEvents.playerPlaceBlock.subscribe(({ block, dimension }) => {
-    if (block.typeId === BEACON) remember(dimension.id, block.location);
+  world.afterEvents.playerPlaceBlock.subscribe(({ block, dimension, player }) => {
+    if (block.typeId === BEACON) remember(dimension.id, block.location, player?.name ?? "");
   });
 
-  world.afterEvents.playerBreakBlock.subscribe(({ block, brokenBlockPermutation, dimension }) => {
-    if (brokenBlockPermutation.type.id === BEACON) forget(dimension.id, block.location, "broken");
+  world.afterEvents.playerBreakBlock.subscribe(({ block, brokenBlockPermutation, dimension, player }) => {
+    if (brokenBlockPermutation.type.id === BEACON) {
+      forget(dimension.id, block.location, "broken", player?.name ?? "");
+    }
   });
 
+  let reported = false;
   system.runInterval(() => {
     try {
       load();
     } catch (e) {
       say(`no-spawn beacon records unreadable: ${e}`);
       return;
+    }
+    // Once per load, after the first tick: the properties can't be read any sooner.
+    if (!reported) {
+      reported = true;
+      emit(beaconsSnapshot(records.values()));
     }
     for (const rec of [...records.values()]) {
       try {

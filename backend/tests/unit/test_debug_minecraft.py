@@ -266,6 +266,21 @@ async def test_travel_reports_the_log_summary(monkeypatch: pytest.MonkeyPatch) -
     assert req.state.debug_detail == "minecraft travel summary"
 
 
+async def test_markers_reports_counts_never_positions(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = {"world": "castle", "beacons": 2, "gates_open": 1, "gates_dormant": 0, "as_of": 7.0}
+
+    async def summary(_maker: Any) -> list[dict[str, Any]]:
+        return [row]
+
+    monkeypatch.setattr(mc.markers, "summary", summary)
+    req: Any = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=object())),
+        state=SimpleNamespace(),
+    )
+    assert await mc.minecraft_markers(req, PRINCIPAL) == {"worlds": [row]}
+    assert req.state.debug_detail == "minecraft beacon and gate counts"
+
+
 async def test_scans_reports_counts_per_world_and_player(monkeypatch: pytest.MonkeyPatch) -> None:
     async def summary(_maker: Any) -> list[dict[str, Any]]:
         return [{"world": "slot2", "xuid": "111", "day": 7, "used": 1, "left": 1}]

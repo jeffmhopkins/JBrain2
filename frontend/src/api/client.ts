@@ -642,6 +642,53 @@ export interface MinecraftMapStructures {
   sweep: MinecraftSweep;
 }
 
+/** A No-Spawn Beacon as the pack last reported it (§M26). `placed_by` is the placer's
+ *  gamertag, "" when the pack didn't record one; `placed_at` null when only a snapshot
+ *  ever named it. */
+export interface MinecraftBeacon {
+  dim: MinecraftDim;
+  x: number;
+  y: number;
+  z: number;
+  placed_by: string;
+  placed_at: number | null;
+}
+
+/** Where an open wormhole gate leads: one of its planter's saved places. */
+export interface MinecraftGateTarget {
+  place: string;
+  dim: MinecraftDim;
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** A wormhole gate (§M12): `x, y, z` is its ring's lowest corner and `axis` the way the
+ *  ring runs; `target` is null while it is dormant. */
+export interface MinecraftGate {
+  id: number;
+  dim: MinecraftDim;
+  x: number;
+  y: number;
+  z: number;
+  axis: "x" | "z";
+  planter: string;
+  state: "open" | "dormant";
+  target: MinecraftGateTarget | null;
+  planted_at: number | null;
+  aimed_at: number | null;
+}
+
+/** GET /map/markers: a world's beacons and gates, kept by the api from the pack's own
+ *  lines, so they answer for a world that isn't loaded; `as_of` is the newest report. */
+export interface MinecraftMapMarkers {
+  slot: string;
+  world: string;
+  beacons: MinecraftBeacon[];
+  gates: MinecraftGate[];
+  as_of: number | null;
+}
+
 // ---- the timeline (§M8a): one world's travel log over a range, epoch seconds ----
 
 /** A run of one player's trail inside one session, one dimension and one life: the client
@@ -5166,6 +5213,11 @@ export const api = {
     const q = new URLSearchParams({ slot, dim });
     const response = await request(`/api/minecraft/map/structures?${q}`);
     return (await response.json()) as MinecraftMapStructures;
+  },
+
+  async minecraftMapMarkers(slot: string): Promise<MinecraftMapMarkers> {
+    const response = await request(`/api/minecraft/map/markers?slot=${encodeURIComponent(slot)}`);
+    return (await response.json()) as MinecraftMapMarkers;
   },
 
   async minecraftMapSweep(slot: string): Promise<MinecraftSweep> {

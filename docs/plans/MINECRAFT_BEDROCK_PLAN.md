@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -1728,7 +1728,8 @@ once the gate has really changed. With none, Dave says so and the gate keeps its
 - **Breaking a frame block destroys the gate, and the seed is lost** (owner, 2026-10-11).
   Rebuilding the frame needs a new seed. While a gate stands, its planter can ask Dave to
   re-point it (above).
-- **Every trip is logged** (who, gate, place) and gates show on the M8 map.
+- **Every trip is logged** (who, gate, place) and gates show on the M8 map — built in
+  §M26: each gate, open or dormant, and a dotted line to where an open one leads.
 - **Saved places stay the planter's.** If the target place is removed (`mc_place_remove`),
   the gate goes dormant until it is re-aimed.
 
@@ -2034,8 +2035,9 @@ decided while building it:
   players. Each removal is `entity.remove()` (no death, so no drops) after an end-rod
   sparkle and a smoke puff.
 - **Not done:** pistons can move the block (its record then drops on the next sweep and
-  the moved block does nothing until it's broken and placed again); the M8 map and Dave
-  don't know about beacons yet.
+  the moved block does nothing until it's broken and placed again). The M8 map and Dave
+  know about beacons since §M26 (the protected squares, and `mc_gates_beacons`' covered
+  check).
 - **The guide** (§M19): an echo shard unlocks `no_spawn_beacon` only for a player who has
   already unlocked `power_pack_uses` (`UNLOCK_NEEDS` in `rules.js`; both in one look
   counts). The entry is in `minecraft_dave_guide.prompt`, `agent-minecraft-dave-guide-v2`
@@ -2639,6 +2641,74 @@ and dig, with no deep scan spent. Chests and containers stay on `mc_find_item`'s
   Windows like the waypoint line does, and the arrow re-aims as the player turns.
 - That `BlockTypes.get` knows the ids players ask for (`diamond_ore`, `ancient_debris`,
   `lit_redstone_ore`) and refuses a made-up one, on 1.26.
+
+### M26 — Beacons and gates on the map (owner, 2026-10-12)
+
+**Why.** §M12 and §M16 both said their gates and protected areas "show on the M8 map", and
+the map's Layers tab listed *Wormhole gates* with a *later* badge. The owner wants to see
+at a glance *what's protected* and *where a gate goes*, and to ask Dave "where's my gate,
+where does it lead, is my base protected?". GUI gate: `docs/mocks/minecraft-map-markers/`;
+the owner picked **variant A, as revised** (always drawn), the independent review's pick.
+
+**The data path** (the mock README's "Data path", built as recommended):
+- **Pack** (1.10.0): beside every prose line (which Dave's tools still read), a structured
+  one. `{"ev":"beacon","op":"on|off",dim,x,y,z,by}` — the beacon now records its placer
+  (`by`, from `playerPlaceBlock`; on `off` it's who broke it, empty when the sweep found it
+  gone). `{"ev":"gate","op":"planted|opened|aimed|dormant|collapsed",id,dim,x,y,z,axis,
+  planter,by,target}` — `target` is `{place,dim,x,y,z}` or null. After the first tick of
+  every load, one `{"ev":"beacons","all":[…]}` and one `{"ev":"gates","all":[…]}`
+  snapshot, so a restore, an import or a missed line can't leave the map stale. The
+  structured line goes first, so a test's or a reader's "last line" is still the prose;
+  `_reply` drops event lines from a console reply. Dimensions are the short names.
+- **Sidecar** (`bds.py` `MARKER_EVENTS`): the four kinds join `PACK_EVENTS`, every field
+  type-checked like deaths: ints clamped to ±30,000,000, the dimension and `op` from closed
+  lists, the axis `x|z`, names and places cut to 40, a snapshot to 256 records with
+  `truncated` set when cut. They carry the world folder and no xuid.
+- **Backend:** migration `0240` (renumbered twice, after clashes with the chat share links and the agent session origin) adds `app.mc_world_beacons` (keyed by world and block) and
+  `app.mc_world_gates` (keyed by world and the pack's gate id), owner-only RLS with
+  isolation tests. The session drain hands each event to `minecraft/markers.py`: an event
+  patches, a whole snapshot replaces a world's set (a cut one only patches), and
+  `world_replaced` (reset, import) clears them. A snapshot keeps the first-heard
+  `placed_at` / `planted_at`; a gate whose target moved unheard keeps no `aimed_at`.
+  `GET /api/minecraft/map/markers?slot=&dim=` → `{beacons, gates, as_of}` answers with the
+  server stopped or the world unloaded. Debug: `GET /minecraft/markers` (counts only).
+- **Dave:** `mc_gates_beacons` (read-only, both tiers, sidecar v1): where each gate is (the
+  middle of its ring), open or dormant and where it leads (with the distance and compass
+  from the gate, or the dimension), each beacon and its square, and which of the player's
+  saved places a beacon covers (a place's chunk within one chunk of a beacon's, same
+  dimension). In game it's only the asker's own, and the item guide (§M19) gates it: no
+  gates before `wormhole_seed`, no beacons before `no_spawn_beacon`, and the door offers the
+  tool only with one of them. In the app it's everyone's, or one `player`'s. `mc_show_map`
+  (v2) gains the focus kinds `gate` and `beacon` and the overlays `beacons` and `gates`
+  (on by default). Prompt `agent-minecraft-dave-v21`.
+
+**The map** (`minecraftMapMarkers.ts` for the rules, `minecraftMapDraw.ts` for the
+drawing, shared by the full map and the chat card):
+- A beacon is a shield on a green-ringed halo tile, its 48 × 48 square a green dash over a
+  halo, the tapped one filled. A gate is the portal on a violet-ringed tile, filled while
+  open; dormant, the same portal unfilled in a dashed ring. An open gate draws a dotted
+  violet line (1 on, 6 off) with an arrowhead to a violet-ringed pin labelled with the
+  place; into another dimension it gets a label (*to Nether base · in the Nether*) instead.
+- **Draw order:** squares, lines, pins, tiles, the selection ring, then **players on top**.
+- **Labels:** a gate's label goes right, left, below or above its marker, else is dropped;
+  every label now keeps off the beacon and gate tiles, the pins, the player discs and every
+  gate line (and the Tricorder bearing) but its own.
+- **Layers:** **No-Spawn Beacons** and **Wormhole gates** switches (no *later*), the
+  **In this world** list (every beacon and gate in any dimension; a tap selects it and
+  flies there), and the legend. **Tap** a gate: *open / dormant*, whose, planted and aimed,
+  *Leads to Tree farm · 244 blocks north-west · X −160 · Z −140* with **Show Tree farm**
+  (both ends framed) or **Show it in the Nether**; a dormant one says how to open it. Tap a
+  beacon: *protecting*, who placed it, the square to the block and its overlaps.
+- **Chat card:** chips **Beacons · Gates**; a `gate` or `beacon` focus is found in the box's
+  own record and drawn selected (line, pin and label).
+- Hidden on the timeline's replay (they are where the pack last reported them). The share
+  map has none: the rows are owner-only.
+
+**Only checkable on the box:** that `playerPlaceBlock` carries `player` for the beacon (it
+does on the stable API, but an older beacon has no placer and shows *placer not
+recorded*); that the after-load snapshot lands once the world's properties are readable
+(first tick of the interval) on a world with many gates; and that a world restored from a
+backup is re-reported by its next start.
 
 ### SW1–SW4 — Spawn wreck: a crashed escape pod under a damaged mothership (owner, 2026-10-11)
 

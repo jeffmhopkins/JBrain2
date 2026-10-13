@@ -1371,6 +1371,89 @@ def test_the_pack_reports_deaths_and_respawns_as_events(tmp_path: Path) -> None:
     assert "killer" not in death  # null is not a string: dropped, not "None"
 
 
+def _pack(b: Any, ev: dict[str, Any]) -> None:
+    b._record("[Scripting] [jbrain] " + json.dumps(ev))
+
+
+def test_beacons_and_gates_become_events_type_checked_and_clamped(
+    tmp_path: Path,
+) -> None:
+    """§M26: the map's markers ride the same pipe as deaths, under the world's folder,
+    with no xuid (the names in them are matched to the roster by the api)."""
+    b = bds.Bds(tmp_path)
+    b.world = "slot2"
+    beacon = {"ev": "beacon", "op": "on", "dim": "overworld", "x": 60, "y": 72}
+    _pack(b, {**beacon, "z": -40, "by": "Mira_P" + "x" * 60})
+    _pack(b, {**beacon, "z": -40, "op": "boom"})  # an op it doesn't know
+    _pack(b, {**beacon, "z": True})  # a bool is not a coordinate
+    _pack(b, {**beacon, "z": 1, "dim": "the_moon"})
+    target = {"place": "Tree farm", "dim": "overworld", "x": -160, "y": 68, "z": -140}
+    gate = {
+        "ev": "gate",
+        "op": "opened",
+        "id": 1,
+        "dim": "overworld",
+        "x": 99_000_000,
+        "y": 71,
+        "z": 14,
+        "axis": "x",
+        "planter": "BlockyFox",
+        "by": "BlockyFox",
+        "target": target,
+    }
+    _pack(b, gate)
+    _pack(b, {**gate, "op": "dormant", "target": {**target, "dim": "moon"}})
+    _pack(b, {**gate, "axis": "y"})
+    _pack(b, {**gate, "id": 0})
+    got = b.events_after(0)
+    assert [(e["kind"], e.get("op"), e["xuid"], e["world"]) for e in got] == [
+        ("beacon", "on", "", "slot2"),
+        ("gate", "opened", "", "slot2"),
+        ("gate", "dormant", "", "slot2"),
+    ]
+    on, opened, dormant = got
+    assert (on["x"], on["z"], on["dim"]) == (60, -40, "overworld")
+    assert on["by"] == ("Mira_P" + "x" * 60)[: bds.MARKER_TEXT_MAX]
+    assert opened["x"] == bds.COORD_MAX  # clamped to the world border
+    assert opened["target"] == target
+    assert dormant["target"] is None  # a target in no known dimension is no target
+
+
+def test_snapshots_carry_every_valid_record_and_say_when_cut(tmp_path: Path) -> None:
+    b = bds.Bds(tmp_path)
+    good = {"dim": "nether", "x": -3, "y": 40, "z": 9, "by": ""}
+    _pack(b, {"ev": "beacons", "all": [good, {"dim": "nether", "x": "1"}, 7]})
+    many = [{**good, "x": i} for i in range(bds.SNAPSHOT_MAX + 5)]
+    _pack(b, {"ev": "beacons", "all": many})
+    _pack(b, {"ev": "gates", "all": "nope"})
+    _pack(
+        b,
+        {
+            "ev": "gates",
+            "all": [
+                {"id": 2, "dim": "overworld", "x": 1, "y": 2, "z": 3, "axis": "z"},
+                {"id": 3, "dim": "overworld", "x": 1, "y": 2, "z": 3},
+            ],
+        },
+    )
+    first, cut, gates = b.events_after(0)
+    assert first["all"] == [good] and first["truncated"] is False
+    assert len(cut["all"]) == bds.SNAPSHOT_MAX and cut["truncated"] is True
+    assert gates["kind"] == "gates"
+    assert gates["all"] == [
+        {
+            "id": 2,
+            "dim": "overworld",
+            "x": 1,
+            "y": 2,
+            "z": 3,
+            "axis": "z",
+            "planter": "",
+            "target": None,
+        }
+    ]
+
+
 def test_a_dave_question_is_an_event_filed_under_the_connected_xuid(
     tmp_path: Path,
 ) -> None:

@@ -7,6 +7,7 @@
 import type {
   MinecraftDim,
   MinecraftMapInfo,
+  MinecraftMapMarkers,
   MinecraftMapPlayers,
   MinecraftMapPoint,
   MinecraftMapStructures,
@@ -325,6 +326,66 @@ export function mcMapStructures(slot: string, dim: MinecraftDim): MinecraftMapSt
     swept_at: swept ? nowS() - 86_400 : null,
     stale: swept ? null : "never searched",
     sweep: { state: "idle" },
+  };
+}
+
+// The markers mock's world (docs/mocks/minecraft-map-markers/, "the world's data"): three
+// beacons, two of them overlapping and one up in a sky base, and three gates — open to the
+// Tree farm, dormant, and open into the Nether.
+export function mcMapMarkers(slot: string): MinecraftMapMarkers {
+  const t = nowS();
+  if (slot !== "slot2") return { slot, world: slot, beacons: [], gates: [], as_of: null };
+  const ow = "overworld" as MinecraftDim;
+  return {
+    slot,
+    world: "Castle Hill",
+    beacons: [
+      { dim: ow, x: 60, y: 72, z: -40, placed_by: "Mira_P", placed_at: t - 86_400 },
+      { dim: ow, x: 90, y: 74, z: -10, placed_by: "BlockyFox", placed_at: t - 20_000 },
+      { dim: ow, x: -150, y: 210, z: 96, placed_by: "BlockyFox", placed_at: t - 4_000 },
+    ],
+    gates: [
+      {
+        id: 1,
+        dim: ow,
+        x: 28,
+        y: 71,
+        z: 14,
+        axis: "x",
+        planter: "BlockyFox",
+        state: "open",
+        target: { place: "Tree farm", dim: ow, x: -160, y: 68, z: -140 },
+        planted_at: t - 100_000,
+        aimed_at: t - 30_000,
+      },
+      {
+        id: 2,
+        dim: ow,
+        x: -70,
+        y: 66,
+        z: 60,
+        axis: "z",
+        planter: "Mira_P",
+        state: "dormant",
+        target: null,
+        planted_at: t - 25_000,
+        aimed_at: null,
+      },
+      {
+        id: 3,
+        dim: ow,
+        x: 2,
+        y: 70,
+        z: -78,
+        axis: "x",
+        planter: "BlockyFox",
+        state: "open",
+        target: { place: "Nether base", dim: "nether", x: -20, y: 72, z: 40 },
+        planted_at: t - 20_000,
+        aimed_at: t - 19_000,
+      },
+    ],
+    as_of: t - 60,
   };
 }
 

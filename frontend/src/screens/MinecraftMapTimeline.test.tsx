@@ -37,7 +37,9 @@ function json(body: unknown, status = 200): Response {
 /** The words use non-breaking spaces so a time never wraps. */
 const text = (el: Element | null) => (el?.textContent ?? "").replace(/ /g, " ");
 
-describe("the map's timeline", () => {
+// openTimeline() chains several 5 s waits; the default 5 s test timeout would cut the cold
+// first test off before they could run out on a slow CI runner.
+describe("the map's timeline", { timeout: 20_000 }, () => {
   const fetchMock = vi.fn<typeof fetch>();
 
   beforeEach(() => {

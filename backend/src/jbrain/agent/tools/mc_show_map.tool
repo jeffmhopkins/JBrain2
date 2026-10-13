@@ -1,13 +1,13 @@
 ---
 name: mc_show_map
-version: 1
+version: 2
 permission: web
 params:
   type: object
   properties:
     focus:
       type: string
-      description: What the card is about — death, player, place, structure or spot. death with no x and z is this chat's player's latest death; player with none is where they were last seen; place with none is the saved place named in label. structure and spot need x and z.
+      description: What the card is about — death, player, place, structure, spot, gate or beacon. death with no x and z is this chat's player's latest death; player with none is where they were last seen; place with none is the saved place named in label. structure, spot, gate and beacon need x and z (a gate's or beacon's from mc_gates_beacons).
     label:
       type: string
       description: A short label for the marked spot, up to 40 characters, e.g. "Woodland mansion". For place with no coordinates, the saved place's name.
@@ -31,12 +31,13 @@ params:
       type: array
       items:
         type: string
-      description: Which overlays to draw, from trails, deaths, structures and players. Default trails, deaths and structures.
+      description: Which overlays to draw, from trails, deaths, structures, players, beacons and gates. Default all but players.
   required: []
 ---
 Show a live piece of the Minecraft map in the chat: the box's biome map (explored ground in
-colour over the satellite's survey) with the marked spot, the player's trail, deaths and the
-structures the server has located, plus a scale bar. The owner can pinch it and tap it to
+colour over the satellite's survey) with the marked spot, the player's trail, deaths, the
+structures the server has located, the No-Spawn Beacons' protected squares and where each
+open wormhole gate leads, plus a scale bar. The owner can pinch it and tap it to
 open the full map. Use it when a place, a death or a structure is easier to see than to
 read: "where did I die?", "where's the village?", "show me my base". Still give the
 coordinates in words. Only in the app — never in game.
