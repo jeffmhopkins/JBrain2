@@ -738,6 +738,8 @@ const registerDave = (registry, name) => {
       name,
       description: "Ask Dave",
       permissionLevel: CommandPermissionLevel.Any,
+      // Defaults to true, which shuts Dave out of every world with cheats off.
+      cheatsRequired: false,
       optionalParameters: Array.from({ length: WORDS }, (_, i) => ({
         name: i === 0 ? "question" : `word${i + 1}`,
         type: CustomCommandParamType.String,

@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-13 (Dave's welcome lines 6 s apart; the Tricorder's equip pop-up and once-a-session hint; villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
+> **Status:** Living · **Last verified:** 2026-10-13 (/dave with cheats off; Dave's welcome lines 6 s apart; the Tricorder's equip pop-up and once-a-session hint; villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -77,6 +77,7 @@ world** in slot 1, never on an imported real world.
 | 25 | Open a librarian's trade screen; then `/dave who sells <one of its books>` | Only the trades the screen shows (its unlocked levels); the line "From up here I see a librarian … who sells … for N emeralds." | `GET /api/debug/minecraft/map/villagers?x=<x>&z=<z>&profession=librarian` matches the screen |
 | 26 | Light a Nether portal, go through, ask Dave to point you home | In the Nether the held Tricorder reads `↑ Nether portal · N blocks · Home is in the Overworld`, pointing at the portal; back through, it points home | `GET /api/debug/minecraft/map/portals` lists the portal; break one and `check=false` still lists it while the default leaves it out |
 | 27 | Rejoin, select your Tricorder, wait, then switch to another slot and back to it a few times | **The heading isn't hidden:** the first hold this session shows "Your Tricorder points where Dave says · ask with /dave" on the actionbar for about 3 s, then the heading; it doesn't come back on a re-select (only after leaving and rejoining). The held-item pop-up over the hotbar shows just "<you>'s Tricorder", one line, no description, and the heading ("↑ World spawn · N blocks") is readable within about 2 s of each re-select. A Tricorder from before this fix loses its old "Points where Dave says" line within a second | your eyes |
+| 28 | On a world with **cheats off** (the slot's allow-cheats off in the PWA), as a non-operator if you can: `/dave where am I` | **Dave answers**, with no "cheats must be enabled" error; `/d` and `/ai` work too | log `"ev":"dave"` line |
 
 ## After (assistant)
 

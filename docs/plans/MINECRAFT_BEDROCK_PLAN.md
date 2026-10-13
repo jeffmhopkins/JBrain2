@@ -924,7 +924,10 @@ should be able to do once we're live").** Not yet tried from a real client.
   `"quoted phrase"` — a comma or a bare number is a syntax error the player sees. So
   "Dave, …" (the comma) and coordinates go in quotes: `/jb:dave "Dave, mark this
   location as tree farm"`; a leading "Dave," is dropped either way. A console origin is
-  refused ("Only a player can ask Dave").
+  refused ("Only a player can ask Dave"). `/jb:dave`, `/jb:d` and `/jb:ai` register with
+  `permissionLevel: Any` and **`cheatsRequired: false`**: a custom command defaults to
+  needing cheats, which shut Dave out of every world with cheats off until 2026-10-13
+  (owner: "I have to have cheats enabled to ask AI things").
 - **The sidecar** (`bds.py`) turns the line into a `dave` event carrying the **xuid BDS
   logged when that name connected** — the script API has no xuid, and the line's own
   fields are never trusted for identity. A name that never connected, or an empty

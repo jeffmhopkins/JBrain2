@@ -3,7 +3,7 @@
 // pack out beside it and runs this file, so CI does too.
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { CustomCommandStatus, Dimension, ItemLockMode, ItemStack, sim } from "@minecraft/server";
+import { CommandPermissionLevel, CustomCommandStatus, Dimension, ItemLockMode, ItemStack, sim } from "@minecraft/server";
 import { FormCancelationReason, forms } from "@minecraft/server-ui";
 import { LINES } from "./pack/scripts/rules.js";
 
@@ -240,6 +240,16 @@ test("/d and /ai are the same door as /dave", () => {
     sim.flush();
     assert.equal(res.status, CustomCommandStatus.Success);
     assert.match(daveEvents().at(-1), new RegExp(`"text":"point me ${name}"`));
+  }
+});
+
+test("/dave, /d and /ai need no cheats and no operator: anyone can ask", () => {
+  // A custom command defaults to cheatsRequired: true (owner, 2026-10-13: "I have to have
+  // cheats enabled to ask AI things").
+  for (const name of ["jb:dave", "jb:d", "jb:ai"]) {
+    const { def } = sim.command(name);
+    assert.equal(def.cheatsRequired, false, name);
+    assert.equal(def.permissionLevel, CommandPermissionLevel.Any, name);
   }
 });
 
