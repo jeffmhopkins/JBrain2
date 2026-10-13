@@ -2,7 +2,7 @@
 
 Proves the SECURITY DEFINER `app.redeem_pairing_code` flow: minting (owner-only)
 then redeeming creates a real device that authenticates, is one-time, rejects
-expired/unknown codes, and that the `pairing_code` table is owner-only. Since 0240 the
+expired/unknown codes, and that the `pairing_code` table is owner-only. Since 0241 the
 table holds only the code's sha256, and a code minted before that migration still redeems.
 """
 
@@ -171,13 +171,13 @@ async def test_the_code_is_stored_only_as_its_digest(maker: async_sessionmaker) 
 
 
 _MIGRATION = (
-    Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0240_pairing_code_hashed.py"
+    Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0241_pairing_code_hashed.py"
 )
 
 
 @pytest.fixture
 def run_0240(_pg_cluster: _Cluster, database_url: str) -> Iterator[object]:  # noqa: F811
-    """Run 0240's upgrade as the superuser the deploy's `migrate` service uses."""
+    """Run 0241's upgrade as the superuser the deploy's `migrate` service uses."""
     spec = importlib.util.spec_from_file_location("migration_0240_pg", _MIGRATION)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

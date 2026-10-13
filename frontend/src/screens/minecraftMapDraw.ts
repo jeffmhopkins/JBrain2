@@ -6,7 +6,9 @@
 
 import {
   MOCK_MODE,
+  type MinecraftBeacon,
   type MinecraftDim,
+  type MinecraftGate,
   type MinecraftMapPlayer,
   type MinecraftStructure,
   type MinecraftTimelineEvent,
@@ -26,6 +28,18 @@ import {
   toScreen,
   toWorld,
 } from "../minecraftMap";
+import {
+  type Avoid,
+  type Box,
+  NO_AVOID,
+  beaconArea,
+  beaconKey,
+  blocked,
+  elsewhereLabel,
+  gateCenter,
+  linesHere,
+  sideSlot,
+} from "../minecraftMapMarkers";
 
 /** A point marker that clusters: a structure, an event (a death; on the replay also a log-in,
  *  log-off or portal trip) or the world spawn. */
@@ -34,6 +48,8 @@ export type Marker = Placed &
     | { type: "struct"; s: MinecraftStructure }
     | { type: "event"; e: MinecraftTimelineEvent }
     | { type: "spawn" }
+    | { type: "beacon"; b: MinecraftBeacon }
+    | { type: "gate"; g: MinecraftGate }
   );
 
 export type TileEntry = {
@@ -86,6 +102,8 @@ export interface Tokens {
   inkOn: string;
   text: string;
   amber: string;
+  green: string;
+  violet: string;
   border: string;
   s2: string;
   /** The page's computed style, to read a player's colour token by name. */
@@ -105,6 +123,8 @@ export function readTokens(el: Element): Tokens {
     inkOn: g("--map-ink-on"),
     text: g("--text"),
     amber: g("--amber"),
+    green: g("--green"),
+    violet: g("--violet"),
     border: g("--border"),
     s2: g("--surface-2"),
     cs,
@@ -133,6 +153,11 @@ export interface Label {
   y: number;
   pr: number;
   left?: boolean;
+  /** What the label belongs to: it may touch its own marker and line, nothing else's. */
+  own?: string | undefined;
+  /** Placed by the side rule (right, left, below, above, else dropped) round a marker of
+   *  this radius, rather than above it (§M26). */
+  side?: number | undefined;
 }
 
 export interface Rect {
@@ -287,6 +312,278 @@ export function structGlyph(
   if (on) ring(ctx, x, y, 18, t);
 }
 
+/** The structures' tile — a dark halo, a 1.5 px accent ring (dashed for a dormant gate) —
+ *  with an ink glyph; a part named in `fill` is filled with the accent first. */
+function tileGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  accent: string,
+  parts: (keyof typeof GLYPHS)[],
+  t: Tokens,
+  opts: { dashed?: boolean; fill?: keyof typeof GLYPHS | null } = {},
+) {
+  ctx.save();
+  ctx.fillStyle = t.halo;
+  ctx.beginPath();
+  ctx.roundRect?.(x - 12, y - 12, 24, 24, 7);
+  ctx.fill();
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 1.5;
+  if (opts.dashed) ctx.setLineDash([3, 2.5]);
+  ctx.beginPath();
+  ctx.roundRect?.(x - 10.5, y - 10.5, 21, 21, 6);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.translate(x - 7.5, y - 7.5);
+  ctx.scale(15 / 24, 15 / 24);
+  ctx.strokeStyle = t.ink;
+  ctx.lineWidth = 2.2;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  for (const key of parts) {
+    const path = glyphPath(key);
+    if (!path) continue;
+    if (opts.fill === key) {
+      ctx.fillStyle = accent;
+      ctx.fill(path);
+    }
+    ctx.stroke(path);
+  }
+  ctx.restore();
+}
+
+/** A No-Spawn Beacon: the shield on a green-ringed tile (green is *safe*). */
+export function beaconGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  t: Tokens,
+  on: boolean,
+) {
+  tileGlyph(ctx, x, y, t.green, ["shield"], t);
+  if (on) ring(ctx, x, y, 18, t);
+}
+
+/** A wormhole gate: the portal on a violet-ringed tile, filled while open; dormant, the
+ *  same portal and swirl unfilled in a dashed ring, so it still reads as a gate. */
+export function gateGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  open: boolean,
+  t: Tokens,
+  on: boolean,
+) {
+  tileGlyph(ctx, x, y, t.violet, ["portalFrame", "swirl"], t, {
+    dashed: !open,
+    fill: open ? "portalFrame" : null,
+  });
+  if (on) ring(ctx, x, y, 18, t);
+}
+
+/** A beacon's protected square, drawn to the block: a green dash over a halo, filled when
+ *  it's the tapped one so it reads apart from an overlapping neighbour. */
+export function protectedArea(
+  ctx: CanvasRenderingContext2D,
+  v: MapView,
+  f: Frame,
+  b: MinecraftBeacon,
+  filled: boolean,
+  t: Tokens,
+) {
+  const a = beaconArea(b);
+  const [x0, y0] = toScreen(v, f, a.x0, a.z0);
+  const [x1, y1] = toScreen(v, f, a.x1, a.z1);
+  ctx.save();
+  if (filled) {
+    ctx.globalAlpha = 0.24;
+    ctx.fillStyle = t.green;
+    ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    ctx.globalAlpha = 1;
+  }
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 4;
+  ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.strokeStyle = t.green;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.restore();
+}
+
+/** Where an open gate leads: a dotted violet line (1 on, 6 off, over a halo) with an
+ *  arrowhead, from the gate's tile to its destination pin. Dotted, so it never reads as a
+ *  solid trail or the Tricorder's dashed bearing. Returns the line as drawn, for labels. */
+export function gateLink(
+  ctx: CanvasRenderingContext2D,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  t: Tokens,
+): { ax: number; ay: number; bx: number; by: number } | null {
+  const len = Math.hypot(bx - ax, by - ay);
+  if (len < 34) return null; // the tiles touch: there is no line to draw
+  const ux = (bx - ax) / len;
+  const uy = (by - ay) / len;
+  const sx = ax + ux * 15;
+  const sy = ay + uy * 15;
+  const ex = bx - ux * 15;
+  const ey = by - uy * 15;
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.setLineDash([1, 6]);
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(ex, ey);
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 6;
+  ctx.stroke();
+  ctx.strokeStyle = t.violet;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.beginPath();
+  ctx.moveTo(ex - ux * 9 - uy * 6, ey - uy * 9 + ux * 6);
+  ctx.lineTo(ex, ey);
+  ctx.lineTo(ex - ux * 9 + uy * 6, ey - uy * 9 - ux * 6);
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 6;
+  ctx.stroke();
+  ctx.strokeStyle = t.violet;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.restore();
+  return { ax: sx, ay: sy, bx: ex, by: ey };
+}
+
+/** The place an open gate leads to: a pin on a violet-ringed halo disc. */
+export function placePin(ctx: CanvasRenderingContext2D, x: number, y: number, t: Tokens) {
+  ctx.save();
+  ctx.fillStyle = t.halo;
+  ctx.beginPath();
+  ctx.arc(x, y, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = t.violet;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y, 10.5, 0, Math.PI * 2);
+  ctx.stroke();
+  const path = glyphPath("pin");
+  if (path) {
+    ctx.translate(x - 7.5, y - 7.5);
+    ctx.scale(15 / 24, 15 / 24);
+    ctx.strokeStyle = t.ink;
+    ctx.lineWidth = 2.2;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.stroke(path);
+  }
+  ctx.restore();
+}
+
+export interface WorldMarkersIn {
+  beacons: MinecraftBeacon[];
+  gates: MinecraftGate[];
+  dim: MinecraftDim;
+  showBeacons: boolean;
+  showGates: boolean;
+  /** The tapped beacon's key or gate's id, if one is. */
+  selBeacon: string | null;
+  selGate: number | null;
+}
+
+export interface WorldMarkersOut {
+  /** The tiles to cluster with the other point markers (the tapped one apart). */
+  markers: Marker[];
+  tapped: Marker | null;
+  /** Each drawn line and destination pin: label obstacles, and the pins' taps. */
+  avoid: Avoid;
+  pins: { sx: number; sy: number; g: MinecraftGate }[];
+  labels: Label[];
+}
+
+/** The parts of the beacons and gates that sit under every tile, in the binding order —
+ *  protected areas, then gate lines, then the places they lead to — and the tiles
+ *  themselves, handed back to cluster with the other point markers. The caller draws the
+ *  tiles, then the players on top of everything (README "Draw order"). */
+export function drawWorldMarkers(
+  ctx: CanvasRenderingContext2D,
+  v: MapView,
+  f: Frame,
+  t: Tokens,
+  w: WorldMarkersIn,
+): WorldMarkersOut {
+  const off = (sx: number, sy: number) => sx < -30 || sy < -30 || sx > f.w + 30 || sy > f.h + 30;
+  const out: WorldMarkersOut = {
+    markers: [],
+    tapped: null,
+    avoid: { rects: [], segs: [] },
+    pins: [],
+    labels: [],
+  };
+  if (w.showBeacons) {
+    const here = w.beacons.filter((b) => b.dim === w.dim);
+    // The tapped square last, so its fill sits over a neighbour's dash.
+    for (const b of here) if (beaconKey(b) !== w.selBeacon) protectedArea(ctx, v, f, b, false, t);
+    for (const b of here) if (beaconKey(b) === w.selBeacon) protectedArea(ctx, v, f, b, true, t);
+    for (const b of here) {
+      const [sx, sy] = toScreen(v, f, b.x + 0.5, b.z + 0.5);
+      const m: Marker = { type: "beacon", b, x: b.x, z: b.z, sx, sy, pr: 3 };
+      if (beaconKey(b) === w.selBeacon) out.tapped = m;
+      else if (!off(sx, sy)) out.markers.push(m);
+    }
+  }
+  if (w.showGates) {
+    const here = w.gates.filter((g) => g.dim === w.dim);
+    const ends: { g: MinecraftGate; sx: number; sy: number }[] = [];
+    for (const g of here) {
+      if (!linesHere(g, w.dim) || !g.target) continue;
+      const [cx, cz] = gateCenter(g);
+      const [ax, ay] = toScreen(v, f, cx, cz);
+      const [bx, by] = toScreen(v, f, g.target.x + 0.5, g.target.z + 0.5);
+      const seg = gateLink(ctx, ax, ay, bx, by, t);
+      if (seg) out.avoid.segs.push({ ...seg, own: `g:${g.id}` });
+      ends.push({ g, sx: bx, sy: by });
+    }
+    for (const e of ends) {
+      if (off(e.sx, e.sy)) continue;
+      placePin(ctx, e.sx, e.sy, t);
+      const own = `g:${e.g.id}`;
+      out.avoid.rects.push({ x: e.sx - 12, y: e.sy - 12, w: 24, h: 24, own });
+      out.pins.push({ sx: e.sx, sy: e.sy, g: e.g });
+      out.labels.push({
+        txt: e.g.target?.place ?? "",
+        x: e.sx,
+        y: e.sy,
+        pr: e.g.id === w.selGate ? -1 : 2,
+        own,
+        side: 12,
+      });
+    }
+    for (const g of here) {
+      const [cx, cz] = gateCenter(g);
+      const [sx, sy] = toScreen(v, f, cx, cz);
+      const m: Marker = { type: "gate", g, x: cx, z: cz, sx, sy, pr: 2 };
+      if (g.id === w.selGate) out.tapped = m;
+      else if (!off(sx, sy)) out.markers.push(m);
+      if (g.state === "open" && g.target && !linesHere(g, w.dim) && !off(sx, sy)) {
+        out.labels.push({
+          txt: elsewhereLabel(g),
+          x: sx,
+          y: sy,
+          pr: g.id === w.selGate ? -1 : 2,
+          own: `g:${g.id}`,
+          side: 12,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 export function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, t: Tokens) {
   ctx.save();
   ctx.beginPath();
@@ -372,8 +669,17 @@ export function markerLabel(m: Marker): string | null {
   return null;
 }
 
+/** A marker's key for the label rule: its label, line and pin share it. */
+export function markerOwn(m: Marker): string | undefined {
+  if (m.type === "gate") return `g:${m.g.id}`;
+  if (m.type === "beacon") return `b:${beaconKey(m.b)}`;
+  return undefined;
+}
+
 export function markerGlyph(ctx: CanvasRenderingContext2D, m: Marker, t: Tokens, on: boolean) {
   if (m.type === "struct") return structGlyph(ctx, m.sx, m.sy, m.s.structure, t, on);
+  if (m.type === "beacon") return beaconGlyph(ctx, m.sx, m.sy, t, on);
+  if (m.type === "gate") return gateGlyph(ctx, m.sx, m.sy, m.g.state === "open", t, on);
   const { sx: x, sy: y } = m;
   ctx.save();
   if (m.type === "event" && m.e.kind !== "death") {
@@ -650,19 +956,18 @@ export function drawScale(ctx: CanvasRenderingContext2D, r: ScaleRect, t: Tokens
 
 /** The tapped thing's label first, then players, then structures; each clamped inside the
  *  visible map, moved below its marker if it collides, or dropped — never drawn under a
- *  control or another label. */
+ *  control or another label. A `side` label (a gate's destination) goes right, left, below
+ *  or above its marker, or is dropped. Every label also keeps off what `avoid` holds — the
+ *  beacon and gate tiles, the player discs and the gates' lines — other than its own. */
 export function placeLabels(
   ctx: CanvasRenderingContext2D,
   labels: Label[],
   keep: Rect[],
   f: Frame,
   t: Tokens,
+  avoid: Avoid = NO_AVOID,
 ) {
-  const placed: Rect[] = [];
-  const clash = (r: Rect) =>
-    [...keep, ...placed].some(
-      (q) => r.x < q.x + q.w && q.x < r.x + r.w && r.y < q.y + q.h && q.y < r.y + r.h,
-    );
+  const placed: Box[] = [];
   const visH = f.h - f.bottom;
   ctx.save();
   ctx.font = FONT;
@@ -671,13 +976,28 @@ export function placeLabels(
 
     const w = ctx.measureText(l.txt).width + 12;
     const h = 20;
-    let r: Rect = l.left ? { x: l.x, y: l.y, w, h } : { x: l.x - w / 2, y: l.y - 26, w, h };
-    r.x = Math.min(Math.max(r.x, 4), f.w - w - 4);
-    r.y = Math.min(Math.max(r.y, 4), visH - h - 4);
-    if (clash(r)) {
-      const below = { ...r, y: l.y + 30 };
-      if (!l.left && below.y + h < visH - 4 && !clash(below)) r = below;
-      else if (l.pr >= 0) continue;
+    let r: Rect | null;
+    if (l.side !== undefined) {
+      r = sideSlot(
+        { x: l.x, y: l.y, r: l.side, own: l.own },
+        w,
+        h,
+        { w: f.w, top: 4, bottom: visH },
+        keep,
+        placed,
+        avoid,
+      );
+      if (!r) continue;
+    } else {
+      r = l.left ? { x: l.x, y: l.y, w, h } : { x: l.x - w / 2, y: l.y - 26, w, h };
+      r.x = Math.min(Math.max(r.x, 4), f.w - w - 4);
+      r.y = Math.min(Math.max(r.y, 4), visH - h - 4);
+      if (blocked(r, l.own, keep, placed, avoid)) {
+        const below = { ...r, y: l.y + 30 };
+        if (!l.left && below.y + h < visH - 4 && !blocked(below, l.own, keep, placed, avoid))
+          r = below;
+        else if (l.pr >= 0) continue;
+      }
     }
     placed.push({ x: r.x - 2, y: r.y - 2, w: r.w + 4, h: r.h + 4 });
     ctx.fillStyle = t.plate;

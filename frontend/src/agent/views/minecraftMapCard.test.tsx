@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mcMapMarkers } from "../../minecraftMapFixtures";
 import { type MapIntent, setMapOpener } from "../../minecraftMapNav";
-import { parseMinecraftMap } from "./minecraftMapCard";
+import { focusedMarker, parseMinecraftMap } from "./minecraftMapCard";
 import { ToolView } from "./registry";
 
 // The GUI gate's chat fixture: BlockyFox's lava death in the Nether, beside the fortress.
@@ -215,6 +216,53 @@ describe("the minecraft_map chat card", () => {
     );
   });
 
+  it("Dave's answer about a gate shows that gate, open, with the Beacons and Gates chips", async () => {
+    const marks = mcMapMarkers("slot2");
+    fetchMock.mockImplementation(async (input) => {
+      const path = new URL(String(input), "http://box").pathname;
+      if (path === "/api/minecraft/map/markers") return json(marks);
+      if (path === "/api/minecraft/map/players") {
+        return json({ slot: "slot2", world: "Castle Hill", live: true, players: [] });
+      }
+      return new Response(null, { status: 404 });
+    });
+    // A card's real size, so the gate, its line and its place all land on it.
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 360,
+      bottom: 220,
+      width: 360,
+      height: 220,
+      toJSON: () => ({}),
+    });
+    show({
+      slot: "slot2",
+      world: "Castle Hill",
+      loaded: true,
+      dim: "overworld",
+      center: { x: -60, z: -60 },
+      zoom: 1,
+      overlays: { beacons: true, gates: true },
+      focus: { kind: "gate", label: "Wormhole gate 1", x: 30, y: 71, z: 14 },
+    });
+    // From the box's own record, not the payload: whose it is and where it leads.
+    expect(await screen.findByText("Wormhole gate 1")).toBeInTheDocument();
+    expect(await screen.findByText(/BlockyFox's, to Tree farm/)).toBeInTheDocument();
+    expect(screen.getByText("open")).toBeInTheDocument();
+    expect(screen.getByText("Copy X Z")).toBeInTheDocument();
+    expect(asked().filter((u) => u.includes("/map/markers"))).toEqual([
+      "/api/minecraft/map/markers?slot=slot2",
+    ]);
+    for (const name of ["Beacons", "Gates"]) {
+      expect(screen.getByRole("button", { name })).toHaveAttribute("aria-pressed", "true");
+    }
+    // The gate's line ends at its place, labelled on the canvas.
+    await waitFor(() => expect(texts).toContain("Tree farm"));
+  });
+
   it("a malformed payload draws nothing it shouldn't", () => {
     const { container } = show({ slot: "../../etc", dim: "<img src=x onerror=alert(1)>" });
     expect(screen.getByText("This map can't be shown.")).toBeInTheDocument();
@@ -244,7 +292,14 @@ describe("parseMinecraftMap", () => {
       x: 30_000_000,
       z: 0,
       zoom: 4,
-      overlays: { trails: false, deaths: false, structures: false, players: true },
+      overlays: {
+        trails: false,
+        deaths: false,
+        structures: false,
+        players: true,
+        beacons: false,
+        gates: false,
+      },
       focus: null,
       trail: null,
     });
@@ -260,10 +315,31 @@ describe("parseMinecraftMap", () => {
       deaths: true,
       structures: true,
       players: false,
+      beacons: true,
+      gates: true,
     });
     expect(card?.focus).toMatchObject({ kind: "spot", label: "", x: 11, z: -3, y: null });
     expect([card?.x, card?.z, card?.zoom]).toEqual([11, -3, 1]);
+    expect(
+      parseMinecraftMap({ slot: "slot1", focus: { kind: "gate", x: 30, z: 14 } })?.focus,
+    ).toMatchObject({ kind: "gate", x: 30, z: 14 });
     expect(parseMinecraftMap({ slot: "slot0" })).toBeNull();
     expect(parseMinecraftMap({})).toBeNull();
+  });
+});
+
+describe("focusedMarker", () => {
+  const marks = mcMapMarkers("slot2");
+  it("finds the gate round the focus spot and the beacon on it, in that dimension", () => {
+    const focus = (kind: "gate" | "beacon", x: number, z: number) =>
+      ({ kind, label: "", x, y: null, z, at: null, cause: null, killer: null }) as const;
+    expect(focusedMarker(marks, "overworld", focus("gate", 30, 14)).gate?.id).toBe(1);
+    expect(focusedMarker(marks, "overworld", focus("gate", 29, 15)).gate?.id).toBe(1);
+    expect(focusedMarker(marks, "overworld", focus("gate", 40, 14)).gate).toBeUndefined();
+    expect(focusedMarker(marks, "nether", focus("gate", 30, 14)).gate).toBeUndefined();
+    expect(focusedMarker(marks, "overworld", focus("beacon", 60, -40)).beacon?.placed_by).toBe(
+      "Mira_P",
+    );
+    expect(focusedMarker(null, "overworld", focus("beacon", 60, -40))).toEqual({});
   });
 });

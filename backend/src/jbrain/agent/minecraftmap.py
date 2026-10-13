@@ -48,11 +48,14 @@ if TYPE_CHECKING:
     from jbrain.settings_store import SqlSettingsStore
 
 VIEW = "minecraft_map"
-FOCUS_KINDS = ("death", "player", "place", "structure", "spot")
-OVERLAYS = ("trails", "deaths", "structures", "players")
-# The chat card's own default: the asker's trail and deaths over the located structures.
-# Live player dots are the full map's job; on a card about yesterday they would mislead.
-DEFAULT_OVERLAYS = frozenset({"trails", "deaths", "structures"})
+# `gate` and `beacon` (§M26): the card draws that gate or beacon selected from the box's
+# own records — the payload carries only where it is.
+FOCUS_KINDS = ("death", "player", "place", "structure", "spot", "gate", "beacon")
+OVERLAYS = ("trails", "deaths", "structures", "players", "beacons", "gates")
+# The chat card's own default: the asker's trail and deaths over the located structures,
+# the beacons' squares and the gates' lines. Live player dots are the full map's job; on a
+# card about yesterday they would mislead.
+DEFAULT_OVERLAYS = frozenset({"trails", "deaths", "structures", "beacons", "gates"})
 # Map zoom as the tile route counts it: 0 is one pixel per block, 4 one per chunk (the
 # furthest the box renders). Below 0 the app scales tiles up itself, to 8 px per block.
 ZOOM_MIN, ZOOM_MAX = -3, 4
@@ -279,7 +282,7 @@ def build_minecraft_map_handlers(
             if x is None or z is None:
                 return "x and z must be block coordinates inside the world."
             at_xz = (x, z)
-        if kind in ("structure", "spot") and at_xz is None:
+        if kind in ("structure", "spot", "gate", "beacon") and at_xz is None:
             return f"A {kind} needs its x and z."
         if kind == "place" and at_xz is None and not place_name(label):
             return "Name the saved place in label (mc_places lists them), or give x and z."

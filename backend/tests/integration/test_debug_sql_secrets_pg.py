@@ -1,8 +1,8 @@
 """The debug SQL console can't read a credential out of app.settings by any spelling
-(docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S3.3, F12; migration 0241).
+(docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S3.3, F12; migration 0242).
 
 The old redaction keyed on column NAMES, so an alias or an expression over `value` read the
-secret straight out. 0241 hides those rows from read-only transactions in Postgres itself;
+secret straight out. 0242 hides those rows from read-only transactions in Postgres itself;
 these tests drive the real route against real RLS with the spellings that used to work, and
 walk `SECRET_SETTING_KEYS` so a credential added in Python but not in the policy fails here.
 """

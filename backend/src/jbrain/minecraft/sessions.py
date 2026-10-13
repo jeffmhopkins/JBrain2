@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.minecraft import client as mc
+from jbrain.minecraft import markers
 
 log = structlog.get_logger(__name__)
 
@@ -108,6 +109,8 @@ class SessionDrain:
         at = _ts(float(e["at"]))
         kind = e.get("kind")
         await _timeline(s, boot, e, at)
+        # The beacons and gates the pack reports, and a replaced world's cleared (§M26).
+        await markers.apply(s, e, at)
         if kind == "join":
             key = player_key(str(e.get("xuid", "")), str(e.get("name", "")))
             # A join with no leave before it (a dropped connection BDS never logged)

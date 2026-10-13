@@ -22,15 +22,15 @@ The key list is frozen here because a migration can't follow live code; it mirro
 `settings_store.SECRET_SETTING_KEYS` and `tests/integration/test_debug_sql_secrets_pg.py`
 walks that set against this policy, so a secret added there and not here fails CI.
 
-Revision ID: 0241
-Revises: 0240
+Revision ID: 0242
+Revises: 0241
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0241"
-down_revision = "0240"
+revision = "0242"
+down_revision = "0241"
 branch_labels = None
 depends_on = None
 

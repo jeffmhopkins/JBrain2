@@ -25,9 +25,12 @@ import {
 } from "react";
 import {
   ApiError,
+  type MinecraftBeacon,
   type MinecraftDim,
   type MinecraftExplored,
+  type MinecraftGate,
   type MinecraftMapInfo,
+  type MinecraftMapMarkers,
   type MinecraftMapPlayer,
   type MinecraftMapPlayers,
   type MinecraftMapPoint,
@@ -41,6 +44,7 @@ import {
 import { useBackLayer } from "../backLayers";
 import { Sheet } from "../components/Sheet";
 import {
+  ArrowRightIcon,
   BedIcon,
   CastleIcon,
   ChevronDownIcon,
@@ -69,6 +73,7 @@ import {
   RewindIcon,
   RouteIcon,
   SatelliteIcon,
+  ShieldCheckIcon,
   SkullIcon,
   UserIcon,
   XIcon,
@@ -123,6 +128,16 @@ import {
   visibleTiles,
   zoomAt,
 } from "../minecraftMap";
+import {
+  type Avoid,
+  type ListRow,
+  beaconKey,
+  beaconWords,
+  gateCenter,
+  gateWords,
+  listRows,
+  overlayLines,
+} from "../minecraftMapMarkers";
 import type { MapIntent } from "../minecraftMapNav";
 import { type MapSource, OWNER_MAP } from "../minecraftMapSource";
 import { useForeground } from "../visibility";
@@ -142,11 +157,13 @@ import {
   colorOf,
   drawScale,
   drawTiles,
+  drawWorldMarkers,
   fetchTile,
   grid,
   line,
   markerGlyph,
   markerLabel,
+  markerOwn,
   placeLabels,
   playerDisc,
   readTokens,
@@ -191,7 +208,9 @@ type Sel =
   | { kind: "player"; p: MinecraftMapPlayer; at?: number | undefined }
   | { kind: "struct"; s: MinecraftStructure; dim: MinecraftDim }
   | { kind: "event"; e: MinecraftTimelineEvent }
-  | { kind: "spawn"; x: number; z: number };
+  | { kind: "spawn"; x: number; z: number }
+  | { kind: "beacon"; b: MinecraftBeacon }
+  | { kind: "gate"; g: MinecraftGate };
 
 type Hit =
   | { kind: "player"; sx: number; sy: number; p: MinecraftMapPlayer }
@@ -224,6 +243,8 @@ interface Overlays {
   deaths: boolean;
   spawn: boolean;
   structures: boolean;
+  beacons: boolean;
+  gates: boolean;
   explored: boolean;
   grid: boolean;
 }
@@ -234,6 +255,9 @@ const OVERLAYS: Overlays = {
   deaths: true,
   spawn: true,
   structures: true,
+  // Always drawn while on (variant A): every protected square and every open gate's line.
+  beacons: true,
+  gates: true,
   explored: false,
   grid: false,
 };
@@ -358,6 +382,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   const [players, setPlayers] = useState<MinecraftMapPlayers | null>(null);
   const [playersFailed, setPlayersFailed] = useState(false);
   const [structs, setStructs] = useState<MinecraftMapStructures | null>(null);
+  const [marks, setMarks] = useState<MinecraftMapMarkers | null>(null);
   const [unreachable, setUnreachable] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [tiles, setTiles] = useState({ visible: 0, pending: 0 });
@@ -417,6 +442,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     ov,
     players,
     structs,
+    marks,
     info,
     tl,
     log,
@@ -432,6 +458,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     ov,
     players,
     structs,
+    marks,
     info,
     tl,
     log,
@@ -444,7 +471,21 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     dirty.current = true;
   }, []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: any change to what's drawn redraws.
-  useEffect(redraw, [slot, dim, layer, sel, ov, players, structs, info, panelH, tl, log, fog]);
+  useEffect(redraw, [
+    slot,
+    dim,
+    layer,
+    sel,
+    ov,
+    players,
+    structs,
+    marks,
+    info,
+    panelH,
+    tl,
+    log,
+    fog,
+  ]);
 
   // A pushed page takes focus at its back button.
   useEffect(() => {
@@ -530,6 +571,34 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       clearInterval(t);
     };
   }, [source, slot, dim, sweeping, foreground]);
+
+  // The world's beacons and gates (§M26): the api's record of the pack's lines, so they
+  // draw for a world that isn't loaded too. While it's live they're read again with the
+  // trails, which is how a new gate turns up.
+  useEffect(() => {
+    const read$ = source.markers;
+    if (!read$ || !foreground) return;
+    let gone = false;
+    const read = () =>
+      read$(slot)
+        .then((m) => {
+          if (!gone) setMarks(m);
+        })
+        .catch(() => {
+          if (!gone) setMarks(null);
+        });
+    void read();
+    if (!live) {
+      return () => {
+        gone = true;
+      };
+    }
+    const t = setInterval(read, LIVE_LOG_MS);
+    return () => {
+      gone = true;
+      clearInterval(t);
+    };
+  }, [source, slot, live, foreground]);
 
   // What a tapped spot or structure stands on.
   useEffect(() => {
@@ -735,6 +804,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     setSel(null);
     setPlayers(null);
     setStructs(null);
+    setMarks(null);
     setLiveLog(null);
     setTl(TL_OFF);
     setTab("layers");
@@ -1182,6 +1252,30 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     const mark = (m: Marker) => {
       if (!off(m.sx, m.sy)) markers.push(m);
     };
+    // Beacons and gates (§M26), in the binding order: the protected squares, the gates'
+    // lines and the places they lead to, under every tile; their tiles cluster with the
+    // point markers below. Not on the replay: they are where the pack last reported them.
+    const world = drawWorldMarkers(ctx, v, f, t, {
+      beacons: st.marks?.beacons ?? [],
+      gates: st.marks?.gates ?? [],
+      dim: st.dim,
+      showBeacons: st.ov.beacons && !replay,
+      showGates: st.ov.gates && !replay,
+      selBeacon: sel?.kind === "beacon" ? beaconKey(sel.b) : null,
+      selGate: sel?.kind === "gate" ? sel.g.id : null,
+    });
+    const avoid: Avoid = { rects: [...world.avoid.rects], segs: [...world.avoid.segs] };
+    for (const m of world.markers) mark(m);
+    for (const p of world.pins) {
+      const [x, z] = gateCenter(p.g);
+      nextHits.push({
+        kind: "marker",
+        sx: p.sx,
+        sy: p.sy,
+        m: { type: "gate", g: p.g, x, z, sx: p.sx, sy: p.sy, pr: 2 },
+      });
+    }
+    labels.push(...world.labels);
     if (st.ov.structures && st.structs && st.structs.dimension === st.dim) {
       for (const s of st.structs.structures) {
         const [sx, sy] = toScreen(v, f, s.x + 0.5, s.z + 0.5);
@@ -1213,6 +1307,8 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         const txt = markerLabel(one);
         if (txt && (v.s >= 0.25 || one.type === "spawn"))
           labels.push({ txt, x: one.sx, y: one.sy - 8, pr: one.pr });
+        const own = markerOwn(one);
+        if (own) avoid.rects.push({ x: one.sx - 12, y: one.sy - 12, w: 24, h: 24, own });
         nextHits.push({ kind: "marker", sx: one.sx, sy: one.sy, m: one });
       } else {
         clusterBadge(ctx, cl, t);
@@ -1229,10 +1325,24 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       const col = colorOf(t, tokenOf(aimer.xuid));
       const tx = aim.x + 0.5;
       const tz = aim.z + 0.5;
-      if (aimer.dim === st.dim) bearingLine(ctx, v, f, [aimer.x, aimer.z], [tx, tz], col, t);
       const [sx, sy] = toScreen(v, f, tx, tz);
+      if (aimer.dim === st.dim) {
+        bearingLine(ctx, v, f, [aimer.x, aimer.z], [tx, tz], col, t);
+        // A gate's label never sits on the bearing either (README "Labels").
+        const [px, py] = toScreen(v, f, aimer.x, aimer.z);
+        avoid.segs.push({ ax: px, ay: py, bx: sx, by: sy, own: "tricorder" });
+      }
       targetMark(ctx, sx, sy, col, t);
-      labels.push({ txt: aim.label, x: sx, y: sy - 14, pr: -1 });
+      labels.push({ txt: aim.label, x: sx, y: sy - 14, pr: -1, own: "tricorder" });
+    }
+
+    // The tapped beacon or gate, with its ring — still under the players, so nobody is
+    // ever hidden by one (README "Draw order").
+    if (world.tapped) {
+      const m = world.tapped;
+      markerGlyph(ctx, m, t, true);
+      avoid.rects.push({ x: m.sx - 18, y: m.sy - 18, w: 36, h: 36, own: markerOwn(m) });
+      nextHits.push({ kind: "marker", sx: m.sx, sy: m.sy, m });
     }
 
     // players: never clustered; online ones pulse. On the replay, each shown player is
@@ -1258,7 +1368,8 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         };
         const on = pinnedOn === tr.xuid;
         playerDisc(ctx, sx, sy, p, colorOf(t, tokenOf(tr.xuid)), t, on, false);
-        labels.push({ txt: tr.gamertag, x: sx, y: sy - 8, pr: on ? -1 : 0 });
+        avoid.rects.push({ x: sx - 12, y: sy - 12, w: 24, h: 24, own: `p:${tr.xuid}` });
+        labels.push({ txt: tr.gamertag, x: sx, y: sy - 8, pr: on ? -1 : 0, own: `p:${tr.xuid}` });
         nextHits.push({ kind: "player", sx, sy, p });
       }
     } else if ((st.ov.players || tls.on) && st.players) {
@@ -1270,12 +1381,14 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         const pulse = p.online && !reducedMotion() && document.visibilityState === "visible";
         if (pulse) animate = true;
         playerDisc(ctx, sx, sy, p, colorOf(t, tokenOf(p.xuid)), t, on, pulse);
+        avoid.rects.push({ x: sx - 12, y: sy - 12, w: 24, h: 24, own: `p:${p.xuid}` });
         if (v.s >= 0.25 || p.online || on) {
           labels.push({
             txt: p.online ? p.gamertag : `${p.gamertag} · offline`,
             x: sx,
             y: sy - 8,
             pr: on ? -1 : p.online ? 0 : 1,
+            own: `p:${p.xuid}`,
           });
         }
         nextHits.push({ kind: "player", sx, sy, p });
@@ -1297,7 +1410,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     }
 
     const scale = scaleRect(ctx, v.s, f);
-    placeLabels(ctx, labels, keepOuts(el, f, scale), f, t);
+    placeLabels(ctx, labels, keepOuts(el, f, scale), f, t, avoid);
     drawScale(ctx, scale, t);
     hits.current = nextHits;
     if (animate) dirty.current = true;
@@ -1444,7 +1557,42 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   function selectMarker(m: Marker) {
     if (m.type === "struct") select({ kind: "struct", s: m.s, dim });
     else if (m.type === "event") select({ kind: "event", e: m.e });
+    else if (m.type === "beacon") select({ kind: "beacon", b: m.b });
+    else if (m.type === "gate") select({ kind: "gate", g: m.g });
     else select({ kind: "spawn", x: m.x, z: m.z });
+  }
+
+  /** A gate or beacon from the Layers list: select it and bring it to the visible map's
+   *  middle, clear of the floating controls, in its own dimension. */
+  function fly(row: ListRow) {
+    const [d, x, z] =
+      row.kind === "beacon" ? [row.b.dim, row.b.x, row.b.z] : [row.g.dim, ...gateCenter(row.g)];
+    select(row.kind === "beacon" ? { kind: "beacon", b: row.b } : { kind: "gate", g: row.g });
+    setSnap("min");
+    showPlace(d, Math.floor(x), Math.floor(z), 1.25);
+  }
+
+  /** "Show Tree farm": both ends of an open gate framed in the visible map; "Show it in the
+   *  Nether": its far end, in that dimension. */
+  function showGateEnds(g: MinecraftGate) {
+    const to = g.target;
+    if (!to) return;
+    if (to.dim !== g.dim) {
+      showPlace(to.dim, to.x, to.z, 1.25);
+      return;
+    }
+    if (g.dim !== state.current.dim) jumpDim(g.dim);
+    const [cx, cz] = gateCenter(g);
+    const fit = fitView(
+      [
+        [cx, cz],
+        [to.x + 0.5, to.z + 0.5],
+      ],
+      frame.current,
+      72,
+      2,
+    );
+    if (fit) glide(fit);
   }
 
   function tap(sx: number, sy: number) {
@@ -1732,6 +1880,8 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                 onSessions={(x) => setList({ who: x })}
                 onReplay={sessions.length ? replayBefore : null}
                 tricorder={tricorder}
+                beacons={marks?.beacons ?? []}
+                onShowGate={showGateEnds}
                 playerToken={
                   sel.kind === "player"
                     ? (roster.find((r) => r.xuid === sel.p.xuid)?.token ?? "--steel")
@@ -1823,6 +1973,8 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                 exBy={exBy}
                 setExBy={setExBy}
                 fog={fog}
+                marks={source.markers ? marks : undefined}
+                onFly={fly}
               />
             </>
           )}
@@ -1904,6 +2056,8 @@ function Detail({
   onSessions,
   onReplay,
   tricorder,
+  beacons,
+  onShowGate,
   playerToken: tok,
 }: {
   sel: Sel;
@@ -1919,6 +2073,9 @@ function Detail({
   onReplay: ((e: MinecraftTimelineEvent) => void) | null;
   /** The selected player's Tricorder line, when Dave has it pointed somewhere. */
   tricorder: string | null;
+  /** Every beacon in the world, for a tapped one's overlaps. */
+  beacons: MinecraftBeacon[];
+  onShowGate: (g: MinecraftGate) => void;
   playerToken: string;
 }) {
   let icon: ReactNode;
@@ -1927,6 +2084,7 @@ function Detail({
   let x: number;
   let z: number;
   let y: number | null = null;
+  let pill: ReactNode = null;
   const now = nowMs / 1000;
   const where: MinecraftDim =
     sel.kind === "player"
@@ -1935,8 +2093,45 @@ function Detail({
         ? (sel.e.dim ?? "overworld")
         : sel.kind === "spawn"
           ? "overworld"
-          : sel.dim;
-  if (sel.kind === "spot") {
+          : sel.kind === "beacon"
+            ? sel.b.dim
+            : sel.kind === "gate"
+              ? sel.g.dim
+              : sel.dim;
+  if (sel.kind === "beacon") {
+    const w = beaconWords(sel.b, beacons);
+    icon = (
+      <span className="mc-map-det-ic bea" aria-hidden="true">
+        <ShieldCheckIcon size={18} />
+      </span>
+    );
+    title = w.title;
+    sub = w.sub;
+    pill = <span className="mc-map-state prot">protecting</span>;
+    x = sel.b.x;
+    y = sel.b.y;
+    z = sel.b.z;
+  } else if (sel.kind === "gate") {
+    const w = gateWords(sel.g);
+    icon = (
+      <span className="mc-map-det-ic gate" aria-hidden="true">
+        <PortalIcon size={18} />
+      </span>
+    );
+    title = w.title;
+    sub = w.sub;
+    pill =
+      sel.g.state === "open" ? (
+        <span className="mc-map-state open">open</span>
+      ) : (
+        <span className="mc-map-state dorm">dormant</span>
+      );
+    // The middle of the ring, where a player would stand to step through.
+    const [cx, cz] = gateCenter(sel.g);
+    x = Math.floor(cx);
+    y = sel.g.y;
+    z = Math.floor(cz);
+  } else if (sel.kind === "spot") {
     const t = spotText(point, sel.dim);
     icon = (
       <span className="mc-map-det-ic" aria-hidden="true">
@@ -2061,7 +2256,11 @@ function Detail({
         {icon}
         <div className="mc-map-det-tx">
           <div className="mc-map-det-t">{title}</div>
-          <div className="mc-map-det-s">{sub}</div>
+          <div className="mc-map-det-s">
+            {pill}
+            {pill ? " · " : null}
+            {sub}
+          </div>
         </div>
         <button type="button" className="mc-icon-btn" aria-label="Close" onClick={onClose}>
           <XIcon size={20} />
@@ -2106,6 +2305,8 @@ function Detail({
           </b>
         </div>
       )}
+      {sel.kind === "beacon" && <BeaconNote b={sel.b} beacons={beacons} />}
+      {sel.kind === "gate" && <GateLead g={sel.g} onShow={onShowGate} />}
       {tricorder && !compact && (
         <p className="mc-map-det-tri">
           <CrosshairIcon size={16} />
@@ -2135,6 +2336,38 @@ function Detail({
         </div>
       )}
     </div>
+  );
+}
+
+function BeaconNote({ b, beacons }: { b: MinecraftBeacon; beacons: MinecraftBeacon[] }) {
+  const w = beaconWords(b, beacons);
+  return (
+    <p className="mc-note mc-map-det-note">
+      <b>48&nbsp;×&nbsp;48 blocks, floor to sky</b> — {w.area} (the 3&nbsp;×&nbsp;3 chunks round it)
+      {w.overlaps}. Wild and hostile mobs vanish there; tamed, named, fed and bred ones stay.
+    </p>
+  );
+}
+
+function GateLead({ g, onShow }: { g: MinecraftGate; onShow: (g: MinecraftGate) => void }) {
+  const w = gateWords(g);
+  if (w.dormant) return <p className="mc-note mc-map-det-note">{w.dormant}</p>;
+  return (
+    <>
+      <p className="mc-map-lead">
+        <ArrowRightIcon size={18} />
+        <span>
+          Leads to <b>{g.target?.place}</b> · {w.lead}
+        </span>
+      </p>
+      {w.show && (
+        <div className="mc-btnrow mc-map-det-acts">
+          <button type="button" className="mc-btn mc-btn-primary" onClick={() => onShow(g)}>
+            {w.show}
+          </button>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -2190,6 +2423,8 @@ function Layers({
   exBy,
   setExBy,
   fog,
+  marks,
+  onFly,
 }: {
   gridRef: React.RefObject<HTMLDivElement>;
   ov: Overlays;
@@ -2206,6 +2441,9 @@ function Layers({
   exBy: string | null;
   setExBy: (x: string | null) => void;
   fog: MinecraftExplored | null;
+  /** The world's beacons and gates; undefined where the map has none to show (a share). */
+  marks: MinecraftMapMarkers | null | undefined;
+  onFly: (row: ListRow) => void;
 }) {
   const forest: [number, number, number] = [5, 102, 33];
   const plains: [number, number, number] = [141, 179, 96];
@@ -2218,6 +2456,9 @@ function Layers({
         ? "from the server’s locate · exact"
         : "not searched yet — needs this world loaded and running";
   const toggle = (k: keyof typeof ov) => setOv((o) => ({ ...o, [k]: !o[k] }));
+  const hasMarks = marks !== undefined;
+  const lines = overlayLines(marks ?? null);
+  const rows = listRows(marks ?? null);
   return (
     <>
       <h3 className="mc-sect mc-map-sect">Map</h3>
@@ -2311,6 +2552,26 @@ function Layers({
             </button>
           )}
         </OverlayRow>
+        {hasMarks && (
+          <>
+            <OverlayRow
+              icon={<ShieldCheckIcon size={18} />}
+              tone="bea"
+              title="No-Spawn Beacons"
+              sub={lines.beacons}
+              on={ov.beacons}
+              onToggle={() => toggle("beacons")}
+            />
+            <OverlayRow
+              icon={<PortalIcon size={18} />}
+              tone="gate"
+              title="Wormhole gates"
+              sub={lines.gates}
+              on={ov.gates}
+              onToggle={() => toggle("gates")}
+            />
+          </>
+        )}
         <OverlayRow
           icon={<EyeIcon size={18} />}
           title="Explored by…"
@@ -2356,24 +2617,40 @@ function Layers({
           on={ov.grid}
           onToggle={() => toggle("grid")}
         />
-        {(
-          [
-            [<PinIcon key="p" size={18} />, "Saved places", "with Minecraft_Dave's places"],
-            [<PortalIcon key="g" size={18} />, "Wormhole gates", "comes with M12"],
-          ] as const
-        ).map(([icon, t, s]) => (
-          <div className="mc-map-ov later" key={t}>
-            <span className="mc-map-ov-gl" aria-hidden="true">
-              {icon}
-            </span>
-            <span className="mc-map-ov-t">
-              {t}
-              <small>{s}</small>
-            </span>
-            <span className="badge off">later</span>
-          </div>
-        ))}
+        <div className="mc-map-ov later">
+          <span className="mc-map-ov-gl" aria-hidden="true">
+            <PinIcon size={18} />
+          </span>
+          <span className="mc-map-ov-t">
+            Saved places
+            <small>with Minecraft_Dave&apos;s places</small>
+          </span>
+          <span className="badge off">later</span>
+        </div>
       </div>
+
+      {rows.length > 0 && (
+        <>
+          <h3 className="mc-sect mc-map-sect">In this world</h3>
+          <div className="mc-map-list">
+            {rows.map((r) => (
+              <button key={r.key} type="button" className="mc-map-li" onClick={() => onFly(r)}>
+                <span
+                  className={`mc-map-det-ic ${r.kind === "beacon" ? "bea" : "gate"}`}
+                  aria-hidden="true"
+                >
+                  {r.kind === "beacon" ? <ShieldCheckIcon size={16} /> : <PortalIcon size={16} />}
+                </span>
+                <span className="mc-map-li-tx">
+                  <b>{r.title}</b>
+                  <span>{r.sub}</span>
+                </span>
+                <ChevronRightIcon size={18} />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <h3 className="mc-sect mc-map-sect">Legend</h3>
       <div className="mc-map-lg">
@@ -2434,6 +2711,36 @@ function Layers({
             Grouped — tap to zoom in
           </span>
         </div>
+        {hasMarks && (
+          <>
+            <div className="mc-map-lg-row">
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="beacon" />
+                No-Spawn Beacon
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="area" />
+                Protected (48 × 48)
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="open" />
+                Gate · open
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="dormant" />
+                Gate · dormant
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="link" />
+                Where it leads
+              </span>
+            </div>
+            <p className="mc-note">
+              Positions are the pack&apos;s own records, sent when a beacon or gate changes and
+              again at every start.
+            </p>
+          </>
+        )}
         {ov.explored && (
           <div className="mc-map-lg-row">
             <span className="mc-map-lg-i">
@@ -2447,6 +2754,74 @@ function Layers({
   );
 }
 
+/** The legend's beacon and gate swatches: the map's own glyphs on the neutral void, drawn
+ *  as SVG with the same tokens the canvas reads. */
+function MarkSwatch({ kind }: { kind: "beacon" | "area" | "open" | "dormant" | "link" }) {
+  const tile = (ring: string, dashed: boolean) => (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="5" fill="var(--map-halo)" />
+      <rect
+        x="5"
+        y="5"
+        width="14"
+        height="14"
+        rx="4"
+        fill="none"
+        stroke={ring}
+        strokeWidth="1.2"
+        strokeDasharray={dashed ? "2.4 2" : undefined}
+      />
+    </>
+  );
+  return (
+    <svg className="mc-map-lg-sw" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <rect x="0" y="0" width="24" height="24" rx="5" fill="var(--map-void)" />
+      {kind === "beacon" && (
+        <>
+          {tile("var(--green)", false)}
+          <path
+            d={GLYPHS.shield}
+            transform="translate(7 7) scale(0.42)"
+            fill="none"
+            stroke="var(--map-ink)"
+            strokeWidth="2.4"
+          />
+        </>
+      )}
+      {kind === "area" && (
+        <rect
+          x="4"
+          y="4"
+          width="16"
+          height="16"
+          fill="color-mix(in srgb, var(--green) 24%, transparent)"
+          stroke="var(--green)"
+          strokeWidth="2"
+          strokeDasharray="4 2.5"
+        />
+      )}
+      {(kind === "open" || kind === "dormant") && (
+        <>
+          {tile("var(--violet)", kind === "dormant")}
+          <g transform="translate(7 7) scale(0.42)" stroke="var(--map-ink)" strokeWidth="2.4">
+            <path d={GLYPHS.portalFrame} fill={kind === "open" ? "var(--violet)" : "none"} />
+            <path d={GLYPHS.swirl} fill="none" />
+          </g>
+        </>
+      )}
+      {kind === "link" && (
+        <path
+          d="M5 19 19 5"
+          stroke="var(--violet)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray="0.1 4.5"
+        />
+      )}
+    </svg>
+  );
+}
+
 function OverlayRow({
   icon,
   title,
@@ -2454,6 +2829,7 @@ function OverlayRow({
   on,
   onToggle,
   children,
+  tone,
 }: {
   icon: ReactNode;
   title: string;
@@ -2461,10 +2837,12 @@ function OverlayRow({
   on: boolean;
   onToggle: () => void;
   children?: ReactNode;
+  /** The glyph's accent: a beacon's green or a gate's violet. */
+  tone?: "bea" | "gate" | undefined;
 }) {
   return (
     <div className="mc-map-ov">
-      <span className="mc-map-ov-gl" aria-hidden="true">
+      <span className={`mc-map-ov-gl${tone ? ` ${tone}` : ""}`} aria-hidden="true">
         {icon}
       </span>
       <span className="mc-map-ov-t">
