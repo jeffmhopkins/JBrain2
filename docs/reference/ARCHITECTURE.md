@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Around
@@ -148,7 +148,9 @@ visitor may read. A chat share link (`/api/chat-share`, migration 0238) is the
 same shape: `agent_sessions_share`, `agent_turns_share` and `runs_chat_share`
 admit exactly the pinned link's one chat — its session row, turns and runs, read
 as they stand at each load — and none of its notes, attachments, generated
-images or sub-agent children.
+images or sub-agent children. Its tool steps travel verbatim, so the mint refuses
+(409) a chat whose stored turns read a firewalled domain, mail or memory — or whose
+current scope can — until the owner confirms (`chat_shares.share_sensitivity`).
 
 ## Knowledge pipeline
 

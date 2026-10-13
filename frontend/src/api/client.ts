@@ -5924,9 +5924,18 @@ export const api = {
 
   /** Mint a public read link to a chat. The token is returned ONCE; build the URL with
    * `chatShareUrl`. */
-  async mintChatShare(sessionId: string): Promise<MintedChatShare> {
+  async mintChatShare(sessionId: string, confirmSensitive = false): Promise<MintedChatShare> {
+    // A chat holding private reads 409s (ApiError) until the owner confirms.
     const path = `/api/sessions/${encodeURIComponent(sessionId)}/shares`;
-    return (await (await request(path, { method: "POST" })).json()) as MintedChatShare;
+    const init = jsonInit("POST", { confirm_sensitive: confirmSensitive });
+    return (await (await request(path, init)).json()) as MintedChatShare;
+  },
+
+  /** Why a share of this chat would publish private data (`health`, `finance`, `location`,
+   *  `mail`, `memory`), read by the server from the stored turns; empty when it wouldn't. */
+  async chatShareSensitivity(sessionId: string): Promise<string[]> {
+    const path = `/api/sessions/${encodeURIComponent(sessionId)}/shares/sensitivity`;
+    return ((await (await request(path)).json()) as { sensitive: string[] }).sensitive;
   },
 
   /** A chat's live share links (usage only, never the secret). */
