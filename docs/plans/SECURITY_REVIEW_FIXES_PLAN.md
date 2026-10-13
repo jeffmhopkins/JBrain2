@@ -386,14 +386,18 @@ devices" fences).
   The owner branch is unchanged.
 - **(b) landed.** `viewer_may_see` / `visible_subjects` answer a non-owner only about its own
   `app.subject_id`; any other viewer gets false / no rows (not an error, so a wrong caller
-  degrades to "can't see"). Owner sessions — full, narrowed, and the worker's `SYSTEM_CTX`
-  that push routing runs under — still ask about anyone. `SqlViewScopeRepo.may_view` (the
+  degrades to "can't see"). Owner sessions holding the location domain — the full owner, the
+  debug console, a location-narrowed agent, and the worker's `SYSTEM_CTX` that push routing
+  runs under — still ask about anyone; a narrowed owner without location gets nothing, since
+  `view_scope` itself is location-firewalled. The pin guards against an app bug passing the
+  wrong viewer, not against arbitrary SQL (which can set its own GUCs). `SqlViewScopeRepo.may_view` (the
   live socket and the MQTT ACL) now asks under the viewer's `device_context`. Every other
   caller already passed its own subject: the `location_fixes` view-scope policy
   (`current_setting('app.subject_id')`), `member_roster` and `member_timeline` (under the
   member's `device_context`).
 - *Tests* (`test_view_scope_pinned_pg.py`): a member asking as another viewer gets false and
-  an empty roster; an empty context gets nothing; owner, narrowed owner and `SYSTEM_CTX`
+  an empty roster; an empty context and a NULL viewer get nothing; a narrowed owner without
+  location gets nothing; owner, debug console, location-narrowed owner and `SYSTEM_CTX`
   unchanged; `may_view` still says yes for the family; audit rows land for a family member,
   for self, and for a group-less member's own track, and the forged "viewed Carol" row is
   refused; the live map's `deliver_fix` over the real repos sends and audits self + family and
@@ -410,8 +414,12 @@ devices" fences).
   on each new chunk — it works in a probe, but it keys on Timescale emitting `ALTER TABLE`
   events for its internal chunk DDL (undocumented, version-dependent) and it runs inside
   the INSERT that creates a chunk, so any failure there would stop location ingest and host
-  metrics. That is a worse risk than a hole only the owner's own SQL can reach. Recorded
-  below.
+  metrics. That is a worse risk than a hole only the owner's own SQL can reach. Revoking
+  `USAGE` on `_timescaledb_internal` (where 2.30.2 keeps the chunks; `jbrain_app` has it only
+  through `PUBLIC`) was probed too and is a non-starter: every insert, select and delete
+  through `app.location_fixes` and `app.host_metrics` then fails with "permission denied for
+  schema _timescaledb_internal", because the executor opens the chunks as the querying role.
+  Recorded below.
 
 ## Owner decisions (taken 2026-10-12)
 
@@ -456,8 +464,8 @@ devices" fences).
 - **Timescale chunks keep `jbrain_app` privileges** (S5c, F16). A direct
   `_timescaledb_internal._hyper_*` read skips the hypertable's RLS. Reachable only with
   arbitrary SQL, which only the owner's debug console has. A revoke does not survive the next
-  chunk (Timescale copies the hypertable ACL); the event-trigger fix that would is fragile and
-  sits in the ingest path. Revisit if a non-owner ever gets arbitrary SQL, or if Timescale
+  chunk (Timescale copies the hypertable ACL), revoking schema `USAGE` breaks every hypertable
+  query, and the event-trigger fix that would hold is fragile and sits in the ingest path. Revisit if a non-owner ever gets arbitrary SQL, or if Timescale
   grows a supported hook.
 - **A lone planted legacy cookie** on a browser with no session of its own is believed (as
   its own kind, never promoted) until the owner signs in.

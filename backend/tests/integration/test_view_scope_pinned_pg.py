@@ -44,6 +44,16 @@ NARROWED_OWNER = SessionContext(
     domain_scopes=("location",),
     owner_scoped=True,
 )
+# The debug console's context: a full owner with no explicit scopes.
+DEBUG_CONSOLE = SessionContext(principal_id="debug-console", principal_kind="owner")
+# A narrowed agent session holding some other domain: view_scope is location-firewalled,
+# so the helpers must not hand it family membership either.
+NARROWED_NO_LOCATION = SessionContext(
+    principal_id=str(uuid.uuid4()),
+    principal_kind="owner",
+    domain_scopes=("health",),
+    owner_scoped=True,
+)
 
 
 @pytest.fixture
@@ -141,6 +151,20 @@ async def test_a_member_cannot_ask_on_another_viewers_behalf(maker: async_sessio
     # A session with no subject at all (the old empty ctx) gets nothing either.
     assert await _scalar(maker, SessionContext(), may, v=sid_a, t=sid_b) is False
     assert await _ids(maker, SessionContext(), sid_a) == set()
+    # A NULL viewer is false, never NULL (the function is not STRICT).
+    assert await _scalar(maker, alice, "SELECT app.viewer_may_see(NULL, :t)", t=sid_b) is False
+
+
+async def test_a_narrowed_owner_without_location_learns_nothing(
+    maker: async_sessionmaker,
+) -> None:
+    _, sid_a = await _device(maker, "Alice")
+    _, sid_b = await _device(maker, "Bob")
+    await _group(maker, [sid_a, sid_b])
+    may = "SELECT app.viewer_may_see(:v, :t)"
+
+    assert await _scalar(maker, NARROWED_NO_LOCATION, may, v=sid_a, t=sid_b) is False
+    assert await _ids(maker, NARROWED_NO_LOCATION, sid_a) == set()
 
 
 async def test_owner_sessions_still_ask_about_anyone(maker: async_sessionmaker) -> None:
@@ -150,7 +174,7 @@ async def test_owner_sessions_still_ask_about_anyone(maker: async_sessionmaker) 
     await _group(maker, [sid_a, sid_b])
     may = "SELECT app.viewer_may_see(:v, :t)"
 
-    for ctx in (OWNER, SYSTEM_CTX, NARROWED_OWNER):
+    for ctx in (OWNER, SYSTEM_CTX, NARROWED_OWNER, DEBUG_CONSOLE):
         assert await _scalar(maker, ctx, may, v=sid_a, t=sid_b) is True
         assert await _scalar(maker, ctx, may, v=sid_a, t=sid_c) is False
         assert await _ids(maker, ctx, sid_b) == {sid_a, sid_b}

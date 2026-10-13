@@ -5,13 +5,17 @@ Both SECURITY DEFINER helpers took the viewer as an argument and trusted it:
 Any session could ask "may <someone else> see <x>?" or list another member's family
 roster with names — membership the owner-only `view_scope` is meant to keep private. And
 `view_audit_write` (0069) let a device write "<me> viewed <x>" about any subject at all,
-visible or not. None of it is reachable through a route today (every caller passes its
-own subject, S3.4 audits only visible subjects); it needs arbitrary SQL, which only the
-owner's debug console has. This closes it in the database anyway.
+visible or not. No route does any of this today (every caller passes its own subject, and
+S3.4 audits only visible subjects), so the pin guards against an app bug that passes the
+wrong viewer argument, not against arbitrary SQL — a session that can run any statement can
+also set its own GUCs, and the debug console runs as full owner, which is exempt anyway.
 
-The pin: an owner session (`app.is_owner()`, narrowed or not — the push router and the
-debug console ask on others' behalf) may pass any viewer; anyone else only its own
-`app.subject_id`, otherwise false / no rows. False rather than an error so a caller that
+The pin: an owner session that holds the location domain (`app.is_owner()` AND
+`app.has_domain_scope('location')` — the full owner, the worker's context that push routing
+runs under, a location-narrowed agent) may pass any viewer; anyone else only its own
+`app.subject_id`, otherwise false / no rows. A narrowed owner without location gets nothing:
+`view_scope` itself is location-firewalled, so its membership must not leak around that
+through these functions. False rather than an error so a caller that
 gets it wrong degrades to "can't see", never a 500 — and the `location_fixes` view-scope
 policy, which already passes `current_setting('app.subject_id')`, is unaffected. The live
 path's `SqlViewScopeRepo.may_view` used to ask from an empty context; it now asks under
@@ -72,7 +76,8 @@ $$
 """
 
 _PIN = (
-    "AND (app.is_owner() OR viewer_subject = coalesce(current_setting('app.subject_id', true), ''))"
+    "AND ((app.is_owner() AND app.has_domain_scope('location'))"
+    " OR viewer_subject = coalesce(current_setting('app.subject_id', true), ''))"
 )
 
 _AUDIT_WRITE = """
