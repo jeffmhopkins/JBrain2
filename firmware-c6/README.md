@@ -2007,6 +2007,118 @@ own. App: 2,054,352 → 2,054,464 B; only the app image and its sum move in `dis
    `post`, at about 0.0.19's 57-61 KB.
 2. One `panel-shot`: `int_min` ≈ 51 KB at **`screenshot`**.
 
+## What 0.0.21 adds: Listen on replies, Load earlier, settings from the PWA
+
+Three features from the boards the owner approved on 2026-10-13 (`docs/mocks/jpanel-c6/`, Listen,
+History and PanelSettings), with the owner's four answers, and the folded steps line asked for the
+same day.
+
+### On the glass
+
+- **Listen.** Every finished Jerv or Dave reply carries a 56 px speaker button, even with Read
+  aloud on (owner answer 1). A tap asks the box to speak that reply's **full** text: "Starting… ·
+  tap to stop" while the box synthesises, then a ring filling with how much of the text has been
+  spoken and the elapsed time. A tap on it, KEY or BOOT stops it. One reply speaks at a time: a tap
+  on another stops the first and starts it. While a turn runs the buttons are dimmed, and a tap says
+  "Listen waits for this answer". A reply being read aloud as it arrives shows the same playing
+  state on its own button, so the one control stops either.
+- **Load earlier.** A thread opens on its newest messages. When the box has more, the top row is
+  "Load earlier · N more"; a tap fetches ten older ones (a spinner in the row while it waits) and
+  the message that was at the top stays where it was. The window holds **at most 20 messages**
+  (owner answer 3): past that the newest drop and a "Newer messages · N more" row at the bottom
+  fetches them back ten at a time. At the true start the top row is "Start of conversation · <when>".
+  A new KEY message, or closing the thread, jumps back to the newest. This replaces 0.0.15's
+  "Earlier messages are in the app" chip, in Jerv's and Dave's threads and in the twins' threads.
+- **Settings from the PWA.** The display panel's card in the PWA (jpanel → Panels) has Clock,
+  Notices, and Screen and sound: the night clock and its hours and colour, the date under the time,
+  the zone; accept notices, refuse at night, the chime; brightness, volume, read aloud, auto-rotate.
+  Mic gain and the IMU axes stay in the debug console. **The panel's last report wins** (owner
+  answer 2): a change waits on the box only while the panel still reports the value it was asked
+  over, and is dropped if the panel reports anything else. Every setting stays settable at the
+  glass, the night colour included (owner answer 4).
+- **Three or more tool steps fold to two lines** (owner request, 2026-10-13). Under a running turn
+  with one or two steps the list is unchanged. From the third, line 1 is "✓ N tools used" (every
+  call started, the running one included) and line 2 is the running step with its spinner, or
+  "◌ Thinking… 0:37" between tools. The same two lines stay once the answer arrives.
+
+### The protocol
+
+- **`GET {api}/endpoint/convo/{agent}/speech/{turn_id}`** speaks one stored reply as a JT2 stream:
+  PCM groups, each preceded by a new **SPOKEN** record (`0x09`: from u16, to u16, the text's
+  length u32) that says which characters the group covers, which is what fills the ring. It ends
+  with END, or END failed when nothing could be spoken. It returns 404 for anything that is not this
+  owner's assistant turn, and 503 `tts_unavailable` with no voice. The panel learns a reply's turn
+  id from a new **IDS** record (`0x0A`: asked u64, answer u64) at the end of a live turn, and from
+  `…/messages` and `…/history`, which now carry ids.
+- **`GET {api}/endpoint/convo/{agent}/history?before=|after=&limit=`** and **`GET
+  {api}/endpoint/messages/{device}/history?before=|after=&limit=`** page at most ten messages either
+  side of a message id, inside 4 KB, with how many are left `older` / `newer` and `start_at` at the
+  true start. Jerv's and Dave's ids are the box's turn numbers; a twin's are her messages' uuids.
+- **The pickup reports the settings** the PWA shows that the notice switches do not already carry
+  (`&no=…&nk=…&sd=…&br=…&vo=…&ra=…&ar=…`, `settings_sync_query`). A pending change answers the
+  pickup with **`X-Panel-Settings: <version>`**; the main loop then fetches **`GET
+  {api}/endpoint/panel-settings`** (`{"v":7,"s":{"br":[60,50],…}}`: each value and the value it was
+  asked over) and the UI task applies each change through `svc_settings` (which clamps) only while
+  the setting still holds that old value. The next report tells the box, which settles or drops
+  each. A version still signalled after a fetch is fetched again no sooner than 15 s.
+
+### The memory
+
+| | Internal RAM | When |
+| --- | --- | --- |
+| Static (`.data` + `.bss`) | **+4,304 B** (153,808 → 158,112 B against 0.0.20) | always: `app_thread`'s drawn rows for 20 messages (+1,824 B over its two instances), `svc_convo`'s request queue now carrying a history path (+1,396 B), `main`'s settings fetch body (514 B) and the pickup's longer query (+707 B), `svc_messages`'s per-thread counts and the window pointer (+200 B), Listen's marks and ids in `svc_audio` (+104 B), the convo views' Listen state (+72 B) |
+| `msg_t` | +4 B each (the box's id), inside the existing message stores | always |
+| The history window | ~4.3 KB of heap: 20 entries (~36 B) and a 3.5 KB text arena | only while a thread is paged; freed when it is back at its newest |
+| A page arriving | ~7 KB of heap: the 4 KB body (main task, until the UI task has applied it), then ten texts, a scratch text and the fill state (UI task) | the length of one fetch and apply |
+| Listen | a play's 6 KB ring and its stream session; no recording buffer | while it speaks, like any reply |
+| Settings from the PWA | none beyond the static body above | a fetch is one short GET |
+
+**Why 20 messages.** The window has to fit the drawn thread and not the box's history: 20 bubbles
+of up to 256 bytes each are the most the thread view has ever drawn, and the sim's worst state
+(`jerv-history-capped`, 20 long messages and both rows) peaks LVGL's pool at 54,048 B with 64-bit
+pointers, inside the device's 64 KB with 32-bit ones. Ten a page is what fits the 4 KB body. The
+window is the only new lasting heap, and it exists only while someone is reading back. The app is
+2,054,464 → 2,072,112 B (51% of the slot free). Bootloader, partition table and `ota_data_initial`
+are byte-identical to 0.0.20's: this is an app-only OTA.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_messages` | `hist_logic.c` (pure: the 20-message window, its text arena, what it drops and counts, the rows' words); the fake service's window ops and window-aware reads; `svc_messages_hist`. |
+| `svc_convo` | `convo_wire.c`: the history path and the page parser; `svc_convo_hist_open/earlier/newer/live` and `CONVO_RQ_HISTORY` on the request queue. |
+| `svc_audio` | `TK_KIND_SPEAK`, the SPOKEN and IDS events, `svc_audio_speak` / `svc_audio_speech`, one queued Listen after the playing one. |
+| `svc_settings` | `settings_sync.c` (pure: the report, the header, when to fetch, the parse, apply-if-unchanged). |
+| `ui_kit` | `ui_listen_set` (the button, ring and caption), `ui_hist_row`, `ui_hist_start`. |
+| `convo`, `app_thread` | Listen on each reply, the history rows and the anchor that keeps a message in place, the folded steps (`convo_work_lines`, `convo_tools_used`). |
+| `main` | `talk_link.c` (the Listen exchange; SPOKEN and IDS), `convo_link.c` (the history fetch), `set_link.c` (the settings fetch and apply), `dbg_link.c` and `box_http.c` (the report and `X-Panel-Settings`). |
+| `sim/` | A fake box answering history pages and speech; states below. |
+| `host/` | The window and its arena, the page parser and paths, Load earlier end to end, Listen one at a time and while a turn runs, the new records, the folded steps, and the settings sync against a glass change. |
+
+### Debugging it
+
+- `audio.kind` says `speak` during a Listen; `audio.listen_id` and `audio.listens`.
+- Each thread under `messages`: `older` (left out when 0) and, while it is paged back, `paged`
+  as `"<messages>/<older>/<newer>/<text bytes>"`; an open Jerv or Dave thread's `history` as
+  `"<top row>:<older>/<newer>"` and `speaking` (the reply Listen is on). Kept terse on purpose:
+  the snapshot's answer is capped at 6 KB (`OUT_MAX`), and these add ~100 B at most (~70 B while
+  nothing is paged) — measured in the sim's `session` snapshot, which is 5,287 B whole.
+- Telemetry `sync=v:N,fetch:N,applied:N,kept:N,last:<status>`: the last version fetched, the
+  changes applied, and the ones kept as set at the glass.
+
+### What to check on the glass
+
+1. **Listen** on an old Jerv reply: "Starting…", then the ring fills to the end with the whole
+   reply read. Tap mid-way: it stops. KEY and BOOT stop it the same way.
+2. Ask Jerv something and tap an older reply's Listen while it works: "Listen waits for this
+   answer".
+3. **Load earlier** in a long Jerv thread: ten more each tap with the top message held still; at
+   30 loaded the newest drop and "Newer messages" appears; KEY jumps back to the newest.
+4. In the PWA, change brightness: "Sending to panel…", then "On the panel" within a pickup or two,
+   and the glass is brighter. Change it at the glass while the PWA's change waits: the glass's
+   value stays and the PWA shows it.
+5. A Jerv question that uses four tools: two lines, the count and the running step.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -2044,6 +2156,10 @@ The same protocol as the S3 panels, so the box needs no new route for it:
   0.0.19) are the push notices: the oldest one waiting as a JN1 stream, the same stream again
   after a torn one, and what became of it on the glass; the debug pickup carries the notice switches
   (`&na=…&tz=…`) and its answer `X-Notice` says when one waits ("What 0.0.19 adds").
+- **`GET {api}/endpoint/convo/{agent}/speech/{turn_id}`**, **`GET …/history`** and **`GET
+  {api}/endpoint/messages/{device}/history`** (since 0.0.21) are Listen and Load earlier; **`GET
+  {api}/endpoint/panel-settings`** is the PWA's pending settings, fetched when the pickup's answer
+  carries `X-Panel-Settings` ("What 0.0.21 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -2225,7 +2341,11 @@ person's thread since 0.0.15), from 0.0.15 `jerv-menu`, `jerv-recent`, `jerv-rec
 `quorra-playing`, `quorra-sending`, `quorra-sent`, `quorra-new`, `home-new` and `clock-new`, and
 from 0.0.17 `quorra-mid` and `quorra-heard`, from 0.0.18 `home-turned` and `clock-upside-down` (the
 panel turned: the PNG is the glass, each strip turned the device's way), `settings-no-imu`, `calib`,
-`calib-missed` and `calib-saved` (the
+`calib-missed` and `calib-saved`, from 0.0.21 `jerv-listen`, `jerv-listen-starting`,
+`jerv-listen-playing`, `jerv-listen-working`, `dave-listen`, `jerv-reply-reading`,
+`jerv-history`, `jerv-history-loading`, `jerv-history-loaded`, `jerv-history-capped`,
+`dave-history-start`, `quorra-history`, `quorra-history-loaded`, `jerv-steps-two`,
+`jerv-steps-four`, `jerv-steps-four-thinking` and `settings-from-pwa` (the
 twins' threads answered by the sim as `api/panel_messages.py` does, with placeholder names and
 words — her message playing, a voice message to her on its way and filed, a new one live in her
 thread, on her tile's badge and on the clock face's), and from

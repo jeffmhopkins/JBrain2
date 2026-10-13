@@ -8,9 +8,28 @@
 #include "svc_audio.h"
 #include "svc_messages.h"
 
-/* A Listen button is on a finished text reply only when replies are not read aloud and it is
- * not being spoken now (mock README "Settings: Jerv"). */
-bool convo_shows_listen(const msg_t *m, bool tts_on, uint32_t speaking_id);
+/* Listen (0.0.21, owner-approved 2026-10-13; answer 1: on every reply, read-aloud on or off).
+ * The speaker button beside a reply: on every finished reply the box has named, never on the
+ * owner's own words or a reply still on its way; dimmed while the agent works on the next answer
+ * (a tap says LISTEN_WAITS); the playing state on the one being spoken, Listen's or read-aloud's.
+ * Its values are ui_listen_t's. `speech` may be NULL (nothing is being said). */
+uint8_t convo_listen_state(const msg_t *m, bool working, const svc_speech_t *speech);
+/* What the caption under it says: "Starting… · tap to stop", "0:14 · tap to stop", or "". */
+void convo_listen_caption(uint8_t state, uint32_t ms, char *out, size_t cap);
+
+/* The steps under a running turn (owner, 2026-10-13: "When using more than two tools, the first
+ * line should just be a running record of how many tools called and the second line down the
+ * current one that's being used"). Up to two steps: each its own line, as since 0.0.14. Three or
+ * more: two lines — "✓ N tools used" (every call started, the running one too), then the running
+ * step with the spinner, or the phase line ("Thinking… 0:37") between tools. */
+typedef struct {
+    bool collapsed;
+    uint16_t count;  /* collapsed: tools started */
+    int8_t running;  /* collapsed: the step[] index of the running one, or -1 for the phase line */
+} convo_work_lines_t;
+convo_work_lines_t convo_work_lines(const svc_work_t *w);
+/* "4 tools used". */
+void convo_tools_used(uint16_t count, char *out, size_t cap);
 /* What ending a hold tells the person, or NULL when the send itself is the answer. */
 const char *convo_talk_toast(talk_outcome_t o);
 
@@ -19,9 +38,8 @@ const char *convo_talk_toast(talk_outcome_t o);
  * so a status line moving on never recreates the widgets above it, nor the spinner (owner,
  * 2026-10-12: the thinking animation "kind of like resetting"). */
 typedef struct {
-    uint32_t rev;      /* svc_messages_rev */
-    uint32_t speaking; /* svc_audio_playing */
-    bool tts, can_speak;
+    uint32_t rev;      /* svc_messages_rev: the messages, and Load earlier's rows (0.0.21) */
+    uint32_t speaking; /* the bubble being spoken (svc_audio_speech); its progress moves in place */
     bool working;      /* the working view is up */
     uint32_t work_seq; /* svc_work_t.seq */
     uint32_t meta;     /* svc_convo_rev: the title, the earlier-messages chip, a switch */

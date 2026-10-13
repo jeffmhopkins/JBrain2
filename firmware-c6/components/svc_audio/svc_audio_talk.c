@@ -36,6 +36,16 @@ static uint32_t s_played_bytes;
    message heard on its next pass and clears this. */
 static bool s_listen_started;
 static tk_stats_t s_st;
+/* Listen's progress (0.0.21): the marks the box sent and the PCM received after them (main task's,
+   under the lock), read against s_played_bytes. */
+static tk_marks_t s_marks;
+/* Listen's bubble and thread (UI task's): the reply being spoken again, 0 for none; and the one a
+   tap asked for while another still spoke, which starts once that one has let go. */
+static uint32_t s_speak_id, s_speak_next;
+static char s_speak_thread[8], s_speak_next_thread[8];
+/* IDS (0.0.21): the exchange's turns on the box, for bubble `s_ids_for` and the reply after it.
+   Main task writes under the lock; the UI task applies them once (`s_ids_seq` moved). */
+static uint32_t s_ids[2], s_ids_for, s_ids_seq, s_ids_applied;
 /* The reply as it streams in (JT2): written by the main task under the lock, read by the UI task.
  * What was heard and the status line each carry a count that grows with every change, so the UI
  * redraws exactly when one moved; the answer is read once, on REPLY. */
@@ -192,6 +202,8 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
         s_heard[0] = s_status[0] = '\0';
         s_heard_seq = s_status_seq = 0;
         tk_steps_init(&s_steps);
+        tk_marks_init(&s_marks);
+        s_played_bytes = 0;
     }
     unlock();
     if (b == TK_BEGIN_STOPPED) {
@@ -347,8 +359,12 @@ bool svc_audio_stop_reply(void)
     s_st.stopped++;
     talk_port_kick();
     msg_t m;
-    if (kind == TK_KIND_LISTEN || kind == TK_KIND_NOTICE) {
+    if (kind == TK_KIND_LISTEN || kind == TK_KIND_NOTICE || kind == TK_KIND_SPEAK) {
         if (kind == TK_KIND_LISTEN) play_over();
+        if (kind == TK_KIND_SPEAK && s_speak_id) {
+            s_speak_id = 0;
+            refresh(s_speak_thread);
+        }
         return true;
     }
     const char *thread = exchange_thread();
@@ -477,16 +493,100 @@ uint32_t svc_audio_played_ms(void)
     return bytes / (TALK_RATE / 1000u * 2u);
 }
 
-/* Listen on a stored reply needs the box to speak text it already sent; until it can,
- * svc_audio_can_speak is false and no Listen button is drawn to reach this. */
-void svc_audio_speak(uint32_t msg_id)
+bool svc_audio_speech(const char *thread, svc_speech_t *out)
 {
-    (void)msg_id;
+    *out = (svc_speech_t){0};
+    if (!thread) return false;
+    lock();
+    const bool speak = s_tk.kind == TK_KIND_SPEAK && s_speak_id && !strcmp(thread, s_speak_thread);
+    const bool reply = !speak && s_speaking && s_tk.kind == TK_KIND_AGENT && !strcmp(thread, THREAD);
+    const bool live = speak || reply;
+    if (live) {
+        out->msg_id = speak ? s_speak_id : s_speaking;
+        out->starting = s_tk.phase == TK_SEND || s_played_bytes == 0;
+        out->permille = tk_marks_progress(&s_marks, s_played_bytes);
+        out->ms = s_played_bytes / (TALK_RATE / 1000u * 2u);
+    }
+    unlock();
+    return live;
 }
 
-bool svc_audio_can_speak(void)
+/* Starts the box speaking reply `msg_id` again. False (with s_refused) when it cannot. */
+static bool speak_start(const char *thread, uint32_t msg_id)
 {
-    return false;
+    msg_t m;
+    tk_agent_t agent;
+    if (!tk_agent_from(thread, &agent) || !svc_messages_find(thread, msg_id, &m) || m.mine ||
+        !m.box_id) {
+        s_refused = "That reply is not on the box";
+        return false;
+    }
+    const char *why = talk_port_speaker() ? refusal("Not connected: Listen needs Wi-Fi", false)
+                                          : "No sound: the speaker did not start";
+    if (why) {
+        s_refused = why;
+        return false;
+    }
+    char path[sizeof s_target];
+    snprintf(path, sizeof path, "/endpoint/convo/%s/speech/%lu", tk_agent_id(agent),
+             (unsigned long)m.box_id);
+    uint8_t *stale = NULL;
+    lock();
+    const tk_begin_t b = tk_listen(&s_tk, msg_id);
+    if (b == TK_BEGIN_OK) {
+        tk_set_agent(&s_tk, agent, false);
+        tk_set_speak(&s_tk);
+        memcpy(s_target, path, sizeof s_target);
+        s_played_bytes = 0;
+        tk_marks_init(&s_marks);
+        /* A talk's ring left behind is 16 KB: the speech takes a play's 6 KB once the box answers. */
+        stale = s_ring_mem;
+        s_ring_mem = NULL;
+        s_ring_bytes = 0;
+        tk_ring_init(&s_ring, NULL, 0);
+    }
+    unlock();
+    free(stale);
+    if (b != TK_BEGIN_OK) {
+        s_refused = "One moment: still finishing the last one";
+        return false;
+    }
+    s_speak_id = msg_id;
+    snprintf(s_speak_thread, sizeof s_speak_thread, "%s", thread);
+    s_st.listens++;
+    refresh(thread);
+    talk_port_kick();
+    talk_port_net();
+    return true;
+}
+
+bool svc_audio_speak(const char *thread, uint32_t msg_id)
+{
+    s_refused = NULL;
+    if (s_holding || !thread) return false;
+    svc_speech_t now;
+    if (svc_audio_speech(thread, &now) && now.msg_id == msg_id) {
+        /* The one speaking: the tap stops it. */
+        s_speak_next = 0;
+        svc_audio_stop_reply();
+        return true;
+    }
+    lock();
+    const bool busy = !tk_quiet(&s_tk);
+    const bool thinking = s_tk.kind == TK_KIND_AGENT && s_tk.phase == TK_SEND;
+    unlock();
+    if (thinking) {
+        s_refused = LISTEN_WAITS;
+        return false;
+    }
+    if (busy) {
+        /* One reply at a time: whatever speaks stops, and this one follows it. */
+        s_speak_next = msg_id;
+        snprintf(s_speak_next_thread, sizeof s_speak_next_thread, "%s", thread);
+        svc_audio_stop_reply();
+        return true;
+    }
+    return speak_start(thread, msg_id);
 }
 
 const char *svc_audio_state(void)
@@ -555,12 +655,24 @@ void svc_audio_service(void)
     static char heard[sizeof s_heard];
     lock();
     const uint8_t kind = s_tk.kind;
-    if (kind == TK_KIND_NOTICE) {
-        /* A notice's sound has no bubble: it ends, and its ring goes back. */
+    if (kind == TK_KIND_NOTICE || kind == TK_KIND_SPEAK) {
+        /* A notice's sound has no bubble: it ends, and its ring goes back. Listen's bubble only
+           goes back to its speaker button. */
         tk_take(&s_tk, why, sizeof why);
         const bool quiet = tk_quiet(&s_tk);
         unlock();
-        if (quiet) free_ring();
+        if (quiet) {
+            free_ring();
+            if (s_speak_id) {
+                s_speak_id = 0;
+                refresh(s_speak_thread);
+            }
+            if (s_speak_next) {
+                const uint32_t next = s_speak_next;
+                s_speak_next = 0;
+                speak_start(s_speak_next_thread, next);
+            }
+        }
         return;
     }
     if (kind != TK_KIND_AGENT) {
@@ -583,6 +695,8 @@ void svc_audio_service(void)
     s_heard_drawn = s_heard_seq;
     s_status_drawn = s_status_seq;
     if (heard_moved || res == TK_RES_REPLY) memcpy(heard, s_heard, sizeof heard);
+    const bool named = s_ids_seq != s_ids_applied;
+    const uint32_t ids[2] = {s_ids[0], s_ids[1]}, ids_for = s_ids_for;
     /* The whole answer goes straight from the main task's buffer to the thread's: 1 KB is not
        copied through this task's stack. */
     if (res == TK_RES_REPLY) svc_messages_fake_long(THREAD, id + 1, s_reply);
@@ -640,7 +754,26 @@ void svc_audio_service(void)
         s_speaking = 0;
         refresh_thread();
     }
+    /* IDS: the box has named the question and the answer, so Listen and Load earlier can. After
+       the reply's bubble exists — the record follows the answer. */
+    if (named && svc_messages_find(THREAD, ids_for + 1, &m)) {
+        s_ids_applied = s_ids_seq;
+        msg_t q;
+        if (ids[0] && svc_messages_find(THREAD, ids_for, &q) && !q.box_id) {
+            q.box_id = ids[0];
+            svc_messages_fake_add(THREAD, &q);
+        }
+        if (ids[1] && !m.box_id) {
+            m.box_id = ids[1];
+            svc_messages_fake_add(THREAD, &m);
+        }
+    }
     if (quiet) free_ring();
+    if (quiet && s_speak_next) {
+        const uint32_t next = s_speak_next;
+        s_speak_next = 0;
+        speak_start(s_speak_next_thread, next);
+    }
 }
 
 /* ---- the main task's half ---- */
@@ -750,6 +883,11 @@ void talk_net_reply(const char *reply, bool audio_follows)
     s_st.replies++;
     tk_net_reply(&s_tk, audio_follows);
     if (s_tk.kind == TK_KIND_LISTEN && s_tk.phase == TK_PLAY) s_listen_started = true;
+    /* A reply's speech (read aloud, or Listen) starts its progress from nothing. */
+    if (s_tk.phase == TK_PLAY && s_tk.kind != TK_KIND_LISTEN) {
+        s_played_bytes = 0;
+        tk_marks_init(&s_marks);
+    }
     /* The recording is all sent and the microphone is off: the ring is the reply's now. */
     if (s_tk.phase == TK_PLAY) tk_ring_init(&s_ring, s_ring_mem, s_ring_bytes);
     unlock();
@@ -775,7 +913,30 @@ void talk_net_fail(const char *why)
 
 uint32_t talk_net_give(const void *src, uint32_t n)
 {
-    return talk_net_wants_audio() ? tk_ring_write(&s_ring, src, n) : 0;
+    const uint32_t k = talk_net_wants_audio() ? tk_ring_write(&s_ring, src, n) : 0;
+    if (k) {
+        lock();
+        tk_marks_pcm(&s_marks, k);
+        unlock();
+    }
+    return k;
+}
+
+void talk_net_spoken(uint16_t from, uint16_t to, uint32_t bytes)
+{
+    lock();
+    tk_marks_add(&s_marks, from, to, bytes);
+    unlock();
+}
+
+void talk_net_ids(uint32_t asked, uint32_t answer)
+{
+    lock();
+    s_ids[0] = asked;
+    s_ids[1] = answer;
+    s_ids_for = s_tk.msg_id;
+    s_ids_seq++;
+    unlock();
 }
 
 bool talk_net_wants_audio(void)
@@ -900,9 +1061,11 @@ static void describe(void *ctx, dbg_json_t *w)
     memcpy(status, s_status, sizeof status);
     unlock();
     dbg_json_str(w, "state", talk_port_state());
-    static const char *const KIND[] = {"agent", "message", "play", "notice"};
+    static const char *const KIND[] = {"agent", "message", "play", "notice", "listen"};
     dbg_json_str(w, "phase", PHASE[t.phase]);
-    dbg_json_str(w, "kind", KIND[t.kind < 4 ? t.kind : 0]);
+    dbg_json_str(w, "kind", KIND[t.kind < 5 ? t.kind : 0]);
+    dbg_json_int(w, "listen_id", s_speak_id);
+    dbg_json_int(w, "listens", st.listens);
     dbg_json_int(w, "playing", s_playing);
     dbg_json_int(w, "plays", st.plays);
     dbg_json_int(w, "play_failed", st.play_failed);

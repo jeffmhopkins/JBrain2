@@ -34,6 +34,7 @@
 #include "svc_settings_drv.h"
 #include "svc_siblings_drv.h"
 #include "svc_touch.h"
+#include "set_link.h"
 
 static const char *TAG = "ui";
 
@@ -120,6 +121,8 @@ static void ui_loop(void *arg)
     for (;;) {
         const uint32_t now = now_ms();
         svc_rtc_poll();
+        /* What the PWA asked for (0.0.21), before the settings are saved in this same pass. */
+        set_link_ui_service();
         svc_settings_service(now);
         svc_audio_service();
         svc_siblings_service();

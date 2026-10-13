@@ -149,17 +149,89 @@ async def thread(
         device_id=device_id,
         name=name,
         tag=await post_tag(_maker(request), owner),
-        messages=[
-            PostLine(
-                id=m.id,
-                mine=m.direction == "out",
-                text=screen_text(" ".join(m.transcript.split()), TEXT_BYTES)[0],
-                ms=m.duration_ms,
-                played=m.played_at is not None,
-                voice=m.composed == "voice",
-            )
-            for m in rows
-        ],
+        messages=[_line(m) for m in rows],
+    )
+
+
+#: A page of older (or newer) messages: the panel's Load earlier asks ten at a time
+#: (`panel_convo.PAGE_MAX`) and keeps at most twenty a thread. Never more JSON than the panel's
+#: page buffer holds: a page of long, much-escaped transcripts is cut short and the rest counted.
+PAGE_MAX = 10
+PAGE_BYTES = 4000
+
+
+class PostPage(BaseModel):
+    """A page oldest first, how many remain before its first and after its last (or either side
+    of the anchor when none came back), and — on the page that reaches it — when the
+    conversation with her began."""
+
+    device_id: str
+    messages: list[PostLine]
+    older: int
+    newer: int
+    start_at: int | None
+
+
+def _line(m: jpanel.Message) -> PostLine:
+    return PostLine(
+        id=m.id,
+        mine=m.direction == "out",
+        text=screen_text(" ".join(m.transcript.split()), TEXT_BYTES)[0],
+        ms=m.duration_ms,
+        played=m.played_at is not None,
+        voice=m.composed == "voice",
+    )
+
+
+def _fit(lines: list[PostLine], newest_first: bool) -> list[PostLine]:
+    """As many of `lines` (oldest first) as fit PAGE_BYTES of JSON, kept from the anchor's side."""
+    order = list(reversed(lines)) if newest_first else list(lines)
+    kept: list[PostLine] = []
+    used = 128
+    for line in order:
+        size = len(line.model_dump_json().encode()) + 1
+        if kept and used + size > PAGE_BYTES:
+            break
+        kept.append(line)
+        used += size
+    return list(reversed(kept)) if newest_first else kept
+
+
+@router.get("/{device_id}/history")
+async def history(
+    device_id: str,
+    principal: PanelDep,
+    request: Request,
+    before: str | None = None,
+    after: str | None = None,
+    limit: int = Query(PAGE_MAX, ge=0, le=PAGE_MAX),
+) -> PostPage:
+    """Load earlier in her thread (firmware-c6 0.0.21): the `limit` messages just before `before`
+    (the newest, with neither) or just after `after`, oldest first, with the counts either side.
+    `limit=0` is the counts alone. 404 for an anchor that is not a message of this conversation."""
+    if before and after:
+        raise HTTPException(status_code=422, detail="before or after, not both")
+    owner = await owner_for_panel(request, principal)
+    await _twin(request, device_id)
+    page = await jpanel.thread_page(
+        _maker(request), owner, device_id, before=before or None, after=after or None, limit=limit
+    )
+    if page is None:
+        raise HTTPException(status_code=404, detail="no such message")
+    lines = _fit([_line(m) for m in page.messages], newest_first=not after)
+    older, newer = page.older, page.newer
+    # What the byte cap left out is still there: counted on the side it was cut from.
+    if lines and len(lines) < len(page.messages):
+        if after:
+            newer += len(page.messages) - len(lines)
+        else:
+            older += len(page.messages) - len(lines)
+    return PostPage(
+        device_id=device_id,
+        messages=lines,
+        older=older,
+        newer=newer,
+        start_at=int(page.start_at.timestamp()) if page.start_at and older == 0 else None,
     )
 
 
