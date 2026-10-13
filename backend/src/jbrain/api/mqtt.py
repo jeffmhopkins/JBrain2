@@ -91,6 +91,10 @@ async def mqtt_auth(body: AuthCheck, repo: AuthRepoDep, settings: SettingsDep) -
         return Response(status_code=_ALLOW)
     # A device: valid active device key AND claiming its own principal id (else a
     # valid key could be flown under a forged identity the ACL would then trust).
+    # Either device class, deliberately left unnarrowed: phones are what MQTT is for and a
+    # wrong guess here silently stops every family phone's live map. A panel key is held to
+    # the same ACL as a phone's — its own topic, and only subjects its own may see — which a
+    # panel subject outside every family group makes nothing (SECURITY_REVIEW_FIXES_PLAN S3.2).
     principal = await service.authenticate_device(repo, body.password)
     if principal is not None and body.username == principal.id:
         return Response(status_code=_ALLOW)

@@ -97,7 +97,9 @@ restore:
   active owner; it runs on the next **Ops → Update** and touches nothing on a box that
   never rotated.
 - Pairing codes are **one-time and short-lived**; never reuse or store a redeemed
-  code.
+  code. The box keeps only each code's SHA-256 (migration `0241`), so reading the
+  table — the debug console included — yields nothing redeemable; a code already on
+  screen when that migration ran was hashed in place and still redeems.
 
 ## Server cert SPKI pin rotation
 

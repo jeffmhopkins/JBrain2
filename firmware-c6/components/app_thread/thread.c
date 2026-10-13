@@ -5,6 +5,7 @@
 #include "app_thread.h"
 #include "svc_audio.h"
 #include "svc_messages.h"
+#include "svc_post.h"
 #include "svc_siblings.h"
 #include "thread_model.h"
 #include "ui_kit.h"
@@ -50,14 +51,18 @@ static void refill(void *self)
     fill_list(self);
 }
 
+/* Her message streams from the box through the speaker; it is marked played (here, on the box
+ * and so in the PWA) only once it has played to its end. Tap again to stop. No auto-play: a
+ * message arriving never makes a sound but the chime (owner's default, plan §1). */
 static void play(lv_event_t *e)
 {
     app_t *self = lv_event_get_user_data(e);
     uint32_t id = (uint32_t)(uintptr_t)lv_obj_get_user_data(lv_event_get_current_target(e));
     if (svc_audio_playing() == id) {
         svc_audio_stop();
-    } else if (svc_audio_play(id)) {
-        svc_messages_mark_played(cfg(self)->thread, id);
+    } else if (!svc_audio_play(id)) {
+        const char *why = svc_audio_talk_refused();
+        self->host->toast(why ? why : "One moment: still finishing the last one");
     }
     /* Not now: the list being rebuilt holds the button whose event this is. */
     lv_async_call(refill, self);
@@ -79,7 +84,14 @@ static void fill_list(app_t *self)
                          .text = m.text, .dur = tb.dur, .status = m.status, .tag = m.id};
         ui_bubble(t->list, &b, self->accent, play, self);
     }
-    if (!n) ui_label_wrap(t->list, "No messages yet. Conversations arrive in a later update.", 18, UI_C_MUTED);
+    if (!n) {
+        char line[80];
+        if (svc_post_loaded(who))
+            snprintf(line, sizeof line, "No messages yet. Hold KEY to send %s one.", t->title);
+        else
+            snprintf(line, sizeof line, "Fetching messages…");
+        ui_label_wrap(t->list, line, 18, UI_C_MUTED);
+    }
     if (ui_pin_should(&t->pin, n ? m.id : 0)) ui_page_pin_bottom(t->list);
 }
 
@@ -95,6 +107,7 @@ static void thread_open(app_t *self, lv_obj_t *root)
     t->list = ui_page(root, true, 60);
     ui_talk_hint(root);
     fill_list(self);
+    svc_post_open(cfg(self)->thread);
 }
 
 static void end_talk(app_t *self, bool send)
@@ -105,6 +118,7 @@ static void end_talk(app_t *self, bool send)
     talk_outcome_t o = svc_audio_talk_end(send);
     if (o == TALK_CANCELLED) self->host->toast("Cancelled — nothing sent");
     if (o == TALK_TOO_SHORT) self->host->toast("Hold KEY the whole time you talk");
+    if (o == TALK_FAILED) self->host->toast("Not sent — the box could not be reached");
 }
 
 static void tapped(void *user)
@@ -129,10 +143,15 @@ static bool on_event(app_t *self, const app_event_t *ev)
     thread_t *t = self->state;
     switch (ev->type) {
     case APP_EV_KEY_DOWN: {
-        if (!svc_audio_talk_begin(TALK_TO_PERSON, cfg(self)->thread)) return true;
+        if (!svc_audio_talk_begin(TALK_TO_PERSON, cfg(self)->thread)) {
+            const char *why = svc_audio_talk_refused();
+            if (why) self->host->toast(why);
+            return true;
+        }
         char title[48];
         snprintf(title, sizeof title, "Message to %s", t->title);
-        t->talk = (ui_talk_t){.cap_ms = TALK_MAX_MS, .ms = svc_audio_talk_ms,
+        /* The box keeps 30 s of a message: the ring sends at its cap. */
+        t->talk = (ui_talk_t){.cap_ms = POST_MAX_MS, .ms = svc_audio_talk_ms,
                               .level = svc_audio_level, .on_tap = tapped, .on_cap = capped,
                               .user = self};
         ui_talk_open(&t->talk, t->root, UI_C_STEEL, title);
@@ -163,7 +182,8 @@ static bool can_clear(app_t *self)
     return true;
 }
 
-/* This panel's view only: the people's threads have no conversation on the box to restart. */
+/* This panel's view only: the messages stay on the box and in the PWA, and the next list from
+ * the box (a new message, or the thread opened again) brings the last four back. */
 static void clear(app_t *self)
 {
     svc_audio_stop();
@@ -179,6 +199,7 @@ static void describe(app_t *self, dbg_json_t *w)
     dbg_json_str(w, "device_id", svc_siblings_slot(cfg(self)->slot, &s) ? s.device_id : "");
     dbg_json_bool(w, "talking", ui_talk_up(&t->talk));
     dbg_json_int(w, "playing", svc_audio_playing());
+    dbg_json_bool(w, "loaded", svc_post_loaded(cfg(self)->thread));
     dbg_json_int(w, "pinned_to", t->pin.last_id);
 }
 

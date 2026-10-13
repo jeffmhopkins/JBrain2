@@ -9,15 +9,48 @@ import uuid
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, func, or_, select, text, update
+from sqlalchemy import (
+    ColumnElement,
+    CursorResult,
+    column,
+    exists,
+    func,
+    or_,
+    select,
+    table,
+    text,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.auth.service import SESSION_KINDS, CapabilityToken, ExternalSession, PrincipalInfo
+from jbrain.auth.service import (
+    SESSION_KINDS,
+    CapabilityToken,
+    DeviceClass,
+    ExternalSession,
+    PrincipalInfo,
+)
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models import DeviceSession, Principal
 
 _LOGIN = SessionContext(auth_context="login")
 _BOOTSTRAP = SessionContext(auth_context="bootstrap")
+# `device_role` is read here and nowhere else through the ORM, so a bare table stands in for a
+# mapped column the Subject model would then write on every insert. `login` may SELECT
+# subjects (migration 0211's `subjects_select_login`).
+_SUBJECTS = table("subjects", column("id"), column("device_role"), schema="app")
+
+
+def _has_role(condition: ColumnElement[bool]) -> ColumnElement[bool]:
+    """The principal's subject exists AND meets `condition`. Fails closed: a subject the
+    `login` context could not see matches neither the phone nor the panel test."""
+    return exists().where(_SUBJECTS.c.id == Principal.subject_id, condition)
+
+
+def _is_phone() -> ColumnElement[bool]:
+    # A key with no subject at all stays the phone it always was (no legacy key locks out);
+    # a panel always has a role'd subject.
+    return or_(Principal.subject_id.is_(None), _has_role(_SUBJECTS.c.device_role.is_(None)))
 
 
 class SqlAuthRepo:
@@ -43,19 +76,26 @@ class SqlAuthRepo:
                 return None
             return _principal_info(row)
 
-    async def find_active_device_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+    async def find_active_device_principal_by_key_hash(
+        self, key_hash: str, device_class: DeviceClass | None = None
+    ) -> PrincipalInfo | None:
         """Look up a device key, kind-filtered in SQL so an owner or capability key
-        can never authenticate on the device path (no kind confusion)."""
+        can never authenticate on the device path (no kind confusion).
+
+        `device_class` narrows it further on the subject's `device_role`: phones and panels
+        share the `device_key` kind, so without it a phone key worked as a panel and a panel
+        key minted a member session. None (MQTT) admits either."""
+        query = select(Principal).where(
+            Principal.key_hash == key_hash,
+            Principal.kind == "device_key",
+            Principal.revoked_at.is_(None),
+        )
+        if device_class == "phone":
+            query = query.where(_is_phone())
+        elif device_class == "panel":
+            query = query.where(_has_role(_SUBJECTS.c.device_role.is_not(None)))
         async with scoped_session(self._maker, _LOGIN) as session:
-            row = (
-                await session.execute(
-                    select(Principal).where(
-                        Principal.key_hash == key_hash,
-                        Principal.kind == "device_key",
-                        Principal.revoked_at.is_(None),
-                    )
-                )
-            ).scalar_one_or_none()
+            row = (await session.execute(query)).scalar_one_or_none()
             if row is None:
                 return None
             return _principal_info(row)
@@ -89,7 +129,9 @@ class SqlAuthRepo:
                 DeviceSession(principal_id=principal_id, token_hash=token_hash, label=label)
             )
 
-    async def find_principal_by_session_token_hash(self, token_hash: str) -> PrincipalInfo | None:
+    async def find_principal_by_session_token_hash(
+        self, token_hash: str, *, touch: bool = True
+    ) -> PrincipalInfo | None:
         async with scoped_session(self._maker, _LOGIN) as session:
             row = (
                 await session.execute(
@@ -107,16 +149,21 @@ class SqlAuthRepo:
                         # the moment it lapses — the cookie can't outlive the share's
                         # expiry. Owner/device principals have NULL expiry, so unaffected.
                         or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
+                        # Only a phone holds a member cookie: one a panel key minted before
+                        # mint was phone-only must stop working, not linger until revoked.
+                        or_(Principal.kind != "device_key", _is_phone()),
                     )
                 )
             ).scalar_one_or_none()
             if row is None:
                 return None
-            await session.execute(
-                update(DeviceSession)
-                .where(DeviceSession.token_hash == token_hash)
-                .values(last_seen_at=text("now()"))
-            )
+            # A socket's periodic re-check is not activity, so it must not write.
+            if touch:
+                await session.execute(
+                    update(DeviceSession)
+                    .where(DeviceSession.token_hash == token_hash)
+                    .values(last_seen_at=text("now()"))
+                )
             return _principal_info(row)
 
     async def revoke_session(self, token_hash: str) -> None:

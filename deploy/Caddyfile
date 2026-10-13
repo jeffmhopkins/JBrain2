@@ -37,6 +37,10 @@
 	handle /api/* {
 		reverse_proxy api:8000 {
 			flush_interval -1
+			# The api's per-client limits and panel nudges read this, and trust it only from
+			# this container (backend api/client_ip.py). Set, not appended: whatever the
+			# client sent is overwritten with the peer Caddy actually saw.
+			header_up X-Real-IP {remote_host}
 		}
 	}
 

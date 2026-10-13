@@ -9,7 +9,7 @@ import socket
 import time
 from typing import Any
 
-from jbrain.api import nudge
+from jbrain.api import client_ip, nudge
 
 
 def _request(headers: dict[str, str] | None = None, client: str | None = "10.0.0.5") -> Any:
@@ -31,31 +31,36 @@ class TestTheAddressItPicks:
     proxy — no error, no panel woken, and the only symptom is that push "does not seem faster",
     which is indistinguishable from a quiet house."""
 
-    def test_the_forwarded_client_wins_over_the_socket(self) -> None:
-        r = _request({"x-forwarded-for": "192.168.1.42"}, client="172.22.0.4")
-        assert nudge._client_ip(r) == "192.168.1.42"
+    PROXY = "172.22.0.4"
 
-    def test_the_first_hop_is_the_client(self) -> None:
-        """`X-Forwarded-For` accumulates left to right, so the ORIGIN is first and every entry
-        after it is a proxy. Taking the last one is the classic reading of this header
-        backwards, and it would aim every nudge at the nearest hop."""
-        r = _request({"x-forwarded-for": "192.168.1.42, 172.22.0.4, 10.1.1.1"})
-        assert nudge._client_ip(r) == "192.168.1.42"
+    def test_the_address_caddy_saw_wins_over_the_socket(self) -> None:
+        with client_ip.pinned(proxy=(self.PROXY,)):
+            r = _request({"x-real-ip": "192.168.1.42"}, client=self.PROXY)
+            assert nudge._client_ip(r) == "192.168.1.42"
 
-    def test_whitespace_around_the_hop_is_not_part_of_the_address(self) -> None:
-        r = _request({"x-forwarded-for": "  192.168.1.42 , 172.22.0.4"})
-        assert nudge._client_ip(r) == "192.168.1.42"
+    def test_a_client_written_forwarded_for_is_not_the_address(self) -> None:
+        """The old reading took the first `X-Forwarded-For` hop, which the client writes, so a
+        panel's nudges could be aimed at any host on the LAN. Caddy's `X-Real-IP` is the one."""
+        with client_ip.pinned(proxy=(self.PROXY,)):
+            r = _request(
+                {"x-forwarded-for": "192.168.1.99, 192.168.1.42", "x-real-ip": "192.168.1.42"},
+                client=self.PROXY,
+            )
+            assert nudge._client_ip(r) == "192.168.1.42"
 
-    def test_it_falls_back_to_the_socket_when_nothing_forwarded(self) -> None:
-        assert nudge._client_ip(_request({}, client="192.168.1.7")) == "192.168.1.7"
+    def test_a_peer_that_is_not_the_proxy_is_its_own_address(self) -> None:
+        with client_ip.pinned(proxy=(self.PROXY,)):
+            r = _request({"x-real-ip": "192.168.1.42"}, client="192.168.1.7")
+            assert nudge._client_ip(r) == "192.168.1.7"
 
     def test_an_empty_header_does_not_beat_the_socket(self) -> None:
         """An empty or whitespace-only header is a proxy misconfiguration, not an address.
         Returning "" from here would poison the cache with an entry that can never be fired
         at and would never be refreshed, because a remembered address stops nothing."""
-        assert nudge._client_ip(_request({"x-forwarded-for": "  "}, client="192.168.1.7")) == (
-            "192.168.1.7"
-        )
+        with client_ip.pinned(proxy=(self.PROXY,)):
+            assert nudge._client_ip(_request({"x-real-ip": "  "}, client=self.PROXY)) == (
+                self.PROXY
+            )
 
     def test_no_client_and_no_header_is_no_address(self) -> None:
         assert nudge._client_ip(_request({}, client=None)) is None

@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from jbrain.api.client_ip import client_ip
 from jbrain.external import jlaunch_shares
 from jbrain.locations.ratelimit import TokenBucket
 
@@ -66,7 +67,7 @@ def _harden(response: Response) -> None:
 
 
 def _rate_limit(request: Request, limiter: TokenBucket) -> None:
-    client = request.client.host if request.client else "unknown"
+    client = client_ip(request) or "unknown"
     if not limiter.allow(client):
         raise HTTPException(status_code=429, detail="rate limited")
 

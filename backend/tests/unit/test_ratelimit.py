@@ -37,3 +37,23 @@ def test_cost_consumes_multiple_tokens_per_call() -> None:
     refilled = TokenBucket(capacity=5, refill_per_sec=0.0)
     assert refilled.allow("dev", now=0.0, cost=9) is False
     assert refilled.allow("dev", now=0.0, cost=5) is True  # the 5 were still there
+
+
+def test_the_table_stays_bounded_when_keys_are_cycled() -> None:
+    # Public limiters key on client IPs an attacker can cycle; the table must not grow.
+    bucket = TokenBucket(capacity=2, refill_per_sec=0.0, max_keys=4)
+    for i in range(50):
+        bucket.allow(f"ip-{i}", now=float(i))
+    assert len(bucket._buckets) <= 4
+
+
+def test_eviction_forgets_full_buckets_before_draining_ones() -> None:
+    bucket = TokenBucket(capacity=2, refill_per_sec=1.0, max_keys=2)
+    assert bucket.allow("drained", now=0.0) and bucket.allow("drained", now=0.0)
+    bucket.allow("idle", now=0.0)
+    # At t=1.5 "idle" (1 token + 1.5) has refilled to full and "drained" (0 + 1.5) has
+    # not, so idle is the one dropped and drained keeps its debt.
+    bucket.allow("new", now=1.5)
+    assert set(bucket._buckets) == {"drained", "new"}
+    assert bucket.allow("drained", now=1.5)
+    assert not bucket.allow("drained", now=1.5)

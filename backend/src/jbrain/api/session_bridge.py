@@ -5,7 +5,8 @@ it here over TLS; on success the browser gets the dashboard session cookie bound
 to the device's subject + view-scope. Direct-key over TLS (owner decision) —
 the same credential the device already presents on the MQTT / OwnTracks path,
 verified against the shipped kind-filtered device lookup, so an owner or
-capability key can never mint a member session here.
+capability key can never mint a member session here — and narrowed to phones (no
+`device_role`), so a room panel's key cannot either.
 
 Distinct from `/auth/session` (the owner cookie): that exchanges the *owner* key
 and sets a Lax cookie; this mints a *member* (device-kind) session and sets a

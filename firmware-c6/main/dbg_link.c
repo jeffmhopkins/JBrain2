@@ -18,6 +18,7 @@
 #include "svc_audio_drv.h"
 #include "svc_box.h"
 #include "svc_display_drv.h"
+#include "svc_post_drv.h"
 #include "svc_settings.h"
 #include "ui_task.h"
 
@@ -279,7 +280,7 @@ static bool send_chunk(chunk_t *c, bool *wrote)
 static int stream_screenshot(const char *path, const dbg_req_t *r)
 {
     if (s_job != JOB_IDLE) return post_failure(path, r, "ui busy", 0);
-    if (!box_http_stream_open(path, "application/octet-stream", BOX_TIMEOUT_MS, false))
+    if (!box_http_stream_open(path, "application/octet-stream", BOX_TIMEOUT_MS, false, NULL))
         return post_failure(path, r, "box unreachable", 0);
     /* After the handshake, whose working memory is freed by now: the chunks never add to its
        peak, the heap's low-water mark. */
@@ -445,8 +446,12 @@ dbg_poll_t dbg_link_poll(void)
        count it a failed pickup so the schedule backs off rather than spins. */
     if (!s_done || !s_free_q || !s_full_q || s_job != JOB_IDLE) return DBG_POLL_FAIL;
     size_t got = 0;
+    box_reply_t rep = {.date = {0}};
     const int status = box_http_call("/endpoint/debug/next?board=" OTA_BOARD_ID, NULL, NULL, 0,
-                                     s_req, sizeof s_req - 1, &got, NULL, BOX_TIMEOUT_MS);
+                                     s_req, sizeof s_req - 1, &got, &rep, BOX_TIMEOUT_MS);
+    /* The owner's voice post rides the pickup (0.0.16): a tag that moved is a fetch of the
+       people's threads, so a twin's message reaches the panel within a pickup or two. */
+    if (status == 200 || status == 204) svc_post_tag(rep.post);
     if (status == 204) {
         s_stats.polls_ok++;
         return DBG_POLL_EMPTY;

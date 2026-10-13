@@ -413,6 +413,45 @@ describe("JcodeSessionScreen", () => {
     expect(api.jcodeMintShare).toHaveBeenCalledWith("j1", 24);
   });
 
+  it("re-reads the preview after revoking a share, since the revoke rotates its address", async () => {
+    const status = vi
+      .spyOn(api, "jcodePreviewStatus")
+      .mockResolvedValueOnce({ enabled: true, url: "https://aaaa-preview.example" })
+      .mockResolvedValue({ enabled: true, url: "https://bbbb-preview.example" });
+    vi.spyOn(api, "jcodeListShares").mockResolvedValue([
+      {
+        id: "p1",
+        label: "a friend",
+        created_at: "2026-10-12T00:00:00Z",
+        expires_at: null,
+        last_used_at: null,
+        redeemed_at: null,
+      },
+    ]);
+    const revoke = vi.spyOn(api, "jcodeRevokeShare").mockResolvedValue();
+    const { container } = render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    await waitFor(() =>
+      expect(container.querySelector("iframe")).toHaveAttribute(
+        "src",
+        "https://aaaa-preview.example",
+      ),
+    );
+
+    fireEvent.click(screen.getByLabelText("Session actions"));
+    fireEvent.click(screen.getByText("Share link…"));
+    fireEvent.click(await screen.findByText("Revoke"));
+    fireEvent.click(screen.getByText("Tap to confirm"));
+    await waitFor(() => expect(revoke).toHaveBeenCalledWith("j1", "p1"));
+    await waitFor(() =>
+      expect(container.querySelector("iframe")).toHaveAttribute(
+        "src",
+        "https://bbbb-preview.example",
+      ),
+    );
+    expect(status).toHaveBeenCalledTimes(2);
+  });
+
   it("hides the owner actions menu and skips the model poll in shared mode", () => {
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} shared />);
     expect(screen.queryByLabelText("Session actions")).not.toBeInTheDocument();

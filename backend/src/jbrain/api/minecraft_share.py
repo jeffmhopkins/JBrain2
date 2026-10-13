@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import Response
 
 from jbrain.api import minecraft as owner_api
+from jbrain.api.client_ip import client_ip
 from jbrain.api.deps import SettingsDep
 from jbrain.db.session import mc_share_context
 from jbrain.locations.ratelimit import TokenBucket
@@ -51,7 +52,7 @@ def _maker(request: Request) -> Any:
 
 
 def _allow(request: Request, bucket: TokenBucket) -> None:
-    client = request.client.host if request.client else "unknown"
+    client = client_ip(request) or "unknown"
     if not bucket.allow(client):
         raise HTTPException(status_code=429, detail="rate limited")
 

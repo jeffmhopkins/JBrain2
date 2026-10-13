@@ -795,7 +795,11 @@ void ui_talk_open(ui_talk_t *t, lv_obj_t *parent, uint32_t color, const char *ti
     t->time = ui_label(t->ring, "0:00", 48, UI_C_TEXT);
     lv_obj_center(t->time);
     ui_label(t->root, "Let go of KEY to send", 22, UI_C_TEXT);
-    ui_label(t->root, "Tap the screen to cancel · 1:00 max", 18, UI_C_MUTED);
+    /* The cap the ring sends at: a minute to an agent, the box's 30 s to a twin. */
+    char hint[48];
+    snprintf(hint, sizeof hint, "Tap the screen to cancel · %lu:%02lu max",
+             (unsigned long)(t->cap_ms / 60000), (unsigned long)(t->cap_ms / 1000 % 60));
+    ui_label(t->root, hint, 18, UI_C_MUTED);
     t->timer = lv_timer_create(talk_tick, 100, t);
     ui_talk_refresh(t);
 }

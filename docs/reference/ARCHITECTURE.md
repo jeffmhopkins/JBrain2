@@ -109,6 +109,35 @@ basemap tiles, the intake stepper, its own jcode session). The route-matrix test
 (`backend/tests/unit/test_route_auth_matrix.py`) presents every non-owner kind to
 every route and fails on any (route, kind) pair not on its allow-list.
 
+A WebSocket authenticates on its handshake, so the long-lived ones (the live location
+feed, the jcode and jlaunch terminals) also re-resolve their handshake session every
+~30 s (`api/ws_reauth.py`), idle or not, without stamping `last_seen_at`, and close
+4401 once it is revoked or lapses (1011 if three checks in a row cannot be made; a single
+failed check, a DB blip, is retried on the next tick).
+The live feed re-asks `viewer_may_see` after each re-check, so a member taken out of a
+family group stops receiving that subject's fixes. Revoking a jcode share closes its
+open terminals at once and rotates the session's preview URL; the session's processes
+keep running, since the owner shares that shell.
+
+Phones and room panels are the same `device_key` kind; the device subject's `device_role`
+(migration 0211: `NULL` a phone, `jpet`/`display` a flashed panel) is what splits them, and the
+auth lookup filters on it. Panel routes (`PanelDep`) and the panel socket take only a role'd
+key; OwnTracks and `/session/mint` take only a role-less one, so a family phone cannot act as a
+bedroom panel and a panel lifted off a wall cannot open a member dashboard. MQTT takes either
+(both are held to the same ACL). The api logs `panel_auth.unroled_panels` at startup if a
+role-less key has ever reported panel status.
+
+The client address behind Caddy is `client_ip` (`backend/src/jbrain/api/client_ip.py`): Caddy
+overwrites `X-Real-IP` with its peer, the api believes it only when the TCP peer is the `proxy`
+container, and reads `Cf-Connecting-IP` only when that peer is the `cloudflared` container
+(both resolved by service name, off the request path). Anything else — a sandbox container
+reaching the api directly, a LAN client forging Cloudflare's header — is its socket address.
+Every per-client rate limit and the panel nudge key on it. A member's `/member/positions`
+read is audited ("viewed") only for a subject `viewer_may_see` admits, and never for itself.
+The database holds both ends of that: `viewer_may_see` and `visible_subjects` answer a non-owner
+only about its own subject, and `view_audit` refuses a member's row about a subject it may not see
+(migration 0243).
+
 The rare **public** surface (a report share link, `/api/research-share`) is not
 an exception to this — it is another RLS scope. A share visitor runs under an
 empty-scope, non-owner context pinned to one share-link id; a row-scoped policy

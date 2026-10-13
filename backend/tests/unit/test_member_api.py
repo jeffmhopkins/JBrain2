@@ -150,6 +150,16 @@ def fcm() -> FakeFcmRepo:
     return FakeFcmRepo()
 
 
+class FakeViewScope:
+    """`viewer_may_see`: the member sees its sibling and pal, nobody else."""
+
+    def __init__(self) -> None:
+        self.visible = {"subject-sib", "subject-pal"}
+
+    async def may_view(self, viewer_subject_id: str, target_subject_id: str) -> bool:
+        return viewer_subject_id == SUBJECT and target_subject_id in self.visible
+
+
 @pytest.fixture
 def client(repo: FakeAuthRepo, locs: FakeLocationRepo, fcm: FakeFcmRepo) -> Iterator[TestClient]:
     settings = Settings(
@@ -160,6 +170,7 @@ def client(repo: FakeAuthRepo, locs: FakeLocationRepo, fcm: FakeFcmRepo) -> Iter
         app.state.auth_repo = repo
         app.state.location_repo = locs
         app.state.fcm_token_repo = fcm
+        app.state.view_scope_repo = FakeViewScope()
         yield test_client
 
 
@@ -220,6 +231,41 @@ def test_positions_returns_trail_and_audits(client: TestClient, locs: FakeLocati
     assert locs.view_calls[0]["target_subject_id"] == "subject-sib"
     assert locs.view_calls[0]["viewer_subject_id"] == SUBJECT
     assert locs.view_calls[0]["path"] == "history"
+
+
+def test_positions_does_not_audit_a_subject_the_member_cannot_see(
+    client: TestClient, locs: FakeLocationRepo
+) -> None:
+    """The subject id is the caller's to choose. Auditing every ask let a member write
+    "<member> viewed you" into any stranger's log; RLS empties the trail, and now the audit
+    stays empty too."""
+    _as_member(client)
+    resp = client.get("/api/member/positions", params={"subject_id": "subject-stranger"})
+    assert resp.status_code == 200
+    assert locs.view_calls == []
+
+
+def test_positions_does_not_audit_the_members_own_track(
+    client: TestClient, locs: FakeLocationRepo
+) -> None:
+    _as_member(client)
+    assert client.get("/api/member/positions", params={"subject_id": SUBJECT}).status_code == 200
+    assert locs.view_calls == []
+
+
+def test_positions_audits_a_visible_subject_with_no_fixes(
+    client: TestClient, locs: FakeLocationRepo
+) -> None:
+    """Asking is the view: an empty window on a family member is still audited."""
+
+    async def no_fixes(ctx, **kwargs):  # noqa: ANN001, ANN003
+        return []
+
+    locs.fixes = no_fixes  # type: ignore[method-assign]
+    _as_member(client)
+    resp = client.get("/api/member/positions", params={"subject_id": "subject-pal"})
+    assert resp.status_code == 200 and resp.json() == []
+    assert [c["target_subject_id"] for c in locs.view_calls] == ["subject-pal"]
 
 
 def test_positions_clamps_to_thirty_day_cap(client: TestClient, locs: FakeLocationRepo) -> None:

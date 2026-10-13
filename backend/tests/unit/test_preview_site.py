@@ -72,6 +72,8 @@ def test_conf_renders_the_wildcard_site_when_base_host_set(tmp_path: Path) -> No
     assert "header_regexp Host ^([0-9a-f]+)-preview" in rendered
     assert "rewrite * /__jcode_preview/{re.preview.1}{uri}" in rendered
     assert "reverse_proxy api:8000" in rendered
+    # Caddy's peer, not a client-sent value, is what the api may read as the client.
+    assert "header_up X-Real-IP {remote_host}" in rendered
     # Every other subdomain on the catch-all wildcard is refused.
     assert "respond 404" in rendered
 

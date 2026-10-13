@@ -1,6 +1,6 @@
 # Security review fixes — third-party access hardening
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2✅ S3◻️ S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2✅ S3✅ S4◻️ S5✅
 
 A whole-codebase security review (2026-10-12; six independent reviewers, the serious
 findings re-verified by hand) looked for programming errors and structural mistakes that
@@ -299,7 +299,19 @@ sessions. *Keeps working:* clone over https, npm/pip installs, grok's model and 
 defaults; squid ACL test cases for the LAN/host ranges. *On-box gate:* clone + `npm install` +
 `curl https://…` + a Node `fetch` in a session.
 
-### S3 — device, session and token hygiene ◻️
+### S3 — device, session and token hygiene ✅
+
+*As built (after per-task reviews):* socket re-checks don't write and survive a DB blip
+(1011 only after three failed checks); a rotated or released preview slug also closes its
+open HMR sockets, and the owner's PWA re-reads the preview after a revoke. **S3.3 differs
+from the text below:** secret `app.settings` rows are not redacted cell by cell but hidden
+from every READ ONLY transaction by a restrictive RLS policy (only the debug routes run read
+only), which holds against any alias, expression or SQL-from-text function; the refused list
+also covers `ts_stat`/`ts_rewrite`/`pg_ls_dir` and `U&` spellings, and the Gmail OAuth state
+is hidden with the credentials. S3.2's phone/panel test fails closed, and a member cookie a
+panel key minted before the fix stops authenticating. The rate-limit table is bounded now
+that it keys on internet-controlled client IPs. S3.5 also tolerates a `NO LOG FILE! - `
+prefix and anchors pack events to the whole line.
 
 **S3.1 Sockets re-validate (F10).** One helper re-authenticates a WS's handshake token on a
 ~30 s tick (the receive wait gets a timeout so idle sockets are re-checked) and closes 4401
@@ -359,20 +371,55 @@ A cold red team re-analyses the whole codebase after S1–S3 merge: re-attack ev
 attack the fixes, and separately hunt regressions across the flow table. Findings are fixed in
 S4's PR.
 
-### S5 — latent RLS hardening ◻️
+### S5 — latent RLS hardening ✅
 
 Not reachable by a third party today (each needs arbitrary SQL, and the only arbitrary-SQL
 surface runs as owner). Each lands only with an integration test proving no behaviour change;
-otherwise recorded as a residual in `ROADMAP.md`.
-(a) `view_audit_write` WITH CHECK adds `app.viewer_may_see(viewer, target)`.
-(b) `viewer_may_see` / `visible_subjects`: a non-owner caller may pass only its own
-`app.subject_id` — and in the same PR `SqlViewScopeRepo.may_view` runs under the viewer's
-`device_context` instead of an empty context (*rev:* otherwise the member live map raises),
-with a member-live integration test.
-(c) TimescaleDB chunks: revoke `jbrain_app`'s direct privileges on `_timescaledb_internal`
-only if an integration test inserting/reading fixes and host metrics as `jbrain_app` passes.
-Dropped after review: tightening `place_geofence_read` (*rev:* ingest-time geofence detection
-relies on it for owner "all devices" fences).
+otherwise recorded as a residual in `ROADMAP.md`. Dropped after review: tightening
+`place_geofence_read` (*rev:* ingest-time geofence detection relies on it for owner "all
+devices" fences).
+
+*As built.* (a) and (b) landed together in one migration; (c) is recorded.
+- **(a) landed.** `view_audit_write` WITH CHECK: a device's row must be about its own subject
+  or one `viewer_may_see` admits. Its own subject is spelled out: `viewer_may_see(self, self)`
+  is false for a member in no family group, and the live socket audits a member's own track.
+  The owner branch is unchanged.
+- **(b) landed.** `viewer_may_see` / `visible_subjects` answer a non-owner only about its own
+  `app.subject_id`; any other viewer gets false / no rows (not an error, so a wrong caller
+  degrades to "can't see"). Owner sessions holding the location domain — the full owner, the
+  debug console, a location-narrowed agent, and the worker's `SYSTEM_CTX` that push routing
+  runs under — still ask about anyone; a narrowed owner without location gets nothing, since
+  `view_scope` itself is location-firewalled. The pin guards against an app bug passing the
+  wrong viewer, not against arbitrary SQL (which can set its own GUCs). `SqlViewScopeRepo.may_view` (the
+  live socket and the MQTT ACL) now asks under the viewer's `device_context`. Every other
+  caller already passed its own subject: the `location_fixes` view-scope policy
+  (`current_setting('app.subject_id')`), `member_roster` and `member_timeline` (under the
+  member's `device_context`).
+- *Tests* (`test_view_scope_pinned_pg.py`): a member asking as another viewer gets false and
+  an empty roster; an empty context and a NULL viewer get nothing; a narrowed owner without
+  location gets nothing; owner, debug console, location-narrowed owner and `SYSTEM_CTX`
+  unchanged; `may_view` still says yes for the family; audit rows land for a family member,
+  for self, and for a group-less member's own track, and the forged "viewed Carol" row is
+  refused; the live map's `deliver_fix` over the real repos sends and audits self + family and
+  drops an outsider; the member dashboard (`/session/mint`, roster, positions, timeline) over
+  the real app with its audit rows. The forgery and foreign-viewer tests fail without the
+  migration.
+- **(c) recorded, not landed.** Probed on TimescaleDB 2.30.2: revoking `jbrain_app`'s
+  privileges on an existing chunk does not break hypertable access (insert, read and delete
+  through `app.location_fixes` all work, and a direct chunk `SELECT` is denied). But
+  Timescale copies the hypertable's ACL onto every new chunk at creation, so the revoke only
+  holds until the next chunk, and `ALTER DEFAULT PRIVILEGES` plays no part. Enabling RLS on a
+  chunk is likewise not inherited by the next one (and `FORCE` is refused on chunks). The
+  only durable mechanism found is a superuser `ddl_command_end` event trigger that revokes
+  on each new chunk — it works in a probe, but it keys on Timescale emitting `ALTER TABLE`
+  events for its internal chunk DDL (undocumented, version-dependent) and it runs inside
+  the INSERT that creates a chunk, so any failure there would stop location ingest and host
+  metrics. That is a worse risk than a hole only the owner's own SQL can reach. Revoking
+  `USAGE` on `_timescaledb_internal` (where 2.30.2 keeps the chunks; `jbrain_app` has it only
+  through `PUBLIC`) was probed too and is a non-starter: every insert, select and delete
+  through `app.location_fixes` and `app.host_metrics` then fails with "permission denied for
+  schema _timescaledb_internal", because the executor opens the chunks as the querying role.
+  Recorded below.
 
 ## Owner decisions (taken 2026-10-12)
 
@@ -396,6 +443,16 @@ relies on it for owner "all devices" fences).
 - **Stream fetches** (yt-dlp/ffmpeg) keep check-once SSRF guarding (S2.3).
 - **MQTT on the first update** (S2.2): profile services are `start`ed, not recreated, so an
   enabled broker keeps its pre-token config until **Ops → Rebuild `mqtt`** (OPERATIONS.md).
+- **Revoke with an unreachable jcode ctl** (S3.1): the revoke stands and is logged, but the
+  old preview slug stays valid until the next rotate, delete or reap.
+- **Minecraft command replies** (S3.5 review): the backend reads `/command` replies from
+  whatever lines arrive in the reply window, so a well-timed `/jb:dave` line could make Dave
+  report a false result to another asker. No identity, permission or stored state rides on
+  it (transport's write is keyed by an unseen trip id); a per-request nonce would close it.
+- **A pairing code minted mid-update** (S3.3): one the old api mints after the migration ran
+  is stored plaintext and won't redeem on the new api; re-minting from the PWA fixes it.
+- **Debug SQL text guard** is a deny-list and refuses a few harmless statements that merely
+  mention a blocked name; the secrets themselves are protected by the RLS policy, not by it.
 - **Git hooks run by the ctl** (reset/clean, as the session uid) don't get the shells'
   `RLIMIT_NPROC`; only the container `pids_limit` bounds them (S2.1).
 - **Browsers without fetch metadata** (Safari before 16.4) send neither `Sec-Fetch-Site` nor
@@ -404,6 +461,12 @@ relies on it for owner "all devices" fences).
 - **Cookie bomb.** A preview can set enough large cookies on the parent domain to overflow the
   owner's Cookie header until they are cleared; only a separate registrable domain for
   previews prevents it (D2, not planned).
+- **Timescale chunks keep `jbrain_app` privileges** (S5c, F16). A direct
+  `_timescaledb_internal._hyper_*` read skips the hypertable's RLS. Reachable only with
+  arbitrary SQL, which only the owner's debug console has. A revoke does not survive the next
+  chunk (Timescale copies the hypertable ACL), revoking schema `USAGE` breaks every hypertable
+  query, and the event-trigger fix that would hold is fragile and sits in the ingest path. Revisit if a non-owner ever gets arbitrary SQL, or if Timescale
+  grows a supported hook.
 - **A lone planted legacy cookie** on a browser with no session of its own is believed (as
   its own kind, never promoted) until the owner signs in.
 

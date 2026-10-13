@@ -23,6 +23,7 @@ from fastapi import APIRouter, WebSocket
 
 from jbrain.api.live import origin_allowed
 from jbrain.api.session_cookie import session_token
+from jbrain.api.ws_reauth import SocketAuth, run_until_revoked
 from jbrain.auth import service
 from jbrain.config import Settings
 
@@ -77,23 +78,27 @@ async def upstream_to_browser(upstream: AsyncIterable[Any], browser: Any) -> Non
             await browser.send_text(message)
 
 
-async def _bridge(browser: WebSocket, upstream: Any) -> None:  # pragma: no cover - live pump
+async def _bridge(browser: WebSocket, upstream: Any) -> None:
     import asyncio
 
     pumps = {
         asyncio.ensure_future(browser_to_upstream(browser, upstream)),
         asyncio.ensure_future(upstream_to_browser(upstream, browser)),
     }
-    done, pending = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
-    for task in pending:
-        task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await asyncio.gather(*pending, return_exceptions=True)
+    try:
+        done, _ = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        # Also when the bridge itself is cancelled (a revoked session): no pump may
+        # outlive it, still reading the browser or writing to a closed upstream.
+        for task in pumps:
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(*pumps, return_exceptions=True)
     for task in done:
         task.result()  # surface a real error (not a normal disconnect) to the caller
 
 
-async def _proxy(browser: WebSocket, settings: Settings, jid: str) -> None:  # pragma: no cover
+async def _proxy(browser: WebSocket, settings: Settings, jid: str) -> None:
     headers = {"Authorization": f"Bearer {settings.jlaunch_token}"}
     try:
         async with websockets.connect(
@@ -113,7 +118,7 @@ async def _proxy(browser: WebSocket, settings: Settings, jid: str) -> None:  # p
 async def jlaunch_terminal(websocket: WebSocket, jid: str) -> None:
     """Bridge the owner's xterm to a job's PTY. Closes 4403 on a disallowed Origin, 4401
     for a non-owner / absent cookie, 4404 when the launcher is off or the id is malformed
-    — all before the upstream socket is opened."""
+    — all before the upstream socket is opened — and 4401 once the session is revoked."""
     settings = cast(Settings, websocket.app.state.settings)
     if not origin_allowed(websocket, settings):
         await websocket.close(code=4403)
@@ -126,4 +131,6 @@ async def jlaunch_terminal(websocket: WebSocket, jid: str) -> None:
         await websocket.close(code=4404)
         return
     await websocket.accept()
-    await _proxy(websocket, settings, jid)
+    await run_until_revoked(
+        websocket, SocketAuth(websocket, principal), _proxy(websocket, settings, jid)
+    )

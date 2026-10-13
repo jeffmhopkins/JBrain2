@@ -87,6 +87,15 @@ def test_mint_rejects_revoked_key(client: TestClient, repo: FakeAuthRepo) -> Non
     assert resp.status_code == 401
 
 
+def test_mint_rejects_a_panel_key(client: TestClient, repo: FakeAuthRepo) -> None:
+    # A room panel's key is a device key too, but a panel is not a family member: a subject
+    # with a device_role never mints a dashboard session.
+    repo.principals[0].device_role = "jpet"
+    resp = client.post("/api/session/mint", json={"device_key": DEVICE_KEY})
+    assert resp.status_code == 401
+    assert _mint_cookie(resp) is None
+
+
 def test_member_session_cannot_reach_owner_routes(client: TestClient) -> None:
     assert client.post("/api/session/mint", json={"device_key": DEVICE_KEY}).status_code == 204
     # The member cookie is set on the client; owner-only routes still 403 it.

@@ -120,6 +120,30 @@ tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id)
     t->net_done = false;
     t->res = TK_RES_NONE;
     t->why[0] = '\0';
+    t->kind = TK_KIND_AGENT;
+    return TK_BEGIN_OK;
+}
+
+void tk_set_post(tk_t *t)
+{
+    t->kind = TK_KIND_POST;
+    t->fresh = false;
+}
+
+tk_begin_t tk_listen(tk_t *t, uint32_t msg_id)
+{
+    if (t->phase != TK_IDLE || t->net_busy || t->mic_on || t->spk_on) return TK_BEGIN_BUSY;
+    t->phase = TK_SEND;
+    t->kind = TK_KIND_LISTEN;
+    t->since_ms = 0;
+    t->held_ms = 0;
+    t->msg_id = msg_id;
+    t->voice = true;
+    t->fresh = false;
+    t->abort = false;
+    t->net_done = false;
+    t->res = TK_RES_NONE;
+    t->why[0] = '\0';
     return TK_BEGIN_OK;
 }
 
@@ -172,7 +196,8 @@ bool tk_quiet(const tk_t *t)
 
 bool tk_net_claim(tk_t *t)
 {
-    if (t->phase != TK_REC || t->net_busy || t->abort) return false;
+    const bool listen = t->kind == TK_KIND_LISTEN && t->phase == TK_SEND;
+    if ((t->phase != TK_REC && !listen) || t->net_busy || t->abort) return false;
     t->net_busy = true;
     t->net_done = false;
     return true;

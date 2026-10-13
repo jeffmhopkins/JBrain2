@@ -994,6 +994,17 @@ def test_sql_rejects_non_read_statements(debug_client: tuple[TestClient, str], s
     assert resp.status_code == 400
 
 
+def test_sql_refuses_a_function_that_reads_around_the_redaction(
+    debug_client: tuple[TestClient, str],
+) -> None:
+    # Refused before any DB session opens: the fixture has no Postgres at all.
+    client, key = debug_client
+    sql = "SELECT query_to_xml('SELECT value FROM app.settings', true, false, '')"
+    resp = client.post("/api/debug/sql", headers=_auth(key), json={"sql": sql})
+    assert resp.status_code == 400
+    assert "query_to_xml" in resp.json()["detail"]
+
+
 def test_jsonable_coerces_db_types() -> None:
     import datetime as dt
     import uuid

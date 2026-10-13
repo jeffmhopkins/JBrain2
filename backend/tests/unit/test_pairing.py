@@ -14,6 +14,7 @@ from jbrain.locations.pairing import (
     RedeemedDevice,
     build_owntracks_config,
     build_pairing_payload,
+    code_digest,
     generate_pairing_code,
 )
 from jbrain.locations.ratelimit import TokenBucket
@@ -43,6 +44,15 @@ def test_build_owntracks_config_binds_username_to_principal() -> None:
     assert cfg["monitoring"] == 2
     assert cfg["remoteConfiguration"] is True  # off upstream; we need server mode-switch
     assert cfg["host"] == "mqtt.example.com" and cfg["port"] == 8883
+
+
+def test_code_digest_is_sha256_hex_and_case_sensitive() -> None:
+    """At rest a code is its sha256 — and NOT `hash_key`'s lowercased form, because two
+    urlsafe codes differing only in case are different codes."""
+    assert code_digest("abc") == (
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    )
+    assert code_digest("AbC") != code_digest("abc")
 
 
 def test_generate_pairing_code_is_unique_and_high_entropy() -> None:
