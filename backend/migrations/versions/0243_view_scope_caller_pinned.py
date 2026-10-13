@@ -29,15 +29,15 @@ The audit write adds visibility: a device's row must be about its own subject or
 may see. Its own subject is spelled out because `viewer_may_see(self, self)` is false
 for a member in no family group, and the live socket audits a member's own track.
 
-Revision ID: 0242
-Revises: 0241
+Revision ID: 0243
+Revises: 0242
 Create Date: 2026-10-12
 """
 
 from alembic import op
 
-revision = "0242"
-down_revision = "0241"
+revision = "0243"
+down_revision = "0242"
 branch_labels = None
 depends_on = None
 

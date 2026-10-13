@@ -1,4 +1,4 @@
-"""The view-scope helpers and the audit write are pinned to the caller (SECURITY S5, 0242).
+"""The view-scope helpers and the audit write are pinned to the caller (SECURITY S5, 0243).
 
 Two halves. The attack: a member session handing `viewer_may_see` / `visible_subjects`
 someone else's subject gets false / nothing, and a member can't write a who-saw-whom row

@@ -87,7 +87,7 @@ async def test_device_can_attribute_a_view_only_to_its_own_subject(
     pid_v, sid_v = await _device(maker, "viewer")
     _, sid_t = await _device(maker, "target")
     viewer = device_context(pid_v, sid_v)
-    # A member audits only a subject it may see (0242), so the two share a family.
+    # A member audits only a subject it may see (0243), so the two share a family.
     async with scoped_session(maker, OWNER) as session:
         gid = (
             await session.execute(

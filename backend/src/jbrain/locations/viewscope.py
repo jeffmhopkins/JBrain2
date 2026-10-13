@@ -4,7 +4,7 @@ The history path enforces family-sees-family inside the `location_fixes` RLS pol
 (migration 0067). The live path is its twin: the MQTT ACL endpoint asks "may this
 device subscribe to that group member's topic?" — i.e. "do these two subjects share
 a family group?" — which is exactly `app.viewer_may_see`. That function is SECURITY
-DEFINER (it reads the owner-only view_scope on the caller's behalf), but since 0242 it
+DEFINER (it reads the owner-only view_scope on the caller's behalf), but since 0243 it
 answers a non-owner only about its OWN subject, so the question is asked as the viewer.
 """
 
