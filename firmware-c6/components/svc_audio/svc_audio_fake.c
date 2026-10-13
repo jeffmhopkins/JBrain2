@@ -157,6 +157,12 @@ void svc_audio_fake_listen(bool arrives, bool to_the_end, bool verified)
         talk_net_end(0, 0, 0);
         return;
     }
+    if (!talk_net_ring()) {
+        talk_net_fail("no memory to play");
+        s_net = false;
+        talk_net_end(0, 0, 0);
+        return;
+    }
     talk_net_reply("", true);
     talk_port_kick();
     if (!to_the_end) return;
@@ -165,4 +171,9 @@ void svc_audio_fake_listen(bool arrives, bool to_the_end, bool verified)
     talk_net_end(0, 64000, 0);
     talk_audio_drained();
     talk_port_kick();
+}
+
+void svc_audio_fake_played(uint32_t ms)
+{
+    talk_audio_played(ms * (TALK_RATE / 1000u) * 2u);
 }

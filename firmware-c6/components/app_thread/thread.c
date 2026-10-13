@@ -11,10 +11,31 @@
 #include "ui_kit.h"
 #include "ui_pin.h"
 
+/* The bubbles a view tracks for changing in place: a person's thread holds four, the box's last
+   four with the panel's own send among them (svc_messages, svc_post's POST_KEEP). */
+#define SHOWN 4
+/* A play's bar moves ten times a second. */
+#define PLAY_TICK_MS 100
+
+/* One drawn bubble: its message, the widgets that move, and what they show now. */
+typedef struct {
+    uint32_t id;
+    ui_bubble_parts_t parts; /* glyph NULL: a bubble with no play */
+    thread_bubble_t shown;
+} drawn_t;
+
 typedef struct {
     lv_obj_t *root, *list;
+    lv_timer_t *tick;
     ui_talk_t talk;
     ui_pin_t pin;
+    /* What the list was built from (thread_shape_*), the thread's revision and whether the box
+       had answered when it was last looked at, and the bubbles drawn. */
+    uint32_t shape, rev;
+    bool loaded;
+    uint8_t n;
+    drawn_t drawn[SHOWN];
+    uint32_t rebuilds;
     /* What the tile and the header say, from svc_siblings: app_t points at these, so a sibling
        renamed on the box is renamed here the next time home is drawn. */
     char title[SIB_NAME_BYTES + 1];
@@ -44,16 +65,108 @@ static void back(lv_event_t *e)
     self->host->go_home();
 }
 
-static void fill_list(app_t *self);
-
-static void refill(void *self)
+/* The bubbles where they stand: the play's glyph, its bar and the dot. Nothing is made or
+   deleted, so nothing moves and the reader's scroll is theirs. */
+static void update(app_t *self)
 {
-    fill_list(self);
+    thread_t *t = self->state;
+    const char *who = cfg(self)->thread;
+    const uint32_t playing = svc_audio_playing(), played = svc_audio_played_ms();
+    msg_t m;
+    for (uint8_t i = 0; i < t->n; i++) {
+        drawn_t *d = &t->drawn[i];
+        if (!d->parts.glyph || !svc_messages_get(who, i, &m) || m.id != d->id) continue;
+        thread_bubble_t tb;
+        thread_bubble(&m, playing, played, &tb);
+        if (tb.playing == d->shown.playing && tb.prog == d->shown.prog &&
+            tb.unplayed == d->shown.unplayed)
+            continue;
+        ui_bubble_set(&d->parts, tb.playing, tb.prog, tb.unplayed);
+        d->shown = tb;
+    }
 }
 
-/* Her message streams from the box through the speaker; it is marked played (here, on the box
- * and so in the PWA) only once it has played to its end. Tap again to stop. No auto-play: a
- * message arriving never makes a sound but the chime (owner's default, plan §1). */
+static void play(lv_event_t *e);
+
+/* The list from scratch: only when the messages themselves changed (a new one, a transcript, a
+   send's status), and then the reader stays where they were, as in convo.c — emptied, the page
+   would clamp its scroll to the top. It pins to the end only on opening and when one arrives. */
+static void fill_list(app_t *self)
+{
+    thread_t *t = self->state;
+    const char *who = cfg(self)->thread;
+    const int32_t y = lv_obj_get_scroll_y(t->list);
+    lv_obj_clean(t->list);
+    t->rev = svc_messages_rev(who);
+    t->loaded = svc_post_loaded(who);
+    t->n = 0;
+    uint32_t shape = THREAD_SHAPE0;
+    const uint32_t playing = svc_audio_playing(), played = svc_audio_played_ms();
+    const uint16_t n = svc_messages_count(who);
+    msg_t m = {0};
+    for (uint16_t i = 0; i < n; i++) {
+        if (!svc_messages_get(who, i, &m)) continue;
+        shape = thread_shape_msg(shape, &m);
+        thread_bubble_t tb;
+        thread_bubble(&m, playing, played, &tb);
+        drawn_t *d = i < SHOWN ? &t->drawn[t->n++] : NULL;
+        if (d) *d = (drawn_t){.id = m.id, .shown = tb};
+        ui_bubble_t b = {.mine = m.mine, .voice = m.voice, .pending = m.pending,
+                         .playing = tb.playing, .unplayed = tb.unplayed, .prog = tb.prog,
+                         .text = m.text, .dur = tb.dur, .status = m.status, .tag = m.id,
+                         .parts = d ? &d->parts : NULL};
+        ui_bubble(t->list, &b, self->accent, play, self);
+    }
+    if (!n) {
+        char line[80];
+        if (t->loaded)
+            snprintf(line, sizeof line, "No messages yet. Hold KEY to send %s one.", t->title);
+        else
+            snprintf(line, sizeof line, "Fetching messages…");
+        ui_label_wrap(t->list, line, 18, UI_C_MUTED);
+    }
+    t->shape = thread_shape_end(shape, n, t->loaded);
+    t->rebuilds++;
+    if (ui_pin_should(&t->pin, n ? m.id : 0)) {
+        ui_page_pin_bottom(t->list);
+    } else {
+        lv_obj_update_layout(t->list);
+        lv_obj_scroll_to_y(t->list, y, LV_ANIM_OFF);
+    }
+}
+
+/* Rebuilt when what the list is built from changed, else updated where it stands. */
+static void refresh(app_t *self)
+{
+    thread_t *t = self->state;
+    const char *who = cfg(self)->thread;
+    const uint32_t rev = svc_messages_rev(who);
+    const bool loaded = svc_post_loaded(who);
+    if (rev != t->rev || loaded != t->loaded) {
+        uint32_t shape = THREAD_SHAPE0;
+        const uint16_t n = svc_messages_count(who);
+        msg_t m;
+        for (uint16_t i = 0; i < n; i++)
+            if (svc_messages_get(who, i, &m)) shape = thread_shape_msg(shape, &m);
+        t->rev = rev;
+        t->loaded = loaded;
+        if (thread_shape_end(shape, n, loaded) != t->shape) {
+            fill_list(self);
+            return;
+        }
+    }
+    update(self);
+}
+
+static void tick(lv_timer_t *tm)
+{
+    refresh(lv_timer_get_user_data(tm));
+}
+
+/* Her message streams from the box through the speaker. The first press marks it heard, here,
+ * on the box and so in the PWA (0.0.17, owner 2026-10-13: "A message should no longer be
+ * considered unread if I even hit play once on it"). Tap again to stop. No auto-play: a message
+ * arriving never makes a sound but the chime (owner's default, plan §1). */
 static void play(lv_event_t *e)
 {
     app_t *self = lv_event_get_user_data(e);
@@ -64,35 +177,8 @@ static void play(lv_event_t *e)
         const char *why = svc_audio_talk_refused();
         self->host->toast(why ? why : "One moment: still finishing the last one");
     }
-    /* Not now: the list being rebuilt holds the button whose event this is. */
-    lv_async_call(refill, self);
-}
-
-static void fill_list(app_t *self)
-{
-    thread_t *t = self->state;
-    const char *who = cfg(self)->thread;
-    lv_obj_clean(t->list);
-    uint16_t n = svc_messages_count(who);
-    msg_t m = {0};
-    for (uint16_t i = 0; i < n; i++) {
-        if (!svc_messages_get(who, i, &m)) continue;
-        thread_bubble_t tb;
-        thread_bubble(&m, svc_audio_playing(), 0, &tb);
-        ui_bubble_t b = {.mine = m.mine, .voice = m.voice, .pending = m.pending,
-                         .playing = tb.playing, .unplayed = tb.unplayed, .prog = tb.prog,
-                         .text = m.text, .dur = tb.dur, .status = m.status, .tag = m.id};
-        ui_bubble(t->list, &b, self->accent, play, self);
-    }
-    if (!n) {
-        char line[80];
-        if (svc_post_loaded(who))
-            snprintf(line, sizeof line, "No messages yet. Hold KEY to send %s one.", t->title);
-        else
-            snprintf(line, sizeof line, "Fetching messages…");
-        ui_label_wrap(t->list, line, 18, UI_C_MUTED);
-    }
-    if (ui_pin_should(&t->pin, n ? m.id : 0)) ui_page_pin_bottom(t->list);
+    /* In place only: a rebuild here would delete the button whose event this is. */
+    update(self);
 }
 
 static void thread_open(app_t *self, lv_obj_t *root)
@@ -103,10 +189,12 @@ static void thread_open(app_t *self, lv_obj_t *root)
     t->list = NULL;
     t->talk = (ui_talk_t){0};
     t->pin = (ui_pin_t){0};
+    t->n = 0;
     ui_header(root, &t->icon, self->accent, t->title, back, self);
     t->list = ui_page(root, true, 60);
     ui_talk_hint(root);
     fill_list(self);
+    t->tick = lv_timer_create(tick, PLAY_TICK_MS, self);
     svc_post_open(cfg(self)->thread);
 }
 
@@ -133,9 +221,12 @@ static void capped(void *user)
 
 static void thread_close(app_t *self)
 {
+    thread_t *t = self->state;
     end_talk(self, false);
     svc_audio_stop();
-    lv_async_call_cancel(refill, self);
+    if (t->tick) lv_timer_delete(t->tick);
+    t->tick = NULL;
+    t->n = 0;
 }
 
 static bool on_event(app_t *self, const app_event_t *ev)
@@ -163,7 +254,7 @@ static bool on_event(app_t *self, const app_event_t *ev)
         end_talk(self, false);
         return true;
     case APP_EV_MSG_ARRIVED:
-        if (!strcmp(ev->u.principal, cfg(self)->thread)) fill_list(self);
+        if (!strcmp(ev->u.principal, cfg(self)->thread)) refresh(self);
         return false;
     default: return false;
     }
@@ -201,6 +292,8 @@ static void describe(app_t *self, dbg_json_t *w)
     dbg_json_int(w, "playing", svc_audio_playing());
     dbg_json_bool(w, "loaded", svc_post_loaded(cfg(self)->thread));
     dbg_json_int(w, "pinned_to", t->pin.last_id);
+    /* How often the list was built from scratch: a play must not move it (0.0.17). */
+    dbg_json_int(w, "rebuilds", t->rebuilds);
 }
 
 bool app_thread_make(app_t *app, const app_thread_config_t *c, uint8_t page, uint8_t slot)

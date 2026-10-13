@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "box_http.h"
+#include "dbg_core.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -328,8 +329,8 @@ static void hex(const uint8_t *b, size_t n, char *out)
 }
 
 /* One of her messages played (0.0.16): the box's 16 kHz s16 into the ring at the speaker's pace,
- * hashed as it goes. It counts as heard only when the whole body arrived and matched the box's
- * digest — a message cut off by the radio stays unplayed, on the panel and in the PWA. */
+ * hashed as it goes. It was marked heard when the play began (0.0.17); the digest judges the
+ * audio itself, and a body cut off or not matching counts as a failed play. */
 static const char *listen_exchange(const char *path, uint32_t *down)
 {
     box_reply_t rep = {.date = {0}};
@@ -337,6 +338,12 @@ static const char *listen_exchange(const char *path, uint32_t *down)
     if (status != 200) {
         if (status > 0) box_http_reply_done();
         return failed(status);
+    }
+    /* The ring only now, with the connection open: a handshake and 16 KB of ring never hold
+       internal RAM at once (README "What 0.0.17 adds", the memory). */
+    if (!talk_net_ring()) {
+        box_http_stream_abort();
+        return "no memory to play";
     }
     talk_net_reply("", true);
     mbedtls_sha256_init(&s_sha);
@@ -382,6 +389,7 @@ bool talk_link_run(void)
     if (!talk_net_claim(&voice, &agent, &fresh)) return false;
     static char target[POST_PATH_BYTES];
     const tk_kind_t kind = talk_net_kind(target, sizeof target);
+    dbg_sys_doing(kind == TK_KIND_POST ? "message" : kind == TK_KIND_LISTEN ? "play" : "talk");
     /* Power save holds a TCP ACK a beacon at the access point; a 32 KB/s upload behind that
        stalls into the ring's half second (the screenshot's lesson, dbg_link.c). */
     wifi_ps_type_t ps = WIFI_PS_MIN_MODEM;

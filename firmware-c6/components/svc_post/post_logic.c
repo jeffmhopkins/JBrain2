@@ -373,6 +373,7 @@ void post_to_msg(const post_line_t *l, uint32_t local_id, msg_t *out)
     out->voice = l->voice;
     out->played = l->played;
     out->dur_s = (uint16_t)((l->ms + 500) / 1000);
+    out->dur_ms = (uint16_t)(l->ms > UINT16_MAX ? UINT16_MAX : l->ms);
     snprintf(out->text, sizeof out->text, "%s", l->text[0] ? l->text : POST_NO_TEXT);
     if (l->mine) snprintf(out->status, sizeof out->status, "%s", l->played ? "Played" : "Sent");
 }

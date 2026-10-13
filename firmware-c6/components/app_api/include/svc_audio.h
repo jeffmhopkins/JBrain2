@@ -84,11 +84,17 @@ bool svc_audio_work(const char *thread, svc_work_t *out);
 bool svc_audio_stop_reply(void);
 
 /* One of a twin's messages through the speaker (0.0.16): streamed from the box as it plays, with
- * the reply's speaker start, and marked played (here and on the box) only once it has played to
- * its end with its digest checked. False with svc_audio_talk_refused() saying why. */
+ * the reply's speaker start. A play that starts marks the message heard at once, here and on the
+ * box (0.0.17, owner 2026-10-13: "A message should no longer be considered unread if I even hit
+ * play once on it"): stopped early, cut off or failing its digest, it stays heard. False, with
+ * svc_audio_talk_refused() saying why and the message untouched, when no play starts. */
 bool svc_audio_play(uint32_t msg_id);
 void svc_audio_stop(void);
 uint32_t svc_audio_playing(void); /* msg id, 0 when silent */
+/* How much of the message playing has gone to the speaker, in ms: counted from the samples the
+ * audio task wrote, so it stands still through an underrun and the speaker's pre-roll. 0 when
+ * no message plays. */
+uint32_t svc_audio_played_ms(void);
 /* A new message's chime: two soft notes, once, when nothing else has the speaker. */
 bool svc_audio_chime(void);
 void svc_audio_speak(uint32_t msg_id);
