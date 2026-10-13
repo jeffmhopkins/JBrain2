@@ -61,6 +61,16 @@ async def _device(maker: async_sessionmaker) -> tuple[str, str]:
     return pid, sid
 
 
+async def _owner(maker: async_sessionmaker) -> None:
+    """The owner principal a transition event is stamped with (emit_event resolves it)."""
+    oid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("INSERT INTO app.principals (id, kind, key_hash) VALUES (:p, 'owner', :kh)"),
+            {"p": oid, "kh": uuid.uuid4().hex},
+        )
+
+
 async def _place_with_geofence_fact(maker: async_sessionmaker, radius: int = 150) -> str:
     """A Place entity + an active note-sourced `geofence` fact, but NO mirror row —
     the state after a dropped projector hook. Returns the entity id."""
@@ -148,6 +158,7 @@ async def test_sweep_rebuilds_a_missing_mirror_then_removes_a_stale_one(
 
 
 async def test_sweep_heals_a_missed_enter_then_is_idempotent(maker: async_sessionmaker) -> None:
+    await _owner(maker)
     await _place_with_geofence_fact(maker)
     pid, sid = await _device(maker)
     await _fix(maker, pid, sid, minute=0)  # the device's latest fix is inside the fence
@@ -167,6 +178,7 @@ async def test_sweep_heals_a_missed_enter_then_is_idempotent(maker: async_sessio
                         "SELECT payload->>'transition' FROM app.events"
                         " WHERE type = 'location.geofence_transition'"
                         " AND payload->>'subject_id' = :s"
+                        " AND principal_id IN (SELECT id FROM app.principals WHERE kind = 'owner')"
                     ),
                     {"s": sid},
                 )

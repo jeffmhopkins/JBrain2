@@ -41,6 +41,7 @@ def _event(
     type: str = wf_events.NOTE_CREATED,
     domain: str = "general",
     payload: dict[str, Any] | None = None,
+    kind: str = "owner",
 ) -> dispatcher._CandidateEvent:
     return dispatcher._CandidateEvent(
         id="ev-1",
@@ -48,6 +49,7 @@ def _event(
         payload=payload or {"note_id": "n-1"},
         domain_code=domain,
         principal_id=PRINCIPAL,
+        principal_kind=kind,
     )
 
 
@@ -82,19 +84,28 @@ def test_event_matches_payload_equals_is_conjunctive() -> None:
 
 
 def test_authorize_domain_accepts_a_real_domain_for_the_owner() -> None:
-    assert dispatcher.authorize_domain(PRINCIPAL, "health") is None
+    assert dispatcher.authorize_domain(PRINCIPAL, "health", "owner") is None
 
 
 def test_authorize_domain_rejects_unknown_domain() -> None:
-    reason = dispatcher.authorize_domain(PRINCIPAL, "nonsense")
+    reason = dispatcher.authorize_domain(PRINCIPAL, "nonsense", "owner")
     assert reason is not None and "unknown domain" in reason
 
 
 def test_authorize_domain_rejects_a_partial_stamp_fail_closed() -> None:
     # A principal with no domain (or vice versa) must never earn the all-domains
     # scope: narrowed_context raises ScopeStampError, which authorize_domain surfaces.
-    assert dispatcher.authorize_domain(PRINCIPAL, "") is not None
-    assert dispatcher.authorize_domain("", "health") is not None
+    assert dispatcher.authorize_domain(PRINCIPAL, "", "owner") is not None
+    assert dispatcher.authorize_domain("", "health", "owner") is not None
+
+
+@pytest.mark.parametrize("kind", ["device_key", "capability_token", "intake_link", ""])
+def test_authorize_domain_rejects_a_non_owner_stamp(kind: str) -> None:
+    # The narrowed job runs with owner identity whoever the stamp names, so a
+    # well-formed stamp from anyone but the owner (or an id naming no principal)
+    # must fail closed rather than launder that principal into the owner.
+    reason = dispatcher.authorize_domain(PRINCIPAL, "location", kind)
+    assert reason is not None and "not the owner" in reason
 
 
 # --- diff_pipeline: E3 registry-only resolution -----------------------------
@@ -366,6 +377,15 @@ async def test_resolve_event_fails_closed_on_unentitled_domain() -> None:
     assert session.executed == []
 
 
+async def test_resolve_event_fails_closed_on_a_device_stamp_before_any_trigger() -> None:
+    session = FakeSession([])
+    ev = _event(type="location.geofence_transition", domain="location", kind="device_key")
+    diff = await dispatcher.resolve_event(session, _registry(), ev)  # type: ignore[arg-type]
+    assert not diff.matches
+    assert diff.error is not None and "not the owner" in diff.error
+    assert session.executed == []
+
+
 async def test_resolve_event_rejects_a_trigger_that_refuses_the_event_domain_e2() -> None:
     # The trigger pins domains=['finance']; a general-domain event must not be fanned
     # into it (E2 accept-side, fail-closed).
@@ -447,6 +467,7 @@ async def test_tick_marks_dispatched_and_does_not_enqueue(
         ),
         domain_code="general",
         principal_id=PRINCIPAL,
+        principal_kind="owner",
     )
     # One claim session: claim event, list triggers, load pipeline, UPDATE dispatched.
     s1 = FakeSession(
@@ -607,6 +628,7 @@ async def test_tick_marks_a_poison_event_dispatched_without_enqueue(
         payload=json.dumps({"note_id": "n-1"}),
         domain_code="bogus",
         principal_id=PRINCIPAL,
+        principal_kind="owner",
     )
     s1 = FakeSession([FakeResult([poison]), FakeResult([])])  # claim, then UPDATE
     s2 = FakeSession([FakeResult([])])
@@ -955,6 +977,7 @@ async def test_tick_live_enqueues_exactly_once_via_diff(
         ),
         domain_code="general",
         principal_id=PRINCIPAL,
+        principal_kind="owner",
     )
     s1 = FakeSession(
         [

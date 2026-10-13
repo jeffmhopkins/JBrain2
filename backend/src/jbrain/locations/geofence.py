@@ -135,7 +135,10 @@ async def detect_transitions(
                 "transition": t["transition"],
                 "captured_at": captured_at.isoformat(),
             },
-            principal_id=principal_id,
+            # Owner-stamped (None resolves the owner), never the device's id: the
+            # dispatcher runs a stamped job as the owner, so it entitles only an owner
+            # stamp (dispatcher.authorize_domain). The device is in `subject_id`.
+            principal_id=None,
         )
     # One content-free poke per crossing batch — the payload says nothing about
     # where, so a single wake-up is enough for the family group to fetch + render.
@@ -245,7 +248,7 @@ _MIRROR_DRIFT_IDS_SQL = text(
 # The latest fix per device subject, with the device principal that recorded it —
 # the sweep re-evaluates exactly this one point per subject. Under the full-owner
 # session every subject is visible; a NULL principal (no authenticated device)
-# cannot be stamped on an event and is skipped by the caller.
+# recorded the fix, so the caller does not let it drive a transition.
 _LATEST_FIX_SQL = text(
     "SELECT DISTINCT ON (subject_id) subject_id::text AS sid, principal_id::text AS pid,"
     "   latitude AS lat, longitude AS lon, captured_at, accuracy_m"
@@ -270,7 +273,7 @@ async def sweep_geofences(maker: async_sessionmaker[AsyncSession]) -> int:
          nothing. A low-accuracy latest fix is ignored, matching the inline gate.
 
     Returns the number of transition events emitted (for logging/tests)."""
-    pending: list[tuple[str, str, datetime, dict]] = []
+    pending: list[tuple[str, datetime, dict]] = []
     async with scoped_session(maker, wf_events.SYSTEM_CTX) as session:
         from jbrain.analysis.device_binding import sweep_device_bindings
         from jbrain.analysis.geofence_projection import project_place_geofences
@@ -291,11 +294,11 @@ async def sweep_geofences(maker: async_sessionmaker[AsyncSession]) -> int:
                 latitude=fix.lat,
                 longitude=fix.lon,
             ):
-                pending.append((fix.sid, fix.pid, fix.captured_at, t))
+                pending.append((fix.sid, fix.captured_at, t))
 
     # Emit after the state writes commit, mirroring the inline path (state under the
-    # scoped session, the event under SYSTEM_CTX stamped with the device principal).
-    for sid, pid, captured_at, t in pending:
+    # scoped session, the event under SYSTEM_CTX, owner-stamped).
+    for sid, captured_at, t in pending:
         await wf_events.emit_event(
             maker,
             wf_events.SYSTEM_CTX,
@@ -308,6 +311,6 @@ async def sweep_geofences(maker: async_sessionmaker[AsyncSession]) -> int:
                 "transition": t["transition"],
                 "captured_at": captured_at.isoformat(),
             },
-            principal_id=pid,
+            principal_id=None,
         )
     return len(pending)

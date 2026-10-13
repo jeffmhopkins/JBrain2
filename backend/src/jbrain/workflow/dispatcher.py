@@ -133,6 +133,9 @@ class _CandidateEvent:
     payload: dict[str, Any]
     domain_code: str
     principal_id: str
+    # The stamp principal's `principals.kind`, joined at claim time ("" when the id
+    # names no principal) — what `authorize_domain` checks the stamp against.
+    principal_kind: str = ""
 
 
 @dataclass(frozen=True)
@@ -156,28 +159,30 @@ def event_matches(filter_: TriggerFilter, event_type: str, payload: dict[str, An
     return all(payload.get(k) == v for k, v in filter_.payload_equals.items())
 
 
-def authorize_domain(principal_id: str, domain_code: str) -> str | None:
+def authorize_domain(principal_id: str, domain_code: str, principal_kind: str) -> str | None:
     """The E1 domain-authorization check A3 deferred to this layer: validate the
     triggering principal is entitled to the event's domain before stamping a
     would-be job with it.
 
-    Returns None when authorized, or a fail-closed reason string. The check has two
-    teeth: the domain must be a real firewall domain (an unknown code can never be
-    entitled), and the (principal_id, domain_code) stamp must build a narrowed
-    `SessionContext` without raising — a malformed/partial stamp is a confused-deputy
-    smell that fails CLOSED (db.session.narrowed_context), never a silent widening to
-    the all-domains scope."""
+    Returns None when authorized, or a fail-closed reason string. Three teeth: the
+    domain must be a real firewall domain, the (principal_id, domain_code) stamp must
+    build a narrowed `SessionContext` without raising (a partial stamp is a
+    confused-deputy smell, db.session.narrowed_context), and the stamp's principal
+    must be the OWNER. `narrowed_context` runs a job with owner identity whoever the
+    stamp names, so only the owner is entitled to one: a device-, token- or
+    share-stamped event would otherwise launder that principal into an owner-narrowed
+    job (security round 2). Device-originated events are emitted owner-stamped
+    (locations/geofence.py), so none of them is lost to this."""
     if domain_code not in VALID_DOMAINS:
         return f"unknown domain {domain_code!r}"
     try:
-        # Building the narrowed context is the authorization: it is the exact scope
-        # a live enqueue would carry, and it raises on a malformed stamp. The single
-        # owner is entitled to every real domain, so a well-formed stamp authorizes;
-        # the narrowing is what a non-owner (Phase 7) scoped principal would be
-        # firewalled by. We construct it to PROVE it is constructible, fail-closed.
+        # Building the narrowed context PROVES the stamp is the exact, well-formed
+        # scope a live enqueue would carry; it raises on a malformed one.
         narrowed_context(principal_id, domain_code)
     except ScopeStampError as exc:
         return f"malformed scope stamp: {exc}"
+    if principal_kind != "owner":
+        return f"stamp principal is not the owner (kind {principal_kind or 'unknown'!r})"
     return None
 
 
@@ -557,7 +562,7 @@ async def resolve_event(
     event must not wedge the claim loop) but never enqueues."""
     # E1 authorization first: an event whose stamp is unentitled/malformed never
     # reaches a pipeline, fail-closed.
-    auth_error = authorize_domain(event.principal_id, event.domain_code)
+    auth_error = authorize_domain(event.principal_id, event.domain_code, event.principal_kind)
     if auth_error is not None:
         return ShadowDiff(event_id=event.id, event_type=event.type, matches=False, error=auth_error)
     triggers = await _matching_triggers(session, event)
@@ -595,12 +600,14 @@ async def _claim_event(session: AsyncSession) -> _CandidateEvent | None:
     row = (
         await session.execute(
             text(
-                "SELECT id::text AS id, type, payload::text AS payload,"
-                "       domain_code, principal_id::text AS principal_id"
-                " FROM app.events"
-                " WHERE dispatched_at IS NULL"
-                " ORDER BY occurred_at"
-                " FOR UPDATE SKIP LOCKED"
+                "SELECT e.id::text AS id, e.type, e.payload::text AS payload,"
+                "       e.domain_code, e.principal_id::text AS principal_id,"
+                "       coalesce(p.kind, '') AS principal_kind"
+                " FROM app.events e"
+                " LEFT JOIN app.principals p ON p.id = e.principal_id"
+                " WHERE e.dispatched_at IS NULL"
+                " ORDER BY e.occurred_at"
+                " FOR UPDATE OF e SKIP LOCKED"
                 " LIMIT 1"
             )
         )
@@ -613,6 +620,7 @@ async def _claim_event(session: AsyncSession) -> _CandidateEvent | None:
         payload=json.loads(row.payload),
         domain_code=row.domain_code,
         principal_id=row.principal_id,
+        principal_kind=row.principal_kind,
     )
 
 
