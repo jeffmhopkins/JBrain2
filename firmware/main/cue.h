@@ -69,6 +69,7 @@ typedef enum {
     CUE_POOP,       /* plop: a round note dropping fast, with a wobble as it lands */
     CUE_BRACE,      /* a nervous titter, three "hee"s going UP: he knows what is coming */
     CUE_TICKLED,    /* "hehehe": the laugh, short, held in — one of the four tickles */
+    CUE_MEGAFART,   /* one piece of the seven-second fart: each play is the next character */
 
     /* --- the interface, which is not an action ----------------------------------------- */
     CUE_BLIP,   /* a tap that resolved to nothing to do */

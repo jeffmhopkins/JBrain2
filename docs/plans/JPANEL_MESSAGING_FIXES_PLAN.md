@@ -2524,7 +2524,8 @@ in flight. Two faults the owner saw within the hour:
   requests, turned on only after speech has started (`firmware/README.md`).
 
 **0.4.12, a tickle that looks like a tickle.** Each tickle is its own squirm and "hehehe", not
-the poke giggle, and he waits visibly braced while the game is on (`firmware/README.md`).
+the poke giggle, and he waits visibly braced while the game is on. And one fart in ten is the
+long one: seven seconds of different rude noises back to back, with a cloud (`firmware/README.md`).
 
 **0.4.11, from the owner trying 0.4.10.** The meal is three bites of one of eight snacks, and the tickle's laugh is
 cheap enough to render that the squirming no longer freezes at each one. Three meals in a

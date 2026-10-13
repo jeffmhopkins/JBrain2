@@ -198,6 +198,15 @@ one of the poke pools' own reactions, with the poke's flinch and colour change. 
 flinches him nor changes his colour. And while he is warned and doing nothing else he holds the
 brace, hunched and shivering (`tickle_wait_p`), so the game is visibly on.
 
+**One fart in ten is the long one (0.4.12).** Owner: *"about a 1 in 10 chance that when he
+farts on command, that the fart lasts a good 7 seconds, and make sure the fart sounds funny."*
+A voice `fart` is `rig_fart_pick(esp_random())`: one time in ten it is `ACT_MEGAFART`, 7 s of
+him straining and wobbling, wide-eyed, as a cloud of gas piles up behind him (`EXTRA_GAS`). A
+cue cannot run past 0.8 s, so the noise is `CUE_MEGAFART` re-cued whenever the speaker is free
+(`rig_recue_continuous`) until the release at 0.93, each piece the next of eight characters —
+a rumble, a climb, a sputter, a squeaker, a wet one, a balloon, a putt-putt and a trumpet — so
+seven seconds of it never sounds like one tone looped. A poke cannot cut it off.
+
 **A different snack every time (0.4.11).** Owner: *"Kids are also requesting a random item to
 eat, maybe one out of eight possibilities."* `food_t`: a cookie, an apple, a banana, a slice of
 pizza, a donut, a carrot, a slice of watermelon or a strawberry, each a per-pixel shape in its

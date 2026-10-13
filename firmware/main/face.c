@@ -376,6 +376,23 @@ static void draw_puff(uint16_t *fb, int ax, int ay, float scale)
     fill_circle(fb, ax - (int)(24.0f * scale), ay + (int)(16.0f * scale), (int)(r * 0.6f), puff);
 }
 
+/* THE MEGA FART's clouds: a new one puffing out behind him every so often, swelling as it
+   drifts away and up, so the trail grows for as long as it goes on. `p` is the action's
+   progress. */
+static void draw_gas(uint16_t *fb, int ax, int ay, float scale, float p)
+{
+    const float every = 0.09f;
+    for (int k = 0; k < 6; k++) {
+        const float age = fmodf(p, every) + (float)k * every; /* 0 is the newest */
+        if (age > p) break;
+        const float t = age / (every * 6.0f);
+        const float grow = 0.6f + 1.1f * t;
+        const int x = ax - (int)lrintf(150.0f * t * scale);
+        const int y = ay - (int)lrintf((50.0f * t + 12.0f * sinf(age * 40.0f)) * scale);
+        draw_puff(fb, x, y, scale * grow * (1.0f - 0.35f * t));
+    }
+}
+
 /* The cheeks sit at +-(dx, dy) from the centre: along the head's own across, which is level
    only while the head is. */
 static void draw_blush(uint16_t *fb, int cx, int cy, int dx, int dy, float scale)
@@ -833,6 +850,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
 
     const int hy = oy + SY(HEAD_Y);
     if (st->fig.extra == EXTRA_PUFF) draw_puff(fb, ox - SX(96), oy + SY(104), s);
+    if (st->fig.extra == EXTRA_GAS) draw_gas(fb, ox - SX(96), oy + SY(104), s, st->fig.extra_p);
 
     /* Drawing order is the mock's: legs behind everything, arms behind the torso. */
     draw_limb(fb, ox - SX(34), oy + SY(HIP_Y), st->rig.leg_l, SY(LEG_L), SX(30), limb);
@@ -977,6 +995,7 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     /* Behind the bird and BELOW the plumes: the robot's anchor hung off the HEAD, so the
        offset that put its cloud by the hips put the ostrich's up at its midriff. */
     if (st->fig.extra == EXTRA_PUFF) draw_puff(fb, ox - SX(100), oy + SY(52), s);
+    if (st->fig.extra == EXTRA_GAS) draw_gas(fb, ox - SX(100), oy + SY(52), s, st->fig.extra_p);
 
     /* Tail plumes first, behind the body. They FLAP with the arm pose — a bird has no arms,
        so the rig's arm angle drives the one thing on a bird that answers to it.

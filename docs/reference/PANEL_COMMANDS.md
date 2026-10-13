@@ -19,7 +19,7 @@ of what it answers to, and only one of those is useful in a bedroom.
 
 | Phrase | Does |
 |---|---|
-| `fart` | the rude noise — five variants |
+| `fart` | the rude noise — five variants; one time in ten, a 7-second long one |
 | `jump` | jump |
 | `eat` | eat |
 | `kick` | kick |

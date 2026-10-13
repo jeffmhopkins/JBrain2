@@ -1051,7 +1051,9 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
        picking from the zone's pool cut the 4.8 s fit off after its first laugh (review). */
     CHECK(rig_holds_pokes(ACT_TICKLE), "a poke mid-fit only flinches");
     for (int a = ACT_NONE; a < ACT_COUNT; a++) {
-        if (a != ACT_TICKLE) CHECK(!rig_holds_pokes((action_t)a), "everything else gives way");
+        if (a != ACT_TICKLE && a != ACT_MEGAFART) {
+            CHECK(!rig_holds_pokes((action_t)a), "everything else gives way");
+        }
     }
     /* The warning holds for TICKLE_WAIT_MS, renewed by each tickle, then passes. */
     tickle_arm(&tk, 10000);
@@ -1126,6 +1128,59 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
         rig_figure(ACT_TICKLE, 0.9f, 1.0f, 0, 0.0f, &st.fig);
         face_draw(fb, 0, &st);
         CHECK(count_colour(mark) == 0, "and gone as he gets his breath back");
+    }
+}
+
+/* ONE FART IN TEN IS THE LONG ONE (owner: "about a 1 in 10 chance that when he farts on
+   command, that the fart lasts a good 7 seconds, and make sure the fart sounds funny"). */
+static void test_one_fart_in_ten_goes_on_for_seven_seconds(void)
+{
+    int mega = 0;
+    for (uint32_t r = 0; r < 10000; r++) {
+        const action_t a = rig_fart_pick(r * 2654435761u);
+        CHECK(a == ACT_FART || a == ACT_MEGAFART, "a fart is still a fart");
+        mega += a == ACT_MEGAFART;
+    }
+    CHECK(mega > 800 && mega < 1200, "about one in ten");
+    CHECK(rig_spec(ACT_MEGAFART)->dur_ms >= 7000, "a good seven seconds");
+    CHECK(cue_for_action(ACT_MEGAFART) == CUE_MEGAFART && CUE_MEGAFART != CUE_FART,
+          "with its own noise");
+
+    /* A cue tops out under a second, so seven seconds is the speaker kept busy: re-cued
+       whenever it is free, right up to the release, and nothing else is. */
+    CHECK(rig_recue_continuous(ACT_MEGAFART, 0.0f) && rig_recue_continuous(ACT_MEGAFART, 0.9f),
+          "kept going all the way through");
+    CHECK(!rig_recue_continuous(ACT_MEGAFART, 0.97f), "and lets the last one ring out");
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a == ACT_MEGAFART) continue;
+        CHECK(!rig_recue_continuous((action_t)a, 0.5f), "nothing else goes on and on");
+    }
+    CHECK(rig_holds_pokes(ACT_MEGAFART), "and a poke cannot cut him off mid-fart");
+
+    /* FUNNY is variety: each piece in a run is a different character, not one tone looped. */
+    static int16_t a[CUE_MAX_SAMPLES], b[CUE_MAX_SAMPLES];
+    int distinct = 0;
+    for (unsigned v = 0; v < 8; v++) {
+        const int na = cue_render(CUE_MEGAFART, a, CUE_RATE, 100, v);
+        const int nb = cue_render(CUE_MEGAFART, b, CUE_RATE, 100, v + 1);
+        CHECK(na > CUE_RATE / 4, "each piece is a proper length");
+        distinct += na != nb || memcmp(a, b, (size_t)na * sizeof a[0]) != 0;
+    }
+    CHECK(distinct == 8, "and the next piece always sounds different");
+
+    /* And the clouds pile up behind him while it lasts, on both forms. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        rig_for(ACT_MEGAFART, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_MEGAFART, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_GAS, "gas is the extra");
+        face_draw(fb, 0, &st);
+        const long with = count_colour(rgb565(0x8C, 0x9A, 0x8C));
+        st.fig.extra = EXTRA_NONE;
+        face_draw(fb, 0, &st);
+        CHECK(with > count_colour(rgb565(0x8C, 0x9A, 0x8C)) + 2000, "a cloud of it");
     }
 }
 
@@ -5123,6 +5178,7 @@ int main(void)
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
     test_a_meal_is_three_bites_of_a_cookie();
     test_a_snack_is_one_of_eight_and_never_the_same_twice();
+    test_one_fart_in_ten_goes_on_for_seven_seconds();
     test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();

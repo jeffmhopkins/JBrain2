@@ -37,6 +37,7 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_POOP] = {2600, FACE_SILLY, 0},
     [ACT_BRACE] = {1600, FACE_EXCITED, 0},
     [ACT_TICKLED] = {1100, FACE_HAPPY, 0},
+    [ACT_MEGAFART] = {7000, FACE_BEWILDERED, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -102,7 +103,27 @@ food_t food_pick(food_t prev, uint32_t rnd)
 
 bool rig_holds_pokes(action_t a)
 {
-    return a == ACT_TICKLE;
+    /* The fit is the payoff for five pokes; the seven seconds are the joke. */
+    return a == ACT_TICKLE || a == ACT_MEGAFART;
+}
+
+bool rig_recue_continuous(action_t a, float p)
+{
+    /* Not in the last moment: a piece started there would run on after he has finished. */
+    return a == ACT_MEGAFART && p < 0.93f;
+}
+
+action_t rig_fart_pick(uint32_t rnd)
+{
+    return rnd % 10u == 0u ? ACT_MEGAFART : ACT_FART;
+}
+
+/* THE MEGA FART's effort: up over the first moment, held, let go at the very end. */
+static float mega_amount(float p)
+{
+    if (p < 0.06f) return p / 0.06f;
+    if (p > 0.92f) return (1.0f - p) / 0.08f;
+    return 1.0f;
 }
 
 /* THE SQUAT: down over the first fifth, held while he strains and through the plop, up after.
@@ -309,6 +330,14 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         out->tail += sinf(p * (float)M_PI * 20.0f) * 14.0f * mag;
         break;
     }
+    case ACT_MEGAFART: {
+        /* Head back, tail up and shaking with it, the whole bird rumbling. */
+        const float k = mega_amount(p) * mag;
+        out->neck -= 18.0f * k + sinf(p * (float)M_PI * 90.0f) * 4.0f * k;
+        out->tail += 30.0f * k + sinf(p * (float)M_PI * 120.0f) * 10.0f * k;
+        out->bob += sinf(p * (float)M_PI * 70.0f) * 3.0f * k;
+        break;
+    }
     case ACT_BRACE:
         /* UH-OH: head pulled down into the shoulders, a nervous shiver, tail tucked. */
         out->bob += squat_amount(p) * 10.0f;
@@ -469,6 +498,15 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
         out->arm_r = -120.0f + q * 12.0f;
         break;
     }
+    case ACT_MEGAFART: {
+        /* The fart's own pose — arms out, a leg up — held for seven seconds, trembling. */
+        const float k = mega_amount(p);
+        const float j = sinf(p * (float)M_PI * 110.0f) * 4.0f * k;
+        out->arm_l = 12.0f + 83.0f * k + j;
+        out->arm_r = -out->arm_l;
+        out->leg_l = 4.0f + 22.0f * k;
+        break;
+    }
     case ACT_BRACE: {
         /* HUNCHED: arms pulled in to guard his sides, knees together. */
         const float k = squat_amount(p);
@@ -625,6 +663,15 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
             out->tilt += sinf(p * (float)M_PI * 8.0f) * 7.0f * mag;
             out->extra = EXTRA_HEARTS;
             break;
+        case ACT_MEGAFART: {
+            /* RUMBLING: a fast shake of the whole figure, eyes wide, the clouds coming. */
+            const float k = mega_amount(p) * mag;
+            out->ox += sinf(p * (float)M_PI * 130.0f) * 3.0f * k;
+            out->oy += sinf(p * (float)M_PI * 96.0f) * 2.0f * k;
+            out->tilt -= 6.0f * k;
+            out->extra = EXTRA_GAS;
+            break;
+        }
         case ACT_BRACE:
             /* Shrinking down and leaning away from the hand that is coming, shivering. */
             out->sy -= squat_amount(p) * 0.06f;

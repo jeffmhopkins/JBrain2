@@ -124,6 +124,13 @@ check(ate.length === 3 && ate[0] !== ate[1] && ate[1] !== ate[2], 'a different s
 check(after.some((e) => e.includes('plop')) && after.some((e) => e.includes('cue POOP')),
   'and he poops, with a plop');
 
+// The one-in-ten fart: seven seconds of it, a new piece the moment the last one ends.
+const farted = events.length;
+p.set(KNOB.PET_ACT, 6);
+p.advance(7300);
+const pieces = events.slice(farted).filter((e) => e.includes('cue MEGAFART'));
+check(pieces.length >= 8, `seven seconds of fart, back to back (${pieces.length} pieces)`);
+
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);
 p.advance(200);

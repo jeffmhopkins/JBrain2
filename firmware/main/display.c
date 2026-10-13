@@ -2015,6 +2015,8 @@ static void face_task(void *arg)
                     /* ASKING FOR A THING SOUNDS LIKE THE THING: the acknowledgement IS the
                        action's cue, not a bleep followed by one. */
                     action = (action_t)v->arg;
+                    /* One "fart" in ten is the seven-second one (`rig_fart_pick`). */
+                    if (action == ACT_FART) action = rig_fart_pick(esp_random());
                     action_mag = 1.0f;
                     action_start = now;
                     heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
@@ -2479,7 +2481,8 @@ static void face_task(void *arg)
                 recue_from = action_start;
                 recue_p = 0.0f;
             }
-            if (action != ACT_NONE && rig_recue(action, recue_p, p) && sound &&
+            if (action != ACT_NONE &&
+                (rig_recue(action, recue_p, p) || rig_recue_continuous(action, p)) && sound &&
                 view->mode == SM_PET && !facts.speaker_busy) {
                 stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
             }

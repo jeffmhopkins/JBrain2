@@ -476,6 +476,8 @@ static void frame(void)
         say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
                          : r_action == ACT_LOVE ? "heard \"i love you\""
                          : r_action == ACT_EAT  ? "heard \"have a snack\""
+                         : r_action == ACT_FART ? "heard \"fart\": a short one"
+                         : r_action == ACT_MEGAFART ? "heard \"fart\": THE LONG ONE"
                                                 : "heard \"im going to tickle you\"");
     }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
@@ -550,8 +552,9 @@ static void frame(void)
         r_recue_from = r_action_at;
         r_recue_p = 0.0f;
     }
-    if (r_action != ACT_NONE && rig_recue(r_action, r_recue_p, p) && view->mode == SM_PET &&
-        !facts.speaker_busy) {
+    if (r_action != ACT_NONE &&
+        (rig_recue(r_action, r_recue_p, p) || rig_recue_continuous(r_action, p)) &&
+        view->mode == SM_PET && !facts.speaker_busy) {
         const cue_t c = cue_for_action((int)r_action);
         (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
         say("cue", "%s (press slot, again)", cue_name(c));
@@ -708,6 +711,13 @@ EXPORT(sim_message) void sim_message(int from_dad, int ms)
 }
 
 /* The box's knobs. */
+/* A random number for the bench's 1-in-10 fart, from the panel clock: the bench has no RNG,
+   and a fixed sequence would make "Fart" always the same one. */
+static uint32_t r_now_rnd(void)
+{
+    return (g_now / 40u) * 2654435761u >> 7;
+}
+
 EXPORT(sim_set) void sim_set(int knob, int value)
 {
     switch (knob) {
@@ -735,6 +745,8 @@ EXPORT(sim_set) void sim_set(int knob, int value)
                         : value == 2 ? ACT_LOVE
                         : value == 3 ? ACT_BRACE
                         : value == 4 ? ACT_EAT
+                        : value == 5 ? rig_fart_pick(r_now_rnd())
+                        : value == 6 ? ACT_MEGAFART
                                      : ACT_NONE;
         break;
     }
