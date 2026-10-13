@@ -427,48 +427,226 @@ static void draw_star(uint16_t *fb, int cx, int cy, int r, uint16_t c)
  *
  * HEARTS (love): twelve, rising from beside the head in turn, swaying as they go and shrinking
  * away at the top rather than vanishing. */
-/* THE COOKIE, with `bites` bites gone out of it. Per pixel over its box: in the disc and in
+/* THE FOOD'S OWN PIXEL: whether (u, v) — the food's radius is 1, y down — is food, and which
+ * colour. Eight simple shapes a four-year-old names at a glance, each in its own colours so
+ * that two meals running look different from across a room. Bites are cut out afterwards,
+ * the same way for all of them. */
+static bool food_px(food_t f, float u, float v, int dx, int dy, uint16_t *c)
+{
+    switch (f) {
+    case FOOD_APPLE: {
+        if (fabsf(u - 0.04f) < 0.07f && v > -1.05f && v < -0.62f) { /* the stem */
+            *c = rgb(0x6B, 0x42, 0x20);
+            return true;
+        }
+        const float lu = (u - 0.27f) / 0.24f, lv = (v + 0.84f) / 0.11f; /* the leaf */
+        if (lu * lu + lv * lv <= 1.0f) {
+            *c = rgb(0x4C, 0xB0, 0x40);
+            return true;
+        }
+        const float au = u / 0.95f, av = (v - 0.1f) / 0.9f;
+        if (au * au + av * av > 1.0f || (v < -0.62f && fabsf(u) < 0.16f)) return false;
+        const float hu = u + 0.42f, hv = v + 0.25f;
+        *c = hu * hu + hv * hv < 0.03f ? rgb(0xFF, 0x9A, 0x8A) : rgb(0xE0, 0x30, 0x30);
+        return true;
+    }
+    case FOOD_BANANA: {
+        const float d = sqrtf(u * u + (v + 1.3f) * (v + 1.3f));
+        if (d < 1.38f || d > 2.05f || fabsf(u) > 0.98f) return false;
+        *c = fabsf(u) > 0.86f ? rgb(0x6B, 0x4A, 0x20)
+             : d > 1.92f      ? rgb(0xD8, 0xA8, 0x20)
+                              : rgb(0xF5, 0xD0, 0x40);
+        return true;
+    }
+    case FOOD_PIZZA: {
+        if (v < -0.9f || v > 0.95f) return false;
+        if (fabsf(u) > 0.92f * (0.95f - v) / 1.85f) return false;
+        if (v < -0.64f) {
+            *c = rgb(0xD9, 0x9A, 0x4E); /* the crust */
+            return true;
+        }
+        static const float PEP[3][2] = {{-0.26f, -0.3f}, {0.26f, -0.28f}, {0.0f, 0.22f}};
+        for (int i = 0; i < 3; i++) {
+            const float pu = u - PEP[i][0], pv = v - PEP[i][1];
+            if (pu * pu + pv * pv < 0.026f) {
+                *c = rgb(0xC0, 0x2A, 0x2A);
+                return true;
+            }
+        }
+        *c = rgb(0xF6, 0xC6, 0x45);
+        return true;
+    }
+    case FOOD_DONUT: {
+        const float d = sqrtf(u * u + v * v);
+        if (d > 1.0f || d < 0.34f) return false;
+        const float wav = 0.05f * sinf(atan2f(v, u) * 9.0f);
+        if (d > 0.42f && d < 0.9f + wav) {
+            const int sp = (dx * 13 + dy * 7 + 600) % 41;
+            *c = sp == 0   ? rgb(0x4A, 0xA8, 0xF0)
+                 : sp == 9 ? rgb(0xF6, 0xE0, 0x40)
+                 : sp == 20 ? rgb(0xFF, 0xFF, 0xFF)
+                            : rgb(0xF0, 0x7C, 0xB0);
+        } else {
+            *c = rgb(0xD9, 0x9A, 0x5B);
+        }
+        return true;
+    }
+    case FOOD_CARROT: {
+        if (v < -0.55f) { /* three blades of top */
+            if (v < -1.02f) return false;
+            const float t = (v + 1.02f) / 0.47f;
+            for (int k = -1; k <= 1; k++) {
+                if (fabsf(u - (float)k * 0.22f * (1.0f - t)) < 0.07f + 0.04f * t) {
+                    *c = rgb(0x4C, 0xB0, 0x40);
+                    return true;
+                }
+            }
+            return false;
+        }
+        if (v > 1.0f || fabsf(u) > 0.44f * (1.0f - v) / 1.55f) return false;
+        *c = fmodf((v + 2.0f) * 6.0f, 1.0f) < 0.14f ? rgb(0xC8, 0x60, 0x10)
+                                                    : rgb(0xF0, 0x86, 0x1E);
+        return true;
+    }
+    case FOOD_WATERMELON: {
+        const float vv = v + 0.3f, d = sqrtf(u * u + vv * vv);
+        if (vv < 0.0f || d > 1.0f) return false;
+        if (d > 0.86f) {
+            *c = rgb(0x2E, 0x8B, 0x3A);
+        } else if (d > 0.78f) {
+            *c = rgb(0xD8, 0xF0, 0xB0);
+        } else {
+            static const float SEED[4][2] = {{-0.35f, 0.15f}, {0.0f, 0.3f}, {0.35f, 0.15f},
+                                             {0.0f, 0.02f}};
+            *c = rgb(0xF0, 0x4A, 0x5A);
+            for (int i = 0; i < 4; i++) {
+                const float su = (u - SEED[i][0]) / 0.06f, sv = (v - SEED[i][1]) / 0.1f;
+                if (su * su + sv * sv <= 1.0f) *c = rgb(0x22, 0x18, 0x18);
+            }
+        }
+        return true;
+    }
+    case FOOD_STRAWBERRY: {
+        if (v < -0.55f) { /* the leaves: a jagged crown */
+            if (v < -0.9f || fabsf(u) > 0.62f) return false;
+            if (v < -0.9f + 0.3f * fabsf(sinf(u * 9.0f))) return false;
+            *c = rgb(0x4C, 0xB0, 0x40);
+            return true;
+        }
+        const float bv = v + 0.12f;
+        const bool top = u * u + bv * bv <= 0.56f;
+        const bool tip = v > -0.12f && v < 1.0f && fabsf(u) < 0.75f * (1.0f - v) / 1.12f;
+        if (!top && !tip) return false;
+        *c = (dx * 11 + dy * 17 + 900) % 37 == 0 ? rgb(0xF6, 0xE0, 0x6A) : rgb(0xE8, 0x2E, 0x3C);
+        return true;
+    }
+    case FOOD_COOKIE:
+    default: {
+        if (u * u + v * v > 1.0f) return false;
+        /* Chips: a fixed scatter, so they are eaten with the dough rather than moving. */
+        const bool chip = ((dx * 7 + dy * 13 + 400) % 23 == 0) ||
+                          ((dx * 11 - dy * 5 + 400) % 29 == 0);
+        *c = chip ? rgb(0x5A, 0x34, 0x1C) : rgb(0xD9, 0xA0, 0x5B);
+        return true;
+    }
+    }
+}
+
+/* Its crumbs are the colour you would remember it by. */
+static uint16_t food_crumb(food_t f)
+{
+    static const uint32_t CRUMB[FOOD_COUNT] = {0xD9A05B, 0xE03030, 0xF5D040, 0xF6C645,
+                                               0xF07CB0, 0xF0861E, 0xF04A5A, 0xE82E3C};
+    const uint32_t h = CRUMB[(unsigned)f < (unsigned)FOOD_COUNT ? f : 0];
+    return rgb((uint8_t)(h >> 16), (uint8_t)(h >> 8), (uint8_t)h);
+}
+
+/* THE MEAL, with `bites` bites gone out of it. Per pixel over its box: food (`food_px`) and in
  * none of the bites. Bites are taken from the side facing the eater (`toward`, radians, y
- * down), each one further round, so it is eaten down to nothing; the fifth finishes it. Crumbs
+ * down), each one further round, so it is eaten down to nothing; the last finishes it. Crumbs
  * fall from the bite for a moment after each (`since`, a fraction of a bite's time). */
-static void draw_food(uint16_t *fb, int cx, int cy, float s, int bites, float since,
+static void draw_food(uint16_t *fb, food_t f, int cx, int cy, float s, int bites, float since,
                       float toward)
 {
-    const uint16_t dough = rgb(0xD9, 0xA0, 0x5B), chip = rgb(0x5A, 0x34, 0x1C);
-    const float r = 24.0f * s, br = 0.62f * r;
-    static const float ROUND[EAT_BITES] = {0.0f, 0.75f, -0.75f, 1.5f, -1.5f};
+    /* Three bites big enough that the third finishes it: each one is most of a third. */
+    const float r = 24.0f * s, br = 0.8f * r;
+    static const float ROUND[EAT_BITES] = {0.0f, 0.9f, -0.9f};
     if (bites < EAT_BITES) {
         float bx[EAT_BITES], by[EAT_BITES];
         for (int k = 0; k < bites; k++) {
             bx[k] = cosf(toward + ROUND[k]) * r;
             by[k] = sinf(toward + ROUND[k]) * r;
         }
-        const int ir = (int)r + 1;
+        const int ir = (int)(r * 1.1f) + 1;
         for (int dy = -ir; dy <= ir; dy++) {
             for (int dx = -ir; dx <= ir; dx++) {
                 const float fx = (float)dx, fy = (float)dy;
-                if (fx * fx + fy * fy > r * r) continue;
+                uint16_t c;
+                if (!food_px(f, fx / r, fy / r, dx, dy, &c)) continue;
                 bool gone = false;
                 for (int k = 0; k < bites && !gone; k++) {
                     const float ex = fx - bx[k], ey = fy - by[k];
                     gone = ex * ex + ey * ey <= br * br;
                 }
-                if (gone) continue;
-                /* Chips: a fixed scatter, so they are eaten with the dough rather than moving. */
-                const bool c = ((dx * 7 + dy * 13 + 400) % 23 == 0) ||
-                               ((dx * 11 - dy * 5 + 400) % 29 == 0);
-                px(fb, cx + dx, cy + dy, c ? chip : dough);
+                if (!gone) px(fb, cx + dx, cy + dy, c);
             }
         }
     }
     if (since >= 0.0f && since < 0.5f) {
         const float t = since / 0.5f;
+        const uint16_t crumb = food_crumb(f);
         for (int k = 0; k < 4; k++) {
             const float a = toward + ROUND[(bites - 1 + EAT_BITES) % EAT_BITES] +
                             ((float)k - 1.5f) * 0.5f;
             const int x = cx + (int)lrintf(cosf(a) * r + ((float)k - 1.5f) * 9.0f * s * t);
             const int y = cy + (int)lrintf(sinf(a) * r + 70.0f * s * t * t);
-            fill_circle(fb, x, y, (int)lrintf(3.0f * s), dough);
+            fill_circle(fb, x, y, (int)lrintf(3.0f * s), crumb);
+        }
+    }
+}
+
+/* THE POOP: the swirl every child draws — three tiers and a curl on top — with a face, because
+ * a four-year-old will want it to have one, and stink lines drifting up off it. `cx` is its
+ * centre, `floor` the floor it sits on, `k` its size (it plops in and shrinks away). */
+static void draw_poop(uint16_t *fb, int cx, int floor, float s, float k, float t)
+{
+    if (k <= 0.01f) return;
+    const uint16_t brown = rgb(0x8A, 0x55, 0x2B), shine = rgb(0xB0, 0x76, 0x44);
+    const uint16_t white = rgb(0xF6, 0xF9, 0xFC), ink = rgb(0x1E, 0x12, 0x08);
+    const float u = s * k;
+    static const struct {
+        int w, h, y;
+    } TIER[] = {{58, 20, 0}, {44, 18, 15}, {30, 16, 28}};
+    for (unsigned i = 0; i < sizeof(TIER) / sizeof(TIER[0]); i++) {
+        const int w = (int)lrintf((float)TIER[i].w * u), h = (int)lrintf((float)TIER[i].h * u);
+        const int y = floor - (int)lrintf((float)TIER[i].y * u) - h;
+        fill_round_rect(fb, cx - w / 2, y, w, h, h / 2, brown);
+        fill_round_rect(fb, cx - w / 2 + w / 5, y + h / 5, w / 4, h / 4 + 1, h / 8 + 1, shine);
+    }
+    fill_circle(fb, cx + (int)lrintf(5.0f * u), floor - (int)lrintf(48.0f * u),
+                (int)lrintf(6.0f * u), brown);
+    /* The face, on the middle tier. */
+    const int ey = floor - (int)lrintf(24.0f * u);
+    for (int side = -1; side <= 1; side += 2) {
+        const int ex = cx + side * (int)lrintf(9.0f * u);
+        fill_circle(fb, ex, ey, (int)lrintf(4.5f * u), white);
+        fill_circle(fb, ex + (int)lrintf(1.0f * u), ey + (int)lrintf(1.0f * u),
+                    (int)lrintf(2.2f * u), ink);
+    }
+    arc_stroke(fb, cx, ey + (int)lrintf(1.0f * u), (int)lrintf(8.0f * u), (float)M_PI * 0.2f,
+               (float)M_PI * 0.8f, (int)lrintf(3.0f * u) + 1, ink);
+    /* Stink: three wavy lines rising and fading, each on its own clock. */
+    if (k < 0.99f) return;
+    const uint16_t stink = rgb(0x9C, 0xC8, 0x6A);
+    for (int j = 0; j < 3; j++) {
+        const float life = fmodf(t * 0.8f + (float)j / 3.0f, 1.0f);
+        const int bx = cx + (j - 1) * (int)lrintf(16.0f * s);
+        for (int d = 0; d < 8; d++) {
+            const float q = life + (float)d * 0.035f;
+            if (q > 1.0f) break;
+            const int x = bx + (int)lrintf(sinf(q * 12.0f + (float)j) * 5.0f * s);
+            const int y = floor - (int)lrintf((60.0f + q * 70.0f) * s);
+            fill_circle(fb, x, y, (int)lrintf(2.5f * s * (1.0f - q)) + 1, stink);
         }
     }
 }
@@ -756,7 +934,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
         const int fx1 = ox + tilt + SX(58), fy1 = hy + SY(34);
         float since;
         const int bites = rig_eat_bites(st->fig.extra_p, &since);
-        draw_food(fb, LERPI(fx0, fx1, r), LERPI(fy0, fy1, r), s, bites, since,
+        draw_food(fb, st->food, LERPI(fx0, fx1, r), LERPI(fy0, fy1, r), s, bites, since,
                   (float)M_PI * 1.1f);
     }
     draw_overhead(fb, st, ox + tilt, hy - SY(HH), SX(HW), s);
@@ -862,7 +1040,7 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     if (st->fig.extra == EXTRA_FOOD) {
         float since;
         const int bites = rig_eat_bites(st->fig.extra_p, &since);
-        draw_food(fb, ox + SX(26), oy + SY(30), s, bites, since, -(float)M_PI * 0.5f);
+        draw_food(fb, st->food, ox + SX(26), oy + SY(30), s, bites, since, -(float)M_PI * 0.5f);
     }
 
     /* Neck: segments narrowing toward the head, leaning forward for life. Each segment
@@ -960,6 +1138,8 @@ void face_rest(face_state_t *st)
     st->bob = 0;
     st->lean = 0;
     st->upright = 0.0f;
+    st->poop_x = st->poop_size = st->poop_t = 0.0f;
+    st->food = FOOD_COOKIE;
     st->talk = 0.0f;
     st->open = 1.0f;
     st->startle = 0.0f;
@@ -1005,6 +1185,15 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
     /* Black, not dark grey: on an AMOLED an unlit pixel is OFF, which is why the mock's
        field is #000 and why the figure reads as emitting rather than as a picture. */
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+    /* THE POOP, behind him on the floor his feet are on: where the feet are at rest, so a jump
+       or a squat does not lift the floor with him. */
+    if (st->poop_size > 0.0f) {
+        const int base = s_fit_oy >= 0 ? s_fit_oy : OY;
+        const int floor = base + (int)lrintf((st->form == FORM_ROBOT ? 166.0f : 184.0f) * s_fit);
+        draw_poop(fb, OX + (int)lrintf(st->poop_x * s_fit), floor, s_fit * 1.3f, st->poop_size,
+                  st->poop_t);
+    }
 
     if (st->form == FORM_ROBOT) {
         draw_robot(fb, hex, st, ox, oy, sx, sy, s, tilt);

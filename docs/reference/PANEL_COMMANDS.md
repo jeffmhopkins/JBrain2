@@ -139,9 +139,15 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
 `wake up now` `do a burp` `make a rude noise` `can you burp` `can you fart` `do a big jump`
 `have a snack` `give it a kick` `do a spin`
 · **love** (0.4.7; 5.6 s since 0.4.10): `i love you` `love you` — hearts float up and he coos
-· **tickle** (0.4.10): `tickle tickle` `tickle me` — he squirms and laughs, three times over
-· **eat** (`eat`, `have a snack`): since 0.4.10 five bites of a cookie over 4.8 s,
-  a crunch on each bite, chewing between
+· **tickle** (0.4.11): `im going to tickle you` `gonna tickle you` — a warning, not a tickle: he
+  braces with a nervous titter, and for 10 s after (renewed by each one) a poke is a tickle. Four
+  get a giggle; the fifth sets off the laughing fit (squirming, laughing three times over).
+  0.4.10's `tickle tickle` / `tickle me` are gone
+· **eat** (`eat`, `have a snack`): since 0.4.11 three bites over 2.9 s of one of eight snacks
+  (cookie, apple, banana, pizza, donut, carrot, watermelon, strawberry; never the same twice running),
+  a crunch on each bite, chewing between. **Three meals inside a minute** and, once he is
+  free, he squats, strains and a poop plops out behind him (0.4.11): it stays on the floor for
+  20 s and slides downhill as the panel is tilted
 
 **Not a phrase: shaking the panel** (0.4.7). Four hard jerks inside a second and a half
 (`screen_shaken`) and he sits down hard, dazed, shaking his head with stars going round, and

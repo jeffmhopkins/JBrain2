@@ -66,6 +66,8 @@ typedef enum {
     CUE_DIZZY,      /* a slow warble sliding down an octave — the room going round */
     CUE_LOVE,       /* THE COO, twice, the second higher: the happiest thing it says */
     CUE_TICKLE,     /* a laugh: a run of breathy "ha"s tumbling down — said three times a tickle */
+    CUE_POOP,       /* plop: a round note dropping fast, with a wobble as it lands */
+    CUE_BRACE,      /* a nervous titter, three "hee"s going UP: he knows what is coming */
 
     /* --- the interface, which is not an action ----------------------------------------- */
     CUE_BLIP,   /* a tap that resolved to nothing to do */

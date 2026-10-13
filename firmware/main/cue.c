@@ -309,6 +309,12 @@ static const cue_def_t DEF[CUE_COUNT] = {
        laughter is a run of separate breathy syllables whose pitch tumbles DOWN as the breath
        runs out. Seven "ha"s in 740 ms (the most a cue can be once the variant stretches it). */
     [CUE_TICKLE] = {SH_LAUGH, 740, 620.0f, 0.0f, 7.0f, 7.0f, {END}, 4, 0},
+    /* PLOP: a short flat hold, then down most of two octaves, wobbling on the way — the sweep's
+       boing run backwards. Played as it lands, not as he squats (`rig_cue_on_start`). */
+    [CUE_POOP] = {SH_SWEEP, 300, 640.0f, 0.5f, -1.7f, 25.0f, {END}, 2, 30},
+    /* UH-OH: the laugh's shape run the other way, three short "hee"s climbing a fourth, higher
+       and quicker than the real thing. Anticipation rises; release (CUE_TICKLE) falls. */
+    [CUE_BRACE] = {SH_LAUGH, 460, 900.0f, 0.0f, 3.0f, -5.0f, {END}, 4, 0},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -425,6 +431,8 @@ cue_t cue_for_action(int action)
     case ACT_DIZZY:  return CUE_DIZZY;
     case ACT_LOVE:   return CUE_LOVE;
     case ACT_TICKLE: return CUE_TICKLE;
+    case ACT_POOP:   return CUE_POOP;
+    case ACT_BRACE:  return CUE_BRACE;
     default:         return CUE_BLIP;
     }
 }
@@ -611,7 +619,14 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
                                                                  : 0.0f;
             const float hz = semi(base, -d->b * k / (d->a - 1.0f)) * (1.0f - 0.06f * w);
             const float ph = step_osc(&a, hz, rate);
-            const float voice = 0.7f * triangle(ph, hz) + 0.3f * pulse(ph, 0.3f, hz);
+            /* NO HARMONIC SUMS: a triangle and a sawtooth straight off the phase. The laugh is
+               the longest cue, it is rendered on the render task, and it was summing a
+               band-limited triangle AND pulse per sample — the costliest cue in the table, and
+               the squirming froze for a moment at every laugh (owner, 0.4.11). A triangle's
+               partials fall as 1/n^2, so the naive one's folding is far under the breath at
+               these pitches; the soft saw is the buzz. */
+            const float ramp = ph / (float)M_PI - 1.0f; /* -1..1 */
+            const float voice = 0.75f * (1.0f - 2.0f * fabsf(ramp)) + 0.18f * ramp;
             const float breath = noise_next(&nz, 5200.0f * vary, rate) * (w < 0.2f ? 0.55f : 0.2f);
             e.hold_ms = dur * 0.8f;
             e.decay_ms = dur * 0.2f - (float)d->attack_ms;
