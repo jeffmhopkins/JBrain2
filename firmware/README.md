@@ -252,6 +252,17 @@ lids — and the beak, its line and the cheeks turn about the head's centre with
 along the head's own down. Upright the drawing is unchanged, pixel for pixel; the host test
 turns the upright face and requires the turned one to match it.
 
+**0.4.9: the play button rings with how much has been heard.** While a message plays, a ring
+round the play/pause button fills clockwise from twelve o'clock (owner: *"a little circle border
+that progresses to show how far it is until it's all the way complete"*). The whole track shows
+from the first moment in grey, so how much is left is visible, and a paused message keeps its
+ring where it got to. The panel streams a message and never holds all of it, so the length comes
+from the box: `X-Jpanel-Duration-Ms` on `/next` and on a replay's `/message/{id}/pcm`, which the
+engine publishes with the stream (`jp_cur_t.duration_ms`) and the machine turns into
+`sm_view_t.progress` from the arbiter's audible ms. A box that sends no length draws no ring.
+The same header switches on the engine's existing "80% of a short one" heard rule, which was
+written for it and had been waiting on the box to send it.
+
 ## One task owns the codec, one owns the panel
 
 `audio.c` runs its own task and performs **every** codec operation. `audio_beep()` and

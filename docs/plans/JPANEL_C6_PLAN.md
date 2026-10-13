@@ -427,6 +427,14 @@ their own post only through `jpanel.py`'s panel routes. Everything runs on owner
 the thread is the rows she sent him and he sent her, never twin-to-twin post; `jpanel_message`
 carries no health, finance or location domain. No new table or policy, so no migration.
 
+**The level.** No panel auto-gains its microphone (the twins' codec AGC is off, and this
+panel's gain sits at 24 dB so a close talk to Jerv does not clip), so a message said at arm's
+length used to play back as quiet as it was recorded (owner, 2026-10-13: *"it seems really under
+gain"*). Every voice message is now evened out as it is filed, in both directions:
+`jpanel._level_voice` raises the voiced frames to about −20 dBFS, at most +18 dB, never turns one
+down, and soft-limits the peaks below full scale. The stored blob is the levelled one, so the
+twin's panel, the desk panel and the PWA all play the same thing.
+
 **The signal** rides the debug pickup the panel already makes every ~3 s: for a gated panel,
 `GET /endpoint/debug/next` carries `X-Jpanel-Post`, eight hex of a hash over the owner's post (count,
 newest filed, newest played, unplayed). The panel fetches both threads when it moves, so a twin's

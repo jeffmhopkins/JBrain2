@@ -210,6 +210,9 @@ typedef struct {
     jp_who_t face;        /* sm_face: the top-left face, and who REPLY addresses (I2) */
     int sel_n, sel_m;     /* the n/m numeral */
     bool run_bar, transport, paused, playing_glyph;
+    /* How much of the message playing has been heard, 0..1000, for the ring round the play
+       button; -1 draws no ring (nothing playing, or a box that does not say how long it is). */
+    int progress;
     /* REPLY is drawn and pressable: always on the again/reply pair, and in PLAY only while the
        message is paused (0.4.2, owner: a reply starts from a message that has stopped talking,
        paused or finished, never from one still talking). */

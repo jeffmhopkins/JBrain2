@@ -23,8 +23,10 @@ only way to find out whether they do.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import hashlib
+import math
 import string
 import time
 import uuid
@@ -428,6 +430,9 @@ async def send(
     if not audio:
         # Silence is not an error; it is a child who pressed and said nothing.
         raise HTTPException(status_code=400, detail="nothing said")
+    # The twins' panels run a fixed microphone gain too, so a message said from across the
+    # room is evened out the same way Dad's are.
+    audio = await asyncio.to_thread(_level_voice, audio)
     duration_ms = len(audio) * 1000 // (PANEL_RATE * 2)
 
     settings = cast(Settings, request.app.state.settings)
@@ -770,6 +775,7 @@ async def next_message(principal: PanelDep, request: Request, at: int = 0) -> Re
             # acknowledge what it could not verify, which leaves the message unplayed and the
             # pop-up standing.
             "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+            "X-Jpanel-Duration-Ms": _duration_ms(body),
         },
     )
 
@@ -815,6 +821,13 @@ async def message_pcm(message_id: str, principal: PanelDep, request: Request) ->
     return await pcm_reply(request, str(row[0]), message_id)
 
 
+def _duration_ms(body: bytes) -> str:
+    """How long `body` plays, for the ring that fills round the panel's play button as a message
+    plays. The panel streams the audio and never holds all of it, so it cannot measure this
+    itself."""
+    return str(len(body) * 1000 // (PANEL_RATE * 2))
+
+
 async def pcm_reply(request: Request, blob_sha: str, message_id: str) -> Response:
     """A stored message as the panels play it: 16 kHz mono s16, with the digest the panel checks
     as it plays. One body for a twin's replay and the desk panel's play, so both hear exactly
@@ -828,6 +841,7 @@ async def pcm_reply(request: Request, blob_sha: str, message_id: str) -> Respons
         headers={
             "X-Jpanel-Id": message_id,
             "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+            "X-Jpanel-Duration-Ms": _duration_ms(body),
         },
     )
 
@@ -1504,6 +1518,59 @@ async def send_audio(
     return await file_owner_voice(request, ctx_for(owner), audio[:MAX_MESSAGE_BYTES], to_device)
 
 
+# THE LEVEL A MESSAGE IS FILED AT, in both directions. No panel auto-gains its microphone: the
+# twins' run a fixed PGA with the codec's AGC off (`endpoint.mic_agc`), and the desk panel's is
+# set low on purpose — a talk to Jerv held close peaked within 2 dB of clipping at 30 dB, so
+# 0.0.11 settled on 24, and a message said at arm's length then played back as quiet as it was
+# recorded (*"it seems really under gain"*, owner, 2026-10-13). So the box evens it out: the
+# voiced part is raised to a comfortable speech level, never by more than 18 dB (past that it is
+# the room being amplified, not a voice), never turned down (a phone's own AGC already got it
+# right), and its peaks are rounded off below full scale rather than clipped.
+_LEVEL_TARGET_RMS = 3300  # about -20 dBFS over the voiced frames
+_LEVEL_MAX_GAIN = 8.0  # +18 dB
+_LEVEL_KNEE = 0.7  # of full scale, where the soft limit begins
+
+
+def _level_voice(pcm: bytes) -> bytes:
+    """`pcm` (16 kHz mono s16) with its voiced part at a steady speech level; unchanged when it
+    is already there or there is nothing voiced to measure."""
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) - len(pcm) % 2])
+    frame = PANEL_RATE // 50
+    energies = [
+        sum(x * x for x in samples[i : i + frame]) / frame
+        for i in range(0, len(samples) - frame + 1, frame)
+    ]
+    if not energies:
+        return pcm
+    # Voiced: within 20 dB of the 95th-percentile frame, so the pauses between words do not
+    # drag the measure down. The reference is a percentile and the voiced frames are capped at
+    # it, because one bump, cough or click at the microphone must not stand in for the voice
+    # and switch the levelling off for the whole message (review of #1735).
+    # Over the frames with any sound at all: a long hold that is mostly digital silence between
+    # two sentences would otherwise put the percentile on a zero.
+    heard = sorted(e for e in energies if e > 0)
+    if not heard:
+        return pcm
+    ref = heard[(len(heard) - 1) * 95 // 100]
+    voiced = [min(e, ref) for e in heard if e >= ref / 100]
+    rms = math.sqrt(sum(voiced) / len(voiced))
+    gain = min(_LEVEL_MAX_GAIN, _LEVEL_TARGET_RMS / rms)
+    if gain <= 1.05:
+        return pcm
+    knee = _LEVEL_KNEE * 32767
+    room = 32767 - knee
+    out = array.array("h", bytes(len(samples) * 2))
+    for i, x in enumerate(samples):
+        y = x * gain
+        mag = abs(y)
+        if mag > knee:
+            mag = knee + room * math.tanh((mag - knee) / room)
+            y = math.copysign(mag, y)
+        out[i] = int(y)
+    return out.tobytes()
+
+
 async def file_owner_voice(
     request: Request, ctx: SessionContext, audio: bytes, to_device: str
 ) -> Message:
@@ -1515,6 +1582,8 @@ async def file_owner_voice(
         # The owner pressed record and said nothing, or held the wrong microphone. Refused
         # rather than filed: an empty message would draw a pop-up on a child's wall for silence.
         raise HTTPException(status_code=400, detail="nothing said")
+    # Off the event loop: a minute of audio is a million samples of pure Python.
+    audio = await asyncio.to_thread(_level_voice, audio)
     duration_ms = len(audio) * 1000 // (PANEL_RATE * 2)
 
     settings = cast(Settings, request.app.state.settings)

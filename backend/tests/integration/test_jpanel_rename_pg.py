@@ -15,6 +15,7 @@ SQL against real policies, so it is asserted here rather than reasoned about (CL
 """
 
 import hashlib
+import json
 import uuid
 from collections.abc import AsyncIterator
 
@@ -569,3 +570,18 @@ async def test_the_box_says_what_it_sent_so_the_panel_can_check(
 
         again = client.get(f"/api/jpanel/message/{message_id}/pcm", headers=head)
         assert again.headers["X-Jpanel-Sha256"] == hashlib.sha256(again.content).hexdigest()
+        # How long it plays, which the panel cannot measure from a stream it never holds whole.
+        assert got.headers["X-Jpanel-Duration-Ms"] == str(len(got.content) * 1000 // 32000)
+        assert got.headers["X-Jpanel-Duration-Ms"] != "0"
+        # AND THE HEAD STILL FITS THE PANEL. The relay hands the panel every `x-` header as one
+        # JSON frame (`panel_ws.py`), and the panel reads that frame into 1024 bytes
+        # (`LINK_HEAD_MAX`, firmware `link.c`): a head that outgrew it would lose every header.
+        passed = {
+            k.lower(): v
+            for k, v in got.headers.items()
+            if k.lower().startswith("x-") or k.lower() == "content-type"
+        }
+        frame = {"t": "res", "id": 2**32 - 1, "s": 200, "h": passed, "len": 2**31}
+        size = len(json.dumps(frame, separators=(",", ":")))
+        assert size < 1024 - 128
+        assert again.headers["X-Jpanel-Duration-Ms"] == str(len(again.content) * 1000 // 32000)
