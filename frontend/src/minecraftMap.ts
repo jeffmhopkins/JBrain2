@@ -11,6 +11,7 @@ import type {
   MinecraftMapPoint,
   MinecraftSession,
   MinecraftSlot,
+  MinecraftTimeline,
   MinecraftTimelineEvent,
   MinecraftTrail,
   MinecraftTrailSegment,
@@ -678,6 +679,64 @@ export function timeStatus(
     head: `Not live · ${day} ${fmtClock(t)}`,
     sub: `${playing ? `Replaying at ${speed}×` : "Paused"} · positions from the travel log · terrain as of now`,
   };
+}
+
+// ---- keeping the trail and what it explored up with the players ----
+
+/** Whether a disc is ahead of its trail: some player's newest sample is newer than the
+ *  travel log the trails were drawn from. Positions are read every 10 s, the trails every
+ *  minute, so without a catch-up the disc ran up to a minute ahead of its trail's end. */
+export function trailBehind(players: { at: number }[], log: { now: number } | null): boolean {
+  return !!log && players.some((p) => p.at > log.now);
+}
+
+/** The newest point of any trail in a travel log: it moves exactly when a trail grows. */
+export function trailTail(log: MinecraftTimeline | null): number | null {
+  let tail: number | null = null;
+  for (const tr of log?.trails ?? []) {
+    for (const seg of tr.segments) {
+      const t = seg.points[seg.points.length - 1]?.[0];
+      if (t !== undefined && (tail === null || t > tail)) tail = t;
+    }
+  }
+  return tail;
+}
+
+/** The trail points newer than `since` in one dimension: the ground just walked. */
+export function trailSince(
+  log: MinecraftTimeline | null,
+  since: number,
+  dim: MinecraftDim,
+): [number, number][] {
+  const out: [number, number][] = [];
+  for (const tr of log?.trails ?? []) {
+    for (const seg of tr.segments) {
+      if (seg.dim !== dim) continue;
+      for (const p of seg.points) if (p[0] > since) out.push([p[1], p[3]]);
+    }
+  }
+  return out;
+}
+
+/** Explored ground is what the server generated round a player — its view distance, not
+ *  the fog's 4-chunk reveal — so a step can change the tiles this far off. */
+export const EXPLORE_REACH = 16 * 16;
+
+/** Every tile, at every zoom, within `reach` blocks of these points, as `zoom|tx|tz`: the
+ *  tiles whose explored ground those steps could have changed. */
+export function tilesNear(pts: [number, number][], reach: number): Set<string> {
+  const out = new Set<string>();
+  for (let zoom = 0; zoom <= MAX_ZOOM; zoom++) {
+    const span = TILE << zoom;
+    for (const [x, z] of pts) {
+      for (let tz = Math.floor((z - reach) / span); tz <= Math.floor((z + reach) / span); tz++) {
+        for (let tx = Math.floor((x - reach) / span); tx <= Math.floor((x + reach) / span); tx++) {
+          out.add(`${zoom}|${tx}|${tz}`);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // ---- where everyone was at a moment ----

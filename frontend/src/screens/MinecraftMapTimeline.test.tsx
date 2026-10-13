@@ -3,9 +3,14 @@
 // strip, a day and a session loaded, the status that never says Live away from now, Back
 // to live, Follow, the speeds, the jump into the Nether, a death's cause, the session list.
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { MinecraftDim, MinecraftTimelinePart } from "../api/client";
+import type {
+  MinecraftDim,
+  MinecraftMapPlayers,
+  MinecraftTimeline,
+  MinecraftTimelinePart,
+} from "../api/client";
 import {
   mcAllowlist,
   mcPlayers,
@@ -364,6 +369,121 @@ describe("the map's timeline", { timeout: 20_000 }, () => {
       await waitFor(() => expect(timelineCalls().length).toBeGreaterThan(0));
       return map;
     }
+
+    /** The live map with Explored by on, BlockyFox about to walk on: `walk` gives his next
+     *  sample to the travel log (every trail read from then on carries it) and, `seen`, to
+     *  his disc too. Intervals are fake so a test can run the 10-s and 1-minute reads. */
+    async function walkingFox() {
+      vi.useRealTimers();
+      vi.useFakeTimers({
+        toFake: ["Date", "setInterval", "clearInterval"],
+        shouldAdvanceTime: true,
+      });
+      vi.setSystemTime(NOW);
+      const srcs: string[] = [];
+      vi.stubGlobal(
+        "Image",
+        class {
+          onload: (() => void) | null = null;
+          onerror: (() => void) | null = null;
+          decoding = "";
+          set src(url: string) {
+            srcs.push(url);
+            setTimeout(() => this.onload?.(), 0);
+          }
+        },
+      );
+      const FOX = "2535411";
+      let step: { t: [number, number, number, number]; seen: boolean } | null = null;
+      const base = fetchMock.getMockImplementation();
+      fetchMock.mockImplementation(async (input, init) => {
+        const got = await base?.(input, init);
+        const path = new URL(String(input), "http://box").pathname;
+        if (!got || !step || !got.ok) return got as Response;
+        const { t, seen } = step;
+        if (path === "/api/minecraft/map/players" && seen) {
+          const body = (await got.json()) as MinecraftMapPlayers;
+          const players = body.players.map((p) =>
+            p.xuid === FOX ? { ...p, x: t[1], y: t[2], z: t[3], at: t[0] } : p,
+          );
+          return json({ ...body, players });
+        }
+        if (path === "/api/minecraft/timeline") {
+          const body = (await got.json()) as MinecraftTimeline;
+          for (const tr of body.trails ?? []) {
+            if (tr.xuid === FOX) tr.segments.at(-1)?.points.push(t);
+          }
+          return json(body);
+        }
+        return got;
+      });
+      render(<MinecraftScreen />);
+      const row = await screen.findByRole("button", { name: /^Map/ });
+      await waitFor(() => expect(row).toHaveTextContent("Castle Hill · BlockyFox and Mira_P"));
+      fireEvent.click(row);
+      await screen.findByRole("application");
+      await waitFor(() => expect(status()).toMatch(/Live · 2 on/));
+      fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+      fireEvent.click(screen.getByRole("switch", { name: "Explored by…" }));
+      const explored = () =>
+        timelineCalls().filter((u) => u.searchParams.get("include") === "explored").length;
+      await waitFor(() => expect(explored()).toBe(1));
+      await waitFor(() => expect(srcs.length).toBeGreaterThan(0));
+      const fox = (
+        (await (await fetch("/api/minecraft/map/players?slot=slot2")).json()) as MinecraftMapPlayers
+      ).players.find((p) => p.xuid === FOX);
+      if (!fox) throw new Error("no BlockyFox in the fixture");
+      const tiles = srcs.length;
+      return {
+        explored,
+        walk: (at: number, seen: boolean) => {
+          step = { t: [at, fox.x + 6, fox.y, fox.z + 6], seen };
+        },
+        /** Tiles fetched again since the walk, past the browser's minute of caching. */
+        refetched: () => srcs.slice(tiles).filter((u) => /[?&]v=\d+/.test(u)),
+        run: (ms: number) =>
+          act(async () => {
+            vi.advanceTimersByTime(ms);
+          }),
+      };
+    }
+
+    it("each time the trail grows, the fog and the tiles round the new steps come again", async () => {
+      const fox = await walkingFox();
+      // A step the travel log has but no disc showed yet: the minute's read brings it.
+      fox.walk(NOW.getTime() / 1000 - 1, false);
+      await fox.run(60_000);
+      await waitFor(() => expect(fox.explored()).toBe(2));
+      await waitFor(() => expect(fox.refetched().length).toBeGreaterThan(0));
+    });
+
+    it("a disc that moved on has its trail read again at once, so the trail reaches it", async () => {
+      const fox = await walkingFox();
+      const before = timelineCalls().length;
+      // His next sample, newer than the travel log the trail was drawn from.
+      fox.walk(NOW.getTime() / 1000 + 5, true);
+      await fox.run(10_000);
+      await waitFor(() =>
+        expect(
+          timelineCalls()
+            .slice(before)
+            .some((u) => u.searchParams.get("include") === "trails,events"),
+        ).toBe(true),
+      );
+      // The trail's last stroke ends on his disc.
+      await waitFor(() => {
+        const b = calls.filter((c) => c.name === "fillText" && c.args[0] === "B").at(-1);
+        expect(b).toBeDefined();
+        const [x, y] = [Number(b?.args[1]), Number(b?.args[2]) - 0.5];
+        const ends = calls.filter(
+          (c) =>
+            c.name === "lineTo" &&
+            Math.abs(Number(c.args[0]) - x) < 0.6 &&
+            Math.abs(Number(c.args[1]) - y) < 0.6,
+        );
+        expect(ends.length).toBeGreaterThan(0);
+      });
+    });
 
     it("a player's Follow opens the timeline following them; Sessions opens their list", async () => {
       const map = await openLiveMap();

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type MinecraftMapPlayer, type MinecraftSlot, minecraftTileUrl } from "./api/client";
+import {
+  type MinecraftMapPlayer,
+  type MinecraftSlot,
+  type MinecraftTimeline,
+  minecraftTileUrl,
+} from "./api/client";
 import {
   type Frame,
   S_MAX,
@@ -22,8 +27,12 @@ import {
   statusLine,
   structureInfo,
   tileKey,
+  tilesNear,
   toScreen,
   toWorld,
+  trailBehind,
+  trailSince,
+  trailTail,
   tricorderLine,
   visibleTiles,
   zoomAt,
@@ -395,5 +404,63 @@ describe("the Tricorder's live scan in words (§M25)", () => {
       "1 min ago",
       "2 h ago",
     ]);
+  });
+});
+
+describe("the trail and what it explored keep up with the players", () => {
+  const log = (now: number): MinecraftTimeline => ({
+    slot: "slot2",
+    world: "castle",
+    from: 0,
+    to: now,
+    now,
+    trails: [
+      {
+        xuid: "fox",
+        gamertag: "BlockyFox",
+        samples: 4,
+        downsampled: false,
+        segments: [
+          {
+            session: "a",
+            dim: "overworld",
+            points: [
+              [10, 0, 64, 0],
+              [20, 40, 64, 0],
+            ],
+          },
+          { session: "a", dim: "nether", points: [[30, 5, 70, 5]] },
+          { session: "a", dim: "overworld", points: [[40, 300, 64, -20]] },
+        ],
+      },
+    ],
+  });
+  const at = (t: number) => ({ at: t }) as MinecraftMapPlayer;
+
+  it("a disc is ahead of its trail when its sample is newer than the log the trail came from", () => {
+    expect(trailBehind([at(44), at(52)], log(50))).toBe(true);
+    expect(trailBehind([at(44), at(50)], log(50))).toBe(false);
+    expect(trailBehind([at(60)], null)).toBe(false);
+  });
+
+  it("the trail's tail is its newest point, and the steps since one tail are in one dimension", () => {
+    expect(trailTail(log(50))).toBe(40);
+    expect(trailTail(null)).toBeNull();
+    expect(trailTail({ ...log(50), trails: [] })).toBeNull();
+    expect(trailSince(log(50), 15, "overworld")).toEqual([
+      [40, 0],
+      [300, -20],
+    ]);
+    expect(trailSince(log(50), 40, "overworld")).toEqual([]);
+  });
+
+  it("new steps mark the tiles at every zoom whose explored ground they could change", () => {
+    const near = tilesNear([[10, 10]], 64);
+    // Zoom 0 tiles are 256 blocks: 64 blocks round (10, 10) reaches the three west and north.
+    for (const k of ["0|0|0", "0|-1|0", "0|0|-1", "0|-1|-1"]) expect(near.has(k)).toBe(true);
+    expect(near.has("0|1|0")).toBe(false);
+    expect(near.has("4|0|0") && near.has("4|-1|-1")).toBe(true);
+    expect(near.has("4|1|0")).toBe(false);
+    expect(tilesNear([], 64).size).toBe(0);
   });
 });

@@ -1162,7 +1162,9 @@ timeline (DESIGN.md "The Minecraft map"):
   world's page: the full-bleed tile map (zoom 0–4 from the box, then nearest-neighbour up to
   8 px per block), pan, pinch, wheel, + / −, show everyone, the dimension switch, the scale
   bar, and the persistent panel with the world picker, the honest status line and Layers.
-  Tiles are re-fetched after a minute while the world is live. `dev:mock` paints the
+  Tiles are re-fetched after a minute while the world is live, and the ones round a trail's
+  new steps each time it grows (2026-10-13: explored ground had lagged the trail by up to
+  two minutes). `dev:mock` paints the
   reviewed fixture's world procedurally (`frontend/src/minecraftMapFixtures.ts`).
 - **Tap a spot** → `GET /api/minecraft/map/point?x&z&slot&dim` (the owner twin of the debug
   route, same bounds): biome, y (`~` for the survey), source, **Copy X Z**. **Long-press** pins
@@ -1229,6 +1231,12 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 - **Overlays made real:** Trails, Deaths, Beds & spawn (the **world spawn**, which the
   sidecar's `/map/info` now reads from `level.dat`) and *Explored by* (Anyone or one player,
   lifting by first-seen time as the timeline plays).
+- **Keeping up (fixed 2026-10-13).** Positions are read every 10 s and the trails every
+  minute, so a disc ran up to a minute past its trail's end, and *Explored by* was read once,
+  when switched on. Now a `/map/players` sample newer than the log the trails came from (its
+  `now`) reads the trails and events again at once (the sessions kept from the minute's read;
+  once per new sample), live or pinned to now; and each time a trail grows, *Explored by* is
+  read again and the tiles within 16 chunks of the new steps are re-fetched, cache-busted.
 - **Not yet (the box doesn't record it):** **beds**. The behavior pack reads a player's spawn
   point only when they ask Dave something (`/jb:dave`), and nothing keeps it, so the overlay
   draws the world spawn and says beds aren't recorded. A pack event on a bed or respawn

@@ -3666,7 +3666,9 @@ opens this screen on its spot.
   colour over the satellite survey (the seed's prediction, dimmed) — that is baked into the
   tiles. Missing tiles are shimmer-hatched while they load and finely hatched when they
   failed. While the world is live, a tile older than a minute is fetched again, which is how
-  the map stays *up to a minute behind*.
+  the map stays *up to a minute behind*; and each time a trail grows, the tiles within 16
+  chunks of its new steps are fetched again at once (past the browser's minute of caching),
+  so explored ground keeps up with the trail drawn over it.
 - **Floating chrome:** back (top left), the **Overworld / Nether / End** segments (top right),
   and zoom in, zoom out and show everyone. Below 380 px of visible map the + / − go; below
   230 px the segments and show everyone go too. Back always stays. A **scale bar** with **N↑**
@@ -3725,13 +3727,15 @@ opens this screen on its spot.
   Surface draws biomes too, and its legend says why (the top block is the bedrock roof). Height
   is listed, disabled, *later*. Overlays: **Players**; **Trails** (live, each player's latest
   session; on the timeline, everyone's path up to the moment, faint, with a bold fading tail of
-  the last 5 minutes); **Deaths** (the last week's live, the range's up to the moment on the
+  the last 5 minutes; a trail always reaches its player's disc — positions come every 10 s and
+  the trails every minute, so a disc newer than its trail has the trail read again at once —
+  and a life's trail ends on its skull); **Deaths** (the last week's live, the range's up to the moment on the
   timeline); **Beds & spawn** (the world spawn from `level.dat` — beds aren't recorded, so its
   line says so); **Structures** (its line says *from the server's locate · exact*, or
   *searching the world · N%* while the box sweeps, with **Search again** when the world is
   live); **Explored by…** (off by default; chips *Anyone* or one player; a `--map-fog` veil at
   62 % over every chunk they hadn't come near, lifted by each chunk's first-seen time as the
-  timeline plays); **Grid & coordinates**; **No-Spawn Beacons** and **Wormhole gates** (see
+  timeline plays, and read again each time a trail grows); **Grid & coordinates**; **No-Spawn Beacons** and **Wormhole gates** (see
   "Beacons and gates on the Minecraft map" below). Saved places are listed with a *later*
   badge. The legend pairs *Explored · Satellite survey*, the dimension's biome
   swatches, the glyphs (player, structure, death, spawn) with the count badge, and the veil

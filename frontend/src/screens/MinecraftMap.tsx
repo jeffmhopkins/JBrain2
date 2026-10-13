@@ -82,6 +82,7 @@ import { agoOf } from "../minecraft";
 import {
   type BaseLayer,
   DIMS,
+  EXPLORE_REACH,
   type Frame,
   GLYPHS,
   type MapView,
@@ -126,9 +127,13 @@ import {
   statusLine,
   structureInfo,
   tileKey,
+  tilesNear,
   timeStatus,
   toScreen,
   toWorld,
+  trailBehind,
+  trailSince,
+  trailTail,
   tricorderLine,
   visibleTiles,
   zoomAt,
@@ -429,6 +434,8 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   const dirty = useRef(true);
   const hits = useRef<Hit[]>([]);
   const cache = useRef(new Map<string, TileEntry>());
+  /** Tiles a trail has just walked through: fetched again, past the browser's cache. */
+  const redo = useRef(new Set<string>());
   const inFlight = useRef(0);
   // Opened on a spot, the first view is that spot; changing world or dimension fits again.
   const needsFit = useRef(!at);
@@ -684,7 +691,37 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     };
   }, [source, slot, tl.on, tl.from, tl.to, say]);
 
-  // Explored by: the fog for this dimension, lifted by first-seen time on the timeline.
+  // A disc ahead of its trail: someone's newest sample is newer than the log the trails
+  // came from. The trail is read again at once (without the sessions, which the minute's
+  // read keeps current), so it reaches the disc instead of a minute behind it. Once per
+  // new sample, so a clock that runs ahead can't keep asking.
+  const caughtUp = useRef(0);
+  useEffect(() => {
+    if (!players || !log || log.world !== players.world || (tl.on && !tl.live)) return;
+    const newest = Math.max(...players.players.map((p) => p.at));
+    if (!trailBehind(players.players, log) || newest <= caughtUp.current) return;
+    caughtUp.current = newest;
+    const keep = tl.on ? setRangeLog : setLiveLog;
+    let gone = false;
+    source
+      .timeline(slot, log.from, Math.max(log.to, nowS()), { include: ["trails", "events"] })
+      .then((got) => {
+        if (gone) return;
+        const sessions = log.sessions ? { sessions: log.sessions } : {};
+        keep((was) => (was === log ? { ...got, ...sessions } : was));
+      })
+      .catch(() => {
+        // The minute's read brings the trail anyway.
+      });
+    return () => {
+      gone = true;
+    };
+  }, [source, slot, players, log, tl.on, tl.live]);
+
+  // Explored by: the fog for this dimension, lifted by first-seen time on the timeline. It
+  // is read again each time the trail grows, so the ground just walked is lifted with it.
+  const tail = trailTail(log);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a longer trail reads the fog again.
   useEffect(() => {
     if (!ov.explored) {
       setFog(null);
@@ -707,7 +744,26 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     return () => {
       gone = true;
     };
-  }, [source, slot, dim, ov.explored, exBy]);
+  }, [source, slot, dim, ov.explored, exBy, tail]);
+
+  // And the tiles round the new steps are fetched again: explored ground is baked into them.
+  const walked = useRef<{ slot: string; tail: number } | null>(null);
+  useEffect(() => {
+    const was = walked.current;
+    walked.current = tail === null ? null : { slot, tail };
+    if (!was || was.slot !== slot || tail === null || tail <= was.tail) return;
+    const st = state.current;
+    if (st.tl.on && !st.tl.live) return; // a replay's range moved, not anyone's feet
+    const near = tilesNear(trailSince(st.log, was.tail, st.dim), EXPLORE_REACH);
+    if (!near.size) return;
+    for (const [key, e] of cache.current) {
+      const [s0, d0, , ...at] = key.split("|");
+      if (s0 === slot && d0 === st.dim && e.state === "ok" && near.has(at.join("|"))) {
+        redo.current.add(key);
+      }
+    }
+    redraw();
+  }, [slot, tail, redraw]);
 
   // ---- view ----
 
@@ -1146,16 +1202,23 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       const st = state.current;
       const now = Date.now();
       const have = cache.current.get(key);
+      const due = redo.current.has(key);
       const stale =
         have &&
-        ((have.state === "ok" && live$.current && now - have.at > TILE_FRESH_MS) ||
+        ((have.state === "ok" && (due || (live$.current && now - have.at > TILE_FRESH_MS))) ||
           (have.state === "failed" && now - have.at > TILE_RETRY_MS));
       if (have && !stale) return have;
       if (have?.state === "loading" || inFlight.current >= TILES_IN_FLIGHT) return have ?? null;
       const entry: TileEntry = { img: have?.img ?? null, at: now, state: "loading" };
       cache.current.set(key, entry);
       inFlight.current++;
-      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer, source.tileUrl)
+      redo.current.delete(key);
+      // The tile route lets the browser keep a tile a minute; a tile the trail just walked
+      // through has to come from the box.
+      const url: typeof source.tileUrl = due
+        ? (...a) => `${source.tileUrl(...a)}&v=${now}`
+        : source.tileUrl;
+      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer, url)
         .then((img) => {
           cache.current.set(key, { img, at: Date.now(), state: "ok" });
         })
