@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Tricorder scan on the map · B — a badge, the rest on tap</title>
+<!-- GUI gate mock — docs/mocks/minecraft-scan-on-map/README.md. Spec: docs/plans/MINECRAFT_BEDROCK_PLAN.md §M25 (the
+     Tricorder's live scan: the nearest matching block in a 33 × 33 × 33 box round the player, every 10 s), §M21 (the
+     Tricorder target on the map) and §M26 (beacons and gates, whose marker grammar this keeps). Built on the binding map
+     (docs/mocks/minecraft-map/a-full-bleed.html, shipped as frontend/src/screens/MinecraftMap.tsx + minecraftMapDraw.ts)
+     and the binding markers mock (docs/mocks/minecraft-map-markers/a-always-drawn.html): tokens, panel, floating chrome,
+     the halo-tile grammar and the label rule are copied from it. The map picture is drawn procedurally; terrain colours
+     are raw RGB inside the image, as the renderer's biome table is. Self-contained and offline. -->
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13); --amber-tint:rgba(201,163,106,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px;
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+    --ok-text:var(--green); --warn-text:var(--amber); --steel-text:var(--steel);
+    --violet-text:var(--violet);
+    --map-void:#141518; --map-fog:#0b0c0e; --map-halo:rgba(8,9,11,.9); --map-plate:rgba(23,24,27,.9);
+    --map-ink:#f2f2f2; --map-ink-on:#0e0f11;
+    --frame:#2A2C30; --page:#000;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+    --shadow-card:0 1px 2px rgba(0,0,0,.06);
+    --ok-text:color-mix(in srgb, var(--green) 46%, var(--text));
+    --warn-text:color-mix(in srgb, var(--amber) 50%, var(--text));
+    --steel-text:color-mix(in srgb, var(--steel) 52%, var(--text));
+    --violet-text:color-mix(in srgb, var(--violet) 52%, var(--text));
+    --map-void:#1e2024; --map-halo:rgba(8,9,11,.85); --map-plate:rgba(255,255,255,.92);
+    --frame:#C9C9C4; --page:#DADAD6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:var(--page);color:var(--text);display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px 0 40px;min-height:100vh;line-height:1.4;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;flex:none;width:18px;height:18px;}
+  button{font:inherit;color:inherit;cursor:pointer;}
+  :focus-visible{outline:2px solid var(--steel);outline-offset:2px;}
+
+  /* reviewer chrome — OUTSIDE the design */
+  .caption{max-width:390px;width:100%;padding:0 16px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .sim{max-width:390px;width:calc(100% - 32px);padding:10px 12px;border:1px dashed var(--text-3);border-radius:14px;display:flex;flex-direction:column;gap:8px;}
+  .sim .stitle{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);}
+  .sim .srow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;}
+  .sim .sl{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-2);width:62px;flex:none;}
+  .sim button{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font-size:11.5px;padding:5px 10px;border-radius:999px;}
+  .sim button[aria-pressed="true"]{background:var(--steel-tint);border-color:transparent;color:var(--steel-text);font-weight:600;}
+  body.shot .caption, body.shot .sim{display:none;}
+  body.shot{padding:0;gap:0;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid var(--frame);border-radius:34px;overflow:hidden;position:relative;}
+  body.shot .phone{border-radius:0;border:0;width:100vw;height:100vh;}
+  @media (max-width:430px){ .phone{width:100%;height:100dvh;border-radius:0;border-left:0;border-right:0;} }
+
+  /* ===== the map (absolute sizes: the .mc-map* exemption) ===== */
+  .map{position:absolute;inset:0;}
+  .map canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;}
+  .top{position:absolute;top:12px;left:12px;right:12px;display:flex;gap:8px;align-items:center;z-index:5;}
+  .fab{appearance:none;width:44px;height:44px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:var(--r-input);background:var(--surface);border:1px solid var(--border);color:var(--text);box-shadow:var(--shadow-card);}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:3px;gap:2px;}
+  .seg button{appearance:none;flex:1;min-width:0;min-height:44px;border:0;border-radius:9px;background:transparent;color:var(--text-2);font-size:13px;font-weight:500;padding:0 6px;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:6px;}
+  .seg button[aria-selected="true"],.seg button[aria-checked="true"]{background:var(--steel-tint);color:var(--text);}
+  .dims{flex:1;max-width:280px;margin-left:auto;background:var(--surface);}
+  .fabs{position:absolute;right:12px;top:68px;z-index:5;display:flex;flex-direction:column;gap:8px;}
+  .scale{position:absolute;left:12px;z-index:5;display:flex;align-items:center;gap:8px;background:var(--map-plate);border-radius:8px;padding:3px 8px;font-size:11px;color:var(--text);}
+  .scale i{display:block;width:40px;height:6px;border:1.5px solid var(--text);border-top:0;}
+
+  /* ===== the persistent panel ===== */
+  .panel{position:absolute;left:0;right:0;bottom:0;z-index:10;display:flex;flex-direction:column;background:var(--surface);border-top:1px solid var(--border);border-radius:16px 16px 0 0;box-shadow:var(--shadow-card);overflow:hidden;}
+  .grip{width:32px;height:4px;margin:7px auto 4px;border-radius:999px;background:var(--border);flex:none;}
+  .head{display:flex;align-items:center;gap:8px;padding:0 12px 0 8px;flex:none;}
+  .world{appearance:none;display:inline-flex;align-items:center;gap:6px;min-height:44px;padding:0 8px;border:0;background:none;font-size:var(--fs-title);font-weight:500;white-space:nowrap;}
+  .world svg{color:var(--text-2);width:16px;height:16px;}
+  .tabs{margin-left:auto;flex:none;}
+  .tabs button{padding:0 10px;font-size:var(--fs-head);}
+  .tabs svg{width:16px;height:16px;}
+  @media (max-width:360px){ .tabs svg{display:none;} .tabs button{padding:0 8px;} }
+  .stat{display:flex;align-items:center;gap:8px;min-height:44px;padding:2px 16px 0;font-size:var(--fs-micro);color:var(--text-2);line-height:1.35;flex:none;}
+  .stat .dot{width:8px;height:8px;border-radius:999px;background:var(--ok);box-shadow:0 0 0 3px var(--green-tint);flex:none;}
+  .stat b{display:block;color:var(--text);font-weight:500;}
+  .note{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45;}
+
+  /* what you tapped: a player */
+  /* the panel stops where the map would drop under 190 px; the card scrolls inside it */
+  .det{display:flex;flex-direction:column;gap:10px;padding:2px 16px 16px;flex:1 1 auto;min-height:0;overflow:auto;}
+  .det-h{display:flex;align-items:flex-start;gap:10px;}
+  .det-ic{width:36px;height:36px;flex:none;display:flex;align-items:center;justify-content:center;border-radius:999px;font-weight:700;font-size:15px;color:var(--map-ink-on);}
+  .det-tx{flex:1;min-width:0;}
+  .det-t{font-size:var(--fs-body);font-weight:500;overflow-wrap:anywhere;}
+  .det-s{margin-top:2px;font-size:var(--fs-micro);line-height:1.4;color:var(--text-2);}
+  .on{color:var(--ok-text);}
+  .x{appearance:none;width:44px;height:44px;margin:-6px -10px 0 0;border:0;background:none;color:var(--text-2);display:flex;align-items:center;justify-content:center;flex:none;}
+  .coord{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-input);}
+  .xyz{flex:1;font-size:var(--fs-secondary);font-variant-numeric:tabular-nums;}
+  .lnk{appearance:none;background:none;border:0;color:var(--steel-text);font-size:var(--fs-micro);font-weight:500;min-height:44px;padding:0 8px;display:inline-flex;align-items:center;gap:5px;}
+  /* the Tricorder line (.mc-map-det-tri), and the scan's line under it */
+  .tri{display:flex;align-items:flex-start;gap:8px;font-size:var(--fs-secondary);color:var(--text-2);line-height:1.4;}
+  .tri svg{color:var(--text-2);margin-top:1px;}
+  .tri b{color:var(--text);font-weight:500;}
+  .tri .sub{display:block;font-size:var(--fs-micro);}
+  .btnrow{display:flex;gap:8px;}
+  .btn{appearance:none;display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:44px;padding:0 14px;border-radius:var(--r-input);border:1px solid var(--border);background:var(--surface-2);color:var(--text);font-size:var(--fs-secondary);font-weight:500;flex:1;}
+  /* C: the radar inset — the 33 × 33 blocks round the player, top down, with the depth beside */
+  .radar{display:flex;gap:12px;align-items:stretch;padding:10px;border:1px solid var(--border);border-radius:var(--r-input);background:var(--surface);}
+  .radar canvas{width:112px;height:112px;flex:none;border-radius:10px;}
+  @media (max-width:360px){ .radar canvas{width:92px;height:92px;} .radar{gap:10px;} }
+  .radar-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;font-size:var(--fs-micro);color:var(--text-2);line-height:1.4;}
+  .radar-tx .rh{display:flex;align-items:center;gap:6px;font-size:var(--fs-secondary);color:var(--text);font-weight:500;}
+  .radar-tx .rh svg{width:16px;height:16px;}
+  .radar-tx .big{font-size:var(--fs-body);color:var(--text);font-weight:500;}
+  .depth{display:flex;align-items:center;gap:6px;}
+  .depth svg{width:14px;height:14px;}
+
+  /* ===== the chat ===== */
+  .chat{position:absolute;inset:0;display:flex;flex-direction:column;background:var(--bg);}
+  .chat .bar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px 0 4px;border-bottom:1px solid var(--border);flex:none;}
+  .chat .bar .ttl{font-size:var(--fs-title);font-weight:500;}
+  .chat .bar .back{appearance:none;background:none;border:0;width:44px;height:44px;display:flex;align-items:center;justify-content:center;color:var(--text-2);}
+  .msgs{flex:1;overflow:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px;}
+  .you{align-self:flex-end;background:var(--surface-2);border-radius:16px;padding:9px 13px;font-size:var(--fs-body);max-width:80%;}
+  .dave{font-size:var(--fs-body);line-height:1.5;}
+  .tv{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;}
+  .tv-h{display:flex;align-items:center;gap:8px;padding:6px 6px 6px 12px;font-size:var(--fs-secondary);}
+  .tv-h svg{color:var(--text-2);}
+  .tv-h .s{color:var(--text-2);font-size:var(--fs-micro);}
+  .tv-h .fab{margin-left:auto;border:0;background:none;}
+  .tv-map{position:relative;height:220px;}
+  .tv-map canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:pan-y;}
+  .tv-b{padding:10px 12px 12px;display:flex;flex-direction:column;gap:10px;}
+  .tool{display:inline-flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);}
+  .tool svg{width:14px;height:14px;}
+</style>
+</head>
+<body>
+<div class="caption" id="cap"></div>
+<div class="sim" id="sim"></div>
+<div class="phone" id="phone"></div>
+<script>
+const V = "b";
+const CAPTION = {
+  a:"<b>A — the scan square, always drawn</b> — every scanning player wears the 33 × 33 block square the Tricorder searches, with a <i>Scanning: diamond</i> plate on it and the block it found. Tapping the player adds the bearing and the card's line.",
+  b:"<b>B — a badge, the rest on tap</b> — a scanning player's disc carries a small scan badge; nothing else is drawn until they are tapped (the Tricorder target's own rule, §M21). Then the square, the block and the bearing appear, and the words live in the card.",
+  c:"<b>C — the radar in the card</b> — the map stays quiet (the square and the block only for the tapped player); the card carries a top-down radar of the 33 × 33 blocks with the depth beside it, which the map can't show. Dave's chat answer gets the same radar.",
+};
+const I = {
+  back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>',
+  down:'<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
+  plus:'<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  minus:'<svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg>',
+  users:'<svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  layers:'<svg viewBox="0 0 24 24"><path d="m12 2 10 5-10 5L2 7z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg>',
+  clock:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>',
+  x:'<svg viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  copy:'<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  cross:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M22 12h-4M6 12H2M12 6V2M12 22v-4"/></svg>',
+  radar:'<svg viewBox="0 0 24 24"><path d="M19.07 4.93A10 10 0 0 0 6.99 3.34"/><path d="M4 6h.01"/><path d="M2.29 9.62A10 10 0 1 0 21.31 8.35"/><path d="M16.24 7.76A6 6 0 1 0 8.23 16.67"/><path d="M12 18h.01"/><path d="M17.99 11.66A6 6 0 0 1 15.77 16.67"/><circle cx="12" cy="12" r="2"/><path d="m13.41 10.59 5.66-5.66"/></svg>',
+  locate:'<svg viewBox="0 0 24 24"><path d="M2 12h3M19 12h3M12 2v3M12 19v3"/><circle cx="12" cy="12" r="7"/></svg>',
+  map:'<svg viewBox="0 0 24 24"><path d="M14.1 6.3 9.9 4.2a2 2 0 0 0-1.8 0L3.6 6.5A1 1 0 0 0 3 7.4v12.2a1 1 0 0 0 1.4.9l3.7-1.8a2 2 0 0 1 1.8 0l4.2 2.1a2 2 0 0 0 1.8 0l4.5-2.3a1 1 0 0 0 .6-.9V5.4a1 1 0 0 0-1.4-.9l-3.7 1.8a2 2 0 0 1-1.8 0zM15 5.8v15M9 3.2v15"/></svg>',
+  expand:'<svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>',
+  below:'<svg viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>',
+  wrench:'<svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+};
+const GLYPH = {
+  shield:"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z",
+  portal:"M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
+  swirl:"M10 7c2 1 2 3 0 5s-2 4 0 5M14 7c-2 1-2 3 0 5s2 4 0 5",
+};
+
+/* ---- the world: BlockyFox is down a mine scanning for diamond; Mira_P is at the surface ---- */
+const REACH = 16; // the pack's SCAN_REACH: a 33 × 33 × 33 box, so a square on the map, not a circle
+const PLAYERS = [
+  {n:"BlockyFox", tok:"--steel", x:32, y:-52, z:-70, on:true, scan:{label:"diamond", found:{x:41, y:-58, z:-79}, ago:"40 s"}, way:{label:"Tree farm", x:-160, z:-140}},
+  {n:"Mira_P", tok:"--green", x:-40, y:71, z:-8, on:true, scan:null, way:null},
+];
+const BEACONS = [{x:-62, y:72, z:-22}];
+const GATES = [{x:8, y:70, z:-64, open:true}];
+const chunk = (v) => Math.floor(v / 16);
+const n = (v) => (v < 0 ? "−" + -v : String(v));
+// a compass word never breaks at its hyphen
+const nbw = (t) => t.replace(/-/g, "‑");
+const XYZ = (o) => `X&nbsp;${n(o.x)} · Y&nbsp;${n(o.y)} · Z&nbsp;${n(o.z)}`;
+const d3 = (a, b) => Math.round(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z));
+function compass(from, to){
+  const dx = to.x - from.x, dz = to.z - from.z; const a = (Math.atan2(dx, -dz) * 180 / Math.PI + 360) % 360;
+  return ["north","north-east","east","south-east","south","south-west","west","north-west"][Math.round(a / 45) % 8];
+}
+
+let S = {};
+const DEF = {view:"found", theme:""};
+function readHash(){
+  S = {...DEF};
+  for (const kv of location.hash.slice(1).split("&")) { const [k,v] = kv.split("="); if (k && v !== undefined) S[k] = decodeURIComponent(v); }
+  if (S.shot) document.body.classList.add("shot");
+  const sys = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  document.documentElement.dataset.theme = S.theme || sys;
+}
+const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---- terrain (the markers mock's), with a mine opening where BlockyFox went down ---- */
+function hash2(x, z){ let h = (x * 374761393 + z * 668265263) | 0; h = (h ^ (h >>> 13)) * 1274126177 | 0; return ((h ^ (h >>> 16)) >>> 0) / 4294967295; }
+function vnoise(x, z){
+  const xi = Math.floor(x), zi = Math.floor(z), xf = x - xi, zf = z - zi;
+  const s = (t) => t * t * (3 - 2 * t);
+  const a = hash2(xi, zi), b = hash2(xi + 1, zi), c = hash2(xi, zi + 1), d = hash2(xi + 1, zi + 1);
+  return (a + (b - a) * s(xf)) + ((c + (d - c) * s(xf)) - (a + (b - a) * s(xf))) * s(zf);
+}
+const fbm = (x, z) => 0.55 * vnoise(x / 90, z / 90) + 0.3 * vnoise(x / 34, z / 34) + 0.15 * vnoise(x / 11, z / 11);
+function terrain(x, z){
+  const h = fbm(x + 400, z + 900), m = vnoise((x + 77) / 60, (z - 31) / 60);
+  let c;
+  if (h < 0.36) c = [52, 84, 138];
+  else if (h < 0.39) c = [206, 196, 140];
+  else if (h > 0.68) c = [128, 128, 122];
+  else if (m > 0.58) c = [64, 104, 52];
+  else c = [118, 156, 84];
+  if (Math.abs(x - 30) <= 2 && Math.abs(z + 66) <= 2) c = [96, 82, 64]; // the mine's mouth
+  const shade = 0.9 + 0.2 * (fbm(x - 1, z - 1) - fbm(x + 1, z + 1)) * 6;
+  c = c.map((v) => Math.max(0, Math.min(255, v * shade)));
+  const explored = Math.hypot(x - 10, (z + 10) * 1.1) < 190 + 30 * vnoise(x / 40, z / 40);
+  if (!explored) { const g = (c[0] + c[1] + c[2]) / 3; c = c.map((v) => (v * 0.5 + g * 0.5) * 0.62); }
+  return c;
+}
+function drawTerrain(ctx, W, H, view, dpr){
+  const img = ctx.createImageData(W * dpr, H * dpr);
+  for (let py = 0; py < H * dpr; py++) {
+    const z = Math.floor(view.cz + (py / dpr - view.my) / view.k);
+    for (let px = 0; px < W * dpr; px++) {
+      const x = Math.floor(view.cx + (px / dpr - view.mx) / view.k);
+      const c = terrain(x, z), o = (py * W * dpr + px) * 4;
+      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/* ---- the shipped grammar: halo tiles, the Tricorder target, its dashed bearing ---- */
+function tile(ctx, x, y, ring, dashed){
+  ctx.save();
+  ctx.fillStyle = T.halo; ctx.beginPath(); ctx.roundRect(x - 12, y - 12, 24, 24, 7); ctx.fill();
+  ctx.strokeStyle = ring; ctx.lineWidth = 1.5; if (dashed) ctx.setLineDash([3, 2.5]);
+  ctx.beginPath(); ctx.roundRect(x - 10.5, y - 10.5, 21, 21, 6); ctx.stroke();
+  ctx.restore();
+}
+function glyph(ctx, x, y, d, fill){
+  ctx.save(); ctx.translate(x - 7.5, y - 7.5); ctx.scale(15 / 24, 15 / 24);
+  ctx.lineWidth = 2.2; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  for (const p of [].concat(d)) { const path = new Path2D(GLYPH[p]); if (fill && p === "portal") { ctx.fillStyle = fill; ctx.fill(path); } ctx.strokeStyle = T.ink; ctx.stroke(path); }
+  ctx.restore();
+}
+function protArea(ctx, view, b){
+  const x0 = (chunk(b.x) - 1) * 16, z0 = (chunk(b.z) - 1) * 16;
+  const [ax, ay] = toS(view, x0, z0), [bx, by] = toS(view, x0 + 48, z0 + 48);
+  ctx.save(); ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = T.halo; ctx.lineWidth = 4; ctx.strokeRect(ax, ay, bx - ax, by - ay);
+  ctx.strokeStyle = T.green; ctx.lineWidth = 2; ctx.strokeRect(ax, ay, bx - ax, by - ay);
+  ctx.restore();
+}
+function targetMark(ctx, x, y, col){
+  ctx.save();
+  for (const r of [11, 5]) { ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.strokeStyle = T.halo; ctx.lineWidth = 5; ctx.stroke(); ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.stroke(); }
+  ctx.beginPath(); ctx.arc(x, y, 1.5, 0, 7); ctx.fillStyle = col; ctx.fill();
+  ctx.restore();
+}
+function bearing(ctx, ax, ay, bx, by, col){
+  const len = Math.hypot(bx - ax, by - ay); if (len < 30) return;
+  const ux = (bx - ax) / len, uy = (by - ay) / len;
+  const sx = ax + ux * 13, sy = ay + uy * 13, ex = bx - ux * 13, ey = by - uy * 13;
+  SEGS.push([sx, sy, ex, ey, "bearing"]);
+  ctx.save(); ctx.lineCap = "round"; ctx.setLineDash([8, 6]);
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+  ctx.strokeStyle = T.halo; ctx.lineWidth = 5; ctx.stroke(); ctx.strokeStyle = col; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.restore();
+}
+function playerDisc(ctx, x, y, p){
+  ctx.save(); ctx.beginPath(); ctx.arc(x, y, 11, 0, 7); ctx.fillStyle = T.halo; ctx.fill();
+  ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.fillStyle = css(p.tok); ctx.fill();
+  ctx.fillStyle = T.inkOn; ctx.font = "700 11px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(p.n[0], x, y + .5);
+  ctx.restore();
+}
+function ring(ctx, x, y, r){ ctx.save(); ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.strokeStyle = T.halo; ctx.lineWidth = 5; ctx.stroke(); ctx.strokeStyle = T.ink; ctx.lineWidth = 2; ctx.stroke(); ctx.restore(); }
+
+/* ---- the new marks: the scan square and (B) the disc's scan badge ---- */
+// The square is the box the pack searches (33 × 33 blocks, ±16 in height too), drawn to the block.
+// Viewfinder corners in the player's colour over a halo, joined by a hairline: it reads as a
+// sensor's field, never as a beacon's dashed protected square or a chunk grid.
+function scanSquare(ctx, view, p, fill){
+  const [x0, y0] = toS(view, p.x - REACH, p.z - REACH), [x1, y1] = toS(view, p.x + REACH + 1, p.z + REACH + 1);
+  const w = x1 - x0, h = y1 - y0, c = Math.min(14, w / 4), col = css(p.tok);
+  ctx.save();
+  if (fill) { ctx.globalAlpha = .1; ctx.fillStyle = col; ctx.fillRect(x0, y0, w, h); ctx.globalAlpha = 1; }
+  ctx.strokeStyle = T.halo; ctx.lineWidth = 2.5; ctx.strokeRect(x0, y0, w, h);
+  ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.globalAlpha = .7; ctx.strokeRect(x0, y0, w, h); ctx.globalAlpha = 1;
+  ctx.lineCap = "round";
+  const corners = [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]];
+  for (const [lw, st] of [[5, T.halo], [2.5, col]]) {
+    ctx.strokeStyle = st; ctx.lineWidth = lw; ctx.beginPath();
+    for (const [cx, cy, sx, sy] of corners) { ctx.moveTo(cx + sx * c, cy); ctx.lineTo(cx, cy); ctx.lineTo(cx, cy + sy * c); }
+    ctx.stroke();
+  }
+  ctx.restore();
+  BOXES.push([x0 - 3, y0 - 3, x0 + c + 3, y0 + c + 3, "sq"], [x1 - c - 3, y0 - 3, x1 + 3, y0 + c + 3, "sq"]);
+  return [x0, y0, x1, y1];
+}
+function scanBadge(ctx, x, y, p){
+  const bx = x + 10, by = y - 10, col = css(p.tok);
+  ctx.save(); ctx.fillStyle = T.halo; ctx.beginPath(); ctx.arc(bx, by, 7.5, 0, 7); ctx.fill();
+  ctx.strokeStyle = col; ctx.lineWidth = 1.6; ctx.lineCap = "round";
+  ctx.beginPath(); ctx.arc(bx - 2.5, by + 2.5, 3.5, -Math.PI / 2, 0); ctx.stroke();
+  ctx.beginPath(); ctx.arc(bx - 2.5, by + 2.5, 7, -Math.PI / 2 + .25, -.25); ctx.stroke();
+  ctx.fillStyle = col; ctx.beginPath(); ctx.arc(bx - 2.5, by + 2.5, 1.4, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+/* ---- labels: the map's rule (right, left, below, above, else dropped) ---- */
+let BOXES = [], SEGS = [], CHROME = [], T = {};
+const boxHit = (lx, ly, w, b) => lx < b[2] && lx + w > b[0] && ly - 10 < b[3] && ly + 10 > b[1];
+function segHit(lx, ly, w, s){
+  const k = Math.ceil(Math.hypot(s[2] - s[0], s[3] - s[1]) / 3);
+  for (let i = 0; i <= k; i++) { const px = s[0] + (s[2] - s[0]) * i / k, py = s[1] + (s[3] - s[1]) * i / k; if (px > lx - 2 && px < lx + w + 2 && py > ly - 12 && py < ly + 12) return true; }
+  return false;
+}
+function plate(ctx, txt, cands, own, bold){
+  ctx.save(); ctx.font = `${bold ? 600 : 500} 12px system-ui, sans-serif`;
+  const w = ctx.measureText(txt).width + 12, cw = ctx.canvas.width / (devicePixelRatio || 1);
+  const fits = ([lx, ly]) => lx >= 6 && lx + w <= cw - 6 && ly > 14
+    && !CHROME.some((r) => boxHit(lx, ly, w, r))
+    && !BOXES.some((b) => b[4] !== own && boxHit(lx, ly, w, b))
+    && !SEGS.some((sg) => sg[4] !== own && segHit(lx, ly, w, sg));
+  const at = cands.map((f) => f(w)).find(fits);
+  if (!at) { ctx.restore(); return false; }
+  BOXES.push([at[0], at[1] - 10, at[0] + w, at[1] + 10, "label"]);
+  ctx.fillStyle = T.plate; ctx.beginPath(); ctx.roundRect(at[0], at[1] - 10, w, 20, 6); ctx.fill();
+  ctx.fillStyle = T.text; ctx.textBaseline = "middle"; ctx.fillText(txt, at[0] + 6, at[1] + .5);
+  ctx.restore(); return true;
+}
+const beside = (x, y) => [(w) => [x + 16, y], (w) => [x - 16 - w, y], (w) => [x - w / 2, y + 24], (w) => [x - w / 2, y - 24]];
+const toS = (v, x, z) => [v.mx + (x - v.cx) * v.k, v.my + (z - v.cz) * v.k];
+function readT(){ T = {halo:css("--map-halo"), ink:css("--map-ink"), inkOn:css("--map-ink-on"), plate:css("--map-plate"), text:css("--text"), green:css("--green"), violet:css("--violet")}; }
+
+/* ---- what each variant draws ---- */
+// sel: the tapped player (or null); none: the scan finds nothing in reach
+function drawMap(ctx, view, sel, none, card){
+  BOXES = []; SEGS = [];
+  for (const b of BEACONS) protArea(ctx, view, b);
+  const scanning = PLAYERS.filter((p) => p.scan && p.on);
+  const shows = (p) => V === "a" || p === sel;
+  const sq = new Map();
+  for (const p of scanning) if (shows(p)) sq.set(p, scanSquare(ctx, view, p, V === "a" || V === "c" ? !none : false));
+  // the found block: the same target grammar the waypoint uses, because in game it IS the
+  // arrow's target; the bearing only for the tapped player, as §M21's
+  for (const p of scanning) {
+    if (none || !shows(p)) continue;
+    const [px, py] = toS(view, p.x, p.z), [tx, ty] = toS(view, p.scan.found.x, p.scan.found.z);
+    if (p === sel || card) bearing(ctx, px, py, tx, ty, css(p.tok));
+  }
+  for (const p of scanning) {
+    if (none || !shows(p)) continue;
+    const [tx, ty] = toS(view, p.scan.found.x, p.scan.found.z);
+    targetMark(ctx, tx, ty, css(p.tok)); BOXES.push([tx - 12, ty - 12, tx + 12, ty + 12, "t"]);
+  }
+  for (const b of BEACONS) { const [x, y] = toS(view, b.x, b.z); tile(ctx, x, y, T.green); glyph(ctx, x, y, "shield"); BOXES.push([x - 12, y - 12, x + 12, y + 12, "m"]); }
+  for (const g of GATES) { const [x, y] = toS(view, g.x, g.z); tile(ctx, x, y, T.violet); glyph(ctx, x, y, ["portal", "swirl"], T.violet); BOXES.push([x - 12, y - 12, x + 12, y + 12, "m"]); }
+  if (sel) { const [x, y] = toS(view, sel.x, sel.z); ring(ctx, x, y, 17); }
+  for (const p of PLAYERS) {
+    const [x, y] = toS(view, p.x, p.z); playerDisc(ctx, x, y, p); BOXES.push([x - 11, y - 11, x + 11, y + 11, "p"]);
+    if (V === "b" && p.scan && p.on && p !== sel) { /* tapped, the square says it instead */ scanBadge(ctx, x, y, p); BOXES.push([x + 2, y - 18, x + 18, y - 2, "p"]); }
+  }
+  // labels: players first (the map's label order), then A's scan plate
+  if (!card) for (const p of PLAYERS) { const [x, y] = toS(view, p.x, p.z); plate(ctx, p.n, [(w) => [x - w / 2, y + 22], (w) => [x + 16, y], (w) => [x - 16 - w, y], (w) => [x - w / 2, y - 24]], "p"); }
+  for (const p of scanning) {
+    if (V !== "a") continue;
+    const r = sq.get(p); if (!r) continue;
+    const txt = none ? `Scanning: ${p.scan.label} · none nearby` : `Scanning: ${p.scan.label}`;
+    const cx = (r[0] + r[2]) / 2;
+    plate(ctx, txt, [(w) => [cx - w / 2, r[1] - 14], (w) => [cx - w / 2, r[3] + 14], (w) => [r[2] + 6, (r[1] + r[3]) / 2], (w) => [r[0] - 6 - w, (r[1] + r[3]) / 2]], "sq", false);
+  }
+  const cvh = ctx.canvas.height / (devicePixelRatio || 1);
+  for (const b of BOXES) if (b[4] !== "label" && b[3] > 0 && b[1] < cvh && CHROME.slice(0, 3).some((r) => b[0] < r[2] && b[2] > r[0] && b[1] < r[3] && b[3] > r[1])) console.warn("marker under chrome at " + b.slice(0, 2).map(Math.round).join(","));
+}
+
+/* ---- the panel ---- */
+function head(){
+  return `<div class="grip"></div><div class="head"><button class="world" aria-label="World: Castle Hill — change">Castle Hill ${I.down}</button>
+  <div class="seg tabs" role="tablist" aria-label="Panel"><button role="tab" aria-selected="true">${I.layers}Layers</button><button role="tab" aria-selected="false">${I.clock}Timeline</button></div></div>`;
+}
+const STAT = `<div class="stat"><span class="dot"></span><span><b>Live · 2 on</b>Up to a minute behind the world · positions live</span></div>`;
+function scanLines(p, none){
+  const f = p.scan.found, dir = compass(p, f);
+  // the shipped Tricorder line, with the pack's own label: the held Tricorder's words
+  const what = none
+    ? `<b>Tricorder</b> · Scanning:&nbsp;${p.scan.label} · none&nbsp;nearby`
+    : `<b>Tricorder</b> · Scanning:&nbsp;${p.scan.label} · ${d3(p, f)}&nbsp;blocks&nbsp;${nbw(dir)} · y&nbsp;${n(f.y)}`;
+  const sub = none
+    ? `Nothing within 16&nbsp;blocks; it looks again every 10&nbsp;s. Their waypoint, ${p.way.label}, comes back when the scan stops.`
+    : `Found ${p.scan.ago} ago. Their waypoint, ${p.way.label}, comes back when the scan stops.`;
+  return `<p class="tri">${I.radar}<span>${what}<span class="sub">${sub}</span></span></p>`;
+}
+function radar(p, none, chat){
+  return `<div class="radar"><canvas data-radar="${none ? "none" : "found"}" width="224" height="224"></canvas><div class="radar-tx">
+    <span class="rh">${I.radar}<span><b style="font-weight:600">Tricorder</b> · Scanning:&nbsp;${p.scan.label}</span></span>
+    ${none
+      ? `<span class="big">None within 16&nbsp;blocks</span><span>Looks again every 10&nbsp;s, 16&nbsp;blocks each way and up and down.</span>`
+      : `<span class="big">${d3(p, p.scan.found)}&nbsp;blocks&nbsp;${nbw(compass(p, p.scan.found))}</span>
+         <span class="depth">${I.below}<span>${Math.abs(p.scan.found.y - p.y)}&nbsp;blocks below them · y&nbsp;${n(p.scan.found.y)}</span></span>
+         <span>Found ${p.scan.ago} ago${chat ? "" : `. Waypoint ${p.way.label} comes back when it stops`}.</span>`}
+  </div></div>`;
+}
+function playerDet(p, none){
+  const c = css(p.tok);
+  const tri = V === "c" ? radar(p, none) : scanLines(p, none);
+  return `<div class="det"><div class="det-h"><span class="det-ic" style="background:${c}">${p.n[0]}</span><div class="det-tx"><div class="det-t">${p.n}</div><div class="det-s"><span class="on">online</span> · here now, at y&nbsp;${n(p.y)}</div></div><button class="x" aria-label="Close">${I.x}</button></div>
+    <div class="coord"><span class="xyz">${XYZ(p)}</span><button class="lnk">${I.copy}Copy X Z</button></div>
+    ${tri}
+    <div class="btnrow"><button class="btn">${I.locate}Follow</button><button class="btn">${I.clock}Sessions</button></div></div>`;
+}
+
+function mapScreen(){
+  const view = S.view, none = view === "none", ph = document.getElementById("phone");
+  const H = ph.clientHeight, W = ph.clientWidth;
+  const sel = view === "overview" ? null : PLAYERS[0];
+  let panelH = 150;
+  ph.innerHTML = `<div class="map"><canvas id="cv"></canvas>
+    <div class="top"><button class="fab" aria-label="Back">${I.back}</button><div class="seg dims" role="radiogroup" aria-label="Dimension"><button role="radio" aria-checked="true">Overworld</button><button role="radio" aria-checked="false">Nether</button><button role="radio" aria-checked="false">End</button></div></div>
+    <div class="fabs"><button class="fab" aria-label="Zoom in">${I.plus}</button><button class="fab" aria-label="Zoom out">${I.minus}</button><button class="fab" aria-label="Show everyone">${I.users}</button></div>
+    <div class="scale"><i></i><span></span></div></div>
+    <div class="panel" style="height:${sel ? "auto" : panelH + "px"};max-height:${H - 190}px">${head()}${STAT}${sel ? playerDet(sel, none) : ""}</div>`;
+  if (sel) panelH = ph.querySelector(".panel").offsetHeight;
+  ph.querySelector(".scale").style.bottom = panelH + 10 + "px";
+  const cv = document.getElementById("cv"), dpr = devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d");
+  const mapH = H - panelH;
+  // a tapped scanning player is framed so their whole square shows: 33 blocks fill about half the width
+  const short = mapH < 380, tiny = mapH < 230;
+  // a tapped scanner is framed so the whole square shows between the top row and the scale bar,
+  // with room for its plate above (on a short map only Back is left up there, at the left)
+  const top = tiny ? 8 : 70, room = 26, avail = mapH - 44 - top - room - 8;
+  let v = sel ? {k:Math.min(4, (W * .55) / 33, avail / 33), cx:sel.x + .5, cz:sel.z + .5, mx:W / 2, my:top + room + 4 + avail / 2} : {k:1.25, cx:10, cz:-30, mx:W / 2, my:mapH / 2 + 30};
+  if (tiny) { ph.querySelector(".dims").style.display = "none"; ph.querySelector(".fabs").style.display = "none"; }
+  else if (short) for (const z of ph.querySelectorAll(".fabs .fab:not(:last-child)")) z.style.display = "none";
+  CHROME = [tiny ? [0, 0, 68, 70] : [0, 0, W, 70], tiny ? [0, 0, 0, 0] : [W - 64, 70, W, short ? 132 : 236], [0, H - panelH - 44, 170, H - panelH], [0, H - panelH, W, H]];
+  ph.querySelector(".scale span").textContent = `${Math.max(1, Math.round(40 / v.k))} blocks · N↑`;
+  drawTerrain(ctx, W, H, v, dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawMap(ctx, v, sel, none, false);
+  drawRadars();
+}
+
+function chatScreen(){
+  const ph = document.getElementById("phone"), p = PLAYERS[0];
+  const ask = `<div class="you">Is BlockyFox's Tricorder still scanning?</div>`;
+  const words = `<div class="dave">Yes — BlockyFox's Tricorder is scanning for diamond. The last scan found one ${d3(p, p.scan.found)}&nbsp;blocks&nbsp;${nbw(compass(p, p.scan.found))} of them, down at y&nbsp;${n(p.scan.found.y)}. It keeps looking every 10 seconds until they ask me to stop.</div>`;
+  let card = "";
+  if (V === "a") card = `<div class="tv"><div class="tv-h">${I.map}<span>Castle Hill · Overworld</span><span class="s">Surface</span><button class="fab" aria-label="Open the full map">${I.expand}</button></div>
+     <div class="tv-map"><canvas id="cv"></canvas><div class="scale" style="bottom:8px"><i></i><span></span></div></div>
+     <div class="tv-b"><div class="note">Live · 2 on · Up to a minute behind the world</div>${scanLines(p, false)}</div></div>`;
+  if (V === "c") card = `<div>${radar(p, false, true)}</div>`;
+  if (V === "b") card = `<div class="tool">${I.wrench}<span>Checked BlockyFox's Tricorder</span></div>`;
+  ph.innerHTML = `<div class="chat"><div class="bar"><button class="back" aria-label="Back">${I.back}</button><span class="ttl">Minecraft_Dave</span></div>
+   <div class="msgs">${ask}${V === "b" ? card + words : words + card}</div></div>`;
+  if (V === "a") {
+    const cv = document.getElementById("cv"), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const ctx = cv.getContext("2d");
+    const v = {k:Math.min(3.6, (H - 70) / 33), cx:p.x + 2, cz:p.z - 2, mx:W / 2, my:H / 2 + 6};
+    CHROME = [[0, H - 40, 170, H]];
+    ph.querySelector(".scale span").textContent = `${Math.round(40 / v.k)} blocks · N↑`;
+    drawTerrain(ctx, W, H, v, dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawMap(ctx, v, p, false, true);
+  }
+  drawRadars();
+}
+
+// C's radar: the 33 × 33 blocks round the player, north up, the player in the middle and the
+// block found where it lies; on the map's own void so it reads as part of the picture.
+function drawRadars(){
+  for (const c of document.querySelectorAll("canvas[data-radar]")) {
+    const s = c.clientWidth, p = PLAYERS[0], col = css(p.tok);
+    c.width = s * 2; c.height = s * 2;
+    const ctx = c.getContext("2d");
+    ctx.setTransform(2, 0, 0, 2, 0, 0);
+    ctx.fillStyle = css("--map-void"); ctx.fillRect(0, 0, s, s);
+    const k = (s - 16) / 33, o = 8;
+    ctx.strokeStyle = "rgba(242,242,242,.07)"; ctx.lineWidth = 1;
+    for (let i = 0; i <= 33; i += 11) { ctx.beginPath(); ctx.moveTo(o + i * k, o); ctx.lineTo(o + i * k, s - o); ctx.moveTo(o, o + i * k); ctx.lineTo(s - o, o + i * k); ctx.stroke(); }
+    ctx.globalAlpha = .7; ctx.strokeStyle = col; ctx.strokeRect(o, o, 33 * k, 33 * k); ctx.globalAlpha = 1;
+    const cx = o + 16.5 * k, cy = cx;
+    if (c.dataset.radar === "found") {
+      const tx = cx + (p.scan.found.x - p.x) * k, ty = cy + (p.scan.found.z - p.z) * k;
+      ctx.save(); ctx.setLineDash([4, 3]); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(tx, ty); ctx.stroke(); ctx.restore();
+      ctx.save(); ctx.translate(tx, ty); ctx.scale(.7, .7); targetMark(ctx, 0, 0, col); ctx.restore();
+    }
+    ctx.beginPath(); ctx.arc(cx, cy, 6, 0, 7); ctx.fillStyle = col; ctx.fill();
+    ctx.strokeStyle = T.halo; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = css("--map-ink"); ctx.font = "600 9px system-ui, sans-serif"; ctx.textAlign = "center"; ctx.fillText("N", cx, o + 8);
+  }
+}
+
+function render(){
+  readHash(); readT();
+  document.getElementById("cap").innerHTML = CAPTION[V] + ` Reviewer chrome (the dashed strip) is not design. States open by hash, e.g. <span style="font-family:var(--font-mono)">#view=none&amp;theme=light</span>.`;
+  if (S.view === "card") chatScreen(); else mapScreen();
+  const opt = (k, vals) => `<div class="srow"><span class="sl">${k}</span>${vals.map(([v, l]) => `<button aria-pressed="${S[k] === v}" data-k="${k}" data-v="${v}">${l}</button>`).join("")}</div>`;
+  document.getElementById("sim").innerHTML = `<div class="stitle">Mock controls</div>` +
+    opt("view", [["found","Tapped · found one"],["none","Tapped · none nearby"],["overview","Overview"],["card","Dave's chat answer"]]) +
+    opt("theme", [["","System"],["dark","Dark"],["light","Light"]]);
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-k]"); if (!b) return;
+  const o = {...S, [b.dataset.k]: b.dataset.v}; delete o.shot;
+  location.hash = Object.entries(o).filter(([k, v]) => v !== DEF[k]).map(([k, v]) => `${k}=${v}`).join("&");
+});
+addEventListener("hashchange", render);
+addEventListener("resize", render);
+render();
+</script>
+</body>
+</html>

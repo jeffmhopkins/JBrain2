@@ -512,6 +512,102 @@ async def minecraft_map_items(
     return await _sidecar(settings, "GET", "/map/items", params=params)
 
 
+@router.get("/map/villagers")
+async def minecraft_map_villagers(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    x: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    z: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+    profession: Annotated[str, Query(pattern=r"^[a-z0-9_]{0,40}$")] = "",
+    sells: Annotated[str, Query(pattern=r"^[a-z0-9_:]{0,64}$")] = "",
+    enchant: Annotated[str, Query(pattern=r"^[a-z0-9_]{0,40}$")] = "",
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    radius: Annotated[int | None, Query(ge=1, le=60_000_000)] = None,
+    flush: bool = False,
+) -> dict[str, Any]:
+    """The nearest villagers with a job or selling an item or enchantment, from the
+    world's actor records — Minecraft_Dave's `mc_find_villager` with no scan charged
+    (§M4e). Only the trades each offers now. Also the entity index's own counts
+    (records, unreadable, unplaced, overflow) for the box check on a real world."""
+    request.state.debug_detail = f"minecraft map villagers {slot} {dim} {x},{z}"
+    params: dict[str, Any] = {
+        "slot": slot,
+        "dim": dim,
+        "x": x,
+        "z": z,
+        "profession": profession,
+        "sells": sells,
+        "enchant": enchant,
+        "limit": limit,
+        "flush": int(flush),
+    }
+    if radius is not None:
+        params["radius"] = radius
+    return await _sidecar(settings, "GET", "/map/villagers", params=params)
+
+
+@router.get("/map/pets")
+async def minecraft_map_pets(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    x: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    z: Annotated[int, Query(ge=-30_000_000, le=30_000_000)],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+    owner: Annotated[str, Query(pattern=r"^(-?\d{1,20})?$")] = "",
+    owner_name: Annotated[str, Query(max_length=16)] = "",
+    kind: Annotated[str, Query(pattern=r"^[a-z0-9_]{0,40}$")] = "",
+    name: Annotated[str, Query(max_length=64)] = "",
+    limit: Annotated[int, Query(ge=1, le=20)] = 5,
+    radius: Annotated[int | None, Query(ge=1, le=60_000_000)] = None,
+    everywhere: bool = False,
+    flush: bool = False,
+) -> dict[str, Any]:
+    """Tamed pets (one player's by `owner` id or `owner_name` gamertag) or any mob named
+    `name`, from the world's actor records — Minecraft_Dave's `mc_find_pet` with no scan
+    charged (§M4e). For the box check that a pet's `OwnerNew` is its tamer's id."""
+    request.state.debug_detail = f"minecraft map pets {slot} {dim} {x},{z}"
+    params: dict[str, Any] = {
+        "slot": slot,
+        "dim": dim,
+        "x": x,
+        "z": z,
+        "owner": owner,
+        "owner_name": owner_name,
+        "kind": kind,
+        "name": name,
+        "limit": limit,
+        "everywhere": int(everywhere),
+        "flush": int(flush),
+    }
+    if radius is not None:
+        params["radius"] = radius
+    return await _sidecar(settings, "GET", "/map/pets", params=params)
+
+
+@router.get("/map/portals")
+async def minecraft_map_portals(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)?$")] = "",
+    check: bool = True,
+) -> dict[str, Any]:
+    """The Nether portals the world recorded, the ones the Tricorder points through
+    (§M4e). `check` leaves out a record whose portal block is gone; `check=false` lists
+    them all, for the box check that a broken portal is caught."""
+    request.state.debug_detail = f"minecraft map portals {slot} {dim or 'all'}"
+    params: dict[str, Any] = {"slot": slot, "check": int(check)}
+    if dim:
+        params["dim"] = dim
+    return await _sidecar(settings, "GET", "/map/portals", params=params)
+
+
 @router.get("/map/nearby")
 async def minecraft_map_nearby(
     request: Request,

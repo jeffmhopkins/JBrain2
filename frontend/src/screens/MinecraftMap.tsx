@@ -88,6 +88,7 @@ import {
   PIN_SCALE,
   type Preset,
   type RosterEntry,
+  type ScanWords,
   type StripDay,
   TAIL_S,
   clamp,
@@ -113,6 +114,10 @@ import {
   presetRange,
   rosterOf,
   scaleOfZoom,
+  scanFrame,
+  scanPlate,
+  scanShown,
+  scanWords,
   sessionAt,
   sessionRange,
   slotLabel,
@@ -143,6 +148,7 @@ import { type MapSource, OWNER_MAP } from "../minecraftMapSource";
 import { useForeground } from "../visibility";
 import { ShareSheet } from "./MinecraftMapShare";
 import { SessionsSheet, TimelinePanel, type TimelineState } from "./MinecraftMapTimeline";
+import { ScanLines } from "./MinecraftScanLines";
 import { useCovered, useW } from "./MinecraftWorlds";
 import {
   LEGEND,
@@ -169,6 +175,7 @@ import {
   readTokens,
   reducedMotion,
   scaleRect,
+  scanSquare,
   spotMark,
   stars,
   targetMark,
@@ -408,13 +415,17 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     sel?.kind === "player" && !timeTravel
       ? players?.players.find((q) => q.xuid === sel.p.xuid)
       : undefined;
-  const tricorder = aimer?.target ? tricorderLine(aimer, aimer.target) : null;
+  // A live scan points the arrow, so the waypoint waiting under it has no line of its own.
+  const tricorder = aimer?.target && !aimer.scan ? tricorderLine(aimer, aimer.target) : null;
+  const scan = aimer ? scanWords(aimer, host.nowMs / 1000) : null;
 
   // Everything the draw loop reads, current as of the last render.
   const view = useRef<MapView>(
     at ? { x: at.x + 0.5, z: at.z + 0.5, s: scaleOfZoom(at.zoom) } : { x: 0, z: 0, s: 0.7 },
   );
   const frame = useRef<Frame>({ w: 1, h: 1, bottom: 160, top: 64 });
+  /** The scanner whose square the camera framed, kept framed until the map is touched. */
+  const reframe = useRef<string | null>(null);
   const dirty = useRef(true);
   const hits = useRef<Hit[]>([]);
   const cache = useRef(new Map<string, TileEntry>());
@@ -779,7 +790,12 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       fitEveryone(false);
       return;
     }
-    view.current = { x: p.x + 0.5, z: p.z + 0.5, s: FOCUS_SCALE };
+    reframe.current = scanShown(p) ? p.xuid : null;
+    view.current = (scanShown(p) ? scanFrame(p, frame.current) : null) ?? {
+      x: p.x + 0.5,
+      z: p.z + 0.5,
+      s: FOCUS_SCALE,
+    };
     redraw();
     setSel({ kind: "player", p });
   }, [info, players, playersFailed, fitEveryone, redraw]);
@@ -1265,6 +1281,28 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       selGate: sel?.kind === "gate" ? sel.g.id : null,
     });
     const avoid: Avoid = { rects: [...world.avoid.rects], segs: [...world.avoid.segs] };
+    // Live scans (§M25): every online scanner's square, over the areas and under the tiles,
+    // and the block each found in the Tricorder target's grammar; the bearing only for the
+    // tapped one. Not on the replay: a scan isn't recorded.
+    if (!replay && st.ov.players && st.players) {
+      const tappedP = sel?.kind === "player" ? sel.p.xuid : null;
+      for (const p of playersIn(st.players.players, st.dim)) {
+        if (!scanShown(p) || !shown(p.xuid) || !p.scan) continue;
+        const col = colorOf(t, tokenOf(p.xuid));
+        const fd = p.scan.state === "found" ? p.scan.found : null;
+        scanSquare(ctx, v, f, p, col, !!fd, t);
+        if (!fd || fd.dim !== st.dim) continue;
+        const [sx, sy] = toScreen(v, f, fd.x + 0.5, fd.z + 0.5);
+        if (tappedP === p.xuid) {
+          bearingLine(ctx, v, f, [p.x, p.z], [fd.x + 0.5, fd.z + 0.5], col, t);
+          const [px, py] = toScreen(v, f, p.x, p.z);
+          // The plate keeps off its own bearing and block too, so neither is ever hidden.
+          avoid.segs.push({ ax: px, ay: py, bx: sx, by: sy, own: `scan:${p.xuid}` });
+        }
+        targetMark(ctx, sx, sy, col, t);
+        avoid.rects.push({ x: sx - 12, y: sy - 12, w: 24, h: 24, own: `scan:${p.xuid}` });
+      }
+    }
     for (const m of world.markers) mark(m);
     for (const p of world.pins) {
       const [x, z] = gateCenter(p.g);
@@ -1320,7 +1358,8 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     // (live view only: the target is where Dave has it pointed now, not then).
     const aimed = sel?.kind === "player" && !replay ? sel.p.xuid : null;
     const aimer = aimed ? st.players?.players.find((q) => q.xuid === aimed) : undefined;
-    const aim = aimer?.target;
+    // A live scan points the arrow now: the waypoint waiting under it isn't drawn.
+    const aim = aimer?.scan ? undefined : aimer?.target;
     if (aimer && aim && aim.dim === st.dim) {
       const col = colorOf(t, tokenOf(aimer.xuid));
       const tx = aim.x + 0.5;
@@ -1383,8 +1422,11 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         playerDisc(ctx, sx, sy, p, colorOf(t, tokenOf(p.xuid)), t, on, pulse);
         avoid.rects.push({ x: sx - 12, y: sy - 12, w: 24, h: 24, own: `p:${p.xuid}` });
         if (v.s >= 0.25 || p.online || on) {
+          // A scanner's one plate carries their name first, and falls back to the name.
+          const plate = replay ? null : scanPlate(p);
           labels.push({
-            txt: p.online ? p.gamertag : `${p.gamertag} · offline`,
+            txt: plate ?? (p.online ? p.gamertag : `${p.gamertag} · offline`),
+            short: plate ? p.gamertag : undefined,
             x: sx,
             y: sy - 8,
             pr: on ? -1 : p.online ? 0 : 1,
@@ -1456,7 +1498,14 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     if (h !== panelH) setPanelH(h);
     const visible = H - h;
     if (visible !== vis) setVis(visible);
+    const moved = frame.current.bottom !== h;
     frame.current = { ...frame.current, bottom: h, top: visible < TINY_PX ? 56 : 64 };
+    // A framed scanner stays framed while the panel settles round their card, until the
+    // map is touched.
+    const owed = reframe.current;
+    const who = owed && sel?.kind === "player" && sel.p.xuid === owed ? aimer : undefined;
+    const to = moved && who ? scanFrame(who, frame.current) : null;
+    if (to) glide(to);
     redraw();
   });
 
@@ -1477,6 +1526,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
 
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     if ((e.target as Element).closest("button")) return;
+    reframe.current = null;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
     const g = gesture.current;
@@ -1607,7 +1657,13 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     if (hit?.kind === "player") {
       // On the timeline, the tapped player is who Follow follows.
       if (tl.on) setTl((c) => ({ ...c, focus: hit.p.xuid }));
-      return select({ kind: "player", p: hit.p, at: tl.on && !tl.live ? tRef.current : undefined });
+      // A scanner is framed so their whole square shows (not on the replay: none is drawn).
+      const scanning = scanShown(hit.p) && !(tl.on && !tl.live);
+      const framed = scanning ? scanFrame(hit.p, frame.current) : null;
+      if (framed) glide(framed);
+      select({ kind: "player", p: hit.p, at: tl.on && !tl.live ? tRef.current : undefined });
+      reframe.current = framed ? hit.p.xuid : null;
+      return;
     }
     if (hit?.kind === "marker") return selectMarker(hit.m);
     const [wx, wz] = toWorld(view.current, frame.current, sx, sy);
@@ -1880,6 +1936,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                 onSessions={(x) => setList({ who: x })}
                 onReplay={sessions.length ? replayBefore : null}
                 tricorder={tricorder}
+                scan={scan}
                 beacons={marks?.beacons ?? []}
                 onShowGate={showGateEnds}
                 playerToken={
@@ -2056,6 +2113,7 @@ function Detail({
   onSessions,
   onReplay,
   tricorder,
+  scan,
   beacons,
   onShowGate,
   playerToken: tok,
@@ -2073,6 +2131,8 @@ function Detail({
   onReplay: ((e: MinecraftTimelineEvent) => void) | null;
   /** The selected player's Tricorder line, when Dave has it pointed somewhere. */
   tricorder: string | null;
+  /** The selected player's live scan, in the held Tricorder's words (§M25). */
+  scan: ScanWords | null;
   /** Every beacon in the world, for a tapped one's overlaps. */
   beacons: MinecraftBeacon[];
   onShowGate: (g: MinecraftGate) => void;
@@ -2315,6 +2375,7 @@ function Detail({
           </span>
         </p>
       )}
+      {scan && !compact && <ScanLines scan={scan} />}
       {sel.kind === "player" && (
         <div className="mc-btnrow mc-map-det-acts">
           <button type="button" className="mc-btn" onClick={() => onFollow(sel.p.xuid)}>

@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3849,7 +3849,58 @@ dimension is marked either way. The player card gets one line under the coordina
 `.mc-map-det-tri`: a crosshair glyph, **Tricorder** then *Diamonds · 330 blocks north-east
 · y -58* (a compass word, north being −z as in game; *y* only when the target has a
 depth), or *Diamonds · in the Nether* across a portal. Hidden on the compact (timeline)
-card and on the replay. Shared maps show it the same way.
+card and on the replay. Shared maps show it the same way. While a live scan is on (below)
+the waypoint waits under it: neither it nor its bearing is drawn, and its line gives way to
+the scan's.
+
+### The Tricorder's live scan on the Minecraft map (owner, 2026-10-13 — binding mock: `docs/mocks/minecraft-scan-on-map/a-square-always.html`, variant A with C's depth line; plan §M25)
+
+*"Dave, scan for diamonds"* puts a player's Tricorder in scan mode: every 10 s the pack
+finds the nearest matching block in a 33 × 33 × 33 box round them. The map shows it from
+the pack's own lines (`scan` in `/api/minecraft/map/players`), **always drawn** for every
+online scanner, so *who is scanning, and is it finding anything?* answers with no tap.
+
+- **The square:** the 33 × 33 blocks searched, centred on the block the player stands in,
+  drawn to the block (`scanSquare`): **viewfinder corners** (2.5 px over a 5 px halo, in
+  the player's colour, up to 14 px long) joined by a 1 px hairline at 70 %. Never dashed, so
+  it never reads as a beacon's protected square or the chunk grid, even for a green player.
+  A **10 % wash** of the player's colour fills it while a block is found. It is the
+  horizontal footprint only; the depth limit is in words (below).
+- **The found block** is the Tricorder target's grammar (§M21: two rings and a dot in the
+  player's colour over a halo), because in game it *is* the arrow's target. The 8 / 6 dashed
+  **bearing** is drawn only for the tapped player. The **waypoint** under a scan is not
+  drawn: two bearings from one player would misstate where the arrow points.
+- **One plate:** a scanner's label is ***BlockyFox · Scanning: diamond*** (*· none nearby*
+  when the scan is empty), in the name's own place and rank (players, after the tapped
+  thing). If it can't be placed it falls back to the name before the drop rule drops it, so
+  a scanner never has fewer words on the map than anyone else.
+- **Draw order:** the squares and found blocks over the beacon squares and gate lines, under
+  every tile; players on top.
+- **The card**, under the coordinates, a `.mc-map-det-tri` line with a **radar** glyph
+  (Lucide `radar`) in place of the crosshair:
+  - **Found:** **Tricorder** · *Scanning: diamond · 13 blocks north-east · y -58* — the
+    shipped `tricorderLine` with the scan as its target, so the distance is the held
+    Tricorder's (across, to the block's centre), never 3D; then *↓ 6 blocks below them · y
+    -58* (*↑ … above them*, or *Level with them*) in `--text`, the depth a top-down map
+    can't show; then, micro, *Within 16 blocks, y -64 to -36. Found 40 s ago.* — the
+    vertical reach for where they stand (16 each way, cut at the world's floor and ceiling)
+    and the last scan heard (the pack resends a steady result once a minute, so this is
+    never more than about a minute stale) — and, when they have a waypoint, *Their
+    waypoint, Tree farm, comes back when the scan stops.*
+  - **None nearby:** *Scanning: diamond · none nearby*, then *Nothing within 16 blocks, y
+    -64 to -36. Last scan 40 s ago.*
+  - **Started, not yet reported:** *Scanning: diamond*, then *Within … The first scan is on
+    its way.*
+  - **Offline:** only *Scanning: diamond — resumes when BlockyFox is back on* (canon: it
+    remembers and picks up again when they're back). Nothing is drawn on the map.
+- **Dave's chat card:** the `minecraft_map` focus kind **`scan`** (its label the gamertag),
+  centred on the scanner at 4 px a block, draws their square, block, bearing and plate from
+  the live players route, and its "what it shows" block is the scanner (*Online ·
+  Overworld*) with the same lines.
+- **Not drawn** on the timeline's replay (a scan isn't recorded) or the compact timeline
+  card. **Shared maps** follow the Tricorder target's rule and show it the same way.
+- **Values** use the shipped line's ASCII minus (*y -58*), so the card's words match the
+  Tricorder line beside them; numbers and units never break (no-break spaces).
 
 ### The Minecraft map share (owner, 2026-10-11 — mock reviewed in chat; plan §M20)
 
@@ -3873,6 +3924,52 @@ A view-only map for someone without a login, at `/mc/s/{token}`.
   disc, *This map link was turned off*, one line on asking for a new link, and the
   wordmark. An unreachable box says *The map isn't answering* instead — never that the link
   ended.
+
+### Players' goals on the Minecraft screen (owner, 2026-10-13 — binding mock: `docs/mocks/minecraft-goals/b-player-sheet.html`, variant B "expandable if clicked", look-only; plan §M24)
+
+Each player's goals and their progress, where the owner already looks after people. The
+owner picked **B** (goals with the player) over A (a Goals section) and C (a Goals tab on
+the map), with one change: the glance line **expands in place**, so every goal is one tap
+away from the Players table, which answers the review's B2 (*all but one goal hidden*).
+The round's record and its independent review are `docs/mocks/minecraft-goals/`.
+
+- **The glance line.** Under a player with goals, a 44 px button of its own (below the
+  row's overlay, so the row still opens the Sheet): a 44 px mini bar and the first open
+  counted goal as *14 / 23 iron blocks · +1 more goal* (the item in words, plural for a
+  count, a mass noun left alone: *200 glass*), or *18 / 16 torches · reached*, or a flag
+  and the title for a plain goal. The rest are said as **goals** (*+1 more goal*), never
+  *1 more* beside a count, where it reads as items short (review B1). A player with only
+  finished goals reads *No open goals · 1 done*. A player with none has no line.
+- **Expanded in place**: every open goal as a 56 px row (glyph tile, title, *14 / 23*, the
+  bar, the *where from · as of* line); finished goals folded under *1 done · 1 abandoned*
+  (done and abandoned pills, the date, what it counted); then the look-only footnote,
+  *Goals and the journal are kept by Dave from what players tell him in game. To change
+  one, {player} asks Dave.* No control edits a goal.
+- **A goal's detail opens in place too** (an accordion, one goal at a time), not in a
+  Sheet: DESIGN's surface rule makes row-level detail an inline expansion, the Players
+  table isn't a modal, and from inside the player Sheet a second Sheet would nest two
+  modals. It holds the headline (*14 of 23 — 9 to go*), the big bar and its key, **where
+  the count comes from** as a plain list (no card in a card, review B3): *On {player}*
+  (inventory, armour and off-hand; *1 shulker box carried: what's inside isn't counted*),
+  *Near {place}* per saved place with its distance and a **far** chip, *Near {player}*
+  (the chests where they stand, as Dave counts them); one far line (*one per check, for
+  all far places*); the files' age with **Count again**; *Counting here is free and never
+  spends {player}'s deep scans*; and the goal's Journal.
+- **The player Sheet** gains a **Goals** section (*N open*, the same list) and the
+  player's latest **Journal** (five entries, newest first, each with its source: *in game*,
+  *Dave*, *you*, *auto*), above Lifetime stats. With no goals it teaches the sentence
+  that makes one: *"Dave, remind me I need 23 iron blocks"*.
+- **The bar**: carried in solid `--steel`, chests in `--steel` at 45 % (`color-mix`), the
+  rest `--surface-2`; reached is `--green` all through with a *reached* pill and *{player}
+  can tell Dave it's done* (Dave never brings it up himself); a count that can't be made is
+  the track hatched in `--border`, *— / 23*. Words always say what the colours say.
+- **Honest counting.** The screen counts each player's goals once when it shows them (one
+  request a player, the files as they are); **Count again** saves the running world first.
+  An offline player's pockets read *counts while they're on*; a goal in a world that isn't
+  loaded carries a *not loaded* pill and is counted from that world's saved files; a
+  server that can't answer reads *Can't count right now — {why}*.
+- **Glyphs**: a cube for a goal that counts an item, a flag for a plain goal, a check and a
+  ban for finished ones. Never the Tricorder target's rings (review X7).
 
 ## Implementation rules
 

@@ -171,7 +171,7 @@ const ownSlot = (player) => {
 const dave = (player, text) => player.sendMessage(DAVE + text);
 
 const story = initWelcome({ beam, ownSlot, tricorderOn, say, dave });
-const scan = initScan({ say });
+const scan = initScan({ say, emit });
 
 const onWaking = (player, initialSpawn) => {
   const left = player.getDynamicProperty(BURNT);
@@ -427,7 +427,8 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
       } else {
         world.setDynamicProperty(waypointKey(wp.player), JSON.stringify(wp.record));
         const r = wp.record;
-        say(`waypoint set for ${wp.player}: ${r.label} at ${r.x} ${r.z} (${r.dim})${ended}`);
+        const via = r.via.length ? ` via ${r.via.length} portal(s)` : "";
+        say(`waypoint set for ${wp.player}: ${r.label} at ${r.x} ${r.z} (${r.dim})${via}${ended}`);
       }
     } catch (e) {
       say(`waypoint refused: ${e}`);
@@ -615,6 +616,8 @@ const askDave = (player, text) => {
   emit({
     ev: "dave",
     name: player.name,
+    // The id a pet's owner is recorded under in the world's files (§M4e): "my dog".
+    pid: player.id,
     text: text.slice(0, QUESTION_MAX),
     ...where(player),
     spawn,

@@ -942,3 +942,99 @@ export function tricorderLine(
   const depth = t.y === null ? "" : ` · y ${t.y}`;
   return `${t.label} · ${blocks} block${blocks === 1 ? "" : "s"} ${way}${depth}`;
 }
+
+// ---- the Tricorder's live scan (§M25; DESIGN "The Tricorder's live scan on the map") ----
+
+/** The pack's SCAN_REACH: a 33 × 33 × 33 box round the player. */
+export const SCAN_REACH = 16;
+/** Each dimension's lowest and highest block, where the box is cut (never shifted). */
+const HEIGHT: Record<MinecraftDim, [number, number]> = {
+  overworld: [-64, 319],
+  nether: [0, 127],
+  the_end: [0, 255],
+};
+
+/** The heights one scan reads for a player at `y`, as the pack's `scanBox` cuts them. */
+export function scanYRange(dim: MinecraftDim, y: number): [number, number] {
+  const [lo, hi] = HEIGHT[dim];
+  const at = Math.floor(y);
+  return [clamp(at - SCAN_REACH, lo, hi), clamp(at + SCAN_REACH, lo, hi)];
+}
+
+/** "40 s ago", "3 min ago", "2 h ago". */
+export function agoWords(sec: number, now: number): string {
+  const s = Math.max(0, Math.round(now - sec));
+  if (s < 60) return `${s}${NB}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}${NB}min ago`;
+  return `${Math.floor(s / 3600)}${NB}h ago`;
+}
+
+/** The view that frames a tapped scanner's whole square, with room for its plate: the
+ *  33 blocks at up to 4 px a block (the mock's camera). */
+export function scanFrame(p: { x: number; z: number }, f: Frame): MapView | null {
+  const bx = Math.floor(p.x);
+  const bz = Math.floor(p.z);
+  return fitView(
+    [
+      [bx - SCAN_REACH, bz - SCAN_REACH],
+      [bx + SCAN_REACH + 1, bz + SCAN_REACH + 1],
+    ],
+    f,
+    40,
+    4,
+  );
+}
+
+/** Whether a player's scan is drawn on the map: on, and they're online to run it. */
+export const scanShown = (p: MinecraftMapPlayer) => !!p.scan && p.online;
+
+/** The one plate a scanning player wears on the map: their name first, so a scanner never
+ *  has fewer words than anyone else (the review's A1). */
+export function scanPlate(p: MinecraftMapPlayer): string | null {
+  const s = p.scan;
+  if (!s || !p.online) return null;
+  return `${p.gamertag} · Scanning: ${s.label}${s.state === "none" ? " · none nearby" : ""}`;
+}
+
+export interface ScanWords {
+  /** After **Tricorder** ·, in the held Tricorder's own words. */
+  line: string;
+  /** How far below or above them the block is, which a top-down map can't show. */
+  depth: string | null;
+  /** The reach, when it last looked, and the waypoint waiting under it. */
+  sub: string;
+}
+
+/** The player card's scan lines, or null with no scan on. The distance is `tricorderLine`'s
+ *  (across, to the block's centre), so the card says what the held Tricorder says. */
+export function scanWords(p: MinecraftMapPlayer, now: number): ScanWords | null {
+  const s = p.scan;
+  if (!s) return null;
+  const label = `Scanning: ${s.label}`;
+  if (!p.online)
+    return { line: `${label} — resumes when ${p.gamertag} is back on`, depth: null, sub: "" };
+  const [lo, hi] = scanYRange(p.dim, p.y);
+  const reach = `${SCAN_REACH}${NB}blocks, y${NB}${lo} to ${hi}`;
+  const when = s.at === null ? "" : agoWords(s.at, now);
+  const way = p.target ? ` Their waypoint, ${p.target.label}, comes back when the scan stops.` : "";
+  if (s.state === "found" && s.found) {
+    const f = s.found;
+    const line = tricorderLine(p, { ...f, label, set_at: s.at ?? 0 });
+    let depth: string | null = null;
+    if (f.dim === p.dim) {
+      const dy = f.y - Math.floor(p.y);
+      const n = Math.abs(dy);
+      const words = `${n}${NB}block${n === 1 ? "" : "s"} ${dy < 0 ? "below" : "above"} them`;
+      depth = `${dy === 0 ? "Level with them" : `${dy < 0 ? "↓" : "↑"} ${words}`} · y${NB}${f.y}`;
+    }
+    return { line, depth, sub: `Within ${reach}. Found ${when}.${way}` };
+  }
+  if (s.state === "none") {
+    return {
+      line: `${label} · none nearby`,
+      depth: null,
+      sub: `Nothing within ${reach}.${when ? ` Last scan ${when}.` : ""}${way}`,
+    };
+  }
+  return { line: label, depth: null, sub: `Within ${reach}. The first scan is on its way.${way}` };
+}

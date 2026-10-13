@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include <time.h>
+#include <math.h>
 
 #include "alarm_logic.h"
 #include "alarm_port_fake.h"
@@ -23,6 +24,8 @@
 #include "convo_wire.h"
 #include "minutes.h"
 #include "notice_policy.h"
+#include "orient_logic.h"
+#include "orient_port_fake.h"
 #include "settings_model.h"
 #include "shell_core.h"
 #include "shell_evq.h"
@@ -38,6 +41,12 @@
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
+#include "svc_calib.h"
+#include "svc_display.h"
+#include "svc_display_fake.h"
+#include "svc_orient.h"
+#include "svc_orient_drv.h"
+#include "tp_cal_port.h"
 #include "svc_alarms_drv.h"
 #include "svc_siblings_drv.h"
 #include "svc_convo.h"
@@ -391,8 +400,9 @@ static void test_settings_cards_say_what_the_mock_says(void)
     char s[200];
     settings_notif_note(true, true, 21 * 60 + 30, 6 * 60 + 30, s, sizeof s);
     CHECK(strstr(s, "Refused 21:30–06:30 — ") == s, "the quiet note names the window");
-    CHECK(strstr(settings_rotate_note(true), "later update") && !strcmp(settings_rotate_note(false), "Locked upright"),
-          "auto-rotate says it is not turning anything yet");
+    CHECK(!strcmp(settings_rotate_note(true, true), "Follows which way is down") &&
+              !strcmp(settings_rotate_note(false, true), "Locked upright"),
+          "auto-rotate says what it does (0.0.18)");
     CHECK(!settings_notif_row_live(1, false) && settings_notif_row_live(0, false),
           "with messages refused only the accept switch is live");
 }
@@ -405,8 +415,59 @@ static void test_conversation_rules(void)
     thread_bubble_t b;
     thread_bubble(&theirs, 0, 0, &b);
     CHECK(b.unplayed && b.prog == 0 && !strcmp(b.dur, "1:05"), "unheard: dot, empty bar");
-    thread_bubble(&theirs, 4, 40, &b);
+    thread_bubble(&theirs, 4, 26000, &b);
     CHECK(!b.unplayed && b.playing && b.prog == 40, "the dot goes the moment it starts");
+    /* 0.0.17 (owner, 2026-10-13: "I expect to go from left to right"): the bar follows what has
+       played, against the box's milliseconds, and never runs past its end. */
+    msg_t hers = {.id = 7, .voice = true, .dur_s = 5, .dur_ms = 5100};
+    thread_bubble(&hers, 7, 0, &b);
+    CHECK(b.playing && b.prog == 0, "a play starts with an empty bar");
+    thread_bubble(&hers, 7, 2550, &b);
+    CHECK(b.prog == 50, "half of 5.1 s played: half the bar, not half of the rounded 5 s");
+    thread_bubble(&hers, 7, 5000, &b);
+    CHECK(b.prog == 98, "5 s of 5.1: not yet full");
+    thread_bubble(&hers, 7, 9000, &b);
+    CHECK(b.prog == 100, "the speaker's tail past its length: full, not more");
+    hers.played = true;
+    thread_bubble(&hers, 0, 0, &b);
+    CHECK(!b.playing && !b.unplayed && b.prog == 100, "heard and stopped: a full bar, no dot");
+    msg_t old = {.id = 8, .voice = true, .dur_s = 4};
+    CHECK(thread_play_pct(&old, 1000) == 25, "no milliseconds from the box: its seconds");
+    msg_t none = {.id = 9, .voice = true};
+    CHECK(thread_play_pct(&none, 1000) == 0, "no length at all: an empty bar, never a divide by zero");
+
+    /* What a thread's list is built from: a play, a stop or a message heard is not a rebuild. */
+    msg_t a = {.id = 1, .voice = true, .dur_s = 3, .text = "Daddy!"};
+    msg_t a_heard = a;
+    a_heard.played = true;
+    const uint32_t s1 = thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a), 1, true);
+    CHECK(s1 == thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a_heard), 1, true),
+          "heard or not, the same list: the dot changes where it stands");
+    msg_t a_text = a;
+    snprintf(a_text.text, sizeof a_text.text, "Daddy!!");
+    CHECK(s1 != thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a_text), 1, true),
+          "a transcript filled in is a rebuild");
+    msg_t a_status = a;
+    snprintf(a_status.status, sizeof a_status.status, "Played");
+    CHECK(s1 != thread_shape_end(thread_shape_msg(THREAD_SHAPE0, &a_status), 1, true),
+          "so is a send's status");
+    CHECK(thread_shape_end(THREAD_SHAPE0, 0, false) != thread_shape_end(THREAD_SHAPE0, 0, true),
+          "and Fetching... giving way to No messages yet");
+    msg_t b2 = {.id = 2, .voice = true, .text = "Bye"};
+    const uint32_t ab = thread_shape_msg(thread_shape_msg(THREAD_SHAPE0, &a), &b2);
+    const uint32_t ba = thread_shape_msg(thread_shape_msg(THREAD_SHAPE0, &b2), &a);
+    CHECK(ab != ba && thread_shape_end(ab, 2, true) != s1, "and a message added, or the order moved");
+
+    /* The heap's low-water mark, named with what the panel was doing when it was set. */
+    dbg_low_t low = {0};
+    CHECK(dbg_low_feed(&low, 60000, "idle", false, false) && !strcmp(low.at, "idle"), "the first reading");
+    CHECK(!dbg_low_feed(&low, 61000, "pickup", true, false) && !strcmp(low.at, "idle"),
+          "a higher reading names nothing");
+    CHECK(dbg_low_feed(&low, 44084, "play", true, true) && low.min == 44084 &&
+              !strcmp(low.at, "play+handshake+ring"),
+          "a new low: the work, inside a handshake, with a ring held");
+    CHECK(!dbg_low_feed(&low, 44084, "report", false, false) && !strcmp(low.at, "play+handshake+ring"),
+          "the same low again keeps who set it");
     msg_t reply = {.id = 9};
     CHECK(convo_shows_listen(&reply, false, 0), "text only: a reply has Listen");
     CHECK(!convo_shows_listen(&reply, true, 0), "read aloud: no Listen");
@@ -1422,6 +1483,32 @@ static void test_the_ring_never_overwrites_and_wraps(void)
     CHECK(tk_ring_read(&r, out, 4) == 0, "the consumer never reads past the producer");
 }
 
+static void test_a_play_rides_a_smaller_ring_than_a_talk(void)
+{
+    CHECK(tk_ring_bytes(TK_KIND_AGENT) == 16384 && tk_ring_bytes(TK_KIND_POST) == 16384,
+          "a talk and a voice message keep 0.0.10's half second of radio slack");
+    CHECK(tk_ring_bytes(TK_KIND_LISTEN) == 6144, "a stored message plays through 6 KB");
+    CHECK(tk_ring_bytes(TK_KIND_LISTEN) >= TK_SPK_START_BYTES + TK_NET_SLICE,
+          "which still holds the speaker's 150 ms start and one more network slice");
+    /* The play's ring fills and drains through a stream several times its size, as the speaker
+       takes 20 ms chunks and the network puts slices: nothing lost, nothing reordered. */
+    static uint8_t mem[TK_RING_PLAY];
+    tk_ring_t r;
+    tk_ring_init(&r, mem, sizeof mem);
+    uint8_t in[TK_NET_SLICE], out[TALK_CHUNK_BYTES];
+    uint32_t put = 0, got = 0;
+    bool order = true;
+    while (got < 5u * TK_RING_PLAY) {
+        for (uint32_t i = 0; i < sizeof in; i++) in[i] = (uint8_t)(put + i);
+        put += tk_ring_write(&r, in, (uint32_t)sizeof in);
+        const uint32_t n = tk_ring_read(&r, out, sizeof out);
+        for (uint32_t i = 0; i < n; i++) order &= out[i] == (uint8_t)(got + i);
+        got += n;
+    }
+    CHECK(order && tk_ring_used(&r) == put - got && tk_ring_used(&r) <= TK_RING_PLAY,
+          "a play's stream comes out of 6 KB in order");
+}
+
 static void test_a_hold_records_sends_and_hears_back(void)
 {
     tk_t t;
@@ -1754,6 +1841,7 @@ static void test_a_talk_on_the_glass_end_to_end(void)
     svc_audio_init();
     svc_settings_set(SET_TTS, 1);
     CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv") && svc_audio_talking(), "KEY down records");
+    CHECK(talk_ring_bytes() == TK_RING_TALK, "into a talk's 16 KB ring, taken at KEY down");
     svc_rtc_fake_advance_ms(3200);
     CHECK(svc_audio_talk_end(true) == TALK_SENT, "a three-second hold is sent");
     msg_t m = last_jerv();
@@ -3673,35 +3761,77 @@ static void test_the_people_s_threads_end_to_end(void)
     CHECK(svc_post_take_chime(false), "a new one in the day, chime on, speaker free: one chime");
     CHECK(!svc_post_take_chime(false), "once");
 
-    /* Play her newest: streamed, then marked played here and on the box. */
+    /* Play her newest. 0.0.17 (owner, 2026-10-13: "A message should no longer be considered
+       unread if I even hit play once on it"): heard once its audio starts, here and on the box;
+       a play the box never answers with audio leaves it unheard and stamps nothing. */
     msg_t m;
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    const uint16_t badge = svc_messages_unplayed(SVC_MESSAGES_THREAD_1);
+    const uint16_t clock_badge = svc_messages_unplayed_total();
     CHECK(svc_audio_play(m.id) && svc_audio_playing() == m.id, "a tap plays her message");
     CHECK(!strcmp(svc_audio_fake_last_path(), "/endpoint/messages/" Q_DEV "/" M5 "/pcm"),
           "from the box's own PCM route for that message");
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(!m.played && !svc_post_take(&r), "not heard before the box has answered with audio");
+    svc_audio_fake_listen(false, false, false);
+    svc_audio_service();
+    svc_post_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(!svc_audio_playing() && !m.played && svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge &&
+              !svc_post_take(&r),
+          "the box refused the play: still unread, no stamp, the badges as they were");
+    CHECK(svc_audio_play(m.id), "again");
+    CHECK(!talk_ring_held(), "no ring until the box answers the play's GET");
     CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1) == false,
           "a hold waits for the play to finish");
+    CHECK(!talk_ring_held(), "and takes no ring of its own while it waits (0.0.18)");
     svc_audio_fake_listen(true, false, false);
     svc_audio_service();
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
+    CHECK(m.played && svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge - 1 &&
+              svc_messages_unplayed_total() == clock_badge - 1,
+          "its audio starts: heard, the tile's badge and the clock's drop at once");
+    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED &&
+              !strcmp(r.path, "/endpoint/messages/" Q_DEV "/" M5 "/played"),
+          "and its stamp is queued for the box, so the PWA shows it played too");
+    post_req_t extra;
+    CHECK(!svc_post_take(&extra), "exactly one stamp");
+    svc_post_done(&r, -1, NULL, 0);
+    CHECK(talk_ring_held(), "the ring once the audio arrives");
+    CHECK(talk_ring_bytes() == TK_RING_PLAY, "a play's own 6 KB ring, not a talk's 16 KB (0.0.18)");
     CHECK(svc_audio_speaking() && svc_audio_playing() == m.id, "playing through the reply's speaker path");
+    CHECK(svc_audio_played_ms() == 0, "nothing at the speaker yet: the bar is empty");
+    svc_audio_fake_played(1200);
+    CHECK(svc_audio_played_ms() == 1200, "the bar follows the samples the speaker took");
     svc_audio_stop();
     svc_audio_service();
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
-    CHECK(!svc_audio_playing() && !m.played && !svc_post_take(&r), "stopped part way: still unplayed, nothing told");
-    CHECK(svc_audio_play(m.id), "again");
+    CHECK(!svc_audio_playing() && m.played && svc_audio_played_ms() == 0,
+          "stopped part way: still heard, and no play's progress left over");
+    CHECK(!talk_ring_held(), "the ring is given back once nothing plays");
+    char before[200], after[200];
+    /* The first stamp's flash write, two seconds on, before the replays are compared. */
+    svc_rtc_fake_advance_ms(2100);
+    svc_post_service();
+    svc_post_note(before, sizeof before);
+    const unsigned saves = post_port_fake_saves();
+    CHECK(svc_audio_play(m.id), "and again");
+    CHECK(svc_audio_played_ms() == 0, "a new play starts its bar from empty");
     svc_audio_fake_listen(true, true, false);
     svc_audio_service();
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
-    CHECK(!m.played && !svc_post_take(&r), "played to the end but its digest did not match: still unplayed");
+    CHECK(m.played && !svc_audio_playing(), "played to the end but its digest did not match: still heard");
     CHECK(svc_audio_play(m.id), "and again");
     svc_audio_fake_listen(true, true, true);
     svc_audio_service();
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
     CHECK(m.played && !svc_audio_playing(), "heard whole: played here");
-    CHECK(svc_post_take(&r) && r.kind == POST_RQ_PLAYED &&
-              !strcmp(r.path, "/endpoint/messages/" Q_DEV "/" M5 "/played"),
-          "and on the box, so the PWA shows it played too");
-    svc_post_done(&r, -1, NULL, 0);
+    svc_rtc_fake_advance_ms(3000);
+    svc_post_service();
+    svc_post_note(after, sizeof after);
+    CHECK(!strcmp(before, after) && post_port_fake_saves() == saves,
+          "replaying a heard message stamps nothing: the list, its counts and flash untouched");
+    CHECK(!svc_post_take(&r), "and queues nothing");
     svc_post_open(SVC_MESSAGES_THREAD_1);
     svc_post_service();
     post_answer(Q_NEWEST);
@@ -3798,6 +3928,21 @@ static void hear(uint16_t at)
     svc_post_heard(SVC_MESSAGES_THREAD_1, m.id);
 }
 
+/* One number from the debug snapshot's `post` section. */
+static long snap_int(const char *key)
+{
+    static char buf[8192];
+    dbg_json_t w;
+    dbg_json_init(&w, buf, sizeof buf);
+    dbg_snapshot(&w);
+    char want[48];
+    snprintf(want, sizeof want, "\"post\":{");
+    const char *post = strstr(dbg_json_text(&w), want);
+    snprintf(want, sizeof want, "\"%s\":", key);
+    const char *at = post ? strstr(post, want) : NULL;
+    return at ? atol(at + strlen(want)) : -1;
+}
+
 static void test_played_stamps_survive_failures_reboots_and_many_plays(void)
 {
     static const char FOUR[] =
@@ -3873,6 +4018,34 @@ static void test_played_stamps_survive_failures_reboots_and_many_plays(void)
     while (svc_post_take(&r)) stamped |= r.kind == POST_RQ_PLAYED;
     CHECK(!stamped, "and once confirmed, a reboot sends none of them again");
 
+    /* A full list and a message heard again: nothing is pushed out, nothing counted dropped. */
+    sib_port_fake_wipe();
+    post_port_fake_wipe();
+    svc_messages_fake_clear();
+    svc_siblings_init();
+    svc_post_init();
+    svc_siblings_offer(POST_SIBS, sizeof POST_SIBS - 1);
+    svc_siblings_service();
+    svc_post_service();
+    post_answer(FOUR);
+    while (svc_post_take(&r)) {
+    }
+    msg_t hm;
+    for (uint16_t k = 0; k < 4; k++) {
+        svc_messages_get(SVC_MESSAGES_THREAD_1, k, &hm);
+        svc_post_heard(SVC_MESSAGES_THREAD_1, hm.id);
+        svc_messages_get(SVC_MESSAGES_THREAD_2, k, &hm);
+        svc_post_heard(SVC_MESSAGES_THREAD_2, hm.id);
+    }
+    CHECK(snap_int("stamps_waiting") == POST_STAMPS && snap_int("stamps_dropped") == 0,
+          "eight heard with the box away: the list is full, none dropped");
+    svc_messages_get(SVC_MESSAGES_THREAD_1, 0, &hm);
+    svc_post_heard(SVC_MESSAGES_THREAD_1, hm.id);
+    CHECK(snap_int("stamps_waiting") == POST_STAMPS && snap_int("stamps_dropped") == 0,
+          "the same one again is a no-op: every waiting stamp kept, stamps_dropped unchanged");
+    while (svc_post_take(&r)) {
+    }
+
     /* More than the list holds: the oldest gives way, the newest eight are kept. */
     post_stamps_t l = {0};
     char id[POST_ID_BYTES];
@@ -3894,6 +4067,553 @@ static void test_played_stamps_survive_failures_reboots_and_many_plays(void)
     svc_messages_fake_clear();
     sib_port_fake_wipe();
     post_port_fake_wipe();
+}
+
+/* ---- 0.0.18: auto-rotate ---- */
+
+static void test_a_turn_and_its_touch_inverse_agree_everywhere(void)
+{
+    bool round = true, forward = true, corners = true;
+    for (uint8_t rot = 0; rot < 4; rot++)
+        for (int32_t y = 0; y < 480; y += 7)
+            for (int32_t x = 0; x < 480; x += 5) {
+                int32_t px, py;
+                disp_rot_point(rot, 480, x, y, &px, &py);
+                int16_t lx, ly, gx, gy;
+                tp_unrotate(rot, (int16_t)px, (int16_t)py, &lx, &ly);
+                tp_rotate(rot, (int16_t)x, (int16_t)y, &gx, &gy);
+                round &= lx == x && ly == y;
+                forward &= gx == px && gy == py;
+                corners &= px >= 0 && px < 480 && py >= 0 && py < 480;
+            }
+    CHECK(round, "a tap on the glass of a turned panel lands where the turned screen drew it");
+    CHECK(forward, "touch's own forward turn is the display's");
+    CHECK(corners, "and nothing lands off the glass");
+    int32_t px, py;
+    disp_rot_point(1, 480, 0, 0, &px, &py);
+    CHECK(px == 0 && py == 479,
+          "turned right (its right edge down), the viewer's top-left is the glass's bottom-left");
+    disp_rot_point(3, 480, 0, 0, &px, &py);
+    CHECK(px == 479 && py == 0, "turned left, it is the glass's top-right");
+    disp_rot_point(2, 480, 0, 0, &px, &py);
+    CHECK(px == 479 && py == 479, "upside down, the bottom-right");
+}
+
+static uint16_t logical_px(int32_t x, int32_t y)
+{
+    return (uint16_t)(x * 131 + y * 7 + (x ^ y));
+}
+
+/* Every strip LVGL could hand the flush, turned the device's way onto a glass, which must then
+   hold the upright screen turned. */
+static void test_turned_strips_build_the_turned_screen(void)
+{
+    static uint16_t glass[480 * 480], strip[480 * 40], piece[DISP_ROT_PIECE_PX];
+    const disp_win_t areas[] = {{0, 0, 479, 39}, {100, 202, 323, 241}, {0, 440, 479, 479},
+                                {6, 6, 7, 7}, {470, 0, 479, 479}};
+    for (uint8_t rot = 0; rot < 4; rot++) {
+        bool even = true, inside = true, whole = true;
+        memset(glass, 0, sizeof glass);
+        /* The whole screen in 40-row strips, then the odd areas over it. */
+        for (int k = 0; k < 12 + 5; k++) {
+            disp_win_t a = k < 12 ? (disp_win_t){0, k * 40, 479, k * 40 + 39} : areas[k - 12];
+            if (k >= 12 && (a.y2 - a.y1 + 1) * (a.x2 - a.x1 + 1) > 480 * 40) {
+                /* Taller than a strip: LVGL would cut it in 40-row bands. */
+                a.y2 = a.y1 + 480 * 40 / (a.x2 - a.x1 + 1) - 1;
+                a.y2 = a.y1 + ((a.y2 - a.y1 + 1) & ~1) - 1;
+            }
+            disp_area_even(&a.x1, &a.y1, &a.x2, &a.y2, 480, 480);
+            const int32_t w = a.x2 - a.x1 + 1, h = a.y2 - a.y1 + 1;
+            for (int32_t j = 0; j < h; j++)
+                for (int32_t i = 0; i < w; i++) strip[j * w + i] = logical_px(a.x1 + i, a.y1 + j);
+            disp_win_t wins[32];
+            const uint16_t *bufs[32];
+            int n = 0;
+            if (rot == 0 || rot == 2) {
+                if (rot == 2) disp_reverse(strip, (uint32_t)(w * h));
+                wins[n] = disp_rot_area(rot, 480, a);
+                bufs[n++] = strip;
+            }
+            const int32_t k = disp_rot_piece_rows(h);
+            even &= !(k & 1) && k * h <= DISP_ROT_PIECE_PX;
+            for (int32_t r0 = 0; (rot & 1) && r0 < w; r0 += k) {
+                const disp_win_t g = disp_rot_piece(rot, 480, a, strip, r0, k, piece);
+                const int32_t gw = g.x2 - g.x1 + 1;
+                for (int32_t y = g.y1; y <= g.y2; y++)
+                    memcpy(&glass[y * 480 + g.x1], &piece[(y - g.y1) * gw], (size_t)gw * 2);
+                even &= !(g.x1 & 1) && !(g.y1 & 1) && (g.x2 & 1) && (g.y2 & 1);
+                inside &= g.x1 >= 0 && g.y1 >= 0 && g.x2 < 480 && g.y2 < 480;
+            }
+            for (int m = 0; m < n; m++) {
+                const disp_win_t g = wins[m];
+                const int32_t gw = g.x2 - g.x1 + 1;
+                whole &= gw * (g.y2 - g.y1 + 1) == w * h;
+                for (int32_t y = g.y1; y <= g.y2; y++)
+                    memcpy(&glass[y * 480 + g.x1], &bufs[m][(y - g.y1) * gw], (size_t)gw * 2);
+                even &= !(g.x1 & 1) && !(g.y1 & 1) && (g.x2 & 1) && (g.y2 & 1);
+                inside &= g.x1 >= 0 && g.y1 >= 0 && g.x2 < 480 && g.y2 < 480;
+            }
+        }
+        bool same = true;
+        for (int32_t y = 0; y < 480; y++)
+            for (int32_t x = 0; x < 480; x++) {
+                int32_t px, py;
+                disp_rot_point(rot, 480, x, y, &px, &py);
+                same &= glass[py * 480 + px] == logical_px(x, y);
+            }
+        char m[96];
+        snprintf(m, sizeof m, "turned %d°: every strip lands on the glass as the turned screen", rot * 90);
+        CHECK(same && whole, m);
+        snprintf(m, sizeof m, "turned %d°: every window even-aligned and on the glass", rot * 90);
+        CHECK(even && inside, m);
+    }
+}
+
+/* Raw counts for gravity's "down" pointing `deg` clockwise from the glass's bottom, `g_mg` of it
+   in the glass's plane and the rest through it, with the default axes (down = -reading). */
+static void tilt(int deg, int g_mg, int16_t a[3])
+{
+    const double r = deg * 3.14159265358979 / 180.0, g = ORIENT_1G * g_mg / 1000.0;
+    const double dx = sin(r) * g, dy = cos(r) * g;
+    const double rest = (double)ORIENT_1G * ORIENT_1G - g * g;
+    a[0] = (int16_t)-dx;
+    a[1] = (int16_t)-dy;
+    a[2] = (int16_t)(rest > 0 ? sqrt(rest) : 0);
+}
+
+static void test_down_needs_a_clear_margin_and_a_dwell(void)
+{
+    orient_t o;
+    orient_init(&o);
+    int16_t a[3];
+    tilt(0, 950, a);
+    CHECK(!orient_feed(&o, 0, a, 0) && o.rot == 0 && o.seen == ORIENT_SEEN_EDGE && o.edge == 0,
+          "upright on its stand: its own bottom is down, nothing to do");
+    tilt(90, 950, a);
+    CHECK(!orient_feed(&o, 0, a, 1000) && o.has_cand && o.cand == 1, "turned right: a candidate");
+    CHECK(!orient_feed(&o, 0, a, 1000 + ORIENT_DWELL_MS - 1), "held, but not yet for its dwell");
+    CHECK(orient_feed(&o, 0, a, 1000 + ORIENT_DWELL_MS) && o.rot == 1 && o.changes == 1,
+          "held for 700 ms: the screen turns, its right edge now the bottom");
+    tilt(45, 950, a);
+    CHECK(!orient_feed(&o, 0, a, 3000) && o.seen == ORIENT_SEEN_BETWEEN && o.rot == 1,
+          "leaned at 45°: between two edges, it holds");
+    tilt(64, 950, a);
+    CHECK(!orient_feed(&o, 0, a, 3100) && o.seen == ORIENT_SEEN_BETWEEN && o.rot == 1,
+          "26° off the right edge's axis is not clearly any edge: it holds");
+    tilt(29, 950, a);
+    for (uint32_t t = 4000; t < 6000; t += 125) orient_feed(&o, 0, a, t);
+    CHECK(o.rot == 1 && o.seen == ORIENT_SEEN_BETWEEN,
+          "29° from upright is 16° past the line: not past the 25° margin, so it never turns back");
+    tilt(19, 950, a);
+    for (uint32_t t = 6000; t < 6000 + ORIENT_DWELL_MS + 125; t += 125) orient_feed(&o, 0, a, t);
+    CHECK(o.rot == 0 && o.changes == 2, "19° from upright is within 20° of its axis: back upright");
+
+    tilt(180, 950, a);
+    orient_feed(&o, 0, a, 10000);
+    orient_feed(&o, 0, a, 10300);
+    tilt(180, 300, a);
+    CHECK(!orient_feed(&o, 0, a, 10500) && o.seen == ORIENT_SEEN_FLAT && !o.has_cand,
+          "laid nearly flat on the desk: no down on the glass, and the dwell starts over");
+    tilt(180, 950, a);
+    orient_feed(&o, 0, a, 10600);
+    CHECK(!orient_feed(&o, 0, a, 11000) && o.rot == 0, "the dwell counts from where it started again");
+    a[1] = (int16_t)(a[1] * 3 / 2);
+    CHECK(!orient_feed(&o, 0, a, 11400) && o.seen == ORIENT_SEEN_MOVING && !o.has_cand,
+          "a hand swinging it (1.5 g) is movement, not gravity");
+    tilt(180, 950, a);
+    orient_feed(&o, 0, a, 11500);
+    CHECK(orient_feed(&o, 0, a, 11500 + ORIENT_DWELL_MS) && o.rot == 2, "then upside down, after its dwell");
+    tilt(270, 950, a);
+    orient_feed(&o, 0, a, 20000);
+    orient_forget(&o);
+    CHECK(!orient_feed(&o, 0, a, 20000 + ORIENT_DWELL_MS) && o.rot == 2,
+          "a forgotten candidate (the screen went dark) starts its dwell again");
+    CHECK(orient_feed(&o, 0, a, 20000 + 2 * ORIENT_DWELL_MS) && o.rot == 3, "turned left, in time");
+
+    /* The chip's axes against the glass: the setting that the board settles. */
+    int32_t dx, dy;
+    const int16_t up_y[3] = {0, -16000, 0};
+    orient_down(0, up_y, &dx, &dy);
+    CHECK(dx == 0 && dy == 16000, "axes 0: the chip's -Y reading is the glass's bottom");
+    orient_down(1, up_y, &dx, &dy);
+    CHECK(dx == 16000 && dy == 0, "axes 1 swaps X and Y");
+    orient_down(1 | 2, up_y, &dx, &dy);
+    CHECK(dx == -16000 && dy == 0, "and 2 flips the glass's x");
+    orient_down(4, up_y, &dx, &dy);
+    CHECK(dx == 0 && dy == -16000, "and 4 its y");
+    CHECK(!strcmp(orient_edge_name(1), "right") && !strcmp(orient_seen_name(ORIENT_SEEN_FLAT), "flat"),
+          "the snapshot's words");
+}
+
+static uint8_t s_turned_to = 0xFF;
+static void turned(uint8_t q)
+{
+    s_turned_to = q;
+}
+
+static void test_the_service_reads_only_while_lit_and_on(void)
+{
+    svc_settings_set(SET_AUTO_ROTATE, 1);
+    svc_settings_set(SET_IMU_AXES, 0);
+    svc_display_set_dark(false);
+    orient_port_fake_fail(NULL);
+    CHECK(svc_orient_start() && svc_orient_available(), "the sensor answers at start");
+    svc_display_on_rotated(turned);
+    int16_t a[3];
+    tilt(0, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    uint32_t t = 100000;
+    svc_orient_service(t);
+    const unsigned r0 = orient_port_fake_reads();
+    for (int i = 0; i < 40; i++) svc_orient_service(t += 25); /* a second of UI passes */
+    const unsigned per_s = orient_port_fake_reads() - r0;
+    CHECK(orient_port_fake_powered() && per_s >= 7 && per_s <= 9, "lit and on: read at 8 Hz, not every pass");
+    tilt(270, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 40; i++) svc_orient_service(t += 25);
+    CHECK(svc_orient_rotation() == 3 && svc_display_rotation() == 3 && s_turned_to == 3,
+          "turned left: the glass turns, and touch is told");
+    svc_display_set_dark(true);
+    svc_orient_service(t += 25);
+    const unsigned dark0 = orient_port_fake_reads();
+    tilt(0, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    CHECK(!orient_port_fake_powered() && orient_port_fake_reads() == dark0 && svc_orient_rotation() == 3,
+          "dark: the accelerometer powered down, nothing read, the turn it had kept");
+    svc_display_set_dark(false);
+    svc_orient_hold(true);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    CHECK(svc_orient_rotation() == 3, "held for calibration: it does not turn under the crosses");
+    svc_orient_hold(false);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    CHECK(svc_orient_rotation() == 0 && s_turned_to == 0, "let go: upright again after its dwell");
+    tilt(90, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    CHECK(svc_orient_rotation() == 1, "turned right");
+    svc_settings_set(SET_AUTO_ROTATE, 0);
+    svc_orient_service(t += 25);
+    CHECK(svc_orient_rotation() == 0 && svc_display_rotation() == 0 && !orient_port_fake_powered(),
+          "auto-rotate off: straight back upright, the sensor off");
+    svc_settings_set(SET_AUTO_ROTATE, 1);
+    svc_settings_set(SET_IMU_AXES, 99);
+    CHECK(svc_settings_get(SET_IMU_AXES) == IMU_AXES_MAX, "the axes setting clamps to its three bits");
+    svc_settings_set(SET_IMU_AXES, 0);
+    svc_orient_service(t += 25);
+    orient_port_fake_fail("id");
+    CHECK(!svc_orient_start() && !svc_orient_available(), "a sensor that does not answer: unavailable");
+    char note[96];
+    svc_orient_note(note, sizeof note);
+    CHECK(strstr(note, "orient=failed:id") == note, "and telemetry names the step");
+    for (int i = 0; i < 40; i++) svc_orient_service(t += 25);
+    CHECK(svc_orient_rotation() == 0, "the panel runs upright");
+    CHECK(strstr(settings_rotate_note(true, false), "tilt sensor") && !strcmp(settings_rotate_note(false, true), "Locked upright") &&
+              !strcmp(settings_rotate_note(true, true), "Follows which way is down"),
+          "Settings says what the switch does, or why it is dead");
+    orient_port_fake_fail(NULL);
+    svc_orient_start();
+    svc_display_on_rotated(NULL);
+}
+
+/* A quarter turn the display cannot take (no 2.5 KB for its piece buffer, the play's low-heap
+   case): the glass stays, and touch and calibration stay with the glass, not with the request. */
+static void test_touch_and_calibration_follow_the_glass_not_the_request(void)
+{
+    svc_settings_set(SET_AUTO_ROTATE, 1);
+    svc_settings_set(SET_IMU_AXES, 0);
+    svc_display_set_dark(false);
+    orient_port_fake_fail(NULL);
+    svc_orient_start();
+    svc_orient_hold(false);
+    s_turned_to = 0xFF;
+    svc_display_on_rotated(turned);
+    int16_t a[3];
+    uint32_t t = 2000000;
+    tilt(0, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    CHECK(svc_display_rotation() == 0, "upright to begin with");
+    s_turned_to = 0xFF;
+    svc_display_fake_no_piece(true);
+    tilt(90, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) {
+        svc_orient_service(t += 25);
+        svc_display_fake_service();
+    }
+    CHECK(svc_display_rotation() == 0 && svc_orient_rotation() == 0,
+          "turned right but no memory for the piece buffer: the glass stays upright, and says so");
+    CHECK(s_turned_to == 0xFF, "touch is not told of a turn the glass did not take");
+    /* A calibration made now is turned back into the glass's frame with what is showing. Taps
+       landing 10 px right of every cross on the upright screen are a glass x error of +10; read
+       through the requested quarter turn it would have been a y error. */
+    tp_cal_port_fake_wipe();
+    svc_calib_reset();
+    svc_calib_begin();
+    calib_pair_t pairs[CAL_TARGETS];
+    for (uint8_t i = 0; i < CAL_TARGETS; i++) {
+        int16_t x, y;
+        calib_target(i, &x, &y);
+        pairs[i] = (calib_pair_t){x, y, (int16_t)(x + 10), y};
+    }
+    CHECK(svc_calib_finish(pairs, CAL_TARGETS) == CALIB_SAVED, "the calibration fits");
+    tp_cal_t c;
+    bool on;
+    tp_cal_port_fake_applied(&c, &on);
+    CHECK(on && c.c < -9 * TP_Q16 && c.c > -11 * TP_Q16 && c.f > -TP_Q16 && c.f < TP_Q16,
+          "and corrects the glass's x, the frame that is showing, not the requested turn's");
+    svc_display_fake_no_piece(false);
+    for (int i = 0; i < 4; i++) {
+        svc_orient_service(t += 25);
+        svc_display_fake_service();
+    }
+    CHECK(svc_display_rotation() == 1 && svc_orient_rotation() == 1 && s_turned_to == 1,
+          "the memory back: the glass, orient and touch all turn together");
+    svc_calib_reset();
+    tilt(0, 950, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+    svc_display_on_rotated(NULL);
+}
+
+/* The raw reading a chip mounted as `axes` gives for gravity's "down" (dx, dy) on the glass: the
+   inverse of orient_down. */
+static void raw_for(uint8_t axes, int32_t dx, int32_t dy, int16_t a[3])
+{
+    const int32_t u = axes & 2 ? dx : -dx, v = axes & 4 ? dy : -dy;
+    a[0] = (int16_t)(axes & 1 ? v : u);
+    a[1] = (int16_t)(axes & 1 ? u : v);
+    a[2] = 5600;
+}
+
+static int orient_snap_int(const char *key)
+{
+    static char out[8192];
+    dbg_json_t w;
+    dbg_json_init(&w, out, sizeof out);
+    dbg_cmd_run("{\"id\":\"ax\",\"cmd\":\"snapshot\"}", &w);
+    char k[48];
+    snprintf(k, sizeof k, "\"%s\":", key);
+    const char *at = strstr(dbg_json_text(&w), k);
+    return at ? atoi(at + strlen(k)) : -99;
+}
+
+/* Two holds settle the whole `imu_axes` value from the box, whatever way the chip is mounted:
+   upright gives the swap and the y flip, then on its right edge the x flip that tells 90° from
+   270°. */
+static void test_two_holds_settle_the_sensor_s_axes(void)
+{
+    svc_settings_set(SET_AUTO_ROTATE, 1);
+    svc_display_set_dark(false);
+    orient_port_fake_fail(NULL);
+    svc_orient_start();
+    svc_orient_hold(false);
+    uint32_t t = 4000000;
+    bool all = true;
+    for (uint8_t truth = 0; truth <= IMU_AXES_MAX; truth++) {
+        svc_settings_set(SET_IMU_AXES, 0);
+        int16_t a[3];
+        raw_for(truth, 0, 15400, a); /* standing upright */
+        orient_port_fake_set(a[0], a[1], a[2]);
+        svc_orient_service(t += 200);
+        const int up = orient_snap_int("axes_if_upright");
+        svc_settings_set(SET_IMU_AXES, up < 0 ? 0 : up);
+        raw_for(truth, 15400, 0, a); /* on its right edge */
+        orient_port_fake_set(a[0], a[1], a[2]);
+        svc_orient_service(t += 200);
+        const int right = orient_snap_int("axes_if_right_edge");
+        all &= up >= 0 && right == truth;
+    }
+    CHECK(all, "for every way the chip can sit, upright then right edge names its imu_axes");
+    svc_settings_set(SET_IMU_AXES, 0);
+    int16_t a[3];
+    raw_for(0, 0, 15400, a);
+    orient_port_fake_set(a[0], a[1], a[2]);
+    for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
+}
+
+/* ---- 0.0.18: touch calibration ---- */
+
+static void test_the_fit_finds_a_panel_s_error_and_refuses_nonsense(void)
+{
+    const tp_pt_t want[4] = {{44, 44}, {436, 44}, {436, 436}, {44, 436}};
+    tp_pt_t got[4];
+    tp_cal_t c;
+    CHECK(tp_cal_fit(want, want, 4, &c) == TP_FIT_OK && c.a == TP_Q16 && c.e == TP_Q16 && c.b == 0 &&
+              c.c == 0 && c.f == 0,
+          "taps exactly on the crosses: no correction");
+    for (int i = 0; i < 4; i++) got[i] = (tp_pt_t){(int16_t)(want[i].x - 12), (int16_t)(want[i].y + 9)};
+    CHECK(tp_cal_fit(want, got, 4, &c) == TP_FIT_OK, "a panel reading 12 px left and 9 px low");
+    int16_t x, y;
+    tp_cal_apply(&c, 228, 249, &x, &y);
+    CHECK(x == 240 && y == 240, "is corrected everywhere, the middle included");
+    /* 6% short of the edges, about the middle: what "corners that stop short" looks like. */
+    for (int i = 0; i < 4; i++)
+        got[i] = (tp_pt_t){(int16_t)(240 + (want[i].x - 240) * 94 / 100), (int16_t)(240 + (want[i].y - 240) * 94 / 100)};
+    CHECK(tp_cal_fit(want, got, 4, &c) == TP_FIT_OK, "a panel whose taps stop short of the edges");
+    tp_cal_apply(&c, (int16_t)(240 + 239 * 94 / 100), 240, &x, &y);
+    CHECK(x >= 477 && y == 240, "reaches the edge again once scaled");
+    tp_cal_apply(&c, 0, 0, &x, &y);
+    CHECK(x == 0 && y == 0, "and is clamped to the glass");
+
+    const tp_pt_t same[4] = {{200, 200}, {200, 200}, {200, 200}, {200, 200}};
+    CHECK(tp_cal_fit(want, same, 4, &c) == TP_FIT_DEGENERATE, "four taps in one place fit nothing");
+    const tp_pt_t line[4] = {{44, 44}, {200, 200}, {300, 300}, {436, 436}};
+    CHECK(tp_cal_fit(want, line, 4, &c) == TP_FIT_DEGENERATE, "nor four in a line");
+    CHECK(tp_cal_fit(want, want, 2, &c) == TP_FIT_DEGENERATE, "nor two");
+    for (int i = 0; i < 4; i++)
+        got[i] = (tp_pt_t){(int16_t)(240 + (want[i].x - 240) * 70 / 100), (int16_t)(240 + (want[i].y - 240) * 70 / 100)};
+    CHECK(tp_cal_fit(want, got, 4, &c) == TP_FIT_WILD, "a 30% scale is a bad run, not a panel");
+    for (int i = 0; i < 4; i++) got[i] = (tp_pt_t){(int16_t)(want[i].x + 60), want[i].y};
+    CHECK(tp_cal_fit(want, got, 4, &c) == TP_FIT_WILD, "so is a 60 px shift");
+    memcpy(got, want, sizeof got);
+    got[2].x = (int16_t)(got[2].x - 60);
+    CHECK(tp_cal_fit(want, got, 4, &c) != TP_FIT_OK, "one corner 60 px out is refused");
+    /* A twist no straight correction has: opposite corners pulled opposite ways. */
+    for (int i = 0; i < 4; i++) got[i] = (tp_pt_t){(int16_t)(want[i].x + (i % 2 ? -30 : 30)), want[i].y};
+    CHECK(tp_cal_fit(want, got, 4, &c) == TP_FIT_SCATTERED, "taps that disagree with every straight fit");
+    tp_cal_identity(&c);
+    tp_cal_apply(&c, 17, 463, &x, &y);
+    CHECK(x == 17 && y == 463, "identity changes nothing");
+}
+
+/* The raw report that the 0.0.7 mapping puts at glass (x, y): x = 479 - rawB, y = rawA. */
+static void raw_at(int16_t x, int16_t y, uint16_t *a, uint16_t *b)
+{
+    *a = (uint16_t)y;
+    *b = (uint16_t)(479 - x);
+}
+
+static void test_calibration_lives_in_the_glass_frame_and_rotation_follows(void)
+{
+    /* A panel that reads every tap 10 px right and 6 px high of the finger, in the glass's frame. */
+    const int16_t ex = 10, ey = -6;
+    for (uint8_t rot = 0; rot < 4; rot++) {
+        tp_cal_port_fake_wipe();
+        svc_calib_reset();
+        svc_calib_begin();
+        tp_cal_t applied;
+        bool on;
+        tp_cal_port_fake_applied(&applied, &on);
+        CHECK(!on && svc_calib_capturing(), "calibrating: taps arrive with no correction");
+        calib_pair_t pairs[CAL_TARGETS];
+        for (uint8_t i = 0; i < CAL_TARGETS; i++) {
+            int16_t tx, ty, gx, gy, lx, ly;
+            calib_target(i, &tx, &ty);
+            /* The cross, where the turned screen drew it; the finger on it; where the panel read
+               it; and the upright screen's coordinates the app saw. */
+            tp_rotate(rot, tx, ty, &gx, &gy);
+            uint16_t a, b;
+            raw_at((int16_t)(gx + ex), (int16_t)(gy + ey), &a, &b);
+            tp_xf_t raw = {.rot = rot};
+            tp_cal_identity(&raw.cal);
+            tp_xform(&raw, a, b, &lx, &ly);
+            pairs[i] = (calib_pair_t){tx, ty, lx, ly};
+        }
+        /* svc_calib reads the rotation from svc_orient; the fake sensor is put where `rot` is. */
+        int16_t g[3];
+        tilt(rot * 90, 950, g);
+        orient_port_fake_set(g[0], g[1], g[2]);
+        svc_orient_hold(false);
+        for (uint32_t t = 0; t < 3000 && svc_orient_rotation() != rot; t += 25) svc_orient_service(500000 + rot * 10000 + t);
+        CHECK(svc_orient_rotation() == rot, "the panel turned as the test says");
+        CHECK(svc_calib_finish(pairs, CAL_TARGETS) == CALIB_SAVED && svc_calib_custom() && !svc_calib_capturing(),
+              "the four corners fit and are saved");
+        tp_cal_port_fake_applied(&applied, &on);
+        bool lands = true;
+        for (int16_t y = 20; y < 460; y += 31)
+            for (int16_t x = 20; x < 460; x += 29) {
+                int16_t gx, gy, lx, ly;
+                tp_rotate(rot, x, y, &gx, &gy);
+                uint16_t a, b;
+                raw_at((int16_t)(gx + ex), (int16_t)(gy + ey), &a, &b);
+                const tp_xf_t xf = {.cal = applied, .cal_on = on, .rot = rot};
+                tp_xform(&xf, a, b, &lx, &ly);
+                lands &= abs(lx - x) <= 1 && abs(ly - y) <= 1;
+            }
+        char m[96];
+        snprintf(m, sizeof m, "turned %d°: every tap lands under the finger once calibrated", rot * 90);
+        CHECK(on && lands, m);
+    }
+    /* The calibration made upright holds after the panel turns: it is the glass's, not the view's. */
+    tp_cal_t applied;
+    bool on;
+    tp_cal_port_fake_applied(&applied, &on);
+    int16_t lx, ly;
+    uint16_t a, b;
+    raw_at(240 + ex, 120 + ey, &a, &b);
+    const tp_xf_t xf = {.cal = applied, .cal_on = on, .rot = 1};
+    tp_xform(&xf, a, b, &lx, &ly);
+    CHECK(lx == 479 - 120 && ly == 240, "one calibration serves every rotation");
+    tp_track_t t = {.xf = &xf};
+    const tp_report_t down = {TP_DOWN, a, b};
+    CHECK(tp_track(&t, &down) == TP_EV_DOWN && t.x == lx && t.y == ly, "and the touch task's stroke uses it");
+
+    svc_calib_begin();
+    svc_calib_cancel();
+    tp_cal_port_fake_applied(&applied, &on);
+    CHECK(on && svc_calib_custom() && !svc_calib_capturing(), "BOOT mid-run: the old calibration back in force");
+    svc_calib_begin();
+    const calib_pair_t bad[4] = {{44, 44, 44, 44}, {436, 44, 436, 44}, {436, 436, 300, 436}, {44, 436, 44, 436}};
+    const calib_result_t r = svc_calib_finish(bad, 4);
+    CHECK(r == CALIB_SCATTERED || r == CALIB_WILD, "a run whose taps disagree is refused");
+    tp_cal_port_fake_applied(&applied, &on);
+    CHECK(on && svc_calib_custom(), "and the calibration before it stays");
+    const calib_pair_t good[4] = {{44, 44, 44, 44}, {436, 44, 436, 44}, {436, 436, 436, 436}, {44, 436, 44, 436}};
+    tp_cal_port_fake_refuse_save(true);
+    svc_calib_begin();
+    CHECK(svc_calib_finish(good, 4) == CALIB_NOT_SAVED, "flash refusing it is said, and it is in force anyway");
+    tp_cal_port_fake_refuse_save(false);
+    svc_calib_reset();
+    tp_cal_port_fake_applied(&applied, &on);
+    CHECK(!on && !svc_calib_custom() && svc_calib_date() == 0, "Reset calibration: the measured mapping alone");
+    for (uint32_t t2 = 0; t2 < 3000 && svc_orient_rotation() != 0; t2 += 25) {
+        int16_t g[3];
+        tilt(0, 950, g);
+        orient_port_fake_set(g[0], g[1], g[2]);
+        svc_orient_service(900000 + t2);
+    }
+}
+
+static void test_the_calibration_screen_counts_taps_that_agree(void)
+{
+    calib_flow_t f;
+    calib_flow_start(&f);
+    int16_t x, y;
+    calib_target(0, &x, &y);
+    CHECK(x == 44 && y == 44, "the first cross is the mock's top-left knot");
+    calib_target(2, &x, &y);
+    CHECK(x == 436 && y == 436, "the third the bottom-right");
+    CHECK(calib_flow_tap(&f, 200, 200) == CALF_MISSED && f.taps == 0, "a tap nowhere near is not counted");
+    CHECK(!strcmp(calib_flow_title(CALF_MISSED), "Tap the centre of the cross"), "and says so");
+    CHECK(calib_flow_tap(&f, 50, 40) == CALF_COUNTED && calib_flow_tap(&f, 48, 42) == CALF_COUNTED,
+          "two taps on the cross");
+    CHECK(calib_flow_tap(&f, 90, 44) == CALF_DISAGREED && f.taps == 0 && f.target == 0,
+          "a third 40 px from the others: that cross again");
+    CHECK(!strcmp(calib_flow_title(CALF_DISAGREED), "Those taps disagreed: again"), "and says so");
+    calib_flow_tap(&f, 50, 40);
+    calib_flow_tap(&f, 48, 42);
+    CHECK(calib_flow_tap(&f, 52, 41) == CALF_NEXT && f.target == 1, "three that agree: the next cross");
+    CHECK(f.done[0].got_x == 50 && f.done[0].got_y == 41 && f.done[0].want_x == 44,
+          "kept as the cross and the taps' mean");
+    for (uint8_t i = 1; i < CAL_TARGETS; i++) {
+        calib_target(i, &x, &y);
+        for (int k = 0; k < CAL_TAPS; k++) calib_flow_tap(&f, x, y);
+    }
+    CHECK(f.target == CAL_TARGETS && calib_flow_tap(&f, 1, 1) == CALF_DONE, "four crosses: done");
+    char line[48];
+    calib_flow_line(1, line, sizeof line);
+    CHECK(!strcmp(line, "2 of 4 · BOOT cancels"), "the line under the prompt, as the mock words it");
+    settings_calib_when(20261013, 20261013, line, sizeof line);
+    CHECK(!strcmp(line, "Today"), "calibrated today");
+    settings_calib_when(20261009, 20261013, line, sizeof line);
+    CHECK(!strcmp(line, "9 Oct"), "or on the day it was");
+    settings_calib_when(0, 20261013, line, sizeof line);
+    CHECK(!strcmp(line, "Never"), "or never");
+    CHECK(!strcmp(settings_calib_result(CALIB_SAVED), "Calibration saved") &&
+              strstr(settings_calib_result(CALIB_WILD), "Try again"),
+          "the toasts");
 }
 
 int main(void)
@@ -3960,6 +4680,16 @@ int main(void)
     test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short();
     test_the_stream_is_byte_for_byte_what_the_box_decodes();
     test_the_ring_never_overwrites_and_wraps();
+    test_a_play_rides_a_smaller_ring_than_a_talk();
+    test_a_turn_and_its_touch_inverse_agree_everywhere();
+    test_turned_strips_build_the_turned_screen();
+    test_down_needs_a_clear_margin_and_a_dwell();
+    test_the_service_reads_only_while_lit_and_on();
+    test_the_fit_finds_a_panel_s_error_and_refuses_nonsense();
+    test_calibration_lives_in_the_glass_frame_and_rotation_follows();
+    test_touch_and_calibration_follow_the_glass_not_the_request();
+    test_two_holds_settle_the_sensor_s_axes();
+    test_the_calibration_screen_counts_taps_that_agree();
     test_a_hold_records_sends_and_hears_back();
     test_a_knock_or_a_cancel_lets_go_of_everything();
     test_key_or_boot_over_a_reply_stops_it();

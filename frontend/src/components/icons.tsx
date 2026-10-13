@@ -693,6 +693,16 @@ export const CrosshairIcon = (p: IconProps) => (
   </Icon>
 );
 
+// The Tricorder's live scan (Lucide `radar`): a sweep, so a scan reads apart from the
+// crosshair of a waypoint at a glance.
+export const RadarIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M19.07 4.93A10 10 0 0 0 6.99 3.34M4 6h.01M2.29 9.62A10 10 0 1 0 21.31 8.35M16.24 7.76A6 6 0 1 0 8.23 16.67M12 18h.01M17.99 11.66A6 6 0 0 1 15.77 16.67" />
+    <circle cx="12" cy="12" r="2" />
+    <path d="m13.41 10.59 5.66-5.66" />
+  </Icon>
+);
+
 // The satellite survey: ground predicted from the seed, as an orbiting satellite sees it.
 export const SatelliteIcon = (p: IconProps) => (
   <Icon {...p}>
@@ -802,5 +812,21 @@ export const RewindIcon = (p: IconProps) => (
 export const FlagIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 22V4M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1" />
+  </Icon>
+);
+
+/** Lucide `gamepad-2`: something a player did or typed in game. */
+export const GamepadIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 11h4M8 9v4M15 12h.01M18 10h.01" />
+    <path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59l-.6 5.38A3 3 0 0 0 5.08 17.3c.83 0 1.58-.42 2.08-1.07L8.5 14.5h7l1.34 1.73c.5.65 1.25 1.07 2.08 1.07a3 3 0 0 0 2.98-3.33l-.6-5.38A4 4 0 0 0 17.32 5z" />
+  </Icon>
+);
+
+/** Lucide `ban`: given up on. */
+export const BanIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="m4.9 4.9 14.2 14.2" />
   </Icon>
 );

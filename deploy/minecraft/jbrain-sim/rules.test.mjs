@@ -55,6 +55,34 @@ test("the tracker line: spawn with no waypoint, arrival, depth and other dimensi
   assert.equal(r.trackerLine({ ...wp, dim: "nether" }, here, N, {}), "Diamonds is in the Nether");
 });
 
+test("in the wrong dimension the arrow points at the nearest known portal (§M4e)", () => {
+  const nether = { dim: "minecraft:nether", x: 0, z: 0 };
+  const via = [
+    { dim: "nether", x: 30, z: -40 },
+    { dim: "nether", x: 0, z: -10 },
+    { dim: "overworld", x: 1, z: 1 }, // the far side's: never this side's arrow
+  ];
+  const wp = { x: 800, y: null, z: 0, dim: "overworld", label: "Base", via };
+  assert.equal(r.trackerLine(wp, nether, N, {}), "↑ Nether portal · 10 blocks · Base is in the Overworld");
+  assert.equal(
+    r.trackerLine(wp, { ...nether, z: -9 }, N, {}),
+    "↑ Nether portal · You're here · Base is in the Overworld",
+  );
+  // No portal known on this side: the old line, and back home the target itself.
+  assert.equal(r.trackerLine({ ...wp, via: [] }, nether, N, {}), "Base is in the Overworld");
+  assert.equal(r.trackerLine(wp, { dim: "minecraft:overworld", x: 0, z: 0 }, N, {}), "→ Base · 800 blocks");
+});
+
+test("a waypoint's portals are checked and capped, never refusing the waypoint", () => {
+  const msg = (via) => JSON.stringify({ player: "P", x: 1, z: 2, dim: "overworld", via });
+  const many = Array.from({ length: 40 }, (_, i) => ({ dim: "nether", x: i, z: 0 }));
+  assert.equal(r.parseWaypoint(msg(many)).record.via.length, r.VIA_MAX);
+  const mixed = [{ dim: "moon", x: 1, z: 1 }, { dim: "nether", x: "a", z: 1 }, null, { dim: "nether", x: 5, z: 6, y: 9, junk: 1 }];
+  assert.deepEqual(r.parseWaypoint(msg(mixed)).record.via, [{ dim: "nether", x: 5, z: 6 }]);
+  assert.deepEqual(r.parseWaypoint(msg("nope")).record.via, []);
+  assert.deepEqual(r.parseWaypoint(msg(undefined)).record.via, []);
+});
+
 test("a Tricorder is its owner's only, and only the newest copy", () => {
   assert.equal(r.tricorderStatus({ owner: "-1", serial: 2 }, "-1", 2), "own");
   assert.equal(r.tricorderStatus({ owner: "-1", serial: 1 }, "-1", 2), "retired");
@@ -105,7 +133,7 @@ test("the wrapper's config and Dave's waypoints are parsed strictly", () => {
   });
   assert.equal(r.parseWaypoint('{"player": "S", "clear": true, "end_scan": true}').endScan, true);
   const wp = r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "nether", "label": "' + "x".repeat(60) + '"}');
-  assert.deepEqual(wp.record, { x: 1, y: null, z: 2, dim: "nether", label: "x".repeat(40) });
+  assert.deepEqual(wp.record, { x: 1, y: null, z: 2, dim: "nether", label: "x".repeat(40), via: [] });
   assert.throws(() => r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "moon"}'));
   assert.throws(() => r.parseWaypoint('{"x": 1, "z": 2, "dim": "nether"}'));
 });
@@ -262,6 +290,49 @@ test("the scan box is 33 blocks a side around the player, y clamped to the world
   assert.deepEqual(r.scanBox({ x: 0, y: 315, z: 0 }, h).to.y, 319);
   assert.ok(r.inScanBox({ x: 0.5, y: 64, z: 0.5 }, { x: 16, y: 48, z: -16 }));
   assert.ok(!r.inScanBox({ x: 0.5, y: 64, z: 0.5 }, { x: 17, y: 64, z: 0 }));
+});
+
+test("the scan's depth limit: 16 above and below, cut at the world's floor and ceiling", () => {
+  const ys = (y, h) => {
+    const b = r.scanBox({ x: 0, y, z: 0 }, h);
+    return [b.from.y, b.to.y];
+  };
+  const over = { min: -64, max: 320 };
+  // Mid-world: the full 33 blocks, y floored first (standing at 63.9 is block 63).
+  assert.deepEqual(ys(-40, over), [-56, -24]);
+  assert.deepEqual(ys(63.9, over), [47, 79]);
+  // Near the floor and ceiling the box is cut, never shifted: still 16 the other way.
+  assert.deepEqual(ys(-52, over), [-64, -36]);
+  assert.deepEqual(ys(-60, over), [-64, -44]);
+  assert.deepEqual(ys(310, over), [294, 319]);
+  // At the build limits themselves: bedrock floor y -64, the last buildable block y 319
+  // (heightRange's max, 320, is exclusive).
+  assert.deepEqual(ys(-64, over), [-64, -48]);
+  assert.deepEqual(ys(319, over), [303, 319]);
+  // Off the world (falling into the void, flying over the roof): clamped inside it.
+  assert.deepEqual(ys(-90, over), [-64, -64]);
+  assert.deepEqual(ys(400, over), [319, 319]);
+  // The Nether is 0 to 127, the End 0 to 255.
+  assert.deepEqual(ys(120, { min: 0, max: 128 }), [104, 127]);
+  assert.deepEqual(ys(5, { min: 0, max: 256 }), [0, 21]);
+});
+
+test("the scan's map line: set, found with its block, none and stop; snapshots carry labels", () => {
+  const scan = { label: "diamond", types: ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"] };
+  assert.deepEqual(r.scanEvent("set", "BlockyFox", scan), {
+    ev: "scan", op: "set", player: "BlockyFox", label: "diamond", ids: scan.types,
+  });
+  assert.deepEqual(r.scanEvent("found", "BlockyFox", scan, { x: 41, y: -58, z: -79 }, "minecraft:overworld"), {
+    ev: "scan", op: "found", player: "BlockyFox", label: "diamond", ids: scan.types,
+    dim: "overworld", x: 41, y: -58, z: -79,
+  });
+  assert.deepEqual(r.scanEvent("none", "BlockyFox", scan, null, "minecraft:nether"), {
+    ev: "scan", op: "none", player: "BlockyFox", label: "diamond", ids: scan.types,
+  });
+  assert.deepEqual(r.scanEvent("stop", "BlockyFox"), { ev: "scan", op: "stop", player: "BlockyFox" });
+  assert.deepEqual(r.scansSnapshot([{ player: "Mira_P", label: "oak log", types: ["minecraft:oak_log"] }]), {
+    ev: "scans", all: [{ player: "Mira_P", label: "oak log", ids: ["minecraft:oak_log"] }],
+  });
 });
 
 test("the nearest block is by 3D distance to its centre", () => {

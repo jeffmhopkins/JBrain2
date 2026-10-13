@@ -64,11 +64,13 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         "goals": [_goal(1, "Get 23 iron blocks", "iron_block", 23)],
         "places": [_place("home", 20, 0), _place("tree farm", 0, -30)],
         "sql": [],
+        "params": [],
     }
 
     class Session:
         async def execute(self, stmt: Any, params: Any = None) -> Any:
             state["sql"].append(str(stmt))
+            state["params"].append(params)
             return SimpleNamespace(first=lambda: None, scalar=lambda: None)
 
     @asynccontextmanager
@@ -207,10 +209,16 @@ async def test_create_takes_an_item_with_its_count(world, book, sidecar) -> None
         {"title": "Get 23 iron blocks", "item": "Iron Block", "count": 23}, PWA
     )
     assert "(iron_block ×23; mc_goal_progress" in out
-    insert = next(q for q in world["sql"] if "INSERT INTO app.mc_goals" in q)
-    assert "item, item_count" in insert
+    at = next(i for i, q in enumerate(world["sql"]) if "INSERT INTO app.mc_goals" in q)
+    assert "item, item_count" in world["sql"][at]
+    # The goal is filed under the loaded world, as places are, so the app can count it there.
+    assert world["params"][at]["w"] == "slot2"
     plain = await tools["mc_goal_create"]({"title": "Beacon"}, PWA)
     assert "×" not in plain
+    # A server that can't say which world is loaded files it under none (read as the loaded one).
+    sidecar["down"] = {"/worlds"}
+    await tools["mc_goal_create"]({"title": "Bridge"}, PWA)
+    assert world["params"][-1]["w"] is None
 
 
 async def test_create_and_update_refuse_a_bad_item_or_count_before_writing(

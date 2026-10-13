@@ -28,6 +28,12 @@ void svc_audio_service(void);
  * talk is under way. False with `why` otherwise. UI task. */
 bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why);
 
+/* Whether a talk's or a play's ring holds its 16 KB of internal RAM now: what the heap's
+ * low-water mark is attributed to (telemetry's `int_min_at`). Any task. */
+bool talk_ring_held(void);
+/* The held ring's size, 0 when none: a talk's 16 KB or a play's 6 KB (0.0.18). */
+uint32_t talk_ring_bytes(void);
+
 /* `audio=…` (tk_stats_note) plus the codec's own state. */
 void svc_audio_note(char *out, size_t len);
 
@@ -38,9 +44,16 @@ bool talk_net_claim(bool *voice, tk_agent_t *agent, bool *fresh);
 /* Right after the claim: what the exchange is, and for a voice message or a play the box path
  * it goes to (svc_post's, built on the UI task when it began). */
 tk_kind_t talk_net_kind(char *path, size_t cap);
-/* A play's end: whether every byte arrived and matched the box's digest. Only then is it
- * marked played. */
+/* A play's end: whether every byte arrived and matched the box's digest. The message was marked
+ * heard when its audio began (talk_net_reply, 0.0.17); a mismatch is counted as a failed play. */
 void talk_net_listened(bool verified);
+/* A play's ring, once the box has answered its GET (0.0.17): after the connection's handshake,
+ * never during it, so the two never hold internal RAM at once. Sized for the exchange
+ * (tk_ring_bytes: 6 KB for a play since 0.0.18). False with no memory for it. */
+bool talk_net_ring(void);
+/* The play's free internal heap before its GET, once answered, with its ring, and the lowest
+ * while it streamed (0.0.18): the snapshot's `audio.play_*`. */
+void talk_net_mem(uint32_t before, uint32_t answered, uint32_t ringed, uint32_t low);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);
@@ -71,6 +84,9 @@ bool talk_audio_more(void);
 /* The speaker would not open: the words stay, the speech stops. */
 void talk_audio_drop(void);
 void talk_audio_underrun(void);
+/* `bytes` of a play's real audio went to the speaker (not the pre-roll's or an underrun's zeros):
+ * the bubble's progress (svc_audio_played_ms). */
+void talk_audio_played(uint32_t bytes);
 void talk_audio_drained(void);
 
 /* ---- what each build supplies: the device's esp/ file, or svc_audio_fake.c ---- */

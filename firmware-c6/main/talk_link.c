@@ -4,6 +4,8 @@
 #include <string.h>
 
 #include "box_http.h"
+#include "dbg_core.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
@@ -16,7 +18,7 @@
 static const char *TAG = "talk";
 
 /* One write each: about 30 ms of speech, one TLS record. */
-#define SLICE 1024
+#define SLICE TK_NET_SLICE
 /* Connect and each write. A box this slow to take bytes is one the ring is already overflowing
    for. */
 #define SEND_TIMEOUT_MS 8000
@@ -328,16 +330,33 @@ static void hex(const uint8_t *b, size_t n, char *out)
 }
 
 /* One of her messages played (0.0.16): the box's 16 kHz s16 into the ring at the speaker's pace,
- * hashed as it goes. It counts as heard only when the whole body arrived and matched the box's
- * digest — a message cut off by the radio stays unplayed, on the panel and in the PWA. */
+ * hashed as it goes. It is marked heard once the box answers with its audio (talk_net_reply,
+ * 0.0.17); the digest judges the audio itself, and a body cut off or not matching counts as a
+ * failed play. */
+static uint32_t int_free(void)
+{
+    return (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+}
+
 static const char *listen_exchange(const char *path, uint32_t *down)
 {
     box_reply_t rep = {.date = {0}};
+    const uint32_t before = int_free();
     const int status = box_http_get_open(path, &rep, SEND_TIMEOUT_MS);
+    const uint32_t answered = int_free();
     if (status != 200) {
         if (status > 0) box_http_reply_done();
         return failed(status);
     }
+    /* The ring only now, with the connection open: a handshake and the ring never hold internal
+       RAM at once (README "What 0.0.17 adds", the memory). It is a play's 6 KB, not a talk's
+       16 KB (tk_ring_bytes, "What 0.0.18 adds"). */
+    if (!talk_net_ring()) {
+        box_http_stream_abort();
+        return "no memory to play";
+    }
+    const uint32_t ringed = int_free();
+    uint32_t low = ringed;
     talk_net_reply("", true);
     mbedtls_sha256_init(&s_sha);
     mbedtls_sha256_starts(&s_sha, 0);
@@ -357,9 +376,14 @@ static const char *listen_exchange(const char *path, uint32_t *down)
         }
         heard_at = now_ms();
         *down += (uint32_t)n;
+        /* With the ring full this is where the play spends its time, and what lwIP and mbedTLS
+           hold behind it is at its most. */
+        const uint32_t now_free = int_free();
+        if (now_free < low) low = now_free;
         mbedtls_sha256_update(&s_sha, s_buf, (size_t)n);
         if (!give(s_buf, (uint32_t)n)) break; /* stopped on the glass */
     }
+    talk_net_mem(before, answered, ringed, low);
     uint8_t digest[POST_DIGEST_BYTES];
     char got[2 * POST_DIGEST_BYTES + 1];
     mbedtls_sha256_finish(&s_sha, digest);
@@ -382,6 +406,7 @@ bool talk_link_run(void)
     if (!talk_net_claim(&voice, &agent, &fresh)) return false;
     static char target[POST_PATH_BYTES];
     const tk_kind_t kind = talk_net_kind(target, sizeof target);
+    dbg_sys_doing(kind == TK_KIND_POST ? "message" : kind == TK_KIND_LISTEN ? "play" : "talk");
     /* Power save holds a TCP ACK a beacon at the access point; a 32 KB/s upload behind that
        stalls into the ring's half second (the screenshot's lesson, dbg_link.c). */
     wifi_ps_type_t ps = WIFI_PS_MIN_MODEM;

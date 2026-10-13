@@ -90,12 +90,43 @@ export const trackerLine = (wp, here, view, spawn) => {
     const { arrow, blocks } = arrowFor(here, view, spawn.x, spawn.z);
     return `${arrow} World spawn · ${blocks} blocks`;
   }
-  if (here.dim !== DIMS[wp.dim]) return `${wp.label} is in ${DIM_NAMES[wp.dim]}`;
+  if (here.dim !== DIMS[wp.dim]) {
+    // Across dimensions it points at the nearest portal Dave knows on this side
+    // (§M4e/§M9), still naming where the target is.
+    const portal = nearestPortal(wp.via, here);
+    if (!portal) return `${wp.label} is in ${DIM_NAMES[wp.dim]}`;
+    const { arrow, blocks } = arrowFor(here, view, portal.x, portal.z);
+    const there = blocks < 3 ? "You're here" : `${blocks} blocks`;
+    return `${arrow} Nether portal · ${there} · ${wp.label} is in ${DIM_NAMES[wp.dim]}`;
+  }
   const { arrow, blocks } = arrowFor(here, view, wp.x, wp.z);
   const depth = wp.y === null || wp.y === undefined ? "" : ` · y ${wp.y}`;
   const there = blocks < HERE_BLOCKS ? "You're here" : `${blocks} blocks`;
   return `${arrow} ${wp.label} · ${there}${depth}`;
 };
+
+// The portal in the holder's dimension nearest them, or undefined.
+const nearestPortal = (via, here) => {
+  let best;
+  let bestGap = Infinity;
+  for (const p of Array.isArray(via) ? via : []) {
+    if (DIMS[p.dim] !== here.dim) continue;
+    const gap = Math.hypot(p.x - here.x, p.z - here.z);
+    if (gap < bestGap) [best, bestGap] = [p, gap];
+  }
+  return best;
+};
+
+// At most this many portals ride on a waypoint: Dave sends the nearest few.
+export const VIA_MAX = 16;
+
+// A waypoint's `via`: the known portals ({dim, x, z}) to point through from another
+// dimension. Anything malformed is dropped, never the waypoint.
+const parseVia = (raw) =>
+  (Array.isArray(raw) ? raw : [])
+    .filter((p) => p && Number.isFinite(p.x) && Number.isFinite(p.z) && p.dim in DIMS)
+    .slice(0, VIA_MAX)
+    .map((p) => ({ dim: p.dim, x: p.x, z: p.z }));
 
 // The arrival chime rings again for the same waypoint only after the holder has walked
 // this far back out, so pacing at the edge of "You're here" doesn't ring it each step.
@@ -137,6 +168,7 @@ export const parseWaypoint = (message) => {
       z: wp.z,
       dim: wp.dim,
       label: String(wp.label ?? "Waypoint").slice(0, 40),
+      via: parseVia(wp.via),
     },
   };
 };
@@ -411,6 +443,27 @@ export const pickScan = (due, frame) => {
   for (const [key, at] of due) if (at <= frame && (pick === undefined || at < due.get(pick))) pick = key;
   return pick;
 };
+
+// The scan as the map and Dave see it (the M26 pipe: pack line, sidecar, backend row).
+// `set` when one starts, `found` / `none` when what it shows changes and again every
+// SCAN_HEARTBEAT scans, so a steady target's "found 40 s ago" stays true, and `stop` when it
+// ends. A `found` carries the block and its dimension; the rest carry none.
+export const SCAN_HEARTBEAT = 6; // scans: a minute
+const dimKey = (id) => Object.keys(DIMS).find((k) => DIMS[k] === id) ?? id;
+export const scanEvent = (op, player, scan, target, dimId) => {
+  const ev = { ev: "scan", op, player };
+  if (op === "stop") return ev;
+  Object.assign(ev, { label: scan.label, ids: scan.types });
+  if (op === "found") Object.assign(ev, { dim: dimKey(dimId), x: target.x, y: target.y, z: target.z });
+  return ev;
+};
+
+// Every kept scan after each load (labels only: the targets come with each one's first
+// scan), so a restore, an import or a missed line can't leave the map out of date.
+export const scansSnapshot = (scans) => ({
+  ev: "scans",
+  all: scans.map((s) => ({ player: s.player, label: s.label, ids: s.types })),
+});
 
 // The held Tricorder's line while a scan is on: the waypoint arrow to the last block
 // found, or a line saying there's none within reach.

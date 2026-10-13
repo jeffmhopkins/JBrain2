@@ -28,7 +28,9 @@ SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(wildcard $(C)/svc_debug/*.c) \
       $(C)/svc_display/disp_logic.c $(C)/svc_display/disp_guard.c \
       $(C)/svc_power/axp_logic.c $(C)/svc_buttons/btn_logic.c \
-      $(C)/svc_touch/tp_logic.c
+      $(C)/svc_touch/tp_logic.c $(C)/svc_touch/svc_calib.c $(C)/svc_touch/tp_cal_port_fake.c \
+      $(C)/svc_orient/orient_logic.c $(C)/svc_orient/svc_orient.c $(C)/svc_orient/orient_port_fake.c \
+      $(C)/svc_display/svc_display_fake.c
 # Headers are prerequisites: a suite that reports OK against a stale binary is worse than none.
 HDR = $(wildcard $(C)/*/include/*.h $(C)/*/*.h)
 
@@ -37,7 +39,7 @@ test: run_tests
 	./run_tests
 
 run_tests: tests.c $(SRC) $(HDR)
-	$(CC) $(CFLAGS) -o $@ tests.c $(SRC)
+	$(CC) $(CFLAGS) -o $@ tests.c $(SRC) -lm
 
 clean:
 	rm -f run_tests

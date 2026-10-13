@@ -1,6 +1,6 @@
 ---
 name: mc_set_waypoint
-version: 4
+version: 5
 permission: web
 params:
   type: object
@@ -34,7 +34,9 @@ params:
 ---
 Point a player's Tricorder at a destination: coordinates, or one of their saved places.
 While they hold it, its screen line shows an arrow toward the place, its label and how far
-it is (and the y, if given), or which dimension it's in when they're elsewhere. Each
+it is (and the y, if given), or which dimension it's in when they're elsewhere; across the
+Overworld and the Nether it points at the nearest Nether portal the world knows on their
+side, so a target there is reached through one. Each
 player has their own waypoint, kept with the world, and it can be set while they're
 offline. Setting or clearing it ends a live scan (mc_tricorder_scan). The Tricorder comes
 with the box's own jbrain pack, in every world it loads.

@@ -16,6 +16,7 @@ import {
   ApiError,
   type MinecraftDim,
   type MinecraftMapMarkers,
+  type MinecraftMapPlayer,
   type MinecraftMapPlayers,
   type MinecraftStructure,
   type MinecraftTimeline,
@@ -30,6 +31,7 @@ import {
   MapIcon,
   PinIcon,
   PortalIcon,
+  RadarIcon,
   RouteIcon,
   ShieldCheckIcon,
   SkullIcon,
@@ -40,6 +42,7 @@ import {
   type Frame,
   GLYPHS,
   type MapView,
+  type ScanWords,
   clamp,
   clusterMarkers,
   clusterTarget,
@@ -52,6 +55,9 @@ import {
   pathUpTo,
   playersIn,
   scaleOfZoom,
+  scanPlate,
+  scanShown,
+  scanWords,
   statusLine,
   structureInfo,
   tileKey,
@@ -68,6 +74,7 @@ import {
   gateWords,
 } from "../../minecraftMapMarkers";
 import { openMinecraftMap } from "../../minecraftMapNav";
+import { ScanLines } from "../../screens/MinecraftScanLines";
 import {
   LEGEND,
   type Label,
@@ -76,6 +83,7 @@ import {
   type Tokens,
   asSurvey,
   beaconGlyph,
+  bearingLine,
   clusterBadge,
   colorOf,
   drawScale,
@@ -91,14 +99,24 @@ import {
   playerDisc,
   readTokens,
   scaleRect,
+  scanSquare,
   spotMark,
   stars,
   structGlyph,
+  targetMark,
 } from "../../screens/minecraftMapDraw";
 
 // ---- the payload: every slot checked, everything else ignored ----
 
-export type McFocusKind = "death" | "player" | "place" | "structure" | "spot" | "gate" | "beacon";
+export type McFocusKind =
+  | "death"
+  | "player"
+  | "place"
+  | "structure"
+  | "spot"
+  | "gate"
+  | "beacon"
+  | "scan";
 export type McOverlay = "trails" | "deaths" | "structures" | "players" | "beacons" | "gates";
 
 export interface McFocus {
@@ -136,6 +154,7 @@ const FOCUS_KINDS: McFocusKind[] = [
   "spot",
   "gate",
   "beacon",
+  "scan",
 ];
 const OVERLAY_IDS: McOverlay[] = ["trails", "deaths", "structures", "players", "beacons", "gates"];
 /** The world's edge: Bedrock's ±30 million blocks. */
@@ -219,6 +238,8 @@ interface Shown {
   y: number | null;
   z: number;
   dim: MinecraftDim;
+  /** A `scan` card's lines, in the held Tricorder's words (§M25). */
+  scan?: ScanWords | null;
 }
 
 function focusShown(f: McFocus, dim: MinecraftDim, who: string, now: number): Shown {
@@ -257,6 +278,16 @@ function focusShown(f: McFocus, dim: MinecraftDim, who: string, now: number): Sh
       sub: dimName(dim),
     };
   }
+  if (f.kind === "scan") {
+    // Until the live route answers: whose scan, and where they were.
+    return {
+      ...at,
+      icon: <RadarIcon size={18} />,
+      tone: "",
+      title: f.label || who || "Live scan",
+      sub: `Tricorder scan · ${dimName(dim)}`,
+    };
+  }
   if (f.kind === "structure") {
     return {
       ...at,
@@ -272,6 +303,31 @@ function focusShown(f: McFocus, dim: MinecraftDim, who: string, now: number): Sh
     tone: "",
     title: f.label || "This spot",
     sub: dimName(dim),
+  };
+}
+
+/** The live player a `scan` card is about: its label is their gamertag. */
+export function scanner(
+  players: MinecraftMapPlayers | null,
+  focus: McFocus | null,
+): MinecraftMapPlayer | undefined {
+  if (focus?.kind !== "scan" || !players) return undefined;
+  const who = focus.label.toLowerCase();
+  return players.players.find((p) => p.gamertag.toLowerCase() === who);
+}
+
+/** A `scan` card's "what it shows": the scanner where they are now, and their scan. */
+function scannerShown(p: MinecraftMapPlayer, now: number): Shown {
+  return {
+    icon: <RadarIcon size={18} />,
+    tone: "",
+    title: p.gamertag,
+    sub: `${p.online ? "Online" : "Offline"} · ${dimName(p.dim)}`,
+    x: Math.floor(p.x),
+    y: Math.floor(p.y),
+    z: Math.floor(p.z),
+    dim: p.dim,
+    scan: scanWords(p, now),
   };
 }
 
@@ -648,6 +704,22 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
       selGate: mine.gate ? mine.gate.id : null,
     });
     const avoid: Avoid = { rects: [...world.avoid.rects], segs: [...world.avoid.segs] };
+    // A `scan` card's scanner (§M25): their square, the block it found and the bearing to it,
+    // over the areas and under the tiles, as on the full map.
+    const who = scanner(st.players, focus);
+    if (who?.scan && scanShown(who) && who.dim === dim) {
+      const fd = who.scan.state === "found" ? who.scan.found : null;
+      scanSquare(ctx, v, f, who, steel, !!fd, t);
+      if (fd && fd.dim === dim) {
+        const [sx, sy] = toScreen(v, f, fd.x + 0.5, fd.z + 0.5);
+        bearingLine(ctx, v, f, [who.x, who.z], [fd.x + 0.5, fd.z + 0.5], steel, t);
+        const [px, py] = toScreen(v, f, who.x, who.z);
+        // The plate keeps off its own bearing and block too, so neither is ever hidden.
+        avoid.segs.push({ ax: px, ay: py, bx: sx, by: sy, own: `scan:${who.xuid}` });
+        targetMark(ctx, sx, sy, steel, t);
+        avoid.rects.push({ x: sx - 12, y: sy - 12, w: 24, h: 24, own: `scan:${who.xuid}` });
+      }
+    }
     for (const m of world.markers) if (!off(m.sx, m.sy)) markers.push(m);
     for (const p of world.pins) {
       const [x, z] = gateCenter(p.g);
@@ -706,6 +778,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
 
     if (st.ov.players && st.players) {
       for (const p of playersIn(st.players.players, dim)) {
+        if (p === who) continue; // the card's own scanner draws itself, on top
         const [sx, sy] = toScreen(v, f, p.x, p.z);
         if (off(sx, sy)) continue;
         playerDisc(ctx, sx, sy, p, steel, t, false, false);
@@ -743,13 +816,40 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
           online: false,
         };
         playerDisc(ctx, sx, sy, p, steel, t, true, false);
+      } else if (focus.kind === "scan") {
+        // Where they are now when the live route has them, else where Dave last saw them.
+        const at = who && who.dim === dim ? who : null;
+        const [px, py] = at ? toScreen(v, f, at.x, at.z) : [sx, sy];
+        const p = at ?? {
+          xuid: trail?.player ?? "",
+          gamertag: focus.label || "?",
+          dim,
+          x: focus.x,
+          y: focus.y ?? 0,
+          z: focus.z,
+          at: focus.at ?? 0,
+          online: false,
+        };
+        playerDisc(ctx, px, py, p, steel, t, true, false);
+        const plate = at ? scanPlate(at) : null;
+        labels.push({
+          txt: plate ?? p.gamertag,
+          short: plate ? p.gamertag : undefined,
+          x: px,
+          y: py - 8,
+          pr: -1,
+          own: `p:${p.xuid}`,
+        });
+        next.push({ kind: "focus", sx: px, sy: py });
       } else if (focus.kind === "structure") {
         structGlyph(ctx, sx, sy, focus.label.toLowerCase().replace(/\s+/g, "_"), t, true);
       } else {
         spotMark(ctx, sx, sy, v.s, false, t);
       }
-      if (focus.label) labels.push({ txt: focus.label, x: sx, y: sy - 8, pr: -1 });
-      next.push({ kind: "focus", sx, sy });
+      if (focus.kind !== "scan") {
+        if (focus.label) labels.push({ txt: focus.label, x: sx, y: sy - 8, pr: -1 });
+        next.push({ kind: "focus", sx, sy });
+      }
     }
 
     const scale = scaleRect(ctx, v.s, f);
@@ -900,15 +1000,18 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
   }, [copied]);
 
   const mine = focusedMarker(marks, dim, focus);
+  const who = scanner(players, focus);
   const shown =
     picked ??
-    (mine.gate
-      ? gateShown(mine.gate)
-      : mine.beacon
-        ? beaconShown(mine.beacon, marks?.beacons ?? [])
-        : focus
-          ? focusShown(focus, dim, trail?.gamertag ?? "", now)
-          : null);
+    (who
+      ? scannerShown(who, now)
+      : mine.gate
+        ? gateShown(mine.gate)
+        : mine.beacon
+          ? beaconShown(mine.beacon, marks?.beacons ?? [])
+          : focus
+            ? focusShown(focus, dim, trail?.gamertag ?? "", now)
+            : null);
   // Until the box says who's on, the card claims nothing about being live.
   const status =
     !players && !unreachable
@@ -1014,6 +1117,7 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
                 Copy X Z
               </button>
             </div>
+            {shown.scan && <ScanLines scan={shown.scan} />}
             {nether && (
               <div className="tv-mc-alt">
                 Overworld side:{" "}

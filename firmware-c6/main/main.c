@@ -43,6 +43,7 @@
 #include "svc_convo_drv.h"
 #include "svc_display_drv.h"
 #include "svc_net_drv.h"
+#include "svc_orient_drv.h"
 #include "svc_post_drv.h"
 #include "svc_power_drv.h"
 #include "svc_rtc_drv.h"
@@ -185,9 +186,11 @@ static bool report(const cfg_t *cfg)
        the body, because this task then runs a TLS handshake on the same 8 KB stack. */
     static char note[1408], part[256];
     size_t used = 0;
+    /* `low=` rides near the front (0.0.18): the note grew `orient=` and `cal=`, and a cut falls
+       on the tail, never on the heap's low-water mark. */
     void (*const parts[])(char *, size_t) = {
-        svc_display_note, ui_task_note,   svc_power_note, svc_buttons_note,
-        svc_touch_note,   svc_settings_note, svc_rtc_note, shell_key_note,
+        svc_display_note, ui_task_note,   dbg_sys_low_note, svc_power_note, svc_buttons_note,
+        svc_touch_note,   svc_orient_note, svc_settings_note, svc_rtc_note, shell_key_note,
         svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note,
         svc_alarms_note,  svc_convo_note, svc_post_note};
     note[0] = '\0';
@@ -235,6 +238,16 @@ static void ota_restarting(void)
 }
 
 static const ota_hooks_t OTA_HOOKS = {ota_progress, ota_restarting};
+
+/* One of the loop's pieces of work, named while it runs: the heap's low-water mark says which
+   set it (dbg_sys_doing). */
+static bool doing(const char *what, bool (*run)(void))
+{
+    dbg_sys_doing(what);
+    const bool r = run();
+    dbg_sys_doing("idle");
+    return r;
+}
 
 /* True when an install was attempted, which on return means it failed. */
 static bool maybe_install(const cfg_t *cfg, const ota_manifest_t *m, uint32_t *last_try_ms)
@@ -292,6 +305,7 @@ _Static_assert((int)DG_RST_PANIC == (int)ESP_RST_PANIC &&
 static void start_panel(const cfg_t *cfg)
 {
     dbg_sys_init();
+    dbg_sys_low_probe(talk_ring_held);
     /* Read on every boot, a fault boot included: an NVS read cannot leave anything changed, and
        a failed one is the defaults. The pairs point into `cfg`, which app_main never frees. */
     static settings_kv_t prov[7];
@@ -338,6 +352,8 @@ static void start_panel(const cfg_t *cfg)
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
     svc_touch_start();
+    /* Likewise: no tilt sensor is a panel that stays upright, its Settings switch dead. */
+    svc_orient_start();
     /* Likewise: a codec that does not answer is a panel without sound, saying so in Settings. */
     svc_audio_start(wake_main);
 }
@@ -406,14 +422,20 @@ void app_main(void)
     while (true) {
         if (reachable) {
             if (!reported || (uint32_t)(now_ms() - last_report_ms) >= REPORT_PERIOD_MS) {
-                if (report(&cfg)) {
+                dbg_sys_doing("report");
+                const bool sent = report(&cfg);
+                dbg_sys_doing("idle");
+                if (sent) {
                     reported = true;
                     last_report_ms = now_ms();
                 }
             }
             /* A failed install is reported on the next pass rather than in fifteen minutes:
                it is the one fault that otherwise looks like "no update was offered". */
-            if (maybe_install(&cfg, &manifest, &ota_last_try_ms)) reported = false;
+            dbg_sys_doing("ota");
+            const bool tried = maybe_install(&cfg, &manifest, &ota_last_try_ms);
+            dbg_sys_doing("idle");
+            if (tried) reported = false;
         }
 
         /* Until the next manifest check: debug pickups while the box answers (dbg_sched.c). A
@@ -426,29 +448,31 @@ void app_main(void)
            what the people's threads asked (post_link.h) after that. */
         const uint32_t check_due = now_ms() + CHECK_PERIOD_MS;
         for (;;) {
-            if (talk_link_run()) break;
-            convo_link_run();
-            post_link_run();
+            if (doing("talk", talk_link_run)) break;
+            doing("convo", convo_link_run);
+            doing("post", post_link_run);
             uint32_t sleep_ms = 0;
             const dbg_next_t next = dbg_sched_next(&pickup, now_ms(), check_due,
                                                    reachable && !svc_net_user_off(), &sleep_ms);
             if (next == DBG_NEXT_CHECK) break;
             if (next == DBG_NEXT_SLEEP) {
                 if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(sleep_ms))) {
-                    talk_link_run();
-                    convo_link_run();
-                    post_link_run();
+                    doing("talk", talk_link_run);
+                    doing("convo", convo_link_run);
+                    doing("post", post_link_run);
                     break;
                 }
                 continue;
             }
+            dbg_sys_doing("pickup");
             const dbg_poll_t got = dbg_link_poll();
+            dbg_sys_doing("idle");
             if (got != DBG_POLL_FAIL) box_reached();
             dbg_sched_done(&pickup, now_ms(), got);
             if (ulTaskNotifyTake(pdTRUE, 0)) {
-                talk_link_run();
-                convo_link_run();
-                post_link_run();
+                doing("talk", talk_link_run);
+                doing("convo", convo_link_run);
+                doing("post", post_link_run);
                 break;
             }
         }
@@ -473,11 +497,15 @@ void app_main(void)
             joined = net_retry(WIFI_TIMEOUT_MS) == ESP_OK;
             if (joined) ESP_LOGI(TAG, "network recovered");
         }
+        dbg_sys_doing("manifest");
         reachable = joined && fetch_manifest(&cfg, &manifest);
         if (reachable) {
+            dbg_sys_doing("siblings");
             sib_link_poll();
+            dbg_sys_doing("alarms");
             alarm_link_poll();
         }
+        dbg_sys_doing("idle");
         if (asked && update_now(&cfg, &manifest, reachable, &ota_last_try_ms)) reported = false;
     }
 }

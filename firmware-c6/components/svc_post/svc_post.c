@@ -203,8 +203,12 @@ void svc_post_heard(const char *thread, uint32_t local_id)
     if (i < 0) return;
     s_st.heard++;
     svc_messages_mark_played(thread, local_id);
-    if (s_stamps.n == POST_STAMPS) s_st.stamps_dropped++;
-    if (post_stamps_add(&s_stamps, sl->device, sl->seen.id[i])) stamps_changed();
+    const bool full = s_stamps.n == POST_STAMPS;
+    if (post_stamps_add(&s_stamps, sl->device, sl->seen.id[i])) {
+        /* Only a real eviction: a repeat adds nothing and drops nothing. */
+        if (full) s_st.stamps_dropped++;
+        stamps_changed();
+    }
     send_stamp();
 }
 

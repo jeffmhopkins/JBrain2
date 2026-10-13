@@ -1226,6 +1226,84 @@ async function daveTranscript() {
   ];
 }
 
+// The live-scan GUI gate's chat (docs/mocks/minecraft-scan-on-map/, variant A): "Is
+// BlockyFox's Tricorder still scanning?", answered with the `minecraft_map` card's `scan`
+// focus. Listed only under `?mcscan=`, which also puts the scan on the map's players.
+const DAVE_SCAN_SESSION = {
+  ...DAVE_SESSION,
+  id: "dave-is-it-scanning",
+  title: "Is BlockyFox's Tricorder still scanning?",
+  last_active_at: daysAgo(0, 14, 40),
+};
+
+async function daveScanTranscript() {
+  const m = await import("../minecraftMapFixtures");
+  const fox = m
+    .mcMapPlayers("slot2", true, "found")
+    .players.find((p) => p.gamertag === "BlockyFox");
+  const [x, y, z] = [Math.round(fox?.x ?? 0), Math.round(fox?.y ?? 64), Math.round(fox?.z ?? 0)];
+  return [
+    {
+      role: "user",
+      content: "Is BlockyFox's Tricorder still scanning?",
+      tools: [],
+      attachments: [],
+    },
+    {
+      role: "assistant",
+      content: [
+        "Yes — BlockyFox's Tricorder is scanning for diamond. The last scan found one",
+        "**13 blocks north-east** of them, **6 blocks below them**. It keeps looking every",
+        "10 seconds until they ask me to stop or ask me for a new heading.",
+      ].join(" "),
+      tools: [
+        {
+          id: "mc1",
+          name: "mc_tricorder_scan",
+          ok: true,
+          args: { gamertag: "BlockyFox", status: true },
+          result_brief: "diamond · found one",
+          sources: [],
+          text_offset: 0,
+        },
+        {
+          id: "mc2",
+          name: "mc_show_map",
+          ok: true,
+          args: { focus: "scan", label: "BlockyFox" },
+          result_brief: "scan · Overworld",
+          sources: [],
+          text_offset: 0,
+          view: {
+            view: "minecraft_map",
+            surface: "inline",
+            refs: [],
+            data: {
+              slot: "slot2",
+              world: "Castle Hill",
+              loaded: true,
+              dim: "overworld",
+              center: { x, z },
+              zoom: -2,
+              overlays: {
+                trails: true,
+                deaths: true,
+                structures: true,
+                players: true,
+                beacons: true,
+                gates: true,
+              },
+              focus: { kind: "scan", label: "BlockyFox", x, y, z, at: null },
+              overworld: null,
+              trail: { player: "2535411", gamertag: "BlockyFox", from: null, to: null },
+            },
+          },
+        },
+      ],
+    },
+  ];
+}
+
 // ===== Phase 6 fixture: the wiki reader's Priya Nair article =====
 // The example mock (docs/mocks/wiki-reader-example-priya.html) verbatim: lead,
 // type-guided sections with nested subsections, a bulleted list, two tables, and
@@ -3920,7 +3998,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const m = await import("../minecraftMapFixtures");
     const slot = "slot2";
     const dim = (url.searchParams.get("dim") ?? "overworld") as MinecraftDim;
-    const players = m.mcMapPlayers(slot, true);
+    // `?mcscan=` as on the owner's map: shared maps show the scan by the target's rule.
+    const scanKnob = new URLSearchParams(globalThis.location?.search ?? "").get("mcscan");
+    const players = m.mcMapPlayers(
+      slot,
+      true,
+      scanKnob === "found" || scanKnob === "none" || scanKnob === "offline" ? scanKnob : "",
+    );
     if (rest === "") {
       const first = players.players[0];
       return json({
@@ -4075,7 +4159,16 @@ export const mockFetch: typeof fetch = async (input, init) => {
         return json(m.mcMapPoint(slot, dim, x, z));
       }
       if (path === "/api/minecraft/map/players") {
-        return json(m.mcMapPlayers(slot, running && !!slotOf(slot)?.active));
+        // `?mcscan=found|none|offline`: BlockyFox's live Tricorder scan (§M25).
+        const scan = new URLSearchParams(globalThis.location?.search ?? "").get("mcscan");
+        const live = running && !!slotOf(slot)?.active;
+        return json(
+          m.mcMapPlayers(
+            slot,
+            live,
+            scan === "found" || scan === "none" || scan === "offline" ? scan : "",
+          ),
+        );
       }
       if (path === "/api/minecraft/map/structures") return json(m.mcMapStructures(slot, dim));
       if (path === "/api/minecraft/map/markers") return json(m.mcMapMarkers(slot));
@@ -4175,6 +4268,22 @@ export const mockFetch: typeof fetch = async (input, init) => {
     if (path === "/api/minecraft") return json(scenario.status);
     if (path === "/api/minecraft/version") return json(scenario.version);
     if (path === "/api/minecraft/players") return json(scenario.players);
+    // Goals (§M24, look-only): `?mcg=empty` has none; `?mcg=down` can't count (the sidecar
+    // unreachable), while the goals themselves, a database read, still answer.
+    if (path === "/api/minecraft/goals" || path === "/api/minecraft/goals/progress") {
+      const knob = new URLSearchParams(globalThis.location?.search ?? "").get("mcg");
+      if (path === "/api/minecraft/goals") {
+        return json(knob === "empty" ? { world: "slot2", players: [] } : mc.mcGoals());
+      }
+      if (knob === "down") {
+        return json(
+          { detail: "Minecraft sidecar unreachable (ConnectError) — is it stopped?" },
+          503,
+        );
+      }
+      const q = url.searchParams;
+      return json(mc.mcGoalProgress(q.get("xuid") ?? "", q.get("flush") === "true"));
+    }
     if (path === "/api/minecraft/settings" && method === "PUT") {
       return json(JSON.parse(String(init?.body ?? "{}")));
     }
@@ -4582,7 +4691,12 @@ export const mockFetch: typeof fetch = async (input, init) => {
   // in mock mode draws the Thought chip, the Worked block, the step rows and the question
   // block, not an empty box. Every other note answers null, which is the ordinary state of
   // a note the box has not read yet.
-  if (path === "/api/sessions" && method === "GET") return json([DAVE_SESSION, NOTE_SESSION]);
+  if (path === "/api/sessions" && method === "GET") {
+    const scanning = new URLSearchParams(globalThis.location?.search ?? "").has("mcscan");
+    return json(
+      scanning ? [DAVE_SCAN_SESSION, DAVE_SESSION, NOTE_SESSION] : [DAVE_SESSION, NOTE_SESSION],
+    );
+  }
   if (path === "/api/proposals" && method === "GET") return json([]);
   const noteThreadPath = path.match(/^\/api\/notes\/([^/]+)\/thread$/);
   if (noteThreadPath && method === "GET") {
@@ -4597,6 +4711,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (transcriptPath && method === "GET") {
     if (decodeURIComponent(transcriptPath[1] ?? "") === DAVE_SESSION.id) {
       return json(await daveTranscript());
+    }
+    if (decodeURIComponent(transcriptPath[1] ?? "") === DAVE_SCAN_SESSION.id) {
+      return json(await daveScanTranscript());
     }
     return json(
       decodeURIComponent(transcriptPath[1] ?? "") === NOTE_SESSION.id ? NOTE_TRANSCRIPT : [],

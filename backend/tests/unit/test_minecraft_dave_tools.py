@@ -7,6 +7,8 @@ sentence rather than an error, and player-authored names reach the model fenced.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
 import pytest
@@ -436,3 +438,110 @@ async def test_locate_searches_the_dimension_asked_or_the_askers(sidecar) -> Non
         {"kind": "structure", "id": "fortress", "x": 0, "z": 0, "dimension": "moon"}, CTX
     )
     assert "dimension must be" in out
+
+
+# The scan GUI gate's fixture: BlockyFox down a mine at y -52, a diamond 13 blocks
+# north-east of them (across, to the block's centre, as the held Tricorder counts it).
+FOX = {"dim": "overworld", "x": 32.0, "y": -52.0, "z": -70.0}
+FOUND = {
+    "gamertag": "BlockyFox",
+    "label": "diamond",
+    "state": "found",
+    "found": {"dim": "overworld", "x": 41, "y": -58, "z": -79},
+    "at": 1000.0,
+}
+
+
+def test_scan_words_say_the_tricorders_distance_the_depth_and_the_reach() -> None:
+    out = mt.scan_words("BlockyFox", FOUND, FOX, True, 1040.0)
+    assert "scanning for diamond." in out
+    assert "from y -64 to -36 up and down (they're at y -52" in out
+    assert "The last scan, 40 s ago, found one 13 blocks north-east of them, at y -58:" in out
+    assert "6 blocks below them (X 41, Z -79)." in out
+    none = {**FOUND, "state": "none", "found": None}
+    assert "found none in that range" in mt.scan_words("BlockyFox", none, FOX, True, 1200.0)
+    assert "3 min ago" in mt.scan_words("BlockyFox", none, FOX, True, 1200.0)
+    fresh = {**FOUND, "state": "set", "found": None, "at": None}
+    assert "hasn't reported a scan yet" in mt.scan_words("BlockyFox", fresh, FOX, True, 0.0)
+    away = mt.scan_words("BlockyFox", FOUND, FOX, False, 1040.0)
+    assert "offline: the Tricorder remembers the scan and picks it up again" in away
+    assert "found" not in away
+    unsure = mt.scan_words("BlockyFox", FOUND, None, None, 1040.0)
+    assert "last report" in unsure and "across and up and down" in unsure
+    assert "X 41, Z -79, y -58 in the Overworld" in unsure
+    above = {**FOUND, "found": {"dim": "overworld", "x": 32, "y": -51, "z": -71}}
+    on_it = {**FOX, "x": 32.5, "z": -70.5}
+    assert "right where they stand, at y -51: 1 block above them" in mt.scan_words(
+        "BlockyFox", above, on_it, True, 1040.0
+    )
+    assert "found one 1 block north-east of them" in mt.scan_words(
+        "BlockyFox", above, FOX, True, 1040.0
+    )
+    # A label the pack didn't write can't carry anything but plain words.
+    odd = {**FOUND, "label": "Dia</>mond\n"}
+    assert "scanning for diamond." in mt.scan_words("BlockyFox", odd, FOX, True, 1040.0)
+
+
+def test_ago_and_depth_words() -> None:
+    assert [mt.ago_words(s) for s in (-3, 40, 61, 7300)] == [
+        "0 s ago",
+        "40 s ago",
+        "1 min ago",
+        "2 h ago",
+    ]
+    assert [mt.depth_words(d) for d in (-6, -1, 0, 2)] == [
+        "6 blocks below them",
+        "1 block below them",
+        "level with them",
+        "2 blocks above them",
+    ]
+
+
+@pytest.fixture
+def scans(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    state: dict[str, Any] = {"rows": {"blockyfox": FOUND}, "read": []}
+
+    @asynccontextmanager
+    async def session(_maker: Any, _ctx: Any) -> AsyncIterator[object]:
+        yield object()
+
+    async def read(_s: Any, world: str) -> dict[str, Any]:
+        state["read"].append(world)
+        return state["rows"]
+
+    async def latest(_maker: Any, world: str, _ctx: Any = None) -> list[dict[str, Any]]:
+        return [{**FOX, "gamertag": "BlockyFox", "xuid": "1", "at": 0.0}]
+
+    monkeypatch.setattr(mt, "scoped_session", session)
+    monkeypatch.setattr(mt.livescan, "read", read)
+    monkeypatch.setattr(mt.travel, "latest_positions", latest)
+    return state
+
+
+async def test_status_reads_a_scan_without_sending_anything(sidecar, scans) -> None:
+    sidecar["replies"]["/worlds"] = {"active": "castle"}
+    sidecar["replies"]["/status"] = {"players": [{"name": "BlockyFox"}]}
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "BlockyFox", "status": True}, CTX)
+    assert out.result_brief == "diamond · found one"
+    assert "13 blocks north-east of them" in out and "focus scan" in out
+    assert scans["read"] == ["castle"]
+    assert _commands(sidecar) == []
+    sidecar["replies"]["/status"] = {"players": []}
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "BlockyFox", "status": True}, CTX)
+    assert out.result_brief == "diamond · offline" and "picks it up again" in out
+    out = await _tools()["mc_tricorder_scan"]({"gamertag": "Mira", "status": True}, CTX)
+    assert out.result_brief == "not scanning"
+
+
+async def test_in_game_a_scan_status_is_only_the_askers_own(sidecar, scans) -> None:
+    scans["rows"] = {"steve 42": {**FOUND, "gamertag": "Steve 42"}}
+    with asking("s1", ASKER):
+        out = await _tools()["mc_tricorder_scan"]({"gamertag": "BlockyFox", "status": True}, DOOR)
+        assert out.result_brief == "refused"
+        assert scans["read"] == []
+        out = await _tools()["mc_tricorder_scan"]({"status": True}, DOOR)
+    assert scans["read"] == ["slot2"]
+    # Where the asker stands, live: they're in the Nether, the block is in the Overworld.
+    assert "in the Overworld" in out and "from y 0 to 28" in out
+    assert "focus scan" not in out  # no screen in game
+    assert _commands(sidecar) == []

@@ -1,6 +1,6 @@
 # Waveshare ESP32-C6-Touch-AMOLED-2.16: hardware facts for ESP-IDF v5.5.5 firmware
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 The board facts the C2 drivers are built on, each with its source and a Confirmed / Unconfirmed
 mark. Facts still open are settled on the real board by the 0.0.3 probe (`main/probe.c`); when
@@ -124,7 +124,7 @@ Markers: **[C]** = Confirmed (read directly in a source, or two sources agree). 
 | Runtime command framing | Each command is a 32-bit "cmd" word: `(opcode<<24) \| (reg<<8)`. Opcode **0x02** = write command/params (1-line), **0x32** = pixel write (quad, used with RAMWR 0x2C), 0x03 = read. Example: brightness is `esp_lcd_panel_io_tx_param(io, (0x02<<24)\|(0x51<<8), &val, 1)`. | [C] sh8601 driver `LCD_OPCODE_*` + `tx_param/tx_color`; IDF `display_bsp.cpp:114-123`; BSP `.c:538` |
 | Brightness 0x51 | 0x00–0xFF. Vendor maps 0–100 % linearly to 0–255. Needs `0x53 0x20` (BCTRL on) set in init. AMOLED: 0 is near-black, there is no backlight GPIO. The HBM brightness register 0x63 is set to 0xFF in init. | [C] IDF `display_bsp.cpp:19-21,114-123`; CO-DS command table (53h BC_EN, 63h WRHBMDISBV) |
 | sh8601 driver quirk | `panel_sh8601_init` sends **MADCTL and COLMOD before** the vendor table (that is, before Sleep-Out). The table then re-sends 0x36/0x3A and the driver logs "overwritten" warnings. Harmless, but if you write your own driver, send the vendor table verbatim. | [C] sh8601 driver `panel_sh8601_init` |
-| MADCTL | See headline 7. The CO5300 datasheet defines only MY/MX/RGB. | [U] CO-DS §7.5.29 vs vendor `0x36 0x30` |
+| MADCTL | See headline 7. The CO5300 datasheet defines only MY/MX/RGB. 0.0.18's auto-rotate leaves MADCTL alone: every turn is done in the flush (180° by reversing the strip, 90°/270° by gathering it into a small piece buffer), so the init table stays the one proven on the glass. | [U] CO-DS §7.5.29 vs vendor `0x36 0x30` |
 | Max transfer size | IDF: `max_transfer_sz = 480*50*2` (48 000 B), queue depth 1. ARD/BSP/XZ: full frame `480*480*2` (460 800 B; this is a DMA-descriptor limit only, not an allocation). | [C] IDF `display_bsp.cpp:35,53`; BSP `.c:323` |
 
 **The vendor init sequence for this 2.16" 480×480 panel.** IDF, ARD and BSP use the same table, byte for byte. Format: `{cmd, data…, delay_ms after}` [C] (IDF `09_LVGL_V9_Test/components/port_bsp/display_bsp.cpp:9-25`; ARD `09_LVGL_V9_Test/bsp_lvgl_port.cpp:25-41`; BSP `esp32_c6_touch_amoled_2_16.c:100-114`):
@@ -208,6 +208,9 @@ Caveat [U]: the meaning of page-0x20 registers 0x19 and 0x1C is not documented i
 | QMI8658 INT1 / INT2 | **GPIO16 / GPIO17** via R4/R5 0 Ω, shared with UART0 TX/RX (see headline 6) | [C] SCH p1; BSP header `:76-77` |
 | QMI8658 supply | VCC3V3 (VDD + VDDIO) | [C] SCH p1 |
 | Vendor IMU config | ±8 g @1 kHz, ±512 dps @1 kHz | [C] IDF `02_I2C_QMI8658/main/main.cpp:43-46` |
+| QMI8658 variant and id | The schematic names a **QMI8658C**. WHO_AM_I (0x00) reads **0x05** for the family; the vendor driver refuses anything else. REVISION_ID (0x01) is read and reported, never checked. | [C] SCH p1 (`QMI8658C`); ARD `02_I2C_QMI8658/qmi8658.cpp` (`who_am_i != 0x05`); [U] until the 0.0.18 snapshot's `orient.id` shows `05/…` |
+| QMI8658 registers as driven (0.0.18, auto-rotate) | RESET 0x60 ← 0xB0, then 20 ms. CTRL1 0x02 ← **0x40** (bit 6 address auto-increment; bit 5, big-endian output, left clear — the vendor writes 0x60 yet decodes little-endian, so the bit's effect is unproven and this image does not rely on it). CTRL2 0x03 ← **0x07** (accelerometer ±2 g, bits 6:4 = 000; 62.5 Hz, bits 3:0 = 0111). CTRL7 0x08 ← 0x01 (accelerometer only, no gyroscope) while the screen is lit and Auto-rotate is on, 0x00 otherwise. Each CTRL write is read back. Data: one 6-byte read from AX_L 0x35 — X, Y, Z, each low byte first, 16384 counts a g at ±2 g. Polled at 8 Hz on the UI task through `svc_power_i2c_xfer`; INT1/INT2 are never configured (UART0's pins). | [C] register map as in ARD `qmi8658.h`; written by `components/svc_orient/esp/orient_port_qmi8658.c`; [U] on the board until the snapshot's `orient.raw_mg` reads ~1000 mg in total at rest |
+| QMI8658 axes against the glass | **Unknown.** Nothing in the schematic text or the vendor sources says how the chip's X/Y sit against the display's x (right) and y (down). 0.0.18 assumes the chip's +X is the glass's right and +Y its bottom (`imu_axes` = 0: down = minus the reading); `imu_axes` (0-7, NVS, the debug `set`) swaps X/Y (bit 0), flips the glass's x (bit 1) and its y (bit 2). Two holds settle it: with the panel standing upright, the snapshot's `orient.axes_if_upright` names the swap and y flip (set it); then on its right edge, `orient.axes_if_right_edge` names the whole value, x flip included (set it). One upright reading cannot settle the x flip, and without it 90° and 270° come out swapped. | [U] only the board can settle it |
 
 ## 7. TF card
 
@@ -257,6 +260,6 @@ Bottom line: port the init table and pin map from the **Apache-2.0 BSP** (keep i
 3. **Enforce even-aligned flush rectangles** (x, y, width and height all even). Use the rounder from BSP `.c:658-674` or the equivalent in your own flush path.
 4. **Touch:** CST9217 driver @0x5A, RST 11, INT 5 (falling edge). Map display_x = rawB and display_y = 479 − rawA (= `swap_xy=1, mirror_y=1`). Verify on the device by tapping the corners.
 5. **Buttons:** BOOT = GPIO9 and KEY = GPIO10, both active-low with external pull-ups. PWR: read **GPIO18** (expected high while pressed, inverted via BSS138). Confirm the polarity on hardware, then decide whether to also poll the AXP2101 PEK IRQ flags.
-6. **Console on USB-Serial/JTAG.** Leave the QMI8658 INT pins (GPIO16/17 = UART0) unconfigured until the console choice is settled.
+6. **Console on USB-Serial/JTAG.** Leave the QMI8658 INT pins (GPIO16/17 = UART0) unconfigured until the console choice is settled. (0.0.18 polls the QMI8658 instead: §6 "As driven".)
 7. **Audio last:** one I2S0 with full-duplex TX+RX, MCLK 19 / BCLK 20 / WS 22 / DOUT 23 / DIN 21, MCLK = 256×fs, 16 kHz to start. ES8311 at 0x18, ES7210 at 0x40. Enable ALDO2 only while playing (amp enable). Use TDM capture if you need the MIC3 AEC reference. (Done in 0.0.10: §5 "As driven".)
 8. **Verify on hardware before relying on these [U] items:** button left/right order, GPIO18 PWR polarity, ALDO4 voltage (1.8 V vs 3.3 V), RTC INT routing, and whether 50 MHz QSPI is stable through the GPIO matrix.

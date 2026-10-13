@@ -5,6 +5,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "dbg_core.h"
 #include "esp_crt_bundle.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
@@ -117,7 +118,10 @@ static esp_err_t open_counted(int len, bool *reused)
 {
     *reused = s_live;
     const int64_t t0 = esp_timer_get_time();
+    /* A new connection's handshake is the heap's sharpest dip: named for its low-water mark. */
+    if (!*reused) dbg_sys_handshake(true);
     const esp_err_t err = esp_http_client_open(s_c, len);
+    if (!*reused) dbg_sys_handshake(false);
     if (*reused) {
         s_reuse++;
     } else if (err == ESP_OK) {

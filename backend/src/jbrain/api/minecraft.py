@@ -25,7 +25,17 @@ from starlette.background import BackgroundTask
 
 from jbrain.api.deps import OwnerDep, SettingsDep, owner_only
 from jbrain.db.session import SessionContext
-from jbrain.minecraft import changelog, markers, sessions, shares, targets, timeline, travel
+from jbrain.minecraft import (
+    changelog,
+    goals,
+    livescan,
+    markers,
+    sessions,
+    shares,
+    targets,
+    timeline,
+    travel,
+)
 from jbrain.minecraft import client as mc
 
 router = APIRouter(prefix="/minecraft", dependencies=[Depends(owner_only)])
@@ -200,6 +210,54 @@ async def players(request: Request, settings: SettingsDep) -> dict[str, Any]:
         # Lifetime stats (deaths, mobs, blocks, distance) arrive with the M5 add-on.
         "stats_available": False,
     }
+
+
+# --- Goals and their progress (§M24; GUI gate docs/mocks/minecraft-goals/, B, look-only).
+# Read-only: players change goals by asking Dave in game, never from here.
+
+
+@router.get("/goals")
+async def player_goals(request: Request, settings: SettingsDep) -> dict[str, Any]:
+    """Every player's goals and latest journal, from the database, each goal with the
+    world it's in (a goal from before goals recorded one is the loaded world's) and
+    whether that's the loaded world. The sidecar only names the worlds: down, the goals
+    still answer, with `loaded` unknown (None)."""
+    try:
+        view: dict[str, Any] | str = await mc.call(settings, "GET", "/worlds")
+    except HTTPException as exc:
+        view = str(exc.detail)
+    active, by_folder = goals.world_names(view)
+    players = await goals.read_goals(_maker(request))
+    for p in players:
+        for g in p["goals"]:
+            folder = g["world"] or active
+            g["world"] = folder
+            g["world_name"] = (by_folder.get(folder) or {}).get("name") if folder else None
+            g["loaded"] = None if active is None else folder == active
+    return {"world": active, "players": players}
+
+
+@router.get("/goals/progress")
+async def goal_progress(
+    request: Request,
+    settings: SettingsDep,
+    xuid: Annotated[str, Query(min_length=1, max_length=64)],
+    flush: bool = False,
+) -> dict[str, Any]:
+    """Count one player's open counted goals now, all at once (one carry, one stock count
+    a dimension): the app path of `mc_goal_progress`, which never spends a deep scan.
+    `flush` is **Count again**: the running world saves first (at most every 30 s)."""
+
+    async def sidecar(method: str, path: str, **kw: Any) -> dict[str, Any] | str:
+        try:
+            return await mc.call(settings, method, path, **kw)
+        except HTTPException as exc:
+            return str(exc.detail)
+
+    try:
+        return await goals.count_progress(_maker(request), sidecar, xuid, flush=flush)
+    except goals.Unavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 # --- Worlds and backups (MINECRAFT_BEDROCK_PLAN §M2/§M3) -----------------------------
@@ -565,13 +623,22 @@ async def players_view(
     if ctx is None:
         players = await travel.latest_positions(_maker(request), folder)
         locks = await targets.for_world(_maker(request), folder)
+        scans = await livescan.for_world(_maker(request), folder)
     else:
         players = await travel.latest_positions(_maker(request), folder, ctx)
         locks = await targets.for_world(_maker(request), folder, ctx)
+        scans = await livescan.for_world(_maker(request), folder, ctx)
     for p in players:
         p["online"] = p["xuid"] in online
         # Where Dave has their Tricorder pointed, if anywhere (plan §M21).
         p["target"] = locks.get(targets.key(str(p["gamertag"])))
+        # And the live scan that points it now, kept while they're offline (§M25).
+        got = scans.get(livescan.key(str(p["gamertag"])))
+        p["scan"] = (
+            None
+            if got is None
+            else {k: got[k] for k in ("label", "state", "found", "at", "set_at")}
+        )
     return {"slot": slot, "world": rec["folder"], "live": running, "players": players}
 
 

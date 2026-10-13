@@ -16,5 +16,12 @@ bool svc_touch_start(void);
 /* UI task, from LVGL's pointer read: the next press, move or release, oldest first. */
 bool svc_touch_next(tp_sample_t *out);
 
-/* `touch=… taps=… tp_last=… tp_err=…` — telemetry-safe tokens. */
+/* Any task (0.0.18): the mapping every later press takes — the owner's calibration (in force or
+ * not) and the panel's rotation (svc_orient). A stroke under way finishes in the mapping it began
+ * with only if no change lands mid-stroke; one that does moves its later points, which a turn of
+ * the panel mid-tap deserves. */
+void svc_touch_set_cal(const tp_cal_t *cal, bool on);
+void svc_touch_set_rotation(uint8_t quarters);
+
+/* `touch=… taps=… tp_last=… tp_err=… cal=…` — telemetry-safe tokens. */
 void svc_touch_note(char *out, size_t len);

@@ -69,7 +69,7 @@ def test_the_argument_buffers_are_the_panel_s() -> None:
         m = re.search(rf"char {name}\[(\d+)\];", src)
         assert m, f"dbg_req_t has no {name}"
         assert int(m.group(1)) - 1 == limit
-    ints = re.search(r"int32_t ([\w, ]+);", src)
+    ints = re.search(r"\bint32_t ([\w, ]+);", src)
     assert ints and {s.strip() for s in ints.group(1).split(",")} == relay.INT_ARGS
 
 

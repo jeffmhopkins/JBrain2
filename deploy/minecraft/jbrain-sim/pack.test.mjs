@@ -3,7 +3,7 @@
 // pack out beside it and runs this file, so CI does too.
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { CustomCommandStatus, ItemLockMode, ItemStack, sim } from "@minecraft/server";
+import { CustomCommandStatus, Dimension, ItemLockMode, ItemStack, sim } from "@minecraft/server";
 import { FormCancelationReason, forms } from "@minecraft/server-ui";
 import { LINES } from "./pack/scripts/rules.js";
 
@@ -98,6 +98,35 @@ test("only the owner sees the arrow; anyone else gets static", () => {
   sibling.inventory.setItem(0, tricorder);
   sim.tick();
   assert.equal(sibling.actionbar.at(-1), "§7§o" + LINES.notTuned);
+});
+
+test("each /dave question carries the asker's player id, the owner id pets are filed under", () => {
+  const p = sim.player("Hank", "-4294967295");
+  wake(p);
+  ask(p, "where's", "my", "dog");
+  assert.equal(JSON.parse(daveEvents().at(-1).split("[jbrain] ")[1]).pid, "-4294967295");
+});
+
+test("in the Nether a waypoint home points through the nearest portal Dave named", () => {
+  const p = sim.player("Owner", "-1");
+  wake(p);
+  p.selectedSlotIndex = p.inventory.slots.indexOf(tricorders(p)[0]);
+  const via = [
+    { dim: "nether", x: 40, z: 0 },
+    { dim: "nether", x: 0, z: -20 },
+  ];
+  sim.scriptevent(
+    "jb:waypoint",
+    JSON.stringify({ player: "Owner", x: 800, z: 0, dim: "overworld", label: "Base", via }),
+  );
+  assert.ok(sim.logs.includes("[jbrain] waypoint set for Owner: Base at 800 0 (overworld) via 2 portal(s)"));
+  p.dimension = new Dimension("minecraft:nether");
+  p.location = { x: 0, y: 64, z: 0 };
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), "↑ Nether portal · 20 blocks · Base is in the Overworld");
+  p.dimension = sim.overworld;
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), "→ Base · 800 blocks");
 });
 
 test("no Tricorder, no Dave: static lines and no question reaches the backend", () => {

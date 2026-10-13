@@ -15,6 +15,7 @@
 #include "apps.h"
 #include "dbg_core.h"
 #include "lvgl.h"
+#include "settings_model.h"
 #include "shell.h"
 #include "sim_png.h"
 #include "alarm_port_fake.h"
@@ -23,7 +24,12 @@
 #include "svc_box_fake.h"
 #include "svc_convo_drv.h"
 #include "svc_display.h"
+#include "disp_logic.h"
+#include "orient_port_fake.h"
+#include "svc_calib.h"
 #include "svc_display_fake.h"
+#include "svc_orient.h"
+#include "svc_orient_drv.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
 #include "svc_notice_fake.h"
@@ -56,6 +62,31 @@ static uint32_t sim_ms(void)
     return s_ms;
 }
 
+/* The glass itself (0.0.18): each strip turned onto it exactly as the device's flush turns it
+   (disp_logic.c), so a rotated state's PNG is what the panel shows, not what LVGL drew. */
+static uint16_t s_glass[W * H];
+
+static void to_glass(const lv_area_t *a, const uint16_t *px)
+{
+    static uint16_t strip[W * STRIP_ROWS], piece[DISP_ROT_PIECE_PX];
+    const uint8_t rot = svc_display_rotation();
+    const disp_win_t l = {a->x1, a->y1, a->x2, a->y2};
+    const int32_t w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
+    memcpy(strip, px, (size_t)(w * h) * 2);
+    if (rot == 1 || rot == 3) {
+        const int32_t k = disp_rot_piece_rows(h);
+        for (int32_t r0 = 0; r0 < w; r0 += k) {
+            const disp_win_t g = disp_rot_piece(rot, W, l, strip, r0, k, piece);
+            for (int32_t y = g.y1; y <= g.y2; y++)
+                memcpy(&s_glass[y * W + g.x1], &piece[(y - g.y1) * h], (size_t)h * 2);
+        }
+        return;
+    }
+    if (rot == 2) disp_reverse(strip, (uint32_t)(w * h));
+    const disp_win_t g = disp_rot_area(rot, W, l);
+    for (int32_t y = g.y1; y <= g.y2; y++) memcpy(&s_glass[y * W + g.x1], &strip[(y - g.y1) * w], (size_t)w * 2);
+}
+
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
     /* A capture must see whole rows top to bottom. A strip that is not full width means LVGL
@@ -67,6 +98,7 @@ static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
         else
             dbg_shot_stripe(&s_cap.shot, (uint16_t)a->y1, (uint16_t)(a->y2 - a->y1 + 1), (const uint16_t *)px);
     }
+    to_glass(a, (const uint16_t *)px);
     lv_display_flush_ready(d);
 }
 
@@ -251,6 +283,21 @@ static const char POST_Q_SENT[] =
     ",{\"id\":\"6b000000-0000-4000-8000-000000000006\",\"mine\":true,"
     "\"text\":\"" POSTED_TEXT "\",\"ms\":2600,\"played\":false,\"voice\":true}";
 static bool s_post_sent;
+/* Her four longest, more than the glass holds: the thread scrolls (0.0.17's stability check). */
+static const char POST_Q_LONG[] =
+    "{\"device_id\":\"" SIM_Q "\",\"name\":\"Quorra\",\"tag\":\"5e1d0c2a\",\"messages\":["
+    "{\"id\":\"6b000000-0000-4000-8000-000000000011\",\"mine\":false,\"text\":\"Daddy, we did the "
+    "volcano at school and it fizzed all over the table and Ms Reyes laughed so hard.\",\"ms\":9200,"
+    "\"played\":false,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000012\",\"mine\":false,\"text\":\"And then we had "
+    "pizza for lunch, the square kind, and I traded my apple for a cookie.\",\"ms\":8000,"
+    "\"played\":false,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000013\",\"mine\":true,\"text\":\"That sounds like "
+    "the best day. Save me a cookie next time!\",\"ms\":4100,\"played\":true,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000014\",\"mine\":false,\"text\":\"No way, cookies "
+    "are for kids. When are you coming home? We want to show you the drawing.\",\"ms\":7400,"
+    "\"played\":false,\"voice\":true}]}";
+static bool s_post_long;
 
 static void fake_post_box(void)
 {
@@ -261,7 +308,9 @@ static void fake_post_box(void)
             continue;
         }
         char body[2048];
-        if (strstr(r.path, SIM_Q))
+        if (strstr(r.path, SIM_Q) && s_post_long)
+            snprintf(body, sizeof body, "%s", POST_Q_LONG);
+        else if (strstr(r.path, SIM_Q))
             snprintf(body, sizeof body, POST_Q, s_post_new ? POST_Q_NEW : s_post_sent ? POST_Q_SENT : "");
         else
             snprintf(body, sizeof body, "%s", POST_T);
@@ -284,6 +333,8 @@ static void step(uint32_t ms)
                                 svc_audio_ringing()))
             svc_audio_chime();
         svc_alarms_service(svc_rtc_uptime_ms());
+        svc_orient_service(svc_rtc_uptime_ms());
+        svc_display_fake_service();
         shell_pump();
         lv_timer_handler();
     }
@@ -395,6 +446,8 @@ static void boot(const char *only)
     alarm_port_fake_wipe();
     svc_alarms_init();
     svc_notice_init();
+    svc_orient_start();
+    svc_calib_custom();
     dbg_sys_init();
     dbg_cmd_bind("screenshot", cmd_screenshot);
     dbg_cmd_bind("set", cmd_set);
@@ -439,10 +492,10 @@ static void fixtures(void)
         const char *thread;
         msg_t m;
     } SAMPLES[] = {
-        {"jerv", {1, true, true, true, false, 3, "Add milk to the shopping list.", ""}},
-        {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", ""}},
-        {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", ""}},
-        {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", ""}},
+        {"jerv", {1, true, true, true, false, 3, "Add milk to the shopping list.", "", 0}},
+        {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", "", 0}},
+        {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", "", 0}},
+        {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", "", 0}},
     };
     for (size_t i = 0; i < sizeof SAMPLES / sizeof *SAMPLES; i++)
         svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
@@ -602,6 +655,25 @@ static void session(void)
     post_arrives();
 }
 
+/* 0.0.18: the panel turned, as the fake accelerometer reads it (default axes: a reading is the
+   opposite of down; ~0.95 g in the glass's plane, the rest through it). */
+static void turn_right(void)
+{
+    orient_port_fake_set(-15400, 0, 5600);
+}
+
+static void upside_down(void)
+{
+    orient_port_fake_set(0, 15400, 5600);
+}
+
+/* The QMI8658 did not answer at boot. */
+static void no_imu(void)
+{
+    orient_port_fake_fail("id");
+    svc_orient_start();
+}
+
 #define CMDS 8
 typedef struct {
     const char *name;
@@ -636,10 +708,14 @@ typedef struct {
 #define POST_NEW "post new"
 #define LISTEN "listen"
 #define POSTED "posted"
+/* Not a debug command (0.0.17): half of the message playing has reached the speaker. */
+#define PLAYED_HALF "played half"
 /* Not debug commands (0.0.14): the fake box streams the transcript, "Thinking…" and then six
  * steps, the last still running and one failed; and, after them, the answer. */
 #define STEPS "steps"
 #define REPLY_TIDE "reply tide"
+/* Not a debug command (0.0.18): the first N taps of a touch calibration, each on its cross. */
+#define CAL_TAPS_N(n) "cal taps " #n
 
 /* Mock boards 1-17 (docs/mocks/jpanel-c6/canvas.json), by the live panel's `start` names. */
 static const state_t STATES[] = {
@@ -653,6 +729,11 @@ static const state_t STATES[] = {
     /* 0.0.16: her message playing (the pause, the dot gone), a voice message to her on its way
        and filed, a new one's badge on her tile and on the clock face, and live in her thread. */
     {"quorra-playing", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN}},
+    /* 0.0.17: the bar half full at half the message, and a message heard once its audio started —
+       stopped at once, it has no dot and its badge is gone. */
+    {"quorra-mid", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN, PLAYED_HALF}},
+    {"quorra-heard", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN,
+                            TAP_LABEL(LV_SYMBOL_PAUSE)}},
     {"quorra-sending", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300)}},
     {"quorra-sent", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), POSTED}},
     {"home-new", NULL, {POST_NEW, WAIT(300)}},
@@ -689,6 +770,17 @@ static const state_t STATES[] = {
     {"settings", NULL, {OPEN("settings")}},
     {"settings-end", NULL, {OPEN("settings"), SCROLL_END}},
     {"settings-usb", no_battery, {OPEN("settings")}},
+    /* 0.0.18: the panel turned on its right edge, and upside down: the content turned to match
+       (the PNG is the glass, each strip turned the device's way). */
+    {"home-turned", turn_right, {WAIT(1200)}},
+    {"clock-upside-down", upside_down, {OPEN("clock"), WAIT(1200)}},
+    /* No tilt sensor: the Auto-rotate switch dead, and why. */
+    {"settings-no-imu", no_imu, {OPEN("settings")}},
+    /* Touch calibration (mock Calib.dc.html): the second cross with one tap on it; a tap that
+       missed; and the card once saved (Today, Reset calibration). */
+    {"calib", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), CAL_TAPS_N(4)}},
+    {"calib-missed", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), TAP(240, 400), WAIT(200)}},
+    {"calib-saved", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), CAL_TAPS_N(12), WAIT(600), SCROLL_END}},
     /* The first tap on Disconnect: rose, "Tap again to disconnect". */
     {"settings-armed", NULL, {OPEN("settings"), SCROLL_END, TAP(240, 418), WAIT(300)}},
     {"updating", downloading, {OPEN("settings"), SCROLL(680)}},
@@ -789,6 +881,13 @@ static int render(const char *name, const char *png, const char *snap)
             step(300);
             continue;
         }
+        if (!strcmp(st->cmds[i], PLAYED_HALF)) {
+            msg_t m;
+            if (svc_messages_find(SVC_MESSAGES_THREAD_1, svc_audio_playing(), &m))
+                svc_audio_fake_played(m.dur_ms / 2u);
+            step(300);
+            continue;
+        }
         if (!strcmp(st->cmds[i], POSTED)) {
             s_post_sent = true;
             svc_audio_fake_posted(201, POSTED_TEXT);
@@ -830,6 +929,19 @@ static int render(const char *name, const char *png, const char *snap)
             step(300);
             continue;
         }
+        if (!strncmp(st->cmds[i], "cal taps ", 9)) {
+            const int n = atoi(st->cmds[i] + 9);
+            for (int k = 0; k < n; k++) {
+                int16_t x, y;
+                calib_target((uint8_t)(k / 3), &x, &y);
+                char tap[96];
+                snprintf(tap, sizeof tap, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}", x + k % 3 - 1, y);
+                run(tap);
+                /* A synthetic stroke is nine pointer reads (~270 ms): the next starts after it. */
+                step(k % 3 == 2 ? 700 : 400);
+            }
+            continue;
+        }
         if (!strncmp(st->cmds[i], "tap ", 4)) {
             if (!tap_label(st->cmds[i] + 4)) {
                 fprintf(stderr, "%s: nothing says \"%s\"\n", name, st->cmds[i] + 4);
@@ -858,7 +970,8 @@ static int render(const char *name, const char *png, const char *snap)
         fprintf(stderr, "%s: the stripe stream did not decode\n", name);
         return 1;
     }
-    if (png && !png_write_rgb565(png, frame, W, H)) {
+    /* A turned panel's picture is its glass; upright, the two are the same pixels. */
+    if (png && !png_write_rgb565(png, svc_display_rotation() ? s_glass : frame, W, H)) {
         fprintf(stderr, "%s: cannot write %s\n", name, png);
         return 1;
     }
@@ -1020,6 +1133,138 @@ static void spinner_checks(void)
     expect(lag <= 15, "and it turns on the tick's phase, so even a new one would carry on where this one is");
     expect(lv_arc_get_angle_end(spin) - lv_arc_get_angle_start(spin) == 90,
            "a fixed quarter arc, not a sweep that grows and shrinks");
+}
+
+/* The open thread's "rebuilds" count, from its snapshot. */
+static long thread_rebuilds(void)
+{
+    const char *at = strstr(run("{\"cmd\":\"snapshot\"}"), "\"rebuilds\":");
+    return at ? atol(at + 11) : -1;
+}
+
+/* The page scrolled down from its top: a thread pinned to its newest message. */
+static lv_obj_t *scrolled(lv_obj_t *o)
+{
+    if (lv_obj_has_flag(o, LV_OBJ_FLAG_SCROLLABLE) && lv_obj_get_scroll_top(o) > 0) return o;
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *hit = scrolled(lv_obj_get_child(o, (int32_t)i));
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
+/* A play glyph whose button is on the glass inside the page: the one a finger can reach. */
+static lv_obj_t *visible_play(lv_obj_t *o, const lv_area_t *in)
+{
+    if (lv_obj_check_type(o, &lv_label_class) && !strcmp(lv_label_get_text(o), LV_SYMBOL_PLAY)) {
+        lv_area_t a;
+        lv_obj_get_coords(lv_obj_get_parent(o), &a);
+        /* Clear of the header over the page's top and the hint under its end. */
+        if (a.y1 >= in->y1 + UI_HEADER_H && a.y2 <= in->y2 - 60) return o;
+    }
+    for (uint32_t i = 0; i < lv_obj_get_child_count(o); i++) {
+        lv_obj_t *hit = visible_play(lv_obj_get_child(o, (int32_t)i), in);
+        if (hit) return hit;
+    }
+    return NULL;
+}
+
+static void tap_obj(lv_obj_t *o)
+{
+    lv_obj_update_layout(lv_screen_active());
+    lv_area_t a;
+    lv_obj_get_coords(o, &a);
+    char cmd[96];
+    snprintf(cmd, sizeof cmd, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}",
+             (int)(a.x1 + a.x2) / 2, (int)(a.y1 + a.y2) / 2);
+    run(cmd);
+    step(500);
+}
+
+/* 0.0.17 (owner, 2026-10-13: "the screen kind of jumps around depending on when I play"): each
+ * play's start and stop rebuilt her whole thread, and an emptied page clamps its scroll, so the
+ * reader was thrown about. Now a play's start, its progress and its stop change her bubble where
+ * it stands: the list is not rebuilt, its widgets are the same ones, and the scroll stays where
+ * the reader left it. And the bar fills left to right with what has played. */
+static int thread_checks(void)
+{
+    s_post_long = true;
+    run(OPEN(SVC_MESSAGES_THREAD_1));
+    step(500);
+    lv_obj_update_layout(lv_screen_active());
+    lv_obj_t *page = scrolled(lv_screen_active());
+    expect(page != NULL, "her four long messages run past the glass, pinned to the newest");
+    if (!page) return 1;
+    /* The reader scrolls up from the newest until one of her earlier messages is in view, and
+       stops short of the top, so a page clamped by a rebuild would show. */
+    lv_area_t in;
+    lv_obj_get_coords(page, &in);
+    lv_obj_t *glyph = NULL;
+    for (int32_t at = lv_obj_get_scroll_y(page) - 40; at > 0 && !glyph; at -= 20) {
+        lv_obj_scroll_to_y(page, at, LV_ANIM_OFF);
+        lv_obj_update_layout(page);
+        glyph = visible_play(page, &in);
+    }
+    step(200);
+    const int32_t y = lv_obj_get_scroll_y(page);
+    expect(glyph != NULL && y > 0, "scrolled part way up, with one of her messages to play in view");
+    if (!glyph) return 1;
+    lv_obj_t *row = lv_obj_get_parent(lv_obj_get_parent(glyph));
+    lv_obj_t *track = lv_obj_get_child(row, 1), *fill = lv_obj_get_child(track, 0);
+    lv_obj_t *dot = lv_obj_get_child(row, 3);
+    const long built = thread_rebuilds();
+    const unsigned objs = shell_obj_count();
+    const uint16_t badge = svc_messages_unplayed(SVC_MESSAGES_THREAD_1);
+    lv_area_t at0;
+    lv_obj_get_coords(lv_obj_get_parent(glyph), &at0);
+    expect(dot && lv_obj_get_style_opa(dot, 0) == LV_OPA_COVER && lv_obj_get_width(fill) == 0,
+           "unheard: its dot, and an empty bar");
+
+    tap_obj(lv_obj_get_parent(glyph));
+    msg_t m = {0};
+    svc_messages_find(SVC_MESSAGES_THREAD_1, svc_audio_playing(), &m);
+    expect(m.id && !strcmp(lv_label_get_text(glyph), LV_SYMBOL_PAUSE),
+           "the press plays it: the same button now says pause");
+    expect(lv_obj_get_style_opa(dot, 0) == LV_OPA_TRANSP &&
+               svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge,
+           "playing, its dot goes; the badge waits for the box's audio");
+    svc_audio_fake_listen(true, false, false);
+    step(300);
+    expect(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge - 1,
+           "its audio starts: heard, one off the badge at once");
+    const int32_t full = lv_obj_get_width(track);
+    expect(lv_obj_get_width(fill) == 0, "the box's audio arrives: the bar starts empty, at the left");
+    svc_audio_fake_played(m.dur_ms / 4u);
+    step(200);
+    const int32_t quarter = lv_obj_get_width(fill);
+    svc_audio_fake_played(m.dur_ms / 4u);
+    step(200);
+    const int32_t half = lv_obj_get_width(fill);
+    expect(quarter > 0 && half > quarter && half >= full / 2 - 2 && half <= full / 2 + 2,
+           "it fills left to right with what has played: a quarter, then half");
+    step(1000);
+    expect(lv_obj_get_width(fill) == half, "an underrun (nothing more played) holds it where it is");
+    expect(lv_obj_get_scroll_y(page) == y, "and the page has not moved through the play");
+    tap_obj(lv_obj_get_parent(glyph));
+    expect(!svc_audio_playing() && !strcmp(lv_label_get_text(glyph), LV_SYMBOL_PLAY),
+           "stopped part way: the same button says play again");
+    expect(lv_obj_get_width(fill) == full && lv_obj_get_style_opa(dot, 0) == LV_OPA_TRANSP,
+           "heard: a full bar and no dot, as every heard message shows");
+    lv_area_t at1;
+    lv_obj_get_coords(lv_obj_get_parent(glyph), &at1);
+    expect(lv_obj_get_scroll_y(page) == y && at1.x1 == at0.x1 && at1.y1 == at0.y1,
+           "the scroll is still where the reader left it, and the button where it was");
+    expect(thread_rebuilds() == built && shell_obj_count() == objs &&
+               lv_obj_get_child(row, 1) == track && lv_obj_get_child(track, 0) == fill,
+           "start, progress and stop rebuilt nothing: the same widgets, the same count");
+    /* Played again to its end: still nothing rebuilt, still nothing moved. */
+    tap_obj(lv_obj_get_parent(glyph));
+    svc_audio_fake_listen(true, true, true);
+    step(300);
+    expect(!svc_audio_playing() && thread_rebuilds() == built && lv_obj_get_scroll_y(page) == y,
+           "a play to its end: the same");
+    s_post_long = false;
+    return s_touch_bad;
 }
 
 /* Every rule a real finger meets that the debug pointer's fixed stroke never did. The first
@@ -1452,6 +1697,38 @@ static int touch_checks(void)
     step(600);
     expect(svc_audio_fake_chimes() == chimes + 1, "with the chime switched off it is silent");
     run("{\"cmd\":\"set\",\"name\":\"notif_chime\",\"value\":1}");
+
+    /* Touch calibration (0.0.18): BOOT over the crosses cancels them and stays in Settings, the
+       old mapping in force; a perfect run is saved and the card says so. */
+    run(OPEN("settings"));
+    scroll_to(LV_COORD_MAX);
+    tap_label("Calibrate");
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"calibrating\":true") && strstr(snap, "\"capturing\":true"),
+           "Calibrate puts up the crosses and measures with no calibration in force");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(300);
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"calibrating\":false") && strstr(snap, "\"capturing\":false") &&
+               shell_open_app() && !strcmp(shell_open_app()->id, "settings"),
+           "BOOT cancels it and stays in Settings");
+    tap_label("Calibrate");
+    for (int k = 0; k < CAL_TARGETS * CAL_TAPS; k++) {
+        int16_t x, y;
+        calib_target((uint8_t)(k / CAL_TAPS), &x, &y);
+        char tap[96];
+        snprintf(tap, sizeof tap, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}", x, y + 2);
+        run(tap);
+        step(k % CAL_TAPS == CAL_TAPS - 1 ? 700 : 400);
+    }
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"custom\":true") && strstr(snap, "\"last\":\"saved\"") && labelled(lv_screen_active(), "Reset calibration"),
+           "four crosses tapped: saved, and Reset calibration offered");
+    scroll_to(LV_COORD_MAX);
+    tap_label("Reset calibration");
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"custom\":false") != NULL, "and Reset puts the measured mapping back");
+    run("{\"cmd\":\"home\"}");
     return s_touch_bad;
 }
 
@@ -1468,6 +1745,11 @@ int main(int argc, char **argv)
             fixtures();
             return lifecycle();
         }
+        if (!strcmp(argv[i], "--thread")) {
+            boot(NULL);
+            fixtures();
+            return thread_checks();
+        }
         if (!strcmp(argv[i], "--touch")) {
             boot(NULL);
             fixtures();
@@ -1480,7 +1762,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--only")) only = argv[++i];
     }
     if (!state) {
-        fprintf(stderr, "usage: jpanel-sim --state NAME [--png F] [--snapshot F] [--only APP] | --list | --lifecycle | --touch\n");
+        fprintf(stderr, "usage: jpanel-sim --state NAME [--png F] [--snapshot F] [--only APP] | --list | --lifecycle | --touch | --thread\n");
         return 2;
     }
     boot(only);

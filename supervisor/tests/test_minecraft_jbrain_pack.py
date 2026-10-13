@@ -174,8 +174,10 @@ def test_the_tricorders_live_scan(tmp_path: Path) -> None:
     """scan.js against the fakes (§M25): the nearest matching block by 3D distance
     within 16 blocks, an ore's deepslate twin, the none-nearby line, one scan every
     10 s, a mined target looked past, stop pointing back at the waypoint, a new
-    waypoint replacing the scan, kept across a rejoin, unknown blocks refused, and
-    players scanned on frames of their own."""
+    waypoint replacing the scan, kept across a rejoin, unknown blocks refused,
+    players scanned on frames of their own, and the map's lines: a `scans` snapshot
+    after each load (retried until it goes out), and `set` / `found` / `none` / `stop`
+    on each change, a mined block noticed held or not, and a once-a-minute resend."""
     root = _node_root(tmp_path)
     _node_test(root / "scan.test.mjs", cwd=root)
 
