@@ -1187,7 +1187,7 @@ static void test_three_meals_in_a_minute_and_he_has_to_go(void)
     poop_ate(&pp, 0);
     poop_ate(&pp, 1);
     poop_ate(&pp, 2);
-    poop_drop(&pp, 10000, 0.0f);
+    poop_drop(&pp, 10000, 0.0f, POOP_HALF);
     CHECK(!pp.owed && pp.on, "dropping it pays off what was owed");
     CHECK(poop_scale(&pp, 10000) < 0.05f && poop_scale(&pp, 10000 + POOP_POP_MS) > 0.99f,
           "it plops in");
@@ -1196,8 +1196,15 @@ static void test_three_meals_in_a_minute_and_he_has_to_go(void)
     for (; t < 10000 + POOP_SHOW_MS + 200; t += 40) poop_step(&pp, t, 0.0f, 40, 150.0f);
     CHECK(!pp.on && poop_scale(&pp, t) == 0.0f, "gone after twenty seconds");
 
+    /* DROPPED BEYOND THE FLOOR'S END (on its side the lean runs to 110, so behind him can be
+       -220 against a floor of 150), it lands on the end of the floor, not off it — and on a
+       level panel it would otherwise have stayed off it all twenty seconds (review on 0.4.11). */
+    poop_drop(&pp, 0, -220.0f, POOP_HALF);
+    for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.0f, 40, POOP_HALF);
+    CHECK(pp.x >= -POOP_HALF && pp.x <= POOP_HALF, "it lands on the floor, never past its end");
+
     /* IT SLIDES DOWNHILL, and stays put on the level. */
-    poop_drop(&pp, 0, 0.0f);
+    poop_drop(&pp, 0, 0.0f, POOP_HALF);
     for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.03f, 40, 150.0f);
     CHECK(pp.x == 0.0f, "a panel a hair off level does not make it creep");
     for (t = 1000; t < 1600; t += 40) poop_step(&pp, t, 0.5f, 40, 150.0f);

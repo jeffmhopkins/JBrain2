@@ -17,6 +17,11 @@
 #define POOP_SHOW_MS 20000u     /* how long it stays on the floor */
 #define POOP_POP_MS 220u        /* it plops in rather than appearing */
 #define POOP_SHRINK_MS 600u     /* and shrinks away rather than vanishing */
+/* The floor it slides on, either side of centre, and where it lands behind him, in figure units
+   (which the panel's 368 square on its side scales down with everything else). Here rather than
+   in `display.c` so the bench uses the same numbers. */
+#define POOP_HALF 150.0f
+#define POOP_BEHIND 110.0f
 
 typedef struct {
     uint32_t meals[POOP_MEALS]; /* when the last few meals started, oldest first */
@@ -34,8 +39,9 @@ void poop_reset(poop_t *p);
    count starts again from there, so a fourth meal does not owe a second. */
 bool poop_ate(poop_t *p, uint32_t now);
 
-/* Put one on the floor at `x`, at rest, for POOP_SHOW_MS. Pays off what was owed. */
-void poop_drop(poop_t *p, uint32_t now, float x);
+/* Put one on the floor at `x`, at rest, for POOP_SHOW_MS. Pays off what was owed. Behind a pet
+   leaning far over can be past the floor's end (`half`), so it lands ON the end instead. */
+void poop_drop(poop_t *p, uint32_t now, float x, float half);
 
 /* One step of the slide. `g` is the tilt, -1 (left side down) .. 1 (right side down); the floor
    runs from `-half` to `half`. Clears `on` once its time is up. */

@@ -33,8 +33,12 @@ bool poop_ate(poop_t *p, uint32_t now)
     return false;
 }
 
-void poop_drop(poop_t *p, uint32_t now, float x)
+void poop_drop(poop_t *p, uint32_t now, float x, float half)
 {
+    /* Clamped here and not left to the slide: on a level panel it never starts sliding, so
+       whatever it lands on is where it stays. */
+    if (x > half) x = half;
+    if (x < -half) x = -half;
     p->owed = false;
     p->on = true;
     p->born = now;

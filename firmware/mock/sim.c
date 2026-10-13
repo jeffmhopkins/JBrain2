@@ -538,7 +538,7 @@ static void frame(void)
         say("cue", "%s (press slot, again)", cue_name(c));
     }
     if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
-        poop_drop(&r_poop, now, (float)r_lean - 110.0f);
+        poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF);
         say("pet", "plop");
     }
     r_recue_p = p;
@@ -573,7 +573,8 @@ static void frame(void)
         r_fst.upright = r_upright;
         const uint32_t dt = r_poop_last != 0 ? now - r_poop_last : 0u;
         r_poop_last = now;
-        poop_step(&r_poop, now, (float)tilt / 2400.0f, dt > 100u ? 100u : dt, 150.0f);
+        /* 2400 is `display.c`'s LEAN_FULL, the same copied number the lean above uses. */
+        poop_step(&r_poop, now, (float)tilt / 2400.0f, dt > 100u ? 100u : dt, POOP_HALF);
         r_fst.poop_x = r_poop.x;
         r_fst.poop_size = poop_scale(&r_poop, now);
         r_fst.poop_t = (float)(now - r_poop.born) * 0.001f;

@@ -942,10 +942,6 @@ static int s_lean;
 /* The tilt along the viewer's horizontal, -1..1 of LEAN_FULL, unsmoothed: what the poop slides
    on (`poop.h`). The lean is a position the tilt picks; the poop has momentum of its own. */
 static float s_tilt_g;
-/* The floor the poop slides on, either side of centre, and where it lands behind him; figure
-   units, which the panel's 368 square on its side scales down with everything else. */
-#define POOP_HALF 150.0f
-#define POOP_BEHIND 110.0f
 /* THE HEAD RIGHTING (`face_state_t.upright`), in degrees — `orient_upright`. */
 static float s_upright;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
@@ -2473,7 +2469,7 @@ static void face_task(void *arg)
             }
             /* The plop: behind him, where a bird's tail is. */
             if (action == ACT_POOP && recue_p < POOP_AT && p >= POOP_AT) {
-                poop_drop(&poop, now, (float)s_lean - POOP_BEHIND);
+                poop_drop(&poop, now, (float)s_lean - POOP_BEHIND, POOP_HALF);
             }
             recue_p = p;
             const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD ||
