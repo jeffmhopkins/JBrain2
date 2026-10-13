@@ -158,6 +158,7 @@ STEP_LABELS: dict[str, str] = {
     "mc_places": "Listed saved places",
     "mc_place_remove": "Forgot a place",
     "mc_wormhole_aim": "Aimed a wormhole",
+    "mc_gates_beacons": "Checked gates and beacons",
     "mc_transport": "Transported to a place",
     "mc_replicator_program": "Programmed a replicator",
     "mc_command": "Ran a server command",

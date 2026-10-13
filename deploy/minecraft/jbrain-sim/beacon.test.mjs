@@ -184,16 +184,18 @@ beforeEach(() => {
   initBeacon(world, { runInterval: (fn, every) => ticks.push({ fn, every }) });
 });
 
-const place = (x, y, z) => {
+const place = (x, y, z, player) => {
   ow.blocks[`${x},${y},${z}`] = b.BEACON;
-  ev.playerPlaceBlock({ block: { typeId: b.BEACON, location: { x, y, z } }, dimension: ow });
+  ev.playerPlaceBlock({ block: { typeId: b.BEACON, location: { x, y, z } }, dimension: ow, player });
 };
+// The structured lines, parsed: what the wrapper turns into the map's events.
+const events = () => logs.filter((l) => l.startsWith("[jbrain] {")).map((l) => JSON.parse(l.slice(9)));
 const sweep = () => ticks.forEach((t) => t.fn());
 
 test("placing records the beacon in a world property; breaking removes it", () => {
   place(-5, 70, -20);
   const key = "jb:beacon:minecraft:overworld@-5,70,-20";
-  assert.deepEqual(JSON.parse(props.get(key)), { dim: mc("overworld"), x: -5, y: 70, z: -20 });
+  assert.deepEqual(JSON.parse(props.get(key)), { dim: mc("overworld"), x: -5, y: 70, z: -20, by: "" });
   assert.ok(logs.some((l) => l.includes("no-spawn beacon on at -5 70 -20")));
   // Another block placed or broken changes nothing.
   ev.playerPlaceBlock({ block: { typeId: mc("stone"), location: { x: 0, y: 0, z: 0 } }, dimension: ow });
@@ -276,4 +278,51 @@ test("records are read back after a restart; the sweep runs once a second", () =
   assert.ok(!slime.isValid);
   assert.equal(ticks.length, 1);
   assert.equal(ticks[0].every, 20);
+});
+
+// --- the map's events (§M16) ------------------------------------------------------------
+
+test("placing and breaking send structured lines with who did it, beside the prose", () => {
+  place(-5, 70, -20, { name: "Mira_P" });
+  const key = "jb:beacon:minecraft:overworld@-5,70,-20";
+  assert.equal(JSON.parse(props.get(key)).by, "Mira_P");
+  ev.playerBreakBlock({ block: { location: { x: -5, y: 70, z: -20 } },
+    brokenBlockPermutation: { type: { id: b.BEACON } }, dimension: ow, player: { name: "BlockyFox" } });
+  assert.deepEqual(events(), [
+    { ev: "beacon", op: "on", dim: "overworld", x: -5, y: 70, z: -20, by: "Mira_P" },
+    { ev: "beacon", op: "off", dim: "overworld", x: -5, y: 70, z: -20, by: "BlockyFox" },
+  ]);
+  // The prose lines Dave's tools and the log keep reading are unchanged.
+  assert.ok(logs.includes("[jbrain] no-spawn beacon on at -5 70 -20 (minecraft:overworld)"));
+  // Breaking one nobody recorded says nothing.
+  ev.playerBreakBlock({ block: { location: { x: 0, y: 0, z: 0 } },
+    brokenBlockPermutation: { type: { id: b.BEACON } }, dimension: ow });
+  assert.equal(events().length, 2);
+});
+
+test("a beacon the sweep finds gone is reported off with nobody to blame", () => {
+  place(0, 64, 0, { name: "Mira_P" });
+  delete ow.blocks["0,64,0"];
+  sweep();
+  assert.deepEqual(events().at(-1), { ev: "beacon", op: "off", dim: "overworld", x: 0, y: 64, z: 0, by: "" });
+});
+
+test("the first tick after a load reports every beacon once, placer and all", () => {
+  props.set("jb:beacon:minecraft:overworld@0,64,0",
+    JSON.stringify({ dim: mc("overworld"), x: 0, y: 64, z: 0, by: "Mira_P" }));
+  // A record from before placers were kept, in another dimension.
+  props.set("jb:beacon:minecraft:nether@-3,40,9", JSON.stringify({ dim: mc("nether"), x: -3, y: 40, z: 9 }));
+  sweep();
+  sweep();
+  const snaps = events().filter((e) => e.ev === "beacons");
+  assert.equal(snaps.length, 1);
+  assert.deepEqual(snaps[0].all, [
+    { dim: "overworld", x: 0, y: 64, z: 0, by: "Mira_P" },
+    { dim: "nether", x: -3, y: 40, z: 9, by: "" },
+  ]);
+});
+
+test("a world with no beacons still reports, so the map clears what it held", () => {
+  sweep();
+  assert.deepEqual(events(), [{ ev: "beacons", all: [] }]);
 });

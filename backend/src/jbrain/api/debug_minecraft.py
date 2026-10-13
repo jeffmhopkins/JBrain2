@@ -23,7 +23,7 @@ from jbrain.api.deps import DebugDep, SettingsDep
 from jbrain.api.minecraft import WORLD_JOB_TIMEOUT_S
 from jbrain.config import Settings
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import scans, timeline, travel
+from jbrain.minecraft import markers, scans, timeline, travel
 
 router = APIRouter(prefix="/debug/minecraft")
 
@@ -379,6 +379,16 @@ async def minecraft_travel(request: Request, _p: DebugDep) -> dict[str, Any]:
     request.state.debug_detail = "minecraft travel summary"
     maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
     return {"players": await travel.summary(maker)}
+
+
+@router.get("/markers")
+async def minecraft_markers(request: Request, _p: DebugDep) -> dict[str, Any]:
+    """The beacons and gates the session drain holds per world (§M26) — counts and the
+    newest report, enough to see the pack's lines arriving, never where they are (the
+    travel log's rule)."""
+    request.state.debug_detail = "minecraft beacon and gate counts"
+    maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
+    return {"worlds": await markers.summary(maker)}
 
 
 @router.get("/scans")

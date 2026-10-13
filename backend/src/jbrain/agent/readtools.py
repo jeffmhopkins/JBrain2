@@ -349,6 +349,7 @@ OPTIONAL_MINECRAFT_TOOLS = frozenset(
         "mc_places",
         "mc_place_remove",
         "mc_wormhole_aim",
+        "mc_gates_beacons",
         "mc_transport",
         "mc_replicator_program",
         "mc_command",

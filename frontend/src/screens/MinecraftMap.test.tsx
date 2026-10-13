@@ -11,7 +11,13 @@ import {
   mcVersion,
   mcWorlds,
 } from "../minecraftFixtures";
-import { mcMapInfo, mcMapPlayers, mcMapPoint, mcMapStructures } from "../minecraftMapFixtures";
+import {
+  mcMapInfo,
+  mcMapMarkers,
+  mcMapPlayers,
+  mcMapPoint,
+  mcMapStructures,
+} from "../minecraftMapFixtures";
 import { MinecraftScreen } from "./MinecraftScreen";
 
 function json(body: unknown, status = 200): Response {
@@ -55,6 +61,7 @@ describe("the Minecraft map", () => {
         return json(mcMapPlayers(slot, server.state === "running" && slot === "slot2"));
       }
       if (path === "/api/minecraft/map/structures") return json(mcMapStructures(slot, dim));
+      if (path === "/api/minecraft/map/markers") return json(mcMapMarkers(slot));
       if (path === "/api/minecraft/map/point") {
         return json(point(Number(q.get("x")), Number(q.get("z")), dim));
       }
@@ -242,6 +249,125 @@ describe("the Minecraft map", () => {
     }
     expect(screen.getByText("Saved places")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Timeline" })).toBeEnabled();
+  });
+
+  it("beacons and gates: two switches, no 'later', and every one listed in this world", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const beacons = screen.getByRole("switch", { name: "No-Spawn Beacons" });
+    const gates = screen.getByRole("switch", { name: "Wormhole gates" });
+    expect(beacons).toHaveAttribute("aria-checked", "true");
+    expect(gates).toHaveAttribute("aria-checked", "true");
+    expect(
+      await screen.findByText("3 in this world · each with its 48 × 48 protected area"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("2 open · 1 dormant · a dotted line to where each leads"),
+    ).toBeInTheDocument();
+    // Only saved places are still to come.
+    expect(screen.getAllByText("later")).toHaveLength(1);
+    fireEvent.click(gates);
+    expect(gates).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("heading", { name: "In this world" })).toBeInTheDocument();
+    for (const name of [
+      /^No-Spawn Beacon · Mira_P/,
+      /^Gate 1 · BlockyFox/,
+      /^Gate 3 · BlockyFox/,
+    ]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(screen.getByText(/up at Y 210/)).toBeInTheDocument();
+    expect(screen.getByText("Gate · dormant")).toBeInTheDocument();
+    expect(screen.getByText(/the pack's own records/)).toBeInTheDocument();
+    expect(calls("/api/minecraft/map/markers")[0]).toBe("/api/minecraft/map/markers?slot=slot2");
+  });
+
+  it("a gate from the list: where it leads, Show Tree farm; dormant; into the Nether", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Gate 1 · BlockyFox/ }));
+    expect(screen.getByText("Wormhole gate 1")).toBeInTheDocument();
+    expect(screen.getByText("open")).toBeInTheDocument();
+    expect(screen.getByText(/BlockyFox's · planted/)).toBeInTheDocument();
+    expect(screen.getByText(/244 blocks north-west · X \u2212160/)).toBeInTheDocument();
+    // The middle of the ring, where a player stands.
+    expect(screen.getByRole("button", { name: "Copy X Z" })).toBeInTheDocument();
+    expect(screen.getByText("30")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show Tree farm" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Gate 2 · Mira_P/ }));
+    expect(screen.getByText("dormant")).toBeInTheDocument();
+    expect(screen.getByText(/^Not open yet\. Mira_P can ask Dave/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Show (Tree|it)/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Gate 3 · BlockyFox/ }));
+    expect(screen.getByText(/in the Nether · X \u221220 · Z 40/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show it in the Nether" }));
+    expect(screen.getByRole("radio", { name: "Nether" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("a beacon from the list: protecting, its square to the block, and its neighbour", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^No-Spawn Beacon · Mira_P/ }));
+    expect(screen.getByText("protecting")).toBeInTheDocument();
+    expect(screen.getByText(/placed by Mira_P/)).toBeInTheDocument();
+    expect(screen.getByText("48 × 48 blocks, floor to sky")).toBeInTheDocument();
+    expect(
+      screen.getByText(/overlaps 1 other beacon\. Wild and hostile mobs vanish/),
+    ).toBeInTheDocument();
+  });
+
+  it("draws every player above every beacon and gate, and above the selection ring", async () => {
+    vi.stubGlobal("Path2D", class {});
+    const log: [string, unknown[]][] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (t, k: string) =>
+        k in t
+          ? t[k]
+          : k === "measureText"
+            ? (x: string) => ({ width: x.length * 6 })
+            : (...a: unknown[]) => {
+                log.push([k, a]);
+              },
+      set: (t, k: string, v) => {
+        t[k] = v;
+        return true;
+      },
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 390,
+      bottom: 844,
+      width: 390,
+      height: 844,
+      toJSON: () => ({}),
+    });
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Gate 1 · BlockyFox/ }));
+    const lastFrame = () => log.slice(log.map(([k]) => k).lastIndexOf("setTransform"));
+    const at = (f: [string, unknown[]][], pick: (k: string, a: unknown[]) => boolean) =>
+      f.flatMap(([k, a], i) => (pick(k, a) ? [i] : []));
+    await waitFor(() => {
+      const f = lastFrame();
+      // A player's disc: the 9.5-px fill or outline on its halo.
+      expect(at(f, (k, a) => k === "arc" && a[2] === 9.5).length).toBeGreaterThan(0);
+      // A violet-ringed gate tile and the tapped gate's ring are both drawn.
+      expect(at(f, (k, a) => k === "roundRect" && a[2] === 21).length).toBeGreaterThan(0);
+      expect(at(f, (k, a) => k === "arc" && a[2] === 18).length).toBeGreaterThan(0);
+    });
+    const f = lastFrame();
+    const discs = at(f, (k, a) => k === "arc" && a[2] === 9.5);
+    const tiles = at(f, (k, a) => k === "roundRect" && a[2] === 21);
+    const rings = at(f, (k, a) => k === "arc" && a[2] === 18);
+    expect(Math.max(...tiles, ...rings)).toBeLessThan(Math.min(...discs));
   });
 
   it("picks the base layer: Surface (true colour) by default, Biomes on a tap, remembered", async () => {

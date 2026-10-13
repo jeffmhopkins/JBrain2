@@ -146,7 +146,14 @@ async def test_where_did_i_die_is_the_nether_death_with_its_overworld_side(box) 
     # The README's fixture: "Overworld side: X 328 · Z −464".
     assert d["overworld"] == {"x": 328, "z": -464}
     assert d["zoom"] == mm.ZOOM_FOCUS
-    assert d["overlays"] == {"trails": True, "deaths": True, "structures": True, "players": False}
+    assert d["overlays"] == {
+        "trails": True,
+        "deaths": True,
+        "structures": True,
+        "players": False,
+        "beacons": True,
+        "gates": True,
+    }
     # The trail is the player's own, over the hours before the death.
     assert d["trail"] == {
         "player": "2535400000000001",
@@ -181,6 +188,8 @@ async def test_every_slot_is_checked_before_the_box_is_asked(box) -> None:
         {"x": 99_999_999, "z": 0},
         {"focus": "structure"},
         {"focus": "spot", "z": 4},
+        {"focus": "gate"},
+        {"focus": "beacon", "x": 3},
         {"focus": "place"},
         {"slot": 9},
         {"slot": "the good one"},
@@ -199,6 +208,8 @@ async def test_zoom_clamps_and_overlays_keep_only_the_closed_set(box) -> None:
         "deaths": True,
         "structures": False,
         "players": False,
+        "beacons": False,
+        "gates": False,
     }
     assert (await _show({"x": 0, "z": 0, "zoom": -40})).view.data["zoom"] == mm.ZOOM_MIN
     # A comma list is the same set, and a label is cut to its limit.

@@ -113,11 +113,13 @@ location tool-views (`location_map`/`place_card`) and their Leaflet trail/fence/
 start markers ride this token (the steel `loc-lf-*` classes on the full-screen
 map are unchanged unless separately re-decided).
 
-**Accent text tokens** — `--ok-text`, `--warn-text`, `--danger-text`, `--steel-text` — are
-for accent-coloured *words* (button labels, badges, links, state words). Dark reads the
-pastel as-is; light mixes it 46–54% toward `--text` so the words clear 4.5:1 (the Syntax
-tokens' pattern). Dots, tints and rules keep the pastel. Added with the Minecraft screen;
-new surfaces use them for accent text.
+**Accent text tokens** — `--ok-text`, `--warn-text`, `--danger-text`, `--steel-text`,
+`--violet-text` — are for accent-coloured *words* (button labels, badges, links, state
+words). Dark reads the pastel as-is; light mixes it 46–54% toward `--text` so the words
+clear 4.5:1 (the Syntax tokens' pattern; `--violet-text` is 52%, measured 6.5:1 on white).
+Dots, tints and rules keep the pastel. Added with the Minecraft screen (`--violet-text` with
+the map's wormhole gates, `docs/mocks/minecraft-map-markers/`); new surfaces use them for
+accent text.
 
 **Map-only tokens** (the Minecraft map; approved with its GUI gate,
 `docs/mocks/minecraft-map/README.md`). The void, the *Explored by* veil, the glyph halo and
@@ -2560,11 +2562,13 @@ payload is never read. The plan's catalog had `minecraft_map` returning an image
 this live component replaces that.
 
 - **Slots** (`{slot, world, loaded, dim, center:{x, z}, zoom, overlays:{trails, deaths,
-  structures, players}, focus:({kind, label, x, y, z, at, cause, killer}|null),
+  structures, players, beacons, gates}, focus:({kind, label, x, y, z, at, cause, killer}|null),
   overworld:({x, z}|null), trail:({player, gamertag, from, to}|null)}`):
   - `slot` is `slot1`–`slot9`, or nothing renders but *This map can't be shown*;
   - `dim` is a closed enum (`overworld | nether | the_end`), and `focus.kind` another
-    (`death | player | place | structure | spot`) that the component maps to its own glyph;
+    (`death | player | place | structure | spot | gate | beacon`) that the component maps to
+    its own glyph — a `gate` or `beacon` is found in the box's own `/map/markers` record by
+    where it is, and drawn selected;
   - coordinates are clamped to the world's ±30,000,000 and `zoom` to the tile route's −3…4
     (−3 is 8 px per block, 0 one per block, 4 one per chunk);
   - labels are cut to 40 characters and rendered as text;
@@ -2588,7 +2592,8 @@ this live component replaces that.
     unreachable*);
   - what it shows: icon, title (*BlockyFox burned in lava*), when and where, *X · Y · Z* with
     **Copy X Z**, and in the Nether *Overworld side: X ×8 · Z ×8*;
-  - overlay chips **Trail · Deaths · Structures · Players** (36 px, with a 44-px hit area);
+  - overlay chips **Trail · Deaths · Structures · Players · Beacons · Gates** (36 px, with a
+    44-px hit area);
   - a one-line legend: *Explored · Satellite survey*, then the glyphs shown.
 - **Gestures** (C's chat-card rule, kept for A): **one finger scrolls the chat**
   (`touch-action: pan-y` on the map), **two fingers pinch** the card, ctrl+wheel (a trackpad
@@ -3726,8 +3731,9 @@ opens this screen on its spot.
   *searching the world · N%* while the box sweeps, with **Search again** when the world is
   live); **Explored by…** (off by default; chips *Anyone* or one player; a `--map-fog` veil at
   62 % over every chunk they hadn't come near, lifted by each chunk's first-seen time as the
-  timeline plays); **Grid & coordinates**. Saved places and Wormhole gates are listed with a
-  *later* badge. The legend pairs *Explored · Satellite survey*, the dimension's biome
+  timeline plays); **Grid & coordinates**; **No-Spawn Beacons** and **Wormhole gates** (see
+  "Beacons and gates on the Minecraft map" below). Saved places are listed with a *later*
+  badge. The legend pairs *Explored · Satellite survey*, the dimension's biome
   swatches, the glyphs (player, structure, death, spawn) with the count badge, and the veil
   while *Explored by* is on.
 - **The Timeline tab** (session navigation *3 · Days*). Opening it pins the timeline to now —
@@ -3771,6 +3777,66 @@ opens this screen on its spot.
 - **Absolute sizes:** the canvas and its floating chrome (`.mc-map*` over the picture) don't
   scale with the text-size setting (see "Theming"); the panel, the Sheet and their words use
   the type tokens. The pulse stops under `prefers-reduced-motion` and while the tab is hidden.
+
+### Beacons and gates on the Minecraft map (owner, 2026-10-12 — binding mock: `docs/mocks/minecraft-map-markers/a-always-drawn.html`, variant A as revised; plan §M26)
+
+No-Spawn Beacons (§M16) and wormhole gates (§M12) on the full map and in the
+`minecraft_map` chat card, from the pack's own records (`/api/minecraft/map/markers`), so
+they draw for a world that isn't loaded, under the map's existing *as of* status line.
+**Always drawn** while their layer is on: the owner's two questions — *what's protected?*
+and *where does it go?* — answer with no tap.
+
+- **Marker grammar** (the structures'): a dark `--map-halo` tile with a 1.5 px accent ring
+  and a `--map-ink` glyph, a 46 px hit circle, clustering with the other point markers
+  under 40 px.
+  - **Beacon:** `--green` ring, shield. **Its protected square** (the 3 × 3 chunks, drawn to
+    the block): a `--green` 2 px dash (6 on, 4 off) over a 4 px halo; the tapped one filled
+    with `--green` at 24 %, so it reads apart from an overlapping neighbour.
+  - **Gate · open:** `--violet` solid ring, the portal filled `--violet` with its swirl.
+    **Gate · dormant:** `--violet` dashed ring (3 / 2.5), the same portal and swirl,
+    unfilled — still a gate, *not open* carried by the dash and the empty frame.
+  - **Where an open gate leads:** a dotted `--violet` line (1 on, 6 off, 3 px over a 6 px
+    halo, round caps) with an arrowhead, from the gate's tile to a violet-ringed halo pin
+    labelled with the place. Dotted, so it never reads as a solid trail or the Tricorder's
+    8 / 6 bearing. **Into another dimension:** no line; a plate *to Nether base · in the
+    Nether* by the gate.
+  - No arrow badge on a gate: the solid / dashed ring and the line already tell open from
+    dormant.
+- **Draw order:** areas, gate lines, place pins, beacons and gates (clustered with the
+  structures), the selection ring, then **player discs on top** — a player is never under
+  a gate, a beacon or a selection ring.
+- **Labels:** a gate's place or Nether plate goes to the **right** of its marker, else the
+  left, else below, else above, else it is **dropped** — never drawn under or over
+  anything. Every label on the map also keeps off the beacon and gate tiles, the pins, the
+  player discs, and every drawn gate line (and the Tricorder bearing) other than its own,
+  so a plate never sits on another gate's line and seems to say where that line goes.
+- **The camera:** a gate or beacon flown to from the list lands in the middle of the
+  visible map, and **Show Tree farm** frames both ends with a 72 px margin, clear of the
+  floating controls.
+- **Tapping a gate:** the portal on a `--violet-tint` tile, **Wormhole gate 1**, an *open*
+  (`--violet-text` on `--violet-tint`) or *dormant* pill, *BlockyFox's · planted Oct 11,
+  aimed Oct 12*; X · Y · Z (the middle of the ring) with **Copy X Z**; *→ Leads to **Tree
+  farm** · 244 blocks north-west · X −160 · Z −140* (the arrow `--violet-text`) or *· in
+  the Nether · X −20 · Z 40*; **Show Tree farm** (frames both ends) or **Show it in the
+  Nether** (switches dimension). A dormant gate says *Not open yet. BlockyFox can ask Dave
+  to open it to one of their saved places, standing within 4 blocks.*
+- **Tapping a beacon:** the shield on a `--green-tint` tile, **No-Spawn Beacon**, a
+  *protecting* pill (`--ok-text`), *placed by Mira_P, Oct 11*; the coordinates with Copy;
+  ***48 × 48 blocks, floor to sky** — X 32 to 79, Z −64 to −17 (the 3 × 3 chunks round it)
+  · overlaps 1 other beacon. Wild and hostile mobs vanish there; tamed, named, fed and bred
+  ones stay.*
+- **Layers:** **No-Spawn Beacons** (*3 in this world · each with its 48 × 48 protected
+  area*) and **Wormhole gates** (*2 open · 1 dormant · a dotted line to where each leads*)
+  switches, both on; an **In this world** list (every beacon, then every gate, in any
+  dimension, *up at Y 210* for a sky base; 52 px rows, a tap selects and flies there); and
+  legend swatches on the neutral `--map-void` (*No-Spawn Beacon · Protected (48 × 48) ·
+  Gate · open · Gate · dormant · Where it leads*) with *Positions are the pack's own
+  records, sent when a beacon or gate changes and again at every start.*
+- **Values** in these words (the lead line, the square, the list rows) use a real minus
+  sign and never break inside a number, a unit or a date (no-break spaces). The shared
+  X · Y · Z box keeps the map's own digits for every kind of marker.
+- **Not drawn** on the timeline's replay (they are where the pack last reported them, not
+  where they were then), nor on a share link's map (the rows are owner-only).
 
 ### The Tricorder target on the Minecraft map (owner, 2026-10-12; plan §M21)
 

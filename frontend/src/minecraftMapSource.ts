@@ -5,6 +5,7 @@
 import {
   type MinecraftDim,
   type MinecraftMapInfo,
+  type MinecraftMapMarkers,
   type MinecraftMapPlayers,
   type MinecraftMapPoint,
   type MinecraftMapStructures,
@@ -38,6 +39,8 @@ export interface MapSource {
   ): string;
   /** Search the loaded world for structures again: the owner's only. */
   sweep: ((slot: string) => Promise<MinecraftSweep>) | null;
+  /** The world's beacons and gates (§M26): the owner's only — a shared map has neither. */
+  markers: ((slot: string) => Promise<MinecraftMapMarkers>) | null;
 }
 
 export const OWNER_MAP: MapSource = {
@@ -48,6 +51,7 @@ export const OWNER_MAP: MapSource = {
   timeline: (slot, from, to, opts) => api.minecraftTimeline(slot, from, to, opts),
   tileUrl: minecraftTileUrl,
   sweep: (slot) => api.minecraftMapSweep(slot),
+  markers: (slot) => api.minecraftMapMarkers(slot),
 };
 
 export function shareMap(token: string): MapSource {
@@ -59,6 +63,7 @@ export function shareMap(token: string): MapSource {
     timeline: (_slot, from, to, opts) => api.mcShareTimeline(token, from, to, opts),
     tileUrl: (_slot, dim, zoom, tx, tz, layer) => mcShareTileUrl(token, dim, zoom, tx, tz, layer),
     sweep: null,
+    markers: null,
   };
 }
 

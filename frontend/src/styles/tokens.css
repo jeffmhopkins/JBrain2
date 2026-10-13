@@ -74,6 +74,7 @@
   --warn-text: var(--amber);
   --danger-text: var(--rose);
   --steel-text: var(--steel);
+  --violet-text: var(--violet);
 
   /* Type scale */
   /* Type scale = DESIGN.md px values × the user's font-scale setting
@@ -155,6 +156,7 @@
   --warn-text: color-mix(in srgb, var(--amber) 50%, var(--text));
   --danger-text: color-mix(in srgb, var(--rose) 54%, var(--text));
   --steel-text: color-mix(in srgb, var(--steel) 52%, var(--text));
+  --violet-text: color-mix(in srgb, var(--violet) 52%, var(--text));
   --map-void: #1e2024;
   --map-halo: rgba(8, 9, 11, 0.85);
   --map-plate: rgba(255, 255, 255, 0.92);

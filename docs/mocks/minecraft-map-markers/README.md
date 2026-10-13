@@ -2,8 +2,11 @@
 
 > **Status:** Living · **Last verified:** 2026-10-12
 >
-> **Open — awaiting the owner's pick.** The independent review is `REVIEW.md` in this
-> folder: it picks **A** with changes. Revision 2 (below) makes those changes. Behaviour sources:
+> **Decided — the owner picked A, as revised (2026-10-12).** `a-always-drawn.html` and its
+> `png/a-*` shots are the binding spec, built in plan §M26 and written into DESIGN.md
+> ("Beacons and gates on the Minecraft map"); B and C stay as the round's record. The
+> independent review is `REVIEW.md` in this folder: it picks **A** with changes, and
+> revision 2 (below) makes them. Behaviour sources:
 > `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M16, §M12, §M8 and P3 (the map and its chat card),
 > and §M21 (the Tricorder target's marker grammar).
 
