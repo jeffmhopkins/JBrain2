@@ -130,6 +130,8 @@ p.set(KNOB.PET_ACT, 6);
 p.advance(7300);
 const pieces = events.slice(farted).filter((e) => e.includes('cue MEGAFART'));
 check(pieces.length >= 8, `seven seconds of fart, back to back (${pieces.length} pieces)`);
+const stamps = pieces.map((e) => e.split(' ')[0]);
+check(new Set(stamps).size === stamps.length, `one piece at a time, never two in a frame (${stamps})`);
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);

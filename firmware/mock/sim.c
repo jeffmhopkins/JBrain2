@@ -555,8 +555,11 @@ static void frame(void)
         r_recue_from = r_action_at;
         r_recue_p = 0.0f;
     }
+    /* Not on the frame it started: `facts` was read before that start cue went in, so the
+       speaker still looks free, where the panel reads its facts after (review). */
     if (r_action != ACT_NONE &&
-        (rig_recue(r_action, r_recue_p, p) || rig_recue_continuous(r_action, p)) &&
+        (rig_recue(r_action, r_recue_p, p) ||
+         (rig_recue_continuous(r_action, p) && r_action_at != now)) &&
         view->mode == SM_PET && !facts.speaker_busy) {
         const cue_t c = cue_for_action((int)r_action);
         (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
