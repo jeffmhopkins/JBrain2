@@ -1,4 +1,4 @@
-"""Pairing codes at rest as sha256 (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S3.3, F12).
+"""Pairing codes at rest as sha256 (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md S3.3, F12).
 
 A pairing code is a bearer credential for fifteen minutes: whoever redeems it gets a device
 key that outlives the code, the debug token that read it, and anything else that saw the

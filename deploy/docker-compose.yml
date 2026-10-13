@@ -647,7 +647,7 @@ services:
   # and is unable to reach `db`, `supervisor` (which holds the docker socket), `worker`,
   # `embed`, the model servers or the blob store. Its only peers are the `api` (which
   # proxies the control surface and serves its models, web tools and OCR) and the squid
-  # `egress` proxy (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S2.4).
+  # `egress` proxy (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md S2.4).
   # EGRESS IS FENCED: `jcode_fenced` is `internal: true`, so there is no NAT route out — the
   # proxy env below sends git/npm/pip/curl/Node fetch through squid, which serves public
   # http/https on 80/443 and refuses the LAN, the host, metadata and every compose name

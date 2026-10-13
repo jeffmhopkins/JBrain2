@@ -1,6 +1,6 @@
 # JBrain2 — docs archive
 
-> **Status:** Living · **Last verified:** 2026-10-08
+> **Status:** Living · **Last verified:** 2026-10-13
 
 Historical documents: completed build plans, fulfilled contracts, rejected
 designs, and the design research that informed them. Kept for the audit trail
@@ -12,6 +12,7 @@ its ship evidence.
 ## Core pipeline & engine
 | Item | What it is |
 |---|---|
+| `SECURITY_REVIEW_FIXES_PLAN.md` | The 2026-10 third-party-access security review and its five waves: preview proxy path containment, same-site request-forgery defences and the `__Host-` cookie, owner gates with a route-matrix test, jcode shells off root and behind the egress fence, per-caller `/internal` tokens, the reader/byparr SSRF fence, socket re-validation, panel-vs-phone keys, hashed pairing codes and hidden debug-SQL secrets, real client IPs, Minecraft log anchoring, caller-pinned view-scope helpers, and the S4 red team's chat-share confirm, intake redeem that keeps the owner signed in, and empty jcode token refusal. Its "Out of scope / recorded" list is carried in `../ROADMAP.md`. |
 | `PROMPT_CACHE_HARDENING_PLAN.md` | The 2026-09 hardening of the jerv prompt cache, from an eight-way parallel review of it. P0 made the cache observable — it was correct and silent, which is how it had shipped inert twice — and P1-P5 fixed the defects that each turned a ~100 ms restore back into a ~125 s prefill: a divergent tool array on every scheduled task, a memo that survived the slot it described, a poisoned file nothing repaired, a keeper that erased its own edge triggers, and fakes that agreed with the docstring instead of testing against llama.cpp. Living successor: `../reference/PROMPT_CACHE.md`. |
 | `GPU_ADMISSION_INTEGRITY_PLAN.md` | **Superseded** by `../plans/LOCAL_MODEL_ACCESS_PLAN.md`. Four cold adversarial reviews found its keystone wave unsound (its central category has no data source on this box, and applying it at `local_gateway.py:762` reintroduces the mid-load-baseline bug #1186 fixed), one wave unbuildable, one wave's premise unreachable, and two waves in contradiction. The one fix worth shipping — `unload()` racing llama-swap's 10 s graceful stop on a 3 s client timeout — was found BY the review and shipped separately. Kept for its evidence and for the record of how it failed: three of its claims were a log label, a README summary and an env-var name mistaken for evidence. |
 | `DITOO_PLAN.md` | **Superseded** by `../plans/ROOM_ENDPOINT_PLAN.md`. Feasibility for driving a Divoom Ditoo (16x16 Bluetooth pixel speaker) from the box; the device was dropped for two Wi-Fi AMOLED endpoints that need no Bluetooth. Kept for four findings that outlive it: the USB question closed with evidence (§1.1), Bluetooth sockets working only in the initial network namespace so a BT sidecar forfeits the `internal: true` egress lock (§4.2), what `update-inner.sh` can and cannot do to the host from the PWA path (§4.3), and the correction that `bluez-alsa` needs no host sound server (§5). §0.2 holds a 2026-09 survey of small pixel/voice hardware. |

@@ -1,6 +1,6 @@
 # Security review fixes — third-party access hardening
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2✅ S3✅ S4◻️ S5✅
+> **Status:** Shipped 2026-10 · migrations 0241–0243 · **Waves:** S1✅ S2✅ S3✅ S4✅ S5✅ · **Superseded-by:** —
 
 A whole-codebase security review (2026-10-12; six independent reviewers, the serious
 findings re-verified by hand) looked for programming errors and structural mistakes that
@@ -365,11 +365,52 @@ visible subject with no fixes, not for an invisible one.
 join/leave, the server-start or save-ready markers. *Tests:* the injected `/jb:dave` question
 is parsed as a question, not a connect; real lines still parse.
 
-### S4 — wave-level red team ◻️
+### S4 — wave-level red team ✅
 
 A cold red team re-analyses the whole codebase after S1–S3 merge: re-attack every finding,
 attack the fixes, and separately hunt regressions across the flow table. Findings are fixed in
 S4's PR.
+
+*As built.* The red team found four things; three are fixed, one is recorded.
+
+- **S4.1 Chat share publishes private reads without a reliable warning.** A share visitor
+  gets every tool step verbatim (`summary`, `args`, `sources[].snippet`), but the share sheet
+  warned from the session's *current* `domain_scopes` only, so a chat re-scoped to `general`
+  after reading a health note, or one that ran Gmail or memory tools, minted a link with no
+  warning. The server now decides: `chat_shares.share_sensitivity` walks every stored turn's
+  `tools` for a source/entity `domain` in the firewalled set (`reflexion.SENSITIVE_SCOPES`),
+  any `gmail_*` step, and the steps listed in `SENSITIVE_TOOLS` (memory and archivist-memory
+  reads, `recall`, the medical-record readers, and every location tool — a test keeps each
+  `.tool` that declares a firewalled domain in that map), plus the session's current
+  firewalled scopes (later turns show on a live link). `GET /sessions/{id}/shares/sensitivity`
+  returns the reasons, and `POST /sessions/{id}/shares` refuses with 409 (and the reasons)
+  unless the body says `confirm_sensitive: true`. The sheet warns from the server's answer
+  with its existing second tap, which is what sends the confirm; a 409 the sheet didn't
+  expect re-arms it with the reasons. *Keeps working:* a harmless chat mints from a bare
+  POST; a confirmed share serves the chat in full, tool steps included, as before.
+  *Tests:* detection unit cases (rescoped source, current scope, mail, memory, sourceless
+  readers, nested and malformed shapes, the `.tool` guard); the API refuses then accepts a
+  re-scoped health chat and a Gmail chat, and mints a harmless one unconfirmed; the sheet
+  warns from server data, sends the confirm, and recovers from a 409.
+- **S4.2 Opening an intake link signs the owner out.** The intake page redeems on load, and
+  the redeem always set the intake cookie over whatever session the browser held. Mirroring
+  the jcode share redeem, a browser holding an **owner** session now gets 409 before the
+  redeem runs, so no open is spent and no cookie is written; the page says the owner is
+  signed in and to try the link in a private window, and leaves the secret in the URL for
+  that. A no-cookie success was rejected: the intake routes need the intake cookie, so the
+  page would have loaded and then failed on its first turn. *Keeps working:* a stranger's
+  redeem, cookie and TTL-capped max-age. *Tests:* owner cookie kept, `opens_used` still 0,
+  then the same link redeems for a stranger; the page's owner state.
+- **S4.3 Empty control tokens.** Compose passes `JCODE_TOKEN: ${JCODE_TOKEN:-}`, so an unset
+  key reached the jcode ctl as `""`, which started and admitted `Bearer ` despite comments
+  saying it would refuse to start. The ctl now refuses an empty token (`min_length=1`). No
+  length floor: every box with code mode on has had a token minted since the updater's
+  self-heal (June 2026; `jcode-setup.sh` before it), but a hand-set short one can't be ruled
+  out, and a floor would stop it with no terminal to fix it. The supervisor is **not**
+  changed (recorded below); its false "refuses to start" comments are corrected.
+  *Tests:* empty `JCODE_TOKEN` in the environment refused; a minted 64-hex token starts.
+- **S4.4 The wall serves the owner's turn text (F18, amended).** Recorded, not fixed; see
+  below. The wall's docstring, which said it carried no user data, is corrected.
 
 ### S5 — latent RLS hardening ✅
 
@@ -434,10 +475,35 @@ devices" fences).
 - **F17 panel flash encryption.** ESP32 flash encryption/secure boot burn eFuses
   irreversibly and interact with the "cable once" OTA rollback design; needs hardware in
   hand. Carried to `ROADMAP.md` as a firmware residual.
-- **F18 wall.** A LAN display by design; S2.2 scopes its token to the pet routes. It still
-  relays pet commands (an owner-context pet line, statue compute) for any client that can
-  reach `:8800` — the LAN, and in direct mode possibly the internet since Docker-published
-  ports bypass ufw. Recorded as a residual; a bind-address default is an owner choice.
+- **F18 wall** (amended by S4). A LAN display by design; S2.2 scopes its token to the pet
+  routes. Everything on `deploy/wall/serve.py` is unauthenticated for any client that can
+  reach `:8800` — the LAN, and in direct mode possibly the internet, since the port is
+  published on `${BRAIN_HOST_BIND:-0.0.0.0}` and Docker-published ports bypass ufw:
+  - `GET /stats` drains the posted-event queue. With the brain-display text setting on
+    (`brain_llm_stream`), the api forwards the owner's real prompts (`llm_input`), answers
+    (`llm_output`) and web queries/URLs (`agent/brainevents.py`), so any poller reads them —
+    and, since the read drains, takes them from the TV.
+  - `POST /event` is unauthenticated: a LAN client can inject popups and text onto the
+    display, latch the read-aloud flag and change the answer voice settings.
+  - `GET /tts`, `/tts/voices`, `/tts/silence` forward to the tts-stt service, so any client
+    can spend its compute.
+  - The pet routes relay an owner-context pet line and statue compute (as before).
+  Candidate fixes, each an owner choice because each changes what the TV on the LAN can
+  do: default `BRAIN_HOST_BIND` to the LAN address or `127.0.0.1` (breaks
+  `http://<host>.local:8800` on another device unless set, so it needs a PWA setting, not an
+  `.env` edit); or forward turn text only when the bind is loopback (loses the text on a LAN
+  TV); or a per-display key the page holds. Not changed in S4: none is safe without the owner
+  choosing, and the bind is `.env`-only today, which is itself a terminal gap to design out.
+- **Supervisor accepts an empty token** (S4.3). Compose passes `${SUPERVISOR_TOKEN}`, so a
+  `.env` without the key starts a supervisor whose bearer is `Bearer `, which the api, holding
+  the same empty value, sends — so such a box works today, and refusing it would stop Ops →
+  Update and the api watchdog with no terminal to repair it. `install.sh` always mints one,
+  and the supervisor is on the internal network only. A safe fix needs the updater to mint a
+  missing key first, which runs only on the second update (the self-update lag above).
+- **A chat share's sensitivity is checked at mint** (S4.1). A link to a harmless chat stays
+  live as the owner keeps chatting, so a later turn that reads a firewalled domain is
+  published with no new warning. The sheet already says later turns show; revoking is the
+  remedy. Gating the visitor's read on later turns would change what a share is.
 - **`update-inner.sh` self-update lag.** The updater runs its pre-reset copy, so new mint steps
   take two updates. S2.2 avoids depending on it; fixing the updater itself is its own change.
 - **Stream fetches** (yt-dlp/ffmpeg) keep check-once SSRF guarding (S2.3).

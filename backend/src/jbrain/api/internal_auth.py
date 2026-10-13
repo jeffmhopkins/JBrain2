@@ -2,7 +2,7 @@
 
 `/internal` is never routed off-box by Caddy, but the api joins every docker network a
 sandbox or headless browser sits on, so "internal network only" admitted a jcode session,
-a fetched page's JavaScript in the reader, anything (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md
+a fetched page's JavaScript in the reader, anything (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md
 F7). Each legitimate caller now holds its own token, scoped to its own routes: the
 LAN-facing wall opens only `/internal/pet*` and must never hold a key to MQTT, and
 mosquitto opens only `/internal/mqtt-*`.

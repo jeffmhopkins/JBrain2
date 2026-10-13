@@ -58,7 +58,7 @@ def test_a_secret_shape_in_an_unnamed_column_is_still_scrubbed() -> None:
     assert "[redacted]" in out[0]
 
 
-# --- S3.3 (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md, F12): the statement guard -----------
+# --- S3.3 (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md, F12): the statement guard -----------
 
 
 @pytest.mark.parametrize(
