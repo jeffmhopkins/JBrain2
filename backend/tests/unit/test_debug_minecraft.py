@@ -362,6 +362,42 @@ async def test_the_debug_item_finder_passes_its_search_through(sidecar) -> None:
     assert seen[1].url.params["radius"] == "48" and seen[1].url.params["flush"] == "1"
 
 
+async def test_the_debug_entity_finders_pass_their_search_through(sidecar) -> None:
+    """§M4e's box checks: villagers, pets (by owner id or gamertag) and portals, with no
+    deep scan charged and nothing else added."""
+    seen, replies = sidecar
+    replies["/map/villagers"] = httpx.Response(200, json={"found": [], "records": 9})
+    replies["/map/pets"] = httpx.Response(200, json={"found": [], "owner_known": True})
+    replies["/map/portals"] = httpx.Response(200, json={"portals": [], "broken": 0})
+    req = _request(FakeSupervisor([]))
+    got = await mc.minecraft_map_villagers(
+        req, SETTINGS, PRINCIPAL, x=1, z=2, enchant="mending", radius=300, flush=True
+    )
+    assert got["records"] == 9
+    assert dict(seen[0].url.params) == {
+        "slot": "slot1",
+        "dim": "overworld",
+        "x": "1",
+        "z": "2",
+        "profession": "",
+        "sells": "",
+        "enchant": "mending",
+        "limit": "5",
+        "flush": "1",
+        "radius": "300",
+    }
+    await mc.minecraft_map_pets(
+        req, SETTINGS, PRINCIPAL, x=0, z=0, owner="-4294967295", everywhere=True
+    )
+    pets = dict(seen[1].url.params)
+    assert pets["owner"] == "-4294967295" and pets["everywhere"] == "1"
+    assert "radius" not in pets and pets["flush"] == "0"
+    await mc.minecraft_map_portals(req, SETTINGS, PRINCIPAL, dim="nether", check=False)
+    assert dict(seen[2].url.params) == {"slot": "slot1", "check": "0", "dim": "nether"}
+    await mc.minecraft_map_portals(req, SETTINGS, PRINCIPAL)
+    assert dict(seen[3].url.params) == {"slot": "slot1", "check": "1"}
+
+
 async def test_the_debug_structure_index_and_sweep_pass_through(sidecar) -> None:
     seen, replies = sidecar
     replies["/map/structures"] = httpx.Response(200, json={"structures": [], "stale": None})

@@ -1,19 +1,20 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** M0✅ M1✅ T1✅ M2✅ M3✅ M4◻️ M5✅ M6✅ M7◻️ M8✅ M8a✅ M9✅ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2✅ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** M0✅ M1✅ T1✅ M2✅ M3✅ M4✅ M5✅ M6✅ M7◻️ M8✅ M8a✅ M9✅ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2✅ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 **What's left (audited against the code, 2026-10-13).** M0, M5, M6, M8, M9 and P2 are built;
 each section's "Remaining" paragraph names its small leftovers. Genuinely open, each the
 owner's call:
 - **R1:** the `mc.hopkinsbrain.com` name and IP updater (put off), a UPnP helper, an
   Internet-play switch with a Test button; a brother joining from his own house is unrecorded.
-- **M4:** an entity index (villagers and trades, pets, named mobs).
-- **M7:** the `/dave` quick menu, a companion NPC, scheduled backups, the other §3b tools.
+- **M4:** built (§M4e, 2026-10-13: villagers and trades, pets, named mobs, the Nether
+  pointer). Left: pets and villagers on the map, chest minecarts in `mc_find_item`, and
+  a fast-path answer for "where's my dog" (§M4e "Not built").
+- **M7:** a companion NPC, scheduled backups, the other §3b tools.
 - **M8:** beds and saved places on the map, height / slice / changes layers, Dave's in-game
   "map of here" link.
-- **M9:** an arrival chime, and the Nether pointer aiming at a known portal (needs M4).
 - **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
-  switch, a latency measurement, and `auto` log entries for deaths and crafting.
+  switch, a latency measurement, and `auto` log entries for crafting.
 - **P1 follow-up:** (§M25) the scan target on the map, in the mock gate. Goals in the PWA
   are built (§M24, "Goals in the app").
 - **Box checks:** `docs/runbooks/MINECRAFT_HOME_TEST.md`.
@@ -625,7 +626,8 @@ house by typing the address.
 > Explored ground (§M8), blocks (`mc_find_block`) and chest contents (§M23,
 > `mc_find_item`) are read straight off the live world's LevelDB by in-memory indexes in
 > the sidecar, refreshed when the files change — no snapshot parse, no `app.mc_*` world
-> tables. Entities (villagers, pets) are what's left of this wave.
+> tables. Entities (villagers, pets) were what was left of this wave; §M4e built them the
+> same way on 2026-10-13, so M4 is done in that shape.
 
 - After each snapshot, the wrapper parses **the snapshot copy** and streams JSONL. The backend
   upserts it into owner-RLS'd tables:
@@ -646,6 +648,239 @@ house by typing the address.
 - An optional owner-side read tool (`minecraft_world`) lets jerv answer the owner's own
   questions ("which chest has my diamonds?"). It is optional, and it drops out like the SDR
   tools when the feature is off.
+
+#### M4e — Dave knows villagers and pets: the entity index (designed and built, 2026-10-13)
+
+> **Status:** built 2026-10-13 (waves E1 and E2, one pass), with the owner's five
+> decisions of 2026-10-13 below. It was what the Status note above called "what's left of
+> this wave", and it carries §M9's Nether pointer. "What was built" at the end of this
+> section is the as-built record; where the design text above it differs, the decisions
+> and the as-built record win.
+
+**Why.** "Who sells Mending?", "where's my dog?", "where did Clover go?" Villagers, pets and
+named mobs live in the world's files the way chests do, and Dave can't see any of them
+today: `mc_find_mob` (§M22) asks the game for the nearest mob of a type, and only within
+the chunks loaded around online players.
+
+**What the files hold (checked 2026-10-13 against BDS 1.26.52.3, on a copy of a dev world,
+with our own `leveldb.py`/`nbt.py`).**
+- **The keys.** Every entity is its own record, `actorprefix` + 8 bytes, holding one NBT
+  compound. Each chunk has a `digp` record listing the 8-byte ids of the entities in it.
+  The `digp` key is `digp` + x + z (12 bytes, the Overworld) or + x + z + dimension (16
+  bytes). The entity's own NBT carries no dimension, so **the dimension comes from the
+  `digp` key**. In all five test worlds every actor was listed by a `digp`, and none had
+  the pre-1.18.30 per-chunk `Entity` record (key tag 50). An imported old world can still
+  hold tag-50 records in chunks nobody has loaded since 1.18.30. They are back-to-back
+  compounds, the same shape as the tag-49 block entities `containers.py` already reads.
+- **The fields** (all read cleanly by `nbt.py`; no reader change needed):
+  - **What it is:** `identifier` (`minecraft:villager_v2`, `minecraft:wolf`, …). **Where:**
+    `Pos` (3 floats).
+  - **Identity:** `UniqueID` (int64). The script API's `entity.id` is the same number as a
+    string: the probe printed `id=-8589934591` for the wolf whose file says `UniqueID:
+    -8589934591`.
+  - **Name:** `CustomName`, plus `CustomNameVisible`.
+  - **Pets:** `IsTamed`, `OwnerNew` (int64, −1 when nobody owns it), `Sitting`, `IsBaby`.
+    `definitions` names the coat in words (`+minecraft:cat_calico`,
+    `+minecraft:base_gray`), which is better than the bare `Variant`/`MarkVariant`
+    numbers.
+  - **Villagers:**
+    - `PreferredProfession` (`"librarian"`, `"cleric"`, …) is present once a villager has
+      a job. `Variant` is the same as a number (0 unskilled, 6 cartographer, 7 cleric, 8
+      armorer, 13 mason, 14 nitwit), and `definitions` carries `+librarian`.
+    - `TradeTier` is the level, 0–4 (Novice → Master). `TradeExperience` > 0 means it has
+      been traded with, which locks in its job.
+    - `Offers.Recipes[]` lists each trade: `buyA`/`buyB` and `sell` item stacks, `tier`,
+      `uses`/`maxUses`. An enchanted book's enchantment is under `sell.tag.ench[]` as
+      `{id, lvl}` with Bedrock's numeric ids. The experiment's librarians sold ids 34, 30,
+      4, 25, 22, 20 and 14; Mending is 26. So we need a small static id → name table.
+  - **Trades exist without a player:** a villager summoned with a job had its full `Offers`
+    for every tier, written by the server before anyone opened its trade screen. A
+    villager's job can still change until it's traded with. The "librarian" summoned in
+    the experiment took a free cartography table and saved as a cartographer.
+- **Owners.** `OwnerNew` holds the owner's `UniqueID`, which is the owner's script
+  `player.id`. The pack already keys each player's records by that id (`jb:known:<id>`,
+  `jb:tricorder:<id>`). The player records in the files (`player_server_<uuid>`) carry no
+  gamertag, so the gamertag ↔ id link has to come from the pack. Not checkable here (it
+  needs a real client to tame something), so it's a box check.
+- **Portals.** One `portals` key holds `data.PortalRecords[]`: `DimId`, `TpX`/`TpY`/`TpZ`,
+  `Span`, `Xa`/`Za`. A portal lit with fire through the console, with no player, was
+  recorded at once. `leveldb.read_keys` reads that one key without a full sweep, so it
+  costs almost nothing.
+
+**What the live game can see** (stable `@minecraft/server` 2.0.0, the same probe):
+- `getEntities` and `nameTag` work, and so do `minecraft:variant` (a villager's job number)
+  and `minecraft:mark_variant`.
+- **A tamed pet has no `minecraft:tameable` component.** The tamed wolf, cat, parrot and
+  horse showed only `minecraft:is_tamed`, which has no owner field. So
+  `tamedToPlayerId` can't be read for the pets that matter.
+- No villager component exposes trades or level.
+- **So the split is:** the index answers everything here (trades, owners, unloaded
+  chunks). It is made current the way §M23 does it: `flush=1` runs the `save hold` dance,
+  which also writes out the entities loaded around players. The pack's only change is to
+  send the asker's `player.id`. `mc_find_mob` stays as it is, for "nearest cow".
+
+**Design.**
+- **Sidecar `entities.py`: `EntityIndex`**, modelled on `ContainerIndex`.
+  - **Refresh:** the same 60 s re-read when the db files change.
+  - **One `leveldb.entries` sweep** keeps `actorprefix`, `digp`, and legacy tag 50.
+    Newest sequence wins.
+  - **Only candidates are parsed:** a villager or wandering trader, anything with
+    `CustomName`, or `IsTamed` set. This is a byte test on the raw value before any parse
+    (`b"CustomName"`, the identifier, `b"\x01\x07\x00IsTamed\x01"`). Every other value is
+    dropped as it streams past, so a world full of cows and bees isn't held in memory.
+  - **Placement:** only actors listed by a `digp` are indexed, with the dimension and the
+    chunk taken from it.
+  - **What's kept per entity:** kind, x/y/z, dimension, name, owner id, sitting, baby, coat
+    words. A villager adds its job, level, locked-in flag, and at most 32 trades as
+    `(tier, buy, buy2, sell, enchantments, uses, max_uses)`.
+  - **Caps:** at most 20,000 villagers, 5,000 pets and 5,000 named mobs, each overflow
+    counted. Unreadable records are counted, as in §M23.
+  - **Cost:** measured here at 0.08 s for the sweep of a 5.5 MB db and about 290 µs to
+    parse one actor. Parsing only the candidates cuts the parsing by about 4× in a village
+    world. On a big world the decompression dominates, as it does for the container index.
+    So the two indexes **share one sweep** (a combined key filter, dispatching on the key)
+    rather than each decompressing every table.
+- **Sidecar routes:**
+  - `GET /map/villagers?slot&dim&x&z&profession&sells&enchant&radius&limit&flush`
+  - `GET /map/pets?slot&dim&x&z&owner&kind&name&radius&limit&flush`. `owner` is a
+    player id. `name` matches any named mob, casefolded.
+  - `GET /map/portals?slot&dim`
+  - Every answer carries `as_of`/`age_s`, the index counts and `flush`, as `/map/items`
+    does. A debug passthrough is added for each, for the box checks.
+- **The asker's id.** The pack adds `pid` (`player.id`) to the `dave` event.
+  `bds._pack_event` accepts it only as a decimal string. The sidecar remembers gamertag ↔
+  id per world, so the app's "Hank's pets" works while Hank is offline.
+- **Backend tools** (both Dave tiers, panel labels, prompt bump):
+  - **`mc_find_villager(profession?, sells?, enchantment?, x?, z?, radius?, limit?,
+    dimension?)`.** Each hit gives the job, level ("an Expert librarian"), whether its job
+    is locked in, and the matching trade and its price ("Mending I for 12 emeralds and a
+    book"). It says when a trade is used up until the villager restocks.
+  - **`mc_find_pet(kind?, name?, gamertag?)`.** In game, `kind` lists the asker's own pets
+    (and, by decision 1, any player's by `gamertag`, or everyone's with `anyone`).
+    `name` finds a named mob, the asker's own pets first. Player-written names are fenced,
+    as container names are. It aims the Tricorder at the nearest hit, like every finder.
+- **Cost (§M17).**
+  - Villagers follow §M23 exactly: free within 48 blocks (the Tricorder's short-range
+    scan), a deep scan farther out, a repeat free.
+  - ~~Your own pets are free anywhere~~, ~~a named mob found by its exact name is free~~:
+    **superseded by decision 3** (2026-10-13). Pets and named mobs follow the chest rule
+    too, your own included.
+- **Item guide (§M19):** no gating. Villagers and pets aren't Old Maker items, and no reply
+  names one.
+- **Nether pointer (§M9 leftover), same pass.** When `mc_set_waypoint` sets a target in
+  another dimension, the record gets `via`: up to 8 known portals in the player's current
+  dimension, from `/map/portals`. Held in the wrong dimension, the Tricorder points at the
+  nearest of those ("Nether portal · 40 blocks"), and still names the target's dimension.
+  A portal record can outlive a broken portal, so before a portal is sent, `BlockIndex`
+  checks that `minecraft:portal` is still at its `Tp` spot (a box check).
+- **Not built (later):**
+  - Pets and villagers on the map (an overlay, as §M26's beacons).
+  - Chest minecarts and chest boats in `mc_find_item` (they are actors, so this sweep
+    makes them cheap; §M23's "Not built").
+  - Allays, which aren't tamed in the files' sense.
+  - The fast path for "where's my dog", until its line is signed off.
+  - Live `jb:find` by name.
+  - Villagers' gossip, and cure discounts (`*CuredDiscount`).
+- **Lore.**
+  - **Answers:** Dave answers from "what it has seen: the saved world". He says "as of N
+    minutes ago" the way §M23 does, and never says what villagers are. Whether they're
+    the Old Makers' descendants is an open question on the lore page, sealed for now.
+  - **Two new lines, signed off on the lore page 2026-10-13** (decision 4; the second
+    without its last sentence):
+    - **Pet found:** **[Dave]** *Rex* is *120* blocks *north-east*, sitting right where
+      you left him. Hold your Tricorder and follow the arrow.
+    - **Trade found:** **[Dave]** From up here I see a *librarian* *230* blocks *west* who
+      sells *Mending* for *12* emeralds.
+- **Effort.** About 1.5 agent-days, in two waves:
+  - **E1:** `entities.py`, the shared sweep, routes and debug, the two tools, the `pid`
+    plumbing, and tests built from fixtures recorded from this experiment. About a day.
+  - **E2:** portals, `via` on the waypoint, the pack arrow and its sim test. About half a
+    day.
+
+  No new tables: the index is in memory, as §M23's is.
+- **Box checks (after deploy).**
+  - That `OwnerNew` equals the taming player's `player.id`, including for a horse.
+  - The counts and time of a cold read on the owner's world, in the Nether too.
+  - That a broken portal leaves its record, and that the block check catches it.
+
+**Owner decisions (2026-10-13, answered).** Where these differ from the design above, they
+win:
+1. **Whose pets: anyone's.** In game a player can find anyone's pets, not only their own,
+   and any named mob. (Not the recommendation: others' pets aren't limited to a name.)
+2. **Which trades: unlocked levels only.** Dave tells only the trades a villager offers
+   now (tiers up to its `TradeTier`), never locked ones. (As recommended.)
+3. **Cost: everything follows the chest rule, own pets included.** Free within 48 blocks
+   of the asker, farther costs one deep scan (§M17), a repeat by §M23's rule free; the
+   app is unlimited. (Not the recommendation: own pets and named mobs aren't free at any
+   distance.)
+4. **The lines** are canon on the lore page ("Villagers and pets"): the pet line as
+   proposed, and the trade line without its last sentence ("The villagers still trade in
+   emeralds without knowing why" was dropped).
+5. **The Nether pointer ships in the same pass** (E2). (As recommended.)
+
+**What was built (2026-10-13).**
+- **Sidecar** (`deploy/minecraft/entities.py`): `EntityIndex`, as designed. One shared
+  sweep: `containers.refresh_together` re-reads every index of a world whose files
+  changed in ONE `leveldb.entries` pass, each index taking its own keys (`wants`) and
+  dropping a value it won't use as it streams past (`keeps`, the byte test), so the chest
+  and entity indexes decompress the tables once. Placement and the dimension come from
+  `digp` (an actor no `digp` lists is counted as `unplaced`); legacy tag-50 records are
+  read by their own key. Trades above the villager's level are dropped at parse and only
+  counted (`locked_trades`), so no route can tell one. The enchantment id → name table is
+  Bedrock's 0–40 (Mending 26). Pet kinds take everyday words (`dog` → `wolf`).
+- **Routes:** `/map/villagers` (`profession`, `sells`, `enchant`), `/map/pets` (`owner`
+  id, or `owner_name` resolved through the world's learned gamertag ↔ id table,
+  `owner_known: false` when it hasn't learned that player yet; `kind`, `name`,
+  `everywhere`), `/map/portals` (`check` drops a record whose `minecraft:portal` block is
+  gone, by `BlockIndex` within 4 blocks of its `Tp` spot). Each carries `as_of`/`age_s`,
+  the index's counts and `flush`, as `/map/items`. The learned ids live in
+  `player-ids.json` in the sidecar's data dir, written when a `/dave` carries `pid`.
+- **The asker's id:** the pack's `dave` event carries `pid` (`player.id`); `bds` keeps it
+  only as a decimal string and the door puts it on the `Asker`.
+- **Tools** (both Dave tiers; prompt `agent-minecraft-dave-v22`; `mc_find_villager` v1,
+  `mc_find_pet` v1, `mc_set_waypoint` v5):
+  - `mc_find_villager(profession?, sells?, enchantment?, x?, z?, radius?, limit?,
+    dimension?)`: each hit is "an Expert librarian at x= y= z=, 230 blocks west: sells an
+    enchanted book (Mending I) for 12 emerald and 1 book", says when a trade is used up
+    until it restocks and when the job is locked in, and that only today's trades are
+    told. Player-given names are fenced.
+  - `mc_find_pet(kind?, name?, gamertag?, anyone?, dimension?, x?, z?, limit?)`: in game,
+    no gamertag is the asker's own pets (by their `pid`; by gamertag from an older pack);
+    `gamertag` is any player's, `anyone` every tamed pet, `name` any mob so named, the
+    asker's first. Pets in other dimensions are listed after, with no distance. Names
+    and owners are fenced.
+  - **Cost, in game:** both look within 48 blocks of the asker first, free (the
+    Tricorder's short-range scan). If that finds nothing and the ask reaches farther (no
+    radius, a wider one, or a centre elsewhere), the search is a deep scan through
+    `scans.deep_scan`: a repeat of the same search from within 256 blocks is free, and a
+    search that matched nothing anywhere is given back (as §M23's unknown item id). An
+    owner Dave hasn't learned yet is said, and costs nothing.
+  - **Wording:** each answer asks Dave to point the Tricorder with `mc_set_waypoint` and
+    to answer in the canon's lines: "*Rex* is *120* blocks *north-east*, sitting right
+    where you left him. Hold your Tricorder and follow the arrow." (the middle only for a
+    sitting pet) and "From up here I see a *librarian* *230* blocks *west* who sells
+    *Mending* for *12* emeralds."
+- **The Nether pointer (E2):** `mc_set_waypoint` adds `via` to a target in the Overworld
+  or the Nether: up to 8 standing portals on the other side, nearest first to the asker
+  when they're there, else to the target mapped across (÷8 / ×8). Pack 1.12.0:
+  `parseWaypoint` keeps at most 16 well-formed `via` entries, and the held Tricorder in
+  the wrong dimension reads `↑ Nether portal · 20 blocks · Base is in the Overworld`
+  (`You're here` within 3 blocks); with none known, the old line. The pack's reply adds
+  `via N portal(s)`.
+- **Tests:** the sidecar's against byte-level records recorded from the experiment world
+  (`supervisor/tests/fixtures/mc_entities.json.gz`: twelve actor records, their `digp`
+  entries and the `portals` record), with owner, level, uses and Mending patched into
+  those bytes in place; the tools' in-game scoping, cost and wording through the real
+  handlers; the pack's `pid` and `via` arrow in the node sim. No new tables.
+- **Debug:** `GET /minecraft/map/villagers`, `/map/pets`, `/map/portals`
+  (`docs/runbooks/DEBUG_ACCESS.md`).
+
+**Box checks (after deploy).** Those above, and: that `OwnerNew` equals the taming
+player's `player.id` on a real tame (a wolf and a horse), seen as `/map/pets?owner_name=`
+listing it after they ask Dave anything; a villager's trades in its trade screen against
+`/map/villagers` (the unlocked ones only); the Tricorder's portal arrow in the Nether on
+a real client; and the cold-read time with both indexes sharing the sweep on the owner's
+world.
 
 ### M5 — The companion bridge (in-game ↔ backend)
 
@@ -777,6 +1012,22 @@ measured reply latency against the 5 s target.
   `ActionFormData`). The form has buttons for *Where am I*, *Nearest…*, *Guide me home*,
   *My last death*, *Map of here* and *Save this spot*. It is vanilla-safe (§3c), and it is
   optional since everyone has a keyboard.
+  **Built (owner-approved 2026-10-13, pack 1.11.0):** `/dave`, `/d` or `/ai` with nothing
+  after it opens an `ActionFormData` titled "Dave" with *Where am I?*, *Point me home*, *My
+  last death*, *Save this spot* and *Ask something else…*. Each button asks its own words
+  through the same path as typing them after `/dave` (the Tricorder check, the unlocks, the
+  fast path §M18, then the model), so it adds no Dave lines. *Save this spot* asks for a
+  name in a `ModalFormData` box ("Name this spot") and sends "save this spot as <name>";
+  *Ask something else…* sends what's typed in an "Ask Dave" box; closing either does
+  nothing. Without their own Tricorder the player gets the usual static and no menu. A
+  command runs with the chat still open, where a form can't show (`UserBusy`), so the
+  menu is asked again each second, as the transport offer is, and after 10 s the old
+  "Ask Dave something…" hint goes to chat instead. The fast path answers *Where am I?*,
+  *Point me home* and a plain *save this spot as <name>* (a name of up to four plain words
+  without "my", "the" and the like); *My last death* goes to the model, as does a name the
+  fast path won't take. *Nearest…* and *Map of here* are left out: the first needs a
+  second menu of things, the second waits on M8's in-game link. Tested in
+  `jbrain-sim/pack.test.mjs`. Box check: home test row 22.
 - A visible **companion NPC**. A *custom* entity's model and texture ride in the `jbrain`
   resource pack that downloads automatically on join (allowed since 2026-10-10, §3c), at
   the cost of a bigger download. The lighter option is a **vanilla mob** (an allay or
@@ -1199,8 +1450,16 @@ compass that Dave sets.
 - The arrow is relative to where the player is **facing**: eight arrows, from the bearing
   to the target minus the player's view direction. Turning re-points it.
 - Within about 8 blocks: `You're here — Woodland mansion`, plus one vanilla chime.
+  **Built (2026-10-13, pack 1.11.0):** within the "You're here" 3 blocks, the holder alone
+  hears `random.orb` (the XP pickup, at volume 0.6) once per arrival: it rings again for
+  the same waypoint only after they've walked 8 blocks back out (`rules.js`
+  `arrivalChime`). A player carrying their Tricorder without holding it hears it when the
+  track drain's arrival clear (§M21) lands, unless the held arrow already rang for that
+  waypoint. Not during a live scan (§M25): a scan's find isn't an arrival, and Dave's own
+  clear (`end_scan`) never rings.
 - **Target in another dimension:** `Woodland mansion is in the Overworld — take a portal`.
-  The Nether pointer can aim at the portal Dave knows from the M4 index.
+  The Nether pointer aims at the portal Dave knows from the M4 index (built in §M4e:
+  `↑ Nether portal · 20 blocks · Base is in the Overworld`).
 - **No target yet:** `Ask Dave where to go: /jb:dave …`.
 - Putting the item away clears the actionbar. Nothing shows for anyone else.
 
@@ -1242,7 +1501,7 @@ owner key is the player's entity id, which BDS keeps per player per world. Waypo
 still go by gamertag, as Dave's tool sends them, and its replies are now `[jbrain]
 waypoint …` lines. The rules are pure functions in `jbrain-pack/scripts/rules.js`, tested
 under node (`deploy/minecraft/jbrain-sim/`, run by the supervisor's pytest). Still to
-come: Dave handing one over in the welcome (DW1), the arrival chime, and a target set
+come: Dave handing one over in the welcome (DW1), the arrival chime (both since built), and a target set
 by `guide_me`. **Box checks:** the lock in Bedrock's own UI on Windows and Xbox (the
 drop key, dragging it out, a chest, a death); that `player.id` is stable across
 sessions; the icon download on join; home test rows 5, 10–12.
@@ -1293,10 +1552,10 @@ server) could show Dave's target as a real waypoint marker on screen. It's only 
 switching to once custom waypoints reach the stable script API, which M0b checks. Until
 then the actionbar arrow is the vanilla path.
 
-**Remaining (checked against the code, 2026-10-12):** the item, ownership, the arrow,
+**Remaining (checked against the code, 2026-10-13):** the item, ownership, the arrow,
 waypoints and saved places are built, and DW1 hands it over in the welcome and re-beams
-it. Left: the arrival chime (the "You're here" text shows, with no sound), the Nether
-pointer aiming at a known portal (waits on M4's index), and the box checks above. A
+it. The arrival chime is built (2026-10-13, above), and the Nether pointer aiming at a
+known portal shipped with §M4e (2026-10-13). Left: the box checks above. A
 separate `guide_me` is not needed: `mc_set_waypoint` is Dave's target.
 
 **Fair play:** the tricorder only points where Dave already said, so it's in the same
@@ -3239,7 +3498,9 @@ doesn't lose it.
   - `owner`: written from the PWA agent;
   - `player`: typed in game, e.g. `/jb:dave log got 12 obsidian`;
   - `dave`: Dave's own summary entry, made only when the player asks;
-  - later `auto` (M5): add-on events such as "died in the Nether", "crafted beacon".
+  - `auto` (M5): add-on events: transport trips, and each death (2026-10-13), such as
+    "Died at 12, 64, -31 in the Overworld (fell from a high place)"; crafting is still to
+    come.
 - **Player memory** (`app.mc_player_memory`): short durable facts about one player. How
   it is written is below.
 
@@ -3399,11 +3660,20 @@ log and memory tools reach players in game at player tier, scoped to the asker's
 plus saved places (`mc_place_save`, `mc_places`, `mc_place_remove`; `mc_set_waypoint`'s
 `place`), prompt `agent-minecraft-dave-v7`.
 
-**P2 remaining (checked against the code, 2026-10-12):** goals, the progress log and
+**P2 remaining (checked against the code, 2026-10-13):** goals, the progress log and
 memory reach Dave in game (the door), scoped to the asker's xuid. Left: the index tools
-(they wait on M4), and `auto` log entries from add-on events beyond transport trips
-(the only `auto` writer today is `mc_transport`'s trip log; deaths and crafting write
-none).
+(they wait on M4), and `auto` log entries for crafting.
+
+**P2 auto deaths (built 2026-10-13):** the session drain, which already puts each death
+on the travel log's timeline, also writes an `auto` entry in that player's progress log
+(`app.mc_goal_log`, on no goal, at the death's time, keyed like the timeline by xuid):
+plain words, not Dave's, e.g. "Died at 10, 70, -4 in the Nether (burned in lava)" or
+"Died (killed by a zombie)", from the place and the cause and killer the pack reports
+(`sessions.death_entry`; anything that isn't a game id is dropped, and it fits the
+500-character cap). It is written only when the death is new to the timeline, so the
+drain re-reading events never repeats it, and through the drain's owner-scoped session
+under the table's existing RLS. Tests: `tests/unit/test_mc_death_journal.py` and
+`tests/integration/test_mc_travel_log_pg.py`.
 
 **P3 (2026-10-11):** `mc_show_map` and the `minecraft_map` card in Minecraft_Dave's chat
 (§M8, *Viewer, wave 3*), prompt `agent-minecraft-dave-v8`. Not in game: the in-game tier

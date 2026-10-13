@@ -15,6 +15,29 @@ test("the arrow points at all eight octants relative to where the player faces",
   assert.equal(r.arrowFor(here, N, 30, 40).blocks, 50);
 });
 
+test("the arrival chime rings once on reaching a waypoint, and again only after leaving", () => {
+  const wp = { x: 100, y: null, z: 100, dim: "overworld", label: "Base" };
+  const at = (x, z, dim = "minecraft:overworld") => ({ dim, x, z });
+  let heard;
+  const step = (here) => {
+    const got = r.arrivalChime(wp, here, heard);
+    heard = got.heard;
+    return got.ring;
+  };
+  assert.equal(step(at(0, 0)), false);
+  assert.equal(step(at(100, 102)), true); // "You're here" reads under 3 blocks
+  assert.equal(step(at(101, 100)), false); // still there: no second ring
+  assert.equal(step(at(100, 105)), false); // pacing the edge keeps it heard
+  assert.equal(step(at(100, 102)), false);
+  assert.equal(step(at(100, 108)), false); // walked back out: forgotten
+  assert.equal(step(at(100, 101)), true);
+  // Another dimension neither rings nor forgets; a new heading to the same spot rings.
+  assert.equal(step(at(100, 100, "minecraft:nether")), false);
+  assert.equal(heard, r.waypointId(wp));
+  assert.equal(r.arrivalChime({ ...wp, label: "Home" }, at(100, 100), heard).ring, true);
+  assert.deepEqual(r.arrivalChime(undefined, at(0, 0), "x"), { ring: false, heard: "x" });
+});
+
 test("the bearing wraps at ±180°: just either side of due south is still ↓", () => {
   const here = { x: 0, z: 0 };
   assert.equal(r.arrowFor(here, N, 0.01, 100).arrow, "↓");
@@ -30,6 +53,34 @@ test("the tracker line: spawn with no waypoint, arrival, depth and other dimensi
   assert.equal(r.trackerLine(wp, here, N, {}), "↗ Diamonds · You're here · y -58");
   assert.equal(r.trackerLine({ ...wp, z: -100, y: null }, here, N, {}), "↑ Diamonds · 100 blocks");
   assert.equal(r.trackerLine({ ...wp, dim: "nether" }, here, N, {}), "Diamonds is in the Nether");
+});
+
+test("in the wrong dimension the arrow points at the nearest known portal (§M4e)", () => {
+  const nether = { dim: "minecraft:nether", x: 0, z: 0 };
+  const via = [
+    { dim: "nether", x: 30, z: -40 },
+    { dim: "nether", x: 0, z: -10 },
+    { dim: "overworld", x: 1, z: 1 }, // the far side's: never this side's arrow
+  ];
+  const wp = { x: 800, y: null, z: 0, dim: "overworld", label: "Base", via };
+  assert.equal(r.trackerLine(wp, nether, N, {}), "↑ Nether portal · 10 blocks · Base is in the Overworld");
+  assert.equal(
+    r.trackerLine(wp, { ...nether, z: -9 }, N, {}),
+    "↑ Nether portal · You're here · Base is in the Overworld",
+  );
+  // No portal known on this side: the old line, and back home the target itself.
+  assert.equal(r.trackerLine({ ...wp, via: [] }, nether, N, {}), "Base is in the Overworld");
+  assert.equal(r.trackerLine(wp, { dim: "minecraft:overworld", x: 0, z: 0 }, N, {}), "→ Base · 800 blocks");
+});
+
+test("a waypoint's portals are checked and capped, never refusing the waypoint", () => {
+  const msg = (via) => JSON.stringify({ player: "P", x: 1, z: 2, dim: "overworld", via });
+  const many = Array.from({ length: 40 }, (_, i) => ({ dim: "nether", x: i, z: 0 }));
+  assert.equal(r.parseWaypoint(msg(many)).record.via.length, r.VIA_MAX);
+  const mixed = [{ dim: "moon", x: 1, z: 1 }, { dim: "nether", x: "a", z: 1 }, null, { dim: "nether", x: 5, z: 6, y: 9, junk: 1 }];
+  assert.deepEqual(r.parseWaypoint(msg(mixed)).record.via, [{ dim: "nether", x: 5, z: 6 }]);
+  assert.deepEqual(r.parseWaypoint(msg("nope")).record.via, []);
+  assert.deepEqual(r.parseWaypoint(msg(undefined)).record.via, []);
 });
 
 test("a Tricorder is its owner's only, and only the newest copy", () => {
@@ -82,7 +133,7 @@ test("the wrapper's config and Dave's waypoints are parsed strictly", () => {
   });
   assert.equal(r.parseWaypoint('{"player": "S", "clear": true, "end_scan": true}').endScan, true);
   const wp = r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "nether", "label": "' + "x".repeat(60) + '"}');
-  assert.deepEqual(wp.record, { x: 1, y: null, z: 2, dim: "nether", label: "x".repeat(40) });
+  assert.deepEqual(wp.record, { x: 1, y: null, z: 2, dim: "nether", label: "x".repeat(40), via: [] });
   assert.throws(() => r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "moon"}'));
   assert.throws(() => r.parseWaypoint('{"x": 1, "z": 2, "dim": "nether"}'));
 });

@@ -41,6 +41,9 @@ class Asker:
     spawn: Spot | None = None
     # The Old Maker items they have unlocked in this world (§M19, `minecraft/guide.py`).
     known: frozenset[str] = frozenset({"tricorder"})
+    # Their script `player.id` (§M4e), the number their pets' owner is recorded under
+    # in the world's files; None from a pack too old to send it.
+    pid: str | None = None
 
 
 _ASKERS: dict[str, Asker] = {}

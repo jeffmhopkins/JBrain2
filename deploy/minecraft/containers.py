@@ -22,7 +22,7 @@ import struct
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import leveldb
 import nbt
@@ -160,6 +160,66 @@ def _dim(key: bytes) -> int:
     return struct.unpack_from("<i", key, 8)[0] if len(key) == 13 else 0
 
 
+def signature(db: Path) -> tuple:
+    """The db files' names, sizes and mtimes: a change in any means a re-read."""
+    try:
+        return tuple(
+            sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in db.iterdir())
+        )
+    except FileNotFoundError:
+        return ()
+
+
+class Swept(Protocol):
+    """An index rebuilt from one sweep of a world's records (`refresh_together`)."""
+
+    db: Path
+    _clock: Any
+    _read_at: float | None
+    _signature: tuple
+
+    def wants(self, key: bytes) -> bool: ...
+
+    def keeps(self, key: bytes, value: bytes) -> bool: ...
+
+    def load(self, best: dict[bytes, bytes]) -> None: ...
+
+
+def refresh_together(indexes: list[Any], force: bool = False) -> None:
+    """Re-read every index of one world whose files changed, in ONE sweep of the
+    database: on a big world decompressing every table is the cost, so the chest and
+    entity indexes share it (§M4e) rather than each paying it. An index read within
+    REREAD_S is left alone unless `force`."""
+    due: list[Swept] = []
+    sig: tuple | None = None
+    for index in indexes:
+        now = index._clock()
+        if not force and index._read_at is not None and now - index._read_at < REREAD_S:
+            continue
+        index._read_at = now
+        sig = signature(index.db) if sig is None else sig
+        if sig != index._signature:
+            due.append(index)
+    if not due:
+        return
+    best: list[dict[bytes, tuple[int, bytes | None]]] = [{} for _ in due]
+
+    def wanted(key: bytes) -> bool:
+        return any(index.wants(key) for index in due)
+
+    for key, seq, value in leveldb.entries(due[0].db, wanted=wanted):
+        for index, kept in zip(due, best, strict=True):
+            if index.wants(key):
+                have = kept.get(key)
+                if have is None or seq > have[0]:
+                    # A value the index won't use is dropped as it streams past, its key
+                    # kept only so an older copy can't win.
+                    kept[key] = (seq, value if value is None or index.keeps(key, value) else b"")
+    for index, kept in zip(due, best, strict=True):
+        index.load({k: v for k, (_, v) in kept.items() if v})
+        index._signature = sig or ()
+
+
 class ContainerIndex:
     """Every readable container in the world with what it holds, read from the
     BlockEntity records and kept until the files change (at most every REREAD_S), as
@@ -175,31 +235,22 @@ class ContainerIndex:
         self.unopened = 0
         self.records = 0
 
+    def wants(self, key: bytes) -> bool:
+        return _is_block_entity(key)
+
+    def keeps(self, key: bytes, value: bytes) -> bool:
+        return True
+
     def refresh(self, force: bool = False) -> None:
         """Re-read when the files changed. `force` skips the REREAD_S wait, for right after
         the server was asked to write everything out."""
-        now = self._clock()
-        if not force and self._read_at is not None and now - self._read_at < REREAD_S:
-            return
-        try:
-            signature = tuple(
-                sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in self.db.iterdir())
-            )
-        except FileNotFoundError:
-            signature = ()
-        self._read_at = now
-        if signature == self._signature:
-            return
-        best: dict[bytes, tuple[int, bytes | None]] = {}
-        for key, seq, value in leveldb.entries(self.db, wanted=_is_block_entity):
-            have = best.get(key)
-            if have is None or seq > have[0]:
-                best[key] = (seq, value)
+        refresh_together([self], force)
+
+    def load(self, best: dict[bytes, bytes]) -> None:
+        """Rebuild from the sweep's newest live value of every key `wants` took."""
         found: list[tuple[Container, tuple[int, int] | None]] = []
         unreadable = unopened = records = 0
-        for key, (_, value) in best.items():
-            if value is None:
-                continue
+        for key, value in best.items():
             records += 1
             try:
                 got, skipped = parse(_dim(key), value)
@@ -210,7 +261,6 @@ class ContainerIndex:
             unopened += skipped
         self.containers = [c for c in _merge(found) if c.items]
         self.unreadable, self.unopened, self.records = unreadable, unopened, records
-        self._signature = signature
 
     def names(self, dim: int) -> set[str]:
         """Every item name held anywhere in the dimension."""
