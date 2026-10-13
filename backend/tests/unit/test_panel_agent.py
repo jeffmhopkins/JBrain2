@@ -435,6 +435,17 @@ def test_the_screen_keeps_the_whole_answer_or_what_fits_with_an_ellipsis() -> No
     assert cut and len(text.encode()) <= 1000
 
 
+def test_the_screen_never_splits_an_emoji() -> None:
+    """The panel draws emoji code point by code point (firmware-c6 README "Emoji"), so a cut
+    must leave each one whole: a stray byte would draw as nothing, or as the wrong glyph."""
+    for full in ("\U0001f436" * 300, "Walk the \U0001f436\U0001f415\u200d\U0001f9ba " * 40):
+        text, cut = panel_agent.screen_text(full, 255)
+        assert cut and len(text.encode()) <= 255
+        body = text.removesuffix("…")
+        assert full.startswith(body)
+        assert body.encode().decode("utf-8") == body
+
+
 def test_what_waits_is_said_in_words() -> None:
     ask = _acc("", AWAITING_OWNER, [{"name": "ask_owner", "args": {"questions": ["bad"]}}])
     assert panel_agent.waiting(ask, "dave") == "Dave has a question for you. Answer it in the app."

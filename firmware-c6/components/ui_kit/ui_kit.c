@@ -5,6 +5,7 @@
 
 #define C(hex) lv_color_hex(hex)
 
+#include "ui_emoji.h"
 #include "ui_jerv_mark.h"
 
 uint32_t ui_accent_color(ui_accent_t a)
@@ -23,30 +24,21 @@ uint32_t ui_accent_color(ui_accent_t a)
 
 LV_FONT_DECLARE(ui_font_clock_92)
 LV_FONT_DECLARE(ui_font_clock_124)
-LV_FONT_DECLARE(ui_glyphs_14)
-LV_FONT_DECLARE(ui_glyphs_16)
-LV_FONT_DECLARE(ui_glyphs_18)
-LV_FONT_DECLARE(ui_glyphs_20)
-LV_FONT_DECLARE(ui_glyphs_22)
-LV_FONT_DECLARE(ui_glyphs_24)
-LV_FONT_DECLARE(ui_glyphs_26)
-LV_FONT_DECLARE(ui_glyphs_28)
-LV_FONT_DECLARE(ui_glyphs_30)
 
 #define N_FONTS 10
 
 /* The built-in fonts are const, so each size is a copy of its descriptor (a few dozen bytes,
- * pointing at the same glyph data in flash) with the punctuation fallback hung on it. */
+ * pointing at the same glyph data in flash) with the emoji font of its size hung on it, which
+ * in turn falls back to the punctuation marks (ui_emoji.h). */
 static lv_font_t s_fonts[N_FONTS];
 static const struct {
     int px;
-    const lv_font_t *base, *glyphs;
+    const lv_font_t *base;
 } FONTS[N_FONTS] = {
-    {14, &lv_font_montserrat_14, &ui_glyphs_14}, {16, &lv_font_montserrat_16, &ui_glyphs_16},
-    {18, &lv_font_montserrat_18, &ui_glyphs_18}, {20, &lv_font_montserrat_20, &ui_glyphs_20},
-    {22, &lv_font_montserrat_22, &ui_glyphs_22}, {24, &lv_font_montserrat_24, &ui_glyphs_24},
-    {26, &lv_font_montserrat_26, &ui_glyphs_26}, {28, &lv_font_montserrat_28, &ui_glyphs_28},
-    {30, &lv_font_montserrat_30, &ui_glyphs_30}, {48, &lv_font_montserrat_48, &ui_glyphs_30},
+    {14, &lv_font_montserrat_14}, {16, &lv_font_montserrat_16}, {18, &lv_font_montserrat_18},
+    {20, &lv_font_montserrat_20}, {22, &lv_font_montserrat_22}, {24, &lv_font_montserrat_24},
+    {26, &lv_font_montserrat_26}, {28, &lv_font_montserrat_28}, {30, &lv_font_montserrat_30},
+    {48, &lv_font_montserrat_48},
 };
 
 const lv_font_t *ui_font(int px)
@@ -54,7 +46,7 @@ const lv_font_t *ui_font(int px)
     if (!s_fonts[0].get_glyph_dsc) {
         for (int i = 0; i < N_FONTS; i++) {
             s_fonts[i] = *FONTS[i].base;
-            s_fonts[i].fallback = FONTS[i].glyphs;
+            s_fonts[i].fallback = ui_emoji_font(FONTS[i].px);
         }
     }
     int best = 0, dist = 1000;

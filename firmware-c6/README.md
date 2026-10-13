@@ -2007,6 +2007,77 @@ own. App: 2,054,352 → 2,054,464 B; only the app image and its sum move in `dis
    `post`, at about 0.0.19's 57-61 KB.
 2. One `panel-shot`: `int_min` ≈ 51 KB at **`screenshot`**.
 
+## What 0.0.23 adds: colour emoji
+
+Before 0.0.23 an emoji in a bubble, a notice or a title drew as LVGL's empty box. Now 390 of them
+draw in colour, at every text size, everywhere ui_kit puts text. No screen builder changed for
+this. The sim's `jerv-emoji` and `notify-emoji` states show it.
+
+### Emoji
+
+**Which.** `components/ui_kit/emoji/emoji_set.txt` lists exactly the emoji the panel carries,
+each pinned by the SHA-256 of its source PNG. The set is the CLDR most-used faces first, then
+hearts, hands, people, animals (🐶 among them), plants, food, weather, celebration, travel,
+objects and symbols (✅ ❌ ⭐ 🎉 🔥). The images are Noto Color Emoji v2.051, Apache 2.0
+(`emoji/NOTICE`). To add one, append its code point and run:
+
+```sh
+python3 firmware-c6/tools/gen_emoji.py --pin   # fetch it and record its checksum
+python3 firmware-c6/tools/gen_emoji.py         # rewrite emoji_set.c and emoji_img.c
+```
+
+The script is plain Python with no dependencies. It caches the PNGs in `~/.cache/jbrain-emoji`
+and refuses any whose checksum differs. CI runs `--check`, so the list, the sources and the
+committed C cannot drift apart. Only the C is committed, so the IDF build never fetches anything
+and clean builds stay byte-identical.
+
+**Two sizes.** Each emoji is cut at 18 px and 24 px. Text up to 20 px uses the 18 px cut (steps,
+rows, Settings); text above 20 px uses the 24 px cut (bubbles at 22, titles at 26 and 30). One
+cut per font size would cost about twice the flash for little visible gain. Each image is an
+area average of the 128 px source, stored as RGB565A8 (what LVGL blends with alpha straight from
+flash) and trimmed to its visible box. Every emoji costs about 2.4 KB of app image.
+
+**How it draws.** `ui_emoji.c` is an LVGL font per Montserrat size, chained behind it:
+Montserrat, then emoji, then the marks font (`· – — … → −`, see Fonts). A code point Montserrat
+lacks reaches the emoji font. That font answers with an image glyph (`LV_USE_IMGFONT`) whose
+source is the const image in flash, so nothing is decoded or copied to draw it. The cell is
+centred on the line using the Montserrat size's own line height and baseline, and `--lifecycle`
+in the sim fails if LVGL ever moves them (`ui_emoji_metrics_ok`).
+
+**Sequences.** LVGL 9.2.2 asks for each glyph with no next letter, so the font sees one code point
+at a time. `emoji_logic.c` (host-tested) decides what each code point does:
+
+| What | On the glass |
+| --- | --- |
+| An emoji in the set | in colour |
+| Variation selectors (❤️ is ❤ + VS16) | nothing: the base emoji alone |
+| A skin tone (👍🏽) | nothing: the default yellow base |
+| A ZWJ sequence (🐕‍🦺) | its parts side by side (🐕🦺), Unicode's own fallback for a font that lacks it |
+| A flag's regional indicators, tag characters, the keycap mark | nothing: flags are not carried |
+| Any other emoji (Unicode's Extended_Pictographic) | a dim grey disc, never LVGL's box |
+| Everything else | plain text, exactly as before |
+
+The box needs no change. Every place it cuts text for the panel (`screen_text`, `panel_stream`'s
+`cut_utf8` and `fit_line`) cuts on a whole code point, so it never leaves half an emoji. A test
+pins this. A 255-byte bubble holds about 60 emoji.
+
+### The memory
+
+| | Cost |
+| --- | --- |
+| App image | 2,054,464 → 3,005,872 B (+951,408 B: 927,728 B of pixels, ~19 KB of image descriptors, the table and the code). 28% of the 4 MB slot is still free. |
+| Static RAM | none: every emoji object's `.data` and `.bss` is empty in the map. `.data` + `.bss` total 153,808 B. |
+| Drawing | an emoji is blended from flash like any glyph. No decoded copy is expected, but this has not yet been measured on the board. |
+
+### What to check on the glass
+
+1. A Jerv answer or a notice with 🐶, ✅ or 🎉 in it: colour, centred on the line, with a pixel
+   of space each side.
+2. ❤️ and 👍🏽 show a plain heart and a yellow thumb. 🐕‍🦺 shows a dog and a vest. A flag shows
+   nothing. An emoji newer than the set shows a dim disc.
+3. After a few emoji answers, `int_min` is where 0.0.20 left it (57-61 KB at `pickup`, `answer`
+   or `post`).
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:

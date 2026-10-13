@@ -92,6 +92,10 @@
 > **0.0.20** names a debug command's answer in the heap low's attribution (`@screenshot`,
 > `@answer`): 0.0.19's 50.9 KB "low at `pickup`" was a debug screenshot's stream, not the
 > pickup and not a notice (firmware README "What 0.0.20 adds").
+> **0.0.23** draws 390 emoji in colour wherever ui_kit puts text, as an LVGL image font chained
+> behind each Montserrat size. Sequences fall back the way Unicode's own fallback does, and any
+> other emoji is a dim disc instead of LVGL's box. It costs +951 KB of app image and no RAM
+> (firmware README "What 0.0.23 adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
