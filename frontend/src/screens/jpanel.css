@@ -1083,7 +1083,7 @@
 .jp-set-chevron {
   flex: none;
   color: var(--text-2);
-  font-size: 22px;
+  font-size: var(--fs-head);
   line-height: 1;
   transition: transform 0.15s ease-out;
 }
