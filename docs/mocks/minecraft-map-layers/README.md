@@ -103,12 +103,12 @@ control (`mapScreen` in each file).
 
 **Not drawn on the timeline's replay.** Places, villagers and beds are where they are now,
 not where they were then. Places, villagers and pets are **owner-only**, like M26's markers.
-The share link is question 5.
+The share link is question 4.
 
 ## 1 · Saved places
 
-Places live in `app.mc_places`: per player, per world folder and dimension, at most 100
-each. A player saves one through Dave where they stand (*"save this place as tree farm"*).
+Places live in `app.mc_places`: per player and world folder (each place carries its
+dimension), at most 100 a player a world. A player saves one through Dave where they stand (*"save this place as tree farm"*).
 The Tricorder points at them (`mc_set_waypoint place=`), a gate opens to them, and goals
 count chests within 48 blocks of them (§M24).
 
@@ -192,7 +192,7 @@ live. In the app the owner sees everything: Dave's in-game rules (own pets first
   - A pet card says *Where Rex was when the world last saved … one free to roam may have
     wandered since*.
   - While the world is live, **Read the world again** asks the box to save and re-read
-    (§M23's `flush`, at most every 30 s). That is question 9.
+    (§M23's `flush`, at most every 30 s). That is question 8.
 - **The markers.**
   - A **villager** is a neutral disc with its job's glyph. Thirteen jobs share seven
     glyphs:
