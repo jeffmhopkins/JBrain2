@@ -35,7 +35,7 @@ function share(scan: Scan, focus: "BlockyFox" | "Mira_P" = "BlockyFox") {
   // Mira_P nearby, so the view opened on her has BlockyFox in it too.
   if (fox && focus === "Mira_P") {
     players.players = players.players.map((p) =>
-      p.gamertag === "Mira_P" ? { ...p, dim: fox.dim, x: fox.x - 60, z: fox.z + 40 } : p,
+      p.gamertag === "Mira_P" ? { ...p, dim: fox.dim, x: fox.x - 90, z: fox.z + 90 } : p,
     );
   }
   const who = players.players.find((p) => p.gamertag === focus);
