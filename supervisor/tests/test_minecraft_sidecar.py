@@ -1455,9 +1455,9 @@ def test_snapshots_carry_every_valid_record_and_say_when_cut(tmp_path: Path) -> 
 
 
 def test_scans_become_events_type_checked_and_clamped(tmp_path: Path) -> None:
-    """§M25 on the map: a Tricorder scan's lines ride the M26 pipe — op and dimension from
-    their lists, coordinates clamped, the label cut, at most eight block ids, and a
-    `found` only with a whole block."""
+    """§M25 on the map: a Tricorder scan's lines ride the M26 pipe — op and dimension
+    from their lists, coordinates clamped, the label cut, at most eight block ids, and
+    a `found` only with a whole block."""
     b = bds.Bds(tmp_path)
     b.world = "slot2"
     ids = ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"]
@@ -1492,7 +1492,12 @@ def test_scans_become_events_type_checked_and_clamped(tmp_path: Path) -> None:
     set_, found, far, none, stop = got
     assert (set_["player"], set_["label"], set_["ids"]) == ("BlockyFox", "diamond", ids)
     assert "dim" not in set_
-    assert (found["dim"], found["x"], found["y"], found["z"]) == ("overworld", 41, -58, -79)
+    assert (found["dim"], found["x"], found["y"], found["z"]) == (
+        "overworld",
+        41,
+        -58,
+        -79,
+    )
     assert far["x"] == -bds.COORD_MAX
     assert none["player"] == "Mira_P"
     assert none["label"] == "x" * bds.MARKER_TEXT_MAX

@@ -231,7 +231,14 @@ export function mcMapPoint(
   };
 }
 
-export function mcMapPlayers(slot: string, live: boolean): MinecraftMapPlayers {
+/** `scan` (the mock's `?mcscan=`) puts BlockyFox's Tricorder on a live scan for diamond
+ *  (§M25): `found` one 13 blocks north-east and 6 below, `none` nearby, or kept while
+ *  they're `offline`. */
+export function mcMapPlayers(
+  slot: string,
+  live: boolean,
+  scan: "" | "found" | "none" | "offline" = "",
+): MinecraftMapPlayers {
   const t = nowS();
   const castle = slot === "slot2";
   const log = fixtureLog();
@@ -252,7 +259,7 @@ export function mcMapPlayers(slot: string, live: boolean): MinecraftMapPlayers {
             y: last[2],
             z: last[3],
             at: on ? t - 8 : last[0],
-            online: live && on,
+            online: live && on && !(scan === "offline" && p.gamertag === "BlockyFox"),
             // Dave has BlockyFox's Tricorder on some diamonds to the north-east.
             target:
               p.gamertag === "BlockyFox"
@@ -263,6 +270,24 @@ export function mcMapPlayers(slot: string, live: boolean): MinecraftMapPlayers {
                     z: -437,
                     label: "Diamonds",
                     set_at: t - 600,
+                  }
+                : null,
+            scan:
+              p.gamertag === "BlockyFox" && scan
+                ? {
+                    label: "diamond",
+                    state: scan === "none" ? ("none" as const) : ("found" as const),
+                    found:
+                      scan === "none"
+                        ? null
+                        : {
+                            dim: seg.dim,
+                            x: Math.floor(last[1]) + 9,
+                            y: Math.floor(last[2]) - 6,
+                            z: Math.floor(last[3]) - 9,
+                          },
+                    at: t - 40,
+                    set_at: t - 900,
                   }
                 : null,
           },

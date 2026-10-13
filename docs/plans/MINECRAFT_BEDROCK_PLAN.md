@@ -14,8 +14,7 @@ owner's call:
 - **M9:** an arrival chime, and the Nether pointer aiming at a known portal (needs M4).
 - **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
   switch, a latency measurement, and `auto` log entries for deaths and crafting.
-- **P1 follow-up:** goals in the PWA, and (§M25) the scan target on the map: both in the mock
-  gate.
+- **P1 follow-up:** goals in the PWA (in the mock gate). §M25's scan on the map is built.
 - **Box checks:** `docs/runbooks/MINECRAFT_HOME_TEST.md`.
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
@@ -2644,15 +2643,61 @@ and dig, with no deep scan spent. Chests and containers stay on `mc_find_item`'s
   near it, "Arrow cleared. Ask me when you need a heading.", would be false after a stop
   (the arrow returns to their waypoint, not cleared). A new quick-answer line needs the
   owner's sign-off on the lore page first.
-- **The map (§M21).** Not shown: a scan's target is found in game every 10 s and never
-  reaches the backend, so showing it would need a new pack-to-backend event and a target
-  row that doesn't overwrite the waypoint the scan returns to. Skipped; during a scan the
-  map keeps showing the player's waypoint.
+- **The map (§M21).** Built 2026-10-13 from the GUI gate `docs/mocks/minecraft-scan-on-map/`:
+  the owner picked **variant A with C's depth line**, and its review's blocking findings
+  are fixed (the plate keeps the name, the distance is the Tricorder's, Dave can read a
+  scan). The M26 pipe, end to end:
+  - **Pack** (1.11.0): `{"ev":"scan","op":"set|found|none|stop",player,label,ids}` (a
+    `found` adds `dim,x,y,z`) when a scan starts, when what it finds changes, and when it
+    stops (a stop, a waypoint set, Dave's clear). Sent from the 10 s scan step, so a player
+    not holding the Tricorder is covered; a once-a-second check of every scanner's found
+    block (one `getBlock` each) notices a mined target held or not, and the rescan it
+    triggers sends the change within two seconds. A steady result is **resent once a
+    minute** (every sixth scan): the card says *Found 40 s ago* from the last line heard,
+    so it stays true (to the minute) without a line per scan. A failed scan (mid-portal)
+    sends nothing, so the map keeps the last result rather than flickering to *none*.
+    After each load, one `{"ev":"scans","all":[{player,label,ids}]}` from the
+    `jb:scan:<gamertag>` properties (which now store the player's name), **retried each
+    frame until it goes out**: the once-flag is set only after a successful emit (§M26's
+    gate-snapshot lesson).
+  - **Sidecar** (`bds.py` `SCAN_EVENTS`): `op` from its list, the dimension from the enum,
+    coordinates clamped, the player cut to 32, the label to 40, at most 8 ids shaped like
+    block ids, a `found` only with a whole block, a snapshot to 256 with `truncated`.
+  - **Backend:** migration `0244` adds `app.mc_tricorder_scans`, a sibling of the targets
+    table, never columns on it, so the waypoint under a scan is never overwritten: one row
+    per world and casefolded gamertag, `state` `set` / `found` / `none`, the block,
+    `scanned_at` (the last line heard) and `set_at`. Owner RLS plus the targets' share
+    read (a share link reads its own world's), with its isolation test.
+    `minecraft/livescan.py` applies the lines in the session drain: a snapshot replaces a
+    world's set (a scan still on keeps its last result until its first new scan; a
+    changed one starts empty), and `world_replaced` (reset, import) clears it.
+    `/map/players` gives each player `scan: {label, state, found, at, set_at}`.
+  - **Dave:** `mc_tricorder_scan` v2 gains `status` (read-only; in game only the asker's
+    own): what it scans for, the reach (16 across, and the y range 16 up and down from
+    where they stand, cut at the world's floor and ceiling), and what the last scan found
+    with the held Tricorder's distance (across, to the block's centre), the compass word
+    and how far below or above them it is; offline, that it picks up again when they're
+    back on. `mc_show_map` v3 gains the focus `scan` (the gamertag in `label`): the card is
+    centred on the scanner and draws the scan live. Prompt `agent-minecraft-dave-v22`.
+  - **The map** (DESIGN.md "The Tricorder's live scan on the Minecraft map"): every online
+    scanner's 33 × 33 square (viewfinder corners and a hairline in their colour, a 10 %
+    wash while something's found), the found block in §M21's target grammar, the bearing
+    only for the tapped player, and the waypoint under a scan hidden. One plate,
+    *BlockyFox · Scanning: diamond* (*· none nearby*), in the name's place, falling back
+    to the name. The card: *Tricorder · Scanning: diamond · 13 blocks north-east · y -58*,
+    *↓ 6 blocks below them · y -58*, *Within 16 blocks, y -64 to -36. Found 40 s ago.*
+    Offline, only *Scanning: diamond — resumes when BlockyFox is back on*. Not on the
+    replay; shared maps show it by the Tricorder target's rule.
 - **Lore.** Canon on the lore page as "The Tricorder's live scan" (2026-10-12): "until
   you ask Dave to stop or ask him for a new heading", which is why Dave's clear (spawn,
   a new heading) ends a scan too.
 
 **Box checks (after deploy).**
+- The map's scan: that `scan` lines reach the drain on the real server (the debug API's
+  `GET /minecraft/logs?tail=` shows the `[jbrain] {"ev":"scan",…}` lines), that the
+  after-load `scans` snapshot lands once the properties are readable, that a mined block
+  shows on the map within a couple of seconds with the Tricorder put away, and that a
+  steady target's *Found N s ago* never reads more than about a minute.
 - The cost of `getBlocks` on the real server: the `scan took N ms` lines in the server log
   (the debug API's `GET /minecraft/logs?tail=`) for a dense block (stone) and a rare one
   (diamond ore), with several players online. If a scan is regularly past a few ms,

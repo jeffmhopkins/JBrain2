@@ -2,8 +2,19 @@
 
 > **Status:** Living · **Last verified:** 2026-10-13
 >
-> **Open — waiting for the owner's pick.** Three variants. An independent review is due
-> before the pick. Behaviour sources: `docs/plans/MINECRAFT_BEDROCK_PLAN.md`:
+> **Decided (owner, 2026-10-13): A with C's depth line** ("A + depth line"), with the
+> independent review's (`REVIEW.md`) blocking findings fixed in the build. The offline line
+> is *Scanning: diamond — resumes when BlockyFox is back on*, and the lore page was updated
+> to match (it remembers what you were scanning for and picks up again when you're back).
+> Built: DESIGN.md "The Tricorder's live scan on the Minecraft map" and plan §M25 are the
+> binding description now; where they differ from these pictures, they win:
+> - one plate, *BlockyFox · Scanning: diamond*, in the name's place (the review's A1);
+> - the distance is the held Tricorder's, across (*13 blocks*), not 3D (X1);
+> - Dave reads a scan with `mc_tricorder_scan` `status` (X2);
+> - the card states the vertical reach, *Within 16 blocks, y -64 to -36* (owner,
+>   2026-10-13).
+>
+> Behaviour sources: `docs/plans/MINECRAFT_BEDROCK_PLAN.md`:
 > - §M25 ("The Tricorder's live scan"). Its *The map (§M21)* note says the scan isn't shown,
 >   because its target never reaches the backend.
 > - §M21 (the Tricorder target on the map).
@@ -117,7 +128,7 @@ nearby, open.
   component.
 - B's badge is too small to carry *none nearby*, which is the state worth seeing.
 
-## Data path (what the map needs; nothing is built)
+## Data path (as proposed; built as plan §M25 "The map" describes)
 
 The scan's target is found in the pack every 10 s and never leaves it (§M25). Showing it
 needs the M26 pipe: structured pack lines, the sidecar's `PACK_EVENTS`, and a backend row.

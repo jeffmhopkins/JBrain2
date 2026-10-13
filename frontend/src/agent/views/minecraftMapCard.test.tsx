@@ -263,6 +263,117 @@ describe("the minecraft_map chat card", () => {
     await waitFor(() => expect(texts).toContain("Tree farm"));
   });
 
+  it("Dave's answer about a scan draws the scanner live: one plate, the square's words", async () => {
+    const now = NOW / 1000;
+    const fox = {
+      xuid: "2535411",
+      gamertag: "BlockyFox",
+      dim: "overworld",
+      x: 32,
+      y: -52,
+      z: -70,
+      at: now,
+      online: true,
+      target: { dim: "overworld", x: 300, y: null, z: 0, label: "Tree farm", set_at: 0 },
+      scan: {
+        label: "diamond",
+        state: "found",
+        found: { dim: "overworld", x: 41, y: -58, z: -79 },
+        at: now - 40,
+        set_at: now - 900,
+      },
+    };
+    fetchMock.mockImplementation(async (input) => {
+      const path = new URL(String(input), "http://box").pathname;
+      if (path === "/api/minecraft/map/players") {
+        return json({ slot: "slot2", world: "Castle Hill", live: true, players: [fox] });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 360,
+      bottom: 220,
+      width: 360,
+      height: 220,
+      toJSON: () => ({}),
+    });
+    show({
+      slot: "slot2",
+      world: "Castle Hill",
+      loaded: true,
+      dim: "overworld",
+      center: { x: 32, z: -70 },
+      zoom: -2,
+      overlays: { players: true },
+      focus: { kind: "scan", label: "blockyfox", x: 30, y: -50, z: -70, at: null },
+      trail: { player: "2535411", gamertag: "BlockyFox", from: null, to: null },
+    });
+    const lines = await waitFor(() => {
+      const el = document.querySelector(".mc-map-det-scan");
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+    const words = (lines.textContent ?? "").replace(/\u00a0/g, " ");
+    expect(words).toContain("Tricorder · Scanning: diamond · 13 blocks north-east · y -58");
+    expect(words).toContain("↓ 6 blocks below them · y -58");
+    expect(words).toContain("Within 16 blocks, y -64 to -36. Found 40 s ago.");
+    // The scanner where they are now, not where Dave saw them.
+    expect(screen.getByText("BlockyFox")).toBeInTheDocument();
+    expect(document.querySelector(".tv-mc-xyz")).toHaveTextContent("X 32 · Y -52 · Z -70");
+    // One plate carries the name and the scan; the name is never on its own beside it.
+    await waitFor(() => expect(texts).toContain("BlockyFox · Scanning: diamond"));
+    expect(texts).not.toContain("BlockyFox");
+  });
+
+  it("a scan card for a player who's offline says it resumes, and draws no square", async () => {
+    const now = NOW / 1000;
+    fetchMock.mockImplementation(async (input) => {
+      const path = new URL(String(input), "http://box").pathname;
+      if (path === "/api/minecraft/map/players") {
+        return json({
+          slot: "slot2",
+          world: "Castle Hill",
+          live: true,
+          players: [
+            {
+              xuid: "2535411",
+              gamertag: "BlockyFox",
+              dim: "overworld",
+              x: 32,
+              y: -52,
+              z: -70,
+              at: now - 600,
+              online: false,
+              scan: { label: "diamond", state: "none", found: null, at: now - 700, set_at: 0 },
+            },
+          ],
+        });
+      }
+      return new Response(null, { status: 404 });
+    });
+    show({
+      slot: "slot2",
+      world: "Castle Hill",
+      loaded: true,
+      dim: "overworld",
+      center: { x: 32, z: -70 },
+      zoom: -2,
+      overlays: {},
+      focus: { kind: "scan", label: "BlockyFox", x: 32, y: -52, z: -70, at: null },
+      trail: null,
+    });
+    expect(
+      await screen.findByText(/Scanning: diamond — resumes when BlockyFox is back on/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Offline · Overworld/)).toBeInTheDocument();
+    await waitFor(() => expect(texts).toContain("BlockyFox"));
+    expect(texts.some((t) => t.includes("Scanning"))).toBe(false);
+  });
+
   it("a malformed payload draws nothing it shouldn't", () => {
     const { container } = show({ slot: "../../etc", dim: "<img src=x onerror=alert(1)>" });
     expect(screen.getByText("This map can't be shown.")).toBeInTheDocument();

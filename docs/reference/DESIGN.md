@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3849,7 +3849,58 @@ dimension is marked either way. The player card gets one line under the coordina
 `.mc-map-det-tri`: a crosshair glyph, **Tricorder** then *Diamonds · 330 blocks north-east
 · y -58* (a compass word, north being −z as in game; *y* only when the target has a
 depth), or *Diamonds · in the Nether* across a portal. Hidden on the compact (timeline)
-card and on the replay. Shared maps show it the same way.
+card and on the replay. Shared maps show it the same way. While a live scan is on (below)
+the waypoint waits under it: neither it nor its bearing is drawn, and its line gives way to
+the scan's.
+
+### The Tricorder's live scan on the Minecraft map (owner, 2026-10-13 — binding mock: `docs/mocks/minecraft-scan-on-map/a-square-always.html`, variant A with C's depth line; plan §M25)
+
+*"Dave, scan for diamonds"* puts a player's Tricorder in scan mode: every 10 s the pack
+finds the nearest matching block in a 33 × 33 × 33 box round them. The map shows it from
+the pack's own lines (`scan` in `/api/minecraft/map/players`), **always drawn** for every
+online scanner, so *who is scanning, and is it finding anything?* answers with no tap.
+
+- **The square:** the 33 × 33 blocks searched, centred on the block the player stands in,
+  drawn to the block (`scanSquare`): **viewfinder corners** (2.5 px over a 5 px halo, in
+  the player's colour, up to 14 px long) joined by a 1 px hairline at 70 %. Never dashed, so
+  it never reads as a beacon's protected square or the chunk grid, even for a green player.
+  A **10 % wash** of the player's colour fills it while a block is found. It is the
+  horizontal footprint only; the depth limit is in words (below).
+- **The found block** is the Tricorder target's grammar (§M21: two rings and a dot in the
+  player's colour over a halo), because in game it *is* the arrow's target. The 8 / 6 dashed
+  **bearing** is drawn only for the tapped player. The **waypoint** under a scan is not
+  drawn: two bearings from one player would misstate where the arrow points.
+- **One plate:** a scanner's label is ***BlockyFox · Scanning: diamond*** (*· none nearby*
+  when the scan is empty), in the name's own place and rank (players, after the tapped
+  thing). If it can't be placed it falls back to the name before the drop rule drops it, so
+  a scanner never has fewer words on the map than anyone else.
+- **Draw order:** the squares and found blocks over the beacon squares and gate lines, under
+  every tile; players on top.
+- **The card**, under the coordinates, a `.mc-map-det-tri` line with a **radar** glyph
+  (Lucide `radar`) in place of the crosshair:
+  - **Found:** **Tricorder** · *Scanning: diamond · 13 blocks north-east · y -58* — the
+    shipped `tricorderLine` with the scan as its target, so the distance is the held
+    Tricorder's (across, to the block's centre), never 3D; then *↓ 6 blocks below them · y
+    -58* (*↑ … above them*, or *Level with them*) in `--text`, the depth a top-down map
+    can't show; then, micro, *Within 16 blocks, y -64 to -36. Found 40 s ago.* — the
+    vertical reach for where they stand (16 each way, cut at the world's floor and ceiling)
+    and the last scan heard (the pack resends a steady result once a minute, so this is
+    never more than about a minute stale) — and, when they have a waypoint, *Their
+    waypoint, Tree farm, comes back when the scan stops.*
+  - **None nearby:** *Scanning: diamond · none nearby*, then *Nothing within 16 blocks, y
+    -64 to -36. Last scan 40 s ago.*
+  - **Started, not yet reported:** *Scanning: diamond*, then *Within … The first scan is on
+    its way.*
+  - **Offline:** only *Scanning: diamond — resumes when BlockyFox is back on* (canon: it
+    remembers and picks up again when they're back). Nothing is drawn on the map.
+- **Dave's chat card:** the `minecraft_map` focus kind **`scan`** (its label the gamertag),
+  centred on the scanner at 4 px a block, draws their square, block, bearing and plate from
+  the live players route, and its "what it shows" block is the scanner (*Online ·
+  Overworld*) with the same lines.
+- **Not drawn** on the timeline's replay (a scan isn't recorded) or the compact timeline
+  card. **Shared maps** follow the Tricorder target's rule and show it the same way.
+- **Values** use the shipped line's ASCII minus (*y -58*), so the card's words match the
+  Tricorder line beside them; numbers and units never break (no-break spaces).
 
 ### The Minecraft map share (owner, 2026-10-11 — mock reviewed in chat; plan §M20)
 

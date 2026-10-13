@@ -556,7 +556,8 @@ def scan_event(data: dict[str, Any]) -> dict[str, Any] | None:
         items = data.get("all")
         if not isinstance(items, list):
             return None
-        good = [s for s in (_scan_who(i) for i in items[:SNAPSHOT_MAX]) if s is not None]
+        kept = (_scan_who(i) for i in items[:SNAPSHOT_MAX])
+        good = [s for s in kept if s is not None]
         return {"all": good, "truncated": len(items) > SNAPSHOT_MAX}
     op = data.get("op")
     who = _scan_who(data)
