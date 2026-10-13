@@ -66,6 +66,7 @@
 #include "thread_model.h"
 #include "time_logic.h"
 #include "tp_logic.h"
+#include "emoji_logic.h"
 #include "ui_hold.h"
 #include "ui_pin.h"
 #include "ui_theme.h"
@@ -2002,6 +2003,51 @@ static void test_a_still_finger_is_a_long_press_once_and_a_scroll_never(void)
     sh_long_press(&lp, false, 0, 0, 9000);
     CHECK(!sh_long_press(&lp, true, 300, 300, 10000) && !sh_long_press(&lp, false, 0, 0, 10300),
           "a tap is never one");
+}
+
+/* ---- emoji ---- */
+
+static void test_emoji_are_drawn_skipped_or_marked_and_text_is_left_alone(void)
+{
+    bool sorted = EMOJI_SET_N > 0;
+    for (uint16_t i = 1; i < EMOJI_SET_N; i++)
+        if (EMOJI_SET[i] <= EMOJI_SET[i - 1]) sorted = false;
+    CHECK(sorted, "the set is strictly ascending, so the search finds every entry");
+    bool found = true;
+    for (uint16_t i = 0; i < EMOJI_SET_N; i++) {
+        uint16_t at = 0xFFFF;
+        if (emoji_kind(EMOJI_SET[i], &at) != EMOJI_IN_SET || at != i) found = false;
+    }
+    CHECK(found, "every emoji of the set is found at its own index (its image's place)");
+
+    uint16_t at = 0;
+    CHECK(emoji_kind(0x1F436, &at) == EMOJI_IN_SET && EMOJI_SET[at] == 0x1F436,
+          "the dog face is carried");
+    CHECK(emoji_kind(0x2705, NULL) == EMOJI_IN_SET && emoji_kind(0x274C, NULL) == EMOJI_IN_SET &&
+              emoji_kind(0x2B50, NULL) == EMOJI_IN_SET && emoji_kind(0x1F389, NULL) == EMOJI_IN_SET &&
+              emoji_kind(0x1F525, NULL) == EMOJI_IN_SET,
+          "check, cross, star, party popper and fire are carried");
+
+    CHECK(emoji_kind(0xFE0F, NULL) == EMOJI_INVISIBLE && emoji_kind(0xFE0E, NULL) == EMOJI_INVISIBLE,
+          "variation selectors take no room");
+    CHECK(emoji_kind(0x200D, NULL) == EMOJI_INVISIBLE,
+          "a ZWJ takes no room, so its sequence shows its parts side by side");
+    CHECK(emoji_kind(0x1F3FB, NULL) == EMOJI_INVISIBLE && emoji_kind(0x1F3FF, NULL) == EMOJI_INVISIBLE,
+          "a skin tone takes no room and leaves the base emoji");
+    CHECK(emoji_kind(0x1F1FA, NULL) == EMOJI_INVISIBLE && emoji_kind(0x1F1F8, NULL) == EMOJI_INVISIBLE,
+          "a flag's regional indicators take no room");
+    CHECK(emoji_kind(0x20E3, NULL) == EMOJI_INVISIBLE && emoji_kind(0xE0067, NULL) == EMOJI_INVISIBLE,
+          "a keycap and a tag character take no room");
+
+    CHECK(emoji_kind(0x1FAE8, NULL) == EMOJI_UNKNOWN && emoji_kind(0x1F9A9, NULL) == EMOJI_UNKNOWN,
+          "an emoji the set lacks is the placeholder, never LVGL's box");
+
+    const uint32_t text[] = {'A', '~', 0xE9, 0xB7, 0x2013, 0x2014, 0x2026, 0x2192, 0x2212,
+                             0x4E2D, 0x0416, 0xF00C, 0xF04B};
+    bool plain = true;
+    for (size_t i = 0; i < sizeof text / sizeof *text; i++)
+        if (emoji_kind(text[i], NULL) != EMOJI_NOT) plain = false;
+    CHECK(plain, "letters, the marks font's punctuation, CJK and LVGL's symbols stay plain text");
 }
 
 static void test_the_clock_face_opens_its_alarms_only_on_a_two_second_hold(void)
@@ -6290,6 +6336,7 @@ int main(void)
     test_play_tone_is_whitelisted_and_harmless();
     test_a_still_finger_is_a_long_press_once_and_a_scroll_never();
     test_the_clock_face_opens_its_alarms_only_on_a_two_second_hold();
+    test_emoji_are_drawn_skipped_or_marked_and_text_is_left_alone();
     test_an_agent_answer_is_kept_whole_on_the_glass();
     test_the_menu_opens_only_over_a_clear_conversation();
     test_clear_chat_takes_two_taps_within_three_seconds();

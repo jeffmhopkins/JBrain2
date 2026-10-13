@@ -43,6 +43,7 @@
 #include "svc_settings_fake.h"
 #include "settings_sync.h"
 #include "svc_siblings_drv.h"
+#include "ui_emoji.h"
 #include "ui_kit.h"
 
 #define W UI_W
@@ -615,6 +616,7 @@ static const char SIBLINGS[] =
     "{\"siblings\":[{\"device_id\":\"0b8e5f7a-1111-4c2d-9e3f-5a6b7c8d9e01\",\"name\":\"Quorra\"},"
     "{\"device_id\":\"0b8e5f7a-2222-4c2d-9e3f-5a6b7c8d9e02\",\"name\":\"Tamsin\"}]}";
 static bool s_no_names;
+static bool s_emoji;
 
 /* The box's own answer to `GET /endpoint/alarms`: the PWA mock's three alarms, through the panel's
  * own path (svc_alarms_offer, then the UI task's service), as the device takes them. */
@@ -685,7 +687,24 @@ static void fixtures(void)
     } else {
         for (size_t i = 2; i < 4; i++) svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
     }
+    /* 0.0.23: emoji in both bubbles. Carried ones in colour; a heart with VS16 and a toned thumb
+       as their base; a ZWJ service dog as its two parts; a flag as nothing; and one the set
+       lacks (shaking face) as the dim mark, never a box. */
+    static const msg_t EMOJI[] = {
+        {3, true, false, false, false, 0, "Walk the \U0001F436 at 6? \U0001F64F", "", 0, 803},
+        {4, false, false, false, false, 0,
+         "Done \u2705 I'll remind you at 6. \u2764\uFE0F \U0001F44D\U0001F3FD "
+         "\U0001F415\u200D\U0001F9BA \U0001FAE8 \U0001F1EC\U0001F1E7 \u2B50\U0001F525",
+         "", 0, 804},
+    };
+    if (s_emoji)
+        for (size_t i = 0; i < sizeof EMOJI / sizeof *EMOJI; i++) svc_messages_fake_add("jerv", &EMOJI[i]);
     step(20);
+}
+
+static void emoji_chat(void)
+{
+    s_emoji = true;
 }
 
 /* Each fixture is the box's current conversation, so the header carries its title. */
@@ -882,6 +901,14 @@ static void notify_info(void)
 {
     sim_notice_push(&(sim_notice_t){1, "Ops", "Disk 91% full",
                                     "The box is running low on space. Ops → Disk shows what is using it.",
+                                    0, {0}, false, 20, SIM_PIC_NONE, 0});
+}
+
+/* 0.0.23: emoji in a notice's title (the 24 px cut) and body. */
+static void notify_emoji(void)
+{
+    sim_notice_push(&(sim_notice_t){1, "Jerv", "Dinner's ready \U0001F355",
+                                    "Pasta \U0001F35D and salad \U0001F957 on the table. \U0001F389",
                                     0, {0}, false, 20, SIM_PIC_NONE, 0});
 }
 
@@ -1116,6 +1143,9 @@ static const state_t STATES[] = {
     {"notify-banner", notify_banner, {WAIT(100)}},
     {"notify-audio", notify_audio, {WAIT(100), SOUND_PLAYING}},
     {"notify-picture-turned", notify_picture_turned, {WAIT(2900)}},
+    /* 0.0.23: colour emoji in a conversation and in a notice. */
+    {"jerv-emoji", emoji_chat, {OPEN("jerv")}},
+    {"notify-emoji", notify_emoji, {WAIT(1900)}},
     /* KEY from Settings: the shell's talk to Jerv, over whatever is open. */
     {"rec-anywhere", NULL, {OPEN("settings"), KEY_DOWN, WAIT(3400)}},
     /* Its release: the Jerv thread, the hold's bubble waiting for its transcript. */
@@ -1369,6 +1399,10 @@ static int lifecycle(void)
 {
     static const char *const IDS[] = {"jerv", SVC_MESSAGES_THREAD_1, SVC_MESSAGES_THREAD_2, "minecraft", "clock", "settings"};
     int bad = 0;
+    if (!ui_emoji_metrics_ok()) {
+        printf("emoji fonts do not match the built-in fonts' line height and baseline\n");
+        bad = 1;
+    }
     step(3000);
     unsigned objs = shell_obj_count(), timers = shell_timer_count();
     for (size_t i = 0; i < sizeof IDS / sizeof *IDS; i++) {

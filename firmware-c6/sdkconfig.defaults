@@ -66,6 +66,8 @@ CONFIG_LV_FONT_MONTSERRAT_28=y
 CONFIG_LV_FONT_MONTSERRAT_30=y
 CONFIG_LV_FONT_MONTSERRAT_48=y
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_20=y
+# Emoji are image glyphs (ui_emoji.c); the software renderer draws one only with this on.
+CONFIG_LV_USE_IMGFONT=y
 # A failed LVGL assert panics rather than spinning (lv_port/lv_assert_trap.h).
 CONFIG_LV_ASSERT_HANDLER_INCLUDE="lv_assert_trap.h"
 

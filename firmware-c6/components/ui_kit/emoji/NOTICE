@@ -1,0 +1,17 @@
+The colour emoji images in emoji_img.c are derived from Noto Color Emoji
+(https://github.com/googlefonts/noto-emoji, tag v2.051, png/128/), Copyright 2021 Google Inc.
+
+They are licensed under the Apache License, Version 2.0 (the "License"); you may not use these
+files except in compliance with the License. You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed under the License
+is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+implied. See the License for the specific language governing permissions and limitations under the
+License.
+
+Modifications: each source image is downscaled to 18 and 24 pixels by area averaging, converted to
+RGB565 with an 8-bit alpha plane, and trimmed to its visible box, by
+firmware-c6/tools/gen_emoji.py. The placeholder for an emoji not carried (a grey disc) is drawn by
+that script and is not from Noto.
