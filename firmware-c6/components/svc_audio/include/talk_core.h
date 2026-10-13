@@ -103,7 +103,9 @@ void tk_init(tk_t *t);
  * critical section, where nothing may take a lock. */
 void tk_copy(char *dst, size_t cap, const char *src);
 
-/* UI task. */
+/* UI task. Whether a hold could start now: nothing of the last exchange still has the radio,
+ * the codec or the phase. */
+bool tk_can_begin(const tk_t *t);
 tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id);
 /* Right after a TK_BEGIN_OK, under the same lock: who the hold is with. */
 void tk_set_agent(tk_t *t, tk_agent_t agent, bool fresh);
@@ -242,6 +244,19 @@ void tk_steps_summary(const tk_steps_t *s, uint32_t ms, char *out, size_t cap);
 #define TK_SPK_START_BYTES 4800 /* 150 ms */
 #define TK_SPK_TAIL_MS 120
 bool tk_spk_may_start(uint32_t since_amp_ms, uint32_t queued, bool more);
+
+/* ---- the ring's size, per kind of exchange (0.0.18) ----
+ * A talk records into its ring while the upload's connection opens and then plays the reply
+ * through it, so it keeps 0.0.10's half second either way (16 KB). A stored message played back
+ * (TK_KIND_LISTEN) needs none of that slack: the box already has the whole clip and sends it as
+ * fast as TCP lets it, so the receive window and mbedTLS's record buffer sit full behind the ring
+ * the whole play, and an underrun re-arms the speaker's start (a pause, never a stutter). Its ring
+ * holds the speaker's start plus one network slice and no more — the 10 KB it gives back is what
+ * lifts a play's low-water mark over 52 KB (README "What 0.0.18 adds", the memory). */
+#define TK_NET_SLICE 1024 /* the main task's read and write: ~30 ms of speech, one TLS record */
+#define TK_RING_TALK 16384
+#define TK_RING_PLAY 6144
+uint32_t tk_ring_bytes(tk_kind_t kind);
 
 /* ---- the conversation's bubbles ---- */
 #define TALK_HEARING "Transcribing…"

@@ -49,6 +49,14 @@ uint32_t tk_ring_write(tk_ring_t *r, const void *src, uint32_t n)
     return n;
 }
 
+_Static_assert(TK_RING_PLAY >= TK_SPK_START_BYTES + TK_NET_SLICE,
+               "a play's ring holds the speaker's start and one more slice from the network");
+
+uint32_t tk_ring_bytes(tk_kind_t kind)
+{
+    return kind == TK_KIND_LISTEN ? TK_RING_PLAY : TK_RING_TALK;
+}
+
 uint32_t tk_ring_read(tk_ring_t *r, void *dst, uint32_t n)
 {
     const uint32_t tail = r->tail;
@@ -102,6 +110,11 @@ void tk_copy(char *dst, size_t cap, const char *src)
     dst[n] = '\0';
 }
 
+bool tk_can_begin(const tk_t *t)
+{
+    return t->phase == TK_IDLE && !t->net_busy && !t->mic_on && !t->spk_on;
+}
+
 tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id)
 {
     if (t->phase == TK_PLAY) {
@@ -110,7 +123,7 @@ tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id)
     }
     /* A dropped exchange still has the radio or the codec until its owner notices (≤ 20 ms on
      * the codec, one bounded network call on the radio): a new hold waits for both. */
-    if (t->phase != TK_IDLE || t->net_busy || t->mic_on || t->spk_on) return TK_BEGIN_BUSY;
+    if (!tk_can_begin(t)) return TK_BEGIN_BUSY;
     t->phase = TK_REC;
     t->since_ms = now_ms;
     t->held_ms = 0;

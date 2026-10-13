@@ -15,6 +15,7 @@
 #include "apps.h"
 #include "dbg_core.h"
 #include "lvgl.h"
+#include "settings_model.h"
 #include "shell.h"
 #include "sim_png.h"
 #include "alarm_port_fake.h"
@@ -23,7 +24,12 @@
 #include "svc_box_fake.h"
 #include "svc_convo_drv.h"
 #include "svc_display.h"
+#include "disp_logic.h"
+#include "orient_port_fake.h"
+#include "svc_calib.h"
 #include "svc_display_fake.h"
+#include "svc_orient.h"
+#include "svc_orient_drv.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
 #include "svc_notice_fake.h"
@@ -56,6 +62,31 @@ static uint32_t sim_ms(void)
     return s_ms;
 }
 
+/* The glass itself (0.0.18): each strip turned onto it exactly as the device's flush turns it
+   (disp_logic.c), so a rotated state's PNG is what the panel shows, not what LVGL drew. */
+static uint16_t s_glass[W * H];
+
+static void to_glass(const lv_area_t *a, const uint16_t *px)
+{
+    static uint16_t strip[W * STRIP_ROWS], piece[DISP_ROT_PIECE_PX];
+    const uint8_t rot = svc_display_rotation();
+    const disp_win_t l = {a->x1, a->y1, a->x2, a->y2};
+    const int32_t w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
+    memcpy(strip, px, (size_t)(w * h) * 2);
+    if (rot == 1 || rot == 3) {
+        const int32_t k = disp_rot_piece_rows(h);
+        for (int32_t r0 = 0; r0 < w; r0 += k) {
+            const disp_win_t g = disp_rot_piece(rot, W, l, strip, r0, k, piece);
+            for (int32_t y = g.y1; y <= g.y2; y++)
+                memcpy(&s_glass[y * W + g.x1], &piece[(y - g.y1) * h], (size_t)h * 2);
+        }
+        return;
+    }
+    if (rot == 2) disp_reverse(strip, (uint32_t)(w * h));
+    const disp_win_t g = disp_rot_area(rot, W, l);
+    for (int32_t y = g.y1; y <= g.y2; y++) memcpy(&s_glass[y * W + g.x1], &strip[(y - g.y1) * w], (size_t)w * 2);
+}
+
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
     /* A capture must see whole rows top to bottom. A strip that is not full width means LVGL
@@ -67,6 +98,7 @@ static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
         else
             dbg_shot_stripe(&s_cap.shot, (uint16_t)a->y1, (uint16_t)(a->y2 - a->y1 + 1), (const uint16_t *)px);
     }
+    to_glass(a, (const uint16_t *)px);
     lv_display_flush_ready(d);
 }
 
@@ -301,6 +333,8 @@ static void step(uint32_t ms)
                                 svc_audio_ringing()))
             svc_audio_chime();
         svc_alarms_service(svc_rtc_uptime_ms());
+        svc_orient_service(svc_rtc_uptime_ms());
+        svc_display_fake_service();
         shell_pump();
         lv_timer_handler();
     }
@@ -412,6 +446,8 @@ static void boot(const char *only)
     alarm_port_fake_wipe();
     svc_alarms_init();
     svc_notice_init();
+    svc_orient_start();
+    svc_calib_custom();
     dbg_sys_init();
     dbg_cmd_bind("screenshot", cmd_screenshot);
     dbg_cmd_bind("set", cmd_set);
@@ -619,6 +655,25 @@ static void session(void)
     post_arrives();
 }
 
+/* 0.0.18: the panel turned, as the fake accelerometer reads it (default axes: a reading is the
+   opposite of down; ~0.95 g in the glass's plane, the rest through it). */
+static void turn_right(void)
+{
+    orient_port_fake_set(-15400, 0, 5600);
+}
+
+static void upside_down(void)
+{
+    orient_port_fake_set(0, 15400, 5600);
+}
+
+/* The QMI8658 did not answer at boot. */
+static void no_imu(void)
+{
+    orient_port_fake_fail("id");
+    svc_orient_start();
+}
+
 #define CMDS 8
 typedef struct {
     const char *name;
@@ -659,6 +714,8 @@ typedef struct {
  * steps, the last still running and one failed; and, after them, the answer. */
 #define STEPS "steps"
 #define REPLY_TIDE "reply tide"
+/* Not a debug command (0.0.18): the first N taps of a touch calibration, each on its cross. */
+#define CAL_TAPS_N(n) "cal taps " #n
 
 /* Mock boards 1-17 (docs/mocks/jpanel-c6/canvas.json), by the live panel's `start` names. */
 static const state_t STATES[] = {
@@ -713,6 +770,17 @@ static const state_t STATES[] = {
     {"settings", NULL, {OPEN("settings")}},
     {"settings-end", NULL, {OPEN("settings"), SCROLL_END}},
     {"settings-usb", no_battery, {OPEN("settings")}},
+    /* 0.0.18: the panel turned on its right edge, and upside down: the content turned to match
+       (the PNG is the glass, each strip turned the device's way). */
+    {"home-turned", turn_right, {WAIT(1200)}},
+    {"clock-upside-down", upside_down, {OPEN("clock"), WAIT(1200)}},
+    /* No tilt sensor: the Auto-rotate switch dead, and why. */
+    {"settings-no-imu", no_imu, {OPEN("settings")}},
+    /* Touch calibration (mock Calib.dc.html): the second cross with one tap on it; a tap that
+       missed; and the card once saved (Today, Reset calibration). */
+    {"calib", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), CAL_TAPS_N(4)}},
+    {"calib-missed", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), TAP(240, 400), WAIT(200)}},
+    {"calib-saved", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), CAL_TAPS_N(12), WAIT(600), SCROLL_END}},
     /* The first tap on Disconnect: rose, "Tap again to disconnect". */
     {"settings-armed", NULL, {OPEN("settings"), SCROLL_END, TAP(240, 418), WAIT(300)}},
     {"updating", downloading, {OPEN("settings"), SCROLL(680)}},
@@ -861,6 +929,19 @@ static int render(const char *name, const char *png, const char *snap)
             step(300);
             continue;
         }
+        if (!strncmp(st->cmds[i], "cal taps ", 9)) {
+            const int n = atoi(st->cmds[i] + 9);
+            for (int k = 0; k < n; k++) {
+                int16_t x, y;
+                calib_target((uint8_t)(k / 3), &x, &y);
+                char tap[96];
+                snprintf(tap, sizeof tap, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}", x + k % 3 - 1, y);
+                run(tap);
+                /* A synthetic stroke is nine pointer reads (~270 ms): the next starts after it. */
+                step(k % 3 == 2 ? 700 : 400);
+            }
+            continue;
+        }
         if (!strncmp(st->cmds[i], "tap ", 4)) {
             if (!tap_label(st->cmds[i] + 4)) {
                 fprintf(stderr, "%s: nothing says \"%s\"\n", name, st->cmds[i] + 4);
@@ -889,7 +970,8 @@ static int render(const char *name, const char *png, const char *snap)
         fprintf(stderr, "%s: the stripe stream did not decode\n", name);
         return 1;
     }
-    if (png && !png_write_rgb565(png, frame, W, H)) {
+    /* A turned panel's picture is its glass; upright, the two are the same pixels. */
+    if (png && !png_write_rgb565(png, svc_display_rotation() ? s_glass : frame, W, H)) {
         fprintf(stderr, "%s: cannot write %s\n", name, png);
         return 1;
     }
@@ -1615,6 +1697,38 @@ static int touch_checks(void)
     step(600);
     expect(svc_audio_fake_chimes() == chimes + 1, "with the chime switched off it is silent");
     run("{\"cmd\":\"set\",\"name\":\"notif_chime\",\"value\":1}");
+
+    /* Touch calibration (0.0.18): BOOT over the crosses cancels them and stays in Settings, the
+       old mapping in force; a perfect run is saved and the card says so. */
+    run(OPEN("settings"));
+    scroll_to(LV_COORD_MAX);
+    tap_label("Calibrate");
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"calibrating\":true") && strstr(snap, "\"capturing\":true"),
+           "Calibrate puts up the crosses and measures with no calibration in force");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(300);
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"calibrating\":false") && strstr(snap, "\"capturing\":false") &&
+               shell_open_app() && !strcmp(shell_open_app()->id, "settings"),
+           "BOOT cancels it and stays in Settings");
+    tap_label("Calibrate");
+    for (int k = 0; k < CAL_TARGETS * CAL_TAPS; k++) {
+        int16_t x, y;
+        calib_target((uint8_t)(k / CAL_TAPS), &x, &y);
+        char tap[96];
+        snprintf(tap, sizeof tap, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}", x, y + 2);
+        run(tap);
+        step(k % CAL_TAPS == CAL_TAPS - 1 ? 700 : 400);
+    }
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"custom\":true") && strstr(snap, "\"last\":\"saved\"") && labelled(lv_screen_active(), "Reset calibration"),
+           "four crosses tapped: saved, and Reset calibration offered");
+    scroll_to(LV_COORD_MAX);
+    tap_label("Reset calibration");
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"custom\":false") != NULL, "and Reset puts the measured mapping back");
+    run("{\"cmd\":\"home\"}");
     return s_touch_bad;
 }
 
