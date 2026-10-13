@@ -970,3 +970,270 @@
 .jp-alarm-spacer {
   flex: 1;
 }
+
+/* ===== The desk panel's settings (docs/mocks/jpanel-c6/PwaPanelSettings.dc.html) ===== */
+
+.jp-settings {
+  display: flex;
+  flex-direction: column;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Honest status (DESIGN.md principle 5): "On the panel" only once the panel reported it back. */
+.jp-set-sync {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+.jp-set-sync.ok {
+  color: var(--ok-text);
+}
+
+.jp-set-sync.warn {
+  color: var(--warn-text);
+}
+
+.jp-set-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+
+.jp-set-subhead {
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.4;
+}
+
+.jp-set-offline {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--r-input);
+  background: var(--amber-tint);
+  color: var(--warn-text);
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+}
+
+.jp-set-groups {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.jp-set-group {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--border);
+}
+
+.jp-set-group-head {
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.jp-set-group-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.jp-set-group-title {
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.jp-set-group-sum {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jp-set-tag {
+  flex: none;
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  background: var(--amber-tint);
+  color: var(--warn-text);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+.jp-set-chevron {
+  flex: none;
+  color: var(--text-2);
+  font-size: 22px;
+  line-height: 1;
+  transition: transform 0.15s ease-out;
+}
+
+.jp-set-chevron.open {
+  transform: rotate(90deg);
+}
+
+.jp-set-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 0 14px;
+}
+
+.jp-set-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+.jp-set-line {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-note);
+}
+
+.jp-set-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.jp-set-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.jp-set-line.dim,
+.jp-set-times.dim,
+.jp-set-colours.dim {
+  opacity: 0.45;
+}
+
+.jp-set-times {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.jp-set-times label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.jp-set-times input,
+.jp-set-line select {
+  min-height: 44px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 0 10px;
+  font: 400 16px system-ui; /* 16px+ so iOS does not zoom the viewport on focus */
+  color: var(--text);
+  background: var(--surface-2);
+  color-scheme: light dark;
+}
+
+.jp-set-times input.waiting {
+  border-color: var(--warn);
+}
+
+.jp-set-colours {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.jp-set-seg {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+/* Each colour is drawn in itself, on black, as the panel shows it. */
+.jp-set-seg button {
+  min-height: 44px;
+  border: 2px solid var(--border);
+  border-radius: var(--r-input);
+  background: #0a0a0a;
+  font: inherit;
+  font-size: var(--fs-note);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.jp-set-seg button.on {
+  border-color: var(--accent);
+}
+
+.jp-set-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-note);
+}
+
+.jp-set-slider-head {
+  display: flex;
+  justify-content: space-between;
+}
+
+.jp-set-slider-head strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.jp-set-slider input {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.jp-set-state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+}
+
+.jp-set-state::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+
+.jp-set-state.warn {
+  color: var(--warn-text);
+}
+
+.jp-set-state.ok {
+  color: var(--ok-text);
+}
