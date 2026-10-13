@@ -4,8 +4,8 @@ The history path enforces family-sees-family inside the `location_fixes` RLS pol
 (migration 0067). The live path is its twin: the MQTT ACL endpoint asks "may this
 device subscribe to that group member's topic?" — i.e. "do these two subjects share
 a family group?" — which is exactly `app.viewer_may_see`. That function is SECURITY
-DEFINER, so it answers regardless of the caller's scope; a bare session suffices to
-invoke it.
+DEFINER (it reads the owner-only view_scope on the caller's behalf), but since 0242 it
+answers a non-owner only about its OWN subject, so the question is asked as the viewer.
 """
 
 from typing import Protocol
@@ -13,11 +13,7 @@ from typing import Protocol
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.db.session import SessionContext, scoped_session
-
-# viewer_may_see reads the owner-only view_scope internally (as definer), so the
-# caller needs no domain scope — only EXECUTE, which PUBLIC has.
-_CTX = SessionContext()
+from jbrain.db.session import device_context, scoped_session
 
 
 class ViewScopeRepo(Protocol):
@@ -32,7 +28,10 @@ class SqlViewScopeRepo:
         """True iff the two subjects share a family group (deny-by-default)."""
         if not viewer_subject_id or not target_subject_id:
             return False
-        async with scoped_session(self._maker, _CTX) as session:
+        # The function reads only the subject pin and the principal kind, and every
+        # caller already holds the viewer's subject — not always its principal id.
+        ctx = device_context("", viewer_subject_id)
+        async with scoped_session(self._maker, ctx) as session:
             allowed = (
                 await session.execute(
                     text("SELECT app.viewer_may_see(:v, :t)"),
