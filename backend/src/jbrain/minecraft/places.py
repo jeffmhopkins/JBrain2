@@ -59,7 +59,14 @@ def place_view(row: Any, beacons: list[dict[str, Any]], gates: list[dict[str, An
         t = g["target"]
         if g["state"] != "open" or t is None:
             continue
-        if t["dim"] == row.dim and t["x"] == row.x and t["z"] == row.z:
+        # By block: a mine saved under a house shares its X/Z. A place saved without a
+        # height can only be matched by its column.
+        if (
+            t["dim"] == row.dim
+            and t["x"] == row.x
+            and t["z"] == row.z
+            and (row.y is None or t["y"] == row.y)
+        ):
             leads.append(g["id"])
         elif _same(t["place"], row.name) and any(
             _same(g["planter"], who) for who in (row.gamertag, row.saved_as)
@@ -74,7 +81,8 @@ def place_view(row: Any, beacons: list[dict[str, Any]], gates: list[dict[str, An
         "x": row.x,
         "y": row.y,
         "z": row.z,
-        # Saving a name again moves the place: `updated_at` is when it was put here.
+        # Saving a name again elsewhere moves the place: `updated_at` is when it was put
+        # here, and a re-save on the same block leaves it (`mc_place_save`).
         "saved_at": _epoch(row.updated_at),
         "moved": row.updated_at > row.created_at,
         "covered": [

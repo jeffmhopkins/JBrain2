@@ -2139,17 +2139,21 @@ def build_minecraft_handlers(
             else:
                 await s.execute(
                     text(
+                        # `updated_at` is when the place was put where it is (the map's
+                        # "moved"), so saving it again on the same block keeps it.
                         "UPDATE app.mc_places SET name = :n, gamertag = :g, x = :x, y = :y,"
-                        " z = :z, dim = :d, updated_at = now() WHERE id = :id"
+                        " z = :z, dim = :d, updated_at = CASE WHEN (x, y, z, dim) IS DISTINCT"
+                        " FROM (:x, :y, :z, :d) THEN now() ELSE updated_at END WHERE id = :id"
                     ),
                     {**values, "id": old.id},
                 )
-        moved = f" (moved from {spot_text(_spot(old))})" if old is not None else ""
+        was = _spot(old) if old is not None else None
+        moved = f" (moved from {spot_text(was)})" if was is not None and was != spot else ""
         return ToolOutput(
             f"Saved {fence(name)} for {fence(player.gamertag)} at {spot_text(spot)}, from"
             f" {origin}{moved}. mc_set_waypoint with place={name!r} points their tricorder"
             " there.",
-            result_brief=name if old is None else f"{name} (moved)",
+            result_brief=f"{name} (moved)" if moved else name,
         )
 
     async def mc_places(arguments: dict, ctx: ToolContext) -> str | ToolOutput:

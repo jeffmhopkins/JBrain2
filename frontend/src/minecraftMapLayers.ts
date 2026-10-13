@@ -7,6 +7,7 @@
 import type {
   MinecraftDim,
   MinecraftGate,
+  MinecraftGateTarget,
   MinecraftGoalProgress,
   MinecraftMapEntities,
   MinecraftMapPlaces,
@@ -195,8 +196,14 @@ export function placeGroups(m: MinecraftMapPlaces | null, roster: RosterEntry[])
   return out;
 }
 
-/** Where a place is, as a key a gate's aim is compared with (by block, X1). */
-export const spotKey = (dim: MinecraftDim, x: number, z: number) => `${dim}@${x},${z}`;
+/** Where a place is, as a key a gate's aim is compared with (by block, X1): a mine saved
+ *  under a house shares its column. A place saved without a height keys its column only. */
+export const spotKey = (dim: MinecraftDim, x: number, y: number | null, z: number) =>
+  `${dim}@${x},${y ?? "*"},${z}`;
+
+/** Whether a gate aimed at this block ends at a saved place's pin. */
+export const aimedAtPlace = (placedAt: Set<string>, t: MinecraftGateTarget) =>
+  placedAt.has(spotKey(t.dim, t.x, t.y, t.z)) || placedAt.has(spotKey(t.dim, t.x, null, t.z));
 
 // ---- villagers ----
 

@@ -1552,7 +1552,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     // the replay: a place is where it is now.
     const herePlaces =
       st.ov.places && !replay ? (st.places?.places ?? []).filter((p) => p.dim === st.dim) : [];
-    const placedAt = new Set(herePlaces.map((p) => spotKey(p.dim, p.x, p.z)));
+    const placedAt = new Set(herePlaces.map((p) => spotKey(p.dim, p.x, p.y, p.z)));
     // The tapped place's goal reach, among the lines under every tile (DESIGN draw order).
     if (sel?.kind === "place" && sel.p.dim === st.dim && !replay) {
       reachCircle(ctx, v, f, sel.p, tokColor(sel.p.xuid, sel.p.gamertag), t);

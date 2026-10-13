@@ -32,7 +32,7 @@ import {
   toScreen,
   toWorld,
 } from "../minecraftMap";
-import { REACH_BLOCKS, type VillageMark, jobOf, spotKey } from "../minecraftMapLayers";
+import { REACH_BLOCKS, type VillageMark, aimedAtPlace, jobOf } from "../minecraftMapLayers";
 import {
   type Avoid,
   type Box,
@@ -745,7 +745,7 @@ export function drawWorldMarkers(
     }
     for (const e of ends) {
       const tg = e.g.target;
-      if (tg && w.placedAt?.has(spotKey(tg.dim, tg.x, tg.z))) continue;
+      if (tg && w.placedAt && aimedAtPlace(w.placedAt, tg)) continue;
       if (off(e.sx, e.sy)) continue;
       placePin(ctx, e.sx, e.sy, t);
       const own = `g:${e.g.id}`;

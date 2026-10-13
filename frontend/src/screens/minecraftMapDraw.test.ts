@@ -165,7 +165,7 @@ describe("drawing beacons and gates", () => {
     const { ctx, log } = recordingCtx();
     const out = drawWorldMarkers(ctx, VIEW, FRAME, TOK, {
       ...base,
-      placedAt: new Set([spotKey("overworld", -160, -140)]),
+      placedAt: new Set([spotKey("overworld", -160, 68, -140)]),
     });
     // The line is still drawn to it; the violet pin, its label and its tap are the place's.
     expect(out.avoid.segs).toHaveLength(1);
@@ -175,9 +175,21 @@ describe("drawing beacons and gates", () => {
     // A place saved somewhere else keeps the gate's own pin where it still leads.
     const moved = drawWorldMarkers(recordingCtx().ctx, VIEW, FRAME, TOK, {
       ...base,
-      placedAt: new Set([spotKey("overworld", -100, -140)]),
+      placedAt: new Set([spotKey("overworld", -100, 68, -140)]),
     });
     expect(moved.pins.map((p) => p.g.id)).toEqual([1]);
+    // A mine saved under it, on the same column, isn't where the gate leads.
+    const below = drawWorldMarkers(recordingCtx().ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -160, 12, -140)]),
+    });
+    expect(below.pins.map((p) => p.g.id)).toEqual([1]);
+    // A place saved without a height can only be matched by its column.
+    const noHeight = drawWorldMarkers(recordingCtx().ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -160, null, -140)]),
+    });
+    expect(noHeight.pins).toEqual([]);
   });
 
   it("this round's markers are keyed one by one, never by kind (X5)", () => {

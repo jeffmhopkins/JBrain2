@@ -6,7 +6,8 @@ The contract:
   player's newest gamertag from the play sessions, not the row's;
 - a place says when it was put where it is (`updated_at`) and whether it was moved;
 - a No-Spawn Beacon covers it by the pack's own chunk rule;
-- a gate leads *here* only when its aim is this place's block (the review's X1); a gate
+- a gate leads *here* only when its aim is this place's block, height and all (the
+  review's X1; a place under another shares its column); a gate
   named for it but aimed where it was is `gates_moved`;
 - a map-share visitor reads no place: the table has no share policy.
 """
@@ -55,6 +56,8 @@ async def _seed(maker: async_sessionmaker) -> None:
             ("Tree farm", -160, 68, -140, "overworld", T0, T0),
             ("Nether base", -20, 72, 40, "nether", T0, T1),
             ("Bakery", 40, 70, -56, "overworld", T0, T1),
+            # Dug under Tree farm: the same column, another block.
+            ("Mine", -160, 12, -140, "overworld", T0, T0),
         ):
             who = (FOX, "BlockyFox") if name != "Bakery" else ("name:Mira_P", "Mira_P")
             await s.execute(
@@ -102,23 +105,32 @@ async def _seed(maker: async_sessionmaker) -> None:
             {"t": T0},
         )
         gates = (
-            # Aimed at Tree farm's block: it leads there.
-            (1, "Tree farm", "overworld", -160, -140, "BlockyFox"),
+            # Aimed at Tree farm's block (the pack aims at the place's own Y): it leads there.
+            (1, "Tree farm", "overworld", -160, 68, -140, "BlockyFox"),
             # Aimed at Nether base before it was moved: it leads where it was.
-            (3, "Nether base", "nether", -40, 40, "Blocky_Fox"),
+            (3, "Nether base", "nether", -40, 72, 40, "Blocky_Fox"),
             # Another planter's gate that happens to be named Home: not Home's.
-            (4, "Home", "overworld", 0, 0, "Mira_P"),
+            (4, "Home", "overworld", 0, 70, 0, "Mira_P"),
         )
-        for gid, place, dim, x, z, planter in gates:
+        for gid, place, dim, x, y, z, planter in gates:
             await s.execute(
                 text(
                     "INSERT INTO app.mc_world_gates (world, gate_id, dim, x, y, z, axis,"
                     " planter, state, target_place, target_dim, target_x, target_y,"
                     " target_z, seen_at)"
                     " VALUES ('castle', :id, 'overworld', 28, 71, 14, 'x', :p, 'open', :tp,"
-                    " :td, :tx, 70, :tz, :t)"
+                    " :td, :tx, :ty, :tz, :t)"
                 ),
-                {"id": gid, "p": planter, "tp": place, "td": dim, "tx": x, "tz": z, "t": T0},
+                {
+                    "id": gid,
+                    "p": planter,
+                    "tp": place,
+                    "td": dim,
+                    "tx": x,
+                    "ty": y,
+                    "tz": z,
+                    "t": T0,
+                },
             )
         await s.execute(
             text(
@@ -134,7 +146,7 @@ async def test_every_players_places_with_whose_when_and_what_covers_them(maker) 
     await _seed(maker)
     got = await places.for_world(maker, "castle")
     by = {p["name"]: p for p in got["places"]}
-    assert list(by) == ["Home", "Nether base", "Tree farm", "Bakery"]  # by player, then name
+    assert list(by) == ["Home", "Mine", "Nether base", "Tree farm", "Bakery"]  # player, name
     home = by["Home"]
     assert home["gamertag"] == "Blocky_Fox" and home["xuid"] == FOX
     # A player the server hasn't seen keeps the row's own gamertag.
@@ -157,6 +169,8 @@ async def test_a_gate_leads_to_a_place_by_its_block_not_its_name(maker) -> None:
     assert (by["Nether base"]["gates"], by["Nether base"]["gates_moved"]) == ([], [3])
     # Gate 4 is Mira's, named "Home" and aimed elsewhere: it isn't BlockyFox's Home's.
     assert (by["Home"]["gates"], by["Home"]["gates_moved"]) == ([], [])
+    # The mine under Tree farm shares its X and Z, not its block.
+    assert (by["Mine"]["gates"], by["Mine"]["gates_moved"]) == ([], [])
 
 
 async def test_one_dimension_and_a_world_with_none(maker) -> None:
