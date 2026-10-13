@@ -736,10 +736,11 @@ static void draw_poop(uint16_t *fb, int kind, int cx, int floor, float s, float 
         if (lk->shape == POOP_SWIRL || lk->shape == POOP_TOWER) {
             fill_circle(fb, cx + U(5), floor - U(TIERS[sh].top), U(6), body); /* the curl */
         } else if (lk->shape == POOP_LOG) {
-            /* Segments, so it reads as a log and not a sausage; the face at the front end. */
+            /* Segments, so it reads as a log and not a sausage; the face at the front end, so
+               the seams stay behind it, clear of its eyes (review). */
             const uint16_t seam = rgb(lk->r * 3 / 5, lk->g * 3 / 5, lk->b * 3 / 5);
             for (int j = -1; j <= 1; j += 2) {
-                fill_rect(fb, cx + j * U(22) - U(10), floor - U(22), U(3) + 1, U(18), seam);
+                fill_rect(fb, cx + j * U(11) - U(19), floor - U(22), U(3) + 1, U(18), seam);
             }
             fx = cx + U(20);
         }

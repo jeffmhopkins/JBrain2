@@ -67,7 +67,7 @@ typedef struct {
     uint32_t born;
     float x;                    /* figure units from the floor's centre */
     float v;                    /* figure units a second */
-    int kind;                   /* which of POOP_KINDS this one is */
+    int kind;                   /* which of POOP_KINDS this one is; POOP_KINDS before any */
 } poop_t;
 
 void poop_reset(poop_t *p);

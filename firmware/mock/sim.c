@@ -670,6 +670,7 @@ EXPORT(sim_init) void sim_init(void)
     stream_init(&g_st, g_ring, s_play, bufs);
     stream_set_arbiter(&g_st, true);
     sm_init(&s_sm, g_now);
+    poop_reset(&r_poop);
     face_rest(&r_fst);
     caption_reset(&r_cap);
     r_active_at = g_now;

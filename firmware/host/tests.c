@@ -1220,6 +1220,14 @@ static void test_eight_poops_each_its_own(void)
         seen |= 1 << pp.kind;
     }
     CHECK(seen == (1 << POOP_KINDS) - 1, "and every one turns up");
+    /* Including first after boot: a fresh one has no "last" to avoid (review). */
+    int first = 0;
+    for (uint32_t r = 0; r < POOP_KINDS; r++) {
+        poop_reset(&pp);
+        poop_drop(&pp, 0, 0.0f, POOP_HALF, r);
+        first |= 1 << pp.kind;
+    }
+    CHECK(first == (1 << POOP_KINDS) - 1, "any of the eight can be the first");
 
     /* On the glass: eight different pictures; the stink as much as the kind says; flies
        only on the ones that have them. Drawn at a moment every stink line is on screen. */

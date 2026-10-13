@@ -34,6 +34,7 @@ const poop_look_t *poop_look(int kind)
 void poop_reset(poop_t *p)
 {
     memset(p, 0, sizeof(*p));
+    p->kind = POOP_KINDS; /* none yet: the first may be any of the eight */
 }
 
 bool poop_ate(poop_t *p, uint32_t now)
@@ -53,8 +54,9 @@ bool poop_ate(poop_t *p, uint32_t now)
 
 void poop_drop(poop_t *p, uint32_t now, float x, float half, uint32_t rnd)
 {
-    const unsigned prev = (unsigned)p->kind % POOP_KINDS;
-    p->kind = (int)((prev + 1u + rnd % (POOP_KINDS - 1u)) % POOP_KINDS);
+    const unsigned prev = (unsigned)p->kind;
+    p->kind = prev < POOP_KINDS ? (int)((prev + 1u + rnd % (POOP_KINDS - 1u)) % POOP_KINDS)
+                                : (int)(rnd % POOP_KINDS);
     /* Clamped here and not left to the slide: on a level panel it never starts sliding, so
        whatever it lands on is where it stays. */
     if (x > half) x = half;
