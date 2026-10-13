@@ -32,6 +32,34 @@ test("the tracker line: spawn with no waypoint, arrival, depth and other dimensi
   assert.equal(r.trackerLine({ ...wp, dim: "nether" }, here, N, {}), "Diamonds is in the Nether");
 });
 
+test("in the wrong dimension the arrow points at the nearest known portal (§M4e)", () => {
+  const nether = { dim: "minecraft:nether", x: 0, z: 0 };
+  const via = [
+    { dim: "nether", x: 30, z: -40 },
+    { dim: "nether", x: 0, z: -10 },
+    { dim: "overworld", x: 1, z: 1 }, // the far side's: never this side's arrow
+  ];
+  const wp = { x: 800, y: null, z: 0, dim: "overworld", label: "Base", via };
+  assert.equal(r.trackerLine(wp, nether, N, {}), "↑ Nether portal · 10 blocks · Base is in the Overworld");
+  assert.equal(
+    r.trackerLine(wp, { ...nether, z: -9 }, N, {}),
+    "↑ Nether portal · You're here · Base is in the Overworld",
+  );
+  // No portal known on this side: the old line, and back home the target itself.
+  assert.equal(r.trackerLine({ ...wp, via: [] }, nether, N, {}), "Base is in the Overworld");
+  assert.equal(r.trackerLine(wp, { dim: "minecraft:overworld", x: 0, z: 0 }, N, {}), "→ Base · 800 blocks");
+});
+
+test("a waypoint's portals are checked and capped, never refusing the waypoint", () => {
+  const msg = (via) => JSON.stringify({ player: "P", x: 1, z: 2, dim: "overworld", via });
+  const many = Array.from({ length: 40 }, (_, i) => ({ dim: "nether", x: i, z: 0 }));
+  assert.equal(r.parseWaypoint(msg(many)).record.via.length, r.VIA_MAX);
+  const mixed = [{ dim: "moon", x: 1, z: 1 }, { dim: "nether", x: "a", z: 1 }, null, { dim: "nether", x: 5, z: 6, y: 9, junk: 1 }];
+  assert.deepEqual(r.parseWaypoint(msg(mixed)).record.via, [{ dim: "nether", x: 5, z: 6 }]);
+  assert.deepEqual(r.parseWaypoint(msg("nope")).record.via, []);
+  assert.deepEqual(r.parseWaypoint(msg(undefined)).record.via, []);
+});
+
 test("a Tricorder is its owner's only, and only the newest copy", () => {
   assert.equal(r.tricorderStatus({ owner: "-1", serial: 2 }, "-1", 2), "own");
   assert.equal(r.tricorderStatus({ owner: "-1", serial: 1 }, "-1", 2), "retired");
@@ -82,7 +110,7 @@ test("the wrapper's config and Dave's waypoints are parsed strictly", () => {
   });
   assert.equal(r.parseWaypoint('{"player": "S", "clear": true, "end_scan": true}').endScan, true);
   const wp = r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "nether", "label": "' + "x".repeat(60) + '"}');
-  assert.deepEqual(wp.record, { x: 1, y: null, z: 2, dim: "nether", label: "x".repeat(40) });
+  assert.deepEqual(wp.record, { x: 1, y: null, z: 2, dim: "nether", label: "x".repeat(40), via: [] });
   assert.throws(() => r.parseWaypoint('{"player": "A", "x": 1, "z": 2, "dim": "moon"}'));
   assert.throws(() => r.parseWaypoint('{"x": 1, "z": 2, "dim": "nether"}'));
 });

@@ -45,6 +45,7 @@ MC_DATA_PATHS = {
     "SNAPSHOT_INDEX": "snapshot-index.json",
     "UPLOAD_DIR": "uploads",
     "STRUCTURE_DIR": "structures",
+    "PLAYER_IDS": "player-ids.json",
 }
 
 TOKEN = "test-token"

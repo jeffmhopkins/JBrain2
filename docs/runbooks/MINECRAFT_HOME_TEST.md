@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-12 (Dave's welcome and first-time beats, DW1)
+> **Status:** Living · **Last verified:** 2026-10-13 (villagers, pets and the portal arrow, §M4e; prior: Dave's welcome and first-time beats, DW1)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -71,6 +71,9 @@ world** in slot 1, never on an imported real world.
 | 19 | `/dave hello`, then `/d hello` | **The welcome's six Dave lines again**, 3 s apart, with no darkness, no title and no second Tricorder, and no "Dave is thinking…" | your eyes; no `"ev":"dave"` line in the log |
 | 20 | Your first death (row 7) | Dave's two first-death lines ("…that was close…", then "The transporter can only carry you…"); a later death says nothing more. If a Power Pack saved your things on that first death (row 13 first), only the first line | your eyes |
 | 21 | Your first Ender Pearl, then your first Power Pack (row 4) | The pearl line once ("…is that an Ender Pearl?…"); on the first Power Pack, the field line only with the keep switch on, and the saved-places line only with the transport switch on. With both off, nothing, and it comes the next time you hold a pack after one is turned on | your eyes |
+| 22 | Tame a wolf and a horse, name the wolf with a name tag, make it sit; then `/dave where's my dog` | **Dave finds it:** "*Rex* is *N* blocks *…*, sitting right where you left him. Hold your Tricorder and follow the arrow.", free within 48 blocks, a deep scan farther; the Tricorder points at it | `GET /api/debug/minecraft/map/pets?x=0&z=0&owner_name=<you>` lists both, `owner` set (the `pid` on your `dave` line in `GET /minecraft/logs`) |
+| 23 | Open a librarian's trade screen; then `/dave who sells <one of its books>` | Only the trades the screen shows (its unlocked levels); the line "From up here I see a librarian … who sells … for N emeralds." | `GET /api/debug/minecraft/map/villagers?x=<x>&z=<z>&profession=librarian` matches the screen |
+| 24 | Light a Nether portal, go through, ask Dave to point you home | In the Nether the held Tricorder reads `↑ Nether portal · N blocks · Home is in the Overworld`, pointing at the portal; back through, it points home | `GET /api/debug/minecraft/map/portals` lists the portal; break one and `check=false` still lists it while the default leaves it out |
 
 ## After (assistant)
 
