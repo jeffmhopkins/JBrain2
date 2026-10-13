@@ -578,7 +578,10 @@ networks, and an SSRF pivot through the reader/byparr browsers. S1 closes the we
 sandboxes and internal network, S3 device and token hygiene, S4 a cold red-team re-analysis, S5 latent RLS hardening. S1 ✅
 (preview containment, owner gates + route matrix, same-site guard + `__Host-` cookie, safe hrefs). S2 ✅
 (jcode per-session uids, per-caller `/internal` tokens, reader/byparr/jcode fenced behind the egress proxy, pinned direct fetches). S3 ✅
-(socket re-validation, panel vs phone keys, hashed pairing codes + debug-SQL secrets, real client IP, Minecraft log anchoring).
+(socket re-validation, panel vs phone keys, hashed pairing codes + debug-SQL secrets, real client IP, Minecraft log anchoring). S5 ✅
+(view-scope helpers and the who-saw-whom write pinned to the caller). *Residual:* Timescale chunks
+keep `jbrain_app`'s privileges, so a direct chunk read skips RLS — owner-SQL-only; a revoke does not
+survive the next chunk and the event-trigger fix is too fragile for the ingest path (plan, S5c).
 
 **Scheduled:** jmolt hardening (build plan: `docs/plans/JMOLT_HARDENING_PLAN.md`, waves H1–H6) —
 after three live nights, four independent audits over the parts the first round of bugfixes had not

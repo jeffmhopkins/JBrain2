@@ -87,6 +87,18 @@ async def test_device_can_attribute_a_view_only_to_its_own_subject(
     pid_v, sid_v = await _device(maker, "viewer")
     _, sid_t = await _device(maker, "target")
     viewer = device_context(pid_v, sid_v)
+    # A member audits only a subject it may see (0243), so the two share a family.
+    async with scoped_session(maker, OWNER) as session:
+        gid = (
+            await session.execute(
+                text("INSERT INTO app.family_group (name) VALUES ('fam') RETURNING id")
+            )
+        ).scalar()
+        for sid in (sid_v, sid_t):
+            await session.execute(
+                text("INSERT INTO app.view_scope (group_id, member_subject_id) VALUES (:g, :s)"),
+                {"g": str(gid), "s": sid},
+            )
 
     # The viewer device records its OWN view of the target, and reads it back.
     await repo.record_view(

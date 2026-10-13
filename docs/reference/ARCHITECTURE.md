@@ -134,6 +134,9 @@ container, and reads `Cf-Connecting-IP` only when that peer is the `cloudflared`
 reaching the api directly, a LAN client forging Cloudflare's header — is its socket address.
 Every per-client rate limit and the panel nudge key on it. A member's `/member/positions`
 read is audited ("viewed") only for a subject `viewer_may_see` admits, and never for itself.
+The database holds both ends of that: `viewer_may_see` and `visible_subjects` answer a non-owner
+only about its own subject, and `view_audit` refuses a member's row about a subject it may not see
+(migration 0243).
 
 The rare **public** surface (a report share link, `/api/research-share`) is not
 an exception to this — it is another RLS scope. A share visitor runs under an
