@@ -5,5 +5,5 @@ idf_component_register(
     SRCS "esp/svc_audio_es.c" "svc_audio_talk.c" "talk_core.c" "talk_policy.c" "alarm_sound.c"
     INCLUDE_DIRS "include"
     REQUIRES app_api svc_debug
-    PRIV_REQUIRES svc_rtc svc_messages svc_net svc_settings svc_power esp_driver_i2s
+    PRIV_REQUIRES svc_rtc svc_messages svc_net svc_settings svc_power svc_post esp_driver_i2s
 )

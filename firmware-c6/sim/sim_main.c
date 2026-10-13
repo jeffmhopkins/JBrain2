@@ -27,6 +27,7 @@
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
 #include "svc_notice_fake.h"
+#include "svc_post_drv.h"
 #include "svc_power_fake.h"
 #include "svc_rtc.h"
 #include "svc_rtc_fake.h"
@@ -222,6 +223,52 @@ static void fake_box(void)
     }
 }
 
+/* ---- the owner's voice post with the twins' panels (0.0.16), answered by the sim the way
+ * `api/panel_messages.py` does — placeholder names and words, as every fixture uses ---- */
+
+#define SIM_Q "0b8e5f7a-1111-4c2d-9e3f-5a6b7c8d9e01"
+#define SIM_T "0b8e5f7a-2222-4c2d-9e3f-5a6b7c8d9e02"
+static const char POST_Q[] =
+    "{\"device_id\":\"" SIM_Q "\",\"name\":\"Quorra\",\"tag\":\"5e1d0c2a\",\"messages\":["
+    "{\"id\":\"6b000000-0000-4000-8000-000000000001\",\"mine\":true,"
+    "\"text\":\"Have a good day at school!\",\"ms\":4200,\"played\":true,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000002\",\"mine\":false,"
+    "\"text\":\"Daddy, when are you coming home?\",\"ms\":5100,\"played\":false,\"voice\":true}%s]}";
+/* What a second message from her adds: the tag on the pickup moves and the list grows. */
+static const char POST_Q_NEW[] =
+    ",{\"id\":\"6b000000-0000-4000-8000-000000000005\",\"mine\":false,"
+    "\"text\":\"I drew you a dragon. It's purple.\",\"ms\":3400,\"played\":false,\"voice\":true}";
+static const char POST_T[] =
+    "{\"device_id\":\"" SIM_T "\",\"name\":\"Tamsin\",\"tag\":\"5e1d0c2a\",\"messages\":["
+    "{\"id\":\"6b000000-0000-4000-8000-000000000003\",\"mine\":false,"
+    "\"text\":\"I made you a drawing.\",\"ms\":3000,\"played\":true,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000004\",\"mine\":true,"
+    "\"text\":\"I can't wait to see it!\",\"ms\":2200,\"played\":true,\"voice\":true}]}";
+static bool s_post_new;
+/* Dad's voice message from the desk, once the box has filed it: in her thread from then on. */
+#define POSTED_TEXT "Coming home at six. Love you!"
+static const char POST_Q_SENT[] =
+    ",{\"id\":\"6b000000-0000-4000-8000-000000000006\",\"mine\":true,"
+    "\"text\":\"" POSTED_TEXT "\",\"ms\":2600,\"played\":false,\"voice\":true}";
+static bool s_post_sent;
+
+static void fake_post_box(void)
+{
+    post_req_t r;
+    while (svc_post_take(&r)) {
+        if (r.kind != POST_RQ_THREAD) {
+            svc_post_done(&r, 204, NULL, 0);
+            continue;
+        }
+        char body[2048];
+        if (strstr(r.path, SIM_Q))
+            snprintf(body, sizeof body, POST_Q, s_post_new ? POST_Q_NEW : s_post_sent ? POST_Q_SENT : "");
+        else
+            snprintf(body, sizeof body, "%s", POST_T);
+        svc_post_done(&r, 200, box_body(body), strlen(body));
+    }
+}
+
 static void step(uint32_t ms)
 {
     for (uint32_t t = 0; t < ms; t += 10) {
@@ -231,6 +278,11 @@ static void step(uint32_t ms)
         svc_siblings_service();
         fake_box();
         svc_convo_service();
+        fake_post_box();
+        svc_post_service();
+        if (svc_post_take_chime(svc_audio_talking() || svc_audio_replying() || svc_audio_playing() ||
+                                svc_audio_ringing()))
+            svc_audio_chime();
         svc_alarms_service(svc_rtc_uptime_ms());
         shell_pump();
         lv_timer_handler();
@@ -338,6 +390,7 @@ static void boot(const char *only)
     svc_messages_init();
     svc_siblings_init();
     svc_convo_init();
+    svc_post_init();
     svc_audio_init();
     alarm_port_fake_wipe();
     svc_alarms_init();
@@ -375,7 +428,8 @@ static const char ALARMS[] =
     "\"max\":8}";
 
 /* The mock's sample conversations. The image ships none: they are the sim's, added the way the
- * services add any message. */
+ * services add any message — the agents' directly, the people's from the box's own JSON through
+ * svc_post (0.0.16), answered by fake_post_box once the siblings are bound. */
 static void fixtures(void)
 {
     svc_alarms_offer(ALARMS, sizeof ALARMS - 1);
@@ -389,10 +443,6 @@ static void fixtures(void)
         {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", ""}},
         {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", ""}},
         {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", ""}},
-        {SVC_MESSAGES_THREAD_1, {3, true, true, true, false, 4, "Have a good day at school!", "Played"}},
-        {SVC_MESSAGES_THREAD_1, {4, false, true, false, false, 5, "Daddy, when are you coming home?", ""}},
-        {SVC_MESSAGES_THREAD_2, {5, false, true, true, false, 3, "I made you a drawing.", ""}},
-        {SVC_MESSAGES_THREAD_2, {6, true, true, true, false, 2, "I can't wait to see it!", "Played"}},
     };
     for (size_t i = 0; i < sizeof SAMPLES / sizeof *SAMPLES; i++)
         svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
@@ -540,10 +590,16 @@ static void text_only(void)
     "The station I read is Port Canaveral's, adjusted for the river; a strong east wind can "      \
     "hold water in the lagoon and push the high a little later and a little higher than this."
 
+/* A new message from her, as the box signals it: the pickup's tag moves and the list grows. */
+static void post_arrives(void)
+{
+    s_post_new = true;
+    svc_post_tag("7a3f9b10");
+}
+
 static void session(void)
 {
-    msg_t m = {.id = 50, .voice = true, .dur_s = 4, .text = "Can we have pancakes?"};
-    svc_messages_fake_add(SVC_MESSAGES_THREAD_2, &m);
+    post_arrives();
 }
 
 #define CMDS 8
@@ -575,6 +631,11 @@ typedef struct {
 #define PROGRESS "progress"
 /* Not a debug command: the fake box answers with a long answer, more than a bubble's 255 bytes. */
 #define REPLY_LONG "reply long"
+/* Not debug commands (0.0.16): her message arrives (the pickup's tag moves); the box answers the
+ * play with its audio, still streaming; the box files the voice message to her. */
+#define POST_NEW "post new"
+#define LISTEN "listen"
+#define POSTED "posted"
 /* Not debug commands (0.0.14): the fake box streams the transcript, "Thinking…" and then six
  * steps, the last still running and one failed; and, after them, the answer. */
 #define STEPS "steps"
@@ -589,6 +650,14 @@ static const state_t STATES[] = {
     {"quorra", NULL, {OPEN(SVC_MESSAGES_THREAD_1)}},
     {"rec-quorra", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(4100)}},
     {"tamsin", NULL, {OPEN(SVC_MESSAGES_THREAD_2)}},
+    /* 0.0.16: her message playing (the pause, the dot gone), a voice message to her on its way
+       and filed, a new one's badge on her tile and on the clock face, and live in her thread. */
+    {"quorra-playing", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN}},
+    {"quorra-sending", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300)}},
+    {"quorra-sent", NULL, {OPEN(SVC_MESSAGES_THREAD_1), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), POSTED}},
+    {"home-new", NULL, {POST_NEW, WAIT(300)}},
+    {"clock-new", NULL, {OPEN("clock"), POST_NEW, WAIT(1300)}},
+    {"quorra-new", NULL, {OPEN(SVC_MESSAGES_THREAD_1), POST_NEW, WAIT(300)}},
     /* Before the box has ever answered (no cache either): neutral names, never compiled-in ones. */
     {"home-unnamed", no_names, {0}},
     {"thread-unnamed", no_names, {OPEN(SVC_MESSAGES_THREAD_1)}},
@@ -708,6 +777,22 @@ static int render(const char *name, const char *png, const char *snap)
     for (int i = 0; i < CMDS && st->cmds[i]; i++) {
         if (!strncmp(st->cmds[i], "wait ", 5)) {
             step((uint32_t)atoi(st->cmds[i] + 5));
+            continue;
+        }
+        if (!strcmp(st->cmds[i], POST_NEW)) {
+            post_arrives();
+            step(100);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], LISTEN)) {
+            svc_audio_fake_listen(true, false, false);
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], POSTED)) {
+            s_post_sent = true;
+            svc_audio_fake_posted(201, POSTED_TEXT);
+            step(300);
             continue;
         }
         if (!strcmp(st->cmds[i], REPLY)) {
@@ -1344,6 +1429,29 @@ static int touch_checks(void)
     step(100);
     expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"last_end\":\"stopped\"") != NULL,
            "BOOT, even held, stops it");
+
+    /* 0.0.16: a twin's new message on the clock face is its corner badge and one chime — never a
+       pop-up, never a sound over the alarm. */
+    run(OPEN("clock"));
+    step(1200);
+    const unsigned chimes = svc_audio_fake_chimes();
+    const uint16_t unheard = svc_messages_unplayed_total();
+    post_arrives();
+    step(1200);
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(svc_messages_unplayed_total() > unheard && strstr(snap, "\"overlay\":\"none\"") &&
+               shell_open_app() && !strcmp(shell_open_app()->id, "clock"),
+           "her new message waits on the face as its badge");
+    expect(svc_audio_fake_chimes() == chimes + 1, "and chimes once");
+    run("{\"cmd\":\"set\",\"name\":\"notif_chime\",\"value\":0}");
+    s_post_new = false;
+    svc_post_tag("0c0c0c0c");
+    step(600);
+    post_arrives();
+    svc_post_tag("1d1d1d1d");
+    step(600);
+    expect(svc_audio_fake_chimes() == chimes + 1, "with the chime switched off it is silent");
+    run("{\"cmd\":\"set\",\"name\":\"notif_chime\",\"value\":1}");
     return s_touch_bad;
 }
 

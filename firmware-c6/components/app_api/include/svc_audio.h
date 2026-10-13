@@ -11,7 +11,8 @@
 #define TALK_MAX_MS 60000u
 
 /* TALK_TO_AGENT: `principal` is the agent's thread, "jerv" or "dave" — the box's real agent —
- * and the hold continues that conversation. TALK_TO_NEW_AGENT starts a new one with it: once the
+ * and the hold continues that conversation. TALK_TO_PERSON: `principal` is a twin's thread, and
+ * the hold is a voice message to her panel (0.0.16), uploaded as it is recorded. TALK_TO_NEW_AGENT starts a new one with it: once the
  * hold is sent, this panel's view of that thread is cleared to just the new exchange and the box
  * is asked for a fresh conversation (the old one stays in the app). */
 typedef enum { TALK_TO_AGENT, TALK_TO_PERSON, TALK_TO_NEW_AGENT } talk_kind_t;
@@ -82,9 +83,14 @@ bool svc_audio_work(const char *thread, svc_work_t *out);
 /* Drops that reply (BOOT or KEY over it). False when there was none. */
 bool svc_audio_stop_reply(void);
 
+/* One of a twin's messages through the speaker (0.0.16): streamed from the box as it plays, with
+ * the reply's speaker start, and marked played (here and on the box) only once it has played to
+ * its end with its digest checked. False with svc_audio_talk_refused() saying why. */
 bool svc_audio_play(uint32_t msg_id);
 void svc_audio_stop(void);
 uint32_t svc_audio_playing(void); /* msg id, 0 when silent */
+/* A new message's chime: two soft notes, once, when nothing else has the speaker. */
+bool svc_audio_chime(void);
 void svc_audio_speak(uint32_t msg_id);
 /* Whether a reply can be listened to on demand: not until the box can speak a stored one. */
 bool svc_audio_can_speak(void);

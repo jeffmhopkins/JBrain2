@@ -75,12 +75,12 @@ async def test_the_gate_refuses_first_and_an_ownerless_box_says_so(
     panel = PrincipalInfo(id="p", kind="device_key", label="panel", subject_id="s")
     monkeypatch.setattr(panel_convo, "agent_allowed", _refused)
     with pytest.raises(HTTPException) as refused:
-        await panel_convo._owner(_request(), panel)
+        await panel_convo.owner_for_panel(_request(), panel)
     assert refused.value.status_code == 403
     monkeypatch.setattr(panel_convo, "agent_allowed", _allowed)
     monkeypatch.setattr(panel_convo, "owner_principal_id", _no_owner)
     with pytest.raises(HTTPException) as ownerless:
-        await panel_convo._owner(_request(), panel)
+        await panel_convo.owner_for_panel(_request(), panel)
     assert ownerless.value.status_code == 503
 
 

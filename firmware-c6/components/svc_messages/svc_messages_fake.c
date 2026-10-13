@@ -8,9 +8,8 @@
 /* Four threads, each its own buffer: Jerv's and Dave's are separate conversations with separate
  * agents on the box (owner, 2026-10-12: "separate instances with separate history"), so neither
  * may ever show the other's messages or lose them to the other's traffic. The agents keep eight
- * (four exchanges, 0.0.10's number); the two people's threads keep four, because until the box
- * client for messages lands they only ever hold "not sent" placeholders — and the bytes that saves
- * are what Dave's eight cost, so 0.0.11's static RAM for messages is 0.0.10's. */
+ * (four exchanges, 0.0.10's number); the two people's threads keep four — the box's last four
+ * messages with each twin (svc_post, 0.0.16), the rest are in the PWA. */
 #define AGENT_KEEP 8
 #define PERSON_KEEP 4
 
@@ -182,6 +181,35 @@ bool svc_messages_fake_add(const char *principal, const msg_t *m)
     thread_t *t = find(principal);
     if (!t) return false;
     *slot_for(t, m->id) = *m;
+    t->rev++;
+    announce(principal);
+    return true;
+}
+
+/* A bubble the panel made that the box has not listed: a send on its way, or one that failed. */
+static bool local_only(const msg_t *m)
+{
+    return m->mine && (m->pending || !strcmp(m->status, "Not sent"));
+}
+
+bool svc_messages_fake_set(const char *principal, const msg_t *m, uint16_t n)
+{
+    thread_t *t = find(principal);
+    if (!t || t->keep) return false;
+    msg_t next[PERSON_KEEP];
+    uint16_t k = 0, all = 0;
+    for (uint16_t i = 0; i < t->n; i++) all += local_only(&t->m[i]);
+    const uint16_t local = all > t->cap ? t->cap : all;
+    /* The box's newest that fit beside the panel's own newest, then those. */
+    const uint16_t room = (uint16_t)(t->cap - local);
+    for (uint16_t i = n > room ? (uint16_t)(n - room) : 0; i < n; i++) next[k++] = m[i];
+    for (uint16_t i = 0, seen = 0; i < t->n; i++) {
+        if (!local_only(&t->m[i]) || seen++ < all - local) continue;
+        next[k++] = t->m[i];
+    }
+    if (k == t->n && !memcmp(next, t->m, sizeof next[0] * k)) return false;
+    memcpy(t->m, next, sizeof next[0] * k);
+    t->n = k;
     t->rev++;
     announce(principal);
     return true;

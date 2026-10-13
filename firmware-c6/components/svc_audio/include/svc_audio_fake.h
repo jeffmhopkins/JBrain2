@@ -1,7 +1,7 @@
 /* The audio service on the host: the device's talk state (talk_core.c) with no codec and no
  * box behind it. A hold to Jerv leaves the "Transcribing…" bubble the device leaves; the sim
- * answers it with svc_audio_fake_reply. A hold to a person is still not sent: the box client
- * for messages is a later wave. Time comes from svc_rtc's uptime, so the sim advances a
+ * answers it with svc_audio_fake_reply. A hold to a twin and a play of one of her messages are
+ * answered by svc_audio_fake_posted and svc_audio_fake_listen (0.0.16). Time comes from svc_rtc's uptime, so the sim advances a
  * recording by advancing the clock. */
 #pragma once
 
@@ -26,3 +26,11 @@ void svc_audio_fake_step(uint8_t index, const char *label);
 void svc_audio_fake_step_done(uint8_t index, bool ok);
 /* The alarm sound "playing" (svc_audio_ring), -1 when silent. */
 int svc_audio_fake_ring_sound(void);
+/* The box's answer to a voice message to a twin: 201 with her transcript, 400 (nothing said),
+ * or another status (a failure). */
+void svc_audio_fake_posted(int status, const char *heard);
+/* A play: the box answers with the audio (`arrives`), it plays `to_the_end`, and its digest
+ * matched (`verified`). Not to the end leaves it playing, as a stream still arriving would. */
+void svc_audio_fake_listen(bool arrives, bool to_the_end, bool verified);
+/* New-message chimes the panel played. */
+unsigned svc_audio_fake_chimes(void);
