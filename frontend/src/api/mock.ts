@@ -4268,6 +4268,22 @@ export const mockFetch: typeof fetch = async (input, init) => {
     if (path === "/api/minecraft") return json(scenario.status);
     if (path === "/api/minecraft/version") return json(scenario.version);
     if (path === "/api/minecraft/players") return json(scenario.players);
+    // Goals (§M24, look-only): `?mcg=empty` has none; `?mcg=down` can't count (the sidecar
+    // unreachable), while the goals themselves, a database read, still answer.
+    if (path === "/api/minecraft/goals" || path === "/api/minecraft/goals/progress") {
+      const knob = new URLSearchParams(globalThis.location?.search ?? "").get("mcg");
+      if (path === "/api/minecraft/goals") {
+        return json(knob === "empty" ? { world: "slot2", players: [] } : mc.mcGoals());
+      }
+      if (knob === "down") {
+        return json(
+          { detail: "Minecraft sidecar unreachable (ConnectError) — is it stopped?" },
+          503,
+        );
+      }
+      const q = url.searchParams;
+      return json(mc.mcGoalProgress(q.get("xuid") ?? "", q.get("flush") === "true"));
+    }
     if (path === "/api/minecraft/settings" && method === "PUT") {
       return json(JSON.parse(String(init?.body ?? "{}")));
     }

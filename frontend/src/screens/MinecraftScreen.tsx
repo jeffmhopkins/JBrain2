@@ -5,7 +5,7 @@
 // Everything shown is what the box reported. Before the first install nothing is claimed:
 // no version, world or join details, and no progress figure the API doesn't give.
 
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   type MinecraftPlayer,
@@ -52,6 +52,13 @@ import { slotName } from "../minecraftWorlds";
 import { safeHref } from "../safeHref";
 import { useForeground } from "../visibility";
 import { DaveSection } from "./MinecraftDave";
+import {
+  GoalGlance,
+  GoalList,
+  type GoalsState,
+  SheetGoals,
+  useMinecraftGoals,
+} from "./MinecraftGoals";
 import { MapEntry, MapLayer } from "./MinecraftMap";
 import { AllowlistSection, ServerSettingsSection } from "./MinecraftServerSettings";
 import { WorldModals } from "./MinecraftWorldSheets";
@@ -135,6 +142,7 @@ export function MinecraftScreen({
   const [updOrigin, setUpdOrigin] = useState<{ at: number; stopped: boolean } | null>(null);
   const [autoUpdate, setAutoUpdate] = useState<boolean | null>(null);
   const stoppedIntent = useRef<boolean | null>(null);
+  const goals = useMinecraftGoals();
 
   const loadStatus = useCallback(async () => {
     try {
@@ -475,6 +483,7 @@ export function MinecraftScreen({
               playersAt={playersAt}
               nowMs={now}
               onOpen={setSheetXuid}
+              goals={goals}
             />
 
             <DaveSection onOpenSession={onOpenSession} />
@@ -532,6 +541,7 @@ export function MinecraftScreen({
             nowMs={now}
             statsAvailable={players?.stats_available ?? false}
             onClose={() => setSheetXuid(null)}
+            goals={goals}
           />
         )}
       </main>
@@ -1203,12 +1213,25 @@ function PlayersSection({
   playersAt,
   nowMs,
   onOpen,
+  goals,
 }: {
   players: MinecraftPlayers | null;
   playersAt: number;
   nowMs: number;
   onOpen: (xuid: string) => void;
+  goals: GoalsState;
 }) {
+  // Whose goals are open in place under their row: the glance line toggles it.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (xuid: string) =>
+    setExpanded((was) => {
+      const next = new Set(was);
+      if (!next.delete(xuid)) next.add(xuid);
+      return next;
+    });
+  const goalsOf = (xuid: string) =>
+    goals.goals?.players.find((g) => g.xuid === xuid && g.goals.length > 0) ?? null;
+  const anyGoals = (goals.goals?.players ?? []).some((g) => g.goals.length > 0);
   let body: ReactNode;
   if (players === null) body = <div className="mc-empty">Loading…</div>;
   else if (players.players.length === 0)
@@ -1233,51 +1256,84 @@ function PlayersSection({
           </tr>
         </thead>
         <tbody>
-          {sorted.map((p) => (
-            <tr className="mc-ptr" key={p.xuid}>
-              <td className="mc-pname">
-                <span className={`mc-pav${p.online ? " on" : ""}`} aria-hidden="true">
-                  {initial(p.gamertag)}
-                </span>
-                <span className="mc-pn">
-                  {/* The button's overlay covers the whole row, so a tap anywhere opens it. */}
-                  <button
-                    type="button"
-                    className="mc-prow-btn"
-                    title={p.gamertag}
-                    onClick={() => onOpen(p.xuid)}
-                  >
-                    {p.gamertag}
-                  </button>
-                  <span className="mc-sm">since {shortDate(p.first_seen)}</span>
-                </span>
-              </td>
-              <td>
-                {fmtDur(liveTotal(p, playersAt, nowMs))}
-                <span className="mc-sm">{plural(p.sessions, "session")}</span>
-              </td>
-              <td>
-                {p.online ? (
-                  <>
-                    <span className="mc-on">on now</span>
-                    <span className="mc-sm">
-                      {p.session_started_at !== null
-                        ? `${fmtDur(nowMs / 1000 - p.session_started_at)} in`
-                        : ""}
+          {sorted.map((p) => {
+            const pg = goalsOf(p.xuid);
+            const open = pg !== null && expanded.has(p.xuid);
+            const panel = `mc-goals-${p.xuid}`;
+            return (
+              <Fragment key={p.xuid}>
+                <tr className={`mc-ptr${pg ? " has-glance" : ""}`}>
+                  <td className="mc-pname">
+                    <span className={`mc-pav${p.online ? " on" : ""}`} aria-hidden="true">
+                      {initial(p.gamertag)}
                     </span>
-                  </>
-                ) : (
-                  <>
-                    {dayOf(p.last_seen, nowMs)}
-                    <span className="mc-sm">{clockOf(p.last_seen)}</span>
-                  </>
+                    <span className="mc-pn">
+                      {/* The button's overlay covers the whole row, so a tap anywhere opens it. */}
+                      <button
+                        type="button"
+                        className="mc-prow-btn"
+                        title={p.gamertag}
+                        onClick={() => onOpen(p.xuid)}
+                      >
+                        {p.gamertag}
+                      </button>
+                      <span className="mc-sm">since {shortDate(p.first_seen)}</span>
+                    </span>
+                  </td>
+                  <td>
+                    {fmtDur(liveTotal(p, playersAt, nowMs))}
+                    <span className="mc-sm">{plural(p.sessions, "session")}</span>
+                  </td>
+                  <td>
+                    {p.online ? (
+                      <>
+                        <span className="mc-on">on now</span>
+                        <span className="mc-sm">
+                          {p.session_started_at !== null
+                            ? `${fmtDur(nowMs / 1000 - p.session_started_at)} in`
+                            : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        {dayOf(p.last_seen, nowMs)}
+                        <span className="mc-sm">{clockOf(p.last_seen)}</span>
+                      </>
+                    )}
+                  </td>
+                  <td aria-hidden="true">
+                    <ChevronRightIcon size={16} />
+                  </td>
+                </tr>
+                {pg && (
+                  <tr className="mc-pgl">
+                    <td colSpan={4}>
+                      <GoalGlance
+                        pg={pg}
+                        state={goals.counts[p.xuid]}
+                        expanded={open}
+                        onToggle={() => toggle(p.xuid)}
+                        panelId={panel}
+                      />
+                    </td>
+                  </tr>
                 )}
-              </td>
-              <td aria-hidden="true">
-                <ChevronRightIcon size={16} />
-              </td>
-            </tr>
-          ))}
+                {pg && open && (
+                  <tr className="mc-pgx" id={panel}>
+                    <td colSpan={4}>
+                      <GoalList
+                        pg={pg}
+                        state={goals.counts[p.xuid]}
+                        nowMs={nowMs}
+                        onCount={(flush) => goals.count(p.xuid, flush)}
+                        idPrefix={`row-goal-${p.xuid}`}
+                      />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     );
@@ -1285,7 +1341,8 @@ function PlayersSection({
   return (
     <>
       <h3 className="mc-sect">
-        Players<span className="mc-sect-r">time on this server</span>
+        Players
+        <span className="mc-sect-r">time on this server{anyGoals ? " · goals" : ""}</span>
       </h3>
       <div className="mc-card mc-card-pad">{body}</div>
     </>
@@ -1315,13 +1372,16 @@ function PlayerSheet({
   nowMs,
   statsAvailable,
   onClose,
+  goals,
 }: {
   player: MinecraftPlayer;
   playersAt: number;
   nowMs: number;
   statsAvailable: boolean;
   onClose: () => void;
+  goals: GoalsState;
 }) {
+  const pg = goals.goals?.players.find((g) => g.xuid === player.xuid) ?? null;
   const session =
     player.online && player.session_started_at !== null
       ? fmtDur(nowMs / 1000 - player.session_started_at)
@@ -1351,6 +1411,14 @@ function PlayerSheet({
           <div className="mc-stat-k">last seen</div>
         </div>
       </div>
+      <SheetGoals
+        pg={pg}
+        state={goals.counts[player.xuid]}
+        error={goals.error}
+        nowMs={nowMs}
+        onCount={(flush) => goals.count(player.xuid, flush)}
+        gamertag={player.gamertag}
+      />
       <h3 className="mc-sect">Lifetime stats</h3>
       <div className="mc-card">
         <AddonNote available={statsAvailable} />

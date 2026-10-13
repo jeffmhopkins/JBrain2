@@ -215,6 +215,8 @@ const STEP_LABELS: Record<string, string> = {
   mc_find_block: "Searched for blocks",
   mc_find_mob: "Looked for a mob",
   mc_find_item: "Looked for items",
+  mc_find_villager: "Looked for villagers",
+  mc_find_pet: "Looked for pets",
   mc_show_map: "Showed the map",
   mc_set_waypoint: "Set the tricorder",
   mc_tricorder_scan: "Set the tricorder's scan",
@@ -377,6 +379,8 @@ const INLINE_ARGS: Record<string, readonly string[]> = {
   mc_find_block: ["blocks"],
   mc_find_mob: ["mob"],
   mc_find_item: ["items"],
+  mc_find_villager: ["enchantment", "sells", "profession"],
+  mc_find_pet: ["name", "kind", "gamertag"],
   // The card's label ("Woodland mansion") says what it shows; else what kind of thing.
   mc_show_map: ["label", "focus"],
   // A saved place's name is the destination; coordinates carry a label instead.

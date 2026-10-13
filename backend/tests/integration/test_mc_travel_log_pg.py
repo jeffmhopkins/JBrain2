@@ -5,6 +5,8 @@ The contract, case by case:
 - a sample stores once however often it's replayed, and clears the fog around it;
 - the fog's first/last-seen window only ever widens;
 - deaths and joins become timeline events with their place and cause;
+- each death also writes one `auto` entry in the player's progress log (P2), however
+  often it's re-read, and only the owner can read it;
 - a reset or import deletes that world's trail, fog and events — and a sample of the
   old terrain that drains after the reset doesn't come back;
 - nobody but the owner can read or write any of the three tables.
@@ -39,7 +41,13 @@ EVERY_SCOPE = SessionContext(
     domain_scopes=("general", "health", "finance", "location"),
 )
 T0 = 1_791_640_000.0
-TABLES = ("mc_player_track", "mc_player_explored", "mc_player_events", "mc_player_sessions")
+TABLES = (
+    "mc_player_track",
+    "mc_player_explored",
+    "mc_player_events",
+    "mc_player_sessions",
+    "mc_goal_log",
+)
 
 
 @pytest.fixture
@@ -160,6 +168,35 @@ async def test_deaths_and_joins_land_on_the_timeline(maker, sidecar) -> None:
         ).all()
     assert [(r.kind, r.xuid) for r in rows] == [("join", "111"), ("death", "111")]
     assert rows[1].x == 1.5 and rows[1].detail == {"cause": "fall", "killer": ""}
+
+
+async def test_each_death_journals_once_in_the_players_progress_log(maker, sidecar) -> None:
+    sidecar.event("join", T0)
+    sidecar.event("death", T0 + 60, dim="nether", x=10.5, y=70.0, z=-3.2, cause="lava")
+    await _drain(maker)
+    sidecar.event("death", T0 + 90, cause="entityAttack", killer="minecraft:zombie")
+    await _drain(maker)  # a fresh drain re-reads the first death too
+    async with scoped_session(maker, OWNER) as s:
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT xuid, gamertag, goal_id, extract(epoch FROM at) AS at, text, source"
+                    " FROM app.mc_goal_log ORDER BY at"
+                )
+            )
+        ).all()
+    assert [(r.xuid, r.gamertag, r.goal_id, r.source) for r in rows] == [
+        ("111", "Steve42", None, "auto"),
+        ("111", "Steve42", None, "auto"),
+    ]
+    assert [(float(r.at), r.text) for r in rows] == [
+        (T0 + 60, "Died at 10, 70, -4 in the Nether (burned in lava)"),
+        (T0 + 90, "Died (killed by a zombie)"),
+    ]
+    for ctx in (EVERY_SCOPE, UNSCOPED):
+        async with scoped_session(maker, ctx) as s:
+            got = (await s.execute(text("SELECT count(*) FROM app.mc_goal_log"))).scalar()
+        assert got == 0
 
 
 async def test_the_map_gets_each_players_newest_sample_in_one_world(maker, sidecar) -> None:

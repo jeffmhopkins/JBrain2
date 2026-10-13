@@ -37,6 +37,7 @@ from typing import Any
 import blocks
 import bds
 import containers
+import entities
 import install
 import mapping
 import structure_sweep
@@ -49,6 +50,10 @@ OVERRIDES = DATA / "properties.json"
 SETTINGS = DATA / "settings.json"
 SLOTS = DATA / "slots.json"
 SNAPSHOT_INDEX = DATA / "snapshot-index.json"
+# Each world's gamertag -> script `player.id`, learned from the asker's `pid` on every
+# `/dave` (§M4e): the files key a pet's owner by that id and never name the player, and
+# the app's "Hank's pets" has to work while Hank is offline.
+PLAYER_IDS = DATA / "player-ids.json"
 UPLOAD_DIR = DATA / "uploads"
 # The saved structure sweeps (§M8), one file per world folder.
 STRUCTURE_DIR = DATA / "structures"
@@ -129,6 +134,12 @@ STOCK_CENTRES_MAX = 101
 # more, never a survey.
 STOCK_RADIUS_MAX = 256
 FLUSH_WAIT_S = 10.0
+# Portals the Tricorder may be pointed through (§M4e/§M9): a few nearest, never a list
+# a console line can't carry.
+PORTALS_MAX = 64
+# A portal still stands when its block is within this many blocks of where its record
+# says a traveller arrives.
+PORTAL_BLOCK_REACH = 4
 TRACK_MIN_MOVE = 4.0
 TRACK_KEPT = 20000
 _DIMENSIONS = {0: "overworld", 1: "nether", 2: "the_end"}
@@ -177,6 +188,9 @@ class Rig:
         self._map_index: dict[str, mapping.WorldIndex] = {}
         self._block_index: dict[str, blocks.BlockIndex] = {}
         self._container_index: dict[str, containers.ContainerIndex] = {}
+        self._entity_index: dict[str, entities.EntityIndex] = {}
+        self._ids_lock = threading.Lock()
+        self.bds.on_player_id = self.remember_player_id
         # When the running world was last written out for a chest search (§M23).
         self._flushed_at: float | None = None
         self._map_seed: dict[str, str | None] = {}
@@ -1577,12 +1591,218 @@ class Rig:
 
     def _containers(self, folder: str, flushed: str) -> containers.ContainerIndex:
         """The world's container index, re-read at once after a flush. Under _map_lock."""
-        index = self._container_index.get(folder)
-        if index is None:
-            index = containers.ContainerIndex(self.world_dir(folder) / "db")
-            self._container_index[folder] = index
-        index.refresh(force=flushed == "flushed")
-        return index
+        return self._world_indexes(folder, flushed)[0]
+
+    def _entities(self, folder: str, flushed: str) -> entities.EntityIndex:
+        """The world's entity index (§M4e), as `_containers`. Under _map_lock."""
+        return self._world_indexes(folder, flushed)[1]
+
+    def _world_indexes(
+        self, folder: str, flushed: str
+    ) -> tuple[containers.ContainerIndex, entities.EntityIndex]:
+        """Both of a world's record indexes, refreshed by ONE sweep of its database
+        when its files changed: decompressing every table is the cost on a big world,
+        so the chests and the entities share it."""
+        db = self.world_dir(folder) / "db"
+        chests = self._container_index.get(folder)
+        if chests is None:
+            chests = self._container_index[folder] = containers.ContainerIndex(db)
+        mobs = self._entity_index.get(folder)
+        if mobs is None:
+            mobs = self._entity_index[folder] = entities.EntityIndex(db)
+        containers.refresh_together([chests, mobs], force=flushed == "flushed")
+        return chests, mobs
+
+    def _fresh(self, folder: str, flushed: str) -> dict[str, Any]:
+        # Just written out, the files are the world as it is now, whatever their mtimes.
+        if flushed == "flushed":
+            return {"as_of": time.time(), "age_s": 0}
+        return _freshness(self.world_dir(folder) / "db")
+
+    def remember_player_id(self, world: str, name: str, pid: str) -> None:
+        """Keep a world's gamertag -> `player.id`, as the pack reported it on a `/dave`.
+        Called on the console thread, so it only writes a small file."""
+        with self._ids_lock:
+            known = self._player_ids()
+            per = known.setdefault(world, {})
+            if per.get(name.casefold(), {}).get("id") == pid:
+                return
+            per[name.casefold()] = {"name": name, "id": pid}
+            try:
+                PLAYER_IDS.write_text(json.dumps(known, indent=2, sort_keys=True))
+            except OSError as exc:
+                print(f"[entities] player ids not saved: {exc}", flush=True)
+
+    def _player_ids(self) -> dict[str, dict[str, dict[str, str]]]:
+        try:
+            raw = json.loads(PLAYER_IDS.read_text())
+        except (FileNotFoundError, ValueError):
+            return {}
+        return raw if isinstance(raw, dict) else {}
+
+    def player_ids(self, folder: str) -> dict[str, dict[str, str]]:
+        """A world's known players, by casefolded gamertag: {"name", "id"}."""
+        with self._ids_lock:
+            per = self._player_ids().get(folder)
+        return per if isinstance(per, dict) else {}
+
+    def map_villagers(
+        self,
+        slot_id: str,
+        dim: str,
+        x: int,
+        z: int,
+        *,
+        profession: str = "",
+        sells: str = "",
+        enchant: str = "",
+        radius: int | None = None,
+        limit: int = 5,
+        flush: bool = False,
+    ) -> dict[str, Any]:
+        """The nearest villagers with a job, or selling an item or an enchantment, from
+        the world's actor records (§M4e). Only the trades each offers now: a level it
+        hasn't reached is never told (owner, 2026-10-13)."""
+        _check_point(dim, x, z)
+        profession = _word(profession, "profession")
+        sells = containers.item_name(_word(sells, "sells")) if sells else ""
+        enchant = _word(enchant, "enchant")
+        if enchant and enchant not in entities.ENCHANTMENTS.values():
+            raise ValueError(f"`{enchant}` isn't an enchantment")
+        folder = self._world_folder(slot_id)
+        flushed = self._flush_for_search(folder) if flush else "not asked"
+        with self._map_lock:
+            index = self._entities(folder, flushed)
+            hits, matched = index.villagers(
+                mapping.DIMENSIONS[dim],
+                x,
+                z,
+                profession=profession,
+                sells=sells,
+                enchant=enchant,
+                radius=radius,
+                limit=limit,
+            )
+            stats = index.counts()
+        return {
+            "dimension": dim,
+            "x": x,
+            "z": z,
+            "radius": radius,
+            "matched": matched,
+            "found": hits,
+            "flush": flushed,
+            **stats,
+            **self._fresh(folder, flushed),
+        }
+
+    def map_pets(
+        self,
+        slot_id: str,
+        dim: str,
+        x: int,
+        z: int,
+        *,
+        owner: str = "",
+        owner_name: str = "",
+        kind: str = "",
+        name: str = "",
+        radius: int | None = None,
+        limit: int = 5,
+        everywhere: bool = False,
+        flush: bool = False,
+    ) -> dict[str, Any]:
+        """Tamed animals (one player's when `owner` or `owner_name` is given), or any mob
+        named `name` with that player's first (§M4e). `everywhere` adds the other
+        dimensions, with no distance."""
+        _check_point(dim, x, z)
+        kind = _word(kind, "kind")
+        kind = entities.KIND_ALIASES.get(kind, kind)
+        if len(name) > 64:
+            raise ValueError("name is at most 64 characters")
+        folder = self._world_folder(slot_id)
+        ids = self.player_ids(folder)
+        owner_known = True
+        if owner_name:
+            got = ids.get(owner_name.strip().casefold())
+            owner_known = got is not None
+            owner = got["id"] if got else ""
+        if owner and not _PLAYER_ID.fullmatch(owner):
+            raise ValueError("owner is a player id, a whole number")
+        names = {v["id"]: v["name"] for v in ids.values() if isinstance(v, dict)}
+        flushed = self._flush_for_search(folder) if flush else "not asked"
+        hits: list[dict[str, Any]] = []
+        matched = 0
+        with self._map_lock:
+            index = self._entities(folder, flushed)
+            # An unknown owner is no filter for a name, which finds any mob called it.
+            if owner_known or name:
+                hits, matched = index.pets(
+                    mapping.DIMENSIONS[dim],
+                    x,
+                    z,
+                    owner=int(owner) if owner else None,
+                    kind=kind,
+                    name=name,
+                    radius=radius,
+                    limit=limit,
+                    everywhere=everywhere,
+                )
+            stats = index.counts()
+        for h in hits:
+            h["owner_name"] = names.get(h["owner"] or "", "")
+            h["dimension"] = _DIMENSIONS.get(h.pop("dim"), "overworld")
+        return {
+            "dimension": dim,
+            "x": x,
+            "z": z,
+            "radius": radius,
+            "owner": owner or None,
+            "owner_known": owner_known,
+            "matched": matched,
+            "found": hits,
+            "flush": flushed,
+            **stats,
+            **self._fresh(folder, flushed),
+        }
+
+    def map_portals(self, slot_id: str, dim: str | None, check: bool = True) -> dict[str, Any]:
+        """The Nether portals the world recorded (§M4e), in one dimension or all. With
+        `check`, a record whose portal block is gone (it was broken) is left out."""
+        if dim is not None and dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        folder = self._world_folder(slot_id)
+        db = self.world_dir(folder) / "db"
+        found = [
+            p
+            for p in entities.portals(db)
+            if p["dim"] in _DIMENSIONS and (dim is None or _DIMENSIONS[p["dim"]] == dim)
+        ][:PORTALS_MAX]
+        broken = 0
+        if check and found:
+            with self._map_lock:
+                index = self._block_index.get(folder)
+                if index is None:
+                    index = self._block_index[folder] = blocks.BlockIndex(db)
+                index.refresh()
+                kept = []
+                for p in found:
+                    stands, _ = index.find(
+                        p["dim"], p["x"], p["z"], {"minecraft:portal"}, 1, PORTAL_BLOCK_REACH
+                    )
+                    if stands:
+                        kept.append(p)
+                    else:
+                        broken += 1
+                found = kept
+        for p in found:
+            p["dimension"] = _DIMENSIONS[p.pop("dim")]
+        return {
+            "portals": found,
+            "checked": check,
+            "broken": broken,
+            **_freshness(db),
+        }
 
     def _flush_for_search(self, folder: str) -> str:
         """Ask the running world to write itself out, so the files hold what's in the
@@ -2049,6 +2269,62 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
+        elif url.path in ("/map/villagers", "/map/pets"):
+            q = {k: v[0] for k, v in query.items()}
+            try:
+                x, z = int(q.get("x", "")), int(q.get("z", ""))
+                limit = max(1, min(int(q.get("limit") or 5), 20))
+                radius = max(1, min(int(q["radius"]), 60_000_000)) if q.get("radius") else None
+            except ValueError:
+                self._send(400, {"detail": "x, z, limit and radius are whole numbers"})
+                return
+            flush = q.get("flush") in ("1", "true")
+            slot, dim = q.get("slot", "slot1"), q.get("dim", "overworld")
+            try:
+                if url.path == "/map/villagers":
+                    got = rig.map_villagers(
+                        slot,
+                        dim,
+                        x,
+                        z,
+                        profession=q.get("profession", ""),
+                        sells=q.get("sells", ""),
+                        enchant=q.get("enchant", ""),
+                        radius=radius,
+                        limit=limit,
+                        flush=flush,
+                    )
+                else:
+                    got = rig.map_pets(
+                        slot,
+                        dim,
+                        x,
+                        z,
+                        owner=q.get("owner", ""),
+                        owner_name=q.get("owner_name", ""),
+                        kind=q.get("kind", ""),
+                        name=q.get("name", ""),
+                        everywhere=q.get("everywhere") in ("1", "true"),
+                        radius=radius,
+                        limit=limit,
+                        flush=flush,
+                    )
+                self._send(200, got)
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/portals":
+            dim = query.get("dim", [""])[0] or None
+            try:
+                self._send(
+                    200,
+                    rig.map_portals(
+                        query.get("slot", ["slot1"])[0],
+                        dim,
+                        check=query.get("check", ["1"])[0] not in ("0", "false"),
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
         elif url.path == "/map/structures":
             try:
                 self._send(
@@ -2314,6 +2590,25 @@ _WORLD_IMPORT = re.compile(r"^/worlds/(slot\d+)/import$")
 _BLOCK_NAME = re.compile(r"^(minecraft:)?[a-z0-9_]{2,60}$")
 # An item id, its namespace optional (the box's own items are `jbrain:`).
 _ITEM_NAME = re.compile(r"^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$")
+
+
+_PLAYER_ID = re.compile(r"^-?\d{1,20}$")
+_WORD = re.compile(r"^[a-z0-9_:]{0,64}$")
+
+
+def _word(raw: str, what: str) -> str:
+    """A lowercase id-like word (spaces as underscores), or ValueError naming `what`."""
+    word = raw.strip().lower().replace(" ", "_")
+    if not _WORD.fullmatch(word):
+        raise ValueError(f"`{raw}` isn't a {what}")
+    return word.removeprefix("minecraft:")
+
+
+def _check_point(dim: str, x: int, z: int) -> None:
+    if dim not in mapping.DIMENSIONS:
+        raise ValueError("dimension must be overworld, nether or the_end")
+    if abs(x) > 30_000_000 or abs(z) > 30_000_000:
+        raise ValueError("that point is outside the world")
 
 
 def _wanted_items(names: list[str]) -> set[str]:

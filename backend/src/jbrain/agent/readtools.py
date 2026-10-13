@@ -342,6 +342,8 @@ OPTIONAL_MINECRAFT_TOOLS = frozenset(
         "mc_find_block",
         "mc_find_mob",
         "mc_find_item",
+        "mc_find_villager",
+        "mc_find_pet",
         "mc_show_map",
         "mc_set_waypoint",
         "mc_tricorder_scan",

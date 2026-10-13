@@ -82,6 +82,8 @@ REPLY_MAX = 900
 PREFIX = "<Dave> "
 _LEADING_DAVE = re.compile(r"^\s*dave\b[\s,:;!.-]*", re.IGNORECASE)
 _MARKDOWN = re.compile(r"[*_`#>]+")
+# The asker's script id as the sidecar passes it (§M4e): a decimal string only.
+_PID = re.compile(r"-?\d{1,20}")
 
 APOLOGY = "Sorry, I couldn't answer that just now. Try again in a minute."
 BUSY = "One moment, I'm still on your last question."
@@ -128,6 +130,7 @@ def parse_question(e: dict[str, Any]) -> Question | None:
         at=at,
         spawn=_spot(e.get("spawn")),
         known=guide.parse_known(e.get("known")),
+        pid=pid if isinstance(pid := e.get("pid"), str) and _PID.fullmatch(pid) else None,
     )
     return Question(int(e["id"]), float(e.get("at") or 0), asker, question[:256])
 

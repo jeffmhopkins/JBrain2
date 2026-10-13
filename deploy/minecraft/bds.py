@@ -77,6 +77,9 @@ QUESTION_MAX = 256
 # The asker's Old Maker unlocks (§M19), as the pack names them; the backend keeps only
 # the ones it knows, so this just bounds what a line can carry.
 _KNOWN = re.compile(r"[a-z_]{1,32}")
+# The asker's script `player.id` (§M4e), the number a pet's `OwnerNew` holds: accepted
+# only as a decimal string, so nothing else rides in on it.
+_PID = re.compile(r"-?\d{1,20}")
 KNOWN_MAX = 16
 _VERSION = re.compile(_BDS + r"Version:? ([0-9][0-9.]*[0-9])")
 _STARTED = re.compile(_BDS + r"Server started\.\s*")
@@ -147,6 +150,8 @@ class Bds:
     # The loaded world's folder, stamped on every event so the api files each one under
     # the world it happened in. The wrapper sets it before each start.
     world: str = "world"
+    # Told each asker's (world, gamertag, player id) as a `/dave` reports it (§M4e).
+    on_player_id: Callable[[str, str, str], None] | None = None
     # Bumped on every start: the output reader of an earlier process must not write
     # "stopped" over the state of the process that replaced it (a fast restart).
     _gen: int = 0
@@ -284,6 +289,11 @@ class Bds:
                 if isinstance(unlocks, list)
                 else set()
             )[:KNOWN_MAX]
+            pid = data.get("pid")
+            if isinstance(pid, str) and _PID.fullmatch(pid):
+                extra["pid"] = pid
+                if self.on_player_id is not None:
+                    self.on_player_id(self.world, name, pid)
         self._event(str(data["ev"]), name, known["xuid"] if known else "", **extra)
 
     def note_world_replaced(self, folder: str) -> None:

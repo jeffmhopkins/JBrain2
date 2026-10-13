@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 from datetime import UTC, datetime
 from typing import Any
@@ -108,7 +109,9 @@ class SessionDrain:
     async def apply(s: AsyncSession, boot: str, e: dict[str, Any]) -> None:
         at = _ts(float(e["at"]))
         kind = e.get("kind")
-        await _timeline(s, boot, e, at)
+        # Only a death new to the timeline is journalled: re-reading events can't repeat it.
+        if await _timeline(s, boot, e, at) and kind == "death":
+            await _journal_death(s, e, at)
         # The beacons and gates the pack reports, and a replaced world's cleared (§M26).
         await markers.apply(s, e, at)
         # What each Tricorder's live scan is finding, and a replaced world's cleared (§M25).
@@ -165,7 +168,8 @@ TIMELINE_KINDS = ("join", "leave", "death", "respawn")
 _DETAIL_KEYS = ("cause", "killer")
 
 
-async def _timeline(s: AsyncSession, boot: str, e: dict[str, Any], at: datetime) -> None:
+async def _timeline(s: AsyncSession, boot: str, e: dict[str, Any], at: datetime) -> bool:
+    """Records a timeline event; True when it is new (not a re-read)."""
     kind = e.get("kind")
     world = str(e.get("world") or "world")
     if kind == "world_replaced":
@@ -185,15 +189,15 @@ async def _timeline(s: AsyncSession, boot: str, e: dict[str, Any], at: datetime)
             {"w": world, "at": at},
         )
     elif kind not in TIMELINE_KINDS:
-        return
+        return False
     coords = {k: float(e[k]) if isinstance(e.get(k), (int, float)) else None for k in "xyz"}
-    await s.execute(
+    added = await s.execute(
         text(
             "INSERT INTO app.mc_player_events"
             " (world, xuid, gamertag, boot_id, event_id, at, kind, dim, x, y, z, detail)"
             " VALUES (:world, :key, :name, :boot, :eid, :at, :kind, :dim, :x, :y, :z,"
             " CAST(:detail AS jsonb))"
-            " ON CONFLICT (boot_id, event_id) DO NOTHING"
+            " ON CONFLICT (boot_id, event_id) DO NOTHING RETURNING 1"
         ),
         {
             "world": world,
@@ -208,6 +212,94 @@ async def _timeline(s: AsyncSession, boot: str, e: dict[str, Any], at: datetime)
             "dim": e.get("dim") if isinstance(e.get("dim"), str) else None,
             **coords,
             "detail": json.dumps({k: e[k] for k in _DETAIL_KEYS if isinstance(e.get(k), str)}),
+        },
+    )
+    return added.first() is not None
+
+
+# The progress log's cap (app.mc_goal_log's CHECK; agent/minecrafttools.LOG_MAX).
+LOG_MAX = 500
+_DIM_NAMES = {"overworld": "the Overworld", "nether": "the Nether", "the_end": "the End"}
+# The script API's damage causes, in plain words. One with a killer names it instead.
+_CAUSES = {
+    "anvil": "crushed by an anvil",
+    "blockExplosion": "blown up",
+    "campfire": "burned",
+    "contact": "pricked to death",
+    "drowning": "drowned",
+    "entityAttack": "killed",
+    "entityExplosion": "blown up",
+    "fall": "fell from a high place",
+    "fallingBlock": "crushed by a falling block",
+    "fire": "burned",
+    "fireTick": "burned",
+    "flyIntoWall": "flew into a wall",
+    "freezing": "froze",
+    "lava": "burned in lava",
+    "lightning": "struck by lightning",
+    "magic": "killed by magic",
+    "projectile": "shot",
+    "sonicBoom": "killed by a sonic boom",
+    "soulCampfire": "burned",
+    "stalactite": "hit by a falling stalactite",
+    "stalagmite": "fell on a stalagmite",
+    "starve": "starved",
+    "suffocation": "suffocated",
+    "suicide": "killed by a command",
+    "thorns": "killed by thorns",
+    "void": "fell out of the world",
+    "wither": "withered away",
+}
+_KILLED_BY = {"projectile": "shot by", "entityExplosion": "blown up by"}
+# Causes that say nothing about how ("none", or the game's catch-all).
+_NO_CAUSE = frozenset({"none", "override"})
+_WORD = re.compile(r"^[A-Za-z]{1,32}$")
+_ENTITY = re.compile(r"^(?:[a-z0-9_]{1,32}:)?([a-z0-9_]{1,48})$")
+
+
+def _a(noun: str) -> str:
+    return f"{'an' if noun[0] in 'aeiou' else 'a'} {noun}"
+
+
+def _num(v: Any) -> float | None:
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else None
+
+
+def death_entry(e: dict[str, Any]) -> str:
+    """A death in plain words for the player's progress log: where and how, from what
+    the pack reported. The cause and killer are the game's ids, kept only when they look
+    like ids."""
+    out = "Died"
+    coords = [c for k in "xyz" if (c := _num(e.get(k))) is not None]
+    if len(coords) == 3:
+        out += " at " + ", ".join(str(math.floor(c)) for c in coords)
+    dim = e.get("dim")
+    if isinstance(dim, str) and dim in _DIM_NAMES:
+        out += f" in {_DIM_NAMES[dim]}"
+    raw, who = e.get("cause"), e.get("killer")
+    cause = raw if isinstance(raw, str) and _WORD.match(raw) and raw not in _NO_CAUSE else ""
+    killer = _ENTITY.match(who) if isinstance(who, str) else None
+    if killer:
+        how = f"{_KILLED_BY.get(cause, 'killed by')} {_a(killer.group(1).replace('_', ' '))}"
+    elif cause:
+        how = _CAUSES.get(cause) or re.sub(r"(?<!^)(?=[A-Z])", " ", cause).lower()
+    else:
+        how = ""
+    return (f"{out} ({how})" if how else out)[:LOG_MAX]
+
+
+async def _journal_death(s: AsyncSession, e: dict[str, Any], at: datetime) -> None:
+    """An `auto` entry in the player's progress log (P2), on no goal."""
+    await s.execute(
+        text(
+            "INSERT INTO app.mc_goal_log (xuid, gamertag, at, text, source)"
+            " VALUES (:key, :name, :at, :t, 'auto')"
+        ),
+        {
+            "key": player_key(str(e.get("xuid", "")), str(e.get("name", ""))),
+            "name": str(e.get("name", "")),
+            "at": at,
+            "t": death_entry(e),
         },
     )
 

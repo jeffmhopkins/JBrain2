@@ -3925,6 +3925,52 @@ A view-only map for someone without a login, at `/mc/s/{token}`.
   wordmark. An unreachable box says *The map isn't answering* instead — never that the link
   ended.
 
+### Players' goals on the Minecraft screen (owner, 2026-10-13 — binding mock: `docs/mocks/minecraft-goals/b-player-sheet.html`, variant B "expandable if clicked", look-only; plan §M24)
+
+Each player's goals and their progress, where the owner already looks after people. The
+owner picked **B** (goals with the player) over A (a Goals section) and C (a Goals tab on
+the map), with one change: the glance line **expands in place**, so every goal is one tap
+away from the Players table, which answers the review's B2 (*all but one goal hidden*).
+The round's record and its independent review are `docs/mocks/minecraft-goals/`.
+
+- **The glance line.** Under a player with goals, a 44 px button of its own (below the
+  row's overlay, so the row still opens the Sheet): a 44 px mini bar and the first open
+  counted goal as *14 / 23 iron blocks · +1 more goal* (the item in words, plural for a
+  count, a mass noun left alone: *200 glass*), or *18 / 16 torches · reached*, or a flag
+  and the title for a plain goal. The rest are said as **goals** (*+1 more goal*), never
+  *1 more* beside a count, where it reads as items short (review B1). A player with only
+  finished goals reads *No open goals · 1 done*. A player with none has no line.
+- **Expanded in place**: every open goal as a 56 px row (glyph tile, title, *14 / 23*, the
+  bar, the *where from · as of* line); finished goals folded under *1 done · 1 abandoned*
+  (done and abandoned pills, the date, what it counted); then the look-only footnote,
+  *Goals and the journal are kept by Dave from what players tell him in game. To change
+  one, {player} asks Dave.* No control edits a goal.
+- **A goal's detail opens in place too** (an accordion, one goal at a time), not in a
+  Sheet: DESIGN's surface rule makes row-level detail an inline expansion, the Players
+  table isn't a modal, and from inside the player Sheet a second Sheet would nest two
+  modals. It holds the headline (*14 of 23 — 9 to go*), the big bar and its key, **where
+  the count comes from** as a plain list (no card in a card, review B3): *On {player}*
+  (inventory, armour and off-hand; *1 shulker box carried: what's inside isn't counted*),
+  *Near {place}* per saved place with its distance and a **far** chip, *Near {player}*
+  (the chests where they stand, as Dave counts them); one far line (*one per check, for
+  all far places*); the files' age with **Count again**; *Counting here is free and never
+  spends {player}'s deep scans*; and the goal's Journal.
+- **The player Sheet** gains a **Goals** section (*N open*, the same list) and the
+  player's latest **Journal** (five entries, newest first, each with its source: *in game*,
+  *Dave*, *you*, *auto*), above Lifetime stats. With no goals it teaches the sentence
+  that makes one: *"Dave, remind me I need 23 iron blocks"*.
+- **The bar**: carried in solid `--steel`, chests in `--steel` at 45 % (`color-mix`), the
+  rest `--surface-2`; reached is `--green` all through with a *reached* pill and *{player}
+  can tell Dave it's done* (Dave never brings it up himself); a count that can't be made is
+  the track hatched in `--border`, *— / 23*. Words always say what the colours say.
+- **Honest counting.** The screen counts each player's goals once when it shows them (one
+  request a player, the files as they are); **Count again** saves the running world first.
+  An offline player's pockets read *counts while they're on*; a goal in a world that isn't
+  loaded carries a *not loaded* pill and is counted from that world's saved files; a
+  server that can't answer reads *Can't count right now — {why}*.
+- **Glyphs**: a cube for a goal that counts an item, a flag for a plain goal, a check and a
+  ban for finished ones. Never the Tricorder target's rings (review X7).
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

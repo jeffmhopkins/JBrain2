@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-12 (Dave's welcome and first-time beats, DW1)
+> **Status:** Living · **Last verified:** 2026-10-13 (villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -56,7 +56,7 @@ world** in slot 1, never on an imported real world.
 | 6b | Walk away, then `/jb:dave navigate to tree farm`, and hold the tricorder | **Navigating to it:** Dave says which way and how far; the arrow leads back to "tree farm" | log `waypoint set for …`; your eyes |
 | 6c | `/jb:dave point me home` — first with no bed set, then after sleeping in a bed (or saying `/jb:dave mark this location as home`) | **Home:** with nothing to go on Dave says so and offers to mark it; with a bed the arrow points at the bed ("Home (your bed)"); a saved home wins over the bed | the reply; the PWA chat |
 | 6d | `/jb:dave "Dave, mark this location as tree farm"` (with quotes), and the same without them | A **comma or a number needs quotes** (checked on a server console; the unquoted one should show a syntax error), and a leading "Dave," is ignored | your eyes |
-| 7 | Die once (fall, or `/kill @s`) | **Deaths reach the travel log with their cause**, and whether a dead player's inventory is still readable (the keep-inventory work); **the Tricorder stays with you** | `GET /api/debug/minecraft/travel` deaths +1; log `player died` |
+| 7 | Die once (fall, or `/kill @s`) | **Deaths reach the travel log with their cause**, and whether a dead player's inventory is still readable (the keep-inventory work); **the Tricorder stays with you**; and a plain *Died at x, y, z in the Overworld (fell from a high place)* entry in your progress log | `GET /api/debug/minecraft/travel` deaths +1; log `player died`; ask Minecraft_Dave in the PWA for your progress log |
 | 8 | Walk somewhere for a minute | Travel-log trail samples are recorded | `GET /api/debug/minecraft/travel` samples grow |
 | 9 | *(optional)* Everyone at once, both devices | Memory and CPU with real players (the 2 GB cap) | debug status |
 | 10 | Try to get rid of your Tricorder: the drop key (Q / the controller's drop), dragging it out of the inventory, putting it in a chest | **It's locked to your inventory** on Windows and on the Xbox: none of them work | Your eyes |
@@ -71,6 +71,11 @@ world** in slot 1, never on an imported real world.
 | 19 | `/dave hello`, then `/d hello` | **The welcome's six Dave lines again**, 3 s apart, with no darkness, no title and no second Tricorder, and no "Dave is thinking…" | your eyes; no `"ev":"dave"` line in the log |
 | 20 | Your first death (row 7) | Dave's two first-death lines ("…that was close…", then "The transporter can only carry you…"); a later death says nothing more. If a Power Pack saved your things on that first death (row 13 first), only the first line | your eyes |
 | 21 | Your first Ender Pearl, then your first Power Pack (row 4) | The pearl line once ("…is that an Ender Pearl?…"); on the first Power Pack, the field line only with the keep switch on, and the saved-places line only with the transport switch on. With both off, nothing, and it comes the next time you hold a pack after one is turned on | your eyes |
+| 22 | Type `/dave` with nothing after it, then close the chat | **The quick menu** opens once chat is closed (a form can't show over the open chat; the pack asks again each second for 10 s, then prints the old "Ask Dave something…" hint): *Where am I?*, *Point me home*, *My last death*, *Save this spot* (a "Name this spot" box) and *Ask something else…* (an "Ask Dave" box). Each asks Dave as if typed; closing a form does nothing. On a controller too | your eyes; log `[jbrain] {"ev":"dave",…}` with the button's words |
+| 23 | Have Dave point your Tricorder somewhere close (row 5b), walk there holding it; then again with it in your pocket, not in hand | **The arrival chime:** one quiet XP-orb ding as "You're here" shows, not repeated while you stand there; carried in a pocket, the ding comes when the map's arrival clear lands (within about 10 s). Nobody else hears it, and nothing during a live scan | your ears |
+| 24 | Tame a wolf and a horse, name the wolf with a name tag, make it sit; then `/dave where's my dog` | **Dave finds it:** "*Rex* is *N* blocks *…*, sitting right where you left him. Hold your Tricorder and follow the arrow.", free within 48 blocks, a deep scan farther; the Tricorder points at it | `GET /api/debug/minecraft/map/pets?x=0&z=0&owner_name=<you>` lists both, `owner` set (the `pid` on your `dave` line in `GET /minecraft/logs`) |
+| 25 | Open a librarian's trade screen; then `/dave who sells <one of its books>` | Only the trades the screen shows (its unlocked levels); the line "From up here I see a librarian … who sells … for N emeralds." | `GET /api/debug/minecraft/map/villagers?x=<x>&z=<z>&profession=librarian` matches the screen |
+| 26 | Light a Nether portal, go through, ask Dave to point you home | In the Nether the held Tricorder reads `↑ Nether portal · N blocks · Home is in the Overworld`, pointing at the portal; back through, it points home | `GET /api/debug/minecraft/map/portals` lists the portal; break one and `check=false` still lists it while the default leaves it out |
 
 ## After (assistant)
 

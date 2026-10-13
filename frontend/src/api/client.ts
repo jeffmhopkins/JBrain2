@@ -978,6 +978,87 @@ export interface MinecraftPlayer {
   last_seen: number;
 }
 
+/** A player's goal (`app.mc_goals`, plan §M24). Look-only: players change goals by asking
+ *  Dave in game. `world` is the world folder it's for (a goal from before goals recorded one
+ *  reads as the loaded world's); `loaded` is null when the server couldn't say. */
+export interface MinecraftGoal {
+  id: string;
+  title: string;
+  notes: string;
+  status: "open" | "done" | "abandoned";
+  world: string | null;
+  world_name: string | null;
+  loaded: boolean | null;
+  /** Counts an item: both set, or neither. */
+  item: string | null;
+  item_count: number | null;
+  created_at: number;
+  finished_at: number | null;
+}
+
+/** One line of a player's journal (`app.mc_goal_log`): `player` is what they typed in game. */
+export interface MinecraftJournalEntry {
+  id: string;
+  goal_id: string | null;
+  at: number;
+  text: string;
+  source: "player" | "dave" | "owner" | "auto";
+}
+
+export interface MinecraftPlayerGoals {
+  xuid: string;
+  gamertag: string;
+  goals: MinecraftGoal[];
+  /** Newest first, the latest few per goal (and for no goal). */
+  journal: MinecraftJournalEntry[];
+}
+
+export interface MinecraftGoals {
+  /** The loaded world's folder; null when the server couldn't say. */
+  world: string | null;
+  players: MinecraftPlayerGoals[];
+}
+
+/** One chest source: the containers within 48 blocks of one saved place. */
+export interface MinecraftGoalChests {
+  place: string;
+  count: number;
+  /** Blocks from where the player stands; null when they're off, or in another dimension. */
+  distance: number | null;
+  /** In game this place would take a deep scan (one per check, for all far places). */
+  far: boolean;
+}
+
+/** One open counted goal, counted now by the app (never a deep scan). */
+export interface MinecraftGoalCount {
+  id: string;
+  world: string | null;
+  world_name: string | null;
+  loaded: boolean;
+  item: string;
+  need: number;
+  /** null when nothing could be counted. */
+  have: number | null;
+  carried: number | null;
+  carried_why: "offline" | "not_loaded" | "failed" | null;
+  /** Shulker boxes carried: what's inside isn't counted. */
+  boxes: number;
+  chests: MinecraftGoalChests[];
+  /** The containers within 48 blocks of where the player stands; null when that isn't known. */
+  here: number | null;
+  chests_why: "no_places" | "no_world" | "failed" | null;
+  detail: string | null;
+  age_s: number | null;
+  as_of: number | null;
+  flush: string | null;
+}
+
+export interface MinecraftGoalProgress {
+  xuid: string;
+  online: boolean;
+  goals: MinecraftGoalCount[];
+}
+
 export interface MinecraftPlayers {
   players: MinecraftPlayer[];
   /** False until the companion add-on feeds lifetime stats. */
@@ -5182,6 +5263,28 @@ export const api = {
     const body = (await response.json()) as MinecraftPlayers;
     if (!body || !Array.isArray(body.players)) {
       throw new ApiError(502, "Unexpected response from the Minecraft player list.");
+    }
+    return body;
+  },
+
+  async minecraftGoals(): Promise<MinecraftGoals> {
+    const response = await request("/api/minecraft/goals");
+    const body = (await response.json()) as MinecraftGoals;
+    if (!body || !Array.isArray(body.players)) {
+      throw new ApiError(502, "Unexpected response from the Minecraft goals list.");
+    }
+    return body;
+  },
+
+  /** Counts one player's open counted goals now. `flush` (Count again) saves the running
+   *  world first; the sidecar does that at most every 30 s. */
+  async minecraftGoalProgress(xuid: string, flush = false): Promise<MinecraftGoalProgress> {
+    const q = new URLSearchParams({ xuid });
+    if (flush) q.set("flush", "true");
+    const response = await request(`/api/minecraft/goals/progress?${q}`);
+    const body = (await response.json()) as MinecraftGoalProgress;
+    if (!body || !Array.isArray(body.goals)) {
+      throw new ApiError(502, "Unexpected response from the goal count.");
     }
     return body;
   },
