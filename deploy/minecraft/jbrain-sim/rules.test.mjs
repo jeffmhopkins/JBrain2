@@ -15,6 +15,29 @@ test("the arrow points at all eight octants relative to where the player faces",
   assert.equal(r.arrowFor(here, N, 30, 40).blocks, 50);
 });
 
+test("the arrival chime rings once on reaching a waypoint, and again only after leaving", () => {
+  const wp = { x: 100, y: null, z: 100, dim: "overworld", label: "Base" };
+  const at = (x, z, dim = "minecraft:overworld") => ({ dim, x, z });
+  let heard;
+  const step = (here) => {
+    const got = r.arrivalChime(wp, here, heard);
+    heard = got.heard;
+    return got.ring;
+  };
+  assert.equal(step(at(0, 0)), false);
+  assert.equal(step(at(100, 102)), true); // "You're here" reads under 3 blocks
+  assert.equal(step(at(101, 100)), false); // still there: no second ring
+  assert.equal(step(at(100, 105)), false); // pacing the edge keeps it heard
+  assert.equal(step(at(100, 102)), false);
+  assert.equal(step(at(100, 108)), false); // walked back out: forgotten
+  assert.equal(step(at(100, 101)), true);
+  // Another dimension neither rings nor forgets; a new heading to the same spot rings.
+  assert.equal(step(at(100, 100, "minecraft:nether")), false);
+  assert.equal(heard, r.waypointId(wp));
+  assert.equal(r.arrivalChime({ ...wp, label: "Home" }, at(100, 100), heard).ring, true);
+  assert.deepEqual(r.arrivalChime(undefined, at(0, 0), "x"), { ring: false, heard: "x" });
+});
+
 test("the bearing wraps at ±180°: just either side of due south is still ↓", () => {
   const here = { x: 0, z: 0 };
   assert.equal(r.arrowFor(here, N, 0.01, 100).arrow, "↓");

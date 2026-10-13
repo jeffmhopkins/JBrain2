@@ -155,5 +155,8 @@ export const initScan = ({ say }) => {
     }
   };
 
-  return { step, line, end, onEvent };
+  // Whether a scan is on for this player: its target is a find, never an arrival.
+  const active = (name) => scanOf(name) !== undefined;
+
+  return { step, line, end, onEvent, active };
 };
