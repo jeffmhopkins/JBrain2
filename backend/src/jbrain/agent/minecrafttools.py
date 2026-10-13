@@ -272,6 +272,99 @@ def _reply(lines: list[str]) -> str:
     return " ".join(line.split("] ", 1)[-1] for line in kept).strip() or "(no answer)"
 
 
+# `/map/stock` and `jb:carry` each take at most this many item ids in one ask.
+ITEMS_PER_ASK = 8
+Sidecar = Callable[..., Awaitable[dict[str, Any] | str]]
+
+
+async def carry_pocket(sidecar: Sidecar, gamertag: str, names: list[str]) -> Pocket | str:
+    """What an online player carries of `names` (inventory, armor, off-hand), from the
+    game itself (the pack's `jb:carry`), or a sentence saying why it wasn't counted.
+    Past ITEMS_PER_ASK names it asks again, and the answers are merged."""
+    pocket: Pocket | None = None
+    for start in range(0, len(names), ITEMS_PER_ASK):
+        query = {"player": gamertag, "types": names[start : start + ITEMS_PER_ASK]}
+        got = await sidecar(
+            "POST",
+            "/command",
+            json={"command": f"scriptevent jb:carry {json.dumps(query)}", "wait_s": 3.0},
+        )
+        if isinstance(got, str):
+            return got
+        reply = _reply([str(line) for line in got.get("lines", [])])
+        m = _CARRY_HIT.search(reply)
+        if m is None:
+            if "carry refused" in reply:
+                return f"What they carry wasn't counted: {fence(reply)}"
+            return (
+                "What they carry wasn't counted: the jbrain pack didn't answer (it updates"
+                " when the server restarts)."
+            )
+        counts = {k: int(n) for k, n in (pair.split("=") for pair in m["counts"].split())}
+        spot = Spot(int(m["x"]), int(m["y"]), int(m["z"]), m["dim"])
+        if pocket is None:
+            pocket = Pocket(counts, spot, int(m["boxes"]))
+        else:
+            pocket.counts.update(counts)
+    return pocket if pocket is not None else "What they carry wasn't counted: no item named."
+
+
+class Stock:
+    """What `stock_near` found: per centre, each item's total; the files' age and time
+    (None when unknown); and the sidecar's word on the flush ("flushed", "recent", …)."""
+
+    __slots__ = ("per", "age_s", "as_of", "flush")
+
+    def __init__(
+        self, per: list[dict[str, int]], age_s: float | None, as_of: float | None, flush: str
+    ) -> None:
+        self.per, self.age_s, self.as_of, self.flush = per, age_s, as_of, flush
+
+
+async def stock_near(
+    sidecar: Sidecar, slot: str, centres: list[Spot], items: list[str], *, flush: bool
+) -> Stock | str:
+    """How many of each of `items` (full ids) the containers within NEAR_BLOCKS of each
+    centre hold in one world slot's saved files, each container once, toward its nearest
+    centre (the sidecar's `/map/stock`: one ask a dimension, per ITEMS_PER_ASK items). A
+    slot that isn't loaded is read just the same; only the flush needs it running. A
+    sentence when the sidecar couldn't count."""
+    per: list[dict[str, int]] = [{} for _ in centres]
+    age: float | None = None
+    when: float | None = None
+    flushed = "not asked"
+    for dim in _DIMENSIONS:
+        here = [i for i, sp in enumerate(centres) if sp.dim == dim]
+        if not here:
+            continue
+        for start in range(0, len(items), ITEMS_PER_ASK):
+            names = items[start : start + ITEMS_PER_ASK]
+            got = await sidecar(
+                "GET",
+                "/map/stock",
+                params={
+                    "slot": slot,
+                    "dim": dim,
+                    "centres": ";".join(f"{centres[i].x},{centres[i].z}" for i in here),
+                    "items": ",".join(names),
+                    "radius": NEAR_BLOCKS,
+                    "flush": 1 if flush else 0,
+                },
+            )
+            if isinstance(got, str):
+                return got
+            for i, c in zip(here, got.get("centres") or [], strict=False):
+                totals = c.get("totals") or {}
+                for n in names:
+                    per[i][n] = per[i].get(n, 0) + int(totals.get(n, 0))
+            if isinstance(got.get("age_s"), int | float):
+                age = max(age or 0, float(got["age_s"]))
+            if isinstance(got.get("as_of"), int | float):
+                when = float(got["as_of"]) if when is None else min(when, float(got["as_of"]))
+            flushed = str(got.get("flush") or flushed)
+    return Stock(per, age, when, flushed)
+
+
 def _int(raw: Any, default: int, low: int, high: int) -> int | None:
     """A model-supplied count clamped to range; None when it isn't a number at all."""
     if raw in (None, ""):
@@ -1688,18 +1781,24 @@ def build_minecraft_handlers(
                 "item and count go together: the item id and how many they need, e.g."
                 ' item "iron_block", count 23. Or leave both out.'
             )
+        # The world it's for, as places are filed: the app counts its chests there, and
+        # can tell a goal made in another world. Unknown (the server can't say) is NULL,
+        # which reads as whichever world is loaded.
+        world = await loaded_world(ctx) or None
         async with scoped_session(maker, ctx.session) as s:
             player = await chat_player(s, ctx)
             if player is None:
                 return no_player
             await s.execute(
                 text(
-                    "INSERT INTO app.mc_goals (xuid, gamertag, title, notes, item, item_count)"
-                    " VALUES (:k, :g, :t, :n, :it, :ic)"
+                    "INSERT INTO app.mc_goals"
+                    " (xuid, gamertag, world, title, notes, item, item_count)"
+                    " VALUES (:k, :g, :w, :t, :n, :it, :ic)"
                 ),
                 {
                     "k": player.key,
                     "g": player.gamertag,
+                    "w": world,
                     "t": title,
                     "n": notes,
                     "it": item,
@@ -1777,59 +1876,22 @@ def build_minecraft_handlers(
     # --- goal progress: what they carry and what's in their own chests (§M24) ----------
 
     async def carry_count(gamertag: str, names: list[str]) -> Pocket | str:
-        """What an online player carries of `names` (inventory, armor, off-hand), from
-        the game itself (the pack's `jb:carry`), or a sentence saying why it wasn't counted."""
-        query = {"player": gamertag, "types": names}
-        got = await console(f"scriptevent jb:carry {json.dumps(query)}")
-        if isinstance(got, str):
-            return got
-        reply = _reply(got)
-        if m := _CARRY_HIT.search(reply):
-            counts = {k: int(n) for k, n in (pair.split("=") for pair in m["counts"].split())}
-            spot = Spot(int(m["x"]), int(m["y"]), int(m["z"]), m["dim"])
-            return Pocket(counts, spot, int(m["boxes"]))
-        if "carry refused" in reply:
-            return f"What they carry wasn't counted: {fence(reply)}"
-        return (
-            "What they carry wasn't counted: the jbrain pack didn't answer (it updates when"
-            " the server restarts)."
-        )
+        return await carry_pocket(sidecar, gamertag, names)
 
     async def chest_counts(
         centres: list[tuple[str, Spot]], item: str
     ) -> tuple[list[tuple[str, int]], Any] | str:
         """How many of `item` the containers within NEAR_BLOCKS of each centre hold, each
-        container once, toward its nearest centre (the sidecar's `/map/stock`, one call a
-        dimension); and the files' age. A sentence when nothing could be counted."""
+        container once, toward its nearest centre; and the files' age. A sentence when
+        nothing could be counted."""
         worlds = await sidecar("GET", "/worlds")
         if isinstance(worlds, str):
             return worlds
         slot = next((w["id"] for w in worlds.get("slots", []) if w.get("active")), "slot1")
-        found: dict[int, int] = {}
-        age: Any = None
-        for dim in _DIMENSIONS:
-            here = [(i, sp) for i, (_, sp) in enumerate(centres) if sp.dim == dim]
-            if not here:
-                continue
-            got = await sidecar(
-                "GET",
-                "/map/stock",
-                params={
-                    "slot": slot,
-                    "dim": dim,
-                    "centres": ";".join(f"{sp.x},{sp.z}" for _, sp in here),
-                    "items": item,
-                    "radius": NEAR_BLOCKS,
-                    "flush": 1,
-                },
-            )
-            if isinstance(got, str):
-                return got
-            for (i, _), c in zip(here, got.get("centres") or [], strict=False):
-                found[i] = int((c.get("totals") or {}).get(item, 0))
-            if isinstance(got.get("age_s"), int | float):
-                age = max(age or 0, got["age_s"])
-        return [(label, found.get(i, 0)) for i, (label, _) in enumerate(centres)], age
+        got = await stock_near(sidecar, slot, [sp for _, sp in centres], [item], flush=True)
+        if isinstance(got, str):
+            return got
+        return [(label, got.per[i].get(item, 0)) for i, (label, _) in enumerate(centres)], got.age_s
 
     def pick_goal(goals: list[Any], raw: Any, gamertag: str) -> tuple[int, Any] | str:
         if raw not in (None, "", 0):

@@ -20,6 +20,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -95,8 +96,13 @@ async def _chat(maker: async_sessionmaker, owner: SessionContext) -> ToolContext
     return ToolContext(session=owner, scopes=(), agent_session_id=sid)
 
 
+# No sidecar token: every sidecar call is the 503 a box without one gives, so a goal made
+# here can't learn its world and is stored with none (read as the loaded world's).
+NO_SIDECAR = SimpleNamespace(minecraft_url="", minecraft_token="")
+
+
 def _tools(maker: async_sessionmaker, gamertag: str | None) -> dict[str, Any]:
-    return mt.build_minecraft_handlers(maker, object(), FakeSettings(gamertag))  # type: ignore[arg-type]
+    return mt.build_minecraft_handlers(maker, NO_SIDECAR, FakeSettings(gamertag))  # type: ignore[arg-type]
 
 
 async def test_a_chat_starts_about_the_owner_and_stays_bound(maker) -> None:
