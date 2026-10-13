@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { CustomCommandStatus, Dimension, ItemLockMode, ItemStack, sim } from "@minecraft/server";
+import { FormCancelationReason, forms } from "@minecraft/server-ui";
 import { LINES } from "./pack/scripts/rules.js";
 
 await import("./pack/scripts/main.js");
@@ -26,7 +27,10 @@ const wake = (p) => {
   p.sounds.length = 0;
 };
 
-beforeEach(() => sim.reset());
+beforeEach(() => {
+  sim.reset();
+  forms.reset();
+});
 
 test("the welcome's Tricorder is bound to its owner", () => {
   const p = sim.player("Steve 42", "-111");
@@ -143,7 +147,7 @@ test("no Tricorder, no Dave: static lines and no question reaches the backend", 
   assert.match(daveEvents()[0], /"text":"point me home"/);
 });
 
-test("/d and /ai are the same door as /dave, and an empty ask names /dave", () => {
+test("/d and /ai are the same door as /dave", () => {
   const p = sim.player("Shorty", "-30");
   wake(p);
   for (const name of ["jb:d", "jb:ai"]) {
@@ -152,7 +156,181 @@ test("/d and /ai are the same door as /dave, and an empty ask names /dave", () =
     assert.equal(res.status, CustomCommandStatus.Success);
     assert.match(daveEvents().at(-1), new RegExp(`"text":"point me ${name}"`));
   }
-  assert.match(sim.command("jb:dave").cb({ sourceEntity: p }).message, /\/dave point me home/);
+});
+
+// --- the quick menu (§M7) ---------------------------------------------------------------
+
+// Every pending form answer, and what it sets off.
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+const HINT = 'Ask Dave something, like: /dave point me home (use "quotes" for commas or numbers)';
+const MENU = ["Where am I?", "Point me home", "My last death", "Save this spot", "Ask something else…"];
+const pick = (i, typed) => (_p, form) =>
+  form.buttons ? { canceled: false, selection: i } : { canceled: false, formValues: [typed] };
+const menu = async (p, command = "jb:dave") => {
+  const res = sim.command(command).cb({ sourceEntity: p });
+  assert.equal(res.status, CustomCommandStatus.Success);
+  assert.equal(res.message, undefined);
+  sim.flush();
+  await settle();
+};
+const asked = () => daveEvents().map((l) => JSON.parse(l.slice(l.indexOf("{"))).text);
+
+test("an empty /dave, /d or /ai opens Dave's quick menu", async () => {
+  const p = sim.player("Menu", "-40");
+  wake(p);
+  for (const name of ["jb:dave", "jb:d", "jb:ai"]) await menu(p, name);
+  assert.equal(forms.shown.length, 3);
+  for (const f of forms.shown) {
+    assert.equal(f.title, "Dave");
+    assert.deepEqual(f.buttons, MENU);
+  }
+  assert.deepEqual(asked(), []); // each closed: nothing asked, nothing said
+  assert.deepEqual(p.messages, []);
+});
+
+test("each plain button asks its own words, as typed after /dave", async () => {
+  const p = sim.player("Menu", "-41");
+  wake(p);
+  for (const i of [0, 1, 2]) {
+    forms.answer = pick(i);
+    await menu(p);
+  }
+  assert.deepEqual(asked(), ["Where am I?", "Point me home", "My last death"]);
+  assert.equal(p.messages.at(-1), "§7Dave is thinking…");
+});
+
+test("Save this spot asks for a name, then saves it under that name", async () => {
+  const p = sim.player("Menu", "-42");
+  wake(p);
+  forms.answer = pick(3, "  Base camp ");
+  await menu(p);
+  const box = forms.shown.at(-1);
+  assert.equal(box.title, "Dave");
+  assert.deepEqual(box.fields, [{ label: "Name this spot", placeholder: "base" }]);
+  assert.deepEqual(asked(), ["save this spot as Base camp"]);
+});
+
+test("Ask something else… sends whatever they type; a blank box asks nothing", async () => {
+  const p = sim.player("Menu", "-43");
+  wake(p);
+  forms.answer = pick(4, "where is the nearest pig");
+  await menu(p);
+  assert.deepEqual(forms.shown.at(-1).fields, [
+    { label: "Ask Dave", placeholder: "where is the nearest village" },
+  ]);
+  forms.answer = pick(4, "   ");
+  await menu(p);
+  forms.answer = pick(3, "");
+  await menu(p);
+  assert.deepEqual(asked(), ["where is the nearest pig"]);
+});
+
+test("closing the menu or its text box does nothing", async () => {
+  const p = sim.player("Menu", "-44");
+  wake(p);
+  await menu(p); // the menu closed
+  forms.answer = (_p, form) =>
+    form.buttons
+      ? { canceled: false, selection: 3 }
+      : { canceled: true, cancelationReason: FormCancelationReason.UserClosed };
+  await menu(p); // the name box closed
+  assert.equal(forms.shown.length, 3);
+  assert.deepEqual(asked(), []);
+  assert.deepEqual(p.messages, []);
+});
+
+test("a menu that can't show while chat is open waits, then falls back to the hint", async () => {
+  const p = sim.player("Menu", "-45");
+  wake(p);
+  const busy = { canceled: true, cancelationReason: FormCancelationReason.UserBusy };
+  let left = 2;
+  forms.answer = (pl, form) => (left-- > 0 ? busy : pick(1)(pl, form));
+  await menu(p);
+  for (let i = 0; i < 3; i++) {
+    sim.advance(20);
+    await settle();
+  }
+  assert.equal(forms.shown.length, 3); // shown again each second until chat closed
+  assert.deepEqual(asked(), ["Point me home"]);
+
+  forms.answer = () => busy;
+  await menu(p);
+  for (let i = 0; i < 12; i++) {
+    sim.advance(20);
+    await settle();
+  }
+  assert.deepEqual(p.messages.slice(-1), [HINT]);
+  assert.equal(forms.shown.length, 3 + 10);
+});
+
+test("no Tricorder, no menu: an empty /dave gets the static", async () => {
+  const p = sim.player("Nobody", "-46");
+  await menu(p);
+  assert.deepEqual(forms.shown, []);
+  assert.deepEqual(p.messages, ["§7§o" + LINES.noSignal]);
+});
+
+// --- the arrival chime (§M9) ------------------------------------------------------------
+
+const ORB = "random.orb";
+const chimes = (p) => p.sounds.filter((s) => s === ORB).length;
+const setWaypoint = (player, x, z, label = "Base") =>
+  sim.scriptevent("jb:waypoint", JSON.stringify({ player, x, z, dim: "overworld", label }));
+const holding = (name, id) => {
+  const p = sim.player(name, id);
+  wake(p);
+  p.selectedSlotIndex = p.inventory.slots.findIndex((s) => s?.typeId === "jbrain:tricorder");
+  return p;
+};
+
+test("holding the Tricorder, reaching the waypoint chimes once, not every frame", () => {
+  const p = holding("Walker", "-50");
+  setWaypoint("Walker", 100, 100);
+  sim.tick();
+  assert.equal(chimes(p), 0);
+  p.location = { x: 100, y: 64, z: 101 };
+  for (let i = 0; i < 8; i++) sim.tick();
+  assert.equal(p.actionbar.at(-1), "↑ Base · You're here");
+  assert.equal(chimes(p), 1);
+  p.location = { x: 100, y: 64, z: 120 }; // away, and back
+  sim.tick();
+  p.location = { x: 100, y: 64, z: 100 };
+  sim.tick();
+  assert.equal(chimes(p), 2);
+  // The track drain's clear after it: the arrival has already rung.
+  sim.scriptevent("jb:waypoint", JSON.stringify({ player: "Walker", clear: true }));
+  assert.equal(chimes(p), 2);
+});
+
+test("carried, not held: the track drain's arrival clear chimes; Dave's clear doesn't", () => {
+  const p = holding("Pocket", "-51");
+  p.selectedSlotIndex = (p.selectedSlotIndex + 1) % 9; // the Tricorder in a pocket
+  setWaypoint("Pocket", 10, 10);
+  p.location = { x: 10, y: 64, z: 10 };
+  sim.tick();
+  assert.equal(chimes(p), 0);
+  sim.scriptevent("jb:waypoint", JSON.stringify({ player: "Pocket", clear: true }));
+  assert.equal(chimes(p), 1);
+  sim.scriptevent("jb:waypoint", JSON.stringify({ player: "Pocket", clear: true })); // none left
+  setWaypoint("Pocket", 10, 10);
+  sim.scriptevent("jb:waypoint", JSON.stringify({ player: "Pocket", clear: true, end_scan: true }));
+  assert.equal(chimes(p), 1);
+});
+
+test("no chime without your own Tricorder, or for a live scan's find", () => {
+  const p = holding("Scanner", "-52");
+  setWaypoint("Scanner", 0, 0); // where they stand, under the scan that follows
+  sim.scriptevent("jb:scan", JSON.stringify({ player: "Scanner", block: "diamond_ore" }));
+  sim.overworld.setBlockAt({ x: 0, y: 63, z: 0 }, "minecraft:diamond_ore");
+  for (let i = 0; i < 4; i++) sim.tick();
+  assert.match(p.actionbar.at(-1), /Scanning: diamond · You're here/);
+  sim.scriptevent("jb:waypoint", JSON.stringify({ player: "Scanner", clear: true }));
+  assert.equal(chimes(p), 0);
+
+  const bare = sim.player("Bare", "-53");
+  setWaypoint("Bare", 0, 0);
+  sim.scriptevent("jb:waypoint", JSON.stringify({ player: "Bare", clear: true }));
+  assert.deepEqual(bare.sounds, []);
 });
 
 const kit = (p) => {
