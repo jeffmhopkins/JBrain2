@@ -76,6 +76,32 @@ def test_domain_tagged_readers_count_only_firewalled_rows() -> None:
     assert sensitivity_reasons([], [[_step("read_lists")]]) == []
 
 
+def test_list_made_in_health_then_rescoped_counts() -> None:
+    """The reviewer's case: a health-scoped chat makes a Meds list and adds a drug, then the
+    chat is re-scoped to `general`. The writers' `[health]` tags still warn."""
+    made = _step("create_list", summary="Created list 'Meds' [health] id=L1.")
+    added = _step("add_list_item", summary="Added 'metformin 500mg' [health] id=i1.")
+    assert sensitivity_reasons(["general"], [[made, added]]) == ["health"]
+    assert sensitivity_reasons(["general"], [[added]]) == ["health"]
+    checked = _step("check_list_item", summary="Checked off 'metformin 500mg' [health].")
+    assert sensitivity_reasons(["general"], [[checked]]) == ["health"]
+    groceries = _step("add_list_item", summary="Added 'milk' [general] id=i2.")
+    assert sensitivity_reasons(["general"], [[groceries]]) == []
+
+
+def test_staged_writes_count_by_their_tag() -> None:
+    appt = _step(
+        "manage_appointment",
+        args={"action": "create", "title": "cardiology", "when": "Tue"},
+        summary="Staged a request to add this appointment [health] for your approval.",
+    )
+    assert sensitivity_reasons(["general"], [[appt]]) == ["health"]
+    fix = _step("propose_correction", summary="Staged a correction [finance] for your approval.")
+    assert sensitivity_reasons(["general"], [[fix]]) == ["finance"]
+    link = _step("make_intake_link", summary="Staged an intake link [general] for your approval.")
+    assert sensitivity_reasons(["general"], [[link]]) == []
+
+
 def test_measurement_chart_counts_whatever_its_view_says() -> None:
     # A finance or mixed chart is tagged `general` with no sources.
     chart = _step("chart_measurements", view={"kind": "chart", "domain": "general"})
@@ -100,10 +126,12 @@ def test_every_firewalled_tool_is_listed() -> None:
     assert missing == []
 
 
-# Readers that need no entry: their steps carry domain-tagged note sources or entity refs, or
-# they read the agent's own state, a Minecraft player's, or the radio. A new reader must be
+# Readers and writers that need no entry: their steps carry domain-tagged note sources,
+# entity refs or fact writes, a required `domain` argument, or nothing private (the agent's
+# own state, a Minecraft player's, the radio, a wiki rebuild, a session title). A new reader,
+# or any tool whose `.tool` says `permission: mutate|sensitive` or `mutating: true`, must be
 # classified here or in `chat_shares`, so one can't publish private rows unnoticed.
-_UNTAGGED_READERS_OK = frozenset(
+_UNTAGGED_OK = frozenset(
     {
         "read_note",
         "read_entity",
@@ -118,25 +146,43 @@ _UNTAGGED_READERS_OK = frozenset(
         "mc_memory_replace",
         "scratch_read",
         "sdr_read",
+        # Writers: facts/entities carry their domain, or `domain` is a required argument.
+        "assert_fact",
+        "correct_fact",
+        "resolve_entity",
+        "merge_entities",
+        "propose_merge",
+        "file_correction",
+        "add_source_exclusion",
+        # Nothing private on the step.
+        "ask_owner",
+        "name_session",
+        "request_rebuild",
+        "remove_list_item",
     }
 )
 
 
-def _is_reader(name: str) -> bool:
-    return (
+def _needs_classifying(path: Path) -> bool:
+    spec = load_tool(path).spec
+    name = spec.name
+    if name.startswith("gmail_"):
+        return False
+    reader = (
         name.startswith("read_")
         or name.endswith("_read")
         or any(word in name for word in ("memory", "prefs", "recall", "remember"))
     )
+    return reader or spec.permission in ("mutate", "sensitive") or spec.mutating
 
 
-def test_every_reader_tool_is_classified() -> None:
-    unclassified = []
-    for path in sorted(_TOOLS_DIR.glob("*.tool")):
-        name = load_tool(path).spec.name
-        if not _is_reader(name) or name.startswith("gmail_"):
-            continue
-        if name in SENSITIVE_TOOLS or name in DOMAIN_TAGGED_TOOLS or name in _UNTAGGED_READERS_OK:
-            continue
-        unclassified.append(name)
+def test_every_reader_and_writer_tool_is_classified() -> None:
+    unclassified = [
+        load_tool(path).spec.name
+        for path in sorted(_TOOLS_DIR.glob("*.tool"))
+        if _needs_classifying(path)
+        and load_tool(path).spec.name not in SENSITIVE_TOOLS
+        and load_tool(path).spec.name not in DOMAIN_TAGGED_TOOLS
+        and load_tool(path).spec.name not in _UNTAGGED_OK
+    ]
     assert unclassified == []

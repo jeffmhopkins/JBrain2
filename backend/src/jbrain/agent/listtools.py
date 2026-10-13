@@ -14,6 +14,10 @@ from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.lists.service import ListInfo, ListsRepo, UnknownDomain
 
 
+def _tag(domain: str) -> str:
+    return f" [{domain}]" if domain else ""
+
+
 def format_lists(lists: list[ListInfo]) -> str:
     """The model-facing index — title, domain, open/total counts, and id."""
     if not lists:
@@ -100,7 +104,12 @@ def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
         item = await lists.add_item(ctx.session, list_id, body)
         if item is None:
             return "No list with that id is in scope."
-        return ToolOutput(f"Added '{item.body}' id={item.id}.", result_brief=f"added '{item.body}'")
+        # The `[domain]` tag is what the chat-share check reads to tell a meds list from a
+        # grocery list once the chat is re-scoped (chat_shares.DOMAIN_TAGGED_TOOLS).
+        return ToolOutput(
+            f"Added '{item.body}'{_tag(item.domain)} id={item.id}.",
+            result_brief=f"added '{item.body}'",
+        )
 
     async def check_list_item_tool(arguments: dict, ctx: ToolContext) -> str:
         item_id = str(arguments.get("item_id", "")).strip()
@@ -112,7 +121,8 @@ def build_list_handlers(lists: ListsRepo) -> dict[str, ToolHandler]:
             return "No item with that id is in scope."
         verb = "checked off" if item.checked else "reopened"
         return ToolOutput(
-            f"{verb.capitalize()} '{item.body}'.", result_brief=f"{verb} '{item.body}'"
+            f"{verb.capitalize()} '{item.body}'{_tag(item.domain)}.",
+            result_brief=f"{verb} '{item.body}'",
         )
 
     async def remove_list_item_tool(arguments: dict, ctx: ToolContext) -> str:

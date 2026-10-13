@@ -92,11 +92,23 @@ SENSITIVE_TOOLS: dict[str, str] = {
 }
 
 
-# Readers whose step carries no sources: each row's domain is only in the result text, as
-# `[health]` (appointmenttools / listtools formatters). Scanning it keeps a grocery list
+# Steps that carry no sources: each row's domain is only in the result text, as `[health]`
+# (the appointment and list readers' formatters, and the writers whose domain can default
+# from the session's scope, which tag what they resolved). Scanning it keeps a grocery list
 # shareable without a second tap.
 DOMAIN_TAGGED_TOOLS = frozenset(
-    {"read_appointments", "read_appointment", "read_lists", "read_list"}
+    {
+        "read_appointments",
+        "read_appointment",
+        "manage_appointment",
+        "read_lists",
+        "read_list",
+        "create_list",
+        "add_list_item",
+        "check_list_item",
+        "propose_correction",
+        "make_intake_link",
+    }
 )
 _DOMAIN_TAG = re.compile(r"\[(" + "|".join(sorted(SENSITIVE_SCOPES)) + r")\]")
 

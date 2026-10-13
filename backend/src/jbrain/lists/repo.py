@@ -14,7 +14,7 @@ from jbrain.lists.service import ListInfo, ListItemInfo, UnknownDomain
 from jbrain.models.lists import List, ListItem
 
 
-def _item_info(i: ListItem) -> ListItemInfo:
+def _item_info(i: ListItem, domain: str = "") -> ListItemInfo:
     return ListItemInfo(
         id=str(i.id),
         body=i.body,
@@ -22,6 +22,7 @@ def _item_info(i: ListItem) -> ListItemInfo:
         position=i.position,
         source_note_id=str(i.source_note_id) if i.source_note_id is not None else None,
         created_at=i.created_at,
+        domain=domain,
     )
 
 
@@ -132,10 +133,10 @@ class SqlListsRepo:
         async with scoped_session(self._maker, ctx) as session:
             # RLS makes an out-of-scope list invisible, so the parent check (and
             # the next-position read) sees nothing and we bail rather than orphan.
-            owner = (
-                await session.execute(select(List.id).where(List.id == lid))
+            domain = (
+                await session.execute(select(List.domain_code).where(List.id == lid))
             ).scalar_one_or_none()
-            if owner is None:
+            if domain is None:
                 return None
             next_pos = (
                 await session.execute(
@@ -154,7 +155,7 @@ class SqlListsRepo:
             await session.execute(update(List).where(List.id == lid).values(updated_at=func.now()))
             await session.flush()
             await session.refresh(item)
-            return _item_info(item)
+            return _item_info(item, domain)
 
     async def set_item_checked(
         self, ctx: SessionContext, item_id: str, *, checked: bool
@@ -170,12 +171,17 @@ class SqlListsRepo:
             if item is None:
                 return None
             item.checked_at = when
-            await session.execute(
-                update(List).where(List.id == item.list_id).values(updated_at=func.now())
-            )
+            domain = (
+                await session.execute(
+                    update(List)
+                    .where(List.id == item.list_id)
+                    .values(updated_at=func.now())
+                    .returning(List.domain_code)
+                )
+            ).scalar_one_or_none()
             await session.flush()
             await session.refresh(item)
-            return _item_info(item)
+            return _item_info(item, domain or "")
 
     async def remove_item(self, ctx: SessionContext, item_id: str) -> bool:
         iid = _as_uuid(item_id)

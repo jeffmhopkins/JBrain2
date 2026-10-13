@@ -77,9 +77,11 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
         # The id rides structurally (a "Review proposal" chip), not in the prose —
         # so the model can't garble it and the user gets a real control.
         return ToolOutput(
-            "Staged a correction for your approval. I won't change anything until you approve"
-            " it — it then re-enters as a normal, source-attributed note, and its facts land"
-            " once that note has been read, usually within a minute or two of the approval."
+            # `[domain]` is what the chat-share check reads (the domain may have defaulted).
+            f"Staged a correction [{domain}] for your approval. I won't change anything until"
+            " you approve it — it then re-enters as a normal, source-attributed note, and its"
+            " facts land once that note has been read, usually within a minute or two of the"
+            " approval."
             " Checking the entity in the same breath as the approval will not show them yet;"
             " say they are on their way rather than that something is missing.",
             proposal=ProposalRef(proposal_id=prop_id, kind="correction"),
@@ -158,8 +160,8 @@ def build_intake_link_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler
             ctx.session, principal_id=ctx.session.principal_id, spec=spec
         )
         return ToolOutput(
-            "Staged an intake link for your approval. Edit the details if you like, then"
-            " approve to mint it — I'll show you the link once, right after.",
+            f"Staged an intake link [{domain}] for your approval. Edit the details if you like,"
+            " then approve to mint it — I'll show you the link once, right after.",
             proposal=ProposalRef(proposal_id=prop_id, kind="intake-link"),
             result_brief="staged, not minted",
         )
