@@ -22,8 +22,6 @@ from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.auth import keys
-from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.devices import service as device_service
@@ -119,11 +117,6 @@ async def test_the_owner_can_write_and_read_back(maker: async_sessionmaker) -> N
 # points `database_url` at a dead port on purpose, so the manifest tests pass there and these
 # cannot.
 
-# ONE KEY PER TEST, because the container's database outlives an individual test and
-# `create_principal` is a unique insert on the key hash — two tests minting the same panel is a
-# constraint violation that only appears when the file is run whole, which is how it appeared.
-PANEL_KEY_SERVED = "k" * 43
-PANEL_KEY_ABSENT = "m" * 43
 FW_VERSION = "9.9.9"
 
 
@@ -153,9 +146,13 @@ async def test_the_settings_poll_also_says_what_firmware_is_served(
     costing a second handshake, which is what lets a three-second cadence notice an update
     without doubling the handshake rate.
     """
-    await SqlAuthRepo(maker).create_principal(
-        "device_key", keys.hash_key(PANEL_KEY_SERVED), "panel Quorra"
-    )
+    # Through the flash path's own provisioning, so the subject has the role a panel route
+    # requires: a role-less device key is a phone's.
+    panel_key_served = (
+        await device_service.provision_or_reflash(
+            SqlDeviceRepo(maker), OWNER, "panel Servedver", device_role="jpet"
+        )
+    ).key
     app = create_app(
         Settings(
             secure_cookies=False,
@@ -165,7 +162,7 @@ async def test_the_settings_poll_also_says_what_firmware_is_served(
     )
     with TestClient(app) as client:
         body = client.get(
-            "/api/endpoint/settings", headers={"Authorization": f"Bearer {PANEL_KEY_SERVED}"}
+            "/api/endpoint/settings", headers={"Authorization": f"Bearer {panel_key_served}"}
         )
         assert body.status_code == 200, body.text
         got = body.json()
@@ -180,9 +177,6 @@ async def test_the_settings_poll_also_says_what_firmware_is_served(
         assert 0 <= got["dim_percent"] <= 100
 
 
-PANEL_KEY_C6 = "n" * 43
-
-
 async def test_the_settings_poll_serves_the_asking_board_s_version(
     database_url: str,  # noqa: F811
     maker: async_sessionmaker,
@@ -191,9 +185,13 @@ async def test_the_settings_poll_serves_the_asking_board_s_version(
     """A C6 panel told the S3's version would see "update available" on every three-second
     poll and then fetch a manifest that never offers one. It asks with the same `?board=` its
     manifest poll carries; an S3 panel, asking with nothing, keeps getting the S3's."""
-    await SqlAuthRepo(maker).create_principal(
-        "device_key", keys.hash_key(PANEL_KEY_C6), "panel Jeff"
-    )
+    # Through the flash path's own provisioning, so the subject has the role a panel route
+    # requires: a role-less device key is a phone's.
+    panel_key_c6 = (
+        await device_service.provision_or_reflash(
+            SqlDeviceRepo(maker), OWNER, "panel Ceesix", device_role="jpet"
+        )
+    ).key
     c6 = tmp_path / "firmware-c6"
     c6.mkdir()
     (c6 / "version.txt").write_text("0.1.0\n", encoding="utf-8")
@@ -205,7 +203,7 @@ async def test_the_settings_poll_serves_the_asking_board_s_version(
             firmware_c6_dir=str(c6),
         )
     )
-    auth = {"Authorization": f"Bearer {PANEL_KEY_C6}"}
+    auth = {"Authorization": f"Bearer {panel_key_c6}"}
     with TestClient(app) as client:
         c6_body = client.get("/api/endpoint/settings?board=c6-amoled-216", headers=auth)
         assert c6_body.status_code == 200, c6_body.text
@@ -225,9 +223,13 @@ async def test_a_box_with_no_firmware_still_serves_the_knobs(
     "nothing to compare against" rather than "you are out of date" — the firmware installs
     nothing on "", which is the flash-loop the manifest's 503 exists to prevent.
     """
-    await SqlAuthRepo(maker).create_principal(
-        "device_key", keys.hash_key(PANEL_KEY_ABSENT), "panel Nessa"
-    )
+    # Through the flash path's own provisioning, so the subject has the role a panel route
+    # requires: a role-less device key is a phone's.
+    panel_key_absent = (
+        await device_service.provision_or_reflash(
+            SqlDeviceRepo(maker), OWNER, "panel Nessa", device_role="jpet"
+        )
+    ).key
     tree = _firmware_tree(tmp_path / "firmware")
     (tree / "version.txt").unlink()
     app = create_app(
@@ -235,7 +237,7 @@ async def test_a_box_with_no_firmware_still_serves_the_knobs(
     )
     with TestClient(app) as client:
         resp = client.get(
-            "/api/endpoint/settings", headers={"Authorization": f"Bearer {PANEL_KEY_ABSENT}"}
+            "/api/endpoint/settings", headers={"Authorization": f"Bearer {panel_key_absent}"}
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["fw_version"] == ""

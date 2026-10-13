@@ -1,6 +1,7 @@
-/* In-memory conversations, until the box client for messages lands (C3). They start empty on
- * the device and in the sim alike; the sim and the host suite add their own sample messages
- * through svc_messages_fake_add, so no sample text ships in the image. */
+/* The conversations the glass draws, in memory. They start empty on the device and in the sim
+ * alike: the agents' threads are filled by svc_audio and svc_convo, the people's by svc_post from
+ * the box (0.0.16); the host suite adds its own through svc_messages_fake_add, so no sample text
+ * ships in the image. */
 #pragma once
 
 #include "svc_messages.h"
@@ -16,3 +17,8 @@ bool svc_messages_find(const char *principal, uint32_t id, msg_t *out);
  * may call it inside its critical section. */
 bool svc_messages_fake_long(const char *principal, uint32_t id, const char *text);
 void svc_messages_fake_clear(void);
+/* A person's thread as the box lists it (`m`, oldest first): replaces what it held, except the
+ * panel's own bubbles the box has not listed yet — a send on its way, or one that failed — which
+ * stay at the end. Raises MSG_ARRIVED only when something changed. False for an agent's thread
+ * and for no change. */
+bool svc_messages_fake_set(const char *principal, const msg_t *m, uint16_t n);

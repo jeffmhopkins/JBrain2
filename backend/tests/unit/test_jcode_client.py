@@ -41,6 +41,26 @@ async def test_client_stop_and_restart_post_to_the_control_server() -> None:
     assert seen == ["POST /sessions/s1/stop", "POST /sessions/s1/restart"]
 
 
+async def test_client_preview_rotate_posts_to_the_control_server() -> None:
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, json={"url": "https://new-preview.box"})
+
+    client = JcodeClient("http://jcode:9100", "tok", transport=httpx.MockTransport(handler))
+    await client.preview_rotate("s1")
+    assert seen == ["POST /sessions/s1/preview/rotate"]
+
+
+async def test_fake_preview_rotate_changes_an_open_url() -> None:
+    fake = FakeJcodeClient()
+    old = (await fake.preview_open("s1", None))["url"]
+    await fake.preview_rotate("s1")
+    assert (await fake.preview_status("s1"))["url"] != old
+    assert fake.rotated == ["s1"]
+
+
 async def test_client_create_session_posts_typed_body() -> None:
     seen: dict[str, object] = {}
 

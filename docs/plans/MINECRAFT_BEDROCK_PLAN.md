@@ -1,6 +1,22 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** M0◻️ M1✅ T1✅ M2✅ M3✅ M4◻️ M5◻️ M6◻️ M7◻️ M8◻️ M8a✅ M9◻️ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2◻️ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** M0✅ M1✅ T1✅ M2✅ M3✅ M4◻️ M5✅ M6✅ M7◻️ M8✅ M8a✅ M9✅ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2✅ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+
+**What's left (audited against the code, 2026-10-13).** M0, M5, M6, M8, M9 and P2 are built;
+each section's "Remaining" paragraph names its small leftovers. Genuinely open, each the
+owner's call:
+- **R1:** the `mc.hopkinsbrain.com` name and IP updater (put off), a UPnP helper, an
+  Internet-play switch with a Test button; a brother joining from his own house is unrecorded.
+- **M4:** an entity index (villagers and trades, pets, named mobs).
+- **M7:** the `/dave` quick menu, a companion NPC, scheduled backups, the other §3b tools.
+- **M8:** beds and saved places on the map, height / slice / changes layers, Dave's in-game
+  "map of here" link.
+- **M9:** an arrival chime, and the Nether pointer aiming at a known portal (needs M4).
+- **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
+  switch, a latency measurement, and `auto` log entries for deaths and crafting.
+- **P1 follow-up:** goals in the PWA, and (§M25) the scan target on the map: both in the mock
+  gate.
+- **Box checks:** `docs/runbooks/MINECRAFT_HOME_TEST.md`.
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
 stop it, back up its world, and **import an existing world** they already play. On top of
@@ -677,7 +693,11 @@ should be able to do once we're live").** Not yet tried from a real client.
 - **The sidecar** (`bds.py`) turns the line into a `dave` event carrying the **xuid BDS
   logged when that name connected** — the script API has no xuid, and the line's own
   fields are never trusted for identity. A name that never connected, or an empty
-  question, is dropped.
+  question, is dropped. Because the line quotes the player's raw text, a `[Scripting]`
+  / `[jbrain]` line is only ever read as the pack's, and BDS's own lines (`Player
+  connected/disconnected`, `Server started.`, `Version`, the `save query` ready line)
+  count only right after BDS's `[… INFO] ` prefix, so a question can't forge a join
+  under someone else's xuid (security N3).
 - **The api** (`jbrain.minecraft.door`, started in `main.py` beside the session and
   track drains) polls `/events` and runs each fresh question (≤ 2 minutes old, so a
   restart never answers an old one late) as one headless Minecraft_Dave turn on the

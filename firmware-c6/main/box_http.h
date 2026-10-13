@@ -13,9 +13,12 @@
 
 #include "cfg.h"
 
-/* The reply's Date header, caught as the headers arrive. */
+/* The reply's headers this panel reads, caught as they arrive: the Date, the pickup's
+ * new-message tag (`X-Jpanel-Post`, 0.0.16) and a played message's digest (`X-Jpanel-Sha256`). */
 typedef struct {
     char date[32];
+    char post[12];
+    char sha[65];
 } box_reply_t;
 
 void box_http_init(const cfg_t *cfg);
@@ -37,7 +40,9 @@ int box_http_put(const char *path, const char *ctype, const char *body, size_t l
  * and the 3 s pickups keep that session warm. Opening on it is retried fresh if it fails before
  * a byte of the body is sent. */
 #define BOX_REUSE_FRESH_MS 20000
-bool box_http_stream_open(const char *path, const char *ctype, int timeout_ms, bool reuse);
+/* `integrity` is the request's `X-Jpanel-Sha256` (a voice message's "trailer"), NULL for none. */
+bool box_http_stream_open(const char *path, const char *ctype, int timeout_ms, bool reuse,
+                          const char *integrity);
 bool box_http_stream_write(const void *data, size_t n);
 /* Sends the last chunk and returns the status (-1: none). */
 int box_http_stream_finish(void);
@@ -55,6 +60,12 @@ void box_http_reply_done(void);
 /* Drops the connection without the last chunk, so the box sees a cut-off body and records
  * nothing — the request stays open for the JSON failure that follows. */
 void box_http_stream_abort(void);
+
+/* A GET whose body is read in slices as it arrives (a message played, 0.0.16): returns the status
+ * once the headers are in (-1: none), `reply` holding them. Then box_http_reply_read, and
+ * box_http_reply_done or box_http_stream_abort, exactly as after a stream. Retried once on a
+ * fresh session when the kept one turns out stale, which is safe: nothing was sent. */
+int box_http_get_open(const char *path, box_reply_t *reply, int timeout_ms);
 
 void box_http_close(void);
 

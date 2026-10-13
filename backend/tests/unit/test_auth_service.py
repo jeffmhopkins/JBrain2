@@ -84,3 +84,13 @@ async def test_the_session_holding_kinds_still_authenticate(kind: str) -> None:
     await repo.create_session(repo.principals[0].id, keys.hash_token("tok"), "s")
     principal = await service.authenticate(repo, "tok")
     assert principal is not None and principal.kind == kind
+
+
+async def test_a_member_cookie_held_by_a_panel_key_stops_authenticating() -> None:
+    # A panel key could mint a member session before mint was phone-only; that session
+    # must not outlive the fix.
+    repo = FakeAuthRepo()
+    await repo.create_principal("device_key", keys.hash_key("panel-key"), "panel", "sub-p")
+    repo.principals[-1].device_role = "jpet"
+    await repo.create_session(repo.principals[-1].id, keys.hash_token("tok"), "panel")
+    assert await service.authenticate(repo, "tok") is None

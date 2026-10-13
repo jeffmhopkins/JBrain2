@@ -12,7 +12,7 @@ void talk_port_unlock(void) {}
 
 static bool s_net;
 /* What the device would have asked the box for: the converse path of the last claimed talk. */
-static char s_path[96];
+static char s_path[112];
 
 /* The audio task and the network in miniature: the codec opens whatever the talk wants at once,
  * and a dropped exchange lets go of the "connection" as the main task would. */
@@ -32,7 +32,9 @@ void talk_port_net(void)
     bool voice, fresh;
     tk_agent_t agent;
     s_net = talk_net_claim(&voice, &agent, &fresh);
-    if (s_net) tk_converse_path(agent, voice, fresh, s_path, sizeof s_path);
+    if (!s_net) return;
+    if (talk_net_kind(s_path, sizeof s_path) == TK_KIND_AGENT)
+        tk_converse_path(agent, voice, fresh, s_path, sizeof s_path);
 }
 
 const char *svc_audio_fake_last_path(void)
@@ -115,4 +117,52 @@ void svc_audio_fake_reply(const char *heard, const char *reply, bool speaking)
     talk_net_reply(reply, speaking);
     s_net = false;
     talk_net_end(32000, speaking ? 64000 : 0, 2400);
+}
+
+static unsigned s_chimes;
+
+bool svc_audio_chime(void)
+{
+    if (svc_audio_talking() || svc_audio_replying() || s_ring) return false;
+    s_chimes++;
+    return true;
+}
+
+unsigned svc_audio_fake_chimes(void)
+{
+    return s_chimes;
+}
+
+void svc_audio_fake_posted(int status, const char *heard)
+{
+    if (!s_net) return;
+    if (status == 201) {
+        talk_net_heard(heard ? heard : "");
+        talk_net_reply("", false);
+    } else if (status == 400) {
+        talk_net_nothing();
+    } else {
+        talk_net_fail(status == 422 ? "the upload was damaged" : "the box did not answer");
+    }
+    s_net = false;
+    talk_net_end(32000, 0, 0);
+}
+
+void svc_audio_fake_listen(bool arrives, bool to_the_end, bool verified)
+{
+    if (!s_net) return;
+    if (!arrives) {
+        talk_net_fail("the box said 404");
+        s_net = false;
+        talk_net_end(0, 0, 0);
+        return;
+    }
+    talk_net_reply("", true);
+    talk_port_kick();
+    if (!to_the_end) return;
+    talk_net_listened(verified);
+    s_net = false;
+    talk_net_end(0, 64000, 0);
+    talk_audio_drained();
+    talk_port_kick();
 }

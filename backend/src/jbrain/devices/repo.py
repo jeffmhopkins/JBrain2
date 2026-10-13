@@ -409,3 +409,29 @@ class SqlDeviceRepo:
             ),
             {"sid": device_id},
         )
+
+
+async def count_unroled_reporting_devices(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext
+) -> int:
+    """Live device keys with no `device_role` that have nonetheless reported endpoint status.
+
+    Panel routes admit only a role'd subject (SECURITY_REVIEW_FIXES_PLAN S3.2), and migration
+    0211 back-filled every flashed label, so this should be zero. One that is not is a panel
+    that will now 401 — counted at startup so it shows in the debug logs instead of as a
+    silent wall. Owner context: `endpoint_status` is owner-readable only."""
+    async with scoped_session(maker, ctx) as session:
+        count = (
+            await session.execute(
+                text(
+                    """
+                    SELECT count(*) FROM app.principals p
+                    JOIN app.endpoint_status es ON es.principal_id = p.id
+                    LEFT JOIN app.subjects s ON s.id = p.subject_id
+                    WHERE p.kind = 'device_key' AND p.revoked_at IS NULL
+                      AND s.device_role IS NULL
+                    """
+                )
+            )
+        ).scalar()
+    return int(count or 0)

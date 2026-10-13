@@ -25,6 +25,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from jbrain.api.same_site import origin_matches_host
 from jbrain.api.session_cookie import session_token
+from jbrain.api.ws_reauth import SocketAuth, run_until_revoked
 from jbrain.auth import service
 from jbrain.auth.service import AuthRepo, PrincipalInfo
 from jbrain.config import Settings
@@ -91,8 +92,8 @@ async def visible_to(
 ) -> bool:
     """May this viewer see this subject's live fix? The owner sees all; a member
     sees its own subject and its family group (`viewer_may_see`). The per-subject
-    decision is cached for the connection's life, so the fan-out costs one lookup
-    per new subject, not one per fix."""
+    decision is cached until the socket's next re-auth tick (which clears it), so
+    the fan-out costs one lookup per subject per tick, not one per fix."""
     if principal.kind == "owner" or subject_id == principal.subject_id:
         return True
     if subject_id not in cache:
@@ -144,11 +145,36 @@ async def deliver_fix(
         log.warning("locations.live_audit_failed", error=repr(exc))
 
 
+async def _pump(
+    websocket: WebSocket,
+    queue: "asyncio.Queue[LiveFix]",
+    deliver: Callable[[LiveFix], Awaitable[None]],
+) -> None:
+    """Forward broadcast fixes until the browser goes away. Races the broadcast against
+    the socket so a disconnect ends the loop promptly."""
+    disconnected = asyncio.ensure_future(websocket.receive())
+    nxt: asyncio.Future[LiveFix] | None = None
+    try:
+        while True:
+            nxt = asyncio.ensure_future(queue.get())
+            done, _ = await asyncio.wait({nxt, disconnected}, return_when=asyncio.FIRST_COMPLETED)
+            if disconnected in done:
+                break
+            await deliver(nxt.result())
+    except WebSocketDisconnect:
+        pass
+    finally:
+        # Also on cancellation (a revoked session), so no orphaned waits remain.
+        disconnected.cancel()
+        if nxt is not None:
+            nxt.cancel()
+
+
 @router.websocket("/locations/live")
 async def live_feed(websocket: WebSocket) -> None:
     """Live feed for the owner (every device) or a member (its own + family group).
-    Closes 4403 on a disallowed Origin, 4401 on an absent/invalid cookie. Races the
-    broadcast against the socket so a disconnect ends the loop promptly."""
+    Closes 4403 on a disallowed Origin, 4401 on an absent/invalid cookie, and 4401 later
+    once that session is revoked or lapses (`ws_reauth`)."""
     settings = cast(Settings, websocket.app.state.settings)
     if not origin_allowed(websocket, settings):
         await websocket.close(code=4403)
@@ -160,24 +186,35 @@ async def live_feed(websocket: WebSocket) -> None:
     broadcaster = cast(LiveBroadcaster, websocket.app.state.live_broadcaster)
     repo = cast(AuditSink, websocket.app.state.location_repo)
     viewscope = cast(ViewScopeRepo, websocket.app.state.view_scope_repo)
-    ctx = viewer_context(principal)
     queue = broadcaster.subscribe()
-    await websocket.accept()
+    try:
+        await websocket.accept()
+        await _stream(websocket, principal, queue, repo, viewscope)
+    finally:
+        broadcaster.unsubscribe(queue)
+
+
+async def _stream(
+    websocket: WebSocket,
+    principal: PrincipalInfo,
+    queue: "asyncio.Queue[LiveFix]",
+    repo: AuditSink,
+    viewscope: ViewScopeRepo,
+) -> None:
+    ctx = viewer_context(principal)
     audited: set[str] = set()
     visible: dict[str, bool] = {}
-    disconnected = asyncio.ensure_future(websocket.receive())
-    try:  # pragma: no cover - the WS pump is exercised at deploy, not in CI
-        while True:
-            nxt = asyncio.ensure_future(queue.get())
-            done, _ = await asyncio.wait({nxt, disconnected}, return_when=asyncio.FIRST_COMPLETED)
-            if disconnected in done:
-                nxt.cancel()
-                break
-            await deliver_fix(
-                websocket.send_json, repo, viewscope, ctx, principal, nxt.result(), audited, visible
-            )
-    except WebSocketDisconnect:
-        pass
-    finally:
-        disconnected.cancel()
-        broadcaster.unsubscribe(queue)
+
+    async def deliver(fix: LiveFix) -> None:
+        await deliver_fix(
+            websocket.send_json, repo, viewscope, ctx, principal, fix, audited, visible
+        )
+
+    # The visibility cache is dropped on every re-check: a member taken out of a family
+    # group keeps a valid session, so only a fresh `viewer_may_see` stops that subject.
+    await run_until_revoked(
+        websocket,
+        SocketAuth(websocket, principal),
+        _pump(websocket, queue, deliver),
+        on_tick=visible.clear,
+    )

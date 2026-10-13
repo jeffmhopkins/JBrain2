@@ -25,6 +25,7 @@
 #include "svc_display_drv.h"
 #include "svc_messages_fake.h"
 #include "svc_notice_fake.h"
+#include "svc_post_drv.h"
 #include "svc_rtc_drv.h"
 #include "svc_settings.h"
 #include "svc_settings_drv.h"
@@ -99,6 +100,7 @@ static void ui_loop(void *arg)
     /* Before the apps: a thread is drawn with the name the box last sent (the cache). */
     svc_siblings_init();
     svc_convo_init();
+    svc_post_init();
     svc_notice_init();
     char err[96];
     shell_set_pointer(touch_feed);
@@ -114,6 +116,11 @@ static void ui_loop(void *arg)
         svc_audio_service();
         svc_siblings_service();
         svc_convo_service();
+        svc_post_service();
+        /* A twin's new message chimes once, never over a talk, a reply, a play or an alarm. */
+        if (svc_post_take_chime(svc_audio_talking() || svc_audio_replying() ||
+                                svc_audio_playing() || svc_audio_ringing()))
+            svc_audio_chime();
         /* Before the shell: an alarm due now is raised and taken over in this same pass. */
         svc_alarms_service(now);
         dbg_sys_crumb(ST_PUMP);

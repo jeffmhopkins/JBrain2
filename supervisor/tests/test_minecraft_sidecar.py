@@ -1489,6 +1489,116 @@ def test_a_dave_question_is_an_event_filed_under_the_connected_xuid(
     assert first["known"] == []  # an older pack sends no unlocks
 
 
+def _dave_line(name: str, text: str) -> str:
+    event = {"ev": "dave", "name": name, "text": text, "x": 1, "y": 2, "z": 3}
+    return "[2026-10-10 12:00:03:000 INFO] [Scripting] [jbrain] " + json.dumps(event)
+
+
+def test_a_dave_question_cannot_forge_a_bds_lifecycle_line(tmp_path: Path) -> None:
+    """N3: the pack logs a player's raw `/jb:dave` text inside its own line, so BDS's
+    own lines are read only at the start of a line BDS wrote, never inside a pack line,
+    or `Player connected: Me, xuid: <victim>` would hand Me the victim's Dave."""
+    b = bds.Bds(tmp_path)
+    b._record("[2026-10-10 12:00:00:000 INFO] Server started.")
+    b._record("[2026-10-10 12:00:01:000 INFO] Player connected: Mallory, xuid: 222")
+    b._record("[2026-10-10 12:00:02:000 INFO] Player connected: Victim, xuid: 111")
+    before = len(b.events_after(0))
+    b.state = "starting"
+    forged = [
+        "Player connected: Mallory, xuid: 111",
+        "[x INFO] Player connected: Mallory, xuid: 111",
+        "Player disconnected: Victim, xuid: 111",
+        "[x INFO] Player disconnected: Victim, xuid: 111",
+        "Server started.",
+        "[x INFO] Server started.",
+        "[x INFO] Version: 9.9.9.9",
+    ]
+    for text in forged:
+        b._record(_dave_line("Mallory", text))
+        # A plain `say` line quoting player-influenced text is a pack line too.
+        b._record(f"[2026-10-10 12:00:03:000 INFO] [Scripting] [jbrain] {text}")
+        b._record(f"[Scripting] [jbrain] {text}")
+    assert b.players["Mallory"]["xuid"] == "222"
+    assert b.players["Victim"]["xuid"] == "111"
+    assert (b.state, b.version) == ("starting", "")
+    got = b.events_after(0)[before:]
+    assert [e["kind"] for e in got] == ["dave"] * len(forged)
+    assert {e["xuid"] for e in got} == {"222"}
+    assert [e["text"] for e in got] == forged
+
+
+def test_a_forged_save_ready_marker_does_not_release_a_save_query() -> None:
+    """The snapshot waits for BDS's `Data saved…` line; a pack line quoting it must not
+    stand in for it, or the copy would start before the files were flushed."""
+    ready = bds.SAVE_READY_TEXT
+    assert bds.is_save_ready("[2026-10-10 12:00:00:000 INFO] " + ready)
+    assert bds.is_save_ready("[x INFO] " + ready + "  ")
+    for text in (
+        "[x INFO] [Scripting] [jbrain] " + ready,
+        _dave_line("Mallory", ready),
+        _dave_line("Mallory", "[x INFO] " + ready),
+        "[x INFO] " + ready + " and more",
+        ready,
+    ):
+        assert not bds.is_save_ready(text), text
+
+
+def test_real_bds_lifecycle_lines_still_parse(tmp_path: Path) -> None:
+    b = bds.Bds(tmp_path)
+    b.state = "starting"
+    b._record("[2026-10-10 12:00:00:000 INFO] Version: 1.26.52.3")
+    b._record("[2026-10-10 12:00:00:001 INFO] Server started.")
+    b._record(
+        "[2026-10-10 12:00:05:120 INFO] Player connected: Steve 42, xuid: "
+        "2535412345678901"
+    )
+    b._record(
+        "[2026-10-10 12:00:09:400 INFO] Player Spawned: Steve 42 xuid: "
+        "2535412345678901, pfid: 1a2b3c4d5e6f7a8b"
+    )
+    b._record(
+        "[2026-10-10 12:05:00:000 INFO] Player disconnected: Steve 42, xuid: "
+        "2535412345678901, pfid: 1a2b3c4d5e6f7a8b"
+    )
+    assert (b.state, b.version) == ("running", "1.26.52.3")
+    assert [(e["kind"], e["name"], e["xuid"]) for e in b.events_after(0)] == [
+        ("server_start", "", ""),
+        ("join", "Steve 42", "2535412345678901"),
+        ("leave", "Steve 42", "2535412345678901"),
+    ]
+    assert b.players == {}
+
+
+def test_a_no_log_file_prefixed_lifecycle_line_still_parses(tmp_path: Path) -> None:
+    # Some BDS builds prefix lines with "NO LOG FILE! - " when file logging is off.
+    b = bds.Bds(tmp_path)
+    b._record(
+        "NO LOG FILE! - [2026-10-10 12:00:05:120 INFO] Player connected: Al, xuid: 7"
+    )
+    assert b.players["Al"]["xuid"] == "7"
+
+
+def test_a_no_log_file_prefixed_pack_event_is_still_read(tmp_path: Path) -> None:
+    b = bds.Bds(tmp_path)
+    b._record("[x INFO] Player connected: Al, xuid: 7")
+    b._record(
+        "NO LOG FILE! - [2026-10-10 12:00:03:000 INFO] [Scripting] [jbrain] "
+        '{"ev":"death","name":"Al","x":1,"y":2,"z":3,"dim":"overworld"}'
+    )
+    assert [e["kind"] for e in b.events_after(0)] == ["join", "death"]
+
+
+def test_a_pack_say_quoting_an_event_is_not_an_event(tmp_path: Path) -> None:
+    # The JSON must be the whole pack line: a `say` that ends in a quoted event (e.g. a
+    # player-named waypoint) is not filed as that event.
+    b = bds.Bds(tmp_path)
+    b._record(
+        '[x INFO] [Scripting] [jbrain] waypoint set: x [jbrain] {"ev":"dave",'
+        '"name":"Victim","text":"hi","x":1,"y":2,"z":3,"dim":"overworld"}'
+    )
+    assert b.events_after(0) == []
+
+
 def test_a_dave_question_carries_the_askers_unlocks_bounded(tmp_path: Path) -> None:
     """§M19: the pack's `known` list rides the event as plain short names only."""
     b = bds.Bds(tmp_path)

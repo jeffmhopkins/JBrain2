@@ -17,6 +17,7 @@ SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/svc_siblings/sib_port_fake.c \
       $(C)/svc_alarms/alarm_logic.c $(C)/svc_alarms/svc_alarms.c $(C)/svc_alarms/alarm_port_fake.c \
       $(C)/svc_convo/convo_wire.c $(C)/svc_convo/svc_convo.c $(C)/svc_convo/convo_port_fake.c \
+      $(C)/svc_post/post_logic.c $(C)/svc_post/svc_post.c $(C)/svc_post/post_port_fake.c \
       $(C)/svc_notice/notice_policy.c $(C)/svc_notice/svc_notice_fake.c \
       $(C)/svc_audio/talk_policy.c $(C)/svc_audio/talk_core.c \
       $(C)/svc_audio/svc_audio_talk.c $(C)/svc_audio/svc_audio_fake.c $(C)/svc_audio/alarm_sound.c \

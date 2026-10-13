@@ -11,6 +11,7 @@ from typing import Annotated, Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from jbrain.api.client_ip import client_ip
 from jbrain.api.deps import OwnerDep
 from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
@@ -114,7 +115,7 @@ async def redeem(
     limiter: PairingLimiterDep,
     settings: SettingsDep,
 ) -> RedeemOut:
-    client = request.client.host if request.client else "unknown"
+    client = client_ip(request) or "unknown"
     if not limiter.allow(client):
         raise HTTPException(status_code=429, detail="rate limited")
     device = await repo.redeem(body.code)

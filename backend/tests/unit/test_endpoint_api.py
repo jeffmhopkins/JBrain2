@@ -166,13 +166,12 @@ def _provision_panel(c: TestClient) -> str:
     unit fakes split them, so a `provision_device` call against `FakeDeviceRepo` leaves
     nothing for `authenticate_device` to find. The real flash path that mints this is
     covered by `TestFlash`; what is under test here is whether the credential it hands
-    over opens the door it was minted for.
+    over opens the door it was minted for. The flash path gives its subject a role, so this
+    principal carries one too — a role-less device key is a phone, which no panel route takes.
     """
-    asyncio.run(
-        cast(FastAPI, c.app).state.auth_repo.create_principal(
-            "device_key", keys.hash_key(PANEL_KEY), "panel Quorra"
-        )
-    )
+    repo = cast(FastAPI, c.app).state.auth_repo
+    asyncio.run(repo.create_principal("device_key", keys.hash_key(PANEL_KEY), "panel Quorra"))
+    repo.principals[-1].device_role = "jpet"
     return PANEL_KEY
 
 
@@ -314,6 +313,20 @@ class TestAPanelCanActuallyAuthenticate:
         c.cookies.clear()
         assert c.get("/api/endpoint/firmware").status_code == 401
         assert c.get("/api/endpoint/firmware/bin").status_code == 401
+
+    def test_a_phone_key_is_not_a_panel_key(
+        self, client: tuple[TestClient, Path, list[Any]]
+    ) -> None:
+        """A family phone's key is the same `device_key` kind as a panel's; without a
+        `device_role` on its subject it opens no panel route (S3.2)."""
+        c, _fw, _sent = client
+        repo = cast(FastAPI, c.app).state.auth_repo
+        asyncio.run(repo.create_principal("device_key", keys.hash_key("phone-key"), "Kid", "s"))
+        c.cookies.clear()
+        auth = {"Authorization": "Bearer phone-key"}
+        assert c.get("/api/endpoint/firmware", headers=auth).status_code == 401
+        assert c.get("/api/endpoint/settings", headers=auth).status_code == 401
+        assert c.get("/api/jpanel/waiting", headers=auth).status_code == 401
 
     def test_a_garbage_bearer_token_is_refused(
         self, client: tuple[TestClient, Path, list[Any]]

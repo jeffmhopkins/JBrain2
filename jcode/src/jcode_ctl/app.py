@@ -288,6 +288,20 @@ def create_app(
         a = host_preview.ensure(sid)
         return {"enabled": True, "url": a.url, "mode": "host", "port": a.port}
 
+    @authed.post("/sessions/{sid}/preview/rotate")
+    async def preview_rotate(sid: str) -> dict[str, object]:
+        """Retire the session's preview URL for a fresh one on the same port. The api
+        calls this when the owner revokes a share, so the recipient's copy stops
+        working."""
+        sessions.get(sid)
+        a = host_preview.rotate(sid)
+        return {
+            "enabled": host_preview.enabled,
+            "url": a.url if a else None,
+            "mode": "host",
+            "port": a.port if a else host_preview.port_for(sid),
+        }
+
     @authed.delete("/sessions/{sid}/preview", status_code=204)
     async def preview_close(sid: str) -> None:
         # No-op, kept for API compatibility: the reservation is kept (released on
@@ -360,7 +374,45 @@ def create_app(
             # 1011 for "nothing listening" matches proxy_ws's own unreachable close.
             await websocket.close(code=1011 if target.status_code == 502 else 4404)
             return
-        await proxy_ws(websocket, target, path, websocket.url.query)
+        await _proxy_until_retired(websocket, slug, target, path)
+
+    async def _proxy_until_retired(
+        websocket: WebSocket, slug: str, port: int, path: str
+    ) -> None:
+        # The slug was checked once, at the handshake, and an HMR socket lives for
+        # hours. When the slug is rotated (a share revoked) or released, close it 4404
+        # as a fresh handshake on the dead slug would be. Registered with no await since
+        # the check, so a rotation can't slip in between.
+        loop = asyncio.get_running_loop()
+        proxy = asyncio.ensure_future(
+            proxy_ws(websocket, port, path, websocket.url.query)
+        )
+        retired = False
+
+        async def _end() -> None:
+            with contextlib.suppress(Exception):
+                await websocket.close(code=4404)
+            proxy.cancel()
+
+        ending: set[asyncio.Task[None]] = set()  # a strong ref, so the task isn't GC'd
+
+        def _schedule_end() -> None:
+            ending.add(loop.create_task(_end()))
+
+        def _on_retire() -> None:
+            nonlocal retired
+            retired = True
+            # Thread-safe: rotate/release may be called off the loop's thread.
+            loop.call_soon_threadsafe(_schedule_end)
+
+        unregister = host_preview.on_retire(slug, _on_retire)
+        try:
+            await proxy
+        except asyncio.CancelledError:
+            if not retired:
+                raise
+        finally:
+            unregister()
 
     @app.websocket("/sessions/{sid}/terminal")
     async def terminal(websocket: WebSocket, sid: str) -> None:

@@ -22,6 +22,7 @@ from jbrain.api.deps import MemberDep
 from jbrain.api.locations import PlaceOut, TimelineEntryOut
 from jbrain.db.session import device_context
 from jbrain.locations import FixPoint, MemberSubject, SqlLocationRepo
+from jbrain.locations.viewscope import ViewScopeRepo
 from jbrain.push import SqlFcmTokenRepo
 
 router = APIRouter(prefix="/member")
@@ -37,6 +38,10 @@ _TIMELINE_LIMIT = 500
 
 def _repo(request: Request) -> SqlLocationRepo:
     return cast(SqlLocationRepo, request.app.state.location_repo)
+
+
+def _view_scope(request: Request) -> ViewScopeRepo:
+    return cast(ViewScopeRepo, request.app.state.view_scope_repo)
 
 
 def _fcm_repo(request: Request) -> SqlFcmTokenRepo:
@@ -156,15 +161,21 @@ async def positions(
     repo = _repo(request)
     rows = await repo.fixes(ctx, subject_id=subject_id, since=start, until=end, limit=_FIXES_LIMIT)
     # Who-saw-whom: a member reading a track is an audited view (M3a). Best-effort —
-    # an audit-write failure is logged, never a 500 on the read.
+    # an audit-write failure is logged, never a 500 on the read. Only a subject this member
+    # may see, and not its own: the subject id is the caller's to choose, so auditing every
+    # ask let anyone write "<member> viewed you" into a stranger's log. A visible subject
+    # with no fixes in the window is still audited — the ask is the view.
     try:
-        await repo.record_view(
-            ctx,
-            viewer_principal_id=principal.id,
-            viewer_subject_id=principal.subject_id,
-            target_subject_id=subject_id,
-            path="history",
-        )
+        if subject_id != principal.subject_id and await _view_scope(request).may_view(
+            principal.subject_id, subject_id
+        ):
+            await repo.record_view(
+                ctx,
+                viewer_principal_id=principal.id,
+                viewer_subject_id=principal.subject_id,
+                target_subject_id=subject_id,
+                path="history",
+            )
     except Exception as exc:  # noqa: BLE001 - audit failure is logged, never a 500
         log.warning("member.audit_failed", error=repr(exc))
     return [FixPointOut.of(f) for f in rows]
