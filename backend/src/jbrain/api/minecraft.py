@@ -27,8 +27,8 @@ from jbrain.api.deps import OwnerDep, SettingsDep, owner_only
 from jbrain.db.session import SessionContext
 from jbrain.minecraft import (
     changelog,
-    livescan,
     goals,
+    livescan,
     markers,
     sessions,
     shares,
