@@ -611,7 +611,14 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
                                                                  : 0.0f;
             const float hz = semi(base, -d->b * k / (d->a - 1.0f)) * (1.0f - 0.06f * w);
             const float ph = step_osc(&a, hz, rate);
-            const float voice = 0.7f * triangle(ph, hz) + 0.3f * pulse(ph, 0.3f, hz);
+            /* NO HARMONIC SUMS: a triangle and a sawtooth straight off the phase. The laugh is
+               the longest cue, it is rendered on the render task, and it was summing a
+               band-limited triangle AND pulse per sample — the costliest cue in the table, and
+               the squirming froze for a moment at every laugh (owner, 0.4.11). A triangle's
+               partials fall as 1/n^2, so the naive one's folding is far under the breath at
+               these pitches; the soft saw is the buzz. */
+            const float ramp = ph / (float)M_PI - 1.0f; /* -1..1 */
+            const float voice = 0.75f * (1.0f - 2.0f * fabsf(ramp)) + 0.18f * ramp;
             const float breath = noise_next(&nz, 5200.0f * vary, rate) * (w < 0.2f ? 0.55f : 0.2f);
             e.hold_ms = dur * 0.8f;
             e.decay_ms = dur * 0.2f - (float)d->attack_ms;

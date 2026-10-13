@@ -1057,14 +1057,15 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
     }
 }
 
-static void test_a_meal_is_five_bites_of_a_cookie(void)
+static void test_a_meal_is_three_bites_of_a_cookie(void)
 {
     /* The owner: "the eat animation can probably be better with multiple bites being taken and
        kind of a longer animation and sound effect too." */
-    CHECK(rig_spec(ACT_EAT)->dur_ms == 4800, "a meal, not a 1.6 s nibble");
+    /* Three bites (0.4.11, owner: "a little too long. Have it only three bites"). */
+    CHECK(EAT_BITES == 3 && rig_spec(ACT_EAT)->dur_ms == 2880, "three bites, 0.96 s apiece");
 
     /* A CRUNCH ON EVERY BITE, ON THE BITE: nothing as it starts (the hand is still on its way
-       up), then a re-cue as each of the five lands, at the panel's 25 fps and at a ragged 7. */
+       up), then a re-cue as each one lands, at the panel's 25 fps and at a ragged 7. */
     CHECK(!rig_cue_on_start(ACT_EAT), "the meal does not crunch before the first bite");
     CHECK(rig_cue_on_start(ACT_TICKLE) && rig_cue_on_start(ACT_DIZZY),
           "everything else sounds as it starts");
@@ -1078,7 +1079,7 @@ static void test_a_meal_is_five_bites_of_a_cookie(void)
             p0 = p;
         }
         bites = rig_eat_bites(1.0f, NULL);
-        CHECK(again == 5 && bites == EAT_BITES, "a crunch for each of the five bites");
+        CHECK(again == EAT_BITES && bites == EAT_BITES, "a crunch for each bite");
         /* Each crunch on the frame its bite's count goes up. */
         p0 = 0.0f;
         for (int t = 0; t < dur; t += step) {
@@ -4914,7 +4915,7 @@ int main(void)
     test_dizzy_sits_down_and_love_shows_hearts();
     test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
-    test_a_meal_is_five_bites_of_a_cookie();
+    test_a_meal_is_three_bites_of_a_cookie();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();

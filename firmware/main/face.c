@@ -429,14 +429,15 @@ static void draw_star(uint16_t *fb, int cx, int cy, int r, uint16_t c)
  * away at the top rather than vanishing. */
 /* THE COOKIE, with `bites` bites gone out of it. Per pixel over its box: in the disc and in
  * none of the bites. Bites are taken from the side facing the eater (`toward`, radians, y
- * down), each one further round, so it is eaten down to nothing; the fifth finishes it. Crumbs
+ * down), each one further round, so it is eaten down to nothing; the last finishes it. Crumbs
  * fall from the bite for a moment after each (`since`, a fraction of a bite's time). */
 static void draw_food(uint16_t *fb, int cx, int cy, float s, int bites, float since,
                       float toward)
 {
     const uint16_t dough = rgb(0xD9, 0xA0, 0x5B), chip = rgb(0x5A, 0x34, 0x1C);
-    const float r = 24.0f * s, br = 0.62f * r;
-    static const float ROUND[EAT_BITES] = {0.0f, 0.75f, -0.75f, 1.5f, -1.5f};
+    /* Three bites big enough that the third finishes it: each one is most of a third. */
+    const float r = 24.0f * s, br = 0.8f * r;
+    static const float ROUND[EAT_BITES] = {0.0f, 0.9f, -0.9f};
     if (bites < EAT_BITES) {
         float bx[EAT_BITES], by[EAT_BITES];
         for (int k = 0; k < bites; k++) {

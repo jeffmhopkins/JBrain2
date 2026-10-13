@@ -21,9 +21,10 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_FART] = {1500, FACE_BEWILDERED, 1},
     [ACT_BURP] = {1400, FACE_BEWILDERED, 1},
     /* A MEAL, NOT A NIBBLE (0.4.10, owner: *"the eat animation can probably be better with
-       multiple bites being taken and kind of a longer animation and sound effect too"*): five
-       bites of a cookie, a crunch each, chewing between. */
-    [ACT_EAT] = {4800, FACE_HAPPY, 0},
+       multiple bites being taken and kind of a longer animation and sound effect too"*): bites
+       of a cookie, a crunch each, chewing between. Three of them, 0.96 s apart (0.4.11, owner:
+       *"a little too long. Have it only three bites"* — five was 4.8 s). */
+    [ACT_EAT] = {960 * EAT_BITES, FACE_HAPPY, 0},
     [ACT_KICK] = {900, FACE_EXCITED, 0},
     [ACT_SPIN] = {1200, FACE_EXCITED, 0},
     /* TWICE AS LONG AS 0.4.7's (owner, 0.4.10: *"the dizziness after being shaken. It should
@@ -107,13 +108,15 @@ bool rig_recue(action_t a, float p0, float p)
     /* The tickle: two more laughs after the first, 1.6 s apart, the last well before he winds
        down. The meal: a crunch on every bite, the first included (`rig_cue_on_start`). */
     static const float TICKLE[] = {0.33f, 0.62f};
-    static const float EAT[] = {BITE_AT / EAT_BITES,          (1.0f + BITE_AT) / EAT_BITES,
-                                (2.0f + BITE_AT) / EAT_BITES, (3.0f + BITE_AT) / EAT_BITES,
-                                (4.0f + BITE_AT) / EAT_BITES};
-    const float *at = a == ACT_TICKLE ? TICKLE : a == ACT_EAT ? EAT : NULL;
-    const unsigned n = a == ACT_TICKLE ? 2u : a == ACT_EAT ? 5u : 0u;
-    for (unsigned i = 0; i < n; i++) {
-        if (p0 < at[i] && p >= at[i]) return true;
+    if (a == ACT_TICKLE) {
+        for (unsigned i = 0; i < sizeof(TICKLE) / sizeof(TICKLE[0]); i++) {
+            if (p0 < TICKLE[i] && p >= TICKLE[i]) return true;
+        }
+    } else if (a == ACT_EAT) {
+        for (int k = 0; k < EAT_BITES; k++) {
+            const float at = ((float)k + BITE_AT) / (float)EAT_BITES;
+            if (p0 < at && p >= at) return true;
+        }
     }
     return false;
 }
@@ -363,7 +366,7 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
     case ACT_EAT: {
         /* THE ROBOT EATS WITH A HAND; THE BIRD PECKS (`bird_channels`). Same action, two
            anatomies, which is the whole reason the bird has channels of its own. A trip to the
-           mouth a bite: one reads as a mistake, five read as a meal. */
+           mouth a bite: one reads as a mistake, three read as a meal. */
         const float w = p * (float)EAT_BITES - floorf(p * (float)EAT_BITES);
         out->arm_r = -120.0f - 45.0f * eat_reach(w) * mag;
         out->arm_l = 20.0f;

@@ -166,7 +166,7 @@ bool rig_cue_on_start(action_t a);
 
 /* EATING: bites taken by progress `p` (0..EAT_BITES), and how long ago the last one was as a
    fraction of a bite's time (for the crumbs), or -1 before the first. */
-#define EAT_BITES 5
+#define EAT_BITES 3
 int rig_eat_bites(float p, float *since);
 
 /* Limb pose for `a` at progress `p` (0..1), scaled by `mag` (the repetition penalty), with

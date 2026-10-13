@@ -163,7 +163,7 @@ cycle counts doubled so the head shakes and the hearts rise at the speed they di
 hearts now, not five. The bench has a "Tickle tickle" button.
 
 **And eating is a meal.** `ACT_EAT` was three pecks in 1.6 s and a 300 ms double bite. It is
-now 4.8 s and five bites of a cookie (`EXTRA_FOOD`): the robot carries it from its hand to the
+now 4.8 s and five bites of a cookie (three since 0.4.11) (`EXTRA_FOOD`): the robot carries it from its hand to the
 corner of its mouth, the bird pecks it off its wing, a piece goes out of it on each bite with
 crumbs falling, and the fifth finishes it. The mouth opens wide before each bite, snaps shut
 on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside `talk`).
@@ -171,6 +171,14 @@ on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside 
 included: the meal is the one action that does not sound as it starts
 (`rig_cue_on_start`), since its hand is still on the way up. The bench has a "Have a snack"
 button.
+
+**0.4.11: three bites, and a laugh that does not freeze him.** The meal was too long at five
+bites (owner), so it is three, 0.96 s apiece as before, each bite a bigger piece of the cookie.
+And the tickle froze for a moment as it started and at each laugh after (owner). Cues are
+rendered on the render task, and the laugh summed a band-limited triangle and a pulse per
+sample over 740 ms: 7.3 ms on a desktop, the costliest cue in the table, and a multiple of that
+on the panel. Its voice is now a triangle and a sawtooth straight off the phase, 0.46 ms for
+the same laugh, cheaper than the giggle.
 
 **A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
 only flinch, which with the meal crunching through two-thirds of its length and the tickle
