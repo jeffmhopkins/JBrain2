@@ -475,9 +475,37 @@ void confirm_draw_exit(uint16_t *fb, int w, int h, int y0, int over_h)
     stroke_r(fb, w, h, cx + a, cy - a, cx - a, cy + a, th, CONFIRM_GLYPH);
 }
 
-void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing, bool reply)
+/* The ring: a dim track all the way round, and over it the heard part in white, clockwise from
+   twelve o'clock like a clock's hand. The whole track is drawn from the first moment so a child
+   can see how much circle there is to fill, which is the thing that says "nearly done". */
+#define RING_IN (CONFIRM_R + 4)
+#define RING_OUT (CONFIRM_R + 10)
+#define RING_TRACK CONFIRM_SWAP(0x4208) /* a grey: plainly there, and well under the white */
+
+static void progress_ring(uint16_t *fb, int w, int h, int cx, int cy, int progress)
+{
+    const float upto = (float)progress / 1000.0f * 2.0f * (float)M_PI;
+    for (int dy = -RING_OUT; dy <= RING_OUT; dy++) {
+        const int py = cy + dy;
+        if (py < 0 || py >= h) continue;
+        for (int dx = -RING_OUT; dx <= RING_OUT; dx++) {
+            const int d2 = dx * dx + dy * dy;
+            if (d2 > RING_OUT * RING_OUT || d2 < RING_IN * RING_IN) continue;
+            const int px = cx + dx;
+            if (px < 0 || px >= w) continue;
+            /* Clockwise from the top, with y down: 0 at twelve, pi/2 at three. */
+            float a = atan2f((float)dx, (float)-dy);
+            if (a < 0.0f) a += 2.0f * (float)M_PI;
+            fb[py * w + px] = a < upto ? CONFIRM_GLYPH : RING_TRACK;
+        }
+    }
+}
+
+void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing, bool reply,
+                            int progress)
 {
     const int cy = confirm_cy(over_h);
+    if (progress >= 0) progress_ring(fb, w, h, CONFIRM_CX_CANCEL, cy, progress);
 
     /* REPLAY, bottom left, in the blue it already had — the one control that survives from the
        old design keeps the colour a child had learned.

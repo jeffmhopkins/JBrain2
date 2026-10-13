@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -243,6 +243,25 @@ body slides downhill, the head turns back toward true up by 0.6 of the panel's a
 (`orient_upright`, `face_state_t.upright`): the ostrich's head swings about its neck and its
 crest, eyes and beak turn about the head's centre; the robot, with no neck, nods its head over a
 little. The browser bench has a tilt slider for it.
+
+**0.4.8: the righted head's eyes and beak turn with it.** 0.4.6 turned where each feature sat
+but drew every one square to the glass, so on a panel held on its side the happy lower lid sat
+beside each eye instead of under it and the beak's four segments stacked into level bars (owner,
+with a photo). Each eye is now drawn turned through `upright` — outline, pupil, glint and both
+lids — and the beak, its line and the cheeks turn about the head's centre with the jaw opening
+along the head's own down. Upright the drawing is unchanged, pixel for pixel; the host test
+turns the upright face and requires the turned one to match it.
+
+**0.4.9: the play button rings with how much has been heard.** While a message plays, a ring
+round the play/pause button fills clockwise from twelve o'clock (owner: *"a little circle border
+that progresses to show how far it is until it's all the way complete"*). The whole track shows
+from the first moment in grey, so how much is left is visible, and a paused message keeps its
+ring where it got to. The panel streams a message and never holds all of it, so the length comes
+from the box: `X-Jpanel-Duration-Ms` on `/next` and on a replay's `/message/{id}/pcm`, which the
+engine publishes with the stream (`jp_cur_t.duration_ms`) and the machine turns into
+`sm_view_t.progress` from the arbiter's audible ms. A box that sends no length draws no ring.
+The same header switches on the engine's existing "80% of a short one" heard rule, which was
+written for it and had been waiting on the box to send it.
 
 ## One task owns the codec, one owns the panel
 

@@ -773,6 +773,7 @@ async def next_message(principal: PanelDep, request: Request, at: int = 0) -> Re
             # acknowledge what it could not verify, which leaves the message unplayed and the
             # pop-up standing.
             "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+            "X-Jpanel-Duration-Ms": _duration_ms(body),
         },
     )
 
@@ -818,6 +819,13 @@ async def message_pcm(message_id: str, principal: PanelDep, request: Request) ->
     return await pcm_reply(request, str(row[0]), message_id)
 
 
+def _duration_ms(body: bytes) -> str:
+    """How long `body` plays, for the ring that fills round the panel's play button as a message
+    plays. The panel streams the audio and never holds all of it, so it cannot measure this
+    itself."""
+    return str(len(body) * 1000 // (PANEL_RATE * 2))
+
+
 async def pcm_reply(request: Request, blob_sha: str, message_id: str) -> Response:
     """A stored message as the panels play it: 16 kHz mono s16, with the digest the panel checks
     as it plays. One body for a twin's replay and the desk panel's play, so both hear exactly
@@ -831,6 +839,7 @@ async def pcm_reply(request: Request, blob_sha: str, message_id: str) -> Respons
         headers={
             "X-Jpanel-Id": message_id,
             "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+            "X-Jpanel-Duration-Ms": _duration_ms(body),
         },
     )
 

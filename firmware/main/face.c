@@ -119,6 +119,41 @@ static void fill_round_rect(uint16_t *fb, int x, int y, int w, int h, int r, uin
     fill_circle(fb, x + w - r - 1, y + h - r - 1, r, c);
 }
 
+/* THE SAME ROUNDED RECT, TURNED `deg` clockwise about (pvx, pvy). A rect turned by moving its
+   corner and nothing else stays square to the glass: the beak came apart into a stack of level
+   bars on a head righting itself (owner's photo, 0.4.7). Per pixel over the turned box, each one
+   turned back into the rect's own frame. At zero it IS `fill_round_rect`, pixel for pixel. */
+static void fill_turned_round_rect(uint16_t *fb, int x, int y, int w, int h, int r, int pvx,
+                                   int pvy, float deg, uint16_t c)
+{
+    if (deg == 0.0f) {
+        fill_round_rect(fb, x, y, w, h, r, c);
+        return;
+    }
+    if (r * 2 > w) r = w / 2;
+    if (r * 2 > h) r = h / 2;
+    const float a = deg * (float)M_PI / 180.0f, ca = cosf(a), sa = sinf(a);
+    /* The rect's centre and half sizes, in its own frame about the pivot. */
+    const float hw = (float)w * 0.5f, hh = (float)h * 0.5f;
+    const float lx = (float)(x - pvx) + hw - 0.5f, ly = (float)(y - pvy) + hh - 0.5f;
+    const float tx = (float)pvx + lx * ca - ly * sa, ty = (float)pvy + lx * sa + ly * ca;
+    const float ex = fabsf(hw * ca) + fabsf(hh * sa) + 1.0f;
+    const float ey = fabsf(hw * sa) + fabsf(hh * ca) + 1.0f;
+    const float rr = (float)r;
+    for (int j = (int)floorf(ty - ey); j <= (int)ceilf(ty + ey); j++) {
+        for (int i = (int)floorf(tx - ex); i <= (int)ceilf(tx + ex); i++) {
+            const float dx = (float)i - tx, dy = (float)j - ty;
+            const float ax = fabsf(dx * ca + dy * sa), ay = fabsf(-dx * sa + dy * ca);
+            if (ax > hw || ay > hh) continue;
+            if (ax > hw - rr && ay > hh - rr) {
+                const float cx = ax - (hw - rr), cy = ay - (hh - rr);
+                if (cx * cx + cy * cy > rr * rr) continue;
+            }
+            px(fb, i, j, c);
+        }
+    }
+}
+
 /* A round-capped stroke IS a run of circles along the path, which is exactly how canvas
    renders `lineCap="round"` — so the smile needs no curve rasteriser. */
 static void arc_stroke(uint16_t *fb, int cx, int cy, int r, float a0, float a1, int width,
@@ -238,7 +273,7 @@ void face_set_fit(float scale, int origin_y)
  * the head and "not drawn" would show the head through it.
  */
 static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_params_t *p,
-                     float open, float startle, float scale)
+                     float open, float startle, float scale, float turn)
 {
     /* 52x62 in the mock, scaled 0.78 because the eyes shrink with the head on a body. */
     const float grow = 1.0f + 0.20f * startle;
@@ -251,7 +286,7 @@ static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_para
     /* Shut: a lid LINE, not an absent eye. A blink drawn as nothing reads as the face
        breaking for a frame; a line reads as a blink. */
     if (h < 5.0f) {
-        fill_round_rect(fb, cx - (int)(w / 2), cy - 2, (int)w, 5, 2, dark);
+        fill_turned_round_rect(fb, cx - (int)(w / 2), cy - 2, (int)w, 5, 2, cx, cy, turn, dark);
         return;
     }
 
@@ -272,12 +307,18 @@ static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_para
     const float lower_y = hh - h * p->ly; /* eye-local y where the lower lid starts */
     const float bend = h * p->lb;
 
-    const int x0 = (int)(-hw) - 1, x1 = (int)(hw) + 1;
-    const int y0 = (int)(-hh) - 1, y1 = (int)(hh) + 1;
+    /* TURNED WITH THE HEAD (`turn`, clockwise). Moving the eye's centre was not enough: the
+       lids and the pupil's glint stayed square to the glass, so on a head righting itself the
+       happy cheek arc sat beside the eye instead of under it. Each pixel is turned back into
+       the eye's own frame, and at zero that is the identity, so the upright eye is unchanged. */
+    const float ta = turn * (float)M_PI / 180.0f, tc = cosf(ta), ts = sinf(ta);
+    const float ex = fabsf(hw * tc) + fabsf(hh * ts), ey = fabsf(hw * ts) + fabsf(hh * tc);
+    const int x0 = (int)(-ex) - 1, x1 = (int)(ex) + 1;
+    const int y0 = (int)(-ey) - 1, y1 = (int)(ey) + 1;
     for (int j = y0; j <= y1; j++) {
-        const float fy = (float)j;
         for (int i = x0; i <= x1; i++) {
-            const float fx = (float)i;
+            const float fx = (float)i * tc + (float)j * ts;
+            const float fy = -(float)i * ts + (float)j * tc;
 
             /* Rounded-rect membership: outside the corner discs is outside the eye. */
             const float ax = fabsf(fx), ay = fabsf(fy);
@@ -335,12 +376,14 @@ static void draw_puff(uint16_t *fb, int ax, int ay, float scale)
     fill_circle(fb, ax - (int)(24.0f * scale), ay + (int)(16.0f * scale), (int)(r * 0.6f), puff);
 }
 
-static void draw_blush(uint16_t *fb, int cx, int cy, int dx, float scale)
+/* The cheeks sit at +-(dx, dy) from the centre: along the head's own across, which is level
+   only while the head is. */
+static void draw_blush(uint16_t *fb, int cx, int cy, int dx, int dy, float scale)
 {
     const uint16_t pink = rgb(0xFF, 0x7A, 0x9C);
     const int r = (int)(16.0f * scale);
-    fill_circle(fb, cx - dx, cy, r, pink);
-    fill_circle(fb, cx + dx, cy, r, pink);
+    fill_circle(fb, cx - dx, cy - dy, r, pink);
+    fill_circle(fb, cx + dx, cy + dy, r, pink);
 }
 
 /* A HEART, by the curve (x^2 + y^2 - 1)^3 <= x^2 y^3 — two lobes and a point, which no pair
@@ -561,7 +604,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
 
     /* ON the face, after it, or the head paints over it — which is exactly what used to
        happen. Cheeks: outboard of the eyes and level with the smile. */
-    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, ox + tilt, hy + SY(26), SX(78), s);
+    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, ox + tilt, hy + SY(26), SX(78), 0, s);
 
     /* NO FACE ON THE BACK OF A HEAD. `facing` goes negative for the half of a spin the
        figure is turned away (rig.h), and the squash alone does not read as a turn — a face
@@ -570,8 +613,8 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
     const bool front = st->fig.facing >= 0.0f;
     const int ex = SX((int)(HW * 0.43f)), ey = hy - SY((int)(HH * 0.17f));
     if (front) {
-        draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s);
-        draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s);
+        draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s, 0.0f);
+        draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s, 0.0f);
     }
 
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
@@ -665,6 +708,7 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     /* A feature at (hx + dx, oy + y) upright, turned about the head's centre. Written so that
        at zero it is EXACTLY the old arithmetic, pixel for pixel. */
 #define HC_Y (OS_HEAD_Y + OS_HEAD_H / 2)
+    const int hcy = oy + SY(HC_Y) + bob;
 #define RX(dx, y) (hx + (int)lrintf((float)SX(dx) * ucos - (float)SY((y) - HC_Y) * usin))
 #define RY(dx, y)                                                                          \
     (oy + SY(y) + bob +                                                                    \
@@ -781,16 +825,22 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
             /* Progressive, so the jaw pivots at the hinge instead of sliding down in one
                piece: the further from the joint, the further it travels. */
             const int drop = i >= 1 ? SY(gape * (int)i / 3) : 0;
-            fill_round_rect(fb, RX(0, BEAK[i].y) - SX(BEAK[i].w / 2),
-                            RY(0, BEAK[i].y) + drop,
-                            SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), beak);
+            /* Laid out upright, then turned whole about the head's centre — the jaw's drop
+               included, so it opens along the turned head's down and not the glass's. */
+            fill_turned_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob + drop,
+                                   SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), hx, hcy,
+                                   st->upright, beak);
         }
-        fill_rect(fb, RX(0, -97) - SX(16), RY(0, -97), SX(32), SY(2), shade(hex, 0.28f));
+        fill_turned_round_rect(fb, hx - SX(16), oy + SY(-97) + bob, SX(32), SY(2), 0, hx, hcy,
+                               st->upright, shade(hex, 0.28f));
     }
 
     /* Cheeks, after the head and before the eyes. Outboard of the eyes and inboard of the
        head's edge, which on a 128-wide head leaves exactly this much room. */
-    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, RX(0, -110), RY(0, -110), SX(50), s);
+    if (st->fig.extra == EXTRA_BLUSH) {
+        draw_blush(fb, RX(0, -110), RY(0, -110), (int)lrintf((float)SX(50) * ucos),
+                   (int)lrintf((float)SX(50) * usin), s);
+    }
 
     /* THE ROBOT'S EYES, UNCHANGED. Six emotions already work as lid geometry; a form that
        redrew them would have to re-implement all six.
@@ -800,9 +850,9 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
        within half a pixel. */
     if (front) {
         draw_eye(fb, RX(-OS_EYE_X, OS_EYE_Y), RY(-OS_EYE_X, OS_EYE_Y), dark, &st->eyes.l,
-                 st->open, st->startle, s * 1.10f);
+                 st->open, st->startle, s * 1.10f, st->upright);
         draw_eye(fb, RX(OS_EYE_X, OS_EYE_Y), RY(OS_EYE_X, OS_EYE_Y), dark, &st->eyes.r,
-                 st->open, st->startle, s * 1.10f);
+                 st->open, st->startle, s * 1.10f, st->upright);
     }
 
     if (u > 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
