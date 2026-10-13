@@ -18,6 +18,7 @@
 #include "svc_audio_drv.h"
 #include "svc_box.h"
 #include "svc_display_drv.h"
+#include "svc_notice_drv.h"
 #include "svc_post_drv.h"
 #include "svc_settings.h"
 #include "ui_task.h"
@@ -447,11 +448,21 @@ dbg_poll_t dbg_link_poll(void)
     if (!s_done || !s_free_q || !s_full_q || s_job != JOB_IDLE) return DBG_POLL_FAIL;
     size_t got = 0;
     box_reply_t rep = {.date = {0}};
-    const int status = box_http_call("/endpoint/debug/next?board=" OTA_BOARD_ID, NULL, NULL, 0,
-                                     s_req, sizeof s_req - 1, &got, &rep, BOX_TIMEOUT_MS);
+    /* The notice switches ride every pickup (0.0.19, plan §2): the box refuses a notice at send
+       time from what the panel said here seconds ago. None when this panel cannot show one (no
+       storage, or no UI on a boot after a fault), and the box then says `no_notice_surface`. */
+    char pickup[112], prefs[48];
+    svc_notice_pickup_query(ui_task_owns_lvgl(), prefs, sizeof prefs);
+    snprintf(pickup, sizeof pickup, "/endpoint/debug/next?board=" OTA_BOARD_ID "%s", prefs);
+    const int status = box_http_call(pickup, NULL, NULL, 0, s_req, sizeof s_req - 1, &got, &rep,
+                                     BOX_TIMEOUT_MS);
     /* The owner's voice post rides the pickup (0.0.16): a tag that moved is a fetch of the
-       people's threads, so a twin's message reaches the panel within a pickup or two. */
-    if (status == 200 || status == 204) svc_post_tag(rep.post);
+       people's threads, so a twin's message reaches the panel within a pickup or two. Notices
+       waiting ride it too: the loop collects them next (notice_link.c). */
+    if (status == 200 || status == 204) {
+        svc_post_tag(rep.post);
+        svc_notice_waiting(rep.notice);
+    }
     if (status == 204) {
         s_stats.polls_ok++;
         return DBG_POLL_EMPTY;

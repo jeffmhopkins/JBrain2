@@ -347,8 +347,8 @@ bool svc_audio_stop_reply(void)
     s_st.stopped++;
     talk_port_kick();
     msg_t m;
-    if (kind == TK_KIND_LISTEN) {
-        play_over();
+    if (kind == TK_KIND_LISTEN || kind == TK_KIND_NOTICE) {
+        if (kind == TK_KIND_LISTEN) play_over();
         return true;
     }
     const char *thread = exchange_thread();
@@ -408,6 +408,50 @@ bool svc_audio_play(uint32_t msg_id)
     talk_port_kick();
     talk_port_net();
     return true;
+}
+
+bool svc_audio_notice_play(const char *key)
+{
+    /* Never over an alarm, and only on a speaker that started; no radio needed. */
+    if (s_holding || !talk_port_speaker() || svc_audio_ringing() || strlen(key) >= sizeof s_target)
+        return false;
+    uint8_t *stale = NULL;
+    lock();
+    const tk_begin_t b = tk_listen(&s_tk, 0);
+    if (b == TK_BEGIN_OK) {
+        tk_set_notice(&s_tk);
+        tk_copy(s_target, sizeof s_target, key);
+        s_played_bytes = 0;
+        /* A talk's ring left behind is 16 KB: the sound takes a play's 6 KB on the main task. */
+        stale = s_ring_mem;
+        s_ring_mem = NULL;
+        s_ring_bytes = 0;
+        tk_ring_init(&s_ring, NULL, 0);
+    }
+    unlock();
+    free(stale);
+    if (b != TK_BEGIN_OK) return false;
+    talk_port_kick();
+    talk_port_net();
+    return true;
+}
+
+bool svc_audio_notice_active(uint32_t *played_ms)
+{
+    lock();
+    const bool on = s_tk.kind == TK_KIND_NOTICE && (s_tk.phase == TK_SEND || s_tk.phase == TK_PLAY);
+    const uint32_t bytes = s_played_bytes;
+    unlock();
+    *played_ms = on ? bytes / (TALK_RATE / 1000u * 2u) : 0;
+    return on;
+}
+
+void svc_audio_notice_stop(void)
+{
+    lock();
+    const bool mine = s_tk.kind == TK_KIND_NOTICE;
+    unlock();
+    if (mine) svc_audio_stop_reply();
 }
 
 void svc_audio_stop(void)
@@ -511,6 +555,14 @@ void svc_audio_service(void)
     static char heard[sizeof s_heard];
     lock();
     const uint8_t kind = s_tk.kind;
+    if (kind == TK_KIND_NOTICE) {
+        /* A notice's sound has no bubble: it ends, and its ring goes back. */
+        tk_take(&s_tk, why, sizeof why);
+        const bool quiet = tk_quiet(&s_tk);
+        unlock();
+        if (quiet) free_ring();
+        return;
+    }
     if (kind != TK_KIND_AGENT) {
         const tk_res_t res = tk_take(&s_tk, why, sizeof why);
         const bool quiet = tk_quiet(&s_tk);
@@ -848,9 +900,9 @@ static void describe(void *ctx, dbg_json_t *w)
     memcpy(status, s_status, sizeof status);
     unlock();
     dbg_json_str(w, "state", talk_port_state());
-    static const char *const KIND[] = {"agent", "message", "play"};
+    static const char *const KIND[] = {"agent", "message", "play", "notice"};
     dbg_json_str(w, "phase", PHASE[t.phase]);
-    dbg_json_str(w, "kind", KIND[t.kind < 3 ? t.kind : 0]);
+    dbg_json_str(w, "kind", KIND[t.kind < 4 ? t.kind : 0]);
     dbg_json_int(w, "playing", s_playing);
     dbg_json_int(w, "plays", st.plays);
     dbg_json_int(w, "play_failed", st.play_failed);

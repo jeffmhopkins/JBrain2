@@ -89,7 +89,7 @@ def build_panel_handlers(
         try:
             hide = int(raw_hide) if raw_hide is not None else None
         except (TypeError, ValueError):
-            return ToolOutput("`hide_after_s` must be a whole number of seconds (3-600).")
+            return ToolOutput("`hide_after_s` must be a whole number of seconds (3-600, or 0).")
         say = arguments.get("say")
         try:
             sent = await notices.send(

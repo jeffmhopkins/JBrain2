@@ -68,3 +68,15 @@ CONFIG_LV_FONT_MONTSERRAT_48=y
 CONFIG_LV_FONT_DEFAULT_MONTSERRAT_20=y
 # A failed LVGL assert panics rather than spinning (lv_port/lv_assert_trap.h).
 CONFIG_LV_ASSERT_HANDLER_INCLUDE="lv_assert_trap.h"
+
+# littlefs on `storage` for push notices (0.0.19). Its caches are internal RAM for as long as it
+# is mounted (a read cache, a program cache, the lookahead) plus one cache per open file, so they
+# are small: 256-byte caches (a multiple of the 128-byte read and program units, a factor of the
+# 4 KB block) and a 32-byte lookahead (256 blocks a scan; the partition has 960, and a scan with
+# four files on it is cheap). One partition, and no mtime attribute on every write.
+CONFIG_LITTLEFS_MAX_PARTITIONS=1
+CONFIG_LITTLEFS_READ_SIZE=128
+CONFIG_LITTLEFS_WRITE_SIZE=128
+CONFIG_LITTLEFS_CACHE_SIZE=256
+CONFIG_LITTLEFS_LOOKAHEAD_SIZE=32
+CONFIG_LITTLEFS_USE_MTIME=n

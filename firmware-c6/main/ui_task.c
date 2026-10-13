@@ -25,6 +25,7 @@
 #include "svc_display.h"
 #include "svc_display_drv.h"
 #include "svc_messages_fake.h"
+#include "svc_notice_drv.h"
 #include "svc_notice_fake.h"
 #include "svc_orient_drv.h"
 #include "svc_post_drv.h"
@@ -124,6 +125,9 @@ static void ui_loop(void *arg)
         svc_siblings_service();
         svc_convo_service();
         svc_post_service();
+        /* A notice arrived (NOTICE_ARRIVED), hid itself (`hide_s`) or lapsed: before the shell, so
+           the overlay follows in this same pass. */
+        svc_notice_service();
         /* A twin's new message chimes once, never over a talk, a reply, a play or an alarm. */
         if (svc_post_take_chime(svc_audio_talking() || svc_audio_replying() ||
                                 svc_audio_playing() || svc_audio_ringing()))

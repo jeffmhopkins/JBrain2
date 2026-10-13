@@ -32,6 +32,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "net.h"
+#include "notice_link.h"
 #include "nvs_flash.h"
 #include "ota.h"
 #include "post_link.h"
@@ -43,6 +44,7 @@
 #include "svc_convo_drv.h"
 #include "svc_display_drv.h"
 #include "svc_net_drv.h"
+#include "svc_notice_drv.h"
 #include "svc_orient_drv.h"
 #include "svc_post_drv.h"
 #include "svc_power_drv.h"
@@ -192,7 +194,7 @@ static bool report(const cfg_t *cfg)
         svc_display_note, ui_task_note,   dbg_sys_low_note, svc_power_note, svc_buttons_note,
         svc_touch_note,   svc_orient_note, svc_settings_note, svc_rtc_note, shell_key_note,
         svc_audio_note,   dbg_link_note,  box_http_note, secrets_note, svc_siblings_note,
-        svc_alarms_note,  svc_convo_note, svc_post_note};
+        svc_alarms_note,  svc_convo_note, svc_post_note, svc_notice_note};
     note[0] = '\0';
     for (size_t i = 0; i < sizeof parts / sizeof *parts && used + 1 < sizeof note; i++) {
         parts[i](part, sizeof part);
@@ -349,6 +351,12 @@ static void start_panel(const cfg_t *cfg)
     /* The people's threads (0.0.16): the glass asks, this loop fetches. */
     svc_post_set_wake(wake_main);
     if (!may_start) return;
+    /* Push notices (0.0.19): `storage` mounted and swept before the UI can ask for a notice, and
+       only on a boot that has a UI to show one — a fault boot reports no notice surface. */
+    svc_notice_set_wake(wake_main);
+    dbg_sys_doing("notice-mount");
+    if (!svc_notice_start()) ESP_LOGE(TAG, "storage did not mount: no notices this boot");
+    dbg_sys_doing("idle");
     ui_task_start(xTaskGetCurrentTaskHandle());
     /* Its failure is reported and survivable: the panel keeps BOOT, KEY and PWR without it. */
     svc_touch_start();
@@ -451,6 +459,7 @@ void app_main(void)
             if (doing("talk", talk_link_run)) break;
             doing("convo", convo_link_run);
             doing("post", post_link_run);
+            doing("notice", notice_link_run);
             uint32_t sleep_ms = 0;
             const dbg_next_t next = dbg_sched_next(&pickup, now_ms(), check_due,
                                                    reachable && !svc_net_user_off(), &sleep_ms);
@@ -460,6 +469,7 @@ void app_main(void)
                     doing("talk", talk_link_run);
                     doing("convo", convo_link_run);
                     doing("post", post_link_run);
+                    doing("notice", notice_link_run);
                     break;
                 }
                 continue;
@@ -473,6 +483,7 @@ void app_main(void)
                 doing("talk", talk_link_run);
                 doing("convo", convo_link_run);
                 doing("post", post_link_run);
+                doing("notice", notice_link_run);
                 break;
             }
         }

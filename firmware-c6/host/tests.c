@@ -23,7 +23,13 @@
 #include "convo_model.h"
 #include "convo_wire.h"
 #include "minutes.h"
+#include "jn1.h"
+#include "notice_logic.h"
+#include "notice_view.h"
 #include "notice_policy.h"
+#include "notice_port.h"
+#include "notice_port_fake.h"
+#include "notice_store.h"
 #include "orient_logic.h"
 #include "orient_port_fake.h"
 #include "settings_model.h"
@@ -37,7 +43,9 @@
 #include "svc_box_fake.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
+#include "svc_notice_drv.h"
 #include "svc_notice_fake.h"
+#include "sha256.h"
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
@@ -4616,6 +4624,1057 @@ static void test_the_calibration_screen_counts_taps_that_agree(void)
           "the toasts");
 }
 
+/* ---- push notices: JN1 against the box's fixtures, the files, the queue (0.0.19) ---- */
+
+#define JN1_FIXTURES "../../backend/tests/fixtures/jpanel_notice/"
+
+static uint8_t *read_fixture(const char *name, size_t *len)
+{
+    char path[160];
+    snprintf(path, sizeof path, JN1_FIXTURES "%s", name);
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    const long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *b = malloc((size_t)n + 1);
+    if (b && fread(b, 1, (size_t)n, f) != (size_t)n) {
+        free(b);
+        b = NULL;
+    }
+    fclose(f);
+    if (b) {
+        b[n] = '\0';
+        *len = (size_t)n;
+    }
+    return b;
+}
+
+/* What `decode()` made of each fixture, from vectors.json — which the test reads too, so a
+   regenerated fixture that changes any of these fails here rather than passing on stale values. */
+typedef struct {
+    const char *name, *sha256, *sender, *title, *body;
+    uint8_t n_choices;
+    const char *choices[4];
+    bool chime;
+    uint16_t hide_s;
+    uint32_t ttl_s;
+    uint8_t mode;
+    uint16_t w, h, stripes;
+    const char *px_sha;
+    uint16_t audio_ms;
+    const char *pcm_sha;
+} jn1_vector_t;
+
+static const jn1_vector_t JN1_VECTORS[] = {
+    {"plain", "64b29a78d9543190d158e1c90af261896a293ab988a62275bc3f8da8957e8428", "Ops",
+     "Disk 91% full", "The box is running low on space.", 0, {0}, false, 0, 900, 0, 0, 0, 0, NULL,
+     0, NULL},
+    {"question", "004c3adb68345fb74bf5b23ff2fea28935ae706e7a3cba152abd5c59d0243b1f", "Jerv",
+     "Run the cleanup now?", "Frees about 38 GB.", 2, {"Yes", "No"}, true, 30, 900, 0, 0, 0, 0,
+     NULL, 0, NULL},
+    {"banner", "7fb86e0fcffa321e0439455e5bbe321d91cfe9444f5723575a2b119e0713bd1f",
+     "Nightly backup", "Backup done", "", 3, {"OK", "Show me", "Later"}, false, 0, 600, 2, 480, 48,
+     2, "ed1c30aa74aa70f8b24ee44f92683a86b508c1aa4455c607e15268dec7110b82", 0, NULL},
+    {"full_sound", "12da6ee7209055c248c597244eda1e0e1c9d2f131c76bd1739bafe09134a6e86", "Jerv",
+     "Look", "", 0, {0}, true, 8, 120, 1, 480, 480, 12,
+     "72b20d214869463c261a409996d69ab31723b2510aa60b3fe774fd37243f065f", 250,
+     "f02407a93f68fef81ae3a880a34b1309b8bdf13482cee91467a046a419ab3ae0"},
+};
+#define JN1_ID "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+
+static void sha_of(const void *b, size_t n, char out[65])
+{
+    sha256_t s;
+    sha256_init(&s);
+    sha256_update(&s, b, n);
+    sha256_hex(&s, out);
+}
+
+/* Little-endian rgb565, the bytes the box hashed. */
+static void sha_px(sha256_t *s, const uint16_t *px, uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++) {
+        const uint8_t le[2] = {(uint8_t)px[i], (uint8_t)(px[i] >> 8)};
+        sha256_update(s, le, 2);
+    }
+}
+
+typedef struct {
+    jn1_ev_t last;
+    uint32_t records;
+    sha256_t px, pcm;
+    bool px_bad;
+} jn1_run_t;
+
+static uint16_t s_px[480 * 40];
+
+/* Feeds `b` in slices of `slice` bytes (0: whole), hashing the pixels and the sound as each
+   record lands, the way a panel with a 480x40 buffer would see them. */
+static jn1_ev_t jn1_run(const uint8_t *b, size_t n, size_t slice, jn1_notice_t *out, jn1_run_t *run)
+{
+    static uint8_t rec[JN1_BUF_BYTES];
+    jn1_reader_t r;
+    jn1_init(&r, rec, out);
+    memset(run, 0, sizeof *run);
+    sha256_init(&run->px);
+    sha256_init(&run->pcm);
+    size_t at = 0;
+    jn1_ev_t ev = JN1_EV_NONE;
+    while (at < n && ev != JN1_EV_BAD) {
+        const size_t want = slice && slice < n - at ? slice : n - at;
+        const size_t used = jn1_feed(&r, b + at, want, &ev);
+        at += used;
+        if (ev == JN1_EV_RECORD || ev == JN1_EV_END) {
+            run->records++;
+            if (r.rec_n > 3 && r.rec[0] == JN1_STRIPE) {
+                uint16_t y0, rows;
+                if (jn1_stripe_pixels(r.rec + 3, r.rec_n - 3, out->img_w, s_px, 480 * 40, &y0, &rows))
+                    sha_px(&run->px, s_px, (uint32_t)rows * out->img_w);
+                else
+                    run->px_bad = true;
+            }
+            if (r.rec[0] == JN1_PCM) sha256_update(&run->pcm, r.rec + 3, r.rec_n - 3);
+        }
+        if (ev != JN1_EV_BAD && used == 0) break;
+        if (ev != JN1_EV_BAD) run->last = ev;
+    }
+    if (ev == JN1_EV_BAD) run->last = ev;
+    return jn1_torn(&r) && run->last != JN1_EV_BAD ? JN1_EV_NONE : run->last;
+}
+
+static void test_jn1_reads_every_fixture_as_the_box_decodes_it(void)
+{
+    size_t vlen = 0;
+    char *vectors = (char *)read_fixture("vectors.json", &vlen);
+    CHECK(vectors != NULL, "the box's vectors.json is where the suite looks for it");
+    if (!vectors) return;
+    static const size_t SLICES[] = {0, 1, 2, 3, 5, 7, 64, 1000, 4099};
+    for (size_t v = 0; v < sizeof JN1_VECTORS / sizeof *JN1_VECTORS; v++) {
+        const jn1_vector_t *x = &JN1_VECTORS[v];
+        CHECK(strstr(vectors, x->sha256) && (!x->px_sha || strstr(vectors, x->px_sha)) &&
+                  (!x->pcm_sha || strstr(vectors, x->pcm_sha)),
+              "the expected digests are vectors.json's own");
+        char file[32];
+        snprintf(file, sizeof file, "%s.jn1", x->name);
+        size_t n = 0;
+        uint8_t *b = read_fixture(file, &n);
+        CHECK(b != NULL, x->name);
+        if (!b) continue;
+        char sha[65];
+        sha_of(b, n, sha);
+        CHECK(!strcmp(sha, x->sha256), "the fixture is the one vectors.json describes");
+        for (size_t s = 0; s < sizeof SLICES / sizeof *SLICES; s++) {
+            jn1_notice_t got;
+            jn1_run_t run;
+            const jn1_ev_t ev = jn1_run(b, n, SLICES[s], &got, &run);
+            char id[37], px[65], pcm[65];
+            jn1_uuid_text(got.id, id);
+            sha256_hex(&run.px, px);
+            sha256_hex(&run.pcm, pcm);
+            CHECK(ev == JN1_EV_END && got.bytes == n, "the whole stream reads, in any split");
+            CHECK(!strcmp(id, JN1_ID) && !strcmp(got.sender, x->sender) &&
+                      !strcmp(got.title, x->title) && !strcmp(got.body, x->body),
+                  "id, sender, title and body as decode() reads them");
+            bool choices = got.n_choices == x->n_choices;
+            for (uint8_t c = 0; choices && c < got.n_choices; c++)
+                choices = !strcmp(got.choices[c], x->choices[c]);
+            CHECK(choices && !(got.flags & JN1_FLAG_QUESTION) == !x->n_choices, "the choices, in order");
+            CHECK(!(got.flags & JN1_FLAG_CHIME) == !x->chime && got.hide_s == x->hide_s &&
+                      got.ttl_s == x->ttl_s,
+                  "chime, hide and the answer window");
+            CHECK(got.img_mode == x->mode && got.img_w == x->w && got.img_h == x->h &&
+                      got.stripes == x->stripes && !run.px_bad,
+                  "the picture's mode, size and stripes");
+            CHECK(!x->px_sha || !strcmp(px, x->px_sha), "every pixel decode() decodes");
+            CHECK(got.audio_ms == x->audio_ms && (!x->pcm_sha || !strcmp(pcm, x->pcm_sha)) &&
+                      !(got.flags & JN1_FLAG_SOUND) == !x->pcm_sha,
+                  "the sound, byte for byte");
+            CHECK(!x->stripes || got.stripe_at > 3, "where the picture starts is kept");
+        }
+        free(b);
+    }
+    free(vectors);
+}
+
+/* ---- crafted streams: what decode() refuses, refused here ---- */
+
+typedef struct {
+    uint8_t b[8192];
+    size_t n;
+} jn_t;
+
+static void jn_rec(jn_t *s, uint8_t kind, const void *p, size_t len)
+{
+    s->b[s->n] = kind;
+    s->b[s->n + 1] = (uint8_t)len;
+    s->b[s->n + 2] = (uint8_t)(len >> 8);
+    if (len) memcpy(s->b + s->n + 3, p, len);
+    s->n += 3 + len;
+}
+
+static void jn_meta(jn_t *s, uint8_t flags, uint8_t mode, uint16_t w, uint16_t h, uint16_t ms)
+{
+    uint8_t m[33] = {0};
+    m[0] = 0x6a;
+    m[16] = flags;
+    m[19] = 60;
+    m[23] = mode;
+    m[24] = (uint8_t)w;
+    m[25] = (uint8_t)(w >> 8);
+    m[26] = (uint8_t)h;
+    m[27] = (uint8_t)(h >> 8);
+    m[28] = (uint8_t)ms;
+    m[29] = (uint8_t)(ms >> 8);
+    memcpy(m + 30, "Ops", 3);
+    memcpy(s->b, "JN1", 3);
+    s->n = 3;
+    jn_rec(s, JN1_META, m, sizeof m);
+}
+
+static void jn_text(jn_t *s, uint8_t kind, const char *t)
+{
+    jn_rec(s, kind, t, strlen(t));
+}
+
+static void jn_end(jn_t *s)
+{
+    const uint32_t at = (uint32_t)s->n;
+    const uint8_t e[5] = {0, (uint8_t)at, (uint8_t)(at >> 8), (uint8_t)(at >> 16), (uint8_t)(at >> 24)};
+    jn_rec(s, JN1_END, e, sizeof e);
+}
+
+/* One stripe of `rows` x `w` in a single colour, as runs of at most 128. */
+static void jn_stripe(jn_t *s, uint16_t y0, uint16_t rows, uint16_t w, int extra)
+{
+    uint8_t p[4096];
+    size_t k = 4;
+    p[0] = (uint8_t)y0, p[1] = (uint8_t)(y0 >> 8), p[2] = (uint8_t)rows, p[3] = (uint8_t)(rows >> 8);
+    int left = rows * w + extra;
+    while (left > 0) {
+        const int run = left > 128 ? 128 : left;
+        p[k++] = (uint8_t)(run - 1);
+        p[k++] = 0x1f;
+        p[k++] = 0xf8;
+        left -= run;
+    }
+    jn_rec(s, JN1_STRIPE, p, k);
+}
+
+static jn1_ev_t jn_read(const jn_t *s, const char **why)
+{
+    static uint8_t rec[JN1_BUF_BYTES];
+    jn1_notice_t n;
+    jn1_reader_t r;
+    jn1_init(&r, rec, &n);
+    jn1_ev_t ev = JN1_EV_NONE, last = JN1_EV_NONE;
+    size_t at = 0;
+    while (at < s->n && ev != JN1_EV_BAD) {
+        at += jn1_feed(&r, s->b + at, s->n - at, &ev);
+        if (ev != JN1_EV_NONE) last = ev;
+    }
+    *why = r.why ? r.why : "";
+    return last == JN1_EV_END && jn1_ended(&r) ? JN1_EV_END : last == JN1_EV_BAD ? JN1_EV_BAD : JN1_EV_NONE;
+}
+
+static void test_jn1_refuses_what_decode_refuses(void)
+{
+    const char *why;
+    jn_t s;
+    /* The well-formed base each case below breaks one way. */
+    jn_meta(&s, JN1_FLAG_QUESTION, 0, 0, 0, 0);
+    jn_text(&s, JN1_TITLE, "T");
+    jn_text(&s, JN1_BODY, "B");
+    jn_text(&s, JN1_CHOICE, "Yes");
+    jn_end(&s);
+    CHECK(jn_read(&s, &why) == JN1_EV_END, "the base stream is whole");
+
+    /* Torn: every prefix is incomplete, never accepted and never mistaken for a refusal. */
+    bool torn_ok = true;
+    for (size_t cut = 0; cut < s.n; cut++) {
+        jn_t t = s;
+        t.n = cut;
+        torn_ok = torn_ok && jn_read(&t, &why) == JN1_EV_NONE;
+    }
+    CHECK(torn_ok, "a stream cut anywhere short of its end is torn, not whole");
+
+    jn_t t = s;
+    t.b[t.n - 4]++;
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "END"), "END's byte count disagreeing");
+    t = s;
+    t.b[t.n - 5] = 1;
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "END's code not 0");
+    t = s;
+    t.b[t.n++] = 0;
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "after END"), "a byte after END");
+    t = s;
+    t.b[0] = 'X';
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "not JN1");
+
+    /* Out of order: BODY before TITLE, TITLE twice, CHOICE before BODY, a second META. */
+    jn_meta(&t, JN1_FLAG_QUESTION, 0, 0, 0, 0);
+    jn_text(&t, JN1_BODY, "B");
+    jn_text(&t, JN1_TITLE, "T");
+    jn_text(&t, JN1_CHOICE, "Yes");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "order"), "BODY before TITLE");
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_text(&t, JN1_TITLE, "T");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "TITLE twice");
+    jn_meta(&t, JN1_FLAG_QUESTION, 0, 0, 0, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_text(&t, JN1_CHOICE, "Yes");
+    jn_text(&t, JN1_BODY, "B");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "CHOICE before BODY");
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    uint8_t meta2[30] = {0};
+    jn_rec(&t, JN1_META, meta2, sizeof meta2);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "a second META");
+    memcpy(t.b, "JN1", 3);
+    t.n = 3;
+    jn_text(&t, JN1_TITLE, "T");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "META"), "a first record that is not META");
+    t.n = 3;
+    jn_text(&t, 0x40, "x");
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "an unknown record before META");
+
+    /* An unknown record after META is skipped by its length, as decode() skips it. */
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_text(&t, 0x40, "later formats");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_END, "an unknown record after META is skipped");
+
+    /* Flags against records. */
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_text(&t, JN1_CHOICE, "Yes");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "question"), "choices without the flag");
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 8, 2, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "picture"), "the picture flag with no stripes");
+    jn_meta(&t, JN1_FLAG_QUESTION, 0, 0, 0, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    for (int i = 0; i < 5; i++) jn_text(&t, JN1_CHOICE, i ? "No" : "Yes");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "a fifth choice");
+
+    /* Stripes: whole rows, in order, exactly covered. */
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 480, 60, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_stripe(&t, 0, 40, 480, 0);
+    jn_stripe(&t, 40, 20, 480, 0);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_END, "two stripes covering 480x60");
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 480, 60, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_stripe(&t, 0, 40, 480, 1);
+    jn_stripe(&t, 40, 20, 480, 0);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "overflows"), "a run past its stripe's pixels");
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 480, 60, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_stripe(&t, 0, 40, 480, -1);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "short"), "a stripe short of its rows");
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 480, 60, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_stripe(&t, 20, 40, 480, 0);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "a stripe that does not start where the last ended");
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 48, 50, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_stripe(&t, 0, 41, 48, 0);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "more than 40 rows in a stripe");
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 480, 60, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_stripe(&t, 0, 40, 480, 0);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "stripes that stop short of the picture's height");
+    jn_meta(&t, JN1_FLAG_PICTURE, 2, 480, 60, 0);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_stripe(&t, 0, 40, 480, 0);
+    jn_stripe(&t, 40, 20, 480, 0);
+    const uint8_t pcm[2] = {0};
+    jn_rec(&t, JN1_PCM, pcm, 2);
+    jn_stripe(&t, 60, 1, 480, 0);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "a STRIPE after PCM");
+
+    /* Sound: even records, and as long as META says. */
+    static uint8_t tone[3200];
+    jn_meta(&t, JN1_FLAG_SOUND, 0, 0, 0, 100);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_rec(&t, JN1_PCM, tone, 3200);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_END, "100 ms of sound, as META says");
+    jn_meta(&t, JN1_FLAG_SOUND, 0, 0, 0, 100);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_rec(&t, JN1_PCM, tone, 3199);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "odd"), "an odd PCM record");
+    jn_meta(&t, JN1_FLAG_SOUND, 0, 0, 0, 200);
+    jn_text(&t, JN1_TITLE, "T");
+    jn_rec(&t, JN1_PCM, tone, 3200);
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "sound"), "a sound shorter than META says");
+
+    /* A record longer than 4096, and text that is not UTF-8. */
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    t.b[t.n] = JN1_TITLE, t.b[t.n + 1] = 0x01, t.b[t.n + 2] = 0x10;
+    t.n += 3;
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD && strstr(why, "long"), "a 4097-byte record");
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    jn_text(&t, JN1_TITLE, "\xc3\x28");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "a title that is not UTF-8");
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    jn_text(&t, JN1_TITLE, "\xed\xa0\x80");
+    jn_end(&t);
+    CHECK(jn_read(&t, &why) == JN1_EV_BAD, "a surrogate is not UTF-8 either");
+
+    /* What the panel keeps of a longer title: cut before a character, never inside one. */
+    jn_meta(&t, 0, 0, 0, 0, 0);
+    char long_title[80];
+    memset(long_title, 'a', 59);
+    memcpy(long_title + 59, "\xc3\xa9xyz", 6);
+    jn_text(&t, JN1_TITLE, long_title);
+    jn_end(&t);
+    static uint8_t rec[JN1_BUF_BYTES];
+    jn1_notice_t n;
+    jn1_reader_t r;
+    jn1_init(&r, rec, &n);
+    jn1_ev_t ev;
+    for (size_t at = 0; at < t.n;) at += jn1_feed(&r, t.b + at, t.n - at, &ev);
+    CHECK(jn1_ended(&r) && strlen(n.title) == 59, "a 66-byte title is kept to 59, before the é");
+}
+
+/* ---- the service: files, queue, the box's answers ---- */
+
+static nfetch_t *fetch_bytes(const char *path, const uint8_t *b, size_t n, size_t upto)
+{
+    nfetch_t *f = svc_notice_fetch_begin(path);
+    size_t at = 0;
+    while (f && at < upto) {
+        uint8_t *dst;
+        const size_t room = svc_notice_fetch_room(f, &dst);
+        if (!room) break;
+        const size_t k = room < upto - at ? room : upto - at;
+        memcpy(dst, b + at, k);
+        at += k;
+        if (!svc_notice_fetch_took(f, k)) break;
+    }
+    (void)n;
+    return f;
+}
+
+static bool fetch_fixture(const char *file, size_t cut)
+{
+    size_t n = 0;
+    uint8_t *b = read_fixture(file, &n);
+    if (!b) return false;
+    nfetch_t *f = fetch_bytes(NOTICE_NEXT_PATH, b, n, cut ? cut : n);
+    const bool queued = svc_notice_fetch_end(f, !cut, 200);
+    free(b);
+    return queued;
+}
+
+static unsigned files_in_storage(void)
+{
+    char name[96];
+    unsigned k = 0;
+    while (nstore_entry(k, name, sizeof name)) k++;
+    return k;
+}
+
+static void notice_boot(void)
+{
+    notice_port_fake_wipe();
+    svc_settings_init();
+    svc_rtc_init();
+    /* A panel that knows the time: a notice's answer window is kept as an instant. */
+    svc_rtc_fake_set_date(2026, 10, 13);
+    svc_rtc_fake_set(12, 0);
+    svc_audio_init();
+    svc_notice_start();
+    app_events_set_sink(NULL);
+}
+
+static void test_the_pickup_reports_the_six_switches_the_box_reads(void)
+{
+    notice_boot();
+    svc_settings_set(SET_NOTIF_ACCEPT, 1);
+    svc_settings_set(SET_NOTIF_QUIET, 1);
+    svc_settings_set(SET_NOTIF_CHIME, 0);
+    svc_settings_set(SET_NIGHT_FROM, 1290);
+    svc_settings_set(SET_NIGHT_TO, 390);
+    svc_settings_set(SET_TZ, 5);
+    char q[64];
+    svc_notice_pickup_query(true, q, sizeof q);
+    CHECK(!strcmp(q, "&na=1&nq=1&nc=0&nf=1290&nt=390&tz=5"), "the six, as parse_prefs takes them");
+    svc_notice_pickup_query(false, q, sizeof q);
+    CHECK(!q[0], "no UI, no report: the box says no_notice_surface");
+    CHECK(notice_waiting_count("2") == 2 && notice_waiting_count("") == 0 &&
+              notice_waiting_count("x") == 0 && notice_waiting_count(NULL) == 0,
+          "X-Notice is a count or nothing");
+    char path[NOTICE_PATH_BYTES];
+    CHECK(!svc_notice_want_fetch(path, sizeof path), "nothing to collect until the pickup says so");
+    svc_notice_waiting("1");
+    CHECK(svc_notice_want_fetch(path, sizeof path) && !strcmp(path, NOTICE_NEXT_PATH), "then notice/next");
+    svc_notice_none_waiting();
+    CHECK(!svc_notice_want_fetch(path, sizeof path), "until it answers 204");
+}
+
+static void test_a_question_reaches_the_glass_and_its_answer_reaches_the_box(void)
+{
+    notice_boot();
+    CHECK(fetch_fixture("question.jn1", 0), "question.jn1 queued");
+    CHECK(svc_notice_count() == 1 && files_in_storage() == 1, "one notice, one file");
+    unsigned before = app_events_unsunk();
+    svc_notice_service();
+    CHECK(app_events_unsunk() == before + 1, "NOTICE_ARRIVED raised once, on the UI task's pass");
+    svc_notice_service();
+    CHECK(app_events_unsunk() == before + 1, "and not again");
+    notice_t n;
+    CHECK(svc_notice_head(&n) && !strcmp(n.title, "Run the cleanup now?") &&
+              !strcmp(n.body, "Frees about 38 GB.") && !strcmp(n.source, "Jerv") && n.n_choices == 2 &&
+              !strcmp(n.choices[1], "No") && n.chime && n.hide_s == 30,
+          "the overlay's notice, read from its file");
+    char path[NOTICE_PATH_BYTES], json[48];
+    CHECK(!svc_notice_post_take(path, sizeof path, json, sizeof json), "nothing owed before it is shown");
+    svc_notice_on_glass(n.id);
+    svc_notice_on_glass(n.id);
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) &&
+              !strcmp(path, "/endpoint/notice/" JN1_ID "/state") && !strcmp(json, "{\"state\":\"shown\"}"),
+          "on the glass: `shown`, once");
+    svc_notice_answer(1);
+    CHECK(svc_notice_count() == 0, "answered, it leaves the glass");
+    CHECK(!svc_notice_post_take(path, sizeof path, json, sizeof json), "one POST at a time");
+    svc_notice_post_done(-1);
+    CHECK(!svc_notice_post_take(path, sizeof path, json, sizeof json), "no answer: not again for 5 s");
+    svc_rtc_fake_advance_ms(5000);
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) && !strcmp(json, "{\"state\":\"shown\"}"),
+          "then `shown` again, still first");
+    svc_notice_post_done(204);
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) &&
+              !strcmp(json, "{\"state\":\"answered\",\"choice\":1}"),
+          "then the answer with the button's index");
+    svc_notice_post_done(204);
+    CHECK(!svc_notice_post_take(path, sizeof path, json, sizeof json), "nothing more owed");
+    svc_notice_housekeep();
+    CHECK(files_in_storage() == 0, "and its file is gone");
+}
+
+static void test_a_torn_stream_is_dropped_whole_and_fetched_again(void)
+{
+    notice_boot();
+    size_t n = 0;
+    uint8_t *b = read_fixture("banner.jn1", &n);
+    CHECK(b != NULL, "banner.jn1");
+    if (!b) return;
+    nfetch_t *f = fetch_bytes(NOTICE_NEXT_PATH, b, n, n / 2);
+    CHECK(!svc_notice_fetch_end(f, false, 200) && svc_notice_count() == 0, "half a stream is no notice");
+    CHECK(files_in_storage() == 0, "and leaves no file");
+    char path[NOTICE_PATH_BYTES];
+    CHECK(!svc_notice_want_fetch(path, sizeof path), "the retry waits");
+    svc_rtc_fake_advance_ms(2000);
+    CHECK(svc_notice_want_fetch(path, sizeof path) && !strcmp(path, "/endpoint/notice/" JN1_ID "/body"),
+          "then its body, by id");
+    f = fetch_bytes(path, b, n, n);
+    CHECK(svc_notice_fetch_end(f, true, 200) && svc_notice_count() == 1, "whole the second time");
+    CHECK(!svc_notice_want_fetch(path, sizeof path), "and not fetched again");
+    /* A refused stream is retried the same way, a bounded number of times. */
+    notice_boot();
+    uint8_t *bad = malloc(n);
+    memcpy(bad, b, n);
+    bad[n - 4] ^= 1;
+    for (int i = 0; i < NOTICE_REFETCH_TRIES + 1; i++) {
+        f = fetch_bytes(i ? path : NOTICE_NEXT_PATH, bad, n, n);
+        CHECK(!svc_notice_fetch_end(f, true, 200), "a bad END count is never queued");
+        svc_rtc_fake_advance_ms(30000);
+        const bool again = svc_notice_want_fetch(path, sizeof path);
+        CHECK(again == (i < NOTICE_REFETCH_TRIES), "fetched again, three times and no more");
+    }
+    /* Gone from the box (its window closed): given up at once. */
+    notice_boot();
+    f = fetch_bytes(NOTICE_NEXT_PATH, b, n, 100);
+    svc_notice_fetch_end(f, false, 200);
+    svc_rtc_fake_advance_ms(2000);
+    CHECK(svc_notice_want_fetch(path, sizeof path), "its body is due");
+    for (int i = 0; i < NOTICE_REFETCH_TRIES + 2; i++) {
+        svc_notice_fetch_failed(path, -1);
+        svc_rtc_fake_advance_ms(30000);
+    }
+    CHECK(svc_notice_want_fetch(path, sizeof path), "no box at all spends no try: it waits");
+    svc_notice_fetch_failed(path, 404);
+    CHECK(!svc_notice_want_fetch(path, sizeof path), "a 404 ends the retries");
+    /* Torn before META: no id to ask for it by, so it is lost, not retried. */
+    notice_boot();
+    f = fetch_bytes(NOTICE_NEXT_PATH, b, n, 40);
+    svc_notice_fetch_end(f, false, 200);
+    svc_rtc_fake_advance_ms(60000);
+    CHECK(!svc_notice_want_fetch(path, sizeof path), "a stream torn before its id is lost");
+    free(bad);
+    free(b);
+}
+
+typedef struct {
+    sha256_t *s;
+    uint32_t bytes;
+} pcm_sink_t;
+
+/* The main task's sink, as talk_link.c gives it: every slice, in order. */
+static bool pcm_take(const uint8_t *p, uint32_t k, void *c)
+{
+    pcm_sink_t *ctx = c;
+    sha256_update(ctx->s, p, k);
+    ctx->bytes += k;
+    return true;
+}
+
+static void test_a_picture_and_a_sound_come_back_out_of_the_file(void)
+{
+    notice_boot();
+    CHECK(fetch_fixture("full_sound.jn1", 0), "full_sound.jn1 queued");
+    notice_t n;
+    CHECK(svc_notice_head(&n) && n.img_mode == 1 && n.stripes == 12 && n.audio_ms == 250,
+          "a picture and a sound");
+    sha256_t s;
+    sha256_init(&s);
+    uint32_t rows_seen = 0;
+    bool ok = true;
+    for (uint16_t i = 0; i < n.stripes && ok; i++) {
+        uint16_t y0, rows;
+        ok = svc_notice_stripe(n.id, i, s_px, 480 * 40, &y0, &rows) && y0 == rows_seen;
+        if (ok) sha_px(&s, s_px, (uint32_t)rows * 480);
+        rows_seen += rows;
+    }
+    char px[65];
+    sha256_hex(&s, px);
+    CHECK(ok && rows_seen == 480 && !strcmp(px, JN1_VECTORS[3].px_sha),
+          "every stripe, decoded from the file into one 480x40 buffer, is decode()'s picture");
+    uint16_t y0, rows;
+    CHECK(svc_notice_stripe(n.id, 3, s_px, 480 * 40, &y0, &rows) && y0 == 120,
+          "a stripe out of order too");
+    CHECK(!svc_notice_stripe(n.id, 3, s_px, 480 * 39, &y0, &rows), "never into a buffer it overflows");
+    CHECK(!svc_notice_stripe(n.id, 12, s_px, 480 * 40, &y0, &rows), "nor past the last");
+
+    /* On the glass: its sound plays once, from its file, through the main task's sink. */
+    svc_notice_on_glass(n.id);
+    const char *key = svc_audio_fake_last_path();
+    CHECK(strstr(key, ".jn1") != NULL && svc_audio_replying(), "the sound is asked for by its file");
+    sha256_t pcm;
+    sha256_init(&pcm);
+    static uint8_t slice[1024];
+    pcm_sink_t ctx = {&pcm, 0};
+    CHECK(svc_notice_pcm_stream(key, slice, sizeof slice, pcm_take, &ctx), "the sound streams");
+    char hex[65];
+    sha256_hex(&pcm, hex);
+    CHECK(ctx.bytes == 8000 && !strcmp(hex, JN1_VECTORS[3].pcm_sha),
+          "250 ms, byte for byte decode()'s");
+    svc_notice_dismiss();
+    CHECK(!svc_audio_replying(), "hidden, its sound stops");
+
+    /* Never over an alarm. */
+    notice_boot();
+    fetch_fixture("full_sound.jn1", 0);
+    svc_notice_head(&n);
+    svc_audio_ring(0);
+    svc_notice_on_glass(n.id);
+    CHECK(!svc_audio_replying(), "an alarm ringing: the notice's sound does not play");
+    svc_audio_ring_stop();
+    svc_notice_dismiss();
+}
+
+static void test_a_notice_hides_itself_after_hide_s(void)
+{
+    notice_boot();
+    fetch_fixture("question.jn1", 0);
+    svc_notice_service();
+    notice_t n;
+    svc_notice_head(&n);
+    svc_rtc_fake_advance_ms(60000);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 1, "the clock starts when it is shown, not when it arrives");
+    svc_notice_on_glass(n.id);
+    svc_rtc_fake_advance_ms(29900);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 1, "29.9 s of 30: still up");
+    svc_rtc_fake_advance_ms(100);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 0, "30 s: hidden");
+    char path[NOTICE_PATH_BYTES], json[48];
+    svc_notice_post_take(path, sizeof path, json, sizeof json);
+    svc_notice_post_done(204);
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) &&
+              !strcmp(json, "{\"state\":\"expired\"}"),
+          "and the box hears `expired`");
+
+    /* A plain notice's OK is a dismissal, not an answer. */
+    notice_boot();
+    fetch_fixture("plain.jn1", 0);
+    svc_notice_head(&n);
+    svc_notice_on_glass(n.id);
+    svc_notice_answer(0);
+    svc_notice_post_take(path, sizeof path, json, sizeof json);
+    svc_notice_post_done(204);
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) &&
+              !strcmp(json, "{\"state\":\"dismissed\"}"),
+          "OK on a plain notice: `dismissed`");
+
+    /* Past its answer window it goes quietly: the box would 404 anything said. */
+    notice_boot();
+    fetch_fixture("full_sound.jn1", 0);
+    svc_rtc_fake_advance_ms(120 * 1000);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 0 && !svc_notice_post_take(path, sizeof path, json, sizeof json),
+          "120 s after delivery, gone with nothing owed");
+    svc_notice_housekeep();
+    CHECK(files_in_storage() == 0, "and its file too");
+}
+
+static void test_four_open_at_most(void)
+{
+    notice_boot();
+    for (int i = 0; i < 4; i++) {
+        size_t n = 0;
+        uint8_t *b = read_fixture("plain.jn1", &n);
+        if (!b) return;
+        b[3 + 3 + 15] = (uint8_t)i; /* a different id each */
+        nfetch_t *f = fetch_bytes(NOTICE_NEXT_PATH, b, n, n);
+        CHECK(svc_notice_fetch_end(f, true, 200), "queued");
+        free(b);
+    }
+    CHECK(svc_notice_count() == 4, "four open");
+    svc_notice_waiting("1");
+    char path[NOTICE_PATH_BYTES];
+    CHECK(!svc_notice_want_fetch(path, sizeof path), "a fifth is not collected while four are open");
+    CHECK(!fetch_fixture("question.jn1", 0) && files_in_storage() == 4, "nor kept if it comes");
+    svc_notice_dismiss();
+    CHECK(svc_notice_want_fetch(path, sizeof path), "one hidden: room again");
+}
+
+/* The review of #1729: a title past the glass's 60 bytes is cut on a character boundary judged
+   from the byte that was left out, not from one never read. */
+static void test_a_long_title_is_cut_on_a_character(void)
+{
+    notice_boot();
+    static jn_t s;
+    jn_meta(&s, 0, 0, 0, 0, 0);
+    char t[72];
+    memset(t, 'a', 59);
+    memcpy(t + 59, "\xc3\xa9tail", 6);
+    t[65] = '\0';
+    jn_text(&s, JN1_TITLE, t);
+    jn_end(&s);
+    uint8_t *b = malloc(s.n);
+    if (!b) return;
+    memcpy(b, s.b, s.n);
+    CHECK(svc_notice_fetch_end(fetch_bytes(NOTICE_NEXT_PATH, b, s.n, s.n), true, 200), "taken");
+    free(b);
+    notice_t n;
+    CHECK(svc_notice_head(&n) && strlen(n.title) == 59 && n.title[58] == 'a',
+          "the split \"é\" goes whole, the 59 bytes before it stay");
+}
+
+/* The review of #1729: with the box unreachable, every end said at the glass must survive, so a
+   notice is only collected while the owed list has room for it. */
+static void test_an_outage_never_loses_an_answer(void)
+{
+    notice_boot();
+    char path[NOTICE_PATH_BYTES], json[48];
+    int taken = 0;
+    for (int i = 0; i < 10; i++) {
+        svc_notice_waiting("1");
+        if (!svc_notice_want_fetch(path, sizeof path)) break;
+        size_t n = 0;
+        uint8_t *b = read_fixture("question.jn1", &n);
+        if (!b) return;
+        b[3 + 3 + 15] = (uint8_t)(0x80 + i);
+        CHECK(svc_notice_fetch_end(fetch_bytes(NOTICE_NEXT_PATH, b, n, n), true, 200), "collected");
+        free(b);
+        notice_t h;
+        svc_notice_head(&h);
+        svc_notice_on_glass(h.id);
+        svc_notice_answer(1);
+        if (svc_notice_post_take(path, sizeof path, json, sizeof json)) svc_notice_post_done(-1);
+        taken++;
+    }
+    CHECK(taken == NOTICE_POSTS / 2, "collecting stops once the owed list could not hold another");
+    int answers = 0, shown = 0;
+    svc_rtc_fake_advance_ms(300000);
+    while (svc_notice_post_take(path, sizeof path, json, sizeof json)) {
+        if (strstr(json, "answered")) answers++;
+        else if (strstr(json, "shown")) shown++;
+        svc_notice_post_done(204);
+    }
+    CHECK(answers == taken && shown == taken, "every `shown` and every answer reaches the box");
+    svc_notice_waiting("1");
+    CHECK(svc_notice_want_fetch(path, sizeof path), "and collecting resumes");
+}
+
+static void test_a_reboot_keeps_the_notices_and_what_the_box_is_owed(void)
+{
+    notice_boot();
+    fetch_fixture("question.jn1", 0);
+    fetch_fixture("full_sound.jn1", 0);
+    CHECK(svc_notice_count() == 1, "the same id twice is one notice");
+    notice_t n;
+    svc_notice_head(&n);
+    svc_notice_on_glass(n.id);
+    svc_rtc_fake_advance_ms(3000);
+    svc_notice_housekeep();
+    CHECK(notice_port_fake_saves() > 0, "what is owed goes to flash");
+    /* Half a stream on its way, and a stranger in the directory, when the power goes. */
+    nfetch_t *f = svc_notice_fetch_begin(NOTICE_NEXT_PATH);
+    char stray[160];
+    snprintf(stray, sizeof stray, "%s/stray.bin", notice_port_base());
+    FILE *fp = fopen(stray, "wb");
+    if (fp) {
+        fputs("x", fp);
+        fclose(fp);
+    }
+    CHECK(files_in_storage() == 3, "the notice, the part file and the stray");
+    svc_notice_start(); /* the reboot */
+    free(f);
+    CHECK(svc_notice_count() == 1 && files_in_storage() == 1, "the whole notice back, the rest gone");
+    CHECK(svc_notice_head(&n) && !strcmp(n.title, "Run the cleanup now?"), "the same notice");
+    char path[NOTICE_PATH_BYTES], json[48];
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) && !strcmp(json, "{\"state\":\"shown\"}"),
+          "its `shown` still owed");
+    /* Answered before the reboot, the box not yet told, its file not yet deleted: not shown
+       again, and the answer still goes. */
+    svc_notice_post_done(204);
+    svc_notice_answer(0);
+    svc_notice_post_take(path, sizeof path, json, sizeof json);
+    svc_notice_post_done(-1);
+    svc_rtc_fake_advance_ms(3000);
+    svc_notice_housekeep();
+    char name[NOTICE_FILE_NAME];
+    const uint8_t id[16] = {0x6a, 0x1f, 0x2c, 0x3d, 0x4e, 0x5f, 0x4a, 0x6b,
+                            0x8c, 0x7d, 0x9e, 0x0f, 0x1a, 0x2b, 0x3c, 0x4d};
+    int64_t now_s;
+    svc_rtc_epoch(&now_s);
+    notice_file_name(99, id, (uint32_t)(now_s + 600), name, sizeof name);
+    size_t qn = 0;
+    uint8_t *qb = read_fixture("question.jn1", &qn);
+    char full[160];
+    snprintf(full, sizeof full, "%s/%s", notice_port_base(), name);
+    fp = fopen(full, "wb");
+    if (fp && qb) fwrite(qb, 1, qn, fp);
+    if (fp) fclose(fp);
+    free(qb);
+    svc_notice_start();
+    CHECK(svc_notice_count() == 0 && files_in_storage() == 0, "a notice already answered stays gone");
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) &&
+              !strcmp(json, "{\"state\":\"answered\",\"choice\":0}"),
+          "and its answer is still owed to the box");
+
+    /* A question whose window closed while the panel was off is not shown again: the box would
+       404 its answer. Nor is one that came while the panel had no time to keep its end by. */
+    notice_boot();
+    fetch_fixture("question.jn1", 0);
+    svc_rtc_fake_advance_ms(901 * 1000);
+    svc_notice_start();
+    CHECK(svc_notice_count() == 0 && files_in_storage() == 0, "past its answer window: gone at boot");
+    notice_boot();
+    fetch_fixture("question.jn1", 0);
+    svc_rtc_fake_advance_ms(600 * 1000);
+    svc_notice_start();
+    CHECK(svc_notice_count() == 1, "inside it: back");
+    CHECK(svc_notice_head(&n) && !svc_notice_post_take(path, sizeof path, json, sizeof json),
+          "never shown, nothing owed");
+    svc_rtc_fake_advance_ms(301 * 1000);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 0, "and it lapses when the rest of its window runs out, not 900 s on");
+
+    notice_port_fake_fail_mount(true);
+    notice_boot();
+    char q[64];
+    svc_notice_pickup_query(true, q, sizeof q);
+    CHECK(!q[0] && !svc_notice_want_fetch(path, sizeof path), "no storage: no report, no fetch");
+    notice_port_fake_fail_mount(false);
+}
+
+static void test_the_state_post_list_and_the_file_names(void)
+{
+    notice_posts_t l = {0};
+    for (int i = 0; i < NOTICE_POSTS; i++) CHECK(notice_posts_add(&l, JN1_ID, NOTICE_SHOWN, 0), "kept");
+    CHECK(!notice_posts_room(&l, 0), "full: no room for another notice");
+    l.p[0].state = NOTICE_ANSWERED;
+    CHECK(!notice_posts_add(&l, JN1_ID, NOTICE_EXPIRED, 0) && l.n == NOTICE_POSTS &&
+              l.p[0].state == NOTICE_ANSWERED && l.p[NOTICE_POSTS - 1].state == NOTICE_EXPIRED,
+          "full, a `shown` gives way and the head (in flight) never does");
+    for (int i = 1; i < NOTICE_POSTS; i++) l.p[i].state = NOTICE_DISMISSED;
+    CHECK(!notice_posts_add(&l, JN1_ID, NOTICE_SHOWN, 0) && l.n == NOTICE_POSTS &&
+              l.p[NOTICE_POSTS - 1].state == NOTICE_DISMISSED,
+          "full of ends, a new `shown` is the one lost");
+    CHECK(notice_posts_final(&l, JN1_ID), "a final state is seen");
+    l.p[0].id[3] = 'X';
+    l.p[1].state = 9;
+    notice_posts_clean(&l);
+    CHECK(l.n == NOTICE_POSTS - 2, "garbage read from flash is dropped");
+    CHECK(notice_post_done(204) && notice_post_done(404) && notice_post_done(409) &&
+              notice_post_done(422) && !notice_post_done(-1) && !notice_post_done(500) &&
+              !notice_post_done(401),
+          "done, or tried again");
+    CHECK(notice_backoff_ms(1) == 5000 && notice_backoff_ms(3) == 60000 && notice_backoff_ms(9) == 300000,
+          "the backoff");
+    uint8_t id[16], back[16];
+    for (int i = 0; i < 16; i++) id[i] = (uint8_t)(i * 17);
+    char name[NOTICE_FILE_NAME];
+    uint32_t seq;
+    uint32_t deadline;
+    notice_file_name(0x2a, id, 0x6a000000u, name, sizeof name);
+    CHECK(notice_file_parse(name, &seq, back, &deadline) && seq == 0x2a && !memcmp(id, back, 16) &&
+              deadline == 0x6a000000u,
+          "a name round-trips, the answer window's end in it");
+    CHECK(!notice_file_parse("part.tmp", &seq, back, &deadline) &&
+              !notice_file_parse("0000002a-zz.jn1", &seq, back, &deadline),
+          "and nothing else is one");
+    CHECK(notice_window_left(1000, true, 400) == 600 && !notice_window_left(1000, true, 1000) &&
+              !notice_window_left(0, true, 400) && !notice_window_left(1000, false, 400),
+          "after a reboot: what is left of the window, and nothing when either end is unknown");
+    CHECK(notice_hide_due(1000, 3, 4000) && !notice_hide_due(1000, 3, 3999) && !notice_hide_due(0, 0, 999999),
+          "hide_s, and 0 is until tapped");
+    CHECK(notice_lapsed(0, 30, 30000) && !notice_lapsed(0, 30, 29999), "the answer window");
+}
+
+/* ---- the notice overlay's look (owner, 2026-10-13; mock Main.dc.html) ---- */
+
+static notice_t view_notice(uint8_t choices, uint16_t hide_s, uint8_t mode)
+{
+    notice_t n = {.id = 7, .n_choices = choices, .hide_s = hide_s, .img_mode = mode};
+    snprintf(n.source, sizeof n.source, "Jerv");
+    snprintf(n.title, sizeof n.title, "Title");
+    if (mode) {
+        n.img_w = 480;
+        n.img_h = mode == 1 ? 480 : 140;
+        n.stripes = 3;
+    }
+    return n;
+}
+
+static void test_the_notice_overlay_reads_like_the_mock(void)
+{
+    notice_look_t l;
+    notice_t n = view_notice(0, 20, 0);
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 2000, &l);
+    CHECK(!strcmp(l.hint, "Tap to hide · hides in 18 s") && l.timer && l.timer_permille == 900,
+          "a plain notice two seconds in: 18 s left, the line nine tenths full (NotifyInfo)");
+    CHECK(l.accent == UI_C_STEEL && l.title == UI_C_TEXT && l.ink_opa == 255 && !l.count[0],
+          "by day: steel, the text colours, alone in the queue");
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 20000, &l);
+    CHECK(l.timer_permille == 0 && strstr(l.hint, "hides in 0 s"), "and empty when its time is up");
+
+    n = view_notice(2, 0, 0);
+    notice_look(&n, 2, false, NOTICE_NIGHT_RED, false, 60000, &l);
+    CHECK(!strcmp(l.hint, "Tap an answer · tap elsewhere to hide") && !l.timer &&
+              !strcmp(l.count, "1 of 2"),
+          "a question: no countdown, a tap elsewhere hides it, 1 of 2 (NotifyQuestion)");
+    n.hide_s = 30;
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 10000, &l);
+    CHECK(!strcmp(l.hint, "Tap an answer · hides in 20 s"), "a question its sender gave a time");
+
+    n = view_notice(0, 8, 1);
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 3000, &l);
+    CHECK(l.full_picture && !l.banner && !l.ask_picture && !strcmp(l.chip_hint, "Tap to hide · 5 s") &&
+              l.timer_color == 0xFFFFFF && l.timer_opa == 217,
+          "a full picture: the glass, the hint as a chip, a white line (NotifyPicture)");
+    n = view_notice(3, 0, 2);
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 0, &l);
+    CHECK(l.banner && !l.full_picture, "a banner over the words (NotifyBanner)");
+
+    /* Inside the night clock's hours every notice takes its colour, and a picture waits. */
+    uint32_t c;
+    uint8_t opa;
+    for (uint8_t k = 0; k < 3; k++) {
+        notice_night_palette(k, &c, &opa);
+        const clock_face_t f = clock_face(true, 0, 1439, k, 600, true);
+        CHECK(c == f.color && opa == f.opa, "the night colours are the clock face's own");
+    }
+    n = view_notice(0, 20, 1);
+    notice_look(&n, 1, true, NOTICE_NIGHT_RED, false, 2000, &l);
+    notice_night_palette(NOTICE_NIGHT_RED, &c, &opa);
+    CHECK(l.night && l.ask_picture && !l.full_picture && l.accent == c && l.title == c &&
+              l.body == c && l.muted == c && l.ink_opa == opa && l.timer_color == c,
+          "at night: the night palette and Show picture (NotifyNight)");
+    notice_look(&n, 1, true, NOTICE_NIGHT_RED, true, 2000, &l);
+    CHECK(l.full_picture && !l.ask_picture, "Show picture tapped: the picture");
+    n = view_notice(2, 0, 2);
+    notice_look(&n, 1, true, NOTICE_NIGHT_AMBER, false, 0, &l);
+    notice_night_palette(NOTICE_NIGHT_AMBER, &c, &opa);
+    CHECK(l.ask_picture && !l.banner && l.accent == c, "a banner waits too, in the colour chosen");
+    n = view_notice(0, 20, 0);
+    notice_look(&n, 1, true, NOTICE_NIGHT_GREY, false, 0, &l);
+    CHECK(l.night && !l.ask_picture && l.title != UI_C_TEXT, "and words alone are dimmed as well");
+
+    CHECK(notice_night_now(true, 21 * 60 + 30, 6 * 60 + 30, true, 23 * 60) &&
+              !notice_night_now(false, 21 * 60 + 30, 6 * 60 + 30, true, 23 * 60) &&
+              !notice_night_now(true, 21 * 60 + 30, 6 * 60 + 30, false, 23 * 60) &&
+              !notice_night_now(true, 21 * 60 + 30, 6 * 60 + 30, true, 12 * 60),
+          "the night clock's hours: on, timed, and inside the window");
+
+    notice_sound_line_t s;
+    notice_sound_line(true, 2400, 6000, &s);
+    CHECK(s.playing && !strcmp(s.time, "0:02 / 0:06") && s.permille == 400, "playing: 0:02 / 0:06 (NotifyAudio)");
+    notice_sound_line(false, 0, 4300, &s);
+    CHECK(!s.playing && !strcmp(s.time, "0:05"), "afterwards its length, beside Play again (NotifyQuestionSound)");
+}
+
+static void test_key_over_a_notice_s_sound_stops_it(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.notices = 1;
+    f.speaking = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_STOP_REPLY && st.key_owner == SH_KEY_FREE,
+          "KEY while its sound plays: the sound stops, nothing records (the reply's rule)");
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_DISMISS_NOTICE, "BOOT still hides it");
+    f.speaking = false;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_NONE, "silent: KEY waits");
+}
+
+static void test_the_picture_comes_out_of_its_file_a_few_rows_at_a_time(void)
+{
+    notice_boot();
+    CHECK(fetch_fixture("full_sound.jn1", 0), "full_sound.jn1 queued");
+    notice_t n;
+    svc_notice_head(&n);
+    notice_pic_t p;
+    CHECK(svc_notice_pic_open(n.id, &p), "opened");
+    sha256_t s;
+    sha256_init(&s);
+    bool ok = true;
+    for (uint16_t y = 0; y < 480 && ok; y += 8) {
+        ok = svc_notice_pic_rows(&p, y, 8, s_px);
+        if (ok) sha_px(&s, s_px, 8 * 480);
+    }
+    char hex[65];
+    sha256_hex(&s, hex);
+    CHECK(ok && !strcmp(hex, JN1_VECTORS[3].px_sha), "eight rows at a time, top to bottom: decode()'s picture");
+    static uint16_t stripe[480 * 40];
+    uint16_t y0, rows;
+    svc_notice_stripe(n.id, 5, stripe, 480 * 40, &y0, &rows);
+    CHECK(svc_notice_pic_rows(&p, (uint16_t)(y0 + 3), 8, s_px) &&
+              !memcmp(s_px, stripe + 3 * 480, 8 * 480 * 2),
+          "asked above the last row read, it starts over and agrees with the stripe");
+    CHECK(!svc_notice_pic_rows(&p, 476, 8, s_px), "never past the bottom");
+    svc_notice_pic_close(&p);
+    notice_boot();
+    fetch_fixture("plain.jn1", 0);
+    svc_notice_head(&n);
+    CHECK(!svc_notice_pic_open(n.id, &p), "a notice with no picture has none to open");
+}
+
 int main(void)
 {
     test_an_alarm_outranks_a_notice_which_outranks_the_app();
@@ -4753,6 +5812,21 @@ int main(void)
     test_a_person_thread_keeps_the_panels_own_bubbles();
     test_the_people_s_threads_end_to_end();
     test_played_stamps_survive_failures_reboots_and_many_plays();
+    test_jn1_reads_every_fixture_as_the_box_decodes_it();
+    test_jn1_refuses_what_decode_refuses();
+    test_the_pickup_reports_the_six_switches_the_box_reads();
+    test_a_question_reaches_the_glass_and_its_answer_reaches_the_box();
+    test_a_torn_stream_is_dropped_whole_and_fetched_again();
+    test_a_picture_and_a_sound_come_back_out_of_the_file();
+    test_a_notice_hides_itself_after_hide_s();
+    test_four_open_at_most();
+    test_an_outage_never_loses_an_answer();
+    test_a_long_title_is_cut_on_a_character();
+    test_a_reboot_keeps_the_notices_and_what_the_box_is_owed();
+    test_the_state_post_list_and_the_file_names();
+    test_the_notice_overlay_reads_like_the_mock();
+    test_key_over_a_notice_s_sound_stops_it();
+    test_the_picture_comes_out_of_its_file_a_few_rows_at_a_time();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

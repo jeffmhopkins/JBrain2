@@ -14,6 +14,7 @@
 #include "mbedtls/sha256.h"
 #include "post_logic.h"
 #include "svc_audio_drv.h"
+#include "svc_notice_drv.h"
 
 static const char *TAG = "talk";
 
@@ -399,6 +400,25 @@ static const char *listen_exchange(const char *path, uint32_t *down)
     return why;
 }
 
+/* A push notice's sound (0.0.19): no box, no radio — its PCM records out of the notice's file
+ * on `storage`, a slice at a time, into the ring at the speaker's pace. */
+static bool give_slice(const uint8_t *pcm, uint32_t n, void *ctx)
+{
+    uint32_t *down = ctx;
+    *down += n;
+    return give(pcm, n);
+}
+
+static const char *notice_exchange(const char *key, uint32_t *down)
+{
+    if (!talk_net_ring()) return "no memory to play";
+    talk_net_reply("", true);
+    /* The slice buffer is free: a notice's sound and a talk never run at once. */
+    if (!svc_notice_pcm_stream(key, s_buf, sizeof s_buf, give_slice, down))
+        return "the notice's sound could not be read";
+    return NULL;
+}
+
 bool talk_link_run(void)
 {
     bool voice, fresh;
@@ -406,7 +426,21 @@ bool talk_link_run(void)
     if (!talk_net_claim(&voice, &agent, &fresh)) return false;
     static char target[POST_PATH_BYTES];
     const tk_kind_t kind = talk_net_kind(target, sizeof target);
-    dbg_sys_doing(kind == TK_KIND_POST ? "message" : kind == TK_KIND_LISTEN ? "play" : "talk");
+    dbg_sys_doing(kind == TK_KIND_POST     ? "message"
+                  : kind == TK_KIND_LISTEN ? "play"
+                  : kind == TK_KIND_NOTICE ? "notice-sound"
+                                           : "talk");
+    if (kind == TK_KIND_NOTICE) {
+        uint32_t down = 0;
+        const char *why = notice_exchange(target, &down);
+        if (why && strcmp(why, "stopped")) {
+            ESP_LOGW(TAG, "notice sound: %s", why);
+            talk_net_fail(why);
+        }
+        ESP_LOGI(TAG, "notice sound: %lu B from storage", (unsigned long)down);
+        talk_net_end(0, 0, 0);
+        return true;
+    }
     /* Power save holds a TCP ACK a beacon at the access point; a 32 KB/s upload behind that
        stalls into the ring's half second (the screenshot's lesson, dbg_link.c). */
     wifi_ps_type_t ps = WIFI_PS_MIN_MODEM;

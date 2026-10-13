@@ -14,11 +14,13 @@
 #include "cfg.h"
 
 /* The reply's headers this panel reads, caught as they arrive: the Date, the pickup's
- * new-message tag (`X-Jpanel-Post`, 0.0.16) and a played message's digest (`X-Jpanel-Sha256`). */
+ * new-message tag (`X-Jpanel-Post`, 0.0.16), a played message's digest (`X-Jpanel-Sha256`) and the
+ * pickup's count of notices waiting (`X-Notice`, 0.0.19). */
 typedef struct {
     char date[32];
     char post[12];
     char sha[65];
+    char notice[8];
 } box_reply_t;
 
 void box_http_init(const cfg_t *cfg);

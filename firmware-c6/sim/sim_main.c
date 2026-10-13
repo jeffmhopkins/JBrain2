@@ -32,7 +32,9 @@
 #include "svc_orient_drv.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
+#include "svc_notice_drv.h"
 #include "svc_notice_fake.h"
+#include "sim_notice.h"
 #include "svc_post_drv.h"
 #include "svc_power_fake.h"
 #include "svc_rtc.h"
@@ -329,6 +331,7 @@ static void step(uint32_t ms)
         svc_convo_service();
         fake_post_box();
         svc_post_service();
+        svc_notice_service();
         if (svc_post_take_chime(svc_audio_talking() || svc_audio_replying() || svc_audio_playing() ||
                                 svc_audio_ringing()))
             svc_audio_chime();
@@ -655,6 +658,67 @@ static void session(void)
     post_arrives();
 }
 
+/* 0.0.19's notice boards (the owner's decisions of 2026-10-13), sent as the box sends them. */
+static void notify_info(void)
+{
+    sim_notice_push(&(sim_notice_t){1, "Ops", "Disk 91% full",
+                                    "The box is running low on space. Ops → Disk shows what is using it.",
+                                    0, {0}, false, 20, SIM_PIC_NONE, 0});
+}
+
+static void notify_question(void)
+{
+    sim_notice_push(&(sim_notice_t){2, "Jerv", "Run the cleanup now?",
+                                    "Frees about 38 GB of build cache. Nothing you keep is touched.", 2,
+                                    {"Yes", "No"}, true, 0, SIM_PIC_NONE, 0});
+    notify_info();
+}
+
+static void notify_question_sound(void)
+{
+    sim_notice_push(&(sim_notice_t){3, "Jerv", "Let the plumber in?",
+                                    "He is at the front door. I can unlock it for ten minutes.", 2,
+                                    {"Yes", "No"}, false, 0, SIM_PIC_NONE, 5000});
+}
+
+static void notify_picture(void)
+{
+    sim_notice_push(&(sim_notice_t){4, "Morning brief", "Rain at 3 pm", "", 0, {0}, false, 8,
+                                    SIM_PIC_WEATHER, 0});
+}
+
+static void notify_night(void)
+{
+    svc_rtc_fake_set(23, 12);
+    sim_notice_push(&(sim_notice_t){5, "Evening brief", "Tomorrow: rain at 3 pm",
+                                    "Take the umbrella. It clears by 6.", 0, {0}, false, 20,
+                                    SIM_PIC_WEATHER, 0});
+}
+
+static void notify_night_question(void)
+{
+    svc_rtc_fake_set(23, 12);
+    notify_question();
+}
+
+static void notify_banner(void)
+{
+    sim_notice_push(&(sim_notice_t){6, "Minecraft", "Update the server?", "Two players are on.", 3,
+                                    {"Now", "In 10 min", "Skip"}, false, 0, SIM_PIC_MINECRAFT, 0});
+}
+
+static void notify_audio(void)
+{
+    sim_notice_push(&(sim_notice_t){7, "Jerv", "The pizza is here", "The driver is at the front door.",
+                                    0, {0}, false, 20, SIM_PIC_NONE, 6000});
+}
+
+static void notify_picture_turned(void)
+{
+    orient_port_fake_set(-15400, 0, 5600);
+    notify_picture();
+}
+
 /* 0.0.18: the panel turned, as the fake accelerometer reads it (default axes: a reading is the
    opposite of down; ~0.95 g in the glass's plane, the rest through it). */
 static void turn_right(void)
@@ -716,6 +780,10 @@ typedef struct {
 #define REPLY_TIDE "reply tide"
 /* Not a debug command (0.0.18): the first N taps of a touch calibration, each on its cross. */
 #define CAL_TAPS_N(n) "cal taps " #n
+/* Not debug commands (0.0.19): the notice's sound reaches the speaker and 2 s of it plays; or
+ * it plays to its end. */
+#define SOUND_PLAYING "notice sound playing"
+#define SOUND_DONE "notice sound done"
 
 /* Mock boards 1-17 (docs/mocks/jpanel-c6/canvas.json), by the live panel's `start` names. */
 static const state_t STATES[] = {
@@ -804,8 +872,20 @@ static const state_t STATES[] = {
     {"alarm-snoozed", ring, {WAIT(100), KEY_DOWN, KEY_UP, WAIT(400), HOLD_MS(240, 240, 2100), WAIT(2400)}},
     /* The debug relay's `inject event=alarm_test`: the whole ring path, with no alarm set. */
     {"alarm-test", NULL, {"{\"cmd\":\"inject\",\"event\":\"alarm_test\",\"name\":\"beeps\"}", WAIT(300)}},
-    {"notify-info", push_info, {WAIT(100)}},
-    {"notify-question", push_question, {WAIT(100)}},
+    /* 0.0.19, the mock boards of 2026-10-13: a plain notice 2 s in (18 s left on its line), a
+       question (no countdown) first of two, a question whose sound has played (Play again), a
+       full picture 3 s in, a picture at night behind Show picture and then shown, a question at
+       night, a banner over three answers, a sound 2 s into its 6, and a picture on its side. */
+    {"notify-info", notify_info, {WAIT(1900)}},
+    {"notify-question", notify_question, {WAIT(100)}},
+    {"notify-question-sound", notify_question_sound, {WAIT(100), SOUND_DONE}},
+    {"notify-picture", notify_picture, {WAIT(2900)}},
+    {"notify-night", notify_night, {WAIT(1900)}},
+    {"notify-night-shown", notify_night, {WAIT(1900), TAP_LABEL("Show picture"), WAIT(300)}},
+    {"notify-night-question", notify_night_question, {WAIT(100)}},
+    {"notify-banner", notify_banner, {WAIT(100)}},
+    {"notify-audio", notify_audio, {WAIT(100), SOUND_PLAYING}},
+    {"notify-picture-turned", notify_picture_turned, {WAIT(2900)}},
     /* KEY from Settings: the shell's talk to Jerv, over whatever is open. */
     {"rec-anywhere", NULL, {OPEN("settings"), KEY_DOWN, WAIT(3400)}},
     /* Its release: the Jerv thread, the hold's bubble waiting for its transcript. */
@@ -874,6 +954,13 @@ static int render(const char *name, const char *png, const char *snap)
         if (!strcmp(st->cmds[i], POST_NEW)) {
             post_arrives();
             step(100);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], SOUND_PLAYING) || !strcmp(st->cmds[i], SOUND_DONE)) {
+            const bool done = !strcmp(st->cmds[i], SOUND_DONE);
+            svc_audio_fake_listen(true, done, true);
+            if (!done) svc_audio_fake_played(2000);
+            step(1800);
             continue;
         }
         if (!strcmp(st->cmds[i], LISTEN)) {
@@ -1323,6 +1410,29 @@ static int touch_checks(void)
     run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
     step(100);
     expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"overlay\":\"none\"") != NULL, "BOOT dismissed it");
+
+    /* 0.0.19 (owner, 2026-10-13): a tap anywhere hides a notice, a question too, unanswered; its
+       answers and its speaker row take their own taps. */
+    notify_question();
+    step(300);
+    finger(240, 200, true);
+    finger(240, 200, false);
+    step(300);
+    expect(svc_notice_count() == 1, "a tap on a question's words hides it, with no answer");
+    finger(240, 200, true);
+    finger(240, 200, false);
+    step(300);
+    expect(svc_notice_count() == 0, "and a tap on a plain notice hides it");
+    notify_question_sound();
+    step(300);
+    finger(240, 309, true);
+    finger(240, 309, false);
+    step(300);
+    expect(svc_notice_count() == 1, "a tap on the speaker row plays it again and hides nothing");
+    finger(133, 383, true);
+    finger(133, 383, false);
+    step(300);
+    expect(svc_notice_count() == 0, "a tap on an answer sends it");
 
     /* The clock face is never covered: a notice waits as the corner badge, opens on its tap. */
     run(OPEN("clock"));

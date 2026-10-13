@@ -1,0 +1,6 @@
+dependencies:
+  # littlefs for the `storage` partition (0.0.19): one file per notice, written as its stream
+  # arrives, because a picture or a sound never fits in RAM. Chosen over SPIFFS because it
+  # survives power loss mid-write (partitions.csv). Exact, so `idf.py update-dependencies` cannot
+  # move it under a dist/ that must rebuild byte for byte.
+  joltwallet/littlefs: "==1.22.3"
