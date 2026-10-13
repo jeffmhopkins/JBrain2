@@ -3578,6 +3578,46 @@ static void test_a_face_of_nobody_draws_nothing(void)
  * pause button"*. So the discs must not move between them — only the glyph may differ. A
  * control that shifted by a few pixels when a message ended would be a second button as far as
  * a four-year-old's finger is concerned. */
+/* THE RING FILLS CLOCKWISE FROM TWELVE, as a clock hand does: half heard is the right half of the
+ * ring lit and the left half still the dim track, all of it outside the button so the glyph and
+ * its target are untouched. With no length to go on there is no ring at all. */
+static void test_the_play_button_ring_fills_clockwise_from_the_top(void)
+{
+    static uint16_t fb[FACE_W * FACE_H];
+    static uint16_t bare[FACE_W * FACE_H];
+    const int over_h = FACE_H, cx = CONFIRM_CX_CANCEL, cy = confirm_cy(over_h);
+    const int r = CONFIRM_R + 7; /* the middle of the ring */
+#define AT(dx, dy) fb[(cy + (dy)) * FACE_W + cx + (dx)]
+    memset(bare, 0, sizeof(bare));
+    confirm_draw_transport(bare, FACE_W, FACE_H, over_h, true, false, -1);
+
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, 500);
+    CHECK(AT(r, 0) == CONFIRM_GLYPH, "half heard: three o'clock is lit");
+    CHECK(AT(5, r) == CONFIRM_GLYPH, "and on round to just short of six");
+    CHECK(AT(-r, 0) != CONFIRM_GLYPH && AT(-r, 0) != 0, "nine o'clock is still the track");
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W; x++) {
+            const int dx = x - cx, dy = y - cy;
+            if (dx * dx + dy * dy <= CONFIRM_R * CONFIRM_R) {
+                CHECK(fb[y * FACE_W + x] == bare[y * FACE_W + x], "the button itself is untouched");
+            }
+        }
+    }
+
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, 0);
+    CHECK(AT(r, 0) != CONFIRM_GLYPH && AT(r, 0) != 0, "nothing heard: the whole track, unlit");
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, 1000);
+    CHECK(AT(-r, 0) == CONFIRM_GLYPH && AT(-3, -r) == CONFIRM_GLYPH, "all heard: all the way round");
+    CHECK(memcmp(fb, bare, sizeof(fb)) != 0, "a ring is drawn");
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, -1);
+    CHECK(memcmp(fb, bare, sizeof(fb)) == 0, "no length, no ring");
+#undef AT
+}
+
 static void test_the_transport_discs_do_not_move_between_play_and_pause(void)
 {
     static uint16_t a[FACE_W * FACE_H];
@@ -3585,8 +3625,8 @@ static void test_the_transport_discs_do_not_move_between_play_and_pause(void)
     const int over_h = FACE_H;
     memset(a, 0, sizeof(a));
     memset(b, 0, sizeof(b));
-    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false, true); /* play */
-    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true, true);  /* pause */
+    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false, true, -1); /* play */
+    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true, true, -1); /* pause */
 
     /* The RIGHT half is the reply envelope in both, so it must be pixel-identical. */
     int right_diff = 0, left_diff = 0;
@@ -3627,7 +3667,7 @@ static void test_pause_reads_as_two_bars_and_play_as_one_shape(void)
 
     for (int pass = 0; pass < 2; pass++) {
         memset(fbt, 0, sizeof(fbt));
-        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1, true);
+        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1, true, -1);
         int runs = 0;
         bool in_run = false;
         for (int x = 0; x < FACE_W / 2; x++) {
@@ -4780,6 +4820,7 @@ int main(void)
     test_a_face_survives_being_resized();
     test_a_face_of_nobody_draws_nothing();
     test_the_transport_discs_do_not_move_between_play_and_pause();
+    test_the_play_button_ring_fills_clockwise_from_the_top();
     test_the_low_tap_counts_are_free_for_the_menu();
     test_the_moved_gestures_still_fire_end_to_end();
     test_pause_reads_as_two_bars_and_play_as_one_shape();

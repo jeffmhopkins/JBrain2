@@ -1260,6 +1260,16 @@ static void make_view(const sm_t *sm, const sm_in_t *in, sm_view_t *v)
     v->transport = play;
     v->paused = play && sm->play.pause_on;
     v->playing_glyph = play && !sm->play.pause_on;
+    /* THE RING ROUND THE PLAY BUTTON (owner: *"a little circle border that progresses to show
+       how far it is until it's all the way complete"*). The audible ms of THIS message's stream
+       against the length the box gave it. Not `on()`: that wants the stream live, and a paused
+       message or the last of one draining must keep its ring where it got to, not lose it. */
+    v->progress = -1;
+    if (play && claimed(sm, s) && s->cur.duration_ms > 0 && in->audio.stream_id != 0 &&
+        in->audio.stream_id == s->cur.stream_id) {
+        const uint64_t p = (uint64_t)in->audio.out_ms * 1000u / s->cur.duration_ms;
+        v->progress = p > 1000u ? 1000 : (int)p;
+    }
     v->reply = v->offer || (play && sm->play.pause_on);
     v->exit_corner = play || v->offer;
     v->face_none = !sm_face(sm, s, &v->face);

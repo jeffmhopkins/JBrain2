@@ -77,6 +77,7 @@ typedef struct {
     uint8_t sid;
     bool sounding, paused;
     uint32_t out_ms;
+    uint32_t dur_ms; /* the length the fake box gives each message; 0 = an old box */
 
     /* the fake microphone, talk and lease */
     bool capture_open, refuse_capture, refused_next;
@@ -308,6 +309,7 @@ static void engine_begin(void)
     w.begun = true;
     w.sid = (uint8_t)(w.sid == 255 ? 1 : w.sid + 1);
     s->cur.stream_id = w.sid;
+    s->cur.duration_ms = w.dur_ms;
     s->phase = JP_SOUNDING;
     if (!s->cur.replay) {
         if (s->waiting.has_ids) {
@@ -933,6 +935,41 @@ static void test_the_controls_are_pressable_for_as_long_as_they_are_drawn(void)
     CHECK(w.sm.play.replay, "again");
     CHECK(w.out.view.transport, "a replay is drawn from the press too");
     CHECK(target_at(LEFT_X, DISC_Y) == SM_T_IGNORED, "and claimed likewise");
+}
+
+static void test_the_play_button_rings_with_how_much_has_been_heard(void)
+{
+    /* The owner: *"the little playback icon should maybe have a little circle border that
+       progresses to show how far it is until it's all the way complete."* */
+    world_reset();
+    w.dur_ms = 4000;
+    arrive("m1", true);
+    run_ms(400);
+    tap_the_notice();
+    CHECK(w.out.view.progress == -1, "no ring before a sound, so it never starts from a guess");
+    for (int i = 0; i < 100 && !is_on(); i++) step();
+    CHECK(is_on(), "the message is sounding");
+    while (w.out_ms < 1000) step();
+    CHECK(w.out.view.progress >= 240 && w.out.view.progress <= 260,
+          "a second into four, a quarter of the ring");
+    while (w.out_ms < 3000) step();
+    CHECK(w.out.view.progress >= 740 && w.out.view.progress <= 760, "three seconds, three quarters");
+
+    tap_at(LEFT_X, DISC_Y);
+    run_ms(200);
+    CHECK(w.out.view.paused, "paused");
+    const int held = w.out.view.progress;
+    run_ms(2000);
+    CHECK(w.out.view.progress == held && held > 0, "a paused message keeps its ring where it got to");
+
+    /* A box that does not say how long a message is: no ring, rather than one that lies. */
+    world_reset();
+    arrive("m1", true);
+    run_ms(400);
+    tap_the_notice();
+    for (int i = 0; i < 100 && !is_on(); i++) step();
+    run_ms(1000);
+    CHECK(is_on() && w.out.view.progress == -1, "an old box gets the button without a ring");
 }
 
 static void test_a_second_press_cannot_cancel_what_the_first_one_started(void)
@@ -3709,6 +3746,7 @@ int main(void)
     test_a_press_does_not_evaporate_behind_its_own_cue();
     test_a_press_during_the_arrival_cue_plays_the_message();
     test_the_run_controls_appear_from_the_press_not_the_stream();
+    test_the_play_button_rings_with_how_much_has_been_heard();
     test_the_top_right_corner_ends_a_message_while_it_plays();
     test_the_pair_waits_for_a_finger_not_a_clock();
     test_reply_records_to_whoever_just_spoke();
