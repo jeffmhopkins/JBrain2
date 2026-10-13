@@ -93,6 +93,11 @@ bool rig_cue_on_start(action_t a)
     return a != ACT_EAT && a != ACT_POOP;
 }
 
+bool rig_holds_pokes(action_t a)
+{
+    return a == ACT_TICKLE;
+}
+
 /* THE SQUAT: down over the first fifth, held while he strains and through the plop, up after.
    The legs splay by SQUAT_SPLAY and `face.c` lowers him by what that takes off the legs. */
 #define SQUAT_SPLAY 40.0f

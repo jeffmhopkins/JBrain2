@@ -90,8 +90,11 @@ p.advance(1800);
 check(events.slice(tickled).some((e) => e.includes('cue BRACE')), 'warned, he braces with a titter');
 for (let i = 0; i < 5; i++) {
   tap(W / 2, H * 0.62);
-  p.advance(i < 4 ? 1300 : 5000);
+  p.advance(i < 4 ? 1300 : 500);
 }
+// A child tickling keeps poking: a poke mid-fit is a flinch, and the fit runs its course.
+tap(W / 2, H * 0.62);
+p.advance(4600);
 const tk = events.slice(tickled);
 check(tk.filter((e) => e.includes('cue GIGGLE')).length === 4, 'four tickles, a giggle each');
 check(tk.filter((e) => e.includes('cue TICKLE')).length === 3,

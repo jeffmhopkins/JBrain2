@@ -2188,7 +2188,7 @@ static void face_task(void *arg)
         if (s_out.pet_press) {
             s_flinch = 1.0f;
             dirty = true;
-            if (!facts.pet_only) {
+            if (!facts.pet_only || rig_holds_pokes(action)) {
                 /* the flinch alone */
             } else if (label_hit(ox, oy, over_y0)) {
                 /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass

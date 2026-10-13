@@ -472,7 +472,7 @@ static void frame(void)
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
     /* As the panel does: warned, a poke is a tickle. The bench has no poke pools, so an
        unwarned poke stays a flinch. */
-    if (s_out.pet_press && facts.pet_only) {
+    if (s_out.pet_press && facts.pet_only && !rig_holds_pokes(r_action)) {
         const tickle_poke_t tk = tickle_poke(&r_tickle, now);
         if (tk != TICKLE_NO) {
             r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_GIGGLE;

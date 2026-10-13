@@ -1016,6 +1016,12 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
     }
     CHECK(tickle_poke(&tk, 7000) == TICKLE_BIG, "and the fifth sets him off");
     CHECK(tickle_poke(&tk, 7500) == TICKLE_NO, "after which a poke is a poke again");
+    /* BUT NOT DURING THE FIT IT SET OFF: a child tickling keeps poking, and the sixth poke
+       picking from the zone's pool cut the 4.8 s fit off after its first laugh (review). */
+    CHECK(rig_holds_pokes(ACT_TICKLE), "a poke mid-fit only flinches");
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a != ACT_TICKLE) CHECK(!rig_holds_pokes((action_t)a), "everything else gives way");
+    }
     /* The warning holds for TICKLE_WAIT_MS, renewed by each tickle, then passes. */
     tickle_arm(&tk, 10000);
     CHECK(tickle_poke(&tk, 10000 + TICKLE_WAIT_MS - 100) == TICKLE_SMALL, "late, but in time");

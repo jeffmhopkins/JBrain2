@@ -186,7 +186,9 @@ you' and then when that happens, pokes make him be tickled ... after five tickle
 warning: `ACT_BRACE` hunches him with a nervous titter (`CUE_BRACE`, the laugh's shape run
 upwards). `tickle.c` (pure, host-tested) then holds for 10 s, renewed by each tickle: a poke that
 reaches him is a tickle rather than the zone's pool, the first four a giggle and the fifth the
-laughing fit (`ACT_TICKLE`), after which pokes are pokes again.
+laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during the fit
+itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
+poking, and the sixth poke used to cut the fit off after its first laugh.
 
 **What goes in must come out (0.4.11).** Owner: *"If he eats three times and within 1 minute,
 he should have to poop afterwards. The poop should stay on the screen for say 20 seconds. And

@@ -166,6 +166,11 @@ bool rig_recue(action_t a, float p0, float p);
    re-cue on the first bite, a quarter of a second in, so every crunch lands on its bite. */
 bool rig_cue_on_start(action_t a);
 
+/* Whether a poke while `a` runs only flinches rather than starting something else. The
+   laughing fit is the payoff for five pokes, and the child doing the tickling keeps poking:
+   the sixth replacing it cut it off after its first laugh. */
+bool rig_holds_pokes(action_t a);
+
 /* EATING: bites taken by progress `p` (0..EAT_BITES), and how long ago the last one was as a
    fraction of a bite's time (for the crumbs), or -1 before the first. */
 #define EAT_BITES 3
