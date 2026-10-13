@@ -79,7 +79,7 @@
 > and **touch calibration** (Settings → Touch screen → Calibrate): four corner crosses, an affine
 > fit in the glass's own frame kept in NVS, applied before the rotation (firmware README "What
 > 0.0.18 adds").
-> **0.0.19 (built, awaiting the board) is C3b's panel half** (§2 "The panel side"): the pickup
+> **0.0.19 (on the board since 2026-10-13) is C3b's panel half** (§2 "The panel side"): the pickup
 > reports `na nq nc nf nt tz`, so the box answers notices instead of `no_notice_surface`; on
 > `X-Notice` the panel collects each JN1 stream record by record into its own file on the
 > `storage` partition (littlefs, first mounted here), checked as `decode()` checks it and fetched
@@ -89,6 +89,9 @@
 > a banner drawn from its file, the speaker row with Play again, the night clock's colours and
 > Show picture at night, the 56 px clock badge; and on the box a plain notice now hides after 20 s
 > by default (firmware README "What 0.0.19 adds").
+> **0.0.20** names a debug command's answer in the heap low's attribution (`@screenshot`,
+> `@answer`): 0.0.19's 50.9 KB "low at `pickup`" was a debug screenshot's stream, not the
+> pickup and not a notice (firmware README "What 0.0.20 adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
