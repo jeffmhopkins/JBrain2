@@ -53,6 +53,8 @@ class JcodeApi(Protocol):
 
     async def preview_close(self, sid: str) -> None: ...
 
+    async def preview_rotate(self, sid: str) -> None: ...
+
 
 class JcodeClient:
     def __init__(
@@ -147,6 +149,9 @@ class JcodeClient:
     async def preview_close(self, sid: str) -> None:
         await self._json("DELETE", f"/sessions/{sid}/preview")
 
+    async def preview_rotate(self, sid: str) -> None:
+        await self._json("POST", f"/sessions/{sid}/preview/rotate")
+
 
 class FakeJcodeClient:
     """In-memory control server for tests: no httpx, no network."""
@@ -163,6 +168,8 @@ class FakeJcodeClient:
         self.created_internet: list[tuple[bool, bool]] = []
         self._preview_enabled = preview_enabled
         self._previews: dict[str, str] = {}
+        # Session ids whose preview slug was rotated, in order.
+        self.rotated: list[str] = []
 
     async def create_session(
         self,
@@ -232,3 +239,8 @@ class FakeJcodeClient:
 
     async def preview_close(self, sid: str) -> None:
         self._previews.pop(sid, None)
+
+    async def preview_rotate(self, sid: str) -> None:
+        self.rotated.append(sid)
+        if sid in self._previews:
+            self._previews[sid] = f"https://demo-{sid}-{len(self.rotated)}.trycloudflare.com"

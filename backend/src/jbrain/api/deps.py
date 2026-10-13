@@ -102,9 +102,10 @@ async def current_device_principal(request: Request, repo: AuthRepoDep) -> Princ
 
     Physically distinct from `current_principal` (the owner cookie path): the two
     share no lookup, so a device key can never reach owner routes and an owner
-    token can never reach the device ingest path (L4)."""
+    token can never reach the device ingest path (L4). Phones only: a panel's key would
+    otherwise write location fixes as if the wall it hangs on had moved."""
     password = _basic_password(request.headers.get("Authorization", ""))
-    principal = await service.authenticate_device(repo, password) if password else None
+    principal = await service.authenticate_device(repo, password, "phone") if password else None
     if principal is None:
         raise HTTPException(
             status_code=401,
@@ -145,7 +146,8 @@ async def current_panel_principal(
     Deliberately a SEPARATE dependency rather than widening `current_principal`: doing that
     would hand a device key every cookie-gated route in the app. The device lookup here is
     the same kind-filtered one the OwnTracks and MQTT paths use, so an owner or capability
-    key presented as a bearer token resolves to nothing (L4).
+    key presented as a bearer token resolves to nothing (L4), and it admits only a subject
+    with a `device_role`: a family phone's key is the same kind, and it is not a panel.
     """
     token = session_token(request, settings)
     principal = await service.authenticate(repo, token) if token else None
@@ -154,7 +156,7 @@ async def current_panel_principal(
         return principal
 
     key = _bearer(request.headers.get("Authorization", ""))
-    panel = await service.authenticate_device(repo, key) if key else None
+    panel = await service.authenticate_device(repo, key, "panel") if key else None
     if panel is None:
         raise HTTPException(status_code=401, detail="not authenticated")
     return panel

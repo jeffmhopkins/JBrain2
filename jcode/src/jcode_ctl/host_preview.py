@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from jcode_ctl.preview import PreviewError
@@ -53,6 +54,9 @@ class HostPreviewManager:
         self._high = port_high
         self._by_sid: dict[str, Allocation] = {}
         self._by_slug: dict[str, str] = {}
+        # Callbacks to run when a slug stops resolving: the open preview sockets that
+        # were admitted on it, which a handshake-time check alone would leave streaming.
+        self._on_retire: dict[str, set[Callable[[], None]]] = {}
 
     @property
     def enabled(self) -> bool:
@@ -76,6 +80,17 @@ class HostPreviewManager:
         if existing is not None:
             _log.debug("host preview reuse sid=%s port=%d", sid, existing.port)
             return existing
+        alloc = self._assign(sid, self._free_port())
+        _log.info(
+            "host preview allocated sid=%s port=%d host=%s-preview.%s",
+            sid,
+            alloc.port,
+            alloc.slug,
+            self._base_host,
+        )
+        return alloc
+
+    def _assign(self, sid: str, port: int) -> Allocation:
         # A 64-bit token never collides in practice, but a collision would silently
         # re-point `resolve(slug)` at a different session (a route hijack, not a benign
         # retry) while `_by_sid` keeps both — so make it impossible, not improbable.
@@ -83,19 +98,23 @@ class HostPreviewManager:
         while slug in self._by_slug:
             slug = secrets.token_hex(8)
         alloc = Allocation(
-            port=self._free_port(),
-            slug=slug,
-            url=f"https://{slug}-preview.{self._base_host}",
+            port=port, slug=slug, url=f"https://{slug}-preview.{self._base_host}"
         )
         self._by_sid[sid] = alloc
         self._by_slug[slug] = sid
-        _log.info(
-            "host preview allocated sid=%s port=%d host=%s-preview.%s",
-            sid,
-            alloc.port,
-            slug,
-            self._base_host,
-        )
+        return alloc
+
+    def rotate(self, sid: str) -> Allocation | None:
+        """Give the session a fresh slug on the SAME port and retire the old one, so a
+        preview URL handed out earlier (to a share recipient since revoked) stops
+        resolving while the running dev server keeps its ``$PORT``. None when the
+        session holds no reservation — there is no URL to retire."""
+        old = self._by_sid.get(sid)
+        if old is None:
+            return None
+        self._retire(old.slug)
+        alloc = self._assign(sid, old.port)
+        _log.info("host preview slug rotated sid=%s port=%d", sid, alloc.port)
         return alloc
 
     def port_for(self, sid: str) -> int | None:
@@ -115,8 +134,27 @@ class HostPreviewManager:
     def release(self, sid: str) -> None:
         alloc = self._by_sid.pop(sid, None)
         if alloc is not None:
-            self._by_slug.pop(alloc.slug, None)
+            self._retire(alloc.slug)
             _log.debug("host preview released sid=%s port=%d", sid, alloc.port)
+
+    def on_retire(self, slug: str, callback: Callable[[], None]) -> Callable[[], None]:
+        """Run ``callback`` once when ``slug`` stops resolving (rotate or release).
+        Returns the function that unregisters it, for a socket that ends by itself."""
+        self._on_retire.setdefault(slug, set()).add(callback)
+
+        def unregister() -> None:
+            callbacks = self._on_retire.get(slug)
+            if callbacks is not None:
+                callbacks.discard(callback)
+                if not callbacks:
+                    del self._on_retire[slug]
+
+        return unregister
+
+    def _retire(self, slug: str) -> None:
+        self._by_slug.pop(slug, None)
+        for callback in self._on_retire.pop(slug, set()):
+            callback()
 
     def release_all(self) -> None:
         for sid in list(self._by_sid):

@@ -21,6 +21,10 @@ class TokenBucket:
 
     capacity: float
     refill_per_sec: float
+    # Public limiters key on client IPs, which an attacker can cycle (one IPv6 /64 is
+    # endless), so the table is bounded: past this many keys, buckets that have refilled
+    # to full are dropped (forgetting them changes nothing), then the stalest.
+    max_keys: int = 4096
     _buckets: dict[str, _Bucket] = field(default_factory=dict)
 
     def allow(self, key: str, *, now: float | None = None, cost: int = 1) -> bool:
@@ -30,6 +34,8 @@ class TokenBucket:
         moment = time.monotonic() if now is None else now
         bucket = self._buckets.get(key)
         if bucket is None:
+            if len(self._buckets) >= self.max_keys:
+                self._evict(moment)
             bucket = _Bucket(tokens=self.capacity, updated_at=moment)
             self._buckets[key] = bucket
         elapsed = max(0.0, moment - bucket.updated_at)
@@ -39,3 +45,17 @@ class TokenBucket:
             return False
         bucket.tokens -= cost
         return True
+
+    def _evict(self, moment: float) -> None:
+        def full(b: _Bucket) -> bool:
+            return b.tokens + (moment - b.updated_at) * self.refill_per_sec >= self.capacity
+
+        for key in [k for k, b in self._buckets.items() if full(b)]:
+            del self._buckets[key]
+        # Make room in batches (a tenth of the table), so a spray of fresh keys pays for a
+        # scan and sort once per batch rather than on every request.
+        overflow = len(self._buckets) - self.max_keys + max(1, self.max_keys // 10)
+        if len(self._buckets) >= self.max_keys and overflow > 0:
+            stalest = sorted(self._buckets, key=lambda k: self._buckets[k].updated_at)
+            for key in stalest[:overflow]:
+                del self._buckets[key]

@@ -10,7 +10,9 @@ credential dump. B9 stops jmolt reading those rows; this stops the console.
 
 from __future__ import annotations
 
-from jbrain.api.debug import _REDACTED, _redact_row
+import pytest
+
+from jbrain.api.debug import _REDACTED, _redact_row, _refused_sql
 
 
 def test_a_settings_row_naming_a_secret_has_its_value_redacted() -> None:
@@ -54,3 +56,52 @@ def test_a_secret_shape_in_an_unnamed_column_is_still_scrubbed() -> None:
     out = _redact_row(["detail"], ["auth failed for moltbook_live_deadbeefcafe"])
     assert "moltbook_live_deadbeefcafe" not in out[0]
     assert "[redacted]" in out[0]
+
+
+# --- S3.3 (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md, F12): the statement guard -----------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT query_to_xml('SELECT value FROM app.settings', true, false, '')",
+        "SELECT Table_To_XML('app.settings', true, false, '')",
+        "SELECT cursor_to_xml('c', 1, false, false, '')",
+        "SELECT schema_to_xml('app', true, false, '')",
+        "SELECT database_to_xml(true, false, '')",
+        "SELECT query_to_xml_and_xmlschema('SELECT 1', true, false, '')",
+        "SELECT set_config('app.principal_kind', 'owner', true)",
+        "SELECT pg_catalog.set_config('transaction_read_only', 'off', true)",
+        "SELECT pg_read_file('/etc/passwd')",
+        "SELECT pg_read_binary_file('/etc/passwd')",
+        "SELECT pg_ls_dir('.')",
+        "SELECT lo_get(1234)",
+        "SELECT * FROM dblink('host=x', 'SELECT 1') AS t(x int)",
+        "SELECT * FROM ts_stat('SELECT to_tsvector(value::text) FROM app.settings')",
+        "EXPLAIN SELECT query_to_xml('SELECT 1', true, false, '')",
+        "SELECT U&\"query\\005fto_xml\"('SELECT 1', true, false, '')",
+        # pg_settings' rule turns the UPDATE into set_config(); EXPLAIN ANALYZE runs it.
+        "EXPLAIN ANALYZE UPDATE pg_settings SET setting = 'x' WHERE name = 'app.x'",
+        "explain (analyze) delete from app.notes",
+    ],
+)
+def test_functions_that_read_around_the_redaction_are_refused(sql: str) -> None:
+    assert _refused_sql(sql) is not None
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT key, value FROM app.settings",
+        "SELECT n.id, c.state FROM app.notes n JOIN app.note_conversations c ON c.note_id = n.id",
+        "EXPLAIN SELECT * FROM app.notes WHERE id = '00000000-0000-0000-0000-000000000000'",
+        "SHOW search_path",
+        "SELECT current_setting('transaction_read_only')",
+        "SELECT xmlparse(content '<a/>')",
+        "SELECT 'hello_world', slot_count FROM app.jobs",
+        "SELECT * FROM app.box_events WHERE kind = 'update'",
+        "SELECT name, setting FROM pg_settings WHERE name = 'work_mem'",
+    ],
+)
+def test_ordinary_diagnostic_reads_pass_the_guard(sql: str) -> None:
+    assert _refused_sql(sql) is None

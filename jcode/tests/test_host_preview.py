@@ -95,3 +95,40 @@ def test_empty_base_host_fail_closes() -> None:
     assert mgr.enabled is False
     with pytest.raises(PreviewError, match="not enabled"):
         mgr.ensure("s1")
+
+
+def test_rotate_mints_a_new_slug_on_the_same_port() -> None:
+    # A revoked share recipient may have kept the preview URL: rotating retires the old
+    # slug while the dev server keeps its $PORT.
+    mgr = _mgr()
+    old = mgr.ensure("s1")
+    other = mgr.ensure("s2")
+    new = mgr.rotate("s1")
+    assert new is not None and new.slug != old.slug and new.port == old.port
+    assert mgr.resolve(old.slug) is None
+    assert mgr.resolve(new.slug) == "s1"
+    assert mgr.url("s1") == new.url == f"https://{new.slug}-preview.box.example.com"
+    assert mgr.resolve(other.slug) == "s2"
+
+
+def test_rotate_without_a_reservation_is_a_no_op() -> None:
+    mgr = _mgr()
+    assert mgr.rotate("s1") is None
+    assert mgr.url("s1") is None
+
+
+def test_on_retire_fires_once_on_rotate_or_release_unless_unregistered() -> None:
+    mgr = _mgr()
+    fired: list[str] = []
+    a = mgr.ensure("a")
+    b = mgr.ensure("b")
+    c = mgr.ensure("c")
+    mgr.on_retire(a.slug, lambda: fired.append("a"))
+    mgr.on_retire(b.slug, lambda: fired.append("b"))
+    unregister = mgr.on_retire(c.slug, lambda: fired.append("c"))
+    unregister()
+    mgr.rotate("a")
+    mgr.rotate("a")  # the new slug has no watchers; the old one fired only once
+    mgr.release("b")
+    mgr.release("c")
+    assert fired == ["a", "b"]

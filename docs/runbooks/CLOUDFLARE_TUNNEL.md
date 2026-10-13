@@ -28,6 +28,12 @@ browser ──HTTPS──> Cloudflare edge ──encrypted tunnel──> cloudfl
 The connector is opt-in: it lives behind the `tunnel` compose profile and only
 runs when `.env` has `TUNNEL_ENABLED=true`. A stock deploy never starts it.
 
+Every tunnelled request reaches Caddy from the `cloudflared` container, so the api reads the
+visitor's address from Cloudflare's `Cf-Connecting-IP` — but only when Caddy's `X-Real-IP` is
+that container's address, so a LAN client sending the same header through the published port
+is still keyed on its own address. Nothing to configure: the api resolves both service names
+itself and the per-client rate limits follow (`backend/src/jbrain/api/client_ip.py`).
+
 ## One-time setup
 
 ### 1. Move your domain's DNS to Cloudflare

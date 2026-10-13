@@ -67,6 +67,7 @@ import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from jbrain.api import nudge
+from jbrain.api.client_ip import client_ip
 from jbrain.auth import service
 from jbrain.auth.service import AuthRepo, PrincipalInfo
 
@@ -265,11 +266,10 @@ class PanelSocket:
         self.key = key
         self.device = principal.id
         now = time.monotonic()
-        client = websocket.client
         self.stats = Stats(
             device=principal.id,
             label=principal.label,
-            client=f"{client.host}" if client else "",
+            client=client_ip(websocket) or "",
             connected_at=now,
             last_rx=now,
         )
@@ -287,7 +287,7 @@ class PanelSocket:
         The URL is fixed (`_BASE_URL`); the Host HEADER is the one the panel connected with, when
         it is a plain host[:port], so a route that derives a URL from its own request (the
         firmware manifest) answers exactly what it answers over HTTPS. The client address and
-        `X-Forwarded-For` are the socket's, so `nudge.remember` still learns where the panel is.
+        forwarding headers are the socket's, so `nudge.remember` still learns where the panel is.
         No cookies: a jar would carry one request's Set-Cookie into the next."""
         client = websocket.client
         transport = _ASGITransport(
@@ -541,9 +541,14 @@ class PanelSocket:
         self.stats.requests += 1
         headers = dict(req.headers)
         headers["authorization"] = f"Bearer {self.key}"
-        fwd = self.ws.headers.get("x-forwarded-for")
-        if fwd:
-            headers["x-forwarded-for"] = fwd
+        # The upgrade's own forwarding headers, which Caddy set: replayed over the in-process
+        # client, whose peer is the socket's (the proxy), `client_ip` reads the same panel
+        # address a direct request would. The frame's headers never carry these
+        # (`_PASS_REQUEST`), so a panel cannot name its own address.
+        for name in ("x-real-ip", "cf-connecting-ip", "x-forwarded-for"):
+            value = self.ws.headers.get(name)
+            if value:
+                headers[name] = value
         status = 0
         answered = False
         failed = False
@@ -615,12 +620,12 @@ class PanelSocket:
 @router.websocket("/ws")
 async def panel_socket(websocket: WebSocket) -> None:
     """A panel's single connection. Authenticated by the same device key, the same way, as
-    every panel route (`Authorization: Bearer <device_key>`, kind-filtered so an owner or
-    capability key resolves to nothing). Refused before the upgrade is accepted: the close is
-    4401, but what crosses the wire is an HTTP 403 to the upgrade."""
+    every panel route (`Authorization: Bearer <device_key>`, kind- and role-filtered so an
+    owner or capability key, or a phone's, resolves to nothing). Refused before the upgrade is
+    accepted: the close is 4401, but what crosses the wire is an HTTP 403 to the upgrade."""
     key = _bearer(websocket.headers.get("authorization", ""))
     repo = cast(AuthRepo, websocket.app.state.auth_repo)
-    principal = await service.authenticate_device(repo, key) if key else None
+    principal = await service.authenticate_device(repo, key, "panel") if key else None
     if principal is None or key is None:
         await websocket.close(code=4401)
         return

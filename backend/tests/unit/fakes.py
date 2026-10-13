@@ -7,7 +7,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from jbrain.auth.service import SESSION_KINDS, CapabilityToken, ExternalSession, PrincipalInfo
+from jbrain.auth.service import (
+    SESSION_KINDS,
+    CapabilityToken,
+    DeviceClass,
+    ExternalSession,
+    PrincipalInfo,
+)
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import DeviceInfo, DeviceRole, DeviceScope
 from jbrain.llm.engine_effort import EngineEfforts
@@ -32,6 +38,9 @@ class FakePrincipal:
     ext_in_tokens: int = 0
     ext_out_tokens: int = 0
     ext_requests: int = 0
+    # The device subject's `subjects.device_role`: None for a phone, 'jpet'/'display' for a
+    # flashed panel. Lives on the principal here because the fake has no subjects table.
+    device_role: str | None = None
 
 
 @dataclass
@@ -46,6 +55,8 @@ class FakeSession:
 class FakeAuthRepo:
     principals: list[FakePrincipal] = field(default_factory=list)
     sessions: list[FakeSession] = field(default_factory=list)
+    # Lookups that stamped a session's last_seen_at (a write in the real repo).
+    touches: int = 0
 
     async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
         for p in self.principals:
@@ -53,9 +64,15 @@ class FakeAuthRepo:
                 return _info(p)
         return None
 
-    async def find_active_device_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+    async def find_active_device_principal_by_key_hash(
+        self, key_hash: str, device_class: DeviceClass | None = None
+    ) -> PrincipalInfo | None:
         for p in self.principals:
             if p.key_hash == key_hash and p.kind == "device_key" and not p.revoked:
+                if device_class == "phone" and p.device_role is not None:
+                    continue
+                if device_class == "panel" and p.device_role is None:
+                    continue
                 return _info(p)
         return None
 
@@ -68,14 +85,19 @@ class FakeAuthRepo:
     async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
         self.sessions.append(FakeSession(principal_id, token_hash, label))
 
-    async def find_principal_by_session_token_hash(self, token_hash: str) -> PrincipalInfo | None:
+    async def find_principal_by_session_token_hash(
+        self, token_hash: str, *, touch: bool = True
+    ) -> PrincipalInfo | None:
         now = datetime.now(UTC)
+        if touch:
+            self.touches += 1
         for s in self.sessions:
             if s.token_hash == token_hash and not s.revoked:
                 for p in self.principals:
                     live = p.expires_at is None or p.expires_at > now
                     holder = p.kind in SESSION_KINDS
-                    if p.id == s.principal_id and not p.revoked and live and holder:
+                    phone = p.kind != "device_key" or p.device_role is None
+                    if p.id == s.principal_id and not p.revoked and live and holder and phone:
                         return _info(p)
         return None
 

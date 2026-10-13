@@ -53,6 +53,7 @@ http://*.${host} {
 		rewrite * /__jcode_preview/{re.preview.1}{uri}
 		reverse_proxy api:8000 {
 			flush_interval -1
+			header_up X-Real-IP {remote_host}
 		}
 	}
 	handle {

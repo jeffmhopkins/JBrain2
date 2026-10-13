@@ -1,6 +1,6 @@
 # Security review fixes — third-party access hardening
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2✅ S3◻️ S4◻️ S5◻️
+> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** S1✅ S2✅ S3✅ S4◻️ S5◻️
 
 A whole-codebase security review (2026-10-12; six independent reviewers, the serious
 findings re-verified by hand) looked for programming errors and structural mistakes that
@@ -299,7 +299,19 @@ sessions. *Keeps working:* clone over https, npm/pip installs, grok's model and 
 defaults; squid ACL test cases for the LAN/host ranges. *On-box gate:* clone + `npm install` +
 `curl https://…` + a Node `fetch` in a session.
 
-### S3 — device, session and token hygiene ◻️
+### S3 — device, session and token hygiene ✅
+
+*As built (after per-task reviews):* socket re-checks don't write and survive a DB blip
+(1011 only after three failed checks); a rotated or released preview slug also closes its
+open HMR sockets, and the owner's PWA re-reads the preview after a revoke. **S3.3 differs
+from the text below:** secret `app.settings` rows are not redacted cell by cell but hidden
+from every READ ONLY transaction by a restrictive RLS policy (only the debug routes run read
+only), which holds against any alias, expression or SQL-from-text function; the refused list
+also covers `ts_stat`/`ts_rewrite`/`pg_ls_dir` and `U&` spellings, and the Gmail OAuth state
+is hidden with the credentials. S3.2's phone/panel test fails closed, and a member cookie a
+panel key minted before the fix stops authenticating. The rate-limit table is bounded now
+that it keys on internet-controlled client IPs. S3.5 also tolerates a `NO LOG FILE! - `
+prefix and anchors pack events to the whole line.
 
 **S3.1 Sockets re-validate (F10).** One helper re-authenticates a WS's handshake token on a
 ~30 s tick (the receive wait gets a timeout so idle sockets are re-checked) and closes 4401
@@ -396,6 +408,16 @@ relies on it for owner "all devices" fences).
 - **Stream fetches** (yt-dlp/ffmpeg) keep check-once SSRF guarding (S2.3).
 - **MQTT on the first update** (S2.2): profile services are `start`ed, not recreated, so an
   enabled broker keeps its pre-token config until **Ops → Rebuild `mqtt`** (OPERATIONS.md).
+- **Revoke with an unreachable jcode ctl** (S3.1): the revoke stands and is logged, but the
+  old preview slug stays valid until the next rotate, delete or reap.
+- **Minecraft command replies** (S3.5 review): the backend reads `/command` replies from
+  whatever lines arrive in the reply window, so a well-timed `/jb:dave` line could make Dave
+  report a false result to another asker. No identity, permission or stored state rides on
+  it (transport's write is keyed by an unseen trip id); a per-request nonce would close it.
+- **A pairing code minted mid-update** (S3.3): one the old api mints after the migration ran
+  is stored plaintext and won't redeem on the new api; re-minting from the PWA fixes it.
+- **Debug SQL text guard** is a deny-list and refuses a few harmless statements that merely
+  mention a blocked name; the secrets themselves are protected by the RLS policy, not by it.
 - **Git hooks run by the ctl** (reset/clean, as the session uid) don't get the shells'
   `RLIMIT_NPROC`; only the container `pids_limit` bounds them (S2.1).
 - **Browsers without fetch metadata** (Safari before 16.4) send neither `Sec-Fetch-Site` nor

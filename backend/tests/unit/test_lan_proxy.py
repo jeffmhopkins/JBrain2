@@ -52,6 +52,17 @@ def test_caddy_shares_handlers_and_imports_the_lan_site() -> None:
     assert "import /etc/caddy/lan/*.caddy" in caddyfile
 
 
+def test_every_app_site_overwrites_x_real_ip_with_its_peer() -> None:
+    # The api trusts X-Real-IP from this container only (api/client_ip.py), so the value
+    # must be Caddy's own peer on every site that imports the snippet (public and LAN), never
+    # one a client sent. One reverse_proxy to the api, and it carries the header_up.
+    caddyfile = _CADDYFILE.read_text()
+    snippet = caddyfile[caddyfile.index("(app) {") : caddyfile.index("{$JBRAIN_SITE_ADDR} {")]
+    assert snippet.count("reverse_proxy api:8000") == 1
+    assert "header_up X-Real-IP {remote_host}" in snippet
+    assert "import app" in _LAN_CONF.read_text()
+
+
 def test_proxy_image_runs_the_rendering_entrypoint() -> None:
     dockerfile = _DOCKERFILE.read_text()
     assert 'ENTRYPOINT ["proxy-entrypoint.sh"]' in dockerfile
