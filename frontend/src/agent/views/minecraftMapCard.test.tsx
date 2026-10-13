@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mcMapMarkers } from "../../minecraftMapFixtures";
 import { type MapIntent, setMapOpener } from "../../minecraftMapNav";
@@ -374,6 +374,34 @@ describe("the minecraft_map chat card", () => {
     expect(texts.some((t) => t.includes("Scanning"))).toBe(false);
   });
 
+  it("Dave's answer about a bed draws it with its words; one not seen there says so", async () => {
+    const bed = {
+      kind: "bed",
+      label: "BlockyFox's bed",
+      x: -136,
+      y: 70,
+      z: 94,
+      spawn: "bed",
+    };
+    show(deathCard({ dim: "overworld", overworld: null, focus: bed, center: { x: -136, z: 94 } }));
+    expect(screen.getByText("BlockyFox's bed")).toBeInTheDocument();
+    expect(screen.getByText("Respawn point · Overworld")).toBeInTheDocument();
+    await waitFor(() => expect(texts).toContain("BlockyFox's bed"));
+    cleanup();
+    show(
+      deathCard({
+        dim: "nether",
+        focus: { ...bed, label: "Mira_P's respawn anchor", spawn: "anchor" },
+      }),
+    );
+    expect(screen.getByText("Respawn point · Nether")).toBeInTheDocument();
+    cleanup();
+    show(deathCard({ dim: "overworld", overworld: null, focus: { ...bed, spawn: "other" } }));
+    expect(
+      screen.getByText("No bed seen there when the pack last looked · Overworld"),
+    ).toBeInTheDocument();
+  });
+
   it("a malformed payload draws nothing it shouldn't", () => {
     const { container } = show({ slot: "../../etc", dim: "<img src=x onerror=alert(1)>" });
     expect(screen.getByText("This map can't be shown.")).toBeInTheDocument();
@@ -436,6 +464,11 @@ describe("parseMinecraftMap", () => {
     ).toMatchObject({ kind: "gate", x: 30, z: 14 });
     expect(parseMinecraftMap({ slot: "slot0" })).toBeNull();
     expect(parseMinecraftMap({})).toBeNull();
+    const bed = (spawn: unknown) =>
+      parseMinecraftMap({ slot: "slot1", focus: { kind: "bed", x: 1, z: 2, spawn } })?.focus;
+    expect(bed("anchor")).toMatchObject({ kind: "bed", spawn: "anchor" });
+    expect(bed("sofa")?.spawn).toBeNull();
+    expect(bed(undefined)?.spawn).toBeNull();
   });
 });
 

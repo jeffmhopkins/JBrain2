@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-13 (villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
+> **Status:** Living · **Last verified:** 2026-10-13 (beds and respawn points on the map, §M8 rows 27–30; prior: villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -18,6 +18,11 @@ Rows 17–21 are **Dave's welcome and the first-time beats** (DW1). They happen 
 the rows above: the welcome on your first join (rows 1–2), the Ender Pearl and Power Pack
 beats at row 4, the first death at row 7. Each is once per player per world, so they are
 checked where they happen; the rows only say what to look for.
+
+Rows 27–30 are **beds and respawn points on the map** (§M8, beds): what the game really
+reports for a bed, a broken bed and a respawn anchor, which the map's dashed "no bed seen
+there" tile and the death card's "Respawned at …" line rest on. Play them on the test world,
+then look at the map in the PWA (tap yourself; tap the death).
 
 **The owner just plays, and the assistant reads the answers.** The test kit logs each
 finding as a `[jbrain-probe]` line on the server, the `jbrain` pack logs its own as
@@ -76,6 +81,10 @@ world** in slot 1, never on an imported real world.
 | 24 | Tame a wolf and a horse, name the wolf with a name tag, make it sit; then `/dave where's my dog` | **Dave finds it:** "*Rex* is *N* blocks *…*, sitting right where you left him. Hold your Tricorder and follow the arrow.", free within 48 blocks, a deep scan farther; the Tricorder points at it | `GET /api/debug/minecraft/map/pets?x=0&z=0&owner_name=<you>` lists both, `owner` set (the `pid` on your `dave` line in `GET /minecraft/logs`) |
 | 25 | Open a librarian's trade screen; then `/dave who sells <one of its books>` | Only the trades the screen shows (its unlocked levels); the line "From up here I see a librarian … who sells … for N emeralds." | `GET /api/debug/minecraft/map/villagers?x=<x>&z=<z>&profession=librarian` matches the screen |
 | 26 | Light a Nether portal, go through, ask Dave to point you home | In the Nether the held Tricorder reads `↑ Nether portal · N blocks · Home is in the Overworld`, pointing at the portal; back through, it points home | `GET /api/debug/minecraft/map/portals` lists the portal; break one and `check=false` still lists it while the default leaves it out |
+| 27 | Place a bed and sleep in it (or tap it); note the bed's block coordinates | **Which block `getSpawnPoint()` names** (the bed's own, the other half, or the spot beside it): the pack counts a bed at or touching the point, and the map's **Bed** line and **Show the bed** tile sit on it. A join always resends the line | `GET /api/debug/minecraft/logs`: `[jbrain] {"ev":"spawnpoint","player":…,"kind":"bed",…}` a tick after; its x/y/z against the bed's; the PWA map, tap yourself |
+| 28 | Standing near it, break that bed and wait 10 s; then die (`/kill @s`) and respawn | **A broken bed before the next death:** the 10 s check reads `kind` `other` at the same point (the game keeps the point), so the map draws the bed **dashed**, *no bed seen there*; after the respawn the line is `none` and the death card says only *Respawned at the world spawn* | log `"kind":"other"` then `"kind":"none"`; the PWA map: tap yourself, then the death |
+| 29 | In the Nether, set a respawn anchor with glowstone and use it; then die until its charges run out | **An anchor:** `kind` `anchor` with `"dim":"nether"`; and **what an anchor at zero charges reports** (still `anchor`, or `none` once the game gives up on it) — record which | log `"kind":"anchor"` lines; the PWA's Layers → In this world |
+| 30 | With the bed back, die somewhere away from it and respawn; and once with no bed set | **How far a waking lands:** the death card says *Respawned at their bed* only within 4 blocks of the point, and *at the world spawn* within 16 of it (the box's `spawnRadius` is 10) — record the real distances; the curve ends at the bed or the star | log `"ev":"respawn"` x/z against the bed's and the world spawn's; the PWA map, tap the death |
 
 ## After (assistant)
 

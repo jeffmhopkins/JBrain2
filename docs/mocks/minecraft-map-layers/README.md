@@ -3,7 +3,8 @@
 > **Status:** Living · **Last verified:** 2026-10-13
 >
 > **Open — waiting on the owner's picks**, one section at a time (the questions at the
-> end). Nothing here is built. The owner asked for these three map follow-ups on
+> end). **Beds is decided (B, 2026-10-13) and built** (§3's decision block); places and
+> villagers are still open here. The owner asked for these three map follow-ups on
 > 2026-10-13. An independent review follows this round. Behaviour sources:
 > `docs/plans/MINECRAFT_BEDROCK_PLAN.md`:
 > - the saved places (`app.mc_places`, migration 0228's docstring) and §M24's goal chests;
@@ -265,6 +266,34 @@ what Dave's chat already gives. A's *Sells Mending* chip retitles the tile, whic
 look-up case on the map.
 
 ## 3 · Beds and respawn points
+
+**Decided (owner, 2026-10-13): B — a bed shows with its player. Built** (DESIGN.md "Beds and
+respawn points on the Minecraft map"; plan §M8 "Beds and respawn points"). The owner's
+answers to questions 4 and 10–13, which override the shared text below where they differ:
+- **Q10:** **B.** A bed or anchor is drawn only while its player, one of their deaths, or the
+  bed is tapped. The player card gains the bed line and **Show the bed**; tapping a death
+  draws the curve from the skull to where they woke.
+- **Q11:** the pack change is approved: `{"ev":"spawnpoint", player, kind: bed | anchor |
+  other | none, dim, x, y, z}` a tick after a bed or anchor is used, on join, and from a 10 s
+  change check of everyone online (`getSpawnPoint()`), sent only on a change.
+- **Q12:** the death card says **only where they woke** — *Respawned at their bed*, *…at
+  their respawn anchor · in the Nether*, *Respawned at the world spawn* — and **never**
+  *their bed was missing or blocked*. The warn-coloured line drawn in `5-death2` is
+  superseded.
+- **Q4 (beds):** owner-only, not on share links and not on the timeline's replay. Per review
+  X3 the points live in their own owner-only table, `app.mc_spawn_points` (a row per change,
+  so the history is kept), with its RLS isolation test — not in `mc_player_events`, which
+  share links read.
+- **Q13 (beds):** `mc_show_map` gains the focus kind `bed`.
+- **Review X4:** a point the game keeps after its bed is broken is drawn with a **dashed**
+  ring (*no bed seen there*): the pack reads the block at the point every time. The box
+  checks are rows 27–30 of `docs/runbooks/MINECRAFT_HOME_TEST.md`.
+- **Review B1:** the Layers row is renamed **Spawn · beds on tap**, so it no longer promises
+  beds the overview doesn't draw.
+- **Built differently from the mock:** the "Bed" label goes beside the tile by the side
+  rule; **Show the anchor** / **Show the spawn point** for those kinds (the mock offered the
+  button only for an Overworld bed); the *no bed set* row in **In this world** is a plain row
+  (there is nowhere to fly); the In-this-world rows come before the beacons and gates.
 
 Each player has **one** respawn point: their bed, or a charged respawn anchor in the Nether.
 Without one they wake at the world spawn.

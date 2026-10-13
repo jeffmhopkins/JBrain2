@@ -33918,6 +33918,26 @@ span.mc-map-world {
   color: var(--text-2);
 }
 
+/* A bed's "respawn point" pill (beds, variant B). */
+.mc-map-state.pt {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+
+.mc-map-det-ic.bed {
+  border-color: transparent;
+}
+
+/* The beds' card lines take the text colour, not the gate line's violet. */
+.mc-map-lead.mc-map-bedln svg {
+  color: var(--text-2);
+}
+
+.mc-map-lead.mc-map-bedln {
+  align-items: flex-start;
+  line-height: 1.4;
+}
+
 .mc-map-lead {
   display: flex;
   align-items: center;
@@ -34084,6 +34104,17 @@ span.mc-map-world {
 .mc-map-det-acts .mc-btn {
   flex: 1;
   min-width: 0;
+}
+
+/* "Show the bed" keeps its words on one line; at 320 the row wraps instead. */
+.mc-map-det-acts .mc-btn.mc-map-bedbtn {
+  flex: 1.6 1 auto;
+  white-space: nowrap;
+}
+
+.mc-map-det-stack .mc-btn,
+.mc-map-det-stack .mc-btn.mc-map-bedbtn {
+  flex: 1 1 100%;
 }
 
 .mc-map-who {

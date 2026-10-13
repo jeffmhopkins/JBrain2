@@ -32,6 +32,7 @@ from jbrain.minecraft import (
     markers,
     sessions,
     shares,
+    spawnpoints,
     targets,
     timeline,
     travel,
@@ -664,10 +665,14 @@ async def map_markers(
 ) -> dict[str, Any]:
     """The world's No-Spawn Beacons and wormhole gates (§M26), in one dimension or all:
     the pack's own records, kept by the session drain, so they answer with the server
-    stopped or the world unloaded, as of `as_of` (when the pack last reported them)."""
+    stopped or the world unloaded, as of `as_of` (when the pack last reported them). With
+    them, every player's respawn point and its recent changes (§M8, beds), in every
+    dimension: the owner's only, as this route is."""
     rec = await mc.slot_record(settings, slot)
-    got = await markers.for_world(_maker(request), str(rec["folder"]), dim)
-    return {"slot": slot, "world": rec["folder"], **got}
+    folder = str(rec["folder"])
+    got = await markers.for_world(_maker(request), folder, dim)
+    beds = await spawnpoints.for_world(_maker(request), folder)
+    return {"slot": slot, "world": rec["folder"], **got, **beds}
 
 
 @router.post("/map/structures/sweep", status_code=202)

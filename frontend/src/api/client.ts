@@ -693,14 +693,41 @@ export interface MinecraftGate {
   aimed_at: number | null;
 }
 
+/** What stood at a player's respawn point when the pack last looked (§M8, beds): `other`
+ *  is a point with no bed or anchor seen there (a /spawnpoint, or a bed broken since — the
+ *  game keeps the point until the next death); `none` is no point, so no place. */
+export type MinecraftSpawnKind = "bed" | "anchor" | "other" | "none";
+
+/** One change of a player's respawn point, as the drain kept it. Epoch seconds. */
+export interface MinecraftSpawnChange {
+  xuid: string;
+  at: number;
+  kind: MinecraftSpawnKind;
+  dim: MinecraftDim | null;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+}
+
+/** A player's current respawn point: `set_at` when they got this place, `at` the latest
+ *  change (a bed read as `other` since, say). */
+export interface MinecraftSpawnPoint extends MinecraftSpawnChange {
+  gamertag: string;
+  set_at: number;
+}
+
 /** GET /map/markers: a world's beacons and gates, kept by the api from the pack's own
- *  lines, so they answer for a world that isn't loaded; `as_of` is the newest report. */
+ *  lines, so they answer for a world that isn't loaded; `as_of` is the newest report. With
+ *  them (owner-only, like the route), each player's respawn point and its recent changes;
+ *  absent from an api older than beds. */
 export interface MinecraftMapMarkers {
   slot: string;
   world: string;
   beacons: MinecraftBeacon[];
   gates: MinecraftGate[];
   as_of: number | null;
+  spawns?: MinecraftSpawnPoint[];
+  spawn_log?: MinecraftSpawnChange[];
 }
 
 // ---- the timeline (§M8a): one world's travel log over a range, epoch seconds ----

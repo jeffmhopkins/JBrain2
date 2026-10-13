@@ -10,6 +10,7 @@ import {
   type MinecraftDim,
   type MinecraftGate,
   type MinecraftMapPlayer,
+  type MinecraftSpawnPoint,
   type MinecraftStructure,
   type MinecraftTimelineEvent,
   minecraftTileUrl,
@@ -43,7 +44,8 @@ import {
 } from "../minecraftMapMarkers";
 
 /** A point marker that clusters: a structure, an event (a death; on the replay also a log-in,
- *  log-off or portal trip) or the world spawn. */
+ *  log-off or portal trip), the world spawn, a beacon or gate, or a player's bed (`col` is
+ *  their colour, resolved). */
 export type Marker = Placed &
   (
     | { type: "struct"; s: MinecraftStructure }
@@ -51,6 +53,7 @@ export type Marker = Placed &
     | { type: "spawn" }
     | { type: "beacon"; b: MinecraftBeacon }
     | { type: "gate"; g: MinecraftGate }
+    | { type: "bed"; s: MinecraftSpawnPoint; col: string }
   );
 
 export type TileEntry = {
@@ -387,6 +390,91 @@ export function gateGlyph(
   if (on) ring(ctx, x, y, 18, t);
 }
 
+/** A player's respawn point: Lucide `bed` (or `anchor`) on a tile ringed in their colour;
+ *  dashed when no bed or anchor was seen at the point (review X4: the game keeps a point
+ *  after its bed is broken), M26's language for "not active". */
+export function bedGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  kind: string,
+  col: string,
+  t: Tokens,
+  on: boolean,
+) {
+  tileGlyph(ctx, x, y, col, [kind === "anchor" ? "anchor" : "bed"], t, {
+    dashed: kind === "other",
+  });
+  if (on) ring(ctx, x, y, 18, t);
+}
+
+/** "Respawned here": a curve from a death to where its player woke, 2 px in their colour
+ *  over a halo, with an arrowhead at the waking. Curved because it is a jump, not a path:
+ *  never a trail (solid, straight), the bearing (dashed) or a gate line (dotted). Returns
+ *  the curve as short segments, for labels to keep off; none when the ends touch. */
+export function respawnCurve(
+  ctx: CanvasRenderingContext2D,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  col: string,
+  t: Tokens,
+): { ax: number; ay: number; bx: number; by: number }[] {
+  const len = Math.hypot(bx - ax, by - ay);
+  if (len < 40) return [];
+  const ux = (bx - ax) / len;
+  const uy = (by - ay) / len;
+  const mx = (ax + bx) / 2 - uy * len * 0.22;
+  const my = (ay + by) / 2 + ux * len * 0.22;
+  const t0 = 14 / len;
+  const t1 = 1 - 16 / len;
+  const q = (s: number): [number, number] => [
+    (1 - s) ** 2 * ax + 2 * (1 - s) * s * mx + s * s * bx,
+    (1 - s) ** 2 * ay + 2 * (1 - s) * s * my + s * s * by,
+  ];
+  const pts: [number, number][] = [];
+  for (let i = 0; i <= 40; i++) pts.push(q(t0 + ((t1 - t0) * i) / 40));
+  const path = () => {
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  };
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  path();
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 5;
+  ctx.stroke();
+  path();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  const [ex, ey] = pts[pts.length - 1] ?? [bx, by];
+  const [px, py] = pts[pts.length - 3] ?? [ax, ay];
+  const l = Math.hypot(ex - px, ey - py) || 1;
+  const vx = (ex - px) / l;
+  const vy = (ey - py) / l;
+  ctx.beginPath();
+  ctx.moveTo(ex - vx * 8 - vy * 5, ey - vy * 8 + vx * 5);
+  ctx.lineTo(ex, ey);
+  ctx.lineTo(ex - vx * 8 + vy * 5, ey - vy * 8 - vx * 5);
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 5;
+  ctx.stroke();
+  ctx.strokeStyle = col;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+  const segs: { ax: number; ay: number; bx: number; by: number }[] = [];
+  for (let i = 0; i + 5 < pts.length; i += 5) {
+    const a = pts[i];
+    const b = pts[i + 5];
+    if (a && b) segs.push({ ax: a[0], ay: a[1], bx: b[0], by: b[1] });
+  }
+  return segs;
+}
+
 /** A beacon's protected square, drawn to the block: a green dash over a halo, filled when
  *  it's the tapped one so it reads apart from an overlapping neighbour. */
 export function protectedArea(
@@ -671,6 +759,9 @@ export function playerDisc(
 export function markerLabel(m: Marker): string | null {
   if (m.type === "struct") return structureInfo(m.s.structure).label;
   if (m.type === "spawn") return "Spawn";
+  if (m.type === "bed") {
+    return m.s.kind === "anchor" ? "Respawn anchor" : m.s.kind === "other" ? "Spawn point" : "Bed";
+  }
   return null;
 }
 
@@ -678,6 +769,7 @@ export function markerLabel(m: Marker): string | null {
 export function markerOwn(m: Marker): string | undefined {
   if (m.type === "gate") return `g:${m.g.id}`;
   if (m.type === "beacon") return `b:${beaconKey(m.b)}`;
+  if (m.type === "bed") return `bed:${m.s.xuid}`;
   return undefined;
 }
 
@@ -685,6 +777,7 @@ export function markerGlyph(ctx: CanvasRenderingContext2D, m: Marker, t: Tokens,
   if (m.type === "struct") return structGlyph(ctx, m.sx, m.sy, m.s.structure, t, on);
   if (m.type === "beacon") return beaconGlyph(ctx, m.sx, m.sy, t, on);
   if (m.type === "gate") return gateGlyph(ctx, m.sx, m.sy, m.g.state === "open", t, on);
+  if (m.type === "bed") return bedGlyph(ctx, m.sx, m.sy, m.s.kind, m.col, t, on);
   const { sx: x, sy: y } = m;
   ctx.save();
   if (m.type === "event" && m.e.kind !== "death") {
