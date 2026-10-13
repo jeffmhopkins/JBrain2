@@ -672,7 +672,7 @@ static const state_t STATES[] = {
     /* 0.0.16: her message playing (the pause, the dot gone), a voice message to her on its way
        and filed, a new one's badge on her tile and on the clock face, and live in her thread. */
     {"quorra-playing", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN}},
-    /* 0.0.17: the bar half full at half the message, and a message heard on its first press —
+    /* 0.0.17: the bar half full at half the message, and a message heard once its audio started —
        stopped at once, it has no dot and its badge is gone. */
     {"quorra-mid", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN, PLAYED_HALF}},
     {"quorra-heard", NULL, {OPEN(SVC_MESSAGES_THREAD_1), TAP_LABEL(LV_SYMBOL_PLAY), LISTEN,
@@ -1144,10 +1144,12 @@ static int thread_checks(void)
     expect(m.id && !strcmp(lv_label_get_text(glyph), LV_SYMBOL_PAUSE),
            "the press plays it: the same button now says pause");
     expect(lv_obj_get_style_opa(dot, 0) == LV_OPA_TRANSP &&
-               svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge - 1,
-           "heard at the first press: the dot and one of the badge go at once");
+               svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge,
+           "playing, its dot goes; the badge waits for the box's audio");
     svc_audio_fake_listen(true, false, false);
     step(300);
+    expect(svc_messages_unplayed(SVC_MESSAGES_THREAD_1) == badge - 1,
+           "its audio starts: heard, one off the badge at once");
     const int32_t full = lv_obj_get_width(track);
     expect(lv_obj_get_width(fill) == 0, "the box's audio arrives: the bar starts empty, at the left");
     svc_audio_fake_played(m.dur_ms / 4u);

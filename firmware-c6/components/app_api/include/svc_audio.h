@@ -84,10 +84,13 @@ bool svc_audio_work(const char *thread, svc_work_t *out);
 bool svc_audio_stop_reply(void);
 
 /* One of a twin's messages through the speaker (0.0.16): streamed from the box as it plays, with
- * the reply's speaker start. A play that starts marks the message heard at once, here and on the
- * box (0.0.17, owner 2026-10-13: "A message should no longer be considered unread if I even hit
- * play once on it"): stopped early, cut off or failing its digest, it stays heard. False, with
- * svc_audio_talk_refused() saying why and the message untouched, when no play starts. */
+ * the reply's speaker start. Heard, here and on the box, once its audio starts — the box's answer
+ * to the play, a fraction of a second after the tap (0.0.17, owner 2026-10-13: "A message should
+ * no longer be considered unread if I even hit play once on it"): stopped early, cut off or
+ * failing its digest after that, it stays heard. A play the box never answers with audio (no
+ * reply, not a 200, no memory for the ring) leaves it unheard and sends no stamp; so does a
+ * press refused here (false, svc_audio_talk_refused() saying why). A message already heard is
+ * never stamped again. */
 bool svc_audio_play(uint32_t msg_id);
 void svc_audio_stop(void);
 uint32_t svc_audio_playing(void); /* msg id, 0 when silent */

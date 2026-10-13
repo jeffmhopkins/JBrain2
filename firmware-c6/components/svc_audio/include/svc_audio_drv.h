@@ -43,7 +43,7 @@ bool talk_net_claim(bool *voice, tk_agent_t *agent, bool *fresh);
  * it goes to (svc_post's, built on the UI task when it began). */
 tk_kind_t talk_net_kind(char *path, size_t cap);
 /* A play's end: whether every byte arrived and matched the box's digest. The message was marked
- * heard when its play began (0.0.17); a mismatch is counted as a failed play. */
+ * heard when its audio began (talk_net_reply, 0.0.17); a mismatch is counted as a failed play. */
 void talk_net_listened(bool verified);
 /* A play's ring, once the box has answered its GET (0.0.17): after the connection's handshake,
  * never during it, so the two never hold internal RAM at once. False with no memory for it. */

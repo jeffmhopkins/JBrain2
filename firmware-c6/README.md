@@ -1372,7 +1372,7 @@ messages with the twins").
   or BOOT, the shell's stop) stops it. Played to its end with its digest checked, it is marked
   played here at once and its "played" stamp goes to the box, so the PWA shows it played too; a
   play stopped part way, or cut off by the radio, leaves it unplayed on both (0.0.17 changed this
-  at the owner's word: heard on the first press, "What 0.0.17 adds"). A stamp the box does
+  at the owner's word: heard once its audio starts, "What 0.0.17 adds"). A stamp the box does
   not take (no Wi-Fi, a box restart, a 5xx) waits in a list of up to eight kept in NVS (namespace
   `jpanel`, key `post_stamps`, written at most every 2 s), sent one at a time and retried after
   5 s, 15 s, 60 s and then every five minutes until the box answers 204; a 404 (the message is
@@ -1470,7 +1470,7 @@ talk's) and nothing else.
 5. In the snapshot: `post.tag` moving with each message, `post.thread1.loaded` true,
    `audio.plays` and `audio.posted` counting.
 
-## What 0.0.17 adds: a thread that holds still, a bar that moves, heard on the first press
+## What 0.0.17 adds: a thread that holds still, a bar that moves, heard once its audio starts
 
 The owner's first use of 0.0.16 on the panel, 2026-10-13: *"When I play back their audio the
 playback works but the screen kind of jumps around depending on when I play. Also, when I hit play
@@ -1502,13 +1502,17 @@ the ~45 KB line this README has drawn since 0.0.11).
   LVGL timer that lives only while the thread is open. An underrun holds the bar where it is;
   stopped early, played out or failed, the message is heard, so its bar shows full like every heard
   message (the mock's rule). The time beside it stays the message's length, as the mock draws it.
-- **Heard on the first press.** The badge on her tile, the clock face's corner badge (within its
-  one-second redraw) and the dot all go the moment ▶ is tapped and the play starts, and the
-  "played" stamp is queued for the box at once through 0.0.16's NVS-kept retry list, so the PWA
-  shows it played too. The stamp goes out on the main task's one connection right behind the play's
-  stream. A play that is stopped, cut off by the radio or fails its digest still counts as heard;
-  the digest still judges the audio itself (a mismatch counts in `audio.play_failed`). A press the
-  panel refuses (no Wi-Fi, a talk under way) starts no play and leaves the message unheard.
+- **Heard once its audio starts.** The dot goes as ▶ becomes ⏸; the moment the box answers the
+  play with its audio — a fraction of a second after the tap — the message is heard: her tile's
+  badge and the clock face's corner badge (within its one-second redraw) drop, and the "played"
+  stamp is queued for the box through 0.0.16's NVS-kept retry list, so the PWA shows it played too.
+  The stamp goes out on the main task's one connection right behind the play's stream. Stopped,
+  cut off by the radio or failing its digest after that, it still counts as heard; the digest
+  still judges the audio itself (a mismatch counts in `audio.play_failed`). A play the box never
+  answers with audio (unreachable, not a 200, no memory for the ring) leaves it unread and sends
+  no stamp, and so does a press the panel refuses (no Wi-Fi, a talk under way). A message already
+  heard is never stamped again, so replays cannot fill the stamp list or push a waiting stamp out
+  of it (`stamps_dropped` now counts only a real eviction).
 
 ### The memory: where 44 KB came from, and the lever pulled
 
@@ -1570,7 +1574,7 @@ image working.
 Static DIRAM (`.dram0.data` + `.dram0.bss`): 152,208 → 152,800 B, **+592 B**: four thread
 instances' drawn bubbles (four `drawn_t` of 28 B each) and their view state (~530 B in all), the
 low-water attribution (~60 B), the play's sample count. `.iram0.text` unchanged. App: 1,976,880 →
-1,979,472 B (+2.5 KB). No new task, no new stack, no new heap; the ring is the same 16 KB, taken
+1,979,632 B (+2.7 KB). No new task, no new stack, no new heap; the ring is the same 16 KB, taken
 later. LVGL's pool peaks at 17.6 KB in the new states (`quorra-mid`, `quorra-heard`; 64-bit host),
 under Settings'. **Expect `int_min` ≈ 56 KB after a session of plays** (`low=…@play+ring`), ~12 KB
 better than 0.0.16's 44,084 B; a talk started just after a dropped connection is the case still
@@ -1855,7 +1859,7 @@ The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB 
 (+1.7 KB), the audio stack
 +768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+14 KB; 53% of the slot
 free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget). 0.0.17: app
-1.98 MB (+2.5 KB), DIRAM static +592 B, and a play's 16 KB ring taken after its connection's
+1.98 MB (+2.7 KB), DIRAM static +592 B, and a play's 16 KB ring taken after its connection's
 handshake rather than before it ("What 0.0.17 adds", The memory).
 
 ## Recovery

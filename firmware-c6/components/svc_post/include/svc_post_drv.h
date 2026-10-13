@@ -49,7 +49,7 @@ bool svc_post_send_path(const char *thread, char *out, size_t cap);
 bool svc_post_pcm_path(uint32_t local_id, char thread[16], char *out, size_t cap);
 /* A send landed: the thread is fetched so its bubble carries the box's id. */
 void svc_post_sent(const char *thread);
-/* `local_id` began to play (0.0.17: heard on the first press, however the play ends): played here
+/* `local_id`'s audio began to play (0.0.17: heard once its audio starts, however it ends): played here
  * at once, and on the box — its stamp waits in the NVS-kept list until the box confirms it,
  * retried with a backoff, and goes behind the play on the main task's one connection. */
 void svc_post_heard(const char *thread, uint32_t local_id);

@@ -329,8 +329,9 @@ static void hex(const uint8_t *b, size_t n, char *out)
 }
 
 /* One of her messages played (0.0.16): the box's 16 kHz s16 into the ring at the speaker's pace,
- * hashed as it goes. It was marked heard when the play began (0.0.17); the digest judges the
- * audio itself, and a body cut off or not matching counts as a failed play. */
+ * hashed as it goes. It is marked heard once the box answers with its audio (talk_net_reply,
+ * 0.0.17); the digest judges the audio itself, and a body cut off or not matching counts as a
+ * failed play. */
 static const char *listen_exchange(const char *path, uint32_t *down)
 {
     box_reply_t rep = {.date = {0}};

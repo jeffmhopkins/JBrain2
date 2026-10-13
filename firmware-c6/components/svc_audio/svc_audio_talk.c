@@ -30,6 +30,9 @@ static tk_ring_t s_ring;
 static uint8_t *s_ring_mem;
 /* The message playing's audio that went to the speaker: the audio task's count, under the lock. */
 static uint32_t s_played_bytes;
+/* The box answered a play with its audio (main task, under the lock): the UI task marks the
+   message heard on its next pass and clears this. */
+static bool s_listen_started;
 static tk_stats_t s_st;
 /* The reply as it streams in (JT2): written by the main task under the lock, read by the UI task.
  * What was heard and the status line each carry a count that grows with every change, so the UI
@@ -361,6 +364,7 @@ bool svc_audio_play(uint32_t msg_id)
         memcpy(s_target, target, sizeof s_target);
         snprintf(s_person, sizeof s_person, "%s", thread);
         s_listen_ok = false;
+        s_listen_started = false;
         s_played_bytes = 0;
         tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
     }
@@ -371,9 +375,6 @@ bool svc_audio_play(uint32_t msg_id)
     }
     s_playing = msg_id;
     s_st.plays++;
-    /* Heard the moment it plays (0.0.17): the dot and every badge go now, and the stamp is queued
-       for the box at once, behind this play on the main task's one connection. */
-    svc_post_heard(thread, msg_id);
     refresh(thread);
     talk_port_kick();
     talk_port_net();
@@ -430,13 +431,25 @@ static void free_ring(void)
     free(mem);
 }
 
+/* Her message's audio has started (0.0.17, owner: "if I even hit play once on it"): heard here at
+   once, every badge with it, and its stamp queued for the box. A message already heard is left
+   alone, so a replay sends no second stamp and can never push a waiting one out of the list. */
+static void listen_heard(uint32_t id)
+{
+    msg_t m;
+    if (!svc_messages_find(s_person, id, &m) || m.played) return;
+    svc_post_heard(s_person, id);
+    refresh(s_person);
+}
+
 /* A voice message to a twin, or one of hers played: how it ended, as her thread shows it. */
 static void person_service(uint8_t kind, tk_res_t res, const char *why, const char *heard,
-                           bool verified, bool quiet)
+                           bool verified, bool quiet, bool started)
 {
     msg_t m;
     if (kind == TK_KIND_LISTEN) {
-        /* Heard already, from its start; the digest still judges the audio itself. */
+        if (started) listen_heard(s_tk.msg_id);
+        /* Heard once its audio started (listen_heard); the digest still judges the audio itself. */
         if (res == TK_RES_FAILED || res == TK_RES_NOTHING || (res == TK_RES_SPOKEN && !verified))
             s_st.play_failed++;
         if (res == TK_RES_SPOKEN || res == TK_RES_FAILED || res == TK_RES_NOTHING || quiet)
@@ -472,9 +485,11 @@ void svc_audio_service(void)
         const tk_res_t res = tk_take(&s_tk, why, sizeof why);
         const bool quiet = tk_quiet(&s_tk);
         const bool verified = s_listen_ok;
+        const bool started = s_listen_started;
+        s_listen_started = false;
         memcpy(heard, s_heard, sizeof heard);
         unlock();
-        person_service(kind, res, why, heard, verified, quiet);
+        person_service(kind, res, why, heard, verified, quiet, started);
         return;
     }
     const tk_res_t res = tk_take(&s_tk, why, sizeof why);
@@ -639,6 +654,7 @@ void talk_net_reply(const char *reply, bool audio_follows)
     s_status[0] = '\0';
     s_st.replies++;
     tk_net_reply(&s_tk, audio_follows);
+    if (s_tk.kind == TK_KIND_LISTEN && s_tk.phase == TK_PLAY) s_listen_started = true;
     /* The recording is all sent and the microphone is off: the ring is the reply's now. */
     if (s_tk.phase == TK_PLAY) tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
     unlock();

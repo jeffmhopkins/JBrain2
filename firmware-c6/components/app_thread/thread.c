@@ -163,7 +163,7 @@ static void tick(lv_timer_t *tm)
     refresh(lv_timer_get_user_data(tm));
 }
 
-/* Her message streams from the box through the speaker. The first press marks it heard, here,
+/* Her message streams from the box through the speaker. Once its audio starts it is heard, here,
  * on the box and so in the PWA (0.0.17, owner 2026-10-13: "A message should no longer be
  * considered unread if I even hit play once on it"). Tap again to stop. No auto-play: a message
  * arriving never makes a sound but the chime (owner's default, plan §1). */
