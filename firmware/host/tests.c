@@ -1049,6 +1049,67 @@ static void test_the_head_rights_itself_against_the_tilt(void)
     }
 }
 
+/* The face's features — what a back view takes away: eyes, lids, beak — at `up` degrees. */
+static int face_features(float up, float talk, uint16_t *front, uint16_t *back, double *cx,
+                         double *cy)
+{
+    face_state_t st;
+    face_rest(&st);
+    st.upright = up;
+    st.talk = talk;
+    face_draw(front, 0, &st);
+    st.fig.facing = -1.0f;
+    face_draw(back, 0, &st);
+    double sx = 0, sy = 0;
+    int n = 0;
+    for (int i = 0; i < FACE_W * FACE_H; i++) {
+        if (front[i] != back[i]) {
+            sx += i % FACE_W;
+            sy += i / FACE_W;
+            n++;
+        }
+    }
+    *cx = sx / n;
+    *cy = sy / n;
+    return n;
+}
+
+static void test_the_righted_head_turns_its_eyes_and_beak_too(void)
+{
+    /* The owner, with a photo of a panel on its side: "you can see how the eye position being
+       redrawn without the bottom eyelid parts being done again. Looks a little funny and beak
+       needs to be redrawn correctly." 0.4.6 turned WHERE each feature sat and drew every one
+       square to the glass, so the happy cheek arc sat beside each eye and the beak's four bars
+       stacked into a ladder.
+
+       So: the features of a turned head are the upright features, turned. Each upright pixel is
+       turned by the same angle about the features' centroid and must find its own colour there.
+       Square-to-the-glass features match 65-77% at 30-45 degrees; turned ones 96-97%, the rest
+       being where two roundings of one edge disagree. */
+    static uint16_t a[FACE_W * FACE_H], b[FACE_W * FACE_H];
+    static uint16_t c[FACE_W * FACE_H], d[FACE_W * FACE_H];
+    for (int t = 0; t < 2; t++) {
+        const float talk = t ? 0.6f : 0.0f; /* the jaw open as well as shut */
+        double ax, ay, cx, cy;
+        face_features(0.0f, talk, a, b, &ax, &ay);
+        const float ups[] = {30.0f, 45.0f, -30.0f, -45.0f};
+        for (unsigned k = 0; k < sizeof(ups) / sizeof(ups[0]); k++) {
+            face_features(ups[k], talk, c, d, &cx, &cy);
+            const double r = ups[k] * M_PI / 180.0, cs = cos(r), sn = sin(r);
+            int hit = 0, all = 0;
+            for (int i = 0; i < FACE_W * FACE_H; i++) {
+                if (a[i] == b[i]) continue;
+                const double x = i % FACE_W - ax, y = i / FACE_W - ay;
+                const int X = (int)lround(cx + x * cs - y * sn);
+                const int Y = (int)lround(cy + x * sn + y * cs);
+                all++;
+                if (X >= 0 && X < FACE_W && Y >= 0 && Y < FACE_H && c[Y * FACE_W + X] == a[i]) hit++;
+            }
+            CHECK((double)hit / all > 0.93, "a righted head's eyes, lids and beak turn with it");
+        }
+    }
+}
+
 static void test_the_orientation_needs_a_band_crossed_on_purpose(void)
 {
     /* The owner: "the tilt going to 90 and causing an orientation change shouldn't happen right
@@ -4624,6 +4685,7 @@ int main(void)
     test_a_shake_is_several_jerks_not_one_bump();
     test_dizzy_sits_down_and_love_shows_hearts();
     test_the_head_rights_itself_against_the_tilt();
+    test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();
     test_the_open_mouth_is_the_smile_opening();
