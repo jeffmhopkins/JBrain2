@@ -1,6 +1,6 @@
 ---
 name: panel_notify
-version: 1
+version: 2
 permission: web
 params:
   type: object
