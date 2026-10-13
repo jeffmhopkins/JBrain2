@@ -7,7 +7,7 @@
 static const char *const NAMES[SET__COUNT] = {
     "brightness", "tts",       "notif_accept", "notif_quiet", "notif_chime", "night_on",
     "night_color", "night_from", "night_to",   "show_date",   "auto_rotate", "tz",
-    "volume",      "mic_gain",
+    "volume",      "mic_gain",    "imu_axes",
 };
 
 /* Brightness 50: what 0.0.4 settled the glass at and the owner has lived with since. Volume
@@ -16,7 +16,7 @@ static const char *const NAMES[SET__COUNT] = {
  * 32,767 — 1-2 dB from clipping on an ordinary voice — and the box heard both. 6 dB down halves
  * the peaks and keeps a raised voice off the rail. A panel that had `set mic_gain` keeps its own. */
 static const int32_t DEFAULTS[SET__COUNT] = {
-    50, 1, 1, 1, 1, 1, 0, 21 * 60 + 30, 6 * 60 + 30, 1, 1, TZ_DEFAULT, 80, 24,
+    50, 1, 1, 1, 1, 1, 0, 21 * 60 + 30, 6 * 60 + 30, 1, 1, TZ_DEFAULT, 80, 24, 0,
 };
 
 int32_t svc_settings_clamp(setting_t key, int32_t v)
@@ -29,6 +29,7 @@ int32_t svc_settings_clamp(setting_t key, int32_t v)
     case SET_TZ: return v < 0 || v >= TZ_ZONES ? TZ_DEFAULT : v;
     case SET_VOLUME: return v < VOLUME_FLOOR ? VOLUME_FLOOR : v > VOLUME_MAX ? VOLUME_MAX : v;
     case SET_MIC_GAIN: return v < 0 ? 0 : v > MIC_GAIN_MAX ? MIC_GAIN_MAX : v;
+    case SET_IMU_AXES: return v < 0 ? 0 : v > IMU_AXES_MAX ? IMU_AXES_MAX : v;
     default: return v ? 1 : 0;
     }
 }

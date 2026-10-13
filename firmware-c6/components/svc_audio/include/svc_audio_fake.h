@@ -32,6 +32,9 @@ void svc_audio_fake_posted(int status, const char *heard);
 /* A play: the box answers with the audio (`arrives`), it plays `to_the_end`, and its digest
  * matched (`verified`). Not to the end leaves it playing, as a stream still arriving would. */
 void svc_audio_fake_listen(bool arrives, bool to_the_end, bool verified);
+/* Listen (0.0.21): the box answers a reply's speech (`arrives`) of `total_ms` as one SPOKEN group,
+ * and `played_ms` of it has gone to the speaker; `to_the_end` finishes it. */
+void svc_audio_fake_speech(bool arrives, uint32_t total_ms, uint32_t played_ms, bool to_the_end);
 /* `ms` more of the message playing reached the speaker, as the audio task would count it. */
 void svc_audio_fake_played(uint32_t ms);
 /* New-message chimes the panel played. */

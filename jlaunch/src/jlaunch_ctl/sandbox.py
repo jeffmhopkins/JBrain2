@@ -1,5 +1,5 @@
 """Per-session unprivileged identities (S2.1 of
-``docs/plans/SECURITY_REVIEW_FIXES_PLAN.md``).
+``docs/archive/SECURITY_REVIEW_FIXES_PLAN.md``).
 
 The control server runs as root and holds ``JCODE_TOKEN``. A session's shell — and
 git, which runs a checkout's hooks, filters and fsmonitor — must not: as root, any of

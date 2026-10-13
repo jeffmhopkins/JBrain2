@@ -51,3 +51,12 @@ uint32_t thread_shape_end(uint32_t h, uint16_t n, bool loaded)
     h = fold(h, &n, sizeof n);
     return fold(h, &l, 1);
 }
+
+uint32_t thread_shape_hist(uint32_t h, const hist_view_t *v)
+{
+    const uint8_t rows[3] = {v->top, v->bottom, v->paged};
+    h = fold(h, rows, sizeof rows);
+    h = fold(h, &v->older, sizeof v->older);
+    h = fold(h, &v->newer, sizeof v->newer);
+    return fold(h, &v->start_at, sizeof v->start_at);
+}

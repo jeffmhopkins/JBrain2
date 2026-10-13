@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { ChatShareSheet } from "./ChatShareSheet";
 import type { AgentSession } from "./types";
 
@@ -29,6 +29,7 @@ const LINK = {
 describe("ChatShareSheet", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.spyOn(api, "chatShareSensitivity").mockResolvedValue([]);
   });
 
   it("mints a link, shows it once, and tells the list to refresh", async () => {
@@ -36,10 +37,10 @@ describe("ChatShareSheet", () => {
     const mint = vi.spyOn(api, "mintChatShare").mockResolvedValue({ ...LINK, token: "tok" });
     const onChanged = vi.fn();
     render(<ChatShareSheet session={chat()} onClose={vi.fn()} onChanged={onChanged} />);
-    expect(screen.queryByText(/can read your/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/has read your/)).not.toBeInTheDocument();
     fireEvent.click(await screen.findByRole("button", { name: /Create share link/ }));
     expect(await screen.findByText(`${window.location.origin}/chat/s/tok`)).toBeInTheDocument();
-    expect(mint).toHaveBeenCalledWith("s1");
+    expect(mint).toHaveBeenCalledWith("s1", false);
     expect(onChanged).toHaveBeenCalled();
     expect(screen.getByText(/isn’t shown again/)).toBeInTheDocument();
     expect(screen.getByText("Not opened yet")).toBeInTheDocument();
@@ -47,6 +48,7 @@ describe("ChatShareSheet", () => {
 
   it("warns about firewalled domains and takes a second tap to publish", async () => {
     vi.spyOn(api, "chatShares").mockResolvedValue([]);
+    vi.spyOn(api, "chatShareSensitivity").mockResolvedValue(["finance", "health"]);
     const mint = vi.spyOn(api, "mintChatShare").mockResolvedValue({ ...LINK, token: "tok" });
     render(
       <ChatShareSheet
@@ -58,7 +60,50 @@ describe("ChatShareSheet", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Create share link/ }));
     expect(mint).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: /Tap again to share/ }));
-    await waitFor(() => expect(mint).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(mint).toHaveBeenCalledWith("s1", true));
+  });
+
+  it("warns from the server's answer for a re-scoped chat that read mail", async () => {
+    // The session's scopes are harmless now; its stored turns are not.
+    vi.spyOn(api, "chatShares").mockResolvedValue([]);
+    vi.spyOn(api, "chatShareSensitivity").mockResolvedValue(["health", "mail"]);
+    const mint = vi.spyOn(api, "mintChatShare").mockResolvedValue({ ...LINK, token: "tok" });
+    render(<ChatShareSheet session={chat()} onClose={vi.fn()} />);
+    expect(await screen.findByText("Medical, Email")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Create share link/ }));
+    expect(mint).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /Tap again to share/ }));
+    await waitFor(() => expect(mint).toHaveBeenCalledWith("s1", true));
+  });
+
+  it("shows a reason it has no label for as its code rather than an empty warning", async () => {
+    vi.spyOn(api, "chatShares").mockResolvedValue([]);
+    vi.spyOn(api, "chatShareSensitivity").mockResolvedValue(["contacts", "measurements"]);
+    const mint = vi.spyOn(api, "mintChatShare").mockResolvedValue({ ...LINK, token: "tok" });
+    render(<ChatShareSheet session={chat()} onClose={vi.fn()} />);
+    expect(await screen.findByText("contacts, Measurement")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Create share link/ }));
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it("re-arms with the reasons when the server refuses an unconfirmed mint", async () => {
+    vi.spyOn(api, "chatShares").mockResolvedValue([]);
+    const sensitivity = vi
+      .spyOn(api, "chatShareSensitivity")
+      .mockResolvedValueOnce([])
+      .mockResolvedValue(["memory"]);
+    const mint = vi
+      .spyOn(api, "mintChatShare")
+      .mockRejectedValueOnce(new ApiError(409, "Request failed: 409"))
+      .mockResolvedValue({ ...LINK, token: "tok" });
+    render(<ChatShareSheet session={chat()} onClose={vi.fn()} />);
+    await waitFor(() => expect(sensitivity).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: /Create share link/ }));
+    expect(await screen.findByText("Memory")).toBeInTheDocument();
+    expect(mint).toHaveBeenCalledWith("s1", false);
+    fireEvent.click(screen.getByRole("button", { name: /Tap again to share/ }));
+    await waitFor(() => expect(mint).toHaveBeenLastCalledWith("s1", true));
+    expect(await screen.findByText(`${window.location.origin}/chat/s/tok`)).toBeInTheDocument();
   });
 
   it("lists live links with their use and revokes one", async () => {

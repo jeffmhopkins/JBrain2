@@ -188,3 +188,43 @@ def _redeem_config(subject_id: str) -> dict:
         bind_on_first=False,
         ttl_hours=24.0,
     )
+
+
+async def test_redeem_keeps_a_signed_in_owner_and_spends_no_open(
+    maker: async_sessionmaker,
+) -> None:
+    """The intake page redeems on load, so an owner opening their own link must not be
+    signed out: 409, no Set-Cookie, the owner session still live, and no open burned — the
+    same link then redeems for a stranger as before (security plan S4)."""
+    from jbrain.intake import service
+
+    sid = await _subject(maker)
+    auth_repo = SqlAuthRepo(maker)
+    owner_key = await auth_service.rotate_owner_key(auth_repo)
+    owner_token = await auth_service.login(auth_repo, owner_key, "test")
+    owner = await auth_service.authenticate(auth_repo, owner_token)
+    assert owner is not None
+    ctx = SessionContext(principal_id=owner.id, principal_kind="owner")
+    repo = SqlIntakeRepo(maker)
+    secret, record = await service.mint_intake_link(
+        repo, ctx, service.IntakeLinkConfig(**_redeem_config(sid))
+    )
+    app = _app(maker)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        client.cookies.set("jbrain_session", owner_token)
+        refused = await client.post("/api/intake/redeem", json={"secret": secret})
+        assert refused.status_code == 409
+        assert "set-cookie" not in {k.lower() for k in refused.headers}
+        assert client.cookies.get("jbrain_session") == owner_token
+        assert (await client.get("/api/intake/links")).status_code == 200
+    link = await repo.get_link(ctx, record.id)
+    assert link is not None and link.opens_used == 0
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as stranger:
+        redeemed = await stranger.post("/api/intake/redeem", json={"secret": secret})
+        assert redeemed.status_code == 200
+        assert "Max-Age=" in redeemed.headers["set-cookie"]
+        who = await auth_service.authenticate(
+            auth_repo, stranger.cookies.get("jbrain_session") or ""
+        )
+        assert who is not None and who.kind == "intake_link"

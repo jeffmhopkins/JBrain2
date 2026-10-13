@@ -19,6 +19,12 @@ THE FORMAT. `JT2`, then records until the body ends. Every record is
     0x07 STEP_START  index: u8 | UTF-8, at most STEP_BYTES: a tool the agent started
                      ("web_search · tide Port St John"); the same index again relabels it
     0x08 STEP_DONE   index: u8 | ok: u8 (1 succeeded, 0 failed)
+    0x09 SPOKEN  from: u16 | to: u16 | bytes: u32, little-endian: the PCM records that follow
+                 (`bytes` of them) speak the text from `from` to `to` thousandths of the way
+                 through — what the panel's Listen ring fills by (0.0.21)
+    0x0A IDS     asked: u64 | answer: u64, little-endian: the `seq` of the question and of the
+                 answer this turn filed, once it has — what the panel names them by to Listen
+                 and to Load earlier (0.0.21)
 
 THE STEPS (firmware-c6 0.0.14, asked for with `steps=1`). Owner, 2026-10-12: "if Jerv is using
 tools we should be able to see that too … you could say using xtool or whatever the tool
@@ -64,6 +70,7 @@ log = structlog.get_logger()
 MAGIC = b"JT2"
 HEARD, STATUS, ALIVE, ANSWER, PCM, END = 0x01, 0x02, 0x03, 0x04, 0x05, 0x06
 STEP_START, STEP_DONE = 0x07, 0x08
+SPOKEN, IDS = 0x09, 0x0A
 ANSWER_SPEECH, ANSWER_CUT = 0x01, 0x02
 END_OK, END_NOTHING, END_FAILED = 0, 1, 2
 
@@ -144,6 +151,14 @@ def end_record(code: int, why: str = "") -> bytes:
 def answer_record(text: str, *, speech: bool, cut: bool) -> bytes:
     flags = (ANSWER_SPEECH if speech else 0) | (ANSWER_CUT if cut else 0)
     return record(ANSWER, bytes([flags]) + cut_utf8(text, MAX_RECORD - 1))
+
+
+def spoken_record(start: int, end: int, pcm_bytes: int) -> bytes:
+    return record(SPOKEN, struct.pack("<HHI", start, end, pcm_bytes))
+
+
+def ids_record(asked: int, answer: int) -> bytes:
+    return record(IDS, struct.pack("<QQ", asked, answer))
 
 
 def pcm_records(pcm: bytes) -> list[bytes]:
@@ -342,12 +357,26 @@ def speech_groups(text: str) -> list[str]:
 Synth = Callable[[str, int], Awaitable[bytes]]
 
 
+def group_marks(groups: list[str]) -> list[tuple[int, int]]:
+    """Where each group starts and ends in the whole text, in thousandths: what a SPOKEN record
+    says, so the panel's ring fills by how much of the answer has been said, not by time."""
+    total = sum(len(g) for g in groups) or 1
+    out: list[tuple[int, int]] = []
+    done = 0
+    for g in groups:
+        out.append((done * 1000 // total, (done + len(g)) * 1000 // total))
+        done += len(g)
+    return out
+
+
 async def speech(text: str, synth: Synth, stats: dict[str, Any]) -> AsyncGenerator[bytes, None]:
     """PCM records for all of `text`, one group synthesised ahead of the one being sent; ALIVE
-    while a slow group is still coming. Stops at SPEECH_CAP_S of audio. A group that cannot be
-    spoken ends the speech, not the answer."""
+    while a slow group is still coming. Each group's PCM follows a SPOKEN record saying which part
+    of the text it says (a panel before 0.0.21 skips it). Stops at SPEECH_CAP_S of audio. A group
+    that cannot be spoken ends the speech, not the answer."""
     budget = int(SPEECH_CAP_S * PANEL_RATE * 2)
     groups = speech_groups(text)
+    marks = group_marks(groups)
     nxt: asyncio.Task[bytes] | None = None
     try:
         for i, _group in enumerate(groups):
@@ -372,6 +401,8 @@ async def speech(text: str, synth: Synth, stats: dict[str, Any]) -> AsyncGenerat
                 nxt = asyncio.ensure_future(synth(groups[i + 1], budget))
             stats["speech_bytes"] = stats.get("speech_bytes", 0) + len(pcm)
             stats["groups"] = i + 1
+            pcm = pcm[: len(pcm) - len(pcm) % 2]
+            yield spoken_record(*marks[i], len(pcm))
             for rec in pcm_records(pcm):
                 yield rec
     finally:
@@ -397,6 +428,8 @@ class Turn:
     cap_s: float = panel_agent.AGENT_STREAM_CAP_S
     #: The panel asked for STEP records (`steps=1`, firmware-c6 0.0.14).
     steps: bool = False
+    #: The question's and the answer's `seq` once the turn has filed them (IDS, 0.0.21).
+    ids: Callable[[panel_agent.Started], Awaitable[tuple[int, int] | None]] | None = None
     stats: dict[str, Any] = field(default_factory=dict)
 
 
@@ -522,6 +555,15 @@ async def agent_turn(turn: Turn) -> AsyncGenerator[bytes, None]:
     text, cut = panel_agent.screen_text(full, TEXT_BYTES)
     synth = await turn.synth(started) if turn.voice else None
     yield answer_record(text, speech=synth is not None, cut=cut)
+    if turn.ids is not None and answer.stop_reason != "still_running" and started.early is None:
+        try:
+            named = await turn.ids(started)
+        except Exception as exc:  # noqa: BLE001 — Listen goes without, the answer does not
+            log.warning("panel_stream.ids_failed", error=repr(exc))
+            named = None
+        if named is not None:
+            yield ids_record(*named)
+            stats["ids"] = list(named)
     stats["answer_bytes"] = len(full.encode("utf-8"))
     stats["cut"] = cut
     if synth is not None:
@@ -530,3 +572,18 @@ async def agent_turn(turn: Turn) -> AsyncGenerator[bytes, None]:
             yield rec
         stats["tts_ms"] = int((time.monotonic() - tts0) * 1000)
     yield end_record(END_OK)
+
+
+async def listen(text: str, synth: Synth, stats: dict[str, Any]) -> AsyncGenerator[bytes, None]:
+    """A stored answer spoken again (Listen, firmware-c6 0.0.21): the whole of `text`, sentence by
+    sentence, as the speech a live turn ends with — SPOKEN marks and PCM, ALIVE while a group is
+    still being synthesised — then END. No HEARD, no ANSWER: the words are already on the glass."""
+    t0 = time.monotonic()
+    yield MAGIC
+    async for rec in speech(text, synth, stats):
+        yield rec
+    stats["tts_ms"] = int((time.monotonic() - t0) * 1000)
+    if stats.get("speech_failed") and not stats.get("speech_bytes"):
+        yield end_record(END_FAILED, "the box could not speak")
+    else:
+        yield end_record(END_OK)

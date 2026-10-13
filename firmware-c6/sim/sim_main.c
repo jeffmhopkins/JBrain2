@@ -15,6 +15,7 @@
 #include "apps.h"
 #include "dbg_core.h"
 #include "lvgl.h"
+#include "settings_model.h"
 #include "shell.h"
 #include "sim_png.h"
 #include "alarm_port_fake.h"
@@ -23,16 +24,24 @@
 #include "svc_box_fake.h"
 #include "svc_convo_drv.h"
 #include "svc_display.h"
+#include "disp_logic.h"
+#include "orient_port_fake.h"
+#include "svc_calib.h"
 #include "svc_display_fake.h"
+#include "svc_orient.h"
+#include "svc_orient_drv.h"
 #include "svc_messages_fake.h"
 #include "svc_net_fake.h"
+#include "svc_notice_drv.h"
 #include "svc_notice_fake.h"
+#include "sim_notice.h"
 #include "svc_post_drv.h"
 #include "svc_power_fake.h"
 #include "svc_rtc.h"
 #include "svc_rtc_fake.h"
 #include "svc_settings.h"
 #include "svc_settings_fake.h"
+#include "settings_sync.h"
 #include "svc_siblings_drv.h"
 #include "ui_kit.h"
 
@@ -56,6 +65,31 @@ static uint32_t sim_ms(void)
     return s_ms;
 }
 
+/* The glass itself (0.0.18): each strip turned onto it exactly as the device's flush turns it
+   (disp_logic.c), so a rotated state's PNG is what the panel shows, not what LVGL drew. */
+static uint16_t s_glass[W * H];
+
+static void to_glass(const lv_area_t *a, const uint16_t *px)
+{
+    static uint16_t strip[W * STRIP_ROWS], piece[DISP_ROT_PIECE_PX];
+    const uint8_t rot = svc_display_rotation();
+    const disp_win_t l = {a->x1, a->y1, a->x2, a->y2};
+    const int32_t w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
+    memcpy(strip, px, (size_t)(w * h) * 2);
+    if (rot == 1 || rot == 3) {
+        const int32_t k = disp_rot_piece_rows(h);
+        for (int32_t r0 = 0; r0 < w; r0 += k) {
+            const disp_win_t g = disp_rot_piece(rot, W, l, strip, r0, k, piece);
+            for (int32_t y = g.y1; y <= g.y2; y++)
+                memcpy(&s_glass[y * W + g.x1], &piece[(y - g.y1) * h], (size_t)h * 2);
+        }
+        return;
+    }
+    if (rot == 2) disp_reverse(strip, (uint32_t)(w * h));
+    const disp_win_t g = disp_rot_area(rot, W, l);
+    for (int32_t y = g.y1; y <= g.y2; y++) memcpy(&s_glass[y * W + g.x1], &strip[(y - g.y1) * w], (size_t)w * 2);
+}
+
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
 {
     /* A capture must see whole rows top to bottom. A strip that is not full width means LVGL
@@ -67,6 +101,7 @@ static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
         else
             dbg_shot_stripe(&s_cap.shot, (uint16_t)a->y1, (uint16_t)(a->y2 - a->y1 + 1), (const uint16_t *)px);
     }
+    to_glass(a, (const uint16_t *)px);
     lv_display_flush_ready(d);
 }
 
@@ -203,20 +238,130 @@ static void box_answer(const convo_req_t *r)
     svc_convo_done(r, 200, box_body(body), strlen(body));
 }
 
-/* Every request the glass made, answered at once — except a list held for the loading board. */
+/* ---- Load earlier (0.0.21), answered as `panel_convo.history` and `panel_messages.history` do:
+ * the T-Rex chat's 48 messages for Jerv (the mock's HistoryLoad boards), Dave's wheat-farm chat at
+ * its start (HistoryStart), and sixteen of her messages for Quorra (HistoryQuorra). ---- */
+
+#define TREX_N 48
+#define TREX_SEQ0 1000u
+static bool s_trex, s_wheat, s_hist_hold;
+
+static const char *trex_text(int i, char *buf, size_t cap)
+{
+    /* i is 1-based, oldest first: odd the owner's, even Jerv's. */
+    static const char *const LAST[][2] = {
+        {"Where was Sue found?", "In South Dakota, in 1990. It is named after her."},
+        {"Is Sue a girl?", "Nobody can tell from the bones. The name is just after the finder."},
+        {"Was it the biggest meat-eater?", "Not quite. Spinosaurus was longer, but T-Rex was heavier."},
+    };
+    const int pair = (i - 1) / 2, mine = i % 2;
+    if (pair >= TREX_N / 2 - 3) return LAST[pair - (TREX_N / 2 - 3)][mine ? 0 : 1];
+    if (mine) snprintf(buf, cap, "Tell me more about T-Rex, part %d?", pair + 1);
+    else snprintf(buf, cap, "Here is part %d: T-Rex lived about 68 million years ago in North America.", pair + 1);
+    return buf;
+}
+
+static int64_t hist_start_at(void)
+{
+    int64_t now = 0;
+    svc_rtc_epoch(&now);
+    rtc_time_t t;
+    svc_rtc_now(&t);
+    /* Yesterday 18:20, local. */
+    return now - (t.h * 3600 + t.m * 60 + t.s) - 86400 + 18 * 3600 + 20 * 60;
+}
+
+static uint32_t query_num(const char *path, const char *key)
+{
+    const char *at = strstr(path, key);
+    return at ? (uint32_t)strtoul(at + strlen(key), NULL, 10) : 0;
+}
+
+/* Her history: sixteen messages, ...0101 to ...0116, the last two the thread's live ones. */
+#define QHIST_N 16
+static void quorra_id(int i, char out[37])
+{
+    snprintf(out, 37, "6b000000-0000-4000-8000-000000000%03u", (unsigned)(100 + i) % 1000u);
+}
+
+static void hist_answer(const convo_req_t *r)
+{
+    static char body[HIST_BODY_MAX];
+    const bool agent = strstr(r->path, "/convo/") != NULL;
+    const bool after = strstr(r->path, "after=") != NULL;
+    const uint32_t limit = query_num(r->path, "limit=");
+    int n = agent ? (strstr(r->path, "/dave/") ? (s_wheat ? 2 : 0) : (s_trex ? TREX_N : 0)) : QHIST_N;
+    /* The anchor's place, 1-based; 0 for none. */
+    int anchor = 0;
+    if (agent) {
+        const uint32_t seq = query_num(r->path, after ? "after=" : "before=");
+        anchor = seq ? (int)(seq - TREX_SEQ0) : 0;
+    } else {
+        const char *at = strstr(r->path, after ? "after=" : "before=");
+        if (at) anchor = atoi(at + strlen(after ? "after=" : "before=") + 33) - 100;
+    }
+    int lo, hi; /* the page, 1-based inclusive */
+    if (after) {
+        lo = anchor + 1;
+        hi = anchor + (int)limit < n ? anchor + (int)limit : n;
+    } else {
+        hi = anchor ? anchor - 1 : n;
+        lo = hi - (int)limit + 1 > 1 ? hi - (int)limit + 1 : 1;
+    }
+    int o = snprintf(body, sizeof body, "{\"messages\":[");
+    for (int i = lo; limit && i <= hi; i++) {
+        char buf[96], id[40];
+        const char *text = agent ? (strstr(r->path, "/dave/") ? (i % 2 ? "How do I keep the wheat growing?"
+                                                                     : "Water within four blocks of every crop, and light so it grows at night.")
+                                          : trex_text(i, buf, sizeof buf))
+                                 : (i % 3 ? "Goodnight Daddy." : "Goodnight sweetheart, sleep well.");
+        if (agent) snprintf(id, sizeof id, "%u", TREX_SEQ0 + (unsigned)i);
+        else {
+            char u[37];
+            quorra_id(i, u);
+            snprintf(id, sizeof id, "\"%s\"", u);
+        }
+        o += snprintf(body + o, sizeof body - (size_t)o,
+                      "%s{\"id\":%s,\"mine\":%s,\"text\":\"%s\",\"ms\":%d,\"played\":true,\"voice\":%s}",
+                      i > lo ? "," : "", id, (agent ? i % 2 : !(i % 3)) ? "true" : "false", text,
+                      2000 + i * 37, agent ? "false" : "true");
+    }
+    const int older = limit && hi >= lo ? lo - 1 : (after ? anchor : (anchor ? anchor - 1 : n));
+    const int newer = limit && hi >= lo ? n - hi : (anchor ? n - anchor : 0);
+    o += snprintf(body + o, sizeof body - (size_t)o, "],\"older\":%d,\"newer\":%d,\"start_at\":", older, newer);
+    if (older == 0 && n) snprintf(body + o, sizeof body - (size_t)o, "%lld}", (long long)hist_start_at());
+    else snprintf(body + o, sizeof body - (size_t)o, "null}");
+    svc_convo_done(r, 200, box_body(body), strlen(body));
+}
+
+/* Every request the glass made, answered at once — except a list held for the loading board, and
+   a page held for "Loading earlier…". */
 static void fake_box(void)
 {
-    static convo_req_t held;
-    static bool holding;
+    static convo_req_t held, held_hist;
+    static bool holding, holding_hist;
     convo_req_t r;
     if (holding && !s_box_hold) {
         holding = false;
         box_answer(&held);
     }
+    if (holding_hist && !s_hist_hold) {
+        holding_hist = false;
+        hist_answer(&held_hist);
+    }
     while (svc_convo_take(&r)) {
         if (r.kind == CONVO_RQ_RECENT && s_box_hold) {
             held = r;
             holding = true;
+            continue;
+        }
+        if (r.kind == CONVO_RQ_HISTORY) {
+            if (s_hist_hold && r.side) {
+                held_hist = r;
+                holding_hist = true;
+            } else {
+                hist_answer(&r);
+            }
             continue;
         }
         box_answer(&r);
@@ -267,6 +412,14 @@ static const char POST_Q_LONG[] =
     "\"played\":false,\"voice\":true}]}";
 static bool s_post_long;
 
+static bool s_quorra_hist;
+static const char POST_Q_HIST[] =
+    "{\"device_id\":\"" SIM_Q "\",\"name\":\"Quorra\",\"tag\":\"5e1d0c2a\",\"messages\":["
+    "{\"id\":\"6b000000-0000-4000-8000-000000000115\",\"mine\":false,"
+    "\"text\":\"Goodnight Daddy.\",\"ms\":2000,\"played\":true,\"voice\":true},"
+    "{\"id\":\"6b000000-0000-4000-8000-000000000116\",\"mine\":true,"
+    "\"text\":\"Goodnight sweetheart, sleep well.\",\"ms\":3000,\"played\":true,\"voice\":true}]}";
+
 static void fake_post_box(void)
 {
     post_req_t r;
@@ -276,7 +429,9 @@ static void fake_post_box(void)
             continue;
         }
         char body[2048];
-        if (strstr(r.path, SIM_Q) && s_post_long)
+        if (strstr(r.path, SIM_Q) && s_quorra_hist)
+            snprintf(body, sizeof body, "%s", POST_Q_HIST);
+        else if (strstr(r.path, SIM_Q) && s_post_long)
             snprintf(body, sizeof body, "%s", POST_Q_LONG);
         else if (strstr(r.path, SIM_Q))
             snprintf(body, sizeof body, POST_Q, s_post_new ? POST_Q_NEW : s_post_sent ? POST_Q_SENT : "");
@@ -297,10 +452,13 @@ static void step(uint32_t ms)
         svc_convo_service();
         fake_post_box();
         svc_post_service();
+        svc_notice_service();
         if (svc_post_take_chime(svc_audio_talking() || svc_audio_replying() || svc_audio_playing() ||
                                 svc_audio_ringing()))
             svc_audio_chime();
         svc_alarms_service(svc_rtc_uptime_ms());
+        svc_orient_service(svc_rtc_uptime_ms());
+        svc_display_fake_service();
         shell_pump();
         lv_timer_handler();
     }
@@ -412,6 +570,8 @@ static void boot(const char *only)
     alarm_port_fake_wipe();
     svc_alarms_init();
     svc_notice_init();
+    svc_orient_start();
+    svc_calib_custom();
     dbg_sys_init();
     dbg_cmd_bind("screenshot", cmd_screenshot);
     dbg_cmd_bind("set", cmd_set);
@@ -447,6 +607,15 @@ static const char ALARMS[] =
 /* The mock's sample conversations. The image ships none: they are the sim's, added the way the
  * services add any message — the agents' directly, the people's from the box's own JSON through
  * svc_post (0.0.16), answered by fake_post_box once the siblings are bound. */
+/* The Listen boards' chat (ListenIdle … ListenWorking): the tides, as the box named them. */
+static bool s_tides;
+#define TIDES_LONG                                                                                 \
+    "It is, if you go in the afternoon. Low tide is at 14:52, so the pools by the jetty will be "  \
+    "open from about 13:30. Watch the time: the tide turns at 14:52 and comes back fast over the " \
+    "flat rocks, so start back up the beach by 16:30 at the latest. Wear shoes with grip: the "    \
+    "rocks near the jetty are covered in weed. It will be 29 degrees with a light onshore breeze, " \
+    "and sunset is at 19:12 if you want to stay on."
+
 static void fixtures(void)
 {
     svc_alarms_offer(ALARMS, sizeof ALARMS - 1);
@@ -456,14 +625,82 @@ static void fixtures(void)
         const char *thread;
         msg_t m;
     } SAMPLES[] = {
-        {"jerv", {1, true, true, true, false, 3, "Add milk to the shopping list.", "", 0}},
-        {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", "", 0}},
-        {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", "", 0}},
-        {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", "", 0}},
+        {"jerv", {1, true, true, true, false, 3, "Add milk to the shopping list.", "", 0, 801}},
+        {"jerv", {2, false, false, true, false, 0, "Added milk to your shopping list.", "", 0, 802}},
+        {"dave", {11, true, true, true, false, 2, "Where did I leave my base?", "", 0, 811}},
+        {"dave", {12, false, false, true, false, 0, "North of spawn, past the river. I can point you there.", "", 0, 812}},
+    }, TIDES[] = {
+        {"jerv", {1, true, true, true, false, 3, "When's low tide at Port St John today?", "", 0, 901}},
+        {"jerv", {2, false, false, true, false, 0, "Low tide is at 14:52 and high tide at 21:07.", "", 0, 902}},
+        {"jerv", {3, true, true, true, false, 4, "Is it good for rock pools this afternoon?", "", 0, 903}},
+        {"jerv", {4, false, false, true, false, 0, "", "", 0, 904}},
+    }, WHEAT[] = {
+        {"dave", {11, true, true, true, false, 4, "How do I keep the wheat growing at night?", "", 0, 1001}},
+        {"dave", {12, false, false, true, false, 0, "Put a torch every few blocks so the light stays at nine or more, and keep water within four blocks of every crop. Then it grows while you sleep. Bone meal speeds it up if you have some.", "", 0, 1002}},
     };
-    for (size_t i = 0; i < sizeof SAMPLES / sizeof *SAMPLES; i++)
-        svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
+    if (s_tides) {
+        for (size_t i = 0; i < sizeof TIDES / sizeof *TIDES; i++) {
+            msg_t m = TIDES[i].m;
+            if (m.id == 4) {
+                snprintf(m.text, sizeof m.text, "%.200s…", TIDES_LONG);
+                svc_messages_fake_long("jerv", 4, TIDES_LONG);
+            }
+            svc_messages_fake_add(TIDES[i].thread, &m);
+        }
+    } else if (s_trex) {
+        for (int i = TREX_N - 3; i <= TREX_N; i++) {
+            char buf[96];
+            msg_t m = {.id = (uint32_t)i, .mine = i % 2, .voice = i % 2, .played = true,
+                       .dur_s = 4, .box_id = TREX_SEQ0 + (uint32_t)i};
+            snprintf(m.text, sizeof m.text, "%s", trex_text(i, buf, sizeof buf));
+            svc_messages_fake_add("jerv", &m);
+        }
+    } else {
+        for (size_t i = 0; i < 2; i++) svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
+    }
+    if (s_wheat) {
+        for (size_t i = 0; i < sizeof WHEAT / sizeof *WHEAT; i++)
+            svc_messages_fake_add(WHEAT[i].thread, &WHEAT[i].m);
+    } else {
+        for (size_t i = 2; i < 4; i++) svc_messages_fake_add(SAMPLES[i].thread, &SAMPLES[i].m);
+    }
     step(20);
+}
+
+/* Each fixture is the box's current conversation, so the header carries its title. */
+static void tides(void)
+{
+    s_tides = true;
+    s_box_cur[0] = 1;
+}
+
+static void trex(void)
+{
+    s_trex = true;
+    s_box_cur[0] = 2;
+}
+
+static void trex_hold(void)
+{
+    trex();
+    s_hist_hold = true;
+}
+
+static void wheat(void)
+{
+    s_wheat = true;
+    s_box_cur[1] = 1;
+}
+
+static void wheat_tides(void)
+{
+    wheat();
+    tides();
+}
+
+static void quorra_hist(void)
+{
+    s_quorra_hist = true;
 }
 
 static void no_names(void)
@@ -619,6 +856,86 @@ static void session(void)
     post_arrives();
 }
 
+/* 0.0.19's notice boards (the owner's decisions of 2026-10-13), sent as the box sends them. */
+static void notify_info(void)
+{
+    sim_notice_push(&(sim_notice_t){1, "Ops", "Disk 91% full",
+                                    "The box is running low on space. Ops → Disk shows what is using it.",
+                                    0, {0}, false, 20, SIM_PIC_NONE, 0});
+}
+
+static void notify_question(void)
+{
+    sim_notice_push(&(sim_notice_t){2, "Jerv", "Run the cleanup now?",
+                                    "Frees about 38 GB of build cache. Nothing you keep is touched.", 2,
+                                    {"Yes", "No"}, true, 0, SIM_PIC_NONE, 0});
+    notify_info();
+}
+
+static void notify_question_sound(void)
+{
+    sim_notice_push(&(sim_notice_t){3, "Jerv", "Let the plumber in?",
+                                    "He is at the front door. I can unlock it for ten minutes.", 2,
+                                    {"Yes", "No"}, false, 0, SIM_PIC_NONE, 5000});
+}
+
+static void notify_picture(void)
+{
+    sim_notice_push(&(sim_notice_t){4, "Morning brief", "Rain at 3 pm", "", 0, {0}, false, 8,
+                                    SIM_PIC_WEATHER, 0});
+}
+
+static void notify_night(void)
+{
+    svc_rtc_fake_set(23, 12);
+    sim_notice_push(&(sim_notice_t){5, "Evening brief", "Tomorrow: rain at 3 pm",
+                                    "Take the umbrella. It clears by 6.", 0, {0}, false, 20,
+                                    SIM_PIC_WEATHER, 0});
+}
+
+static void notify_night_question(void)
+{
+    svc_rtc_fake_set(23, 12);
+    notify_question();
+}
+
+static void notify_banner(void)
+{
+    sim_notice_push(&(sim_notice_t){6, "Minecraft", "Update the server?", "Two players are on.", 3,
+                                    {"Now", "In 10 min", "Skip"}, false, 0, SIM_PIC_MINECRAFT, 0});
+}
+
+static void notify_audio(void)
+{
+    sim_notice_push(&(sim_notice_t){7, "Jerv", "The pizza is here", "The driver is at the front door.",
+                                    0, {0}, false, 20, SIM_PIC_NONE, 6000});
+}
+
+static void notify_picture_turned(void)
+{
+    orient_port_fake_set(-15400, 0, 5600);
+    notify_picture();
+}
+
+/* 0.0.18: the panel turned, as the fake accelerometer reads it (default axes: a reading is the
+   opposite of down; ~0.95 g in the glass's plane, the rest through it). */
+static void turn_right(void)
+{
+    orient_port_fake_set(-15400, 0, 5600);
+}
+
+static void upside_down(void)
+{
+    orient_port_fake_set(0, 15400, 5600);
+}
+
+/* The QMI8658 did not answer at boot. */
+static void no_imu(void)
+{
+    orient_port_fake_fail("id");
+    svc_orient_start();
+}
+
 #define CMDS 8
 typedef struct {
     const char *name;
@@ -659,6 +976,23 @@ typedef struct {
  * steps, the last still running and one failed; and, after them, the answer. */
 #define STEPS "steps"
 #define REPLY_TIDE "reply tide"
+/* Not debug commands (0.0.21): Listen on reply `id` of the open agent's thread, as its button
+ * would; the box answers it with speech of 20 s, 14 s of it played; and a page held for "Loading
+ * earlier…" lets go. */
+#define SPEAK(id) "speak " #id
+#define SPEECH "speech"
+#define HIST_GO "history go"
+/* Not a debug command (0.0.21): the PWA's change reaches the panel (brightness 30, auto-rotate
+ * off, the night colour amber) through the panel's own parse and apply. */
+#define PWA_SETTINGS "pwa settings"
+/* Not a debug command (0.0.21): the fake box streams four steps, the last still running. */
+#define STEPS_N(n) "steps " #n
+/* Not a debug command (0.0.18): the first N taps of a touch calibration, each on its cross. */
+#define CAL_TAPS_N(n) "cal taps " #n
+/* Not debug commands (0.0.19): the notice's sound reaches the speaker and 2 s of it plays; or
+ * it plays to its end. */
+#define SOUND_PLAYING "notice sound playing"
+#define SOUND_DONE "notice sound done"
 
 /* Mock boards 1-17 (docs/mocks/jpanel-c6/canvas.json), by the live panel's `start` names. */
 static const state_t STATES[] = {
@@ -713,6 +1047,17 @@ static const state_t STATES[] = {
     {"settings", NULL, {OPEN("settings")}},
     {"settings-end", NULL, {OPEN("settings"), SCROLL_END}},
     {"settings-usb", no_battery, {OPEN("settings")}},
+    /* 0.0.18: the panel turned on its right edge, and upside down: the content turned to match
+       (the PNG is the glass, each strip turned the device's way). */
+    {"home-turned", turn_right, {WAIT(1200)}},
+    {"clock-upside-down", upside_down, {OPEN("clock"), WAIT(1200)}},
+    /* No tilt sensor: the Auto-rotate switch dead, and why. */
+    {"settings-no-imu", no_imu, {OPEN("settings")}},
+    /* Touch calibration (mock Calib.dc.html): the second cross with one tap on it; a tap that
+       missed; and the card once saved (Today, Reset calibration). */
+    {"calib", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), CAL_TAPS_N(4)}},
+    {"calib-missed", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), TAP(240, 400), WAIT(200)}},
+    {"calib-saved", NULL, {OPEN("settings"), SCROLL_END, TAP_LABEL("Calibrate"), CAL_TAPS_N(12), WAIT(600), SCROLL_END}},
     /* The first tap on Disconnect: rose, "Tap again to disconnect". */
     {"settings-armed", NULL, {OPEN("settings"), SCROLL_END, TAP(240, 418), WAIT(300)}},
     {"updating", downloading, {OPEN("settings"), SCROLL(680)}},
@@ -736,8 +1081,20 @@ static const state_t STATES[] = {
     {"alarm-snoozed", ring, {WAIT(100), KEY_DOWN, KEY_UP, WAIT(400), HOLD_MS(240, 240, 2100), WAIT(2400)}},
     /* The debug relay's `inject event=alarm_test`: the whole ring path, with no alarm set. */
     {"alarm-test", NULL, {"{\"cmd\":\"inject\",\"event\":\"alarm_test\",\"name\":\"beeps\"}", WAIT(300)}},
-    {"notify-info", push_info, {WAIT(100)}},
-    {"notify-question", push_question, {WAIT(100)}},
+    /* 0.0.19, the mock boards of 2026-10-13: a plain notice 2 s in (18 s left on its line), a
+       question (no countdown) first of two, a question whose sound has played (Play again), a
+       full picture 3 s in, a picture at night behind Show picture and then shown, a question at
+       night, a banner over three answers, a sound 2 s into its 6, and a picture on its side. */
+    {"notify-info", notify_info, {WAIT(1900)}},
+    {"notify-question", notify_question, {WAIT(100)}},
+    {"notify-question-sound", notify_question_sound, {WAIT(100), SOUND_DONE}},
+    {"notify-picture", notify_picture, {WAIT(2900)}},
+    {"notify-night", notify_night, {WAIT(1900)}},
+    {"notify-night-shown", notify_night, {WAIT(1900), TAP_LABEL("Show picture"), WAIT(300)}},
+    {"notify-night-question", notify_night_question, {WAIT(100)}},
+    {"notify-banner", notify_banner, {WAIT(100)}},
+    {"notify-audio", notify_audio, {WAIT(100), SOUND_PLAYING}},
+    {"notify-picture-turned", notify_picture_turned, {WAIT(2900)}},
     /* KEY from Settings: the shell's talk to Jerv, over whatever is open. */
     {"rec-anywhere", NULL, {OPEN("settings"), KEY_DOWN, WAIT(3400)}},
     /* Its release: the Jerv thread, the hold's bubble waiting for its transcript. */
@@ -756,6 +1113,29 @@ static const state_t STATES[] = {
     {"jerv-long", text_only, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY_LONG, SCROLL_END}},
     /* The same with "Read replies aloud" off: words only. */
     {"jerv-reply-text", text_only, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY}},
+    /* 0.0.21, the owner-approved boards of 2026-10-13: Listen on every reply (ListenIdle,
+       ListenStarting, ListenPlaying, ListenWorking, DaveListen), Load earlier (HistoryLoad,
+       HistoryLoading, HistoryLoaded, HistoryCapped, HistoryStart, HistoryQuorra), the steps folded
+       past two tools (owner, 2026-10-13), and a change from the PWA's Panel settings applied. */
+    {"jerv-listen", tides, {OPEN("jerv"), WAIT(300), SCROLL(0)}},
+    {"jerv-listen-starting", tides, {OPEN("jerv"), SPEAK(2), WAIT(300), SCROLL(0)}},
+    {"jerv-listen-playing", tides, {OPEN("jerv"), SPEAK(4), SPEECH, SCROLL_END}},
+    {"jerv-listen-working", tides, {OPEN("jerv"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), PROGRESS, WAIT(12000)}},
+    {"dave-listen", wheat, {OPEN("minecraft"), TAP_LABEL("Dave"), SPEAK(12), SPEECH, SCROLL_END}},
+    {"jerv-reply-reading", wheat_tides, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), REPLY, SPEECH}},
+    {"jerv-history", trex, {OPEN("jerv"), WAIT(300), SCROLL(0)}},
+    {"jerv-history-loading", trex_hold, {OPEN("jerv"), WAIT(300), SCROLL(0), TAP_LABEL("Load earlier")}},
+    {"jerv-history-loaded", trex, {OPEN("jerv"), WAIT(300), SCROLL(0), TAP_LABEL("Load earlier"), WAIT(300)}},
+    {"jerv-history-capped", trex, {OPEN("jerv"), WAIT(300), SCROLL(0), TAP_LABEL("Load earlier"),
+                                   SCROLL(0), TAP_LABEL("Load earlier"), SCROLL_END}},
+    {"dave-history-start", wheat, {OPEN("minecraft"), TAP_LABEL("Dave"), WAIT(300), SCROLL(0)}},
+    {"quorra-history", quorra_hist, {OPEN(SVC_MESSAGES_THREAD_1), WAIT(600), SCROLL(0)}},
+    {"quorra-history-loaded", quorra_hist, {OPEN(SVC_MESSAGES_THREAD_1), WAIT(600), SCROLL(0),
+                                            TAP_LABEL("Load earlier"), WAIT(300)}},
+    {"jerv-steps-two", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), STEPS_N(2), WAIT(20000)}},
+    {"jerv-steps-four", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), STEPS_N(4), WAIT(20000)}},
+    {"jerv-steps-four-thinking", NULL, {OPEN("clock"), KEY_DOWN, WAIT(2600), KEY_UP, WAIT(300), STEPS_N(-4), WAIT(37000)}},
+    {"settings-from-pwa", NULL, {PWA_SETTINGS, OPEN("settings")}},
     /* BOOT held from inside an app: the clock face (owner, 2026-10-12). */
     {"boot-long", NULL, {OPEN("settings"), "{\"cmd\":\"inject\",\"event\":\"boot_long\"}", WAIT(300)}},
     /* Not a mock board: a short session whose snapshot shows the debug surface. */
@@ -808,6 +1188,13 @@ static int render(const char *name, const char *png, const char *snap)
             step(100);
             continue;
         }
+        if (!strcmp(st->cmds[i], SOUND_PLAYING) || !strcmp(st->cmds[i], SOUND_DONE)) {
+            const bool done = !strcmp(st->cmds[i], SOUND_DONE);
+            svc_audio_fake_listen(true, done, true);
+            if (!done) svc_audio_fake_played(2000);
+            step(1800);
+            continue;
+        }
         if (!strcmp(st->cmds[i], LISTEN)) {
             svc_audio_fake_listen(true, false, false);
             step(300);
@@ -841,16 +1228,50 @@ static int render(const char *name, const char *png, const char *snap)
             step(300);
             continue;
         }
-        if (!strcmp(st->cmds[i], STEPS)) {
+        if (!strcmp(st->cmds[i], STEPS) || !strncmp(st->cmds[i], "steps ", 6)) {
             static const char *const LABELS[] = {TIDE_STEP_0, TIDE_STEP_1, TIDE_STEP_2,
                                                  TIDE_STEP_3, TIDE_STEP_4, TIDE_STEP_5};
+            /* "steps N": N steps, the last running; "steps -N": N steps, all done (thinking). */
+            const int arg = st->cmds[i][5] == ' ' ? atoi(st->cmds[i] + 6) : 6;
+            const uint8_t n = (uint8_t)(arg < 0 ? -arg : arg);
             svc_audio_fake_progress(TIDE_HEARD, "Thinking…");
             step(100);
-            for (uint8_t k = 0; k < 6; k++) {
+            for (uint8_t k = 0; k < n; k++) {
                 svc_audio_fake_step(k, LABELS[k]);
                 step(100);
-                if (k < 5) svc_audio_fake_step_done(k, k != 2);
+                if (k + 1 < n || arg < 0) svc_audio_fake_step_done(k, k != 2);
             }
+            step(300);
+            continue;
+        }
+        if (!strncmp(st->cmds[i], "speak ", 6)) {
+            const char *who = svc_messages_count("jerv") && !s_wheat ? "jerv" : "dave";
+            if (!svc_audio_speak(who, (uint32_t)atoi(st->cmds[i] + 6))) {
+                fprintf(stderr, "%s: Listen refused: %s\n", name, svc_audio_talk_refused());
+                return 1;
+            }
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], SPEECH)) {
+            svc_audio_fake_speech(true, 20000, 14000, false);
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], HIST_GO)) {
+            s_hist_hold = false;
+            step(300);
+            continue;
+        }
+        if (!strcmp(st->cmds[i], PWA_SETTINGS)) {
+            static const char PWA[] = "{\"v\":3,\"s\":{\"ar\":[0,1],\"br\":[30,50],\"nk\":[1,0]}}";
+            sync_pending_t pend;
+            if (!settings_sync_parse(PWA, sizeof PWA - 1, &pend) ||
+                !settings_sync_apply(&pend, svc_settings_get, svc_settings_set)) {
+                fprintf(stderr, "%s: the PWA's settings were not applied\n", name);
+                return 1;
+            }
+            svc_display_set_brightness((uint8_t)svc_settings_get(SET_BRIGHTNESS));
             step(300);
             continue;
         }
@@ -859,6 +1280,19 @@ static int render(const char *name, const char *png, const char *snap)
             svc_audio_fake_reply(TIDE_HEARD, "High tide at Port St John is at 4:12 pm, 3.1 feet.",
                                  svc_settings_get(SET_TTS) != 0);
             step(300);
+            continue;
+        }
+        if (!strncmp(st->cmds[i], "cal taps ", 9)) {
+            const int n = atoi(st->cmds[i] + 9);
+            for (int k = 0; k < n; k++) {
+                int16_t x, y;
+                calib_target((uint8_t)(k / 3), &x, &y);
+                char tap[96];
+                snprintf(tap, sizeof tap, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}", x + k % 3 - 1, y);
+                run(tap);
+                /* A synthetic stroke is nine pointer reads (~270 ms): the next starts after it. */
+                step(k % 3 == 2 ? 700 : 400);
+            }
             continue;
         }
         if (!strncmp(st->cmds[i], "tap ", 4)) {
@@ -889,7 +1323,8 @@ static int render(const char *name, const char *png, const char *snap)
         fprintf(stderr, "%s: the stripe stream did not decode\n", name);
         return 1;
     }
-    if (png && !png_write_rgb565(png, frame, W, H)) {
+    /* A turned panel's picture is its glass; upright, the two are the same pixels. */
+    if (png && !png_write_rgb565(png, svc_display_rotation() ? s_glass : frame, W, H)) {
         fprintf(stderr, "%s: cannot write %s\n", name, png);
         return 1;
     }
@@ -1241,6 +1676,29 @@ static int touch_checks(void)
     run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
     step(100);
     expect(strstr(run("{\"cmd\":\"snapshot\"}"), "\"overlay\":\"none\"") != NULL, "BOOT dismissed it");
+
+    /* 0.0.19 (owner, 2026-10-13): a tap anywhere hides a notice, a question too, unanswered; its
+       answers and its speaker row take their own taps. */
+    notify_question();
+    step(300);
+    finger(240, 200, true);
+    finger(240, 200, false);
+    step(300);
+    expect(svc_notice_count() == 1, "a tap on a question's words hides it, with no answer");
+    finger(240, 200, true);
+    finger(240, 200, false);
+    step(300);
+    expect(svc_notice_count() == 0, "and a tap on a plain notice hides it");
+    notify_question_sound();
+    step(300);
+    finger(240, 309, true);
+    finger(240, 309, false);
+    step(300);
+    expect(svc_notice_count() == 1, "a tap on the speaker row plays it again and hides nothing");
+    finger(133, 383, true);
+    finger(133, 383, false);
+    step(300);
+    expect(svc_notice_count() == 0, "a tap on an answer sends it");
 
     /* The clock face is never covered: a notice waits as the corner badge, opens on its tap. */
     run(OPEN("clock"));
@@ -1615,6 +2073,38 @@ static int touch_checks(void)
     step(600);
     expect(svc_audio_fake_chimes() == chimes + 1, "with the chime switched off it is silent");
     run("{\"cmd\":\"set\",\"name\":\"notif_chime\",\"value\":1}");
+
+    /* Touch calibration (0.0.18): BOOT over the crosses cancels them and stays in Settings, the
+       old mapping in force; a perfect run is saved and the card says so. */
+    run(OPEN("settings"));
+    scroll_to(LV_COORD_MAX);
+    tap_label("Calibrate");
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"calibrating\":true") && strstr(snap, "\"capturing\":true"),
+           "Calibrate puts up the crosses and measures with no calibration in force");
+    run("{\"cmd\":\"inject\",\"event\":\"boot\"}");
+    step(300);
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"calibrating\":false") && strstr(snap, "\"capturing\":false") &&
+               shell_open_app() && !strcmp(shell_open_app()->id, "settings"),
+           "BOOT cancels it and stays in Settings");
+    tap_label("Calibrate");
+    for (int k = 0; k < CAL_TARGETS * CAL_TAPS; k++) {
+        int16_t x, y;
+        calib_target((uint8_t)(k / CAL_TAPS), &x, &y);
+        char tap[96];
+        snprintf(tap, sizeof tap, "{\"cmd\":\"inject\",\"event\":\"touch\",\"x\":%d,\"y\":%d}", x, y + 2);
+        run(tap);
+        step(k % CAL_TAPS == CAL_TAPS - 1 ? 700 : 400);
+    }
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"custom\":true") && strstr(snap, "\"last\":\"saved\"") && labelled(lv_screen_active(), "Reset calibration"),
+           "four crosses tapped: saved, and Reset calibration offered");
+    scroll_to(LV_COORD_MAX);
+    tap_label("Reset calibration");
+    snap = run("{\"cmd\":\"snapshot\"}");
+    expect(strstr(snap, "\"custom\":false") != NULL, "and Reset puts the measured mapping back");
+    run("{\"cmd\":\"home\"}");
     return s_touch_bad;
 }
 

@@ -11,6 +11,7 @@
 #include "svc_convo_drv.h"
 #include "svc_debug.h"
 #include "svc_messages_fake.h"
+#include "svc_post_drv.h"
 
 /* Requests waiting for the main task, and answers waiting for the UI task. A new request of the
  * same kind for the same agent replaces the one still waiting, so a burst of asks is one fetch. */
@@ -18,6 +19,8 @@
 /* A switched thread's bubbles take ids from here up: past any the talks will reach (they count
  * up by two from 1000), and below the people's placeholders (900000). */
 #define SWITCH_ID0 500000u
+/* A page's bubbles that are not already on the panel: far past every other maker's. */
+#define HIST_ID0 0x40000000u
 
 enum { A_JERV, A_DAVE, A_N };
 
@@ -48,6 +51,13 @@ static uint32_t s_list_seq;
 static convo_state_t s_switch_state;
 static uint32_t s_switch_seq;
 static uint32_t s_next_id = SWITCH_ID0;
+static uint32_t s_next_hist = HIST_ID0;
+/* The history request each thread waits for: an answer to any other is stale. */
+#define HIST_THREADS 4
+static struct {
+    char thread[16];
+    uint32_t seq;
+} s_hist[HIST_THREADS];
 static struct {
     uint32_t asked, ok, failed, stale;
     int last;
@@ -213,10 +223,10 @@ typedef struct {
     const char *agent;
 } fill_t;
 
-static void add_msg(void *user, bool mine, const char *text)
+static void add_msg(void *user, bool mine, const char *text, uint32_t id)
 {
     const fill_t *f = user;
-    msg_t m = {.id = s_next_id++, .mine = mine, .played = true};
+    msg_t m = {.id = s_next_id++, .mine = mine, .played = true, .box_id = id};
     convo_fit(m.text, sizeof m.text, text, strlen(text));
     /* The newest answer is kept whole: each answer replaces the one before, so the last wins. */
     if (!mine) svc_messages_fake_long(f->agent, m.id, text);
@@ -257,11 +267,190 @@ static void apply_switch(const convo_req_t *r, int status, const char *body, siz
     changed(a);
 }
 
-static void ignore_msg(void *user, bool mine, const char *text)
+static void ignore_msg(void *user, bool mine, const char *text, uint32_t id)
 {
     (void)user;
     (void)mine;
     (void)text;
+    (void)id;
+}
+
+/* ---- Load earlier (0.0.21) ---- */
+
+static uint32_t *hist_seq(const char *thread)
+{
+    for (int i = 0; i < HIST_THREADS; i++)
+        if (!strcmp(s_hist[i].thread, thread)) return &s_hist[i].seq;
+    for (int i = 0; i < HIST_THREADS; i++)
+        if (!s_hist[i].thread[0]) {
+            snprintf(s_hist[i].thread, sizeof s_hist[i].thread, "%s", thread);
+            return &s_hist[i].seq;
+        }
+    return &s_hist[0].seq;
+}
+
+/* A message's anchor for the box: an agent's turn `seq`, or a person's box id (the window's own,
+   or the live thread's from svc_post). False when the box has never named it. */
+static bool anchor(const char *thread, const char *who, const msg_t *m, uint32_t *box_id,
+                   char uuid[37])
+{
+    *box_id = 0;
+    uuid[0] = '\0';
+    if (convo_agent_ok(who)) {
+        *box_id = m->box_id;
+        return m->box_id != 0;
+    }
+    char owner[16];
+    if (svc_messages_page_uuid(m->id, owner, uuid) && !strcmp(owner, thread)) return true;
+    return svc_post_uuid(thread, m->id, uuid);
+}
+
+static void hist_ask(const char *thread, const char *who, uint8_t side, uint32_t counted,
+                     uint32_t box_id, const char *uuid)
+{
+    convo_req_t r = {.kind = CONVO_RQ_HISTORY, .side = side, .counted = counted};
+    if (!convo_hist_path(who, side, box_id, uuid, r.path, sizeof r.path)) return;
+    snprintf(r.thread, sizeof r.thread, "%s", thread);
+    snprintf(r.agent, sizeof r.agent, "h%.6s", thread);
+    convo_port_lock();
+    r.seq = ++s_seq;
+    *hist_seq(thread) = r.seq;
+    uint8_t at = s_queued;
+    for (uint8_t i = 0; i < s_queued; i++)
+        if (s_queue[i].kind == CONVO_RQ_HISTORY && !strcmp(s_queue[i].thread, thread)) at = i;
+    if (at == QUEUE) {
+        memmove(s_queue, s_queue + 1, sizeof s_queue[0] * (QUEUE - 1));
+        at = QUEUE - 1;
+    } else if (at == s_queued) {
+        s_queued++;
+    }
+    s_queue[at] = r;
+    convo_port_unlock();
+    s_st.asked++;
+    if (side) svc_messages_hist_loading(thread, side);
+    if (s_wake) s_wake();
+}
+
+void svc_convo_hist_open(const char *thread, const char *who)
+{
+    if (!thread || !who || svc_messages_paged(thread) || svc_messages_hist_counted(thread)) return;
+    /* Asked already for this oldest message: once is enough until it changes. */
+    msg_t m;
+    const bool any = svc_messages_edge(thread, true, &m);
+    const uint32_t counted = any ? m.id : 0;
+    static struct {
+        char thread[16];
+        uint32_t counted;
+        bool asked;
+    } last[HIST_THREADS];
+    int slot = 0;
+    for (int i = 0; i < HIST_THREADS; i++)
+        if (!strcmp(last[i].thread, thread) || !last[i].thread[0]) {
+            slot = i;
+            break;
+        }
+    if (last[slot].asked && last[slot].counted == counted && !strcmp(last[slot].thread, thread))
+        return;
+    uint32_t box_id = 0;
+    char uuid[37] = "";
+    /* A thread whose oldest message the box never named cannot be counted from it. */
+    if (any && !anchor(thread, who, &m, &box_id, uuid)) return;
+    snprintf(last[slot].thread, sizeof last[slot].thread, "%s", thread);
+    last[slot].counted = counted;
+    last[slot].asked = true;
+    hist_ask(thread, who, 0, counted, box_id, uuid);
+}
+
+void svc_convo_hist_earlier(const char *thread, const char *who)
+{
+    if (!thread || !who) return;
+    msg_t m;
+    const bool any = svc_messages_edge(thread, true, &m);
+    uint32_t box_id = 0;
+    char uuid[37] = "";
+    if (any && !anchor(thread, who, &m, &box_id, uuid)) return;
+    if (!svc_messages_page_begin(thread)) return;
+    hist_ask(thread, who, 1, 0, box_id, uuid);
+}
+
+void svc_convo_hist_newer(const char *thread, const char *who)
+{
+    msg_t m;
+    uint32_t box_id = 0;
+    char uuid[37] = "";
+    if (!thread || !who || !svc_messages_paged(thread) || !svc_messages_edge(thread, false, &m) ||
+        !anchor(thread, who, &m, &box_id, uuid))
+        return;
+    hist_ask(thread, who, 2, 0, box_id, uuid);
+}
+
+void svc_convo_hist_live(const char *thread)
+{
+    if (!thread) return;
+    convo_port_lock();
+    *hist_seq(thread) = 0;
+    convo_port_unlock();
+    svc_messages_hist_loading(thread, 0);
+    svc_messages_page_end(thread);
+}
+
+typedef struct {
+    const char *thread;
+    hist_in_t in[HIST_PAGE];
+    char *text;
+    uint8_t n;
+} page_fill_t;
+
+static void page_item(void *user, const hist_in_t *item)
+{
+    page_fill_t *f = user;
+    if (f->n >= HIST_PAGE) return;
+    char *dst = f->text + (size_t)f->n * sizeof(((msg_t *)0)->text);
+    snprintf(dst, sizeof(((msg_t *)0)->text), "%s", item->text);
+    hist_in_t in = *item;
+    in.text = dst;
+    /* One of her messages the panel already holds keeps its id: its play and its "played" are
+       svc_post's. */
+    uint32_t local = in.uuid[0] ? svc_post_local(f->thread, in.uuid) : 0;
+    in.local_id = local ? local : s_next_hist++;
+    f->in[f->n++] = in;
+}
+
+static void apply_history(const convo_req_t *r, int status, const char *body, size_t len)
+{
+    uint32_t *seq = hist_seq(r->thread);
+    if (r->seq != *seq) {
+        s_st.stale++;
+        return;
+    }
+    *seq = 0;
+    if (r->side) svc_messages_hist_loading(r->thread, 0);
+    if (status != 200 || !body) return;
+    convo_page_t page;
+    if (!r->side) {
+        char scratch[4];
+        if (convo_parse_page(body, len, &page, scratch, sizeof scratch, NULL, NULL))
+            svc_messages_hist_counts(r->thread, r->counted, (int32_t)page.older, page.start_at);
+        return;
+    }
+    page_fill_t *f = calloc(1, sizeof *f);
+    char *text = f ? malloc((size_t)HIST_PAGE * sizeof(((msg_t *)0)->text)) : NULL;
+    if (!text) {
+        free(f);
+        return;
+    }
+    f->thread = r->thread;
+    f->text = text;
+    char *scratch = malloc(sizeof(((msg_t *)0)->text));
+    if (scratch && convo_parse_page(body, len, &page, scratch, sizeof(((msg_t *)0)->text),
+                                    page_item, f)) {
+        const bool front = r->side == 1;
+        svc_messages_page_add(r->thread, front, f->in, f->n, front ? page.older : page.newer,
+                              front && page.older == 0 ? page.start_at : 0);
+    }
+    free(scratch);
+    free(text);
+    free(f);
 }
 
 static void apply_title(const convo_req_t *r, int status, const char *body, size_t len)
@@ -304,6 +493,7 @@ static void apply(const convo_req_t *r, int status, const char *body, size_t len
         apply_switch(r, status, body, len);
         return;
     case CONVO_RQ_TITLE: apply_title(r, status, body, len); return;
+    case CONVO_RQ_HISTORY: apply_history(r, status, body, len); return;
     default: return;
     }
 }

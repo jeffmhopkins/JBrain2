@@ -1,4 +1,4 @@
-"""`/internal/*` is gated per caller (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S2.2, F7).
+"""`/internal/*` is gated per caller (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md S2.2, F7).
 
 The api joins every docker network a sandbox or headless browser sits on, so "internal
 network only" let any of them drive the pet as the owner or use `/internal/mqtt-auth` as a

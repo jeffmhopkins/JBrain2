@@ -78,8 +78,16 @@ sh_route_t sh_route_button(sh_state_t *st, const sh_facts_t *f, sh_button_t b)
      * inject; a finger cannot) must not start another. */
     if (f->talking) return r(b == SH_BTN_BOOT ? SH_ACT_CANCEL_TALK : SH_ACT_NONE, SH_ACT_NONE);
 
-    if (sh_top_overlay(st, f) == SH_OV_NOTICE)
-        return b == SH_BTN_BOOT ? r(SH_ACT_DISMISS_NOTICE, SH_ACT_NONE) : r(SH_ACT_NONE, SH_ACT_NONE);
+    if (sh_top_overlay(st, f) == SH_OV_NOTICE) {
+        if (b == SH_BTN_BOOT) return r(SH_ACT_DISMISS_NOTICE, SH_ACT_NONE);
+        /* KEY over a notice whose sound is playing is the reply's rule: the sound stops (its
+           speaker row turns to Play again) and nothing records. Otherwise KEY waits, as before. */
+        if (b == SH_BTN_KEY_DOWN && f->speaking) {
+            st->key_owner = SH_KEY_FREE;
+            return r(SH_ACT_STOP_REPLY, SH_ACT_NONE);
+        }
+        return r(SH_ACT_NONE, SH_ACT_NONE);
+    }
 
     /* A hand on KEY or BOOT while Jerv speaks is reaching for "stop", in every app: the voice
      * goes quiet and nothing else happens — no recording starts, and the release that follows

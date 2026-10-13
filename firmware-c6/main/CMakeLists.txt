@@ -2,7 +2,7 @@
 # without it the header is off the include path even with the bundle enabled in sdkconfig.
 idf_component_register(
     SRCS "main.c" "cfg.c" "net.c" "ota.c" "box_http.c" "dbg_link.c" "talk_link.c" "sib_link.c"
-         "alarm_link.c" "convo_link.c" "post_link.c"
+         "alarm_link.c" "convo_link.c" "post_link.c" "notice_link.c" "set_link.c"
          "ui_task.c"
          "apps.c"
     INCLUDE_DIRS "."
@@ -10,6 +10,6 @@ idf_component_register(
              esp_app_format json mbedtls esp_timer espcoredump
              app_api ui_kit shell svc_debug svc_display svc_power svc_buttons svc_touch
              svc_alarms svc_audio svc_box svc_messages svc_net svc_notice svc_rtc svc_settings
-             svc_siblings svc_convo svc_post convo
+             svc_siblings svc_convo svc_post svc_orient convo
              app_jerv app_thread app_clock app_settings app_minecraft lvgl__lvgl
 )

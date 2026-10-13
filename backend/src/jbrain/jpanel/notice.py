@@ -44,6 +44,10 @@ CHOICE_BYTES = 16
 #: cannot be read; past ten minutes it is "until tapped" with extra steps.
 HIDE_MIN_S = 3
 HIDE_MAX_S = 600
+#: A plain notice the sender gave no time hides after this long; a question waits for its answer
+#: (owner, 2026-10-13). A sender asks for "until tapped" with `hide_after_s=0`.
+HIDE_DEFAULT_PLAIN_S = 20
+HIDE_UNTIL_TAPPED = 0
 #: How long an answer is accepted once the panel has the notice. Default: fifteen minutes,
 #: long enough to walk back to the desk, short enough that a stale "run the cleanup now?" is
 #: not answered tomorrow.
@@ -159,9 +163,19 @@ def check_text(title: str, body: str, choices: list[str]) -> tuple[str, str, lis
     return title, body, out
 
 
-def check_hide(hide_after_s: int | None) -> int | None:
-    if hide_after_s is not None and not HIDE_MIN_S <= hide_after_s <= HIDE_MAX_S:
-        raise NoticeRefused("bad_field", 422, field="hide_after_s", min=HIDE_MIN_S, max=HIDE_MAX_S)
+def check_hide(hide_after_s: int | None, *, question: bool) -> int | None:
+    """The hide time the notice is stored with, None for until tapped. Omitted (None) is the
+    default — HIDE_DEFAULT_PLAIN_S for a plain notice, none for a question; 0 asks for until
+    tapped whatever the kind. Callers that predate the default and send None for a plain notice
+    now get it, which is the owner's call, not a break: nothing else about the notice changes."""
+    if hide_after_s is None:
+        return None if question else HIDE_DEFAULT_PLAIN_S
+    if hide_after_s == HIDE_UNTIL_TAPPED:
+        return None
+    if not HIDE_MIN_S <= hide_after_s <= HIDE_MAX_S:
+        raise NoticeRefused(
+            "bad_field", 422, field="hide_after_s", min=HIDE_MIN_S, max=HIDE_MAX_S, until_tapped=0
+        )
     return hide_after_s
 
 

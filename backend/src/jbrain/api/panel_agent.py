@@ -336,6 +336,8 @@ class Started:
     t0: float
     live: Any = None
     early: Answer | None = None
+    #: The `/chat` run this turn is, as `agent_turns.run_id` files both halves of it.
+    run_id: str | None = None
 
     def answer(self, words: str, stop: str, full: str = "") -> Answer:
         waited = int((asyncio.get_running_loop().time() - self.t0) * 1000)
@@ -371,12 +373,41 @@ async def start_turn(
             started.early = started.answer(BUSY, "busy", BUSY_STREAM)
             return started
         raise
-    live = request.app.state.live_turns.get(resp.headers.get("X-Run-Id", ""))
+    started.run_id = resp.headers.get("X-Run-Id") or None
+    live = request.app.state.live_turns.get(started.run_id or "")
     if live is None or live.task is None:
         started.early = started.answer(FAILED, "error")
     else:
         started.live = live
     return started
+
+
+async def exchange_ids(
+    maker: async_sessionmaker[AsyncSession], started: Started
+) -> tuple[int, int] | None:
+    """The `seq` of the question and of the answer a finished turn filed in its thread, so the
+    panel can name them to Listen and Load earlier (firmware-c6 0.0.21). Found by the turn's own
+    run, never by position: an exchange the PWA finished in the same chat meanwhile is the
+    newest pair, and naming it would have Listen read a different answer (review of #1736).
+    None when the turn filed no answer."""
+    if started.run_id is None:
+        return None
+    async with scoped_session(maker, started.owner_ctx) as s:
+        got = (
+            await s.execute(
+                text(
+                    "SELECT seq, role FROM app.agent_turns"
+                    " WHERE session_id = CAST(:sid AS uuid) AND run_id = CAST(:rid AS uuid)"
+                    " ORDER BY seq"
+                ),
+                {"sid": started.session_id, "rid": started.run_id},
+            )
+        ).all()
+    user = next((int(r.seq) for r in got if r.role == "user"), None)
+    answer = next((int(r.seq) for r in reversed(got) if r.role == "assistant"), None)
+    if user is None or answer is None:
+        return None
+    return user, answer
 
 
 def settle(started: Started, agent: PanelAgent) -> Answer:

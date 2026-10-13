@@ -331,6 +331,10 @@ fi
 #   IDF_TARGETS=esp32c6 scripts/firmware-setup.sh
 #   . ~/esp-idf/export.sh && (cd firmware-c6 && idf.py build)
 #   scripts/firmware-dist.sh firmware-c6
+# Its managed components — LVGL, the sh8601 display driver, esp_codec_dev and, since 0.0.19,
+# joltwallet/littlefs for the notices' `storage` partition — are fetched by `idf.py` itself
+# from the Espressif component registry, at the exact versions and content hashes
+# firmware-c6/dependencies.lock pins, so there is nothing more to install for them.
 #
 # That third step is not optional bookkeeping: the built images in firmware/dist/ ARE the
 # distribution — the box flashes them off its own checkout instead of downloading a release

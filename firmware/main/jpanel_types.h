@@ -113,6 +113,7 @@ typedef struct {
 typedef struct {
     uint32_t seq;      /* the command this belongs to */
     uint8_t stream_id; /* 0 until the stream has begun */
+    uint32_t duration_ms; /* the box's X-Jpanel-Duration-Ms, set with stream_id; 0 = not sent */
     uint32_t gen;
     jp_who_t who;      /* seeded before the request: from the waiting entry, or the REPLAY cmd */
     bool replay;

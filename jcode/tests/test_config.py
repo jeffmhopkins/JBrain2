@@ -14,6 +14,19 @@ def test_token_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
         Settings()  # pyright: ignore[reportCallIssue]
 
 
+def test_empty_token_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Compose's `${JCODE_TOKEN:-}` turns an unset key into an empty variable.
+    monkeypatch.setenv("JCODE_TOKEN", "")
+    with pytest.raises(ValidationError):
+        Settings()  # pyright: ignore[reportCallIssue]
+
+
+def test_minted_token_from_env_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    minted = "a" * 64  # update-inner.sh mints a sha256 hex digest
+    monkeypatch.setenv("JCODE_TOKEN", minted)
+    assert Settings().token == minted  # pyright: ignore[reportCallIssue]
+
+
 def test_defaults_are_local_and_fail_closed() -> None:
     s = Settings(token="x")
     assert s.model_base_url.startswith("http://api:8000/api/jcode/llm")

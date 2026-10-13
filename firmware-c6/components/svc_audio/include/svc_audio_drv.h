@@ -28,9 +28,21 @@ void svc_audio_service(void);
  * talk is under way. False with `why` otherwise. UI task. */
 bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why);
 
+/* A push notice's sound (0.0.19), from its file: `key` is what svc_notice_pcm_stream takes back
+ * on the main task. Refused (false) while an alarm rings, the speaker is not up, or anything else
+ * holds the codec or the radio — it plays once, as the notice appears, or not at all. UI task. */
+bool svc_audio_notice_play(const char *key);
+/* The notice hid: its sound stops, if it is the one playing. UI task. */
+void svc_audio_notice_stop(void);
+/* Whether a notice's sound is being fetched from its file or played, and how much of it has gone
+ * to the speaker (the speaker row's progress). */
+bool svc_audio_notice_active(uint32_t *played_ms);
+
 /* Whether a talk's or a play's ring holds its 16 KB of internal RAM now: what the heap's
  * low-water mark is attributed to (telemetry's `int_min_at`). Any task. */
 bool talk_ring_held(void);
+/* The held ring's size, 0 when none: a talk's 16 KB or a play's 6 KB (0.0.18). */
+uint32_t talk_ring_bytes(void);
 
 /* `audio=…` (tk_stats_note) plus the codec's own state. */
 void svc_audio_note(char *out, size_t len);
@@ -46,8 +58,12 @@ tk_kind_t talk_net_kind(char *path, size_t cap);
  * heard when its audio began (talk_net_reply, 0.0.17); a mismatch is counted as a failed play. */
 void talk_net_listened(bool verified);
 /* A play's ring, once the box has answered its GET (0.0.17): after the connection's handshake,
- * never during it, so the two never hold internal RAM at once. False with no memory for it. */
+ * never during it, so the two never hold internal RAM at once. Sized for the exchange
+ * (tk_ring_bytes: 6 KB for a play since 0.0.18). False with no memory for it. */
 bool talk_net_ring(void);
+/* The play's free internal heap before its GET, once answered, with its ring, and the lowest
+ * while it streamed (0.0.18): the snapshot's `audio.play_*`. */
+void talk_net_mem(uint32_t before, uint32_t answered, uint32_t ringed, uint32_t low);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);
@@ -58,6 +74,10 @@ void talk_net_status(const char *status);
 void talk_net_step_start(uint8_t index, const char *label);
 void talk_net_step_done(uint8_t index, bool ok);
 void talk_net_reply(const char *reply, bool audio_follows);
+/* SPOKEN (0.0.21): the speech that follows says the words from `from` to `to` thousandths. */
+void talk_net_spoken(uint16_t from, uint16_t to, uint32_t bytes);
+/* IDS (0.0.21): the exchange's question and answer on the box, which name them from now on. */
+void talk_net_ids(uint32_t asked, uint32_t answer);
 void talk_net_nothing(void);
 void talk_net_fail(const char *why);
 /* The reply's speech into the ring: how much fit. Zero once the speech is no longer wanted. */

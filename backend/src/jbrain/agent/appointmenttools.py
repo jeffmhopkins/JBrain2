@@ -240,9 +240,12 @@ def build_appointment_write_handlers(
             ctx.session, principal_id=ctx.session.principal_id, spec=spec
         )
         verb = {"create": "add", "reschedule": "move", "cancel": "cancel"}[action]
+        # The `[domain]` tag mirrors the readers' and is what the chat-share check reads: the
+        # staged title and time sit in this step, and its domain is otherwise nowhere on it.
         return ToolOutput(
-            f"Staged a request to {verb} this appointment for your approval. I won't change"
-            " your calendar until you approve it — it then re-enters as a normal, dated note.",
+            f"Staged a request to {verb} this appointment [{domain}] for your approval. I won't"
+            " change your calendar until you approve it — it then re-enters as a normal,"
+            " dated note.",
             proposal=ProposalRef(proposal_id=prop_id, kind="appointment"),
             # "staged", never "moved": nothing has changed until the owner approves, and a
             # row that says otherwise is the one lie this tool must not tell.

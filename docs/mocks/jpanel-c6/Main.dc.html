@@ -27,7 +27,7 @@ body{margin:0}
   </div>
   <div style="position: absolute; left: 177px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
     <span style="font-size: 14px; font-weight: 700; letter-spacing: 0.08em;">BOOT</span>
-    <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">home</span>
+    <span style="font-size: 13px; font-weight: 500; color: #4A4D53;">{{bootSub}}</span>
   </div>
 
   <button aria-label="KEY — hold to talk" onPointerDown="{{keyDown}}" onPointerUp="{{keyUp}}" onPointerCancel="{{keyUp}}" style="position: absolute; left: 447px; top: 92px; width: 72px; height: 30px; border-radius: 10px 10px 4px 4px; border: 1px solid #C9C9C4; background: {{keyBg}}; cursor: pointer; touch-action: none; padding: 0;"></button>
@@ -135,9 +135,30 @@ body{margin:0}
                 <span style="font-size: 18px; font-weight: 500; line-height: 1.35; color: #9A9DA3;">Hold KEY and ask {{cur.name}} something. The last one is in Recent conversations.</span>
               </div>
             </sc-if>
+            <sc-if value="{{hist.showLoad}}" hint-placeholder-val="{{false}}">
+              <button onClick="{{hist.loadEarlier}}" aria-label="{{hist.aria}}" aria-busy="{{hist.busy}}" style="flex-shrink: 0; height: 56px; border-radius: 20px; border: 1px solid #26282C; background: #17181B; color: {{hist.color}}; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer; padding: 0 18px;">
+                <sc-if value="{{hist.loading}}" hint-placeholder-val="{{false}}">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="#2C2F34"></circle><path d="M12 3 a9 9 0 0 1 9 9" stroke="{{cur.color}}"></path></svg>
+                </sc-if>
+                <sc-if value="{{hist.idle}}" hint-placeholder-val="{{true}}">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19 L12 5"></path><path d="M6 11 L12 5 L18 11"></path></svg>
+                </sc-if>
+                <span>{{hist.label}}</span>
+                <sc-if value="{{hist.idle}}" hint-placeholder-val="{{true}}">
+                  <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{hist.more}}</span>
+                </sc-if>
+              </button>
+            </sc-if>
+            <sc-if value="{{hist.showStart}}" hint-placeholder-val="{{false}}">
+              <div style="flex-shrink: 0; align-self: center; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0 6px;">
+                <span style="font-size: 18px; font-weight: 600; color: #9A9DA3;">Start of conversation</span>
+                <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{hist.startWhen}}</span>
+              </div>
+            </sc-if>
             <sc-for list="{{msgs}}" as="m" hint-placeholder-count="2">
               <sc-if value="{{m.them}}" hint-placeholder-val="{{true}}">
-                <div style="align-self: flex-start; max-width: 360px; display: flex; flex-direction: column; gap: 4px;">
+                <div data-mid="{{m.id}}" style="flex-shrink: 0; align-self: flex-start; max-width: 440px; display: flex; align-items: flex-end; gap: 10px;">
+                <div style="max-width: 360px; min-width: 0; display: flex; flex-direction: column; gap: 4px;">
                   <div style="background: #1E2024; border-radius: 22px 22px 22px 6px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px;">
                     <sc-if value="{{m.voice}}" hint-placeholder-val="{{false}}">
                       <div style="display: flex; align-items: center; gap: 10px;">
@@ -159,17 +180,31 @@ body{margin:0}
                       </div>
                     </sc-if>
                     <span style="font-size: 22px; font-weight: 500; line-height: 1.3; color: {{m.textColor}};">{{m.text}}</span>
-                    <sc-if value="{{m.canSpeak}}" hint-placeholder-val="{{false}}">
-                      <button onClick="{{m.speak}}" aria-label="Read this reply aloud" style="align-self: flex-start; height: 44px; padding: 0 14px; border-radius: 22px; border: none; background: rgba(127,167,201,0.16); color: #7FA7C9; display: flex; align-items: center; gap: 8px; font-family: inherit; font-size: 17px; font-weight: 600; cursor: pointer;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Listen</span></button>
-                    </sc-if>
                   </div>
-                  <sc-if value="{{m.speakingNow}}" hint-placeholder-val="{{false}}">
-                    <span style="display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 500; color: #7FA7C9; padding-left: 6px;"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg><span>Speaking…</span></span>
+                  <sc-if value="{{m.hasListenLine}}" hint-placeholder-val="{{false}}">
+                    <span style="display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 600; color: {{cur.color}}; padding-left: 6px; font-variant-numeric: tabular-nums;">{{m.listenLine}}</span>
                   </sc-if>
+                </div>
+                <sc-if value="{{m.hasListen}}" hint-placeholder-val="{{false}}">
+                  <button onClick="{{m.listen}}" aria-label="{{m.listenAria}}" aria-pressed="{{m.listenPressed}}" style="position: relative; flex-shrink: 0; width: 56px; height: 56px; border-radius: 28px; border: none; background: {{m.listenBg}}; color: {{cur.color}}; opacity: {{m.listenDim}}; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;">
+                    <sc-if value="{{m.listenRing}}" hint-placeholder-val="{{false}}">
+                      <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true" style="position: absolute; left: 0; top: 0; transform: rotate(-90deg);"><circle cx="28" cy="28" r="26" fill="none" stroke="#2C2F34" stroke-width="3"></circle><circle cx="28" cy="28" r="26" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-dasharray="163.4" stroke-dashoffset="{{m.listenOffset}}"></circle></svg>
+                    </sc-if>
+                    <sc-if value="{{m.listenStarting}}" hint-placeholder-val="{{false}}">
+                      <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true" style="position: absolute; left: 0; top: 0;"><circle cx="28" cy="28" r="26" fill="none" stroke="#2C2F34" stroke-width="3"></circle><path d="M28 2 a26 26 0 0 1 26 26" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"></path></svg>
+                    </sc-if>
+                    <sc-if value="{{m.listenIdle}}" hint-placeholder-val="{{true}}">
+                      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11"></path></svg>
+                    </sc-if>
+                    <sc-if value="{{m.listenStop}}" hint-placeholder-val="{{false}}">
+                      <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2.5" fill="currentColor"></rect></svg>
+                    </sc-if>
+                  </button>
+                </sc-if>
                 </div>
               </sc-if>
               <sc-if value="{{m.me}}" hint-placeholder-val="{{false}}">
-                <div style="align-self: flex-end; max-width: 360px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                <div data-mid="{{m.id}}" style="flex-shrink: 0; align-self: flex-end; max-width: 360px; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
                   <div style="background: #1D2733; border-radius: 22px 22px 6px 22px; padding: 12px 16px; display: flex; flex-direction: column; gap: 6px;">
                     <sc-if value="{{m.voice}}" hint-placeholder-val="{{true}}">
                       <div style="display: flex; align-items: center; gap: 8px; color: #7FA7C9;">
@@ -185,6 +220,13 @@ body{margin:0}
                 </div>
               </sc-if>
             </sc-for>
+            <sc-if value="{{hist.showNewer}}" hint-placeholder-val="{{false}}">
+              <button onClick="{{hist.loadNewer}}" aria-label="Load newer messages" style="flex-shrink: 0; height: 56px; border-radius: 20px; border: 1px solid #26282C; background: #17181B; color: #E6E7E9; display: flex; align-items: center; justify-content: center; gap: 10px; font-family: inherit; font-size: 20px; font-weight: 600; cursor: pointer; padding: 0 18px;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5 L12 19"></path><path d="M6 13 L12 19 L18 13"></path></svg>
+                <span>Newer messages</span>
+                <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{hist.newer}}</span>
+              </button>
+            </sc-if>
           </div>
           <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 60px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #9A9DA3; font-size: 18px; font-weight: 600;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5 11 a7 7 0 0 0 14 0"></path><path d="M12 18 L12 21"></path></svg>
@@ -210,7 +252,7 @@ body{margin:0}
             <span style="position: absolute; left: 0; right: 0; bottom: 40px; text-align: center; font-size: 24px; font-weight: 600; letter-spacing: 0.02em; color: {{face.color}}; opacity: {{face.dateOpacity}}; pointer-events: none;">{{clock.dayDate}}</span>
           </sc-if>
           <sc-if value="{{faceBadge.show}}" hint-placeholder-val="{{false}}">
-            <button onClick="{{faceBadge.open}}" aria-label="{{faceBadge.aria}}" style="position: absolute; top: 26px; right: 30px; height: 44px; min-width: 44px; padding: 0 12px; box-sizing: border-box; border-radius: 22px; border: 1px solid #26282C; background: #0A0A0A; color: {{face.color}}; opacity: {{faceBadge.opacity}}; display: flex; align-items: center; justify-content: center; gap: 6px; font-family: inherit; font-size: 18px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums;"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{faceBadge.count}}</span></button>
+            <button onClick="{{faceBadge.open}}" aria-label="{{faceBadge.aria}}" style="position: absolute; top: 22px; right: 26px; height: 56px; min-width: 56px; padding: 0 16px; box-sizing: border-box; border-radius: 28px; border: 1px solid #26282C; background: #0A0A0A; color: {{face.color}}; opacity: {{faceBadge.opacity}}; display: flex; align-items: center; justify-content: center; gap: 8px; font-family: inherit; font-size: 20px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg><span>{{faceBadge.count}}</span></button>
           </sc-if>
         </sc-if>
 
@@ -431,21 +473,26 @@ body{margin:0}
                 <span style="position: absolute; right: 12px; bottom: 8px; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.75);">{{note.imageCaption}}</span>
               </div>
             </sc-if>
-            <div style="display: flex; align-items: center; gap: 10px; color: {{note.accent}};">
+            <div style="display: flex; align-items: center; gap: 10px; color: {{note.accent}}; opacity: {{note.inkOpacity}};">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
               <span style="font-size: 18px; font-weight: 700; letter-spacing: 0.02em; flex-grow: 1;">{{note.from}}</span>
-              <span style="font-size: 16px; font-weight: 600; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{note.count}}</span>
+              <span style="font-size: 18px; font-weight: 600; color: {{note.mutedColor}}; font-variant-numeric: tabular-nums;">{{note.count}}</span>
             </div>
-            <span style="font-size: {{note.titleSize}}px; font-weight: 700; line-height: 1.2;">{{note.title}}</span>
-            <span style="font-size: 21px; font-weight: 500; line-height: 1.35; color: #C4C7CC; flex-grow: 1;">{{note.body}}</span>
+            <span style="font-size: {{note.titleSize}}px; font-weight: 700; line-height: 1.2; color: {{note.titleColor}}; opacity: {{note.inkOpacity}};">{{note.title}}</span>
+            <span style="font-size: 21px; font-weight: 500; line-height: 1.35; color: {{note.bodyColor}}; opacity: {{note.inkOpacity}}; flex-grow: 1;">{{note.body}}</span>
             <sc-if value="{{note.hasAudio}}" hint-placeholder-val="{{false}}">
-              <div aria-label="{{note.audio.aria}}" style="display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; border-radius: 18px; background: {{note.audio.tint}}; color: {{note.accent}};">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11" opacity="{{note.audio.waveOpacity}}"></path></svg>
-                <div style="flex-grow: 1; height: 6px; border-radius: 3px; background: #2C2F34; overflow: hidden;">
-                  <div style="height: 6px; width: {{note.audio.pct}}%; background: {{note.accent}};"></div>
-                </div>
-                <span style="font-size: 17px; font-weight: 600; color: #C4C7CC; font-variant-numeric: tabular-nums;">{{note.audio.time}}</span>
-              </div>
+              <button onClick="{{note.audio.replay}}" aria-label="{{note.audio.aria}}" style="display: flex; align-items: center; gap: 12px; height: 56px; padding: 0 16px; border-radius: 18px; border: none; background: {{note.audio.tint}}; color: {{note.accent}}; font-family: inherit; cursor: pointer; text-align: left; flex-shrink: 0;">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0;"><path d="M4 9 L8 9 L13 5 L13 19 L8 15 L4 15 Z"></path><path d="M16.5 9 a4 4 0 0 1 0 6"></path><path d="M19 6.5 a7.5 7.5 0 0 1 0 11" opacity="{{note.audio.waveOpacity}}"></path></svg>
+                <sc-if value="{{note.audio.playing}}" hint-placeholder-val="{{true}}">
+                  <div style="flex-grow: 1; height: 6px; border-radius: 3px; background: #2C2F34; overflow: hidden;">
+                    <div style="height: 6px; width: {{note.audio.pct}}%; background: {{note.accent}};"></div>
+                  </div>
+                </sc-if>
+                <sc-if value="{{note.audio.done}}" hint-placeholder-val="{{false}}">
+                  <span style="flex-grow: 1; font-size: 20px; font-weight: 600;">Play again</span>
+                </sc-if>
+                <span style="font-size: 18px; font-weight: 600; color: #C4C7CC; font-variant-numeric: tabular-nums;">{{note.audio.time}}</span>
+              </button>
             </sc-if>
             <sc-if value="{{note.hasButtons}}" hint-placeholder-val="{{true}}">
               <div style="display: grid; grid-template-columns: repeat({{note.cols}}, minmax(0, 1fr)); gap: 10px;">
@@ -454,7 +501,13 @@ body{margin:0}
                 </sc-for>
               </div>
             </sc-if>
-            <span style="font-size: 15px; font-weight: 500; color: #9A9DA3; text-align: center;">{{note.hint}}</span>
+            <sc-if value="{{note.nightAsk}}" hint-placeholder-val="{{false}}">
+              <button onClick="{{note.reveal}}" aria-label="Show the picture" style="height: 64px; border-radius: 20px; border: 1px solid {{note.accent}}; background: {{note.revealBg}}; color: {{note.accent}}; opacity: {{note.inkOpacity}}; display: flex; align-items: center; justify-content: center; gap: 12px; font-family: inherit; font-size: 22px; font-weight: 700; cursor: pointer; flex-shrink: 0;">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="9" cy="10" r="1.8"></circle><path d="M4 17 L10 12.5 L14 15.5 L17 13 L20 15.5"></path></svg>
+                <span>Show picture</span>
+              </button>
+            </sc-if>
+            <span style="font-size: 18px; font-weight: 500; color: {{note.mutedColor}}; opacity: {{note.inkOpacity}}; text-align: center;">{{note.hint}}</span>
           </div>
           <sc-if value="{{note.isPicture}}" hint-placeholder-val="{{false}}">
             <div role="img" aria-label="{{note.imageAlt}}" onClick="{{note.tapCard}}" style="position: absolute; inset: 0; background: #000000; cursor: pointer;">
@@ -472,11 +525,11 @@ body{margin:0}
                   <text x="44" y="440" font-family="Montserrat, sans-serif" font-size="20" font-weight="600" fill="#F2D6C2">Take the umbrella · clears by 6</text>
                 </svg>
               </sc-if>
-              <div style="position: absolute; left: 22px; top: 22px; height: 36px; padding: 0 14px; border-radius: 18px; background: rgba(0,0,0,0.55); color: #E6E7E9; display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 700;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
+              <div style="position: absolute; left: 20px; top: 20px; height: 40px; padding: 0 14px; border-radius: 20px; background: rgba(0,0,0,0.55); color: #E6E7E9; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
                 <span>{{note.from}}</span>
               </div>
-              <span style="position: absolute; right: 22px; top: 30px; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.8);">{{note.hint}}</span>
+              <span style="position: absolute; right: 20px; top: 20px; height: 40px; padding: 0 14px; border-radius: 20px; background: rgba(0,0,0,0.55); display: flex; align-items: center; font-size: 18px; font-weight: 600; color: rgba(255,255,255,0.85); font-variant-numeric: tabular-nums;">{{note.picHint}}</span>
             </div>
           </sc-if>
           <sc-if value="{{note.hasTimer}}" hint-placeholder-val="{{false}}">
@@ -613,7 +666,7 @@ body{margin:0}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question","notify-picture","notify-banner","notify-audio","dave","jerv-menu","jerv-recent","jerv-recent-loading","jerv-recent-empty","jerv-switched","jerv-new","dave-menu","dave-recent"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent","picture","banner question","with a sound"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question","notify-question-sound","notify-picture","notify-night","notify-banner","notify-audio","dave","jerv-menu","jerv-recent","jerv-recent-loading","jerv-recent-empty","jerv-switched","jerv-new","dave-menu","dave-recent","jerv-listen","jerv-listen-starting","jerv-listen-playing","jerv-listen-working","dave-listen-playing","jerv-history","jerv-history-loading","jerv-history-loaded","jerv-history-capped","dave-history-start","quorra-history"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent","picture","picture at night","banner question","with a sound","question with a sound"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -684,6 +737,160 @@ class Component extends DCLogic {
     };
   }
 
+  // Threads for the Listen boards: a short reply and a long one (the whole answer is kept for
+  // the newest reply, up to 1,000 bytes; older ones keep a bubble's 255 on the panel).
+  listenSeed() {
+    return {
+      jerv: [
+        { id: 401, from: 'me', kind: 'voice', durS: 3, text: "When's low tide at Port St John today?" },
+        { id: 402, from: 'them', kind: 'text', text: 'Low tide is at 14:52 and high tide at 21:07.' },
+        { id: 403, from: 'me', kind: 'voice', durS: 4, text: 'Is it good for rock pools this afternoon?' },
+        { id: 404, from: 'them', kind: 'text', text: 'Yes, this afternoon is a good one. It is a spring tide, so the water goes out further than usual and the pools by the north jetty are uncovered from about 13:30. Go after 14:00 for the best of it. The tide turns at 14:52 and comes back fast over the flat rocks, so start back up the beach by 16:30 at the latest. Wear shoes with grip: the rocks near the jetty are covered in weed. It will be 29 degrees with a light onshore breeze, and sunset is at 19:12 if you want to stay on.' }
+      ],
+      dave: [
+        { id: 411, from: 'me', kind: 'voice', durS: 3, text: 'How do I keep the wheat growing at night?' },
+        { id: 412, from: 'them', kind: 'text', text: 'Put a torch every few blocks so the light stays at nine or more, and keep water within four blocks of every crop. Then it grows while you sleep. Bone meal speeds it up if you have some.' }
+      ]
+    };
+  }
+
+  // The box's whole conversation behind a thread; the panel holds a window of it (see win).
+  historySeed() {
+    const jerv = [
+      ['How big was a T-Rex?', 'About 12 metres long and 4 metres tall at the hip. Longer than a bus.'],
+      ['How heavy?', 'Around 8 tonnes, as much as a big elephant and a half.'],
+      ['When did it live?', 'At the very end of the dinosaurs, 68 to 66 million years ago.'],
+      ['Where?', 'Western North America: Montana, the Dakotas, Wyoming and up into Canada.'],
+      ['Could it run?', 'Not really. Probably a fast walk, about 20 km/h at most.'],
+      ['How many teeth?', 'About 60, some longer than a banana, root and all.'],
+      ['Did they fall out?', 'All the time. New ones grew in underneath, all its life.'],
+      ['How strong was the bite?', 'The strongest of any land animal we know. It could crush bone.'],
+      ['Why were its arms so small?', 'Nobody knows for sure. They were strong for their size, though.'],
+      ['Did it have feathers?', 'Maybe a few as a baby. The skin found on adults is scaly.'],
+      ['What did it eat?', 'Other dinosaurs: Triceratops and Edmontosaurus, mostly.'],
+      ['Did it hunt or scavenge?', 'Both, most likely, like lions and hyenas do today.'],
+      ['How long did it live?', 'Up to about 30 years.'],
+      ['How fast did it grow?', 'Very fast as a teenager: up to 2 kg a day.'],
+      ['Could it see well?', 'Yes. Its eyes faced forward, so it could judge distance.'],
+      ['And smell?', 'Very well. The smell part of its brain was huge.'],
+      ['Was it the biggest meat-eater?', 'Not quite. Spinosaurus was longer, but T-Rex was heavier.'],
+      ['Who named it?', 'Henry Fairfield Osborn, in 1905.'],
+      ['What does the name mean?', 'Tyrant lizard king.'],
+      ['How many skeletons are there?', 'More than 30, a few of them nearly whole.'],
+      ['Which is the best one?', 'Sue, in Chicago. About 90% of the bones were found.'],
+      ['Who found Sue?', 'Sue Hendrickson, in South Dakota, in 1990. It is named after her.'],
+      ['Is Sue a girl?', 'Nobody can tell from the bones. The name is just after the finder.'],
+      ['Can we visit Sue?', 'Yes, at the Field Museum in Chicago. It has its own room.'],
+      ['How much are tickets?', 'About 30 dollars for an adult, less for children.'],
+      ['Is it open on Sundays?', 'Yes, every day from 9:00 to 17:00.'],
+      ['Add the Field Museum to our trip ideas.', 'Added the Field Museum to your trip ideas list.']
+    ];
+    const dave = [
+      ['How do I keep the wheat growing?', 'Water within four blocks of every crop, and light so it grows at night.'],
+      ['How much light?', 'Level nine or more. A torch every five or six blocks does it.'],
+      ['What about the rabbits?', 'Fence it, or put a gate on the farm. Rabbits eat carrots, not wheat.'],
+      ['Can villagers farm it for me?', 'A farmer villager will, if it has a composter and a bed nearby.'],
+      ['How do I get a farmer?', 'Put a composter next to a villager with no job.'],
+      ['Thanks Dave.', 'Any time. The wheat by your base is ready to cut now.']
+    ];
+    // Quorra's voice messages run both ways; she sends most of them.
+    const quorra = [
+      ['them', 'Daddy, I lost a tooth!'], ['me', 'Well done! Put it under your pillow.'],
+      ['them', 'Can we have pizza tonight?'], ['me', 'Friday is pizza night. Today is Tuesday.'],
+      ['them', 'I drew a horse at school.'], ['me', "I can't wait to see it."],
+      ['them', 'Tamsin took my blue pen.'], ['me', 'Ask her nicely to give it back.'],
+      ['them', 'She gave it back.'], ['me', 'Good. Thank you for asking nicely.'],
+      ['them', 'When are we going to the beach?'], ['me', 'Saturday, if it does not rain.'],
+      ['them', 'I finished my reading book.'], ['me', 'Brilliant. Pick a new one tomorrow.'],
+      ['them', 'Goodnight Daddy.'], ['me', 'Goodnight sweetheart, sleep well.'],
+      ['them', 'Good morning! It is sunny.'], ['me', 'Have a good day at school!'],
+      ['them', 'We had a fire drill.'], ['me', 'Did you line up quietly?'],
+      ['them', 'Yes, and I was first.'], ['me', "I'll be home in twenty minutes."],
+      ['me', 'Have a good day at school!'], ['them', 'Daddy, when are you coming home?']
+    ];
+    let id = 500;
+    const pairs = (list) => list.flatMap(([q, a]) => [
+      { id: id++, from: 'me', kind: 'voice', durS: 2 + (q.length % 3), text: q },
+      { id: id++, from: 'them', kind: 'text', text: a }
+    ]);
+    return {
+      jerv: pairs(jerv),
+      dave: pairs(dave),
+      quorra: quorra.map(([from, text], k, all) => ({ id: id++, from: from, kind: 'voice', durS: 2 + (text.length % 4), text: text, played: from === 'me' || k < all.length - 1, status: from === 'me' ? 'Played' : undefined }))
+    };
+  }
+
+  // Listen reads a reply in the PWA's voice, about 2.5 words a second; the panel does not know
+  // the length until the box has synthesised the last sentence, so only the text's share is drawn.
+  speechSecs(m) {
+    return Math.max(2, Math.round(m.text.split(/\s+/).length / 2.5));
+  }
+
+  // Plays one reply; any other stops. The box synthesises sentence by sentence, so there is a
+  // short "starting" while the first one is made.
+  listenTo(m) {
+    const b = this.base(this.state);
+    clearInterval(this.listenTimer);
+    clearTimeout(this.listenStart);
+    if (b.listen && b.listen.id === m.id) { this.put({ listen: null }); return; }
+    if (this.working(b)) { this.say('Listen waits for this answer'); return; }
+    this.put({ listen: { id: m.id, phase: 'starting', t: 0 }, playing: null });
+    this.listenStart = setTimeout(() => this.playListen(m), 900);
+  }
+
+  playListen(m) {
+    const total = this.speechSecs(m);
+    this.put((b) => (b.listen && b.listen.id === m.id ? { listen: { id: m.id, phase: 'playing', t: 0 } } : {}));
+    clearInterval(this.listenTimer);
+    this.listenTimer = setInterval(() => {
+      this.put((b) => {
+        if (!b.listen || b.listen.id !== m.id || b.listen.frozen) { clearInterval(this.listenTimer); return {}; }
+        const t = b.listen.t + 0.2;
+        if (t >= total) { clearInterval(this.listenTimer); return { listen: null }; }
+        return { listen: Object.assign({}, b.listen, { t: t }) };
+      });
+    }, 200);
+  }
+
+  // An agent turn still in flight in this thread: its one connection is busy, so a Listen on
+  // an older reply would have to queue behind it.
+  working(b) {
+    const t = b.threads[b.screen];
+    return !!t && this.isAgent(b.screen) && t.some((x) => x.from === 'them' && x.pending);
+  }
+
+  // The panel keeps at most 20 messages of a thread in RAM, 10 to a page. Loading earlier past
+  // that drops the newest off the bottom (a "Newer messages" row brings them back), so memory
+  // never grows however far back the owner reads.
+  loadPage(dir) {
+    const b = this.base(this.state);
+    const key = b.screen;
+    const w = b.win[key];
+    if (!w || w.phase === 'loading') return;
+    const all = b.threads[key];
+    const hi0 = w.hi == null ? all.length : w.hi;
+    if (dir < 0 && w.lo === 0) return;
+    // The message at the edge being extended keeps its place on the glass.
+    const anchorId = dir < 0 ? all[w.lo].id : all[hi0 - 1].id;
+    let y = dir < 0 ? 84 : 200;
+    const el = this.listEl && this.listEl.querySelector('[data-mid="' + anchorId + '"]');
+    if (el) y = el.offsetTop - this.listEl.scrollTop;
+    this.put({ win: Object.assign({}, b.win, { [key]: Object.assign({}, w, { phase: 'loading' }) }) });
+    clearTimeout(this.pageTimer);
+    this.pageTimer = setTimeout(() => this.put((c) => {
+      const w2 = c.win[key];
+      const n = c.threads[key].length;
+      let lo = w2.lo;
+      let hi = w2.hi == null ? n : w2.hi;
+      if (dir < 0) { lo = Math.max(0, lo - 10); if (hi - lo > 20) hi = lo + 20; }
+      else { hi = Math.min(n, hi + 10); if (hi - lo > 20) lo = hi - 20; }
+      return {
+        win: Object.assign({}, c.win, { [key]: Object.assign({}, w2, { lo: lo, hi: hi >= n ? null : hi, phase: 'idle' }) }),
+        anchor: { id: anchorId, y: y, key: anchorId + ':' + Date.now() }
+      };
+    }), 900);
+  }
+
   isAgent(key) {
     return key === 'jerv' || key === 'dave';
   }
@@ -745,7 +952,7 @@ class Component extends DCLogic {
 
   initial() {
     const start = this.props.start || 'home';
-    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', menu: null, recent: null, sessions: this.sessionSeed(), cur: { jerv: 'j1', dave: 'd1' }, earlier: { jerv: false, dave: false }, clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, speaking: null, bright: 80, autoRotate: true, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
+    const s = { ready: true, start: start, screen: 'home', page: 0, rec: null, off: false, toast: '', threads: this.seed(), playing: null, progress: 0, nextId: 100, said: 0, fw: { version: '0.0.1', phase: 'idle', pct: 0 }, calib: null, calibWhen: 'Never', menu: null, recent: null, sessions: this.sessionSeed(), cur: { jerv: 'j1', dave: 'd1' }, earlier: { jerv: false, dave: false }, clockView: 'face', showDate: true, night: { on: true, from: 21 * 60 + 30, to: 6 * 60 + 30, color: 'red' }, wifi: 'connected', tts: true, listen: null, win: {}, anchor: null, bright: 80, autoRotate: true, ring: null, notes: [], notif: { allow: true, sound: true, quiet: true },
       alarms: [
         { id: 1, h: 6, m: 45, days: 'Weekdays', label: 'Work', on: true },
         { id: 2, h: 8, m: 30, days: 'Sat, Sun', label: '', on: false },
@@ -757,10 +964,13 @@ class Component extends DCLogic {
     if (start === 'updating') { s.screen = 'settings'; s.fw = { version: '0.0.1', phase: 'downloading', pct: 64 }; }
     if (start === 'calib') { s.screen = 'settings'; s.calib = { i: 5, taps: 1 }; }
     if (start === 'clock') { s.screen = 'clock'; s.page = 1; }
-    if (start === 'notify-info') s.notes = [this.sample('info')];
-    if (start === 'notify-question') s.notes = [this.sample('yes/no question'), this.sample('info')];
     // Frozen part-way so the board shows the countdown line and the clip's progress.
+    if (start === 'notify-info') { s.notes = [this.sample('info')]; s.noteAge = 2; s.noteFrozen = true; }
+    if (start === 'notify-question') s.notes = [this.sample('yes/no question'), this.sample('info')];
+    // After the clip has played once, so the board shows the row that plays it again.
+    if (start === 'notify-question-sound') { s.notes = [this.sample('question with a sound')]; s.noteAge = 6; s.noteFrozen = true; }
     if (start === 'notify-picture') { s.notes = [this.sample('picture')]; s.noteAge = 3; s.noteFrozen = true; }
+    if (start === 'notify-night') { s.forceNight = true; s.notes = [this.sample('picture at night')]; s.noteAge = 2; s.noteFrozen = true; }
     if (start === 'notify-banner') { s.notes = [this.sample('banner question')]; s.noteFrozen = true; }
     if (start === 'notify-audio') { s.notes = [this.sample('with a sound')]; s.noteAge = 2.6; s.noteFrozen = true; }
     if (start === 'clock-night') { s.screen = 'clock'; s.page = 1; s.forceNight = true; }
@@ -791,6 +1001,47 @@ class Component extends DCLogic {
       s.threads.jerv = [];
       s.cur.jerv = 'jn';
     }
+    if (start.indexOf('jerv-listen') === 0 || start === 'dave-listen-playing') {
+      const L = this.listenSeed();
+      s.tts = false;
+      s.threads.jerv = L.jerv;
+      s.threads.dave = L.dave;
+      s.cur.jerv = 'j2';
+      s.cur.dave = 'd2';
+      s.screen = start === 'dave-listen-playing' ? 'dave' : 'jerv';
+    }
+    // Scrolled up to the short reply, so its button and the long one's opening both show.
+    if (start === 'jerv-listen' || start === 'jerv-listen-starting') s.scrollTop0 = true;
+    if (start === 'jerv-listen-starting') s.listen = { id: 402, phase: 'starting', t: 0, frozen: true };
+    if (start === 'jerv-listen-playing') s.listen = { id: 404, phase: 'playing', t: 14, frozen: true };
+    if (start === 'dave-listen-playing') s.listen = { id: 412, phase: 'playing', t: 6, frozen: true };
+    if (start === 'jerv-listen-working') {
+      s.threads.jerv = s.threads.jerv.concat([
+        { id: 405, from: 'me', kind: 'voice', durS: 3, text: 'How warm is the water there?' },
+        { id: 406, from: 'them', kind: 'text', text: 'Thinking… 0:12', pending: true }
+      ]);
+    }
+    if (start.indexOf('-history') > 0) {
+      const H = this.historySeed();
+      const key = start.split('-')[0];
+      s.screen = key;
+      s.threads[key] = H[key];
+      const n = H[key].length;
+      s.win[key] = { lo: Math.max(0, n - 10), hi: null, phase: 'idle', startWhen: { jerv: 'Yesterday 19:40', dave: 'Yesterday 18:20', quorra: 'Mon 08:12' }[key] };
+      if (key === 'jerv') s.cur.jerv = 'j3';
+      if (key === 'dave') s.cur.dave = 'd2';
+      s.scrollTop0 = true;
+    }
+    if (start === 'jerv-history-loading') s.win.jerv.phase = 'loading';
+    // Ten more loaded above; the message that was at the top is still exactly where it was.
+    if (start === 'jerv-history-loaded') {
+      s.win.jerv.lo = 34;
+      s.anchor = { id: s.threads.jerv[44].id, y: 84, key: 'start' };
+      s.scrollTop0 = false;
+    }
+    // Loaded back past the 20-message window: the newest ten went off the bottom.
+    if (start === 'jerv-history-capped') { s.win.jerv.lo = 14; s.win.jerv.hi = 34; s.scrollTop0 = false; }
+    if (start === 'dave-history-start') s.win.dave.lo = 0;
     if (start === 'rec-jerv') { s.screen = 'jerv'; s.rec = { to: 'jerv', secs: 3.4, frozen: true }; }
     if (start === 'rec-quorra') { s.screen = 'quorra'; s.rec = { to: 'quorra', secs: 4.1, frozen: true }; }
     return s;
@@ -813,12 +1064,17 @@ class Component extends DCLogic {
     clearInterval(this.playTimer);
     clearTimeout(this.toastTimer);
     clearInterval(this.fwTimer);
-    clearTimeout(this.speakTimer);
+    clearInterval(this.listenTimer);
+    clearTimeout(this.listenStart);
+    clearTimeout(this.pageTimer);
     clearInterval(this.tick);
   }
 
   componentDidMount() {
+    this.placeScroll();
     this.measure();
+    // Montserrat arriving re-wraps every bubble; place the scroll again once it has.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { this.wantFresh = true; this.placeScroll(); this.measure(); });
     // A notice's age on the glass: drives the hide-after line, the clip's progress, and the
     // hide itself when the time is up (the panel then reports `expired`).
     this.noteTimer = setInterval(() => this.ageNote(), 250);
@@ -830,9 +1086,10 @@ class Component extends DCLogic {
     const n = b.notes[0];
     if (!n || b.noteFrozen || b.off || b.ring || b.rec) return;
     if (b.screen === 'clock' && b.clockView === 'face' && !b.noteOpen) return;
-    if (!n.hide && !n.audio) return;
+    const hide = this.hideAfter(n);
+    if (!hide && !n.audio) return;
     const age = n.id === b.noteAgeId ? (b.noteAge || 0) + 0.25 : 0;
-    if (n.hide && age >= n.hide) {
+    if (hide && age >= hide) {
       this.put((c) => ({ notes: c.notes.slice(1), noteOpen: false, noteAge: 0, noteAgeId: null }));
       this.say('Hid itself — the sender reads expired');
       return;
@@ -840,13 +1097,35 @@ class Component extends DCLogic {
     this.put({ noteAge: age, noteAgeId: n.id });
   }
 
+  // Seconds a notice stays once shown; 0 waits for a tap or an answer. A plain notice hides
+  // after 20 s unless its sender picked another time or "until tapped" (`hide: 0`); a
+  // question has no default, so it waits for an answer unless its sender set one
+  // (owner, 2026-10-13).
+  hideAfter(n) {
+    if (n.hide != null) return n.hide;
+    return n.choices.length ? 0 : 20;
+  }
+
+  // The night clock's hours dim the notices too: a full picture would light the whole glass
+  // at 3 a.m., so it arrives as words on the night palette behind a Show picture button.
+  nightNow(s) {
+    return !!s.forceNight || (s.night.on && this.inNight(s));
+  }
+
+  rgba(hex, a) {
+    const c = (k) => parseInt(hex.slice(k, k + 2), 16);
+    return 'rgba(' + c(1) + ',' + c(3) + ',' + c(5) + ',' + a + ')';
+  }
+
   hm(h, m) {
     return { hm: String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'), ampm: '' };
   }
 
-  speakDone(id) {
-    clearTimeout(this.speakTimer);
-    this.speakTimer = setTimeout(() => this.put((b) => (b.speaking === id ? { speaking: null } : {})), 2600);
+  // Read-aloud on: a reply that lands is spoken at once, drawn as the same Listen state, so a
+  // tap on its button stops it like any other.
+  autoSpeak(thread, id) {
+    const m = this.base(this.state).threads[thread].find((x) => x.id === id);
+    if (m) this.playListen(m);
   }
 
   // Deep red first: it is the colour least disruptive to dark-adapted eyes, and on an AMOLED
@@ -986,13 +1265,20 @@ class Component extends DCLogic {
       info: { from: 'Ops', title: 'Disk 91% full', body: 'The box is running low on space. Ops → Disk shows what is using it.', choices: [] },
       'yes/no question': { from: 'Jerv', title: 'Run the cleanup now?', body: 'Frees about 38 GB of build cache. Nothing you keep is touched.', choices: ['Yes', 'No'] },
       'three choices': { from: 'Minecraft', title: 'Restart the server?', body: 'An update is ready. Two players are on.', choices: ['Now', 'In 10 min', 'Skip'] },
-      urgent: { from: 'Ops', title: 'Backup failed', body: 'Last night\'s backup did not finish. Check Ops → Backups.', choices: [], urgent: true },
-      // A picture the sender drew itself, the whole glass; it hides itself after 8 s.
+      // The sender chose "until tapped": a failed backup should not slip away unseen.
+      urgent: { from: 'Ops', title: 'Backup failed', body: 'Last night\'s backup did not finish. Check Ops → Backups.', choices: [], urgent: true, hide: 0 },
+      // A picture the sender drew itself, the whole glass; the sender picked 8 s over the 20 s default.
       picture: { from: 'Morning brief', title: 'Rain at 3 pm', body: '', choices: [], image: 'weather', mode: 'full', hide: 8 },
+      // The same kind of picture inside the night clock's hours. Its words are shown first on
+      // the night palette; how bright the picture is once asked for is the firmware's call.
+      'picture at night': { from: 'Evening brief', title: 'Tomorrow: rain at 3 pm', body: 'Take the umbrella. It clears by 6.', choices: [], image: 'weather', mode: 'full', night: true },
       // A banner the sender drew, over the words and the answers.
       'banner question': { from: 'Minecraft', title: 'Update the server?', body: 'Two players are on.', choices: ['Now', 'In 10 min', 'Skip'], image: 'minecraft', mode: 'banner' },
-      // Words read aloud in the PWA's voice (≤ 8 s), hidden after 20 s or a tap.
-      'with a sound': { from: 'Jerv', title: 'The pizza is here', body: 'The driver is at the front door.', choices: [], audio: 6, hide: 20 }
+      // Words read aloud in the PWA's voice (≤ 8 s), hidden after the default 20 s or a tap.
+      'with a sound': { from: 'Jerv', title: 'The pizza is here', body: 'The driver is at the front door.', choices: [], audio: 6 },
+      // A question carries a sound like any notice: it plays once as it arrives, and a tap on
+      // the speaker row plays it again.
+      'question with a sound': { from: 'Jerv', title: 'Let the plumber in?', body: 'He is at the front door. I can unlock it for ten minutes.', choices: ['Yes', 'No'], audio: 5 }
     }[kind];
     this.noteSeq = (this.noteSeq || 0) + 1;
     return Object.assign({ id: this.noteSeq, urgent: false }, k);
@@ -1018,19 +1304,49 @@ class Component extends DCLogic {
     if (!kind || kind === 'none' || (prevProps && prevProps.incoming === kind)) return;
     const b = this.base(this.state);
     if (!b.notif.allow) { this.say('Sender got 409 not_accepting'); return; }
-    if (b.notif.quiet && this.inNight(b)) { this.say('Sender got 409 quiet_hours, until ' + this.nightWindow(b).split('–')[1]); return; }
+    // "picture at night" stands in for a night with Refuse during night hours off: the box
+    // lets it through and the panel shows it the night way.
+    if (kind !== 'picture at night' && b.notif.quiet && this.inNight(b)) { this.say('Sender got 409 quiet_hours, until ' + this.nightWindow(b).split('–')[1]); return; }
     const n = this.sample(kind);
     this.put((c) => ({ notes: c.notes.concat([n]), off: false }));
   }
 
   componentDidUpdate(prevProps) {
     if (prevProps && prevProps.incoming !== this.props.incoming) this.maybeIncoming(prevProps);
+    this.placeScroll();
+    this.measure();
+  }
+
+  // Where a thread's scroll should sit: the newest message when one arrives, the top for a board
+  // that shows the history row, or, after a page loads, wherever keeps the anchor message still.
+  // Re-applied only to a new list element or a new intent, so a reader's own scroll is kept.
+  placeScroll() {
+    const el = this.listEl;
+    if (!el) return;
     const s = this.base(this.state);
     const t = s.threads[s.screen];
     const key = s.screen + ':' + (t ? t.length : 0) + ':' + (t && t.length ? t[t.length - 1].text : '');
-    if (this.listEl && key !== this.pinKey) this.listEl.scrollTop = this.listEl.scrollHeight;
-    this.pinKey = key;
-    this.measure();
+    if (key !== this.pinKey) {
+      this.pinKey = key;
+      this.want = s.scrollTop0 && !this.top0Used ? { mode: 'top' } : { mode: 'bottom' };
+      if (s.scrollTop0) this.top0Used = true;
+      this.wantFresh = true;
+    }
+    if (s.anchor && s.anchor.key !== this.anchorKey) {
+      this.anchorKey = s.anchor.key;
+      this.want = { mode: 'anchor', id: s.anchor.id, y: s.anchor.y };
+      this.wantFresh = true;
+    }
+    if (!this.want || (!this.wantFresh && el === this.placedEl)) return;
+    this.wantFresh = false;
+    this.placedEl = el;
+    const w = this.want;
+    if (w.mode === 'top') el.scrollTop = 0;
+    else if (w.mode === 'bottom') el.scrollTop = el.scrollHeight;
+    else {
+      const m = el.querySelector('[data-mid="' + w.id + '"]');
+      if (m) el.scrollTop = m.offsetTop - w.y;
+    }
   }
 
   scroller() {
@@ -1082,7 +1398,10 @@ class Component extends DCLogic {
     // Quorra's or Tamsin's thread it is a message to her.
     const to = s.threads[s.screen] ? s.screen : 'jerv';
     clearInterval(this.recTimer);
-    this.put({ rec: { to: to, secs: 0, from: s.screen }, toast: '', recent: null });
+    // KEY stops a reply being read, then records.
+    clearInterval(this.listenTimer);
+    clearTimeout(this.listenStart);
+    this.put({ rec: { to: to, secs: 0, from: s.screen }, toast: '', recent: null, listen: null });
     this.recTimer = setInterval(() => {
       this.put((b) => {
         if (!b.rec || b.rec.frozen) return {};
@@ -1111,7 +1430,8 @@ class Component extends DCLogic {
     const id = s.nextId;
     const text = said[s.said % said.length];
     const mine = { id: id, from: 'me', kind: 'voice', durS: Math.round(secs), text: 'Transcribing…', pending: true, status: this.isAgent(to) ? '' : 'Sending…' };
-    this.put((b) => ({ rec: null, screen: to === 'jerv' ? 'jerv' : b.screen, nextId: b.nextId + 2, said: b.said + 1, threads: Object.assign({}, b.threads, { [to]: b.threads[to].concat([mine]) }) }));
+    clearInterval(this.listenTimer);
+    this.put((b) => ({ rec: null, listen: null, win: b.win[to] ? Object.assign({}, b.win, { [to]: Object.assign({}, b.win[to], { lo: Math.max(0, b.threads[to].length + 1 - 10), hi: null }) }) : b.win, screen: to === 'jerv' ? 'jerv' : b.screen, nextId: b.nextId + 2, said: b.said + 1, threads: Object.assign({}, b.threads, { [to]: b.threads[to].concat([mine]) }) }));
     setTimeout(() => {
       this.put((b) => {
         const list = b.threads[to].map((m) => (m.id === id ? Object.assign({}, m, { text: text, pending: false, status: this.isAgent(to) ? '' : 'Delivered' }) : m));
@@ -1124,8 +1444,9 @@ class Component extends DCLogic {
         ? (s.said % 2 === 0 ? 'Two players are on, both near spawn.' : 'There is one about 300 blocks east of your base.')
         : (s.said % 2 === 0 ? "Done — I'll remind you at 9:00 tomorrow." : "Done — the porch light goes off at 11:00 tonight.");
       setTimeout(() => {
-        this.put((b) => ({ speaking: b.tts ? id + 1 : b.speaking, threads: Object.assign({}, b.threads, { [to]: b.threads[to].map((m) => (m.id === id + 1 ? Object.assign({}, m, { text: reply, pending: false }) : m)) }) }));
-        this.speakDone(id + 1);
+        const tts = this.base(this.state).tts;
+        this.put((b) => ({ listen: b.tts ? { id: id + 1, phase: 'playing', t: 0 } : b.listen, threads: Object.assign({}, b.threads, { [to]: b.threads[to].map((m) => (m.id === id + 1 ? Object.assign({}, m, { text: reply, pending: false }) : m)) }) }));
+        if (tts) this.autoSpeak(to, id + 1);
       }, 2400);
     }
   }
@@ -1176,8 +1497,16 @@ class Component extends DCLogic {
     const isPage = on && s.screen !== 'home';
     const thread = s.threads[s.screen];
     const a = A[s.screen] || A.jerv;
-    const msgs = (thread || []).map((m) => {
+    // A thread with a window shows only its slice of the box's conversation (loadPage).
+    const win = s.win[s.screen];
+    const all = thread || [];
+    const lo = win ? win.lo : 0;
+    const hi = win && win.hi != null ? win.hi : all.length;
+    const busy = this.working(s);
+    const msgs = all.slice(lo, hi).map((m) => {
       const playing = s.playing === m.id;
+      const ls = s.listen && s.listen.id === m.id ? s.listen : null;
+      const secs = m.text ? this.speechSecs(m) : 1;
       return {
         id: m.id, me: m.from === 'me', them: m.from !== 'me', voice: m.kind === 'voice',
         text: m.text, dur: this.fmt(m.durS || 0),
@@ -1188,9 +1517,18 @@ class Component extends DCLogic {
         playLabel: playing ? 'Pause' : 'Play message',
         prog: playing ? Math.min(100, Math.round((s.progress / (m.durS || 1)) * 100)) : (m.played === false ? 0 : 100),
         play: () => { if (!this.swiped) this.togglePlay(s.screen, m); },
-        canSpeak: this.isAgent(s.screen) && m.from !== 'me' && m.kind !== 'voice' && !m.pending && !s.tts && s.speaking !== m.id,
-        speakingNow: s.speaking === m.id,
-        speak: () => { if (this.swiped) return; this.put({ speaking: m.id }); this.speakDone(m.id); }
+        // Every finished reply of an agent's, read-aloud on or off: on, it replays one.
+        hasListen: this.isAgent(s.screen) && m.from !== 'me' && m.kind !== 'voice' && !m.pending,
+        listenIdle: !ls, listenStarting: !!ls && ls.phase === 'starting', listenRing: !!ls && ls.phase === 'playing',
+        listenStop: !!ls,
+        listenBg: ls ? this.rgba(a.color, 0.22) : a.tint,
+        listenDim: busy && !ls ? 0.4 : 1,
+        listenPressed: ls ? 'true' : 'false',
+        listenOffset: ls ? Math.round(163.4 * (1 - Math.min(1, ls.t / secs)) * 10) / 10 : 163.4,
+        listenAria: ls ? 'Stop reading this reply' : 'Read this reply aloud',
+        hasListenLine: !!ls,
+        listenLine: !ls ? '' : (ls.phase === 'starting' ? 'Starting… · tap to stop' : this.fmt(ls.t) + ' · tap to stop'),
+        listen: () => { if (!this.swiped) this.listenTo(m); }
       };
     });
     let rec = null;
@@ -1266,7 +1604,23 @@ class Component extends DCLogic {
       mn: mn,
       rc: rc,
       recentRef: (el) => { this.recentEl = el; },
-      earlierRow: !!agentNow && !!s.earlier[agentNow],
+      earlierRow: !!agentNow && !!s.earlier[agentNow] && !win,
+      hist: (() => {
+        if (!win) return { showLoad: false, showStart: false, showNewer: false };
+        const loading = win.phase === 'loading';
+        return {
+          showLoad: lo > 0, showStart: lo === 0, showNewer: hi < all.length,
+          loading: loading, idle: !loading, busy: loading ? 'true' : 'false',
+          label: loading ? 'Loading earlier…' : 'Load earlier',
+          color: loading ? '#9A9DA3' : '#E6E7E9',
+          more: lo + ' more',
+          aria: loading ? 'Loading earlier messages' : 'Load earlier messages, ' + lo + ' more on the box',
+          newer: (all.length - hi) + ' more',
+          startWhen: win.startWhen || '',
+          loadEarlier: () => { if (!this.swiped) this.loadPage(-1); },
+          loadNewer: () => { if (!this.swiped) this.loadPage(1); }
+        };
+      })(),
       threadEmpty: !!agentNow && s.threads[agentNow].length === 0,
       isHome: on && s.screen === 'home' && !s.rec && !s.ring,
       isHome0: on && s.screen === 'home' && s.page === 0 && !s.rec && !s.ring,
@@ -1349,6 +1703,8 @@ class Component extends DCLogic {
       // On the clock face nothing covers the time: what arrives waits as a corner badge until
       // it is tapped, so a glance at 3 a.m. always finds the hour (owner, 2026-10-11).
       hasNote: on && !s.ring && !s.rec && s.notes.length > 0 && (!(s.screen === 'clock' && s.clockView === 'face') || !!s.noteOpen),
+      // BOOT hides a notice on the glass, unanswered, before it means home.
+      bootSub: on && !s.ring && !s.rec && s.notes.length > 0 && (!(s.screen === 'clock' && s.clockView === 'face') || !!s.noteOpen) ? 'hide notice' : 'home',
       faceBadge: (() => {
         const unread = this.unplayed(s.threads.quorra) + this.unplayed(s.threads.tamsin);
         const n = s.notes.length + unread;
@@ -1366,27 +1722,46 @@ class Component extends DCLogic {
       })(),
       note: (() => {
         const n = s.notes[0];
-        if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', accent: '#7FA7C9', aria: '', pad: '40px 32px 30px', titleSize: 30, hasButtons: false, hasBanner: false, isPicture: false, hasAudio: false, hasTimer: false, audio: { pct: 0, time: '', aria: '', tint: '', waveOpacity: 1 }, timerPct: 0, timerColor: '#7FA7C9', timerAria: '', bannerH: 0, imgMinecraft: false, imgWeather: false, imageAlt: '', imageCaption: '', tapCard: () => {} };
-        const answer = (label) => () => {
+        if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', picHint: '', accent: '#7FA7C9', titleColor: '#E6E7E9', bodyColor: '#C4C7CC', mutedColor: '#9A9DA3', inkOpacity: 1, aria: '', pad: '40px 32px 30px', titleSize: 30, hasButtons: false, hasBanner: false, isPicture: false, nightAsk: false, revealBg: '', reveal: () => {}, hasAudio: false, hasTimer: false, audio: { pct: 0, time: '', aria: '', tint: '', waveOpacity: 1, playing: false, done: false, replay: () => {} }, timerPct: 0, timerColor: '#7FA7C9', timerAria: '', bannerH: 0, imgMinecraft: false, imgWeather: false, imageAlt: '', imageCaption: '', tapCard: () => {} };
+        // A button inside the card must not also count as the tap that hides it.
+        const own = (fn) => (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (!this.swiped) fn(); };
+        const answer = (label) => own(() => {
           this.put((b) => ({ notes: b.notes.slice(1), noteOpen: false, noteAge: 0 }));
           this.say('Sent to ' + n.from + ': ' + label);
-        };
-        const accent = n.urgent ? '#C9A36A' : '#7FA7C9';
+        });
         const age = n.id === s.noteAgeId || s.noteFrozen ? (s.noteAge || 0) : 0;
-        const left = n.hide ? Math.max(0, n.hide - age) : 0;
-        const isPicture = n.mode === 'full';
-        const tapHides = !n.choices.length;
+        const hide = this.hideAfter(n);
+        const left = hide ? Math.max(0, hide - age) : 0;
+        // At night a full picture waits behind Show picture; once asked for it fills the glass.
+        const atNight = n.mode === 'full' && (n.night || this.nightNow(s));
+        const nightAsk = atNight && s.noteReveal !== n.id;
+        const pal = this.nightPalette()[s.night.color];
+        const accent = nightAsk ? pal.color : (n.urgent ? '#C9A36A' : '#7FA7C9');
+        const isPicture = n.mode === 'full' && !nightAsk;
+        const hides = hide ? 'hides in ' + Math.ceil(left) + ' s' : '';
+        // Every notice hides on a tap away from its buttons, a question too (dismissed, no
+        // answer), and BOOT does the same (owner, 2026-10-13).
         const hint = n.choices.length
-          ? 'Your answer goes back to ' + n.from + ' · BOOT answers nothing'
-          : (n.hide ? 'Tap to hide · hides in ' + Math.ceil(left) + ' s' : 'Tap to hide');
-        const played = n.audio ? Math.min(n.audio, age) : 0;
+          ? 'Tap an answer · ' + (hides || 'tap elsewhere to hide')
+          : 'Tap to hide' + (hides ? ' · ' + hides : '');
+        const audioFrom = s.noteAudio && s.noteAudio.id === n.id ? s.noteAudio.from : 0;
+        const played = n.audio ? Math.max(0, Math.min(n.audio, age - audioFrom)) : 0;
+        const audioDone = !!n.audio && played >= n.audio;
         return {
           from: n.from + (n.urgent ? ' · urgent' : ''),
           title: n.title, body: n.body,
           accent: accent,
+          titleColor: nightAsk ? pal.color : '#E6E7E9',
+          bodyColor: nightAsk ? pal.color : '#C4C7CC',
+          mutedColor: nightAsk ? pal.color : '#9A9DA3',
+          inkOpacity: nightAsk ? pal.opacity : 1,
+          nightAsk: nightAsk,
+          revealBg: nightAsk ? this.rgba(pal.color, 0.12) : 'transparent',
+          reveal: own(() => this.put({ noteReveal: n.id })),
           count: s.notes.length > 1 ? '1 of ' + s.notes.length : '',
           cols: n.choices.length === 3 ? 3 : Math.max(1, n.choices.length),
-          hint: isPicture ? (n.hide ? 'Tap to hide · ' + Math.ceil(left) + ' s' : 'Tap to hide') : hint,
+          hint: hint,
+          picHint: 'Tap to hide' + (hide ? ' · ' + Math.ceil(left) + ' s' : ''),
           aria: n.from + ': ' + n.title,
           pad: n.mode === 'banner' ? '0 32px 26px' : '40px 32px 30px',
           titleSize: n.mode === 'banner' ? 26 : 30,
@@ -1400,22 +1775,25 @@ class Component extends DCLogic {
           imageCaption: n.image === 'minecraft' ? 'drawn by the sender' : '',
           hasAudio: !!n.audio,
           audio: {
+            playing: !audioDone, done: audioDone,
             pct: n.audio ? Math.round(100 * played / n.audio) : 0,
-            time: n.audio ? '0:0' + Math.floor(played) + ' / 0:0' + n.audio : '',
-            aria: n.audio ? (played < n.audio ? 'Playing the sound' : 'Sound played') : '',
+            time: n.audio ? (audioDone ? '0:0' + n.audio : '0:0' + Math.floor(played) + ' / 0:0' + n.audio) : '',
+            aria: n.audio ? (audioDone ? 'Play the sound again' : 'Playing the sound') : '',
             tint: 'rgba(127,167,201,0.10)',
-            waveOpacity: n.audio && played < n.audio ? 1 : 0.25
+            waveOpacity: n.audio && !audioDone ? 1 : 0.25,
+            // Plays once as the notice arrives; the row plays it again rather than hiding it.
+            replay: own(() => this.put((b) => ({ noteAudio: { id: n.id, from: n.id === b.noteAgeId ? (b.noteAge || 0) : 0 } })))
           },
           // The hide-after countdown: a thin line along the bottom edge that drains to the
           // left, the same on every kind of notice. Absent when it waits for a tap.
-          hasTimer: !!n.hide,
-          timerPct: n.hide ? Math.round(100 * left / n.hide) : 0,
-          timerColor: isPicture ? 'rgba(255,255,255,0.85)' : accent,
-          timerAria: n.hide ? 'Hides in ' + Math.ceil(left) + ' seconds' : '',
+          hasTimer: !!hide,
+          timerPct: hide ? Math.round(100 * left / hide) : 0,
+          timerColor: isPicture ? 'rgba(255,255,255,0.85)' : (nightAsk ? this.rgba(pal.color, pal.opacity) : accent),
+          timerAria: hide ? 'Hides in ' + Math.ceil(left) + ' seconds' : '',
           tapCard: () => {
-            if (!tapHides || this.swiped) return;
+            if (this.swiped) return;
             this.put((b) => ({ notes: b.notes.slice(1), noteOpen: false, noteAge: 0 }));
-            this.say('Hidden — the sender reads dismissed');
+            this.say(n.choices.length ? 'Hidden, no answer — the sender reads dismissed' : 'Hidden — the sender reads dismissed');
           },
           choices: n.choices.map((label, k) => ({
             label: label,
@@ -1490,7 +1868,7 @@ class Component extends DCLogic {
         knobX: s.tts ? 34 : 5,
         note: s.tts ? 'Replies are spoken and shown as text.' : 'Replies are text only. Tap Listen on a reply to hear it.'
       },
-      toggleTts: () => { if (!this.swiped) this.put((b) => ({ tts: !b.tts, speaking: null })); },
+      toggleTts: () => { if (!this.swiped) this.put((b) => ({ tts: !b.tts, listen: null })); },
       cal: this.calView(s.calib || { i: 0, taps: 0 }),
       calibWhen: s.calibWhen,
       openSettings: () => { if (!this.swiped) this.put({ screen: 'settings', playing: null }); },
@@ -1535,6 +1913,7 @@ class Component extends DCLogic {
         const b = this.base(this.state);
         if (b.ring) { this.put({ ring: null, off: false }); this.say('Alarm stopped'); return; }
         if (b.notes.length && (b.noteOpen || !(b.screen === 'clock' && b.clockView === 'face'))) { this.put({ notes: b.notes.slice(1), noteOpen: false, noteAge: 0 }); this.say('Dismissed — no answer sent'); return; }
+        if (b.listen) { clearInterval(this.listenTimer); clearTimeout(this.listenStart); this.put({ listen: null }); return; }
         if (b.calib) { this.put({ calib: null }); this.say('Calibration cancelled — old one kept'); return; }
         if (b.menu) { this.put({ menu: null }); return; }
         if (b.recent) { this.put({ recent: null }); return; }

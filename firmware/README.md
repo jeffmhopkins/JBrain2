@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -153,6 +153,33 @@ Two actions that answer one thing each, so neither is in a poke pool:
 
 The bench has a Shake button and an "I love you" voice button.
 
+**0.4.10: tickle tickle, and both of these twice as long.** `tickle tickle` / `tickle me` makes
+him laugh helplessly for 4.8 s: he squirms side to side, bounces on every "ha", tosses his head,
+kicks his legs out in turn, and tickle marks flicker either side of his body. `CUE_TICKLE` is a
+laugh (`SH_LAUGH`: seven breathy "ha"s tumbling down), and because a cue is at most 0.8 s the
+action says it again (`rig_recue`), three laughs in all, each only into a free speaker. The
+dizzy spell is now 6.4 s and the love 5.6 s, twice what they were, with their motions'
+cycle counts doubled so the head shakes and the hearts rise at the speed they did: twelve
+hearts now, not five. The bench has a "Tickle tickle" button.
+
+**And eating is a meal.** `ACT_EAT` was three pecks in 1.6 s and a 300 ms double bite. It is
+now 4.8 s and five bites of a cookie (`EXTRA_FOOD`): the robot carries it from its hand to the
+corner of its mouth, the bird pecks it off its wing, a piece goes out of it on each bite with
+crumbs falling, and the fifth finishes it. The mouth opens wide before each bite, snaps shut
+on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside `talk`).
+`CUE_EAT` is now a crunch and two munches, said on every bite through `rig_recue`, the first
+included: the meal is the one action that does not sound as it starts
+(`rig_cue_on_start`), since its hand is still on the way up. The bench has a "Have a snack"
+button.
+
+**A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
+only flinch, which with the meal crunching through two-thirds of its length and the tickle
+laughing through half of its own made most pokes during them do nothing. Two halves to it: the
+arbiter now lets a press cue cut a sounding PRESS-slot cue (the pet's own noise; never a reply
+or another slot's result or chime, which a press is still dropped behind), and
+`stream_facts_t.pet_only` tells `display.c` when that is all that is sounding, so it reacts
+there and flinches everywhere else. `stream_tests` drives it through the real arbiter.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,
@@ -243,6 +270,25 @@ body slides downhill, the head turns back toward true up by 0.6 of the panel's a
 (`orient_upright`, `face_state_t.upright`): the ostrich's head swings about its neck and its
 crest, eyes and beak turn about the head's centre; the robot, with no neck, nods its head over a
 little. The browser bench has a tilt slider for it.
+
+**0.4.8: the righted head's eyes and beak turn with it.** 0.4.6 turned where each feature sat
+but drew every one square to the glass, so on a panel held on its side the happy lower lid sat
+beside each eye instead of under it and the beak's four segments stacked into level bars (owner,
+with a photo). Each eye is now drawn turned through `upright` — outline, pupil, glint and both
+lids — and the beak, its line and the cheeks turn about the head's centre with the jaw opening
+along the head's own down. Upright the drawing is unchanged, pixel for pixel; the host test
+turns the upright face and requires the turned one to match it.
+
+**0.4.9: the play button rings with how much has been heard.** While a message plays, a ring
+round the play/pause button fills clockwise from twelve o'clock (owner: *"a little circle border
+that progresses to show how far it is until it's all the way complete"*). The whole track shows
+from the first moment in grey, so how much is left is visible, and a paused message keeps its
+ring where it got to. The panel streams a message and never holds all of it, so the length comes
+from the box: `X-Jpanel-Duration-Ms` on `/next` and on a replay's `/message/{id}/pcm`, which the
+engine publishes with the stream (`jp_cur_t.duration_ms`) and the machine turns into
+`sm_view_t.progress` from the arbiter's audible ms. A box that sends no length draws no ring.
+The same header switches on the engine's existing "80% of a short one" heard rule, which was
+written for it and had been waiting on the box to send it.
 
 ## One task owns the codec, one owns the panel
 

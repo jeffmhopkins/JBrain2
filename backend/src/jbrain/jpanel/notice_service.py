@@ -185,7 +185,7 @@ class NoticeService:
         """Put one notice on a panel, or raise `NoticeRefused` saying why not."""
         N.check_sender(sender)
         title, body, picks = N.check_text(title, body, list(choices))
-        hide = N.check_hide(hide_after_s)
+        hide = N.check_hide(hide_after_s, question=bool(picks))
         ttl = N.check_ttl(ttl_s)
         if audio is not None and say:
             raise N.NoticeRefused("bad_field", 422, field="say", want="audio or say, not both")

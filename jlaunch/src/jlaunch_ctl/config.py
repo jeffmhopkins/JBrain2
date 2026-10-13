@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,16 +10,18 @@ class Settings(BaseSettings):
     """Runtime settings sourced from ``JLAUNCH_``-prefixed environment variables.
 
     ``token`` has no default on purpose: a control server without a token must refuse
-    to start rather than run unauthenticated (mirrors the supervisor's
-    ``SUPERVISOR_TOKEN`` and jcode's ``JCODE_TOKEN``). The api presents it as a bearer
-    token on every proxied call.
+    to start rather than run unauthenticated (mirrors jcode's ``JCODE_TOKEN``). The api
+    presents it as a bearer token on every proxied call.
     """
 
     model_config = SettingsConfigDict(env_prefix="jlaunch_", case_sensitive=False)
 
     # Shared secret the JBrain api presents on every control call. No default —
-    # fail-closed: no token, no service.
-    token: str
+    # fail-closed: no token, no service. Compose passes `${JLAUNCH_TOKEN:-}`, so an
+    # unset key arrives as "" and would otherwise admit `Bearer `. Only empty is
+    # refused: install.sh mints one and update-inner.sh backfills a missing or empty one
+    # before every `up` (since August 2026); a length floor could strand a hand-set one.
+    token: str = Field(min_length=1)
 
     # Root of the per-job checkouts on the scratch volume. Each job gets its own
     # subdirectory (the repo is cloned into it) — the ~15 GB scratch a census run needs.

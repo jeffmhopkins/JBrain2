@@ -157,7 +157,89 @@ bool settings_notif_row_live(int row, bool accept)
     return row == 0 || accept;
 }
 
-const char *settings_rotate_note(bool on)
+const char *settings_rotate_note(bool on, bool available)
 {
-    return on ? "Follows which way is down, from a later update" : "Locked upright";
+    if (!available) return "The tilt sensor did not start, so the screen stays upright";
+    return on ? "Follows which way is down" : "Locked upright";
+}
+
+void calib_flow_start(calib_flow_t *f)
+{
+    *f = (calib_flow_t){0};
+}
+
+void calib_target(uint8_t i, int16_t *x, int16_t *y)
+{
+    static const int16_t T[CAL_TARGETS][2] = {
+        {CAL_NEAR, CAL_NEAR}, {CAL_FAR, CAL_NEAR}, {CAL_FAR, CAL_FAR}, {CAL_NEAR, CAL_FAR}};
+    if (i >= CAL_TARGETS) i = CAL_TARGETS - 1;
+    *x = T[i][0];
+    *y = T[i][1];
+}
+
+static int32_t d2(int32_t ax, int32_t ay, int32_t bx, int32_t by)
+{
+    return (ax - bx) * (ax - bx) + (ay - by) * (ay - by);
+}
+
+calib_step_t calib_flow_tap(calib_flow_t *f, int16_t x, int16_t y)
+{
+    if (f->target >= CAL_TARGETS) return CALF_DONE;
+    int16_t tx, ty;
+    calib_target(f->target, &tx, &ty);
+    if (d2(x, y, tx, ty) > CAL_MISS_PX * CAL_MISS_PX) return CALF_MISSED;
+    f->x[f->taps] = x;
+    f->y[f->taps] = y;
+    if (++f->taps < CAL_TAPS) return CALF_COUNTED;
+    int32_t sx = 0, sy = 0;
+    for (int i = 0; i < CAL_TAPS; i++) {
+        sx += f->x[i];
+        sy += f->y[i];
+    }
+    const int16_t mx = (int16_t)((sx + CAL_TAPS / 2) / CAL_TAPS), my = (int16_t)((sy + CAL_TAPS / 2) / CAL_TAPS);
+    f->taps = 0;
+    for (int i = 0; i < CAL_TAPS; i++)
+        if (d2(f->x[i], f->y[i], mx, my) > CAL_AGREE_PX * CAL_AGREE_PX) return CALF_DISAGREED;
+    f->done[f->target] = (calib_pair_t){tx, ty, mx, my};
+    return ++f->target < CAL_TARGETS ? CALF_NEXT : CALF_DONE;
+}
+
+const char *calib_flow_title(calib_step_t last)
+{
+    switch (last) {
+    case CALF_MISSED: return "Tap the centre of the cross";
+    case CALF_DISAGREED: return "Those taps disagreed: again";
+    default: return "Tap the cross";
+    }
+}
+
+void calib_flow_line(uint8_t i, char *out, size_t cap)
+{
+    const unsigned at = i < CAL_TARGETS ? i + 1u : CAL_TARGETS;
+    snprintf(out, cap, "%u of %u · BOOT cancels", at, (unsigned)CAL_TARGETS);
+}
+
+void settings_calib_when(uint32_t saved, uint32_t today, char *out, size_t cap)
+{
+    static const char *const MON[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                      "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    const unsigned mon = saved / 100u % 100u, day = saved % 100u;
+    if (!saved || mon < 1 || mon > 12) {
+        snprintf(out, cap, "%s", saved ? "Calibrated" : "Never");
+        return;
+    }
+    if (saved == today) {
+        snprintf(out, cap, "Today");
+        return;
+    }
+    snprintf(out, cap, "%u %s", day, MON[mon - 1]);
+}
+
+const char *settings_calib_result(calib_result_t r)
+{
+    switch (r) {
+    case CALIB_SAVED: return "Calibration saved";
+    case CALIB_NOT_SAVED: return "Calibrated, but not saved: it lasts until a restart";
+    default: return "Not saved: those taps did not agree. Try again";
+    }
 }

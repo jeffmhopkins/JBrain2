@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # The `internal_secrets` volume: the api mints one bearer per /internal caller here
     # (wall, mosquitto) and those services mount it read-only, so a new caller secret
     # ships with the same update as the code that checks it — no `.env` key, no second
-    # update (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S2.2).
+    # update (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md S2.2).
     internal_secrets_dir: str = "/run/jbrain-internal"
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"

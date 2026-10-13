@@ -9,7 +9,7 @@ import { parseIntakeSecret } from "./share";
 import "./intake.css";
 import type { IntakeConfig } from "./types";
 
-type Phase = "loading" | "welcome" | "interview" | "review" | "done" | "dead";
+type Phase = "loading" | "welcome" | "interview" | "review" | "done" | "dead" | "owner";
 
 interface Msg {
   who: "you" | "guide";
@@ -25,6 +25,7 @@ const STEP_OF: Record<Phase, number> = {
   review: 2,
   done: 3,
   dead: 0,
+  owner: 0,
 };
 
 export function GuidedIntakeApp(): JSX.Element {
@@ -54,8 +55,10 @@ export function GuidedIntakeApp(): JSX.Element {
         window.history.replaceState(null, "", "/intake");
         setConfig(cfg);
         setPhase("welcome");
-      } catch {
-        setPhase("dead");
+      } catch (err) {
+        // 409: this browser is signed in as the owner, and redeeming would replace that
+        // session. The secret stays in the URL so it can be opened in a private window.
+        setPhase(err instanceof ApiError && err.status === 409 ? "owner" : "dead");
       }
     })();
   }, []);
@@ -164,6 +167,16 @@ export function GuidedIntakeApp(): JSX.Element {
           <p className="intake-blurb">
             It may have expired, been used up, or been revoked. Ask whoever sent it to share a fresh
             link.
+          </p>
+        </div>
+      )}
+
+      {phase === "owner" && (
+        <div className="intake-body intake-center">
+          <h1>You're signed in as the owner</h1>
+          <p className="intake-blurb">
+            Opening this link here would sign you out. To try it as the recipient would, open it in
+            a private window. The link hasn't been used.
           </p>
         </div>
       )}

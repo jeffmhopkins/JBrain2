@@ -122,14 +122,14 @@
       "y": 4423,
       "w": 720,
       "h": 720,
-      "title": "15 \u00b7 Push message from the box (tap to hide)"
+      "title": "15 \u00b7 Push message \u2014 hides itself after 20 s by default, or on a tap"
     },
     "NotifyQuestion.dc.html": {
       "x": 1600,
       "y": 4423,
       "w": 720,
       "h": 720,
-      "title": "16 \u00b7 Push question \u2014 answer goes back (1 of 2)"
+      "title": "16 \u00b7 Push question \u2014 answer goes back; a tap elsewhere or BOOT hides it (1 of 2)"
     },
     "ClockBadge.dc.html": {
       "x": 2400,
@@ -143,7 +143,7 @@
       "y": 5263,
       "w": 720,
       "h": 720,
-      "title": "18 \u00b7 Push picture \u2014 the sender's own image, whole glass (hides itself)"
+      "title": "18 \u00b7 Push picture \u2014 the sender\u2019s own image, whole glass (sender picked 8 s)"
     },
     "NotifyBanner.dc.html": {
       "x": 800,
@@ -159,54 +159,174 @@
       "h": 720,
       "title": "20 \u00b7 Push with a sound \u2014 playing, tap or wait to hide"
     },
-    "ConvoMenu.dc.html": {
+    "NotifyQuestionSound.dc.html": {
+      "x": 2400,
+      "y": 5263,
+      "w": 720,
+      "h": 720,
+      "title": "28 \u00b7 Push question with a sound \u2014 played once, tap the speaker row to replay"
+    },
+    "NotifyNight.dc.html": {
       "x": 0,
       "y": 6103,
+      "w": 720,
+      "h": 720,
+      "title": "29 \u00b7 Picture at night \u2014 words on the night palette, Show picture (brightness is the firmware\u2019s call)"
+    },
+    "ConvoMenu.dc.html": {
+      "x": 0,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "21 \u00b7 Long press in Jerv\u2019s thread \u2014 New conversation / Recent (proposal)"
     },
     "ConvoLoading.dc.html": {
       "x": 800,
-      "y": 6103,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "22 \u00b7 Recent conversations \u2014 loading from the box"
     },
     "ConvoRecent.dc.html": {
       "x": 1600,
-      "y": 6103,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "23 \u00b7 Recent conversations \u2014 tap one to switch"
     },
     "ConvoSwitched.dc.html": {
       "x": 2400,
-      "y": 6103,
+      "y": 6943,
       "w": 720,
       "h": 720,
       "title": "24 \u00b7 Switched \u2014 an older conversation, its title under Jerv"
     },
     "ConvoNew.dc.html": {
       "x": 0,
-      "y": 6943,
+      "y": 7783,
       "w": 720,
       "h": 720,
       "title": "25 \u00b7 After New conversation \u2014 a blank thread"
     },
     "ConvoEmpty.dc.html": {
       "x": 800,
-      "y": 6943,
+      "y": 7783,
       "w": 720,
       "h": 720,
       "title": "26 \u00b7 Recent conversations \u2014 nothing earlier yet"
     },
     "DaveRecent.dc.html": {
       "x": 1600,
-      "y": 6943,
+      "y": 7783,
       "w": 720,
       "h": 720,
       "title": "27 \u00b7 Dave\u2019s own recent conversations (per agent)"
+    },
+    "ListenIdle.dc.html": {
+      "x": 0,
+      "y": 8903,
+      "w": 720,
+      "h": 720,
+      "title": "30 \u00b7 Listen on every reply of Jerv's \u2014 a 56 px speaker beside it (read-aloud off here)"
+    },
+    "ListenStarting.dc.html": {
+      "x": 800,
+      "y": 8903,
+      "w": 720,
+      "h": 720,
+      "title": "31 \u00b7 Listen tapped \u2014 \"Starting\u2026\" while the box makes the first sentence; tap again stops"
+    },
+    "ListenPlaying.dc.html": {
+      "x": 1600,
+      "y": 8903,
+      "w": 720,
+      "h": 720,
+      "title": "32 \u00b7 Listen on a long reply \u2014 the ring fills as the text is read, tap \u25a0 to stop"
+    },
+    "ListenWorking.dc.html": {
+      "x": 2400,
+      "y": 8903,
+      "w": 720,
+      "h": 720,
+      "title": "33 \u00b7 Jerv still working \u2014 Listen on older replies is dimmed and waits for this answer"
+    },
+    "DaveListen.dc.html": {
+      "x": 3200,
+      "y": 8903,
+      "w": 720,
+      "h": 720,
+      "title": "34 \u00b7 Dave's reply read aloud \u2014 the same button, in his green"
+    },
+    "HistoryLoad.dc.html": {
+      "x": 0,
+      "y": 9743,
+      "w": 720,
+      "h": 720,
+      "title": "35 \u00b7 Load earlier at the top of a thread \u2014 44 more on the box"
+    },
+    "HistoryLoading.dc.html": {
+      "x": 800,
+      "y": 9743,
+      "w": 720,
+      "h": 720,
+      "title": "36 \u00b7 Load earlier \u2014 fetching ten from the box"
+    },
+    "HistoryLoaded.dc.html": {
+      "x": 1600,
+      "y": 9743,
+      "w": 720,
+      "h": 720,
+      "title": "37 \u00b7 Loaded \u2014 ten earlier above; \"Is Sue a girl?\" has not moved"
+    },
+    "HistoryCapped.dc.html": {
+      "x": 2400,
+      "y": 9743,
+      "w": 720,
+      "h": 720,
+      "title": "38 \u00b7 Read back past the 20-message window \u2014 the newest ten went off the bottom"
+    },
+    "HistoryStart.dc.html": {
+      "x": 3200,
+      "y": 9743,
+      "w": 720,
+      "h": 720,
+      "title": "39 \u00b7 Dave \u2014 \"Start of conversation\", nothing earlier"
+    },
+    "HistoryQuorra.dc.html": {
+      "x": 4000,
+      "y": 9743,
+      "w": 720,
+      "h": 720,
+      "title": "40 \u00b7 Quorra's thread \u2014 Load earlier on her voice messages"
+    },
+    "PwaPanelSettings.dc.html": {
+      "x": 0,
+      "y": 10583,
+      "w": 390,
+      "h": 844,
+      "title": "41 \u00b7 PWA \u2014 panel settings on the display panel's card (jpanel \u2192 Panels)",
+      "is_interactive": true
+    },
+    "PwaSettingsOpen.dc.html": {
+      "x": 470,
+      "y": 10583,
+      "w": 390,
+      "h": 844,
+      "title": "42 \u00b7 PWA \u2014 Clock and Notices open, everything on the panel"
+    },
+    "PwaSettingsWaiting.dc.html": {
+      "x": 940,
+      "y": 10583,
+      "w": 390,
+      "h": 844,
+      "title": "43 \u00b7 PWA \u2014 two changes waiting for the panel, one just landed"
+    },
+    "PwaSettingsOffline.dc.html": {
+      "x": 1410,
+      "y": 10583,
+      "w": 390,
+      "h": 844,
+      "title": "44 \u00b7 PWA \u2014 panel offline: last report shown, a change waits on the box"
     }
   },
   "order": [
@@ -231,13 +351,30 @@
     "NotifyPicture.dc.html",
     "NotifyBanner.dc.html",
     "NotifyAudio.dc.html",
+    "NotifyQuestionSound.dc.html",
+    "NotifyNight.dc.html",
     "ConvoMenu.dc.html",
     "ConvoLoading.dc.html",
     "ConvoRecent.dc.html",
     "ConvoSwitched.dc.html",
     "ConvoNew.dc.html",
     "ConvoEmpty.dc.html",
-    "DaveRecent.dc.html"
+    "DaveRecent.dc.html",
+    "ListenIdle.dc.html",
+    "ListenStarting.dc.html",
+    "ListenPlaying.dc.html",
+    "ListenWorking.dc.html",
+    "DaveListen.dc.html",
+    "HistoryLoad.dc.html",
+    "HistoryLoading.dc.html",
+    "HistoryLoaded.dc.html",
+    "HistoryCapped.dc.html",
+    "HistoryStart.dc.html",
+    "HistoryQuorra.dc.html",
+    "PwaPanelSettings.dc.html",
+    "PwaSettingsOpen.dc.html",
+    "PwaSettingsWaiting.dc.html",
+    "PwaSettingsOffline.dc.html"
   ],
   "notes": {
     "states": {
@@ -246,6 +383,13 @@
       "text": "Screens to lock down",
       "kind": "title1",
       "maxW": 3120
+    },
+    "proposals": {
+      "x": 0,
+      "y": 8663,
+      "text": "Proposed 2026-10-13: Listen, Load earlier, panel settings in the PWA",
+      "kind": "title1",
+      "maxW": 4000
     }
   },
   "designSystems": []

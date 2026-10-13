@@ -64,7 +64,7 @@ _Static_assert((STREAM_RING_SAMPLES & (STREAM_RING_SAMPLES - 1)) == 0, "ring mus
 /* The cue slots, in the order the arbiter processes them each tick (after `silence`, stale-stream
    discard and the reply). */
 typedef enum {
-    STREAM_SLOT_PRESS = 0, /* today's rule: dropped if a cue or reply is sounding */
+    STREAM_SLOT_PRESS = 0, /* dropped behind a reply or another slot's cue; cuts its own (0.4.10) */
     STREAM_SLOT_SEND_RESULT, /* survives a silence (E1.2); latest wins; expires 15 s after eligible */
     STREAM_SLOT_FAIL,        /* latest wins; never overwrites a pending SENT */
     STREAM_SLOT_REFUSAL,     /* CUE_BUSY, coalesced; expires 2 s after eligible */
@@ -96,6 +96,9 @@ typedef struct {
     bool clip_busy;     /* a cue or a reply: the press-drop rule and the mic gate use this */
     bool reply_busy;    /* a reply pending or sounding */
     bool stream_live;   /* the current-gen stream is open or the ring is undrained */
+    /* Quiet, or the only thing sounding or pending is a press-slot cue: the pet's own noise,
+       which a new press cuts. Not a reply, a message, a result or the chime. */
+    bool pet_only;
     uint32_t arb_hb;
     bool arbiter;       /* the audio task exists (audio_start succeeded and xTaskCreate ran) */
     uint32_t cue_expired; /* outcome cues that waited past their TTL (telemetry) */

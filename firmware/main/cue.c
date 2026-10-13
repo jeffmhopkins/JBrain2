@@ -163,6 +163,7 @@ typedef enum {
     SH_NOISE,    /* filtered noise, optionally over a falling tone */
     SH_RUDE,     /* the body noises */
     SH_PAIR,     /* two detuned voices, falling together */
+    SH_LAUGH,    /* `a` syllables of "ha", tumbling `b` semitones down across the run */
 } shape_t;
 
 #define STEPS_MAX 4
@@ -290,8 +291,10 @@ static const cue_def_t DEF[CUE_COUNT] = {
        per-variant length comes from `cue_ms`. */
     [CUE_FART] = {SH_RUDE, 700, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
     [CUE_BURP] = {SH_RUDE, 560, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
-    /* Two soft bites. Noise, but low-clocked and short, so it chews rather than hisses. */
-    [CUE_EAT] = {SH_NOISE, 300, 0.0f, 0, 2.6f, 0.0f, {0, 0, END}, 3, 20},
+    /* CRUNCH, MUNCH, MUNCH: a bite and two chews, sounded on every bite of the meal (0.4.10).
+       Noise, low-clocked so it chews rather than hisses; the clock falls across the run, so
+       the crunch is crisper than the munches after it. Was two soft bites in 300 ms. */
+    [CUE_EAT] = {SH_NOISE, 620, 0.0f, 0, 3.4f, 0.0f, {0, 0, 0, END}, 3, 35},
     /* A thud: a noise burst over a tone dropping fast. Contact, then nothing. */
     [CUE_KICK] = {SH_NOISE, 200, 0.0f, 0, 4.2f, 260.0f, {END}, 1, 60},
     /* Three rises, each starting higher than the last — a spiral, which one sweep cannot be. */
@@ -302,6 +305,10 @@ static const cue_def_t DEF[CUE_COUNT] = {
     /* Two coos, a major third apart — the blush's warm arc said twice, which is how pleased
        sounds rather than merely content. */
     [CUE_LOVE] = {SH_COO, 620, 440.0f, 0.0f, 0.4f, 0, {0, 4, END}, 30, 0},
+    /* A LAUGH, which none of the shapes above could make: GIGGLE is four clean blips, and real
+       laughter is a run of separate breathy syllables whose pitch tumbles DOWN as the breath
+       runs out. Seven "ha"s in 740 ms (the most a cue can be once the variant stretches it). */
+    [CUE_TICKLE] = {SH_LAUGH, 740, 620.0f, 0.0f, 7.0f, 7.0f, {END}, 4, 0},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -417,6 +424,7 @@ cue_t cue_for_action(int action)
     case ACT_SPIN:   return CUE_SPIN;
     case ACT_DIZZY:  return CUE_DIZZY;
     case ACT_LOVE:   return CUE_LOVE;
+    case ACT_TICKLE: return CUE_TICKLE;
     default:         return CUE_BLIP;
     }
 }
@@ -590,6 +598,24 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             e.hold_ms = dur * 0.12f;
             e.decay_ms = dur * 0.88f - (float)d->attack_ms;
             v = s;
+            break;
+        }
+
+        case SH_LAUGH: {
+            /* Each syllable a fast-in, slower-out pulse with a gap after it, so the ear counts
+               separate "ha"s. A buzzy voice for the vowel, breath riding it (the "h" is mostly
+               air), and each one pitched a little lower than the last, sagging as it goes. */
+            const float syl = u * d->a;
+            const float k = floorf(syl), w = syl - k;
+            const float gate = w < 0.12f ? w / 0.12f : w < 0.62f ? 1.0f - (w - 0.12f) / 0.5f
+                                                                 : 0.0f;
+            const float hz = semi(base, -d->b * k / (d->a - 1.0f)) * (1.0f - 0.06f * w);
+            const float ph = step_osc(&a, hz, rate);
+            const float voice = 0.7f * triangle(ph, hz) + 0.3f * pulse(ph, 0.3f, hz);
+            const float breath = noise_next(&nz, 5200.0f * vary, rate) * (w < 0.2f ? 0.55f : 0.2f);
+            e.hold_ms = dur * 0.8f;
+            e.decay_ms = dur * 0.2f - (float)d->attack_ms;
+            v = (voice + breath) * gate;
             break;
         }
 

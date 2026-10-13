@@ -1,25 +1,32 @@
 // The chat share sheet (docs/mocks/chat-share, variant B): mint a revocable, no-login link to
 // one chat, copy or send it (shown once — only its hash is stored), see how often it was
 // opened, and revoke it. Anyone with the link reads the whole chat, tool steps included, as it
-// stands each time they open it. A chat that could read a firewalled domain warns first and
-// takes a second tap to publish, because its turns can quote those notes.
+// stands each time they open it. A chat that can read or has read a firewalled domain, mail or
+// memory warns first and takes a second tap to publish, because its turns can quote them. The
+// server decides from the stored turns (a re-scoped chat keeps what it read) and refuses an
+// unconfirmed mint, so the warning can't be skipped by a stale answer here.
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
-import { type ChatShareLink, type MintedChatShare, api } from "../api/client";
+import { ApiError, type ChatShareLink, type MintedChatShare, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
 import { CopyIcon, EyeIcon, LinkIcon, ShieldIcon } from "../components/icons";
 import { chatShareUrl } from "./chatShare";
 import type { AgentSession } from "./types";
 
-// The firewalled domains, by wire code, in the words the owner sees.
-const FIREWALLED: Record<string, string> = {
+// The server's sensitivity reasons, by wire code, in the words the owner sees.
+const SENSITIVE: Record<string, string> = {
   health: "Medical",
   finance: "Financial",
   location: "Location",
+  mail: "Email",
+  memory: "Memory",
+  measurements: "Measurement",
 };
 
-function firewalledLabels(scopes: readonly string[]): string[] {
-  return scopes.flatMap((code) => (FIREWALLED[code] ? [FIREWALLED[code] as string] : []));
+// A reason this build has no word for still shows, as its code: an empty warning would
+// re-arm the button with nothing said.
+function sensitiveLabels(codes: readonly string[]): string[] {
+  return codes.map((code) => SENSITIVE[code] ?? code);
 }
 
 function when(iso: string): string {
@@ -63,8 +70,12 @@ export function ChatShareSheet({
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(false);
   const [status, setStatus] = useState("");
+  // The session's own scopes until the server answers, so the warning never starts absent.
+  const [sensitive, setSensitive] = useState<string[]>(() =>
+    session.domain_scopes.filter((code) => code in SENSITIVE),
+  );
 
-  const firewalled = firewalledLabels(session.domain_scopes);
+  const firewalled = sensitiveLabels(sensitive);
   const turns = session.turn_count ?? 0;
 
   const reload = useCallback(async () => {
@@ -75,14 +86,25 @@ export function ChatShareSheet({
     }
   }, [session.id]);
 
+  const loadSensitivity = useCallback(async (): Promise<string[] | null> => {
+    try {
+      const codes = await api.chatShareSensitivity(session.id);
+      setSensitive(codes);
+      return codes;
+    } catch {
+      return null;
+    }
+  }, [session.id]);
+
   useEffect(() => {
     void reload();
-  }, [reload]);
+    void loadSensitivity();
+  }, [reload, loadSensitivity]);
 
   async function mint(): Promise<void> {
     setBusy(true);
     try {
-      const m = await api.mintChatShare(session.id);
+      const m = await api.mintChatShare(session.id, armed);
       setMinted(m);
       setStatus(
         (await copyText(chatShareUrl(m.token)))
@@ -91,11 +113,18 @@ export function ChatShareSheet({
       );
       onChanged?.();
       void reload();
-    } catch {
+      setArmed(false);
+    } catch (err) {
+      // The chat read something private since the sheet loaded: show why and re-arm.
+      if (err instanceof ApiError && err.status === 409 && (await loadSensitivity())?.length) {
+        setArmed(true);
+        setStatus("");
+        return;
+      }
       setStatus("Couldn’t create the link. Try again.");
+      setArmed(false);
     } finally {
       setBusy(false);
-      setArmed(false);
     }
   }
 
@@ -142,8 +171,8 @@ export function ChatShareSheet({
           <div className="cshare-warn">
             <ShieldIcon size={16} />
             <span>
-              This chat can read your <b>{firewalled.join(", ")}</b> notes. Anything it quoted from
-              them will be visible to anyone with the link.
+              This chat can read or has read your <b>{firewalled.join(", ")}</b>. Anything it quoted
+              from them will be visible to anyone with the link.
             </span>
           </div>
         )}
