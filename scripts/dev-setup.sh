@@ -348,6 +348,12 @@ fi
 # LVGL release at configure time. Both already exist in this container, so nothing is
 # installed here for them.
 #
+# Its colour emoji (0.0.23) are generated C, committed: `firmware-c6/tools/gen_emoji.py` is plain
+# Python with no dependencies, and fetches the Noto Color Emoji PNGs that
+# `components/ui_kit/emoji/emoji_set.txt` names (sha256-pinned, tag v2.051) into
+# ~/.cache/jbrain-emoji on first run. Nothing is installed here for it, and neither the IDF build
+# nor the sim needs the network for emoji.
+#
 # The twins' panel has a browser bench (`docs/mocks/jpanel-s3/`): its own UI code compiled to
 # WebAssembly by `firmware/mock/build.sh`. That needs a clang with the wasm32 target (this
 # container's clang 18 has it) and fetches the rest itself — wasi-sdk 24's sysroot and builtins,

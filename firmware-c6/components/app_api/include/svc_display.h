@@ -18,10 +18,10 @@ bool svc_display_applied(void);
 
 /* Auto-rotate (0.0.18): the panel turned `quarters` quarter turns clockwise from upright
  * (disp_logic.h). svc_orient records it; the UI task applies it between frames and redraws the
- * whole screen. `rotation` is what the glass shows now, which lags a request by a frame — or by
- * longer, when a quarter turn finds no memory for its piece buffer and the glass stays as it was.
- * Everything that must agree with the glass (touch, calibration) follows `rotation`, never the
- * request: `on_rotated` is called on the UI task with each turn the glass actually took. */
+ * whole screen. `rotation` is what the glass shows now, which lags a request until the UI task's
+ * next pass between frames. Everything that must agree with the glass (touch, calibration)
+ * follows `rotation`, never the request: `on_rotated` is called on the UI task with each turn the
+ * glass actually took. Since 0.0.22 a turn needs no memory of its own, so it is never refused. */
 void svc_display_set_rotation(uint8_t quarters);
 uint8_t svc_display_rotation(void);
 void svc_display_on_rotated(void (*fn)(uint8_t quarters));

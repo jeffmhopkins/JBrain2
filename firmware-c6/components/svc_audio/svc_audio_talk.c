@@ -30,6 +30,8 @@ static uint32_t s_ring_bytes;
    the box answered, with the ring taken, and the lowest seen while the audio streamed. The last
    two apart are what the network holds behind the ring. */
 static uint32_t s_play_mem[4];
+/* The last talk's (0.0.22): as its upload began, and the lowest up and down. */
+static uint32_t s_talk_mem[3];
 /* The message playing's audio that went to the speaker: the audio task's count, under the lock. */
 static uint32_t s_played_bytes;
 /* The box answered a play with its audio (main task, under the lock): the UI task marks the
@@ -820,6 +822,15 @@ void talk_net_mem(uint32_t before, uint32_t answered, uint32_t ringed, uint32_t 
     unlock();
 }
 
+void talk_net_talk_mem(uint32_t before, uint32_t up_low, uint32_t reply_low)
+{
+    lock();
+    s_talk_mem[0] = before;
+    s_talk_mem[1] = up_low;
+    s_talk_mem[2] = reply_low;
+    unlock();
+}
+
 void talk_net_listened(bool verified)
 {
     lock();
@@ -888,9 +899,30 @@ void talk_net_reply(const char *reply, bool audio_follows)
         s_played_bytes = 0;
         tk_marks_init(&s_marks);
     }
-    /* The recording is all sent and the microphone is off: the ring is the reply's now. */
-    if (s_tk.phase == TK_PLAY) tk_ring_init(&s_ring, s_ring_mem, s_ring_bytes);
+    /* The recording is all sent and the microphone is off: the ring is the reply's now, and a
+       talk's shrinks to a play's (tk_reply_ring_bytes; a Listen's is a play's already). Nothing
+       reads or writes it meanwhile: the speaker waits for the kick below, and this task gives the
+       reply's audio only after. The UI task frees a ring only once the exchange is quiet, which
+       this one is not. */
+    uint8_t *mem = NULL;
+    const uint32_t want = tk_reply_ring_bytes(s_ring_bytes);
+    if (s_tk.phase == TK_PLAY) {
+        if (s_ring_mem && want < s_ring_bytes) mem = s_ring_mem;
+        tk_ring_init(&s_ring, mem ? NULL : s_ring_mem, mem ? 0 : s_ring_bytes);
+    }
     unlock();
+    if (mem) {
+        /* Outside the lock, a critical section on the device. A shrink is done in place by the
+           heap; were it ever refused, the old block is still valid and still the ring. */
+        uint8_t *small = realloc(mem, want);
+        lock();
+        if (small) {
+            s_ring_mem = small;
+            s_ring_bytes = want;
+        }
+        tk_ring_init(&s_ring, s_ring_mem, s_ring_bytes);
+        unlock();
+    }
     talk_port_kick();
 }
 
@@ -1055,8 +1087,9 @@ static void describe(void *ctx, dbg_json_t *w)
     const tk_t t = s_tk;
     const uint32_t queued = tk_ring_used(&s_ring);
     const uint32_t ring = s_ring_mem ? s_ring_bytes : 0;
-    uint32_t mem[4];
+    uint32_t mem[4], talk[3];
     memcpy(mem, s_play_mem, sizeof mem);
+    memcpy(talk, s_talk_mem, sizeof talk);
     char status[sizeof s_status];
     memcpy(status, s_status, sizeof status);
     unlock();
@@ -1085,6 +1118,14 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "play_answered", mem[1]);
     dbg_json_int(w, "play_ring_free", mem[2]);
     dbg_json_int(w, "play_low", mem[3]);
+    /* The last talk's (0.0.22) as "<before>/<up low>/<reply low>", one string because the
+       snapshot's answer is capped at 6 KB. Its 16 KB ring is already in `before`: what the
+       network held is before - up low going up, and 10 KB more than before - reply low coming
+       down, once the reply's ring had shrunk to 6 KB. */
+    char tm[36];
+    snprintf(tm, sizeof tm, "%lu/%lu/%lu", (unsigned long)talk[0], (unsigned long)talk[1],
+             (unsigned long)talk[2]);
+    dbg_json_str(w, "talk_mem", tm);
     dbg_json_int(w, "queued", queued);
     dbg_json_int(w, "talks", st.talks);
     dbg_json_int(w, "sent", st.sent);

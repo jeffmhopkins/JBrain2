@@ -924,7 +924,10 @@ should be able to do once we're live").** Not yet tried from a real client.
   `"quoted phrase"` — a comma or a bare number is a syntax error the player sees. So
   "Dave, …" (the comma) and coordinates go in quotes: `/jb:dave "Dave, mark this
   location as tree farm"`; a leading "Dave," is dropped either way. A console origin is
-  refused ("Only a player can ask Dave").
+  refused ("Only a player can ask Dave"). `/jb:dave`, `/jb:d` and `/jb:ai` register with
+  `permissionLevel: Any` and **`cheatsRequired: false`**: a custom command defaults to
+  needing cheats, which shut Dave out of every world with cheats off until 2026-10-13
+  (owner: "I have to have cheats enabled to ask AI things").
 - **The sidecar** (`bds.py`) turns the line into a `dave` event carrying the **xuid BDS
   logged when that name connected** — the script API has no xuid, and the line's own
   fields are never trusted for identity. A name that never connected, or an empty
@@ -1501,8 +1504,9 @@ it. In game the answer also says which way and how far the target is.
 and its set-A icon (`../mocks/minecraft-items/`) moved from the home-test kit into the
 always-installed `jbrain` behavior pack and a new `jbrain` resource pack, which the
 wrapper installs into every world it loads and BDS pushes on join
-(`texturepacks-required=true` is pinned). Each copy is named "<Player>'s Tricorder" with
-the lore "Points where Dave says", created with `lockMode = inventory` and
+(`texturepacks-required=true` is pinned). Each copy is named "<Player>'s Tricorder" (it
+carried the lore "Points where Dave says" until 2026-10-13, see DW1's "What the item
+shows"), created with `lockMode = inventory` and
 `keepOnDeath = true`, and carries its owner's `player.id` and a serial as item dynamic
 properties: the world keeps each owner's current serial, so a new copy retires every
 older one wherever it is (it reads "This tricorder is retired", and is unlocked so it
@@ -1549,7 +1553,8 @@ sessions; the icon download on join; home test rows 5, 10–12.
 **The item itself: a true custom item, `jbrain:tricorder`** (owner, 2026-10-10: a small
 pack that downloads automatically on join is fine, §3c rule 2).
 - **Its own icon** comes from the server-pushed `jbrain` resource pack (§3c rule 2).
-- Stack size 1. Lore: "Points where Dave says". It can't be crafted by players.
+- Stack size 1. No lore (dropped 2026-10-13, DW1 "What the item shows"). It can't be
+  crafted by players.
 - The game's own `minecraft:display_name` is "Tricorder". Each copy's name tag is set to
   **"<Player>'s Tricorder"** when Dave gives it.
 - It's never confused with a real item, because the script recognises the item type.
@@ -3356,6 +3361,21 @@ lore page (2026-10-11), so DW1 can be built from them.
   following M9's one-at-a-time rule.
 - **Power Pack uses (M10)** need the player's own Tricorder on them too, above.
 
+**What the item shows (owner bug report, 2026-10-13).** Bedrock's vanilla held-item
+pop-up (above the hotbar) shows an item's name and every lore line for about 2 s each
+time it is selected, over the actionbar where the heading is drawn; a pack cannot turn
+it off. So the Tricorder carries **no lore**: only its name, "<Player>'s Tricorder",
+which is where ownership shows. Copies beamed before this have their old "Points where
+Dave says" line cleared on the next once-a-second look at what the player carries
+(`tricorderLoreStale` in `rules.js`, beside the Power Pack's lore rewrite); a retired
+copy keeps "This tricorder is retired". What the item does is said instead **once a
+session** on the actionbar: the first time a player holds their own Tricorder after
+joining, "Your Tricorder points where Dave says · ask with /dave" (`TRICORDER_HINT`,
+plain words, not one of Dave's lines) for about 3 s, then the heading; never again until
+they rejoin (in memory, so a server restart shows it once more). The heading itself is
+re-sent on every 5-tick frame, changed or not, so after a re-select it is back as soon as
+the pop-up clears.
+
 **First-time beats.** Each is once per player per world. A world dynamic property keyed
 by xuid records which beats each player has had, so the pack needs no backend for them.
 - **Waking** (first `playerSpawn` with `initialSpawn` in this world). The sequence, timed
@@ -3405,7 +3425,11 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   the player: `camera.fade` to black for 2 s with "…where am I?"; end-rod sparkles falling
   in a column onto them (`Player.spawnParticle`) with a climbing `note.chime`; "…what's
   this?"; at 5 s a chime and their Tricorder beamed into the selected slot; a crackle and
-  the **SIGNAL ACQUIRED** title; then Dave's six lines 3 s apart. Each step re-checks the
+  the **SIGNAL ACQUIRED** title; then Dave's six lines 6 s apart, at 8, 14, 20, 26, 32
+  and 38 s (3 s until 2026-10-13, when the owner found it too fast to read; the lore
+  table moved with it), so the welcome runs about 40 s and everything that waits for its
+  end (queued first-time beats, the re-beam stand-down) waits that long; `/dave hello`
+  replays the lines at the same 6 s pace. Each step re-checks the
   player, so leaving mid-welcome ends it quietly.
 - **Who gets it:** once per player per world, on a join with no `welcome` beat, which
   includes **players who joined before it shipped** (owner, 2026-10-12: they see it on
