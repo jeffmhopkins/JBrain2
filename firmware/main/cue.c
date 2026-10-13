@@ -247,18 +247,20 @@ static const rude_t BURP = {560, 140.0f, 65.0f, 0.0f, 27.0f, 0.38f, 0.30f};
 /* THE MEGA FART (0.4.12, owner: *"about a 1 in 10 chance that when he farts on command, that
    the fart lasts a good 7 seconds, and make sure the fart sounds funny"*). A cue is at most
    0.8 s, so seven seconds is a run of these, back to back (`rig_recue_continuous`), each the
-   next in the list — the play counter steps through it. What makes a long one funny is that it
-   will not stay the same noise: it rumbles, climbs, sputters, squeaks, goes wet, deflates like
-   a balloon, putters and trumpets, and the tiny gap between pieces is a catch of breath. */
+   next in the list — the play counter steps through it and is never reset, so each long one
+   starts wherever the last left off and no two begin alike. What makes a long one funny is
+   that it will not stay the same noise: it rumbles, climbs, sputters, squeaks, goes wet,
+   deflates like a balloon, putters and trumpets, and the tiny gap between pieces is a catch
+   of breath. */
 static const rude_t MEGA[] = {
-    {700, 95.0f, 30.0f, 0.12f, 17.0f, 0.36f, 0.32f},   /* the rumble that starts it */
-    {700, 120.0f, -60.0f, 0.10f, 23.0f, 0.40f, 0.42f}, /* ...and climbs */
+    {700, 95.0f, 30.0f, 0.12f, 17.0f, 0.36f, 0.32f},   /* a rumble */
+    {700, 120.0f, -60.0f, 0.10f, 23.0f, 0.40f, 0.42f}, /* climbing */
     {650, 160.0f, 60.0f, 0.15f, 11.0f, 0.92f, 0.40f},  /* sputtering: separate bursts */
     {700, 230.0f, -130.0f, 0.00f, 38.0f, 0.30f, 0.58f}, /* the squeaker, rising high */
     {700, 115.0f, 45.0f, 0.65f, 29.0f, 0.38f, 0.24f},  /* wet */
     {650, 330.0f, 230.0f, 0.05f, 46.0f, 0.50f, 0.52f}, /* the balloon letting go */
     {700, 88.0f, 18.0f, 0.20f, 9.0f, 0.70f, 0.36f},    /* putt... putt... putt */
-    {700, 250.0f, -70.0f, 0.00f, 33.0f, 0.34f, 0.62f}, /* the trumpet finish */
+    {700, 250.0f, -70.0f, 0.00f, 33.0f, 0.34f, 0.62f}, /* the trumpet */
 };
 
 #define MEGA_COUNT ((int)(sizeof(MEGA) / sizeof(MEGA[0])))

@@ -205,7 +205,8 @@ him straining and wobbling, wide-eyed, as a cloud of gas piles up behind him (`E
 cue cannot run past 0.8 s, so the noise is `CUE_MEGAFART` re-cued whenever the speaker is free
 (`rig_recue_continuous`) until the release at 0.93, each piece the next of eight characters —
 a rumble, a climb, a sputter, a squeaker, a wet one, a balloon, a putt-putt and a trumpet — so
-seven seconds of it never sounds like one tone looped. A poke cannot cut it off.
+seven seconds of it never sounds like one tone looped (and each long one picks up where the
+last left off, so no two start alike). A poke cannot cut it off.
 
 **A different snack every time (0.4.11).** Owner: *"Kids are also requesting a random item to
 eat, maybe one out of eight possibilities."* `food_t`: a cookie, an apple, a banana, a slice of
