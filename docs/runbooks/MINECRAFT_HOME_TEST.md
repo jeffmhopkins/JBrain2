@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-13 (the /dave quick menu and the arrival chime)
+> **Status:** Living · **Last verified:** 2026-10-13 (villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -73,6 +73,9 @@ world** in slot 1, never on an imported real world.
 | 21 | Your first Ender Pearl, then your first Power Pack (row 4) | The pearl line once ("…is that an Ender Pearl?…"); on the first Power Pack, the field line only with the keep switch on, and the saved-places line only with the transport switch on. With both off, nothing, and it comes the next time you hold a pack after one is turned on | your eyes |
 | 22 | Type `/dave` with nothing after it, then close the chat | **The quick menu** opens once chat is closed (a form can't show over the open chat; the pack asks again each second for 10 s, then prints the old "Ask Dave something…" hint): *Where am I?*, *Point me home*, *My last death*, *Save this spot* (a "Name this spot" box) and *Ask something else…* (an "Ask Dave" box). Each asks Dave as if typed; closing a form does nothing. On a controller too | your eyes; log `[jbrain] {"ev":"dave",…}` with the button's words |
 | 23 | Have Dave point your Tricorder somewhere close (row 5b), walk there holding it; then again with it in your pocket, not in hand | **The arrival chime:** one quiet XP-orb ding as "You're here" shows, not repeated while you stand there; carried in a pocket, the ding comes when the map's arrival clear lands (within about 10 s). Nobody else hears it, and nothing during a live scan | your ears |
+| 24 | Tame a wolf and a horse, name the wolf with a name tag, make it sit; then `/dave where's my dog` | **Dave finds it:** "*Rex* is *N* blocks *…*, sitting right where you left him. Hold your Tricorder and follow the arrow.", free within 48 blocks, a deep scan farther; the Tricorder points at it | `GET /api/debug/minecraft/map/pets?x=0&z=0&owner_name=<you>` lists both, `owner` set (the `pid` on your `dave` line in `GET /minecraft/logs`) |
+| 25 | Open a librarian's trade screen; then `/dave who sells <one of its books>` | Only the trades the screen shows (its unlocked levels); the line "From up here I see a librarian … who sells … for N emeralds." | `GET /api/debug/minecraft/map/villagers?x=<x>&z=<z>&profession=librarian` matches the screen |
+| 26 | Light a Nether portal, go through, ask Dave to point you home | In the Nether the held Tricorder reads `↑ Nether portal · N blocks · Home is in the Overworld`, pointing at the portal; back through, it points home | `GET /api/debug/minecraft/map/portals` lists the portal; break one and `check=false` still lists it while the default leaves it out |
 
 ## After (assistant)
 

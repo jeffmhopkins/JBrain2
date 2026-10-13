@@ -1794,10 +1794,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # v2: `place`, a saved place's name, as an alternative to coordinates.
         # v3: the Tricorder is in every world (the jbrain pack), not the home-test kit.
         # v4: setting or clearing a waypoint ends a live scan (§M25).
+        # v5: across the Overworld and the Nether it points through a known portal (§M4e).
         "mc_set_waypoint.tool": (
             "mc_set_waypoint",
-            4,
-            "f1644c136fa45ebf04a38031674250666424c39327884244315552305e71c62e",
+            5,
+            "474a2f0ab42f70641ca85bca88a75491d828a660b787ce23f92e5f9010ab9a42",
         ),
         # The Tricorder's live scan (§M25): free, until a stop or a new waypoint.
         "mc_tricorder_scan.tool": (
@@ -1867,6 +1868,18 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "mc_find_item",
             1,
             "3fe9f09f6faadd4a4dfc584ffb40a87d2b4ec262991b7434d0fbad6f6852612e",
+        ),
+        # Villagers and pets from the world's files (§M4e): the chest rule prices them,
+        # and only a villager's unlocked trades are told.
+        "mc_find_villager.tool": (
+            "mc_find_villager",
+            1,
+            "cc012e6cf5b605411a5e1dbb75bba00bbc9f269909a9f9bc47852b6a63d344ac",
+        ),
+        "mc_find_pet.tool": (
+            "mc_find_pet",
+            1,
+            "656858ac1f0550b5ba7a4de742edab583ed1a5161f62c609d3c3ec53a367c4fe",
         ),
         # v2: in game, one of the player's daily deep scans (§M17).
         "mc_nearby.tool": (

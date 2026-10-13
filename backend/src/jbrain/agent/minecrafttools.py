@@ -322,6 +322,57 @@ def from_asker(asker: Asker | None, spot: Spot) -> str:
     return " You're standing there." if far < 3 else f" From you: {far} blocks {way}."
 
 
+_ROMAN = ("I", "II", "III", "IV", "V")
+# What players call a villager's job or a pet, to the word the world's files use.
+_PET_KINDS = {"dog": "wolf", "puppy": "wolf", "kitten": "cat", "kitty": "cat", "pony": "horse"}
+_WORD_ID = re.compile(r"^[a-z0-9_]{2,40}$")
+# The Overworld and the Nether are joined by portals; a target across them gets the
+# known portals on the far side (§M4e), so the Tricorder can point at one.
+_PORTAL_SIDES = {"overworld": "nether", "nether": "overworld"}
+VIA_MAX = 8
+
+
+def _a(word: str) -> str:
+    return f"an {word}" if word[:1].lower() in "aeiou" else f"a {word}"
+
+
+def _stack_words(stack: list[Any]) -> str:
+    name, n = str(stack[0]), int(stack[1])
+    return f"{n} {_item_words(name)}"
+
+
+def _enchant_words(name: str) -> str:
+    """An enchantment as the game shows it: "Mending", "Luck of the Sea"."""
+    words = _item_words(name).split()
+    return " ".join(w if i and w in ("of", "the") else w.capitalize() for i, w in enumerate(words))
+
+
+def trade_text(t: dict[str, Any]) -> str:
+    """One trade as Dave would say it: "an enchanted book (Mending I) for 12 emerald and
+    1 book"; a used-up one says it waits for a restock."""
+    sell = t["sell"]
+    what = _item_words(str(sell[0]))
+    what = _a(what) if int(sell[1]) == 1 else f"{sell[1]} {what}"
+    ench = t.get("enchantments") or []
+    if ench:
+        what += (
+            " ("
+            + ", ".join(
+                f"{_enchant_words(str(e))} {_ROMAN[lvl - 1] if 1 <= lvl <= 5 else lvl}"
+                for e, lvl in ench
+            )
+            + ")"
+        )
+    price = _stack_words(t["buy"]) + (f" and {_stack_words(t['buy2'])}" if t.get("buy2") else "")
+    used = " — used up until it restocks" if t.get("used_up") else ""
+    return f"{what} for {price}{used}"
+
+
+def pet_kind(raw: Any) -> str:
+    word = str(raw or "").strip().lower().replace(" ", "_").removeprefix("minecraft:")
+    return _PET_KINDS.get(word, word)
+
+
 def place_name(raw: Any) -> str:
     """A place's name as stored: printable, spacing collapsed; "" when it can't be one."""
     name = " ".join("".join(c for c in str(raw or "") if c.isprintable()).split())
@@ -1264,6 +1315,316 @@ def build_minecraft_handlers(
             brief = "none anywhere" if nowhere else "none in range"
         return ToolOutput(body, result_brief=brief)
 
+    async def active_slot() -> str | ToolOutput:
+        worlds = await sidecar("GET", "/worlds")
+        if isinstance(worlds, str):
+            return ToolOutput(worlds)
+        return next((w["id"] for w in worlds.get("slots", []) if w.get("active")), "slot1")
+
+    async def near_or_deep(
+        ctx: ToolContext,
+        dim: str,
+        at: tuple[int, int, str],
+        radius: int | None,
+        search: Callable[[int, int, str, int | None], Awaitable[ToolOutput]],
+        key: str,
+    ) -> str | ToolOutput:
+        """The chest rule (§M23), which villagers and pets follow too (owner,
+        2026-10-13): in game, what's within NEAR_BLOCKS of the asker is their Tricorder's
+        short-range scan, free; anything farther is a deep scan (§M17), a repeat from
+        about the same place free. `search` answers with `result_brief` "none in range"
+        when it found nothing there, "none anywhere" when nothing in the whole world
+        matched (a deep scan that found that is given back), and no brief when it
+        couldn't search at all. The app is unlimited."""
+        xi, zi, origin = at
+        asker = asker_for(ctx.agent_session_id)
+        if asker is None:
+            return await search(xi, zi, origin, radius)
+        near = asker.at.dim == dim and math.dist((xi, zi), (asker.at.x, asker.at.z)) <= NEAR_BLOCKS
+        if near:
+            reach = NEAR_BLOCKS if radius is None else min(radius, NEAR_BLOCKS)
+            out = await search(asker.at.x, asker.at.z, "where the player is standing", reach)
+            done = out.result_brief not in ("none in range", "none anywhere")
+            if done or (radius is not None and radius <= NEAR_BLOCKS):
+                if out.result_brief and out.result_brief != "owner unknown":
+                    return ToolOutput(
+                        f"{out}\n(The Tricorder's short-range scan, {NEAR_BLOCKS} blocks"
+                        " around the player: free.)",
+                        result_brief=out.result_brief,
+                    )
+                return out
+
+        async def run() -> tuple[str, bool]:
+            out = await search(xi, zi, origin, radius)
+            return out, out.result_brief not in ("", "none anywhere")
+
+        scan = scans.Search(key.split("|", 1)[0], key.split("|", 1)[1], dim, xi, zi)
+        return await scanned(ctx, scan, run, needs_server=False)
+
+    async def mc_find_villager(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """Villagers by job, or by what they sell, from the world's files (§M4e). Only
+        the trades each offers now (owner, 2026-10-13)."""
+        dim = dimension_of(arguments, ctx)
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        words = {}
+        for arg in ("profession", "sells", "enchantment"):
+            raw = str(arguments.get(arg) or "").strip().lower().replace(" ", "_")
+            raw = raw.removeprefix("minecraft:")
+            if raw and not _WORD_ID.fullmatch(raw):
+                return f"{arg} is one word id, e.g. librarian, enchanted_book, mending."
+            words[arg] = raw
+        limit = _int(arguments.get("limit"), 5, 1, 20)
+        wide = arguments.get("radius") in (None, "")
+        radius = None if wide else _int(arguments.get("radius"), NEAR_BLOCKS, 1, 60_000_000)
+        if limit is None or (radius is None and not wide):
+            return "limit and radius must be numbers."
+        at = await where(arguments, ctx, dim)
+        if isinstance(at, str):
+            return at
+        asker = asker_for(ctx.agent_session_id)
+
+        async def search(xi: int, zi: int, origin: str, reach: int | None) -> ToolOutput:
+            slot = await active_slot()
+            if isinstance(slot, ToolOutput):
+                return slot
+            params: dict[str, Any] = {
+                "slot": slot,
+                "dim": dim,
+                "x": xi,
+                "z": zi,
+                "limit": limit,
+                "flush": 1,
+                "profession": words["profession"],
+                "sells": words["sells"],
+                "enchant": words["enchantment"],
+            }
+            if reach is not None:
+                params["radius"] = reach
+            got = await sidecar("GET", "/map/villagers", params=params)
+            if isinstance(got, str):
+                return ToolOutput(got)
+            where_ = f"within {reach} blocks" if reach is not None else "anywhere in the dimension"
+            head = (
+                f"Villagers {where_} of ({xi}, {zi}) in the {_DIMENSION_NAMES[dim]}, {origin},"
+                f" from the saved world{as_of(got.get('age_s'))}"
+            )
+            found = got.get("found") or []
+            if not found:
+                brief = "none anywhere" if reach is None else "none in range"
+                return ToolOutput(f"{head}: none that match.", result_brief=brief)
+            lines, names = [], []
+            for i, v in enumerate(found, 1):
+                way, far = bearing(xi, zi, v["x"], v["z"])
+                job = str(v["job"]).replace("_", " ")
+                who = (
+                    _a(job)
+                    if v["kind"] == "wandering_trader" or job in ("unemployed", "nitwit")
+                    else f"{_a(v['level_name'])} {job}"
+                )
+                locked = (
+                    " (its job is locked in: someone has traded with it)"
+                    if v.get("locked_in")
+                    else ""
+                )
+                line = (
+                    f"- #{i} {who} at x={v['x']} y={v['y']} z={v['z']}, {far} blocks {way}{locked}"
+                )
+                trades = v.get("trades") or []
+                if trades:
+                    line += ": sells " + "; ".join(trade_text(t) for t in trades[:8])
+                    if len(trades) > 8:
+                        line += f"; and {len(trades) - 8} more"
+                lines.append(line)
+                if v.get("name"):
+                    names.append(f"#{i}: {v['name']}")
+            body = f"{head}, nearest first:\n" + "\n".join(lines)
+            more = int(got.get("matched", len(found))) - len(found)
+            if more > 0:
+                body += f"\n({more} more not listed.)"
+            body += (
+                "\nOnly the trades each offers now: a villager's higher levels unlock more,"
+                " and Dave never tells those."
+            )
+            if names:
+                body += "\nNames players gave them:\n" + fence("\n".join(names))
+            if asker is not None:
+                body += (
+                    "\nPoint their Tricorder at the one they want with mc_set_waypoint, then"
+                    " answer in Dave's words, e.g.: From up here I see a librarian 230 blocks"
+                    " west who sells Mending for 12 emeralds."
+                )
+            return ToolOutput(body, result_brief=f"{len(found)} villager(s)")
+
+        key = (
+            "mc_find_villager|"
+            + ",".join(f"{k}={v}" for k, v in sorted(words.items()))
+            + f"|r{radius or 'all'}|n{limit}"
+        )
+        return await near_or_deep(ctx, dim, at, radius, search, key)
+
+    async def mc_find_pet(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        """Pets and named mobs from the world's files (§M4e). Anyone's pets can be found,
+        in game too (owner, 2026-10-13), and any named mob; the chest rule prices it."""
+        dim = dimension_of(arguments, ctx)
+        if dim not in _DIMENSIONS:
+            return "dimension must be overworld, nether or the_end."
+        kind = pet_kind(arguments.get("kind"))
+        if kind and not _WORD_ID.fullmatch(kind):
+            return "kind is a mob id, e.g. wolf (a dog), cat, parrot, horse."
+        name = " ".join(
+            "".join(c for c in str(arguments.get("name") or "") if c.isprintable()).split()
+        )
+        if len(name) > 64:
+            return "name is at most 64 characters."
+        limit = _int(arguments.get("limit"), 5, 1, 20)
+        if limit is None:
+            return "limit must be a number."
+        asker = asker_for(ctx.agent_session_id)
+        anyone = bool(arguments.get("anyone"))
+        raw_tag = str(arguments.get("gamertag") or "").strip()
+        owner: dict[str, str] = {}
+        whose = ""
+        if raw_tag:
+            tag = check_gamertag(raw_tag)
+            if tag is None:
+                return "That isn't a gamertag (letters, digits and spaces, up to 16)."
+            if asker is not None and tag.casefold() == asker.gamertag.casefold() and asker.pid:
+                owner = {"owner": asker.pid}
+            else:
+                owner = {"owner_name": tag}
+            whose = tag
+        elif asker is not None and not anyone:
+            # "My dog": the asker's own, by the id their /dave carried.
+            owner = {"owner": asker.pid} if asker.pid else {"owner_name": asker.gamertag}
+            whose = asker.gamertag
+        at = await where(arguments, ctx, dim)
+        if isinstance(at, str):
+            return at
+
+        async def search(xi: int, zi: int, origin: str, reach: int | None) -> ToolOutput:
+            slot = await active_slot()
+            if isinstance(slot, ToolOutput):
+                return slot
+            params: dict[str, Any] = {
+                "slot": slot,
+                "dim": dim,
+                "x": xi,
+                "z": zi,
+                "limit": limit,
+                "flush": 1,
+                "kind": kind,
+                "name": name,
+                **owner,
+            }
+            if reach is not None:
+                params["radius"] = reach
+            else:
+                params["everywhere"] = 1
+            got = await sidecar("GET", "/map/pets", params=params)
+            if isinstance(got, str):
+                return ToolOutput(got)
+            if got.get("owner_known") is False and not name:
+                return ToolOutput(
+                    f"Dave hasn't learned which pets are {fence(whose)}'s yet: the world's"
+                    " files name a pet's owner only by a number, which Dave learns the first"
+                    " time that player asks him something in game. Ask them to, or search"
+                    " by the pet's name.",
+                    result_brief="owner unknown",
+                )
+            where_ = f"within {reach} blocks" if reach is not None else "anywhere in the world"
+            what = "mobs with that name" if name else "pets"
+            mine = f"{fence(whose)}'s " if whose and not name else ""
+            head = (
+                f"{f'{mine}{what}' if mine else what.capitalize()} {where_} of ({xi}, {zi}) in"
+                f" the {_DIMENSION_NAMES[dim]}, {origin}, from the saved world"
+                f"{as_of(got.get('age_s'))}"
+            )
+            found = got.get("found") or []
+            if not found:
+                brief = "none anywhere" if reach is None else "none in range"
+                return ToolOutput(f"{head}: none.", result_brief=brief)
+            lines, names = [], []
+            for i, p in enumerate(found, 1):
+                what_ = str(p["kind"]).replace("_", " ")
+                if p.get("coat"):
+                    what_ = f"{' '.join(p['coat'])} {what_}"
+                if p.get("baby"):
+                    what_ = f"baby {what_}"
+                state = ", sitting" if p.get("sitting") else ""
+                there = p.get("dimension") or dim
+                if p.get("distance") is None or there != dim:
+                    away = f"in the {_DIMENSION_NAMES.get(there, there)}"
+                else:
+                    way, far = bearing(xi, zi, p["x"], p["z"])
+                    away = f"{far} blocks {way}"
+                tamed = " (tamed)" if p.get("tamed") and name else ""
+                line = (
+                    f"- #{i} {_a(what_)}{tamed}{state} at x={p['x']} y={p['y']} z={p['z']}, {away}"
+                )
+                lines.append(line)
+                label = []
+                if p.get("name"):
+                    label.append(f"name {p['name']}")
+                if p.get("owner_name"):
+                    label.append(f"owner {p['owner_name']}")
+                if label:
+                    names.append(f"#{i}: " + ", ".join(label))
+            body = f"{head}, nearest first:\n" + "\n".join(lines)
+            more = int(got.get("matched", len(found))) - len(found)
+            if more > 0:
+                body += f"\n({more} more not listed.)"
+            if names:
+                body += "\nTheir names and owners, as players wrote them:\n" + fence(
+                    "\n".join(names)
+                )
+            body += (
+                "\nAn animal wanders unless it's sitting: this is where the world last saved it."
+            )
+            if asker is not None:
+                body += (
+                    "\nPoint their Tricorder at it with mc_set_waypoint (its dimension too),"
+                    " then answer in Dave's words, e.g.: Rex is 120 blocks north-east,"
+                    " sitting right where you left him. Hold your Tricorder and follow the"
+                    ' arrow. Say "sitting right where you left him" only for one that is'
+                    " sitting."
+                )
+            return ToolOutput(body, result_brief=f"{len(found)} found")
+
+        key = (
+            f"mc_find_pet|kind={kind},name={name.casefold()},owner="
+            f"{owner.get('owner') or owner.get('owner_name', '').casefold()}|n{limit}"
+        )
+        return await near_or_deep(ctx, dim, at, None, search, key)
+
+    async def portals_via(target: Spot, asker: Asker | None) -> list[dict[str, Any]]:
+        """The known, still-standing portals on the far side of a target across the
+        Overworld and the Nether (§M4e), nearest first to where the player will stand
+        there: the asker if they're on that side, else the target's own spot mapped
+        across (÷8 into the Nether, ×8 out of it). Empty when none, or on any failure:
+        the waypoint still works without them."""
+        side = _PORTAL_SIDES.get(target.dim)
+        if side is None:
+            return []
+        slot = await active_slot()
+        if isinstance(slot, ToolOutput):
+            return []
+        got = await sidecar("GET", "/map/portals", params={"slot": slot, "dim": side})
+        if isinstance(got, str):
+            return []
+        if asker is not None and asker.at.dim == side:
+            fx, fz = asker.at.x, asker.at.z
+        else:
+            scale = 1 / 8 if side == "nether" else 8
+            fx, fz = target.x * scale, target.z * scale
+        found = [
+            {"dim": side, "x": int(p["x"]), "z": int(p["z"])}
+            for p in got.get("portals") or []
+            if isinstance(p, dict) and isinstance(p.get("x"), int) and isinstance(p.get("z"), int)
+        ]
+        found.sort(key=lambda p: math.dist((fx, fz), (p["x"], p["z"])))
+        return found[:VIA_MAX]
+
     async def loaded_world(ctx: ToolContext) -> str:
         """The world a place is filed under: the one the in-game asker is in, else the
         loaded world's folder; "" when the server can't say."""
@@ -1359,6 +1720,7 @@ def build_minecraft_handlers(
             if max(abs(x), abs(z)) > _COORD_MAX or (y is not None and not -64 <= y <= 320):
                 return "Those coordinates are outside the world."
             target = Spot(x, y, z, dim)
+        via: list[dict[str, Any]] = []
         if target is not None:
             # The label shows on the player's screen: one short line of plain text.
             event.update(
@@ -1370,6 +1732,9 @@ def build_minecraft_handlers(
                     "label": label.strip()[:40] or "Waypoint",
                 }
             )
+            via = await portals_via(target, asker_for(ctx.agent_session_id))
+            if via:
+                event["via"] = via
         # json.dumps escapes every quote and control character, so the message can't end
         # the command or start another; the console takes it as one line.
         got = await console(f"scriptevent jb:waypoint {json.dumps(event)}")
@@ -1400,9 +1765,16 @@ def build_minecraft_handlers(
                 + ended,
                 result_brief="cleared",
             )
+        portal_note = (
+            f" From the {_DIMENSION_NAMES[via[0]['dim']]} it points at the nearest of"
+            f" {len(via)} known Nether portal(s) there."
+            if via
+            else ""
+        )
         return Found(
             f"{fence(gamertag)}'s tricorder now points to {fence(event['label'])} at"
             f" {spot_text(target)}. They see it when they hold the Tricorder."
+            + portal_note
             + ended
             + from_asker(asker_for(ctx.agent_session_id), target),
             str(event["label"]),
@@ -2196,6 +2568,8 @@ def build_minecraft_handlers(
         "mc_find_block": mc_find_block,
         "mc_find_mob": mc_find_mob,
         "mc_find_item": mc_find_item,
+        "mc_find_villager": mc_find_villager,
+        "mc_find_pet": mc_find_pet,
         "mc_set_waypoint": mc_set_waypoint,
         "mc_tricorder_scan": mc_tricorder_scan,
         "mc_place_save": mc_place_save,
