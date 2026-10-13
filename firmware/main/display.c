@@ -2470,9 +2470,12 @@ static void face_task(void *arg)
                not an action, so nothing re-cues and a poke is still read as a tickle. */
             action_t shown = action;
             float shown_p = p;
+            /* At full shiver, not the last tickle's lighter magnitude (review). */
+            float shown_mag = action_mag;
             if (action == ACT_NONE && tickle_armed(&tickle, now)) {
                 shown = ACT_BRACE;
                 shown_p = tickle_wait_p(now);
+                shown_mag = 1.0f;
             }
             /* AN ACTION THAT OUTLASTS ITS SOUND SAYS IT AGAIN (`rig_recue`): the tickle laughs
                three times. Measured from the last DRAWN frame's progress, so a skipped frame
@@ -2507,10 +2510,10 @@ static void face_task(void *arg)
                this panel renders at 25. */
             emotion_approach_face(&fst.eyes, &target, target.rate);
             emotion_approach_face(&fst.eyes, &target, target.rate);
-            rig_for(shown, shown_p, action_mag, now, &fst.rig);
+            rig_for(shown, shown_p, shown_mag, now, &fst.rig);
             rig_walk(&walk, (float)(s_lean - walked_from), &fst.rig);
             walked_from = s_lean;
-            rig_figure(shown, shown_p, action_mag, now, fst.eyes.face_ang, &fst.fig);
+            rig_figure(shown, shown_p, shown_mag, now, fst.eyes.face_ang, &fst.fig);
             fst.bob = bob_step(frame++);
             fst.lean = s_lean;
             fst.upright = s_upright;

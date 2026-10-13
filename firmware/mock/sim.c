@@ -449,6 +449,7 @@ static void frame(void)
         r_mode_was = s_sm.mode;
     }
     if (execute(now)) {
+        r_mag = 1.0f;
         r_action = ACT_NOD;
         r_action_at = now;
     }
@@ -543,9 +544,11 @@ static void frame(void)
     /* As the panel does: warned and idle, he holds the brace, shivering (`tickle_wait_p`). */
     action_t shown = r_action;
     float shown_p = p;
+    float shown_mag = r_mag;
     if (r_action == ACT_NONE && tickle_armed(&r_tickle, now)) {
         shown = ACT_BRACE;
         shown_p = tickle_wait_p(now);
+        shown_mag = 1.0f;
     }
     /* As the panel does (`display.c`): an action that outlasts its sound says it again. */
     if (r_action_at != r_recue_from) {
@@ -574,7 +577,7 @@ static void frame(void)
                     &target);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
-    rig_for(shown, shown_p, r_mag, now, &r_fst.rig);
+    rig_for(shown, shown_p, shown_mag, now, &r_fst.rig);
     /* `display.c`'s `update_orientation`, upright: the lean and the head's righting from a
        panel turned `r_tilt_deg`, as the accelerometer (one g = 8192) would report it. The
        lean's arithmetic is copied; the axes and the righting are `orient.c`'s own. */
@@ -601,7 +604,7 @@ static void frame(void)
         r_fst.poop_size = poop_scale(&r_poop, now);
         r_fst.poop_t = (float)(now - r_poop.born) * 0.001f;
     }
-    rig_figure(shown, shown_p, r_mag, now, r_fst.eyes.face_ang, &r_fst.fig);
+    rig_figure(shown, shown_p, shown_mag, now, r_fst.eyes.face_ang, &r_fst.fig);
     r_fst.bob = bob_step(r_frame++);
     const uint32_t blink = now % 4200;
     r_fst.open = dozing ? 0.0f : blink < 120 ? 1.0f - blink / 120.0f : blink < 240 ? (blink - 120) / 120.0f : 1.0f;
