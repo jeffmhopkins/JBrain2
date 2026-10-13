@@ -140,6 +140,8 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
 `have a snack` `give it a kick` `do a spin`
 · **love** (0.4.7; 5.6 s since 0.4.10): `i love you` `love you` — hearts float up and he coos
 · **tickle** (0.4.10): `tickle tickle` `tickle me` — he squirms and laughs, three times over
+· **eat** (`eat`, `have a snack`, and pokes): since 0.4.10 five bites of a cookie over 4.8 s, a
+  crunch each, chewing between
 
 **Not a phrase: shaking the panel** (0.4.7). Four hard jerks inside a second and a half
 (`screen_shaken`) and he sits down hard, dazed, shaking his head with stars going round, and

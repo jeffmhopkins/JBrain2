@@ -60,7 +60,7 @@ typedef enum {
                        transposed a semitone is the same fart and these are the twins'
                        favourite thing the panel does. */
     CUE_BURP,       /* the dry one, and still a single character */
-    CUE_EAT,        /* two soft noise bites */
+    CUE_EAT,        /* crunch, munch, munch: said on every bite of a meal */
     CUE_KICK,       /* a thud: noise plus a pitch drop */
     CUE_SPIN,       /* three rising sweeps, each starting higher */
     CUE_DIZZY,      /* a slow warble sliding down an octave — the room going round */

@@ -162,6 +162,14 @@ dizzy spell is now 6.4 s and the love 5.6 s, twice what they were, with their mo
 cycle counts doubled so the head shakes and the hearts rise at the speed they did: twelve
 hearts now, not five. The bench has a "Tickle tickle" button.
 
+**And eating is a meal.** `ACT_EAT` was three pecks in 1.6 s and a 300 ms double bite. It is
+now 4.8 s and five bites of a cookie (`EXTRA_FOOD`): the robot carries it from its hand to the
+corner of its mouth, the bird pecks it off its wing, a piece goes out of it on each bite with
+crumbs falling, and the fifth finishes it. The mouth opens wide before each bite, snaps shut
+on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside `talk`).
+`CUE_EAT` is now a crunch and two munches, said on every bite through `rig_recue`. The bench
+has a "Have a snack" button.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,

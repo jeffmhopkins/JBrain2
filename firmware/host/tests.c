@@ -1012,8 +1012,8 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
         CHECK(again == 2, "he laughs twice more after the first");
     }
     for (int a = ACT_NONE; a < ACT_COUNT; a++) {
-        if (a == ACT_TICKLE) continue;
-        CHECK(!rig_recue((action_t)a, 0.0f, 1.0f), "every other action sounds once");
+        if (a == ACT_TICKLE || a == ACT_EAT) continue;
+        CHECK(!rig_recue((action_t)a, 0.0f, 1.0f), "every other action but the meal sounds once");
     }
 
     /* A LAUGH IS SEPARATE SYLLABLES: count the gaps in its 10 ms envelope. GIGGLE's blips run
@@ -1054,6 +1054,66 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
         rig_figure(ACT_TICKLE, 0.9f, 1.0f, 0, 0.0f, &st.fig);
         face_draw(fb, 0, &st);
         CHECK(count_colour(mark) == 0, "and gone as he gets his breath back");
+    }
+}
+
+static void test_a_meal_is_five_bites_of_a_cookie(void)
+{
+    /* The owner: "the eat animation can probably be better with multiple bites being taken and
+       kind of a longer animation and sound effect too." */
+    CHECK(rig_spec(ACT_EAT)->dur_ms == 4800, "a meal, not a 1.6 s nibble");
+
+    /* A CRUNCH ON EVERY BITE: the action's cue says the first, four re-cues the rest, at the
+       panel's 25 fps and at a ragged 7. */
+    for (int step = 40; step <= 140; step += 100) {
+        const int dur = rig_spec(ACT_EAT)->dur_ms;
+        int again = 0, bites = 0;
+        float p0 = 0.0f;
+        for (int t = 0; t < dur; t += step) {
+            const float p = (float)t / (float)dur;
+            again += rig_recue(ACT_EAT, p0, p);
+            p0 = p;
+        }
+        bites = rig_eat_bites(1.0f, NULL);
+        CHECK(again == 4 && bites == EAT_BITES, "a crunch for each of the five bites");
+    }
+
+    /* THE COOKIE GETS SMALLER WITH EVERY BITE and is gone at the end, on both forms. */
+    const uint16_t dough = rgb565(0xD9, 0xA0, 0x5B);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        long last = -1;
+        for (int b = 0; b <= EAT_BITES; b++) {
+            /* Just before bite b+1 lands: crumbs from bite b have fallen, the cookie is still. */
+            const float p = b < EAT_BITES ? ((float)b + 0.2f) / EAT_BITES : 0.999f;
+            rig_for(ACT_EAT, p, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, p, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            const long n = count_colour(dough);
+            if (b == 0) CHECK(n > 1000, "a whole cookie to start");
+            if (b > 0 && b < EAT_BITES) CHECK(n < last - 100, "each bite takes a piece out of it");
+            if (b == EAT_BITES) CHECK(n == 0, "and the last one finishes it");
+            last = n;
+        }
+    }
+
+    /* HE CHEWS: the mouth opens with no speech at all, before a bite and after it. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        static uint16_t shut[FACE_W * FACE_H];
+        rig_for(ACT_EAT, 0.6f / EAT_BITES, 1.0f, 0, &st.rig);
+        rig_figure(ACT_EAT, 0.6f / EAT_BITES, 1.0f, 0, 0.0f, &st.fig);
+        st.fig.chew = 0.0f;
+        face_draw(fb, 0, &st);
+        memcpy(shut, fb, sizeof(shut));
+        rig_figure(ACT_EAT, 0.6f / EAT_BITES, 1.0f, 0, 0.0f, &st.fig);
+        st.fig.chew = 0.45f;
+        face_draw(fb, 0, &st);
+        CHECK(memcmp(shut, fb, sizeof(shut)) != 0, "chewing opens the mouth, with nothing said");
     }
 }
 
@@ -4842,6 +4902,7 @@ int main(void)
     test_dizzy_sits_down_and_love_shows_hearts();
     test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
+    test_a_meal_is_five_bites_of_a_cookie();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();

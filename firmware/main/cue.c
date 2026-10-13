@@ -291,8 +291,10 @@ static const cue_def_t DEF[CUE_COUNT] = {
        per-variant length comes from `cue_ms`. */
     [CUE_FART] = {SH_RUDE, 700, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
     [CUE_BURP] = {SH_RUDE, 560, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
-    /* Two soft bites. Noise, but low-clocked and short, so it chews rather than hisses. */
-    [CUE_EAT] = {SH_NOISE, 300, 0.0f, 0, 2.6f, 0.0f, {0, 0, END}, 3, 20},
+    /* CRUNCH, MUNCH, MUNCH: a bite and two chews, sounded on every bite of the meal (0.4.10).
+       Noise, low-clocked so it chews rather than hisses; the clock falls across the run, so
+       the crunch is crisper than the munches after it. Was two soft bites in 300 ms. */
+    [CUE_EAT] = {SH_NOISE, 620, 0.0f, 0, 3.4f, 0.0f, {0, 0, 0, END}, 3, 35},
     /* A thud: a noise burst over a tone dropping fast. Contact, then nothing. */
     [CUE_KICK] = {SH_NOISE, 200, 0.0f, 0, 4.2f, 260.0f, {END}, 1, 60},
     /* Three rises, each starting higher than the last — a spiral, which one sweep cannot be. */

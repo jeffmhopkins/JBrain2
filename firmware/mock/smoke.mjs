@@ -88,6 +88,11 @@ p.set(KNOB.PET_ACT, 3);
 p.advance(5000);
 check(events.slice(tickled).filter((e) => e.includes('cue TICKLE')).length === 3,
   '"tickle tickle" makes him laugh, and laugh again, and again');
+const fed = events.length;
+p.set(KNOB.PET_ACT, 4);
+p.advance(5000);
+check(events.slice(fed).filter((e) => e.includes('cue EAT')).length === 5,
+  'a snack is five bites, a crunch each');
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);

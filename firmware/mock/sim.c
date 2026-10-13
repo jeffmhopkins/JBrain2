@@ -458,6 +458,7 @@ static void frame(void)
         }
         say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
                          : r_action == ACT_LOVE ? "heard \"i love you\""
+                         : r_action == ACT_EAT  ? "heard \"have a snack\""
                                                 : "heard \"tickle tickle\"");
     }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
@@ -677,6 +678,7 @@ EXPORT(sim_set) void sim_set(int knob, int value)
         r_pending_act = value == 1   ? ACT_DIZZY
                         : value == 2 ? ACT_LOVE
                         : value == 3 ? ACT_TICKLE
+                        : value == 4 ? ACT_EAT
                                      : ACT_NONE;
         break;
     }

@@ -427,6 +427,52 @@ static void draw_star(uint16_t *fb, int cx, int cy, int r, uint16_t c)
  *
  * HEARTS (love): twelve, rising from beside the head in turn, swaying as they go and shrinking
  * away at the top rather than vanishing. */
+/* THE COOKIE, with `bites` bites gone out of it. Per pixel over its box: in the disc and in
+ * none of the bites. Bites are taken from the side facing the eater (`toward`, radians, y
+ * down), each one further round, so it is eaten down to nothing; the fifth finishes it. Crumbs
+ * fall from the bite for a moment after each (`since`, a fraction of a bite's time). */
+static void draw_food(uint16_t *fb, int cx, int cy, float s, int bites, float since,
+                      float toward)
+{
+    const uint16_t dough = rgb(0xD9, 0xA0, 0x5B), chip = rgb(0x5A, 0x34, 0x1C);
+    const float r = 24.0f * s, br = 0.62f * r;
+    static const float ROUND[EAT_BITES] = {0.0f, 0.75f, -0.75f, 1.5f, -1.5f};
+    if (bites < EAT_BITES) {
+        float bx[EAT_BITES], by[EAT_BITES];
+        for (int k = 0; k < bites; k++) {
+            bx[k] = cosf(toward + ROUND[k]) * r;
+            by[k] = sinf(toward + ROUND[k]) * r;
+        }
+        const int ir = (int)r + 1;
+        for (int dy = -ir; dy <= ir; dy++) {
+            for (int dx = -ir; dx <= ir; dx++) {
+                const float fx = (float)dx, fy = (float)dy;
+                if (fx * fx + fy * fy > r * r) continue;
+                bool gone = false;
+                for (int k = 0; k < bites && !gone; k++) {
+                    const float ex = fx - bx[k], ey = fy - by[k];
+                    gone = ex * ex + ey * ey <= br * br;
+                }
+                if (gone) continue;
+                /* Chips: a fixed scatter, so they are eaten with the dough rather than moving. */
+                const bool c = ((dx * 7 + dy * 13 + 400) % 23 == 0) ||
+                               ((dx * 11 - dy * 5 + 400) % 29 == 0);
+                px(fb, cx + dx, cy + dy, c ? chip : dough);
+            }
+        }
+    }
+    if (since >= 0.0f && since < 0.5f) {
+        const float t = since / 0.5f;
+        for (int k = 0; k < 4; k++) {
+            const float a = toward + ROUND[(bites - 1 + EAT_BITES) % EAT_BITES] +
+                            ((float)k - 1.5f) * 0.5f;
+            const int x = cx + (int)lrintf(cosf(a) * r + ((float)k - 1.5f) * 9.0f * s * t);
+            const int y = cy + (int)lrintf(sinf(a) * r + 70.0f * s * t * t);
+            fill_circle(fb, x, y, (int)lrintf(3.0f * s), dough);
+        }
+    }
+}
+
 /* TICKLE MARKS: two arcs either side of the body, the way a comic draws a squirm, flickering
  * out of step side to side so they read as something happening TO him. `cx, cy` is the body's
  * centre and `half` its half width; both forms' bodies are 144 wide. */
@@ -658,7 +704,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
            a lens rather than a band. That is the cartoon convention — the mouth opens out of
            the smile line, and the smile becomes the bottom of it — and it collapses exactly to
            the untouched arc as the gape goes to zero, with no pop and no second shape. */
-        const int gape = (int)lrintf(st->talk * 26.0f * s);
+        const int gape = (int)lrintf(fmaxf(st->talk, st->fig.chew) * 26.0f * s);
         if (gape > 0) {
             /* 0.15pi is where the arc starts, so its half-width is r*cos(0.15pi). */
             const int xmax = (int)(cosf((float)M_PI * 0.15f) * (float)mr);
@@ -700,6 +746,18 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
         const int hr = (int)((18.0f + 14.0f * u) * s);
         fill_circle(fb, ox + tilt - hx, hyy, hr, limb);
         fill_circle(fb, ox + tilt + hx, hyy, hr, limb);
+    }
+    /* THE COOKIE, carried from beside the body to the corner of the mouth: the arm goes up
+       behind the head, so the cookie is what the eye follows. Drawn last, in front of the face
+       it is being eaten by. */
+    if (st->fig.extra == EXTRA_FOOD) {
+        const float r = st->fig.reach;
+        const int fx0 = ox + SX(130), fy0 = oy - SY(31);
+        const int fx1 = ox + tilt + SX(58), fy1 = hy + SY(34);
+        float since;
+        const int bites = rig_eat_bites(st->fig.extra_p, &since);
+        draw_food(fb, LERPI(fx0, fx1, r), LERPI(fy0, fy1, r), s, bites, since,
+                  (float)M_PI * 1.1f);
     }
     draw_overhead(fb, st, ox + tilt, hy - SY(HH), SX(HW), s);
     draw_tickle(fb, st, ox, oy + SY(40), SX(72), s);
@@ -799,6 +857,13 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     const int ww = LERPI(SX(74), SX(144), u);
     const int wh = LERPI(SY(66), SY(88), u);
     if (u <= 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
+    /* THE COOKIE, on the wing, where the beak comes down to at the bottom of a peck: before
+       the neck and head, so the beak goes over it. Bitten from the top, where the beak is. */
+    if (st->fig.extra == EXTRA_FOOD) {
+        float since;
+        const int bites = rig_eat_bites(st->fig.extra_p, &since);
+        draw_food(fb, ox + SX(26), oy + SY(30), s, bites, since, -(float)M_PI * 0.5f);
+    }
 
     /* Neck: segments narrowing toward the head, leaning forward for life. Each segment
        carries its share of the head's total displacement — the segments used to be drawn at
@@ -845,7 +910,7 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
            mandible, the other three swing as one jaw) and the gape goes to 30, which is most
            of the beak's own height. A talking mouth has to read from the far side of a room
            or it is not doing the job the animation exists for. */
-        const int gape = (int)lrintf(st->talk * 30.0f);
+        const int gape = (int)lrintf(fmaxf(st->talk, st->fig.chew) * 30.0f);
         for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
             /* Progressive, so the jaw pivots at the hinge instead of sliding down in one
                piece: the further from the joint, the further it travels. */
