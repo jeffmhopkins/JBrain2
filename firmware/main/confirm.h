@@ -124,8 +124,11 @@ bool confirm_hit_centre(int fx, int fy, int over_h);
  * button always shows what the press will DO rather than what the panel is doing. */
 #define CONFIRM_ENVELOPE CONFIRM_SWAP(0x07E0)
 
-/* `reply` false leaves the envelope's corner empty: a message still talking cannot be answered. */
-void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing, bool reply);
+/* `reply` false leaves the envelope's corner empty: a message still talking cannot be answered.
+ * `progress` (0..1000) rings the play button with how much of the message has been heard,
+ * filling clockwise from the top; -1 draws no ring. */
+void confirm_draw_transport(uint16_t *fb, int w, int h, int over_h, bool playing, bool reply,
+                            int progress);
 
 /* THE WAY OUT, DRAWN. The corner worked before this existed and that was the problem: the
  * owner had to be told where to press, which means no child would ever have found it. *"Make

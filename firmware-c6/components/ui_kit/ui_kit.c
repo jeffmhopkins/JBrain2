@@ -608,20 +608,124 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
     lv_obj_t *t = ui_label(body, b->text, 22, b->pending ? UI_C_MUTED : UI_C_TEXT);
     lv_label_set_long_mode(t, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_max_width(t, 360 - 32, 0);
-    if (b->listen) {
-        lv_obj_t *l = bare(body);
-        lv_obj_set_size(l, LV_SIZE_CONTENT, UI_TOUCH_MIN);
-        lv_obj_set_style_pad_hor(l, 14, 0);
-        fill(l, UI_C_JERV, UI_OPA_TINT, 22);
-        lv_obj_add_flag(l, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_user_data(l, (void *)b->tag);
-        if (cb) lv_obj_add_event_cb(l, cb, LV_EVENT_CLICKED, user);
-        lv_obj_t *lt = ui_label(l, LV_SYMBOL_VOLUME_MAX " Listen", 16, UI_C_JERV);
-        lv_obj_center(lt);
+    if (b->listen != UI_LISTEN_NONE) {
+        /* Beside the bubble, at its foot, as the mock draws it; the caption under the bubble. */
+        lv_obj_set_flex_align(line, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+        lv_obj_set_style_pad_column(line, 10, 0);
+        ui_listen_parts_t parts = {0};
+        parts.caption = ui_label(wrap, "", 18, accent_c);
+        lv_obj_set_style_pad_left(parts.caption, 6, 0);
+        lv_obj_t *btn = bare(line);
+        lv_obj_set_size(btn, 56, 56);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_user_data(btn, (void *)b->tag);
+        if (cb) lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user);
+        parts.button = btn;
+        parts.arc = lv_arc_create(btn);
+        lv_obj_remove_style_all(parts.arc);
+        lv_obj_remove_flag(parts.arc, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_size(parts.arc, 56, 56);
+        lv_obj_center(parts.arc);
+        lv_arc_set_bg_angles(parts.arc, 0, 360);
+        lv_arc_set_range(parts.arc, 0, 1000);
+        lv_obj_set_style_arc_width(parts.arc, 3, LV_PART_MAIN);
+        lv_obj_set_style_arc_color(parts.arc, C(UI_C_LINE_STRONG), LV_PART_MAIN);
+        lv_obj_set_style_arc_width(parts.arc, 3, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(parts.arc, C(accent_c), LV_PART_INDICATOR);
+        lv_obj_set_style_arc_rounded(parts.arc, true, LV_PART_INDICATOR);
+        parts.icon = ui_label(btn, LV_SYMBOL_VOLUME_MAX, 22, accent_c);
+        lv_obj_center(parts.icon);
+        parts.stop = bare(btn);
+        lv_obj_set_size(parts.stop, 16, 16);
+        fill(parts.stop, accent_c, LV_OPA_COVER, 3);
+        lv_obj_center(parts.stop);
+        ui_listen_set(&parts, (ui_listen_t)b->listen, b->listen_permille, b->listen_caption, accent_c);
+        if (b->listen_parts) *b->listen_parts = parts;
     }
-    if (b->speaking) ui_label(wrap, LV_SYMBOL_VOLUME_MAX " Speaking…", 16, UI_C_JERV);
     if (b->status && b->status[0]) ui_label(wrap, b->status, 16, UI_C_MUTED);
     return line;
+}
+
+static void listen_spin(void *obj, int32_t v)
+{
+    (void)v;
+    lv_arc_set_rotation(obj, (int32_t)(lv_tick_get() % 1000 * 360 / 1000));
+}
+
+void ui_listen_set(const ui_listen_parts_t *p, ui_listen_t state, uint16_t permille,
+                   const char *caption, uint32_t accent)
+{
+    if (!p->button) return;
+    const bool live = state == UI_LISTEN_STARTING || state == UI_LISTEN_PLAYING;
+    /* The speaker on a tinted disc at rest; a dark disc with a ring and the stop square while it
+       speaks. A dimmed one waits for the agent's answer. */
+    fill(p->button, live ? UI_C_RAISED : accent, live ? LV_OPA_COVER : UI_OPA_TINT, LV_RADIUS_CIRCLE);
+    lv_obj_set_style_opa(p->button, state == UI_LISTEN_DIM ? LV_OPA_40 : LV_OPA_COVER, 0);
+    if (live) lv_obj_add_flag(p->icon, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_remove_flag(p->icon, LV_OBJ_FLAG_HIDDEN);
+    if (live) lv_obj_remove_flag(p->stop, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(p->stop, LV_OBJ_FLAG_HIDDEN);
+    if (live) lv_obj_remove_flag(p->arc, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(p->arc, LV_OBJ_FLAG_HIDDEN);
+    const bool spinning = lv_anim_get(p->arc, listen_spin) != NULL;
+    if (state == UI_LISTEN_STARTING) {
+        lv_arc_set_angles(p->arc, 0, 60);
+        if (!spinning) {
+            lv_anim_t an;
+            lv_anim_init(&an);
+            lv_anim_set_var(&an, p->arc);
+            lv_anim_set_exec_cb(&an, listen_spin);
+            lv_anim_set_values(&an, 0, 360);
+            lv_anim_set_duration(&an, 1000);
+            lv_anim_set_repeat_count(&an, LV_ANIM_REPEAT_INFINITE);
+            lv_anim_start(&an);
+        }
+        listen_spin(p->arc, 0);
+    } else {
+        if (spinning) lv_anim_delete(p->arc, listen_spin);
+        lv_arc_set_rotation(p->arc, 270);
+        lv_arc_set_angles(p->arc, 0, (lv_value_precise_t)((permille > 1000 ? 1000 : permille) * 360 / 1000));
+    }
+    const char *text = caption ? caption : "";
+    if (strcmp(lv_label_get_text(p->caption), text)) lv_label_set_text(p->caption, text);
+    if (text[0]) lv_obj_remove_flag(p->caption, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(p->caption, LV_OBJ_FLAG_HIDDEN);
+}
+
+lv_obj_t *ui_hist_row(lv_obj_t *parent, bool up, bool loading, uint32_t more, lv_event_cb_t cb,
+                      void *user)
+{
+    lv_obj_t *r = bare(parent);
+    lv_obj_set_size(r, LV_PCT(100), 56);
+    fill(r, UI_C_SURFACE, LV_OPA_COVER, 20);
+    border(r, UI_C_LINE, 1);
+    lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(r, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(r, 10, 0);
+    if (loading) {
+        ui_spinner(r, UI_C_MUTED);
+        ui_label(r, up ? "Loading earlier…" : "Loading newer…", 22, UI_C_MUTED);
+        return r;
+    }
+    lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+    if (cb) lv_obj_add_event_cb(r, cb, LV_EVENT_CLICKED, user);
+    ui_label(r, up ? LV_SYMBOL_UP : LV_SYMBOL_DOWN, 18, UI_C_TEXT_SOFT);
+    ui_label(r, up ? "Load earlier" : "Newer messages", 22, UI_C_TEXT_SOFT);
+    char n[24];
+    snprintf(n, sizeof n, "%lu more", (unsigned long)more);
+    ui_label(r, n, 20, UI_C_MUTED);
+    return r;
+}
+
+lv_obj_t *ui_hist_start(lv_obj_t *parent, const char *when)
+{
+    lv_obj_t *col = ui_box(parent, LV_FLEX_FLOW_COLUMN, 2);
+    lv_obj_set_width(col, LV_PCT(100));
+    lv_obj_set_style_pad_ver(col, 8, 0);
+    lv_obj_set_flex_align(col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    ui_label(col, "Start of conversation", 18, UI_C_MUTED);
+    if (when && when[0]) ui_label(col, when, 18, UI_C_FAINT);
+    return col;
 }
 
 void ui_bubble_set(const ui_bubble_parts_t *p, bool playing, uint8_t prog, bool unplayed)

@@ -26,9 +26,9 @@ SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/svc_audio/talk_policy.c $(C)/svc_audio/talk_core.c \
       $(C)/svc_audio/svc_audio_talk.c $(C)/svc_audio/svc_audio_fake.c $(C)/svc_audio/alarm_sound.c \
       $(C)/svc_settings/svc_settings_fake.c \
-      $(C)/svc_settings/settings_store.c $(C)/svc_rtc/time_logic.c \
+      $(C)/svc_settings/settings_store.c $(C)/svc_settings/settings_sync.c $(C)/svc_rtc/time_logic.c \
       $(C)/svc_rtc/svc_rtc_fake.c $(C)/svc_net/svc_net_fake.c $(C)/svc_box/svc_box_fake.c \
-      $(C)/svc_box/box_logic.c $(C)/svc_messages/svc_messages_fake.c \
+      $(C)/svc_box/box_logic.c $(C)/svc_messages/svc_messages_fake.c $(C)/svc_messages/hist_logic.c \
       $(wildcard $(C)/svc_debug/*.c) \
       $(C)/svc_display/disp_logic.c $(C)/svc_display/disp_guard.c \
       $(C)/svc_power/axp_logic.c $(C)/svc_buttons/btn_logic.c \

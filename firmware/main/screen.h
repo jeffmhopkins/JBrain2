@@ -81,6 +81,7 @@ screen_stage_t screen_stage(uint32_t idle_ms);
  * which is the whole reason it was split out. */
 bool screen_dozing(screen_stage_t stage, bool conversing, bool speaking);
 
+
 /* What the panel should be showing, as against the brightness the BOX asked for — which has
    to survive a night's sleep unchanged, because it is a setting and this is a mood. */
 uint8_t screen_level(uint8_t configured, screen_stage_t stage, int dim_percent);

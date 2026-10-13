@@ -20,6 +20,8 @@
 #include "svc_display_drv.h"
 #include "svc_notice_drv.h"
 #include "svc_post_drv.h"
+#include "set_link.h"
+#include "settings_sync.h"
 #include "svc_settings.h"
 #include "ui_task.h"
 
@@ -451,9 +453,13 @@ dbg_poll_t dbg_link_poll(void)
     /* The notice switches ride every pickup (0.0.19, plan §2): the box refuses a notice at send
        time from what the panel said here seconds ago. None when this panel cannot show one (no
        storage, or no UI on a boot after a fault), and the box then says `no_notice_surface`. */
-    char pickup[112], prefs[48];
+    char pickup[176], prefs[48], sync[64] = "";
     svc_notice_pickup_query(ui_task_owns_lvgl(), prefs, sizeof prefs);
-    snprintf(pickup, sizeof pickup, "/endpoint/debug/next?board=" OTA_BOARD_ID "%s", prefs);
+    /* The rest of the settings the PWA shows (0.0.21): reported whenever the UI is up, so a
+       change made at the glass reaches the PWA within a pickup and settles or refuses what the
+       PWA asked for. No UI (a boot after a fault): nothing the PWA could change is running. */
+    if (ui_task_owns_lvgl()) settings_sync_query(svc_settings_get, sync, sizeof sync);
+    snprintf(pickup, sizeof pickup, "/endpoint/debug/next?board=" OTA_BOARD_ID "%s%s", prefs, sync);
     const int status = box_http_call(pickup, NULL, NULL, 0, s_req, sizeof s_req - 1, &got, &rep,
                                      BOX_TIMEOUT_MS);
     /* The owner's voice post rides the pickup (0.0.16): a tag that moved is a fetch of the
@@ -462,6 +468,8 @@ dbg_poll_t dbg_link_poll(void)
     if (status == 200 || status == 204) {
         svc_post_tag(rep.post);
         svc_notice_waiting(rep.notice);
+        /* A change the PWA asked for waits for this panel: the loop fetches it next. */
+        set_link_signal(rep.settings);
     }
     if (status == 204) {
         s_stats.polls_ok++;

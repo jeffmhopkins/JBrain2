@@ -64,6 +64,10 @@ bool talk_net_ring(void);
 /* The play's free internal heap before its GET, once answered, with its ring, and the lowest
  * while it streamed (0.0.18): the snapshot's `audio.play_*`. */
 void talk_net_mem(uint32_t before, uint32_t answered, uint32_t ringed, uint32_t low);
+/* A talk's free internal heap as its upload began (its ring already held since KEY down), and the
+ * lowest while the recording went up and while the reply came down (0.0.22): the snapshot's
+ * `audio.talk_*`, 0 for a half the talk never reached. */
+void talk_net_talk_mem(uint32_t before, uint32_t up_low, uint32_t reply_low);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);
@@ -74,6 +78,10 @@ void talk_net_status(const char *status);
 void talk_net_step_start(uint8_t index, const char *label);
 void talk_net_step_done(uint8_t index, bool ok);
 void talk_net_reply(const char *reply, bool audio_follows);
+/* SPOKEN (0.0.21): the speech that follows says the words from `from` to `to` thousandths. */
+void talk_net_spoken(uint16_t from, uint16_t to, uint32_t bytes);
+/* IDS (0.0.21): the exchange's question and answer on the box, which name them from now on. */
+void talk_net_ids(uint32_t asked, uint32_t answer);
 void talk_net_nothing(void);
 void talk_net_fail(const char *why);
 /* The reply's speech into the ring: how much fit. Zero once the speech is no longer wanted. */

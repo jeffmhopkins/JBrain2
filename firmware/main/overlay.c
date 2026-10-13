@@ -315,10 +315,10 @@ static void draw_popup_badge(uint16_t *fb, int y0, int over_h, const char *from,
  * message"* too. It is the same face in the same corner the notice used, so the picture that
  * said "Dad sent you one" is the picture that says "this is Dad" while it plays. */
 static void draw_run(uint16_t *fb, int y0, int over_h, int count, int sel, sendto_hit_t who,
-                     bool playing, bool reply)
+                     bool playing, bool reply, int progress)
 {
     draw_sender_face(fb, y0, over_h, who);
-    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, playing, reply);
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, playing, reply, progress);
 
     if (count > 1) {
         /* WHICH OF HOW MANY, and it keeps the slot the count already had rather than the one the
@@ -374,13 +374,14 @@ void overlay_draw(uint16_t *fb, const sm_view_t *view, const overlay_ctx_t *c)
     }
     if (view->run_bar) {
         draw_run(fb, c->over_y0, c->over_h, view->sel_m, view->sel_n - 1, who,
-                 view->playing_glyph, view->reply);
+                 view->playing_glyph, view->reply, view->progress);
     } else if (view->pair) {
         /* THE FACE STAYS FOR THE WHOLE EXCHANGE: AGAIN and REPLY are about the person who
            just spoke, so their face is the answer to "reply to whom?". */
         draw_sender_face(fb, c->over_y0, c->over_h, who);
         confirm_draw_transport(fb, FACE_W, FACE_H, c->over_h,
-                               view->transport && view->playing_glyph, view->reply);
+                               view->transport && view->playing_glyph, view->reply,
+                               view->transport ? view->progress : -1);
     }
     if (view->exit_corner) confirm_draw_exit(fb, FACE_W, FACE_H, c->over_y0, c->over_h);
     /* PLACEHOLDERS (F4): a send in flight, then its outcome, top right. */

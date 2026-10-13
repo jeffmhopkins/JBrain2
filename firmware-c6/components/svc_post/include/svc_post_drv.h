@@ -47,6 +47,10 @@ bool svc_post_send_path(const char *thread, char *out, size_t cap);
 /* The play path for the bubble `local_id` (in whichever person thread holds it), and that
  * thread; false for a bubble that is not one of the box's messages. */
 bool svc_post_pcm_path(uint32_t local_id, char thread[16], char *out, size_t cap);
+/* A bubble's box id (Load earlier's anchor, 0.0.21): false for one the box has not listed. */
+bool svc_post_uuid(const char *thread, uint32_t local_id, char out[POST_ID_BYTES]);
+/* The bubble the panel already shows for box message `uuid`, 0 when none. */
+uint32_t svc_post_local(const char *thread, const char *uuid);
 /* A send landed: the thread is fetched so its bubble carries the box's id. */
 void svc_post_sent(const char *thread);
 /* `local_id`'s audio began to play (0.0.17: heard once its audio starts, however it ends): played here

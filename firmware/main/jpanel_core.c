@@ -474,6 +474,7 @@ static void first_byte(void)
 {
     s_f.first_byte = true;
     s_v.cur.stream_id = s_f.stream_id;
+    s_v.cur.duration_ms = s_f.duration_ms;
     if (!s_f.replay) {
         /* The header wins over the seed, so a box that disagrees with its own poll is believed. */
         if (s_f.from_set) copy(s_v.cur.who.from, sizeof(s_v.cur.who.from), s_f.from);
@@ -816,6 +817,7 @@ static void claim(const jp_cmd_t *c)
     s_v.cur.gen = c->gen;
     s_v.cur.replay = c->kind == JP_CMD_REPLAY;
     s_v.cur.run_continues = false;
+    s_v.cur.duration_ms = 0;
     s_v.phase = JP_FETCHING;
     s_v.deadline_ms = now_ms() + JP_HTTP_MS;
     if (c->kind == JP_CMD_REPLAY) {

@@ -3,17 +3,21 @@
 #include <string.h>
 
 #include "app_thread.h"
+#include "convo.h"
 #include "svc_audio.h"
+#include "svc_convo.h"
 #include "svc_messages.h"
+#include "svc_rtc.h"
 #include "svc_post.h"
 #include "svc_siblings.h"
 #include "thread_model.h"
 #include "ui_kit.h"
 #include "ui_pin.h"
 
-/* The bubbles a view tracks for changing in place: a person's thread holds four, the box's last
-   four with the panel's own send among them (svc_messages, svc_post's POST_KEEP). */
-#define SHOWN 4
+/* The bubbles a view tracks for changing in place: a person's thread holds four live (the box's
+   last four with the panel's own send among them, svc_post's POST_KEEP), and paged back with Load
+   earlier (0.0.21) as many as the window does. */
+#define SHOWN HIST_MAX
 /* A play's bar moves ten times a second. */
 #define PLAY_TICK_MS 100
 
@@ -36,6 +40,10 @@ typedef struct {
     uint8_t n;
     drawn_t drawn[SHOWN];
     uint32_t rebuilds;
+    /* Load earlier's anchor (0.0.21): the message that keeps its place while a page lands. */
+    uint32_t anchor_id;
+    int32_t anchor_y;
+    bool anchor_on;
     /* What the tile and the header say, from svc_siblings: app_t points at these, so a sibling
        renamed on the box is renamed here the next time home is drawn. */
     char title[SIB_NAME_BYTES + 1];
@@ -88,6 +96,61 @@ static void update(app_t *self)
 
 static void play(lv_event_t *e);
 
+/* Her panel's device id: who the box's history is asked about. "" before the box named her. */
+static const char *device_of(app_t *self, sibling_t *s)
+{
+    return svc_siblings_slot(cfg(self)->slot, s) ? s->device_id : "";
+}
+
+static void anchor_mark(app_t *self, bool top)
+{
+    thread_t *t = self->state;
+    const uint32_t n = lv_obj_get_child_count(t->list);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *ch = lv_obj_get_child(t->list, (int32_t)(top ? i : n - 1 - i));
+        const uintptr_t id = (uintptr_t)lv_obj_get_user_data(ch);
+        if (!id) continue;
+        lv_area_t a;
+        lv_obj_get_coords(ch, &a);
+        t->anchor_id = (uint32_t)id;
+        t->anchor_y = a.y1;
+        t->anchor_on = true;
+        return;
+    }
+}
+
+static bool anchor_keep(thread_t *t)
+{
+    if (!t->anchor_on) return false;
+    lv_obj_update_layout(t->list);
+    const uint32_t n = lv_obj_get_child_count(t->list);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *ch = lv_obj_get_child(t->list, (int32_t)i);
+        if ((uintptr_t)lv_obj_get_user_data(ch) != t->anchor_id) continue;
+        lv_area_t a;
+        lv_obj_get_coords(ch, &a);
+        lv_obj_scroll_by(t->list, 0, t->anchor_y - a.y1, LV_ANIM_OFF);
+        return true;
+    }
+    return false;
+}
+
+static void earlier(lv_event_t *e)
+{
+    app_t *self = lv_event_get_user_data(e);
+    sibling_t s;
+    anchor_mark(self, true);
+    svc_convo_hist_earlier(cfg(self)->thread, device_of(self, &s));
+}
+
+static void newer(lv_event_t *e)
+{
+    app_t *self = lv_event_get_user_data(e);
+    sibling_t s;
+    anchor_mark(self, false);
+    svc_convo_hist_newer(cfg(self)->thread, device_of(self, &s));
+}
+
 /* The list from scratch: only when the messages themselves changed (a new one, a transcript, a
    send's status), and then the reader stays where they were, as in convo.c — emptied, the page
    would clamp its scroll to the top. It pins to the end only on opening and when one arrives. */
@@ -103,6 +166,17 @@ static void fill_list(app_t *self)
     uint32_t shape = THREAD_SHAPE0;
     const uint32_t playing = svc_audio_playing(), played = svc_audio_played_ms();
     const uint16_t n = svc_messages_count(who);
+    hist_view_t h;
+    svc_messages_hist(who, &h);
+    shape = thread_shape_hist(shape, &h);
+    if (h.top == HIST_TOP_LOAD || h.top == HIST_TOP_LOADING) {
+        ui_hist_row(t->list, true, h.top == HIST_TOP_LOADING, h.older, earlier, self);
+    } else if (h.top == HIST_TOP_START) {
+        int64_t now = 0;
+        char when[24] = "";
+        if (svc_rtc_epoch(&now)) convo_when(h.start_at, now, convo_zone_offset(now), when, sizeof when);
+        ui_hist_start(t->list, when);
+    }
     msg_t m = {0};
     for (uint16_t i = 0; i < n; i++) {
         if (!svc_messages_get(who, i, &m)) continue;
@@ -115,8 +189,11 @@ static void fill_list(app_t *self)
                          .playing = tb.playing, .unplayed = tb.unplayed, .prog = tb.prog,
                          .text = m.text, .dur = tb.dur, .status = m.status, .tag = m.id,
                          .parts = d ? &d->parts : NULL};
-        ui_bubble(t->list, &b, self->accent, play, self);
+        lv_obj_t *line = ui_bubble(t->list, &b, self->accent, play, self);
+        lv_obj_set_user_data(line, (void *)(uintptr_t)m.id);
     }
+    if (h.bottom != HIST_BOTTOM_NONE)
+        ui_hist_row(t->list, false, h.bottom == HIST_BOTTOM_LOADING, h.newer, newer, self);
     if (!n) {
         char line[80];
         if (t->loaded)
@@ -127,11 +204,12 @@ static void fill_list(app_t *self)
     }
     t->shape = thread_shape_end(shape, n, t->loaded);
     t->rebuilds++;
-    if (ui_pin_should(&t->pin, n ? m.id : 0)) {
+    lv_obj_update_layout(t->list);
+    lv_obj_scroll_to_y(t->list, y, LV_ANIM_OFF);
+    if (anchor_keep(t)) {
+        if (h.top != HIST_TOP_LOADING && h.bottom != HIST_BOTTOM_LOADING) t->anchor_on = false;
+    } else if (!h.paged && ui_pin_should(&t->pin, n ? m.id : 0)) {
         ui_page_pin_bottom(t->list);
-    } else {
-        lv_obj_update_layout(t->list);
-        lv_obj_scroll_to_y(t->list, y, LV_ANIM_OFF);
     }
 }
 
@@ -142,8 +220,13 @@ static void refresh(app_t *self)
     const char *who = cfg(self)->thread;
     const uint32_t rev = svc_messages_rev(who);
     const bool loaded = svc_post_loaded(who);
+    sibling_t s;
+    /* "Load earlier · N more": counted from whatever the oldest message is now. */
+    if (loaded) svc_convo_hist_open(who, device_of(self, &s));
     if (rev != t->rev || loaded != t->loaded) {
-        uint32_t shape = THREAD_SHAPE0;
+        hist_view_t h;
+        svc_messages_hist(who, &h);
+        uint32_t shape = thread_shape_hist(THREAD_SHAPE0, &h);
         const uint16_t n = svc_messages_count(who);
         msg_t m;
         for (uint16_t i = 0; i < n; i++)
@@ -190,6 +273,7 @@ static void thread_open(app_t *self, lv_obj_t *root)
     t->talk = (ui_talk_t){0};
     t->pin = (ui_pin_t){0};
     t->n = 0;
+    t->anchor_on = false;
     ui_header(root, &t->icon, self->accent, t->title, back, self);
     t->list = ui_page(root, true, 60);
     ui_talk_hint(root);
@@ -227,6 +311,8 @@ static void thread_close(app_t *self)
     if (t->tick) lv_timer_delete(t->tick);
     t->tick = NULL;
     t->n = 0;
+    /* Paged back, the thread opens on its newest next time: the window's memory goes now. */
+    svc_convo_hist_live(cfg(self)->thread);
 }
 
 static bool on_event(app_t *self, const app_event_t *ev)
@@ -239,6 +325,9 @@ static bool on_event(app_t *self, const app_event_t *ev)
             if (why) self->host->toast(why);
             return true;
         }
+        /* A new message from KEY: the thread jumps back to its newest (owner-approved mock). */
+        t->anchor_on = false;
+        svc_convo_hist_live(cfg(self)->thread);
         char title[48];
         snprintf(title, sizeof title, "Message to %s", t->title);
         /* The box keeps 30 s of a message: the ring sends at its cap. */

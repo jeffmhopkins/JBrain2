@@ -17,20 +17,34 @@ is 404 whatever id is sent.
 
 "New conversation" has no route: the panel already asks for one with the talk's
 `new_thread=true` (`/endpoint/converse`), so nothing is created until something is said.
+
+Since firmware-c6 0.0.21 (owner, approved 2026-10-13) two more, behind the same gate and the
+same scoping (`_owned`: never a domain- or subject-scoped chat):
+
+- `GET …/history?before=|after=&limit=` pages the panel's current conversation ten messages at
+  a time, oldest first, with how many remain either side and when it began. A message's id is
+  its turn's `seq`, the same id the talk's stream gives the panel for the exchange it just had
+  (`panel_stream.IDS`), so "Load earlier" pages from whatever is on the glass.
+- `GET …/speech/{id}` speaks one stored answer, whole — not the 255 bytes the bubble shows — as
+  the JT2 records the panel already plays a reply from (`panel_stream.listen`): Listen.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.api import panel_agent, panel_stream
 from jbrain.api.deps import PanelDep
+from jbrain.api.endpoint import panel_speech
 from jbrain.api.panel_agent import (
     AGENT_IDS,
     LEGACY_VOICE_PREFIX,
@@ -42,7 +56,9 @@ from jbrain.api.panel_agent import (
 )
 from jbrain.auth.owner import owner_principal_id
 from jbrain.auth.service import PrincipalInfo
+from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.settings_store import SqlSettingsStore
 
 log = structlog.get_logger()
 
@@ -91,6 +107,8 @@ class Selected(BaseModel):
 class Line(BaseModel):
     mine: bool
     text: str
+    #: The turn's `seq` (0.0.21): what Listen and Load earlier name this message by.
+    id: int = 0
 
 
 class Thread(BaseModel):
@@ -260,21 +278,23 @@ async def select(
     return Selected(id=row.id, title=title_of(row.title, row.origin))
 
 
-def lines(turns: list[tuple[str, str]]) -> list[Line]:
+def lines(turns: list[tuple[str, str]], ids: list[int] | None = None) -> list[Line]:
     """`turns` (oldest first) as the panel's bubbles: each its plain prose, the newest answer
     up to NEWEST_BYTES and every other message BUBBLE_BYTES — an answer in whole sentences with
-    " More in the app." when cut (`panel_agent.condensed`), the owner's words cut on a word."""
+    " More in the app." when cut (`panel_agent.condensed`), the owner's words cut on a word.
+    `ids` (the turns' `seq`, in the same order) name each bubble for Listen and Load earlier."""
     newest = max((i for i, (role, _) in enumerate(turns) if role == "assistant"), default=-1)
     out: list[Line] = []
     for i, (role, content) in enumerate(turns):
         prose = _plain(role, content)
         if not prose:
             continue
+        mid = ids[i] if ids else 0
         if role == "user":
-            out.append(Line(mine=True, text=screen_text(prose, BUBBLE_BYTES)[0]))
+            out.append(Line(mine=True, text=screen_text(prose, BUBBLE_BYTES)[0], id=mid))
         else:
             limit = NEWEST_BYTES if i == newest else BUBBLE_BYTES
-            out.append(Line(mine=False, text=condensed(prose, limit=limit)))
+            out.append(Line(mine=False, text=condensed(prose, limit=limit), id=mid))
     return out
 
 
@@ -300,14 +320,196 @@ async def messages(
         got = (
             await s.execute(
                 text(
-                    "SELECT role, content FROM app.agent_turns"
+                    "SELECT seq, role, content FROM app.agent_turns"
                     " WHERE session_id = CAST(:sid AS uuid) ORDER BY seq DESC LIMIT :n"
                 ),
                 {"sid": row.id, "n": want + 1},
             )
         ).all()
     more = len(got) > want
-    turns = [(r.role, r.content) for r in reversed(got[:want])]
+    kept = list(reversed(got[:want]))
     return Thread(
-        id=row.id, title=title_of(row.title, row.origin), messages=lines(turns), more=more
+        id=row.id,
+        title=title_of(row.title, row.origin),
+        messages=lines([(r.role, r.content) for r in kept], [int(r.seq) for r in kept]),
+        more=more,
+    )
+
+
+# ---- 0.0.21: Load earlier, and Listen -----------------------------------------------------------
+
+#: A page of history: ten messages (the mock's "fetches 10 older"), and never more JSON than the
+#: panel's page buffer holds (firmware `HIST_BODY_MAX`): a page of long, much-escaped bubbles is
+#: cut short and the rest stay counted in `older` / `newer`.
+PAGE_MAX = 10
+PAGE_BYTES = 4000
+
+
+class PageLine(BaseModel):
+    id: int
+    mine: bool
+    text: str
+
+
+class Page(BaseModel):
+    """Messages oldest first; how many remain before the first and after the last (or either side
+    of the anchor, when none came back); and, at the true start, when the conversation began."""
+
+    messages: list[PageLine]
+    older: int
+    newer: int
+    start_at: int | None
+
+
+#: A turn the panel can show: one with words in it.
+_SHOWN = "session_id = CAST(:sid AS uuid) AND btrim(content) <> ''"
+
+
+def page_line(seq: int, role: str, content: str) -> PageLine:
+    """One message of an older page: its plain prose cut to a bubble on a word — Listen reads
+    the rest — or "…" for a turn whose words were all markup."""
+    text_ = screen_text(_plain(role, content), BUBBLE_BYTES)[0] or "…"
+    return PageLine(id=seq, mine=role == "user", text=text_)
+
+
+def fit_page(lines_: list[PageLine], newest_first: bool) -> list[PageLine]:
+    """As many of `lines_` (oldest first) as fit PAGE_BYTES of JSON, kept from the anchor's side:
+    the newest when paging back (`newest_first`), the oldest when paging forward. Never none."""
+    order = list(reversed(lines_)) if newest_first else list(lines_)
+    kept: list[PageLine] = []
+    used = 64
+    for line in order:
+        size = len(line.model_dump_json().encode()) + 1
+        if kept and used + size > PAGE_BYTES:
+            break
+        kept.append(line)
+        used += size
+    return list(reversed(kept)) if newest_first else kept
+
+
+async def _count(s: AsyncSession, sid: str, where: str, **params: Any) -> int:
+    got = await s.execute(
+        text(f"SELECT count(*) FROM app.agent_turns WHERE {_SHOWN} AND {where}"),  # noqa: S608
+        {"sid": sid, **params},
+    )
+    return int(got.scalar_one())
+
+
+@router.get("/{agent}/history")
+async def history(
+    agent: PanelAgent,
+    principal: PanelDep,
+    request: Request,
+    before: int | None = Query(None, ge=1),
+    after: int | None = Query(None, ge=1),
+    limit: int = Query(PAGE_MAX, ge=0, le=PAGE_MAX),
+) -> Page:
+    """A page of the panel's current conversation with `agent`: the `limit` messages just before
+    `before` (the newest, with neither), or just after `after`. `limit=0` is the counts alone,
+    which the panel asks for when a thread opens, for "Load earlier · N more"."""
+    if before is not None and after is not None:
+        raise HTTPException(status_code=422, detail="before or after, not both")
+    owner = await owner_for_panel(request, principal)
+    maker = _maker(request)
+    agent_id = AGENT_IDS[agent]
+    current = await _current(maker, owner, principal.subject_id, agent_id)
+    row = await _owned(maker, owner, agent_id, current) if current else None
+    if row is None:
+        return Page(messages=[], older=0, newer=0, start_at=None)
+    sid = str(row.id)
+    async with scoped_session(maker, owner) as s:
+        if after is not None:
+            sql = (
+                f"SELECT seq, role, content FROM app.agent_turns WHERE {_SHOWN}"  # noqa: S608
+                " AND seq > :p ORDER BY seq LIMIT :n"
+            )
+            got = (await s.execute(text(sql), {"sid": sid, "p": after, "n": limit})).all()
+            page = fit_page([page_line(int(r.seq), r.role, r.content) for r in got], False)
+        else:
+            cond = "seq < :p" if before is not None else "seq > 0"
+            sql = (
+                f"SELECT seq, role, content FROM app.agent_turns WHERE {_SHOWN}"  # noqa: S608
+                f" AND {cond} ORDER BY seq DESC LIMIT :n"
+            )
+            got = (await s.execute(text(sql), {"sid": sid, "p": before or 0, "n": limit})).all()
+            rows = [page_line(int(r.seq), r.role, r.content) for r in reversed(got)]
+            page = fit_page(rows, True)
+        if page:
+            older = await _count(s, sid, "seq < :p", p=page[0].id)
+            newer = await _count(s, sid, "seq > :p", p=page[-1].id)
+        elif after is not None:
+            older = await _count(s, sid, "seq <= :p", p=after)
+            newer = await _count(s, sid, "seq > :p", p=after)
+        elif before is not None:
+            older = await _count(s, sid, "seq < :p", p=before)
+            newer = await _count(s, sid, "seq > :p", p=before)
+        else:
+            older, newer = await _count(s, sid, "seq > 0"), 0
+        start_at = None
+        if older == 0:
+            first = (
+                await s.execute(
+                    text(f"SELECT min(created_at) FROM app.agent_turns WHERE {_SHOWN}"),  # noqa: S608
+                    {"sid": sid},
+                )
+            ).scalar_one()
+            start_at = int(first.timestamp()) if first is not None else None
+    return Page(messages=page, older=older, newer=newer, start_at=start_at)
+
+
+@router.get("/{agent}/speech/{turn_id}")
+async def speech(
+    agent: PanelAgent, turn_id: int, principal: PanelDep, request: Request
+) -> StreamingResponse:
+    """One of the agent's stored answers spoken whole, in the PWA read-aloud's voice, as JT2:
+    SPOKEN marks and PCM sentence by sentence, then END (`panel_stream.listen`). Only an answer
+    in one of the owner's chats the panel may show (`_owned`); 404 for anything else, a question
+    included. 503 `tts_unavailable` when the box cannot speak."""
+    owner = await owner_for_panel(request, principal)
+    maker = _maker(request)
+    agent_id = AGENT_IDS[agent]
+    async with scoped_session(maker, owner) as s:
+        turn = (
+            await s.execute(
+                text(
+                    "SELECT session_id::text AS sid, role, content FROM app.agent_turns"
+                    " WHERE seq = :seq"
+                ),
+                {"seq": turn_id},
+            )
+        ).first()
+    if turn is None or turn.role != "assistant":
+        raise HTTPException(status_code=404, detail="no such answer")
+    if await _owned(maker, owner, agent_id, str(turn.sid)) is None:
+        raise HTTPException(status_code=404, detail="no such answer")
+    words = _plain("assistant", turn.content)
+    if not words:
+        raise HTTPException(status_code=404, detail="no such answer")
+    settings = cast(Settings, request.app.state.settings)
+    if not (settings.brain_tts_url or "").strip():
+        raise HTTPException(status_code=503, detail={"reason": "tts_unavailable"})
+    store = cast(SqlSettingsStore, request.app.state.settings_store)
+    voice: panel_agent.Voice | None
+    try:
+        voice = await panel_agent.owner_voice(store, owner)
+    except Exception as exc:  # noqa: BLE001 — the default voice rather than none
+        log.warning("panel_convo.listen_voice_error", error=repr(exc))
+        voice = None
+
+    async def say(chunk: str, budget: int) -> bytes:
+        return await panel_speech(settings, chunk, budget, voice)
+
+    stats: dict[str, Any] = {}
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for rec in panel_stream.listen(words, say, stats):
+                yield rec
+        finally:
+            log.info("panel_convo.listen", agent=agent_id, turn=turn_id, **stats)
+
+    return StreamingResponse(
+        body(),
+        media_type="application/x-jpanel-turn",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

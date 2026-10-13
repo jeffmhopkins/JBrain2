@@ -842,3 +842,83 @@ class TestNamingAPanelWithoutACable:
             f"the box can send {wire} bytes and the panel reads at most {held - 1} — a poll that "
             "overruns parses as nothing at all, so the panel would report an empty queue forever"
         )
+
+
+# ---- a message's level (owner, 2026-10-13: "it seems really under gain") ---------------------
+
+
+def _tone(amp: int, seconds: float = 1.0, gap: float = 0.0) -> bytes:
+    import array
+    import math
+
+    n, quiet = int(16000 * seconds), int(16000 * gap)
+    voice = [int(amp * math.sin(2 * math.pi * 440 * i / 16000)) for i in range(n)]
+    return array.array("h", voice + [0] * quiet + voice).tobytes()
+
+
+def _peak_rms(pcm: bytes) -> tuple[int, float]:
+    import array
+    import math
+
+    a = array.array("h")
+    a.frombytes(pcm)
+    voiced = [x for x in a if x]
+    return max(abs(x) for x in a), math.sqrt(sum(x * x for x in voiced) / len(voiced))
+
+
+def test_a_quiet_message_is_raised_to_speaking_level() -> None:
+    peak, rms = _peak_rms(jpanel._level_voice(_tone(1000)))
+    assert 3000 < rms < 3600 and peak < 32767
+
+
+def test_a_message_already_at_level_is_left_alone() -> None:
+    loud = _tone(9000)
+    assert jpanel._level_voice(loud) == loud
+
+
+def test_the_pauses_between_words_do_not_buy_extra_gain() -> None:
+    _, with_gap = _peak_rms(jpanel._level_voice(_tone(1000, gap=2.0)))
+    _, without = _peak_rms(jpanel._level_voice(_tone(1000)))
+    assert abs(with_gap - without) < 50
+
+
+def test_the_room_is_not_amplified_past_18_db() -> None:
+    _, rms = _peak_rms(jpanel._level_voice(_tone(100)))
+    assert rms <= 100 / 2**0.5 * 8 + 1
+
+
+def test_a_raised_peak_is_rounded_off_never_wrapped() -> None:
+    import array
+
+    clip = array.array("h", _tone(500))
+    clip[800] = 20000  # one sharp sound in a quiet message
+    out = array.array("h")
+    out.frombytes(jpanel._level_voice(clip.tobytes()))
+    assert 22000 < out[800] < 32767 and min(out) > -32768
+
+
+def test_one_loud_click_does_not_switch_the_levelling_off() -> None:
+    """The review of #1735: quiet speech with a bump at the microphone in it."""
+    import array
+
+    clip = array.array("h", _tone(300, seconds=2.0))
+    for i in range(16000, 16100):
+        clip[i] = 30000 if i % 2 else -30000
+    out = array.array("h")
+    out.frombytes(jpanel._level_voice(clip.tobytes()))
+    speech = out[:15000]
+    rms = (sum(x * x for x in speech) / len(speech)) ** 0.5
+    assert rms > 1500, rms
+    # The click itself is rounded off at full scale: never wrapped to the other sign.
+    assert out[16001] > 30000 and out[16000] < -30000
+
+
+def test_a_long_silence_between_two_sentences_is_levelled_not_a_crash() -> None:
+    """The second review of #1735: speech at both ends of a hold, digital silence between."""
+    _, rms = _peak_rms(jpanel._level_voice(_tone(800, seconds=1.0, gap=50.0)))
+    assert 3000 < rms < 3600, rms
+
+
+def test_silence_and_nothing_pass_through() -> None:
+    assert jpanel._level_voice(b"") == b""
+    assert jpanel._level_voice(bytes(32000)) == bytes(32000)
