@@ -20,6 +20,7 @@ import {
   mcVersion,
   mcWorlds,
 } from "../minecraftFixtures";
+import { EXPLORE_REACH, tilesNear } from "../minecraftMap";
 import {
   mcMapInfo,
   mcMapPlayers,
@@ -394,14 +395,16 @@ describe("the map's timeline", { timeout: 20_000 }, () => {
         },
       );
       const FOX = "2535411";
-      let step: { t: [number, number, number, number]; seen: boolean } | null = null;
+      // His steps since the map opened, each [at, x, y, z], and whether his disc shows it.
+      const steps: { t: [number, number, number, number]; seen: boolean }[] = [];
       const base = fetchMock.getMockImplementation();
       fetchMock.mockImplementation(async (input, init) => {
         const got = await base?.(input, init);
         const path = new URL(String(input), "http://box").pathname;
-        if (!got || !step || !got.ok) return got as Response;
-        const { t, seen } = step;
-        if (path === "/api/minecraft/map/players" && seen) {
+        const step = steps.filter((x) => x.seen).at(-1);
+        if (!got || !steps.length || !got.ok) return got as Response;
+        if (path === "/api/minecraft/map/players" && step) {
+          const t = step.t;
           const body = (await got.json()) as MinecraftMapPlayers;
           const players = body.players.map((p) =>
             p.xuid === FOX ? { ...p, x: t[1], y: t[2], z: t[3], at: t[0] } : p,
@@ -410,8 +413,13 @@ describe("the map's timeline", { timeout: 20_000 }, () => {
         }
         if (path === "/api/minecraft/timeline") {
           const body = (await got.json()) as MinecraftTimeline;
+          // The travel log has every step up to the read's end, as the box would.
+          const q = new URL(String(input), "http://box").searchParams;
+          const [from, to] = [Number(q.get("from")), Number(q.get("to"))];
           for (const tr of body.trails ?? []) {
-            if (tr.xuid === FOX) tr.segments.at(-1)?.points.push(t);
+            if (tr.xuid !== FOX) continue;
+            for (const { t } of steps)
+              if (t[0] >= from && t[0] <= to) tr.segments.at(-1)?.points.push(t);
           }
           return json(body);
         }
@@ -436,9 +444,11 @@ describe("the map's timeline", { timeout: 20_000 }, () => {
       const tiles = srcs.length;
       return {
         explored,
-        walk: (at: number, seen: boolean) => {
-          step = { t: [at, fox.x + 6, fox.y, fox.z + 6], seen };
+        walk: (at: number, seen: boolean, east = 6) => {
+          steps.push({ t: [at, fox.x + east, fox.y, fox.z + 6], seen });
         },
+        x: fox.x,
+        z: fox.z,
         /** Tiles fetched again since the walk, past the browser's minute of caching. */
         refetched: () => srcs.slice(tiles).filter((u) => /[?&]v=\d+/.test(u)),
         run: (ms: number) =>
@@ -455,6 +465,43 @@ describe("the map's timeline", { timeout: 20_000 }, () => {
       await fox.run(60_000);
       await waitFor(() => expect(fox.explored()).toBe(2));
       await waitFor(() => expect(fox.refetched().length).toBeGreaterThan(0));
+    });
+
+    it("a minute of walking costs six small catch-ups, one full read, one fog, one tile refresh", async () => {
+      const fox = await walkingFox();
+      const before = timelineCalls().length;
+      for (let i = 1; i <= 6; i++) {
+        // A step every 10 s, seen on his disc at the next poll.
+        fox.walk(Date.now() / 1000 + 1, true, 6 * i);
+        await fox.run(10_000);
+        await new Promise((r) => setTimeout(r, 30));
+      }
+      await waitFor(() => expect(fox.explored()).toBe(2));
+      const minute = timelineCalls().slice(before);
+      const kind = (u: URL) => u.searchParams.get("include") ?? "full";
+      const gaps = minute.filter((u) => kind(u) === "trails,events");
+      expect(gaps.length).toBeGreaterThan(0);
+      expect(gaps.length).toBeLessThanOrEqual(6);
+      for (const u of gaps) {
+        // Only the stretch since the trail drawn, for the walkers only — never the week.
+        const span = Number(u.searchParams.get("to")) - Number(u.searchParams.get("from"));
+        expect(span).toBeLessThan(120);
+        expect(u.searchParams.get("players")).toBeTruthy();
+      }
+      expect(minute.filter((u) => kind(u) === "full").length).toBeLessThanOrEqual(1);
+      expect(minute.filter((u) => kind(u) === "explored")).toHaveLength(1);
+      // Each tile round his steps is fetched again once, and no other.
+      const again = fox.refetched().map((u) => u.replace(/[?&]v=\d+/, ""));
+      expect(again.length).toBeGreaterThan(0);
+      expect(new Set(again).size).toBe(again.length);
+      const near = tilesNear(
+        Array.from({ length: 7 }, (_, i) => [fox.x + 6 * i, fox.z + 6] as [number, number]),
+        EXPLORE_REACH,
+      );
+      for (const u of again) {
+        const m = /tile\/overworld\/(\d+)\/(-?\d+)\/(-?\d+)\.png/.exec(u);
+        expect(m && near.has(`${m[1]}|${m[2]}|${m[3]}`)).toBe(true);
+      }
     });
 
     it("a disc that moved on has its trail read again at once, so the trail reaches it", async () => {

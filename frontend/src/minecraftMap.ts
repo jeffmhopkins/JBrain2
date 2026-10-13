@@ -690,6 +690,73 @@ export function trailBehind(players: { at: number }[], log: { now: number } | nu
   return !!log && players.some((p) => p.at > log.now);
 }
 
+/** Where a catch-up read starts: the oldest last point among the walkers who are ahead
+ *  (the log's `now` for anyone it doesn't hold yet). Reading from the point drawn, not
+ *  after it, gives the box that point to cut the seam with: a death, a respawn or a portal
+ *  just after it starts a new piece in the read exactly as in a full one. */
+export function gapFrom(log: MinecraftTimeline, xuids: string[]): number {
+  let from = log.now;
+  for (const tr of log.trails ?? []) {
+    if (!xuids.includes(tr.xuid)) continue;
+    const t = tr.segments[tr.segments.length - 1]?.points.at(-1)?.[0];
+    if (t !== undefined && t < from) from = t;
+  }
+  return from;
+}
+
+/** A catch-up read (from `gapFrom` to now) joined onto the log the trails came from.
+ *  Points at or before a trail's last point are already drawn. The first new piece carries
+ *  on the last one only when the box put that last point in it too — so a death, a
+ *  respawn or a portal at the seam starts a new piece, as a full read would. */
+export function mergeGap(log: MinecraftTimeline, gap: MinecraftTimeline): MinecraftTimeline {
+  const trails = (log.trails ?? []).map((tr) => ({
+    ...tr,
+    segments: tr.segments.map((g) => ({ ...g, points: [...g.points] })),
+  }));
+  for (const g of gap.trails ?? []) {
+    const tr = trails.find((x) => x.xuid === g.xuid);
+    if (!tr) {
+      trails.push(g);
+      continue;
+    }
+    const last = tr.segments[tr.segments.length - 1];
+    const lastT = last?.points.at(-1)?.[0] ?? Number.NEGATIVE_INFINITY;
+    let first = true;
+    for (const seg of g.segments) {
+      const fresh = seg.points.filter((p) => p[0] > lastT);
+      if (!fresh.length) continue;
+      const carries =
+        first &&
+        last &&
+        seg.dim === last.dim &&
+        seg.session === last.session &&
+        seg.points.some((p) => p[0] === lastT);
+      if (carries) last.points.push(...fresh);
+      else tr.segments.push({ ...seg, points: fresh });
+      tr.samples += fresh.length;
+      first = false;
+    }
+    tr.gamertag = g.gamertag;
+  }
+  const seen = new Set<string>();
+  const events = [...(log.events ?? []), ...(gap.events ?? [])]
+    .filter((e) => {
+      const k = `${e.kind}|${e.xuid}|${e.at}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    })
+    .sort((a, b) => a.at - b.at);
+  return {
+    ...log,
+    to: Math.max(log.to, gap.to),
+    now: Math.max(log.now, gap.now),
+    trails,
+    events,
+    truncated: !!(log.truncated || gap.truncated),
+  };
+}
+
 /** The newest point of any trail in a travel log: it moves exactly when a trail grows. */
 export function trailTail(log: MinecraftTimeline | null): number | null {
   let tail: number | null = null;

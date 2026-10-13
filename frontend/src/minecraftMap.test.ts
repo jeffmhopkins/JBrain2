@@ -14,7 +14,9 @@ import {
   clusterTarget,
   entryLine,
   fitView,
+  gapFrom,
   hitTest,
+  mergeGap,
   overworldSide,
   panBy,
   scaleBar,
@@ -462,5 +464,149 @@ describe("the trail and what it explored keep up with the players", () => {
     expect(near.has("4|0|0") && near.has("4|-1|-1")).toBe(true);
     expect(near.has("4|1|0")).toBe(false);
     expect(tilesNear([], 64).size).toBe(0);
+  });
+});
+
+describe("a catch-up read joins the trail at its seam", () => {
+  type Pt = [number, number, number, number];
+  const seg = (session: string, dim: "overworld" | "nether", ...pts: Pt[]) => ({
+    session,
+    dim,
+    points: pts,
+  });
+  const fox = (...segments: ReturnType<typeof seg>[]) => ({
+    xuid: "fox",
+    gamertag: "BlockyFox",
+    samples: segments.reduce((n, g) => n + g.points.length, 0),
+    downsampled: false,
+    segments,
+  });
+  const ev = (kind: "death" | "respawn", at: number, x: number) => ({
+    kind,
+    xuid: "fox",
+    gamertag: "BlockyFox",
+    at,
+    dim: "overworld" as const,
+    x,
+    y: 64,
+    z: 0,
+  });
+  const log = (
+    from: number,
+    now: number,
+    trails: NonNullable<MinecraftTimeline["trails"]>,
+    events: NonNullable<MinecraftTimeline["events"]> = [],
+  ): MinecraftTimeline => ({
+    slot: "slot2",
+    world: "castle",
+    from,
+    to: now,
+    now,
+    trails,
+    events,
+    sessions: [],
+  });
+  // The trail drawn: BlockyFox walking east, last seen at t=20.
+  const old = () =>
+    log(0, 25, [fox(seg("a", "overworld", [10, 0, 64, 0], [20, 10, 64, 0]))], [ev("death", 5, 0)]);
+  const shape = (l: MinecraftTimeline) =>
+    (l.trails?.[0]?.segments ?? []).map((g) => [g.dim, ...g.points.map((p) => p[0])]);
+
+  it("reads from each walker's last point, so the box cuts the seam with what came before it", () => {
+    expect(gapFrom(old(), ["fox"])).toBe(20);
+    expect(gapFrom(old(), ["mira"])).toBe(25); // nothing drawn yet: from the log's now
+  });
+
+  it("a plain step continues the same piece, the seam point once", () => {
+    const gap = log(20, 35, [fox(seg("a", "overworld", [20, 10, 64, 0], [30, 20, 64, 0]))]);
+    const got = mergeGap(old(), gap);
+    expect(shape(got)).toEqual([["overworld", 10, 20, 30]]);
+    expect(got.now).toBe(35);
+    expect(got.from).toBe(0);
+    expect(got.sessions).toEqual([]);
+  });
+
+  it("a death at the seam ends the old piece on the skull; the next sample starts anew", () => {
+    // The box ended the seam's piece on the death (§M8a) and began the next after it.
+    const gap = log(
+      20,
+      45,
+      [
+        fox(
+          seg("a", "overworld", [20, 10, 64, 0], [24, 14, 60, 0]),
+          seg("a", "overworld", [40, -300, 64, 0]),
+        ),
+      ],
+      [ev("death", 24, 14), ev("respawn", 26, -300)],
+    );
+    const got = mergeGap(old(), gap);
+    expect(shape(got)).toEqual([
+      ["overworld", 10, 20, 24],
+      ["overworld", 40],
+    ]);
+    expect(got.events?.map((e) => [e.kind, e.at])).toEqual([
+      ["death", 5],
+      ["death", 24],
+      ["respawn", 26],
+    ]);
+  });
+
+  it("a respawn at the seam is a new piece, never a line from the old one", () => {
+    const gap = log(
+      20,
+      45,
+      [fox(seg("a", "overworld", [20, 10, 64, 0]), seg("a", "overworld", [40, -300, 64, 0]))],
+      [ev("respawn", 30, -300)],
+    );
+    expect(shape(mergeGap(old(), gap))).toEqual([
+      ["overworld", 10, 20],
+      ["overworld", 40],
+    ]);
+  });
+
+  it("a portal at the seam is a new piece in the other dimension", () => {
+    const gap = log(20, 45, [
+      fox(
+        seg("a", "overworld", [20, 10, 64, 0]),
+        seg("a", "nether", [30, 1, 70, 0], [40, 5, 70, 0]),
+      ),
+    ]);
+    expect(shape(mergeGap(old(), gap))).toEqual([
+      ["overworld", 10, 20],
+      ["nether", 30, 40],
+    ]);
+  });
+
+  it("a death the old log already ends on is not drawn twice, and nothing older comes back", () => {
+    const ended = log(
+      0,
+      25,
+      [fox(seg("a", "overworld", [10, 0, 64, 0], [24, 14, 60, 0]))],
+      [ev("death", 24, 14)],
+    );
+    // Read from the second the skull fell in: the box saw the sample before it as well.
+    const gap = log(
+      24,
+      45,
+      [
+        fox(
+          seg("a", "overworld", [23.5, 13, 64, 0], [24, 14, 60, 0]),
+          seg("a", "overworld", [40, -300, 64, 0]),
+        ),
+      ],
+      [ev("death", 24, 14)],
+    );
+    const got = mergeGap(ended, gap);
+    expect(shape(got)).toEqual([
+      ["overworld", 10, 24],
+      ["overworld", 40],
+    ]);
+    expect(got.events).toHaveLength(1);
+  });
+
+  it("someone not on the old log brings their whole trail", () => {
+    const gap = log(25, 45, [{ ...fox(seg("b", "overworld", [30, 5, 64, 5])), xuid: "mira" }]);
+    const got = mergeGap(old(), gap);
+    expect(got.trails?.map((t) => t.xuid)).toEqual(["fox", "mira"]);
   });
 });

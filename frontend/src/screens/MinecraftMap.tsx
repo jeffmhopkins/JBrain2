@@ -104,8 +104,10 @@ import {
   fitView,
   fmtClock,
   fmtDay,
+  gapFrom,
   hitTest,
   initialOf,
+  mergeGap,
   nextSpeed,
   overworldSide,
   panBy,
@@ -692,9 +694,10 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   }, [source, slot, tl.on, tl.from, tl.to, say]);
 
   // A disc ahead of its trail: someone's newest sample is newer than the log the trails
-  // came from. The trail is read again at once (without the sessions, which the minute's
-  // read keeps current), so it reaches the disc instead of a minute behind it. Once per
-  // new sample, so a clock that runs ahead can't keep asking.
+  // came from. Only the stretch since then is read, for the walkers only, and joined onto
+  // the trail, so it reaches the disc instead of a minute behind it; the minute's full
+  // read stays the backstop. Once per new sample, so a clock that runs ahead can't keep
+  // asking.
   const caughtUp = useRef(0);
   useEffect(() => {
     if (!players || !log || log.world !== players.world || (tl.on && !tl.live)) return;
@@ -702,13 +705,15 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     if (!trailBehind(players.players, log) || newest <= caughtUp.current) return;
     caughtUp.current = newest;
     const keep = tl.on ? setRangeLog : setLiveLog;
+    const walkers = players.players.filter((p) => p.at > log.now).map((p) => p.xuid);
     let gone = false;
     source
-      .timeline(slot, log.from, Math.max(log.to, nowS()), { include: ["trails", "events"] })
+      .timeline(slot, gapFrom(log, walkers), Math.max(log.to, nowS()), {
+        include: ["trails", "events"],
+        players: walkers,
+      })
       .then((got) => {
-        if (gone) return;
-        const sessions = log.sessions ? { sessions: log.sessions } : {};
-        keep((was) => (was === log ? { ...got, ...sessions } : was));
+        if (!gone) keep((was) => (was === log ? mergeGap(log, got) : was));
       })
       .catch(() => {
         // The minute's read brings the trail anyway.
@@ -719,8 +724,10 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   }, [source, slot, players, log, tl.on, tl.live]);
 
   // Explored by: the fog for this dimension, lifted by first-seen time on the timeline. It
-  // is read again each time the trail grows, so the ground just walked is lifted with it.
+  // is read again when the trail has grown (`walkedGen`, below), so the ground just walked
+  // is lifted with it.
   const tail = trailTail(log);
+  const [walkedGen, setWalkedGen] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: a longer trail reads the fog again.
   useEffect(() => {
     if (!ov.explored) {
@@ -744,16 +751,25 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     return () => {
       gone = true;
     };
-  }, [source, slot, dim, ov.explored, exBy, tail]);
+  }, [source, slot, dim, ov.explored, exBy, walkedGen]);
 
   // And the tiles round the new steps are fetched again: explored ground is baked into them.
-  const walked = useRef<{ slot: string; tail: number } | null>(null);
+  // At most once a minute: the box re-reads the world no oftener, so a faster refresh
+  // fetches the same picture. A grown trail inside the minute waits for the next poll.
+  const walked = useRef<{ slot: string; tail: number; at: number } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each poll looks again at a held refresh.
   useEffect(() => {
     const was = walked.current;
-    walked.current = tail === null ? null : { slot, tail };
-    if (!was || was.slot !== slot || tail === null || tail <= was.tail) return;
+    const now = Date.now();
+    if (tail === null || !was || was.slot !== slot) {
+      walked.current = tail === null ? null : { slot, tail, at: now };
+      return;
+    }
+    if (tail <= was.tail || now - was.at < TILE_FRESH_MS) return;
+    walked.current = { slot, tail, at: now };
     const st = state.current;
     if (st.tl.on && !st.tl.live) return; // a replay's range moved, not anyone's feet
+    setWalkedGen((g) => g + 1);
     const near = tilesNear(trailSince(st.log, was.tail, st.dim), EXPLORE_REACH);
     if (!near.size) return;
     for (const [key, e] of cache.current) {
@@ -763,7 +779,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       }
     }
     redraw();
-  }, [slot, tail, redraw]);
+  }, [slot, tail, players, redraw]);
 
   // ---- view ----
 
