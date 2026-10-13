@@ -250,8 +250,9 @@ void tk_steps_summary(const tk_steps_t *s, uint32_t ms, char *out, size_t cap);
 bool tk_spk_may_start(uint32_t since_amp_ms, uint32_t queued, bool more);
 
 /* ---- the ring's size, per kind of exchange (0.0.18) ----
- * A talk records into its ring while the upload's connection opens and then plays the reply
- * through it, so it keeps 0.0.10's half second either way (16 KB). A stored message played back
+ * A talk records into its ring while the upload's connection opens, so it takes 0.0.10's half
+ * second (16 KB) at KEY down; its reply is played through less (tk_reply_ring_bytes). A stored
+ * message played back
  * (TK_KIND_LISTEN) needs none of that slack: the box already has the whole clip and sends it as
  * fast as TCP lets it, so the receive window and mbedTLS's record buffer sit full behind the ring
  * the whole play, and an underrun re-arms the speaker's start (a pause, never a stutter). Its ring
@@ -261,6 +262,14 @@ bool tk_spk_may_start(uint32_t since_amp_ms, uint32_t queued, bool more);
 #define TK_RING_TALK 16384
 #define TK_RING_PLAY 6144
 uint32_t tk_ring_bytes(tk_kind_t kind);
+/* A talk's ring once its spoken reply starts (0.0.22): the microphone is done with it, so the
+ * half second it kept for the upload's connection is slack nothing uses, and the reply is played
+ * through a play's 6 KB, shrunk in place. What the speaker has ahead of it is the same either way
+ * — the box's own TCP buffers hold a synthesised sentence the ring has no room for yet, and a
+ * pause comes only when the box has not synthesised the next one — except across a radio stall
+ * longer than the ring and the receive window, the margin plays have run on since 0.0.18. This is
+ * what lifts a talk's low to a play's (README "What 0.0.22 adds", the heap). */
+uint32_t tk_reply_ring_bytes(uint32_t held);
 
 /* ---- the conversation's bubbles ---- */
 #define TALK_HEARING "Transcribing…"

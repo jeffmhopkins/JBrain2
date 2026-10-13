@@ -7,10 +7,9 @@ static uint8_t s_pct = 80;
 static bool s_dark;
 static bool s_applied;
 /* What svc_orient asked and what the glass took: the device's rule (svc_display_co5300.c),
-   including a quarter turn that finds no memory for its piece buffer and waits. */
+   applied between frames, never before (svc_display_fake_hold stands in for the wait). */
 static uint8_t s_rot, s_rot_req;
-static bool s_no_piece;
-static uint32_t s_rot_fail;
+static bool s_hold;
 static void (*s_rotated)(uint8_t quarters);
 
 void svc_display_set_brightness(uint8_t pct)
@@ -41,11 +40,7 @@ bool svc_display_applied(void)
 
 void svc_display_fake_service(void)
 {
-    if (s_rot_req == s_rot) return;
-    if ((s_rot_req & 1) && s_no_piece) {
-        s_rot_fail++;
-        return;
-    }
+    if (s_rot_req == s_rot || s_hold) return;
     s_rot = s_rot_req;
     if (s_rotated) s_rotated(s_rot);
 }
@@ -53,7 +48,7 @@ void svc_display_fake_service(void)
 void svc_display_set_rotation(uint8_t quarters)
 {
     s_rot_req = quarters & 3;
-    /* No frames to wait for in the sim and the host: applied at once, unless refused. */
+    /* No frames to wait for in the sim and the host: applied at once, unless held. */
     svc_display_fake_service();
 }
 
@@ -67,9 +62,9 @@ void svc_display_on_rotated(void (*fn)(uint8_t quarters))
     s_rotated = fn;
 }
 
-void svc_display_fake_no_piece(bool refuse)
+void svc_display_fake_hold(bool hold)
 {
-    s_no_piece = refuse;
+    s_hold = hold;
 }
 
 static void describe(void *ctx, dbg_json_t *w)
@@ -79,7 +74,6 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_bool(w, "dark", s_dark);
     dbg_json_bool(w, "applied", s_applied);
     dbg_json_int(w, "rotation", s_rot * 90);
-    dbg_json_int(w, "rot_no_memory", s_rot_fail);
     dbg_json_str(w, "driver", "fake");
 }
 

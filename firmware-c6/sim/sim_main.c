@@ -68,19 +68,40 @@ static uint32_t sim_ms(void)
    (disp_logic.c), so a rotated state's PNG is what the panel shows, not what LVGL drew. */
 static uint16_t s_glass[W * H];
 
+/* The controller's write pointer (0.0.22): RAMWR starts at the window's first pixel, RAMWRC goes
+   on from the last one written, row by row inside the window. */
+static struct {
+    disp_win_t win;
+    int32_t x, y;
+} s_ctl;
+
+static void ctl_write(uint8_t cmd, const uint16_t *px, int32_t n)
+{
+    if (cmd == DISP_RAMWR) s_ctl.x = s_ctl.win.x1, s_ctl.y = s_ctl.win.y1;
+    for (int32_t i = 0; i < n; i++) {
+        s_glass[s_ctl.y * W + s_ctl.x] = px[i];
+        if (++s_ctl.x > s_ctl.win.x2) {
+            s_ctl.x = s_ctl.win.x1;
+            if (++s_ctl.y > s_ctl.win.y2) s_ctl.y = s_ctl.win.y1;
+        }
+    }
+}
+
 static void to_glass(const lv_area_t *a, const uint16_t *px)
 {
-    static uint16_t strip[W * STRIP_ROWS], piece[DISP_ROT_PIECE_PX];
+    static uint16_t strip[W * STRIP_ROWS], piece[DISP_ROT_PIECES][DISP_ROT_PIECE_PX];
     const uint8_t rot = svc_display_rotation();
     const disp_win_t l = {a->x1, a->y1, a->x2, a->y2};
     const int32_t w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
     memcpy(strip, px, (size_t)(w * h) * 2);
     if (rot == 1 || rot == 3) {
+        /* The device's stream: the turned window once, then the pieces into it. */
+        s_ctl.win = disp_rot_area(rot, W, l);
         const int32_t k = disp_rot_piece_rows(h);
-        for (int32_t r0 = 0; r0 < w; r0 += k) {
-            const disp_win_t g = disp_rot_piece(rot, W, l, strip, r0, k, piece);
-            for (int32_t y = g.y1; y <= g.y2; y++)
-                memcpy(&s_glass[y * W + g.x1], &piece[(y - g.y1) * h], (size_t)h * 2);
+        disp_piece_t p;
+        for (int32_t i = 0; disp_rot_step(w, k, i, &p); i++) {
+            disp_rot_piece(rot, W, l, strip, p.r0, p.rows, piece[p.buf]);
+            ctl_write(p.cmd, piece[p.buf], p.rows * h);
         }
         return;
     }
