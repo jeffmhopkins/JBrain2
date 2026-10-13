@@ -913,6 +913,12 @@ def test_one_loud_click_does_not_switch_the_levelling_off() -> None:
     assert out[16001] > 30000 and out[16000] < -30000
 
 
+def test_a_long_silence_between_two_sentences_is_levelled_not_a_crash() -> None:
+    """The second review of #1735: speech at both ends of a hold, digital silence between."""
+    _, rms = _peak_rms(jpanel._level_voice(_tone(800, seconds=1.0, gap=50.0)))
+    assert 3000 < rms < 3600, rms
+
+
 def test_silence_and_nothing_pass_through() -> None:
     assert jpanel._level_voice(b"") == b""
     assert jpanel._level_voice(bytes(32000)) == bytes(32000)

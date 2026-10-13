@@ -1441,10 +1441,13 @@ def _level_voice(pcm: bytes) -> bytes:
     # drag the measure down. The reference is a percentile and the voiced frames are capped at
     # it, because one bump, cough or click at the microphone must not stand in for the voice
     # and switch the levelling off for the whole message (review of #1735).
-    ref = sorted(energies)[(len(energies) - 1) * 95 // 100]
-    voiced = [min(e, ref) for e in energies if e >= ref / 100 and e > 0]
-    if not voiced:
+    # Over the frames with any sound at all: a long hold that is mostly digital silence between
+    # two sentences would otherwise put the percentile on a zero.
+    heard = sorted(e for e in energies if e > 0)
+    if not heard:
         return pcm
+    ref = heard[(len(heard) - 1) * 95 // 100]
+    voiced = [min(e, ref) for e in heard if e >= ref / 100]
     rms = math.sqrt(sum(voiced) / len(voiced))
     gain = min(_LEVEL_MAX_GAIN, _LEVEL_TARGET_RMS / rms)
     if gain <= 1.05:
