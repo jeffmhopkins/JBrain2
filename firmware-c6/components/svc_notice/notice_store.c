@@ -10,7 +10,7 @@
 #include "notice_logic.h"
 #include "notice_port.h"
 
-#define PATH_BYTES 80
+#define PATH_BYTES 128
 
 static void path_of(const char *name, char *out)
 {
@@ -245,4 +245,100 @@ bool nstore_entry(unsigned skip_n, char *name, size_t cap)
     }
     closedir(d);
     return found;
+}
+
+/* ---- the picture by rows ---- */
+
+/* `n` bytes of the stream through the struct's buffer. */
+static bool pic_bytes(notice_pic_t *p, uint8_t *out, uint32_t n)
+{
+    while (n) {
+        if (p->buf_at == p->buf_n) {
+            const ssize_t k = read(p->fd, p->buf, sizeof p->buf);
+            if (k <= 0) return false;
+            p->buf_n = (uint16_t)k;
+            p->buf_at = 0;
+        }
+        const uint32_t k = n < (uint32_t)(p->buf_n - p->buf_at) ? n : (uint32_t)(p->buf_n - p->buf_at);
+        memcpy(out, p->buf + p->buf_at, k);
+        p->buf_at = (uint16_t)(p->buf_at + k);
+        out += k;
+        n -= k;
+    }
+    return true;
+}
+
+static bool pic_rewind(notice_pic_t *p)
+{
+    p->row = 0;
+    p->run_left = p->stripe_left = 0;
+    p->buf_n = p->buf_at = 0;
+    return lseek(p->fd, (off_t)p->first_at, SEEK_SET) >= 0;
+}
+
+bool nstore_pic_open(notice_pic_t *p, const char *name, uint32_t first_at, uint16_t w, uint16_t h)
+{
+    memset(p, 0, sizeof *p);
+    p->fd = -1;
+    if (!first_at || !w || !h) return false;
+    p->fd = nstore_open(name);
+    if (p->fd < 0) return false;
+    p->w = w;
+    p->h = h;
+    p->first_at = first_at;
+    if (pic_rewind(p)) return true;
+    nstore_pic_close(p);
+    return false;
+}
+
+/* The next `n` pixels of the stream, into `px` or (NULL) skipped. Runs never cross a stripe, so
+   the stream is the stripes' runs end to end; a stripe's header is read where its runs end. */
+static bool pic_pixels(notice_pic_t *p, uint32_t n, uint16_t *px)
+{
+    while (n) {
+        if (!p->run_left) {
+            if (!p->stripe_left) {
+                uint8_t h[JN1_HEAD + 4];
+                if (!pic_bytes(p, h, sizeof h) || h[0] != JN1_STRIPE) return false;
+                const uint32_t len = (uint32_t)(h[1] | h[2] << 8);
+                if (len < 4 || (len - 4) % 3) return false;
+                p->stripe_left = len - 4;
+                if (!p->stripe_left) continue;
+            }
+            uint8_t r[3];
+            if (!pic_bytes(p, r, 3)) return false;
+            p->stripe_left -= 3;
+            p->run_left = (uint32_t)r[0] + 1;
+            p->color = (uint16_t)(r[1] | r[2] << 8);
+        }
+        const uint32_t k = n < p->run_left ? n : p->run_left;
+        if (px) {
+            for (uint32_t j = 0; j < k; j++) px[j] = p->color;
+            px += k;
+        }
+        p->run_left -= k;
+        n -= k;
+    }
+    return true;
+}
+
+bool nstore_pic_rows(notice_pic_t *p, uint16_t y0, uint16_t rows, uint16_t *px)
+{
+    if (p->fd < 0 || !rows || (uint32_t)y0 + rows > p->h) return false;
+    if (y0 < p->row && !pic_rewind(p)) return false;
+    if (y0 > p->row && !pic_pixels(p, (uint32_t)(y0 - p->row) * p->w, NULL)) return false;
+    p->row = y0;
+    if (!pic_pixels(p, (uint32_t)rows * p->w, px)) {
+        /* Whatever was read is unknown now: the next ask starts again from the top. */
+        p->row = UINT16_MAX;
+        return false;
+    }
+    p->row = (uint16_t)(y0 + rows);
+    return true;
+}
+
+void nstore_pic_close(notice_pic_t *p)
+{
+    if (p->fd >= 0) close(p->fd);
+    p->fd = -1;
 }

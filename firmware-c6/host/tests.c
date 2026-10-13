@@ -25,6 +25,7 @@
 #include "minutes.h"
 #include "jn1.h"
 #include "notice_logic.h"
+#include "notice_view.h"
 #include "notice_policy.h"
 #include "notice_port.h"
 #include "notice_port_fake.h"
@@ -5099,6 +5100,9 @@ static void notice_boot(void)
     notice_port_fake_wipe();
     svc_settings_init();
     svc_rtc_init();
+    /* A panel that knows the time: a notice's answer window is kept as an instant. */
+    svc_rtc_fake_set_date(2026, 10, 13);
+    svc_rtc_fake_set(12, 0);
     svc_audio_init();
     svc_notice_start();
     app_events_set_sink(NULL);
@@ -5398,7 +5402,9 @@ static void test_a_reboot_keeps_the_notices_and_what_the_box_is_owed(void)
     char name[NOTICE_FILE_NAME];
     const uint8_t id[16] = {0x6a, 0x1f, 0x2c, 0x3d, 0x4e, 0x5f, 0x4a, 0x6b,
                             0x8c, 0x7d, 0x9e, 0x0f, 0x1a, 0x2b, 0x3c, 0x4d};
-    notice_file_name(99, id, name, sizeof name);
+    int64_t now_s;
+    svc_rtc_epoch(&now_s);
+    notice_file_name(99, id, (uint32_t)(now_s + 600), name, sizeof name);
     size_t qn = 0;
     uint8_t *qb = read_fixture("question.jn1", &qn);
     char full[160];
@@ -5412,6 +5418,24 @@ static void test_a_reboot_keeps_the_notices_and_what_the_box_is_owed(void)
     CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) &&
               !strcmp(json, "{\"state\":\"answered\",\"choice\":0}"),
           "and its answer is still owed to the box");
+
+    /* A question whose window closed while the panel was off is not shown again: the box would
+       404 its answer. Nor is one that came while the panel had no time to keep its end by. */
+    notice_boot();
+    fetch_fixture("question.jn1", 0);
+    svc_rtc_fake_advance_ms(901 * 1000);
+    svc_notice_start();
+    CHECK(svc_notice_count() == 0 && files_in_storage() == 0, "past its answer window: gone at boot");
+    notice_boot();
+    fetch_fixture("question.jn1", 0);
+    svc_rtc_fake_advance_ms(600 * 1000);
+    svc_notice_start();
+    CHECK(svc_notice_count() == 1, "inside it: back");
+    CHECK(svc_notice_head(&n) && !svc_notice_post_take(path, sizeof path, json, sizeof json),
+          "never shown, nothing owed");
+    svc_rtc_fake_advance_ms(301 * 1000);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 0, "and it lapses when the rest of its window runs out, not 900 s on");
 
     notice_port_fake_fail_mount(true);
     notice_boot();
@@ -5443,13 +5467,147 @@ static void test_the_state_post_list_and_the_file_names(void)
     for (int i = 0; i < 16; i++) id[i] = (uint8_t)(i * 17);
     char name[NOTICE_FILE_NAME];
     uint32_t seq;
-    notice_file_name(0x2a, id, name, sizeof name);
-    CHECK(notice_file_parse(name, &seq, back) && seq == 0x2a && !memcmp(id, back, 16), "a name round-trips");
-    CHECK(!notice_file_parse("part.tmp", &seq, back) && !notice_file_parse("0000002a-zz.jn1", &seq, back),
+    uint32_t deadline;
+    notice_file_name(0x2a, id, 0x6a000000u, name, sizeof name);
+    CHECK(notice_file_parse(name, &seq, back, &deadline) && seq == 0x2a && !memcmp(id, back, 16) &&
+              deadline == 0x6a000000u,
+          "a name round-trips, the answer window's end in it");
+    CHECK(!notice_file_parse("part.tmp", &seq, back, &deadline) &&
+              !notice_file_parse("0000002a-zz.jn1", &seq, back, &deadline),
           "and nothing else is one");
+    CHECK(notice_window_left(1000, true, 400) == 600 && !notice_window_left(1000, true, 1000) &&
+              !notice_window_left(0, true, 400) && !notice_window_left(1000, false, 400),
+          "after a reboot: what is left of the window, and nothing when either end is unknown");
     CHECK(notice_hide_due(1000, 3, 4000) && !notice_hide_due(1000, 3, 3999) && !notice_hide_due(0, 0, 999999),
           "hide_s, and 0 is until tapped");
     CHECK(notice_lapsed(0, 30, 30000) && !notice_lapsed(0, 30, 29999), "the answer window");
+}
+
+/* ---- the notice overlay's look (owner, 2026-10-13; mock Main.dc.html) ---- */
+
+static notice_t view_notice(uint8_t choices, uint16_t hide_s, uint8_t mode)
+{
+    notice_t n = {.id = 7, .n_choices = choices, .hide_s = hide_s, .img_mode = mode};
+    snprintf(n.source, sizeof n.source, "Jerv");
+    snprintf(n.title, sizeof n.title, "Title");
+    if (mode) {
+        n.img_w = 480;
+        n.img_h = mode == 1 ? 480 : 140;
+        n.stripes = 3;
+    }
+    return n;
+}
+
+static void test_the_notice_overlay_reads_like_the_mock(void)
+{
+    notice_look_t l;
+    notice_t n = view_notice(0, 20, 0);
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 2000, &l);
+    CHECK(!strcmp(l.hint, "Tap to hide · hides in 18 s") && l.timer && l.timer_permille == 900,
+          "a plain notice two seconds in: 18 s left, the line nine tenths full (NotifyInfo)");
+    CHECK(l.accent == UI_C_STEEL && l.title == UI_C_TEXT && l.ink_opa == 255 && !l.count[0],
+          "by day: steel, the text colours, alone in the queue");
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 20000, &l);
+    CHECK(l.timer_permille == 0 && strstr(l.hint, "hides in 0 s"), "and empty when its time is up");
+
+    n = view_notice(2, 0, 0);
+    notice_look(&n, 2, false, NOTICE_NIGHT_RED, false, 60000, &l);
+    CHECK(!strcmp(l.hint, "Tap an answer · tap elsewhere to hide") && !l.timer &&
+              !strcmp(l.count, "1 of 2"),
+          "a question: no countdown, a tap elsewhere hides it, 1 of 2 (NotifyQuestion)");
+    n.hide_s = 30;
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 10000, &l);
+    CHECK(!strcmp(l.hint, "Tap an answer · hides in 20 s"), "a question its sender gave a time");
+
+    n = view_notice(0, 8, 1);
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 3000, &l);
+    CHECK(l.full_picture && !l.banner && !l.ask_picture && !strcmp(l.chip_hint, "Tap to hide · 5 s") &&
+              l.timer_color == 0xFFFFFF && l.timer_opa == 217,
+          "a full picture: the glass, the hint as a chip, a white line (NotifyPicture)");
+    n = view_notice(3, 0, 2);
+    notice_look(&n, 1, false, NOTICE_NIGHT_RED, false, 0, &l);
+    CHECK(l.banner && !l.full_picture, "a banner over the words (NotifyBanner)");
+
+    /* Inside the night clock's hours every notice takes its colour, and a picture waits. */
+    uint32_t c;
+    uint8_t opa;
+    for (uint8_t k = 0; k < 3; k++) {
+        notice_night_palette(k, &c, &opa);
+        const clock_face_t f = clock_face(true, 0, 1439, k, 600, true);
+        CHECK(c == f.color && opa == f.opa, "the night colours are the clock face's own");
+    }
+    n = view_notice(0, 20, 1);
+    notice_look(&n, 1, true, NOTICE_NIGHT_RED, false, 2000, &l);
+    notice_night_palette(NOTICE_NIGHT_RED, &c, &opa);
+    CHECK(l.night && l.ask_picture && !l.full_picture && l.accent == c && l.title == c &&
+              l.body == c && l.muted == c && l.ink_opa == opa && l.timer_color == c,
+          "at night: the night palette and Show picture (NotifyNight)");
+    notice_look(&n, 1, true, NOTICE_NIGHT_RED, true, 2000, &l);
+    CHECK(l.full_picture && !l.ask_picture, "Show picture tapped: the picture");
+    n = view_notice(2, 0, 2);
+    notice_look(&n, 1, true, NOTICE_NIGHT_AMBER, false, 0, &l);
+    notice_night_palette(NOTICE_NIGHT_AMBER, &c, &opa);
+    CHECK(l.ask_picture && !l.banner && l.accent == c, "a banner waits too, in the colour chosen");
+    n = view_notice(0, 20, 0);
+    notice_look(&n, 1, true, NOTICE_NIGHT_GREY, false, 0, &l);
+    CHECK(l.night && !l.ask_picture && l.title != UI_C_TEXT, "and words alone are dimmed as well");
+
+    CHECK(notice_night_now(true, 21 * 60 + 30, 6 * 60 + 30, true, 23 * 60) &&
+              !notice_night_now(false, 21 * 60 + 30, 6 * 60 + 30, true, 23 * 60) &&
+              !notice_night_now(true, 21 * 60 + 30, 6 * 60 + 30, false, 23 * 60) &&
+              !notice_night_now(true, 21 * 60 + 30, 6 * 60 + 30, true, 12 * 60),
+          "the night clock's hours: on, timed, and inside the window");
+
+    notice_sound_line_t s;
+    notice_sound_line(true, 2400, 6000, &s);
+    CHECK(s.playing && !strcmp(s.time, "0:02 / 0:06") && s.permille == 400, "playing: 0:02 / 0:06 (NotifyAudio)");
+    notice_sound_line(false, 0, 4300, &s);
+    CHECK(!s.playing && !strcmp(s.time, "0:05"), "afterwards its length, beside Play again (NotifyQuestionSound)");
+}
+
+static void test_key_over_a_notice_s_sound_stops_it(void)
+{
+    sh_state_t st = {0};
+    sh_facts_t f = in_app();
+    f.notices = 1;
+    f.speaking = true;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_STOP_REPLY && st.key_owner == SH_KEY_FREE,
+          "KEY while its sound plays: the sound stops, nothing records (the reply's rule)");
+    CHECK(sh_route_button(&st, &f, SH_BTN_BOOT).first == SH_ACT_DISMISS_NOTICE, "BOOT still hides it");
+    f.speaking = false;
+    CHECK(sh_route_button(&st, &f, SH_BTN_KEY_DOWN).first == SH_ACT_NONE, "silent: KEY waits");
+}
+
+static void test_the_picture_comes_out_of_its_file_a_few_rows_at_a_time(void)
+{
+    notice_boot();
+    CHECK(fetch_fixture("full_sound.jn1", 0), "full_sound.jn1 queued");
+    notice_t n;
+    svc_notice_head(&n);
+    notice_pic_t p;
+    CHECK(svc_notice_pic_open(n.id, &p), "opened");
+    sha256_t s;
+    sha256_init(&s);
+    bool ok = true;
+    for (uint16_t y = 0; y < 480 && ok; y += 8) {
+        ok = svc_notice_pic_rows(&p, y, 8, s_px);
+        if (ok) sha_px(&s, s_px, 8 * 480);
+    }
+    char hex[65];
+    sha256_hex(&s, hex);
+    CHECK(ok && !strcmp(hex, JN1_VECTORS[3].px_sha), "eight rows at a time, top to bottom: decode()'s picture");
+    static uint16_t stripe[480 * 40];
+    uint16_t y0, rows;
+    svc_notice_stripe(n.id, 5, stripe, 480 * 40, &y0, &rows);
+    CHECK(svc_notice_pic_rows(&p, (uint16_t)(y0 + 3), 8, s_px) &&
+              !memcmp(s_px, stripe + 3 * 480, 8 * 480 * 2),
+          "asked above the last row read, it starts over and agrees with the stripe");
+    CHECK(!svc_notice_pic_rows(&p, 476, 8, s_px), "never past the bottom");
+    svc_notice_pic_close(&p);
+    notice_boot();
+    fetch_fixture("plain.jn1", 0);
+    svc_notice_head(&n);
+    CHECK(!svc_notice_pic_open(n.id, &p), "a notice with no picture has none to open");
 }
 
 int main(void)
@@ -5599,6 +5757,9 @@ int main(void)
     test_four_open_at_most();
     test_a_reboot_keeps_the_notices_and_what_the_box_is_owed();
     test_the_state_post_list_and_the_file_names();
+    test_the_notice_overlay_reads_like_the_mock();
+    test_key_over_a_notice_s_sound_stops_it();
+    test_the_picture_comes_out_of_its_file_a_few_rows_at_a_time();
     printf("%d checks, %d failed\n", s_checks, s_fails);
     return s_fails ? 1 : 0;
 }

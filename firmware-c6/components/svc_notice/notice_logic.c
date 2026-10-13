@@ -126,11 +126,17 @@ bool notice_lapsed(uint32_t arrived_ms, uint32_t ttl_s, uint32_t now_ms)
     return (uint64_t)(uint32_t)(now_ms - arrived_ms) >= (uint64_t)ttl_s * 1000u;
 }
 
-void notice_file_name(uint32_t seq, const uint8_t id[16], char *out, size_t cap)
+void notice_file_name(uint32_t seq, const uint8_t id[16], uint32_t deadline, char *out, size_t cap)
 {
     char hex[33];
     for (int i = 0; i < 16; i++) snprintf(hex + 2 * i, 3, "%02x", id[i]);
-    snprintf(out, cap, "%08lx-%s.jn1", (unsigned long)seq, hex);
+    snprintf(out, cap, "%08lx-%s-%08lx.jn1", (unsigned long)seq, hex, (unsigned long)deadline);
+}
+
+uint32_t notice_window_left(uint32_t deadline, bool now_known, int64_t now)
+{
+    if (!deadline || !now_known || now >= (int64_t)deadline) return 0;
+    return (uint32_t)((int64_t)deadline - now);
 }
 
 static int nib(char c)
@@ -140,21 +146,31 @@ static int nib(char c)
     return -1;
 }
 
-bool notice_file_parse(const char *name, uint32_t *seq, uint8_t id[16])
+static bool hex32(const char *p, uint32_t *out)
 {
-    /* 8 hex, '-', 32 hex, ".jn1" */
-    if (strlen(name) != 45 || name[8] != '-' || strcmp(name + 41, ".jn1")) return false;
-    uint32_t s = 0;
+    uint32_t v = 0;
     for (int i = 0; i < 8; i++) {
-        const int v = nib(name[i]);
-        if (v < 0) return false;
-        s = s << 4 | (uint32_t)v;
+        const int d = nib(p[i]);
+        if (d < 0) return false;
+        v = v << 4 | (uint32_t)d;
     }
+    *out = v;
+    return true;
+}
+
+bool notice_file_parse(const char *name, uint32_t *seq, uint8_t id[16], uint32_t *deadline)
+{
+    /* 8 hex, '-', 32 hex, '-', 8 hex, ".jn1" */
+    if (strlen(name) != 54 || name[8] != '-' || name[41] != '-' || strcmp(name + 50, ".jn1"))
+        return false;
+    uint32_t s, d;
+    if (!hex32(name, &s) || !hex32(name + 42, &d)) return false;
     for (int i = 0; i < 16; i++) {
         const int hi = nib(name[9 + 2 * i]), lo = nib(name[10 + 2 * i]);
         if (hi < 0 || lo < 0) return false;
         id[i] = (uint8_t)(hi << 4 | lo);
     }
     *seq = s;
+    *deadline = d;
     return true;
 }

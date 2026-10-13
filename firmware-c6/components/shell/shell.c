@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "dbg_core.h"
+#include "notice_overlay.h"
 #include "shell_evq.h"
 #include "svc_alarms.h"
 #include "svc_audio.h"
@@ -33,10 +34,8 @@ static sh_evq_t s_q;
 static sh_state_t s_st;
 static uint8_t s_page;
 static app_t *s_open;
-static lv_obj_t *s_home, *s_app_root, *s_notice;
+static lv_obj_t *s_home, *s_app_root;
 static lv_indev_t *s_indev;
-static uint32_t s_notice_id;
-static uint8_t s_notice_n;
 static bool s_started;
 
 /* KEY held outside a conversation: the shell's own talk ring, over whatever is open. */
@@ -484,70 +483,6 @@ static void talk_end(bool send)
 
 /* ---- overlays: the notice (a dark screen has none; sh_gate holds its presses) ---- */
 
-static void notice_choice(lv_event_t *e)
-{
-    uint8_t choice = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
-    notice_t n;
-    char t[64] = "Dismissed";
-    if (svc_notice_head(&n) && n.n_choices)
-        snprintf(t, sizeof t, "Sent to %s: %s", n.source, n.choices[choice]);
-    svc_notice_answer(choice);
-    ui_toast(t, 2200);
-}
-
-static void drop_notice(void)
-{
-    if (s_notice) lv_obj_delete(s_notice);
-    s_notice = NULL;
-    s_notice_id = 0;
-}
-
-static void build_notice(const notice_t *n, uint8_t count)
-{
-    drop_notice();
-    s_notice = ui_overlay(lv_layer_top());
-    lv_obj_set_flex_align(s_notice, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_top(s_notice, 40, 0);
-    lv_obj_set_style_pad_hor(s_notice, 32, 0);
-    lv_obj_set_style_pad_bottom(s_notice, 30, 0);
-    lv_obj_set_style_pad_row(s_notice, 14, 0);
-    uint32_t accent = n->urgent ? UI_C_WARN : UI_C_STEEL;
-    lv_obj_t *head = ui_box(s_notice, LV_FLEX_FLOW_ROW, 10);
-    lv_obj_set_width(head, LV_PCT(100));
-    char from[56];
-    snprintf(from, sizeof from, LV_SYMBOL_BELL "  %s%s", n->source, n->urgent ? " · urgent" : "");
-    lv_obj_t *src = ui_label(head, from, 18, accent);
-    lv_obj_set_flex_grow(src, 1);
-    if (count > 1) {
-        char c[12];
-        snprintf(c, sizeof c, "1 of %u", count);
-        ui_label(head, c, 16, UI_C_MUTED);
-    }
-    ui_label_wrap(s_notice, n->title, 30, UI_C_TEXT);
-    lv_obj_t *body = ui_label_wrap(s_notice, n->body, 22, UI_C_TEXT_SOFT);
-    lv_obj_set_flex_grow(body, 1);
-    lv_obj_t *row = ui_box(s_notice, LV_FLEX_FLOW_ROW, 10);
-    lv_obj_set_width(row, LV_PCT(100));
-    uint8_t k = n->n_choices ? n->n_choices : 1;
-    for (uint8_t i = 0; i < k; i++) {
-        lv_obj_t *b = ui_button(row, n->n_choices ? n->choices[i] : "OK",
-                                i == 0 ? UI_BTN_PRIMARY : UI_BTN_SECONDARY, true, notice_choice,
-                                (void *)(uintptr_t)i);
-        lv_obj_set_height(b, UI_CHOICE_H);
-        lv_obj_set_width(b, LV_SIZE_CONTENT);
-        lv_obj_set_flex_grow(b, 1);
-        lv_obj_set_style_radius(b, UI_R_CHOICE, 0);
-    }
-    lv_obj_t *hint = ui_label(s_notice,
-                              n->n_choices ? "Your answer goes back to the sender · BOOT answers nothing"
-                                           : "BOOT dismisses",
-                              16, UI_C_MUTED);
-    lv_obj_set_width(hint, LV_PCT(100));
-    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-    s_notice_id = n->id;
-    s_notice_n = count;
-}
-
 /* One decision draws the overlay and arms its hit area together: what is on the glass is what
  * a press reaches (the twins' notice was once painted in one rectangle and armed in another).
  * A notice that appears under a finger ends that finger's stroke: its release would otherwise
@@ -558,8 +493,8 @@ static void sync_overlays(void)
     sh_facts_t f = facts();
     notice_t n;
     if (sh_top_overlay(&s_st, &f) == SH_OV_NOTICE && svc_notice_head(&n)) {
-        if (n.id != s_notice_id || f.notices != s_notice_n) {
-            build_notice(&n, f.notices);
+        if (n.id != notice_overlay_id() || f.notices != notice_overlay_count()) {
+            notice_overlay_build(lv_layer_top(), &n, f.notices);
             /* On the glass now: its hide clock and its sound start, and the box hears `shown`. */
             svc_notice_on_glass(n.id);
             if (s_indev && lv_indev_get_state(s_indev) == LV_INDEV_STATE_PRESSED) {
@@ -567,8 +502,8 @@ static void sync_overlays(void)
                 lv_indev_wait_release(s_indev);
             }
         }
-    } else {
-        drop_notice();
+    } else if (notice_overlay_id()) {
+        notice_overlay_drop();
     }
 }
 
@@ -824,6 +759,7 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_str(w, "open", s_open ? s_open->id : "home");
     dbg_json_int(w, "page", s_page);
     dbg_json_str(w, "overlay", OVERLAY[sh_top_overlay(&s_st, &f)]);
+    dbg_json_str(w, "notice_view", notice_overlay_kind());
     dbg_json_bool(w, "dark", f.dark);
     static const char *const OWNER[] = {"free", "app", "alarm", "shell"};
     dbg_json_str(w, "key_owner", OWNER[s_st.key_owner]);
@@ -976,6 +912,7 @@ bool shell_start(char *err, size_t err_len)
     dbg_cmd_bind("open", cmd_open);
     dbg_cmd_bind("home", cmd_home);
     dbg_cmd_bind("inject", cmd_inject);
+    notice_overlay_init();
     s_started = true;
     build_home();
     return true;

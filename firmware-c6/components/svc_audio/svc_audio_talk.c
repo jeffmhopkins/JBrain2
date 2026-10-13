@@ -436,6 +436,16 @@ bool svc_audio_notice_play(const char *key)
     return true;
 }
 
+bool svc_audio_notice_active(uint32_t *played_ms)
+{
+    lock();
+    const bool on = s_tk.kind == TK_KIND_NOTICE && (s_tk.phase == TK_SEND || s_tk.phase == TK_PLAY);
+    const uint32_t bytes = s_played_bytes;
+    unlock();
+    *played_ms = on ? bytes / (TALK_RATE / 1000u * 2u) : 0;
+    return on;
+}
+
 void svc_audio_notice_stop(void)
 {
     lock();

@@ -31,6 +31,11 @@ bool nstore_load_text(const char *name, notice_t *out);
 bool nstore_stripe(const char *name, uint32_t first_at, uint16_t index, uint16_t img_w,
                    uint16_t *px, uint32_t cap_px, uint16_t *y0, uint16_t *rows);
 
+/* The picture by rows (svc_notice.h's notice_pic_t). */
+bool nstore_pic_open(notice_pic_t *p, const char *name, uint32_t first_at, uint16_t w, uint16_t h);
+bool nstore_pic_rows(notice_pic_t *p, uint16_t y0, uint16_t rows, uint16_t *px);
+void nstore_pic_close(notice_pic_t *p);
+
 /* The PCM records from `pcm_at` on, through `buf` (`cap` bytes) into `sink` until END. Stops
  * early, true, when the sink says false (the sound stopped); false when the file cannot be
  * read. */

@@ -37,11 +37,12 @@ typedef struct {
     uint16_t hide_s, img_w, img_h, audio_ms, stripes;
     uint32_t ttl_s, stripe_at, pcm_at;
     uint32_t arrived_ms, shown_ms;
+    uint32_t deadline; /* UTC seconds the answer window closes, 0 unknown: in the file's name */
     bool shown, announced;
 } entry_t;
 
 typedef struct {
-    uint32_t seq;
+    uint32_t seq, deadline;
     uint8_t id[16];
 } trash_t;
 
@@ -80,7 +81,7 @@ typedef struct {
 static post_stats_t s_post;
 static struct {
     uint32_t arrived, shown, answered, dismissed, expired, lapsed, sounds, sound_refused, chimes;
-    uint32_t restored, orphans, unreadable;
+    uint32_t restored, orphans, unreadable, stale;
 } s_st;
 
 /* ---- the main task's ---- */
@@ -110,9 +111,18 @@ static uint32_t now_ms(void)
     return svc_rtc_uptime_ms();
 }
 
+/* When the box stops taking answers for a notice that arrives now with `ttl_s` left, in UTC
+   seconds; 0 while the panel has no time (such a notice is not brought back after a reboot). */
+static uint32_t deadline_for(uint32_t ttl_s)
+{
+    int64_t now;
+    if (!svc_rtc_epoch(&now) || now <= 0) return 0;
+    return (uint32_t)(now + ttl_s);
+}
+
 static void name_of(const entry_t *e, char *out)
 {
-    notice_file_name(e->seq, e->id, out, NOTICE_FILE_NAME);
+    notice_file_name(e->seq, e->id, e->deadline, out, NOTICE_FILE_NAME);
 }
 
 static void wake(void)
@@ -166,6 +176,7 @@ static void drop_at(uint8_t i)
 {
     if (s_ntrash < TRASH) {
         s_trash[s_ntrash].seq = s_q[i].seq;
+        s_trash[s_ntrash].deadline = s_q[i].deadline;
         memcpy(s_trash[s_ntrash].id, s_q[i].id, 16);
         s_ntrash++;
     }
@@ -187,7 +198,9 @@ static void owe(const uint8_t id[16], notice_state_t st, uint8_t choice)
     s_posts_changed = now_ms();
 }
 
-static bool add_entry(const jn1_notice_t *n, uint32_t seq)
+/* `ttl_s` is what is left of the answer window: the notice's own on arrival, what its deadline
+   leaves after a reboot. */
+static bool add_entry(const jn1_notice_t *n, uint32_t seq, uint32_t deadline, uint32_t ttl_s)
 {
     entry_t e = {
         .seq = seq,
@@ -198,7 +211,8 @@ static bool add_entry(const jn1_notice_t *n, uint32_t seq)
         .img_h = n->img_h,
         .audio_ms = n->audio_ms,
         .stripes = n->stripes,
-        .ttl_s = n->ttl_s,
+        .ttl_s = ttl_s,
+        .deadline = deadline,
         .stripe_at = n->stripe_at,
         .pcm_at = n->pcm_at,
         .arrived_ms = now_ms(),
@@ -312,6 +326,8 @@ void svc_notice_dismiss(void)
     finish(NOTICE_DISMISSED, 0);
 }
 
+static bool play(const entry_t *e);
+
 void svc_notice_on_glass(uint32_t id)
 {
     notice_port_lock();
@@ -329,16 +345,84 @@ void svc_notice_on_glass(uint32_t id)
     wake();
     /* Once, as it appears; never over an alarm (svc_audio refuses then), and stopped when it
        hides (finish). */
-    if (e.flags & JN1_FLAG_SOUND) {
-        char name[NOTICE_FILE_NAME];
-        name_of(&e, name);
-        if (!svc_audio_ringing() && svc_audio_notice_play(name)) {
-            s_sound_serial = e.serial;
-            s_st.sounds++;
-        } else {
-            s_st.sound_refused++;
+    if (e.flags & JN1_FLAG_SOUND) play(&e);
+}
+
+/* Notice `id`'s entry, copied out. */
+static bool entry_of(uint32_t id, entry_t *out)
+{
+    bool have = false;
+    notice_port_lock();
+    for (uint8_t i = 0; i < s_n && !have; i++)
+        if (s_q[i].serial == id) {
+            *out = s_q[i];
+            have = true;
         }
+    notice_port_unlock();
+    return have;
+}
+
+bool svc_notice_pic_open(uint32_t id, notice_pic_t *p)
+{
+    entry_t e;
+    p->fd = -1;
+    if (!entry_of(id, &e) || !e.stripes) return false;
+    char name[NOTICE_FILE_NAME];
+    name_of(&e, name);
+    return nstore_pic_open(p, name, e.stripe_at, e.img_w, e.img_h);
+}
+
+bool svc_notice_pic_rows(notice_pic_t *p, uint16_t y0, uint16_t rows, uint16_t *px)
+{
+    return nstore_pic_rows(p, y0, rows, px);
+}
+
+void svc_notice_pic_close(notice_pic_t *p)
+{
+    nstore_pic_close(p);
+}
+
+bool svc_notice_shown_for(uint32_t id, uint32_t *ms)
+{
+    entry_t e;
+    *ms = 0;
+    if (!entry_of(id, &e) || !e.shown) return false;
+    *ms = now_ms() - e.shown_ms;
+    return true;
+}
+
+bool svc_notice_sound(uint32_t id, bool *playing, uint32_t *played_ms)
+{
+    entry_t e;
+    *playing = false;
+    *played_ms = 0;
+    if (!entry_of(id, &e) || !(e.flags & JN1_FLAG_SOUND)) return false;
+    if (s_sound_serial == id) *playing = svc_audio_notice_active(played_ms);
+    return true;
+}
+
+/* Its sound from the start, as it appears or when its row is tapped: never over an alarm, never
+   over anything else that has the speaker (svc_audio refuses then). */
+static bool play(const entry_t *e)
+{
+    char name[NOTICE_FILE_NAME];
+    name_of(e, name);
+    if (svc_audio_ringing() || !svc_audio_notice_play(name)) {
+        s_st.sound_refused++;
+        return false;
     }
+    s_sound_serial = e->serial;
+    s_st.sounds++;
+    return true;
+}
+
+bool svc_notice_replay(uint32_t id)
+{
+    entry_t e;
+    uint32_t ms;
+    if (!entry_of(id, &e) || !(e.flags & JN1_FLAG_SOUND)) return false;
+    if (s_sound_serial == id && svc_audio_notice_active(&ms)) return true;
+    return play(&e);
 }
 
 bool svc_notice_stripe(uint32_t id, uint16_t index, uint16_t *px, uint32_t cap_px, uint16_t *y0,
@@ -618,9 +702,10 @@ bool svc_notice_fetch_end(nfetch_t *f, bool whole, int status)
         notice_port_lock();
         const uint32_t seq = ++s_seq;
         notice_port_unlock();
-        notice_file_name(seq, f->n.id, name, sizeof name);
+        const uint32_t deadline = deadline_for(f->n.ttl_s);
+        notice_file_name(seq, f->n.id, deadline, name, sizeof name);
         committed = nstore_part_commit(f->fd, name);
-        if (committed) queued = add_entry(&f->n, seq);
+        if (committed) queued = add_entry(&f->n, seq, deadline, f->n.ttl_s);
         if (committed && !queued) nstore_remove(name);
     } else {
         nstore_part_discard(f->fd);
@@ -717,7 +802,7 @@ void svc_notice_housekeep(void)
         notice_port_unlock();
         if (!any) break;
         char name[NOTICE_FILE_NAME];
-        notice_file_name(t.seq, t.id, name, sizeof name);
+        notice_file_name(t.seq, t.id, t.deadline, name, sizeof name);
         nstore_remove(name);
         removed = true;
     }
@@ -738,9 +823,9 @@ typedef struct {
 bool svc_notice_pcm_stream(const char *key, uint8_t *buf, size_t cap,
                            bool (*sink)(const uint8_t *pcm, uint32_t n, void *ctx), void *ctx)
 {
-    uint32_t seq;
+    uint32_t seq, deadline;
     uint8_t id[16];
-    if (!notice_file_parse(key, &seq, id)) return false;
+    if (!notice_file_parse(key, &seq, id, &deadline)) return false;
     notice_port_lock();
     const int i = find_id(id);
     const uint32_t at = i >= 0 ? s_q[i].pcm_at : 0;
@@ -772,16 +857,32 @@ static bool check_file(const char *name, uint8_t *buf, jn1_notice_t *n)
 
 typedef struct {
     char name[NOTICE_FILE_NAME];
-    uint32_t seq;
+    uint32_t seq, deadline;
 } found_t;
 
+/* What is left of an answer window that closes at `deadline`, from the clock chip's time now. */
+static uint32_t window_left(uint32_t deadline)
+{
+    int64_t now = 0;
+    const bool known = svc_rtc_epoch(&now);
+    return notice_window_left(deadline, known, now);
+}
+
 /* Whether `name` is a whole notice this panel should show again after a reboot: one it wrote,
-   whole, and not one that ended before the reboot with only its POST still owed. */
+   whole, not one that ended before the reboot with only its POST still owed, and not one whose
+   answer window has closed — or might have: with no deadline, or no time to judge it by, the box
+   could already refuse its answer, so it is not shown. */
 static bool worth_keeping(const char *name, uint8_t *buf, jn1_notice_t *n, uint32_t *seq)
 {
     uint8_t id[16];
+    uint32_t deadline;
     char text[NOTICE_ID_TEXT];
-    if (strlen(name) >= NOTICE_FILE_NAME || !notice_file_parse(name, seq, id)) return false;
+    if (strlen(name) >= NOTICE_FILE_NAME || !notice_file_parse(name, seq, id, &deadline))
+        return false;
+    if (!window_left(deadline)) {
+        s_st.stale++;
+        return false;
+    }
     if (!check_file(name, buf, n) || memcmp(n->id, id, 16)) return false;
     jn1_uuid_text(id, text);
     return !notice_posts_final(&s_posts, text);
@@ -808,19 +909,23 @@ static void restore(void)
     found_t keep[NOTICE_OPEN_MAX];
     uint8_t nkeep = 0;
     for (unsigned at = 0; nstore_entry(at, name, sizeof name); at++) {
-        if (!notice_file_parse(name, &seq, n->id)) continue;
+        uint32_t deadline;
+        if (!notice_file_parse(name, &seq, n->id, &deadline)) continue;
         if (seq > s_seq) s_seq = seq;
         uint8_t i = nkeep;
         while (i && keep[i - 1].seq > seq) i--;
         if (i == NOTICE_OPEN_MAX) continue;
         if (nkeep < NOTICE_OPEN_MAX) nkeep++;
         memmove(keep + i + 1, keep + i, sizeof keep[0] * (size_t)(nkeep - 1 - i));
-        /* A name notice_file_parse took is exactly 45 characters. */
+        /* A name notice_file_parse took is exactly 54 characters. */
         memcpy(keep[i].name, name, strlen(name) + 1);
         keep[i].seq = seq;
+        keep[i].deadline = deadline;
     }
     for (uint8_t i = 0; i < nkeep; i++) {
-        if (check_file(keep[i].name, buf, n) && add_entry(n, keep[i].seq)) s_st.restored++;
+        const uint32_t left = window_left(keep[i].deadline);
+        if (left && check_file(keep[i].name, buf, n) && add_entry(n, keep[i].seq, keep[i].deadline, left))
+            s_st.restored++;
     }
     /* Past the four kept: more than the box ever lets open, so the newest go. */
     for (unsigned at = 0; nstore_entry(at, name, sizeof name);) {
@@ -912,8 +1017,9 @@ bool svc_notice_fake_push(const notice_t *src)
     const uint32_t seq = ++s_seq;
     notice_port_unlock();
     char name[NOTICE_FILE_NAME];
-    notice_file_name(seq, n.id, name, sizeof name);
-    if (!nstore_part_commit(fd, name) || !add_entry(&n, seq)) {
+    const uint32_t deadline = deadline_for(n.ttl_s);
+    notice_file_name(seq, n.id, deadline, name, sizeof name);
+    if (!nstore_part_commit(fd, name) || !add_entry(&n, seq, deadline, n.ttl_s)) {
         nstore_remove(name);
         return false;
     }
@@ -1023,6 +1129,7 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "restored", s_st.restored);
     dbg_json_int(w, "orphans", s_st.orphans);
     dbg_json_int(w, "unreadable", s_st.unreadable);
+    dbg_json_int(w, "stale", s_st.stale);
     dbg_json_obj_begin(w, "report");
     dbg_json_bool(w, "accept", r.accept);
     dbg_json_bool(w, "quiet", r.quiet);

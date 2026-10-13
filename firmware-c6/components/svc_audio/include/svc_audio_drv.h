@@ -34,6 +34,9 @@ bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why);
 bool svc_audio_notice_play(const char *key);
 /* The notice hid: its sound stops, if it is the one playing. UI task. */
 void svc_audio_notice_stop(void);
+/* Whether a notice's sound is being fetched from its file or played, and how much of it has gone
+ * to the speaker (the speaker row's progress). */
+bool svc_audio_notice_active(uint32_t *played_ms);
 
 /* Whether a talk's or a play's ring holds its 16 KB of internal RAM now: what the heap's
  * low-water mark is attributed to (telemetry's `int_min_at`). Any task. */

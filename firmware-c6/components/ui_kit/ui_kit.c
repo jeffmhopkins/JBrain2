@@ -439,18 +439,19 @@ lv_obj_t *ui_choice(lv_obj_t *parent, const char *text, uint32_t color, bool pic
 lv_obj_t *ui_corner_badge(lv_obj_t *parent, const char *count, uint32_t color, uint8_t opa,
                           lv_event_cb_t cb, void *user)
 {
+    /* 56 px, the owner's size of 2026-10-13: a bell and a count read from across the desk. */
     lv_obj_t *b = bare(parent);
-    lv_obj_set_size(b, LV_SIZE_CONTENT, UI_TOUCH_MIN);
-    lv_obj_set_style_min_width(b, UI_TOUCH_MIN, 0);
-    lv_obj_set_style_pad_hor(b, 12, 0);
-    fill(b, 0x0A0A0A, LV_OPA_COVER, UI_TOUCH_MIN / 2);
+    lv_obj_set_size(b, LV_SIZE_CONTENT, UI_BUTTON_H);
+    lv_obj_set_style_min_width(b, UI_BUTTON_H, 0);
+    lv_obj_set_style_pad_hor(b, 16, 0);
+    fill(b, 0x0A0A0A, LV_OPA_COVER, UI_BUTTON_H / 2);
     border(b, UI_C_LINE, 1);
     lv_obj_set_style_opa(b, opa, 0);
     lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(b, 6, 0);
-    ui_label(b, LV_SYMBOL_BELL, 16, color);
-    ui_label(b, count, 18, color);
+    lv_obj_set_style_pad_column(b, 8, 0);
+    ui_label(b, LV_SYMBOL_BELL, 20, color);
+    ui_label(b, count, 20, color);
     lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(b, 10);
     if (cb) lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);

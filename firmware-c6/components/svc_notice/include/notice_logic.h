@@ -82,8 +82,14 @@ bool notice_hide_due(uint32_t shown_ms, uint16_t hide_s, uint32_t now_ms);
  * so the notice is gone from here too. */
 bool notice_lapsed(uint32_t arrived_ms, uint32_t ttl_s, uint32_t now_ms);
 
-/* ---- the files: `<seq>-<id hex>.jn1`, the order they came in and which notice ---- */
-#define NOTICE_FILE_NAME 48
-void notice_file_name(uint32_t seq, const uint8_t id[16], char *out, size_t cap);
+/* ---- the files: `<seq>-<id hex>-<deadline>.jn1` ----
+ * The order they came in, which notice, and the instant (UTC seconds, 0 when the panel had no
+ * time) the box stops taking answers for it: kept in the name so a reboot knows it without a
+ * second file. */
+#define NOTICE_FILE_NAME 64
+void notice_file_name(uint32_t seq, const uint8_t id[16], uint32_t deadline, char *out, size_t cap);
 /* False for any name that is not one this panel wrote. */
-bool notice_file_parse(const char *name, uint32_t *seq, uint8_t id[16]);
+bool notice_file_parse(const char *name, uint32_t *seq, uint8_t id[16], uint32_t *deadline);
+/* What is left of a notice's answer window after a reboot, in seconds: 0 when it has passed, or
+ * when either instant is unknown (it would be shown with an answer the box may already refuse). */
+uint32_t notice_window_left(uint32_t deadline, bool now_known, int64_t now);
