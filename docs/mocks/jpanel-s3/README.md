@@ -1,6 +1,6 @@
 # The twins' panels (ESP32-S3-Touch-AMOLED-1.8): the bench
 
-Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.7's own UI code** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.10's own UI code** · Last verified: 2026-10-13
 
 An interactive mock of the twins' panel, with one difference from Jeff's C6 set
 (`../jpanel-c6/`): nothing here is a drawing of the panel. `sim.wasm` is the firmware's own UI
@@ -43,9 +43,10 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
 - **Tilt.** The bench's slider turns the drawn case right side down, and the pet leans and
   rights his head as the accelerometer would make him. Upright only: on its side the panel also
   slides the figure's square into the glass's side bands, which the page does not draw.
-- **Shake and love.** "Shake the panel" shakes the drawn case and starts the dizzy action the
-  panel's shake detector starts; the "I love you" voice button starts the hearts. The bench
-  does not run the detector itself.
+- **Shake, love, tickle and a snack.** "Shake the panel" shakes the drawn case and starts the
+  dizzy action the panel's shake detector starts; the "I love you" voice button starts the
+  hearts, "Tickle tickle" the laughing and "Have a snack" the cookie. The bench does not run the
+  detector itself.
 - **F4.** The SENDING / SENT / NOBODY / NOT SENT / DROPPED visuals are 0.4.x placeholders until
   the owner approves the final ones (`docs/plans/JPANEL_MESSAGING_FIXES_PLAN.md` §15 row F).
   This page is where they get reviewed. Each new version is in `overlay.c`, so the mock and

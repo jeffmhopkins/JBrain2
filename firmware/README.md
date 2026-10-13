@@ -153,6 +153,33 @@ Two actions that answer one thing each, so neither is in a poke pool:
 
 The bench has a Shake button and an "I love you" voice button.
 
+**0.4.10: tickle tickle, and both of these twice as long.** `tickle tickle` / `tickle me` makes
+him laugh helplessly for 4.8 s: he squirms side to side, bounces on every "ha", tosses his head,
+kicks his legs out in turn, and tickle marks flicker either side of his body. `CUE_TICKLE` is a
+laugh (`SH_LAUGH`: seven breathy "ha"s tumbling down), and because a cue is at most 0.8 s the
+action says it again (`rig_recue`), three laughs in all, each only into a free speaker. The
+dizzy spell is now 6.4 s and the love 5.6 s, twice what they were, with their motions'
+cycle counts doubled so the head shakes and the hearts rise at the speed they did: twelve
+hearts now, not five. The bench has a "Tickle tickle" button.
+
+**And eating is a meal.** `ACT_EAT` was three pecks in 1.6 s and a 300 ms double bite. It is
+now 4.8 s and five bites of a cookie (`EXTRA_FOOD`): the robot carries it from its hand to the
+corner of its mouth, the bird pecks it off its wing, a piece goes out of it on each bite with
+crumbs falling, and the fifth finishes it. The mouth opens wide before each bite, snaps shut
+on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside `talk`).
+`CUE_EAT` is now a crunch and two munches, said on every bite through `rig_recue`, the first
+included: the meal is the one action that does not sound as it starts
+(`rig_cue_on_start`), since its hand is still on the way up. The bench has a "Have a snack"
+button.
+
+**A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
+only flinch, which with the meal crunching through two-thirds of its length and the tickle
+laughing through half of its own made most pokes during them do nothing. Two halves to it: the
+arbiter now lets a press cue cut a sounding PRESS-slot cue (the pet's own noise; never a reply
+or another slot's result or chime, which a press is still dropped behind), and
+`stream_facts_t.pet_only` tells `display.c` when that is all that is sounding, so it reacts
+there and flinches everywhere else. `stream_tests` drives it through the real arbiter.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,
