@@ -108,6 +108,7 @@ p.set(KNOB.PET_ACT, 4);
 p.advance(3200);
 check(events.slice(fed).filter((e) => e.includes('cue EAT')).length === 3,
   'a snack is three bites, a crunch each');
+const snacks = () => events.slice(fed).filter((e) => e.includes('eats a ')).map((e) => e.split('eats a ')[1]);
 // Two more snacks inside the minute: he has to go, and it plops out after the third.
 p.set(KNOB.PET_ACT, 4);
 p.advance(3200);
@@ -116,6 +117,8 @@ p.advance(3200);
 p.advance(3000);
 const after = events.slice(fed);
 check(after.some((e) => e.includes('three meals in a minute')), 'three snacks in a minute owe one');
+const ate = snacks();
+check(ate.length === 3 && ate[0] !== ate[1] && ate[1] !== ate[2], 'a different snack each time');
 check(after.some((e) => e.includes('plop')) && after.some((e) => e.includes('cue POOP')),
   'and he poops, with a plop');
 

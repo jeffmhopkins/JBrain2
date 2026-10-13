@@ -190,6 +190,12 @@ laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
 
+**A different snack every time (0.4.11).** Owner: *"Kids are also requesting a random item to
+eat, maybe one out of eight possibilities."* `food_t`: a cookie, an apple, a banana, a slice of
+pizza, a donut, a carrot, a slice of watermelon or a strawberry, each a per-pixel shape in its
+own colours (`food_px` in `face.c`), bitten and crumbed exactly as the cookie was. `display.c`
+picks one per meal with `food_pick`, which never brings the last one again.
+
 **What goes in must come out (0.4.11).** Owner: *"If he eats three times and within 1 minute,
 he should have to poop afterwards. The poop should stay on the screen for say 20 seconds. And
 should slide around with the angle of the device."* `poop.c` (pure, host-tested) counts meals

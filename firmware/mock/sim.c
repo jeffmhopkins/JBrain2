@@ -457,6 +457,13 @@ static void frame(void)
         r_pending_act = ACT_NONE;
         if (r_action == ACT_EAT && poop_ate(&r_poop, now)) say("pet", "three meals in a minute");
         if (r_action == ACT_BRACE) tickle_arm(&r_tickle, now);
+        if (r_action == ACT_EAT) {
+            static const char *const FOOD[FOOD_COUNT] = {"cookie", "apple",  "banana", "pizza",
+                                                         "donut",  "carrot", "watermelon",
+                                                         "strawberry"};
+            r_fst.food = food_pick(r_fst.food, now * 2654435761u);
+            say("pet", "eats a %s", FOOD[r_fst.food]);
+        }
         /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
            is a voice command, and those are deaf while a message plays. */
         if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {

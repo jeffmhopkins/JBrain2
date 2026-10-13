@@ -93,6 +93,12 @@ bool rig_cue_on_start(action_t a)
     return a != ACT_EAT && a != ACT_POOP;
 }
 
+food_t food_pick(food_t prev, uint32_t rnd)
+{
+    const unsigned p = (unsigned)prev < (unsigned)FOOD_COUNT ? (unsigned)prev : 0u;
+    return (food_t)((p + 1u + rnd % (FOOD_COUNT - 1u)) % FOOD_COUNT);
+}
+
 bool rig_holds_pokes(action_t a)
 {
     return a == ACT_TICKLE;

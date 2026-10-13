@@ -175,6 +175,24 @@ bool rig_holds_pokes(action_t a);
    fraction of a bite's time (for the crumbs), or -1 before the first. */
 #define EAT_BITES 3
 
+/* WHAT HE EATS (0.4.11, owner: *"Kids are also requesting a random item to eat, maybe one out
+   of eight possibilities"*). Drawn by `face.c`, picked per meal by `food_pick`. */
+typedef enum {
+    FOOD_COOKIE = 0,
+    FOOD_APPLE,
+    FOOD_BANANA,
+    FOOD_PIZZA,
+    FOOD_DONUT,
+    FOOD_CARROT,
+    FOOD_WATERMELON,
+    FOOD_STRAWBERRY,
+    FOOD_COUNT,
+} food_t;
+
+/* The next meal's food, from a random `rnd`: any of the eight but `prev`, so asking for a snack
+   twice never brings the same thing twice running. */
+food_t food_pick(food_t prev, uint32_t rnd);
+
 /* THE PLOP: where in ACT_POOP the poop lands on the floor and its sound plays. */
 #define POOP_AT 0.6f
 int rig_eat_bites(float p, float *since);

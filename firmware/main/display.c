@@ -2019,6 +2019,8 @@ static void face_task(void *arg)
                     action_start = now;
                     heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
                     if (action == ACT_BRACE) tickle_arm(&tickle, now);
+                    /* A different snack every time (`food_pick`): never the last one again. */
+                    if (action == ACT_EAT) fst.food = food_pick(fst.food, esp_random());
                     if (action == ACT_EAT && poop_ate(&poop, now)) {
                         ESP_LOGI(TAG, "three meals in a minute: a poop is owed");
                     }

@@ -79,6 +79,7 @@ typedef struct {
     /* THE POOP ON THE FLOOR (`poop.h`), drawn behind him: `poop_x` in figure units from the
        floor's centre, `poop_size` 0 (none) .. 1, `poop_t` seconds since it landed, which
        moves its stink lines. */
+    food_t food; /* what the meal is (`food_pick`); the bites come out of it the same way */
     float poop_x;
     float poop_size;
     float poop_t;

@@ -2523,7 +2523,7 @@ in flight. Two faults the owner saw within the hour:
   the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
   requests, turned on only after speech has started (`firmware/README.md`).
 
-**0.4.11, from the owner trying 0.4.10.** The meal is three bites, and the tickle's laugh is
+**0.4.11, from the owner trying 0.4.10.** The meal is three bites of one of eight snacks, and the tickle's laugh is
 cheap enough to render that the squirming no longer freezes at each one. Three meals in a
 minute and he poops, and the poop slides with the panel's tilt for 20 s; and "I'm going to tickle
 you" warns him, after which five pokes tickle him into the laughing fit (`firmware/README.md`).

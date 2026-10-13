@@ -143,7 +143,8 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   braces with a nervous titter, and for 10 s after (renewed by each one) a poke is a tickle. Four
   get a giggle; the fifth sets off the laughing fit (squirming, laughing three times over).
   0.4.10's `tickle tickle` / `tickle me` are gone
-· **eat** (`eat`, `have a snack`): since 0.4.11 three bites of a cookie over 2.9 s,
+· **eat** (`eat`, `have a snack`): since 0.4.11 three bites over 2.9 s of one of eight snacks
+  (cookie, apple, banana, pizza, donut, carrot, watermelon, strawberry; never the same twice running),
   a crunch on each bite, chewing between. **Three meals inside a minute** and, once he is
   free, he squats, strains and a poop plops out behind him (0.4.11): it stays on the floor for
   20 s and slides downhill as the panel is tilted

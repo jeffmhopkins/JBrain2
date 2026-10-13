@@ -1171,6 +1171,48 @@ static void test_a_meal_is_three_bites_of_a_cookie(void)
     }
 }
 
+static void test_a_snack_is_one_of_eight_and_never_the_same_twice(void)
+{
+    /* The owner: "Kids are also requesting a random item to eat, maybe one out of eight
+       possibilities." */
+    CHECK(FOOD_COUNT == 8, "eight things he might eat");
+    int seen[FOOD_COUNT] = {0};
+    food_t f = FOOD_COOKIE;
+    uint32_t rnd = 12345u;
+    for (int i = 0; i < 400; i++) {
+        rnd = rnd * 1103515245u + 12345u;
+        const food_t next = food_pick(f, rnd >> 8);
+        CHECK((unsigned)next < (unsigned)FOOD_COUNT, "always one of the eight");
+        CHECK(next != f, "and never the same twice running");
+        seen[next]++;
+        f = next;
+    }
+    for (int k = 0; k < FOOD_COUNT; k++) CHECK(seen[k] > 20, "every one of them turns up");
+
+    /* EACH ONE IS DRAWN AND EATEN: its own colour on the screen to start, none of it left
+       after the last bite. Its crumb colour is its body's, so that is what is counted. */
+    static const uint32_t BODY[FOOD_COUNT] = {0xD9A05B, 0xE03030, 0xF5D040, 0xF6C645,
+                                              0xF07CB0, 0xF0861E, 0xF04A5A, 0xE82E3C};
+    for (int k = 0; k < FOOD_COUNT; k++) {
+        const uint16_t body = rgb565((uint8_t)(BODY[k] >> 16), (uint8_t)(BODY[k] >> 8),
+                                     (uint8_t)BODY[k]);
+        for (int form = 0; form < FORM_COUNT; form++) {
+            face_state_t st;
+            face_rest(&st);
+            st.form = (face_form_t)form;
+            st.food = (food_t)k;
+            rig_for(ACT_EAT, 0.0f, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, 0.0f, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            CHECK(count_colour(body) > 250, "the food is there to see");
+            rig_for(ACT_EAT, 0.999f, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, 0.999f, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            CHECK(count_colour(body) == 0, "and it is all gone after the last bite");
+        }
+    }
+}
+
 static void test_three_meals_in_a_minute_and_he_has_to_go(void)
 {
     /* The owner: "If he eats three times and within 1 minute, he should have to poop
@@ -5049,6 +5091,7 @@ int main(void)
     test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
     test_a_meal_is_three_bites_of_a_cookie();
+    test_a_snack_is_one_of_eight_and_never_the_same_twice();
     test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();
