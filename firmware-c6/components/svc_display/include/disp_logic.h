@@ -2,6 +2,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* The CO5300 takes a window only if its start column and width are both even, and likewise its
@@ -87,3 +88,7 @@ typedef struct {
 void disp_stat_add(disp_stat_t *s, uint32_t flush_us, uint32_t wall_us, bool full);
 uint32_t disp_stat_avg_ms(const disp_stat_t *s);
 uint32_t disp_stat_full_avg_ms(const disp_stat_t *s);
+/* The snapshot's `display.rot_ms`: for each rotation that has had a whole-glass frame,
+ * "<deg>:<mean>,<worst>,<count>,<last wall>" in ms, space-separated, "" before any. One short
+ * string because the snapshot's answer is capped at 6 KB (dbg_link's OUT_MAX) and nearly full. */
+void disp_stat_fmt(char *out, size_t len, const disp_stat_t st[4]);

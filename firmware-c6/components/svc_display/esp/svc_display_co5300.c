@@ -254,24 +254,9 @@ static bool fail(const char **failed_step, const char *step, esp_err_t e)
     return false;
 }
 
-static uint32_t st_max(const disp_stat_t *s)
-{
-    return s->max_ms;
-}
-
 static uint32_t st_full_max(const disp_stat_t *s)
 {
     return s->full_max_ms;
-}
-
-static uint32_t st_full_n(const disp_stat_t *s)
-{
-    return s->full;
-}
-
-static uint32_t st_wall(const disp_stat_t *s)
-{
-    return s->full_wall_ms;
 }
 
 /* One number per rotation, "0°/90°/180°/270°". */
@@ -295,17 +280,9 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "flush_errors", s_flush_errs);
     dbg_json_int(w, "rotation", s_rot * 90);
     dbg_json_int(w, "rot_changes", s_rot_changes);
-    dbg_json_int(w, "last_frame_ms", s_last_frame_ms);
-    /* Per rotation as "0°/90°/180°/270°", strings because the whole snapshot must fit the 6 KB
-       answer: every frame's mean and worst flush, then whole-glass frames' mean and worst flush,
-       how many, and the last one's drawing and sending together. */
-    char v[48];
-    dbg_json_str(w, "flush_avg_ms", rot4(v, sizeof v, disp_stat_avg_ms));
-    dbg_json_str(w, "flush_max_ms", rot4(v, sizeof v, st_max));
-    dbg_json_str(w, "full_ms", rot4(v, sizeof v, disp_stat_full_avg_ms));
-    dbg_json_str(w, "full_max_ms", rot4(v, sizeof v, st_full_max));
-    dbg_json_str(w, "full_n", rot4(v, sizeof v, st_full_n));
-    dbg_json_str(w, "full_wall_ms", rot4(v, sizeof v, st_wall));
+    char v[112];
+    disp_stat_fmt(v, sizeof v, s_stat);
+    dbg_json_str(w, "rot_ms", v);
     dbg_json_str(w, "driver", "co5300");
 }
 

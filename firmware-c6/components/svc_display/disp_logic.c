@@ -1,5 +1,7 @@
 #include "disp_logic.h"
 
+#include <stdio.h>
+
 static int32_t clip(int32_t v, int32_t max)
 {
     return v < 0 ? 0 : v > max ? max : v;
@@ -124,4 +126,19 @@ uint32_t disp_stat_avg_ms(const disp_stat_t *s)
 uint32_t disp_stat_full_avg_ms(const disp_stat_t *s)
 {
     return s->full ? ms(s->full_sum_us / s->full) : 0;
+}
+
+void disp_stat_fmt(char *out, size_t len, const disp_stat_t st[4])
+{
+    size_t at = 0;
+    if (len) out[0] = '\0';
+    for (int r = 0; r < 4 && at < len; r++) {
+        if (!st[r].full) continue;
+        const int n = snprintf(out + at, len - at, "%s%d:%lu,%lu,%lu,%lu", at ? " " : "", r * 90,
+                               (unsigned long)disp_stat_full_avg_ms(&st[r]),
+                               (unsigned long)st[r].full_max_ms, (unsigned long)st[r].full,
+                               (unsigned long)st[r].full_wall_ms);
+        if (n < 0) break;
+        at += (size_t)n;
+    }
 }

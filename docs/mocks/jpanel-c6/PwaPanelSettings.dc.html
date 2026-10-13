@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PWA — panel settings</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #0E0F11; color: #E6E7E9; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column; overflow: hidden;">
+
+  <div style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #26282C; flex-shrink: 0;">
+    <button aria-label="Back" style="width: 44px; height: 44px; border-radius: 22px; border: none; background: transparent; color: #E6E7E9; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5 L8 12 L15 19"></path></svg>
+    </button>
+    <span style="font-size: 18px; font-weight: 600;">jpanel</span>
+  </div>
+
+  <div style="padding: 12px 16px 0; flex-shrink: 0;">
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: #1E2024;">
+      <button style="height: 44px; border-radius: 10px; border: none; background: transparent; color: #9A9DA3; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Messages</button>
+      <button aria-pressed="true" style="height: 44px; border-radius: 10px; border: none; background: rgba(127,167,201,0.13); color: #7FA7C9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Panels</button>
+      <button style="height: 44px; border-radius: 10px; border: none; background: transparent; color: #9A9DA3; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Flash</button>
+    </div>
+  </div>
+
+  <div ref="{{scrollRef}}" style="flex-grow: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+    <div style="flex-shrink: 0; background: #17181B; border: 1px solid #26282C; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div style="display: flex; align-items: baseline; gap: 10px;">
+          <span style="font-size: 18px; font-weight: 600;">Jeff's</span>
+          <span style="font-size: 12px; color: #9A9DA3; border: 1px solid #26282C; border-radius: 999px; padding: 0 6px;">display</span>
+          <span style="margin-left: auto; font-size: 13px; color: {{seenColor}};">{{seen}}</span>
+        </div>
+        <span style="font-size: 13px; color: #9A9DA3;"><span style="font-family: ui-monospace, Menlo, monospace;">0.0.19</span> · {{metaTail}}<sc-if value="{{offline}}" hint-placeholder-val="{{false}}"> · <span style="color: #CF8A8F;">offline</span></sc-if></span>
+      </div>
+
+      <label style="display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px;">
+        <input type="checkbox" checked style="width: 20px; height: 20px; margin: 0; accent-color: #7FA7C9;">
+        <span>Talks to the full Jerv and Dave</span>
+      </label>
+      <div style="display: flex;">
+        <button style="height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 15px; cursor: pointer;">Send test notice</button>
+      </div>
+
+      <div style="display: flex; flex-direction: column; padding-top: 12px; border-top: 1px solid #26282C;">
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span style="font-size: 15px; font-weight: 600; color: #9A9DA3;">Alarms</span>
+          <span style="font-size: 13px; color: {{alarmSyncColor}};">{{alarmSync}}</span>
+        </div>
+        <div style="display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid #26282C;">
+          <sc-for list="{{alarms}}" as="al" hint-placeholder-count="3">
+            <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #26282C;">
+              <div style="flex-grow: 1; min-height: 44px; display: flex; flex-direction: column; justify-content: center; gap: 2px; opacity: {{al.dim}};">
+                <span style="font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums;">{{al.hm}}</span>
+                <span style="font-size: 13px; color: #9A9DA3;">{{al.sub}}</span>
+              </div>
+              <span role="switch" aria-checked="{{al.checked}}" style="position: relative; flex-shrink: 0; width: 52px; height: 32px; box-sizing: border-box; border-radius: 16px; border: 1px solid {{al.sw.border}}; background: {{al.sw.track}};"><span style="position: absolute; top: 4px; left: {{al.sw.knobX}}px; width: 22px; height: 22px; border-radius: 11px; background: {{al.sw.knob}};"></span></span>
+            </div>
+          </sc-for>
+        </div>
+        <button style="margin-top: 12px; height: 44px; border-radius: 12px; border: none; background: rgba(127,167,201,0.13); color: #7FA7C9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Add alarm</button>
+      </div>
+
+      <section ref="{{settingsRef}}" aria-label="Panel settings" style="display: flex; flex-direction: column; padding-top: 12px; border-top: 1px solid #26282C;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+          <span style="font-size: 15px; font-weight: 600; color: #9A9DA3;">Panel settings</span>
+          <span aria-live="polite" style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: {{sync.color}};"><span style="width: 8px; height: 8px; border-radius: 4px; background: {{sync.color}};"></span>{{sync.text}}</span>
+        </div>
+        <span style="margin-top: 4px; font-size: 13px; color: #6B6E75; line-height: 1.4;">{{sync.sub}}</span>
+        <sc-if value="{{offline}}" hint-placeholder-val="{{false}}">
+          <div style="margin-top: 10px; padding: 10px 12px; border-radius: 12px; background: rgba(201,163,106,0.10); color: #C9A36A; font-size: 13px; line-height: 1.4;">The panel has not been heard from since {{lastSeenAt}}. Changes wait on the box and reach it the moment it is back.</div>
+        </sc-if>
+
+        <div style="display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid #26282C;">
+          <sc-for list="{{groups}}" as="g" hint-placeholder-count="3">
+            <div style="display: flex; flex-direction: column; border-bottom: 1px solid #26282C;">
+              <button onClick="{{g.toggle}}" aria-expanded="{{g.expanded}}" style="min-height: 56px; display: flex; align-items: center; gap: 10px; padding: 8px 0; border: none; background: transparent; color: #E6E7E9; font-family: inherit; text-align: left; cursor: pointer;">
+                <span style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: 16px; font-weight: 600;">{{g.title}}</span>
+                  <span style="font-size: 13px; color: #9A9DA3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{g.summary}}</span>
+                </span>
+                <sc-if value="{{g.hasTag}}" hint-placeholder-val="{{false}}">
+                  <span style="flex-shrink: 0; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: rgba(201,163,106,0.13); color: #C9A36A;">{{g.tag}}</span>
+                </sc-if>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#9A9DA3" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink: 0; transform: rotate({{g.chevron}}deg);"><path d="M9 5 L16 12 L9 19"></path></svg>
+              </button>
+              <sc-if value="{{g.open}}" hint-placeholder-val="{{false}}">
+                <div style="display: flex; flex-direction: column; gap: 4px; padding: 0 0 14px;">
+                  <sc-for list="{{g.rows}}" as="r" hint-placeholder-count="3">
+                    <div style="display: flex; flex-direction: column; gap: 4px; padding: 4px 0;">
+                      <sc-if value="{{r.isSwitch}}" hint-placeholder-val="{{true}}">
+                        <div style="min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; opacity: {{r.dim}};">
+                          <span style="display: flex; flex-direction: column; gap: 2px;">
+                            <span style="font-size: 15px;">{{r.label}}</span>
+                            <sc-if value="{{r.hasSub}}" hint-placeholder-val="{{false}}"><span style="font-size: 13px; color: #9A9DA3;">{{r.sub}}</span></sc-if>
+                          </span>
+                          <button role="switch" aria-checked="{{r.checked}}" aria-label="{{r.label}}" onClick="{{r.flip}}" style="position: relative; flex-shrink: 0; width: 52px; height: 32px; border-radius: 16px; border: 1px solid {{r.sw.border}}; background: {{r.sw.track}}; cursor: pointer; padding: 0;"><span style="position: absolute; top: 4px; left: {{r.sw.knobX}}px; width: 22px; height: 22px; border-radius: 11px; background: {{r.sw.knob}};"></span></button>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{r.isTimes}}" hint-placeholder-val="{{false}}">
+                        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; opacity: {{r.dim}};">
+                          <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+                            From
+                            <input type="time" value="{{r.from}}" onChange="{{r.setFrom}}" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid {{r.fromBorder}}; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 18px; padding: 0 10px; color-scheme: dark;">
+                          </label>
+                          <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+                            To
+                            <input type="time" value="{{r.to}}" onChange="{{r.setTo}}" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid {{r.toBorder}}; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 18px; padding: 0 10px; color-scheme: dark;">
+                          </label>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{r.isColour}}" hint-placeholder-val="{{false}}">
+                        <div style="display: flex; flex-direction: column; gap: 6px; opacity: {{r.dim}};">
+                          <span style="font-size: 13px; color: #9A9DA3;">Night colour</span>
+                          <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;">
+                            <sc-for list="{{r.colours}}" as="c" hint-placeholder-count="3">
+                              <button aria-pressed="{{c.pressed}}" onClick="{{c.pick}}" style="height: 44px; border-radius: 12px; border: 2px solid {{c.ring}}; background: #0A0A0A; color: {{c.color}}; font-family: inherit; font-size: 15px; font-weight: 700; cursor: pointer;">{{c.label}}</button>
+                            </sc-for>
+                          </div>
+                        </div>
+                      </sc-if>
+                      <sc-if value="{{r.isSlider}}" hint-placeholder-val="{{false}}">
+                        <label style="display: flex; flex-direction: column; gap: 4px; font-size: 15px;">
+                          <span style="display: flex; justify-content: space-between;"><span>{{r.label}}</span><strong style="font-variant-numeric: tabular-nums;">{{r.value}}%</strong></span>
+                          <input type="range" min="10" max="100" step="5" value="{{r.value}}" onChange="{{r.set}}" style="width: 100%; height: 28px; margin: 0; accent-color: #7FA7C9;">
+                        </label>
+                      </sc-if>
+                      <sc-if value="{{r.isZone}}" hint-placeholder-val="{{false}}">
+                        <label style="min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px;">
+                          <span>Time zone</span>
+                          <select onChange="{{r.set}}" style="height: 44px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 15px; padding: 0 10px; color-scheme: dark;">
+                            <sc-for list="{{r.zones}}" as="z" hint-placeholder-count="3">
+                              <option value="{{z.name}}">{{z.name}}</option>
+                            </sc-for>
+                          </select>
+                        </label>
+                      </sc-if>
+                      <sc-if value="{{r.hasState}}" hint-placeholder-val="{{false}}">
+                        <span style="display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: {{r.stateColor}};"><span style="width: 7px; height: 7px; border-radius: 4px; background: {{r.stateColor}};"></span>{{r.state}}</span>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                  <sc-if value="{{g.hasNote}}" hint-placeholder-val="{{false}}">
+                    <span style="font-size: 13px; color: #6B6E75; line-height: 1.4;">{{g.note}}</span>
+                  </sc-if>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <div style="display: flex; gap: 8px; padding-top: 4px;">
+        <button style="height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 15px;">Rename</button>
+        <button style="height: 44px; padding: 0 14px; border-radius: 12px; border: none; background: rgba(207,138,143,0.13); color: #CF8A8F; font-family: inherit; font-size: 15px;">Revoke</button>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"view":{"editor":"enum","options":["card","open","waiting","offline"],"default":"card","section":"State"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  // What the panel last reported on its pickup (firmware-c6 svc_settings names), and what the
+  // owner asked for here. A row is "on the panel" once the two agree, never before.
+  defaults() {
+    return {
+      night_on: true, night_from: '21:30', night_to: '06:30', night_color: 'red', show_date: true, tz: 'New York',
+      notif_accept: true, notif_quiet: true, notif_chime: true,
+      brightness: 50, volume: 80, tts: true, auto_rotate: true
+    };
+  }
+
+  initial() {
+    const view = this.props.view || 'card';
+    const reported = this.defaults();
+    const s = { ready: true, view: view, reported: reported, wanted: Object.assign({}, reported), landed: {}, open: {}, offline: false };
+    if (view === 'open') s.open = { clock: true, notices: true };
+    // Two changes on their way, one already landed a moment ago.
+    if (view === 'waiting') {
+      s.open = { clock: true };
+      s.wanted.night_from = '22:00';
+      s.wanted.night_color = 'amber';
+      s.reported.night_color = 'amber';
+      s.landed = { night_color: true };
+      s.wanted.volume = 60;
+      s.frozen = true;
+    }
+    if (view === 'offline') {
+      s.offline = true;
+      s.open = { screen: true };
+      s.wanted.brightness = 30;
+      s.frozen = true;
+    }
+    return s;
+  }
+
+  base(prev) {
+    return prev && prev.ready && prev.view === (this.props.view || 'card') ? prev : this.initial();
+  }
+
+  put(fn) {
+    this.setState((prev) => {
+      const b = this.base(prev);
+      return Object.assign({}, b, typeof fn === 'function' ? fn(b) : fn);
+    });
+  }
+
+  componentWillUnmount() {
+    clearTimeout(this.pickTimer);
+    clearTimeout(this.landTimer);
+  }
+
+  // Stands in for the panel's next pickup: it takes what waits on the box, applies it, and
+  // reports it back, which is what turns a row to "On the panel".
+  set(key, value) {
+    this.put((b) => ({ wanted: Object.assign({}, b.wanted, { [key]: value }), landed: Object.assign({}, b.landed, { [key]: false }) }));
+    const b = this.base(this.state);
+    if (b.offline || b.frozen) return;
+    clearTimeout(this.pickTimer);
+    this.pickTimer = setTimeout(() => {
+      this.put((c) => {
+        const landed = {};
+        Object.keys(c.wanted).forEach((k) => { if (c.wanted[k] !== c.reported[k]) landed[k] = true; });
+        return { reported: Object.assign({}, c.wanted), landed: landed };
+      });
+      clearTimeout(this.landTimer);
+      this.landTimer = setTimeout(() => this.put({ landed: {} }), 4000);
+    }, 2500);
+  }
+
+  sw(on) {
+    return {
+      track: on ? 'rgba(143,188,154,0.22)' : '#1E2024',
+      border: on ? 'transparent' : '#3A3D42',
+      knob: on ? '#8FBC9A' : '#9A9DA3',
+      knobX: on ? 25 : 4
+    };
+  }
+
+  rowState(s, keys) {
+    const waiting = keys.some((k) => s.wanted[k] !== s.reported[k]);
+    if (waiting) return { hasState: true, state: s.offline ? 'Waiting — the panel is offline' : 'Waiting for the panel', stateColor: '#C9A36A' };
+    if (keys.some((k) => s.landed[k])) return { hasState: true, state: 'On the panel', stateColor: '#8FBC9A' };
+    return { hasState: false, state: '', stateColor: '' };
+  }
+
+  renderVals() {
+    const s = this.base(this.state);
+    const w = s.wanted;
+    const sw = (key, label, sub, dim) => Object.assign({
+      isSwitch: true, label: label, sub: sub || '', hasSub: !!sub, dim: dim ? 0.45 : 1,
+      checked: w[key] ? 'true' : 'false', sw: this.sw(w[key]),
+      flip: () => { if (!dim) this.set(key, !this.base(this.state).wanted[key]); }
+    }, this.rowState(s, [key]));
+    const pal = { red: '#B23A3A', amber: '#A47A3E', grey: '#6E7178' };
+    const colourName = { red: 'Red', amber: 'Amber', grey: 'Grey' };
+    const waitingIn = (keys) => keys.filter((k) => w[k] !== s.reported[k]).length;
+    const groupDefs = [
+      {
+        key: 'clock', title: 'Clock',
+        keys: ['night_on', 'night_from', 'night_to', 'night_color', 'show_date', 'tz'],
+        summary: w.night_on ? 'Night clock ' + w.night_from + '–' + w.night_to + ' · ' + colourName[w.night_color] : 'Night clock off',
+        rows: [
+          sw('night_on', 'Night clock', 'Dim digits on black at bedtime'),
+          Object.assign({
+            isTimes: true, dim: w.night_on ? 1 : 0.45, from: w.night_from, to: w.night_to,
+            fromBorder: w.night_from !== s.reported.night_from ? '#C9A36A' : '#26282C',
+            toBorder: w.night_to !== s.reported.night_to ? '#C9A36A' : '#26282C',
+            setFrom: (e) => { if (e.target.value) this.set('night_from', e.target.value); },
+            setTo: (e) => { if (e.target.value) this.set('night_to', e.target.value); }
+          }, this.rowState(s, ['night_from', 'night_to'])),
+          Object.assign({
+            isColour: true, dim: w.night_on ? 1 : 0.45,
+            colours: ['red', 'amber', 'grey'].map((c) => ({
+              label: colourName[c], color: pal[c], pressed: w.night_color === c ? 'true' : 'false',
+              ring: w.night_color === c ? '#7FA7C9' : '#26282C',
+              pick: () => this.set('night_color', c)
+            }))
+          }, this.rowState(s, ['night_color'])),
+          sw('show_date', 'Day and date under the time'),
+          Object.assign({
+            isZone: true,
+            zones: ['Honolulu', 'Anchorage', 'Los Angeles', 'Denver', 'Chicago', 'New York', 'Phoenix', 'UTC', 'London', 'Paris', 'Athens', 'Sydney'].sort((x, y) => (y === w.tz) - (x === w.tz)).map((z) => ({ name: z })),
+            set: (e) => this.set('tz', e.target.value)
+          }, this.rowState(s, ['tz']))
+        ],
+        note: 'The same hours refuse notices at night when that is on. Alarms are above.'
+      },
+      {
+        key: 'notices', title: 'Notices',
+        keys: ['notif_accept', 'notif_quiet', 'notif_chime'],
+        summary: !w.notif_accept ? 'Not accepting' : 'Accepting' + (w.notif_quiet ? ' · refused at night' : '') + (w.notif_chime ? ' · chime' : ' · silent'),
+        rows: [
+          sw('notif_accept', 'Accept notices from the box'),
+          sw('notif_quiet', 'Refuse during night hours', w.night_from + '–' + w.night_to + ', the night clock’s hours', !w.notif_accept),
+          sw('notif_chime', 'Chime when one arrives', '', !w.notif_accept)
+        ],
+        note: 'A refused notice is never held: the sender is told at once.'
+      },
+      {
+        key: 'screen', title: 'Screen and sound',
+        keys: ['brightness', 'volume', 'tts', 'auto_rotate'],
+        summary: 'Brightness ' + w.brightness + '% · volume ' + w.volume + '%',
+        rows: [
+          Object.assign({ isSlider: true, label: 'Brightness', value: w.brightness, set: (e) => this.set('brightness', Number(e.target.value)) }, this.rowState(s, ['brightness'])),
+          Object.assign({ isSlider: true, label: 'Speaker volume', value: w.volume, set: (e) => this.set('volume', Number(e.target.value)) }, this.rowState(s, ['volume'])),
+          sw('tts', 'Read Jerv’s replies aloud', 'Off: text, with Listen on each reply'),
+          sw('auto_rotate', 'Auto-rotate')
+        ],
+        note: '10% is the floor for both. Microphone gain stays in the debug console.'
+      }
+    ];
+    const groups = groupDefs.map((g) => {
+      const n = waitingIn(g.keys);
+      const open = !!s.open[g.key];
+      return {
+        title: g.title, summary: g.summary, open: open, expanded: open ? 'true' : 'false', chevron: open ? 90 : 0,
+        hasTag: n > 0, tag: n === 1 ? '1 waiting' : n + ' waiting',
+        rows: g.rows.map((r) => Object.assign({ isSwitch: false, isTimes: false, isColour: false, isSlider: false, isZone: false, dim: 1 }, r)),
+        hasNote: !!g.note, note: g.note,
+        toggle: () => this.put((b) => ({ open: Object.assign({}, b.open, { [g.key]: !b.open[g.key] }) }))
+      };
+    });
+    const pending = Object.keys(w).filter((k) => w[k] !== s.reported[k]).length;
+    const sync = s.offline
+      ? { text: 'Panel offline', color: '#C9A36A', sub: 'Showing what the panel reported 2 h ago.' }
+      : pending
+        ? { text: 'Sending to panel…', color: '#C9A36A', sub: 'Reported 40 s ago. A change lands within a minute.' }
+        : { text: 'On the panel', color: '#8FBC9A', sub: 'As the panel reported them 40 s ago.' };
+    const alarm = (hm, sub, on) => ({ hm: hm, sub: sub, dim: on ? 1 : 0.55, checked: on ? 'true' : 'false', sw: this.sw(on) });
+    return {
+      offline: s.offline,
+      seen: s.offline ? '2 h ago' : '40 s ago',
+      seenColor: s.offline ? '#CF8A8F' : '#9A9DA3',
+      metaTail: s.offline ? 'clock' : 'Jerv',
+      lastSeenAt: '21:14',
+      alarmSync: s.offline ? 'Waiting for the panel' : 'On the panel',
+      alarmSyncColor: s.offline ? '#9A9DA3' : '#8FBC9A',
+      alarms: [alarm('06:45', 'Weekdays · Work · Chime', true), alarm('08:30', 'Weekends · Beeps', false), alarm('21:00', 'Every day · Girls to bed · Chime', true)],
+      sync: sync,
+      groups: groups,
+      scrollRef: (el) => { this.scrollEl = el; this.placeScroll(); },
+      settingsRef: (el) => { this.settingsEl = el; this.placeScroll(); }
+    };
+  }
+
+  // The state boards open on the settings section, as if scrolled to it; the card board just
+  // far enough that the whole section shows under the alarms.
+  placeScroll() {
+    const s = this.base(this.state);
+    const el = this.scrollEl;
+    const sec = this.settingsEl;
+    if (!el || !sec || this.placedOn === el || !sec.isConnected) return;
+    this.placedOn = el;
+    const top = sec.offsetTop - el.offsetTop;
+    el.scrollTop = s.view === 'card' ? Math.max(0, top + sec.offsetHeight - el.clientHeight + 12) : top - 16;
+  }
+
+  componentDidMount() {
+    this.placedOn = null;
+    this.placeScroll();
+  }
+}
+</script>
+</body>
+</html>

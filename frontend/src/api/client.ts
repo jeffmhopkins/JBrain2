@@ -3822,6 +3822,40 @@ export interface PanelAlarms {
   panel_seen_s: number | null;
 }
 
+/** The desk panel's settings the PWA may change (firmware-c6 0.0.21), by the box's names. Every
+ *  value is a whole number in the panel's own encoding: switches 0/1, minutes of the day,
+ *  `night_color` 0 red / 1 amber / 2 grey, `tz` an index into `zones`, percentages 10-100.
+ *  Microphone gain and the tilt sensor's axes stay in the debug console. */
+export type PanelSettingKey =
+  | "night_on"
+  | "night_from"
+  | "night_to"
+  | "night_color"
+  | "show_date"
+  | "tz"
+  | "notif_accept"
+  | "notif_quiet"
+  | "notif_chime"
+  | "brightness"
+  | "volume"
+  | "read_aloud"
+  | "auto_rotate";
+
+export type PanelSettingValues = Partial<Record<PanelSettingKey, number>>;
+
+/** What the panel last reported and what waits for it on the box. `reported` is null until a
+ *  panel whose firmware reports its settings has picked up; the panel's word always wins. */
+export interface PanelSettingsOut {
+  supported: boolean;
+  reported: PanelSettingValues | null;
+  reported_s: number | null;
+  online: boolean;
+  pending: PanelSettingValues;
+  version: number;
+  zones: string[];
+  night_colors: string[];
+}
+
 /** Letters and spaces only, and short. TWO unrelated systems constrain this and the stricter one
  *  wins: the panel's 5x7 font has no glyph for an apostrophe and draws it as NOTHING, and the
  *  wake word runs through MultiNet, which matches phonemes — so digits and punctuation are not
@@ -6866,6 +6900,20 @@ export const api = {
     await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/alarms/${id}`, {
       method: "DELETE",
     });
+  },
+
+  async panelSettings(deviceId: string): Promise<PanelSettingsOut> {
+    const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/settings`);
+    return (await response.json()) as PanelSettingsOut;
+  },
+
+  /** Queued on the box until the panel takes it, however long it is offline. */
+  async setPanelSettings(deviceId: string, changes: PanelSettingValues): Promise<PanelSettingsOut> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/settings`,
+      jsonInit("PUT", { changes }),
+    );
+    return (await response.json()) as PanelSettingsOut;
   },
 
   // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for

@@ -372,6 +372,71 @@ static void test_reply_waits_out_a_sounding_cue(void)
     CHECK(heard_n == c + 2000 && heard[c] == 777, "and the reply follows it, never refused");
 }
 
+static void test_a_poke_cuts_the_pets_own_noise_and_is_heard(void)
+{
+    /* The reviewer on 0.4.10: a poke over the pet's own crunch started a reaction, but the
+       arbiter dropped its cue behind ANY sounding cue, so the reaction was silent. A press now
+       cuts a press-slot cue (the pet's own noise) and nothing else; `pet_only` says which. */
+    setup(true, true);
+    CHECK(stream_facts(&st).pet_only, "a quiet speaker: a poke may react");
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_EAT, STREAM_CUE_GAIN, 0);
+    ticks(3);
+    CHECK(stream_facts(&st).pet_only, "mid-crunch: still only the pet's own noise");
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_GIGGLE, STREAM_CUE_GAIN, 0);
+    const int at = heard_n;
+    until_quiet();
+    static int16_t r[CUE_MAX_SAMPLES];
+    CHECK(sounded(at, CUE_GIGGLE, 0), "the poke's giggle cuts the crunch and is heard whole");
+    CHECK(heard_n == at + ref(CUE_GIGGLE, 0, r), "and the rest of the crunch never comes back");
+    CHECK(!stream_facts(&st).speaker_busy, "nothing owed after");
+
+    /* A REPLY WAITING ON THE CRUNCH keeps its place: the press behind it is dropped, not cut in
+       ahead (the reviewer's edge — a voice ack posts with no busy check). */
+    setup(true, true);
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_EAT, STREAM_CUE_GAIN, 0);
+    ticks(3);
+    fill_reply(AUDIO_RATE / 2, 1234);
+    stream_reply(&st, reply_pcm, AUDIO_RATE / 2, 9);
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_GIGGLE, STREAM_CUE_GAIN, 0);
+    until_quiet();
+    int stray = 0, first_reply = -1;
+    for (int i = 0; i < heard_n; i++) {
+        if (heard[i] == 1234 && first_reply < 0) first_reply = i;
+    }
+    for (int i = first_reply; i >= 0 && i < heard_n; i++) stray += heard[i] != 1234;
+    CHECK(sounded(0, CUE_EAT, 0) && first_reply == ref(CUE_EAT, 0, r),
+          "the crunch finishes and the reply follows it, the giggle never jumping ahead");
+    CHECK(stray == 0, "and nothing of the giggle sounds after it either");
+
+    /* Behind the agent: no cut, and the poke only flinches. */
+    setup(true, true);
+    fill_reply(AUDIO_RATE, 1234);
+    stream_reply(&st, reply_pcm, AUDIO_RATE, 5);
+    ticks(2);
+    CHECK(!stream_facts(&st).pet_only, "over the agent talking: not the pet's to talk over");
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_GIGGLE, STREAM_CUE_GAIN, 0);
+    until_quiet();
+    int giggle = 0;
+    for (int i = 0; i < heard_n; i++) giggle += heard[i] != 1234 && heard[i] != 0;
+    CHECK(giggle == 0, "and a press behind it is dropped, as it always was");
+
+    /* Behind the notice chime: likewise. */
+    setup(true, true);
+    stream_cue(&st, STREAM_SLOT_CHIME, CUE_MESSAGE, STREAM_CUE_GAIN, 0);
+    ticks(2);
+    CHECK(!stream_facts(&st).pet_only, "over the chime: not the pet's either");
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_GIGGLE, STREAM_CUE_GAIN, 0);
+    until_quiet();
+    CHECK(sounded(0, CUE_MESSAGE, 0) && heard_n == ref(CUE_MESSAGE, 0, r),
+          "the chime is heard whole and the press behind it dropped");
+
+    /* A message playing: not the pet's to talk over. */
+    setup(true, true);
+    begin();
+    write_ramp(0, 20000);
+    CHECK(!stream_facts(&st).pet_only, "over a message: a flinch, nothing more");
+}
+
 static void test_standby_silences_then_sounds_its_own_stop(void)
 {
     /* On 0.3.39 standby's CUE_STOP was cut in the same frame by audio_stop(). Now silence comes
@@ -681,6 +746,7 @@ int main(void)
     test_heard_bit_is_sticky_until_classified();
     test_the_lease_has_one_holder();
     test_a_cue_deafens_and_keeps_the_recording_timeline();
+    test_a_poke_cuts_the_pets_own_noise_and_is_heard();
     printf("stream ok — %d checks\n", checks);
     return 0;
 }

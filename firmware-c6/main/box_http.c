@@ -46,6 +46,8 @@ static esp_err_t on_http(esp_http_client_event_t *e)
         snprintf(r->sha, sizeof r->sha, "%s", e->header_value);
     else if (strcasecmp(e->header_key, "X-Notice") == 0)
         snprintf(r->notice, sizeof r->notice, "%s", e->header_value);
+    else if (strcasecmp(e->header_key, "X-Panel-Settings") == 0)
+        snprintf(r->settings, sizeof r->settings, "%s", e->header_value);
     return ESP_OK;
 }
 

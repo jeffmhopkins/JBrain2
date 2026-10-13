@@ -134,6 +134,17 @@ static const char *take(reading_t *r, tk_stream_ev_t ev, const uint8_t *pcm, siz
         break;
     case TS_EV_STEP_START: talk_net_step_start(s_stream.flags, s_stream.text); break;
     case TS_EV_STEP_DONE: talk_net_step_done(s_stream.flags, tk_stream_step_ok(&s_stream)); break;
+    case TS_EV_SPOKEN: {
+        uint16_t from, to;
+        uint32_t bytes;
+        if (tk_stream_spoken(&s_stream, &from, &to, &bytes)) talk_net_spoken(from, to, bytes);
+        break;
+    }
+    case TS_EV_IDS: {
+        uint32_t asked, answer;
+        if (tk_stream_ids(&s_stream, &asked, &answer)) talk_net_ids(asked, answer);
+        break;
+    }
     case TS_EV_ANSWER:
         if (r->answered) break;
         r->answered = true;
@@ -418,6 +429,71 @@ static const char *listen_exchange(const char *path, uint32_t *down)
     return why;
 }
 
+/* Listen (0.0.21): a stored reply spoken again — the box's JT2 records (SPOKEN marks and PCM, then
+ * END) into a play's ring at the speaker's pace, read as a reply's speech is. */
+static const char *speak_exchange(const char *path, uint32_t *down)
+{
+    box_reply_t rep = {.date = {0}};
+    const int status = box_http_get_open(path, &rep, SEND_TIMEOUT_MS);
+    if (status != 200) {
+        if (status > 0) box_http_reply_done();
+        return status == 503 ? "the box cannot speak now" : status == 404 ? "not on the box"
+                                                                          : failed(status);
+    }
+    /* After the handshake, as a play's (README "What 0.0.17 adds"). */
+    if (!talk_net_ring()) {
+        box_http_stream_abort();
+        return "no memory to play";
+    }
+    talk_net_reply("", true);
+    tk_stream_init(&s_stream);
+    uint32_t heard_at = now_ms();
+    bool whole = false, ended = false;
+    const char *why = NULL;
+    while (!why && !ended) {
+        const int n = box_http_reply_read(s_buf, sizeof s_buf, READ_SLICE_MS);
+        if (n == BOX_HTTP_AGAIN) {
+            if (now_ms() - heard_at > IDLE_MS) why = "the box went quiet";
+            if (!talk_net_wants_audio()) break;
+            continue;
+        }
+        if (n <= 0) {
+            whole = n == 0;
+            break;
+        }
+        heard_at = now_ms();
+        *down += (uint32_t)n;
+        size_t off = 0;
+        while (off < (size_t)n && !why && !ended) {
+            tk_stream_ev_t ev;
+            const uint8_t *pcm;
+            size_t pcm_n;
+            off += tk_stream_feed(&s_stream, s_buf + off, (size_t)n - off, &ev, &pcm, &pcm_n);
+            if (ev == TS_EV_PCM && !give(pcm, (uint32_t)pcm_n)) why = "stopped";
+            else if (ev == TS_EV_SPOKEN) {
+                uint16_t from, to;
+                uint32_t bytes;
+                if (tk_stream_spoken(&s_stream, &from, &to, &bytes)) talk_net_spoken(from, to, bytes);
+            } else if (ev == TS_EV_END) {
+                ended = true;
+                if (s_stream.flags != TS_END_OK) why = "the box could not speak";
+            } else if (ev == TS_EV_BAD) {
+                why = "a reply this panel could not read";
+            }
+        }
+    }
+    if (ended) {
+        while (box_http_reply_read(s_buf, sizeof s_buf, READ_SLICE_MS) > 0) {
+        }
+        whole = true;
+    }
+    if (whole)
+        box_http_reply_done();
+    else
+        box_http_stream_abort();
+    return why;
+}
+
 /* A push notice's sound (0.0.19): no box, no radio — its PCM records out of the notice's file
  * on `storage`, a slice at a time, into the ring at the speaker's pace. */
 static bool give_slice(const uint8_t *pcm, uint32_t n, void *ctx)
@@ -446,6 +522,7 @@ bool talk_link_run(void)
     const tk_kind_t kind = talk_net_kind(target, sizeof target);
     dbg_sys_doing(kind == TK_KIND_POST     ? "message"
                   : kind == TK_KIND_LISTEN ? "play"
+                  : kind == TK_KIND_SPEAK  ? "listen"
                   : kind == TK_KIND_NOTICE ? "notice-sound"
                                            : "talk");
     if (kind == TK_KIND_NOTICE) {
@@ -468,13 +545,14 @@ bool talk_link_run(void)
     uint32_t up = 0, down = 0, reply_ms = 0;
     const char *why = kind == TK_KIND_POST     ? post_exchange(target, &up, &down)
                       : kind == TK_KIND_LISTEN ? listen_exchange(target, &down)
+                      : kind == TK_KIND_SPEAK  ? speak_exchange(target, &down)
                                                : exchange(agent, voice, fresh, &up, &down, &reply_ms);
     if (had) esp_wifi_set_ps(ps);
     if (why && strcmp(why, "stopped")) {
         ESP_LOGW(TAG, "not answered: %s", why);
         talk_net_fail(why);
     }
-    static const char *const KIND[] = {"", "message", "play"};
+    static const char *const KIND[] = {"", "message", "play", "notice", "listen"};
     ESP_LOGI(TAG, "%s%s: up %lu B, down %lu B, answer in %lu ms, %lu ms in all",
              kind == TK_KIND_AGENT ? tk_agent_id(agent) : KIND[kind],
              kind == TK_KIND_AGENT && fresh ? " (new chat)" : "", (unsigned long)up,

@@ -254,6 +254,37 @@ def test_a_voice_message_from_the_desk_lands_on_the_right_twin(box: Box) -> None
     assert [(m["id"], m["mine"], m["voice"]) for m in msgs] == [(sent["id"], True, True)]
 
 
+def test_a_quiet_message_from_the_desk_reaches_her_at_speaking_level(box: Box) -> None:
+    """The desk panel's low microphone gain must not reach a twin's panel as a whisper
+    (owner, 2026-10-13): the box raises the voiced part, never past full scale."""
+    _owner_put(box, "Jeff", True)
+    quiet = b"".join(
+        struct.pack("<h", int(1000 * math.sin(2 * math.pi * 440 * i / 16000))) for i in range(16000)
+    )
+    r = _send(box, "Tamsin", _framed(quiet))
+    assert r.status_code == 201, r.text
+    got = box.panel("Tamsin", "GET", "/api/jpanel/next")
+    assert got.status_code == 200
+    body = got.content[44:] if got.content[:4] == b"RIFF" else got.content
+    pcm = struct.unpack(f"<{len(body) // 2}h", body[: len(body) - len(body) % 2])
+    peak = max(abs(x) for x in pcm)
+    assert 4000 < peak < 32767, peak
+
+
+def test_a_quiet_message_to_dad_reaches_him_at_speaking_level(box: Box) -> None:
+    """The twins' fixed-gain microphones too: said from across the room, heard at a level."""
+    quiet = b"".join(
+        struct.pack("<h", int(1000 * math.sin(2 * math.pi * 440 * i / 16000))) for i in range(16000)
+    )
+    mid = _to_dad(box, "Quorra", quiet)
+    _owner_put(box, "Jeff", True)
+    r = box.panel("Jeff", "GET", f"/api/endpoint/messages/{box.devices['Quorra']}/{mid}/pcm")
+    assert r.status_code == 200, r.text
+    body = r.content[44:] if r.content[:4] == b"RIFF" else r.content
+    pcm = struct.unpack(f"<{len(body) // 2}h", body[: len(body) - len(body) % 2])
+    assert 4000 < max(abs(x) for x in pcm) < 32767
+
+
 def test_a_damaged_upload_is_refused_and_nothing_is_filed(box: Box) -> None:
     _owner_put(box, "Jeff", True)
     audio = _voice()

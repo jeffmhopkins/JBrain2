@@ -100,9 +100,24 @@ uint32_t svc_audio_playing(void); /* msg id, 0 when silent */
 uint32_t svc_audio_played_ms(void);
 /* A new message's chime: two soft notes, once, when nothing else has the speaker. */
 bool svc_audio_chime(void);
-void svc_audio_speak(uint32_t msg_id);
-/* Whether a reply can be listened to on demand: not until the box can speak a stored one. */
-bool svc_audio_can_speak(void);
+/* ---- Listen (0.0.21, owner-approved 2026-10-13) ----
+ * A 56 px speaker button on every finished reply of Jerv's or Dave's, read-aloud on or off: the
+ * box speaks that reply's WHOLE words again, in the PWA's voice (backend `panel_convo.speech`),
+ * even where the bubble keeps 255 bytes. One reply at a time; KEY, BOOT or the button stops it. */
+typedef struct {
+    uint32_t msg_id;   /* the bubble being spoken, Listen's or read-aloud's; 0 for none */
+    bool starting;     /* asked, nothing heard yet: "Starting… · tap to stop" */
+    uint16_t permille; /* how much of its words has been said: the ring round the stop button */
+    uint32_t ms;       /* how long it has played: "0:14 · tap to stop" */
+} svc_speech_t;
+/* What is being said in `thread` now; false when nothing there is. */
+bool svc_audio_speech(const char *thread, svc_speech_t *out);
+/* A Listen tap on bubble `msg_id` of `thread`: speaks it, or stops it when it is the one speaking.
+ * Another reply speaking is stopped and this one follows it. False, with svc_audio_talk_refused
+ * saying why, when it cannot start (no Wi-Fi, no speaker, a reply the box has not named). */
+bool svc_audio_speak(const char *thread, uint32_t msg_id);
+/* What Listen says over a reply while the agent works on the next answer. */
+#define LISTEN_WAITS "Listen waits for this answer"
 
 /* An alarm's sound (svc_alarms.h's alarm_sound_t), looped with a rising volume until
  * svc_audio_ring_stop. It OUTRANKS every other sound: the microphone, a reply's voice and a test

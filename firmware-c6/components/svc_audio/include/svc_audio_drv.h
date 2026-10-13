@@ -78,6 +78,10 @@ void talk_net_status(const char *status);
 void talk_net_step_start(uint8_t index, const char *label);
 void talk_net_step_done(uint8_t index, bool ok);
 void talk_net_reply(const char *reply, bool audio_follows);
+/* SPOKEN (0.0.21): the speech that follows says the words from `from` to `to` thousandths. */
+void talk_net_spoken(uint16_t from, uint16_t to, uint32_t bytes);
+/* IDS (0.0.21): the exchange's question and answer on the box, which name them from now on. */
+void talk_net_ids(uint32_t asked, uint32_t answer);
 void talk_net_nothing(void);
 void talk_net_fail(const char *why);
 /* The reply's speech into the ring: how much fit. Zero once the speech is no longer wanted. */

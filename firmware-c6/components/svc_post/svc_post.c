@@ -170,7 +170,28 @@ bool svc_post_pcm_path(uint32_t local_id, char thread[16], char *out, size_t cap
         snprintf(thread, 16, "%s", svc_siblings_thread(s));
         return post_pcm_path(s_slot[s].device, s_slot[s].seen.id[i], out, cap);
     }
-    return false;
+    /* An older one, paged in by Load earlier (0.0.21): its box id is the window's. */
+    char uuid[POST_ID_BYTES];
+    if (!svc_messages_page_uuid(local_id, thread, uuid)) return false;
+    const int s = slot_of(thread);
+    return s >= 0 && post_pcm_path(s_slot[s].device, uuid, out, cap);
+}
+
+bool svc_post_uuid(const char *thread, uint32_t local_id, char out[POST_ID_BYTES])
+{
+    const int s = slot_of(thread);
+    const int i = s >= 0 ? find_local(&s_slot[s], local_id) : -1;
+    if (i < 0) return false;
+    snprintf(out, POST_ID_BYTES, "%s", s_slot[s].seen.id[i]);
+    return true;
+}
+
+uint32_t svc_post_local(const char *thread, const char *uuid)
+{
+    const int s = slot_of(thread);
+    for (uint8_t i = 0; s >= 0 && i < s_slot[s].seen.n; i++)
+        if (!strcmp(s_slot[s].seen.id[i], uuid)) return s_slot[s].local[i];
+    return 0;
 }
 
 void svc_post_sent(const char *thread)
@@ -200,11 +221,15 @@ void svc_post_heard(const char *thread, uint32_t local_id)
     if (s < 0) return;
     slot_t *sl = &s_slot[s];
     const int i = find_local(sl, local_id);
-    if (i < 0) return;
+    char paged[16], uuid[POST_ID_BYTES];
+    const char *id = i >= 0 ? sl->seen.id[i] : NULL;
+    /* An older one Load earlier paged in: stamped by the window's box id, the same way. */
+    if (!id && svc_messages_page_uuid(local_id, paged, uuid) && !strcmp(paged, thread)) id = uuid;
+    if (!id) return;
     s_st.heard++;
     svc_messages_mark_played(thread, local_id);
     const bool full = s_stamps.n == POST_STAMPS;
-    if (post_stamps_add(&s_stamps, sl->device, sl->seen.id[i])) {
+    if (post_stamps_add(&s_stamps, sl->device, id)) {
         /* Only a real eviction: a repeat adds nothing and drops nothing. */
         if (full) s_st.stamps_dropped++;
         stamps_changed();

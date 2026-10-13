@@ -27,3 +27,6 @@ uint8_t thread_play_pct(const msg_t *m, uint32_t played_ms);
 #define THREAD_SHAPE0 2166136261u
 uint32_t thread_shape_msg(uint32_t h, const msg_t *m);
 uint32_t thread_shape_end(uint32_t h, uint16_t n, bool loaded);
+/* Load earlier's rows (0.0.21): a row appearing, loading, its count or the start changing is a
+   rebuild like a message's. */
+uint32_t thread_shape_hist(uint32_t h, const hist_view_t *v);

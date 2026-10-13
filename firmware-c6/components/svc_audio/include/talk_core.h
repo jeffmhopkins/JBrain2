@@ -80,7 +80,9 @@ void tk_converse_path(tk_agent_t a, bool voice, bool fresh, char *out, size_t ca
  * plays it through the same ring, the same speaker start and the same stop as a reply). */
 /* NOTICE (0.0.19): a push notice's sound, played once as it is shown — a LISTEN whose bytes come
  * from the notice's file on `storage` instead of the box, through the same ring and speaker start. */
-typedef enum { TK_KIND_AGENT, TK_KIND_POST, TK_KIND_LISTEN, TK_KIND_NOTICE } tk_kind_t;
+/* SPEAK (0.0.21): Listen on a stored reply — a LISTEN whose bytes are the box speaking that reply's
+ * whole words again, as JT2's SPOKEN and PCM records (backend `panel_stream.listen`). */
+typedef enum { TK_KIND_AGENT, TK_KIND_POST, TK_KIND_LISTEN, TK_KIND_NOTICE, TK_KIND_SPEAK } tk_kind_t;
 
 typedef struct {
     tk_phase_t phase;
@@ -118,6 +120,8 @@ void tk_set_post(tk_t *t);
 tk_begin_t tk_listen(tk_t *t, uint32_t msg_id);
 /* Right after a TK_BEGIN_OK from tk_listen, under the same lock: it is a notice's sound. */
 void tk_set_notice(tk_t *t);
+/* ... or a stored reply spoken again (Listen, 0.0.21). */
+void tk_set_speak(tk_t *t);
 /* The hold's end. A send that the box was already failed for is TALK_FAILED (the result says
  * why); anything short of a message lets go of everything. */
 talk_outcome_t tk_end(tk_t *t, uint32_t now_ms, bool send);
@@ -169,6 +173,9 @@ uint8_t talk_level(uint16_t peak);
 #define TS_END 0x06
 #define TS_STEP_START 0x07 /* index: u8 | UTF-8 label; the same index again relabels it */
 #define TS_STEP_DONE 0x08  /* index: u8 | ok: u8 */
+#define TS_SPOKEN 0x09     /* from: u16 | to: u16 | bytes: u32 — the PCM that follows says the
+                              text from `from` to `to` thousandths of the way through (0.0.21) */
+#define TS_IDS 0x0A        /* asked: u64 | answer: u64 — the exchange's turns on the box (0.0.21) */
 #define TS_ANSWER_SPEECH 0x01 /* the answer's speech follows */
 #define TS_ANSWER_CUT 0x02    /* the box cut the text to fit; the speech says all of it */
 #define TS_END_OK 0
@@ -187,6 +194,8 @@ typedef enum {
     TS_EV_END,    /* `flags` is the code, `text` why */
     TS_EV_STEP_START, /* `flags` is the index, `text` the label */
     TS_EV_STEP_DONE,  /* `flags` is the index; tk_stream_step_ok says how it went */
+    TS_EV_SPOKEN,     /* tk_stream_spoken reads it */
+    TS_EV_IDS,        /* tk_stream_ids reads it */
     TS_EV_BAD,    /* not a JT2 stream, or a record longer than TS_MAX_RECORD */
 } tk_stream_ev_t;
 
@@ -210,6 +219,32 @@ size_t tk_stream_feed(tk_stream_t *s, const uint8_t *b, size_t n, tk_stream_ev_t
 bool tk_stream_done(const tk_stream_t *s);
 /* The STEP_DONE just read: false only when the box said the tool failed. */
 bool tk_stream_step_ok(const tk_stream_t *s);
+/* The SPOKEN or IDS just read; false for one of the wrong length. An id past 32 bits is 0: the
+ * panel names a message in 32. */
+bool tk_stream_spoken(const tk_stream_t *s, uint16_t *from, uint16_t *to, uint32_t *bytes);
+bool tk_stream_ids(const tk_stream_t *s, uint32_t *asked, uint32_t *answer);
+
+/* ---- Listen's progress (0.0.21): how much of a reply's words the speaker has said ----
+ * The ring under the stop button fills by the words, not by the clock (owner-approved mock): the
+ * box says, before each group of sentences' speech, which part of the text it is and how many
+ * bytes of PCM say it; the speaker counts what it played. A handful of marks is all that is ever
+ * between the network and the speaker (a 6 KB ring and a TCP window, against groups of seconds). */
+#define TK_MARKS 4
+typedef struct {
+    uint32_t pcm_at; /* PCM received before this group */
+    uint32_t bytes;
+    uint16_t from, to; /* thousandths */
+} tk_mark_t;
+typedef struct {
+    uint8_t n;
+    uint32_t pcm_in;
+    tk_mark_t m[TK_MARKS]; /* oldest first */
+} tk_marks_t;
+void tk_marks_init(tk_marks_t *k);
+void tk_marks_add(tk_marks_t *k, uint16_t from, uint16_t to, uint32_t bytes);
+void tk_marks_pcm(tk_marks_t *k, uint32_t n);
+/* Thousandths of the words said once `played` bytes have gone to the speaker. */
+uint16_t tk_marks_progress(const tk_marks_t *k, uint32_t played);
 bool tk_stream_bad(const tk_stream_t *s);
 
 /* `src` into `dst`, cut on a character with an ellipsis when it does not fit, never in the middle
@@ -289,6 +324,7 @@ typedef struct {
     uint32_t reply_ms, reply_ms_max;
     uint32_t underruns, overruns, tones;
     uint32_t plays, play_failed, posted; /* 0.0.16: her messages played, and voice messages sent */
+    uint32_t listens;                    /* 0.0.21: replies spoken again (Listen) */
     uint16_t peak_l, peak_r;
 } tk_stats_t;
 /* `audio=<state>,talks:N,sent:N,heard:N,none:N,fail:N,stop:N,up:<KB>,down:<KB>,ms:<last>/<max>,
