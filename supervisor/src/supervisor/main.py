@@ -8,7 +8,7 @@ from supervisor.disk_cleanup import DiskCleanup
 from supervisor.disk_usage import DiskUsage
 from supervisor.gateway import ComposeDockerGateway
 
-# SUPERVISOR_TOKEN is required and comes from the environment at runtime.
+# SUPERVISOR_TOKEN comes from the environment at runtime (see Settings on an empty one).
 settings = Settings()  # pyright: ignore[reportCallIssue]
 gateway = ComposeDockerGateway(
     docker.from_env(), settings.compose_project, settings.project_dir

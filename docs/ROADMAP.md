@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-13
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -569,19 +569,43 @@ domain, a tamper watch + suspension auto-pause, and a sanitized morning digest. 
 adversarial threat-model dossiers under `docs/research/jmolt/`. W1 citizenship + read-only lurking,
 W2 memory, W3 autonomous writes, W4 observation + integrity.
 
-**In progress:** security review fixes (build plan: `docs/plans/SECURITY_REVIEW_FIXES_PLAN.md`, waves
-S1–S5) — a 2026-10-12 whole-codebase review for third-party access found RLS sound but the layers
-around it open: a preview-proxy path traversal into the jcode control API, same-site request
+**Shipped:** security review fixes (build record: `docs/archive/SECURITY_REVIEW_FIXES_PLAN.md`,
+waves S1–S5) — a 2026-10-12 whole-codebase review for third-party access found RLS sound but the
+layers around it open: a preview-proxy path traversal into the jcode control API, same-site request
 forgery from the preview subdomain, owner surfaces admitting any cookie principal, sandbox shells
 that can read the jcode control token, an unauthenticated `/internal` reachable from sandbox
-networks, and an SSRF pivot through the reader/byparr browsers. S1 closes the web holes, S2 the
-sandboxes and internal network, S3 device and token hygiene, S4 a cold red-team re-analysis, S5 latent RLS hardening. S1 ✅
+networks, and an SSRF pivot through the reader/byparr browsers. S1 ✅
 (preview containment, owner gates + route matrix, same-site guard + `__Host-` cookie, safe hrefs). S2 ✅
 (jcode per-session uids, per-caller `/internal` tokens, reader/byparr/jcode fenced behind the egress proxy, pinned direct fetches). S3 ✅
-(socket re-validation, panel vs phone keys, hashed pairing codes + debug-SQL secrets, real client IP, Minecraft log anchoring). S5 ✅
-(view-scope helpers and the who-saw-whom write pinned to the caller). *Residual:* Timescale chunks
-keep `jbrain_app`'s privileges, so a direct chunk read skips RLS — owner-SQL-only; a revoke does not
-survive the next chunk and the event-trigger fix is too fragile for the ingest path (plan, S5c).
+(socket re-validation, panel vs phone keys, hashed pairing codes + debug-SQL secrets, real client IP, Minecraft log anchoring). S4 ✅
+(cold red team: a chat share that holds firewalled, mail or memory reads needs the owner's confirm,
+decided by the server from the stored turns; opening an intake link no longer signs the owner out;
+jcode and jlaunch refuse an empty control token). S5 ✅
+(view-scope helpers and the who-saw-whom write pinned to the caller). *Residuals* (the plan's
+"Out of scope / recorded" list, in full there):
+- **Wall (F18).** `deploy/wall/serve.py` is unauthenticated on `${BRAIN_HOST_BIND:-0.0.0.0}:8800`:
+  with brain-display text on, `GET /stats` hands any LAN poller the owner's real prompts, answers
+  and web queries (and drains them from the TV); `POST /event` lets a LAN client inject display
+  text and voice settings; `/tts*` spends tts-stt compute; the pet routes relay an owner-context
+  line. Candidate fixes (a LAN/loopback bind default, text only on a loopback bind, a per-display
+  key) are owner choices, and the bind is `.env`-only today — a terminal gap to design out first.
+- **Supervisor empty token.** An unset `SUPERVISOR_TOKEN` starts a supervisor that accepts
+  `Bearer `; refusing it could strand Ops → Update with no terminal, so the updater must mint a
+  missing key first (lands on the second update).
+- **Chat share drift.** A share's sensitivity is checked at mint; later turns that read private data
+  are published on the live link without a new warning (revoke is the remedy).
+- **Timescale chunks** keep `jbrain_app`'s privileges, so a direct chunk read skips RLS —
+  owner-SQL-only; a revoke does not survive the next chunk and the event-trigger fix is too fragile
+  for the ingest path (S5c).
+- **Panel flash encryption (F17)** needs hardware in hand (eFuses, OTA rollback); a stolen desk-panel
+  key is owner agent reads.
+- Smaller recorded items: the updater's self-update lag (new mint steps take two updates), stream
+  fetches (yt-dlp/ffmpeg) checked once for SSRF, MQTT keeping its pre-token config until **Ops →
+  Rebuild `mqtt`**, a revoke with the jcode ctl down leaving the old preview slug, Minecraft command
+  replies forgeable within the reply window, a pairing code minted mid-update needing a re-mint,
+  the debug-SQL deny-list refusing a few harmless statements, ctl-run git hooks outside
+  `RLIMIT_NPROC`, browsers without fetch metadata (Safari < 16.4) reaching side-effecting GETs,
+  a preview's cookie bomb, and a lone planted legacy cookie believed until the owner signs in.
 
 **Scheduled:** jmolt hardening (build plan: `docs/plans/JMOLT_HARDENING_PLAN.md`, waves H1–H6) —
 after three live nights, four independent audits over the parts the first round of bugfixes had not

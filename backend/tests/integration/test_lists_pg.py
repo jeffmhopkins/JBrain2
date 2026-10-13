@@ -80,6 +80,19 @@ async def test_list_round_trip(maker: async_sessionmaker) -> None:
     assert lst.id in [x.id for x in await repo.list_lists(ctx, include_archived=True)]
 
 
+async def test_item_writers_return_the_list_domain(maker: async_sessionmaker) -> None:
+    """add/check carry the parent list's domain so the agent's step can tag it for the
+    chat-share check (security plan S4)."""
+    pid = await _owner_principal(maker)
+    ctx = read_context(pid, ("health",))
+    repo = SqlListsRepo(maker)
+    meds = await repo.create_list(ctx, domain="health", title="Meds")
+    item = await repo.add_item(ctx, meds.id, "metformin 500mg")
+    assert item is not None and item.domain == "health"
+    checked = await repo.set_item_checked(ctx, item.id, checked=True)
+    assert checked is not None and checked.checked and checked.domain == "health"
+
+
 async def test_reorder_rename_and_delete(maker: async_sessionmaker) -> None:
     pid = await _owner_principal(maker)
     ctx = read_context(pid, ("general",))

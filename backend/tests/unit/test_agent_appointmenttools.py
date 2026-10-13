@@ -241,6 +241,20 @@ async def test_manage_appointment_create_stages_a_dated_note() -> None:
     assert node.preview["action"] == "create" and node.preview["domain"] == "general"
 
 
+async def test_manage_appointment_tags_the_resolved_domain() -> None:
+    """The domain defaults to the session's first scope and sits nowhere else on the step,
+    so the result text tags it for the chat-share check."""
+    health_ctx = ToolContext(session=OWNER_CTX.session, scopes=("health", "general"))
+    out = await write_handlers(FakeProposals(), FakeAppointments())["manage_appointment"](
+        {"action": "create", "title": "cardiology", "when": "Tue 12:45"}, health_ctx
+    )
+    assert "this appointment [health] for your approval" in out
+    general = await write_handlers(FakeProposals(), FakeAppointments())["manage_appointment"](
+        {"action": "create", "title": "haircut", "when": "Wed"}, OWNER_CTX
+    )
+    assert "[general]" in general
+
+
 async def test_manage_appointment_reschedule_anchors_on_the_existing_appointment() -> None:
     props = FakeProposals()
     existing = FakeAppointments(one=appt("A1", "Dentist with Dr. Nguyen"))

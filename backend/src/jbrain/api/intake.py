@@ -26,7 +26,8 @@ from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import AuthRepoDep, OwnerDep, PrincipalDep, SettingsDep
-from jbrain.api.session_cookie import set_session_cookie
+from jbrain.api.session_cookie import session_token, set_session_cookie
+from jbrain.auth import service as auth_service
 from jbrain.db.session import SessionContext, intake_context
 from jbrain.intake import service, turn
 from jbrain.intake.materialize import materialize_submission
@@ -381,6 +382,7 @@ async def mint_from_proposal(
 @router.post("/intake/redeem")
 async def redeem(
     body: RedeemRequest,
+    request: Request,
     response: Response,
     repo: IntakeRepoDep,
     auth_repo: AuthRepoDep,
@@ -391,7 +393,18 @@ async def redeem(
     401 on an invalid / revoked / lapsed / capped secret, writing no cookie.
     Unauthenticated by design — the secret is the credential. The cookie max-age is
     capped at the link TTL (never the jcode 30-day default), so it cannot outlive the
-    link's box even in the browser; the principal carries the same expiry server-side."""
+    link's box even in the browser; the principal carries the same expiry server-side.
+
+    409 for a browser signed in as the owner, checked before the redeem so no open is
+    spent: the intake cookie would replace the owner's session (the page redeems on load,
+    so merely opening a link would sign the owner out), and the intake routes need that
+    cookie, so a no-cookie success would leave a page that can't talk."""
+    existing = await auth_service.authenticate(auth_repo, session_token(request, settings))
+    if existing is not None and existing.kind == "owner":
+        raise HTTPException(
+            status_code=409,
+            detail="signed in as the owner — open the link in a private window to try it",
+        )
     result = await service.redeem_intake_link(repo, auth_repo, body.secret)
     if result is None:
         raise HTTPException(status_code=401, detail="invalid, expired, or exhausted link")

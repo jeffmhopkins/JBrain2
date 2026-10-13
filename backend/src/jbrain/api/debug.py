@@ -1583,7 +1583,7 @@ def _redact_row(columns: list[str], row: list[Any]) -> list[Any]:
     return out
 
 
-# F12 (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S3.3). Functions that turn a read into
+# F12 (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md S3.3). Functions that turn a read into
 # something the column-name redaction can't see: the *_to_xml family and ts_stat/ts_rewrite
 # run a query given as TEXT (so its columns arrive as one opaque blob), set_config moves the
 # session's RLS stamps, pg_read_*/pg_ls_dir/lo_* read server files and large objects, dblink

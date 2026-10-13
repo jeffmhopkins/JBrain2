@@ -647,7 +647,7 @@ services:
   # and is unable to reach `db`, `supervisor` (which holds the docker socket), `worker`,
   # `embed`, the model servers or the blob store. Its only peers are the `api` (which
   # proxies the control surface and serves its models, web tools and OCR) and the squid
-  # `egress` proxy (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md S2.4).
+  # `egress` proxy (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md S2.4).
   # EGRESS IS FENCED: `jcode_fenced` is `internal: true`, so there is no NAT route out — the
   # proxy env below sends git/npm/pip/curl/Node fetch through squid, which serves public
   # http/https on 80/443 and refuses the LAN, the host, metadata and every compose name
@@ -671,8 +671,9 @@ services:
     # share recipient could fill it for every session by forking, deleting, repeating.
     init: true
     environment:
-      # Bearer token the api presents on every control call (fail-closed: no token,
-      # the service refuses to start). Shared with the api via JBRAIN_JCODE_TOKEN.
+      # Bearer token the api presents on every control call (fail-closed: an unset or
+      # empty token and the service refuses to start). Shared with the api via
+      # JBRAIN_JCODE_TOKEN.
       JCODE_TOKEN: ${JCODE_TOKEN:-}
       JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       # Logged only (the ctl never calls it): grok reaches its models through the api.
@@ -777,8 +778,9 @@ services:
       dockerfile: jlaunch/Dockerfile
     restart: unless-stopped
     environment:
-      # Bearer token the api presents on every control call (fail-closed: no token, the
-      # service refuses to start). Shared with the api via JBRAIN_JLAUNCH_TOKEN.
+      # Bearer token the api presents on every control call (fail-closed: an unset or
+      # empty token and the service refuses to start). Shared with the api via
+      # JBRAIN_JLAUNCH_TOKEN.
       JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}
       JLAUNCH_WORKSPACE_ROOT: /work
       JLAUNCH_STATE_ROOT: /work/.state

@@ -7,11 +7,17 @@ PINNED to the link id (`chat_share_context(link_id)`) so the `*_share` policies 
 that chat's session row, turns and runs. The transcript is read through the same
 `AgentTranscript.load` the owner's reopen uses, so the visitor gets the same turn shape; its
 attachment lookup runs under the visitor context too, where the domain firewall returns none.
+
+The visitor gets every tool step verbatim (its result text, arguments and note snippets), so
+`share_sensitivity` reads what the stored turns actually hold and the owner must confirm a
+mint that would publish firewalled-domain, mail or memory reads (security plan S4).
 """
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -21,6 +27,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.reflexion import SENSITIVE_SCOPES
 from jbrain.agent.transcript_store import AgentTranscript, TurnRecord
 from jbrain.auth import keys
 from jbrain.db.session import SessionContext, chat_share_context, scoped_session
@@ -51,6 +58,124 @@ class SharedChat:
 
 
 _LINK_FIELDS = "id, session_id, created_at, last_viewed_at, view_count"
+
+# Tools whose stored step quotes something private that no note source tags with a domain:
+# the owner's mail, the agent's memory of them, and the readers of firewalled data whose
+# steps carry no `sources` (medical records, location). A test keeps every `.tool` declaring
+# a firewalled domain in this map, so a new location tool can't slip past it.
+SENSITIVE_TOOLS: dict[str, str] = {
+    "archivist_memory_read": "mail",
+    "archivist_memory_write": "mail",
+    "memory_read": "memory",
+    "memory_edit": "memory",
+    "recall": "memory",
+    "remember": "memory",
+    "prefs_read": "memory",
+    "prefs_write": "memory",
+    # Its chart is tagged `health` only when every point is, and finance or mixed readings
+    # read as `general` with no sources, so the domain can't be told from the step.
+    "chart_measurements": "measurements",
+    "read_labs": "health",
+    "read_encounters": "health",
+    "current_location": "location",
+    "device_status": "location",
+    "find_when_at": "location",
+    "geocode_reverse": "location",
+    "home_status": "location",
+    "location_history": "location",
+    "location_query": "location",
+    "nearby_now": "location",
+    "save_place": "location",
+    "time_at_place": "location",
+    "where_is": "location",
+    "where_was_i": "location",
+}
+
+
+# Steps that carry no sources: each row's domain is only in the result text, as `[health]`
+# (the appointment and list readers' formatters, and the writers whose domain can default
+# from the session's scope, which tag what they resolved). Scanning it keeps a grocery list
+# shareable without a second tap.
+DOMAIN_TAGGED_TOOLS = frozenset(
+    {
+        "read_appointments",
+        "read_appointment",
+        "manage_appointment",
+        "read_lists",
+        "read_list",
+        "create_list",
+        "add_list_item",
+        "check_list_item",
+        "propose_correction",
+        "make_intake_link",
+    }
+)
+_DOMAIN_TAG = re.compile(r"\[(" + "|".join(sorted(SENSITIVE_SCOPES)) + r")\]")
+
+
+def _tool_reason(name: str) -> str | None:
+    # Every gmail tool, the write ones included: their result text names the messages.
+    if name.startswith("gmail_"):
+        return "mail"
+    return SENSITIVE_TOOLS.get(name)
+
+
+def _collect_reasons(node: Any, reasons: set[str]) -> None:
+    """Walk a stored `tools` value in full — a step's sources, nested views and any shape a
+    later producer adds — so detection doesn't depend on where a domain tag sits."""
+    if isinstance(node, dict):
+        domain = node.get("domain")
+        if isinstance(domain, str) and domain in SENSITIVE_SCOPES:
+            reasons.add(domain)
+        name = node.get("name")
+        if isinstance(name, str) and "ok" in node:
+            reason = _tool_reason(name)
+            if reason is not None:
+                reasons.add(reason)
+            summary = node.get("summary")
+            if name in DOMAIN_TAGGED_TOOLS and isinstance(summary, str):
+                reasons.update(_DOMAIN_TAG.findall(summary))
+        for value in node.values():
+            _collect_reasons(value, reasons)
+    elif isinstance(node, list):
+        for value in node:
+            _collect_reasons(value, reasons)
+
+
+def sensitivity_reasons(scopes: Iterable[str], turn_tools: Iterable[Any]) -> list[str]:
+    """Why a share of this chat publishes private data, sorted; empty when it doesn't. The
+    session's CURRENT firewalled scopes count (later turns show on the link too), and so does
+    every stored step, since a chat re-scoped mid-way keeps the turns it read before."""
+    reasons = {s for s in scopes if s in SENSITIVE_SCOPES}
+    for tools in turn_tools:
+        _collect_reasons(tools, reasons)
+    return sorted(reasons)
+
+
+async def share_sensitivity(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, session_id: str
+) -> list[str] | None:
+    """`sensitivity_reasons` for one chat, read under the OWNER's context. None when the chat
+    doesn't exist."""
+    sid = _uuid_or_none(session_id)
+    if sid is None:
+        return None
+    async with scoped_session(maker, ctx) as session:
+        scopes = (
+            await session.execute(
+                text("SELECT domain_scopes FROM app.agent_sessions WHERE id = cast(:sid AS uuid)"),
+                {"sid": sid},
+            )
+        ).first()
+        if scopes is None:
+            return None
+        tools = (
+            await session.execute(
+                text("SELECT tools FROM app.agent_turns WHERE session_id = cast(:sid AS uuid)"),
+                {"sid": sid},
+            )
+        ).scalars()
+        return sensitivity_reasons(scopes.domain_scopes or [], list(tools))
 
 
 def _row_to_link(row: Any) -> ChatShareLink:

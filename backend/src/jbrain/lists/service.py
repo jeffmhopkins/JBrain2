@@ -21,6 +21,9 @@ class ListItemInfo:
     position: int
     source_note_id: str | None
     created_at: datetime
+    # The parent list's domain where the writer already resolved it (add / check), so the
+    # agent's step can tag the row like a read does; "" elsewhere.
+    domain: str = ""
 
 
 @dataclass(frozen=True)

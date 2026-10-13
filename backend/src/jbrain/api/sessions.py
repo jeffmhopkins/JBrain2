@@ -299,6 +299,18 @@ class MintedChatShareOut(ChatShareOut):
     token: str
 
 
+class ChatShareMint(BaseModel):
+    # The owner saw `sensitive` and tapped again. Required only when the chat is sensitive,
+    # so a harmless chat still mints from a bare POST.
+    confirm_sensitive: bool = False
+
+
+class ChatShareSensitivityOut(BaseModel):
+    # Why a link would publish private data (firewalled domains, mail, memory); empty when
+    # it wouldn't. Computed from the stored turns, not the session's current scopes alone.
+    sensitive: list[str]
+
+
 def _share_out(link: chat_shares.ChatShareLink) -> ChatShareOut:
     return ChatShareOut(
         id=link.id,
@@ -308,14 +320,40 @@ def _share_out(link: chat_shares.ChatShareLink) -> ChatShareOut:
     )
 
 
-@router.post("/{session_id}/shares", status_code=201)
-async def mint_chat_share(
+@router.get("/{session_id}/shares/sensitivity")
+async def chat_share_sensitivity(
     request: Request, principal: PrincipalDep, session_id: str
-) -> MintedChatShareOut:
-    """Mint a public read link to this chat. 404 when the chat doesn't exist."""
-    minted = await chat_shares.mint_share(
+) -> ChatShareSensitivityOut:
+    """What a share of this chat would publish that the owner should be warned about."""
+    reasons = await chat_shares.share_sensitivity(
         request.app.state.session_maker, ctx_for(principal), session_id
     )
+    if reasons is None:
+        raise HTTPException(status_code=404, detail="no such session")
+    return ChatShareSensitivityOut(sensitive=reasons)
+
+
+@router.post("/{session_id}/shares", status_code=201)
+async def mint_chat_share(
+    request: Request,
+    principal: PrincipalDep,
+    session_id: str,
+    body: ChatShareMint | None = None,
+) -> MintedChatShareOut:
+    """Mint a public read link to this chat. 404 when the chat doesn't exist; 409 with the
+    reasons when it holds private reads and the owner hasn't confirmed, so a stale client's
+    warning can't be the only thing between a firewalled note and a public link."""
+    maker = request.app.state.session_maker
+    ctx = ctx_for(principal)
+    reasons = await chat_shares.share_sensitivity(maker, ctx, session_id)
+    if reasons is None:
+        raise HTTPException(status_code=404, detail="no such session")
+    if reasons and not (body is not None and body.confirm_sensitive):
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "this chat holds private reads", "sensitive": reasons},
+        )
+    minted = await chat_shares.mint_share(maker, ctx, session_id)
     if minted is None:
         raise HTTPException(status_code=404, detail="no such session")
     token, link = minted
