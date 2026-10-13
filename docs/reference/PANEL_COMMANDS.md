@@ -19,7 +19,7 @@ of what it answers to, and only one of those is useful in a bedroom.
 
 | Phrase | Does |
 |---|---|
-| `fart` | the rude noise — five variants |
+| `fart` | the rude noise — five variants; one time in ten, a 7-second long one |
 | `jump` | jump |
 | `eat` | eat |
 | `kick` | kick |
@@ -140,14 +140,17 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
 `have a snack` `give it a kick` `do a spin`
 · **love** (0.4.7; 5.6 s since 0.4.10): `i love you` `love you` — hearts float up and he coos
 · **tickle** (0.4.11): `im going to tickle you` `gonna tickle you` — a warning, not a tickle: he
-  braces with a nervous titter, and for 10 s after (renewed by each one) a poke is a tickle. Four
-  get a giggle; the fifth sets off the laughing fit (squirming, laughing three times over).
+  braces with a nervous titter, and for 10 s after (renewed by each one) a poke is a tickle. He
+  waits hunched and shivering; each of four tickles is a squirm with tickle marks and a held-in
+  "hehehe", harder each time, with none of a poke's flinch or colour change (0.4.12); the fifth
+  sets off the laughing fit (squirming, laughing three times over).
   0.4.10's `tickle tickle` / `tickle me` are gone
 · **eat** (`eat`, `have a snack`): since 0.4.11 three bites over 2.9 s of one of eight snacks
   (cookie, apple, banana, pizza, donut, carrot, watermelon, strawberry; never the same twice running),
   a crunch on each bite, chewing between. **Three meals inside a minute** and, once he is
   free, he squats, strains and a poop plops out behind him (0.4.11): it stays on the floor for
-  20 s and slides downhill as the panel is tilted
+  20 s and slides downhill as the panel is tilted. It is one of eight (0.4.12), never the same
+  twice running: each its own shape, colour and face, some stinkier than others, some with flies
 
 **Not a phrase: shaking the panel** (0.4.7). Four hard jerks inside a second and a half
 (`screen_shaken`) and he sits down hard, dazed, shaking his head with stars going round, and

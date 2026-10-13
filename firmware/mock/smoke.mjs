@@ -96,8 +96,10 @@ for (let i = 0; i < 5; i++) {
 tap(W / 2, H * 0.62);
 p.advance(4600);
 const tk = events.slice(tickled);
-check(tk.filter((e) => e.includes('cue GIGGLE')).length === 4, 'four tickles, a giggle each');
-check(tk.filter((e) => e.includes('cue TICKLE')).length === 3,
+check(tk.filter((e) => e.includes('cue TICKLED')).length === 4,
+  'four tickles, a held-in "hehehe" each, not the poke giggle');
+check(!tk.some((e) => e.includes('cue GIGGLE')), 'nothing about a tickle sounds like a poke');
+check(tk.filter((e) => e.includes('cue TICKLE (')).length === 3,
   'and the fifth sets him laughing, and laughing again, and again');
 const later = events.length;
 tap(W / 2, H * 0.62);
@@ -121,6 +123,15 @@ const ate = snacks();
 check(ate.length === 3 && ate[0] !== ate[1] && ate[1] !== ate[2], 'a different snack each time');
 check(after.some((e) => e.includes('plop')) && after.some((e) => e.includes('cue POOP')),
   'and he poops, with a plop');
+
+// The one-in-ten fart: seven seconds of it, a new piece the moment the last one ends.
+const farted = events.length;
+p.set(KNOB.PET_ACT, 6);
+p.advance(7300);
+const pieces = events.slice(farted).filter((e) => e.includes('cue MEGAFART'));
+check(pieces.length >= 8, `seven seconds of fart, back to back (${pieces.length} pieces)`);
+const stamps = pieces.map((e) => e.split(' ')[0]);
+check(new Set(stamps).size === stamps.length, `one piece at a time, never two in a frame (${stamps})`);
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);

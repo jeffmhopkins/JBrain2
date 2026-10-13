@@ -1016,11 +1016,44 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
     }
     CHECK(tickle_poke(&tk, 7000) == TICKLE_BIG, "and the fifth sets him off");
     CHECK(tickle_poke(&tk, 7500) == TICKLE_NO, "after which a poke is a poke again");
+    /* AND A TICKLE LOOKS LIKE A TICKLE (owner: "if I touch him he still acts like I'm poking
+       him versus tickling"). The four were ACT_GIGGLE, one of the poke pools' own reactions,
+       with the poke's flinch and colour change: indistinguishable from a poke. Now each is its
+       own squirm with the tickle marks and its own sound, rising tickle by tickle. */
+    CHECK(cue_for_action(ACT_TICKLED) == CUE_TICKLED && CUE_TICKLED != CUE_GIGGLE,
+          "a tickle has its own held-in laugh, not the poke giggle");
+    {
+        figure_pose_t fig;
+        rig_figure(ACT_TICKLED, 0.4f, 1.0f, 0, 0.0f, &fig);
+        CHECK(fig.extra == EXTRA_TICKLE, "and the tickle marks, as the fit has");
+        tickle_t tm;
+        tickle_reset(&tm);
+        tickle_arm(&tm, 0);
+        float last = 0.0f;
+        for (int i = 1; i < TICKLE_POKES; i++) {
+            tickle_poke(&tm, (uint32_t)i * 100);
+            CHECK(tickle_mag(&tm) > last && tickle_mag(&tm) <= 1.0f,
+                  "each tickle harder than the last");
+            last = tickle_mag(&tm);
+        }
+    }
+    /* WAITING TO BE TICKLED, the game is visibly on: the brace held, never easing out of it. */
+    for (uint32_t ms = 0; ms < 5000; ms += 37) {
+        const float wp = tickle_wait_p(ms);
+        rig_pose_t a, b;
+        rig_for(ACT_BRACE, wp, 1.0f, 0, &a);
+        rig_for(ACT_BRACE, 0.5f, 1.0f, 0, &b);
+        CHECK(wp > 0.2f && wp < 0.78f && fabsf(a.leg_l - b.leg_l) < 0.01f,
+              "the waiting pose holds the hunch the whole time");
+    }
+
     /* BUT NOT DURING THE FIT IT SET OFF: a child tickling keeps poking, and the sixth poke
        picking from the zone's pool cut the 4.8 s fit off after its first laugh (review). */
     CHECK(rig_holds_pokes(ACT_TICKLE), "a poke mid-fit only flinches");
     for (int a = ACT_NONE; a < ACT_COUNT; a++) {
-        if (a != ACT_TICKLE) CHECK(!rig_holds_pokes((action_t)a), "everything else gives way");
+        if (a != ACT_TICKLE && a != ACT_MEGAFART) {
+            CHECK(!rig_holds_pokes((action_t)a), "everything else gives way");
+        }
     }
     /* The warning holds for TICKLE_WAIT_MS, renewed by each tickle, then passes. */
     tickle_arm(&tk, 10000);
@@ -1095,6 +1128,147 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
         rig_figure(ACT_TICKLE, 0.9f, 1.0f, 0, 0.0f, &st.fig);
         face_draw(fb, 0, &st);
         CHECK(count_colour(mark) == 0, "and gone as he gets his breath back");
+    }
+}
+
+/* ONE FART IN TEN IS THE LONG ONE (owner: "about a 1 in 10 chance that when he farts on
+   command, that the fart lasts a good 7 seconds, and make sure the fart sounds funny"). */
+static void test_one_fart_in_ten_goes_on_for_seven_seconds(void)
+{
+    int mega = 0;
+    for (uint32_t r = 0; r < 10000; r++) {
+        const action_t a = rig_fart_pick(r * 2654435761u);
+        CHECK(a == ACT_FART || a == ACT_MEGAFART, "a fart is still a fart");
+        mega += a == ACT_MEGAFART;
+    }
+    CHECK(mega > 800 && mega < 1200, "about one in ten");
+    CHECK(rig_spec(ACT_MEGAFART)->dur_ms >= 7000, "a good seven seconds");
+    CHECK(cue_for_action(ACT_MEGAFART) == CUE_MEGAFART && CUE_MEGAFART != CUE_FART,
+          "with its own noise");
+
+    /* A cue tops out under a second, so seven seconds is the speaker kept busy: re-cued
+       whenever it is free, right up to the release, and nothing else is. */
+    CHECK(rig_recue_continuous(ACT_MEGAFART, 0.0f) && rig_recue_continuous(ACT_MEGAFART, 0.9f),
+          "kept going all the way through");
+    CHECK(!rig_recue_continuous(ACT_MEGAFART, 0.97f), "and lets the last one ring out");
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a == ACT_MEGAFART) continue;
+        CHECK(!rig_recue_continuous((action_t)a, 0.5f), "nothing else goes on and on");
+    }
+    CHECK(rig_holds_pokes(ACT_MEGAFART), "and a poke cannot cut him off mid-fart");
+
+    /* FUNNY is variety: each piece in a run is a different character, not one tone looped. */
+    static int16_t a[CUE_MAX_SAMPLES], b[CUE_MAX_SAMPLES];
+    int distinct = 0;
+    for (unsigned v = 0; v < 8; v++) {
+        const int na = cue_render(CUE_MEGAFART, a, CUE_RATE, 100, v);
+        const int nb = cue_render(CUE_MEGAFART, b, CUE_RATE, 100, v + 1);
+        CHECK(na > CUE_RATE / 4, "each piece is a proper length");
+        distinct += na != nb || memcmp(a, b, (size_t)na * sizeof a[0]) != 0;
+    }
+    CHECK(distinct == 8, "and the next piece always sounds different");
+
+    /* And the clouds pile up behind him while it lasts, on both forms. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        rig_for(ACT_MEGAFART, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_MEGAFART, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_GAS, "gas is the extra");
+        face_draw(fb, 0, &st);
+        const long with = count_colour(rgb565(0x8C, 0x9A, 0x8C));
+        st.fig.extra = EXTRA_NONE;
+        face_draw(fb, 0, &st);
+        CHECK(with > count_colour(rgb565(0x8C, 0x9A, 0x8C)) + 2000, "a cloud of it");
+    }
+}
+
+/* EIGHT POOPS (owner: "make eight variations of poops also. Maybe we can vary graphic, that
+   poops expression, and the amount of stink, and maybe it has flies or not"). */
+static void test_eight_poops_each_its_own(void)
+{
+    /* Every kind tells apart from every other by at least two of shape, face, stink, flies. */
+    int shapes = 0, faces = 0, stinks = 0, flies = 0, with_flies = 0;
+    for (int a = 0; a < POOP_KINDS; a++) {
+        const poop_look_t *x = poop_look(a);
+        shapes |= 1 << x->shape;
+        faces |= 1 << x->face;
+        stinks |= 1 << x->stink;
+        flies |= 1 << x->flies;
+        with_flies += x->flies > 0;
+        for (int b = a + 1; b < POOP_KINDS; b++) {
+            const poop_look_t *y = poop_look(b);
+            const int differ = (x->shape != y->shape) + (x->face != y->face) +
+                               (x->stink != y->stink) + (x->flies != y->flies);
+            CHECK(differ >= 2, "no two poops are near-twins");
+        }
+    }
+    CHECK(shapes == (1 << POOP_SHAPE_COUNT) - 1, "every shape is used");
+    CHECK(faces == (1 << POOP_FACE_COUNT) - 1, "and every face, one each");
+    CHECK(stinks == 0xF && flies == 0xF, "stink 0..3 and flies 0..3 all appear");
+    CHECK(with_flies > 0 && with_flies < POOP_KINDS, "some have flies, some do not");
+
+    /* The pick: never the one before, and all eight come round. */
+    poop_t pp;
+    poop_reset(&pp);
+    int seen = 0;
+    for (uint32_t i = 0; i < 400; i++) {
+        const int prev = pp.kind;
+        poop_drop(&pp, i, 0.0f, POOP_HALF, i * 2654435761u);
+        CHECK(pp.kind != prev && pp.kind >= 0 && pp.kind < POOP_KINDS, "never the same twice");
+        seen |= 1 << pp.kind;
+    }
+    CHECK(seen == (1 << POOP_KINDS) - 1, "and every one turns up");
+    /* Including first after boot: a fresh one has no "last" to avoid (review). */
+    int first = 0;
+    for (uint32_t r = 0; r < POOP_KINDS; r++) {
+        poop_reset(&pp);
+        poop_drop(&pp, 0, 0.0f, POOP_HALF, r);
+        first |= 1 << pp.kind;
+    }
+    CHECK(first == (1 << POOP_KINDS) - 1, "any of the eight can be the first");
+
+    /* On the glass: eight different pictures; the stink as much as the kind says; flies
+       only on the ones that have them. Drawn at a moment every stink line is on screen. */
+    const uint16_t stink = rgb565(0x9C, 0xC8, 0x6A), fly = rgb565(0x6A, 0x70, 0x7C);
+    static uint32_t sums[POOP_KINDS];
+    long stink_px[POOP_KINDS];
+    for (int k = 0; k < POOP_KINDS; k++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = FORM_OSTRICH;
+        st.poop_size = 0.0f;
+        face_draw(fb, 0, &st);
+        const long bare_stink = count_colour(stink), bare_fly = count_colour(fly);
+        st.poop_kind = k;
+        st.poop_size = 1.0f;
+        st.poop_x = -110.0f;
+        long most = 0, flies_px = 0;
+        for (float t = 1.0f; t < 3.0f; t += 0.1f) {
+            st.poop_t = t;
+            face_draw(fb, 0, &st);
+            const long n = count_colour(stink) - bare_stink;
+            most = n > most ? n : most;
+            const long f = count_colour(fly) - bare_fly;
+            flies_px = f > flies_px ? f : flies_px;
+        }
+        stink_px[k] = most;
+        CHECK((poop_look(k)->flies > 0) == (flies_px > 20), "flies buzz only where they belong");
+        CHECK((poop_look(k)->stink > 0) == (most > 20), "an odourless one gives off nothing");
+        st.poop_t = 1.0f;
+        face_draw(fb, 0, &st);
+        uint32_t h = 2166136261u;
+        for (long i = 0; i < (long)FACE_W * FACE_H; i++) h = (h ^ fb[i]) * 16777619u;
+        sums[k] = h;
+        for (int j = 0; j < k; j++) CHECK(sums[j] != h, "each looks like itself");
+    }
+    for (int a = 0; a < POOP_KINDS; a++) {
+        for (int b = 0; b < POOP_KINDS; b++) {
+            if (poop_look(a)->stink > poop_look(b)->stink) {
+                CHECK(stink_px[a] > stink_px[b], "a ranker one smells visibly worse");
+            }
+        }
     }
 }
 
@@ -1235,7 +1409,7 @@ static void test_three_meals_in_a_minute_and_he_has_to_go(void)
     poop_ate(&pp, 0);
     poop_ate(&pp, 1);
     poop_ate(&pp, 2);
-    poop_drop(&pp, 10000, 0.0f, POOP_HALF);
+    poop_drop(&pp, 10000, 0.0f, POOP_HALF, 0u);
     CHECK(!pp.owed && pp.on, "dropping it pays off what was owed");
     CHECK(poop_scale(&pp, 10000) < 0.05f && poop_scale(&pp, 10000 + POOP_POP_MS) > 0.99f,
           "it plops in");
@@ -1247,12 +1421,12 @@ static void test_three_meals_in_a_minute_and_he_has_to_go(void)
     /* DROPPED BEYOND THE FLOOR'S END (on its side the lean runs to 110, so behind him can be
        -220 against a floor of 150), it lands on the end of the floor, not off it — and on a
        level panel it would otherwise have stayed off it all twenty seconds (review on 0.4.11). */
-    poop_drop(&pp, 0, -220.0f, POOP_HALF);
+    poop_drop(&pp, 0, -220.0f, POOP_HALF, 0u);
     for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.0f, 40, POOP_HALF);
     CHECK(pp.x >= -POOP_HALF && pp.x <= POOP_HALF, "it lands on the floor, never past its end");
 
     /* IT SLIDES DOWNHILL, and stays put on the level. */
-    poop_drop(&pp, 0, 0.0f, POOP_HALF);
+    poop_drop(&pp, 0, 0.0f, POOP_HALF, 0u);
     for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.03f, 40, 150.0f);
     CHECK(pp.x == 0.0f, "a panel a hair off level does not make it creep");
     for (t = 1000; t < 1600; t += 40) poop_step(&pp, t, 0.5f, 40, 150.0f);
@@ -5092,6 +5266,8 @@ int main(void)
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
     test_a_meal_is_three_bites_of_a_cookie();
     test_a_snack_is_one_of_eight_and_never_the_same_twice();
+    test_one_fart_in_ten_goes_on_for_seven_seconds();
+    test_eight_poops_each_its_own();
     test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();

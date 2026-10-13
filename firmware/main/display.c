@@ -2015,6 +2015,8 @@ static void face_task(void *arg)
                     /* ASKING FOR A THING SOUNDS LIKE THE THING: the acknowledgement IS the
                        action's cue, not a bleep followed by one. */
                     action = (action_t)v->arg;
+                    /* One "fart" in ten is the seven-second one (`rig_fart_pick`). */
+                    if (action == ACT_FART) action = rig_fart_pick(esp_random());
                     action_mag = 1.0f;
                     action_start = now;
                     heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
@@ -2202,15 +2204,19 @@ static void face_task(void *arg)
                 /* THE POKE IS THE PRODUCT, AND WHERE YOU POKE IS HALF OF IT. The zone picks the
                    pool; the pool picks the reaction, weighted, cooled down and softened if you are
                    hammering it (`variants.c`). THE SOUND FOLLOWS THE ACTION. */
-                colour = (colour + 1) % face_colour_count();
                 s_tap_zone = (int)face_zone(fst.form, s_fig_x, s_fig_y, s_upside_down, s_lean);
-                /* WARNED, A POKE IS A TICKLE (`tickle.h`): a giggle for each he holds out
-                   against, and the laughing fit on the fifth. Otherwise the zone's pool. */
+                /* WARNED, A POKE IS A TICKLE (`tickle.h`), and must not look like a poke (owner:
+                   *"if I touch him he still acts like I'm poking him versus tickling"*). So no
+                   flinch and no colour change, which are what a poke does; a squirm with the
+                   tickle marks and a held-in "hehehe" for each he holds out against, harder each
+                   time, and the laughing fit on the fifth. Otherwise the zone's pool. */
                 const tickle_poke_t tk = tickle_poke(&tickle, now);
                 if (tk != TICKLE_NO) {
-                    action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_GIGGLE;
-                    action_mag = 1.0f;
+                    s_flinch = 0.0f;
+                    action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
+                    action_mag = tk == TICKLE_BIG ? 1.0f : tickle_mag(&tickle);
                 } else {
+                    colour = (colour + 1) % face_colour_count();
                     const pool_t pool = ZONE_POOL[s_tap_zone];
                     action = (action_t)variants_pick(pool, &mem[pool], now, esp_random());
                     action_mag = variants_penalty(pool, &mem[pool], now);
@@ -2422,6 +2428,7 @@ static void face_task(void *arg)
            inside the draw below, after the gate had already read `dirty`, so a reply's mouth was
            drawn at the 200 ms floor: five frames a second (0.4.3). */
         if (facts.speaker_busy) dirty = true;
+        if (tickle_armed(&tickle, now)) dirty = true; /* the waiting shiver moves */
         /* WHAT GOES IN (`poop.h`): owed after three meals in a minute, and done at the first
            moment he is free, on the pet screen. It lands at POOP_AT (below); from then it
            slides on the tilt for its twenty seconds. A frame whenever it moves, plops in or
@@ -2458,6 +2465,18 @@ static void face_task(void *arg)
                     p = (float)el / (float)dur;
                 }
             }
+            /* WAITING TO BE TICKLED (`tickle_wait_p`): warned and doing nothing else, he holds
+               the brace, hunched and shivering, so the game is visibly on. Drawn only — it is
+               not an action, so nothing re-cues and a poke is still read as a tickle. */
+            action_t shown = action;
+            float shown_p = p;
+            /* At full shiver, not the last tickle's lighter magnitude (review). */
+            float shown_mag = action_mag;
+            if (action == ACT_NONE && tickle_armed(&tickle, now)) {
+                shown = ACT_BRACE;
+                shown_p = tickle_wait_p(now);
+                shown_mag = 1.0f;
+            }
             /* AN ACTION THAT OUTLASTS ITS SOUND SAYS IT AGAIN (`rig_recue`): the tickle laughs
                three times. Measured from the last DRAWN frame's progress, so a skipped frame
                cannot skip a laugh; and only into a speaker nobody else is using. */
@@ -2465,13 +2484,14 @@ static void face_task(void *arg)
                 recue_from = action_start;
                 recue_p = 0.0f;
             }
-            if (action != ACT_NONE && rig_recue(action, recue_p, p) && sound &&
+            if (action != ACT_NONE &&
+                (rig_recue(action, recue_p, p) || rig_recue_continuous(action, p)) && sound &&
                 view->mode == SM_PET && !facts.speaker_busy) {
                 stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
             }
             /* The plop: behind him, where a bird's tail is. */
             if (action == ACT_POOP && recue_p < POOP_AT && p >= POOP_AT) {
-                poop_drop(&poop, now, (float)s_lean - POOP_BEHIND, POOP_HALF);
+                poop_drop(&poop, now, (float)s_lean - POOP_BEHIND, POOP_HALF, esp_random());
             }
             recue_p = p;
             const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD ||
@@ -2484,22 +2504,23 @@ static void face_task(void *arg)
             emotion_resolve(dozing                      ? FACE_SLEEPY
                             : view->mode == SM_LISTEN ? FACE_CURIOUS
                             : view->dash              ? FACE_BEWILDERED
-                                                      : rig_spec(action)->face,
+                                                      : rig_spec(shown)->face,
                             &target);
             /* TWICE PER FRAME: `emotion_approach` halves per frame and was written against 50 fps;
                this panel renders at 25. */
             emotion_approach_face(&fst.eyes, &target, target.rate);
             emotion_approach_face(&fst.eyes, &target, target.rate);
-            rig_for(action, p, action_mag, now, &fst.rig);
+            rig_for(shown, shown_p, shown_mag, now, &fst.rig);
             rig_walk(&walk, (float)(s_lean - walked_from), &fst.rig);
             walked_from = s_lean;
-            rig_figure(action, p, action_mag, now, fst.eyes.face_ang, &fst.fig);
+            rig_figure(shown, shown_p, shown_mag, now, fst.eyes.face_ang, &fst.fig);
             fst.bob = bob_step(frame++);
             fst.lean = s_lean;
             fst.upright = s_upright;
             fst.poop_x = poop.x;
             fst.poop_size = poop_scale(&poop, now);
             fst.poop_t = (float)(now - poop.born) * 0.001f;
+            fst.poop_kind = poop.kind;
             fst.open = dozing ? emotion_approach(emotion_approach(fst.open, 0.0f, 0.12f), 0.0f, 0.12f)
                               : s_open;
             fst.startle = s_flinch;

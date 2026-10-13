@@ -23,6 +23,42 @@
 #define POOP_HALF 150.0f
 #define POOP_BEHIND 110.0f
 
+/* EIGHT POOPS (0.4.12, owner: *"make eight variations of poops also. Maybe we can vary
+   graphic, that poops expression, and the amount of stink, and maybe it has flies or not"*).
+   A kind is a row of `POOP_LOOKS` (`poop.c`); the next is never the last (`poop_drop`). */
+#define POOP_KINDS 8
+
+typedef enum {
+    POOP_SWIRL,   /* the three-tier swirl every child draws */
+    POOP_TOWER,   /* four tiers, showing off */
+    POOP_BLOB,    /* a flat puddle with a lump */
+    POOP_PELLETS, /* a pile of little balls */
+    POOP_LOG,     /* one long one */
+    POOP_SHAPE_COUNT,
+} poop_shape_t;
+
+typedef enum {
+    POOP_SMILE,
+    POOP_COOL,    /* sunglasses */
+    POOP_SLEEPY,
+    POOP_SHOCKED,
+    POOP_TONGUE,
+    POOP_GRUMPY,
+    POOP_QUEASY,  /* worried, with a sweat drop */
+    POOP_WINK,
+    POOP_FACE_COUNT,
+} poop_face_t;
+
+typedef struct {
+    uint8_t shape;  /* poop_shape_t */
+    uint8_t face;   /* poop_face_t */
+    uint8_t stink;  /* 0 none .. 3 rank: how many lines rise, and how fast and high */
+    uint8_t flies;  /* 0 .. 3 buzzing round it */
+    uint8_t r, g, b;
+} poop_look_t;
+
+const poop_look_t *poop_look(int kind);
+
 typedef struct {
     uint32_t meals[POOP_MEALS]; /* when the last few meals started, oldest first */
     int n;
@@ -31,6 +67,7 @@ typedef struct {
     uint32_t born;
     float x;                    /* figure units from the floor's centre */
     float v;                    /* figure units a second */
+    int kind;                   /* which of POOP_KINDS this one is; POOP_KINDS before any */
 } poop_t;
 
 void poop_reset(poop_t *p);
@@ -40,8 +77,9 @@ void poop_reset(poop_t *p);
 bool poop_ate(poop_t *p, uint32_t now);
 
 /* Put one on the floor at `x`, at rest, for POOP_SHOW_MS. Pays off what was owed. Behind a pet
-   leaning far over can be past the floor's end (`half`), so it lands ON the end instead. */
-void poop_drop(poop_t *p, uint32_t now, float x, float half);
+   leaning far over can be past the floor's end (`half`), so it lands ON the end instead. `rnd`
+   picks its kind, never the one before. */
+void poop_drop(poop_t *p, uint32_t now, float x, float half, uint32_t rnd);
 
 /* One step of the slide. `g` is the tilt, -1 (left side down) .. 1 (right side down); the floor
    runs from `-half` to `half`. Clears `on` once its time is up. */

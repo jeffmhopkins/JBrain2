@@ -111,9 +111,17 @@ static rig_walk_t r_walk;
 static action_t r_action;
 static uint32_t r_action_at;
 static uint32_t r_recue_from;
+/* A random number for the bench's 1-in-10 fart and its poops, from the panel clock: the bench has no RNG,
+   and a fixed sequence would make "Fart" always the same one. */
+static uint32_t r_now_rnd(void)
+{
+    return (g_now / 40u) * 2654435761u >> 7;
+}
+
 /* As the panel does: three snacks in a minute and he has to go (`poop.h`). */
 static poop_t r_poop;
 static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
+static float r_mag = 1.0f; /* the action's magnitude: the tickles rise */
 static uint32_t r_poop_last;
 static float r_recue_p;
 static float r_flinch;
@@ -448,10 +456,12 @@ static void frame(void)
         r_mode_was = s_sm.mode;
     }
     if (execute(now)) {
+        r_mag = 1.0f;
         r_action = ACT_NOD;
         r_action_at = now;
     }
     if (r_pending_act != ACT_NONE) {
+        r_mag = 1.0f;
         r_action = r_pending_act;
         r_action_at = now;
         r_pending_act = ACT_NONE;
@@ -474,6 +484,8 @@ static void frame(void)
         say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
                          : r_action == ACT_LOVE ? "heard \"i love you\""
                          : r_action == ACT_EAT  ? "heard \"have a snack\""
+                         : r_action == ACT_FART ? "heard \"fart\": a short one"
+                         : r_action == ACT_MEGAFART ? "heard \"fart\": THE LONG ONE"
                                                 : "heard \"im going to tickle you\"");
     }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
@@ -482,7 +494,9 @@ static void frame(void)
     if (s_out.pet_press && facts.pet_only && !rig_holds_pokes(r_action)) {
         const tickle_poke_t tk = tickle_poke(&r_tickle, now);
         if (tk != TICKLE_NO) {
-            r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_GIGGLE;
+            r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
+            r_mag = tk == TICKLE_BIG ? 1.0f : tickle_mag(&r_tickle);
+            r_flinch = 0.0f;
             r_action_at = now;
             const cue_t c = cue_for_action((int)r_action);
             (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
@@ -491,6 +505,7 @@ static void frame(void)
         }
     }
     if (r_poop.owed && r_action == ACT_NONE && s_sm.mode == SM_PET) {
+        r_mag = 1.0f;
         r_action = ACT_POOP;
         r_action_at = now;
         say("pet", "has to go");
@@ -533,20 +548,33 @@ static void frame(void)
             p = (float)el / (float)dur;
         }
     }
+    /* As the panel does: warned and idle, he holds the brace, shivering (`tickle_wait_p`). */
+    action_t shown = r_action;
+    float shown_p = p;
+    float shown_mag = r_mag;
+    if (r_action == ACT_NONE && tickle_armed(&r_tickle, now)) {
+        shown = ACT_BRACE;
+        shown_p = tickle_wait_p(now);
+        shown_mag = 1.0f;
+    }
     /* As the panel does (`display.c`): an action that outlasts its sound says it again. */
     if (r_action_at != r_recue_from) {
         r_recue_from = r_action_at;
         r_recue_p = 0.0f;
     }
-    if (r_action != ACT_NONE && rig_recue(r_action, r_recue_p, p) && view->mode == SM_PET &&
-        !facts.speaker_busy) {
+    /* Not on the frame it started: `facts` was read before that start cue went in, so the
+       speaker still looks free, where the panel reads its facts after (review). */
+    if (r_action != ACT_NONE &&
+        (rig_recue(r_action, r_recue_p, p) ||
+         (rig_recue_continuous(r_action, p) && r_action_at != now)) &&
+        view->mode == SM_PET && !facts.speaker_busy) {
         const cue_t c = cue_for_action((int)r_action);
         (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
         say("cue", "%s (press slot, again)", cue_name(c));
     }
     if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
-        poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF);
-        say("pet", "plop");
+        poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF, r_now_rnd());
+        say("pet", "plop (kind %d)", r_poop.kind);
     }
     r_recue_p = p;
     const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD || view->think;
@@ -555,11 +583,11 @@ static void frame(void)
     emotion_resolve(dozing                    ? FACE_SLEEPY
                     : view->mode == SM_LISTEN ? FACE_CURIOUS
                     : view->dash              ? FACE_BEWILDERED
-                                              : rig_spec(r_action)->face,
+                                              : rig_spec(shown)->face,
                     &target);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
-    rig_for(r_action, p, 1.0f, now, &r_fst.rig);
+    rig_for(shown, shown_p, shown_mag, now, &r_fst.rig);
     /* `display.c`'s `update_orientation`, upright: the lean and the head's righting from a
        panel turned `r_tilt_deg`, as the accelerometer (one g = 8192) would report it. The
        lean's arithmetic is copied; the axes and the righting are `orient.c`'s own. */
@@ -585,8 +613,9 @@ static void frame(void)
         r_fst.poop_x = r_poop.x;
         r_fst.poop_size = poop_scale(&r_poop, now);
         r_fst.poop_t = (float)(now - r_poop.born) * 0.001f;
+        r_fst.poop_kind = r_poop.kind;
     }
-    rig_figure(r_action, p, 1.0f, now, r_fst.eyes.face_ang, &r_fst.fig);
+    rig_figure(shown, shown_p, shown_mag, now, r_fst.eyes.face_ang, &r_fst.fig);
     r_fst.bob = bob_step(r_frame++);
     const uint32_t blink = now % 4200;
     r_fst.open = dozing ? 0.0f : blink < 120 ? 1.0f - blink / 120.0f : blink < 240 ? (blink - 120) / 120.0f : 1.0f;
@@ -641,6 +670,7 @@ EXPORT(sim_init) void sim_init(void)
     stream_init(&g_st, g_ring, s_play, bufs);
     stream_set_arbiter(&g_st, true);
     sm_init(&s_sm, g_now);
+    poop_reset(&r_poop);
     face_rest(&r_fst);
     caption_reset(&r_cap);
     r_active_at = g_now;
@@ -696,6 +726,7 @@ EXPORT(sim_message) void sim_message(int from_dad, int ms)
 }
 
 /* The box's knobs. */
+
 EXPORT(sim_set) void sim_set(int knob, int value)
 {
     switch (knob) {
@@ -723,6 +754,8 @@ EXPORT(sim_set) void sim_set(int knob, int value)
                         : value == 2 ? ACT_LOVE
                         : value == 3 ? ACT_BRACE
                         : value == 4 ? ACT_EAT
+                        : value == 5 ? rig_fart_pick(r_now_rnd())
+                        : value == 6 ? ACT_MEGAFART
                                      : ACT_NONE;
         break;
     }

@@ -47,6 +47,8 @@ typedef enum {
     ACT_LOVE,  /* "I love you": hearts float up and he coos */
     ACT_TICKLE, /* the fifth tickle (`tickle.h`): he squirms and laughs, and laughs again */
     ACT_BRACE,  /* "I'm going to tickle you": he braces, giggling nervously */
+    ACT_TICKLED, /* one of the four tickles before the fifth: a squirm and a "hehehe" */
+    ACT_MEGAFART, /* one "fart" in ten (`rig_fart_pick`): seven seconds of it */
     ACT_POOP,   /* three meals in a minute (`poop.h`): he squats, strains, and plop */
     ACT_COUNT,
 } action_t;
@@ -128,6 +130,7 @@ typedef enum {
     EXTRA_HEARTS,
     EXTRA_TICKLE, /* wiggle marks either side of him: where the tickling is */
     EXTRA_FOOD,   /* a cookie, a bite gone at each bite (`rig_eat_bites`), crumbs falling */
+    EXTRA_GAS,    /* clouds puffing out behind him and drifting off, the whole time */
 } extra_t;
 
 typedef struct {
@@ -170,6 +173,13 @@ bool rig_cue_on_start(action_t a);
    laughing fit is the payoff for five pokes, and the child doing the tickling keeps poking:
    the sixth replacing it cut it off after its first laugh. */
 bool rig_holds_pokes(action_t a);
+
+/* An action whose sound is a run of cues back to back for as long as it lasts: the next is
+   started the moment the speaker is free, rather than at fixed points (`rig_recue`). */
+bool rig_recue_continuous(action_t a, float p);
+
+/* What "fart" brings, from a random `rnd`: one time in ten the seven-second one. */
+action_t rig_fart_pick(uint32_t rnd);
 
 /* EATING: bites taken by progress `p` (0..EAT_BITES), and how long ago the last one was as a
    fraction of a bite's time (for the crumbs), or -1 before the first. */

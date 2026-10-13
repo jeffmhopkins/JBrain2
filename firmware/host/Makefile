@@ -76,7 +76,7 @@ run_jpanel_tests: jpanel_tests.c $(JPANEL_SRC) fake_stream.h $(HDR)
 # `display.c` wires them, against `jpanel_tests.c`'s scripted box (included whole, minus its
 # `main`). Its own source list for the reason `run_jpanel_tests` has one: this links the real
 # `stream.c` where that one links the fake.
-E2E_SRC = ../main/jpanel_core.c ../main/stream.c ../main/panel_sm.c ../main/cue.c ../main/ring.c ../main/reach.c ../main/confirm.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/gesture.c
+E2E_SRC = ../main/jpanel_core.c ../main/stream.c ../main/panel_sm.c ../main/cue.c ../main/ring.c ../main/reach.c ../main/confirm.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/gesture.c ../main/poop.c
 run_e2e_tests: e2e_tests.c jpanel_tests.c $(E2E_SRC) fake_stream.h $(HDR)
 	$(CC) $(CFLAGS) -pthread -o $@ e2e_tests.c $(E2E_SRC) $(LDLIBS)
 
