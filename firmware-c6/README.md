@@ -1684,8 +1684,9 @@ it can start (`tk_can_begin`), and a play takes its own size.
   start, so the screen stays upright", and telemetry says `orient=failed:<step>`.
 - **Screenshots stay upright**: the debug screenshot taps the strips before they are turned, so it is
   what LVGL drew; `display.rotation` and `orient.rotation` say how the glass shows it.
-- **The chip's axes against the glass are not known** (HARDWARE.md §6). `imu_axes` (NVS, 0-7, the
-  debug `set`) swaps the chip's X/Y and flips either axis; 0 assumes +X right, +Y down.
+- **The chip's axes against the glass** are `imu_axes` = 6 on the owner's board (measured
+  2026-10-13, HARDWARE.md §6). `imu_axes` (NVS, 0-7, the debug `set`) swaps the chip's X/Y and flips
+  either axis; the default 0 assumes +X right, +Y down, which shows this board upright as 180°.
 
 ### Touch calibration
 
@@ -1732,7 +1733,8 @@ it can start (`tk_can_begin`), and a play takes its own size.
   `read_errors`, `changes`, `chip` and `id` (WHO_AM_I / revision).
 - **Settling `imu_axes` from the box takes two holds**, because one upright reading cannot tell the
   glass's x flip (and that bit is what tells 90° from 270°): (1) panel upright, still, a snapshot —
-  `set imu_axes` to its `orient.axes_if_upright`; (2) panel on its **right** edge (turned a quarter turn
+  `set imu_axes` to its `orient.axes_if_upright` before the second hold, since that helper starts from the
+  current value; (2) panel on its **right** edge (turned a quarter turn
   clockwise, so the edge that was on your right is at the bottom), still, a snapshot — `set imu_axes` to its
   `orient.axes_if_right_edge`. That value is the whole answer; record it in HARDWARE.md §6. Telemetry: `orient=ok,rot:90,chg:N,rd:N,err:N,axes:N`.
 - `calib`: `custom`, `capturing`, `date`, `fit` (a,b,c,d,e,f: scales and shears in thousandths,
