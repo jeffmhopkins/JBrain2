@@ -41,6 +41,11 @@ MAX_VILLAGERS = 20_000
 MAX_PETS = 5_000
 MAX_NAMED = 5_000
 MAX_TRADES = 32
+# The map's listing (§M4e "on the map"): villagers within this many blocks of each
+# other, by single link, are one village; at most this many villagers are listed (the
+# villages always count them all).
+VILLAGE_LINK = 48
+MAX_LISTED_VILLAGERS = 4_000
 
 # The byte tests (§M4e): a candidate holds one of these before it is parsed. A tamed
 # animal's `IsTamed` byte tag is 1; an untamed one still carries the tag, set to 0.
@@ -166,6 +171,12 @@ class Mob:
     @property
     def villager(self) -> bool:
         return self.kind in VILLAGER_KINDS
+
+    @property
+    def key(self) -> str:
+        """A stable id for the map: the game's `UniqueID`, or where it stands when the
+        record had none (it's 0 then)."""
+        return str(self.uid) if self.uid else f"at:{self.dim}:{self.x}:{self.y}:{self.z}"
 
 
 def is_candidate(value: bytes) -> bool:
@@ -473,7 +484,112 @@ class EntityIndex:
         return [_pet_out(d, m) for _, d, m in hits[:limit]], len(hits)
 
 
-def _villager_out(distance: int, m: Mob, trades: list[Trade]) -> dict[str, Any]:
+def _villages(mobs: list[Mob]) -> list[list[Mob]]:
+    """Single-link groups: two villagers within VILLAGE_LINK blocks are in one village.
+    A grid of VILLAGE_LINK cells keeps it linear in the villagers, not quadratic."""
+    parent = list(range(len(mobs)))
+
+    def root(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    cells: dict[tuple[int, int], list[int]] = {}
+    for i, m in enumerate(mobs):
+        cells.setdefault((m.x // VILLAGE_LINK, m.z // VILLAGE_LINK), []).append(i)
+    for (cx, cz), here in cells.items():
+        near = [
+            j
+            for dx in (-1, 0, 1)
+            for dz in (-1, 0, 1)
+            for j in cells.get((cx + dx, cz + dz), [])
+        ]
+        for i in here:
+            a = mobs[i]
+            for j in near:
+                if j > i:
+                    b = mobs[j]
+                    if math.dist((a.x, a.z), (b.x, b.z)) <= VILLAGE_LINK:
+                        parent[root(i)] = root(j)
+    groups: dict[int, list[Mob]] = {}
+    for i, m in enumerate(mobs):
+        groups.setdefault(root(i), []).append(m)
+    return sorted(groups.values(), key=lambda g: (-len(g), min(m.key for m in g)))
+
+
+def _in_box(m: Mob, box: tuple[int, int, int, int] | None) -> bool:
+    return box is None or (box[0] <= m.x <= box[2] and box[1] <= m.z <= box[3])
+
+
+def listing(
+    mobs: list[Mob], dim: int, box: tuple[int, int, int, int] | None = None
+) -> dict[str, Any]:
+    """Everything the map draws in one dimension (or in `box`, x0 z0 x1 z1): the
+    villages, each villager compactly (its trades are asked for by id), the pets and the
+    named mobs. Wandering traders are visitors, not villagers: they're only counted. A
+    named pet is listed once, as a pet."""
+    here = [m for m in mobs if m.dim == dim]
+    people = [m for m in here if m.villager and m.kind != "wandering_trader"]
+    villages: list[dict[str, Any]] = []
+    village_of: dict[str, str] = {}
+    for group in _villages(people):
+        vid = "v" + min(m.key for m in group)
+        jobs: dict[str, int] = {}
+        for m in group:
+            jobs[m.job] = jobs.get(m.job, 0) + 1
+            village_of[m.key] = vid
+        x = round(sum(m.x for m in group) / len(group))
+        z = round(sum(m.z for m in group) / len(group))
+        if box is None or (box[0] <= x <= box[2] and box[1] <= z <= box[3]):
+            villages.append(
+                {"id": vid, "x": x, "z": z, "count": len(group), "jobs": jobs}
+            )
+    shown = [m for m in people if _in_box(m, box)]
+    shown.sort(key=lambda m: m.key)
+    return {
+        "villages": villages,
+        "villagers": [
+            {
+                "id": m.key,
+                "job": m.job,
+                "level": m.level,
+                "locked_in": m.locked_in,
+                "name": m.name,
+                "x": m.x,
+                "y": m.y,
+                "z": m.z,
+                "village": village_of[m.key],
+                "trades": len(m.trades),
+                # What a filter chip asks of it ("sells Mending"): only what it offers now.
+                "enchants": sorted({e for t in m.trades for e, _ in t.enchantments}),
+            }
+            for m in shown[:MAX_LISTED_VILLAGERS]
+        ],
+        "villagers_truncated": len(shown) > MAX_LISTED_VILLAGERS,
+        "pets": [
+            {k: v for k, v in _pet_out(None, m).items() if k != "distance"}
+            for m in here
+            if m.tamed and _in_box(m, box)
+        ],
+        "named": [
+            {k: v for k, v in _pet_out(None, m).items() if k != "distance"}
+            for m in here
+            if m.name and not m.tamed and not m.villager and _in_box(m, box)
+        ],
+        "traders": sum(m.kind == "wandering_trader" and _in_box(m, box) for m in here),
+    }
+
+
+def villager_by_id(mobs: list[Mob], key: str) -> dict[str, Any] | None:
+    """One villager's card: every trade it offers now (§M4e decision 2)."""
+    m = next((m for m in mobs if m.villager and m.key == key), None)
+    if m is None:
+        return None
+    return {**_villager_out(None, m, m.trades), "id": m.key, "dim": m.dim}
+
+
+def _villager_out(distance: int | None, m: Mob, trades: list[Trade]) -> dict[str, Any]:
     return {
         "kind": m.kind,
         "job": m.job,
@@ -506,7 +622,7 @@ def _pet_out(distance: int | None, m: Mob) -> dict[str, Any]:
     return {
         "kind": m.kind,
         "name": m.name,
-        "id": str(m.uid),
+        "id": m.key,
         "tamed": m.tamed,
         "owner": None if m.owner is None else str(m.owner),
         "sitting": m.sitting,

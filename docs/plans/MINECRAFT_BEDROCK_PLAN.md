@@ -8,11 +8,11 @@ owner's call:
 - **R1:** the `mc.hopkinsbrain.com` name and IP updater (put off), a UPnP helper, an
   Internet-play switch with a Test button; a brother joining from his own house is unrecorded.
 - **M4:** built (§M4e, 2026-10-13: villagers and trades, pets, named mobs, the Nether
-  pointer). Left: pets and villagers on the map, chest minecarts in `mc_find_item`, and
-  a fast-path answer for "where's my dog" (§M4e "Not built").
+  pointer, and, the same day, villagers and pets on the map). Left: chest minecarts in
+  `mc_find_item`, and a fast-path answer for "where's my dog" (§M4e "Not built").
 - **M7:** a companion NPC, scheduled backups, the other §3b tools.
-- **M8:** beds and saved places on the map, height / slice / changes layers, Dave's in-game
-  "map of here" link.
+- **M8:** beds on the map, height / slice / changes layers, Dave's in-game "map of here"
+  link. Saved places are on the map (2026-10-13, §M8 "Saved places, villagers and pets").
 - **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
   switch, a latency measurement, and `auto` log entries for crafting.
 - **P1 follow-up:** done: goals in the PWA (§M24, "Goals in the app") and §M25's scan on
@@ -773,8 +773,18 @@ with our own `leveldb.py`/`nbt.py`).**
   nearest of those ("Nether portal · 40 blocks"), and still names the target's dimension.
   A portal record can outlive a broken portal, so before a portal is sent, `BlockIndex`
   checks that `minecraft:portal` is still at its `Tp` spot (a box check).
+- **On the map (built 2026-10-13):** the GUI gate `docs/mocks/minecraft-map-layers/` picked
+  variant A — a village is one tile with its count, splitting into job discs from 3 px a
+  block; pets and named mobs drawn; filter chips with a ranked list; every trade a villager
+  offers now on its card. The sidecar's `GET /map/entities?slot&dim[&x0&z0&x1&z1]`
+  (`entities.listing`) groups villagers by single link at 48 blocks (a grid, so linear),
+  leaves wandering traders out (counted only), lists a named pet once, and caps the listed
+  villagers at 4,000 (`villagers_truncated`; the villages still count them all);
+  `/map/villagers?id=` is one villager's card (the id is its `UniqueID`, or where it stands
+  when it has none). The api passes them through as `GET /api/minecraft/map/entities` and
+  `/map/villager`, owner-only; it never flushes. Details in §M8 "Saved places, villagers and
+  pets" and DESIGN.md.
 - **Not built (later):**
-  - Pets and villagers on the map (an overlay, as §M26's beacons).
   - Chest minecarts and chest boats in `mc_find_item` (they are actors, so this sweep
     makes them cheap; §M23's "Not built").
   - Allays, which aren't tamed in the files' sense.
@@ -1248,9 +1258,24 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 - **Not yet (the box doesn't record it):** **beds**. The behavior pack reads a player's spawn
   point only when they ask Dave something (`/jb:dave`), and nothing keeps it, so the overlay
   draws the world spawn and says beds aren't recorded. A pack event on a bed or respawn
-  anchor being set, kept per player, would close it. **Saved places** (`mc_places`) are kept
-  but not drawn yet; the overlay stays *later*.
-- **Next:** beds, saved places on the map, and the player share link.
+  anchor being set, kept per player, would close it.
+- **Saved places, villagers and pets (built 2026-10-13;** GUI gate
+  `docs/mocks/minecraft-map-layers/`, places A and villagers-and-pets A, its review's blocking
+  findings fixed; DESIGN.md "Saved places, villagers and pets on the Minecraft map"):
+  - `GET /api/minecraft/map/places?slot[&dim]` (`minecraft/places.py`, owner RLS on
+    `app.mc_places`, no migration): every player's places in the slot's world folder, each
+    with its player's newest gamertag, `saved_at` (`updated_at`: saving a name again moves the
+    place) and `moved`, the beacons that cover it (`markers.covers`), the gates aimed at its
+    block (`gates`) and the gates still named for it but aimed where it was (`gates_moved`).
+    Matching by block, not by name, is the review's X1: a gate keeps its own target copy.
+  - The map draws them on by default, in the player's colour, always named; a gate aimed at a
+    place's block ends at the place's pin. The card shows protection, where the player is, the
+    gates, and this place's share of each open counted goal (`/goals/progress`, read once per
+    player while the map is open) with the 48-block circle; no Tricorder button (owner).
+  - Villagers and pets: §M4e "On the map"; both off by default. Owner-only, never on a share
+    link; none of the three on the timeline's replay.
+  - Dave's map card gained the `villager` and `pet` focuses (`mc_show_map` v4).
+- **Next:** beds and the player share link.
 
 **Viewer, wave 3 — the chat card, P3 (shipped 2026-10-11).** Minecraft_Dave's `minecraft_map`
 tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
@@ -1259,7 +1284,8 @@ tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
   clamps every slot before the box is asked anything, resolves the loaded world, and fills
   `focus: death` from the chat player's newest death in that world's travel log (placed at
   the last sample before it when the pack gave no position), `player` from their last
-  sample, `place` from their saved places. It returns the data-only view and a fenced text
+  sample, `place` from their saved places; `villager` and `pet` (v4, 2026-10-13) take the
+  x and z a finder gave and open the full map with that layer on. It returns the data-only view and a fenced text
   summary with the coordinates and, in the Nether, the Overworld side (×8). The view holds
   no URL: the card builds its own tile requests from the on-box route — the carve-out
   approved with the GUI gate, written into DESIGN.

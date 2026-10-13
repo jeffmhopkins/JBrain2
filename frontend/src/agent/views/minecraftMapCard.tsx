@@ -66,6 +66,7 @@ import {
   visibleTiles,
   zoomAt,
 } from "../../minecraftMap";
+import { jobOf } from "../../minecraftMapLayers";
 import {
   type Avoid,
   beaconKey,
@@ -95,6 +96,7 @@ import {
   markerGlyph,
   markerLabel,
   markerOwn,
+  mobTile,
   placeLabels,
   playerDisc,
   readTokens,
@@ -104,6 +106,7 @@ import {
   stars,
   structGlyph,
   targetMark,
+  villagerDisc,
 } from "../../screens/minecraftMapDraw";
 
 // ---- the payload: every slot checked, everything else ignored ----
@@ -116,7 +119,9 @@ export type McFocusKind =
   | "spot"
   | "gate"
   | "beacon"
-  | "scan";
+  | "scan"
+  | "villager"
+  | "pet";
 export type McOverlay = "trails" | "deaths" | "structures" | "players" | "beacons" | "gates";
 
 export interface McFocus {
@@ -155,6 +160,8 @@ const FOCUS_KINDS: McFocusKind[] = [
   "gate",
   "beacon",
   "scan",
+  "villager",
+  "pet",
 ];
 const OVERLAY_IDS: McOverlay[] = ["trails", "deaths", "structures", "players", "beacons", "gates"];
 /** The world's edge: Bedrock's ±30 million blocks. */
@@ -286,6 +293,32 @@ function focusShown(f: McFocus, dim: MinecraftDim, who: string, now: number): Sh
       tone: "",
       title: f.label || who || "Live scan",
       sub: `Tricorder scan · ${dimName(dim)}`,
+    };
+  }
+  if (f.kind === "villager" || f.kind === "pet") {
+    // Where the saved world has it (§M4e): it may have moved since the last save.
+    const villager = f.kind === "villager";
+    const glyph = villager ? jobOf(f.label.split(" ")[0] ?? "").glyph : "paw";
+    return {
+      ...at,
+      icon: (
+        <svg
+          aria-hidden="true"
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d={GLYPHS[glyph]} />
+        </svg>
+      ),
+      tone: "",
+      title: f.label || (villager ? "A villager" : "A pet"),
+      sub: `${villager ? "Villager" : "Pet"} · as of the world's last save · ${dimName(dim)}`,
     };
   }
   if (f.kind === "structure") {
@@ -843,6 +876,10 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
         next.push({ kind: "focus", sx: px, sy: py });
       } else if (focus.kind === "structure") {
         structGlyph(ctx, sx, sy, focus.label.toLowerCase().replace(/\s+/g, "_"), t, true);
+      } else if (focus.kind === "villager") {
+        villagerDisc(ctx, sx, sy, focus.label.split(" ")[0] ?? "", t, true);
+      } else if (focus.kind === "pet") {
+        mobTile(ctx, sx, sy, true, null, t, true);
       } else {
         spotMark(ctx, sx, sy, v.s, false, t);
       }
@@ -959,9 +996,12 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
   function openFull() {
     const [cx, cz] = toWorld(view.current, frame.current, frame.current.w / 2, frame.current.h / 2);
     const zoom = clamp(Math.round(-Math.log2(view.current.s)), ZOOM_MIN, ZOOM_MAX);
+    // A villager or pet card opens the full map with that layer on (they're off there).
+    const show =
+      focus?.kind === "villager" ? "villagers" : focus?.kind === "pet" ? "pets" : undefined;
     openMinecraftMap(
       focus
-        ? { slot, dim, x: focus.x, z: focus.z, zoom, mark: true }
+        ? { slot, dim, x: focus.x, z: focus.z, zoom, mark: true, show }
         : { slot, dim, x: Math.floor(cx), z: Math.floor(cz), zoom, mark: false },
     );
   }

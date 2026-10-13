@@ -472,3 +472,118 @@ def test_the_entity_routes_check_their_numbers(monkeypatch: pytest.MonkeyPatch) 
         assert get("/map/portals", None) == 401
     finally:
         httpd.shutdown()
+
+
+# --- on the map: the listing (§M4e "on the map", owner 2026-10-13) ---
+
+
+def _mob(uid: int, x: int, z: int, **kw: Any) -> Any:
+    kind = kw.pop("kind", "villager_v2")
+    return entities.Mob(uid, kind, kw.pop("dim", 0), x, 64, z, **kw)
+
+
+def test_villagers_within_48_blocks_of_each_other_are_one_village() -> None:
+    chain = [_mob(i + 1, i * 40, 0, job="farmer") for i in range(4)]  # 40 apart
+    lone = _mob(9, 1000, 1000, job="librarian")
+    got = entities.listing([*chain, lone], 0)
+    assert [(v["count"], v["jobs"]) for v in got["villages"]] == [
+        (4, {"farmer": 4}),
+        (1, {"librarian": 1}),
+    ]
+    first = got["villages"][0]
+    # Single link: the ends are 120 apart, joined through the middle.
+    assert (first["x"], first["z"]) == (60, 0)
+    assert {v["village"] for v in got["villagers"][:4]} == {first["id"]}
+
+
+def test_the_grouping_stays_linear_on_a_big_world() -> None:
+    crowd = [
+        _mob(i + 1, (i % 100) * 3, (i // 100) * 3, job="mason") for i in range(5000)
+    ]
+    got = entities.listing(crowd, 0)
+    assert len(got["villages"]) == 1 and got["villages"][0]["count"] == 5000
+
+
+def test_traders_are_counted_not_grouped_and_a_named_pet_is_listed_once() -> None:
+    mobs = [
+        _mob(1, 0, 0, job="cleric"),
+        _mob(2, 5, 5, kind="wandering_trader", job="wandering trader"),
+        _mob(3, 10, 0, kind="wolf", name="Rex", tamed=True, owner=7, sitting=True),
+        _mob(4, 20, 0, kind="cow", name="Clover"),
+        _mob(5, 30, 0, name="Libby", job="cartographer"),
+        _mob(6, 0, 0, kind="cat", tamed=True, dim=1),
+    ]
+    got = entities.listing(mobs, 0)
+    assert got["traders"] == 1
+    assert [v["count"] for v in got["villages"]] == [2]
+    assert [p["name"] for p in got["pets"]] == ["Rex"]
+    assert got["pets"][0]["owner"] == "7" and got["pets"][0]["sitting"]
+    assert [m["name"] for m in got["named"]] == ["Clover"]
+    assert entities.listing(mobs, 1)["pets"][0]["kind"] == "cat"
+
+
+def test_a_box_narrows_what_is_listed_but_a_village_counts_all_its_villagers() -> None:
+    mobs = [_mob(i + 1, i * 10, 0, job="farmer") for i in range(6)]  # x 0..50
+    got = entities.listing(mobs, 0, (0, -10, 20, 10))
+    assert [v["x"] for v in got["villagers"]] == [0, 10, 20]
+    assert got["villages"] == []  # its centre, x 25, is outside the box
+    assert entities.listing(mobs, 0, (20, -10, 30, 10))["villages"][0]["count"] == 6
+
+
+def test_a_villager_with_no_unique_id_is_keyed_by_where_it_stands() -> None:
+    m = _mob(0, -3, 7, job="nitwit")
+    assert m.key == "at:0:-3:64:7"
+    assert entities.villager_by_id([m], "at:0:-3:64:7")["job"] == "nitwit"
+    assert entities.villager_by_id([m], "12") is None
+
+
+def test_the_listing_caps_the_villagers_it_lists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(entities, "MAX_LISTED_VILLAGERS", 3)
+    got = entities.listing([_mob(i + 1, i, 0, job="farmer") for i in range(5)], 0)
+    assert len(got["villagers"]) == 3 and got["villagers_truncated"]
+    assert got["villages"][0]["count"] == 5
+
+
+def test_the_entities_route_and_a_villagers_trades_by_id(tmp_path: Path) -> None:
+    rig = _rig_on_fixture()
+    got = rig.map_entities("slot1", "overworld")
+    assert sum(v["count"] for v in got["villages"]) == 5
+    assert {p["name"] for p in got["pets"]} >= {"Rex"}
+    assert {m["name"] for m in got["named"]} == {"Bacon"}
+    assert got["live"] is False and got["age_s"] >= 0 and "flush" not in got
+    lib = next(v for v in got["villagers"] if v["job"] == "librarian")
+    card = rig.map_villager("slot1", lib["id"])["found"]
+    assert card["dimension"] == "overworld" and card["trades"]
+    assert all(t["tier"] <= card["level"] for t in card["trades"])
+    assert rig.map_villager("slot1", "123")["found"] is None
+    with pytest.raises(ValueError):
+        rig.map_villager("slot1", "1; op")
+    with pytest.raises(ValueError):
+        rig.map_entities("slot1", "moon")
+    with pytest.raises(ValueError):
+        rig.map_entities("slot1", "overworld", (10, 0, 0, 0))
+
+
+def test_the_entities_routes_check_their_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_minecraft_sidecar import _serve
+
+    httpd, get = _serve(monkeypatch, "t")
+    w = _make_world("world")
+    (w / "db").rmdir()
+    world(w)
+    try:
+        auth = "Bearer t"
+        assert get("/map/entities?dim=overworld", auth) == 200
+        assert get("/map/entities?x0=-400&z0=0&x1=0&z1=200", auth) == 200
+        assert get("/map/entities?x0=-400&z0=0", auth) == 400
+        assert get("/map/entities?x0=a&z0=0&x1=1&z1=1", auth) == 400
+        assert get("/map/entities?dim=moon", auth) == 400
+        assert get("/map/villagers?id=-8589934591", auth) == 200
+        assert get("/map/villagers?id=bogus", auth) == 400
+        assert get("/map/entities", None) == 401
+    finally:
+        httpd.shutdown()

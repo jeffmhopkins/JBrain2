@@ -4201,6 +4201,11 @@ export const mockFetch: typeof fetch = async (input, init) => {
       }
       if (path === "/api/minecraft/map/structures") return json(m.mcMapStructures(slot, dim));
       if (path === "/api/minecraft/map/markers") return json(m.mcMapMarkers(slot));
+      if (path === "/api/minecraft/map/places") return json(m.mcMapPlaces(slot));
+      if (path === "/api/minecraft/map/entities") return json(m.mcMapEntities(slot, dim));
+      if (path === "/api/minecraft/map/villager") {
+        return json(m.mcMapVillager(slot, url.searchParams.get("id") ?? ""));
+      }
       if (path === "/api/minecraft/map/structures/sweep") {
         return running && slotOf(slot)?.active
           ? json({ state: "running", done: 0, total: 1200 }, 202)
@@ -4311,7 +4316,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
         );
       }
       const q = url.searchParams;
-      return json(mc.mcGoalProgress(q.get("xuid") ?? "", q.get("flush") === "true"));
+      // The map's place cards ask by the travel log's keys; the goals fixture's are its own.
+      const { GOAL_KEYS } = await import("../minecraftMapFixtures");
+      const who = q.get("xuid") ?? "";
+      return json(mc.mcGoalProgress(GOAL_KEYS[who] ?? who, q.get("flush") === "true"));
     }
     if (path === "/api/minecraft/settings" && method === "PUT") {
       return json(JSON.parse(String(init?.body ?? "{}")));
