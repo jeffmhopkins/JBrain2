@@ -1511,6 +1511,9 @@ static void test_a_play_rides_a_smaller_ring_than_a_talk(void)
     CHECK(tk_ring_bytes(TK_KIND_LISTEN) == 6144, "a stored message plays through 6 KB");
     CHECK(tk_ring_bytes(TK_KIND_LISTEN) >= TK_SPK_START_BYTES + TK_NET_SLICE,
           "which still holds the speaker's 150 ms start and one more network slice");
+    CHECK(tk_reply_ring_bytes(TK_RING_TALK) == TK_RING_PLAY && tk_reply_ring_bytes(TK_RING_PLAY) == TK_RING_PLAY &&
+              tk_reply_ring_bytes(0) == 0,
+          "a talk's spoken reply plays through a play's ring; a play's and none are left as they are");
     /* The play's ring fills and drains through a stream several times its size, as the speaker
        takes 20 ms chunks and the network puts slices: nothing lost, nothing reordered. */
     static uint8_t mem[TK_RING_PLAY];
@@ -1897,6 +1900,8 @@ static void test_a_talk_on_the_glass_end_to_end(void)
           "Jerv's words are shown while its voice plays");
     CHECK(!status_of("jerv", status, sizeof status) && svc_audio_speaking(),
           "the answer replaces the status line");
+    CHECK(talk_ring_bytes() == TK_RING_PLAY,
+          "the microphone done, the spoken reply plays through a play's 6 KB ring (0.0.22)");
     CHECK(svc_audio_stop_reply() && svc_audio_playing() == 0 && !svc_audio_replying(),
           "BOOT stops the voice; the words stay");
     svc_audio_service();
@@ -4123,69 +4128,162 @@ static uint16_t logical_px(int32_t x, int32_t y)
     return (uint16_t)(x * 131 + y * 7 + (x ^ y));
 }
 
+/* The CO5300 as the flush drives it: a window set by CASET/RASET, RAMWR writing from its first
+   pixel and RAMWRC carrying on from the last one written, row by row (CO-DS §7.5.32-33). */
+static struct {
+    uint16_t glass[480 * 480];
+    disp_win_t win;
+    int32_t x, y;
+    bool even, inside;
+} s_co;
+
+static void co_window(disp_win_t g)
+{
+    s_co.win = g;
+    s_co.even &= !(g.x1 & 1) && !(g.y1 & 1) && (g.x2 & 1) && (g.y2 & 1);
+    s_co.inside &= g.x1 >= 0 && g.y1 >= 0 && g.x2 < 480 && g.y2 < 480 && g.x1 <= g.x2 && g.y1 <= g.y2;
+}
+
+static void co_write(uint8_t cmd, const uint16_t *px, int32_t n)
+{
+    if (cmd == DISP_RAMWR) s_co.x = s_co.win.x1, s_co.y = s_co.win.y1;
+    for (int32_t i = 0; i < n; i++) {
+        s_co.glass[s_co.y * 480 + s_co.x] = px[i];
+        if (++s_co.x > s_co.win.x2) {
+            s_co.x = s_co.win.x1;
+            if (++s_co.y > s_co.win.y2) s_co.y = s_co.win.y1;
+        }
+    }
+}
+
 /* Every strip LVGL could hand the flush, turned the device's way onto a glass, which must then
-   hold the upright screen turned. */
+   hold the upright screen turned. LVGL's buffer is the device's: 40 rows upright and upside down,
+   DISP_SIDE_ROWS on its side with the two pieces in the tail it gave up. */
 static void test_turned_strips_build_the_turned_screen(void)
 {
-    static uint16_t glass[480 * 480], strip[480 * 40], piece[DISP_ROT_PIECE_PX];
+    static uint16_t buf[480 * DISP_STRIP_ROWS];
     const disp_win_t areas[] = {{0, 0, 479, 39}, {100, 202, 323, 241}, {0, 440, 479, 479},
-                                {6, 6, 7, 7}, {470, 0, 479, 479}};
+                                {6, 6, 7, 7}, {470, 0, 479, 479}, {138, 0, 279, 479}};
+    const int na = (int)(sizeof areas / sizeof *areas);
     for (uint8_t rot = 0; rot < 4; rot++) {
-        bool even = true, inside = true, whole = true;
-        memset(glass, 0, sizeof glass);
-        /* The whole screen in 40-row strips, then the odd areas over it. */
-        for (int k = 0; k < 12 + 5; k++) {
-            disp_win_t a = k < 12 ? (disp_win_t){0, k * 40, 479, k * 40 + 39} : areas[k - 12];
-            if (k >= 12 && (a.y2 - a.y1 + 1) * (a.x2 - a.x1 + 1) > 480 * 40) {
-                /* Taller than a strip: LVGL would cut it in 40-row bands. */
-                a.y2 = a.y1 + 480 * 40 / (a.x2 - a.x1 + 1) - 1;
+        const int32_t rows = rot & 1 ? DISP_SIDE_ROWS : DISP_STRIP_ROWS, cap = 480 * rows;
+        uint16_t *const piece0 = buf + cap;
+        bool whole = true, stream = true, apart = true;
+        s_co.even = s_co.inside = true;
+        memset(s_co.glass, 0, sizeof s_co.glass);
+        /* The whole screen in strips, then the odd areas over it. */
+        const int strips = (480 + rows - 1) / rows;
+        for (int s = 0; s < strips + na; s++) {
+            disp_win_t a = s < strips ? (disp_win_t){0, s * rows, 479, s * rows + rows - 1} : areas[s - strips];
+            if (a.y2 > 479) a.y2 = 479;
+            if ((a.y2 - a.y1 + 1) * (a.x2 - a.x1 + 1) > cap) {
+                /* Taller than the buffer holds: LVGL cuts it in even bands that fit. */
+                a.y2 = a.y1 + cap / (a.x2 - a.x1 + 1) - 1;
                 a.y2 = a.y1 + ((a.y2 - a.y1 + 1) & ~1) - 1;
             }
             disp_area_even(&a.x1, &a.y1, &a.x2, &a.y2, 480, 480);
             const int32_t w = a.x2 - a.x1 + 1, h = a.y2 - a.y1 + 1;
+            whole &= w * h <= cap;
             for (int32_t j = 0; j < h; j++)
-                for (int32_t i = 0; i < w; i++) strip[j * w + i] = logical_px(a.x1 + i, a.y1 + j);
-            disp_win_t wins[32];
-            const uint16_t *bufs[32];
-            int n = 0;
-            if (rot == 0 || rot == 2) {
-                if (rot == 2) disp_reverse(strip, (uint32_t)(w * h));
-                wins[n] = disp_rot_area(rot, 480, a);
-                bufs[n++] = strip;
+                for (int32_t i = 0; i < w; i++) buf[j * w + i] = logical_px(a.x1 + i, a.y1 + j);
+            if (!(rot & 1)) {
+                if (rot == 2) disp_reverse(buf, (uint32_t)(w * h));
+                const disp_win_t g = disp_rot_area(rot, 480, a);
+                whole &= (g.x2 - g.x1 + 1) * (g.y2 - g.y1 + 1) == w * h;
+                co_window(g);
+                co_write(DISP_RAMWR, buf, w * h);
+                continue;
             }
+            /* The device's stream: one window, the pieces into it, each gathered while the one
+               before is "in flight" — never into the buffer that one is being sent from. */
+            const disp_win_t g = disp_rot_area(rot, 480, a);
+            co_window(g);
             const int32_t k = disp_rot_piece_rows(h);
-            even &= !(k & 1) && k * h <= DISP_ROT_PIECE_PX;
-            for (int32_t r0 = 0; (rot & 1) && r0 < w; r0 += k) {
-                const disp_win_t g = disp_rot_piece(rot, 480, a, strip, r0, k, piece);
-                const int32_t gw = g.x2 - g.x1 + 1;
-                for (int32_t y = g.y1; y <= g.y2; y++)
-                    memcpy(&glass[y * 480 + g.x1], &piece[(y - g.y1) * gw], (size_t)gw * 2);
-                even &= !(g.x1 & 1) && !(g.y1 & 1) && (g.x2 & 1) && (g.y2 & 1);
-                inside &= g.x1 >= 0 && g.y1 >= 0 && g.x2 < 480 && g.y2 < 480;
+            stream &= !(k & 1) && k * h <= DISP_ROT_PIECE_PX;
+            disp_piece_t p;
+            int in_flight = -1;
+            int32_t sent = 0, n = 0;
+            for (int32_t i = 0; disp_rot_step(w, k, i, &p); i++, n++) {
+                apart &= p.buf != in_flight && p.rows > 0 && !(p.rows & 1);
+                uint16_t *piece = piece0 + p.buf * DISP_ROT_PIECE_PX;
+                const disp_win_t pw = disp_rot_piece(rot, 480, a, buf, p.r0, p.rows, piece);
+                stream &= pw.y1 == g.y1 + sent && pw.x1 == g.x1 && pw.x2 == g.x2;
+                stream &= (p.cmd == DISP_RAMWR) == (i == 0) && (p.cmd == DISP_RAMWR || p.cmd == DISP_RAMWRC);
+                co_write(p.cmd, piece, p.rows * h);
+                sent += p.rows;
+                in_flight = p.buf;
             }
-            for (int m = 0; m < n; m++) {
-                const disp_win_t g = wins[m];
-                const int32_t gw = g.x2 - g.x1 + 1;
-                whole &= gw * (g.y2 - g.y1 + 1) == w * h;
-                for (int32_t y = g.y1; y <= g.y2; y++)
-                    memcpy(&glass[y * 480 + g.x1], &bufs[m][(y - g.y1) * gw], (size_t)gw * 2);
-                even &= !(g.x1 & 1) && !(g.y1 & 1) && (g.x2 & 1) && (g.y2 & 1);
-                inside &= g.x1 >= 0 && g.y1 >= 0 && g.x2 < 480 && g.y2 < 480;
-            }
+            stream &= sent == w && n == (w + k - 1) / k;
         }
         bool same = true;
         for (int32_t y = 0; y < 480; y++)
             for (int32_t x = 0; x < 480; x++) {
                 int32_t px, py;
                 disp_rot_point(rot, 480, x, y, &px, &py);
-                same &= glass[py * 480 + px] == logical_px(x, y);
+                same &= s_co.glass[py * 480 + px] == logical_px(x, y);
             }
-        char m[96];
+        char m[112];
         snprintf(m, sizeof m, "turned %d°: every strip lands on the glass as the turned screen", rot * 90);
         CHECK(same && whole, m);
         snprintf(m, sizeof m, "turned %d°: every window even-aligned and on the glass", rot * 90);
-        CHECK(even && inside, m);
+        CHECK(s_co.even && s_co.inside, m);
+        if (rot & 1) {
+            snprintf(m, sizeof m, "turned %d°: RAMWR then RAMWRC fill each window exactly, piece by piece", rot * 90);
+            CHECK(stream, m);
+            snprintf(m, sizeof m, "turned %d°: no piece is gathered into the buffer still on the wire", rot * 90);
+            CHECK(apart, m);
+        }
     }
+}
+
+/* What a quarter turn costs on the wire, in the numbers the README's estimate is built on. */
+static void test_a_turned_strip_is_a_few_large_pieces_in_one_window(void)
+{
+    CHECK(DISP_SIDE_ROWS * 480 + DISP_ROT_PIECES * DISP_ROT_PIECE_PX == DISP_STRIP_ROWS * 480,
+          "the two pieces are exactly the strip rows LVGL gives up on its side: no new memory");
+    CHECK(DISP_ROT_PIECE_PX == 1920 && disp_rot_piece_rows(DISP_SIDE_ROWS) == 60,
+          "a full-width 32-row strip goes in pieces of 60 glass rows");
+    disp_piece_t p;
+    int n = 0;
+    while (disp_rot_step(480, disp_rot_piece_rows(DISP_SIDE_ROWS), n, &p)) n++;
+    CHECK(n == 8, "8 pieces a strip, 15 strips a frame: 120 pieces, down from 0.0.18's 180");
+    CHECK(disp_rot_piece_rows(480) == 4 && disp_rot_piece_rows(2) == 960,
+          "a glass-tall area still gets even pieces that fit");
+    CHECK(disp_rot_step(10, 4, 2, &p) && p.r0 == 8 && p.rows == 2 && p.cmd == DISP_RAMWRC && p.buf == 0,
+          "the last piece is what is left, and the buffers alternate");
+    CHECK(!disp_rot_step(10, 4, 3, &p) && !disp_rot_step(10, 0, 0, &p) && !disp_rot_step(10, 4, -1, &p),
+          "and nothing past it");
+}
+
+static void test_frame_costs_are_kept_per_rotation_and_whole_frames_apart(void)
+{
+    disp_stat_t s = {0};
+    CHECK(disp_stat_avg_ms(&s) == 0 && disp_stat_full_avg_ms(&s) == 0, "nothing drawn: zeros, no division");
+    disp_stat_add(&s, 2400, 9000, false);
+    disp_stat_add(&s, 30600, 61000, true);
+    disp_stat_add(&s, 24400, 52000, true);
+    CHECK(s.frames == 3 && s.last_ms == 24 && s.max_ms == 31 && disp_stat_avg_ms(&s) == 19,
+          "every frame: the last, the worst and the mean");
+    CHECK(s.full == 2 && s.full_ms == 24 && s.full_max_ms == 31 && disp_stat_full_avg_ms(&s) == 28 &&
+              s.full_wall_ms == 52,
+          "whole-glass frames on their own: a clock tick never dilutes a turn's cost");
+
+    disp_stat_t four[4] = {{0}};
+    char out[96];
+    disp_stat_fmt(out, sizeof out, four);
+    CHECK(strcmp(out, "") == 0, "rot_ms: nothing before a whole-glass frame");
+    four[1] = s;
+    disp_stat_add(&four[0], 9000, 20000, false);
+    disp_stat_fmt(out, sizeof out, four);
+    CHECK(strcmp(out, "90:28,31,2,52") == 0, "rot_ms: only a rotation that drew the whole glass");
+    disp_stat_add(&four[0], 24000, 60000, true);
+    four[3] = s;
+    disp_stat_fmt(out, sizeof out, four);
+    CHECK(strcmp(out, "0:24,24,1,60 90:28,31,2,52 270:28,31,2,52") == 0,
+          "rot_ms: each in order, space-separated");
+    char tiny[8];
+    disp_stat_fmt(tiny, sizeof tiny, four);
+    CHECK(strlen(tiny) == 7, "rot_ms: cut short, never past its buffer");
 }
 
 /* Raw counts for gravity's "down" pointing `deg` clockwise from the glass's bottom, `g_mg` of it
@@ -4335,8 +4433,8 @@ static void test_the_service_reads_only_while_lit_and_on(void)
     svc_display_on_rotated(NULL);
 }
 
-/* A quarter turn the display cannot take (no 2.5 KB for its piece buffer, the play's low-heap
-   case): the glass stays, and touch and calibration stay with the glass, not with the request. */
+/* A turn the glass has not taken yet (the device applies it on the UI task's next pass between
+   frames): touch and calibration stay with what is showing, not with the request. */
 static void test_touch_and_calibration_follow_the_glass_not_the_request(void)
 {
     svc_settings_set(SET_AUTO_ROTATE, 1);
@@ -4354,7 +4452,7 @@ static void test_touch_and_calibration_follow_the_glass_not_the_request(void)
     for (int i = 0; i < 80; i++) svc_orient_service(t += 25);
     CHECK(svc_display_rotation() == 0, "upright to begin with");
     s_turned_to = 0xFF;
-    svc_display_fake_no_piece(true);
+    svc_display_fake_hold(true);
     tilt(90, 950, a);
     orient_port_fake_set(a[0], a[1], a[2]);
     for (int i = 0; i < 80; i++) {
@@ -4362,7 +4460,7 @@ static void test_touch_and_calibration_follow_the_glass_not_the_request(void)
         svc_display_fake_service();
     }
     CHECK(svc_display_rotation() == 0 && svc_orient_rotation() == 0,
-          "turned right but no memory for the piece buffer: the glass stays upright, and says so");
+          "turned right but not yet applied: the glass stays upright, and says so");
     CHECK(s_turned_to == 0xFF, "touch is not told of a turn the glass did not take");
     /* A calibration made now is turned back into the glass's frame with what is showing. Taps
        landing 10 px right of every cross on the upright screen are a glass x error of +10; read
@@ -4382,13 +4480,13 @@ static void test_touch_and_calibration_follow_the_glass_not_the_request(void)
     tp_cal_port_fake_applied(&c, &on);
     CHECK(on && c.c < -9 * TP_Q16 && c.c > -11 * TP_Q16 && c.f > -TP_Q16 && c.f < TP_Q16,
           "and corrects the glass's x, the frame that is showing, not the requested turn's");
-    svc_display_fake_no_piece(false);
+    svc_display_fake_hold(false);
     for (int i = 0; i < 4; i++) {
         svc_orient_service(t += 25);
         svc_display_fake_service();
     }
     CHECK(svc_display_rotation() == 1 && svc_orient_rotation() == 1 && s_turned_to == 1,
-          "the memory back: the glass, orient and touch all turn together");
+          "applied: the glass, orient and touch all turn together");
     svc_calib_reset();
     tilt(0, 950, a);
     orient_port_fake_set(a[0], a[1], a[2]);
@@ -6165,6 +6263,8 @@ int main(void)
     test_a_play_rides_a_smaller_ring_than_a_talk();
     test_a_turn_and_its_touch_inverse_agree_everywhere();
     test_turned_strips_build_the_turned_screen();
+    test_a_turned_strip_is_a_few_large_pieces_in_one_window();
+    test_frame_costs_are_kept_per_rotation_and_whole_frames_apart();
     test_down_needs_a_clear_margin_and_a_dwell();
     test_the_service_reads_only_while_lit_and_on();
     test_the_fit_finds_a_panel_s_error_and_refuses_nonsense();

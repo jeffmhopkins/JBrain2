@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 void svc_display_init(void);
-/* A quarter turn's piece buffer refused (true) or given (false), and the retry the device's UI
-   task makes every pass (the sim's step makes it too). */
-void svc_display_fake_no_piece(bool refuse);
+/* A requested turn held back (true) as the device holds it until its UI task's next pass between
+   frames, or let through (false) at the next svc_display_fake_service (the sim's step calls it). */
+void svc_display_fake_hold(bool hold);
 void svc_display_fake_service(void);

@@ -97,6 +97,11 @@
 > has the box speak its full text, older history paged ten at a time into a 20-message window,
 > and the panel's settings changed from the PWA's Panels card, with the panel's last report
 > winning; plus three or more tool steps folded to two lines (firmware README "What 0.0.21 adds").
+> **0.0.22** turns a sideways frame at nearly upright speed — one window a strip, its pieces
+> streamed with RAMWRC and gathered while the last is on the wire, from the strip buffer's own tail
+> — and lifts a talk's heap low (38.2 KB at `talk+ring` on 0.0.20) toward a play's: no piece
+> buffer, and a talk's ring shrinks to 6 KB once its reply speaks (firmware README "What 0.0.22
+> adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
