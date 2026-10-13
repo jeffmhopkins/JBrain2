@@ -379,6 +379,28 @@ async def start_turn(
     return started
 
 
+async def exchange_ids(
+    maker: async_sessionmaker[AsyncSession], started: Started
+) -> tuple[int, int] | None:
+    """The `seq` of the question and of the answer a finished turn just filed in its thread, so
+    the panel can name them to Listen and Load earlier (firmware-c6 0.0.21). None unless the
+    thread's newest two turns are exactly that pair — a turn that never filed an answer, or one
+    the PWA has spoken into since, names nothing rather than the wrong message."""
+    async with scoped_session(maker, started.owner_ctx) as s:
+        got = (
+            await s.execute(
+                text(
+                    "SELECT seq, role FROM app.agent_turns"
+                    " WHERE session_id = CAST(:sid AS uuid) ORDER BY seq DESC LIMIT 2"
+                ),
+                {"sid": started.session_id},
+            )
+        ).all()
+    if len(got) != 2 or got[0].role != "assistant" or got[1].role != "user":
+        return None
+    return int(got[1].seq), int(got[0].seq)
+
+
 def settle(started: Started, agent: PanelAgent) -> Answer:
     """The answer of a turn that has finished (or failed): JT1's condensed words and JT2's whole
     prose, each with what waits for the owner."""

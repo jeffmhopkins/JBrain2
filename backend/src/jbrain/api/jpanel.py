@@ -29,7 +29,9 @@ import string
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import Literal, cast
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Literal, cast
 
 import httpx
 import structlog
@@ -927,6 +929,110 @@ async def thread_with(maker, ctx: SessionContext, device_id: str, limit: int) ->
         ).all()
     names = await _panel_names(maker)
     return [_row_to_message(row, names) for row in reversed(rows)]
+
+
+@dataclass(frozen=True)
+class ThreadPage:
+    """A page of the owner's conversation with one twin (oldest first), how many messages remain
+    before its first and after its last, and when the conversation began — known only on the
+    page that reaches it (`older == 0`)."""
+
+    messages: list[Message]
+    older: int
+    newer: int
+    start_at: datetime | None
+
+
+_PAGE_COLUMNS = """id, sender_kind, sender_device, recipient_kind, recipient_device,
+    transcript, composed, duration_ms, created_at, played_at, deliveries"""
+
+
+async def thread_page(
+    maker,
+    ctx: SessionContext,
+    device_id: str,
+    *,
+    before: str | None = None,
+    after: str | None = None,
+    limit: int,
+) -> ThreadPage | None:
+    """Older (or newer) pages of `thread_with`'s conversation, for the desk panel's Load earlier
+    (firmware-c6 0.0.21): the `limit` messages just before `before` (the newest, with neither) or
+    just after `after`, in the order `thread_with` keeps — `created_at`, ties broken by id. None
+    when the anchor is not a message of this conversation. `ctx` is the owner's."""
+    anchor = after or before
+    if anchor is not None:
+        try:
+            uuid.UUID(anchor)
+        except ValueError:
+            return None
+    async with scoped_session(maker, ctx) as session:
+
+        async def count(cmp: str, at: Any, mid: str) -> int:
+            got = await session.execute(
+                text(
+                    f"SELECT count(*) FROM app.jpanel_message WHERE {_WITH_OWNER}"  # noqa: S608
+                    f" AND (created_at, id) {cmp} (:at, CAST(:mid AS uuid))"
+                ),
+                {"dev": device_id, "at": at, "mid": mid},
+            )
+            return int(got.scalar_one())
+
+        pivot = None
+        if anchor is not None:
+            pivot = (
+                await session.execute(
+                    text(
+                        f"SELECT created_at, id::text FROM app.jpanel_message"  # noqa: S608
+                        f" WHERE id = CAST(:id AS uuid) AND {_WITH_OWNER}"
+                    ),
+                    {"id": anchor, "dev": device_id},
+                )
+            ).first()
+            if pivot is None:
+                return None
+        where = _WITH_OWNER
+        params: dict[str, Any] = {"dev": device_id, "lim": limit}
+        if pivot is not None:
+            where += f" AND (created_at, id) {'>' if after else '<'} (:at, CAST(:mid AS uuid))"
+            params |= {"at": pivot[0], "mid": pivot[1]}
+        order = "created_at, id" if after else "created_at DESC, id DESC"
+        rows = (
+            await session.execute(
+                text(
+                    f"SELECT {_PAGE_COLUMNS} FROM app.jpanel_message"  # noqa: S608
+                    f" WHERE {where} ORDER BY {order} LIMIT :lim"
+                ),
+                params,
+            )
+        ).all()
+        if not after:
+            rows = list(reversed(rows))
+        if rows:
+            older = await count("<", rows[0][8], str(rows[0][0]))
+            newer = await count(">", rows[-1][8], str(rows[-1][0]))
+        elif pivot is not None:
+            older = await count("<=" if after else "<", pivot[0], pivot[1])
+            newer = await count(">", pivot[0], pivot[1])
+        else:
+            total = await session.execute(
+                text(f"SELECT count(*) FROM app.jpanel_message WHERE {_WITH_OWNER}"),  # noqa: S608
+                {"dev": device_id},
+            )
+            older, newer = int(total.scalar_one()), 0
+        start_at = None
+        if older == 0:
+            start_at = (
+                await session.execute(
+                    text(
+                        f"SELECT min(created_at) FROM app.jpanel_message"  # noqa: S608
+                        f" WHERE {_WITH_OWNER}"
+                    ),
+                    {"dev": device_id},
+                )
+            ).scalar_one()
+    names = await _panel_names(maker)
+    return ThreadPage([_row_to_message(r, names) for r in rows], older, newer, start_at)
 
 
 async def owner_row(
