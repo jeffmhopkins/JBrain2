@@ -5362,6 +5362,65 @@ static void test_four_open_at_most(void)
     CHECK(svc_notice_want_fetch(path, sizeof path), "one hidden: room again");
 }
 
+/* The review of #1729: a title past the glass's 60 bytes is cut on a character boundary judged
+   from the byte that was left out, not from one never read. */
+static void test_a_long_title_is_cut_on_a_character(void)
+{
+    notice_boot();
+    static jn_t s;
+    jn_meta(&s, 0, 0, 0, 0, 0);
+    char t[72];
+    memset(t, 'a', 59);
+    memcpy(t + 59, "\xc3\xa9tail", 6);
+    t[65] = '\0';
+    jn_text(&s, JN1_TITLE, t);
+    jn_end(&s);
+    uint8_t *b = malloc(s.n);
+    if (!b) return;
+    memcpy(b, s.b, s.n);
+    CHECK(svc_notice_fetch_end(fetch_bytes(NOTICE_NEXT_PATH, b, s.n, s.n), true, 200), "taken");
+    free(b);
+    notice_t n;
+    CHECK(svc_notice_head(&n) && strlen(n.title) == 59 && n.title[58] == 'a',
+          "the split \"é\" goes whole, the 59 bytes before it stay");
+}
+
+/* The review of #1729: with the box unreachable, every end said at the glass must survive, so a
+   notice is only collected while the owed list has room for it. */
+static void test_an_outage_never_loses_an_answer(void)
+{
+    notice_boot();
+    char path[NOTICE_PATH_BYTES], json[48];
+    int taken = 0;
+    for (int i = 0; i < 10; i++) {
+        svc_notice_waiting("1");
+        if (!svc_notice_want_fetch(path, sizeof path)) break;
+        size_t n = 0;
+        uint8_t *b = read_fixture("question.jn1", &n);
+        if (!b) return;
+        b[3 + 3 + 15] = (uint8_t)(0x80 + i);
+        CHECK(svc_notice_fetch_end(fetch_bytes(NOTICE_NEXT_PATH, b, n, n), true, 200), "collected");
+        free(b);
+        notice_t h;
+        svc_notice_head(&h);
+        svc_notice_on_glass(h.id);
+        svc_notice_answer(1);
+        if (svc_notice_post_take(path, sizeof path, json, sizeof json)) svc_notice_post_done(-1);
+        taken++;
+    }
+    CHECK(taken == NOTICE_POSTS / 2, "collecting stops once the owed list could not hold another");
+    int answers = 0, shown = 0;
+    svc_rtc_fake_advance_ms(300000);
+    while (svc_notice_post_take(path, sizeof path, json, sizeof json)) {
+        if (strstr(json, "answered")) answers++;
+        else if (strstr(json, "shown")) shown++;
+        svc_notice_post_done(204);
+    }
+    CHECK(answers == taken && shown == taken, "every `shown` and every answer reaches the box");
+    svc_notice_waiting("1");
+    CHECK(svc_notice_want_fetch(path, sizeof path), "and collecting resumes");
+}
+
 static void test_a_reboot_keeps_the_notices_and_what_the_box_is_owed(void)
 {
     notice_boot();
@@ -5449,9 +5508,15 @@ static void test_the_state_post_list_and_the_file_names(void)
 {
     notice_posts_t l = {0};
     for (int i = 0; i < NOTICE_POSTS; i++) CHECK(notice_posts_add(&l, JN1_ID, NOTICE_SHOWN, 0), "kept");
+    CHECK(!notice_posts_room(&l, 0), "full: no room for another notice");
+    l.p[0].state = NOTICE_ANSWERED;
     CHECK(!notice_posts_add(&l, JN1_ID, NOTICE_EXPIRED, 0) && l.n == NOTICE_POSTS &&
-              l.p[NOTICE_POSTS - 1].state == NOTICE_EXPIRED,
-          "full, the oldest gives way");
+              l.p[0].state == NOTICE_ANSWERED && l.p[NOTICE_POSTS - 1].state == NOTICE_EXPIRED,
+          "full, a `shown` gives way and the head (in flight) never does");
+    for (int i = 1; i < NOTICE_POSTS; i++) l.p[i].state = NOTICE_DISMISSED;
+    CHECK(!notice_posts_add(&l, JN1_ID, NOTICE_SHOWN, 0) && l.n == NOTICE_POSTS &&
+              l.p[NOTICE_POSTS - 1].state == NOTICE_DISMISSED,
+          "full of ends, a new `shown` is the one lost");
     CHECK(notice_posts_final(&l, JN1_ID), "a final state is seen");
     l.p[0].id[3] = 'X';
     l.p[1].state = 9;
@@ -5755,6 +5820,8 @@ int main(void)
     test_a_picture_and_a_sound_come_back_out_of_the_file();
     test_a_notice_hides_itself_after_hide_s();
     test_four_open_at_most();
+    test_an_outage_never_loses_an_answer();
+    test_a_long_title_is_cut_on_a_character();
     test_a_reboot_keeps_the_notices_and_what_the_box_is_owed();
     test_the_state_post_list_and_the_file_names();
     test_the_notice_overlay_reads_like_the_mock();

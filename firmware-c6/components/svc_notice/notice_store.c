@@ -97,9 +97,13 @@ static bool skip(int fd, uint32_t n)
 static bool text(int fd, uint16_t len, char *dst, size_t cap)
 {
     size_t k = len < cap - 1 ? len : cap - 1;
-    if (!read_all(fd, dst, k) || !skip(fd, (uint32_t)(len - k))) return false;
-    if (k < len)
-        while (k && ((uint8_t)dst[k] & 0xC0) == 0x80) k--;
+    if (!read_all(fd, dst, k)) return false;
+    if (k < len) {
+        /* The first byte left out says whether the cut split a character: back off to its start. */
+        uint8_t c;
+        if (!read_all(fd, &c, 1) || !skip(fd, (uint32_t)(len - k - 1))) return false;
+        while (k && (c & 0xC0) == 0x80) c = (uint8_t)dst[--k];
+    }
     dst[k] = '\0';
     return true;
 }

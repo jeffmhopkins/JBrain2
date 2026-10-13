@@ -1841,10 +1841,12 @@ NotifyPicture, NotifyNight, NotifyBanner, NotifyAudio and ClockBadge, `docs/mock
   | `hide_s` after it was drawn | `{"state":"expired"}` |
   | its answer window (`ttl_s`) runs out | nothing: the box has closed it, and would 404 |
 
-- **The states reach the box whatever the radio does.** They wait in a list of eight, oldest
+- **The states reach the box whatever the radio does.** They wait in a list of twelve, oldest
   first, kept in NVS (`jpanel` / `notice_posts`, saved at most every 2 s), and go one at a time in
   order — `shown` before the answer that follows it — retried after 5 s, 15 s, 60 s and then every
-  5 min.
+  5 min. A notice is collected (or brought back after a reboot) only while the list has room for
+  its two POSTs on top of what the notices already held may still owe, so a long outage stops
+  new notices at the box rather than losing an answer said at the glass.
   A 2xx is done; so are a 404, 409 or 422, which no retry changes. A reboot keeps the list.
 - **The sound plays once, as the notice is drawn**, from its file: a new kind of exchange in
   `svc_audio` (`TK_KIND_NOTICE`), a play whose bytes come from `storage` instead of the box, through
@@ -1922,7 +1924,7 @@ program; a play's measured ~6-12 KB is the model): an estimate of 55-60 KB for `
 | `sim/` | `sim_notice.c` sends notices as the box does (a JN1 stream with a picture and a sound through the panel's own collection path); states `notify-info`, `notify-question`, `notify-question-sound`, `notify-picture`, `notify-night`, `notify-night-shown`, `notify-night-question`, `notify-banner`, `notify-audio`, `notify-picture-turned`; `--touch` taps a question, a plain notice, the speaker row and an answer. |
 | `main` | `notice_link.c` (the collection, read straight into the record buffer, and the state POSTs); the pickup's query and `X-Notice` (`dbg_link.c`, `box_http.c`); the notice sound from its file (`talk_link.c`); the mount before the UI (`main.c`); the UI task's pass (`ui_task.c`). |
 | `sdkconfig.defaults` | littlefs: one partition, 128 B read and program units, 256 B caches, a 32 B lookahead, no mtime. |
-| `host/` | The reader against every fixture in `backend/tests/fixtures/jpanel_notice/` in nine splits, its pixels and PCM by SHA-256 against `vectors.json` (`sha256.c` is the suite's own); torn streams, a bad END count, a stripe that overflows or falls short, records out of order and the rest of `decode()`'s refusals; the service end to end through real files: arrival, `shown`, an answer, a failed POST retried, the torn stream fetched again, `hide_s`, the answer window, four open, a reboot. |
+| `host/` | The reader against every fixture in `backend/tests/fixtures/jpanel_notice/` in nine splits, its pixels and PCM by SHA-256 against `vectors.json` (`sha256.c` is the suite's own); torn streams, a bad END count, a stripe that overflows or falls short, records out of order and the rest of `decode()`'s refusals; the service end to end through real files: arrival, `shown`, an answer, a failed POST retried, the torn stream fetched again, `hide_s`, the answer window, four open, an outage that never loses an answer, a reboot. |
 
 ### Debugging it
 

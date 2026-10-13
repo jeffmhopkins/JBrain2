@@ -44,8 +44,10 @@ void notice_state_json(notice_state_t s, uint8_t choice, char *out, size_t cap);
 
 /* The state POSTs the box has not confirmed, oldest first: kept in NVS so neither a dropped
  * radio nor a reboot loses an answer, and sent one at a time, in order — `shown` before the
- * answer it precedes. Full, the oldest gives way. */
-#define NOTICE_POSTS 8
+ * answer it precedes. A notice is only taken while the list has room for its two and what the
+ * held ones may still owe (`notice_posts_room`), so it never fills; if it somehow does, a `shown` gives way first
+ * and the head (the POST in flight) never does. */
+#define NOTICE_POSTS 12
 typedef struct {
     char id[NOTICE_ID_TEXT];
     uint8_t state; /* notice_state_t */
@@ -55,8 +57,11 @@ typedef struct {
     uint8_t n;
     notice_post_t p[NOTICE_POSTS];
 } notice_posts_t;
-/* False when it was full and the oldest was dropped to make room. */
+/* False when it was full and something (the new `shown` itself, or an older entry) was lost. */
 bool notice_posts_add(notice_posts_t *l, const char *id, notice_state_t s, uint8_t choice);
+/* Room for one more notice's `shown` and end, beyond the `ahead` POSTs the notices already held
+ * may still owe (two for one not yet shown, one for one that is). */
+bool notice_posts_room(const notice_posts_t *l, uint8_t ahead);
 void notice_posts_pop(notice_posts_t *l);
 /* Whether `id` has a final state (answered, dismissed, expired) waiting: a notice that ended
  * before a reboot and is not shown again. */

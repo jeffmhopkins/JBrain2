@@ -57,11 +57,25 @@ void notice_state_json(notice_state_t s, uint8_t choice, char *out, size_t cap)
         snprintf(out, cap, "{\"state\":\"%s\"}", notice_state_name(s));
 }
 
+/* Never the head: it may be the POST in flight, and its answer is what clears it. */
+static void posts_drop(notice_posts_t *l, uint8_t at)
+{
+    memmove(l->p + at, l->p + at + 1, sizeof l->p[0] * (size_t)(l->n - 1 - at));
+    l->n--;
+}
+
 bool notice_posts_add(notice_posts_t *l, const char *id, notice_state_t s, uint8_t choice)
 {
     bool kept = true;
     if (l->n == NOTICE_POSTS) {
-        notice_posts_pop(l);
+        /* A `shown` is the cheapest thing to lose: the box takes an end straight from delivered. */
+        uint8_t at = 1;
+        while (at < l->n && l->p[at].state != NOTICE_SHOWN) at++;
+        if (at == l->n) {
+            if (s == NOTICE_SHOWN) return false;
+            at = 1;
+        }
+        posts_drop(l, at);
         kept = false;
     }
     notice_post_t *p = &l->p[l->n++];
@@ -69,6 +83,11 @@ bool notice_posts_add(notice_posts_t *l, const char *id, notice_state_t s, uint8
     p->state = (uint8_t)s;
     p->choice = choice;
     return kept;
+}
+
+bool notice_posts_room(const notice_posts_t *l, uint8_t ahead)
+{
+    return l->n + ahead + 2u <= NOTICE_POSTS;
 }
 
 void notice_posts_pop(notice_posts_t *l)

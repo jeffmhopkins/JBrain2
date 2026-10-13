@@ -185,15 +185,19 @@ static void drop_at(uint8_t i)
 }
 
 /* Under the lock. */
+/* What the notices held may still add to the owed list. Under the lock. */
+static uint8_t owed_ahead(void)
+{
+    uint8_t k = (uint8_t)(2 * s_nrefetch);
+    for (uint8_t i = 0; i < s_n; i++) k += s_q[i].shown ? 1 : 2;
+    return k;
+}
+
 static void owe(const uint8_t id[16], notice_state_t st, uint8_t choice)
 {
     char text[NOTICE_ID_TEXT];
     jn1_uuid_text(id, text);
-    if (!notice_posts_add(&s_posts, text, st, choice)) {
-        s_post.dropped++;
-        /* The POST in flight may have been the one that gave way: it is sent again from the head. */
-        s_post_out = false;
-    }
+    if (!notice_posts_add(&s_posts, text, st, choice)) s_post.dropped++;
     s_posts_dirty = true;
     s_posts_changed = now_ms();
 }
@@ -531,7 +535,8 @@ bool svc_notice_want_fetch(char *path, size_t cap)
         }
     /* Room for one more: the box holds a fifth back anyway (429 busy), but a panel holding
        stale ones must not take a notice it has nowhere to keep. */
-    if (!want && s_want_next && s_n + s_nrefetch < NOTICE_OPEN_MAX) {
+    if (!want && s_want_next && s_n + s_nrefetch < NOTICE_OPEN_MAX &&
+        notice_posts_room(&s_posts, owed_ahead())) {
         snprintf(path, cap, "%s", NOTICE_NEXT_PATH);
         want = true;
     }
@@ -924,7 +929,8 @@ static void restore(void)
     }
     for (uint8_t i = 0; i < nkeep; i++) {
         const uint32_t left = window_left(keep[i].deadline);
-        if (left && check_file(keep[i].name, buf, n) && add_entry(n, keep[i].seq, keep[i].deadline, left))
+        if (left && notice_posts_room(&s_posts, owed_ahead()) && check_file(keep[i].name, buf, n) &&
+            add_entry(n, keep[i].seq, keep[i].deadline, left))
             s_st.restored++;
     }
     /* Past the four kept: more than the box ever lets open, so the newest go. */
