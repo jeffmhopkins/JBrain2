@@ -96,8 +96,10 @@ for (let i = 0; i < 5; i++) {
 tap(W / 2, H * 0.62);
 p.advance(4600);
 const tk = events.slice(tickled);
-check(tk.filter((e) => e.includes('cue GIGGLE')).length === 4, 'four tickles, a giggle each');
-check(tk.filter((e) => e.includes('cue TICKLE')).length === 3,
+check(tk.filter((e) => e.includes('cue TICKLED')).length === 4,
+  'four tickles, a held-in "hehehe" each, not the poke giggle');
+check(!tk.some((e) => e.includes('cue GIGGLE')), 'nothing about a tickle sounds like a poke');
+check(tk.filter((e) => e.includes('cue TICKLE (')).length === 3,
   'and the fifth sets him laughing, and laughing again, and again');
 const later = events.length;
 tap(W / 2, H * 0.62);

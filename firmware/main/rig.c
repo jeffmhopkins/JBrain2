@@ -36,6 +36,7 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_TICKLE] = {4800, FACE_HAPPY, 0},
     [ACT_POOP] = {2600, FACE_SILLY, 0},
     [ACT_BRACE] = {1600, FACE_EXCITED, 0},
+    [ACT_TICKLED] = {1100, FACE_HAPPY, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -321,6 +322,15 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         out->bob += squat_amount(p) * 8.0f;
         out->tail += squat_amount(p) * 22.0f;
         break;
+    case ACT_TICKLED: {
+        /* ONE TICKLE: the fit's squirm, short and at `mag` — which rises tickle by tickle, so
+           the four build to the fifth rather than repeating. */
+        const float k = tickle_env(p) * mag;
+        out->neck += sinf(p * (float)M_PI * 14.0f) * 16.0f * k;
+        out->bob -= fabsf(sinf(p * (float)M_PI * 12.0f)) * 10.0f * k;
+        out->tail += sinf(p * (float)M_PI * 18.0f) * 24.0f * k;
+        break;
+    }
     case ACT_TICKLE: {
         /* HELPLESS LAUGHTER: the head tosses, he bounces with every "ha", the tail wags flat
            out and the feet kick. Each channel at its own rate so it never settles into one
@@ -477,6 +487,13 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
         out->arm_r = -out->arm_l;
         break;
     }
+    case ACT_TICKLED: {
+        /* Arms snapping in to guard the tickled side, and back. */
+        const float k = tickle_env(p) * mag;
+        out->arm_l = 25.0f + sinf(p * (float)M_PI * 12.0f) * 40.0f * k;
+        out->arm_r = -(25.0f + sinf(p * (float)M_PI * 12.0f + 1.3f) * 40.0f * k);
+        break;
+    }
     case ACT_TICKLE: {
         /* Arms flailing, out of step with each other; legs kicking OUT in turn, never across
            (a kick through the middle crossed his legs). */
@@ -620,6 +637,14 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
             /* Up on his toes with relief once it is out. */
             if (p > POOP_AT) out->oy -= sinf((p - POOP_AT) / (1.0f - POOP_AT) * (float)M_PI) * 10.0f;
             break;
+        case ACT_TICKLED: {
+            const float k = tickle_env(p) * mag;
+            out->ox += sinf(p * (float)M_PI * 10.0f) * 9.0f * k;
+            out->oy -= fabsf(sinf(p * (float)M_PI * 12.0f)) * 8.0f * k;
+            out->tilt += sinf(p * (float)M_PI * 8.0f) * 9.0f * k;
+            out->extra = EXTRA_TICKLE;
+            break;
+        }
         case ACT_TICKLE: {
             /* Wriggling side to side and bouncing on the laughs. */
             const float k = tickle_env(p) * mag;

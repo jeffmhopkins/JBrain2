@@ -47,6 +47,7 @@ typedef enum {
     ACT_LOVE,  /* "I love you": hearts float up and he coos */
     ACT_TICKLE, /* the fifth tickle (`tickle.h`): he squirms and laughs, and laughs again */
     ACT_BRACE,  /* "I'm going to tickle you": he braces, giggling nervously */
+    ACT_TICKLED, /* one of the four tickles before the fifth: a squirm and a "hehehe" */
     ACT_POOP,   /* three meals in a minute (`poop.h`): he squats, strains, and plop */
     ACT_COUNT,
 } action_t;

@@ -315,6 +315,9 @@ static const cue_def_t DEF[CUE_COUNT] = {
     /* UH-OH: the laugh's shape run the other way, three short "hee"s climbing a fourth, higher
        and quicker than the real thing. Anticipation rises; release (CUE_TICKLE) falls. */
     [CUE_BRACE] = {SH_LAUGH, 460, 900.0f, 0.0f, 3.0f, -5.0f, {END}, 4, 0},
+    /* HEHEHE: the real laugh's shape, four "he"s and quick, trying to hold it in — the fit
+       (CUE_TICKLE) is what it sounds like once he cannot. */
+    [CUE_TICKLED] = {SH_LAUGH, 380, 700.0f, 0.0f, 4.0f, 3.0f, {END}, 4, 0},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -433,6 +436,7 @@ cue_t cue_for_action(int action)
     case ACT_TICKLE: return CUE_TICKLE;
     case ACT_POOP:   return CUE_POOP;
     case ACT_BRACE:  return CUE_BRACE;
+    case ACT_TICKLED: return CUE_TICKLED;
     default:         return CUE_BLIP;
     }
 }

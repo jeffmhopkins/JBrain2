@@ -190,6 +190,14 @@ laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
 
+**0.4.12: a tickle that looks like a tickle.** Owner: *"when he's in tickle mode if I touch him
+he still acts like I'm poking him versus tickling."* He did: the four tickles were `ACT_GIGGLE`,
+one of the poke pools' own reactions, with the poke's flinch and colour change. Now each is
+`ACT_TICKLED` — the fit's squirm, short, with the tickle marks and `CUE_TICKLED`, a held-in
+"hehehe" — at a magnitude that rises tickle by tickle (`tickle_mag`), and a tickle neither
+flinches him nor changes his colour. And while he is warned and doing nothing else he holds the
+brace, hunched and shivering (`tickle_wait_p`), so the game is visibly on.
+
 **A different snack every time (0.4.11).** Owner: *"Kids are also requesting a random item to
 eat, maybe one out of eight possibilities."* `food_t`: a cookie, an apple, a banana, a slice of
 pizza, a donut, a carrot, a slice of watermelon or a strawberry, each a per-pixel shape in its

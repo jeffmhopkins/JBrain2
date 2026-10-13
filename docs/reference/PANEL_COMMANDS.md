@@ -140,8 +140,10 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
 `have a snack` `give it a kick` `do a spin`
 · **love** (0.4.7; 5.6 s since 0.4.10): `i love you` `love you` — hearts float up and he coos
 · **tickle** (0.4.11): `im going to tickle you` `gonna tickle you` — a warning, not a tickle: he
-  braces with a nervous titter, and for 10 s after (renewed by each one) a poke is a tickle. Four
-  get a giggle; the fifth sets off the laughing fit (squirming, laughing three times over).
+  braces with a nervous titter, and for 10 s after (renewed by each one) a poke is a tickle. He
+  waits hunched and shivering; each of four tickles is a squirm with tickle marks and a held-in
+  "hehehe", harder each time, with none of a poke's flinch or colour change (0.4.12); the fifth
+  sets off the laughing fit (squirming, laughing three times over).
   0.4.10's `tickle tickle` / `tickle me` are gone
 · **eat** (`eat`, `have a snack`): since 0.4.11 three bites over 2.9 s of one of eight snacks
   (cookie, apple, banana, pizza, donut, carrot, watermelon, strawberry; never the same twice running),

@@ -1,6 +1,6 @@
 # The twins' panels (ESP32-S3-Touch-AMOLED-1.8): the bench
 
-Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.11's own UI code** · Last verified: 2026-10-13
+Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.12's own UI code** · Last verified: 2026-10-13
 
 An interactive mock of the twins' panel, with one difference from Jeff's C6 set
 (`../jpanel-c6/`): nothing here is a drawing of the panel. `sim.wasm` is the firmware's own UI

@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** FW🟡 (firmware 0.4.0–0.4.11, §15) W1◻️ W2◻️ W3◻️ P1◻️
+> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** FW🟡 (firmware 0.4.0–0.4.12, §15) W1◻️ W2◻️ W3◻️ P1◻️
 >
 > **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
 > until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs
@@ -2522,6 +2522,9 @@ in flight. Two faults the owner saw within the hour:
 - *The animation was choppy.* With the socket off, every request was a fresh TLS handshake, and
   the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
   requests, turned on only after speech has started (`firmware/README.md`).
+
+**0.4.12, a tickle that looks like a tickle.** Each tickle is its own squirm and "hehehe", not
+the poke giggle, and he waits visibly braced while the game is on (`firmware/README.md`).
 
 **0.4.11, from the owner trying 0.4.10.** The meal is three bites of one of eight snacks, and the tickle's laugh is
 cheap enough to render that the squirming no longer freezes at each one. Three meals in a

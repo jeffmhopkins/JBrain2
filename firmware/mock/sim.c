@@ -114,6 +114,7 @@ static uint32_t r_recue_from;
 /* As the panel does: three snacks in a minute and he has to go (`poop.h`). */
 static poop_t r_poop;
 static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
+static float r_mag = 1.0f; /* the action's magnitude: the tickles rise */
 static uint32_t r_poop_last;
 static float r_recue_p;
 static float r_flinch;
@@ -452,6 +453,7 @@ static void frame(void)
         r_action_at = now;
     }
     if (r_pending_act != ACT_NONE) {
+        r_mag = 1.0f;
         r_action = r_pending_act;
         r_action_at = now;
         r_pending_act = ACT_NONE;
@@ -482,7 +484,9 @@ static void frame(void)
     if (s_out.pet_press && facts.pet_only && !rig_holds_pokes(r_action)) {
         const tickle_poke_t tk = tickle_poke(&r_tickle, now);
         if (tk != TICKLE_NO) {
-            r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_GIGGLE;
+            r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
+            r_mag = tk == TICKLE_BIG ? 1.0f : tickle_mag(&r_tickle);
+            r_flinch = 0.0f;
             r_action_at = now;
             const cue_t c = cue_for_action((int)r_action);
             (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
@@ -491,6 +495,7 @@ static void frame(void)
         }
     }
     if (r_poop.owed && r_action == ACT_NONE && s_sm.mode == SM_PET) {
+        r_mag = 1.0f;
         r_action = ACT_POOP;
         r_action_at = now;
         say("pet", "has to go");
@@ -533,6 +538,13 @@ static void frame(void)
             p = (float)el / (float)dur;
         }
     }
+    /* As the panel does: warned and idle, he holds the brace, shivering (`tickle_wait_p`). */
+    action_t shown = r_action;
+    float shown_p = p;
+    if (r_action == ACT_NONE && tickle_armed(&r_tickle, now)) {
+        shown = ACT_BRACE;
+        shown_p = tickle_wait_p(now);
+    }
     /* As the panel does (`display.c`): an action that outlasts its sound says it again. */
     if (r_action_at != r_recue_from) {
         r_recue_from = r_action_at;
@@ -555,11 +567,11 @@ static void frame(void)
     emotion_resolve(dozing                    ? FACE_SLEEPY
                     : view->mode == SM_LISTEN ? FACE_CURIOUS
                     : view->dash              ? FACE_BEWILDERED
-                                              : rig_spec(r_action)->face,
+                                              : rig_spec(shown)->face,
                     &target);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
-    rig_for(r_action, p, 1.0f, now, &r_fst.rig);
+    rig_for(shown, shown_p, r_mag, now, &r_fst.rig);
     /* `display.c`'s `update_orientation`, upright: the lean and the head's righting from a
        panel turned `r_tilt_deg`, as the accelerometer (one g = 8192) would report it. The
        lean's arithmetic is copied; the axes and the righting are `orient.c`'s own. */
@@ -586,7 +598,7 @@ static void frame(void)
         r_fst.poop_size = poop_scale(&r_poop, now);
         r_fst.poop_t = (float)(now - r_poop.born) * 0.001f;
     }
-    rig_figure(r_action, p, 1.0f, now, r_fst.eyes.face_ang, &r_fst.fig);
+    rig_figure(shown, shown_p, r_mag, now, r_fst.eyes.face_ang, &r_fst.fig);
     r_fst.bob = bob_step(r_frame++);
     const uint32_t blink = now % 4200;
     r_fst.open = dozing ? 0.0f : blink < 120 ? 1.0f - blink / 120.0f : blink < 240 ? (blink - 120) / 120.0f : 1.0f;

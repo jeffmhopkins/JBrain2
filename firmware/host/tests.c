@@ -1016,6 +1016,37 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
     }
     CHECK(tickle_poke(&tk, 7000) == TICKLE_BIG, "and the fifth sets him off");
     CHECK(tickle_poke(&tk, 7500) == TICKLE_NO, "after which a poke is a poke again");
+    /* AND A TICKLE LOOKS LIKE A TICKLE (owner: "if I touch him he still acts like I'm poking
+       him versus tickling"). The four were ACT_GIGGLE, one of the poke pools' own reactions,
+       with the poke's flinch and colour change: indistinguishable from a poke. Now each is its
+       own squirm with the tickle marks and its own sound, rising tickle by tickle. */
+    CHECK(cue_for_action(ACT_TICKLED) == CUE_TICKLED && CUE_TICKLED != CUE_GIGGLE,
+          "a tickle has its own held-in laugh, not the poke giggle");
+    {
+        figure_pose_t fig;
+        rig_figure(ACT_TICKLED, 0.4f, 1.0f, 0, 0.0f, &fig);
+        CHECK(fig.extra == EXTRA_TICKLE, "and the tickle marks, as the fit has");
+        tickle_t tm;
+        tickle_reset(&tm);
+        tickle_arm(&tm, 0);
+        float last = 0.0f;
+        for (int i = 1; i < TICKLE_POKES; i++) {
+            tickle_poke(&tm, (uint32_t)i * 100);
+            CHECK(tickle_mag(&tm) > last && tickle_mag(&tm) <= 1.0f,
+                  "each tickle harder than the last");
+            last = tickle_mag(&tm);
+        }
+    }
+    /* WAITING TO BE TICKLED, the game is visibly on: the brace held, never easing out of it. */
+    for (uint32_t ms = 0; ms < 5000; ms += 37) {
+        const float wp = tickle_wait_p(ms);
+        rig_pose_t a, b;
+        rig_for(ACT_BRACE, wp, 1.0f, 0, &a);
+        rig_for(ACT_BRACE, 0.5f, 1.0f, 0, &b);
+        CHECK(wp > 0.2f && wp < 0.78f && fabsf(a.leg_l - b.leg_l) < 0.01f,
+              "the waiting pose holds the hunch the whole time");
+    }
+
     /* BUT NOT DURING THE FIT IT SET OFF: a child tickling keeps poking, and the sixth poke
        picking from the zone's pool cut the 4.8 s fit off after its first laugh (review). */
     CHECK(rig_holds_pokes(ACT_TICKLE), "a poke mid-fit only flinches");
