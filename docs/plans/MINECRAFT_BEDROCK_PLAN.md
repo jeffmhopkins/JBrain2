@@ -1274,7 +1274,8 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
   - Villagers and pets: §M4e "On the map"; both off by default. Owner-only, never on a share
     link; none of the three on the timeline's replay.
   - Dave's map card gained the `villager` and `pet` focuses (`mc_show_map` v4).
-- **Next:** the height, slice and changes layers.
+- **Next:** the player share link ("map of here", below), then the height, slice and changes
+  layers.
 
 **Beds and respawn points (built 2026-10-13; the owner's pick, beds variant B of
 `docs/mocks/minecraft-map-layers/`; DESIGN.md "Beds and respawn points on the Minecraft
