@@ -172,11 +172,13 @@ included: the meal is the one action that does not sound as it starts
 (`rig_cue_on_start`), since its hand is still on the way up. The bench has a "Have a snack"
 button.
 
-**A poke over the pet's own sound reacts again.** A poke over any sound used to only flinch,
-which with the meal crunching through two-thirds of its length and the tickle laughing through
-half of its own made most pokes during them do nothing. Now only the agent talking or a message
-playing holds a poke to a flinch (`screen_poke_reacts`); a new reaction's cue replaces the one
-sounding.
+**A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
+only flinch, which with the meal crunching through two-thirds of its length and the tickle
+laughing through half of its own made most pokes during them do nothing. Two halves to it: the
+arbiter now lets a press cue cut a sounding PRESS-slot cue (the pet's own noise; never a reply
+or another slot's result or chime, which a press is still dropped behind), and
+`stream_facts_t.pet_only` tells `display.c` when that is all that is sounding, so it reacts
+there and flinches everywhere else. `stream_tests` drives it through the real arbiter.
 
 ## Where you poke him changes what he does
 

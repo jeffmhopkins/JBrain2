@@ -2167,11 +2167,13 @@ static void face_task(void *arg)
         /* THE POKE, which the machine hands back when a press reached the pet. SPEAKING, AND IT
            OUTRANKS THE TOY: *"when the agent is talking we should prohibit beeps from cutting it
            off, and we should also stop poke interactions making other animations."* A poke over
-           sound only flinches, because ignoring a finger entirely reads as a frozen pet. */
+           sound only flinches, because ignoring a finger entirely reads as a frozen pet.
+           EXCEPT OVER THE PET'S OWN NOISE (`pet_only`, 0.4.10): a meal crunches through two
+           thirds of its 4.8 s, and the speaker cuts that cue for the poke's, so it is heard. */
         if (s_out.pet_press) {
             s_flinch = 1.0f;
             dirty = true;
-            if (!screen_poke_reacts(facts.reply_busy, facts.stream_live)) {
+            if (!facts.pet_only) {
                 /* the flinch alone */
             } else if (label_hit(ox, oy, over_y0)) {
                 /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass

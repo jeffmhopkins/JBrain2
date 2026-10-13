@@ -1057,16 +1057,6 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
     }
 }
 
-static void test_a_poke_over_the_pets_own_sound_still_reacts(void)
-{
-    /* The reviewer on 0.4.10: the meal crunches through two-thirds of its 4.8 s and the tickle
-       laughs through half of it, and a poke over ANY sound only flinched, so most pokes during
-       either did nothing. Only the agent and a message are not the pet's to talk over. */
-    CHECK(screen_poke_reacts(false, false), "over the pet's own crunch or laugh: it reacts");
-    CHECK(!screen_poke_reacts(true, false), "over the agent talking: a flinch, nothing more");
-    CHECK(!screen_poke_reacts(false, true), "over a message: a flinch, nothing more");
-}
-
 static void test_a_meal_is_five_bites_of_a_cookie(void)
 {
     /* The owner: "the eat animation can probably be better with multiple bites being taken and
@@ -4925,7 +4915,6 @@ int main(void)
     test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
     test_a_meal_is_five_bites_of_a_cookie();
-    test_a_poke_over_the_pets_own_sound_still_reacts();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();

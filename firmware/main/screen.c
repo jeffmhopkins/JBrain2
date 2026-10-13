@@ -54,11 +54,6 @@ bool screen_shaken(shake_t *s, int magnitude, uint32_t now_ms)
     return true;
 }
 
-bool screen_poke_reacts(bool agent_talking, bool message_playing)
-{
-    return !agent_talking && !message_playing;
-}
-
 bool screen_dozing(screen_stage_t stage, bool conversing, bool speaking)
 {
     return stage == SCREEN_DIM && !conversing && !speaking;
