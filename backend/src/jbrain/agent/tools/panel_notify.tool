@@ -36,7 +36,7 @@ params:
       description: Chime when it arrives. Default false.
     hide_after_s:
       type: integer
-      description: Hide it by itself this many seconds after it shows (3-600). Omit to keep it until tapped.
+      description: Hide it by itself this many seconds after it shows (3-600), or 0 to keep it until tapped. Omitted, a plain notice hides after 20 seconds and a question stays until answered.
   required: [title]
 ---
 Put a notice on the owner's desk panel — the small screen on his desk — and, with
