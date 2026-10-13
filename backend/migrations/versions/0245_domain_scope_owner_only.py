@@ -15,8 +15,8 @@ names that kind, through `app.has_kind_scope(kind, code)`, so each grant is expl
   view-scope read of its family's fixes, geofence state + fences, shared places, its FCM
   token, the who-saw-whom audit). The subject / principal pins already in each policy are
   unchanged and still load-bearing. `events` gains a SELECT-only arm limited to
-  geofence-transition rows about the device's own subject or one it may see — the member
-  timeline, which used to rely on its own SQL as the firewall. A panel is also a
+  geofence-transition rows at a shared place about the device's own subject or one it may
+  see — the member timeline, which used to rely on its own SQL as the firewall. A panel is also a
   `device_key` but carries no scope (`panel_context`), so it earns none of these.
 - `jmolt_observer` + `jmolt`: the five `jmolt_*_read` SELECT policies (M19's read-only
   observer, which is deliberately not an owner so the outbox advance/purge stay shut).
@@ -114,8 +114,10 @@ def _policies(device: bool) -> list[str]:
     ]
 
 
-# The member timeline's one read of `events`: geofence crossings about the device's own
-# subject or a family member it may see. No write arm — transitions are emitted under the
+# The member timeline's one read of `events`: geofence crossings at an owner-SHARED place
+# about the device's own subject or a family member it may see. The place match compares
+# text, never casts, so a malformed payload id just fails to match. `place_share` is read
+# through the device's own arm on it. No write arm — transitions are emitted under the
 # system context (locations/geofence.py).
 _EVENTS_DEVICE = f"""
 CREATE POLICY events_device_geofence_read ON app.events FOR SELECT
@@ -125,6 +127,10 @@ USING (
     AND (
         payload->>'subject_id' = current_setting('app.subject_id', true)
         OR app.viewer_may_see(current_setting('app.subject_id', true), payload->>'subject_id')
+    )
+    AND EXISTS (
+        SELECT 1 FROM app.place_share ps
+        WHERE ps.place_entity_id::text = payload->>'place_entity_id'
     )
 )
 """

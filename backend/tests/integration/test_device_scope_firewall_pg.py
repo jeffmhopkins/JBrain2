@@ -109,15 +109,46 @@ async def _seed_location_knowledge(maker: async_sessionmaker) -> tuple[str, str]
     return note, ent
 
 
-async def _event(maker: async_sessionmaker, *, type_: str, subject: str, principal: str) -> None:
+async def _event(
+    maker: async_sessionmaker, *, type_: str, subject: str, principal: str, place: str
+) -> None:
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
                 "INSERT INTO app.events (id, type, payload, domain_code, principal_id)"
-                " VALUES (gen_random_uuid(), :t, cast(:pl AS jsonb), 'location', :p)"
+                " VALUES (gen_random_uuid(), :t,"
+                " jsonb_build_object('subject_id', cast(:s AS text), 'place_entity_id',"
+                " cast(:pl AS text)), 'location', :p)"
             ),
-            {"t": type_, "pl": f'{{"subject_id": "{subject}"}}', "p": principal},
+            {"t": type_, "s": subject, "pl": place, "p": principal},
         )
+
+
+async def _place(maker: async_sessionmaker, *, shared: bool) -> str:
+    """A Place entity with a subject-less fence, shared to members when asked."""
+    async with scoped_session(maker, OWNER) as s:
+        eid = (
+            await s.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, domain_code)"
+                    " VALUES (gen_random_uuid(), 'Place', 'Spot', 'location') RETURNING id::text"
+                )
+            )
+        ).scalar_one()
+        await s.execute(
+            text(
+                "INSERT INTO app.place_geofence (place_entity_id, domain_code, name, center,"
+                " radius_m) VALUES (cast(:e AS uuid), 'location', 'Spot',"
+                " ST_SetSRID(ST_MakePoint(-74.0, 40.0), 4326)::geography, 150)"
+            ),
+            {"e": eid},
+        )
+        if shared:
+            await s.execute(
+                text("INSERT INTO app.place_share (place_entity_id) VALUES (cast(:e AS uuid))"),
+                {"e": eid},
+            )
+    return eid
 
 
 async def _count(maker: async_sessionmaker, ctx: SessionContext, table: str) -> int:
@@ -172,18 +203,41 @@ async def test_a_device_reads_only_geofence_events_it_may_see(maker: async_sessi
                 text("INSERT INTO app.view_scope (group_id, member_subject_id) VALUES (:g, :s)"),
                 {"g": str(gid), "s": member},
             )
+    shared, private = await _place(maker, shared=True), await _place(maker, shared=False)
+    crossing = "location.geofence_transition"
     for subject in (sid, kin, stranger):
-        await _event(maker, type_="location.geofence_transition", subject=subject, principal=pid)
-    # A location-domain event of another type, about the device's own subject.
-    await _event(maker, type_="note.created", subject=sid, principal=pid)
+        await _event(maker, type_=crossing, subject=subject, principal=pid, place=shared)
+    # The device's own crossing at a place the owner never shared, one whose payload
+    # place id is malformed (must not error the whole read), and a location event of
+    # another type at the shared place.
+    await _event(maker, type_=crossing, subject=sid, principal=pid, place=private)
+    await _event(maker, type_=crossing, subject=sid, principal=pid, place="not-a-uuid")
+    await _event(maker, type_="note.created", subject=sid, principal=pid, place=shared)
 
     async with scoped_session(maker, device_context(pid, sid)) as s:
-        seen = set(
-            (await s.execute(text("SELECT payload->>'subject_id' FROM app.events"))).scalars()
-        )
-        kinds = set((await s.execute(text("SELECT type FROM app.events"))).scalars())
-    assert seen == {sid, kin}
-    assert kinds == {"location.geofence_transition"}
+        rows = (
+            await s.execute(
+                text(
+                    "SELECT type, payload->>'subject_id' AS s,"
+                    " payload->>'place_entity_id' AS p FROM app.events"
+                )
+            )
+        ).all()
+    assert sorted((r.type, r.s, r.p) for r in rows) == sorted(
+        (crossing, subject, shared) for subject in (sid, kin)
+    )
+    # The member timeline over the same rows: its own + family crossings at the shared
+    # place, nothing else.
+    timeline = await SqlLocationRepo(maker).member_timeline(
+        device_context(pid, sid),
+        viewer_subject_id=sid,
+        since=datetime(2000, 1, 1, tzinfo=UTC),
+        until=datetime(2100, 1, 1, tzinfo=UTC),
+        limit=50,
+    )
+    assert sorted((e.subject_id, e.place_entity_id) for e in timeline) == sorted(
+        (subject, shared) for subject in (sid, kin)
+    )
 
     with pytest.raises(ProgrammingError):
         async with scoped_session(maker, device_context(pid, sid)) as s:

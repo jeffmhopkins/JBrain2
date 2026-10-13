@@ -584,11 +584,11 @@ class SqlLocationRepo:
         """The subject's enter→exit stays overlapping `[since, until)`, by pairing
         `location.geofence_transition` events in time order.
 
-        Reads `app.events`, which is WEAK RLS (`has_domain_scope` only — a narrowed
-        owner still sees these rows), so this MUST gate on `require_full_owner`
-        first: RLS will NOT fail it closed. An enter still open at `until` is clamped
-        to `until`; an exit with no preceding enter is dropped, as is any non-positive
-        interval. `place_entity_id` optionally restricts to one place."""
+        Reads `app.events`, whose RLS admits any location-scoped owner (narrowed
+        too) and, since 0245, a device's own/family crossings — so this MUST gate on
+        `require_full_owner` first: RLS will NOT fail it closed. An enter still open
+        at `until` is clamped to `until`; an exit with no preceding enter is dropped,
+        as is any non-positive interval. `place_entity_id` optionally restricts to one place."""
         require_full_owner(ctx)
         clause = " AND e.payload->>'place_entity_id' = :eid" if place_entity_id else ""
         # No lower bound on the fetch on purpose: an enter that predates `since` is
@@ -627,8 +627,9 @@ class SqlLocationRepo:
         `place_entity_id`. A crossing whose place entity was since deleted falls back
         to a generic label rather than vanishing from the audit.
 
-        `app.events` is WEAK RLS (`has_domain_scope` only), so the full-owner gate
-        here is the real barrier — a narrowed owner is refused, not handed rows."""
+        `app.events` RLS admits a narrowed owner (and a device's own crossings, 0245),
+        so the full-owner gate here is the real barrier — a narrowed owner is refused,
+        not handed rows."""
         require_full_owner(ctx)
         async with scoped_session(self._maker, ctx) as session:
             rows = (
@@ -667,8 +668,9 @@ class SqlLocationRepo:
         source of truth, #7); center/polygon come back as lat/lon via PostGIS so the
         self-rendered map can project them without a geometry lib client-side.
 
-        `place_geofence` READ is WEAK RLS (`has_domain_scope`, also satisfied by a
-        device key), so the full-owner gate here is the real barrier."""
+        `place_geofence` READ also admits a device key through its explicit arm
+        (subject-less or own-subject fences, 0245), so the full-owner gate here is the
+        real barrier."""
         require_full_owner(ctx)
         async with scoped_session(self._maker, ctx) as session:
             rows = (
@@ -818,12 +820,11 @@ class SqlLocationRepo:
         `subject_id` is given, the subject's most recent fix — resolved INSIDE the
         query so a coordinate never crosses the repo boundary into model-facing text.
 
-        Reads `place_geofence` (the fence names/geometry), which is WEAK RLS
-        (`has_domain_scope`, also satisfied by a device key and by a narrowed owner),
-        so this MUST gate on `require_full_owner` first — RLS will NOT fail it closed,
-        and the distance to a private fence is itself a leak. Bounded by `ST_DWithin`
-        and ordered by the `<->` KNN operator over the `place_geofence_center_idx`
-        GiST index; circular fences only (a fence stores center XOR polygon)."""
+        Reads `place_geofence` (the fence names/geometry), whose READ also admits a device key
+        through its explicit arm (0245), so this MUST gate on `require_full_owner` first — RLS will
+        NOT fail it closed, and the distance to a private fence is itself a leak. Bounded by
+        `ST_DWithin` and ordered by the `<->` KNN operator over the `place_geofence_center_idx` GiST
+        index; circular fences only (a fence stores center XOR polygon)."""
         require_full_owner(ctx)
         if center is None and subject_id is None:
             return []
@@ -870,11 +871,11 @@ class SqlLocationRepo:
     async def home_roster(self, ctx: SessionContext) -> list[RosterEntry]:
         """Every device subject's current place + last-seen freshness, for the
         household presence read. Resolves place NAMES through `place_geofence`/
-        `entities` (WEAK RLS), so it MUST gate on `require_full_owner` first — a
-        narrowed owner is refused, not handed presence rows. The current inside-fence
-        (most recently entered wins) is left-joined so an outside subject still
-        appears (place None); `last_seen` is its latest fix so the caller can flag a
-        stale fix rather than report an old position as "here now"."""
+        `entities` (a narrowed owner passes their RLS), so it MUST gate on `require_full_owner`
+        first — a narrowed owner is refused, not handed presence rows. The current inside-fence
+        (most recently entered wins) is left-joined so an outside subject still appears (place
+        None); `last_seen` is its latest fix so the caller can flag a stale fix rather than report
+        an old position as "here now"."""
         require_full_owner(ctx)
         async with scoped_session(self._maker, ctx) as session:
             rows = (

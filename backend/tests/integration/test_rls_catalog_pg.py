@@ -57,3 +57,19 @@ async def test_every_table_forces_rls_with_a_policy(maker: async_sessionmaker) -
     assert bad == []
     # The exemptions are real tables, so the list cannot rot into covering nothing.
     assert {(r.schema, r.name) for r in rows} >= _EXEMPT
+
+
+async def test_no_materialized_view_sidesteps_rls(maker: async_sessionmaker) -> None:
+    """A materialized view takes no RLS of its own and snapshots its rows as the role
+    that refreshed it, so one in `app` would hand every reader the owner's rows."""
+    async with scoped_session(maker, UNSCOPED) as s:
+        views = (
+            await s.execute(
+                text(
+                    "SELECT n.nspname || '.' || c.relname"
+                    " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+                    " WHERE n.nspname IN ('app', 'public') AND c.relkind = 'm'"
+                )
+            )
+        ).scalars()
+        assert list(views) == []

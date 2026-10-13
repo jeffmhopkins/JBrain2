@@ -303,7 +303,7 @@ async def reverse_geocode(request: Request, lat: float, lon: float) -> AddressOu
 
 # ===== L7a — the nightly/weekly place digest (compute-on-read) =====
 # No table, no migration, no scheduler: the rollup is computed at request time from
-# the owner's own device dwells (`app.events`, WEAK RLS). `app.events`/`place_geofence`
+# the owner's own device dwells (`app.events`). `app.events`/`place_geofence`
 # are NOT fail-closed by RLS for a narrowed owner, so the route's owner_only gate +
 # the repo's `require_full_owner` are the real barrier here, asserted in the tests.
 
@@ -428,8 +428,8 @@ async def _owner_dwells(
     until: datetime,  # noqa: ANN001
 ) -> list[Dwell]:
     """Every paired stay for the owner's OWN devices in `[since, until)`, merged across
-    devices (the owner may carry more than one). `dwells` is full-owner gated (it reads
-    WEAK-RLS `app.events`); resolving the owner's device subjects is the deterministic
+    devices (the owner may carry more than one). `dwells` is full-owner gated (`app.events`
+    RLS admits a narrowed owner); resolving the owner's device subjects is the deterministic
     "Me" hard-link, never an LLM/fuzzy match."""
     subs = await devices.owner_device_subjects(ctx)
     merged: list[Dwell] = []
@@ -445,8 +445,8 @@ async def place_digest(
     """The owner's place digest for the period (week default, or night). Computed on
     read from the owner's own dwells — there is no stored feed and no scheduled write.
 
-    Owner-only and FULL-owner gated: `app.events`/`place_geofence` are WEAK RLS (a
-    narrowed owner still passes them), so the route's `owner_only` dependency + the
+    Owner-only and FULL-owner gated: `app.events`/`place_geofence` RLS admits a
+    narrowed owner, so the route's `owner_only` dependency + the
     repo's `require_full_owner` are the barrier — RLS will not fail this closed. A
     narrowed/non-owner session never reaches here (403/refused). Names + times only."""
     if period not in ("week", "night"):
