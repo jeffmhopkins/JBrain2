@@ -1473,6 +1473,32 @@ static void test_the_ring_never_overwrites_and_wraps(void)
     CHECK(tk_ring_read(&r, out, 4) == 0, "the consumer never reads past the producer");
 }
 
+static void test_a_play_rides_a_smaller_ring_than_a_talk(void)
+{
+    CHECK(tk_ring_bytes(TK_KIND_AGENT) == 16384 && tk_ring_bytes(TK_KIND_POST) == 16384,
+          "a talk and a voice message keep 0.0.10's half second of radio slack");
+    CHECK(tk_ring_bytes(TK_KIND_LISTEN) == 6144, "a stored message plays through 6 KB");
+    CHECK(tk_ring_bytes(TK_KIND_LISTEN) >= TK_SPK_START_BYTES + TK_NET_SLICE,
+          "which still holds the speaker's 150 ms start and one more network slice");
+    /* The play's ring fills and drains through a stream several times its size, as the speaker
+       takes 20 ms chunks and the network puts slices: nothing lost, nothing reordered. */
+    static uint8_t mem[TK_RING_PLAY];
+    tk_ring_t r;
+    tk_ring_init(&r, mem, sizeof mem);
+    uint8_t in[TK_NET_SLICE], out[TALK_CHUNK_BYTES];
+    uint32_t put = 0, got = 0;
+    bool order = true;
+    while (got < 5u * TK_RING_PLAY) {
+        for (uint32_t i = 0; i < sizeof in; i++) in[i] = (uint8_t)(put + i);
+        put += tk_ring_write(&r, in, (uint32_t)sizeof in);
+        const uint32_t n = tk_ring_read(&r, out, sizeof out);
+        for (uint32_t i = 0; i < n; i++) order &= out[i] == (uint8_t)(got + i);
+        got += n;
+    }
+    CHECK(order && tk_ring_used(&r) == put - got && tk_ring_used(&r) <= TK_RING_PLAY,
+          "a play's stream comes out of 6 KB in order");
+}
+
 static void test_a_hold_records_sends_and_hears_back(void)
 {
     tk_t t;
@@ -1805,6 +1831,7 @@ static void test_a_talk_on_the_glass_end_to_end(void)
     svc_audio_init();
     svc_settings_set(SET_TTS, 1);
     CHECK(svc_audio_talk_begin(TALK_TO_AGENT, "jerv") && svc_audio_talking(), "KEY down records");
+    CHECK(talk_ring_bytes() == TK_RING_TALK, "into a talk's 16 KB ring, taken at KEY down");
     svc_rtc_fake_advance_ms(3200);
     CHECK(svc_audio_talk_end(true) == TALK_SENT, "a three-second hold is sent");
     msg_t m = last_jerv();
@@ -3747,6 +3774,7 @@ static void test_the_people_s_threads_end_to_end(void)
     CHECK(!talk_ring_held(), "no ring until the box answers the play's GET");
     CHECK(svc_audio_talk_begin(TALK_TO_PERSON, SVC_MESSAGES_THREAD_1) == false,
           "a hold waits for the play to finish");
+    CHECK(!talk_ring_held(), "and takes no ring of its own while it waits (0.0.18)");
     svc_audio_fake_listen(true, false, false);
     svc_audio_service();
     svc_messages_get(SVC_MESSAGES_THREAD_1, 2, &m);
@@ -3760,6 +3788,7 @@ static void test_the_people_s_threads_end_to_end(void)
     CHECK(!svc_post_take(&extra), "exactly one stamp");
     svc_post_done(&r, -1, NULL, 0);
     CHECK(talk_ring_held(), "the ring once the audio arrives");
+    CHECK(talk_ring_bytes() == TK_RING_PLAY, "a play's own 6 KB ring, not a talk's 16 KB (0.0.18)");
     CHECK(svc_audio_speaking() && svc_audio_playing() == m.id, "playing through the reply's speaker path");
     CHECK(svc_audio_played_ms() == 0, "nothing at the speaker yet: the bar is empty");
     svc_audio_fake_played(1200);
@@ -4094,6 +4123,7 @@ int main(void)
     test_a_registered_secret_is_scrubbed_from_a_log_line_even_cut_short();
     test_the_stream_is_byte_for_byte_what_the_box_decodes();
     test_the_ring_never_overwrites_and_wraps();
+    test_a_play_rides_a_smaller_ring_than_a_talk();
     test_a_hold_records_sends_and_hears_back();
     test_a_knock_or_a_cancel_lets_go_of_everything();
     test_key_or_boot_over_a_reply_stops_it();

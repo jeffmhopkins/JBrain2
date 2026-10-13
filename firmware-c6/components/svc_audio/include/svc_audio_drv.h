@@ -31,6 +31,8 @@ bool svc_audio_tone(uint16_t hz, uint16_t ms, const char **why);
 /* Whether a talk's or a play's ring holds its 16 KB of internal RAM now: what the heap's
  * low-water mark is attributed to (telemetry's `int_min_at`). Any task. */
 bool talk_ring_held(void);
+/* The held ring's size, 0 when none: a talk's 16 KB or a play's 6 KB (0.0.18). */
+uint32_t talk_ring_bytes(void);
 
 /* `audio=…` (tk_stats_note) plus the codec's own state. */
 void svc_audio_note(char *out, size_t len);
@@ -46,8 +48,12 @@ tk_kind_t talk_net_kind(char *path, size_t cap);
  * heard when its audio began (talk_net_reply, 0.0.17); a mismatch is counted as a failed play. */
 void talk_net_listened(bool verified);
 /* A play's ring, once the box has answered its GET (0.0.17): after the connection's handshake,
- * never during it, so the two never hold internal RAM at once. False with no memory for it. */
+ * never during it, so the two never hold internal RAM at once. Sized for the exchange
+ * (tk_ring_bytes: 6 KB for a play since 0.0.18). False with no memory for it. */
 bool talk_net_ring(void);
+/* The play's free internal heap before its GET, once answered, with its ring, and the lowest
+ * while it streamed (0.0.18): the snapshot's `audio.play_*`. */
+void talk_net_mem(uint32_t before, uint32_t answered, uint32_t ringed, uint32_t low);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);
