@@ -13,6 +13,7 @@
  */
 
 #include "face.h"
+#include "poop.h"
 
 #include <math.h>
 #include <stdbool.h>
@@ -622,49 +623,160 @@ static void draw_food(uint16_t *fb, food_t f, int cx, int cy, float s, int bites
     }
 }
 
-/* THE POOP: the swirl every child draws — three tiers and a curl on top — with a face, because
- * a four-year-old will want it to have one, and stink lines drifting up off it. `cx` is its
- * centre, `floor` the floor it sits on, `k` its size (it plops in and shrinks away). */
-static void draw_poop(uint16_t *fb, int cx, int floor, float s, float k, float t)
+/* THE POOP: one of eight (`poop_look`): the swirl every child draws, a tower, a puddle, a
+ * pile of pellets or a log, in its own colour, with a face (a four-year-old will want it to
+ * have one), stink lines rising off it and flies round it — as many as the kind says. `cx` is
+ * its centre, `floor` the floor it sits on, `k` its size (it plops in and shrinks away). */
+static int lift(int c)
+{
+    return c + 40 > 255 ? 255 : c + 40;
+}
+
+static void draw_poop_face(uint16_t *fb, int face, int fx, int ey, float u, float t)
+{
+    const uint16_t white = rgb(0xF6, 0xF9, 0xFC), ink = rgb(0x1E, 0x12, 0x08);
+    const int ed = (int)lrintf(9.0f * u), er = (int)lrintf(4.5f * u) + 1;
+    const int pr = (int)lrintf(2.2f * u) + 1, w = (int)lrintf(2.6f * u) + 1;
+    const int my = ey + (int)lrintf(1.0f * u), mr = (int)lrintf(8.0f * u);
+    const float pi = (float)M_PI;
+    /* The eyes, by kind. */
+    for (int side = -1; side <= 1; side += 2) {
+        const int ex = fx + side * ed;
+        const bool shut = face == POOP_SLEEPY || (face == POOP_WINK && side > 0);
+        if (shut) {
+            arc_stroke(fb, ex, ey - er / 2, er, pi * 0.15f, pi * 0.85f, w, ink);
+        } else if (face == POOP_COOL) {
+            fill_round_rect(fb, ex - er - 1, ey - er + 1, 2 * er + 2, er + er / 2 + 1, er / 2,
+                            ink);
+        } else {
+            const int r = face == POOP_SHOCKED ? er + er / 3 : er;
+            fill_circle(fb, ex, ey, r, white);
+            const int look = face == POOP_QUEASY ? -pr : (int)lrintf(1.0f * u);
+            fill_circle(fb, ex + (face == POOP_QUEASY ? 0 : look), ey + look,
+                        face == POOP_SHOCKED ? pr - pr / 3 : pr, ink);
+        }
+        if (face == POOP_GRUMPY) {
+            /* A brow sloping down to the middle: a short run of discs. */
+            for (int i = 0; i <= 4; i++) {
+                const int bx = ex - side * er + side * (er * i) / 2;
+                fill_circle(fb, bx, ey - er - 2 - ((4 - i) * er) / 8, w / 2 + 1, ink);
+            }
+        }
+    }
+    if (face == POOP_COOL) fill_rect(fb, fx - ed + er, ey - er + 2, 2 * (ed - er), w, ink);
+    /* The mouth. */
+    switch (face) {
+    case POOP_SHOCKED:
+        fill_circle(fb, fx, my + mr / 2 + 2, mr / 2, ink);
+        break;
+    case POOP_SLEEPY:
+        fill_circle(fb, fx, my + mr / 2, mr / 3 + 1, ink);
+        break;
+    case POOP_TONGUE:
+        arc_stroke(fb, fx, my, mr, pi * 0.1f, pi * 0.9f, w, ink);
+        fill_circle(fb, fx + mr / 3, my + mr, mr / 2, rgb(0xF2, 0x6B, 0x86));
+        break;
+    case POOP_GRUMPY:
+    case POOP_QUEASY:
+        arc_stroke(fb, fx, my + mr + mr / 2, mr, pi * 1.25f, pi * 1.75f, w, ink);
+        if (face == POOP_QUEASY) {
+            /* The sweat drop, sliding down and starting over. */
+            const float d = fmodf(t * 0.7f, 1.0f);
+            fill_circle(fb, fx + ed + er + 2, ey - er + (int)lrintf(d * 10.0f * u), er - er / 4,
+                        rgb(0x8F, 0xD3, 0xF5));
+        }
+        break;
+    case POOP_COOL:
+        arc_stroke(fb, fx + mr / 3, my, mr - mr / 4, pi * 0.15f, pi * 0.6f, w, ink);
+        break;
+    default:
+        arc_stroke(fb, fx, my, mr, pi * 0.2f, pi * 0.8f, w, ink);
+        break;
+    }
+}
+
+static void draw_poop(uint16_t *fb, int kind, int cx, int floor, float s, float k, float t)
 {
     if (k <= 0.01f) return;
-    const uint16_t brown = rgb(0x8A, 0x55, 0x2B), shine = rgb(0xB0, 0x76, 0x44);
-    const uint16_t white = rgb(0xF6, 0xF9, 0xFC), ink = rgb(0x1E, 0x12, 0x08);
+    const poop_look_t *lk = poop_look(kind);
+    const uint16_t body = rgb(lk->r, lk->g, lk->b);
+    const uint16_t shine = rgb(lift(lk->r), lift(lk->g), lift(lk->b));
     const float u = s * k;
+#define U(v) ((int)lrintf((float)(v) * u))
+    /* Tiers bottom up, each {width, height, rise}; and where the face sits and how high. */
     static const struct {
-        int w, h, y;
-    } TIER[] = {{58, 20, 0}, {44, 18, 15}, {30, 16, 28}};
-    for (unsigned i = 0; i < sizeof(TIER) / sizeof(TIER[0]); i++) {
-        const int w = (int)lrintf((float)TIER[i].w * u), h = (int)lrintf((float)TIER[i].h * u);
-        const int y = floor - (int)lrintf((float)TIER[i].y * u) - h;
-        fill_round_rect(fb, cx - w / 2, y, w, h, h / 2, brown);
-        fill_round_rect(fb, cx - w / 2 + w / 5, y + h / 5, w / 4, h / 4 + 1, h / 8 + 1, shine);
+        int n;
+        int w[4], h[4], y[4];
+        int face_y, top;
+    } TIERS[] = {
+        [POOP_SWIRL] = {3, {58, 44, 30}, {20, 18, 16}, {0, 15, 28}, 24, 48},
+        [POOP_TOWER] = {4, {58, 48, 38, 28}, {18, 16, 15, 14}, {0, 13, 25, 36}, 22, 58},
+        [POOP_BLOB] = {2, {78, 40}, {22, 18}, {0, 12}, 14, 34},
+        [POOP_LOG] = {1, {92}, {26}, {0}, 13, 30},
+    };
+    int fx = cx, face_y = 24, top = 48;
+    if (lk->shape == POOP_PELLETS) {
+        static const int PEL[][3] = {{-24, 11, 11}, {0, 12, 12}, {24, 11, 11}, {-12, 31, 11},
+                                     {12, 31, 11}, {0, 49, 10}};
+        for (unsigned i = 0; i < sizeof(PEL) / sizeof(PEL[0]); i++) {
+            const int x = cx + U(PEL[i][0]), y = floor - U(PEL[i][1]), r = U(PEL[i][2]);
+            fill_circle(fb, x, y, r, body);
+            fill_circle(fb, x - r / 3, y - r / 3, r / 4 + 1, shine);
+        }
+        face_y = 13;
+        top = 58;
+    } else {
+        const int sh = lk->shape < POOP_SHAPE_COUNT && lk->shape != POOP_PELLETS ? lk->shape : 0;
+        for (int i = 0; i < TIERS[sh].n; i++) {
+            const int w = U(TIERS[sh].w[i]), h = U(TIERS[sh].h[i]);
+            const int y = floor - U(TIERS[sh].y[i]) - h;
+            fill_round_rect(fb, cx - w / 2, y, w, h, h / 2, body);
+            fill_round_rect(fb, cx - w / 2 + w / 5, y + h / 5, w / 4, h / 4 + 1, h / 8 + 1, shine);
+        }
+        if (lk->shape == POOP_SWIRL || lk->shape == POOP_TOWER) {
+            fill_circle(fb, cx + U(5), floor - U(TIERS[sh].top), U(6), body); /* the curl */
+        } else if (lk->shape == POOP_LOG) {
+            /* Segments, so it reads as a log and not a sausage; the face at the front end. */
+            const uint16_t seam = rgb(lk->r * 3 / 5, lk->g * 3 / 5, lk->b * 3 / 5);
+            for (int j = -1; j <= 1; j += 2) {
+                fill_rect(fb, cx + j * U(22) - U(10), floor - U(22), U(3) + 1, U(18), seam);
+            }
+            fx = cx + U(20);
+        }
+        face_y = TIERS[sh].face_y;
+        top = TIERS[sh].top;
     }
-    fill_circle(fb, cx + (int)lrintf(5.0f * u), floor - (int)lrintf(48.0f * u),
-                (int)lrintf(6.0f * u), brown);
-    /* The face, on the middle tier. */
-    const int ey = floor - (int)lrintf(24.0f * u);
-    for (int side = -1; side <= 1; side += 2) {
-        const int ex = cx + side * (int)lrintf(9.0f * u);
-        fill_circle(fb, ex, ey, (int)lrintf(4.5f * u), white);
-        fill_circle(fb, ex + (int)lrintf(1.0f * u), ey + (int)lrintf(1.0f * u),
-                    (int)lrintf(2.2f * u), ink);
-    }
-    arc_stroke(fb, cx, ey + (int)lrintf(1.0f * u), (int)lrintf(8.0f * u), (float)M_PI * 0.2f,
-               (float)M_PI * 0.8f, (int)lrintf(3.0f * u) + 1, ink);
-    /* Stink: three wavy lines rising and fading, each on its own clock. */
+    draw_poop_face(fb, lk->face, fx, floor - U(face_y), u, t);
+#undef U
     if (k < 0.99f) return;
+    /* Stink: more lines, rising higher and faster, the ranker it is; each on its own clock. */
     const uint16_t stink = rgb(0x9C, 0xC8, 0x6A);
-    for (int j = 0; j < 3; j++) {
-        const float life = fmodf(t * 0.8f + (float)j / 3.0f, 1.0f);
-        const int bx = cx + (j - 1) * (int)lrintf(16.0f * s);
+    const int lines = lk->stink == 0 ? 0 : lk->stink + 1;
+    const float speed = 0.5f + 0.25f * (float)lk->stink, rise = 50.0f + 18.0f * (float)lk->stink;
+    for (int j = 0; j < lines; j++) {
+        const float life = fmodf(t * speed + (float)j / (float)lines, 1.0f);
+        const int bx = cx + (int)lrintf(((float)j - (float)(lines - 1) * 0.5f) * 16.0f * s);
         for (int d = 0; d < 8; d++) {
             const float q = life + (float)d * 0.035f;
             if (q > 1.0f) break;
             const int x = bx + (int)lrintf(sinf(q * 12.0f + (float)j) * 5.0f * s);
-            const int y = floor - (int)lrintf((60.0f + q * 70.0f) * s);
+            const int y = floor - (int)lrintf(((float)top + 12.0f + q * rise) * s);
             fill_circle(fb, x, y, (int)lrintf(2.5f * s * (1.0f - q)) + 1, stink);
         }
+    }
+    /* Flies: each on its own figure of eight round the top, wings beating. A grey body, not
+       a black one: black on the black floor is just the wings, and those read as eyes. */
+    const uint16_t fly = rgb(0x6A, 0x70, 0x7C), wing = rgb(0xD8, 0xE6, 0xF0);
+    for (int f = 0; f < lk->flies; f++) {
+        const float a = t * (2.6f + 0.7f * (float)f) + (float)f * 2.1f;
+        const int x = cx + (int)lrintf(sinf(a) * (38.0f + 6.0f * (float)f) * s);
+        const int y = floor - (int)lrintf(((float)top + 6.0f + sinf(2.0f * a) * 12.0f) * s);
+        const int r = (int)lrintf(3.0f * s) + 1;
+        const int flap = (int)(t * 30.0f + (float)f) % 2 ? r : r / 2;
+        fill_circle(fb, x - r, y - flap, r, wing);
+        fill_circle(fb, x + r, y - flap, r, wing);
+        fill_circle(fb, x, y, r, fly);
+        fill_circle(fb, x + r + r / 2, y + r / 3, r - r / 3, fly); /* its head, leading */
     }
 }
 
@@ -1210,8 +1322,8 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
     if (st->poop_size > 0.0f) {
         const int base = s_fit_oy >= 0 ? s_fit_oy : OY;
         const int floor = base + (int)lrintf((st->form == FORM_ROBOT ? 166.0f : 184.0f) * s_fit);
-        draw_poop(fb, OX + (int)lrintf(st->poop_x * s_fit), floor, s_fit * 1.3f, st->poop_size,
-                  st->poop_t);
+        draw_poop(fb, st->poop_kind, OX + (int)lrintf(st->poop_x * s_fit), floor, s_fit * 1.3f,
+                  st->poop_size, st->poop_t);
     }
 
     if (st->form == FORM_ROBOT) {

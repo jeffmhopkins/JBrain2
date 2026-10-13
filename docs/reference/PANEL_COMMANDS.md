@@ -149,7 +149,8 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   (cookie, apple, banana, pizza, donut, carrot, watermelon, strawberry; never the same twice running),
   a crunch on each bite, chewing between. **Three meals inside a minute** and, once he is
   free, he squats, strains and a poop plops out behind him (0.4.11): it stays on the floor for
-  20 s and slides downhill as the panel is tilted
+  20 s and slides downhill as the panel is tilted. It is one of eight (0.4.12), never the same
+  twice running: each its own shape, colour and face, some stinkier than others, some with flies
 
 **Not a phrase: shaking the panel** (0.4.7). Four hard jerks inside a second and a half
 (`screen_shaken`) and he sits down hard, dazed, shaking his head with stars going round, and

@@ -13,6 +13,24 @@
 #define POOP_STICK 0.08f
 #define POOP_REST 6.0f
 
+/* Every kind differs from every other in at least two of shape, face, stink and flies, and
+   the colours are a child's: brown, gold, a sickly green, a unicorn's pink. */
+static const poop_look_t POOP_LOOKS[POOP_KINDS] = {
+    {POOP_SWIRL, POOP_SMILE, 2, 0, 0x8A, 0x55, 0x2B},   /* the classic */
+    {POOP_SWIRL, POOP_COOL, 1, 0, 0xD9, 0xA4, 0x2E},    /* golden, and knows it */
+    {POOP_BLOB, POOP_SLEEPY, 2, 2, 0x6E, 0x44, 0x22},   /* a sleepy puddle, flies already */
+    {POOP_PELLETS, POOP_SHOCKED, 1, 0, 0x7A, 0x4C, 0x26}, /* bunny droppings, surprised */
+    {POOP_TOWER, POOP_TONGUE, 3, 1, 0x93, 0x5C, 0x2E},  /* a tower, blowing a raspberry */
+    {POOP_LOG, POOP_GRUMPY, 3, 3, 0x5A, 0x3A, 0x1E},    /* a grumpy log, swarming */
+    {POOP_SWIRL, POOP_QUEASY, 3, 2, 0x7C, 0x8A, 0x2E},  /* green: something he ate */
+    {POOP_TOWER, POOP_WINK, 0, 0, 0xF2, 0x8C, 0xC8},    /* unicorn: pink, and no smell at all */
+};
+
+const poop_look_t *poop_look(int kind)
+{
+    return &POOP_LOOKS[(unsigned)kind % POOP_KINDS];
+}
+
 void poop_reset(poop_t *p)
 {
     memset(p, 0, sizeof(*p));
@@ -33,8 +51,10 @@ bool poop_ate(poop_t *p, uint32_t now)
     return false;
 }
 
-void poop_drop(poop_t *p, uint32_t now, float x, float half)
+void poop_drop(poop_t *p, uint32_t now, float x, float half, uint32_t rnd)
 {
+    const unsigned prev = (unsigned)p->kind % POOP_KINDS;
+    p->kind = (int)((prev + 1u + rnd % (POOP_KINDS - 1u)) % POOP_KINDS);
     /* Clamped here and not left to the slide: on a level panel it never starts sliding, so
        whatever it lands on is where it stays. */
     if (x > half) x = half;

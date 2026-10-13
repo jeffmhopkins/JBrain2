@@ -1184,6 +1184,86 @@ static void test_one_fart_in_ten_goes_on_for_seven_seconds(void)
     }
 }
 
+/* EIGHT POOPS (owner: "make eight variations of poops also. Maybe we can vary graphic, that
+   poops expression, and the amount of stink, and maybe it has flies or not"). */
+static void test_eight_poops_each_its_own(void)
+{
+    /* Every kind tells apart from every other by at least two of shape, face, stink, flies. */
+    int shapes = 0, faces = 0, stinks = 0, flies = 0, with_flies = 0;
+    for (int a = 0; a < POOP_KINDS; a++) {
+        const poop_look_t *x = poop_look(a);
+        shapes |= 1 << x->shape;
+        faces |= 1 << x->face;
+        stinks |= 1 << x->stink;
+        flies |= 1 << x->flies;
+        with_flies += x->flies > 0;
+        for (int b = a + 1; b < POOP_KINDS; b++) {
+            const poop_look_t *y = poop_look(b);
+            const int differ = (x->shape != y->shape) + (x->face != y->face) +
+                               (x->stink != y->stink) + (x->flies != y->flies);
+            CHECK(differ >= 2, "no two poops are near-twins");
+        }
+    }
+    CHECK(shapes == (1 << POOP_SHAPE_COUNT) - 1, "every shape is used");
+    CHECK(faces == (1 << POOP_FACE_COUNT) - 1, "and every face, one each");
+    CHECK(stinks == 0xF && flies == 0xF, "stink 0..3 and flies 0..3 all appear");
+    CHECK(with_flies > 0 && with_flies < POOP_KINDS, "some have flies, some do not");
+
+    /* The pick: never the one before, and all eight come round. */
+    poop_t pp;
+    poop_reset(&pp);
+    int seen = 0;
+    for (uint32_t i = 0; i < 400; i++) {
+        const int prev = pp.kind;
+        poop_drop(&pp, i, 0.0f, POOP_HALF, i * 2654435761u);
+        CHECK(pp.kind != prev && pp.kind >= 0 && pp.kind < POOP_KINDS, "never the same twice");
+        seen |= 1 << pp.kind;
+    }
+    CHECK(seen == (1 << POOP_KINDS) - 1, "and every one turns up");
+
+    /* On the glass: eight different pictures; the stink as much as the kind says; flies
+       only on the ones that have them. Drawn at a moment every stink line is on screen. */
+    const uint16_t stink = rgb565(0x9C, 0xC8, 0x6A), fly = rgb565(0x6A, 0x70, 0x7C);
+    static uint32_t sums[POOP_KINDS];
+    long stink_px[POOP_KINDS];
+    for (int k = 0; k < POOP_KINDS; k++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = FORM_OSTRICH;
+        st.poop_size = 0.0f;
+        face_draw(fb, 0, &st);
+        const long bare_stink = count_colour(stink), bare_fly = count_colour(fly);
+        st.poop_kind = k;
+        st.poop_size = 1.0f;
+        st.poop_x = -110.0f;
+        long most = 0, flies_px = 0;
+        for (float t = 1.0f; t < 3.0f; t += 0.1f) {
+            st.poop_t = t;
+            face_draw(fb, 0, &st);
+            const long n = count_colour(stink) - bare_stink;
+            most = n > most ? n : most;
+            const long f = count_colour(fly) - bare_fly;
+            flies_px = f > flies_px ? f : flies_px;
+        }
+        stink_px[k] = most;
+        CHECK((poop_look(k)->flies > 0) == (flies_px > 20), "flies buzz only where they belong");
+        CHECK((poop_look(k)->stink > 0) == (most > 20), "an odourless one gives off nothing");
+        st.poop_t = 1.0f;
+        face_draw(fb, 0, &st);
+        uint32_t h = 2166136261u;
+        for (long i = 0; i < (long)FACE_W * FACE_H; i++) h = (h ^ fb[i]) * 16777619u;
+        sums[k] = h;
+        for (int j = 0; j < k; j++) CHECK(sums[j] != h, "each looks like itself");
+    }
+    for (int a = 0; a < POOP_KINDS; a++) {
+        for (int b = 0; b < POOP_KINDS; b++) {
+            if (poop_look(a)->stink > poop_look(b)->stink) {
+                CHECK(stink_px[a] > stink_px[b], "a ranker one smells visibly worse");
+            }
+        }
+    }
+}
+
 static void test_a_meal_is_three_bites_of_a_cookie(void)
 {
     /* The owner: "the eat animation can probably be better with multiple bites being taken and
@@ -1321,7 +1401,7 @@ static void test_three_meals_in_a_minute_and_he_has_to_go(void)
     poop_ate(&pp, 0);
     poop_ate(&pp, 1);
     poop_ate(&pp, 2);
-    poop_drop(&pp, 10000, 0.0f, POOP_HALF);
+    poop_drop(&pp, 10000, 0.0f, POOP_HALF, 0u);
     CHECK(!pp.owed && pp.on, "dropping it pays off what was owed");
     CHECK(poop_scale(&pp, 10000) < 0.05f && poop_scale(&pp, 10000 + POOP_POP_MS) > 0.99f,
           "it plops in");
@@ -1333,12 +1413,12 @@ static void test_three_meals_in_a_minute_and_he_has_to_go(void)
     /* DROPPED BEYOND THE FLOOR'S END (on its side the lean runs to 110, so behind him can be
        -220 against a floor of 150), it lands on the end of the floor, not off it — and on a
        level panel it would otherwise have stayed off it all twenty seconds (review on 0.4.11). */
-    poop_drop(&pp, 0, -220.0f, POOP_HALF);
+    poop_drop(&pp, 0, -220.0f, POOP_HALF, 0u);
     for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.0f, 40, POOP_HALF);
     CHECK(pp.x >= -POOP_HALF && pp.x <= POOP_HALF, "it lands on the floor, never past its end");
 
     /* IT SLIDES DOWNHILL, and stays put on the level. */
-    poop_drop(&pp, 0, 0.0f, POOP_HALF);
+    poop_drop(&pp, 0, 0.0f, POOP_HALF, 0u);
     for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.03f, 40, 150.0f);
     CHECK(pp.x == 0.0f, "a panel a hair off level does not make it creep");
     for (t = 1000; t < 1600; t += 40) poop_step(&pp, t, 0.5f, 40, 150.0f);
@@ -5179,6 +5259,7 @@ int main(void)
     test_a_meal_is_three_bites_of_a_cookie();
     test_a_snack_is_one_of_eight_and_never_the_same_twice();
     test_one_fart_in_ten_goes_on_for_seven_seconds();
+    test_eight_poops_each_its_own();
     test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();

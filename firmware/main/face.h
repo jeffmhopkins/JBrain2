@@ -83,6 +83,7 @@ typedef struct {
     float poop_x;
     float poop_size;
     float poop_t;
+    int poop_kind; /* which of the eight (`poop_look`) */
     float open;     /* eyelids: 1 fully open, 0 shut. Blink, not emotion. */
     float startle;  /* 0 calm, 1 wide-eyed. The poke recoil, on top of whatever face is worn. */
     /* 0 shut, 1 fully open — the mouth while the pet is SPEAKING. The owner: "we should make

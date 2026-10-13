@@ -111,6 +111,13 @@ static rig_walk_t r_walk;
 static action_t r_action;
 static uint32_t r_action_at;
 static uint32_t r_recue_from;
+/* A random number for the bench's 1-in-10 fart and its poops, from the panel clock: the bench has no RNG,
+   and a fixed sequence would make "Fart" always the same one. */
+static uint32_t r_now_rnd(void)
+{
+    return (g_now / 40u) * 2654435761u >> 7;
+}
+
 /* As the panel does: three snacks in a minute and he has to go (`poop.h`). */
 static poop_t r_poop;
 static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
@@ -566,8 +573,8 @@ static void frame(void)
         say("cue", "%s (press slot, again)", cue_name(c));
     }
     if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
-        poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF);
-        say("pet", "plop");
+        poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF, r_now_rnd());
+        say("pet", "plop (kind %d)", r_poop.kind);
     }
     r_recue_p = p;
     const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD || view->think;
@@ -606,6 +613,7 @@ static void frame(void)
         r_fst.poop_x = r_poop.x;
         r_fst.poop_size = poop_scale(&r_poop, now);
         r_fst.poop_t = (float)(now - r_poop.born) * 0.001f;
+        r_fst.poop_kind = r_poop.kind;
     }
     rig_figure(shown, shown_p, shown_mag, now, r_fst.eyes.face_ang, &r_fst.fig);
     r_fst.bob = bob_step(r_frame++);
@@ -717,12 +725,6 @@ EXPORT(sim_message) void sim_message(int from_dad, int ms)
 }
 
 /* The box's knobs. */
-/* A random number for the bench's 1-in-10 fart, from the panel clock: the bench has no RNG,
-   and a fixed sequence would make "Fart" always the same one. */
-static uint32_t r_now_rnd(void)
-{
-    return (g_now / 40u) * 2654435761u >> 7;
-}
 
 EXPORT(sim_set) void sim_set(int knob, int value)
 {

@@ -2491,7 +2491,7 @@ static void face_task(void *arg)
             }
             /* The plop: behind him, where a bird's tail is. */
             if (action == ACT_POOP && recue_p < POOP_AT && p >= POOP_AT) {
-                poop_drop(&poop, now, (float)s_lean - POOP_BEHIND, POOP_HALF);
+                poop_drop(&poop, now, (float)s_lean - POOP_BEHIND, POOP_HALF, esp_random());
             }
             recue_p = p;
             const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD ||
@@ -2520,6 +2520,7 @@ static void face_task(void *arg)
             fst.poop_x = poop.x;
             fst.poop_size = poop_scale(&poop, now);
             fst.poop_t = (float)(now - poop.born) * 0.001f;
+            fst.poop_kind = poop.kind;
             fst.open = dozing ? emotion_approach(emotion_approach(fst.open, 0.0f, 0.12f), 0.0f, 0.12f)
                               : s_open;
             fst.startle = s_flinch;

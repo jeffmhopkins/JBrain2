@@ -224,6 +224,17 @@ with a face and stink lines, behind the figure, and it SLIDES: the unsmoothed ti
 friction slows it, the floor's ends bounce it back, and below a small tilt it does not start
 at all, so it stays put on a table. It plops in, and shrinks away after 20 s.
 
+**Eight poops (0.4.12).** Owner: *"make eight variations of poops also. Maybe we can vary
+graphic, that poops expression, and the amount of stink, and maybe it has flies or not."*
+`poop_drop` picks a kind, never the last one, from `POOP_LOOKS` (`poop.c`): each row a shape
+(the swirl, a four-tier tower, a puddle, a pile of pellets, a log), a face (smiling, cool in
+sunglasses, asleep, shocked, tongue out, grumpy, queasy with a sweat drop, winking), a stink
+of 0–3 (more lines, rising higher and faster) and 0–3 flies on figure-of-eight paths. The
+classic brown swirl, a golden one in shades, a sleepy puddle with flies, surprised bunny
+pellets, a tower blowing a raspberry, a grumpy log in a swarm, a queasy green one and a pink
+unicorn one that does not smell at all. No two are near-twins: every pair differs in at least
+two of the four, which the host test holds the table to.
+
 **A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
 only flinch, which with the meal crunching through two-thirds of its length and the tickle
 laughing through half of its own made most pokes during them do nothing. Two halves to it: the
