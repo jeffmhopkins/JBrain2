@@ -6,8 +6,10 @@
 
 import type {
   MinecraftDim,
+  MinecraftMapEntities,
   MinecraftMapInfo,
   MinecraftMapMarkers,
+  MinecraftMapPlaces,
   MinecraftMapPlayers,
   MinecraftMapPoint,
   MinecraftMapStructures,
@@ -15,7 +17,10 @@ import type {
   MinecraftTimeline,
   MinecraftTimelineEvent,
   MinecraftTimelinePart,
+  MinecraftTrade,
   MinecraftTrailSegment,
+  MinecraftVillager,
+  MinecraftVillagerCard,
 } from "./api/client";
 
 const nowS = () => Date.now() / 1000;
@@ -413,6 +418,234 @@ export function mcMapMarkers(slot: string): MinecraftMapMarkers {
     as_of: t - 60,
   };
 }
+
+// ---- saved places, villagers and pets (GUI gate docs/mocks/minecraft-map-layers/) ----
+
+// The layers mock's world: BlockyFox's Home (under his beacon), Tree farm (gate 1 leads
+// there, by its block) and Nether base; Mira_P's Bakery (under her beacon) and Melon farm;
+// Steve42's Mine outpost underground and Lookout in the sky.
+export function mcMapPlaces(slot: string): MinecraftMapPlaces {
+  const t = nowS();
+  if (slot !== "slot2") return { slot, world: slot, places: [], as_of: null };
+  const ow = "overworld" as MinecraftDim;
+  const row = (
+    id: string,
+    who: [string, string],
+    name: string,
+    at: [number, number | null, number],
+    dim: MinecraftDim,
+    extra: Partial<MinecraftMapPlaces["places"][number]> = {},
+  ) => ({
+    id,
+    xuid: who[0],
+    gamertag: who[1],
+    name,
+    dim,
+    x: at[0],
+    y: at[1],
+    z: at[2],
+    saved_at: t - 172_800,
+    moved: false,
+    covered: [],
+    gates: [],
+    gates_moved: [],
+    ...extra,
+  });
+  const fox: [string, string] = ["2535411", "BlockyFox"];
+  const mira: [string, string] = ["2535412", "Mira_P"];
+  const steve: [string, string] = ["2535413", "Steve42"];
+  return {
+    slot,
+    world: "slot2",
+    places: [
+      row("p1", fox, "Home", [70, 71, 12], ow, {
+        covered: [{ x: 90, y: 74, z: -10, placed_by: "BlockyFox" }],
+      }),
+      row("p2", fox, "Tree farm", [-160, 68, -140], ow, { gates: [1] }),
+      row("p3", fox, "Nether base", [-20, 72, 40], "nether", { gates: [3], moved: true }),
+      row("p4", mira, "Bakery", [40, 70, -56], ow, {
+        covered: [{ x: 60, y: 72, z: -40, placed_by: "Mira_P" }],
+        saved_at: t - 86_400,
+      }),
+      row("p5", mira, "Melon farm", [-20, 66, 96], ow, { saved_at: t - 86_400 }),
+      row("p6", steve, "Mine outpost", [-110, -12, 40], ow, { saved_at: t - 259_200 }),
+      row("p7", steve, "Lookout", [-150, 140, -236], ow, { saved_at: t - 86_400 }),
+    ],
+    as_of: t - 86_400,
+  };
+}
+
+function rnd(i: number) {
+  const v = Math.sin(i * 12.9898 + 4.1414) * 43758.5453;
+  return v - Math.floor(v);
+}
+
+// A village of 23 round the located one at X 232 · Z −304, and a group of 8 with no
+// located village; the librarian the owner taps is an Expert who sells Mending.
+const V1 = [
+  ...["librarian", "librarian", "librarian", "librarian"],
+  ...["farmer", "farmer", "farmer", "farmer", "farmer", "cleric", "cleric"],
+  ...["armorer", "armorer", "toolsmith", "weaponsmith", "cartographer"],
+  ...["fisherman", "fisherman", "shepherd", "fletcher", "mason", "unemployed", "nitwit"],
+];
+const V2 = ["librarian", "farmer", "farmer", "cleric", "mason", "unemployed", "unemployed"];
+
+function fxVillagers(): MinecraftVillager[] {
+  const one = (job: string, i: number, cx: number, cz: number, village: string, spread: number) => {
+    const v: MinecraftVillager = {
+      id: String(-8589934000 - i),
+      job,
+      level: Math.floor(rnd(i) * 4),
+      locked_in: rnd(i + 50) > 0.35,
+      name: "",
+      x: cx + Math.round((rnd(i + 7) - 0.5) * spread),
+      y: 66,
+      z: cz + Math.round((rnd(i + 19) - 0.5) * spread),
+      village,
+      trades: 4,
+      enchants: [],
+    };
+    return v;
+  };
+  const a = V1.map((job, i) => one(job, i, 232, -304, "v1", 56));
+  const b = [...V2, "fisherman"].map((job, i) => one(job, i + 90, 100, 140, "v2", 22));
+  const lib = a[0] as MinecraftVillager;
+  Object.assign(lib, { level: 3, locked_in: true, x: 238, z: -298, enchants: ["mending"] });
+  Object.assign(a[2] as MinecraftVillager, { level: 4, locked_in: true, enchants: ["mending"] });
+  return [...a, ...b];
+}
+
+export function mcMapEntities(slot: string, dim: MinecraftDim): MinecraftMapEntities {
+  const t = nowS();
+  const empty: MinecraftMapEntities = {
+    dimension: dim,
+    villages: [],
+    villagers: [],
+    villagers_truncated: false,
+    pets: [],
+    named: [],
+    traders: 0,
+    live: false,
+    as_of: t - 360,
+    age_s: 360,
+  };
+  if (slot !== "slot2" || dim !== "overworld") return empty;
+  const villagers = fxVillagers();
+  const jobs = (id: string) => {
+    const out: Record<string, number> = {};
+    for (const v of villagers) if (v.village === id) out[v.job] = (out[v.job] ?? 0) + 1;
+    return out;
+  };
+  const pet = (
+    id: string,
+    name: string,
+    kind: string,
+    owner: [string, string] | null,
+    at: [number, number],
+    sitting: boolean,
+    coat: string[],
+  ) => ({
+    id,
+    kind,
+    name,
+    tamed: true,
+    owner: owner ? owner[0] : "-77",
+    owner_name: owner ? owner[1] : "",
+    sitting,
+    baby: false,
+    coat,
+    x: at[0],
+    y: 70,
+    z: at[1],
+  });
+  return {
+    ...empty,
+    villages: [
+      { id: "v1", x: 230, z: -302, count: 23, jobs: jobs("v1") },
+      { id: "v2", x: 100, z: 140, count: 8, jobs: jobs("v2") },
+    ],
+    villagers,
+    pets: [
+      pet("-101", "Rex", "wolf", ["-4294967295", "BlockyFox"], [52, 52], true, ["pale"]),
+      pet("-102", "Whiskers", "cat", ["-4294967296", "Mira_P"], [30, -60], false, ["calico"]),
+      pet("-103", "Kiwi", "parrot", ["-4294967296", "Mira_P"], [-10, -92], true, ["red"]),
+      pet("-104", "Biscuit", "horse", ["-4294967297", "Steve42"], [-96, -6], false, []),
+      pet("-105", "Luna", "wolf", ["-4294967297", "Steve42"], [-166, 6], true, ["black"]),
+      pet("-106", "", "cat", null, [150, -40], true, ["tabby"]),
+    ],
+    named: [
+      { ...pet("-201", "Clover", "cow", null, [-30, 70], false, []), tamed: false, owner: null },
+      { ...pet("-202", "Hopper", "rabbit", null, [10, 132], false, []), tamed: false, owner: null },
+    ],
+    traders: 1,
+    live: true,
+  };
+}
+
+const TRADES: MinecraftTrade[] = [
+  [0, ["minecraft:paper", 24], null, ["minecraft:emerald", 1], [], 3, 16],
+  [0, ["minecraft:emerald", 9], null, ["minecraft:bookshelf", 1], [], 0, 12],
+  [
+    1,
+    ["minecraft:emerald", 12],
+    ["minecraft:book", 1],
+    ["minecraft:enchanted_book", 1],
+    [["mending", 1]],
+    2,
+    12,
+  ],
+  [1, ["minecraft:ink_sac", 5], null, ["minecraft:emerald", 1], [], 12, 12],
+  [2, ["minecraft:emerald", 1], null, ["minecraft:glass", 4], [], 0, 12],
+  [3, ["minecraft:emerald", 5], null, ["minecraft:clock", 1], [], 1, 12],
+  [4, ["minecraft:emerald", 20], null, ["minecraft:name_tag", 1], [], 0, 12],
+].map(
+  ([tier, buy, buy2, sell, enchantments, uses, max]) =>
+    ({
+      tier,
+      buy,
+      buy2,
+      sell,
+      enchantments,
+      uses,
+      max_uses: max,
+      used_up: uses === max,
+    }) as MinecraftTrade,
+);
+
+export function mcMapVillager(slot: string, id: string): MinecraftVillagerCard {
+  const t = nowS();
+  const v = slot === "slot2" ? fxVillagers().find((q) => q.id === id) : undefined;
+  if (!v) return { found: null, as_of: t - 360, age_s: 360 };
+  const mine = v.enchants.includes("mending")
+    ? TRADES
+    : TRADES.filter((q) => !q.enchantments.length);
+  return {
+    found: {
+      id: v.id,
+      job: v.job,
+      level: v.level,
+      level_name: ["Novice", "Apprentice", "Journeyman", "Expert", "Master"][v.level] ?? "Novice",
+      locked_in: v.locked_in,
+      name: v.name,
+      x: v.x,
+      y: v.y,
+      z: v.z,
+      dimension: "overworld",
+      trades: mine.filter((q) => q.tier <= v.level),
+      locked_trades: mine.filter((q) => q.tier > v.level).length,
+    },
+    as_of: t - 360,
+    age_s: 360,
+  };
+}
+
+/** The goal count a place card asks for: the map's players keyed as the goals fixture
+ *  keys them. */
+export const GOAL_KEYS: Record<string, string> = {
+  "2535411": "x-BlockyFox",
+  "2535412": "x-Mira_P",
+  "2535413": "x-Steve42",
+};
 
 // ---- the travel log behind the timeline (M8a): the reviewed fixture's week ----
 //

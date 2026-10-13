@@ -30,6 +30,7 @@ from jbrain.minecraft import (
     goals,
     livescan,
     markers,
+    places,
     sessions,
     shares,
     targets,
@@ -668,6 +669,57 @@ async def map_markers(
     rec = await mc.slot_record(settings, slot)
     got = await markers.for_world(_maker(request), str(rec["folder"]), dim)
     return {"slot": slot, "world": rec["folder"], **got}
+
+
+@router.get("/map/places")
+async def map_places(
+    request: Request,
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str | None, Query(pattern=_DIM)] = None,
+) -> dict[str, Any]:
+    """Every player's saved places in the slot's world (one dimension or all), each with
+    the beacons that cover it and the gates aimed at its block (GUI gate
+    `docs/mocks/minecraft-map-layers/`, places A). Owner-only: never on a share link."""
+    rec = await mc.slot_record(settings, slot)
+    got = await places.for_world(_maker(request), str(rec["folder"]), dim)
+    return {"slot": slot, "world": rec["folder"], **got}
+
+
+_ID = r"^(-?\d{1,20}|at:-?\d{1,2}:-?\d{1,9}:-?\d{1,4}:-?\d{1,9})$"
+
+
+@router.get("/map/entities")
+async def map_entities(
+    settings: SettingsDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=_DIM)] = "overworld",
+    x0: Annotated[int | None, Query(ge=-_COORD, le=_COORD)] = None,
+    z0: Annotated[int | None, Query(ge=-_COORD, le=_COORD)] = None,
+    x1: Annotated[int | None, Query(ge=-_COORD, le=_COORD)] = None,
+    z1: Annotated[int | None, Query(ge=-_COORD, le=_COORD)] = None,
+) -> dict[str, Any]:
+    """The villagers (grouped into villages), pets and named mobs in one dimension, or in
+    a box, from the world's saved files (§M4e's index, on the map). Answers with the
+    server stopped; never forces a save. Owner-only like the beacons and gates."""
+    corners = (x0, z0, x1, z1)
+    params: dict[str, Any] = {"slot": slot, "dim": dim}
+    if any(v is not None for v in corners):
+        if any(v is None for v in corners):
+            raise HTTPException(status_code=422, detail="a box needs x0, z0, x1 and z1")
+        params.update(x0=x0, z0=z0, x1=x1, z1=z1)
+    return await mc.call(settings, "GET", "/map/entities", params=params)
+
+
+@router.get("/map/villager")
+async def map_villager(
+    settings: SettingsDep,
+    vid: Annotated[str, Query(alias="id", pattern=_ID)],
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+) -> dict[str, Any]:
+    """One villager's card, by the id `/map/entities` gave it: every trade it offers now,
+    by level. `found` is null when the saved world no longer has it."""
+    return await mc.call(settings, "GET", "/map/villagers", params={"slot": slot, "id": vid})
 
 
 @router.post("/map/structures/sweep", status_code=202)

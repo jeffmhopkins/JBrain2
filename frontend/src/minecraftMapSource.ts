@@ -4,14 +4,18 @@
 
 import {
   type MinecraftDim,
+  type MinecraftGoalProgress,
+  type MinecraftMapEntities,
   type MinecraftMapInfo,
   type MinecraftMapMarkers,
+  type MinecraftMapPlaces,
   type MinecraftMapPlayers,
   type MinecraftMapPoint,
   type MinecraftMapStructures,
   type MinecraftSweep,
   type MinecraftTimeline,
   type MinecraftTimelinePart,
+  type MinecraftVillagerCard,
   api,
   mcShareTileUrl,
   minecraftTileUrl,
@@ -41,6 +45,12 @@ export interface MapSource {
   sweep: ((slot: string) => Promise<MinecraftSweep>) | null;
   /** The world's beacons and gates (§M26): the owner's only — a shared map has neither. */
   markers: ((slot: string) => Promise<MinecraftMapMarkers>) | null;
+  /** Every player's saved places, the villagers and pets, a villager's trades, and a
+   *  player's goal counts near their places (minecraft-map-layers): the owner's only. */
+  places: ((slot: string) => Promise<MinecraftMapPlaces>) | null;
+  entities: ((slot: string, dim: MinecraftDim) => Promise<MinecraftMapEntities>) | null;
+  villager: ((slot: string, id: string) => Promise<MinecraftVillagerCard>) | null;
+  goals: ((xuid: string) => Promise<MinecraftGoalProgress>) | null;
 }
 
 export const OWNER_MAP: MapSource = {
@@ -52,6 +62,10 @@ export const OWNER_MAP: MapSource = {
   tileUrl: minecraftTileUrl,
   sweep: (slot) => api.minecraftMapSweep(slot),
   markers: (slot) => api.minecraftMapMarkers(slot),
+  places: (slot) => api.minecraftMapPlaces(slot),
+  entities: (slot, dim) => api.minecraftMapEntities(slot, dim),
+  villager: (slot, id) => api.minecraftMapVillager(slot, id),
+  goals: (xuid) => api.minecraftGoalProgress(xuid),
 };
 
 export function shareMap(token: string): MapSource {
@@ -64,6 +78,10 @@ export function shareMap(token: string): MapSource {
     tileUrl: (_slot, dim, zoom, tx, tz, layer) => mcShareTileUrl(token, dim, zoom, tx, tz, layer),
     sweep: null,
     markers: null,
+    places: null,
+    entities: null,
+    villager: null,
+    goals: null,
   };
 }
 

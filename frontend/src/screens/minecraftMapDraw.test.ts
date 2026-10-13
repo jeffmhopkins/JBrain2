@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BaseLayer, TileSpot } from "../minecraftMap";
-import { mcMapMarkers } from "../minecraftMapFixtures";
+import { mcMapEntities, mcMapMarkers, mcMapPlaces } from "../minecraftMapFixtures";
+import { spotKey } from "../minecraftMapLayers";
 import {
   type TileEntry,
   type Tokens,
   drawTiles,
   drawWorldMarkers,
   gateGlyph,
+  markerOwn,
   placeLabels,
   scanSquare,
 } from "./minecraftMapDraw";
@@ -157,6 +159,47 @@ describe("drawing beacons and gates", () => {
       ["Tree farm", "g:1", 12],
       ["to Nether base · in the Nether", "g:3", 12],
     ]);
+  });
+
+  it("a gate aimed at a saved place's very block ends at that place's pin (X1)", () => {
+    const { ctx, log } = recordingCtx();
+    const out = drawWorldMarkers(ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -160, -140)]),
+    });
+    // The line is still drawn to it; the violet pin, its label and its tap are the place's.
+    expect(out.avoid.segs).toHaveLength(1);
+    expect(out.pins).toEqual([]);
+    expect(out.labels.map((l) => l.txt)).toEqual(["to Nether base · in the Nether"]);
+    expect(log.some(([k, a]) => k === "arc" && a[2] === 12)).toBe(false);
+    // A place saved somewhere else keeps the gate's own pin where it still leads.
+    const moved = drawWorldMarkers(recordingCtx().ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -100, -140)]),
+    });
+    expect(moved.pins.map((p) => p.g.id)).toEqual([1]);
+  });
+
+  it("this round's markers are keyed one by one, never by kind (X5)", () => {
+    const e = mcMapEntities("slot2", "overworld");
+    const [a, b] = e.pets;
+    const own = (m: (typeof e.pets)[number]) =>
+      markerOwn({ type: "pet", m, tok: null, x: 0, z: 0, sx: 0, sy: 0, pr: 1.6 });
+    expect(own(a as never)).not.toBe(own(b as never));
+    const place = mcMapPlaces("slot2").places[0];
+    expect(
+      markerOwn({
+        type: "place",
+        p: place as never,
+        tok: null,
+        own: "pl:p1",
+        x: 0,
+        z: 0,
+        sx: 0,
+        sy: 0,
+        pr: 1,
+      }),
+    ).toBe("pl:p1");
   });
 
   it("fills only the tapped square, and keeps the tapped gate apart for its ring", () => {

@@ -423,3 +423,57 @@ def test_a_rule_the_charm_holds_is_refused_with_the_boxs_reason(client, sidecar)
     )
     resp = client.put("/api/minecraft/worlds/slot2/rules", json={"set": {"keepInventory": False}})
     assert resp.status_code == 400 and "Power Pack charm" in resp.json()["detail"]
+
+
+def test_map_places_read_the_slots_world_owner_only(
+    client, sidecar, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GUI gate `minecraft-map-layers`, places A: every player's places in the slot's
+    world, with the server stopped too."""
+    asked: list[tuple[str, str | None]] = []
+    rows = {"places": [{"name": "Home"}], "as_of": 7.0}
+
+    async def read(_m: Any, world: str, dim: str | None = None) -> dict[str, Any]:
+        asked.append((world, dim))
+        return rows
+
+    monkeypatch.setattr(api.places, "for_world", read)
+    client.app.state.session_maker = object()
+    _players_world(sidecar, active=False, state="stopped")
+    got = client.get("/api/minecraft/map/places?slot=slot2").json()
+    assert got == {"slot": "slot2", "world": "castle", **rows}
+    client.get("/api/minecraft/map/places?slot=slot2&dim=nether")
+    assert asked == [("castle", None), ("castle", "nether")]
+    assert client.get("/api/minecraft/map/places?slot=slot2&dim=moon").status_code == 422
+    assert client.get("/api/minecraft/map/places?slot=slot5").status_code == 404
+
+
+def test_map_entities_and_a_villagers_card_pass_through_checked(client, sidecar) -> None:
+    """§M4e on the map: the sidecar's listing, in a dimension or a box, and one
+    villager's trades by its id; a half box or a bad id never reaches the box."""
+    seen, replies = sidecar
+    replies["/map/entities"] = httpx.Response(200, json={"villages": [], "live": False})
+    got = client.get("/api/minecraft/map/entities?slot=slot2&dim=nether")
+    assert got.json() == {"villages": [], "live": False}
+    assert dict(seen[-1].url.params) == {"slot": "slot2", "dim": "nether"}
+    client.get("/api/minecraft/map/entities?slot=slot2&x0=-10&z0=-20&x1=30&z1=40")
+    assert dict(seen[-1].url.params) == {
+        "slot": "slot2",
+        "dim": "overworld",
+        "x0": "-10",
+        "z0": "-20",
+        "x1": "30",
+        "z1": "40",
+    }
+    n = len(seen)
+    assert client.get("/api/minecraft/map/entities?x0=1&z0=2").status_code == 422
+    assert client.get("/api/minecraft/map/entities?dim=moon").status_code == 422
+    replies["/map/villagers"] = httpx.Response(200, json={"found": None})
+    assert client.get("/api/minecraft/map/villager?slot=slot2&id=-858").json() == {"found": None}
+    assert dict(seen[-1].url.params) == {"slot": "slot2", "id": "-858"}
+    client.get("/api/minecraft/map/villager?id=at:0:-3:64:7")
+    assert seen[-1].url.params["id"] == "at:0:-3:64:7"
+    m = len(seen)
+    for bad in ("1;op", "at:0", "", "x" * 30):
+        assert client.get(f"/api/minecraft/map/villager?id={bad}").status_code == 422
+    assert len(seen) == m and n == m - 2

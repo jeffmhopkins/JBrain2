@@ -2566,9 +2566,12 @@ this live component replaces that.
   overworld:({x, z}|null), trail:({player, gamertag, from, to}|null)}`):
   - `slot` is `slot1`–`slot9`, or nothing renders but *This map can't be shown*;
   - `dim` is a closed enum (`overworld | nether | the_end`), and `focus.kind` another
-    (`death | player | place | structure | spot | gate | beacon`) that the component maps to
-    its own glyph — a `gate` or `beacon` is found in the box's own `/map/markers` record by
-    where it is, and drawn selected;
+    (`death | player | place | structure | spot | gate | beacon | scan | villager | pet`) that
+    the component maps to its own glyph — a `gate` or `beacon` is found in the box's own
+    `/map/markers` record by where it is, and drawn selected; a `villager` (its job's disc,
+    the job read from the label's first word) or `pet` (a paw tile) is where a finder found it,
+    said *as of the world's last save*, and **expand** opens the full map with the Villagers or
+    Pets layer on (both are off there by default);
   - coordinates are clamped to the world's ±30,000,000 and `zoom` to the tile route's −3…4
     (−3 is 8 px per block, 0 one per block, 4 one per chunk);
   - labels are cut to 40 characters and rendered as text;
@@ -3732,8 +3735,9 @@ opens this screen on its spot.
   live); **Explored by…** (off by default; chips *Anyone* or one player; a `--map-fog` veil at
   62 % over every chunk they hadn't come near, lifted by each chunk's first-seen time as the
   timeline plays); **Grid & coordinates**; **No-Spawn Beacons** and **Wormhole gates** (see
-  "Beacons and gates on the Minecraft map" below). Saved places are listed with a *later*
-  badge. The legend pairs *Explored · Satellite survey*, the dimension's biome
+  "Beacons and gates on the Minecraft map" below); **Saved places**, **Villagers** and **Pets &
+  named mobs** (see "Saved places, villagers and pets on the Minecraft map" below). Nothing is
+  listed *later* but Height. The legend pairs *Explored · Satellite survey*, the dimension's biome
   swatches, the glyphs (player, structure, death, spawn) with the count badge, and the veil
   while *Explored by* is on.
 - **The Timeline tab** (session navigation *3 · Days*). Opening it pins the timeline to now —
@@ -3802,9 +3806,14 @@ and *where does it go?* — answer with no tap.
     Nether* by the gate.
   - No arrow badge on a gate: the solid / dashed ring and the line already tell open from
     dormant.
-- **Draw order:** areas, gate lines, place pins, beacons and gates (clustered with the
-  structures), the selection ring, then **player discs on top** — a player is never under
-  a gate, a beacon or a selection ring.
+- **Draw order** (amended 2026-10-13 by the layers round, the review's S1 and X2): areas, gate
+  lines and the tapped place's goal circle, the places gates lead to, then **every point marker
+  but the players in one cluster pass** — structures, beacons, gates, the spawn, deaths, saved
+  places, villages and villagers, pets and named mobs, merged under 40 px into one count badge
+  whatever their kind — the selection ring, then **player discs on top**: a player is never
+  under a gate, a beacon or a selection ring. A gate's violet destination pin is the one point
+  outside the pass, being the end of its line; where a saved place stands on that very block
+  the place's own pin ends the line instead (the next section).
 - **Labels:** a gate's place or Nether plate goes to the **right** of its marker, else the
   left, else below, else above, else it is **dropped** — never drawn under or over
   anything. Every label on the map also keeps off the beacon and gate tiles, the pins, the
@@ -3837,6 +3846,79 @@ and *where does it go?* — answer with no tap.
   X · Y · Z box keeps the map's own digits for every kind of marker.
 - **Not drawn** on the timeline's replay (they are where the pack last reported them, not
   where they were then), nor on a share link's map (the rows are owner-only).
+
+### Saved places, villagers and pets on the Minecraft map (owner, 2026-10-13 — binding mocks: `docs/mocks/minecraft-map-layers/places-a-colour-pins.html` and `mobs-a-village-tiles.html`; plan §M8, §M4e)
+
+The GUI gate (`docs/mocks/minecraft-map-layers/README.md`, reviewed in `REVIEW.md`) picked
+**places A** and **villagers and pets A**; both extend M26's grammar above: a **round** halo pin
+for a place someone named, a **square** halo tile for a thing in the world, a 1.5 px ring in
+its player's colour (the same token as their disc), or `--map-ink` at 55 % for nobody's, and
+no new colour tokens. Every one joins the single 40 px cluster pass and is a label obstacle
+**keyed per marker** (`pl:`, `vg:`, `vv:`, `pet:`, `nm:` and the id), so one pet's plate never
+covers another pet. Their names go by the side rule (right, else left, below, above, else
+dropped). Owner-only — no share link (`app.mc_places` has no share policy, and the routes are
+the owner's) — and **not on the timeline's replay**: they are where they are now.
+
+- **Saved places** (`GET /api/minecraft/map/places`), **on** by default. Every player's places
+  in the world, each a pin in its player's current colour (the newest gamertag from the play
+  sessions, so a rename keeps the colour), always named. The row reads *7 in this world ·
+  BlockyFox 3 · Mira_P 2 · Steve42 2 · each labelled*. **In this world** lists them by player
+  (a coloured dot, *BlockyFox's places*), in every dimension, *down at Y −12* / *up at Y 140*,
+  *protected*, *gate 1 leads here*; a tap selects one and frames it.
+  - **A gate's destination is matched by block** (the review's X1): a gate aimed at a place's
+    very x · z in its dimension ends at the place's own pin — no violet pin; a gate still aimed
+    where a re-saved place used to be keeps its violet pin there, and the place's card says so.
+  - **Tapping a place:** the pin on its player's tint, the name, *BlockyFox's saved place ·
+    saved Oct 11 · in the Overworld* (*moved* when it was saved again); X · Y · Z with **Copy X
+    Z**; *Protected · by their No-Spawn Beacon at X 90 · Z −10* (the shield `--ok-text`; *a
+    No-Spawn Beacon* when its placer isn't recorded) or *Not protected · no No-Spawn Beacon
+    covers it*; *BlockyFox is 28 blocks west of it · online*; *Wormhole gate 1 leads here,
+    from X 30 · Z 14* (the portal `--violet-text`) or *Wormhole gate 1 still leads to where
+    Tree farm was, X −160 · Z −140* (`--warn-text` glyph); ***Goals count chests within 48
+    blocks** (the circle) · 9 of the 23 iron blocks are in chests here* — this place's share of
+    each open counted goal, read once per player while the map is open — and the footnote
+    *Each chest counts once, toward its nearest saved place, or toward BlockyFox where they
+    stand.* **No Tricorder button** (owner). The **48-block circle** round the tapped place is
+    a 1.5 px hairline in the player's colour over a 4 px halo with a 10 % wash, drawn with the
+    lines under every tile, and the camera frames it with a 72 px margin, again once the panel
+    settles round the card.
+- **Villagers** (`GET /api/minecraft/map/entities`), **off** by default. Zoomed out (under
+  3 px a block) **a village is one tile** with its count on a corner badge: the server's
+  located village within 48 blocks keeps its amber tile (*Village · 23 villagers*), any other
+  group is a neutral house tile (*8 villagers*). A village is the box's single-link grouping
+  of villagers within 48 blocks; wandering traders are visitors, never counted or drawn. The
+  count goes on the first corner no gate line or bearing crosses (the review's A1). A tap on a
+  village zooms in until it splits: from 3 px a block each villager is a neutral disc with its
+  job's glyph (book librarian, flask cleric, wheat farmer, fish fisherman, hammer the three
+  smiths, map cartographer, person everyone else), merging under **22 px** among themselves.
+  **Chips** under the row: *All jobs*, *Sells Mending* (when anyone does), and the commonest
+  jobs; a chip retitles the tiles (*Village · 4 librarians*, *2 sell Mending*), labels the
+  split discs *Librarian · Expert*, and lists the matches under the chips, **nearest first**
+  (C's list: *145 blocks north-east of BlockyFox · sells Mending · job locked in*); a row
+  selects and flies there.
+  - **Tapping a villager:** its job glyph, ***Librarian · Expert***, a *job locked in* pill
+    (traded with), *in the village of 23*; X · Y · Z; *72 blocks south-west of Mira_P* (the
+    nearest online player); **every trade it offers now, by level** (Novice to its own), each
+    *what it sells* over *for what* with *3 of 16 used* or *used up · restocks* in
+    `--warn-text`, a trade the chip asked for on `--steel-tint`; the footnote *Its trades now,
+    levels Novice to Expert. Master trades are told when it gets there.* and the age.
+- **Pets & named mobs**, **off** by default: a paw tile ringed in its owner's colour, a tag
+  tile ringed neutral, each named. A pet whose owner the world doesn't know (they never asked
+  Dave) is ringed neutral and says *owner not known yet*. A named, tamed animal is a pet, once.
+  **Chips**: *Everyone's* and each known owner; one owner's chip shows only theirs (no named
+  mobs) and lists them nearest that player first. **Tapping a pet:** the paw on its owner's
+  tint, ***Rex***, *BlockyFox's dog · pale · sitting* (*free to roam*), X · Y · Z, *42 blocks
+  south of BlockyFox · online*, and *Where Rex was as of the world's last save, …. A sitting
+  pet stays put; one free to roam may have wandered since.*
+- **The age is always said, honestly** (the review's S3): the box's age is the newest write to
+  the world's files, which on a live world is seconds old while a mob's own record is only as
+  new as its chunk's last save — so a live world reads *as of the world's last save, re-read
+  every minute* with no number, and a stopped or unloaded one *as of the world's last save,
+  6 min ago*. The box re-reads at most once a minute when the files change; there is **no
+  "Read the world again"** (owner).
+- **Legend:** *Saved place (ring: whose) · Where goals count chests (tapped)*, and while a
+  mobs layer is on *Village (count) · Villager, by job · Pet (ring: whose) · Named mob* and the
+  seven job glyphs.
 
 ### The Tricorder target on the Minecraft map (owner, 2026-10-12; plan §M21)
 

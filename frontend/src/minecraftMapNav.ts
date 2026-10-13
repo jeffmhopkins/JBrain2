@@ -14,6 +14,9 @@ export interface MapIntent {
   /** The tile route's zoom: 0 is one pixel per block, 4 one per chunk, below 0 closer. */
   zoom: number;
   mark: boolean;
+  /** A layer the card was about, turned on as the map opens: a villager or a pet a
+   *  finder found (they're off by default). */
+  show?: "villagers" | "pets" | undefined;
 }
 
 let opener: ((intent: MapIntent) => void) | null = null;

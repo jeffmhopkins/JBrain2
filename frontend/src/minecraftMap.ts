@@ -170,6 +170,9 @@ export interface Placed {
   sy: number;
   /** Lower draws (and labels) first: the tapped thing, players, places, spawn, structures. */
   pr: number;
+  /** Merges closer than this instead of CLUSTER_PX: a split village's villagers, whose
+   *  houses are a few blocks apart. Two markers merge within the smaller of theirs. */
+  cr?: number | undefined;
 }
 
 export interface Cluster<T extends Placed> {
@@ -178,16 +181,19 @@ export interface Cluster<T extends Placed> {
   members: T[];
 }
 
-/** Greedy, in priority order: each marker joins the first cluster seeded within `r` px. */
+/** Greedy, in priority order: each marker joins the first cluster seeded within `r` px
+ *  (or within the smaller of its own and the seed's `cr`). One pass over every point
+ *  marker but the players, so no two of them ever overlap (DESIGN "The Minecraft map"). */
 export function clusterMarkers<T extends Placed>(items: T[], r = CLUSTER_PX): Cluster<T>[] {
   const sorted = [...items].sort((a, b) => a.pr - b.pr);
-  const out: Cluster<T>[] = [];
+  const out: (Cluster<T> & { r: number })[] = [];
   for (const m of sorted) {
-    const c = out.find((q) => Math.hypot(q.sx - m.sx, q.sy - m.sy) < r);
+    const mine = m.cr ?? r;
+    const c = out.find((q) => Math.hypot(q.sx - m.sx, q.sy - m.sy) < Math.min(q.r, mine));
     if (c) c.members.push(m);
-    else out.push({ sx: m.sx, sy: m.sy, members: [m] });
+    else out.push({ sx: m.sx, sy: m.sy, members: [m], r: mine });
   }
-  return out;
+  return out.map(({ sx, sy, members }) => ({ sx, sy, members }));
 }
 
 /** Where a tapped count badge zooms to: in until its members separate (at most ×8 a tap),
@@ -275,6 +281,21 @@ export const GLYPHS = {
   portalFrame: "M7 2h10a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z",
   swirl: "M10 7c2 1 2 3 0 5s-2 4 0 5M14 7c-2 1-2 3 0 5s2 4 0 5",
   pin: "M20 10c0 4.99-5.54 10.19-7.4 11.8a1 1 0 0 1-1.2 0C9.54 20.19 4 14.99 4 10a8 8 0 0 1 16 0",
+  // Saved places, villagers and pets (GUI gate minecraft-map-layers): the pet's paw, a
+  // named mob's tag, and seven job glyphs for the fifteen jobs.
+  paw: "M13 4a2 2 0 1 1-4 0 2 2 0 1 1 4 0M20 8a2 2 0 1 1-4 0 2 2 0 1 1 4 0M22 16a2 2 0 1 1-4 0 2 2 0 1 1 4 0M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z",
+  tag: "M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42zM8 7.5a.5.5 0 1 1-1 0 .5.5 0 1 1 1 0",
+  book: "M12 7v14M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z",
+  flask:
+    "M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2M8.5 2h7M7 16h10",
+  wheat:
+    "M2 22 16 8M3.47 12.53 5 11l1.53 1.53a3.5 3.5 0 0 1 0 4.94L5 19l-1.53-1.53a3.5 3.5 0 0 1 0-4.94ZM7.47 8.53 9 7l1.53 1.53a3.5 3.5 0 0 1 0 4.94L9 15l-1.53-1.53a3.5 3.5 0 0 1 0-4.94ZM11.47 4.53 13 3l1.53 1.53a3.5 3.5 0 0 1 0 4.94L13 11l-1.53-1.53a3.5 3.5 0 0 1 0-4.94ZM20 2h2v2a4 4 0 0 1-4 4h-2V6a4 4 0 0 1 4-4Z",
+  hammer:
+    "m15 12-8.373 8.373a1 1 0 1 1-3-3L12 9M18 15l4-4M21.5 11.5l-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5",
+  fish: "M6.5 12c.94-3.46 4.94-6 8.5-6 3.56 0 6.06 2.54 7 6-.94 3.47-3.44 6-7 6s-7.56-2.53-8.5-6ZM18 12v.5M7 10.67C7 8 5.58 5.97 2.73 5.5c-1 1.5-1 5 .23 6.5-1.24 1.5-1.24 5-.23 6.5C5.58 18.03 7 16 7 13.33",
+  mapFold:
+    "M14.1 6.3 9.9 4.2a2 2 0 0 0-1.8 0L3.6 6.5A1 1 0 0 0 3 7.4v12.2a1 1 0 0 0 1.4.9l3.7-1.8a2 2 0 0 1 1.8 0l4.2 2.1a2 2 0 0 0 1.8 0l4.5-2.3a1 1 0 0 0 .6-.9V5.4a1 1 0 0 0-1.4-.9l-3.7 1.8a2 2 0 0 1-1.8 0zM15 5.8v15M9 3.2v15",
+  user: "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2M16 7a4 4 0 1 1-8 0 4 4 0 1 1 8 0",
   pick: "M14.531 12.469 6.619 20.38a1 1 0 1 1-3-3l7.912-7.912M15.686 4.314A12.5 12.5 0 0 0 5.461 2.958 1 1 0 0 0 5.58 4.71a22 22 0 0 1 6.318 3.393M17.7 3.7a1 1 0 0 0-1.4 0l-4.6 4.6a1 1 0 0 0 0 1.4l2.6 2.6a1 1 0 0 0 1.4 0l4.6-4.6a1 1 0 0 0 0-1.4zM19.686 8.314a12.501 12.501 0 0 1 1.356 10.225 1 1 0 0 1-1.751-.119 22 22 0 0 0-3.393-6.319",
 } as const;
 

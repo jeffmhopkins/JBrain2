@@ -1,13 +1,13 @@
 ---
 name: mc_show_map
-version: 3
+version: 4
 permission: web
 params:
   type: object
   properties:
     focus:
       type: string
-      description: What the card is about — death, player, place, structure, spot, gate, beacon or scan. death with no x and z is this chat's player's latest death; player with none is where they were last seen; place with none is the saved place named in label; scan is a player's live Tricorder scan (the gamertag in label, else this chat's player), drawn live with the square it searches and the block it found. structure, spot, gate and beacon need x and z (a gate's or beacon's from mc_gates_beacons).
+      description: What the card is about — death, player, place, structure, spot, gate, beacon, scan, villager or pet. death with no x and z is this chat's player's latest death; player with none is where they were last seen; place with none is the saved place named in label; scan is a player's live Tricorder scan (the gamertag in label, else this chat's player), drawn live with the square it searches and the block it found. structure, spot, gate and beacon need x and z (a gate's or beacon's from mc_gates_beacons); villager and pet need the x and z mc_find_villager or mc_find_pet gave, with a label like "Librarian · Expert" or the pet's name, and open the full map with villagers or pets shown.
     label:
       type: string
       description: A short label for the marked spot, up to 40 characters, e.g. "Woodland mansion". For place with no coordinates, the saved place's name; for scan, whose (a gamertag).
