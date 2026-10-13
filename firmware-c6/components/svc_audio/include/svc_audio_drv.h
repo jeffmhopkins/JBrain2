@@ -64,6 +64,10 @@ bool talk_net_ring(void);
 /* The play's free internal heap before its GET, once answered, with its ring, and the lowest
  * while it streamed (0.0.18): the snapshot's `audio.play_*`. */
 void talk_net_mem(uint32_t before, uint32_t answered, uint32_t ringed, uint32_t low);
+/* A talk's free internal heap as its upload began (its ring already held since KEY down), and the
+ * lowest while the recording went up and while the reply came down (0.0.22): the snapshot's
+ * `audio.talk_*`, 0 for a half the talk never reached. */
+void talk_net_talk_mem(uint32_t before, uint32_t up_low, uint32_t reply_low);
 /* What to do next; `mic_off` once the microphone has stopped, so the last of it is in the ring. */
 tk_net_t talk_net_next(bool *mic_off);
 uint32_t talk_net_take(void *dst, uint32_t cap);
