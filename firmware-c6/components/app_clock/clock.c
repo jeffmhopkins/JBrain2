@@ -173,7 +173,7 @@ static void build_face(app_t *self, lv_obj_t *v)
         snprintf(count, sizeof count, "%u", c->sig.badge > 99 ? 99u : (unsigned)c->sig.badge);
         lv_obj_t *b = ui_corner_badge(v, count, f.color, clock_badge_opa(c->sig.urgent),
                                       badge_tapped, self);
-        lv_obj_align(b, LV_ALIGN_TOP_RIGHT, -30, 26);
+        lv_obj_align(b, LV_ALIGN_TOP_RIGHT, -26, 22);
     }
 }
 

@@ -113,8 +113,12 @@ void svc_audio_fake_step_done(uint8_t index, bool ok)
 
 void svc_audio_fake_reply(const char *heard, const char *reply, bool speaking)
 {
+    static uint32_t seq = 7000;
     talk_net_heard(heard);
     talk_net_reply(reply, speaking);
+    /* The box names the exchange's two turns right after the answer (IDS, 0.0.21). */
+    talk_net_ids(seq + 1, seq + 2);
+    seq += 2;
     s_net = false;
     talk_net_end(32000, speaking ? 64000 : 0, 2400);
 }
@@ -169,6 +173,37 @@ void svc_audio_fake_listen(bool arrives, bool to_the_end, bool verified)
     talk_net_listened(verified);
     s_net = false;
     talk_net_end(0, 64000, 0);
+    talk_audio_drained();
+    talk_port_kick();
+}
+
+void svc_audio_fake_speech(bool arrives, uint32_t total_ms, uint32_t played_ms, bool to_the_end)
+{
+    if (!s_net) {
+        /* A reply read aloud: its exchange is already speaking, the marks ride its own stream. */
+        talk_net_spoken(0, 1000, total_ms * (TALK_RATE / 1000u) * 2u);
+        talk_audio_played(played_ms * (TALK_RATE / 1000u) * 2u);
+        return;
+    }
+    if (!arrives) {
+        talk_net_fail("the box cannot speak now");
+        s_net = false;
+        talk_net_end(0, 0, 0);
+        return;
+    }
+    if (!talk_net_ring()) {
+        talk_net_fail("no memory to play");
+        s_net = false;
+        talk_net_end(0, 0, 0);
+        return;
+    }
+    talk_net_reply("", true);
+    talk_net_spoken(0, 1000, total_ms * (TALK_RATE / 1000u) * 2u);
+    talk_audio_played(played_ms * (TALK_RATE / 1000u) * 2u);
+    talk_port_kick();
+    if (!to_the_end) return;
+    s_net = false;
+    talk_net_end(0, total_ms * 32u, 0);
     talk_audio_drained();
     talk_port_kick();
 }

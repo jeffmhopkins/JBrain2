@@ -6,10 +6,12 @@ host vitals straight from /proc and /sys — the same amdgpu/meminfo sources as
 supervisor/src/supervisor/host_metrics.py. `POST /event` accepts a tiny
 `{"kind": "web_search"|"web_fetch"}` marker from the JBrain2 agent (-> a reach-out
 tendril). It is deliberately decoupled from the authenticated api: it touches NO
-database and NO user data, only non-sensitive host vitals (GPU/RAM/power/load,
-net + disk throughput) and content-free web-tool markers, so it is safe to expose
-without auth *on a trusted LAN*. Its pet view proxies the api's `/internal/pet*` routes,
-presenting the wall's own token (WALL_TOKEN_FILE), which opens those routes and no others.
+database, only host vitals (GPU/RAM/power/load, net + disk throughput) and web-tool
+markers. When the owner turns on brain-display text, the markers carry the owner's own
+prompts, answers and web queries, and `/stats` hands them to any client that polls it,
+so it is only safe without auth *on a trusted LAN* (security plan S4, F18). Its pet view
+proxies the api's `/internal/pet*` routes, presenting the wall's own token
+(WALL_TOKEN_FILE), which opens those routes and no others.
 
 SECURITY: there is no authentication. Bind it to your LAN only and never
 port-forward it to the public internet. Defaults to 0.0.0.0 so it answers at

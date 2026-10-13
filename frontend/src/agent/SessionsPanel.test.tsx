@@ -768,6 +768,7 @@ describe("SessionsPanel share", () => {
 
   it("puts share second on a five-action rail and opens the share sheet", async () => {
     vi.spyOn(api, "chatShares").mockResolvedValue([]);
+    vi.spyOn(api, "chatShareSensitivity").mockResolvedValue([]);
     panel({});
     swipe();
     const rail = document.querySelector(".session-rail.rail-5") as HTMLElement;

@@ -1880,6 +1880,8 @@ static void face_task(void *arg)
     face_rest(&fst);
     action_t action = ACT_NONE;
     uint32_t action_start = 0;
+    uint32_t recue_from = 0;
+    float recue_p = 0.0f;
     float action_mag = 1.0f;
     gesture_t gest;
     gesture_reset(&gest);
@@ -2004,7 +2006,7 @@ static void face_task(void *arg)
                     action = (action_t)v->arg;
                     action_mag = 1.0f;
                     action_start = now;
-                    heard_cue = cue_for_action((int)action);
+                    heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
                     break;
                 }
                 if (heard_cue != CUE_COUNT && sound) {
@@ -2165,11 +2167,13 @@ static void face_task(void *arg)
         /* THE POKE, which the machine hands back when a press reached the pet. SPEAKING, AND IT
            OUTRANKS THE TOY: *"when the agent is talking we should prohibit beeps from cutting it
            off, and we should also stop poke interactions making other animations."* A poke over
-           sound only flinches, because ignoring a finger entirely reads as a frozen pet. */
+           sound only flinches, because ignoring a finger entirely reads as a frozen pet.
+           EXCEPT OVER THE PET'S OWN NOISE (`pet_only`, 0.4.10): a meal crunches through two
+           thirds of its 4.8 s, and the speaker cuts that cue for the poke's, so it is heard. */
         if (s_out.pet_press) {
             s_flinch = 1.0f;
             dirty = true;
-            if (facts.speaker_busy) {
+            if (!facts.pet_only) {
                 /* the flinch alone */
             } else if (label_hit(ox, oy, over_y0)) {
                 /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass
@@ -2192,7 +2196,9 @@ static void face_task(void *arg)
                          s_tap_x, s_tap_y, s_fig_x, s_fig_y, s_tap_zone, colour, (int)action,
                          (double)action_mag);
                 PHASE(3);
-                if (sound) stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                if (sound && rig_cue_on_start(action)) {
+                    stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                }
             }
         }
 
@@ -2405,6 +2411,18 @@ static void face_task(void *arg)
                     p = (float)el / (float)dur;
                 }
             }
+            /* AN ACTION THAT OUTLASTS ITS SOUND SAYS IT AGAIN (`rig_recue`): the tickle laughs
+               three times. Measured from the last DRAWN frame's progress, so a skipped frame
+               cannot skip a laugh; and only into a speaker nobody else is using. */
+            if (action_start != recue_from) {
+                recue_from = action_start;
+                recue_p = 0.0f;
+            }
+            if (action != ACT_NONE && rig_recue(action, recue_p, p) && sound &&
+                view->mode == SM_PET && !facts.speaker_busy) {
+                stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+            }
+            recue_p = p;
             const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD ||
                                     view->think;
             const bool speaking = facts.speaker_busy;

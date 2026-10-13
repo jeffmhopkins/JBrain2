@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; the steps list, the steady spinner and KEY-outside-starts-new in 0.0.14; the conversation switcher (New and Recent conversations) approved 2026-10-12 and built in 0.0.15; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12 (box side built, panel side next)** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; the steps list, the steady spinner and KEY-outside-starts-new in 0.0.14; the conversation switcher (New and Recent conversations) approved 2026-10-12 and built in 0.0.15; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12, re-mocked and approved 2026-10-13 and built in 0.0.19 (box and panel); Listen on replies, Load earlier and the PWA's panel settings approved 2026-10-13 and built in 0.0.21, with the folded steps line** · Last verified: 2026-10-13
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -60,6 +60,22 @@ panel, the others import it at a fixed `start` state).
   the box turns a send away at once (`409 not_accepting` / `409 quiet_hours` with `until`, or
   `503 offline`), so nothing is held to pop up later — plus a chime switch. Box side:
   `../../plans/JPANEL_C6_PLAN.md` §2.
+- **Notices, as approved 2026-10-13** (boards NotifyInfo, NotifyQuestion, NotifyQuestionSound,
+  NotifyPicture, NotifyNight, NotifyBanner, NotifyAudio, ClockBadge): a **plain notice hides
+  after 20 s** unless its sender picks another time or "until tapped" (the box applies the
+  default); a **question has no default time**. A thin line along the bottom edge drains to the
+  left over the time, and the hint reads "Tap to hide · hides in N s" ("Tap an answer · tap
+  elsewhere to hide" on a question). **A tap anywhere but a button hides any notice, a question
+  too** (the sender reads `dismissed`, no answer), and so does BOOT ("hide notice" above it). A
+  **question may carry a sound**: it plays once as the notice appears, a speaker row shows its
+  progress and then "Play again · 0:05", and a tap on the row plays it again. A **full picture**
+  fills the glass with the sender and the hint as chips; a **banner** sits across the top, up to
+  240 px, the words and answers under it. **At night** (the night clock on and inside its hours)
+  every notice is drawn in the night clock's colour (*"if they are turned on yes they should follow
+  the same color rules"*), and a picture waits behind a **Show picture** button (64 px) until it is
+  asked for. "1 of N", the alarm on top, and the clock face's corner badge — now 56 px, bell and
+  count, never over the time — as before. Hint text is 18 px. Built in firmware 0.0.19; the
+  sim's `notify-*` states are the pictures.
 - **The clock face is never covered** (owner, 2026-10-11): while the giant clock is up, a push
   message or a girl's message does not pop up — it waits as a small badge (bell + count) in
   the top-right corner, drawn in the night-clock colour at night, and opens only when tapped.
@@ -150,6 +166,14 @@ panel, the others import it at a fixed `start` state).
   resetting"*) — not LVGL's growing and shrinking sweep — and a status change no longer remakes it.
   The sim's `jerv-thinking`, `jerv-steps` and `jerv-steps-done` states are the pictures; there is
   no mock board. Firmware 0.0.14.
+- **Three or more steps fold into two lines** (owner request, 2026-10-13: *"When using more than
+  two tools, the first line should just be a running record of how many tools called and the
+  second line down the current one that's being used."*). With one or two steps the list is as
+  above. From the third, line 1 is "✓ N tools used" — every call started, the running one
+  included — and line 2 is the running step with its spinner, or "◌ Thinking… 0:37" between
+  tools; the steady spinner stays. The same two lines stay once the answer arrives. The sim's
+  `jerv-steps-two`, `jerv-steps-four` and `jerv-steps-four-thinking` states are the pictures.
+  Firmware 0.0.21.
 - **Alarms, built** (firmware 0.0.13 and the PWA): `ClockAlarms`, `Ringing` and `PwaAlarms` as
   drawn, with these differences, each on purpose. **A sound per alarm** — the PWA's form gains a
   Chime / Beeps / Rise picker below the label (the mock has none; the brief asked for a small fixed
@@ -160,8 +184,8 @@ panel, the others import it at a fixed `start` state).
   in a label** (the panel's fetch buffer is sized for labels with nothing to escape). **The time
   field is the phone's own** — `<input
   type="time">` shows 12-hour on a phone set to 12-hour; the list, the panel and the box are 24-hour.
-  **The night-clock hours are not in the PWA yet** (still the panel's default 21:30–06:30); that
-  half of the mock's card is a later wave. On the panel the ringing screen's second button stays
+  **The night-clock hours came to the PWA later**, in 0.0.21's Panel settings (below); until then
+  they were the panel's default 21:30–06:30. On the panel the ringing screen's second button stays
   **Stop**, as drawn. The sim's `ringing`, `ringing-dark`, `ringing-over-notice`, `alarm-snoozed`,
   `alarm-test` and `clock-alarms` states are the panel's pictures, from the box's own JSON.
 - **New conversation and Recent conversations** (owner, 2026-10-12: *"On long press of the Jerv
@@ -180,7 +204,8 @@ panel, the others import it at a fixed `start` state).
   defaults are what is built:
   1. the conversation's title always shows under "Jerv" / "Dave" in the header; a new one reads
      "Desk panel" until the box has a title for it;
-  2. after a switch, the chip "Earlier messages are in the app", not "Load earlier";
+  2. after a switch, the chip "Earlier messages are in the app", not "Load earlier" (replaced in
+     0.0.21 by Load earlier, below);
   3. Dave's Recent is his panel and PWA conversations only, not the in-game Minecraft chats, for
      now;
   4. conversations started by KEY from outside a thread are in Recent like any other.
@@ -210,3 +235,32 @@ panel, the others import it at a fixed `start` state).
   sender reads `expired`. Without a timeout it waits for the tap. The live panel's *Send a test
   message* tweak sends a picture, a banner question and one with a sound. Box side and wire
   format: `../../plans/JPANEL_C6_PLAN.md` §2.
+- **Listen, Load earlier and settings from the PWA** — boards `ListenIdle`, `ListenStarting`,
+  `ListenPlaying`, `ListenWorking`, `DaveListen`, `HistoryLoad`, `HistoryLoading`,
+  `HistoryLoaded`, `HistoryCapped`, `HistoryStart`, `HistoryQuorra`, `PwaPanelSettings`,
+  `PwaSettingsOpen`, `PwaSettingsWaiting` and `PwaSettingsOffline`, **approved by the owner on
+  2026-10-13**. A 56 px speaker button on every finished Jerv or Dave reply: "Starting… · tap to
+  stop", then a ring filling with the text spoken and the elapsed time; a tap, KEY or BOOT stops
+  it; it reads the whole reply, one reply at a time; while a turn runs the buttons are dimmed and
+  a tap says "Listen waits for this answer"; a reply being read aloud shows the same playing state.
+  In every thread "Load earlier · N more" fetches ten older messages with a spinner in the row,
+  the message at the top holding its place; "Start of conversation · <when>" at the true start.
+  On the PWA, a **Panel settings** section on the display panel's card, under Alarms: Clock (the
+  night clock, its hours and colour, the date under the time, the zone), Notices (accept, refuse
+  during night hours, chime) and Screen and sound (brightness and volume 10–100%, read aloud,
+  auto-rotate), each row "Waiting for the panel" or "On the panel", the header the last report's
+  age, "Sending to panel…" and an offline state; mic gain and the IMU axes stay out. The owner's
+  answers to the boards' questions:
+  1. **Listen shows on every reply**, read-aloud on as well as off;
+  2. **the panel's last report wins**: a change from the PWA is retried only while the panel still
+     reports the old value, and dropped if it reports a different one;
+  3. **a 20-message window**: past 20 the newest drop and a "Newer messages · N more" row brings
+     them back; a new KEY message jumps back to the newest;
+  4. **the night colour stays settable on the panel** as well as in the PWA.
+
+  Built in firmware 0.0.21 and the PWA; the sim's `jerv-listen`, `jerv-listen-starting`,
+  `jerv-listen-playing`, `jerv-listen-working`, `dave-listen`, `jerv-reply-reading`,
+  `jerv-history`, `jerv-history-loading`, `jerv-history-loaded`, `jerv-history-capped`,
+  `dave-history-start`, `quorra-history`, `quorra-history-loaded` and `settings-from-pwa` states
+  are the panel's pictures. Box side: `../../plans/JPANEL_C6_PLAN.md` §1 "Listen, Load earlier
+  and settings from the PWA".

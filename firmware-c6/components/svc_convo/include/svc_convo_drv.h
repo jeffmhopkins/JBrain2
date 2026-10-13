@@ -17,6 +17,13 @@ typedef struct {
     char agent[8];
     char id[CONVO_ID_BYTES];
     uint32_t seq;
+    /* CONVO_RQ_HISTORY (0.0.21): the thread it is for, the path built on the UI task (where the
+       panels' ids live), which page (0 counts, 1 earlier, 2 newer) and, for the counts, the
+       local id of the oldest message they are counted from. */
+    char thread[16];
+    char path[HIST_PATH_BYTES];
+    uint8_t side;
+    uint32_t counted;
 } convo_req_t;
 
 /* Its section of the debug snapshot ("convo"): what is waiting, and each agent's title. */

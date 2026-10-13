@@ -78,7 +78,8 @@ class NoticeIn(BaseModel):
     choices: list[str] = Field(default_factory=list, max_length=8)
     #: Chime as it arrives (still silent inside quiet hours — a refusal is never bypassed).
     chime: bool = False
-    #: Hide this long after it is shown (3-600 s); omitted: until it is tapped.
+    #: Hide this long after it is shown (3-600 s); 0: until it is tapped; omitted: 20 s for a
+    #: plain notice, until answered for a question (owner, 2026-10-13).
     hide_after_s: int | None = None
     #: How long an answer is accepted once the panel has it (30 s - 24 h, default 15 min).
     ttl_s: int | None = None

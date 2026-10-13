@@ -95,10 +95,16 @@ def test_a_body_may_hold_line_breaks() -> None:
 
 
 def test_hide_and_ttl_bounds() -> None:
-    assert N.check_hide(None) is None
-    assert N.check_hide(3) == 3 and N.check_hide(600) == 600
-    for bad in (2, 601, 0, -1):
-        assert refused(N.check_hide, bad).extra["field"] == "hide_after_s"
+    # Omitted: a plain notice hides after 20 s, a question waits for its answer (owner,
+    # 2026-10-13); 0 asks for until tapped either way.
+    assert N.check_hide(None, question=False) == N.HIDE_DEFAULT_PLAIN_S == 20
+    assert N.check_hide(None, question=True) is None
+    assert N.check_hide(0, question=False) is None and N.check_hide(0, question=True) is None
+    assert N.check_hide(3, question=False) == 3 and N.check_hide(600, question=True) == 600
+    for bad in (2, 601, -1):
+        assert (
+            refused(lambda v: N.check_hide(v, question=False), bad).extra["field"] == "hide_after_s"
+        )
     assert N.check_ttl(None) == N.TTL_DEFAULT_S == 900
     assert N.check_ttl(30) == 30 and N.check_ttl(86400) == 86400
     for bad in (29, 86401):

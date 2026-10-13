@@ -37,6 +37,10 @@ uint32_t dbg_sys_crumb_now(void);
  * records it with that work, "+handshake" inside one and "+ring" while a talk's or a play's ring
  * is held. Reported as the snapshot's `system.int_min_at` and telemetry's `low=<B>@<what>`. */
 void dbg_sys_low_probe(bool (*ring_held)(void));
+/* What the main task is doing while it answers a debug command (0.0.20): "screenshot" for the
+ * capture's stream, "answer" for the rest; "pickup" names the GET alone. A string literal, as
+ * dbg_sys_doing needs. Pure. */
+const char *dbg_answer_phase(const char *cmd);
 void dbg_sys_doing(const char *what);
 void dbg_sys_handshake(bool on);
 void dbg_sys_low_check(void);

@@ -104,7 +104,16 @@ async def test_chat_share_api_end_to_end(
         )
 
         assert client.post("/api/sessions/not-a-session/shares").status_code == 404
-        minted = client.post(f"/api/sessions/{sid}/shares")
+        assert client.get("/api/sessions/not-a-session/shares/sensitivity").status_code == 404
+        # The chat can read finance, so the owner confirms before a link exists.
+        assert client.get(f"/api/sessions/{sid}/shares/sensitivity").json() == {
+            "sensitive": ["finance"]
+        }
+        refused = client.post(f"/api/sessions/{sid}/shares")
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["sensitive"] == ["finance"]
+        assert client.get(f"/api/sessions/{sid}/shares").json() == []
+        minted = client.post(f"/api/sessions/{sid}/shares", json={"confirm_sensitive": True})
         assert minted.status_code == 201
         body = minted.json()
         token, share_id = body["token"], body["id"]
@@ -161,6 +170,80 @@ async def test_chat_share_api_end_to_end(
         assert client.delete(f"/api/sessions/shares/{share_id}").status_code == 404
         assert client.get(f"/api/sessions/{sid}/shares").json() == []
         assert client.get(f"/api/chat-share/{token}").status_code == 404
+
+
+async def test_chat_share_mint_confirms_private_reads(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A harmless chat mints from a bare POST as before; a chat re-scoped to `general` after a
+    turn quoted a health note, or one that read mail, needs the owner's confirm."""
+    key = await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    owner = await _owner_ctx(maker)
+    transcript = AgentTranscript(maker)
+    with TestClient(app) as client:
+        assert client.post("/api/auth/session", json={"owner_key": key}).status_code == 204
+
+        def chat(scopes: list[str]) -> str:
+            return str(client.post("/api/sessions", json={"domain_scopes": scopes}).json()["id"])
+
+        harmless = chat(["general"])
+        await transcript.record_exchange(
+            owner,
+            session_id=harmless,
+            run_id=None,
+            user_text="news?",
+            assistant_text="Here.",
+            tools=[_STEP],
+        )
+        assert client.get(f"/api/sessions/{harmless}/shares/sensitivity").json() == {
+            "sensitive": []
+        }
+        assert client.post(f"/api/sessions/{harmless}/shares").status_code == 201
+
+        rescoped = chat(["general", "health"])
+        health_read = {
+            "id": "t2",
+            "name": "search",
+            "ok": True,
+            "sources": [{"note_id": "n1", "domain": "health", "snippet": "A1c 6.1"}],
+        }
+        await transcript.record_exchange(
+            owner,
+            session_id=rescoped,
+            run_id=None,
+            user_text="my A1c?",
+            assistant_text="6.1",
+            tools=[health_read],
+        )
+        assert (
+            client.post(f"/api/sessions/{rescoped}/scope", json={"domain_scopes": ["general"]})
+        ).status_code == 204
+        refused = client.post(f"/api/sessions/{rescoped}/shares", json={})
+        assert refused.status_code == 409
+        assert refused.json()["detail"]["sensitive"] == ["health"]
+        ok = client.post(f"/api/sessions/{rescoped}/shares", json={"confirm_sensitive": True})
+        assert ok.status_code == 201
+        # The confirmed link serves the chat in full: the owner chose to share it.
+        client.cookies.clear()
+        page = client.get(f"/api/chat-share/{ok.json()['token']}").json()
+        assert page["turns"][1]["tools"][0]["sources"][0]["snippet"] == "A1c 6.1"
+
+        assert client.post("/api/auth/session", json={"owner_key": key}).status_code == 204
+        mail = chat(["general"])
+        await transcript.record_exchange(
+            owner,
+            session_id=mail,
+            run_id=None,
+            user_text="any bank mail?",
+            assistant_text="One.",
+            tools=[{"id": "t3", "name": "gmail_search", "ok": True, "summary": "From: bank"}],
+        )
+        assert client.post(f"/api/sessions/{mail}/shares").status_code == 409
+        assert client.get(f"/api/sessions/{mail}/shares/sensitivity").json() == {
+            "sensitive": ["mail"]
+        }
 
 
 async def test_chat_share_reads_are_rate_limited(

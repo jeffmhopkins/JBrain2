@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.api import panel_messages
+from jbrain.api import panel_messages, panel_settings
 from jbrain.api.deps import PanelDep
 from jbrain.api.endpoint import DEFAULT_BOARD, BoardId
 from jbrain.api.notes import ctx_for
@@ -67,7 +67,10 @@ async def next_request(
     `tz` (the panel's zone index) — and either answer carries `X-Notice: <n>` when n notices
     wait for it (JPANEL_C6_PLAN.md §2). For the owner's desk panel (the talk's gate) either answer
     also carries `X-Jpanel-Post: <tag>`, which moves whenever his voice post does
-    (`panel_messages.post_tag`, 0.0.16): the panel fetches its person threads only then.
+    (`panel_messages.post_tag`, 0.0.16): the panel fetches its person threads only then. Since
+    0.0.21 the query also carries the rest of the PWA-managed settings (`no nk sd br vo ra ar`,
+    `jpanel/panel_settings.py`) and either answer carries `X-Panel-Settings: <version>` while a
+    change asked for in the PWA waits for the panel (`panel_settings.record_report`).
 
     200 carries exactly the flat object `dbg_cmd_run` takes. Collecting it starts the
     answer window (`relay.ANSWER_WINDOW_S`); a request not collected within
@@ -105,6 +108,11 @@ async def next_request(
     tag = await panel_messages.pickup_tag(_maker(request), principal)
     if tag:
         hint[panel_messages.POST_HEADER] = tag
+    asked = await panel_settings.record_report(
+        _maker(request), principal, dict(request.query_params)
+    )
+    if asked:
+        hint[panel_settings.S.HEADER] = asked
     if row is None:
         return Response(status_code=204, headers=hint)
     log.info("debug.panel_pickup", device=principal.id, request_id=row[0], cmd=row[1])

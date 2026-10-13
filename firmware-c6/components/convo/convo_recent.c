@@ -77,7 +77,7 @@ static void scrolled(lv_event_t *e)
 }
 
 /* The panel's zone now, local minus UTC, from its own clock: the rows' times are the panel's. */
-static int32_t zone_offset(int64_t now)
+int32_t convo_zone_offset(int64_t now)
 {
     rtc_time_t t;
     svc_rtc_now(&t);
@@ -97,7 +97,7 @@ static void draw_rows(convo_t *c, lv_obj_t *page)
     if (!l) return;
     int64_t now = 0;
     const bool timed = svc_rtc_epoch(&now);
-    const int32_t off = timed ? zone_offset(now) : 0;
+    const int32_t off = timed ? convo_zone_offset(now) : 0;
     const bool fresh = svc_audio_fresh_pending(c->cfg->thread);
     for (uint8_t i = 0; i < l->n; i++) {
         const convo_row_t *r = &l->row[i];

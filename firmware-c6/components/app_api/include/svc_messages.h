@@ -21,6 +21,10 @@ typedef struct {
        progress bar fills against; 0 when unknown. 16 bits hold 65 s (a message is 30 s, a talk
        60), and last, it sits in what was the struct's padding: no message grew. */
     uint16_t dur_ms;
+    /* The box's id for an agent's message, its turn `seq` (0.0.21): what Listen speaks and Load
+       earlier pages from. 0 for a person's message (svc_post keeps her box ids) and for one the
+       box has not named — a question still on its way, a talk before this image. */
+    uint32_t box_id;
 } msg_t;
 
 /* The threads: "jerv" and "dave" (the agents), and the two people's, by slot. A person's thread
@@ -50,3 +54,22 @@ uint16_t svc_messages_unplayed(const char *principal);
 uint16_t svc_messages_unplayed_total(void);
 bool svc_messages_first_unplayed(char principal[16]);
 void svc_messages_mark_played(const char *principal, uint32_t id);
+
+/* ---- Load earlier (0.0.21, owner-approved 2026-10-13) ----
+ * A thread opens on its live messages with "Load earlier · N more" above them while the box has
+ * older ones, and "Start of conversation · <when>" at the true start. Ten at a time come in front;
+ * past HIST_MAX the newest go and "Newer messages · N more" sits below. While paged the thread's
+ * count, get and text are the window's (hist_logic.h). Requests are svc_convo.h's. */
+#define HIST_MAX 20
+#define HIST_PAGE 10
+typedef enum { HIST_TOP_NONE, HIST_TOP_LOAD, HIST_TOP_LOADING, HIST_TOP_START } hist_top_t;
+typedef enum { HIST_BOTTOM_NONE, HIST_BOTTOM_NEWER, HIST_BOTTOM_LOADING } hist_bottom_t;
+typedef struct {
+    uint8_t top;      /* hist_top_t */
+    uint32_t older;   /* LOAD: how many */
+    int64_t start_at; /* START: when it began, UTC seconds */
+    uint8_t bottom;   /* hist_bottom_t */
+    uint32_t newer;   /* NEWER: how many */
+    bool paged;       /* the window is what is shown */
+} hist_view_t;
+void svc_messages_hist(const char *principal, hist_view_t *out);

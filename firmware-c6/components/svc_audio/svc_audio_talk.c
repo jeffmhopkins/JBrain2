@@ -18,22 +18,34 @@
 /* The thread the current exchange belongs to, "jerv" or "dave". `agent` is written only by the
  * UI task (tk_set_agent at a hold's start), which is also the only reader of this. */
 #define THREAD tk_agent_id((tk_agent_t)s_tk.agent)
-/* Half a second of speech either way: the upload's slack for a radio that stalls, and the
- * reply's for a box that sends in bursts. Allocated per exchange, so between talks the heap
- * has it back (README "What 0.0.10 adds", the memory budget). */
-#define RING_BYTES 16384
-
 static tk_t s_tk;
 static tk_ring_t s_ring;
 /* Set and cleared under the lock: a talk's ring is taken on the UI task at KEY down, a play's on
- * the main task once the box has answered (talk_net_ring), and the UI task frees either. */
+ * the main task once the box has answered (talk_net_ring), and the UI task frees either. Its size
+ * is the exchange's (tk_ring_bytes: 16 KB for a talk, 6 KB for a play since 0.0.18); allocated
+ * per exchange, so between them the heap has it back. */
 static uint8_t *s_ring_mem;
+static uint32_t s_ring_bytes;
+/* The play's internal heap as it went (0.0.18, main task's, under the lock): before its GET, once
+   the box answered, with the ring taken, and the lowest seen while the audio streamed. The last
+   two apart are what the network holds behind the ring. */
+static uint32_t s_play_mem[4];
 /* The message playing's audio that went to the speaker: the audio task's count, under the lock. */
 static uint32_t s_played_bytes;
 /* The box answered a play with its audio (main task, under the lock): the UI task marks the
    message heard on its next pass and clears this. */
 static bool s_listen_started;
 static tk_stats_t s_st;
+/* Listen's progress (0.0.21): the marks the box sent and the PCM received after them (main task's,
+   under the lock), read against s_played_bytes. */
+static tk_marks_t s_marks;
+/* Listen's bubble and thread (UI task's): the reply being spoken again, 0 for none; and the one a
+   tap asked for while another still spoke, which starts once that one has let go. */
+static uint32_t s_speak_id, s_speak_next;
+static char s_speak_thread[8], s_speak_next_thread[8];
+/* IDS (0.0.21): the exchange's turns on the box, for bubble `s_ids_for` and the reply after it.
+   Main task writes under the lock; the UI task applies them once (`s_ids_seq` moved). */
+static uint32_t s_ids[2], s_ids_for, s_ids_seq, s_ids_applied;
 /* The reply as it streams in (JT2): written by the main task under the lock, read by the UI task.
  * What was heard and the status line each carry a count that grows with every change, so the UI
  * redraws exactly when one moved; the answer is read once, on REPLY. */
@@ -97,30 +109,43 @@ static void unlock(void)
 
 /* ---- the glass ---- */
 
-/* The ring, if there is none yet. Allocated outside the lock (a critical section on the
-   device), kept only if no other task set one meanwhile. */
-static bool ring_alloc(void)
+/* The exchange's ring, `bytes` long. One the last exchange left behind of another size is given
+   back first: only the UI task starts an exchange and the main task takes a play's ring inside
+   one, so whoever calls this is the only one who could be touching it. Allocated outside the lock
+   (a critical section on the device). */
+static bool ring_alloc(uint32_t bytes)
 {
     lock();
-    const bool have = s_ring_mem != NULL;
+    uint8_t *old = s_ring_mem;
+    const bool fits = old && s_ring_bytes == bytes;
+    if (old && !fits) {
+        s_ring_mem = NULL;
+        s_ring_bytes = 0;
+        tk_ring_init(&s_ring, NULL, 0);
+    }
     unlock();
-    if (have) return true;
-    uint8_t *mem = malloc(RING_BYTES);
+    if (fits) return true;
+    free(old);
+    uint8_t *mem = malloc(bytes);
     if (!mem) return false;
     lock();
-    const bool lost = s_ring_mem != NULL;
-    if (!lost) s_ring_mem = mem;
+    s_ring_mem = mem;
+    s_ring_bytes = bytes;
     unlock();
-    if (lost) free(mem);
     return true;
 }
 
 bool talk_ring_held(void)
 {
+    return talk_ring_bytes() != 0;
+}
+
+uint32_t talk_ring_bytes(void)
+{
     lock();
-    const bool held = s_ring_mem != NULL;
+    const uint32_t n = s_ring_mem ? s_ring_bytes : 0;
     unlock();
-    return held;
+    return n;
 }
 
 /* What stops an exchange before it starts: the codec, the radio, and for a hold the ring's
@@ -131,7 +156,7 @@ static const char *refusal(const char *offline, bool ring)
     net_info_t n;
     svc_net_info(&n);
     if (!why && n.state != NET_CONNECTED) why = offline;
-    if (!why && ring && !ring_alloc()) why = "No memory to record";
+    if (!why && ring && !ring_alloc(TK_RING_TALK)) why = "No memory to record";
     return why;
 }
 
@@ -146,9 +171,14 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
         s_refused = "Not sent: her panel is not known yet";
         return false;
     }
+    /* The ring only for a hold that can start: KEY over a play still being fetched must not take
+       16 KB while the play's own ring is on its way (0.0.18). */
+    lock();
+    const bool can = tk_can_begin(&s_tk);
+    unlock();
     const char *why = refusal(person ? "Not connected: messages need Wi-Fi"
                                      : "Not connected: talking needs Wi-Fi",
-                              true);
+                              can);
     if (why) {
         s_refused = why;
         return false;
@@ -158,7 +188,9 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
     const bool voice = !person && svc_settings_get(SET_TTS) != 0 && talk_port_speaker();
     const uint32_t now = svc_rtc_uptime_ms();
     lock();
-    const tk_begin_t b = tk_begin(&s_tk, now, voice, s_next_id);
+    /* Gone idle since the check: this hold has no ring, so it is the next one that starts. */
+    const tk_begin_t b = !can && tk_can_begin(&s_tk) ? TK_BEGIN_BUSY
+                                                     : tk_begin(&s_tk, now, voice, s_next_id);
     if (b == TK_BEGIN_OK) {
         tk_set_agent(&s_tk, agent, s_fresh[agent] || kind == TALK_TO_NEW_AGENT);
         if (person) {
@@ -166,10 +198,12 @@ bool svc_audio_talk_begin(talk_kind_t kind, const char *principal)
             memcpy(s_target, target, sizeof s_target);
             snprintf(s_person, sizeof s_person, "%s", principal);
         }
-        tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+        tk_ring_init(&s_ring, s_ring_mem, s_ring_bytes);
         s_heard[0] = s_status[0] = '\0';
         s_heard_seq = s_status_seq = 0;
         tk_steps_init(&s_steps);
+        tk_marks_init(&s_marks);
+        s_played_bytes = 0;
     }
     unlock();
     if (b == TK_BEGIN_STOPPED) {
@@ -325,8 +359,12 @@ bool svc_audio_stop_reply(void)
     s_st.stopped++;
     talk_port_kick();
     msg_t m;
-    if (kind == TK_KIND_LISTEN) {
-        play_over();
+    if (kind == TK_KIND_LISTEN || kind == TK_KIND_NOTICE || kind == TK_KIND_SPEAK) {
+        if (kind == TK_KIND_LISTEN) play_over();
+        if (kind == TK_KIND_SPEAK && s_speak_id) {
+            s_speak_id = 0;
+            refresh(s_speak_thread);
+        }
         return true;
     }
     const char *thread = exchange_thread();
@@ -358,6 +396,7 @@ bool svc_audio_play(uint32_t msg_id)
         s_refused = why;
         return false;
     }
+    uint8_t *stale = NULL;
     lock();
     const tk_begin_t b = tk_listen(&s_tk, msg_id);
     if (b == TK_BEGIN_OK) {
@@ -366,9 +405,15 @@ bool svc_audio_play(uint32_t msg_id)
         s_listen_ok = false;
         s_listen_started = false;
         s_played_bytes = 0;
-        tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+        /* A ring the last exchange left (not yet given back) is a talk's 16 KB: a play takes its
+           own, smaller one once the box answers (talk_net_ring). */
+        stale = s_ring_mem;
+        s_ring_mem = NULL;
+        s_ring_bytes = 0;
+        tk_ring_init(&s_ring, NULL, 0);
     }
     unlock();
+    free(stale);
     if (b != TK_BEGIN_OK) {
         s_refused = "One moment: still finishing the last one";
         return false;
@@ -379,6 +424,50 @@ bool svc_audio_play(uint32_t msg_id)
     talk_port_kick();
     talk_port_net();
     return true;
+}
+
+bool svc_audio_notice_play(const char *key)
+{
+    /* Never over an alarm, and only on a speaker that started; no radio needed. */
+    if (s_holding || !talk_port_speaker() || svc_audio_ringing() || strlen(key) >= sizeof s_target)
+        return false;
+    uint8_t *stale = NULL;
+    lock();
+    const tk_begin_t b = tk_listen(&s_tk, 0);
+    if (b == TK_BEGIN_OK) {
+        tk_set_notice(&s_tk);
+        tk_copy(s_target, sizeof s_target, key);
+        s_played_bytes = 0;
+        /* A talk's ring left behind is 16 KB: the sound takes a play's 6 KB on the main task. */
+        stale = s_ring_mem;
+        s_ring_mem = NULL;
+        s_ring_bytes = 0;
+        tk_ring_init(&s_ring, NULL, 0);
+    }
+    unlock();
+    free(stale);
+    if (b != TK_BEGIN_OK) return false;
+    talk_port_kick();
+    talk_port_net();
+    return true;
+}
+
+bool svc_audio_notice_active(uint32_t *played_ms)
+{
+    lock();
+    const bool on = s_tk.kind == TK_KIND_NOTICE && (s_tk.phase == TK_SEND || s_tk.phase == TK_PLAY);
+    const uint32_t bytes = s_played_bytes;
+    unlock();
+    *played_ms = on ? bytes / (TALK_RATE / 1000u * 2u) : 0;
+    return on;
+}
+
+void svc_audio_notice_stop(void)
+{
+    lock();
+    const bool mine = s_tk.kind == TK_KIND_NOTICE;
+    unlock();
+    if (mine) svc_audio_stop_reply();
 }
 
 void svc_audio_stop(void)
@@ -404,16 +493,100 @@ uint32_t svc_audio_played_ms(void)
     return bytes / (TALK_RATE / 1000u * 2u);
 }
 
-/* Listen on a stored reply needs the box to speak text it already sent; until it can,
- * svc_audio_can_speak is false and no Listen button is drawn to reach this. */
-void svc_audio_speak(uint32_t msg_id)
+bool svc_audio_speech(const char *thread, svc_speech_t *out)
 {
-    (void)msg_id;
+    *out = (svc_speech_t){0};
+    if (!thread) return false;
+    lock();
+    const bool speak = s_tk.kind == TK_KIND_SPEAK && s_speak_id && !strcmp(thread, s_speak_thread);
+    const bool reply = !speak && s_speaking && s_tk.kind == TK_KIND_AGENT && !strcmp(thread, THREAD);
+    const bool live = speak || reply;
+    if (live) {
+        out->msg_id = speak ? s_speak_id : s_speaking;
+        out->starting = s_tk.phase == TK_SEND || s_played_bytes == 0;
+        out->permille = tk_marks_progress(&s_marks, s_played_bytes);
+        out->ms = s_played_bytes / (TALK_RATE / 1000u * 2u);
+    }
+    unlock();
+    return live;
 }
 
-bool svc_audio_can_speak(void)
+/* Starts the box speaking reply `msg_id` again. False (with s_refused) when it cannot. */
+static bool speak_start(const char *thread, uint32_t msg_id)
 {
-    return false;
+    msg_t m;
+    tk_agent_t agent;
+    if (!tk_agent_from(thread, &agent) || !svc_messages_find(thread, msg_id, &m) || m.mine ||
+        !m.box_id) {
+        s_refused = "That reply is not on the box";
+        return false;
+    }
+    const char *why = talk_port_speaker() ? refusal("Not connected: Listen needs Wi-Fi", false)
+                                          : "No sound: the speaker did not start";
+    if (why) {
+        s_refused = why;
+        return false;
+    }
+    char path[sizeof s_target];
+    snprintf(path, sizeof path, "/endpoint/convo/%s/speech/%lu", tk_agent_id(agent),
+             (unsigned long)m.box_id);
+    uint8_t *stale = NULL;
+    lock();
+    const tk_begin_t b = tk_listen(&s_tk, msg_id);
+    if (b == TK_BEGIN_OK) {
+        tk_set_agent(&s_tk, agent, false);
+        tk_set_speak(&s_tk);
+        memcpy(s_target, path, sizeof s_target);
+        s_played_bytes = 0;
+        tk_marks_init(&s_marks);
+        /* A talk's ring left behind is 16 KB: the speech takes a play's 6 KB once the box answers. */
+        stale = s_ring_mem;
+        s_ring_mem = NULL;
+        s_ring_bytes = 0;
+        tk_ring_init(&s_ring, NULL, 0);
+    }
+    unlock();
+    free(stale);
+    if (b != TK_BEGIN_OK) {
+        s_refused = "One moment: still finishing the last one";
+        return false;
+    }
+    s_speak_id = msg_id;
+    snprintf(s_speak_thread, sizeof s_speak_thread, "%s", thread);
+    s_st.listens++;
+    refresh(thread);
+    talk_port_kick();
+    talk_port_net();
+    return true;
+}
+
+bool svc_audio_speak(const char *thread, uint32_t msg_id)
+{
+    s_refused = NULL;
+    if (s_holding || !thread) return false;
+    svc_speech_t now;
+    if (svc_audio_speech(thread, &now) && now.msg_id == msg_id) {
+        /* The one speaking: the tap stops it. */
+        s_speak_next = 0;
+        svc_audio_stop_reply();
+        return true;
+    }
+    lock();
+    const bool busy = !tk_quiet(&s_tk);
+    const bool thinking = s_tk.kind == TK_KIND_AGENT && s_tk.phase == TK_SEND;
+    unlock();
+    if (thinking) {
+        s_refused = LISTEN_WAITS;
+        return false;
+    }
+    if (busy) {
+        /* One reply at a time: whatever speaks stops, and this one follows it. */
+        s_speak_next = msg_id;
+        snprintf(s_speak_next_thread, sizeof s_speak_next_thread, "%s", thread);
+        svc_audio_stop_reply();
+        return true;
+    }
+    return speak_start(thread, msg_id);
 }
 
 const char *svc_audio_state(void)
@@ -426,6 +599,7 @@ static void free_ring(void)
     lock();
     uint8_t *mem = s_ring_mem;
     s_ring_mem = NULL;
+    s_ring_bytes = 0;
     tk_ring_init(&s_ring, NULL, 0);
     unlock();
     free(mem);
@@ -481,6 +655,26 @@ void svc_audio_service(void)
     static char heard[sizeof s_heard];
     lock();
     const uint8_t kind = s_tk.kind;
+    if (kind == TK_KIND_NOTICE || kind == TK_KIND_SPEAK) {
+        /* A notice's sound has no bubble: it ends, and its ring goes back. Listen's bubble only
+           goes back to its speaker button. */
+        tk_take(&s_tk, why, sizeof why);
+        const bool quiet = tk_quiet(&s_tk);
+        unlock();
+        if (quiet) {
+            free_ring();
+            if (s_speak_id) {
+                s_speak_id = 0;
+                refresh(s_speak_thread);
+            }
+            if (s_speak_next) {
+                const uint32_t next = s_speak_next;
+                s_speak_next = 0;
+                speak_start(s_speak_next_thread, next);
+            }
+        }
+        return;
+    }
     if (kind != TK_KIND_AGENT) {
         const tk_res_t res = tk_take(&s_tk, why, sizeof why);
         const bool quiet = tk_quiet(&s_tk);
@@ -501,6 +695,8 @@ void svc_audio_service(void)
     s_heard_drawn = s_heard_seq;
     s_status_drawn = s_status_seq;
     if (heard_moved || res == TK_RES_REPLY) memcpy(heard, s_heard, sizeof heard);
+    const bool named = s_ids_seq != s_ids_applied;
+    const uint32_t ids[2] = {s_ids[0], s_ids[1]}, ids_for = s_ids_for;
     /* The whole answer goes straight from the main task's buffer to the thread's: 1 KB is not
        copied through this task's stack. */
     if (res == TK_RES_REPLY) svc_messages_fake_long(THREAD, id + 1, s_reply);
@@ -558,7 +754,26 @@ void svc_audio_service(void)
         s_speaking = 0;
         refresh_thread();
     }
+    /* IDS: the box has named the question and the answer, so Listen and Load earlier can. After
+       the reply's bubble exists — the record follows the answer. */
+    if (named && svc_messages_find(THREAD, ids_for + 1, &m)) {
+        s_ids_applied = s_ids_seq;
+        msg_t q;
+        if (ids[0] && svc_messages_find(THREAD, ids_for, &q) && !q.box_id) {
+            q.box_id = ids[0];
+            svc_messages_fake_add(THREAD, &q);
+        }
+        if (ids[1] && !m.box_id) {
+            m.box_id = ids[1];
+            svc_messages_fake_add(THREAD, &m);
+        }
+    }
     if (quiet) free_ring();
+    if (quiet && s_speak_next) {
+        const uint32_t next = s_speak_next;
+        s_speak_next = 0;
+        speak_start(s_speak_next_thread, next);
+    }
 }
 
 /* ---- the main task's half ---- */
@@ -585,11 +800,24 @@ tk_kind_t talk_net_kind(char *path, size_t cap)
 
 bool talk_net_ring(void)
 {
-    if (!ring_alloc()) return false;
     lock();
-    tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+    const uint8_t kind = s_tk.kind;
+    unlock();
+    if (!ring_alloc(tk_ring_bytes((tk_kind_t)kind))) return false;
+    lock();
+    tk_ring_init(&s_ring, s_ring_mem, s_ring_bytes);
     unlock();
     return true;
+}
+
+void talk_net_mem(uint32_t before, uint32_t answered, uint32_t ringed, uint32_t low)
+{
+    lock();
+    s_play_mem[0] = before;
+    s_play_mem[1] = answered;
+    s_play_mem[2] = ringed;
+    s_play_mem[3] = low;
+    unlock();
 }
 
 void talk_net_listened(bool verified)
@@ -655,8 +883,13 @@ void talk_net_reply(const char *reply, bool audio_follows)
     s_st.replies++;
     tk_net_reply(&s_tk, audio_follows);
     if (s_tk.kind == TK_KIND_LISTEN && s_tk.phase == TK_PLAY) s_listen_started = true;
+    /* A reply's speech (read aloud, or Listen) starts its progress from nothing. */
+    if (s_tk.phase == TK_PLAY && s_tk.kind != TK_KIND_LISTEN) {
+        s_played_bytes = 0;
+        tk_marks_init(&s_marks);
+    }
     /* The recording is all sent and the microphone is off: the ring is the reply's now. */
-    if (s_tk.phase == TK_PLAY) tk_ring_init(&s_ring, s_ring_mem, RING_BYTES);
+    if (s_tk.phase == TK_PLAY) tk_ring_init(&s_ring, s_ring_mem, s_ring_bytes);
     unlock();
     talk_port_kick();
 }
@@ -680,7 +913,30 @@ void talk_net_fail(const char *why)
 
 uint32_t talk_net_give(const void *src, uint32_t n)
 {
-    return talk_net_wants_audio() ? tk_ring_write(&s_ring, src, n) : 0;
+    const uint32_t k = talk_net_wants_audio() ? tk_ring_write(&s_ring, src, n) : 0;
+    if (k) {
+        lock();
+        tk_marks_pcm(&s_marks, k);
+        unlock();
+    }
+    return k;
+}
+
+void talk_net_spoken(uint16_t from, uint16_t to, uint32_t bytes)
+{
+    lock();
+    tk_marks_add(&s_marks, from, to, bytes);
+    unlock();
+}
+
+void talk_net_ids(uint32_t asked, uint32_t answer)
+{
+    lock();
+    s_ids[0] = asked;
+    s_ids[1] = answer;
+    s_ids_for = s_tk.msg_id;
+    s_ids_seq++;
+    unlock();
 }
 
 bool talk_net_wants_audio(void)
@@ -798,14 +1054,18 @@ static void describe(void *ctx, dbg_json_t *w)
     const tk_stats_t st = s_st;
     const tk_t t = s_tk;
     const uint32_t queued = tk_ring_used(&s_ring);
-    const bool ring = s_ring_mem != NULL;
+    const uint32_t ring = s_ring_mem ? s_ring_bytes : 0;
+    uint32_t mem[4];
+    memcpy(mem, s_play_mem, sizeof mem);
     char status[sizeof s_status];
     memcpy(status, s_status, sizeof status);
     unlock();
     dbg_json_str(w, "state", talk_port_state());
-    static const char *const KIND[] = {"agent", "message", "play"};
+    static const char *const KIND[] = {"agent", "message", "play", "notice", "listen"};
     dbg_json_str(w, "phase", PHASE[t.phase]);
-    dbg_json_str(w, "kind", KIND[t.kind < 3 ? t.kind : 0]);
+    dbg_json_str(w, "kind", KIND[t.kind < 5 ? t.kind : 0]);
+    dbg_json_int(w, "listen_id", s_speak_id);
+    dbg_json_int(w, "listens", st.listens);
     dbg_json_int(w, "playing", s_playing);
     dbg_json_int(w, "plays", st.plays);
     dbg_json_int(w, "play_failed", st.play_failed);
@@ -818,7 +1078,13 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "speaking", s_speaking);
     if (t.phase == TK_SEND && status[0]) dbg_json_str(w, "status", status);
     dbg_json_int(w, "steps", s_steps.total);
-    dbg_json_int(w, "ring", ring ? RING_BYTES : 0);
+    dbg_json_int(w, "ring", ring);
+    /* The last play's internal heap, in bytes (0.0.18): what the board can settle that the host
+       cannot — `play_ring_free - play_low` is the network's backlog behind the ring. */
+    dbg_json_int(w, "play_before", mem[0]);
+    dbg_json_int(w, "play_answered", mem[1]);
+    dbg_json_int(w, "play_ring_free", mem[2]);
+    dbg_json_int(w, "play_low", mem[3]);
     dbg_json_int(w, "queued", queued);
     dbg_json_int(w, "talks", st.talks);
     dbg_json_int(w, "sent", st.sent);

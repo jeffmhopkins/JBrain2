@@ -99,3 +99,12 @@ typedef struct {
 } ui_tile_state_t;
 
 uint32_t ui_accent_color(ui_accent_t a);
+
+/* Listen's speaker button beside a reply (0.0.21, owner-approved mock): 56 px, its states. */
+typedef enum {
+    UI_LISTEN_NONE,
+    UI_LISTEN_IDLE,     /* the speaker: tap to hear it */
+    UI_LISTEN_DIM,      /* the agent is working on an answer: "Listen waits for this answer" */
+    UI_LISTEN_STARTING, /* asked, nothing heard yet: a short arc turning round the stop square */
+    UI_LISTEN_PLAYING,  /* the ring filling by how much of the words has been said */
+} ui_listen_t;

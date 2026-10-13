@@ -119,6 +119,41 @@ static void fill_round_rect(uint16_t *fb, int x, int y, int w, int h, int r, uin
     fill_circle(fb, x + w - r - 1, y + h - r - 1, r, c);
 }
 
+/* THE SAME ROUNDED RECT, TURNED `deg` clockwise about (pvx, pvy). A rect turned by moving its
+   corner and nothing else stays square to the glass: the beak came apart into a stack of level
+   bars on a head righting itself (owner's photo, 0.4.7). Per pixel over the turned box, each one
+   turned back into the rect's own frame. At zero it IS `fill_round_rect`, pixel for pixel. */
+static void fill_turned_round_rect(uint16_t *fb, int x, int y, int w, int h, int r, int pvx,
+                                   int pvy, float deg, uint16_t c)
+{
+    if (deg == 0.0f) {
+        fill_round_rect(fb, x, y, w, h, r, c);
+        return;
+    }
+    if (r * 2 > w) r = w / 2;
+    if (r * 2 > h) r = h / 2;
+    const float a = deg * (float)M_PI / 180.0f, ca = cosf(a), sa = sinf(a);
+    /* The rect's centre and half sizes, in its own frame about the pivot. */
+    const float hw = (float)w * 0.5f, hh = (float)h * 0.5f;
+    const float lx = (float)(x - pvx) + hw - 0.5f, ly = (float)(y - pvy) + hh - 0.5f;
+    const float tx = (float)pvx + lx * ca - ly * sa, ty = (float)pvy + lx * sa + ly * ca;
+    const float ex = fabsf(hw * ca) + fabsf(hh * sa) + 1.0f;
+    const float ey = fabsf(hw * sa) + fabsf(hh * ca) + 1.0f;
+    const float rr = (float)r;
+    for (int j = (int)floorf(ty - ey); j <= (int)ceilf(ty + ey); j++) {
+        for (int i = (int)floorf(tx - ex); i <= (int)ceilf(tx + ex); i++) {
+            const float dx = (float)i - tx, dy = (float)j - ty;
+            const float ax = fabsf(dx * ca + dy * sa), ay = fabsf(-dx * sa + dy * ca);
+            if (ax > hw || ay > hh) continue;
+            if (ax > hw - rr && ay > hh - rr) {
+                const float cx = ax - (hw - rr), cy = ay - (hh - rr);
+                if (cx * cx + cy * cy > rr * rr) continue;
+            }
+            px(fb, i, j, c);
+        }
+    }
+}
+
 /* A round-capped stroke IS a run of circles along the path, which is exactly how canvas
    renders `lineCap="round"` — so the smile needs no curve rasteriser. */
 static void arc_stroke(uint16_t *fb, int cx, int cy, int r, float a0, float a1, int width,
@@ -238,7 +273,7 @@ void face_set_fit(float scale, int origin_y)
  * the head and "not drawn" would show the head through it.
  */
 static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_params_t *p,
-                     float open, float startle, float scale)
+                     float open, float startle, float scale, float turn)
 {
     /* 52x62 in the mock, scaled 0.78 because the eyes shrink with the head on a body. */
     const float grow = 1.0f + 0.20f * startle;
@@ -251,7 +286,7 @@ static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_para
     /* Shut: a lid LINE, not an absent eye. A blink drawn as nothing reads as the face
        breaking for a frame; a line reads as a blink. */
     if (h < 5.0f) {
-        fill_round_rect(fb, cx - (int)(w / 2), cy - 2, (int)w, 5, 2, dark);
+        fill_turned_round_rect(fb, cx - (int)(w / 2), cy - 2, (int)w, 5, 2, cx, cy, turn, dark);
         return;
     }
 
@@ -272,12 +307,18 @@ static void draw_eye(uint16_t *fb, int cx, int cy, uint16_t dark, const eye_para
     const float lower_y = hh - h * p->ly; /* eye-local y where the lower lid starts */
     const float bend = h * p->lb;
 
-    const int x0 = (int)(-hw) - 1, x1 = (int)(hw) + 1;
-    const int y0 = (int)(-hh) - 1, y1 = (int)(hh) + 1;
+    /* TURNED WITH THE HEAD (`turn`, clockwise). Moving the eye's centre was not enough: the
+       lids and the pupil's glint stayed square to the glass, so on a head righting itself the
+       happy cheek arc sat beside the eye instead of under it. Each pixel is turned back into
+       the eye's own frame, and at zero that is the identity, so the upright eye is unchanged. */
+    const float ta = turn * (float)M_PI / 180.0f, tc = cosf(ta), ts = sinf(ta);
+    const float ex = fabsf(hw * tc) + fabsf(hh * ts), ey = fabsf(hw * ts) + fabsf(hh * tc);
+    const int x0 = (int)(-ex) - 1, x1 = (int)(ex) + 1;
+    const int y0 = (int)(-ey) - 1, y1 = (int)(ey) + 1;
     for (int j = y0; j <= y1; j++) {
-        const float fy = (float)j;
         for (int i = x0; i <= x1; i++) {
-            const float fx = (float)i;
+            const float fx = (float)i * tc + (float)j * ts;
+            const float fy = -(float)i * ts + (float)j * tc;
 
             /* Rounded-rect membership: outside the corner discs is outside the eye. */
             const float ax = fabsf(fx), ay = fabsf(fy);
@@ -335,12 +376,14 @@ static void draw_puff(uint16_t *fb, int ax, int ay, float scale)
     fill_circle(fb, ax - (int)(24.0f * scale), ay + (int)(16.0f * scale), (int)(r * 0.6f), puff);
 }
 
-static void draw_blush(uint16_t *fb, int cx, int cy, int dx, float scale)
+/* The cheeks sit at +-(dx, dy) from the centre: along the head's own across, which is level
+   only while the head is. */
+static void draw_blush(uint16_t *fb, int cx, int cy, int dx, int dy, float scale)
 {
     const uint16_t pink = rgb(0xFF, 0x7A, 0x9C);
     const int r = (int)(16.0f * scale);
-    fill_circle(fb, cx - dx, cy, r, pink);
-    fill_circle(fb, cx + dx, cy, r, pink);
+    fill_circle(fb, cx - dx, cy - dy, r, pink);
+    fill_circle(fb, cx + dx, cy + dy, r, pink);
 }
 
 /* A HEART, by the curve (x^2 + y^2 - 1)^3 <= x^2 y^3 — two lobes and a point, which no pair
@@ -382,17 +425,85 @@ static void draw_star(uint16_t *fb, int cx, int cy, int r, uint16_t c)
  * old already reads as "shaken up". The far side of the orbit is drawn smaller, which is all
  * the depth a flat ellipse needs.
  *
- * HEARTS (love): five, rising from beside the head in turn, swaying as they go and shrinking
+ * HEARTS (love): twelve, rising from beside the head in turn, swaying as they go and shrinking
  * away at the top rather than vanishing. */
+/* THE COOKIE, with `bites` bites gone out of it. Per pixel over its box: in the disc and in
+ * none of the bites. Bites are taken from the side facing the eater (`toward`, radians, y
+ * down), each one further round, so it is eaten down to nothing; the fifth finishes it. Crumbs
+ * fall from the bite for a moment after each (`since`, a fraction of a bite's time). */
+static void draw_food(uint16_t *fb, int cx, int cy, float s, int bites, float since,
+                      float toward)
+{
+    const uint16_t dough = rgb(0xD9, 0xA0, 0x5B), chip = rgb(0x5A, 0x34, 0x1C);
+    const float r = 24.0f * s, br = 0.62f * r;
+    static const float ROUND[EAT_BITES] = {0.0f, 0.75f, -0.75f, 1.5f, -1.5f};
+    if (bites < EAT_BITES) {
+        float bx[EAT_BITES], by[EAT_BITES];
+        for (int k = 0; k < bites; k++) {
+            bx[k] = cosf(toward + ROUND[k]) * r;
+            by[k] = sinf(toward + ROUND[k]) * r;
+        }
+        const int ir = (int)r + 1;
+        for (int dy = -ir; dy <= ir; dy++) {
+            for (int dx = -ir; dx <= ir; dx++) {
+                const float fx = (float)dx, fy = (float)dy;
+                if (fx * fx + fy * fy > r * r) continue;
+                bool gone = false;
+                for (int k = 0; k < bites && !gone; k++) {
+                    const float ex = fx - bx[k], ey = fy - by[k];
+                    gone = ex * ex + ey * ey <= br * br;
+                }
+                if (gone) continue;
+                /* Chips: a fixed scatter, so they are eaten with the dough rather than moving. */
+                const bool c = ((dx * 7 + dy * 13 + 400) % 23 == 0) ||
+                               ((dx * 11 - dy * 5 + 400) % 29 == 0);
+                px(fb, cx + dx, cy + dy, c ? chip : dough);
+            }
+        }
+    }
+    if (since >= 0.0f && since < 0.5f) {
+        const float t = since / 0.5f;
+        for (int k = 0; k < 4; k++) {
+            const float a = toward + ROUND[(bites - 1 + EAT_BITES) % EAT_BITES] +
+                            ((float)k - 1.5f) * 0.5f;
+            const int x = cx + (int)lrintf(cosf(a) * r + ((float)k - 1.5f) * 9.0f * s * t);
+            const int y = cy + (int)lrintf(sinf(a) * r + 70.0f * s * t * t);
+            fill_circle(fb, x, y, (int)lrintf(3.0f * s), dough);
+        }
+    }
+}
+
+/* TICKLE MARKS: two arcs either side of the body, the way a comic draws a squirm, flickering
+ * out of step side to side so they read as something happening TO him. `cx, cy` is the body's
+ * centre and `half` its half width; both forms' bodies are 144 wide. */
+static void draw_tickle(uint16_t *fb, const face_state_t *st, int cx, int cy, int half, float s)
+{
+    if (st->fig.extra != EXTRA_TICKLE) return;
+    const float p = st->fig.extra_p;
+    if (p > 0.8f) return; /* gone as he gets his breath back */
+    const uint16_t mark = rgb(0xFF, 0xF0, 0xA0);
+    const int w = (int)lrintf(7.0f * s);
+    for (int side = -1; side <= 1; side += 2) {
+        const float flick = sinf(p * (float)M_PI * 34.0f + (side > 0 ? 0.0f : 1.6f));
+        if (flick < -0.3f) continue; /* each side blinks off now and then */
+        const float a0 = side > 0 ? -0.55f : (float)M_PI - 0.55f;
+        for (int k = 0; k < 2; k++) {
+            const int r = half + (int)lrintf((14.0f + 16.0f * (float)k + 4.0f * flick) * s);
+            arc_stroke(fb, cx, cy, r, a0, a0 + 1.1f, w, mark);
+        }
+    }
+}
+
 static void draw_overhead(uint16_t *fb, const face_state_t *st, int cx, int top, int half,
                           float s)
 {
     const float p = st->fig.extra_p;
     if (st->fig.extra == EXTRA_STARS) {
         const uint16_t star = rgb(0xFF, 0xD8, 0x4A);
-        const float in = p < 0.1f ? p / 0.1f : p > 0.88f ? (1.0f - p) / 0.12f : 1.0f;
+        /* Eight turns over 6.4 s: the speed four turns had over 3.2 s (0.4.10). */
+        const float in = p < 0.05f ? p / 0.05f : p > 0.94f ? (1.0f - p) / 0.06f : 1.0f;
         for (int k = 0; k < 3; k++) {
-            const float a = p * 2.0f * (float)M_PI * 4.0f + (float)k * 2.0f * (float)M_PI / 3.0f;
+            const float a = p * 2.0f * (float)M_PI * 8.0f + (float)k * 2.0f * (float)M_PI / 3.0f;
             const float depth = sinf(a);
             const int x = cx + (int)lrintf(cosf(a) * ((float)half + 16.0f * s));
             const int y = top - (int)(10.0f * s) + (int)lrintf(depth * 14.0f * s);
@@ -400,12 +511,14 @@ static void draw_overhead(uint16_t *fb, const face_state_t *st, int cx, int top,
         }
     } else if (st->fig.extra == EXTRA_HEARTS) {
         const uint16_t heart = rgb(0xFF, 0x4F, 0x7B);
-        for (int k = 0; k < 5; k++) {
-            const float t = (p - (float)k * 0.13f) / 0.42f; /* this heart's own life, 0..1 */
+        /* Twelve, each rising for the 1.2 s and following the last by the 0.36 s the five did
+           over 2.8 s: the love lasts twice as long, not twice as slow (0.4.10). */
+        for (int k = 0; k < 12; k++) {
+            const float t = (p - (float)k * 0.065f) / 0.21f; /* this heart's own life, 0..1 */
             if (t <= 0.0f || t >= 1.0f) continue;
             const int side = (k % 2) ? 1 : -1;
             const float grow = t < 0.15f ? t / 0.15f : t > 0.75f ? (1.0f - t) / 0.25f : 1.0f;
-            const float out = ((float)half + 6.0f * s) * (0.75f + 0.1f * (float)k);
+            const float out = ((float)half + 6.0f * s) * (0.75f + 0.1f * (float)(k % 5));
             const int x = cx + side * (int)lrintf(out) +
                           (int)lrintf(sinf(t * 2.0f * (float)M_PI * 1.5f) * 10.0f * s);
             const int y = top + (int)lrintf((90.0f - 190.0f * t) * s);
@@ -561,7 +674,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
 
     /* ON the face, after it, or the head paints over it — which is exactly what used to
        happen. Cheeks: outboard of the eyes and level with the smile. */
-    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, ox + tilt, hy + SY(26), SX(78), s);
+    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, ox + tilt, hy + SY(26), SX(78), 0, s);
 
     /* NO FACE ON THE BACK OF A HEAD. `facing` goes negative for the half of a spin the
        figure is turned away (rig.h), and the squash alone does not read as a turn — a face
@@ -570,8 +683,8 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
     const bool front = st->fig.facing >= 0.0f;
     const int ex = SX((int)(HW * 0.43f)), ey = hy - SY((int)(HH * 0.17f));
     if (front) {
-        draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s);
-        draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s);
+        draw_eye(fb, ox + tilt - ex, ey, dark, &st->eyes.l, st->open, st->startle, s, 0.0f);
+        draw_eye(fb, ox + tilt + ex, ey, dark, &st->eyes.r, st->open, st->startle, s, 0.0f);
     }
 
     /* Smile: arc(cx, cy-16, 30) from 0.15pi to 0.85pi, stroked 9 wide. */
@@ -591,7 +704,7 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
            a lens rather than a band. That is the cartoon convention — the mouth opens out of
            the smile line, and the smile becomes the bottom of it — and it collapses exactly to
            the untouched arc as the gape goes to zero, with no pop and no second shape. */
-        const int gape = (int)lrintf(st->talk * 26.0f * s);
+        const int gape = (int)lrintf(fmaxf(st->talk, st->fig.chew) * 26.0f * s);
         if (gape > 0) {
             /* 0.15pi is where the arc starts, so its half-width is r*cos(0.15pi). */
             const int xmax = (int)(cosf((float)M_PI * 0.15f) * (float)mr);
@@ -634,7 +747,20 @@ static void draw_robot(uint16_t *fb, uint32_t hex, const face_state_t *st, int o
         fill_circle(fb, ox + tilt - hx, hyy, hr, limb);
         fill_circle(fb, ox + tilt + hx, hyy, hr, limb);
     }
+    /* THE COOKIE, carried from beside the body to the corner of the mouth: the arm goes up
+       behind the head, so the cookie is what the eye follows. Drawn last, in front of the face
+       it is being eaten by. */
+    if (st->fig.extra == EXTRA_FOOD) {
+        const float r = st->fig.reach;
+        const int fx0 = ox + SX(130), fy0 = oy - SY(31);
+        const int fx1 = ox + tilt + SX(58), fy1 = hy + SY(34);
+        float since;
+        const int bites = rig_eat_bites(st->fig.extra_p, &since);
+        draw_food(fb, LERPI(fx0, fx1, r), LERPI(fy0, fy1, r), s, bites, since,
+                  (float)M_PI * 1.1f);
+    }
     draw_overhead(fb, st, ox + tilt, hy - SY(HH), SX(HW), s);
+    draw_tickle(fb, st, ox, oy + SY(40), SX(72), s);
 }
 
 static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int ox, int oy,
@@ -665,6 +791,7 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     /* A feature at (hx + dx, oy + y) upright, turned about the head's centre. Written so that
        at zero it is EXACTLY the old arithmetic, pixel for pixel. */
 #define HC_Y (OS_HEAD_Y + OS_HEAD_H / 2)
+    const int hcy = oy + SY(HC_Y) + bob;
 #define RX(dx, y) (hx + (int)lrintf((float)SX(dx) * ucos - (float)SY((y) - HC_Y) * usin))
 #define RY(dx, y)                                                                          \
     (oy + SY(y) + bob +                                                                    \
@@ -730,6 +857,13 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
     const int ww = LERPI(SX(74), SX(144), u);
     const int wh = LERPI(SY(66), SY(88), u);
     if (u <= 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
+    /* THE COOKIE, on the wing, where the beak comes down to at the bottom of a peck: before
+       the neck and head, so the beak goes over it. Bitten from the top, where the beak is. */
+    if (st->fig.extra == EXTRA_FOOD) {
+        float since;
+        const int bites = rig_eat_bites(st->fig.extra_p, &since);
+        draw_food(fb, ox + SX(26), oy + SY(30), s, bites, since, -(float)M_PI * 0.5f);
+    }
 
     /* Neck: segments narrowing toward the head, leaning forward for life. Each segment
        carries its share of the head's total displacement — the segments used to be drawn at
@@ -776,21 +910,27 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
            mandible, the other three swing as one jaw) and the gape goes to 30, which is most
            of the beak's own height. A talking mouth has to read from the far side of a room
            or it is not doing the job the animation exists for. */
-        const int gape = (int)lrintf(st->talk * 30.0f);
+        const int gape = (int)lrintf(fmaxf(st->talk, st->fig.chew) * 30.0f);
         for (unsigned i = 0; i < sizeof(BEAK) / sizeof(BEAK[0]); i++) {
             /* Progressive, so the jaw pivots at the hinge instead of sliding down in one
                piece: the further from the joint, the further it travels. */
             const int drop = i >= 1 ? SY(gape * (int)i / 3) : 0;
-            fill_round_rect(fb, RX(0, BEAK[i].y) - SX(BEAK[i].w / 2),
-                            RY(0, BEAK[i].y) + drop,
-                            SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), beak);
+            /* Laid out upright, then turned whole about the head's centre — the jaw's drop
+               included, so it opens along the turned head's down and not the glass's. */
+            fill_turned_round_rect(fb, hx - SX(BEAK[i].w / 2), oy + SY(BEAK[i].y) + bob + drop,
+                                   SX(BEAK[i].w), SY(BEAK[i].h), (int)(5 * s), hx, hcy,
+                                   st->upright, beak);
         }
-        fill_rect(fb, RX(0, -97) - SX(16), RY(0, -97), SX(32), SY(2), shade(hex, 0.28f));
+        fill_turned_round_rect(fb, hx - SX(16), oy + SY(-97) + bob, SX(32), SY(2), 0, hx, hcy,
+                               st->upright, shade(hex, 0.28f));
     }
 
     /* Cheeks, after the head and before the eyes. Outboard of the eyes and inboard of the
        head's edge, which on a 128-wide head leaves exactly this much room. */
-    if (st->fig.extra == EXTRA_BLUSH) draw_blush(fb, RX(0, -110), RY(0, -110), SX(50), s);
+    if (st->fig.extra == EXTRA_BLUSH) {
+        draw_blush(fb, RX(0, -110), RY(0, -110), (int)lrintf((float)SX(50) * ucos),
+                   (int)lrintf((float)SX(50) * usin), s);
+    }
 
     /* THE ROBOT'S EYES, UNCHANGED. Six emotions already work as lid geometry; a form that
        redrew them would have to re-implement all six.
@@ -800,13 +940,14 @@ static void draw_ostrich(uint16_t *fb, uint32_t hex, const face_state_t *st, int
        within half a pixel. */
     if (front) {
         draw_eye(fb, RX(-OS_EYE_X, OS_EYE_Y), RY(-OS_EYE_X, OS_EYE_Y), dark, &st->eyes.l,
-                 st->open, st->startle, s * 1.10f);
+                 st->open, st->startle, s * 1.10f, st->upright);
         draw_eye(fb, RX(OS_EYE_X, OS_EYE_Y), RY(OS_EYE_X, OS_EYE_Y), dark, &st->eyes.r,
-                 st->open, st->startle, s * 1.10f);
+                 st->open, st->startle, s * 1.10f, st->upright);
     }
 
     if (u > 0.01f) draw_wing(fb, wx, wy, ww, wh, s, wing, col);
     draw_overhead(fb, st, hx, hy, SX(OS_HEAD_W / 2), s);
+    draw_tickle(fb, st, ox, oy + SY(OS_BODY_Y + OS_BODY_H / 2), SX(OS_BODY_W / 2), s);
 #undef RX
 #undef RY
 #undef HC_Y

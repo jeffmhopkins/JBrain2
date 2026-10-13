@@ -26,7 +26,7 @@ file(GLOB FW_INC LIST_DIRECTORIES true ${C}/*/include)
 
 # The device's app set (main/apps.c), so the sim registers exactly the apps the glass shows.
 set(M ${CMAKE_CURRENT_SOURCE_DIR}/../main)
-add_executable(jpanel-sim sim_main.c sim_png.c ${M}/apps.c ${FW_SRC})
+add_executable(jpanel-sim sim_main.c sim_png.c sim_notice.c ${M}/apps.c ${FW_SRC})
 target_include_directories(jpanel-sim PRIVATE ${FW_INC} ${M} ${C}/app_clock ${C}/app_settings
                                               ${C}/app_thread)
 target_compile_options(jpanel-sim PRIVATE -Wall -Wextra -Werror)

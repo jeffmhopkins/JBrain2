@@ -230,11 +230,18 @@ def test_a_question_round_trip(box: Box) -> None:
 
 def test_a_plain_notice_is_dismissed_or_hides_itself(box: Box) -> None:
     box.pickup(**DAY)
-    one = box.send(title="Disk 91% full", hide_after_s=20).json()["id"]
+    one = box.send(title="Disk 91% full", hide_after_s=45).json()["id"]
     two = box.send(title="Backup done").json()["id"]
+    three = box.send(title="Read me", hide_after_s=0).json()["id"]
     first = N.decode(box.collect().content).notice
-    assert first.id == one and first.hide_after_s == 20 and not first.choices
-    assert N.decode(box.collect().content).notice.id == two, "oldest first"
+    assert first.id == one and first.hide_after_s == 45 and not first.choices
+    second = N.decode(box.collect().content).notice
+    assert second.id == two, "oldest first"
+    assert second.hide_after_s == N.HIDE_DEFAULT_PLAIN_S, (
+        "a plain notice given no time hides at 20 s"
+    )
+    third = N.decode(box.collect().content).notice
+    assert third.id == three and third.hide_after_s is None, "0 asks for until tapped"
     assert box.state(one, state="expired").status_code == 204
     assert box.state(two, state="shown").status_code == 204
     assert box.state(two, state="dismissed").status_code == 204

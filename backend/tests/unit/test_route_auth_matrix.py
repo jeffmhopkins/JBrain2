@@ -4,7 +4,7 @@ Postgres RLS protects the rows, not the side effects around them — loading a m
 spending the Tavily key, writing a blob, reading the Gmail credential under an owner
 context. A route written against bare `PrincipalDep` admits ANY session cookie, so a
 family phone, a jcode share recipient or an intake-link stranger reached those side
-effects (docs/plans/SECURITY_REVIEW_FIXES_PLAN.md F3). This walks the whole app, with
+effects (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md F3). This walks the whole app, with
 every conditional router mounted, and presents a session cookie of each non-owner kind
 to each route. A route must refuse it (HTTP 401/403, a WebSocket closed before accept)
 unless the (route, kind) pair is on `ALLOWED`. A new route that is not owner-gated fails

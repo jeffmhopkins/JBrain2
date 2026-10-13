@@ -511,6 +511,9 @@ static link_res_t serve_audio(const link_req_t *req, req_log_t *lg, msg_t *m, bo
     if (!replay && g_mode == BOX_NEW) {
         snprintf(num, sizeof(num), "%d", m->deliveries);
         req->on_header(req->ctx, "X-Jpanel-Delivery", num);
+    }
+    /* The length rides a replay too: the ring round the play button fills on either. */
+    if (g_mode == BOX_NEW) {
         snprintf(num, sizeof(num), "%u", (unsigned)m->ms);
         req->on_header(req->ctx, "X-Jpanel-Duration-Ms", num);
     }
@@ -1052,6 +1055,39 @@ static void watch_returned(const char *point)
     bool listed = false;
     for (int i = 0; i < v.waiting.n; i++) listed |= strcmp(v.waiting.q[i].id, "e1") == 0;
     g_ret_pub_ok = listed && v.waiting.count == 2 && v.waiting.q[0].id[0] == 'e' && v.cur.in_waiting;
+}
+
+/* The length the snapshot carries while a message is sounding: what the ring is drawn from. */
+static uint32_t g_dur_seen;
+static void watch_duration(const char *point)
+{
+    (void)point;
+    const jp_view_t v = snap();
+    if (v.cur.stream_id != 0) g_dur_seen = v.cur.duration_ms;
+}
+
+static void test_the_length_rides_with_the_message_for_the_ring(void)
+{
+    for (int mode = 0; mode < 2; mode++) {
+        reset(mode == 0 ? BOX_TODAY : BOX_NEW);
+        add_msg("d1", "Dad", true, 3200);
+        poll_now();
+        g_dur_seen = 99;
+        g_yield = watch_duration;
+        drive_done(post_play("d1", 0), 20000);
+        CHECK(g_dur_seen == (mode == 0 ? 0u : 3200u),
+              "the box's length is published with the stream; an old box's is 0, not a guess");
+        if (mode == 0) continue;
+        const jp_who_t again = snap().last_begun;
+        g_dur_seen = 99;
+        drive_done(post_replay(&again), 20000);
+        CHECK(g_dur_seen == 3200u, "and a replay carries it too");
+        add_msg("d2", "Tamsin", false, 1500);
+        poll_now();
+        g_dur_seen = 99;
+        drive_done(post_play("d2", 0), 20000);
+        CHECK(g_dur_seen == 1500u, "each message its own, never the last one's");
+    }
 }
 
 static void test_stop_in_preroll_returns_not_acks(void)
@@ -2214,6 +2250,7 @@ int main(void)
     test_heard_unacked_only_without_header_id();
     test_against_0_3_39_box_short_stop_acks();
     test_stop_in_preroll_returns_not_acks();
+    test_the_length_rides_with_the_message_for_the_ring();
     test_stop_after_threshold_acks_with_heard_ms();
     test_reply_stop_counts_heard();
     test_short_message_threshold_is_80_percent();

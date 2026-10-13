@@ -145,6 +145,8 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
           <button id="v-sister">“Tell my sister”</button>
           <button id="v-dad">“Tell Dad”</button>
           <button id="v-love">“I love you”</button>
+          <button id="v-tickle">“Tickle tickle”</button>
+          <button id="v-eat">“Have a snack”</button>
         </div>
         <label>When the microphone opens
           <select id="autotalk"><option value="2500" selected>she talks for 2.5 s</option><option value="6000">she talks for 6 s</option><option value="0">she says nothing</option></select>
@@ -347,6 +349,8 @@ $('v-stop').onclick = () => panel.voice(VOICE.STOP);
 $('v-sister').onclick = () => panel.voice(VOICE.SEND_SISTER);
 $('v-dad').onclick = () => panel.voice(VOICE.SEND_DAD);
 $('v-love').onclick = () => panel.set(KNOB.PET_ACT, 2);
+$('v-tickle').onclick = () => panel.set(KNOB.PET_ACT, 3);
+$('v-eat').onclick = () => panel.set(KNOB.PET_ACT, 4);
 $('shake').onclick = () => {
   const box = document.querySelector('.case');
   box.animate([{ translate: '0 0' }, { translate: '-14px 0' }, { translate: '14px 0' }, { translate: '-10px 0' }, { translate: '10px 0' }, { translate: '0 0' }], { duration: 450 });

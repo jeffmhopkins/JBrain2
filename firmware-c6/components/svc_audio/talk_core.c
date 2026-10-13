@@ -49,6 +49,15 @@ uint32_t tk_ring_write(tk_ring_t *r, const void *src, uint32_t n)
     return n;
 }
 
+_Static_assert(TK_RING_PLAY >= TK_SPK_START_BYTES + TK_NET_SLICE,
+               "a play's ring holds the speaker's start and one more slice from the network");
+
+uint32_t tk_ring_bytes(tk_kind_t kind)
+{
+    return kind == TK_KIND_LISTEN || kind == TK_KIND_NOTICE || kind == TK_KIND_SPEAK ? TK_RING_PLAY
+                                                                                       : TK_RING_TALK;
+}
+
 uint32_t tk_ring_read(tk_ring_t *r, void *dst, uint32_t n)
 {
     const uint32_t tail = r->tail;
@@ -102,6 +111,11 @@ void tk_copy(char *dst, size_t cap, const char *src)
     dst[n] = '\0';
 }
 
+bool tk_can_begin(const tk_t *t)
+{
+    return t->phase == TK_IDLE && !t->net_busy && !t->mic_on && !t->spk_on;
+}
+
 tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id)
 {
     if (t->phase == TK_PLAY) {
@@ -110,7 +124,7 @@ tk_begin_t tk_begin(tk_t *t, uint32_t now_ms, bool voice, uint32_t msg_id)
     }
     /* A dropped exchange still has the radio or the codec until its owner notices (≤ 20 ms on
      * the codec, one bounded network call on the radio): a new hold waits for both. */
-    if (t->phase != TK_IDLE || t->net_busy || t->mic_on || t->spk_on) return TK_BEGIN_BUSY;
+    if (!tk_can_begin(t)) return TK_BEGIN_BUSY;
     t->phase = TK_REC;
     t->since_ms = now_ms;
     t->held_ms = 0;
@@ -145,6 +159,16 @@ tk_begin_t tk_listen(tk_t *t, uint32_t msg_id)
     t->res = TK_RES_NONE;
     t->why[0] = '\0';
     return TK_BEGIN_OK;
+}
+
+void tk_set_notice(tk_t *t)
+{
+    t->kind = TK_KIND_NOTICE;
+}
+
+void tk_set_speak(tk_t *t)
+{
+    t->kind = TK_KIND_SPEAK;
 }
 
 void tk_set_agent(tk_t *t, tk_agent_t agent, bool fresh)
@@ -196,7 +220,9 @@ bool tk_quiet(const tk_t *t)
 
 bool tk_net_claim(tk_t *t)
 {
-    const bool listen = t->kind == TK_KIND_LISTEN && t->phase == TK_SEND;
+    const bool listen = (t->kind == TK_KIND_LISTEN || t->kind == TK_KIND_NOTICE ||
+                         t->kind == TK_KIND_SPEAK) &&
+                        t->phase == TK_SEND;
     if ((t->phase != TK_REC && !listen) || t->net_busy || t->abort) return false;
     t->net_busy = true;
     t->net_done = false;
@@ -351,6 +377,8 @@ static tk_stream_ev_t finished(tk_stream_t *s)
     case TS_END: return TS_EV_END;
     case TS_STEP_START: return TS_EV_STEP_START;
     case TS_STEP_DONE: return TS_EV_STEP_DONE;
+    case TS_SPOKEN: return TS_EV_SPOKEN;
+    case TS_IDS: return TS_EV_IDS;
     default: return TS_EV_ALIVE;
     }
 }
@@ -414,7 +442,9 @@ size_t tk_stream_feed(tk_stream_t *s, const uint8_t *b, size_t n, tk_stream_ev_t
             }
             switch (s->type) {
             case TS_HEARD:
-            case TS_STATUS: s->st = TS_TEXT; break;
+            case TS_STATUS:
+            case TS_SPOKEN:
+            case TS_IDS: s->st = TS_TEXT; break;
             case TS_ANSWER:
             case TS_END:
             case TS_STEP_START:
@@ -581,4 +611,62 @@ void tk_stats_note(const tk_stats_t *s, const char *state, char *out, size_t len
              (unsigned long)(s->up_bytes / 1024), (unsigned long)(s->down_bytes / 1024),
              (unsigned long)s->reply_ms, (unsigned long)s->reply_ms_max,
              (unsigned long)s->underruns, (unsigned long)s->overruns);
+}
+
+static uint32_t le32(const char *b)
+{
+    const unsigned char *u = (const unsigned char *)b;
+    return (uint32_t)u[0] | (uint32_t)u[1] << 8 | (uint32_t)u[2] << 16 | (uint32_t)u[3] << 24;
+}
+
+bool tk_stream_spoken(const tk_stream_t *s, uint16_t *from, uint16_t *to, uint32_t *bytes)
+{
+    if (s->type != TS_SPOKEN || s->text_n != 8) return false;
+    const unsigned char *u = (const unsigned char *)s->text;
+    *from = (uint16_t)(u[0] | u[1] << 8);
+    *to = (uint16_t)(u[2] | u[3] << 8);
+    *bytes = le32(s->text + 4);
+    if (*from > 1000) *from = 1000;
+    if (*to > 1000) *to = 1000;
+    if (*to < *from) *to = *from;
+    return true;
+}
+
+bool tk_stream_ids(const tk_stream_t *s, uint32_t *asked, uint32_t *answer)
+{
+    if (s->type != TS_IDS || s->text_n != 16) return false;
+    *asked = le32(s->text + 4) ? 0 : le32(s->text);
+    *answer = le32(s->text + 12) ? 0 : le32(s->text + 8);
+    return true;
+}
+
+void tk_marks_init(tk_marks_t *k)
+{
+    memset(k, 0, sizeof *k);
+}
+
+void tk_marks_add(tk_marks_t *k, uint16_t from, uint16_t to, uint32_t bytes)
+{
+    if (k->n == TK_MARKS) {
+        memmove(k->m, k->m + 1, sizeof k->m[0] * (TK_MARKS - 1));
+        k->n--;
+    }
+    k->m[k->n++] = (tk_mark_t){k->pcm_in, bytes, from, to};
+}
+
+void tk_marks_pcm(tk_marks_t *k, uint32_t n)
+{
+    k->pcm_in += n;
+}
+
+uint16_t tk_marks_progress(const tk_marks_t *k, uint32_t played)
+{
+    int at = -1;
+    for (uint8_t i = 0; i < k->n; i++)
+        if (k->m[i].pcm_at <= played) at = i;
+    if (at < 0) return k->n ? k->m[0].from : 0;
+    const tk_mark_t *m = &k->m[at];
+    const uint32_t in = played - m->pcm_at;
+    if (!m->bytes || in >= m->bytes) return m->to;
+    return (uint16_t)(m->from + (uint32_t)(m->to - m->from) * in / m->bytes);
 }

@@ -79,14 +79,21 @@ typedef struct {
     lv_obj_t *dot;   /* the amber "not heard yet" dot */
 } ui_bubble_parts_t;
 
+/* Its moving parts, changed where they stand while it plays (a rebuild would lose the scroll). */
+typedef struct {
+    lv_obj_t *button, *arc, *icon, *stop, *caption;
+} ui_listen_parts_t;
+
 typedef struct {
     bool mine;
     bool voice;
     bool pending;
     bool playing;
     bool unplayed;
-    bool listen;   /* a Listen button: replies are text-only */
-    bool speaking; /* "Speaking…" under it */
+    uint8_t listen;           /* ui_listen_t: the speaker button beside a reply */
+    uint16_t listen_permille; /* PLAYING: the ring */
+    const char *listen_caption; /* under the bubble: "Starting… · tap to stop", "0:14 · tap to stop" */
+    ui_listen_parts_t *listen_parts;
     uint8_t prog;  /* playback 0-100 */
     const char *text;
     const char *dur;
@@ -102,6 +109,16 @@ lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, 
                     void *user);
 /* The parts' new state: nothing moves but the glyph, the fill's width and the dot. */
 void ui_bubble_set(const ui_bubble_parts_t *p, bool playing, uint8_t prog, bool unplayed);
+/* Listen's button and caption, in place: STARTING turns a short arc, PLAYING fills the ring. */
+void ui_listen_set(const ui_listen_parts_t *p, ui_listen_t state, uint16_t permille,
+                   const char *caption, uint32_t accent);
+
+/* Load earlier (0.0.21): the full-width row above a thread's messages ("↑ Load earlier · 44
+ * more", or a spinner and "Loading earlier…"), the same below them ("↓ Newer messages · 20
+ * more"), and "Start of conversation / Yesterday 18:20" at the true start. */
+lv_obj_t *ui_hist_row(lv_obj_t *parent, bool up, bool loading, uint32_t more, lv_event_cb_t cb,
+                      void *user);
+lv_obj_t *ui_hist_start(lv_obj_t *parent, const char *when);
 
 /* Full-screen black base for everything modal: the talk ring, the push pop-up, the alarm. It
  * takes every press inside it, so nothing under it can be reached while it is drawn. */

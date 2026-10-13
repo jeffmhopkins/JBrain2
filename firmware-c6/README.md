@@ -204,7 +204,7 @@ cap with room to spare):
 | --- | --- | --- |
 | `touch=` | `ok` | `failed:<step>` at start — `rst`/`int` (GPIO config), `bus` (no bus to borrow: the PMIC service never opened it), `i2c` (no answer at 0x5A after the reset), `task`: the panel runs without touch. `failed:lost`: it answered, then stopped (read `tp_err`, `tp_rst`). `off`: a fault boot, which starts neither display nor touch. |
 | `taps=` | one more per finger-down (the wake stroke and swipes count too) | stays 0 while tapping: the chip reports no pressed point — read `tp_noack`. |
-| `tp_last=` | `rawA,rawB>x,y` for the last four touch-downs, oldest first | a corner tap that does not land near its corner. Tap top-left, top-right, bottom-right, bottom-left: expect `x,y` near `0,0`, `479,0`, `479,479`, `0,479` (raw a,b near `0,479`, `0,0`, `479,0`, `479,479`). A swapped or mirrored pattern is the mapping; corners that stop short (e.g. never below 20) are the edge accuracy calibration will fix. |
+| `tp_last=` | `rawA,rawB>x,y` for the last four touch-downs, oldest first | a corner tap that does not land near its corner. Tap top-left, top-right, bottom-right, bottom-left: expect `x,y` near `0,0`, `479,0`, `479,479`, `0,479` (raw a,b near `0,479`, `0,0`, `479,0`, `479,479`). A swapped or mirrored pattern is the mapping; corners that stop short (e.g. never below 20) are the edge accuracy calibration fixes. From 0.0.18 `x,y` is after the calibration and the rotation (`cal=`, `tp_rot=`). |
 | `tp_err=` / `tp_rst=` | `0` / `0` | climbing: failed reads, and how often the chip was reset. The PMIC's `i2c_err=` must stay 0 whatever these do. |
 | `tp_noack=down/all` | `down` 0 or tiny | `all` counts reads without `0xAB` (normal while idle if the chip only acks fresh reports); `down` counts those inside a stroke — held over, up to 3 in a row. Large `down` with broken drags: strokes are being cut. |
 | `tp_int=down/up` | (a measurement) | polls with GPIO5 low while pressed / while not. `down` near the press polls and `up` near 0: INT is a level, and a later image can sleep on it. |
@@ -225,12 +225,12 @@ Wi-Fi last.
 
 | Card | Real now | Still not real |
 | --- | --- | --- |
-| Brightness | The slider (10-100 %, 10 % floor, 5 % steps) reaches the glass on every tick through `svc_display` (the UI task records, sends between frames) and is **saved** and **restored at boot**. Auto-rotate is a saved switch. | Auto-rotate turns nothing yet (plan §2b); its line says "from a later update". |
+| Brightness | The slider (10-100 %, 10 % floor, 5 % steps) reaches the glass on every tick through `svc_display` (the UI task records, sends between frames) and is **saved** and **restored at boot**. Auto-rotate is a saved switch. | Auto-rotate turned nothing until 0.0.18 ("What 0.0.18 adds"). |
 | Battery | The AXP2101's readings: percent, voltage and charging when a cell is fitted, otherwise "No battery fitted · USB x.xx V". | — |
 | Notifications | Three saved switches; the quiet-hours note names the night window. | Nothing polls the box for notices yet, so they decide nothing (C3b). |
 | Jerv | "Read replies aloud", saved. | No audio, so nothing is read aloud. |
 | Firmware | The running version (the app descriptor's). **Update now** really checks: it raises a request and wakes the update loop, which fetches the manifest at once and shows Checking → Already on the newest version, or Downloading x · N % → Restarting into x, or Update failed (why) — each from what the loop is actually doing. The boot after an install that marked itself good says "Updated". | — |
-| Touch screen | — | Calibrate says it is coming in a later update. |
+| Touch screen | — | Calibrate said it was coming in a later update, until 0.0.18 ("What 0.0.18 adds"). |
 | Wi-Fi | The network the radio is on and its signal (`esp_wifi`), the state (Connected / Connecting / Off) from the driver's events. **Disconnect takes two taps within 3 s** (the first turns it rose: "Tap again to disconnect") and drops the radio at once; nothing re-joins until **Connect** or a restart. Connect is carried to the update loop, which re-joins. | — |
 
 **Why the UI never touches the box or the radio's join itself.** The box connection belongs to
@@ -246,8 +246,9 @@ backoff a failed install earns — the owner asked. Disconnect is the one direct
 
 `svc_settings` keeps every setting in NVS namespace **`jpanel`**, one `i32` per key named as
 `svc_settings_name` (`brightness`, `tts`, `notif_accept`, `notif_quiet`, `notif_chime`,
-`night_on`, `night_color`, `night_from`, `night_to`, `show_date`, `auto_rotate`, `tz`). The box's
-provisioning (`jbrain`) is never written.
+`night_on`, `night_color`, `night_from`, `night_to`, `show_date`, `auto_rotate`, `tz`; later
+`volume`, `mic_gain` and, from 0.0.18, `imu_axes`). The touch calibration (0.0.18) is a blob of its
+own beside them, `tp_cal`. The box's provisioning (`jbrain`) is never written.
 
 - **One writer.** Loaded on the main task before the UI starts; written only from the UI task,
   where every setter runs (the glass and the debug commands).
@@ -1553,7 +1554,7 @@ the case, and the 8 KB ring is the next lever.
 note **`low=<bytes>@<what>`**: when the internal heap reaches a new low, the first task to see it —
 the main task at each change of work, the UI task every pass — records what the main task was
 doing (`pickup`, `report`, `manifest`, `ota`, `talk`, `message`, `play`, `post`, `convo`,
-`siblings`, `alarms`, `idle`), `+handshake` inside a new connection's TLS handshake, and `+ring`
+`siblings`, `alarms`, `idle`; since 0.0.20 `answer` and `screenshot` for a debug command's reply), `+handshake` inside a new connection's TLS handshake, and `+ring`
 while a talk's or a play's ring is held. A reading of `low=…@play+ring` at or above ~52 KB is this
 image working.
 
@@ -1591,6 +1592,533 @@ open (above).
 4. Stop one, play the next, a few times; then the snapshot: `system.int_min` and `int_min_at`
    (expect ≈ 56 KB at `play+ring`), and the `app` section's `rebuilds` unchanged by the plays.
 
+## What 0.0.18 adds: a play's own ring, auto-rotate, and touch calibration
+
+The owner approved this scope on 2026-10-13 (*"Go ahead with 0.0.18."*): the memory 0.0.17 left at
+a play, and the two Settings rows that had said "a later update" since 0.0.8 — Auto-rotate (plan
+§2b, wave C2r) and Touch screen → Calibrate (the mock's `Calib.dc.html`).
+
+### The memory: what a play holds, and the lever pulled
+
+0.0.17 on the board, after a power-on and three plays of the twins' messages: `system.int_min`
+**43,548 B at `play+ring`**, `int_free` 71.7 KB with the kept session up, `int_largest` 52 KB, the UI's
+start low-water 63 KB. 0.0.17 had expected ~56 KB (72 − 16 for the ring), so about **12 KB more is
+held during a play than it modelled** — and the label says when: inside `listen_exchange`, after its
+handshake (no `+handshake`), with the ring held.
+
+What is live during a play's stream, from the code:
+
+| What | Internal RAM | During a play | Counted in 0.0.17's model? |
+| --- | --- | --- | --- |
+| The kept TLS session (mbedTLS in 16 KB + out 4 KB, context, the peer's chain) | ~24-28 KB | yes — the play rides it | yes, inside the 71.7 KB baseline |
+| A second TLS session | — | **never**: the image has one `esp_http_client` (`box_http.c`); a play's GET goes on it, a dropped connection is closed (and its mbedTLS context freed) before the next opens on the same client, and the OTA download's own session opens only after `box_http_close` | — |
+| mbedTLS record buffers growing | — | **no**: `CONFIG_MBEDTLS_DYNAMIC_BUFFER` is off, so in/out are allocated at the handshake at their full size and never grow | — |
+| The play's ring | 16,384 B | yes | yes |
+| **The receive window, full** | ~6.5 KB | **the whole play**: the box sends a stored clip as fast as TCP lets it and the reader is paced by the speaker, so lwIP's window (`TCP_WND` 5,760 B = 4 × 1,440) sits full of unread data, each segment in a Wi-Fi dynamic RX buffer sized to its frame (~1.6 KB with the 802.11 headers, the RX control block and the pbuf) | **no** |
+| A loss in flight (AMPDU reorder, lwIP's out-of-order queue) | up to a few more frames | while a gap is filled | no |
+| The "played" stamp's NVS write (UI task, ~2 s into the play) | a few hundred bytes | briefly | no |
+| The JT2 decoder, the 1 KB slice buffer, the SHA-256 context | static | — | — |
+| A thread's fetch buffer (3,074 B) and its parse | — | **not during a play**: the main task makes one request at a time, after `talk_link_run` returns, and the low would be labelled `post` | — |
+| The speaker | — | the I2S DMA buffers are allocated at boot; opening the speaker reconfigures TX at the same size, and `esp_codec_dev_open` allocates nothing | — |
+
+So the ~12 KB is what the network holds behind the ring: the full receive window for certain (~6.5
+KB), the rest most likely loss-and-reorder frames and the stamp's write. The host cannot measure
+Wi-Fi buffers, so this image measures them on the board: the snapshot's `audio` section now keeps
+the last play's free heap **before its GET** (`play_before`), **once the box answered**
+(`play_answered`), **with the ring taken** (`play_ring_free`) and **the lowest seen while it
+streamed** (`play_low`). `play_ring_free − play_low` is exactly what lwIP and mbedTLS held behind the
+ring.
+
+**The lever: a play's ring is 6 KB, not a talk's 16 KB** (`tk_ring_bytes`, `TK_RING_PLAY`). The
+network already buffers a stored message (the window, and mbedTLS's decrypted record), and an
+underrun re-arms the speaker's start (0.0.12's gate: a pause, never a stutter), so the play's ring
+needs only the speaker's 150 ms start (4,800 B) plus one network slice (1 KB). Talks and voice
+messages keep 16 KB, which they need: a talk's ring is the microphone's while the upload connects.
+The arithmetic, against the board's own numbers:
+
+| | 0.0.17 (measured) | 8 KB ring | **0.0.18: 6 KB ring** |
+| --- | --- | --- | --- |
+| Free with the session up | 71.7 KB | 71.7 KB | 71.7 KB |
+| The ring | − 16.4 KB | − 8.2 KB | **− 6.1 KB** |
+| What the network held behind it (71.7 − 16.4 − 43.5) | − 11.8 KB | − 11.8 KB | − 11.8 KB |
+| `int_min` at `play+ring` | **43.5 KB** | 51.7 KB — short of 52 | **≈ 53.8 KB** |
+
+8 KB, the first number weighed, lands under the 52 KB target; 6 KB clears it by ~1.8 KB (by ~0.5 KB
+reading every KB as 1,024 B). The buffered audio is ~0.19 s in the ring plus ~0.18 s in the window
+plus whatever of mbedTLS's record is still unread. The other lever weighed — streaming the play over
+the kept session rather than a new one — is what 0.0.16 already does: there is only ever one.
+
+One more fix on the way: a KEY hold refused while a play was still being fetched took a 16 KB talk
+ring before finding the exchange busy, and the play then adopted it. A hold now takes a ring only when
+it can start (`tk_can_begin`), and a play takes its own size.
+
+### Auto-rotate
+
+- **Which way is down** comes from the QMI8658's accelerometer in the glass's plane (±2 g, 62.5 Hz,
+  the gyroscope off), read at 8 Hz **on the UI task's own passes** — no task of its own — only while
+  the screen is lit and the switch is on; dark or off, the accelerometer is powered down.
+- **Hysteresis** (`orient_logic.c`, host-tested): a new edge counts only **25° past the 45° line**
+  into its quadrant (within 20° of that edge's axis), and only after **700 ms** of every reading
+  saying so. A lean near 45° holds whatever is showing. **Flat** (under 0.5 g in the glass's plane:
+  within 30° of lying face up or down) changes nothing; **moving** (a total more than 0.2 g from 1 g)
+  starts the dwell again.
+- **How it turns: in the flush, not in LVGL and not in the CO5300.** LVGL keeps drawing the same
+  upright 480×480 screen (the glass is square, so nothing is laid out again); each strip is turned on
+  its way to the glass. **Upside down** reverses the strip where it lies and sends it to the mirrored
+  window — no memory at all. **On its side**, the strip's columns are gathered into a 2.5 KB piece
+  buffer and sent a few glass rows at a time (`disp_rot_piece`; an area LVGL draws narrow is tall, so
+  the rows per piece are worked out per area). Every window stays even-aligned, as the CO5300 needs.
+  Why not the alternatives: LVGL 9.2's own rotation in partial mode still leaves the flush to turn
+  the pixels, with a second ~38 KB strip buffer for 90°/270° — RAM this board does not have; and the
+  CO5300's MADCTL has no row/column exchange (HARDWARE.md §2), only mirrors, which would cover 180°
+  alone and change the one init table proven on the glass.
+- **Touch turns with it**, in the one place that maps it (`tp_xform`): raw → the 0.0.7 mapping → the
+  calibration → the rotation undone. It follows the turn the **glass actually took**
+  (`svc_display_on_rotated`), never the request: a quarter turn that finds no 2.5 KB for its piece
+  buffer (most likely mid-play, the heap's low point) leaves the glass as it was and retries every
+  pass, and touch, `svc_orient_rotation` and a calibration made meanwhile all stay with what is
+  showing until it succeeds, then move together. The buttons do not move: KEY, BOOT and PWR mean
+  what they did.
+- **Off** is the panel's own upright, at once. **No sensor** (no answer at 0x6B, or not a QMI8658):
+  the panel stays upright for the boot, Settings draws the switch dead with "The tilt sensor did not
+  start, so the screen stays upright", and telemetry says `orient=failed:<step>`.
+- **Screenshots stay upright**: the debug screenshot taps the strips before they are turned, so it is
+  what LVGL drew; `display.rotation` and `orient.rotation` say how the glass shows it.
+- **The chip's axes against the glass** are `imu_axes` = 6 on the owner's board (measured
+  2026-10-13, HARDWARE.md §6). `imu_axes` (NVS, 0-7, the debug `set`) swaps the chip's X/Y and flips
+  either axis; the default 0 assumes +X right, +Y down, which shows this board upright as 180°.
+
+### Touch calibration
+
+- **Settings → Touch screen → Calibrate** puts up the mock's screen: "Tap the cross", "1 of 4 · BOOT
+  cancels", an amber cross with a ring and three dots, **one at each corner** (the mock's outer knots,
+  44 px in) rather than the mock's sixteen. Three taps per cross that agree (each within 24 px of
+  their mean) turn it green and bring the next; a tap more than 64 px from the cross is not counted
+  ("Tap the centre of the cross"); three that disagree start that cross again ("Those taps disagreed:
+  again"). **BOOT cancels** and stays in Settings with the old calibration (or none) in force; KEY
+  still talks to Jerv. While it runs the screen holds whichever way up it is.
+- **The fit** (`tp_cal_fit`, host-tested): an affine least-squares fit, x' = a·x + b·y + c and y' =
+  d·x + e·y + f, **in the glass's own frame**, over the 0.0.7 measured mapping (x = 479 − rawB, y =
+  rawA), from the four crosses' true places and the taps' means (both turned back into the glass's
+  frame). Four points for six numbers leave a residual to judge it by. Refused, with "Not saved:
+  those taps did not agree. Try again", when the taps span no plane (`few`), when it needs a scale
+  past 15 %, a shear past 0.1 or a shift past 48 px anywhere on the glass (`wild`), or when a tap
+  ends more than 12 px from its cross after it (`scattered`).
+- **Kept** in NVS namespace `jpanel`, key `tp_cal` (a 32-byte blob: layout, the six numbers in Q16,
+  the day), and applied to every touch from then on; **"Reset calibration"** (shown once there is
+  one) erases it and puts the measured mapping back. The card's corner says Never, Today, or the day.
+- **With rotation**: the calibration is applied in the glass's frame, then the rotation, so one
+  calibration made in any orientation serves all four.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_audio` | `tk_ring_bytes` (`TK_RING_TALK` 16 KB, `TK_RING_PLAY` 6 KB), `tk_can_begin`, a ring sized per exchange (`talk_ring_bytes`), `talk_net_mem` and the `audio.play_*` fields. |
+| `main/talk_link.c` | The play's free heap before, answered, with its ring, and its low while streaming. |
+| `svc_orient` (new) | `orient_logic.c` (pure: down from a raw reading, the margin, the dwell, flat and moving), `svc_orient.c` (the 8 Hz read on the UI task, the switch, the hold, the `orient` snapshot section and `orient=` note), `esp/orient_port_qmi8658.c` (id, reset, ±2 g at 62.5 Hz, power up/down, the 6-byte read, all through `svc_power_i2c_xfer`), `orient_port_fake.c` (the sim's and the host's tilt). |
+| `svc_display` | `disp_rot_point`, `disp_rot_area`, `disp_reverse`, `disp_rot_piece`, `disp_rot_piece_rows` (pure, host-tested); the flush turning each strip, the turn applied between frames with the whole screen redrawn, `display.rotation`. |
+| `svc_touch` | `tp_xform` (map → calibrate → unrotate), `tp_cal_fit` / `tp_cal_apply`, `tp_rotate` / `tp_unrotate` (pure); `svc_calib.c` (the fit's bookkeeping, the `calib` snapshot section); `esp/tp_cal_port_esp.c` (NVS); the touch task maps through a copy of the mapping each poll. |
+| `svc_settings` | `imu_axes` (0-7, default 0). |
+| `app_settings` | The Auto-rotate row live or dead; the calibration screen and its flow (`calib_flow_*`, pure); the Touch screen card's day and Reset calibration. |
+| `main` | `svc_orient_start` after touch; the UI task's pass, the calibration loaded and touch following each turn; `low=` moved near the front of the note so a long note never cuts it. |
+| `sim/` | Every strip also turned onto a glass framebuffer exactly as the flush turns it; `home-turned` (on its right edge) and `clock-upside-down` render the glass; `settings-no-imu`; `calib`, `calib-missed`, `calib-saved`; `--touch` runs a calibration, BOOT over it, and Reset. |
+
+### Debugging it
+
+- `orient`: `imu` (`ok` / `failed:<step>`), `auto`, `rotation` (degrees, what the glass shows) and
+  `down` (the edge showing as the bottom), `asked` (only while a requested turn waits for memory),
+  `seen` (`edge` / `between` / `flat` / `moving`) and `seen_edge`, `raw` (counts) and `raw_mg`
+  (milli-g), `axes`, `axes_if_upright`, `axes_if_right_edge`, `powered`, `held`, `reads`,
+  `read_errors`, `changes`, `chip` and `id` (WHO_AM_I / revision).
+- **Settling `imu_axes` from the box takes two holds**, because one upright reading cannot tell the
+  glass's x flip (and that bit is what tells 90° from 270°): (1) panel upright, still, a snapshot —
+  `set imu_axes` to its `orient.axes_if_upright` before the second hold, since that helper starts from the
+  current value; (2) panel on its **right** edge (turned a quarter turn
+  clockwise, so the edge that was on your right is at the bottom), still, a snapshot — `set imu_axes` to its
+  `orient.axes_if_right_edge`. That value is the whole answer; record it in HARDWARE.md §6. Telemetry: `orient=ok,rot:90,chg:N,rd:N,err:N,axes:N`.
+- `calib`: `custom`, `capturing`, `date`, `fit` (a,b,c,d,e,f: scales and shears in thousandths,
+  offsets in pixels — `1000,0,0,0,1000,0` is none), `fits`, `refused`, `last`. Telemetry's touch
+  tokens gain `cal=custom|none` and `tp_rot=`; `tp_last`'s `x,y` are now after both.
+- `display.rotation`, `rot_changes`, `rot_no_memory` (a quarter turn that found no 2.5 KB).
+- `audio.ring` is the ring's real size; `audio.play_before` / `play_answered` / `play_ring_free` /
+  `play_low` as above.
+- A calibration can be driven from the box: `open` settings, then `inject` `touch` at each cross
+  (44,44), (436,44), (436,436), (44,436), three times each; `inject boot` cancels.
+
+```sh
+scripts/debug-connect.sh panel-cmd c6 snapshot                       # orient, calib, audio.play_*
+scripts/debug-connect.sh panel-cmd c6 set --arg name=imu_axes --arg value=4
+scripts/debug-connect.sh panel-cmd c6 set --arg name=auto_rotate --arg value=0
+```
+
+### The memory budget
+
+Static DIRAM (`.dram0.data` + `.dram0.bss`): 152,800 → 153,104 B, **+304 B**: the orientation state
+and its describer, the calibration's coefficients and bookkeeping, the touch task's mapping, the
+calibration screen's view, the play's heap readings. App: 1,979,632 → 1,992,656 B (+12.7 KB; 52% of
+the slot free). No new task, no new stack. On the heap: a play's ring is **10 KB smaller** for its
+whole length; the quarter-turn piece buffer is **2,560 B only while the panel is on its side**
+(upright and upside down take none); the calibration's NVS write is a transient handle. CPU: one
+6-byte bus read every 125 ms while lit (~0.3 ms each, well under 1 % of the UI task); a turned frame
+adds the strip's reversal (180°) or gather plus a window per piece (90°/270°, ~15 pieces a full-width
+strip). LVGL's pool peaks at 38.5 KB in `calib` (the screen over Settings; 64-bit host), under its
+64 KB.
+
+### What to check on the glass
+
+1. **The play's memory.** Play three of her messages (stop one part way), then a snapshot:
+   `system.int_min` at `play+ring` should read **≥ 52 KB** (expect ~53-54 KB); `audio.ring` 6144
+   during a play; `play_ring_free − play_low` is what the network held behind the ring (expect
+   ~6-12 KB). The sound should be as before; an underrun is a short pause, not a stutter.
+2. **Auto-rotate.** With the panel standing on the desk, the screen must stay as it is. Turn it onto
+   its right edge and hold it still: within a second the content turns to read upright; the same on
+   its left edge and upside down. Lean it at about 45°: nothing flickers. Lay it flat: it keeps the
+   last turn. Tap a tile in each orientation: it opens what is under the finger. If it turns while
+   standing normally, or the right and left edges come out swapped (or upside down), settle the
+   axes in two holds (Debugging it, above): **upright** → `set imu_axes` to `orient.axes_if_upright`,
+   then **on its right edge** → `set imu_axes` to `orient.axes_if_right_edge`. Skipping the second
+   hold leaves 90° and 270° swapped. Meanwhile Auto-rotate can be switched off in Settings — touch
+   works whichever way the screen shows.
+3. **Settings → Auto-rotate off**: the screen goes straight back to the panel's own upright.
+4. **Touch calibration.** Settings → Touch screen → Calibrate: tap each cross until it turns green
+   (three taps). The card then says Today and offers Reset calibration. Taps near the edges should
+   land better than before; `calib.fit` in the snapshot shows the correction. Try it once with the
+   panel turned, then upright: one calibration serves both. BOOT mid-way leaves the old one.
+
+## What 0.0.19 adds: push notices on the panel
+
+Wave C3b's panel half (plan §2, "The panel side"). The box has taken notices since 2026-10-12 — a
+title, a body, up to four answers, a picture the sender drew, up to eight seconds of sound, a
+hide timer — and refused every one with `409 no_notice_surface`, because no panel said it could
+show one. This image says so, collects them into files, and shows them on the overlay the owner
+approved on 2026-10-13 (mock boards NotifyInfo, NotifyQuestion, NotifyQuestionSound,
+NotifyPicture, NotifyNight, NotifyBanner, NotifyAudio and ClockBadge, `docs/mocks/jpanel-c6/`).
+
+### What happens to a notice
+
+- **The pickup reports the switches.** Every debug pickup carries
+  `&na=…&nq=…&nc=…&nf=…&nt=…&tz=…` — Accept, Refuse during night hours, Chime, the night window
+  in minutes and the zone index, from the panel's own settings — exactly the six
+  `notice.parse_prefs` reads. With them the box answers a sender `202` (or `not_accepting` /
+  `quiet_hours`) instead of `no_notice_surface`. A boot after a fault (no UI) and a panel whose
+  `storage` did not mount report nothing, so the box keeps saying `no_notice_surface`: they could
+  not show one.
+- **`X-Notice: <n>` on the pickup's answer** sets the main loop collecting: `GET
+  /endpoint/notice/next` until it answers 204, at most four a pass, and never while four are
+  already open here (the box's own limit, 429 `busy`).
+- **Each notice streams into its own file.** The JN1 stream is read a record at a time straight
+  into one 4 KB record buffer (`jn1.c`), checked, and written to `/notice/part.tmp` on the `storage`
+  partition; only when END has been checked is the file renamed to `<seq>-<id>.jn1`. Nothing ever
+  holds a picture (up to 320 KB) or a sound (up to 256 KB) whole. The checks are `decode()`'s, the
+  box's reference reader: the record order, META first, every flag against its records, each
+  stripe's place, rows (≤ 40) and runs covering its pixels exactly, PCM even and as long as META
+  says, END's byte count, nothing after END, strict UTF-8. Texts longer than the box's limits (which
+  `decode()` would take) are kept cut before a character.
+- **A torn or refused stream is dropped whole** — the part file deleted — and fetched again from
+  `/endpoint/notice/{id}/body` after 2 s, 10 s and 30 s; three tries, then it is given up (the box
+  expires it at its own deadline). No answer at all (an outage) spends no try. A 404 (its window
+  closed) gives up at once. A stream torn before its META has no id to ask for: it is counted
+  `lost`.
+- **`storage` is mounted at boot** (littlefs, `joltwallet/littlefs` 1.22.3), after the rollback gate
+  and before the UI. The partition has never held a filesystem, so the first boot of 0.0.19 formats
+  it: littlefs writes its two metadata blocks, not 3.75 MB. Then it is swept: a half-written
+  `part.tmp`, anything that is not a whole notice, a notice whose answer was given before the
+  reboot, and a notice whose answer window has closed are deleted; the whole notices a reboot
+  interrupted come back, oldest first (at most four), and are shown again. **The window's end is
+  kept as an instant** (UTC seconds, from the clock chip, when the notice arrived) in the file's
+  own name, `<seq>-<id>-<deadline>.jn1`: a notice comes back only with what is left of its window,
+  and one that arrived while the panel had no time is not brought back at all, so a rebooted panel
+  never shows a question the box would 404. A finished notice's file is deleted by the main task
+  right after it ends.
+- **On the glass** (the approved boards; "On the glass" below): what the box hears —
+
+  | On the glass | The box hears |
+  | --- | --- |
+  | the notice is drawn | `{"state":"shown"}` (once; a repeat is harmless) |
+  | an answer button | `{"state":"answered","choice":<index>}` |
+  | a tap anywhere else, a question's too, or BOOT | `{"state":"dismissed"}` |
+  | `hide_s` after it was drawn | `{"state":"expired"}` |
+  | its answer window (`ttl_s`) runs out | nothing: the box has closed it, and would 404 |
+
+- **The states reach the box whatever the radio does.** They wait in a list of twelve, oldest
+  first, kept in NVS (`jpanel` / `notice_posts`, saved at most every 2 s), and go one at a time in
+  order — `shown` before the answer that follows it — retried after 5 s, 15 s, 60 s and then every
+  5 min. A notice is collected (or brought back after a reboot) only while the list has room for
+  its two POSTs on top of what the notices already held may still owe, so a long outage stops
+  new notices at the box rather than losing an answer said at the glass.
+  A 2xx is done; so are a 404, 409 or 422, which no retry changes. A reboot keeps the list.
+- **The sound plays once, as the notice is drawn**, from its file: a new kind of exchange in
+  `svc_audio` (`TK_KIND_NOTICE`), a play whose bytes come from `storage` instead of the box, through
+  a play's 6 KB ring and the reply's speaker start. Never over an alarm (refused while one rings,
+  and stopped when one starts), never over a talk, a reply or a play (refused while the codec is
+  busy — it then does not play at all), and stopped when the notice hides. A notice with the chime
+  flag and no sound of its own chimes once as it arrives, by the plan's rule (`notice_chime`): the
+  Chime switch, not in the night window, nothing else on the speaker.
+- **The picture is drawn from its file**, never held: an LVGL image decoder (`notice_overlay.c`)
+  hands the renderer eight rows at a time, read from the file's runs through a 96-byte buffer
+  (`svc_notice_pic_*`); each 480×40 strip LVGL renders asks only for the rows it covers. The
+  plan's "a stripe at a time through the draw buffer" was weighed and not built: a stripe decodes
+  to up to 38 KB, and LVGL's draw buffer is busy with the strip being drawn, so the stripe reader
+  (`svc_notice_stripe`) stays for whole-stripe use and the decoder reads rows. The flush turns the
+  picture with everything else, so auto-rotate holds (sim `notify-picture-turned`).
+
+### On the glass
+
+- **A plain notice** (NotifyInfo): the bell and the sender in steel, the title (30 px), the body,
+  and at the bottom "Tap to hide · hides in 18 s" over a 4 px line that drains to the left over
+  `hide_s`. The box now gives a plain notice 20 s when its sender names no time (plan §2).
+- **A question** (NotifyQuestion): up to four answers in a row, the first in steel; "Tap an answer
+  · tap elsewhere to hide"; no countdown unless its sender set one. "1 of 2" in the corner when
+  more wait.
+- **A tap anywhere but a button hides any notice**, a question too: the sender reads `dismissed`,
+  and a question says "Hidden — no answer sent". The answers and the speaker row take their own
+  taps. BOOT hides it the same way. (The panel has no labels above its buttons to draw "hide
+  notice" on; the mock's are the board's frame.)
+- **A sound** (NotifyAudio, NotifyQuestionSound): a speaker row with its progress, "0:02 / 0:06",
+  then "Play again" beside its length; a tap on the row plays it again from its file. **KEY while
+  it plays stops it** — the reply's rule (KEY over Jerv's voice stops it and records nothing),
+  chosen because a hand on KEY over a talking panel is reaching for quiet, and the row turning to
+  Play again is the visible answer; KEY over a silent notice still does nothing, as before.
+- **A full picture** (NotifyPicture): the whole glass, the sender and "Tap to hide · 5 s" as dark
+  chips over it, a white countdown line. **A banner** (NotifyBanner): across the top at its own
+  height (≤ 240 px), the words and answers under it with a smaller title (26 px).
+- **At night** (NotifyNight): with the night clock on and inside its hours, every notice is drawn in
+  the night clock's colour and opacity — the words, the bell, the answers' outlines, the line — and
+  a picture, full or banner, waits behind a 64 px **Show picture** button; tapped, the picture is
+  shown as by day. The box lets a notice through at night only when *Refuse during night hours* is
+  off.
+- **The clock face** keeps its notices as the corner badge, now 56 px (bell and count, 20 px); an
+  alarm outranks everything.
+
+### The memory
+
+| | Internal RAM | When |
+| --- | --- | --- |
+| Static (`.data` + `.bss`) | +552 B (153,104 → 153,656 B) | always: the queue's four entries (~80 B each, no text), the head's words (~490 B), the owed states (~320 B), the overlay's widget handles and the picture source (~140 B), the counters; the fake queue's four full notices (~1.2 KB) are gone |
+| The mount | ~1.0 KB (estimated: two 256 B caches, a 32 B lookahead, `lfs_t` and the VFS's context 128 B each, a mutex) | from boot, for good; the board reports it exactly as `notice.fs.mount_heap` |
+| A collection | ~5.4 KB: the reader's record buffer and state 4.7 KB, one open file ~650 B (its 256 B cache and the VFS's file) | from the box's headers to the stream's end — after the handshake, never during one |
+| The boot's sweep | ~4.6 KB | once, before the UI starts |
+| A notice's sound | a play's 6 KB ring | while it plays; no radio at all |
+| A stripe read (`svc_notice_stripe`) | 255 B of stack, one open file | when called |
+| A picture on the glass | 7.5 KB of LVGL's own 64 KB pool (eight 480-pixel rows) and ~150 B, plus one open file (~650 B of heap) | for the length of one image draw, each strip it covers |
+| The overlay | its widgets (a few KB of LVGL's pool) and a 200 ms timer | while a notice is up |
+
+So a collection sits ~5.4 KB under the kept session's ~71.7 KB, plus whatever the box's stream
+holds in the receive window while the flash writes (a 4 KB record can take tens of milliseconds to
+program; a play's measured ~6-12 KB is the model): an estimate of 55-60 KB for `int_min` at
+`notice-fetch`, at or above a play's ~54 KB — not yet measured. The board measures it:
+`notice.fetch.heap_before` / `heap_ready` / `heap_low`, and `int_min_at` names the phase
+(`notice-mount`, `notice-fetch`, `notice-state`, `notice-sound`). App: 1,992,656 → 2,054,080 B
+(+60 KB, littlefs most of it; 51% of the slot free).
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_notice` | `jn1.c` (pure: the incremental JN1 reader, the stripe decoder, strict UTF-8), `notice_logic.c` (pure: the pickup's query, the paths, the owed states' list and backoff, the hide and answer-window clocks, the file names), `notice_store.c` (the files, POSIX on the mount: part file, commit by rename, the head's words, a stripe, the PCM), `svc_notice.c` (the queue between the main and UI tasks, the fetch, the states, the sweep, the `notice` snapshot section and `notice=` note; the fake queue is gone and `svc_notice_fake_push` writes a real file), `esp/notice_port_esp.c` (littlefs at `/notice`, NVS, the lock), `notice_port_fake.c` (a temporary directory on the host and in the sim). |
+| `app_api` | `notice_t` carries the box's limits (sender 32, title 60, body 300, a choice 16 bytes) and the notice's hide, picture and sound facts; `svc_notice_on_glass`, `svc_notice_shown_for`, `svc_notice_stripe`, `svc_notice_pic_*`, `svc_notice_sound`, `svc_notice_replay`. |
+| `svc_audio` | `TK_KIND_NOTICE`, `svc_audio_notice_play` / `svc_audio_notice_stop` / `svc_audio_notice_active`. |
+| `shell` | `notice_view.c` (pure, host-tested: the colours, the hint, the countdown, which picture view, the night rule, the speaker row's line), `notice_overlay.c` (draws it, the picture decoder, the 200 ms refresh, the taps); `shell_core.c`: KEY over a notice's sound stops it; the snapshot's `shell.notice_view`. |
+| `ui_kit`, `app_clock` | The corner badge at 56 px. |
+| `sim/` | `sim_notice.c` sends notices as the box does (a JN1 stream with a picture and a sound through the panel's own collection path); states `notify-info`, `notify-question`, `notify-question-sound`, `notify-picture`, `notify-night`, `notify-night-shown`, `notify-night-question`, `notify-banner`, `notify-audio`, `notify-picture-turned`; `--touch` taps a question, a plain notice, the speaker row and an answer. |
+| `main` | `notice_link.c` (the collection, read straight into the record buffer, and the state POSTs); the pickup's query and `X-Notice` (`dbg_link.c`, `box_http.c`); the notice sound from its file (`talk_link.c`); the mount before the UI (`main.c`); the UI task's pass (`ui_task.c`). |
+| `sdkconfig.defaults` | littlefs: one partition, 128 B read and program units, 256 B caches, a 32 B lookahead, no mtime. |
+| `host/` | The reader against every fixture in `backend/tests/fixtures/jpanel_notice/` in nine splits, its pixels and PCM by SHA-256 against `vectors.json` (`sha256.c` is the suite's own); torn streams, a bad END count, a stripe that overflows or falls short, records out of order and the rest of `decode()`'s refusals; the service end to end through real files: arrival, `shown`, an answer, a failed POST retried, the torn stream fetched again, `hide_s`, the answer window, four open, an outage that never loses an answer, a reboot. |
+
+### Debugging it
+
+- `notice`: `queued` and `queue` (each notice's `n`, `id`, `flags`, `shown`, `age_s`, `hide_s`,
+  `stripes`, `audio_ms`), `head` (its `n`, `id`, `from`, `title`, `choices`, `flags`), `fs`
+  (`mounted`, `total_kb`, `used_kb`, `free_kb`, `mount_heap`), `fetch` (`waiting`, `got`, `torn`,
+  `refused`,
+  `fs_errors`, `retrying`, `refetched`, `lost`, `dup`, `full`, `bytes`, `last_status`, `last_err`,
+  `heap_before`, `heap_ready`, `heap_low`), `state_posts` (`owed`, `fails`, `ok`, `refused`,
+  `retries`, `dropped`, `last_status`), `trash`, and the counts `arrived`, `shown`, `answered`,
+  `dismissed`, `expired`, `lapsed`, `sounds`, `sound_refused`, `chimes`, `restored`, `orphans`,
+  `unreadable`, `stale` (past their window at boot); `report` as before.
+- `shell.notice_view`: what the overlay draws — `plain`, `question`, `banner`, `picture`,
+  `night-picture` or `none`.
+- `audio.kind` says `notice` while a notice's sound plays.
+- Telemetry:
+  `notice=q:N,fs:ok|off|failed,got:N,torn:N,bad:N,lost:N,st:<ok>/<failed>,owed:N,last:<status>`.
+
+```sh
+scripts/debug-connect.sh panel-notify c6 "Run the cleanup now?" --body "Frees 38 GB." \
+    --choice Yes --choice No --hide 30
+scripts/debug-connect.sh panel-cmd c6 snapshot                 # notice, audio, system.int_min_at
+```
+
+### What to check on the glass
+
+1. **The first boot formats `storage`.** A snapshot: `notice.fs.mounted` true, `total_kb` ~3840,
+   `mount_heap` about 1 KB.
+2. **The box takes notices.** `panel-notify c6 "Hello"` answers 202 (not `no_notice_surface`); the
+   notice is on the glass within a pickup or two with its 20 s line draining; left alone it hides
+   itself and the command prints `expired`; tapped anywhere, `dismissed`.
+3. **A question.** With `--choice Yes --choice No`: the tap comes back as `answered: Yes`; a tap on
+   its words instead hides it and prints `dismissed`. With `--hide 10` and no tap: `expired`.
+4. **A sound.** With `--say "Hello from the box"`: it plays once as the notice appears with the
+   row filling, then Play again; a tap on the row plays it again; KEY while it plays stops it.
+5. **A picture** (`--image` a PNG): drawn full-screen with no body, as a banner with one; tilt the
+   panel: it turns. `fetch.heap_low` says what collecting it cost, `system.int_min_at` what drawing
+   it did.
+6. **At night** (Settings → Notifications → Refuse during night hours off, then a notice inside the
+   night clock's hours): dim, in the night colour, a picture behind Show picture.
+7. **A reboot with a notice up** (`panel-cmd c6 reboot --confirm`): it comes back (`restored: 1`)
+   with the rest of its window; past its window it does not (`stale: 1`).
+8. **An outage.** Answer a question with Wi-Fi off (Settings → Disconnect), then Connect: the
+   answer still reaches the box.
+
+## What 0.0.20 adds: a debug screenshot's low named as its own
+
+After 0.0.19 booted, `system.int_min` read 57.9 KB at `post`; after a test notice and a
+`panel-shot` it read **50,972 B at `pickup`**, under 0.0.18's 56-60 KB. Measured on the board on
+2026-10-13, from a reboot (`panel-cmd c6 reboot --confirm`, the one way to reset the mark), one
+step at a time:
+
+| Step | `int_min` | `int_min_at` | `int_free` |
+| --- | --- | --- | --- |
+| Booted, 56 s | 60,980 | `post` | 69,544 |
+| Two minutes of idle pickups | 57,656 | `pickup` | 69,564 |
+| One `panel-shot` | **51,448** | `pickup` | 69,564 |
+| One plain test notice, on the glass | 51,448 | `pickup` | 69,564 (`fetch.heap_low` 62,584) |
+| The same, hidden (`expired`) | 51,448 | `pickup` | 69,552 |
+
+So the low was the **screenshot**, ~6.2 KB under the idle pickups' — not the pickup, not
+`X-Notice`, not the overlay (its widgets live in LVGL's own pool) and not littlefs (`mount_heap`
+1,048 B, there from boot). The screenshot is answered inside `dbg_link_poll`, which the main loop
+names `pickup`, so the capture's cost read as the pickup's: its stream opens a fresh session and
+then holds the 8 KB chunk pair while the radio's send queue fills, with Wi-Fi power save off.
+That path is unchanged since 0.0.9; 0.0.19's own permanent cost is ~1.6 KB (the mount and
+552 B of statics), so on 0.0.18 a screenshot would have read ~53 KB too.
+
+It is debug-only: nothing in normal use takes a screenshot, and 51 KB is above the ~45 KB the
+memory notes treat as the line. Shrinking it would mean smaller chunks against the capture's 2 s
+ceiling, so this image changes only the name: **a debug command's reply is its own phase** —
+`screenshot` for the capture's stream, `answer` for every other command's (a snapshot's 6 KB
+POST) — and `pickup` names the GET alone (`dbg_answer_phase`, host-tested). A low at
+`@screenshot` says a debug session took one; a low at `@pickup` or anything else is the panel's
+own. App: 2,054,352 → 2,054,464 B; only the app image and its sum move in `dist/`.
+
+### What to check on the glass
+
+1. After the update, idle pickups and a snapshot or two: `int_min_at` reads `pickup`, `answer` or
+   `post`, at about 0.0.19's 57-61 KB.
+2. One `panel-shot`: `int_min` ≈ 51 KB at **`screenshot`**.
+
+## What 0.0.21 adds: Listen on replies, Load earlier, settings from the PWA
+
+Three features from the boards the owner approved on 2026-10-13 (`docs/mocks/jpanel-c6/`, Listen,
+History and PanelSettings), with the owner's four answers, and the folded steps line asked for the
+same day.
+
+### On the glass
+
+- **Listen.** Every finished Jerv or Dave reply carries a 56 px speaker button, even with Read
+  aloud on (owner answer 1). A tap asks the box to speak that reply's **full** text: "Starting… ·
+  tap to stop" while the box synthesises, then a ring filling with how much of the text has been
+  spoken and the elapsed time. A tap on it, KEY or BOOT stops it. One reply speaks at a time: a tap
+  on another stops the first and starts it. While a turn runs the buttons are dimmed, and a tap says
+  "Listen waits for this answer". A reply being read aloud as it arrives shows the same playing
+  state on its own button, so the one control stops either.
+- **Load earlier.** A thread opens on its newest messages. When the box has more, the top row is
+  "Load earlier · N more"; a tap fetches ten older ones (a spinner in the row while it waits) and
+  the message that was at the top stays where it was. The window holds **at most 20 messages**
+  (owner answer 3): past that the newest drop and a "Newer messages · N more" row at the bottom
+  fetches them back ten at a time. At the true start the top row is "Start of conversation · <when>".
+  A new KEY message, or closing the thread, jumps back to the newest. This replaces 0.0.15's
+  "Earlier messages are in the app" chip, in Jerv's and Dave's threads and in the twins' threads.
+- **Settings from the PWA.** The display panel's card in the PWA (jpanel → Panels) has Clock,
+  Notices, and Screen and sound: the night clock and its hours and colour, the date under the time,
+  the zone; accept notices, refuse at night, the chime; brightness, volume, read aloud, auto-rotate.
+  Mic gain and the IMU axes stay in the debug console. **The panel's last report wins** (owner
+  answer 2): a change waits on the box only while the panel still reports the value it was asked
+  over, and is dropped if the panel reports anything else. Every setting stays settable at the
+  glass, the night colour included (owner answer 4).
+- **Three or more tool steps fold to two lines** (owner request, 2026-10-13). Under a running turn
+  with one or two steps the list is unchanged. From the third, line 1 is "✓ N tools used" (every
+  call started, the running one included) and line 2 is the running step with its spinner, or
+  "◌ Thinking… 0:37" between tools. The same two lines stay once the answer arrives.
+
+### The protocol
+
+- **`GET {api}/endpoint/convo/{agent}/speech/{turn_id}`** speaks one stored reply as a JT2 stream:
+  PCM groups, each preceded by a new **SPOKEN** record (`0x09`: from u16, to u16, the text's
+  length u32) that says which characters the group covers, which is what fills the ring. It ends
+  with END, or END failed when nothing could be spoken. It returns 404 for anything that is not this
+  owner's assistant turn, and 503 `tts_unavailable` with no voice. The panel learns a reply's turn
+  id from a new **IDS** record (`0x0A`: asked u64, answer u64) at the end of a live turn, and from
+  `…/messages` and `…/history`, which now carry ids.
+- **`GET {api}/endpoint/convo/{agent}/history?before=|after=&limit=`** and **`GET
+  {api}/endpoint/messages/{device}/history?before=|after=&limit=`** page at most ten messages either
+  side of a message id, inside 4 KB, with how many are left `older` / `newer` and `start_at` at the
+  true start. Jerv's and Dave's ids are the box's turn numbers; a twin's are her messages' uuids.
+- **The pickup reports the settings** the PWA shows that the notice switches do not already carry
+  (`&no=…&nk=…&sd=…&br=…&vo=…&ra=…&ar=…`, `settings_sync_query`). A pending change answers the
+  pickup with **`X-Panel-Settings: <version>`**; the main loop then fetches **`GET
+  {api}/endpoint/panel-settings`** (`{"v":7,"s":{"br":[60,50],…}}`: each value and the value it was
+  asked over) and the UI task applies each change through `svc_settings` (which clamps) only while
+  the setting still holds that old value. The next report tells the box, which settles or drops
+  each. A version still signalled after a fetch is fetched again no sooner than 15 s.
+
+### The memory
+
+| | Internal RAM | When |
+| --- | --- | --- |
+| Static (`.data` + `.bss`) | **+4,304 B** (153,808 → 158,112 B against 0.0.20) | always: `app_thread`'s drawn rows for 20 messages (+1,824 B over its two instances), `svc_convo`'s request queue now carrying a history path (+1,396 B), `main`'s settings fetch body (514 B) and the pickup's longer query (+707 B), `svc_messages`'s per-thread counts and the window pointer (+200 B), Listen's marks and ids in `svc_audio` (+104 B), the convo views' Listen state (+72 B) |
+| `msg_t` | +4 B each (the box's id), inside the existing message stores | always |
+| The history window | ~4.3 KB of heap: 20 entries (~36 B) and a 3.5 KB text arena | only while a thread is paged; freed when it is back at its newest |
+| A page arriving | ~7 KB of heap: the 4 KB body (main task, until the UI task has applied it), then ten texts, a scratch text and the fill state (UI task) | the length of one fetch and apply |
+| Listen | a play's 6 KB ring and its stream session; no recording buffer | while it speaks, like any reply |
+| Settings from the PWA | none beyond the static body above | a fetch is one short GET |
+
+**Why 20 messages.** The window has to fit the drawn thread and not the box's history: 20 bubbles
+of up to 256 bytes each are the most the thread view has ever drawn, and the sim's worst state
+(`jerv-history-capped`, 20 long messages and both rows) peaks LVGL's pool at 54,048 B with 64-bit
+pointers, inside the device's 64 KB with 32-bit ones. Ten a page is what fits the 4 KB body. The
+window is the only new lasting heap, and it exists only while someone is reading back. The app is
+2,054,464 → 2,072,112 B (51% of the slot free). Bootloader, partition table and `ota_data_initial`
+are byte-identical to 0.0.20's: this is an app-only OTA.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_messages` | `hist_logic.c` (pure: the 20-message window, its text arena, what it drops and counts, the rows' words); the fake service's window ops and window-aware reads; `svc_messages_hist`. |
+| `svc_convo` | `convo_wire.c`: the history path and the page parser; `svc_convo_hist_open/earlier/newer/live` and `CONVO_RQ_HISTORY` on the request queue. |
+| `svc_audio` | `TK_KIND_SPEAK`, the SPOKEN and IDS events, `svc_audio_speak` / `svc_audio_speech`, one queued Listen after the playing one. |
+| `svc_settings` | `settings_sync.c` (pure: the report, the header, when to fetch, the parse, apply-if-unchanged). |
+| `ui_kit` | `ui_listen_set` (the button, ring and caption), `ui_hist_row`, `ui_hist_start`. |
+| `convo`, `app_thread` | Listen on each reply, the history rows and the anchor that keeps a message in place, the folded steps (`convo_work_lines`, `convo_tools_used`). |
+| `main` | `talk_link.c` (the Listen exchange; SPOKEN and IDS), `convo_link.c` (the history fetch), `set_link.c` (the settings fetch and apply), `dbg_link.c` and `box_http.c` (the report and `X-Panel-Settings`). |
+| `sim/` | A fake box answering history pages and speech; states below. |
+| `host/` | The window and its arena, the page parser and paths, Load earlier end to end, Listen one at a time and while a turn runs, the new records, the folded steps, and the settings sync against a glass change. |
+
+### Debugging it
+
+- `audio.kind` says `speak` during a Listen; `audio.listen_id` and `audio.listens`.
+- Each thread under `messages`: `older` (left out when 0) and, while it is paged back, `paged`
+  as `"<messages>/<older>/<newer>/<text bytes>"`; an open Jerv or Dave thread's `history` as
+  `"<top row>:<older>/<newer>"` and `speaking` (the reply Listen is on). Kept terse on purpose:
+  the snapshot's answer is capped at 6 KB (`OUT_MAX`), and these add ~100 B at most (~70 B while
+  nothing is paged) — measured in the sim's `session` snapshot, which is 5,287 B whole.
+- Telemetry `sync=v:N,fetch:N,applied:N,kept:N,last:<status>`: the last version fetched, the
+  changes applied, and the ones kept as set at the glass.
+
+### What to check on the glass
+
+1. **Listen** on an old Jerv reply: "Starting…", then the ring fills to the end with the whole
+   reply read. Tap mid-way: it stops. KEY and BOOT stop it the same way.
+2. Ask Jerv something and tap an older reply's Listen while it works: "Listen waits for this
+   answer".
+3. **Load earlier** in a long Jerv thread: ten more each tap with the top message held still; at
+   30 loaded the newest drop and "Newer messages" appears; KEY jumps back to the newest.
+4. In the PWA, change brightness: "Sending to panel…", then "On the panel" within a pickup or two,
+   and the glass is brighter. Change it at the glass while the PWA's change waits: the glass's
+   value stays and the PWA shows it.
+5. A Jerv question that uses four tools: two lines, the count and the running step.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -1624,6 +2152,14 @@ The same protocol as the S3 panels, so the box needs no new route for it:
   **`POST …/send`** (since 0.0.16) are the owner's voice post with each twin's panel: her thread, a
   message played, its "played", and a voice message to her; the debug pickup's `X-Jpanel-Post`
   says when to fetch the threads ("What 0.0.16 adds").
+- **`GET {api}/endpoint/notice/next`**, **`GET …/{id}/body`** and **`POST …/{id}/state`** (since
+  0.0.19) are the push notices: the oldest one waiting as a JN1 stream, the same stream again
+  after a torn one, and what became of it on the glass; the debug pickup carries the notice switches
+  (`&na=…&tz=…`) and its answer `X-Notice` says when one waits ("What 0.0.19 adds").
+- **`GET {api}/endpoint/convo/{agent}/speech/{turn_id}`**, **`GET …/history`** and **`GET
+  {api}/endpoint/messages/{device}/history`** (since 0.0.21) are Listen and Load earlier; **`GET
+  {api}/endpoint/panel-settings`** is the PWA's pending settings, fetched when the pickup's answer
+  carries `X-Panel-Settings` ("What 0.0.21 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -1734,8 +2270,10 @@ components/
                     (PCF85063 + the box's clock), svc_net, svc_box and svc_audio (ES8311 + ES7210,
                     the talk to Jerv and Dave, the alarm sounds), svc_siblings (the twins' panels'
                     names, NVS-cached), svc_alarms (the box's alarms, NVS-cached), svc_convo (an
-                    agent's conversations) and svc_post (the voice post with the twins) are real: the device builds their esp/ file and pure logic, the sim and host
-                    the top-level files
+                    agent's conversations), svc_post (the voice post with the twins), svc_orient
+                    (auto-rotate from the QMI8658, 0.0.18) and svc_notice (push notices on
+                    `storage`, 0.0.19) are real: the device builds their esp/ file and pure
+                    logic, the sim and host the top-level files
   convo/            the one conversation view every agent's app instantiates (Jerv, Dave)
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
   app_jerv/ app_thread/ app_clock/ app_settings/ app_minecraft/
@@ -1801,7 +2339,13 @@ person's thread since 0.0.15), from 0.0.15 `jerv-menu`, `jerv-recent`, `jerv-rec
 `jerv-recent-end`, `jerv-recent-empty`, `jerv-switched`, `jerv-new`, `dave-menu` and
 `dave-recent` (the box's conversations answered by the sim from the mock's sessions), from 0.0.16
 `quorra-playing`, `quorra-sending`, `quorra-sent`, `quorra-new`, `home-new` and `clock-new`, and
-from 0.0.17 `quorra-mid` and `quorra-heard` (the
+from 0.0.17 `quorra-mid` and `quorra-heard`, from 0.0.18 `home-turned` and `clock-upside-down` (the
+panel turned: the PNG is the glass, each strip turned the device's way), `settings-no-imu`, `calib`,
+`calib-missed` and `calib-saved`, from 0.0.21 `jerv-listen`, `jerv-listen-starting`,
+`jerv-listen-playing`, `jerv-listen-working`, `dave-listen`, `jerv-reply-reading`,
+`jerv-history`, `jerv-history-loading`, `jerv-history-loaded`, `jerv-history-capped`,
+`dave-history-start`, `quorra-history`, `quorra-history-loaded`, `jerv-steps-two`,
+`jerv-steps-four`, `jerv-steps-four-thinking` and `settings-from-pwa` (the
 twins' threads answered by the sim as `api/panel_messages.py` does, with placeholder names and
 words — her message playing, a voice message to her on its way and filed, a new one live in her
 thread, on her tile's badge and on the clock face's), and from
@@ -1860,7 +2404,13 @@ The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB 
 +768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+14 KB; 53% of the slot
 free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget). 0.0.17: app
 1.98 MB (+2.7 KB), DIRAM static +592 B, and a play's 16 KB ring taken after its connection's
-handshake rather than before it ("What 0.0.17 adds", The memory).
+handshake rather than before it ("What 0.0.17 adds", The memory). 0.0.18: app 1.99 MB (+12.7 KB;
+52% of the slot free), DIRAM static +304 B, a play's ring 6 KB instead of 16, and a 2.5 KB piece
+buffer only while the panel is on its side ("What 0.0.18 adds", The memory budget). 0.0.19: app
+2.05 MB (+60 KB, littlefs most of it; 51% of the slot free), DIRAM static +552 B, ~1 KB for the
+mounted `storage`, ~5.4 KB only while a notice is being collected and 7.5 KB of LVGL's pool only
+while a picture is drawn ("What 0.0.19 adds", The
+memory).
 
 ## Recovery
 

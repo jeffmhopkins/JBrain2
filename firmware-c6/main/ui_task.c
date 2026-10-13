@@ -20,17 +20,21 @@
 #include "shell.h"
 #include "svc_alarms_drv.h"
 #include "svc_audio_drv.h"
+#include "svc_calib.h"
 #include "svc_convo_drv.h"
 #include "svc_display.h"
 #include "svc_display_drv.h"
 #include "svc_messages_fake.h"
+#include "svc_notice_drv.h"
 #include "svc_notice_fake.h"
+#include "svc_orient_drv.h"
 #include "svc_post_drv.h"
 #include "svc_rtc_drv.h"
 #include "svc_settings.h"
 #include "svc_settings_drv.h"
 #include "svc_siblings_drv.h"
 #include "svc_touch.h"
+#include "set_link.h"
 
 static const char *TAG = "ui";
 
@@ -102,6 +106,11 @@ static void ui_loop(void *arg)
     svc_convo_init();
     svc_post_init();
     svc_notice_init();
+    /* The owner's touch calibration from NVS into the touch task's mapping, and the panel's
+       rotation into it as the glass actually turns (0.0.18): a turn the display could not take
+       for memory leaves touch where the picture is. */
+    svc_calib_custom();
+    svc_display_on_rotated(svc_touch_set_rotation);
     char err[96];
     shell_set_pointer(touch_feed);
     if (!apps_register(NULL) || !shell_start(err, sizeof err)) stop("shell");
@@ -112,17 +121,24 @@ static void ui_loop(void *arg)
     for (;;) {
         const uint32_t now = now_ms();
         svc_rtc_poll();
+        /* What the PWA asked for (0.0.21), before the settings are saved in this same pass. */
+        set_link_ui_service();
         svc_settings_service(now);
         svc_audio_service();
         svc_siblings_service();
         svc_convo_service();
         svc_post_service();
+        /* A notice arrived (NOTICE_ARRIVED), hid itself (`hide_s`) or lapsed: before the shell, so
+           the overlay follows in this same pass. */
+        svc_notice_service();
         /* A twin's new message chimes once, never over a talk, a reply, a play or an alarm. */
         if (svc_post_take_chime(svc_audio_talking() || svc_audio_replying() ||
                                 svc_audio_playing() || svc_audio_ringing()))
             svc_audio_chime();
         /* Before the shell: an alarm due now is raised and taken over in this same pass. */
         svc_alarms_service(now);
+        /* At most 8 Hz of it reads the tilt sensor; a turn is drawn from the next frame. */
+        svc_orient_service(now);
         dbg_sys_crumb(ST_PUMP);
         shell_pump();
         dbg_sys_crumb(ST_RENDER);

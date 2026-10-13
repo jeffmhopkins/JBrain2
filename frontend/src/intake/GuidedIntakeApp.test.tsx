@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatEvent } from "../agent/types";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { GuidedIntakeApp } from "./GuidedIntakeApp";
 
 // Pin the URL state; tests override `secret` to model a missing/invalid link.
@@ -72,5 +72,16 @@ describe("GuidedIntakeApp", () => {
     vi.spyOn(api, "intakeRedeem").mockRejectedValue(new Error("401"));
     render(<GuidedIntakeApp />);
     await waitFor(() => expect(screen.getByText(/can't be opened/)).toBeInTheDocument());
+  });
+
+  it("tells a signed-in owner to use a private window instead of signing them out", async () => {
+    const replace = vi.spyOn(window.history, "replaceState");
+    vi.spyOn(api, "intakeRedeem").mockRejectedValue(new ApiError(409, "signed in as the owner"));
+    render(<GuidedIntakeApp />);
+    expect(await screen.findByText(/signed in as the owner/)).toBeInTheDocument();
+    expect(screen.getByText(/private window/)).toBeInTheDocument();
+    expect(screen.queryByText(/can't be opened/)).not.toBeInTheDocument();
+    // The secret stays in the URL so the owner can copy it into the private window.
+    expect(replace).not.toHaveBeenCalled();
   });
 });

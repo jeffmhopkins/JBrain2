@@ -13,9 +13,17 @@ CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("gener
 NOW = datetime(2026, 6, 1, tzinfo=UTC)
 
 
-def item(item_id: str, body: str, *, checked: bool = False, pos: int = 0) -> ListItemInfo:
+def item(
+    item_id: str, body: str, *, checked: bool = False, pos: int = 0, domain: str = ""
+) -> ListItemInfo:
     return ListItemInfo(
-        id=item_id, body=body, checked=checked, position=pos, source_note_id=None, created_at=NOW
+        id=item_id,
+        body=body,
+        checked=checked,
+        position=pos,
+        source_note_id=None,
+        created_at=NOW,
+        domain=domain,
     )
 
 
@@ -169,6 +177,18 @@ async def test_add_item_found_and_missing() -> None:
         {"list_id": "gone", "body": "eggs"}, CTX
     )
     assert "in scope" in missing
+
+
+async def test_item_writers_tag_the_list_domain() -> None:
+    """The chat-share check reads the `[domain]` tag once the chat is re-scoped."""
+    meds = item("i2", "metformin 500mg", domain="health")
+    added = await handlers(FakeLists(item_result=meds))["add_list_item"](
+        {"list_id": "L2", "body": "metformin 500mg"}, CTX
+    )
+    assert "Added 'metformin 500mg' [health] id=i2." in added
+    checked = item("i2", "metformin 500mg", checked=True, domain="health")
+    out = await handlers(FakeLists(item_result=checked))["check_list_item"]({"item_id": "i2"}, CTX)
+    assert "Checked off 'metformin 500mg' [health]." in out
 
 
 async def test_add_item_needs_list_and_body() -> None:
