@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-13 (/dave with cheats off; Dave's welcome lines 6 s apart; the Tricorder's equip pop-up and once-a-session hint; villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
+> **Status:** Living · **Last verified:** 2026-10-13 against the code (rows added, not yet run on the box: /dave with cheats off; Dave's welcome lines 6 s apart; the Tricorder's equip pop-up and once-a-session hint; villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
