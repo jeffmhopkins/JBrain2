@@ -15,6 +15,7 @@ mint that would publish firewalled-domain, mail or memory reads (security plan S
 
 from __future__ import annotations
 
+import re
 import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -64,9 +65,16 @@ _LINK_FIELDS = "id, session_id, created_at, last_viewed_at, view_count"
 # a firewalled domain in this map, so a new location tool can't slip past it.
 SENSITIVE_TOOLS: dict[str, str] = {
     "archivist_memory_read": "mail",
+    "archivist_memory_write": "mail",
     "memory_read": "memory",
     "memory_edit": "memory",
     "recall": "memory",
+    "remember": "memory",
+    "prefs_read": "memory",
+    "prefs_write": "memory",
+    # Its chart is tagged `health` only when every point is, and finance or mixed readings
+    # read as `general` with no sources, so the domain can't be told from the step.
+    "chart_measurements": "measurements",
     "read_labs": "health",
     "read_encounters": "health",
     "current_location": "location",
@@ -82,6 +90,15 @@ SENSITIVE_TOOLS: dict[str, str] = {
     "where_is": "location",
     "where_was_i": "location",
 }
+
+
+# Readers whose step carries no sources: each row's domain is only in the result text, as
+# `[health]` (appointmenttools / listtools formatters). Scanning it keeps a grocery list
+# shareable without a second tap.
+DOMAIN_TAGGED_TOOLS = frozenset(
+    {"read_appointments", "read_appointment", "read_lists", "read_list"}
+)
+_DOMAIN_TAG = re.compile(r"\[(" + "|".join(sorted(SENSITIVE_SCOPES)) + r")\]")
 
 
 def _tool_reason(name: str) -> str | None:
@@ -103,6 +120,9 @@ def _collect_reasons(node: Any, reasons: set[str]) -> None:
             reason = _tool_reason(name)
             if reason is not None:
                 reasons.add(reason)
+            summary = node.get("summary")
+            if name in DOMAIN_TAGGED_TOOLS and isinstance(summary, str):
+                reasons.update(_DOMAIN_TAG.findall(summary))
         for value in node.values():
             _collect_reasons(value, reasons)
     elif isinstance(node, list):

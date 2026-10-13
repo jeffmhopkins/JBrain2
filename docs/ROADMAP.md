@@ -580,7 +580,7 @@ networks, and an SSRF pivot through the reader/byparr browsers. S1 ✅
 (socket re-validation, panel vs phone keys, hashed pairing codes + debug-SQL secrets, real client IP, Minecraft log anchoring). S4 ✅
 (cold red team: a chat share that holds firewalled, mail or memory reads needs the owner's confirm,
 decided by the server from the stored turns; opening an intake link no longer signs the owner out;
-jcode refuses an empty control token). S5 ✅
+jcode and jlaunch refuse an empty control token). S5 ✅
 (view-scope helpers and the who-saw-whom write pinned to the caller). *Residuals* (the plan's
 "Out of scope / recorded" list, in full there):
 - **Wall (F18).** `deploy/wall/serve.py` is unauthenticated on `${BRAIN_HOST_BIND:-0.0.0.0}:8800`:

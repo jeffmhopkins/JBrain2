@@ -778,8 +778,9 @@ services:
       dockerfile: jlaunch/Dockerfile
     restart: unless-stopped
     environment:
-      # Bearer token the api presents on every control call (fail-closed: no token, the
-      # service refuses to start). Shared with the api via JBRAIN_JLAUNCH_TOKEN.
+      # Bearer token the api presents on every control call (fail-closed: an unset or
+      # empty token and the service refuses to start). Shared with the api via
+      # JBRAIN_JLAUNCH_TOKEN.
       JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}
       JLAUNCH_WORKSPACE_ROOT: /work
       JLAUNCH_STATE_ROOT: /work/.state

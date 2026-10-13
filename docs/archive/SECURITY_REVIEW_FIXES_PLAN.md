@@ -379,17 +379,23 @@ S4's PR.
   after reading a health note, or one that ran Gmail or memory tools, minted a link with no
   warning. The server now decides: `chat_shares.share_sensitivity` walks every stored turn's
   `tools` for a source/entity `domain` in the firewalled set (`reflexion.SENSITIVE_SCOPES`),
-  any `gmail_*` step, and the steps listed in `SENSITIVE_TOOLS` (memory and archivist-memory
-  reads, `recall`, the medical-record readers, and every location tool — a test keeps each
-  `.tool` that declares a firewalled domain in that map), plus the session's current
-  firewalled scopes (later turns show on a live link). `GET /sessions/{id}/shares/sensitivity`
+  any `gmail_*` step, and the steps listed in `SENSITIVE_TOOLS` (agent and archivist memory
+  reads and writes, `recall`, `remember`, the standing-rules `prefs_*`, the medical-record
+  readers, every location tool, and `chart_measurements`, whose view says `general` for a
+  finance or mixed chart), plus the appointment and list readers when their result text tags
+  a row `[health]`/`[finance]`/`[location]` (their only domain marker, so a grocery list stays
+  one tap), plus the session's current firewalled scopes (later turns show on a live link).
+  Two tests keep the map honest: every `.tool` declaring a firewalled domain is in it, and
+  every reader-shaped tool (`read_*`, `*_read`, memory/prefs/recall/remember) is classified
+  as sensitive, domain-tagged, or explicitly harmless. `GET /sessions/{id}/shares/sensitivity`
   returns the reasons, and `POST /sessions/{id}/shares` refuses with 409 (and the reasons)
   unless the body says `confirm_sensitive: true`. The sheet warns from the server's answer
   with its existing second tap, which is what sends the confirm; a 409 the sheet didn't
-  expect re-arms it with the reasons. *Keeps working:* a harmless chat mints from a bare
+  expect re-arms it with the reasons, and a reason the sheet has no word for shows as its code. *Keeps working:* a harmless chat mints from a bare
   POST; a confirmed share serves the chat in full, tool steps included, as before.
-  *Tests:* detection unit cases (rescoped source, current scope, mail, memory, sourceless
-  readers, nested and malformed shapes, the `.tool` guard); the API refuses then accepts a
+  *Tests:* detection unit cases (rescoped source, current scope, mail, memory and prefs,
+  sourceless readers, tagged appointment/list rows vs a general list, the measurement chart,
+  nested and malformed shapes, both guards); the API refuses then accepts a
   re-scoped health chat and a Gmail chat, and mints a harmless one unconfirmed; the sheet
   warns from server data, sends the confirm, and recovers from a 409.
 - **S4.2 Opening an intake link signs the owner out.** The intake page redeems on load, and
@@ -401,14 +407,18 @@ S4's PR.
   page would have loaded and then failed on its first turn. *Keeps working:* a stranger's
   redeem, cookie and TTL-capped max-age. *Tests:* owner cookie kept, `opens_used` still 0,
   then the same link redeems for a stranger; the page's owner state.
-- **S4.3 Empty control tokens.** Compose passes `JCODE_TOKEN: ${JCODE_TOKEN:-}`, so an unset
-  key reached the jcode ctl as `""`, which started and admitted `Bearer ` despite comments
-  saying it would refuse to start. The ctl now refuses an empty token (`min_length=1`). No
-  length floor: every box with code mode on has had a token minted since the updater's
-  self-heal (June 2026; `jcode-setup.sh` before it), but a hand-set short one can't be ruled
-  out, and a floor would stop it with no terminal to fix it. The supervisor is **not**
+- **S4.3 Empty control tokens.** Compose passes `JCODE_TOKEN: ${JCODE_TOKEN:-}` and
+  `JLAUNCH_TOKEN: ${JLAUNCH_TOKEN:-}`, so an unset key reached the ctl as `""`, which started
+  and admitted `Bearer ` despite comments saying it would refuse to start. Both ctls now
+  refuse an empty token (`min_length=1`). That is safe because neither can be empty after an
+  update: `update-inner.sh` backfills a missing or empty `JCODE_TOKEN` whenever code mode is on
+  (since June 2026; `jcode-setup.sh` before it) and a missing or empty `JLAUNCH_TOKEN`
+  unconditionally (since August 2026; `install.sh` mints one too), both before the stack's
+  `up`. No length floor: a hand-set short token can't be ruled out, and a floor would stop it
+  with no terminal to fix it. The supervisor is **not**
   changed (recorded below); its false "refuses to start" comments are corrected.
-  *Tests:* empty `JCODE_TOKEN` in the environment refused; a minted 64-hex token starts.
+  *Tests:* for each ctl, an empty token in the environment is refused and a minted 64-hex
+  token starts.
 - **S4.4 The wall serves the owner's turn text (F18, amended).** Recorded, not fixed; see
   below. The wall's docstring, which said it carried no user data, is corrected.
 

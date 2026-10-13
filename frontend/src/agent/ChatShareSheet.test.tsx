@@ -76,6 +76,16 @@ describe("ChatShareSheet", () => {
     await waitFor(() => expect(mint).toHaveBeenCalledWith("s1", true));
   });
 
+  it("shows a reason it has no label for as its code rather than an empty warning", async () => {
+    vi.spyOn(api, "chatShares").mockResolvedValue([]);
+    vi.spyOn(api, "chatShareSensitivity").mockResolvedValue(["contacts", "measurements"]);
+    const mint = vi.spyOn(api, "mintChatShare").mockResolvedValue({ ...LINK, token: "tok" });
+    render(<ChatShareSheet session={chat()} onClose={vi.fn()} />);
+    expect(await screen.findByText("contacts, Measurement")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Create share link/ }));
+    expect(mint).not.toHaveBeenCalled();
+  });
+
   it("re-arms with the reasons when the server refuses an unconfirmed mint", async () => {
     vi.spyOn(api, "chatShares").mockResolvedValue([]);
     const sensitivity = vi

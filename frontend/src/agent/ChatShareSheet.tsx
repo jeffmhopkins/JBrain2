@@ -20,10 +20,13 @@ const SENSITIVE: Record<string, string> = {
   location: "Location",
   mail: "Email",
   memory: "Memory",
+  measurements: "Measurement",
 };
 
+// A reason this build has no word for still shows, as its code: an empty warning would
+// re-arm the button with nothing said.
 function sensitiveLabels(codes: readonly string[]): string[] {
-  return codes.flatMap((code) => (SENSITIVE[code] ? [SENSITIVE[code] as string] : []));
+  return codes.map((code) => SENSITIVE[code] ?? code);
 }
 
 function when(iso: string): string {
