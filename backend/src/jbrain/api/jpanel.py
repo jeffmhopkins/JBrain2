@@ -1437,10 +1437,12 @@ def _level_voice(pcm: bytes) -> bytes:
     ]
     if not energies:
         return pcm
-    # Voiced: within 20 dB of the loudest frame, so the pauses between words do not drag the
-    # measure down and get boosted with it.
-    floor = max(energies) / 100
-    voiced = [e for e in energies if e >= floor and e > 0]
+    # Voiced: within 20 dB of the 95th-percentile frame, so the pauses between words do not
+    # drag the measure down. The reference is a percentile and the voiced frames are capped at
+    # it, because one bump, cough or click at the microphone must not stand in for the voice
+    # and switch the levelling off for the whole message (review of #1735).
+    ref = sorted(energies)[(len(energies) - 1) * 95 // 100]
+    voiced = [min(e, ref) for e in energies if e >= ref / 100 and e > 0]
     if not voiced:
         return pcm
     rms = math.sqrt(sum(voiced) / len(voiced))

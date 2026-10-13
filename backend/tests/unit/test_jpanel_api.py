@@ -897,6 +897,22 @@ def test_a_raised_peak_is_rounded_off_never_wrapped() -> None:
     assert 22000 < out[800] < 32767 and min(out) > -32768
 
 
+def test_one_loud_click_does_not_switch_the_levelling_off() -> None:
+    """The review of #1735: quiet speech with a bump at the microphone in it."""
+    import array
+
+    clip = array.array("h", _tone(300, seconds=2.0))
+    for i in range(16000, 16100):
+        clip[i] = 30000 if i % 2 else -30000
+    out = array.array("h")
+    out.frombytes(jpanel._level_voice(clip.tobytes()))
+    speech = out[:15000]
+    rms = (sum(x * x for x in speech) / len(speech)) ** 0.5
+    assert rms > 1500, rms
+    # The click itself is rounded off at full scale: never wrapped to the other sign.
+    assert out[16001] > 30000 and out[16000] < -30000
+
+
 def test_silence_and_nothing_pass_through() -> None:
     assert jpanel._level_voice(b"") == b""
     assert jpanel._level_voice(bytes(32000)) == bytes(32000)
