@@ -1,6 +1,6 @@
 # Jeff's jpanel (ESP32-C6-Touch-AMOLED-2.16) — on-glass UI
 
-Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; the steps list, the steady spinner and KEY-outside-starts-new in 0.0.14; the conversation switcher (New and Recent conversations) approved 2026-10-12 and built in 0.0.15; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12 (box side built, panel side next)** · Last verified: 2026-10-12
+Kind: Living (mock set) · Status: **approved; Settings, Clock and KEY routing built in firmware 0.0.8, BOOT held in 0.0.9, Clear chat, real panel names and the Minecraft menu in 0.0.11; the Clock's two-second hold, Jerv's PWA icon and the live status line in 0.0.12; alarms (the list, ringing, and the PWA editor) in 0.0.13; the steps list, the steady spinner and KEY-outside-starts-new in 0.0.14; the conversation switcher (New and Recent conversations) approved 2026-10-12 and built in 0.0.15; notices with a picture, a sound and hide-by-tap-or-time mocked 2026-10-12, re-mocked and approved 2026-10-13 and built in 0.0.19 (box and panel)** · Last verified: 2026-10-13
 
 The owner's own panel's interface, agreed before any of it is drawn by firmware. The
 board is the 480×480 Waveshare C6 (`firmware-c6/`); these files are drawn 1:1 in panel
@@ -60,6 +60,22 @@ panel, the others import it at a fixed `start` state).
   the box turns a send away at once (`409 not_accepting` / `409 quiet_hours` with `until`, or
   `503 offline`), so nothing is held to pop up later — plus a chime switch. Box side:
   `../../plans/JPANEL_C6_PLAN.md` §2.
+- **Notices, as approved 2026-10-13** (boards NotifyInfo, NotifyQuestion, NotifyQuestionSound,
+  NotifyPicture, NotifyNight, NotifyBanner, NotifyAudio, ClockBadge): a **plain notice hides
+  after 20 s** unless its sender picks another time or "until tapped" (the box applies the
+  default); a **question has no default time**. A thin line along the bottom edge drains to the
+  left over the time, and the hint reads "Tap to hide · hides in N s" ("Tap an answer · tap
+  elsewhere to hide" on a question). **A tap anywhere but a button hides any notice, a question
+  too** (the sender reads `dismissed`, no answer), and so does BOOT ("hide notice" above it). A
+  **question may carry a sound**: it plays once as the notice appears, a speaker row shows its
+  progress and then "Play again · 0:05", and a tap on the row plays it again. A **full picture**
+  fills the glass with the sender and the hint as chips; a **banner** sits across the top, up to
+  240 px, the words and answers under it. **At night** (the night clock on and inside its hours)
+  every notice is drawn in the night clock's colour (*"if they are turned on yes they should follow
+  the same color rules"*), and a picture waits behind a **Show picture** button (64 px) until it is
+  asked for. "1 of N", the alarm on top, and the clock face's corner badge — now 56 px, bell and
+  count, never over the time — as before. Hint text is 18 px. Built in firmware 0.0.19; the
+  sim's `notify-*` states are the pictures.
 - **The clock face is never covered** (owner, 2026-10-11): while the giant clock is up, a push
   message or a girl's message does not pop up — it waits as a small badge (bell + count) in
   the top-right corner, drawn in the night-clock colour at night, and opens only when tapped.
