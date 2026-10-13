@@ -1800,10 +1800,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "f1644c136fa45ebf04a38031674250666424c39327884244315552305e71c62e",
         ),
         # The Tricorder's live scan (§M25): free, until a stop or a new waypoint.
+        # v2: `status`, Dave's read of what the scan is finding (the map's scan, §M25).
         "mc_tricorder_scan.tool": (
             "mc_tricorder_scan",
-            1,
-            "9f4a29d138ab482581d479f1fb3844628f6ad482b6cf2ce4994f30e73a3be2c9",
+            2,
+            "52ecc8d3f0703dcadc828a521ea5d42eb314846bac3d05a67257966763e687e8",
         ),
         # v2: no coordinates; a place is only ever where the player is right now.
         "mc_place_save.tool": (
@@ -1881,10 +1882,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         # The map card (§P3): data slots only, the app builds every tile request.
         # v2: `gate` and `beacon` focuses, `beacons` and `gates` overlays (§M26).
+        # v3: the `scan` focus, a player's live Tricorder scan (§M25).
         "mc_show_map.tool": (
             "mc_show_map",
-            2,
-            "41eb296db128df41e72a38a75238cb0cc40ec1944275430c7b44a9852b9bae9f",
+            3,
+            "dc38f0f11f9a877c73941f5d531f930c459ac79a87e4584893e0f866538f6a32",
         ),
         "mc_backups.tool": (
             "mc_backups",

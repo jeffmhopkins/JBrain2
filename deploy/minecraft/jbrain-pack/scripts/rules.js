@@ -389,6 +389,27 @@ export const pickScan = (due, frame) => {
   return pick;
 };
 
+// The scan as the map and Dave see it (the M26 pipe: pack line, sidecar, backend row).
+// `set` when one starts, `found` / `none` when what it shows changes and again every
+// SCAN_HEARTBEAT scans, so a steady target's "found 40 s ago" stays true, and `stop` when it
+// ends. A `found` carries the block and its dimension; the rest carry none.
+export const SCAN_HEARTBEAT = 6; // scans: a minute
+const dimKey = (id) => Object.keys(DIMS).find((k) => DIMS[k] === id) ?? id;
+export const scanEvent = (op, player, scan, target, dimId) => {
+  const ev = { ev: "scan", op, player };
+  if (op === "stop") return ev;
+  Object.assign(ev, { label: scan.label, ids: scan.types });
+  if (op === "found") Object.assign(ev, { dim: dimKey(dimId), x: target.x, y: target.y, z: target.z });
+  return ev;
+};
+
+// Every kept scan after each load (labels only: the targets come with each one's first
+// scan), so a restore, an import or a missed line can't leave the map out of date.
+export const scansSnapshot = (scans) => ({
+  ev: "scans",
+  all: scans.map((s) => ({ player: s.player, label: s.label, ids: s.types })),
+});
+
 // The held Tricorder's line while a scan is on: the waypoint arrow to the last block
 // found, or a line saying there's none within reach.
 export const scanLine = (scan, target, here, view) => {

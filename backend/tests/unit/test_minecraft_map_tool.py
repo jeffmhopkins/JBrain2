@@ -297,3 +297,76 @@ def test_overworld_side_is_eight_to_one() -> None:
     assert mm.overworld_side(41, -58) == (328, -464)
     assert mm.parse_slot("slot3") == 3 and mm.parse_slot(None) is None
     assert isinstance(mm.parse_slot(0), str)
+
+
+SCAN = {
+    "gamertag": "BlockyFox",
+    "label": "diamond",
+    "ids": ["minecraft:diamond_ore"],
+    "state": "found",
+    "found": {"dim": "overworld", "x": 41, "y": -58, "z": -79},
+    "at": 1_791_700_000.0,
+    "set_at": None,
+}
+
+
+@pytest.fixture
+def scanning(box, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """BlockyFox down a mine, scanning for diamond (the scan GUI gate's fixture)."""
+    box["scans"] = {"blockyfox": SCAN}
+    box["where"] = [
+        {
+            "xuid": "2535400000000001",
+            "gamertag": "BlockyFox",
+            "dim": "overworld",
+            "x": 32.4,
+            "y": -52.0,
+            "z": -70.6,
+            "at": 1_791_700_000.0,
+        },
+    ]
+
+    async def read(_s: Any, world: str) -> dict[str, Any]:
+        box["asked"].append(("scans", world))
+        return box["scans"]
+
+    async def latest(_maker: Any, world: str, _ctx: Any = None) -> list[dict[str, Any]]:
+        return box["where"]
+
+    monkeypatch.setattr(mm.livescan, "read", read)
+    monkeypatch.setattr(mm.travel, "latest_positions", latest)
+    return box
+
+
+async def test_a_scan_card_is_centred_on_the_scanner_and_drawn_live(scanning) -> None:
+    out = await _show({"focus": "scan", "label": "blockyfox"})
+    d = out.view.data
+    assert d["focus"] == {
+        "kind": "scan",
+        "label": "BlockyFox",
+        "x": 32,
+        "y": -52,
+        "z": -71,
+        "at": 1_791_700_000,
+    }
+    assert d["center"] == {"x": 32, "z": -71} and d["dim"] == "overworld"
+    assert d["zoom"] == mm.ZOOM_SCAN
+    # The card reads the live players route for the square and the block: players on.
+    assert d["overlays"]["players"] is True
+    assert d["trail"]["player"] == "2535400000000001"
+    assert ("scans", "Castle Hill") in scanning["asked"]
+    assert "mc_tricorder_scan with status" in out
+    assert not _urlish(d)
+    # The chat's own player when no label names one.
+    out = await _show({"focus": "scan"})
+    assert out.view.data["focus"]["label"] == "BlockyFox"
+
+
+async def test_no_scan_or_no_scanner_is_said_not_drawn(scanning) -> None:
+    out = await _show({"focus": "scan", "label": "Mira_P"})
+    assert out.view is None and out.result_brief == "not scanning"
+    scanning["where"] = []
+    out = await _show({"focus": "scan", "label": "BlockyFox"})
+    assert out.view is None and out.result_brief == "not seen"
+    scanning["player"] = None
+    assert "Say whose scan" in await _show({"focus": "scan"})

@@ -25,7 +25,16 @@ from starlette.background import BackgroundTask
 
 from jbrain.api.deps import OwnerDep, SettingsDep, owner_only
 from jbrain.db.session import SessionContext
-from jbrain.minecraft import changelog, markers, sessions, shares, targets, timeline, travel
+from jbrain.minecraft import (
+    changelog,
+    livescan,
+    markers,
+    sessions,
+    shares,
+    targets,
+    timeline,
+    travel,
+)
 from jbrain.minecraft import client as mc
 
 router = APIRouter(prefix="/minecraft", dependencies=[Depends(owner_only)])
@@ -565,13 +574,22 @@ async def players_view(
     if ctx is None:
         players = await travel.latest_positions(_maker(request), folder)
         locks = await targets.for_world(_maker(request), folder)
+        scans = await livescan.for_world(_maker(request), folder)
     else:
         players = await travel.latest_positions(_maker(request), folder, ctx)
         locks = await targets.for_world(_maker(request), folder, ctx)
+        scans = await livescan.for_world(_maker(request), folder, ctx)
     for p in players:
         p["online"] = p["xuid"] in online
         # Where Dave has their Tricorder pointed, if anywhere (plan §M21).
         p["target"] = locks.get(targets.key(str(p["gamertag"])))
+        # And the live scan that points it now, kept while they're offline (§M25).
+        got = scans.get(livescan.key(str(p["gamertag"])))
+        p["scan"] = (
+            None
+            if got is None
+            else {k: got[k] for k in ("label", "state", "found", "at", "set_at")}
+        )
     return {"slot": slot, "world": rec["folder"], "live": running, "players": players}
 
 

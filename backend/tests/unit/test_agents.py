@@ -962,9 +962,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v18: `mc_find_item`, chests and the ground; near is free, wider a deep scan (§M23).
         # v20: goals with a count and `mc_goal_progress` (§M24), and `mc_tricorder_scan` (§M25).
         # v21: `mc_gates_beacons`, and `mc_show_map`'s gate and beacon focuses (§M26).
+        # v22: `mc_tricorder_scan`'s status read and `mc_show_map`'s scan focus (§M25).
         "minecraft_dave": (
-            "agent-minecraft-dave-v21",
-            "7a15d64f2547d84add6068b41d05ad404843c944e2976bbe10ca3a9c3dd634dd",
+            "agent-minecraft-dave-v22",
+            "0ac104137ed58f1287b8a0491fbbdf3bbafd506df9681727d23084571762b37b",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

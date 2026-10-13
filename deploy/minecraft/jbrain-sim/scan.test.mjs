@@ -3,7 +3,7 @@
 // file, so CI does too.
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { sim } from "@minecraft/server";
+import { sim, world } from "@minecraft/server";
 
 await import("./pack/scripts/main.js");
 sim.startup();
@@ -30,7 +30,49 @@ const ticks = (n) => {
 const shown = (p) => p.actionbar.at(-1);
 const put = (x, y, z, t) => sim.overworld.setBlockAt({ x, y, z }, t);
 
+const events = (ev) =>
+  sim.logs.filter((l) => l.startsWith("[jbrain] {")).map((l) => JSON.parse(l.slice(9))).filter((e) => e.ev === ev);
+const DIAMOND = ["minecraft:diamond_ore", "minecraft:deepslate_diamond_ore"];
+const found = (player, x, y, z) => ({
+  ev: "scan", op: "found", player, label: "diamond", ids: DIAMOND, dim: "overworld", x, y, z,
+});
+const none = (player) => ({ ev: "scan", op: "none", player, label: "diamond", ids: DIAMOND });
+
 beforeEach(() => sim.reset());
+
+// First in the file: the report is once per load, and main.js loads once for all of them.
+test("after a load every kept scan is reported once, retried until it goes out", () => {
+  world.setDynamicProperty(
+    "jb:scan:blockyfox",
+    JSON.stringify({ block: DIAMOND[0], types: DIAMOND, label: "diamond", player: "BlockyFox" }),
+  );
+  // Kept before the name was stored with it: named by its key.
+  world.setDynamicProperty("jb:scan:mira_p", JSON.stringify({ types: ["minecraft:oak_log"], label: "oak log" }));
+  world.setDynamicProperty("jb:waypoint:mira_p", JSON.stringify({ x: 1, z: 2 }));
+  const read = world.getDynamicProperty;
+  let failed = false;
+  world.getDynamicProperty = function (k) {
+    if (k.startsWith("jb:scan:") && !failed) {
+      failed = true;
+      throw new Error("not ready");
+    }
+    return read.call(this, k);
+  };
+  sim.tick();
+  world.getDynamicProperty = read;
+  assert.deepEqual(events("scans"), []);
+  assert.equal(sim.logs.filter((l) => l.startsWith("[jbrain] scan report failed, trying again")).length, 1);
+  ticks(3);
+  assert.deepEqual(events("scans"), [
+    {
+      ev: "scans",
+      all: [
+        { player: "BlockyFox", label: "diamond", ids: DIAMOND },
+        { player: "mira_p", label: "oak log", ids: ["minecraft:oak_log"] },
+      ],
+    },
+  ]);
+});
 
 test("the arrow points at the nearest matching block, by 3D distance", () => {
   const p = holder("Steve 42", "-1");
@@ -204,4 +246,78 @@ test("players scanning together are scanned on frames of their own", () => {
     const mine = order.filter((o) => o.x === x).map((o) => o.frame);
     assert.deepEqual(mine.slice(1).map((f, i) => f - mine[i]), [TEN_SECONDS, TEN_SECONDS]);
   }
+});
+
+test("the map hears each change: set, found, a nearer block, none, and stop", () => {
+  const p = holder("BlockyFox", "-20");
+  put(0, 64, -9, "minecraft:diamond_ore");
+  scanFor("BlockyFox", "diamond_ore");
+  assert.deepEqual(events("scan"), [{ ev: "scan", op: "set", player: "BlockyFox", label: "diamond", ids: DIAMOND }]);
+  ticks(1);
+  assert.deepEqual(events("scan").at(-1), found("BlockyFox", 0, 64, -9));
+  // A steady target costs nothing at each scan.
+  ticks(TEN_SECONDS * 2);
+  assert.equal(events("scan").length, 2);
+  put(3, 60, 0, "minecraft:deepslate_diamond_ore");
+  ticks(TEN_SECONDS);
+  assert.deepEqual(events("scan").at(-1), found("BlockyFox", 3, 60, 0));
+  assert.equal(events("scan").length, 3);
+  sim.overworld.blocks.clear();
+  ticks(TEN_SECONDS);
+  assert.deepEqual(events("scan").at(-1), none("BlockyFox"));
+  stop("BlockyFox");
+  assert.deepEqual(events("scan").at(-1), { ev: "scan", op: "stop", player: "BlockyFox" });
+  // Stopping a scan that isn't on says nothing to the map.
+  stop("BlockyFox");
+  assert.equal(events("scan").length, 5);
+  ticks(1);
+  assert.match(shown(p), /World spawn/);
+});
+
+test("a mined block is noticed within two seconds with the Tricorder put away", () => {
+  const p = holder("Pocket", "-21");
+  p.selectedSlotIndex = (p.selectedSlotIndex + 1) % 9;
+  put(0, 64, -3, "minecraft:diamond_ore");
+  put(0, 64, -9, "minecraft:diamond_ore");
+  scanFor("Pocket", "diamond_ore");
+  ticks(1);
+  assert.deepEqual(events("scan").at(-1), found("Pocket", 0, 64, -3));
+  put(0, 64, -3, undefined);
+  ticks(8);
+  assert.deepEqual(events("scan").at(-1), found("Pocket", 0, 64, -9));
+  put(0, 64, -9, undefined);
+  ticks(8);
+  assert.deepEqual(events("scan").at(-1), none("Pocket"));
+});
+
+test("a steady target is sent again once a minute, so its time stays true", () => {
+  holder("Steady", "-22");
+  put(5, 64, 0, "minecraft:diamond_ore");
+  scanFor("Steady", "diamond_ore");
+  ticks(1);
+  ticks(TEN_SECONDS * 5);
+  assert.equal(events("scan").filter((e) => e.op === "found").length, 1);
+  ticks(TEN_SECONDS);
+  assert.equal(events("scan").filter((e) => e.op === "found").length, 2);
+  ticks(TEN_SECONDS * 6);
+  assert.equal(events("scan").filter((e) => e.op === "found").length, 3);
+});
+
+test("a new waypoint ends the scan on the map too; a rejoin sends what it finds afresh", () => {
+  const p = holder("Hopper", "-23");
+  put(0, 64, -5, "minecraft:diamond_ore");
+  scanFor("Hopper", "diamond_ore");
+  ticks(1);
+  sim.leave(p);
+  ticks(TEN_SECONDS);
+  sim.join(p);
+  ticks(1);
+  assert.equal(events("scan").filter((e) => e.op === "found").length, 2);
+  waypoint({ player: "Hopper", x: 0, z: -40, dim: "overworld", label: "Home" });
+  assert.deepEqual(events("scan").at(-1), { ev: "scan", op: "stop", player: "Hopper" });
+  // The track drain's arrival clear sends no end_scan, and the map hears nothing.
+  scanFor("Hopper", "diamond_ore");
+  const before = events("scan").length;
+  waypoint({ player: "Hopper", clear: true });
+  assert.equal(events("scan").length, before);
 });

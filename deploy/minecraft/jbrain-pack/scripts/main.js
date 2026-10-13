@@ -170,7 +170,7 @@ const ownSlot = (player) => {
 const dave = (player, text) => player.sendMessage(DAVE + text);
 
 const story = initWelcome({ beam, ownSlot, tricorderOn, say, dave });
-const scan = initScan({ say });
+const scan = initScan({ say, emit });
 
 const onWaking = (player, initialSpawn) => {
   const left = player.getDynamicProperty(BURNT);

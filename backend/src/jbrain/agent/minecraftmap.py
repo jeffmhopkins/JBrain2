@@ -40,6 +40,7 @@ from jbrain.agent.minecrafttools import (
 )
 from jbrain.db.session import scoped_session
 from jbrain.minecraft import client as mc
+from jbrain.minecraft import livescan, travel
 from jbrain.minecraft.asker import asker_for
 
 if TYPE_CHECKING:
@@ -49,8 +50,10 @@ if TYPE_CHECKING:
 
 VIEW = "minecraft_map"
 # `gate` and `beacon` (§M26): the card draws that gate or beacon selected from the box's
-# own records — the payload carries only where it is.
-FOCUS_KINDS = ("death", "player", "place", "structure", "spot", "gate", "beacon")
+# own records — the payload carries only where it is. `scan` (§M25): a player's live
+# Tricorder scan, which the card reads from the live players route; the payload carries
+# only whose it is and where they were.
+FOCUS_KINDS = ("death", "player", "place", "structure", "spot", "gate", "beacon", "scan")
 OVERLAYS = ("trails", "deaths", "structures", "players", "beacons", "gates")
 # The chat card's own default: the asker's trail and deaths over the located structures,
 # the beacons' squares and the gates' lines. Live player dots are the full map's job; on a
@@ -60,6 +63,7 @@ DEFAULT_OVERLAYS = frozenset({"trails", "deaths", "structures", "beacons", "gate
 # furthest the box renders). Below 0 the app scales tiles up itself, to 8 px per block.
 ZOOM_MIN, ZOOM_MAX = -3, 4
 ZOOM_FOCUS = -1  # 2 px per block: a death or a doorway reads on a 220-px card
+ZOOM_SCAN = -2  # 4 px per block: the scan's 33-block square is about 130 px
 ZOOM_AREA = 1
 SLOTS = 5
 LABEL_MAX = 40
@@ -186,6 +190,11 @@ def map_summary(view: ViewPayload) -> str:
         facts.append(f"Overworld side: X {d['overworld']['x']}, Z {d['overworld']['z']}")
     if not d["loaded"]:
         lines.append("That world isn't the loaded one, so the map is as of when it was played.")
+    if focus and focus["kind"] == "scan":
+        lines.append(
+            "The card draws their Tricorder's scan live: the square it searches and the block"
+            " it last found. For the words, mc_tricorder_scan with status."
+        )
     lines.append(fence("\n".join(facts)))
     lines.append(
         "Answer in words with the coordinates; the card already draws the spot, and "
@@ -286,7 +295,8 @@ def build_minecraft_map_handlers(
             return f"A {kind} needs its x and z."
         if kind == "place" and at_xz is None and not place_name(label):
             return "Name the saved place in label (mc_places lists them), or give x and z."
-        zoom = parse_zoom(arguments.get("zoom"), ZOOM_FOCUS if kind or at_xz else ZOOM_AREA)
+        default_zoom = ZOOM_SCAN if kind == "scan" else ZOOM_FOCUS if kind or at_xz else ZOOM_AREA
+        zoom = parse_zoom(arguments.get("zoom"), default_zoom)
         if isinstance(zoom, str):
             return zoom
         overlays = parse_overlays(arguments.get("show"))
@@ -311,6 +321,8 @@ def build_minecraft_map_handlers(
         focus: dict[str, Any] | None = None
         center: tuple[int, int] | None = at_xz
         moment: float | None = None
+        if kind == "scan":
+            return await scan_card(rec, slot, folder, world, label, zoom, overlays, ctx)
         async with scoped_session(maker, ctx.session) as s:
             player: Player | None = await chat_player_for(
                 s, settings_store, ctx.session, ctx.agent_session_id
@@ -404,5 +416,69 @@ def build_minecraft_map_handlers(
         )
         brief = f"{focus['kind'] if focus else 'map'} · {_DIMENSION_NAMES[dim]}"
         return ToolOutput(map_summary(view), view=view, result_brief=brief)
+
+    async def scan_card(
+        rec: dict[str, Any],
+        slot: str,
+        folder: str,
+        world: str,
+        label: str,
+        zoom: int,
+        overlays: dict[str, bool],
+        ctx: ToolContext,
+    ) -> str | ToolOutput:
+        """The `scan` card: whose scan is the label's gamertag, else this chat's player.
+        Centred on where they are; the card draws the square, the block and the words from
+        the live route, so it stays true after the answer."""
+        async with scoped_session(maker, ctx.session) as s:
+            chat = await chat_player_for(s, settings_store, ctx.session, ctx.agent_session_id)
+            scans = await livescan.read(s, folder)
+        gamertag = label or (chat.gamertag if chat is not None else "")
+        if not gamertag:
+            return "Say whose scan in label (a gamertag), or set this chat's player with mc_player."
+        scan = scans.get(livescan.key(gamertag))
+        if scan is None:
+            return ToolOutput(
+                f"{fence(gamertag)}'s Tricorder isn't scanning in this world.",
+                result_brief="not scanning",
+            )
+        name = str(scan["gamertag"] or gamertag)
+        where = next(
+            (
+                p
+                for p in await travel.latest_positions(maker, folder, ctx.session)
+                if str(p["gamertag"]).casefold() == name.casefold()
+            ),
+            None,
+        )
+        if where is None:
+            return ToolOutput(
+                f"{fence(name)} hasn't been seen in this world, so there's nowhere to centre"
+                " their scan.",
+                result_brief="not seen",
+            )
+        dim = str(where["dim"])
+        focus = {
+            "kind": "scan",
+            "label": name,
+            "x": round(where["x"]),
+            "y": round(where["y"]),
+            "z": round(where["z"]),
+            "at": None if scan["at"] is None else round(scan["at"]),
+        }
+        view = map_view(
+            slot=slot,
+            world=world,
+            loaded=bool(rec.get("active")),
+            dim=dim,
+            center=(focus["x"], focus["z"]),
+            zoom=zoom,
+            overlays={**overlays, "players": True},
+            focus=focus,
+            trail={"player": where["xuid"], "gamertag": name, "from": None, "to": None},
+        )
+        return ToolOutput(
+            map_summary(view), view=view, result_brief=f"scan · {_DIMENSION_NAMES[dim]}"
+        )
 
     return {"mc_show_map": _guarded("mc_show_map", mc_show_map)}
