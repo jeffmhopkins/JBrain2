@@ -9,6 +9,8 @@ await import("./pack/scripts/main.js");
 sim.startup();
 
 const WELCOME_TICKS = 500;
+// main.js's once-a-session hint on first holding the Tricorder (TRICORDER_HINT).
+const HINT_TICKS = 60;
 // main.js's loop runs every 5 ticks; sim.tick() is one of its frames, so 10 s is 40.
 const TEN_SECONDS = 40;
 
@@ -19,6 +21,8 @@ const holder = (name, id) => {
   sim.advance(WELCOME_TICKS);
   p.selectedSlotIndex = p.inventory.slots.findIndex((s) => s?.typeId === "jbrain:tricorder");
   p.location = { x: 0.5, y: 64, z: 0.5 };
+  sim.tick();
+  sim.advance(HINT_TICKS);
   return p;
 };
 const scanFor = (name, block) => sim.scriptevent("jb:scan", JSON.stringify({ player: name, block }));
@@ -200,6 +204,8 @@ test("a scan lasts across a rejoin, set while offline too", () => {
   ticks(TEN_SECONDS * 2);
   put(0, 64, -4, "minecraft:diamond_ore");
   sim.join(p);
+  ticks(1); // a new session: the Tricorder's hint first, then the scan
+  sim.advance(HINT_TICKS);
   ticks(1);
   assert.equal(shown(p), "↑ Scanning: diamond · 4 blocks · y 64");
 

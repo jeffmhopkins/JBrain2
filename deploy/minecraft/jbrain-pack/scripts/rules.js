@@ -54,7 +54,19 @@ export const LINES = {
 
 export const TRICORDER = "jbrain:tricorder";
 export const POWER_PACK = "jbrain:power_pack";
-export const LORE = "Points where Dave says";
+
+// The Tricorder carries no description: Bedrock's held-item pop-up shows an item's lore
+// over the actionbar the heading is on, every time it's selected (owner, 2026-10-13). It
+// says what the item does once a session on the actionbar instead, in plain words, not
+// Dave's: it isn't one of his lines.
+export const TRICORDER_HINT = "Your Tricorder points where Dave says · ask with /dave";
+// About 3 s, then the heading.
+export const TRICORDER_HINT_TICKS = 60;
+
+// A Tricorder beamed before that still has its old line, cleared on the next look. A
+// retired copy's "This tricorder is retired" is no description and stays.
+export const tricorderLoreStale = (typeId, lore) =>
+  typeId === TRICORDER && lore.length > 0 && !(lore.length === 1 && lore[0] === LINES.retired);
 
 // A crafted Power Pack carries no lore (a recipe can't set one), so the pack writes it on
 // every stack a player carries. Any lore other than exactly the current line is stale, so
