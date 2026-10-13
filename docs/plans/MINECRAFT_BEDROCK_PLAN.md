@@ -7,7 +7,8 @@ each section's "Remaining" paragraph names its small leftovers. Genuinely open, 
 owner's call:
 - **R1:** the `mc.hopkinsbrain.com` name and IP updater (put off), a UPnP helper, an
   Internet-play switch with a Test button; a brother joining from his own house is unrecorded.
-- **M4:** an entity index (villagers and trades, pets, named mobs).
+- **M4:** an entity index (villagers and trades, pets, named mobs), plus §M9's Nether
+  pointer. Designed in §M4e (2026-10-13), with five owner decisions open.
 - **M7:** the `/dave` quick menu, a companion NPC, scheduled backups, the other §3b tools.
 - **M8:** beds and saved places on the map, height / slice / changes layers, Dave's in-game
   "map of here" link.
@@ -646,6 +647,173 @@ house by typing the address.
 - An optional owner-side read tool (`minecraft_world`) lets jerv answer the owner's own
   questions ("which chest has my diamonds?"). It is optional, and it drops out like the SDR
   tools when the feature is off.
+
+#### M4e — Dave knows villagers and pets: the entity index (design, 2026-10-13)
+
+> **Status:** designed, not built. The owner approved building it on 2026-10-13; the
+> decisions below are open until answered. It is what the Status note above calls "what's
+> left of this wave", and it also unblocks §M9's Nether pointer.
+
+**Why.** "Who sells Mending?", "where's my dog?", "where did Clover go?" Villagers, pets and
+named mobs live in the world's files the way chests do, and Dave can't see any of them
+today: `mc_find_mob` (§M22) asks the game for the nearest mob of a type, and only within
+the chunks loaded around online players.
+
+**What the files hold (checked 2026-10-13 against BDS 1.26.52.3, on a copy of a dev world,
+with our own `leveldb.py`/`nbt.py`).**
+- **The keys.** Every entity is its own record, `actorprefix` + 8 bytes, holding one NBT
+  compound. Each chunk has a `digp` record listing the 8-byte ids of the entities in it.
+  The `digp` key is `digp` + x + z (12 bytes, the Overworld) or + x + z + dimension (16
+  bytes). The entity's own NBT carries no dimension, so **the dimension comes from the
+  `digp` key**. In all five test worlds every actor was listed by a `digp`, and none had
+  the pre-1.18.30 per-chunk `Entity` record (key tag 50). An imported old world can still
+  hold tag-50 records in chunks nobody has loaded since 1.18.30. They are back-to-back
+  compounds, the same shape as the tag-49 block entities `containers.py` already reads.
+- **The fields** (all read cleanly by `nbt.py`; no reader change needed):
+  - **What it is:** `identifier` (`minecraft:villager_v2`, `minecraft:wolf`, …). **Where:**
+    `Pos` (3 floats).
+  - **Identity:** `UniqueID` (int64). The script API's `entity.id` is the same number as a
+    string: the probe printed `id=-8589934591` for the wolf whose file says `UniqueID:
+    -8589934591`.
+  - **Name:** `CustomName`, plus `CustomNameVisible`.
+  - **Pets:** `IsTamed`, `OwnerNew` (int64, −1 when nobody owns it), `Sitting`, `IsBaby`.
+    `definitions` names the coat in words (`+minecraft:cat_calico`,
+    `+minecraft:base_gray`), which is better than the bare `Variant`/`MarkVariant`
+    numbers.
+  - **Villagers:**
+    - `PreferredProfession` (`"librarian"`, `"cleric"`, …) is present once a villager has
+      a job. `Variant` is the same as a number (0 unskilled, 6 cartographer, 7 cleric, 8
+      armorer, 13 mason, 14 nitwit), and `definitions` carries `+librarian`.
+    - `TradeTier` is the level, 0–4 (Novice → Master). `TradeExperience` > 0 means it has
+      been traded with, which locks in its job.
+    - `Offers.Recipes[]` lists each trade: `buyA`/`buyB` and `sell` item stacks, `tier`,
+      `uses`/`maxUses`. An enchanted book's enchantment is under `sell.tag.ench[]` as
+      `{id, lvl}` with Bedrock's numeric ids. The experiment's librarians sold ids 34, 30,
+      4, 25, 22, 20 and 14; Mending is 26. So we need a small static id → name table.
+  - **Trades exist without a player:** a villager summoned with a job had its full `Offers`
+    for every tier, written by the server before anyone opened its trade screen. A
+    villager's job can still change until it's traded with. The "librarian" summoned in
+    the experiment took a free cartography table and saved as a cartographer.
+- **Owners.** `OwnerNew` holds the owner's `UniqueID`, which is the owner's script
+  `player.id`. The pack already keys each player's records by that id (`jb:known:<id>`,
+  `jb:tricorder:<id>`). The player records in the files (`player_server_<uuid>`) carry no
+  gamertag, so the gamertag ↔ id link has to come from the pack. Not checkable here (it
+  needs a real client to tame something), so it's a box check.
+- **Portals.** One `portals` key holds `data.PortalRecords[]`: `DimId`, `TpX`/`TpY`/`TpZ`,
+  `Span`, `Xa`/`Za`. A portal lit with fire through the console, with no player, was
+  recorded at once. `leveldb.read_keys` reads that one key without a full sweep, so it
+  costs almost nothing.
+
+**What the live game can see** (stable `@minecraft/server` 2.0.0, the same probe):
+- `getEntities` and `nameTag` work, and so do `minecraft:variant` (a villager's job number)
+  and `minecraft:mark_variant`.
+- **A tamed pet has no `minecraft:tameable` component.** The tamed wolf, cat, parrot and
+  horse showed only `minecraft:is_tamed`, which has no owner field. So
+  `tamedToPlayerId` can't be read for the pets that matter.
+- No villager component exposes trades or level.
+- **So the split is:** the index answers everything here (trades, owners, unloaded
+  chunks). It is made current the way §M23 does it: `flush=1` runs the `save hold` dance,
+  which also writes out the entities loaded around players. The pack's only change is to
+  send the asker's `player.id`. `mc_find_mob` stays as it is, for "nearest cow".
+
+**Design.**
+- **Sidecar `entities.py`: `EntityIndex`**, modelled on `ContainerIndex`.
+  - **Refresh:** the same 60 s re-read when the db files change.
+  - **One `leveldb.entries` sweep** keeps `actorprefix`, `digp`, and legacy tag 50.
+    Newest sequence wins.
+  - **Only candidates are parsed:** a villager or wandering trader, anything with
+    `CustomName`, or `IsTamed` set. This is a byte test on the raw value before any parse
+    (`b"CustomName"`, the identifier, `b"\x01\x07\x00IsTamed\x01"`). Every other value is
+    dropped as it streams past, so a world full of cows and bees isn't held in memory.
+  - **Placement:** only actors listed by a `digp` are indexed, with the dimension and the
+    chunk taken from it.
+  - **What's kept per entity:** kind, x/y/z, dimension, name, owner id, sitting, baby, coat
+    words. A villager adds its job, level, locked-in flag, and at most 32 trades as
+    `(tier, buy, buy2, sell, enchantments, uses, max_uses)`.
+  - **Caps:** at most 20,000 villagers, 5,000 pets and 5,000 named mobs, each overflow
+    counted. Unreadable records are counted, as in §M23.
+  - **Cost:** measured here at 0.08 s for the sweep of a 5.5 MB db and about 290 µs to
+    parse one actor. Parsing only the candidates cuts the parsing by about 4× in a village
+    world. On a big world the decompression dominates, as it does for the container index.
+    So the two indexes **share one sweep** (a combined key filter, dispatching on the key)
+    rather than each decompressing every table.
+- **Sidecar routes:**
+  - `GET /map/villagers?slot&dim&x&z&profession&sells&enchant&radius&limit&flush`
+  - `GET /map/pets?slot&dim&x&z&owner&kind&name&radius&limit&flush`. `owner` is a
+    player id. `name` matches any named mob, casefolded.
+  - `GET /map/portals?slot&dim`
+  - Every answer carries `as_of`/`age_s`, the index counts and `flush`, as `/map/items`
+    does. A debug passthrough is added for each, for the box checks.
+- **The asker's id.** The pack adds `pid` (`player.id`) to the `dave` event.
+  `bds._pack_event` accepts it only as a decimal string. The sidecar remembers gamertag ↔
+  id per world, so the app's "Hank's pets" works while Hank is offline.
+- **Backend tools** (both Dave tiers, panel labels, prompt bump):
+  - **`mc_find_villager(profession?, sells?, enchantment?, x?, z?, radius?, limit?,
+    dimension?)`.** Each hit gives the job, level ("an Expert librarian"), whether its job
+    is locked in, and the matching trade and its price ("Mending I for 12 emeralds and a
+    book"). It says when a trade is used up until the villager restocks.
+  - **`mc_find_pet(kind?, name?, gamertag?)`.** In game, `kind` lists the asker's own pets.
+    `name` finds a named mob, the asker's own pets first. Player-written names are fenced,
+    as container names are. It aims the Tricorder at the nearest hit, like every finder.
+- **Cost (§M17).**
+  - Villagers follow §M23 exactly: free within 48 blocks (the Tricorder's short-range
+    scan), a deep scan farther out, a repeat free.
+  - **Your own pets are free anywhere.** Finding them reveals nothing nobody pointed out:
+    you tamed them, the same as your saved places and your trail.
+  - A named mob found by its exact name is free for the same reason. You already know
+    it's there.
+- **Item guide (§M19):** no gating. Villagers and pets aren't Old Maker items, and no reply
+  names one.
+- **Nether pointer (§M9 leftover), same pass.** When `mc_set_waypoint` sets a target in
+  another dimension, the record gets `via`: up to 8 known portals in the player's current
+  dimension, from `/map/portals`. Held in the wrong dimension, the Tricorder points at the
+  nearest of those ("Nether portal · 40 blocks"), and still names the target's dimension.
+  A portal record can outlive a broken portal, so before a portal is sent, `BlockIndex`
+  checks that `minecraft:portal` is still at its `Tp` spot (a box check).
+- **Not built (later):**
+  - Pets and villagers on the map (an overlay, as §M26's beacons).
+  - Chest minecarts and chest boats in `mc_find_item` (they are actors, so this sweep
+    makes them cheap; §M23's "Not built").
+  - Allays, which aren't tamed in the files' sense.
+  - The fast path for "where's my dog", until its line is signed off.
+  - Live `jb:find` by name.
+  - Villagers' gossip, and cure discounts (`*CuredDiscount`).
+- **Lore.**
+  - **Answers:** Dave answers from "what it has seen: the saved world". He says "as of N
+    minutes ago" the way §M23 does, and never says what villagers are. Whether they're
+    the Old Makers' descendants is an open question on the lore page, sealed for now.
+  - **Two new lines, for the owner's sign-off on the lore page** (proposals, not canon):
+    - **Pet found:** **[Dave]** *Rex* is *120* blocks *north-east*, sitting right where
+      you left him. Hold your Tricorder and follow the arrow.
+    - **Trade found:** **[Dave]** From up here I see a *librarian* *230* blocks *west* who
+      sells *Mending* for *12* emeralds. The villagers still trade in emeralds without
+      knowing why.
+
+    The second line's last sentence echoes canon (the Emerald row); drop it if it's too
+    much.
+- **Effort.** About 1.5 agent-days, in two waves:
+  - **E1:** `entities.py`, the shared sweep, routes and debug, the two tools, the `pid`
+    plumbing, and tests built from fixtures recorded from this experiment. About a day.
+  - **E2:** portals, `via` on the waypoint, the pack arrow and its sim test. About half a
+    day.
+
+  No new tables: the index is in memory, as §M23's is.
+- **Box checks (after deploy).**
+  - That `OwnerNew` equals the taming player's `player.id`, including for a horse.
+  - The counts and time of a cold read on the owner's world, in the Nether too.
+  - That a broken portal leaves its record, and that the block check catches it.
+
+**Owner decisions (open, 2026-10-13):**
+1. **Whose pets.** Does a player see only their own pets in game? *Recommended: yes. Others'
+   pets are found only by their name, like any named mob.*
+2. **Which trades.** Does Dave tell trades a villager hasn't unlocked yet (the files hold
+   every level's trades)? *Recommended: no. Unlocked levels only, as the game shows them.*
+3. **Pet cost.** Are your own pets and named mobs free at any distance? *Recommended: yes.
+   Villagers cost as §M23's chests do.*
+4. **The lines.** Sign off the two proposed lines above (or reword them) on the lore page.
+   *Recommended: the first as written. The second either way.*
+5. **The Nether pointer.** Should it ship in the same pass (wave E2)? *Recommended: yes. The
+   portal records are one key, and the pointer is the §M9 leftover that waited on M4.*
 
 ### M5 — The companion bridge (in-game ↔ backend)
 
@@ -1296,7 +1464,7 @@ then the actionbar arrow is the vanilla path.
 **Remaining (checked against the code, 2026-10-12):** the item, ownership, the arrow,
 waypoints and saved places are built, and DW1 hands it over in the welcome and re-beams
 it. Left: the arrival chime (the "You're here" text shows, with no sound), the Nether
-pointer aiming at a known portal (waits on M4's index), and the box checks above. A
+pointer aiming at a known portal (waits on M4's index; designed in §M4e), and the box checks above. A
 separate `guide_me` is not needed: `mc_set_waypoint` is Dave's target.
 
 **Fair play:** the tricorder only points where Dave already said, so it's in the same
