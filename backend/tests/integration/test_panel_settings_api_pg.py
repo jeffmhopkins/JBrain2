@@ -216,3 +216,29 @@ def test_unauthenticated_is_refused(box: Box) -> None:
     box.client.cookies.clear()
     assert box.client.get("/api/endpoint/panel-settings").status_code == 401
     assert box.client.get(box.url()).status_code == 401
+
+
+def test_an_owner_change_between_a_pickup_s_read_and_write_survives(
+    box: Box, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The review of #1736: the pickup read the row unlocked and wrote back a stale `desired`,
+    so a change the owner made in between vanished without being applied or refused."""
+    box.pickup()
+    box.ask(volume=60)
+    read = panel_settings._row
+    raced: list[bool] = []
+
+    async def owner_asks_mid_pickup(s: Any, sid: str) -> Any:
+        row = await read(s, sid)
+        if not raced:
+            raced.append(True)
+            maker = box.app.state.session_maker
+            await panel_settings.ask(maker, OWNER, box.devices["Jeff"], {"brightness": 70})
+        return row
+
+    monkeypatch.setattr(panel_settings, "_row", owner_asks_mid_pickup)
+    box.pickup(vo=60)  # settles the volume while the owner asks for a brightness
+    monkeypatch.setattr(panel_settings, "_row", read)
+    assert raced
+    assert box.owner("GET", box.url()).json()["pending"].get("brightness") == 70
+    assert "X-Panel-Settings" in box.pickup(vo=60).headers

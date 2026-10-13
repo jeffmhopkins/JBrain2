@@ -255,13 +255,19 @@ async def _record(
                 {"sid": sid, "r": json.dumps(report)},
             )
         elif keep != desired or stale or _report(row.reported) != report:
+            # `keep` came from an unlocked read, so it is written only over the version it was
+            # computed from: an owner's change committed in between bumped `version`, and
+            # writing over it would drop that change unapplied (review of #1736). The UPDATE
+            # re-reads the row under its lock, so the CASE sees the newest version; a skipped
+            # drop is redone by the next pickup.
             await s.execute(
                 text(
                     "UPDATE app.endpoint_panel_setting SET reported = CAST(:r AS jsonb),"
-                    " reported_at = now(), desired = CAST(:d AS jsonb)"
+                    " reported_at = now(),"
+                    " desired = CASE WHEN version = :v THEN CAST(:d AS jsonb) ELSE desired END"
                     " WHERE subject_id = CAST(:sid AS uuid)"
                 ),
-                {"sid": sid, "r": json.dumps(report), "d": json.dumps(keep)},
+                {"sid": sid, "r": json.dumps(report), "d": json.dumps(keep), "v": row.version},
             )
         else:
             return str(row.version) if keep else None
