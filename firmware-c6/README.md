@@ -1786,6 +1786,153 @@ strip). LVGL's pool peaks at 38.5 KB in `calib` (the screen over Settings; 64-bi
    land better than before; `calib.fit` in the snapshot shows the correction. Try it once with the
    panel turned, then upright: one calibration serves both. BOOT mid-way leaves the old one.
 
+## What 0.0.19 adds: push notices reach the panel (the plumbing)
+
+Wave C3b's panel half (plan §2, "The panel side"), the part with no look of its own. The box has
+taken notices since 2026-10-12 — a title, a body, up to four answers, a picture the sender drew,
+up to eight seconds of sound, a hide timer — and refused every one with `409
+no_notice_surface`, because no panel said it could show one. This image says so, collects them,
+and puts them through the overlay **as it was already drawn**: the sim's 72 renders, the notice
+boards among them, are byte for byte 0.0.18's. The overlay's new look (the picture, the speaker
+row, the countdown line, a tap hiding a plain notice) is being re-mocked for the owner and is the
+next wave.
+
+### What happens to a notice
+
+- **The pickup reports the switches.** Every debug pickup carries
+  `&na=…&nq=…&nc=…&nf=…&nt=…&tz=…` — Accept, Refuse during night hours, Chime, the night window
+  in minutes and the zone index, from the panel's own settings — exactly the six
+  `notice.parse_prefs` reads. With them the box answers a sender `202` (or `not_accepting` / `quiet_hours`) instead of
+  `no_notice_surface`. A boot after a fault (no UI) and a panel whose `storage` did not mount report
+  nothing, so the box keeps saying `no_notice_surface`: they could not show one.
+- **`X-Notice: <n>` on the pickup's answer** sets the main loop collecting: `GET
+  /endpoint/notice/next` until it answers 204, at most four a pass, and never while four are
+  already open here (the box's own limit, 429 `busy`).
+- **Each notice streams into its own file.** The JN1 stream is read a record at a time straight
+  into one 4 KB record buffer (`jn1.c`), checked, and written to `/notice/part.tmp` on the `storage`
+  partition; only when END has been checked is the file renamed to `<seq>-<id>.jn1`. Nothing ever
+  holds a picture (up to 320 KB) or a sound (up to 256 KB) whole. The checks are `decode()`'s, the
+  box's reference reader: the record order, META first, every flag against its records, each
+  stripe's place, rows (≤ 40) and runs covering its pixels exactly, PCM even and as long as META
+  says, END's byte count, nothing after END, strict UTF-8. Texts longer than the box's limits (which
+  `decode()` would take) are kept cut before a character.
+- **A torn or refused stream is dropped whole** — the part file deleted — and fetched again from
+  `/endpoint/notice/{id}/body` after 2 s, 10 s and 30 s; three tries, then it is given up (the box
+  expires it at its own deadline). No answer at all (an outage) spends no try. A 404 (its window
+  closed) gives up at once. A stream torn before its META has no id to ask for: it is counted
+  `lost`.
+- **`storage` is mounted at boot** (littlefs, `joltwallet/littlefs` 1.22.3), after the rollback gate
+  and before the UI. The partition has never held a filesystem, so the first boot of 0.0.19 formats
+  it: littlefs writes its two metadata blocks, not 3.75 MB. Then it is swept: a half-written
+  `part.tmp`, anything that is not a whole notice, and a notice whose answer was given before the
+  reboot are deleted; the whole notices a reboot interrupted come back, oldest first (at most four),
+  and are shown again. A finished notice's file is deleted by the main task right after it ends.
+- **On the glass, through the existing overlay**: the sender, title, body and buttons come from the
+  file (read once, when the notice reaches the head of the queue; only the head's words are in
+  RAM). The plan's rules that the shell already kept still hold: an alarm outranks it, it outranks
+  every app but the clock face (a corner badge there until tapped), and it waits for a KEY hold to
+  end. What the box hears:
+
+  | On the glass | The box hears |
+  | --- | --- |
+  | the notice is drawn | `{"state":"shown"}` (once; a repeat is harmless) |
+  | an answer button | `{"state":"answered","choice":<index>}` |
+  | OK on a plain notice, or BOOT | `{"state":"dismissed"}` |
+  | `hide_s` after it was drawn | `{"state":"expired"}` |
+  | its answer window (`ttl_s`) runs out | nothing: the box has closed it, and would 404 |
+
+- **The states reach the box whatever the radio does.** They wait in a list of eight, oldest
+  first, kept in NVS (`jpanel` / `notice_posts`, saved at most every 2 s), and go one at a time in
+  order — `shown` before the answer that follows it — retried after 5 s, 15 s, 60 s and then every
+  5 min.
+  A 2xx is done; so are a 404, 409 or 422, which no retry changes. A reboot keeps the list.
+- **The sound plays once, as the notice is drawn**, from its file: a new kind of exchange in
+  `svc_audio` (`TK_KIND_NOTICE`), a play whose bytes come from `storage` instead of the box, through
+  a play's 6 KB ring and the reply's speaker start. Never over an alarm (refused while one rings,
+  and stopped when one starts), never over a talk, a reply or a play (refused while the codec is
+  busy — it then does not play at all), and stopped when the notice hides. A notice with the chime
+  flag and no sound of its own chimes once as it arrives, by the plan's rule (`notice_chime`): the
+  Chime switch, not in the night window, nothing else on the speaker.
+- **The picture** is reachable for the next wave but not yet drawn:
+  `svc_notice_stripe(id, n, px, cap, &y0, &rows)` decodes stripe *n* from the file into a caller's
+  buffer — one stripe is at most 480×40, one draw buffer — reading its runs 255 bytes at a time;
+  reading them in order costs one header each.
+
+### The memory
+
+| | Internal RAM | When |
+| --- | --- | --- |
+| Static (`.data` + `.bss`) | +416 B (153,104 → 153,520 B) | always: the queue's four entries (~76 B each, no text), the head's words (~490 B), the owed states (~320 B), the counters; the fake queue's four full notices (~1.2 KB) are gone |
+| The mount | ~1.0 KB (estimated: two 256 B caches, a 32 B lookahead, `lfs_t` and the VFS's context 128 B each, a mutex) | from boot, for good; the board reports it exactly as `notice.fs.mount_heap` |
+| A collection | ~5.4 KB: the reader's record buffer and state 4.7 KB, one open file ~650 B (its 256 B cache and the VFS's file) | from the box's headers to the stream's end — after the handshake, never during one |
+| The boot's sweep | ~4.6 KB | once, before the UI starts |
+| A notice's sound | a play's 6 KB ring | while it plays; no radio at all |
+| A stripe read | 255 B of stack, one open file | the next wave's draw |
+
+So a collection sits ~5.4 KB under the kept session's ~71.7 KB, plus whatever the box's stream
+holds in the receive window while the flash writes (a 4 KB record can take tens of milliseconds to
+program; a play's measured ~6-12 KB is the model): an estimate of 55-60 KB for `int_min` at
+`notice-fetch`, at or above a play's ~54 KB — not yet measured. The board measures it:
+`notice.fetch.heap_before` / `heap_ready` / `heap_low`, and `int_min_at` names the phase
+(`notice-mount`, `notice-fetch`, `notice-state`, `notice-sound`). App: 1,992,656 → 2,047,680 B
+(+55 KB, littlefs most of it; 51% of the slot free).
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_notice` | `jn1.c` (pure: the incremental JN1 reader, the stripe decoder, strict UTF-8), `notice_logic.c` (pure: the pickup's query, the paths, the owed states' list and backoff, the hide and answer-window clocks, the file names), `notice_store.c` (the files, POSIX on the mount: part file, commit by rename, the head's words, a stripe, the PCM), `svc_notice.c` (the queue between the main and UI tasks, the fetch, the states, the sweep, the `notice` snapshot section and `notice=` note; the fake queue is gone and `svc_notice_fake_push` writes a real file), `esp/notice_port_esp.c` (littlefs at `/notice`, NVS, the lock), `notice_port_fake.c` (a temporary directory on the host and in the sim). |
+| `app_api` | `notice_t` carries the box's limits (sender 32, title 60, body 300, a choice 16 bytes) and the notice's hide, picture and sound facts; `svc_notice_on_glass`, `svc_notice_stripe`. |
+| `svc_audio` | `TK_KIND_NOTICE`, `svc_audio_notice_play` / `svc_audio_notice_stop`. |
+| `shell` | Tells the service when it draws a notice (`svc_notice_on_glass`); the sender line's buffer fits a 32-byte name. Nothing else about the overlay changed. |
+| `main` | `notice_link.c` (the collection, read straight into the record buffer, and the state POSTs); the pickup's query and `X-Notice` (`dbg_link.c`, `box_http.c`); the notice sound from its file (`talk_link.c`); the mount before the UI (`main.c`); the UI task's pass (`ui_task.c`). |
+| `sdkconfig.defaults` | littlefs: one partition, 128 B read and program units, 256 B caches, a 32 B lookahead, no mtime. |
+| `host/` | The reader against every fixture in `backend/tests/fixtures/jpanel_notice/` in nine splits, its pixels and PCM by SHA-256 against `vectors.json` (`sha256.c` is the suite's own); torn streams, a bad END count, a stripe that overflows or falls short, records out of order and the rest of `decode()`'s refusals; the service end to end through real files: arrival, `shown`, an answer, a failed POST retried, the torn stream fetched again, `hide_s`, the answer window, four open, a reboot. |
+
+### Debugging it
+
+- `notice`: `queued` and `queue` (each notice's `n`, `id`, `flags`, `shown`, `age_s`, `hide_s`,
+  `stripes`, `audio_ms`), `head` (its `n`, `id`, `from`, `title`, `choices`, `flags`), `fs`
+  (`mounted`, `total_kb`, `used_kb`, `free_kb`, `mount_heap`), `fetch` (`waiting`, `got`, `torn`,
+  `refused`,
+  `fs_errors`, `retrying`, `refetched`, `lost`, `dup`, `full`, `bytes`, `last_status`, `last_err`,
+  `heap_before`, `heap_ready`, `heap_low`), `state_posts` (`owed`, `fails`, `ok`, `refused`,
+  `retries`, `dropped`, `last_status`), `trash`, and the counts `arrived`, `shown`, `answered`,
+  `dismissed`, `expired`, `lapsed`, `sounds`, `sound_refused`, `chimes`, `restored`, `orphans`,
+  `unreadable`; `report` as before.
+- `audio.kind` says `notice` while a notice's sound plays.
+- Telemetry:
+  `notice=q:N,fs:ok|off|failed,got:N,torn:N,bad:N,lost:N,st:<ok>/<failed>,owed:N,last:<status>`.
+
+```sh
+scripts/debug-connect.sh panel-notify c6 "Run the cleanup now?" --body "Frees 38 GB." \
+    --choice Yes --choice No --hide 30
+scripts/debug-connect.sh panel-cmd c6 snapshot                 # notice, audio, system.int_min_at
+```
+
+### Left for the UI wave
+
+The overlay's look, on the re-mocked design: drawing the picture (`full` and `banner`) through
+`svc_notice_stripe`, the speaker row and its progress, the countdown line along the bottom edge and
+the seconds in the hint, a tap anywhere hiding a plain notice or a picture (today only OK and BOOT
+do), and how KEY behaves while a notice's sound plays (today it is the reply's rule: KEY stops it).
+
+### What to check on the glass
+
+1. **The first boot formats `storage`.** A snapshot: `notice.fs.mounted` true, `total_kb` ~3840,
+   `mount_heap` about 1 KB.
+2. **The box takes notices.** `panel-notify c6 "Hello"` answers 202 (not `no_notice_surface`); the
+   notice is on the glass within a pickup or two; OK hides it, and the command prints `dismissed`.
+3. **A question.** With `--choice Yes --choice No`: the tap comes back as `answered: Yes`. With
+   `--hide 10` and no tap: `expired` after ten seconds.
+4. **A sound.** With `--say "Hello from the box"`: it plays once as the notice appears, and stops
+   if the notice is dismissed first.
+5. **A picture** (`--image`): nothing is drawn yet, but the snapshot's `queue` shows its `stripes`,
+   and `fetch.heap_low` says what collecting it cost.
+6. **A reboot with a notice up** (`panel-cmd c6 reboot --confirm`): it comes back (`restored: 1`).
+7. **An outage.** Answer a question with Wi-Fi off (Settings → Disconnect), then Connect: the
+   answer still reaches the box.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -1819,6 +1966,10 @@ The same protocol as the S3 panels, so the box needs no new route for it:
   **`POST …/send`** (since 0.0.16) are the owner's voice post with each twin's panel: her thread, a
   message played, its "played", and a voice message to her; the debug pickup's `X-Jpanel-Post`
   says when to fetch the threads ("What 0.0.16 adds").
+- **`GET {api}/endpoint/notice/next`**, **`GET …/{id}/body`** and **`POST …/{id}/state`** (since
+  0.0.19) are the push notices: the oldest one waiting as a JN1 stream, the same stream again after a
+  torn one, and what became of it on the glass; the debug pickup carries the notice switches
+  (`&na=…&tz=…`) and its answer `X-Notice` says when one waits ("What 0.0.19 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -1929,8 +2080,9 @@ components/
                     (PCF85063 + the box's clock), svc_net, svc_box and svc_audio (ES8311 + ES7210,
                     the talk to Jerv and Dave, the alarm sounds), svc_siblings (the twins' panels'
                     names, NVS-cached), svc_alarms (the box's alarms, NVS-cached), svc_convo (an
-                    agent's conversations), svc_post (the voice post with the twins) and svc_orient
-                    (auto-rotate from the QMI8658, 0.0.18) are real: the device builds their esp/ file and pure logic, the sim and host
+                    agent's conversations), svc_post (the voice post with the twins), svc_orient
+                    (auto-rotate from the QMI8658, 0.0.18) and svc_notice (push notices on
+                    `storage`, 0.0.19) are real: the device builds their esp/ file and pure logic, the sim and host
                     the top-level files
   convo/            the one conversation view every agent's app instantiates (Jerv, Dave)
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
@@ -2060,7 +2212,10 @@ free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget). 
 1.98 MB (+2.7 KB), DIRAM static +592 B, and a play's 16 KB ring taken after its connection's
 handshake rather than before it ("What 0.0.17 adds", The memory). 0.0.18: app 1.99 MB (+12.7 KB;
 52% of the slot free), DIRAM static +304 B, a play's ring 6 KB instead of 16, and a 2.5 KB piece
-buffer only while the panel is on its side ("What 0.0.18 adds", The memory budget).
+buffer only while the panel is on its side ("What 0.0.18 adds", The memory budget). 0.0.19: app
+2.05 MB (+55 KB, littlefs most of it; 51% of the slot free), DIRAM static +416 B, ~1 KB for the
+mounted `storage` and ~5.4 KB only while a notice is being collected ("What 0.0.19 adds", The
+memory).
 
 ## Recovery
 
