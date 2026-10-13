@@ -810,8 +810,14 @@ async def message_pcm(message_id: str, principal: PanelDep, request: Request) ->
         ).first()
     if row is None or not row[0]:
         raise HTTPException(status_code=404, detail="no such message")
+    return await pcm_reply(request, str(row[0]), message_id)
 
-    wav = await request.app.state.blob_store.get(str(row[0]))
+
+async def pcm_reply(request: Request, blob_sha: str, message_id: str) -> Response:
+    """A stored message as the panels play it: 16 kHz mono s16, with the digest the panel checks
+    as it plays. One body for a twin's replay and the desk panel's play, so both hear exactly
+    the same bytes (`api/panel_messages.py`)."""
+    wav = await request.app.state.blob_store.get(blob_sha)
     pcm, rate = _pcm_from_wav(wav)
     body = _to_panel_rate(pcm, rate)
     return Response(
@@ -888,6 +894,64 @@ async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threa
             continue
         thread.messages.append(_row_to_message(row, names))
     return Threads(panels=list(threads.values()))
+
+
+#: The rows of one twin's conversation with the owner: what she sent HIM and what he sent HER.
+#: Twin-to-twin post is not in it — he is not an end of that conversation.
+_WITH_OWNER = """
+    ((sender_kind = 'panel' AND sender_device = :dev AND recipient_kind = 'owner')
+     OR (sender_kind = 'owner' AND recipient_kind = 'panel' AND recipient_device = :dev))
+"""
+
+
+async def thread_with(maker, ctx: SessionContext, device_id: str, limit: int) -> list[Message]:
+    """The owner's conversation with one twin's panel, its newest `limit` messages, oldest
+    first — the desk panel's person thread (`api/panel_messages.py`). The same rows and the same
+    `Message` the PWA's thread draws, so the two clients cannot disagree about what was said or
+    whether it was played. `ctx` is the owner's."""
+    async with scoped_session(maker, ctx) as session:
+        rows = (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT id, sender_kind, sender_device, recipient_kind, recipient_device,
+                           transcript, composed, duration_ms, created_at, played_at, deliveries
+                    FROM app.jpanel_message
+                    WHERE {_WITH_OWNER}
+                    ORDER BY created_at DESC
+                    LIMIT :lim
+                    """
+                ),
+                {"dev": device_id, "lim": max(1, limit)},
+            )
+        ).all()
+    names = await _panel_names(maker)
+    return [_row_to_message(row, names) for row in reversed(rows)]
+
+
+async def owner_row(
+    maker, ctx: SessionContext, device_id: str, message_id: str
+) -> tuple[str, bool] | None:
+    """`(blob_sha256, sent_to_owner)` for a message of the owner's conversation with this twin,
+    or None — an id from another conversation, or not an id at all, is not there."""
+    try:
+        uuid.UUID(message_id)
+    except ValueError:
+        return None
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT blob_sha256, recipient_kind = 'owner'
+                    FROM app.jpanel_message
+                    WHERE id = CAST(:id AS uuid) AND {_WITH_OWNER}
+                    """
+                ),
+                {"id": message_id, "dev": device_id},
+            )
+        ).first()
+    return (str(row[0]), bool(row[1])) if row is not None and row[0] else None
 
 
 # THE PANEL'S FONT IS THE REAL CONSTRAINT ON A NAME, not taste and not the column width.
@@ -1331,7 +1395,15 @@ async def send_audio(
     audio = await request.body()
     if not audio:
         raise HTTPException(status_code=400, detail="no audio")
-    audio = audio[:MAX_MESSAGE_BYTES]
+    return await file_owner_voice(request, ctx_for(owner), audio[:MAX_MESSAGE_BYTES], to_device)
+
+
+async def file_owner_voice(
+    request: Request, ctx: SessionContext, audio: bytes, to_device: str
+) -> Message:
+    """Dad's recorded voice filed for one twin's panel, from the PWA or from his desk panel
+    (`api/panel_messages.py`): one path, so her panel receives the same row, the same blob and
+    the same nudge whichever of his two clients he spoke into. `ctx` is the owner's."""
     audio = _trim_to_speech(audio)
     if not audio:
         # The owner pressed record and said nothing, or held the wrong microphone. Refused
@@ -1353,7 +1425,7 @@ async def send_audio(
     transcript = await _transcribe(settings, audio)
     sha = await request.app.state.blob_store.put(_wav(audio))
 
-    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
         row = (
             await session.execute(
                 text(
@@ -1397,7 +1469,14 @@ async def mark_read(owner: OwnerDep, request: Request, message_id: str) -> Respo
 
     Idempotent, and `played_at IS NULL` keeps the FIRST time: when he saw it is a real answer,
     and a second look should not overwrite it."""
-    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+    await mark_owner_played(request, ctx_for(owner), message_id)
+    return Response(status_code=204)
+
+
+async def mark_owner_played(request: Request, ctx: SessionContext, message_id: str) -> None:
+    """The owner has dealt with `message_id`, from the PWA or his desk panel: one stamp, so the
+    other client shows it played too. `ctx` is the owner's."""
+    async with scoped_session(request.app.state.session_maker, ctx) as session:
         await session.execute(
             text(
                 "UPDATE app.jpanel_message SET played_at = now()"
@@ -1406,7 +1485,6 @@ async def mark_read(owner: OwnerDep, request: Request, message_id: str) -> Respo
             {"id": message_id},
         )
         await session.commit()
-    return Response(status_code=204)
 
 
 @router.get("/messages/{message_id}/audio")

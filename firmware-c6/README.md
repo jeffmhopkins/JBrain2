@@ -1352,6 +1352,123 @@ worst transient is the list and a reply buffer together, ~8 KB, for the moment a
    Recent returns to the thread.
 6. Minecraft → Dave: the same menu and Recent, in Dave's green, listing only Dave's chats.
 
+## What 0.0.16 adds: voice messages with the twins' panels
+
+The owner, 2026-10-12: *"Am I able to receive voice messages now from the kids' other jpanel?"*
+Until this image the answer was no: a twin's panel could already send "to Dad", but only the PWA
+read those messages, and the two person threads here were stubs that said "Not sent". The desk
+panel is now a second owner client for the same messages, next to the PWA (plan §1 "Voice
+messages with the twins").
+
+### On the glass
+
+- **Her thread lists the real messages**: the box's last four with her, hers on the left with ▶,
+  her length and the amber dot until it has been heard, his on the right with "Sent" or, once she
+  has played it on her panel, "Played". The words are the box's transcript ("Voice message" when
+  there is none). "Fetching messages…" until the box has answered once; "No messages yet. Hold KEY
+  to send Quorra one." when there are none.
+- **A tap on ▶ plays it** through the speaker, streamed from the box as it plays (no clip is held
+  in RAM), with the reply's speaker start from 0.0.12 so its first word is not clipped. ⏸ (or KEY,
+  or BOOT, the shell's stop) stops it. Played to its end with its digest checked, it is marked
+  played here at once and its "played" stamp goes to the box, so the PWA shows it played too; a
+  play stopped part way, or cut off by the radio, leaves it unplayed on both. A stamp the box does
+  not take (no Wi-Fi, a box restart, a 5xx) waits in a list of up to eight kept in NVS (namespace
+  `jpanel`, key `post_stamps`, written at most every 2 s), sent one at a time and retried after
+  5 s, 15 s, 60 s and then every five minutes until the box answers 204; a 404 (the message is
+  gone) is dropped. A reboot or a long outage loses none of them, and while one waits the message
+  stays played on the panel whatever the box's list says, so its badge never comes back.
+- **Hold KEY in her thread** to send her a voice message: the ring says "Message to Quorra", "0:30
+  max" (the box keeps 30 s); let go and the bubble says "Sending…", then her panel has it exactly
+  as if Dad had spoken into the PWA, and the bubble shows the box's transcript and "Sent". A
+  failure says why ("Not sent: the upload was damaged", "…the box did not answer"); a hold of
+  silence says "Nothing heard". KEY outside her thread is still Jerv's (0.0.14).
+- **A new message from her**: the badge on her home tile, the clock face's corner badge (never a
+  pop-up on the clock — the face's existing rule), the thread updating live if it is open, and
+  one soft two-note chime — only with Notifications → chime on, outside the night window, and
+  never over a hold, an answer, a play or an alarm. The messages waiting at boot are badged, not
+  chimed.
+- **No auto-play.** A message arriving never makes a sound but the chime; she is heard when he taps.
+  Simple, and the same choice the PWA makes.
+- Alarm and notice precedence are unchanged: a ringing alarm stops a play (as it stops a reply)
+  and takes the speaker; a girl's message raises no overlay at all, so nothing in `shell_core.c`'s
+  ordering moved.
+
+### The protocol
+
+Four routes behind the talk's own gate (`panel_agent.agent_allowed`: a `display` panel the owner
+switched on — the twins' `jpet` panels get 403 and nothing else), each a thin door onto
+`api/jpanel.py`'s own functions, on owner-scoped sessions (backend `api/panel_messages.py`):
+
+| Request | Answer |
+| --- | --- |
+| `GET /endpoint/messages/{device}?limit=4` | `{"device_id","name","tag","messages":[{"id","mine","text","ms","played","voice"}…]}` — the owner's conversation with that twin (what she sent him, what he sent her; never twin-to-twin post), oldest first, text ≤ 255 B cut on a word. |
+| `GET /endpoint/messages/{device}/{id}/pcm` | 16 kHz mono s16, with `X-Jpanel-Sha256` — the body a twin's panel replays. |
+| `POST /endpoint/messages/{device}/{id}/played` | 204: the PWA's own "played" stamp. Only a message she sent him. |
+| `POST /endpoint/messages/{device}/send` | Chunked 16 kHz s16 as it is recorded, `X-Jpanel-Sha256: trailer` and the 32 raw bytes of sha256(audio) after the audio (the digest cannot ride a header ahead of a stream) → 201 `{"id","text","ms"}`, filed through the PWA's `send_audio` path; 422 when the digest does not match, 413 past 30 s, 400 for silence. |
+
+**The new-message signal rides the 3 s debug pickup**: `GET /endpoint/debug/next` carries
+`X-Jpanel-Post: <8 hex>` for this panel, a tag that moves whenever the owner's post does (a message
+filed, played or cleared). When it moves the panel fetches both threads — so a twin's message is on
+the glass within a pickup or two, and an idle panel makes no extra request.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_post` (new) | The service: the person threads from the box, each message's box id against its bubble, the unconfirmed "played" stamps (`post_stamps_*`: eight kept in NVS, deduplicated, one in flight, retried on `post_backoff_ms`, dropped only on 204 or 404), the pickup's tag, the chime decision. `post_logic.c` (host-tested): the paths (only a box id reaches one), the two answers' readers, the bubble, `post_arrivals` (new = hers, unplayed, not in the last list; the first list of a boot counts none), `post_chime`, `post_tag_feed`, `post_upload_room` (the upload stops at the box's 30 s). |
+| `main/post_link.c` (new) | A thread's fetch and a "played" on the main loop, after a talk and the conversations. |
+| `svc_audio` | Two new kinds of exchange through the same `tk_t`: `TK_KIND_POST` (recorded and uploaded like a talk, answered with an id and a transcript, no speech) and `TK_KIND_LISTEN` (no hold: `tk_listen` starts at the send, the audio goes through the reply's ring and speaker start). `svc_audio_play` and `svc_audio_chime` are real; 0.0.11's "Not sent" placeholder is gone. |
+| `main/talk_link.c` | `post_exchange` (the digest kept with mbedTLS as the audio goes up, then sent as the trailer) and `listen_exchange` (a GET read in slices into the ring, hashed as it plays and compared with `X-Jpanel-Sha256`). |
+| `main/box_http.c` | Reads `X-Jpanel-Post` and `X-Jpanel-Sha256` off a reply; a stream may carry the integrity header; `box_http_get_open`, a GET whose body is read in slices. |
+| `svc_messages` | `svc_messages_fake_set`: a person thread replaced by the box's list, keeping the panel's own send on its way or failed. |
+| `app_thread` | The list, ▶ and ⏸, the toasts, the 30 s ring, the open fetch. `ui_kit`'s ring says its own cap. |
+
+### Debugging it
+
+- The snapshot gains a **`post`** section: `tag`, `queued`, `arrivals`, `chimes`, `heard`,
+  `stamps_waiting`, `stamp_fails`, `stamp_retries`, `stamps_dropped`, `last_status`, and per thread `device_id`, `loaded`, `listed`, `unplayed`. `audio` gains `kind`
+  (`agent` / `message` / `play`), `playing`, `plays`, `play_failed`, `posted`, and the codec's
+  `chimes`; an open thread's `app` section says `loaded`.
+- Telemetry's note gains `post=rq:N,ok:N,fail:N,new:N,chimes:N,stamps:N,retries:N,tag:<tag>,last:<status>`.
+
+```sh
+scripts/debug-connect.sh panel-cmd c6 open --arg app=thread1
+scripts/debug-connect.sh panel-cmd c6 snapshot           # post, audio.kind, app.loaded
+scripts/debug-connect.sh panel-shot c6 thread.png
+```
+
+### The memory budget
+
+Static DIRAM (`.dram0.data` + `.dram0.bss`; 0.0.15 rebuilt from its source to the byte of its
+`dist/`, app `00b4074a…`): 149,800 → 152,208 B, **+2,408 B** (all `.bss`; `.data` and `.iram0.text`
+unchanged): `svc_post`'s two slots (each its panel's id, the last list's four box ids and their
+bubble ids), the eight unconfirmed "played" stamps (594 B, a box id and its panel's each), its queue of four requests and four answers
+(968 B, each carrying its 112-byte path), the send's or play's box path on each side of the talk
+(224 B), the SHA-256 context (116 B), counters. The person threads still keep four messages each in `svc_messages`' existing buffers, so
+nothing grew there. The send's answer is read into the talk's own 1 KB slice buffer once the upload
+is over. App: 1,963,008 → 1,976,880 B (+14 KB; 53% of the slot free).
+
+**On the heap, only while it is needed:** a thread's reply buffer, 3,074 B, from its fetch until
+the UI task has applied it, and the parsed list, ~1.2 KB, for that moment; a play uses the talk's
+16 KB ring, allocated when it starts and freed when it ends, exactly as a talk does — never both,
+since one exchange runs at a time. No new task, no new stack. LVGL's pool peaks at 22.0 KB in the
+sim's busiest new state (`quorra-sending`, 64-bit host), under Settings' 36.6 KB. **`int_min` should
+read about 2.5 KB lower than 0.0.15's**; the worst transient is a play's ring (16 KB, the same as a
+talk's) and nothing else.
+
+### What to check on the glass
+
+1. On a twin's panel, record a message "to Dad". Within a few seconds the desk panel's home tile
+   for her shows a badge (and the clock face its corner badge), and the panel chimes once if the
+   chime is on and it is not night.
+2. Open her thread: her message on the left with ▶ and its length. Tap ▶: it plays; the dot goes
+   when it finishes; the PWA's thread shows it played.
+3. In her thread, hold KEY and say something; let go. "Sending…", then the box's transcript and
+   "Sent". Her panel shows Dad's message waiting; once she plays it, his bubble says "Played".
+4. KEY outside her thread still talks to Jerv; KEY over a message playing stops it.
+5. In the snapshot: `post.tag` moving with each message, `post.thread1.loaded` true,
+   `audio.plays` and `audio.posted` counting.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -1381,6 +1498,10 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **`GET {api}/endpoint/convo/{agent}/recent`**, **`POST …/select`** and **`GET
   …/messages?limit=N`** (since 0.0.15) are the agent's Recent list, a switch, and the switched
   thread's last exchanges or the title alone ("What 0.0.15 adds").
+- **`GET {api}/endpoint/messages/{device}`**, **`GET …/{id}/pcm`**, **`POST …/{id}/played`** and
+  **`POST …/send`** (since 0.0.16) are the owner's voice post with each twin's panel: her thread, a
+  message played, its "played", and a voice message to her; the debug pickup's `X-Jpanel-Post`
+  says when to fetch the threads ("What 0.0.16 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -1490,7 +1611,8 @@ components/
                     svc_power, svc_display, svc_buttons, svc_touch, svc_settings (NVS), svc_rtc
                     (PCF85063 + the box's clock), svc_net, svc_box and svc_audio (ES8311 + ES7210,
                     the talk to Jerv and Dave, the alarm sounds), svc_siblings (the twins' panels'
-                    names, NVS-cached) and svc_alarms (the box's alarms, NVS-cached) are real: the device builds their esp/ file and pure logic, the sim and host
+                    names, NVS-cached), svc_alarms (the box's alarms, NVS-cached), svc_convo (an
+                    agent's conversations) and svc_post (the voice post with the twins) are real: the device builds their esp/ file and pure logic, the sim and host
                     the top-level files
   convo/            the one conversation view every agent's app instantiates (Jerv, Dave)
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
@@ -1555,7 +1677,11 @@ box has sent the panels' names), `dave`, `rec-dave`, `dave-reply`, `compass`, an
 `quorra-menu`, `quorra-menu-armed` and `quorra-cleared` (0.0.11's `chat-menu` states, in a
 person's thread since 0.0.15), from 0.0.15 `jerv-menu`, `jerv-recent`, `jerv-recent-loading`,
 `jerv-recent-end`, `jerv-recent-empty`, `jerv-switched`, `jerv-new`, `dave-menu` and
-`dave-recent` (the box's conversations answered by the sim from the mock's sessions), and from
+`dave-recent` (the box's conversations answered by the sim from the mock's sessions), from 0.0.16
+`quorra-playing`, `quorra-sending`, `quorra-sent`, `quorra-new`, `home-new` and `clock-new` (the
+twins' threads answered by the sim as `api/panel_messages.py` does, with placeholder names and
+words — her message playing, a voice message to her on its way and filed, a new one live in her
+thread, on her tile's badge and on the clock face's), and from
 0.0.13 `ringing-dark`,
 `ringing-over-notice`, `alarm-snoozed` and `alarm-test`. The alarms come from the box's own JSON
 through `svc_alarms_offer`, as the siblings' names do. The sim feeds the panels' names through the
@@ -1608,7 +1734,8 @@ free), 264 KB of DIRAM static (+9.4 KB); at runtime the audio task (3.5 KB stack
 I2S DMA and codec objects from boot, and the 16 KB talk ring per exchange ("What 0.0.10 adds",
 The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB of DIRAM static
 (+1.7 KB), the audio stack
-+768 B ("What 0.0.11 adds", From the first talks).
++768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+14 KB; 53% of the slot
+free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget).
 
 ## Recovery
 

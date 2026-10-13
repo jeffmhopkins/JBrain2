@@ -45,7 +45,7 @@ esp_err_t ota_fetch_manifest(const cfg_t *cfg, ota_manifest_t *out)
     (void)cfg;
     char body[MANIFEST_MAX];
     size_t got = 0;
-    box_reply_t reply = {{0}};
+    box_reply_t reply = {.date = {0}};
     const int status = box_http_call("/endpoint/firmware?board=" OTA_BOARD_ID, NULL, NULL, 0, body,
                                      sizeof(body) - 1, &got, &reply, HTTP_TIMEOUT_MS);
     out->date = 0;
