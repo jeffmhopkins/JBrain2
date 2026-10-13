@@ -3542,7 +3542,8 @@ doesn't lose it.
 - **Progress log** (`app.mc_goal_log`): player xuid, optional goal, time, text, and
   **source**:
   - `owner`: written from the PWA agent;
-  - `player`: typed in game, e.g. `/jb:dave log got 12 obsidian`;
+  - `player`: typed in game, e.g. `/jb:dave log got 12 obsidian` — `mc_log` in an in-game
+    turn writes `player` (or `dave`), never `owner`;
   - `dave`: Dave's own summary entry, made only when the player asks;
   - `auto` (M5): add-on events: transport trips, and each death (2026-10-13), such as
     "Died at 12, 64, -31 in the Overworld (fell from a high place)"; crafting is still to
