@@ -2078,7 +2078,7 @@ of up to 256 bytes each are the most the thread view has ever drawn, and the sim
 (`jerv-history-capped`, 20 long messages and both rows) peaks LVGL's pool at 54,048 B with 64-bit
 pointers, inside the device's 64 KB with 32-bit ones. Ten a page is what fits the 4 KB body. The
 window is the only new lasting heap, and it exists only while someone is reading back. The app is
-2,054,464 → 2,072,176 B (51% of the slot free). Bootloader, partition table and `ota_data_initial`
+2,054,464 → 2,072,112 B (51% of the slot free). Bootloader, partition table and `ota_data_initial`
 are byte-identical to 0.0.20's: this is an app-only OTA.
 
 ### The pieces
@@ -2098,8 +2098,11 @@ are byte-identical to 0.0.20's: this is an app-only OTA.
 ### Debugging it
 
 - `audio.kind` says `speak` during a Listen; `audio.listen_id` and `audio.listens`.
-- `messages.threads[*].older` and, while paged, `paged`, `paged_older`, `paged_newer`,
-  `paged_text`.
+- Each thread under `messages`: `older` (left out when 0) and, while it is paged back, `paged`
+  as `"<messages>/<older>/<newer>/<text bytes>"`; an open Jerv or Dave thread's `history` as
+  `"<top row>:<older>/<newer>"` and `speaking` (the reply Listen is on). Kept terse on purpose:
+  the snapshot's answer is capped at 6 KB (`OUT_MAX`), and these add ~100 B at most (~70 B while
+  nothing is paged) — measured in the sim's `session` snapshot, which is 5,287 B whole.
 - Telemetry `sync=v:N,fetch:N,applied:N,kept:N,last:<status>`: the last version fetched, the
   changes applied, and the ones kept as set at the glass.
 

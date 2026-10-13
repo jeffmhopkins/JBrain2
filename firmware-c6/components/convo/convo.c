@@ -469,10 +469,12 @@ void convo_describe(const convo_t *c, dbg_json_t *w)
     hist_view_t h;
     svc_messages_hist(c->cfg->thread, &h);
     static const char *const TOP[] = {"none", "load", "loading", "start"};
-    dbg_json_str(w, "history", TOP[h.top < 4 ? h.top : 0]);
-    dbg_json_int(w, "older", h.older);
-    dbg_json_int(w, "newer", h.newer);
-    dbg_json_bool(w, "paged", h.paged);
+    /* One terse string, the snapshot's answer being capped at 6 KB (`OUT_MAX`, main/dbg_link.c):
+       the top row, then older/newer on the box beyond what is drawn. */
+    char hist[40];
+    snprintf(hist, sizeof hist, "%s:%lu/%lu", TOP[h.top < 4 ? h.top : 0], (unsigned long)h.older,
+             (unsigned long)h.newer);
+    dbg_json_str(w, "history", hist);
     static const char *const RC[] = {"closed", "loading", "list", "empty", "failed", "opening"};
     dbg_json_str(w, "recent", RC[c->recent.rc.mode]);
     dbg_json_str(w, "subtitle", c->sub ? lv_label_get_text(c->sub) : "");

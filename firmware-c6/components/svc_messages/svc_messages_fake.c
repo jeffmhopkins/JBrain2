@@ -457,12 +457,15 @@ static void describe(void *ctx, dbg_json_t *w)
         dbg_json_int(w, "keeps", s_t[i].cap);
         dbg_json_int(w, "unplayed", svc_messages_unplayed(s_t[i].principal));
         dbg_json_int(w, "last_id", s_t[i].n ? s_t[i].m[s_t[i].n - 1].id : 0);
-        dbg_json_int(w, "older", s_meta[i].older);
+        /* Terse and only when not the default: the snapshot's answer is capped at 6 KB
+           (`OUT_MAX`, main/dbg_link.c) and these ride every thread. */
+        if (s_meta[i].older > 0) dbg_json_int(w, "older", s_meta[i].older);
         if (s_win_of == &s_t[i]) {
-            dbg_json_int(w, "paged", s_win->n);
-            dbg_json_int(w, "paged_older", s_win->older);
-            dbg_json_int(w, "paged_newer", s_win->newer);
-            dbg_json_int(w, "paged_text", s_win->used);
+            char paged[48];
+            snprintf(paged, sizeof paged, "%u/%lu/%lu/%u", (unsigned)s_win->n,
+                     (unsigned long)s_win->older, (unsigned long)s_win->newer,
+                     (unsigned)s_win->used);
+            dbg_json_str(w, "paged", paged);
         }
         if (s_t[i].keep) {
             dbg_json_int(w, "long_id", s_t[i].keep->id);
