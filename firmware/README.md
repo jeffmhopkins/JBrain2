@@ -180,6 +180,16 @@ sample over 740 ms: 7.3 ms on a desktop, the costliest cue in the table, and a m
 on the panel. Its voice is now a triangle and a sawtooth straight off the phase, 0.46 ms for
 the same laugh, cheaper than the giggle.
 
+**What goes in must come out (0.4.11).** Owner: *"If he eats three times and within 1 minute,
+he should have to poop afterwards. The poop should stay on the screen for say 20 seconds. And
+should slide around with the angle of the device."* `poop.c` (pure, host-tested) counts meals
+and owes one at the third inside 60 s; `display.c` starts `ACT_POOP` at the first moment he is
+free on the pet screen. He squats (`figure_pose_t.sit`, as dizzy does), strains, and at
+`POOP_AT` it lands behind him with `CUE_POOP`, a falling plop. On the floor it is the swirl
+with a face and stink lines, behind the figure, and it SLIDES: the unsmoothed tilt pushes it,
+friction slows it, the floor's ends bounce it back, and below a small tilt it does not start
+at all, so it stays put on a table. It plops in, and shrinks away after 20 s.
+
 **A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
 only flinch, which with the meal crunching through two-thirds of its length and the tickle
 laughing through half of its own made most pokes during them do nothing. Two halves to it: the

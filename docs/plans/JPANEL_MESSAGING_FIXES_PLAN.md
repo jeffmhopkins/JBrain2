@@ -2524,7 +2524,8 @@ in flight. Two faults the owner saw within the hour:
   requests, turned on only after speech has started (`firmware/README.md`).
 
 **0.4.11, from the owner trying 0.4.10.** The meal is three bites, and the tickle's laugh is
-cheap enough to render that the squirming no longer freezes at each one (`firmware/README.md`).
+cheap enough to render that the squirming no longer freezes at each one. Three meals in a
+minute and he poops, and the poop slides with the panel's tilt for 20 s (`firmware/README.md`).
 
 **0.4.10, tickle tickle and a real meal.** A new laughing action from `tickle tickle` /
 `tickle me`; eating becomes five bites of a cookie with a crunch on each; the dizzy and love

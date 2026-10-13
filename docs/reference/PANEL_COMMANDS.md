@@ -141,7 +141,9 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
 · **love** (0.4.7; 5.6 s since 0.4.10): `i love you` `love you` — hearts float up and he coos
 · **tickle** (0.4.10): `tickle tickle` `tickle me` — he squirms and laughs, three times over
 · **eat** (`eat`, `have a snack`): since 0.4.11 three bites of a cookie over 2.9 s,
-  a crunch on each bite, chewing between
+  a crunch on each bite, chewing between. **Three meals inside a minute** and, once he is
+  free, he squats, strains and a poop plops out behind him (0.4.11): it stays on the floor for
+  20 s and slides downhill as the panel is tilted
 
 **Not a phrase: shaking the panel** (0.4.7). Four hard jerks inside a second and a half
 (`screen_shaken`) and he sits down hard, dazed, shaking his head with stars going round, and

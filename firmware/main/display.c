@@ -55,6 +55,7 @@
 #include "vocab.h"
 #include "variants.h"
 #include "orient.h"
+#include "poop.h"
 #include "screen.h"
 #include "ota.h"
 #include "overlay.h"
@@ -937,6 +938,13 @@ void display_set_debug_overlay(bool on)
    panel sits still reads as broken rather than alive. */
 #define LEAN_SMOOTH 4
 static int s_lean;
+/* The tilt along the viewer's horizontal, -1..1 of LEAN_FULL, unsmoothed: what the poop slides
+   on (`poop.h`). The lean is a position the tilt picks; the poop has momentum of its own. */
+static float s_tilt_g;
+/* The floor the poop slides on, either side of centre, and where it lands behind him; figure
+   units, which the panel's 368 square on its side scales down with everything else. */
+#define POOP_HALF 150.0f
+#define POOP_BEHIND 110.0f
 /* THE HEAD RIGHTING (`face_state_t.upright`), in degrees — `orient_upright`. */
 static float s_upright;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
@@ -1347,6 +1355,7 @@ static void update_orientation(void)
      * small signal a tilt moves, in every orientation. */
     int tilt = 0, down = 0;
     orient_axes(s_quarter, ax, ay, &tilt, &down);
+    s_tilt_g = (float)tilt / (float)LEAN_FULL;
     const int lean_max = side ? FACE_LEAN_MAX_SIDE : FACE_LEAN_MAX;
     int target = tilt * lean_max / LEAN_FULL;
     if (target > lean_max) target = lean_max;
@@ -1882,6 +1891,9 @@ static void face_task(void *arg)
     uint32_t action_start = 0;
     uint32_t recue_from = 0;
     float recue_p = 0.0f;
+    poop_t poop;
+    poop_reset(&poop);
+    uint32_t poop_last = 0;
     float action_mag = 1.0f;
     gesture_t gest;
     gesture_reset(&gest);
@@ -2007,6 +2019,9 @@ static void face_task(void *arg)
                     action_mag = 1.0f;
                     action_start = now;
                     heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
+                    if (action == ACT_EAT && poop_ate(&poop, now)) {
+                        ESP_LOGI(TAG, "three meals in a minute: a poop is owed");
+                    }
                     break;
                 }
                 if (heard_cue != CUE_COUNT && sound) {
@@ -2397,6 +2412,28 @@ static void face_task(void *arg)
            inside the draw below, after the gate had already read `dirty`, so a reply's mouth was
            drawn at the 200 ms floor: five frames a second (0.4.3). */
         if (facts.speaker_busy) dirty = true;
+        /* WHAT GOES IN (`poop.h`): owed after three meals in a minute, and done at the first
+           moment he is free, on the pet screen. It lands at POOP_AT (below); from then it
+           slides on the tilt for its twenty seconds. A frame whenever it moves, plops in or
+           shrinks away; the stink lines make do with the floor rate. */
+        if (poop.owed && action == ACT_NONE && view->mode == SM_PET) {
+            action = ACT_POOP;
+            action_mag = 1.0f;
+            action_start = now;
+            dirty = true;
+        }
+        {
+            const uint32_t dt = poop_last != 0 ? now - poop_last : 0u;
+            poop_last = now;
+            const float x0 = poop.x;
+            const bool was = poop.on;
+            poop_step(&poop, now, s_tilt_g, dt > 100u ? 100u : dt, POOP_HALF);
+            const uint32_t age = now - poop.born;
+            if (poop.on != was || poop.x != x0 ||
+                (poop.on && (age < POOP_POP_MS + 80u || age > POOP_SHOW_MS - POOP_SHRINK_MS - 80u))) {
+                dirty = true;
+            }
+        }
         if (s_sleep != SCREEN_DARK && (dirty || since_draw >= FACE_FLOOR_MS)) {
             s_drawn_lean = s_lean;
             s_drawn_upright = s_upright;
@@ -2422,6 +2459,10 @@ static void face_task(void *arg)
                 view->mode == SM_PET && !facts.speaker_busy) {
                 stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
             }
+            /* The plop: behind him, where a bird's tail is. */
+            if (action == ACT_POOP && recue_p < POOP_AT && p >= POOP_AT) {
+                poop_drop(&poop, now, (float)s_lean - POOP_BEHIND);
+            }
             recue_p = p;
             const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD ||
                                     view->think;
@@ -2446,6 +2487,9 @@ static void face_task(void *arg)
             fst.bob = bob_step(frame++);
             fst.lean = s_lean;
             fst.upright = s_upright;
+            fst.poop_x = poop.x;
+            fst.poop_size = poop_scale(&poop, now);
+            fst.poop_t = (float)(now - poop.born) * 0.001f;
             fst.open = dozing ? emotion_approach(emotion_approach(fst.open, 0.0f, 0.12f), 0.0f, 0.12f)
                               : s_open;
             fst.startle = s_flinch;

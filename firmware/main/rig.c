@@ -34,6 +34,7 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_DIZZY] = {6400, FACE_BEWILDERED, 0},
     [ACT_LOVE] = {5600, FACE_HAPPY, 0},
     [ACT_TICKLE] = {4800, FACE_HAPPY, 0},
+    [ACT_POOP] = {2600, FACE_SILLY, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -88,7 +89,25 @@ static float eat_chew(float w)
 
 bool rig_cue_on_start(action_t a)
 {
-    return a != ACT_EAT;
+    return a != ACT_EAT && a != ACT_POOP;
+}
+
+/* THE SQUAT: down over the first fifth, held while he strains and through the plop, up after.
+   The legs splay by SQUAT_SPLAY and `face.c` lowers him by what that takes off the legs. */
+#define SQUAT_SPLAY 40.0f
+
+static float squat_amount(float p)
+{
+    if (p < 0.2f) return p / 0.2f;
+    if (p > 0.78f) return (1.0f - p) / 0.22f;
+    return 1.0f;
+}
+
+/* Straining: a fast shiver building towards the plop, gone after it. */
+static float strain(float p)
+{
+    if (p < 0.2f || p >= POOP_AT) return 0.0f;
+    return sinf(p * (float)M_PI * 44.0f) * (p - 0.2f) / (POOP_AT - 0.2f);
 }
 
 int rig_eat_bites(float p, float *since)
@@ -117,6 +136,8 @@ bool rig_recue(action_t a, float p0, float p)
             const float at = ((float)k + BITE_AT) / (float)EAT_BITES;
             if (p0 < at && p >= at) return true;
         }
+    } else if (a == ACT_POOP) {
+        return p0 < POOP_AT && p >= POOP_AT; /* the plop, not the squat */
     }
     return false;
 }
@@ -275,6 +296,13 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         out->tail += sinf(p * (float)M_PI * 20.0f) * 14.0f * mag;
         break;
     }
+    case ACT_POOP:
+        /* Head down and straining, tail up out of the way; a shake of relief after. */
+        out->neck += strain(p) * 6.0f * mag;
+        if (p > POOP_AT) out->neck += sinf(p * (float)M_PI * 12.0f) * 8.0f * mag;
+        out->bob += squat_amount(p) * 8.0f;
+        out->tail += squat_amount(p) * 22.0f;
+        break;
     case ACT_TICKLE: {
         /* HELPLESS LAUGHTER: the head tosses, he bounces with every "ha", the tail wags flat
            out and the feet kick. Each channel at its own rate so it never settles into one
@@ -413,6 +441,15 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
         out->arm_r = -120.0f + q * 12.0f;
         break;
     }
+    case ACT_POOP: {
+        /* SQUATTING: legs out, arms in tight with the effort. */
+        const float k = squat_amount(p);
+        out->leg_l = 4.0f + (SQUAT_SPLAY - 4.0f) * k;
+        out->leg_r = -out->leg_l;
+        out->arm_l = 12.0f - 8.0f * k;
+        out->arm_r = -out->arm_l;
+        break;
+    }
     case ACT_TICKLE: {
         /* Arms flailing, out of step with each other; legs kicking OUT in turn, never across
            (a kick through the middle crossed his legs). */
@@ -543,6 +580,12 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
         case ACT_LOVE:
             out->tilt += sinf(p * (float)M_PI * 8.0f) * 7.0f * mag;
             out->extra = EXTRA_HEARTS;
+            break;
+        case ACT_POOP:
+            out->sit = squat_amount(p);
+            out->tilt += strain(p) * 3.0f * mag;
+            /* Up on his toes with relief once it is out. */
+            if (p > POOP_AT) out->oy -= sinf((p - POOP_AT) / (1.0f - POOP_AT) * (float)M_PI) * 10.0f;
             break;
         case ACT_TICKLE: {
             /* Wriggling side to side and bouncing on the laughs. */

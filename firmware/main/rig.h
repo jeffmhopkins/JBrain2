@@ -46,6 +46,7 @@ typedef enum {
     ACT_DIZZY, /* shaken hard: he sits down hard and shakes his head, stars going round */
     ACT_LOVE,  /* "I love you": hearts float up and he coos */
     ACT_TICKLE, /* "tickle tickle": he squirms and laughs, and laughs again */
+    ACT_POOP,   /* three meals in a minute (`poop.h`): he squats, strains, and plop */
     ACT_COUNT,
 } action_t;
 
@@ -167,6 +168,9 @@ bool rig_cue_on_start(action_t a);
 /* EATING: bites taken by progress `p` (0..EAT_BITES), and how long ago the last one was as a
    fraction of a bite's time (for the crumbs), or -1 before the first. */
 #define EAT_BITES 3
+
+/* THE PLOP: where in ACT_POOP the poop lands on the floor and its sound plays. */
+#define POOP_AT 0.6f
 int rig_eat_bites(float p, float *since);
 
 /* Limb pose for `a` at progress `p` (0..1), scaled by `mag` (the repetition penalty), with

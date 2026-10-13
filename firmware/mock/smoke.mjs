@@ -93,6 +93,16 @@ p.set(KNOB.PET_ACT, 4);
 p.advance(3200);
 check(events.slice(fed).filter((e) => e.includes('cue EAT')).length === 3,
   'a snack is three bites, a crunch each');
+// Two more snacks inside the minute: he has to go, and it plops out after the third.
+p.set(KNOB.PET_ACT, 4);
+p.advance(3200);
+p.set(KNOB.PET_ACT, 4);
+p.advance(3200);
+p.advance(3000);
+const after = events.slice(fed);
+check(after.some((e) => e.includes('three meals in a minute')), 'three snacks in a minute owe one');
+check(after.some((e) => e.includes('plop')) && after.some((e) => e.includes('cue POOP')),
+  'and he poops, with a plop');
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);

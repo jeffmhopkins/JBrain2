@@ -309,6 +309,9 @@ static const cue_def_t DEF[CUE_COUNT] = {
        laughter is a run of separate breathy syllables whose pitch tumbles DOWN as the breath
        runs out. Seven "ha"s in 740 ms (the most a cue can be once the variant stretches it). */
     [CUE_TICKLE] = {SH_LAUGH, 740, 620.0f, 0.0f, 7.0f, 7.0f, {END}, 4, 0},
+    /* PLOP: a short flat hold, then down most of two octaves, wobbling on the way — the sweep's
+       boing run backwards. Played as it lands, not as he squats (`rig_cue_on_start`). */
+    [CUE_POOP] = {SH_SWEEP, 300, 640.0f, 0.5f, -1.7f, 25.0f, {END}, 2, 30},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -425,6 +428,7 @@ cue_t cue_for_action(int action)
     case ACT_DIZZY:  return CUE_DIZZY;
     case ACT_LOVE:   return CUE_LOVE;
     case ACT_TICKLE: return CUE_TICKLE;
+    case ACT_POOP:   return CUE_POOP;
     default:         return CUE_BLIP;
     }
 }

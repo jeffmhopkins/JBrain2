@@ -474,6 +474,52 @@ static void draw_food(uint16_t *fb, int cx, int cy, float s, int bites, float si
     }
 }
 
+/* THE POOP: the swirl every child draws — three tiers and a curl on top — with a face, because
+ * a four-year-old will want it to have one, and stink lines drifting up off it. `cx` is its
+ * centre, `floor` the floor it sits on, `k` its size (it plops in and shrinks away). */
+static void draw_poop(uint16_t *fb, int cx, int floor, float s, float k, float t)
+{
+    if (k <= 0.01f) return;
+    const uint16_t brown = rgb(0x8A, 0x55, 0x2B), shine = rgb(0xB0, 0x76, 0x44);
+    const uint16_t white = rgb(0xF6, 0xF9, 0xFC), ink = rgb(0x1E, 0x12, 0x08);
+    const float u = s * k;
+    static const struct {
+        int w, h, y;
+    } TIER[] = {{58, 20, 0}, {44, 18, 15}, {30, 16, 28}};
+    for (unsigned i = 0; i < sizeof(TIER) / sizeof(TIER[0]); i++) {
+        const int w = (int)lrintf((float)TIER[i].w * u), h = (int)lrintf((float)TIER[i].h * u);
+        const int y = floor - (int)lrintf((float)TIER[i].y * u) - h;
+        fill_round_rect(fb, cx - w / 2, y, w, h, h / 2, brown);
+        fill_round_rect(fb, cx - w / 2 + w / 5, y + h / 5, w / 4, h / 4 + 1, h / 8 + 1, shine);
+    }
+    fill_circle(fb, cx + (int)lrintf(5.0f * u), floor - (int)lrintf(48.0f * u),
+                (int)lrintf(6.0f * u), brown);
+    /* The face, on the middle tier. */
+    const int ey = floor - (int)lrintf(24.0f * u);
+    for (int side = -1; side <= 1; side += 2) {
+        const int ex = cx + side * (int)lrintf(9.0f * u);
+        fill_circle(fb, ex, ey, (int)lrintf(4.5f * u), white);
+        fill_circle(fb, ex + (int)lrintf(1.0f * u), ey + (int)lrintf(1.0f * u),
+                    (int)lrintf(2.2f * u), ink);
+    }
+    arc_stroke(fb, cx, ey + (int)lrintf(1.0f * u), (int)lrintf(8.0f * u), (float)M_PI * 0.2f,
+               (float)M_PI * 0.8f, (int)lrintf(3.0f * u) + 1, ink);
+    /* Stink: three wavy lines rising and fading, each on its own clock. */
+    if (k < 0.99f) return;
+    const uint16_t stink = rgb(0x9C, 0xC8, 0x6A);
+    for (int j = 0; j < 3; j++) {
+        const float life = fmodf(t * 0.8f + (float)j / 3.0f, 1.0f);
+        const int bx = cx + (j - 1) * (int)lrintf(16.0f * s);
+        for (int d = 0; d < 8; d++) {
+            const float q = life + (float)d * 0.035f;
+            if (q > 1.0f) break;
+            const int x = bx + (int)lrintf(sinf(q * 12.0f + (float)j) * 5.0f * s);
+            const int y = floor - (int)lrintf((60.0f + q * 70.0f) * s);
+            fill_circle(fb, x, y, (int)lrintf(2.5f * s * (1.0f - q)) + 1, stink);
+        }
+    }
+}
+
 /* TICKLE MARKS: two arcs either side of the body, the way a comic draws a squirm, flickering
  * out of step side to side so they read as something happening TO him. `cx, cy` is the body's
  * centre and `half` its half width; both forms' bodies are 144 wide. */
@@ -961,6 +1007,7 @@ void face_rest(face_state_t *st)
     st->bob = 0;
     st->lean = 0;
     st->upright = 0.0f;
+    st->poop_x = st->poop_size = st->poop_t = 0.0f;
     st->talk = 0.0f;
     st->open = 1.0f;
     st->startle = 0.0f;
@@ -1006,6 +1053,15 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
     /* Black, not dark grey: on an AMOLED an unlit pixel is OFF, which is why the mock's
        field is #000 and why the figure reads as emitting rather than as a picture. */
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+
+    /* THE POOP, behind him on the floor his feet are on: where the feet are at rest, so a jump
+       or a squat does not lift the floor with him. */
+    if (st->poop_size > 0.0f) {
+        const int base = s_fit_oy >= 0 ? s_fit_oy : OY;
+        const int floor = base + (int)lrintf((st->form == FORM_ROBOT ? 166.0f : 184.0f) * s_fit);
+        draw_poop(fb, OX + (int)lrintf(st->poop_x * s_fit), floor, s_fit * 1.3f, st->poop_size,
+                  st->poop_t);
+    }
 
     if (st->form == FORM_ROBOT) {
         draw_robot(fb, hex, st, ox, oy, sx, sy, s, tilt);
