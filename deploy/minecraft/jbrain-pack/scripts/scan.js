@@ -97,12 +97,15 @@ export const initScan = ({ say, emit }) => {
     emit(scanEvent(target ? "found" : "none", player.name, scan, target, dim));
   };
 
-  // Whether the block a scan found is still there: mined, it's gone now and looked past
-  // within a second, held or not.
+  // Whether the block a scan found is still there and still in reach: mined or walked
+  // away from, it's dropped now and looked past within a second, held or not, so the map
+  // never keeps a block outside the square.
   const stillThere = (player, key, scan, target) => {
     let still = false;
     try {
-      still = scan.types.includes(player.dimension.getBlock(target)?.typeId);
+      still =
+        inScanBox(player.location, target) &&
+        scan.types.includes(player.dimension.getBlock(target)?.typeId);
     } catch {
       // Unloaded: as good as gone.
     }
@@ -195,14 +198,13 @@ export const initScan = ({ say, emit }) => {
   };
 
   // The held Tricorder's line while a scan is on, else undefined. The last target is
-  // checked cheaply each frame: mined, it's gone now and looked past within a second;
-  // walked away from, it's past the reach and hidden until the next scan.
+  // checked cheaply each frame: mined or walked away from, it's gone now and looked past
+  // within a second.
   const line = (player) => {
     const scan = scanOf(player.name);
     if (!scan) return undefined;
     const key = player.name.toLowerCase();
     let target = found.get(key) ?? null;
-    if (target && !inScanBox(player.location, target)) target = null;
     if (target && !stillThere(player, key, scan, target)) target = null;
     const here = { dim: player.dimension.id, x: player.location.x, z: player.location.z };
     return scanLine(scan, target, here, player.getViewDirection());

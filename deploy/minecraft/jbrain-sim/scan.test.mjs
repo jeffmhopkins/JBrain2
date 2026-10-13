@@ -290,6 +290,18 @@ test("a mined block is noticed within two seconds with the Tricorder put away", 
   assert.deepEqual(events("scan").at(-1), none("Pocket"));
 });
 
+test("walking out of reach of the found block is noticed within two seconds, held or not", () => {
+  const p = holder("Walker", "-23");
+  p.selectedSlotIndex = (p.selectedSlotIndex + 1) % 9;
+  put(0, 64, -9, "minecraft:diamond_ore");
+  scanFor("Walker", "diamond_ore");
+  ticks(1);
+  assert.deepEqual(events("scan").at(-1), found("Walker", 0, 64, -9));
+  p.location = { x: 0.5, y: 64, z: 40.5 };
+  ticks(8);
+  assert.deepEqual(events("scan").at(-1), none("Walker"));
+});
+
 test("a steady target is sent again once a minute, so its time stays true", () => {
   holder("Steady", "-22");
   put(5, 64, 0, "minecraft:diamond_ore");

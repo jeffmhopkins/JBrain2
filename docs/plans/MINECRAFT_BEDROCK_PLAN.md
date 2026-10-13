@@ -2961,7 +2961,7 @@ and dig, with no deep scan spent. Chests and containers stay on `mc_find_item`'s
     with the held Tricorder's distance (across, to the block's centre), the compass word
     and how far below or above them it is; offline, that it picks up again when they're
     back on. `mc_show_map` v3 gains the focus `scan` (the gamertag in `label`): the card is
-    centred on the scanner and draws the scan live. Prompt `agent-minecraft-dave-v22`.
+    centred on the scanner and draws the scan live. Prompt `agent-minecraft-dave-v23` (merged with §M4e's v22).
   - **The map** (DESIGN.md "The Tricorder's live scan on the Minecraft map"): every online
     scanner's 33 × 33 square (viewfinder corners and a hairline in their colour, a 10 %
     wash while something's found), the found block in §M21's target grammar, the bearing
