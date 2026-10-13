@@ -556,6 +556,37 @@ devices" fences).
 - **A lone planted legacy cookie** on a browser with no session of its own is believed (as
   its own kind, never promoted) until the owner signs in.
 
+## Round 2 (post-ship cold review)
+
+A cold reviewer read the shipped fixes again (2026-10-13). Fixed:
+
+- **Reader redirects.** `_fetch_via_reader` followed the reader's 3xx with no SSRF check per
+  hop, so a hostile page could steer the api (on the internal networks) at an internal
+  service and get the body back as page text. A reader 3xx is now a reader miss.
+- **htmlrender popups.** The request and WebSocket routes were page-scoped, so a
+  `window.open` or a `target=_blank` form post ran in a second page they never saw. They are
+  on the browser context now, and any second page is closed.
+- **jcode preview errors.** The preview status/open routes, open to share recipients, echoed
+  the control server's error text and so its internal URL. Fixed detail; cause logged.
+- **`mc_log` source.** An entry written in an in-game turn was labelled `owner`; it is
+  `player` (or `dave`) now.
+- **Unauthenticated POST bodies.** Login, session mint and the intake, jcode-share and
+  pairing redeems had no body bound. Caddy caps exactly those paths at 64 KB, and their
+  token fields have a max length.
+
+Recorded, not changed:
+
+- **Untrusted PDFs are parsed in the api.** `POST /api/jcode/llm/v1/ocr` (reachable only
+  from the jcode container with its gateway key) rasterizes a PDF with MuPDF inside the api
+  process, so a MuPDF bug is reached by sandbox-authored bytes there. Moving the rasterize
+  step into the RapidOCR sidecar would keep it out of the api.
+- **The ComfyUI image is unpinned.** `COMFYUI_IMAGE` defaults to
+  `kyuz0/amd-strix-halo-comfyui:latest`, unlike the digest-pinned local-LLM base, so an
+  upstream push changes what runs on the next pull.
+- **The LAN-only debug-console page is reachable by naming the LAN host.** Caddy serves it
+  only on the LAN site, which is routing by `Host`/SNI, not a network fence. Accepted: the
+  page is static and every action it takes needs a debug token (`DEBUG_ACCESS.md`).
+
 ## Provenance
 
 Six cold reviewers (non-owner routes, unauthenticated routes, credentials/share links,
