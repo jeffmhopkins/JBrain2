@@ -804,3 +804,19 @@ export const FlagIcon = (p: IconProps) => (
     <path d="M4 22V4M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1" />
   </Icon>
 );
+
+/** Lucide `gamepad-2`: something a player did or typed in game. */
+export const GamepadIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M6 11h4M8 9v4M15 12h.01M18 10h.01" />
+    <path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.59l-.6 5.38A3 3 0 0 0 5.08 17.3c.83 0 1.58-.42 2.08-1.07L8.5 14.5h7l1.34 1.73c.5.65 1.25 1.07 2.08 1.07a3 3 0 0 0 2.98-3.33l-.6-5.38A4 4 0 0 0 17.32 5z" />
+  </Icon>
+);
+
+/** Lucide `ban`: given up on. */
+export const BanIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="10" />
+    <path d="m4.9 4.9 14.2 14.2" />
+  </Icon>
+);

@@ -50,6 +50,8 @@ WORLDS = {
     ],
 }
 T0 = datetime(2026, 10, 12, 19, 0, tzinfo=UTC)
+# The routes take the app settings only to reach the sidecar, which these tests fake.
+SETTINGS: Any = object()
 
 
 @pytest.fixture
@@ -175,7 +177,7 @@ async def test_a_goal_dave_makes_is_filed_under_the_loaded_world(maker, sidecar)
 
 async def test_the_goals_route_reads_every_goal_and_its_journal(maker, sidecar) -> None:
     ids = await _seed(maker)
-    body = await api.player_goals(_request(maker), object())
+    body = await api.player_goals(_request(maker), SETTINGS)
     assert body["world"] == "castle"
     [p] = body["players"]
     assert p["xuid"] == XUID and p["gamertag"] == "BlockyFox"
@@ -197,7 +199,7 @@ async def test_the_goals_route_reads_every_goal_and_its_journal(maker, sidecar) 
 
 async def test_progress_counts_each_goal_in_its_own_world(maker, sidecar) -> None:
     ids = await _seed(maker)
-    got = await api.goal_progress(_request(maker), object(), XUID, flush=False)
+    got = await api.goal_progress(_request(maker), SETTINGS, XUID, flush=False)
     assert got["online"] is True
     old, sky = got["goals"]
     assert old["id"] == ids["old"] and sky["id"] == ids["sky"]

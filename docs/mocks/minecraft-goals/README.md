@@ -2,10 +2,45 @@
 
 > **Status:** Living · **Last verified:** 2026-10-13
 >
-> **Open — waiting for the owner's pick.** Three variants. An independent review is due
-> before the pick. Behaviour sources: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M24 ("Goals that
-> count", whose *Not built* list names this: *the goals list in the PWA doesn't show
-> progress*) and "Goals and the progress log" (`app.mc_goals`, `app.mc_goal_log`).
+> **Decided (owner, 2026-10-13): B, "but expandable if clicked", look-only.** Built per
+> `docs/reference/DESIGN.md` "Players' goals on the Minecraft screen" and plan §M24 "Goals in
+> the app". Behaviour sources: `docs/plans/MINECRAFT_BEDROCK_PLAN.md` §M24 ("Goals that
+> count") and "Goals and the progress log" (`app.mc_goals`, `app.mc_goal_log`). The
+> independent review is `REVIEW.md`.
+
+## Decision and what the build changed
+
+The owner picked **B** with one change: tapping a player's glance line **expands it in
+place** to show all their goals, each with its bar and *where from · as of* line, finished
+goals folded under *N done · N abandoned*. A goal opens its detail in place (an accordion);
+the row still opens the player Sheet, which gains the Goals section and the latest Journal.
+Read-only: the app never edits a goal, and the footnote says players change goals by
+asking Dave (open question 2: look-only).
+
+The mocks below are kept as drawn. The build departs from them where the review found them
+untrue of the code, or misleading:
+
+- **The glance line** reads *14 / 23 iron blocks · +1 more goal*, not *14/23 iron blocks ·
+  1 more* (review B1).
+- **Goals know their world.** `mc_goal_create` now writes it; a goal with none reads as the
+  loaded world's (X1). A world that isn't loaded **is** counted, from its saved files (which
+  are exact while nobody plays it), with a *not loaded* pill and no pockets; the fixture's
+  *— / 200* now applies only when nothing could be counted (open question 6).
+- **Where they stand counts** (X2): the detail has a *Near {player}* row, so the app's total
+  is Dave's.
+- **The far cost** is one deep scan **per check, for all far places** (X3), said once under
+  the source list; the app never pays it (`scans.charge` is never called).
+- **Reached** says *{player} can tell Dave it's done*: Dave doesn't bring it up (X4, open
+  question 3).
+- **The journal** has no *Goal made* entry: nothing writes one.
+- **Counting is batched per player** (X8): one request a player, made when the goals are
+  shown (no forced save); **Count again** forces the save, at most every 30 s (open
+  question 7).
+- **Values never break** (X5): *1 shulker box* is one unit, and its line says *what's
+  inside isn't counted*.
+- **Glyphs** (X7): a cube for a counted goal, not the Tricorder target's rings.
+- **The Sheet** keeps its shipped totals grid above Goals and Journal (the mock drew one
+  totals line).
 
 Each player's goals live in `app.mc_goals`. A goal has a title, a status (open, done or
 abandoned), when it was made and finished, and, since §M24, an optional item and count
@@ -130,7 +165,7 @@ Home* row (open question 4).
 - A's Sheet carries everything the count needs to be honest: the sources, the far place, the
   file age, the shulker caveat and the no-deep-scan line. It needs no new pattern.
 
-## Data path (what the app needs; nothing is built)
+## Data path (as drawn; built as `GET /api/minecraft/goals` and `GET /api/minecraft/goals/progress?xuid=&flush=`, one request a player — see the plan)
 
 - **Read the goals:** `GET /api/minecraft/goals?slot=`. It returns every player's goals (owner
   RLS, like the rest of `/api/minecraft`) with `item`, `item_count`, `status`, `created_at`
