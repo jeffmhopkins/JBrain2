@@ -390,6 +390,24 @@ static void test_a_poke_cuts_the_pets_own_noise_and_is_heard(void)
     CHECK(heard_n == at + ref(CUE_GIGGLE, 0, r), "and the rest of the crunch never comes back");
     CHECK(!stream_facts(&st).speaker_busy, "nothing owed after");
 
+    /* A REPLY WAITING ON THE CRUNCH keeps its place: the press behind it is dropped, not cut in
+       ahead (the reviewer's edge — a voice ack posts with no busy check). */
+    setup(true, true);
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_EAT, STREAM_CUE_GAIN, 0);
+    ticks(3);
+    fill_reply(AUDIO_RATE / 2, 1234);
+    stream_reply(&st, reply_pcm, AUDIO_RATE / 2, 9);
+    stream_cue(&st, STREAM_SLOT_PRESS, CUE_GIGGLE, STREAM_CUE_GAIN, 0);
+    until_quiet();
+    int stray = 0, first_reply = -1;
+    for (int i = 0; i < heard_n; i++) {
+        if (heard[i] == 1234 && first_reply < 0) first_reply = i;
+    }
+    for (int i = first_reply; i >= 0 && i < heard_n; i++) stray += heard[i] != 1234;
+    CHECK(sounded(0, CUE_EAT, 0) && first_reply == ref(CUE_EAT, 0, r),
+          "the crunch finishes and the reply follows it, the giggle never jumping ahead");
+    CHECK(stray == 0, "and nothing of the giggle sounds after it either");
+
     /* Behind the agent: no cut, and the poke only flinches. */
     setup(true, true);
     fill_reply(AUDIO_RATE, 1234);

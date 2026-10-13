@@ -410,8 +410,12 @@ stream_tick_t stream_tick(stream_t *s, uint32_t now, int16_t *out, size_t chunk)
                dropped behind one. The stream does not count; it yields chunk by chunk below.
                BUT IT CUTS THE PET'S OWN NOISE (0.4.10): a meal crunches through two-thirds of
                its 4.8 s, and a poke into it would otherwise react in silence. The old cue is
-               finished first, so the copy never overwrites samples still being played. */
-            if (s->snd == STREAM_SND_CUE && s->snd_slot == STREAM_SLOT_PRESS) finish_sound(s);
+               finished first, so the copy never overwrites samples still being played. NOT
+               with a reply waiting on that noise: the reply is next, and a press cut in ahead
+               of it would delay the agent by a whole cue. */
+            if (s->snd == STREAM_SND_CUE && s->snd_slot == STREAM_SLOT_PRESS && !reply_active) {
+                finish_sound(s);
+            }
             if (s->snd != STREAM_SND_NONE) {
                 dispose_cue(s, i, seq);
             } else {
