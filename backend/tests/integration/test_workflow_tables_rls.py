@@ -23,15 +23,17 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, UNSCOPED, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
-GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+HEALTH_ONLY = scoped_owner("health")
+GENERAL_ONLY = scoped_owner("general")
+# A non-owner carrying a scope claim: the owner-only tables must refuse it.
+HEALTH_TOKEN = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
 # A narrowed owner session (migration 0015): keeps owner identity but is firewalled
 # to its domain_scopes, so an owner-only table is still visible while a
 # domain-firewalled row outside scope is not.
@@ -184,7 +186,7 @@ async def test_workflow_owner_tables_are_owner_only(
     # A domain-narrowed owner is still an owner (is_owner() ignores owner_scoped),
     # exactly like app.agent_runs — these config/audit rows aren't domain data.
     assert await count_visible(maker, OWNER_HEALTH, query, params) == 1
-    assert await count_visible(maker, HEALTH_ONLY, query, params) == 0
+    assert await count_visible(maker, HEALTH_TOKEN, query, params) == 0
     assert await count_visible(maker, UNSCOPED, query, params) == 0
 
 
@@ -205,5 +207,5 @@ async def test_pipelines_are_global_read_owner_write(maker: async_sessionmaker) 
     assert await count_visible(maker, UNSCOPED, query, params) == 1
     # A non-owner write is refused by the owner-only INSERT policy.
     with pytest.raises(ProgrammingError):
-        async with scoped_session(maker, HEALTH_ONLY) as s:
+        async with scoped_session(maker, HEALTH_TOKEN) as s:
             await s.execute(text("INSERT INTO app.pipelines (name, version) VALUES ('sneaky', 1)"))

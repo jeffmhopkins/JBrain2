@@ -38,15 +38,15 @@ from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from jbrain.transcribe import Transcript, Word
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, UNSCOPED, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
-GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+HEALTH_ONLY = scoped_owner("health")
+GENERAL_ONLY = scoped_owner("general")
 
 
 class FakeTranscribeClient:

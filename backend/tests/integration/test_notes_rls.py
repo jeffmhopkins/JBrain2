@@ -8,11 +8,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.db.session import scoped_session
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notes.service import NoteUpdate, UnknownDomain
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, UNSCOPED, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -32,8 +32,8 @@ def repo(maker: async_sessionmaker) -> SqlNotesRepo:
     return SqlNotesRepo(maker)
 
 
-HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
-GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+HEALTH_ONLY = scoped_owner("health")
+GENERAL_ONLY = scoped_owner("general")
 
 
 async def test_create_is_idempotent_against_real_unique_constraint(repo: SqlNotesRepo) -> None:

@@ -704,8 +704,9 @@ class SqlLocationRepo:
         `place_share` join (a row = the owner shared this place); `place_geofence`'s
         own RLS additionally limits a device to subject-less / own-subject fences, so
         an un-shared or owner-private fence never reaches a member. Names come from
-        `place_geofence` (a device cannot read `entities`), so no fence the owner did
-        not share is ever named to a member."""
+        `place_geofence`, never `entities`: a device's location scope is honoured only
+        by the explicit device arms (migration 0245), and `entities` has none, so no
+        fence the owner did not share is ever named to a member."""
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(
@@ -742,12 +743,12 @@ class SqlLocationRepo:
         limit: int,
     ) -> list[TimelineEntry]:
         """A member's timeline: geofence crossings at SHARED places for the subjects
-        the member may see (JBrain360 M4c). `app.events` is weak RLS (a device can
-        read every location event), so the firewall here is the SQL itself: the
-        `place_share` join admits only owner-shared places, and the subject predicate
-        (own subject OR `viewer_may_see`) admits only the member's own + family-group
-        crossings. The place name comes from `place_geofence` (device-readable for a
-        shared subject-less fence), never `entities`."""
+        the member may see (JBrain360 M4c). RLS (`events_device_geofence_read`, 0245)
+        already limits a device to geofence crossings about its own or a family
+        subject; the SQL repeats that subject predicate and adds the `place_share`
+        join, which admits only owner-shared places. The place name comes from
+        `place_geofence` (device-readable for a shared subject-less fence), never
+        `entities`."""
         async with scoped_session(self._maker, ctx) as session:
             rows = (
                 await session.execute(

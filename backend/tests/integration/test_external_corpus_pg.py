@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.db.session import scoped_session
 from jbrain.embed import ExternalSourceEmbedder, vector_literal
 from jbrain.external.corpus import (
     delete_external_video,
@@ -33,16 +33,16 @@ from jbrain.external.corpus import (
 from jbrain.ingest.video import VideoAnalysis
 from jbrain.stream import ResolvedStream
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, UNSCOPED, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
-HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
-EXTERNAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("external",))
+GENERAL_ONLY = scoped_owner("general")
+HEALTH_ONLY = scoped_owner("health")
+EXTERNAL_ONLY = scoped_owner("external")
 DIMS = 384
 
 

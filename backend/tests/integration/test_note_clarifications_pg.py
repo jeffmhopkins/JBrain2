@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -247,20 +247,19 @@ async def test_append_works_under_the_narrowed_owner_session_w3_will_use(
 async def test_append_fails_closed_under_a_capability_token(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Not a guard anyone wrote — `app.jobs` is `is_owner()`-only (0009), so the
-    in-transaction enqueue is what refuses. Recorded because it is a real consequence of
-    putting the enqueue inside the append: this method is OWNER-ONLY, and a
-    capability-token caller gets a raw driver error, not a clean refusal."""
+    """This method is OWNER-ONLY. A non-owner's `domain_scopes` grant it nothing (0245:
+    `has_domain_scope` is owner-only), so even a token claiming the note's domain cannot
+    see the note and gets the not-found answer — no block, no re-ingest job."""
     note_id = await make_note(maker)
     token = SessionContext(
         principal_id=str(uuid.uuid4()),
         principal_kind="capability",
         domain_scopes=("general",),
     )
-    with pytest.raises(ProgrammingError):
-        await SqlNotesRepo(maker).append_clarification(
-            token, note_id, question="Which 10k?", answer="The canal loop."
-        )
+    got = await SqlNotesRepo(maker).append_clarification(
+        token, note_id, question="Which 10k?", answer="The canal loop."
+    )
+    assert got is None
     assert await block_count(maker, note_id) == 0
 
 
