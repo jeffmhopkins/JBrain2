@@ -14,6 +14,7 @@ SRC = $(C)/app_api/dbg_json.c $(C)/app_api/app_event.c \
       $(C)/shell/shell_core.c $(C)/shell/shell_evq.c $(C)/shell/notice_view.c \
       $(C)/app_clock/clock_model.c $(C)/app_settings/settings_model.c \
       $(C)/app_thread/thread_model.c $(C)/convo/convo_model.c $(C)/ui_kit/ui_pin.c $(C)/ui_kit/ui_hold.c \
+      $(C)/ui_kit/emoji_logic.c $(C)/ui_kit/emoji/emoji_set.c \
       $(C)/svc_siblings/sib_logic.c $(C)/svc_siblings/svc_siblings.c \
       $(C)/svc_siblings/sib_port_fake.c \
       $(C)/svc_alarms/alarm_logic.c $(C)/svc_alarms/svc_alarms.c $(C)/svc_alarms/alarm_port_fake.c \
@@ -43,7 +44,7 @@ test: run_tests
 
 # sha256.c is the suite's own: the box's notice fixtures name their pixels and sound by digest.
 run_tests: tests.c sha256.c sha256.h $(SRC) $(HDR)
-	$(CC) $(CFLAGS) -o $@ tests.c sha256.c $(SRC) -lm
+	$(CC) $(CFLAGS) -DEMOJI_HOST_TEST -o $@ tests.c sha256.c $(SRC) -lm
 
 clean:
 	rm -f run_tests

@@ -10,9 +10,12 @@ import {
   type MinecraftDim,
   type MinecraftGate,
   type MinecraftMapPlayer,
+  type MinecraftMob,
+  type MinecraftPlace,
   type MinecraftSpawnPoint,
   type MinecraftStructure,
   type MinecraftTimelineEvent,
+  type MinecraftVillager,
   minecraftTileUrl,
 } from "../api/client";
 import {
@@ -30,6 +33,7 @@ import {
   toScreen,
   toWorld,
 } from "../minecraftMap";
+import { REACH_BLOCKS, type VillageMark, aimedAtPlace, jobOf } from "../minecraftMapLayers";
 import {
   type Avoid,
   type Box,
@@ -40,12 +44,15 @@ import {
   elsewhereLabel,
   gateCenter,
   linesHere,
+  segHitsBox,
   sideSlot,
 } from "../minecraftMapMarkers";
 
 /** A point marker that clusters: a structure, an event (a death; on the replay also a log-in,
- *  log-off or portal trip), the world spawn, a beacon or gate, or a player's bed (`col` is
- *  their colour, resolved). */
+ *  log-off or portal trip), the world spawn, a beacon or gate, and — from the layers round
+ *  (GUI gate minecraft-map-layers) — a saved place, a village, a villager, a pet or a named
+ *  mob, or a player's bed. `tok` is a player's colour token; null takes the neutral ring;
+ *  a bed's `col` is its player's colour, resolved. */
 export type Marker = Placed &
   (
     | { type: "struct"; s: MinecraftStructure }
@@ -53,6 +60,11 @@ export type Marker = Placed &
     | { type: "spawn" }
     | { type: "beacon"; b: MinecraftBeacon }
     | { type: "gate"; g: MinecraftGate }
+    | { type: "place"; p: MinecraftPlace; tok: string | null; own: string }
+    | { type: "village"; v: VillageMark }
+    | { type: "villager"; v: MinecraftVillager; label: string | null }
+    | { type: "pet"; m: MinecraftMob; tok: string | null }
+    | { type: "named"; m: MinecraftMob }
     | { type: "bed"; s: MinecraftSpawnPoint; col: string }
   );
 
@@ -326,7 +338,7 @@ function tileGlyph(
   ctx: CanvasRenderingContext2D,
   x: number,
   y: number,
-  accent: string,
+  accent: string | null,
   parts: (keyof typeof GLYPHS)[],
   t: Tokens,
   opts: { dashed?: boolean; fill?: keyof typeof GLYPHS | null } = {},
@@ -336,12 +348,13 @@ function tileGlyph(
   ctx.beginPath();
   ctx.roundRect?.(x - 12, y - 12, 24, 24, 7);
   ctx.fill();
-  ctx.strokeStyle = accent;
+  neutralOr(ctx, accent, t);
   ctx.lineWidth = 1.5;
   if (opts.dashed) ctx.setLineDash([3, 2.5]);
   ctx.beginPath();
   ctx.roundRect?.(x - 10.5, y - 10.5, 21, 21, 6);
   ctx.stroke();
+  ctx.globalAlpha = 1;
   ctx.setLineDash([]);
   ctx.translate(x - 7.5, y - 7.5);
   ctx.scale(15 / 24, 15 / 24);
@@ -352,12 +365,186 @@ function tileGlyph(
   for (const key of parts) {
     const path = glyphPath(key);
     if (!path) continue;
-    if (opts.fill === key) {
+    if (opts.fill === key && accent) {
       ctx.fillStyle = accent;
       ctx.fill(path);
     }
     ctx.stroke(path);
   }
+  ctx.restore();
+}
+
+/** A ring in a player's colour, or nobody's: `--map-ink` at 55 % (a villager, a named
+ *  mob, a village with no located structure, a pet whose owner isn't known). */
+function neutralOr(ctx: CanvasRenderingContext2D, col: string | null, t: Tokens) {
+  if (col) {
+    ctx.strokeStyle = col;
+  } else {
+    ctx.strokeStyle = t.ink;
+    ctx.globalAlpha = 0.55;
+  }
+}
+
+/** A Lucide glyph in `--map-ink`, `size` px square, centred on (x, y). */
+function inkGlyph(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  key: keyof typeof GLYPHS,
+  size: number,
+  t: Tokens,
+) {
+  const path = glyphPath(key);
+  if (!path) return;
+  ctx.save();
+  ctx.translate(x - size / 2, y - size / 2);
+  ctx.scale(size / 24, size / 24);
+  ctx.strokeStyle = t.ink;
+  ctx.lineWidth = (2.2 * 15) / size;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke(path);
+  ctx.restore();
+}
+
+/** A round halo disc with a 1.5 px ring: a saved place's pin, a villager's job. */
+function haloDisc(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  col: string | null,
+  t: Tokens,
+) {
+  ctx.save();
+  ctx.fillStyle = t.halo;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  neutralOr(ctx, col, t);
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(x, y, r - 1.5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** A saved place: the pin on a halo disc ringed in its player's colour. Round, because a
+ *  place is somewhere someone named, not a thing built in the world (those are tiles). */
+export function savedPin(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  col: string | null,
+  t: Tokens,
+  on: boolean,
+) {
+  haloDisc(ctx, x, y, 12, col, t);
+  inkGlyph(ctx, x, y, "pin", 15, t);
+  if (on) ring(ctx, x, y, 18, t);
+}
+
+/** A villager: its job's glyph on a neutral disc (nobody's). */
+export function villagerDisc(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  job: string,
+  t: Tokens,
+  on: boolean,
+) {
+  haloDisc(ctx, x, y, 11, null, t);
+  inkGlyph(ctx, x, y, jobOf(job).glyph, 12, t);
+  if (on) ring(ctx, x, y, 17, t);
+}
+
+/** Where a village tile's count goes: the first corner no line crosses (the review's A1 —
+ *  never on a gate's dotted line), else the top right. */
+export function cornerBox(x: number, y: number, w: number, segs: Avoid["segs"]): Box {
+  const slots: Box[] = [
+    { x: x + 6, y: y - 20, w, h: 16 },
+    { x: x - 6 - w, y: y - 20, w, h: 16 },
+    { x: x + 6, y: y + 4, w, h: 16 },
+    { x: x - 6 - w, y: y + 4, w, h: 16 },
+  ];
+  return slots.find((r) => !segs.some((sg) => segHitsBox(sg, r))) ?? (slots[0] as Box);
+}
+
+/** A village: the house on an amber tile where the server located one, a neutral one
+ *  where it didn't, with how many it stands for on a corner. Returns the count's box, a
+ *  label obstacle. */
+export function villageTile(
+  ctx: CanvasRenderingContext2D,
+  v: VillageMark,
+  x: number,
+  y: number,
+  t: Tokens,
+  segs: Avoid["segs"],
+): Box {
+  tileGlyph(ctx, x, y, v.struct ? t.amber : null, ["house"], t);
+  const txt = String(v.count);
+  ctx.save();
+  ctx.font = "700 10.5px system-ui, sans-serif";
+  const w = Math.max(18, ctx.measureText(txt).width + 9);
+  const r = cornerBox(x, y, w, segs);
+  ctx.fillStyle = t.halo;
+  ctx.beginPath();
+  ctx.roundRect?.(r.x, r.y, w, 16, 8);
+  ctx.fill();
+  ctx.strokeStyle = t.ink;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect?.(r.x + 0.5, r.y + 0.5, w - 1, 15, 7.5);
+  ctx.stroke();
+  ctx.fillStyle = t.ink;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(txt, r.x + w / 2, r.y + 8.5);
+  ctx.restore();
+  return r;
+}
+
+/** A pet: the paw on a tile ringed in its owner's colour; a named mob: the tag on a
+ *  neutral one. Square, as things in the world are. */
+export function mobTile(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  pet: boolean,
+  col: string | null,
+  t: Tokens,
+  on: boolean,
+) {
+  tileGlyph(ctx, x, y, pet ? col : null, [pet ? "paw" : "tag"], t);
+  if (on) ring(ctx, x, y, 18, t);
+}
+
+/** The 48-block reach round a tapped place, where goals count its chests (§M24): a
+ *  hairline in its player's colour over a halo, with a 10 % wash. Round, because the reach
+ *  is measured across — never a beacon's dashed square or the scan's corners. */
+export function reachCircle(
+  ctx: CanvasRenderingContext2D,
+  v: MapView,
+  f: Frame,
+  p: { x: number; z: number },
+  col: string | null,
+  t: Tokens,
+) {
+  const [x, y] = toScreen(v, f, p.x + 0.5, p.z + 0.5);
+  const r = REACH_BLOCKS * v.s;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.globalAlpha = 0.1;
+  ctx.fillStyle = col ?? t.ink;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = t.halo;
+  ctx.lineWidth = 4;
+  ctx.stroke();
+  neutralOr(ctx, col, t);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -586,6 +773,9 @@ export interface WorldMarkersIn {
   /** The tapped beacon's key or gate's id, if one is. */
   selBeacon: string | null;
   selGate: number | null;
+  /** Where a saved place's pin stands (`spotKey`): a gate aimed at that block ends at the
+   *  place's own pin instead of its violet one (the review's X1, matched by block). */
+  placedAt?: Set<string> | undefined;
 }
 
 export interface WorldMarkersOut {
@@ -642,6 +832,8 @@ export function drawWorldMarkers(
       ends.push({ g, sx: bx, sy: by });
     }
     for (const e of ends) {
+      const tg = e.g.target;
+      if (tg && w.placedAt && aimedAtPlace(w.placedAt, tg)) continue;
       if (off(e.sx, e.sy)) continue;
       placePin(ctx, e.sx, e.sy, t);
       const own = `g:${e.g.id}`;
@@ -759,24 +951,47 @@ export function playerDisc(
 export function markerLabel(m: Marker): string | null {
   if (m.type === "struct") return structureInfo(m.s.structure).label;
   if (m.type === "spawn") return "Spawn";
+  if (m.type === "place") return m.p.name;
+  if (m.type === "village") return m.v.label;
+  if (m.type === "villager") return m.label;
+  if (m.type === "pet" || m.type === "named") return m.m.name || null;
   if (m.type === "bed") {
     return m.s.kind === "anchor" ? "Respawn anchor" : m.s.kind === "other" ? "Spawn point" : "Bed";
   }
   return null;
 }
 
-/** A marker's key for the label rule: its label, line and pin share it. */
+/** A marker's key for the label rule: its label, line and pin share it, and every other
+ *  label keeps off it. Keyed per marker, never per kind, so one pet's plate can't cover
+ *  another pet (the review's X5). */
 export function markerOwn(m: Marker): string | undefined {
   if (m.type === "gate") return `g:${m.g.id}`;
   if (m.type === "beacon") return `b:${beaconKey(m.b)}`;
+  if (m.type === "place") return m.own;
+  if (m.type === "village") return `vg:${m.v.id}`;
+  if (m.type === "villager") return `vv:${m.v.id}`;
+  if (m.type === "pet") return `pet:${m.m.id}`;
+  if (m.type === "named") return `nm:${m.m.id}`;
   if (m.type === "bed") return `bed:${m.s.xuid}`;
   return undefined;
 }
+
+/** The colour a marker's ring takes, from its player's token; null is nobody's. */
+const ringOf = (t: Tokens, tok: string | null) => (tok ? colorOf(t, tok) : null);
 
 export function markerGlyph(ctx: CanvasRenderingContext2D, m: Marker, t: Tokens, on: boolean) {
   if (m.type === "struct") return structGlyph(ctx, m.sx, m.sy, m.s.structure, t, on);
   if (m.type === "beacon") return beaconGlyph(ctx, m.sx, m.sy, t, on);
   if (m.type === "gate") return gateGlyph(ctx, m.sx, m.sy, m.g.state === "open", t, on);
+  if (m.type === "place") return savedPin(ctx, m.sx, m.sy, ringOf(t, m.tok), t, on);
+  if (m.type === "villager") return villagerDisc(ctx, m.sx, m.sy, m.v.job, t, on);
+  if (m.type === "pet") return mobTile(ctx, m.sx, m.sy, true, ringOf(t, m.tok), t, on);
+  if (m.type === "named") return mobTile(ctx, m.sx, m.sy, false, null, t, on);
+  if (m.type === "village") {
+    villageTile(ctx, m.v, m.sx, m.sy, t, []);
+    if (on) ring(ctx, m.sx, m.sy, 18, t);
+    return;
+  }
   if (m.type === "bed") return bedGlyph(ctx, m.sx, m.sy, m.s.kind, m.col, t, on);
   const { sx: x, sy: y } = m;
   ctx.save();

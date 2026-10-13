@@ -198,6 +198,40 @@ async def test_saving_again_moves_and_remove_forgets(maker, sidecar) -> None:
         assert "outside the world" in await tools["mc_place_save"]({"name": "x"}, ctx)
 
 
+async def test_saving_again_on_the_same_block_is_not_a_move(maker, sidecar) -> None:
+    """The map says "moved <date>" from `updated_at`, so a re-save on the very block, even
+    one that only changes the name's case, keeps it; one elsewhere advances it."""
+    owner = await _owner(maker)
+    ctx = await _chat(maker, owner)
+    assert ctx.agent_session_id is not None
+    tools = _tools(maker)
+    here = _asker(Spot(1, 64, 2, "overworld"))
+    with asking(ctx.agent_session_id, here):
+        await tools["mc_place_save"]({"name": "base"}, ctx)
+    long_ago = datetime(2026, 10, 1, tzinfo=UTC)
+    async with scoped_session(maker, owner) as s:
+        await s.execute(
+            text("UPDATE app.mc_places SET created_at = :t, updated_at = :t"), {"t": long_ago}
+        )
+
+    async def stamps() -> tuple[str, datetime, datetime]:
+        async with scoped_session(maker, owner) as s:
+            row = (
+                await s.execute(text("SELECT name, created_at, updated_at FROM app.mc_places"))
+            ).one()
+        return row.name, row.created_at, row.updated_at
+
+    with asking(ctx.agent_session_id, here):
+        again = await tools["mc_place_save"]({"name": "BASE"}, ctx)
+    assert "moved" not in again
+    assert await stamps() == ("BASE", long_ago, long_ago)
+    with asking(ctx.agent_session_id, _asker(Spot(1, 70, 2, "overworld"))):
+        higher = await tools["mc_place_save"]({"name": "base"}, ctx)
+    assert "moved from (1, 2, y 64)" in higher
+    _, made, put = await stamps()
+    assert made == long_ago and put > long_ago
+
+
 async def test_a_place_is_only_ever_where_the_player_stands(maker, sidecar) -> None:
     """No saving by coordinates (owner, 2026-10-11): a saved place is what a transport
     may go to, so it must be somewhere the player has stood."""

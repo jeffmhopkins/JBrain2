@@ -2,15 +2,63 @@
 
 > **Status:** Living · **Last verified:** 2026-10-13
 >
-> **Open — waiting on the owner's picks**, one section at a time (the questions at the
-> end). **Beds is decided (B, 2026-10-13) and built** (§3's decision block); places and
-> villagers are still open here. The owner asked for these three map follow-ups on
-> 2026-10-13. An independent review follows this round. Behaviour sources:
+> **Decided and built, all three sections (owner, 2026-10-13):** places and villagers and
+> pets (their sections' decisions), and beds, variant B (§3's decision block). The owner
+> asked for these three map follow-ups on 2026-10-13; the independent review is
+> `REVIEW.md`. Behaviour sources:
 > `docs/plans/MINECRAFT_BEDROCK_PLAN.md`:
 > - the saved places (`app.mc_places`, migration 0228's docstring) and §M24's goal chests;
 > - §M4e, the entity index (*Not built (later): pets and villagers on the map*);
 > - §M26, beacons and gates. DESIGN.md has it as "Beacons and gates on the Minecraft
 >   map", and its marker language is kept here.
+
+## Decided (owner, 2026-10-13)
+
+1. **Saved places: variant A** — pins in the player's current colour, always named, merging
+   into a count under 40 px, with an *In this world* list by player in Layers. The card says
+   whose and when it was saved (`updated_at`), the coordinates, how far its player is, *Protected
+   by …'s No-Spawn Beacon* (`covered_by`), *Wormhole gate N leads here*, and the goal chests
+   near it with **the 48-block circle drawn** on tap, worded as this place's share (*9 of the
+   23 iron blocks are in chests here*). **No "Point the Tricorder here" button.** A gate's
+   destination is matched to a place **by position** (the review's X1); where they differ both
+   are drawn.
+2. **Villagers and pets: variant A** — a village is one tile with its count zoomed out (the
+   located village keeps its amber tile and gains the count; wandering traders aren't
+   counted), splitting into job discs from 3 px a block; pets and named mobs drawn; filter
+   chips in Layers (*Sells Mending*, *Librarians*, a player's pets…) with C's ranked list
+   under a chip. The villager card lists **every trade it offers now, by level**. The pet card
+   says whose (or that the owner isn't known yet), its coat, and whether it's sitting. **No
+   "Read the world again"**: the automatic re-read only, and the age is worded for what it
+   is (the newest write to the world's files).
+3. **Defaults:** saved places on; villagers off; pets and named mobs off.
+4. **Owner-only:** none of these on share links, and none on the timeline's replay.
+5. **Dave's chat card:** `villager` and `pet` focus kinds (`place` already existed).
+
+The review's blocking findings X1, X2 and X5 are fixed in the build; DESIGN.md "Saved places,
+villagers and pets on the Minecraft map" is the binding record. Questions 1-9 and 13 below are
+answered by the above; the beds questions (10-12) are their own.
+
+**Where the build departs from these mocks** (checked in headless Chromium at 390 × 844 and
+320 × 568, dark and light, against `png/places-a-*` and `png/mobs-a-*`):
+- The place pin is the map's shipped Lucide `map-pin` (no centre dot), as M26's destination
+  pin already was; the card and list icons use the same glyph.
+- The goal line names each open counted goal with any count here (*· 9 of the 23 iron blocks
+  are in chests here*), *none here yet*, *counting…* or *can't count right now*, and a
+  footnote says each chest counts toward its nearest place or the player (S2).
+- A gate aimed where a re-saved place used to be adds *Wormhole gate 1 still leads to where
+  Tree farm was, X … · Z …* with a `--warn-text` glyph (X1's case, not in the mock fixture).
+- The age on a live world has no number: *as of the world's last save, re-read every minute*;
+  a stopped world says *…, 6 min ago* (S3).
+- The villager chips come from the world: *All jobs*, *Sells Mending* when anyone sells it,
+  then the five commonest jobs. The pets chips are *Everyone's* and each owner the world
+  knows (*BlockyFox's*), and an owner's chip lists their pets nearest them, as a villager
+  chip lists the matches (C's list).
+- Tapping a village tile zooms in until it splits; there's no village card.
+- A pet whose owner is unknown is ringed neutral and its card says so (S6); the fixture adds
+  one (a tabby cat).
+- The village count badge moves to the first corner no gate line crosses (A1).
+- At 320 × 568 with a place's card open the visible map is about 170 px, so the framed
+  48-block circle is small.
 
 The shipped map's Layers tab lists **Saved places** with a *later* badge. **Beds & spawn**
 says *beds aren't recorded yet*. Villagers and pets aren't on the map at all. These mocks
@@ -287,13 +335,15 @@ answers to questions 4 and 10–13, which override the shared text below where t
 - **Q13 (beds):** `mc_show_map` gains the focus kind `bed`.
 - **Review X4:** a point the game keeps after its bed is broken is drawn with a **dashed**
   ring (*no bed seen there*): the pack reads the block at the point every time. The box
-  checks are rows 27–30 of `docs/runbooks/MINECRAFT_HOME_TEST.md`.
+  checks are rows 29–32 of `docs/runbooks/MINECRAFT_HOME_TEST.md`.
 - **Review B1:** the Layers row is renamed **Spawn · beds on tap**, so it no longer promises
   beds the overview doesn't draw.
 - **Built differently from the mock:** the "Bed" label goes beside the tile by the side
   rule; **Show the anchor** / **Show the spawn point** for those kinds (the mock offered the
   button only for an Overworld bed); the *no bed set* row in **In this world** is a plain row
-  (there is nowhere to fly); the In-this-world rows come before the beacons and gates.
+  (there is nowhere to fly); in **In this world** the respawn points have their own
+  *Respawn points* group, after the places (grouped by player) and before the beacons and
+  gates.
 
 Each player has **one** respawn point: their bed, or a charged respawn anchor in the Nether.
 Without one they wake at the world spawn.

@@ -52,7 +52,9 @@ VIEW = "minecraft_map"
 # `gate` and `beacon` (§M26): the card draws that gate or beacon selected from the box's
 # own records — the payload carries only where it is. `scan` (§M25): a player's live
 # Tricorder scan, which the card reads from the live players route; the payload carries
-# only whose it is and where they were. `bed` (§M8): a player's respawn point, a bed or a
+# only whose it is and where they were. `villager` and `pet` (§M4e on the map, owner
+# 2026-10-13): one mc_find_villager or mc_find_pet found, where the saved world has it; the
+# full map opens on it with that layer on. `bed` (§M8): a player's respawn point, a bed or a
 # respawn anchor, from the drain's record of the pack's lines; `spawn` says which.
 FOCUS_KINDS = (
     "death",
@@ -63,8 +65,12 @@ FOCUS_KINDS = (
     "gate",
     "beacon",
     "scan",
+    "villager",
+    "pet",
     "bed",
 )
+# Focuses that are only ever a spot the model was told: they need their x and z.
+_NEEDS_XZ = ("structure", "spot", "gate", "beacon", "villager", "pet")
 # What a `bed` focus's point was when the pack last looked, as the card draws it.
 _SPAWN_NOUNS = {"bed": "bed", "anchor": "respawn anchor", "other": "spawn point"}
 OVERLAYS = ("trails", "deaths", "structures", "players", "beacons", "gates")
@@ -203,6 +209,11 @@ def map_summary(view: ViewPayload) -> str:
         facts.append(f"Overworld side: X {d['overworld']['x']}, Z {d['overworld']['z']}")
     if not d["loaded"]:
         lines.append("That world isn't the loaded one, so the map is as of when it was played.")
+    if focus and focus["kind"] in ("villager", "pet"):
+        lines.append(
+            "The card marks where it was when the world was last saved; a mob may have"
+            " moved since, so say it's as of the last save."
+        )
     if focus and focus["kind"] == "bed" and focus.get("spawn") == "other":
         lines.append(
             "No bed or respawn anchor was seen at that point when the pack last looked: the"
@@ -309,7 +320,7 @@ def build_minecraft_map_handlers(
             if x is None or z is None:
                 return "x and z must be block coordinates inside the world."
             at_xz = (x, z)
-        if kind in ("structure", "spot", "gate", "beacon") and at_xz is None:
+        if kind in _NEEDS_XZ and at_xz is None:
             return f"A {kind} needs its x and z."
         if kind == "place" and at_xz is None and not place_name(label):
             return "Name the saved place in label (mc_places lists them), or give x and z."

@@ -608,6 +608,48 @@ async def minecraft_map_portals(
     return await _sidecar(settings, "GET", "/map/portals", params=params)
 
 
+@router.get("/map/entities")
+async def minecraft_map_entities(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
+    dim: Annotated[str, Query(pattern=r"^(overworld|nether|the_end)$")] = "overworld",
+) -> dict[str, Any]:
+    """What the map's Villagers and Pets layers get (`/api/minecraft/map/entities`), as
+    counts and each village's centre, size and jobs — for the box check of the 48-block
+    grouping against a real village — without every villager's row."""
+    request.state.debug_detail = f"minecraft map entities {slot} {dim}"
+    got = await _sidecar(settings, "GET", "/map/entities", params={"slot": slot, "dim": dim})
+    return {
+        "dimension": got.get("dimension"),
+        "villages": got.get("villages", []),
+        "villagers_listed": len(got.get("villagers", [])),
+        "villagers_truncated": got.get("villagers_truncated", False),
+        "pets": len(got.get("pets", [])),
+        "pets_owner_unknown": sum(
+            1 for p in got.get("pets", []) if p.get("owner") and not p.get("owner_name")
+        ),
+        "named": len(got.get("named", [])),
+        "traders": got.get("traders", 0),
+        "live": got.get("live"),
+        "as_of": got.get("as_of"),
+        "age_s": got.get("age_s"),
+        "index": {k: got.get(k) for k in _INDEX_COUNTS},
+    }
+
+
+_INDEX_COUNTS = (
+    "villagers_indexed",
+    "pets_indexed",
+    "named_indexed",
+    "records",
+    "unreadable_records",
+    "unplaced_records",
+    "overflow",
+)
+
+
 @router.get("/map/nearby")
 async def minecraft_map_nearby(
     request: Request,

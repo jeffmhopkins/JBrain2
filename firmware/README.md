@@ -163,7 +163,7 @@ cycle counts doubled so the head shakes and the hearts rise at the speed they di
 hearts now, not five. The bench has a "Tickle tickle" button.
 
 **And eating is a meal.** `ACT_EAT` was three pecks in 1.6 s and a 300 ms double bite. It is
-now 4.8 s and five bites of a cookie (`EXTRA_FOOD`): the robot carries it from its hand to the
+now 4.8 s and five bites of a cookie (three since 0.4.11) (`EXTRA_FOOD`): the robot carries it from its hand to the
 corner of its mouth, the bird pecks it off its wing, a piece goes out of it on each bite with
 crumbs falling, and the fifth finishes it. The mouth opens wide before each bite, snaps shut
 on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside `talk`).
@@ -171,6 +171,40 @@ on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside 
 included: the meal is the one action that does not sound as it starts
 (`rig_cue_on_start`), since its hand is still on the way up. The bench has a "Have a snack"
 button.
+
+**0.4.11: three bites, and a laugh that does not freeze him.** The meal was too long at five
+bites (owner), so it is three, 0.96 s apiece as before, each bite a bigger piece of the cookie.
+And the tickle froze for a moment as it started and at each laugh after (owner). Cues are
+rendered on the render task, and the laugh summed a band-limited triangle and a pulse per
+sample over 740 ms: 7.3 ms on a desktop, the costliest cue in the table, and a multiple of that
+on the panel. Its voice is now a triangle and a sawtooth straight off the phase, 0.46 ms for
+the same laugh, cheaper than the giggle.
+
+**"I'm going to tickle you" (0.4.11).** Owner: *"let's change tickle, to 'I'm going to tickle
+you' and then when that happens, pokes make him be tickled ... after five tickles."* The phrase
+(`im going to tickle you`, `gonna tickle you`; `tickle tickle` / `tickle me` are gone) is a
+warning: `ACT_BRACE` hunches him with a nervous titter (`CUE_BRACE`, the laugh's shape run
+upwards). `tickle.c` (pure, host-tested) then holds for 10 s, renewed by each tickle: a poke that
+reaches him is a tickle rather than the zone's pool, the first four a giggle and the fifth the
+laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during the fit
+itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
+poking, and the sixth poke used to cut the fit off after its first laugh.
+
+**A different snack every time (0.4.11).** Owner: *"Kids are also requesting a random item to
+eat, maybe one out of eight possibilities."* `food_t`: a cookie, an apple, a banana, a slice of
+pizza, a donut, a carrot, a slice of watermelon or a strawberry, each a per-pixel shape in its
+own colours (`food_px` in `face.c`), bitten and crumbed exactly as the cookie was. `display.c`
+picks one per meal with `food_pick`, which never brings the last one again.
+
+**What goes in must come out (0.4.11).** Owner: *"If he eats three times and within 1 minute,
+he should have to poop afterwards. The poop should stay on the screen for say 20 seconds. And
+should slide around with the angle of the device."* `poop.c` (pure, host-tested) counts meals
+and owes one at the third inside 60 s; `display.c` starts `ACT_POOP` at the first moment he is
+free on the pet screen. He squats (`figure_pose_t.sit`, as dizzy does), strains, and at
+`POOP_AT` it lands behind him with `CUE_POOP`, a falling plop. On the floor it is the swirl
+with a face and stink lines, behind the figure, and it SLIDES: the unsmoothed tilt pushes it,
+friction slows it, the floor's ends bounce it back, and below a small tilt it does not start
+at all, so it stays put on a table. It plops in, and shrinks away after 20 s.
 
 **A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
 only flinch, which with the meal crunching through two-thirds of its length and the tickle

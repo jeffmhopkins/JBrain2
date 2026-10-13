@@ -26,6 +26,8 @@
 #include "gesture.h"
 #include "orient.h"
 #include "ring.h"
+#include "poop.h"
+#include "tickle.h"
 #include "screen.h"
 #include "rig.h"
 #include "variants.h"
@@ -984,19 +986,58 @@ static void test_dizzy_and_love_last_twice_as_long_at_the_same_speed(void)
 
 static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
 {
-    /* The owner: "I want to say tickle tickle, and have it have an animation of giggling and
-       laughing and being tickled." */
-    int heard = 0;
+    /* The owner, first: "I want to say tickle tickle, and have it have an animation of giggling
+       and laughing and being tickled." Then: "let's change tickle, to 'I'm going to tickle
+       you' and then when that happens, pokes make him be tickled ... after five tickles." So
+       the phrases WARN him (ACT_BRACE) and nothing said tickles him: fingers do. */
+    int warned = 0;
     for (int i = 0; i < vocab_count(); i++) {
         const vocab_t *v = vocab_get(i);
-        if (v->kind == VOCAB_ACTION && v->arg == ACT_TICKLE) {
-            heard++;
-            CHECK(strcmp(v->phrase, "tickle tickle") == 0 || strcmp(v->phrase, "tickle me") == 0,
-                  "said as a child says it, never as a bare 'tickle' a television says");
+        if (v->kind != VOCAB_ACTION) continue;
+        CHECK(v->arg != ACT_TICKLE, "no phrase tickles him; the pokes do");
+        if (v->arg == ACT_BRACE) {
+            warned++;
+            CHECK(strcmp(v->phrase, "im going to tickle you") == 0 ||
+                      strcmp(v->phrase, "gonna tickle you") == 0,
+                  "warned as a child warns, never by a bare 'tickle' a television says");
         }
     }
-    CHECK(heard == 2, "both ways of asking");
-    CHECK(cue_for_action(ACT_TICKLE) == CUE_TICKLE, "and it sounds like a laugh, its own");
+    CHECK(warned == 2, "both ways of saying it");
+    CHECK(cue_for_action(ACT_BRACE) == CUE_BRACE && cue_for_action(ACT_TICKLE) == CUE_TICKLE,
+          "the titter of the warning and the laugh of the tickle, each its own");
+
+    /* FIVE TICKLES: four he holds out against, the fifth gets him, and the warning is spent. */
+    tickle_t tk;
+    tickle_reset(&tk);
+    CHECK(tickle_poke(&tk, 1000) == TICKLE_NO, "unwarned, a poke is a poke");
+    tickle_arm(&tk, 2000);
+    for (int i = 1; i < TICKLE_POKES; i++) {
+        CHECK(tickle_poke(&tk, 2000 + (uint32_t)i * 900) == TICKLE_SMALL, "a giggle each");
+    }
+    CHECK(tickle_poke(&tk, 7000) == TICKLE_BIG, "and the fifth sets him off");
+    CHECK(tickle_poke(&tk, 7500) == TICKLE_NO, "after which a poke is a poke again");
+    /* BUT NOT DURING THE FIT IT SET OFF: a child tickling keeps poking, and the sixth poke
+       picking from the zone's pool cut the 4.8 s fit off after its first laugh (review). */
+    CHECK(rig_holds_pokes(ACT_TICKLE), "a poke mid-fit only flinches");
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a != ACT_TICKLE) CHECK(!rig_holds_pokes((action_t)a), "everything else gives way");
+    }
+    /* The warning holds for TICKLE_WAIT_MS, renewed by each tickle, then passes. */
+    tickle_arm(&tk, 10000);
+    CHECK(tickle_poke(&tk, 10000 + TICKLE_WAIT_MS - 100) == TICKLE_SMALL, "late, but in time");
+    CHECK(tickle_poke(&tk, 10000 + 2 * TICKLE_WAIT_MS - 200) == TICKLE_SMALL,
+          "each tickle renews the wait");
+    CHECK(!tickle_armed(&tk, 10000 + 3 * TICKLE_WAIT_MS),
+          "and with nobody tickling, the moment passes");
+    CHECK(tickle_poke(&tk, 10000 + 3 * TICKLE_WAIT_MS) == TICKLE_NO, "and pokes are pokes");
+    tickle_arm(&tk, 50000);
+    tickle_poke(&tk, 50100);
+    tickle_poke(&tk, 50200);
+    tickle_arm(&tk, 50300);
+    for (int i = 1; i < TICKLE_POKES; i++) {
+        CHECK(tickle_poke(&tk, 50300 + (uint32_t)i * 100) == TICKLE_SMALL,
+              "warned again, the count starts again");
+    }
 
     /* THREE LAUGHS: the first as he hears it, two more as it goes, walked at the panel's 25 fps
        and at a ragged 7 fps, so a dropped frame cannot drop a laugh. Nothing else re-cues. */
@@ -1012,8 +1053,8 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
         CHECK(again == 2, "he laughs twice more after the first");
     }
     for (int a = ACT_NONE; a < ACT_COUNT; a++) {
-        if (a == ACT_TICKLE || a == ACT_EAT) continue;
-        CHECK(!rig_recue((action_t)a, 0.0f, 1.0f), "every other action but the meal sounds once");
+        if (a == ACT_TICKLE || a == ACT_EAT || a == ACT_POOP) continue;
+        CHECK(!rig_recue((action_t)a, 0.0f, 1.0f), "every other action sounds once");
     }
 
     /* A LAUGH IS SEPARATE SYLLABLES: count the gaps in its 10 ms envelope. GIGGLE's blips run
@@ -1057,14 +1098,15 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
     }
 }
 
-static void test_a_meal_is_five_bites_of_a_cookie(void)
+static void test_a_meal_is_three_bites_of_a_cookie(void)
 {
     /* The owner: "the eat animation can probably be better with multiple bites being taken and
        kind of a longer animation and sound effect too." */
-    CHECK(rig_spec(ACT_EAT)->dur_ms == 4800, "a meal, not a 1.6 s nibble");
+    /* Three bites (0.4.11, owner: "a little too long. Have it only three bites"). */
+    CHECK(EAT_BITES == 3 && rig_spec(ACT_EAT)->dur_ms == 2880, "three bites, 0.96 s apiece");
 
     /* A CRUNCH ON EVERY BITE, ON THE BITE: nothing as it starts (the hand is still on its way
-       up), then a re-cue as each of the five lands, at the panel's 25 fps and at a ragged 7. */
+       up), then a re-cue as each one lands, at the panel's 25 fps and at a ragged 7. */
     CHECK(!rig_cue_on_start(ACT_EAT), "the meal does not crunch before the first bite");
     CHECK(rig_cue_on_start(ACT_TICKLE) && rig_cue_on_start(ACT_DIZZY),
           "everything else sounds as it starts");
@@ -1078,7 +1120,7 @@ static void test_a_meal_is_five_bites_of_a_cookie(void)
             p0 = p;
         }
         bites = rig_eat_bites(1.0f, NULL);
-        CHECK(again == 5 && bites == EAT_BITES, "a crunch for each of the five bites");
+        CHECK(again == EAT_BITES && bites == EAT_BITES, "a crunch for each bite");
         /* Each crunch on the frame its bite's count goes up. */
         p0 = 0.0f;
         for (int t = 0; t < dur; t += step) {
@@ -1126,6 +1168,140 @@ static void test_a_meal_is_five_bites_of_a_cookie(void)
         st.fig.chew = 0.45f;
         face_draw(fb, 0, &st);
         CHECK(memcmp(shut, fb, sizeof(shut)) != 0, "chewing opens the mouth, with nothing said");
+    }
+}
+
+static void test_a_snack_is_one_of_eight_and_never_the_same_twice(void)
+{
+    /* The owner: "Kids are also requesting a random item to eat, maybe one out of eight
+       possibilities." */
+    CHECK(FOOD_COUNT == 8, "eight things he might eat");
+    int seen[FOOD_COUNT] = {0};
+    food_t f = FOOD_COOKIE;
+    uint32_t rnd = 12345u;
+    for (int i = 0; i < 400; i++) {
+        rnd = rnd * 1103515245u + 12345u;
+        const food_t next = food_pick(f, rnd >> 8);
+        CHECK((unsigned)next < (unsigned)FOOD_COUNT, "always one of the eight");
+        CHECK(next != f, "and never the same twice running");
+        seen[next]++;
+        f = next;
+    }
+    for (int k = 0; k < FOOD_COUNT; k++) CHECK(seen[k] > 20, "every one of them turns up");
+
+    /* EACH ONE IS DRAWN AND EATEN: its own colour on the screen to start, none of it left
+       after the last bite. Its crumb colour is its body's, so that is what is counted. */
+    static const uint32_t BODY[FOOD_COUNT] = {0xD9A05B, 0xE03030, 0xF5D040, 0xF6C645,
+                                              0xF07CB0, 0xF0861E, 0xF04A5A, 0xE82E3C};
+    for (int k = 0; k < FOOD_COUNT; k++) {
+        const uint16_t body = rgb565((uint8_t)(BODY[k] >> 16), (uint8_t)(BODY[k] >> 8),
+                                     (uint8_t)BODY[k]);
+        for (int form = 0; form < FORM_COUNT; form++) {
+            face_state_t st;
+            face_rest(&st);
+            st.form = (face_form_t)form;
+            st.food = (food_t)k;
+            rig_for(ACT_EAT, 0.0f, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, 0.0f, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            CHECK(count_colour(body) > 250, "the food is there to see");
+            rig_for(ACT_EAT, 0.999f, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, 0.999f, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            CHECK(count_colour(body) == 0, "and it is all gone after the last bite");
+        }
+    }
+}
+
+static void test_three_meals_in_a_minute_and_he_has_to_go(void)
+{
+    /* The owner: "If he eats three times and within 1 minute, he should have to poop
+       afterwards. The poop should stay on the screen for say 20 seconds. And should slide
+       around with the angle of the device." */
+    poop_t pp;
+    poop_reset(&pp);
+    CHECK(!poop_ate(&pp, 1000) && !poop_ate(&pp, 20000), "one and two meals owe nothing");
+    CHECK(poop_ate(&pp, 59000) && pp.owed, "the third inside the minute does");
+    CHECK(!poop_ate(&pp, 61000), "and the count starts again: a fourth does not owe a second");
+
+    poop_reset(&pp);
+    poop_ate(&pp, 0);
+    poop_ate(&pp, 40000);
+    CHECK(!poop_ate(&pp, 70000), "three meals over seventy seconds owe nothing");
+    CHECK(poop_ate(&pp, 90000), "but the last three of four inside a minute do");
+
+    /* ON THE FLOOR FOR TWENTY SECONDS, popping in and shrinking away. */
+    poop_reset(&pp);
+    poop_ate(&pp, 0);
+    poop_ate(&pp, 1);
+    poop_ate(&pp, 2);
+    poop_drop(&pp, 10000, 0.0f, POOP_HALF);
+    CHECK(!pp.owed && pp.on, "dropping it pays off what was owed");
+    CHECK(poop_scale(&pp, 10000) < 0.05f && poop_scale(&pp, 10000 + POOP_POP_MS) > 0.99f,
+          "it plops in");
+    CHECK(poop_scale(&pp, 10000 + POOP_SHOW_MS - 100) < 0.5f, "and shrinks away at the end");
+    uint32_t t = 10000;
+    for (; t < 10000 + POOP_SHOW_MS + 200; t += 40) poop_step(&pp, t, 0.0f, 40, 150.0f);
+    CHECK(!pp.on && poop_scale(&pp, t) == 0.0f, "gone after twenty seconds");
+
+    /* DROPPED BEYOND THE FLOOR'S END (on its side the lean runs to 110, so behind him can be
+       -220 against a floor of 150), it lands on the end of the floor, not off it — and on a
+       level panel it would otherwise have stayed off it all twenty seconds (review on 0.4.11). */
+    poop_drop(&pp, 0, -220.0f, POOP_HALF);
+    for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.0f, 40, POOP_HALF);
+    CHECK(pp.x >= -POOP_HALF && pp.x <= POOP_HALF, "it lands on the floor, never past its end");
+
+    /* IT SLIDES DOWNHILL, and stays put on the level. */
+    poop_drop(&pp, 0, 0.0f, POOP_HALF);
+    for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.03f, 40, 150.0f);
+    CHECK(pp.x == 0.0f, "a panel a hair off level does not make it creep");
+    for (t = 1000; t < 1600; t += 40) poop_step(&pp, t, 0.5f, 40, 150.0f);
+    CHECK(pp.x > 40.0f, "tilted right side down, it slides right");
+    const float right = pp.x;
+    for (t = 1600; t < 3600; t += 40) poop_step(&pp, t, -0.5f, 40, 150.0f);
+    CHECK(pp.x < right - 60.0f, "and back the other way when the tilt turns");
+    for (t = 3600; t < 8000; t += 40) poop_step(&pp, t, -1.0f, 40, 150.0f);
+    CHECK(pp.x >= -150.0f && pp.x < -140.0f, "and stops at the edge rather than leaving");
+    for (t = 8000; t < 10000; t += 40) poop_step(&pp, t, 0.0f, 40, 150.0f);
+    const float rest = pp.x;
+    poop_step(&pp, 10040, 0.0f, 40, 150.0f);
+    CHECK(pp.x == rest, "levelled, it settles and stays");
+
+    /* THE PLOP: no sound as he squats, one as it lands, exactly once. */
+    CHECK(!rig_cue_on_start(ACT_POOP), "silent while he squats");
+    int plops = 0;
+    float p0 = 0.0f;
+    for (int ms = 0; ms < rig_spec(ACT_POOP)->dur_ms; ms += 40) {
+        const float p = (float)ms / (float)rig_spec(ACT_POOP)->dur_ms;
+        plops += rig_recue(ACT_POOP, p0, p);
+        p0 = p;
+    }
+    CHECK(plops == 1, "and one plop as it lands");
+
+    /* DRAWN ON THE FLOOR, where `poop_x` says, on both forms. */
+    const uint16_t brown = rgb565(0x8A, 0x55, 0x2B);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(brown) == 0, "nothing on the floor until there is");
+        double cx[2];
+        for (int k = 0; k < 2; k++) {
+            st.poop_size = 1.0f;
+            st.poop_x = k ? 120.0f : -120.0f;
+            face_draw(fb, 0, &st);
+            double sum = 0, n = 0;
+            for (int i = 0; i < FACE_W * FACE_H; i++) {
+                if (fb[i] == brown) {
+                    sum += i % FACE_W;
+                    n++;
+                }
+            }
+            CHECK(n > 800, "a poop you can see across a room");
+            cx[k] = sum / n;
+        }
+        CHECK(cx[1] - cx[0] > 200.0, "and it is where it has slid to");
     }
 }
 
@@ -4914,7 +5090,9 @@ int main(void)
     test_dizzy_sits_down_and_love_shows_hearts();
     test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
-    test_a_meal_is_five_bites_of_a_cookie();
+    test_a_meal_is_three_bites_of_a_cookie();
+    test_a_snack_is_one_of_eight_and_never_the_same_twice();
+    test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();

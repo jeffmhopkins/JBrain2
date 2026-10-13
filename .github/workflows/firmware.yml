@@ -223,6 +223,16 @@ jobs:
       - name: The Jerv mark matches the PWA's icon
         run: python3 firmware-c6/tools/gen_jerv_mark.py --check
 
+      # The colour emoji are generated C cut from Noto Color Emoji's PNGs, each pinned by its
+      # sha256 in emoji_set.txt: regenerated here and compared, so the list, the pixels and the
+      # committed C cannot drift apart. The PNGs are cached between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/jbrain-emoji
+          key: jbrain-emoji-${{ hashFiles('firmware-c6/components/ui_kit/emoji/emoji_set.txt') }}
+      - name: The emoji match their pinned sources
+        run: python3 firmware-c6/tools/gen_emoji.py --check
+
       # The framework against real LVGL, headless: every mock board's state rendered through
       # the debug screenshot path, every app opened and closed back to the same widget and
       # timer count, and a debug snapshot checked for provisioning secrets. The PNGs are

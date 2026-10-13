@@ -1896,11 +1896,12 @@ def test_sidecars_pinned_to_their_versions() -> None:
         # The map card (§P3): data slots only, the app builds every tile request.
         # v2: `gate` and `beacon` focuses, `beacons` and `gates` overlays (§M26).
         # v3: the `scan` focus, a player's live Tricorder scan (§M25).
-        # v4: the `bed` focus, a player's respawn point (§M8, beds).
+        # v4: the `villager` and `pet` focuses, one a finder found (§M4e on the map).
+        # v5: the `bed` focus, a player's respawn point (§M8, beds).
         "mc_show_map.tool": (
             "mc_show_map",
-            4,
-            "def863960a86f2b353d3444418fd2f38ad2b19484199533894c6bcaa01c479f0",
+            5,
+            "c0617ddf740f4be08d7bf684fa96ddf3cdf15adb481a151e09d5028d72afa4cd",
         ),
         "mc_backups.tool": (
             "mc_backups",

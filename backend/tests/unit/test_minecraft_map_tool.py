@@ -453,3 +453,22 @@ async def test_a_bed_card_with_nobody_to_ask_about_asks_who(beds, box) -> None:
     box["player"] = None
     out = await _show({"focus": "bed"})
     assert isinstance(out, str) and "whose bed" in out
+
+
+async def test_a_villager_or_pet_a_finder_found_is_a_focus_with_its_spot(box) -> None:
+    """§M4e on the map (owner 2026-10-13): the card marks the saved world's spot and says
+    it's as of the last save; with no x and z there's nothing to mark."""
+    for kind, label in (("villager", "Librarian · Expert"), ("pet", "Rex")):
+        out = await _show({"focus": kind, "x": -122, "z": -104, "label": label})
+        assert isinstance(out, ToolOutput) and out.view is not None
+        focus = out.view.data["focus"]
+        assert (focus["kind"], focus["label"], focus["x"], focus["z"]) == (
+            kind,
+            label,
+            -122,
+            -104,
+        )
+        assert "as of the last save" in out
+        assert _urlish(out.view.data) == []
+        refused = await _show({"focus": kind, "label": label})
+        assert isinstance(refused, str) and "x and z" in refused

@@ -29,18 +29,25 @@ import {
   type MinecraftDim,
   type MinecraftExplored,
   type MinecraftGate,
+  type MinecraftGoalProgress,
+  type MinecraftMapEntities,
   type MinecraftMapInfo,
   type MinecraftMapMarkers,
+  type MinecraftMapPlaces,
   type MinecraftMapPlayer,
   type MinecraftMapPlayers,
   type MinecraftMapPoint,
   type MinecraftMapStructures,
+  type MinecraftMob,
+  type MinecraftPlace,
   type MinecraftSession,
   type MinecraftSlot,
   type MinecraftSpawnPoint,
   type MinecraftStructure,
   type MinecraftTimeline,
   type MinecraftTimelineEvent,
+  type MinecraftVillager,
+  type MinecraftVillagerCard,
 } from "../api/client";
 import { useBackLayer } from "../backLayers";
 import { Sheet } from "../components/Sheet";
@@ -69,13 +76,13 @@ import {
   LogOutIcon,
   MapIcon,
   MinusIcon,
-  PinIcon,
   PlusIcon,
   PortalIcon,
   RewindIcon,
   RouteIcon,
   SatelliteIcon,
   ShieldCheckIcon,
+  ShieldIcon,
   SkullIcon,
   UserIcon,
   XIcon,
@@ -84,8 +91,10 @@ import { agoOf } from "../minecraft";
 import {
   type BaseLayer,
   DIMS,
+  EXPLORE_REACH,
   type Frame,
   GLYPHS,
+  type GlyphKey,
   type MapView,
   PIN_SCALE,
   type Preset,
@@ -105,8 +114,10 @@ import {
   fitView,
   fmtClock,
   fmtDay,
+  gapFrom,
   hitTest,
   initialOf,
+  mergeGap,
   nextSpeed,
   overworldSide,
   panBy,
@@ -128,9 +139,13 @@ import {
   statusLine,
   structureInfo,
   tileKey,
+  tilesNear,
   timeStatus,
   toScreen,
   toWorld,
+  trailBehind,
+  trailSince,
+  trailTail,
   tricorderLine,
   visibleTiles,
   zoomAt,
@@ -150,6 +165,38 @@ import {
   wakeOf,
   wakesHere,
 } from "../minecraftMapBeds";
+import {
+  ALL_JOBS,
+  type CardLine,
+  SPLIT_SCALE,
+  VILLAGER_CLUSTER_PX,
+  type VillagerFilter,
+  entitiesAge,
+  filterKey,
+  goalWords,
+  jobOf,
+  matches,
+  mobFrom,
+  mobWords,
+  petChips,
+  petNote,
+  petsLine,
+  petsShown,
+  placeGroups,
+  placeLines,
+  placeSub,
+  placesLine,
+  rankedPets,
+  rankedVillagers,
+  spotKey,
+  tokenFor,
+  tradeTiers,
+  tradesNote,
+  villageMarks,
+  villagerChips,
+  villagerTitle,
+  villagersLine,
+} from "../minecraftMapLayers";
 import {
   type Avoid,
   type ListRow,
@@ -191,6 +238,7 @@ import {
   markerOwn,
   placeLabels,
   playerDisc,
+  reachCircle,
   readTokens,
   reducedMotion,
   respawnCurve,
@@ -200,8 +248,11 @@ import {
   stars,
   targetMark,
   veil,
+  villageTile,
 } from "./minecraftMapDraw";
 
+/** Villagers and pets are re-read with the world's files, at most once a minute. */
+const ENTITIES_MS = 60_000;
 /** How close a shared map opens on its player. */
 const FOCUS_SCALE = 1.4;
 /** Online players' positions arrive through the travel log every ~10 s. */
@@ -238,6 +289,9 @@ type Sel =
   | { kind: "spawn"; x: number; z: number }
   | { kind: "beacon"; b: MinecraftBeacon }
   | { kind: "gate"; g: MinecraftGate }
+  | { kind: "place"; p: MinecraftPlace }
+  | { kind: "villager"; v: MinecraftVillager; dim: MinecraftDim }
+  | { kind: "pet"; m: MinecraftMob; dim: MinecraftDim }
   /** A player's respawn point, as the pack last sent it (§M8, beds). */
   | { kind: "bed"; s: MinecraftSpawnPoint };
 
@@ -245,6 +299,9 @@ type Hit =
   | { kind: "player"; sx: number; sy: number; p: MinecraftMapPlayer }
   | { kind: "marker"; sx: number; sy: number; m: Marker }
   | { kind: "cluster"; sx: number; sy: number; members: Marker[] };
+
+/** This round's markers (minecraft-map-layers): labelled by the side rule, always. */
+const LAYER_TYPES = new Set<Marker["type"]>(["place", "village", "villager", "pet", "named"]);
 
 const TL_OFF: TimelineState = {
   on: false,
@@ -274,6 +331,9 @@ interface Overlays {
   structures: boolean;
   beacons: boolean;
   gates: boolean;
+  places: boolean;
+  villagers: boolean;
+  pets: boolean;
   explored: boolean;
   grid: boolean;
 }
@@ -289,6 +349,11 @@ const OVERLAYS: Overlays = {
   // Always drawn while on (variant A): every protected square and every open gate's line.
   beacons: true,
   gates: true,
+  // GUI gate minecraft-map-layers (owner, 2026-10-13): places on; villagers and pets off —
+  // they are many, they move, and they're as old as the world's last save.
+  places: true,
+  villagers: false,
+  pets: false,
   explored: false,
   grid: false,
 };
@@ -388,7 +453,9 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       : null,
   );
   const [point, setPoint] = useState<MinecraftMapPoint | null>(null);
-  const [ov, setOv] = useState<Overlays>(OVERLAYS);
+  const [ov, setOv] = useState<Overlays>(() =>
+    at?.show ? { ...OVERLAYS, [at.show]: true } : OVERLAYS,
+  );
   const [layer, setLayerState] = useState<BaseLayer>(storedLayer);
   const setLayer = useCallback((l: BaseLayer) => {
     setLayerState(l);
@@ -417,6 +484,16 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   /** The Overworld's spawn, kept while another dimension is shown: a Nether death's player
    *  wakes in the Overworld, and its card says whether that was at the world spawn. */
   const [worldSpawn, setWorldSpawn] = useState<{ x: number; z: number } | null>(null);
+  const [places, setPlaces] = useState<MinecraftMapPlaces | null>(null);
+  const [ents, setEnts] = useState<MinecraftMapEntities | null>(null);
+  const [vfilter, setVfilter] = useState<VillagerFilter>(ALL_JOBS);
+  const [petsOf, setPetsOf] = useState<string | null>(null);
+  const [vcard, setVcard] = useState<MinecraftVillagerCard | "loading" | "failed" | null>(null);
+  const [goalsGot, setGoalsGot] = useState<MinecraftGoalProgress | "loading" | "failed" | null>(
+    null,
+  );
+  /** Goal counts read for a place card, by player: counting reads the world's files. */
+  const goalCache = useRef(new Map<string, MinecraftGoalProgress>());
   const [unreachable, setUnreachable] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [tiles, setTiles] = useState({ visible: 0, pending: 0 });
@@ -453,9 +530,14 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   const frame = useRef<Frame>({ w: 1, h: 1, bottom: 160, top: 64 });
   /** The scanner whose square the camera framed, kept framed until the map is touched. */
   const reframe = useRef<string | null>(null);
+  /** The place whose reach the camera framed, framed again as the panel settles round its
+   *  card, until the map is touched. */
+  const placeFramed = useRef<MinecraftPlace | null>(null);
   const dirty = useRef(true);
   const hits = useRef<Hit[]>([]);
   const cache = useRef(new Map<string, TileEntry>());
+  /** Tiles a trail has just walked through: fetched again, past the browser's cache. */
+  const redo = useRef(new Set<string>());
   const inFlight = useRef(0);
   // Opened on a spot, the first view is that spot; changing world or dimension fits again.
   const needsFit = useRef(!at);
@@ -481,6 +563,10 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     players,
     structs,
     marks,
+    places,
+    ents,
+    vfilter,
+    petsOf,
     info,
     tl,
     log,
@@ -498,6 +584,10 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     players,
     structs,
     marks,
+    places,
+    ents,
+    vfilter,
+    petsOf,
     info,
     tl,
     log,
@@ -520,6 +610,10 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     players,
     structs,
     marks,
+    places,
+    ents,
+    vfilter,
+    petsOf,
     info,
     panelH,
     tl,
@@ -641,6 +735,106 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     };
   }, [source, slot, live, foreground]);
 
+  // Every player's saved places (places A): the api's own rows, so they draw for a world
+  // that isn't loaded; read again while it's live, as the beacons are.
+  useEffect(() => {
+    const read$ = source.places;
+    if (!read$ || !foreground) return;
+    let gone = false;
+    const read = () =>
+      read$(slot)
+        .then((m) => {
+          if (!gone) setPlaces(m);
+        })
+        .catch(() => {
+          if (!gone) setPlaces(null);
+        });
+    void read();
+    if (!live) {
+      return () => {
+        gone = true;
+      };
+    }
+    const t = setInterval(read, LIVE_LOG_MS);
+    return () => {
+      gone = true;
+      clearInterval(t);
+    };
+  }, [source, slot, live, foreground]);
+
+  // Villagers, pets and named mobs (§M4e on the map), only while one of their layers is
+  // on: the saved world's, read again at most once a minute — the automatic re-read is
+  // the only one (owner: no "Read the world again").
+  const wantEnts = ov.villagers || ov.pets;
+  useEffect(() => {
+    const read$ = source.entities;
+    if (!read$ || !foreground || !wantEnts) return;
+    let gone = false;
+    const read = () =>
+      read$(slot, dim)
+        .then((e) => {
+          if (!gone) setEnts(e);
+        })
+        .catch(() => {
+          if (!gone) setEnts(null);
+        });
+    void read();
+    const t = setInterval(read, ENTITIES_MS);
+    return () => {
+      gone = true;
+      clearInterval(t);
+    };
+  }, [source, slot, dim, wantEnts, foreground]);
+
+  // A tapped villager's trades, by its id; a tapped place's goal counts, once per player
+  // while the map is open (counting reads every chest in the world's files).
+  const selVillager = sel?.kind === "villager" ? sel.v.id : null;
+  useEffect(() => {
+    const read$ = source.villager;
+    if (!selVillager || !read$) {
+      setVcard(null);
+      return;
+    }
+    let gone = false;
+    setVcard("loading");
+    read$(slot, selVillager)
+      .then((c) => {
+        if (!gone) setVcard(c);
+      })
+      .catch(() => {
+        if (!gone) setVcard("failed");
+      });
+    return () => {
+      gone = true;
+    };
+  }, [source, slot, selVillager]);
+  const selPlayerOfPlace = sel?.kind === "place" ? sel.p.xuid : null;
+  useEffect(() => {
+    const read$ = source.goals;
+    if (!selPlayerOfPlace || !read$) {
+      setGoalsGot(null);
+      return;
+    }
+    const kept = goalCache.current.get(selPlayerOfPlace);
+    if (kept) {
+      setGoalsGot(kept);
+      return;
+    }
+    let gone = false;
+    setGoalsGot("loading");
+    read$(selPlayerOfPlace)
+      .then((g) => {
+        goalCache.current.set(selPlayerOfPlace, g);
+        if (!gone) setGoalsGot(g);
+      })
+      .catch(() => {
+        if (!gone) setGoalsGot("failed");
+      });
+    return () => {
+      gone = true;
+    };
+  }, [source, selPlayerOfPlace]);
+
   // What a tapped spot or structure stands on.
   useEffect(() => {
     if (!sel || (sel.kind !== "spot" && sel.kind !== "struct")) {
@@ -714,7 +908,42 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     };
   }, [source, slot, tl.on, tl.from, tl.to, say]);
 
-  // Explored by: the fog for this dimension, lifted by first-seen time on the timeline.
+  // A disc ahead of its trail: someone's newest sample is newer than the log the trails
+  // came from. Only the stretch since then is read, for the walkers only, and joined onto
+  // the trail, so it reaches the disc instead of a minute behind it; the minute's full
+  // read stays the backstop. Once per new sample, so a clock that runs ahead can't keep
+  // asking.
+  const caughtUp = useRef(0);
+  useEffect(() => {
+    if (!players || !log || log.world !== players.world || (tl.on && !tl.live)) return;
+    const newest = Math.max(...players.players.map((p) => p.at));
+    if (!trailBehind(players.players, log) || newest <= caughtUp.current) return;
+    caughtUp.current = newest;
+    const keep = tl.on ? setRangeLog : setLiveLog;
+    const walkers = players.players.filter((p) => p.at > log.now).map((p) => p.xuid);
+    let gone = false;
+    source
+      .timeline(slot, gapFrom(log, walkers), Math.max(log.to, nowS()), {
+        include: ["trails", "events"],
+        players: walkers,
+      })
+      .then((got) => {
+        if (!gone) keep((was) => (was === log ? mergeGap(log, got) : was));
+      })
+      .catch(() => {
+        // The minute's read brings the trail anyway.
+      });
+    return () => {
+      gone = true;
+    };
+  }, [source, slot, players, log, tl.on, tl.live]);
+
+  // Explored by: the fog for this dimension, lifted by first-seen time on the timeline. It
+  // is read again when the trail has grown (`walkedGen`, below), so the ground just walked
+  // is lifted with it.
+  const tail = trailTail(log);
+  const [walkedGen, setWalkedGen] = useState(0);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a longer trail reads the fog again.
   useEffect(() => {
     if (!ov.explored) {
       setFog(null);
@@ -737,7 +966,35 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     return () => {
       gone = true;
     };
-  }, [source, slot, dim, ov.explored, exBy]);
+  }, [source, slot, dim, ov.explored, exBy, walkedGen]);
+
+  // And the tiles round the new steps are fetched again: explored ground is baked into them.
+  // At most once a minute: the box re-reads the world no oftener, so a faster refresh
+  // fetches the same picture. A grown trail inside the minute waits for the next poll.
+  const walked = useRef<{ slot: string; tail: number; at: number } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each poll looks again at a held refresh.
+  useEffect(() => {
+    const was = walked.current;
+    const now = Date.now();
+    if (tail === null || !was || was.slot !== slot) {
+      walked.current = tail === null ? null : { slot, tail, at: now };
+      return;
+    }
+    if (tail <= was.tail || now - was.at < TILE_FRESH_MS) return;
+    walked.current = { slot, tail, at: now };
+    const st = state.current;
+    if (st.tl.on && !st.tl.live) return; // a replay's range moved, not anyone's feet
+    setWalkedGen((g) => g + 1);
+    const near = tilesNear(trailSince(st.log, was.tail, st.dim), EXPLORE_REACH);
+    if (!near.size) return;
+    for (const [key, e] of cache.current) {
+      const [s0, d0, , ...at] = key.split("|");
+      if (s0 === slot && d0 === st.dim && e.state === "ok" && near.has(at.join("|"))) {
+        redo.current.add(key);
+      }
+    }
+    redraw();
+  }, [slot, tail, players, redraw]);
 
   // ---- view ----
 
@@ -838,6 +1095,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   function changeDim(d: MinecraftDim) {
     if (d === dim) return;
     setDim(d);
+    setEnts(null);
     setSel(null);
     needsFit.current = true;
   }
@@ -852,6 +1110,9 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     setStructs(null);
     setMarks(null);
     setWorldSpawn(null);
+    setPlaces(null);
+    setEnts(null);
+    goalCache.current.clear();
     setLiveLog(null);
     setTl(TL_OFF);
     setTab("layers");
@@ -1177,16 +1438,23 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       const st = state.current;
       const now = Date.now();
       const have = cache.current.get(key);
+      const due = redo.current.has(key);
       const stale =
         have &&
-        ((have.state === "ok" && live$.current && now - have.at > TILE_FRESH_MS) ||
+        ((have.state === "ok" && (due || (live$.current && now - have.at > TILE_FRESH_MS))) ||
           (have.state === "failed" && now - have.at > TILE_RETRY_MS));
       if (have && !stale) return have;
       if (have?.state === "loading" || inFlight.current >= TILES_IN_FLIGHT) return have ?? null;
       const entry: TileEntry = { img: have?.img ?? null, at: now, state: "loading" };
       cache.current.set(key, entry);
       inFlight.current++;
-      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer, source.tileUrl)
+      redo.current.delete(key);
+      // The tile route lets the browser keep a tile a minute; a tile the trail just walked
+      // through has to come from the box.
+      const url: typeof source.tileUrl = due
+        ? (...a) => `${source.tileUrl(...a)}&v=${now}`
+        : source.tileUrl;
+      fetchTile(st.slot, st.dim, t.zoom, t.tx, t.tz, layer, url)
         .then((img) => {
           cache.current.set(key, { img, at: Date.now(), state: "ok" });
         })
@@ -1246,6 +1514,10 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     const replay = tls.on && !tls.live;
     const shown = (x: string) => !tls.on || !tls.hidden.includes(x);
     const tokenOf = (x: string) => st.roster.find((r) => r.xuid === x)?.token ?? "--steel";
+    const tokColor = (xuid: string | null, tag: string) => {
+      const tok = tokenFor(st.roster, xuid, tag);
+      return tok ? colorOf(t, tok) : null;
+    };
     const off = (sx: number, sy: number) => sx < -30 || sy < -30 || sx > f.w + 30 || sy > f.h + 30;
 
     if (st.ov.explored && st.fog && st.fog.dim === st.dim) {
@@ -1295,6 +1567,9 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         sel.s.structure === m.s.structure) ||
       (m.type === "event" && sel?.kind === "event" && sel.e === m.e) ||
       (m.type === "spawn" && sel?.kind === "spawn") ||
+      (m.type === "place" && sel?.kind === "place" && sel.p.id === m.p.id) ||
+      (m.type === "villager" && sel?.kind === "villager" && sel.v.id === m.v.id) ||
+      ((m.type === "pet" || m.type === "named") && sel?.kind === "pet" && sel.m.id === m.m.id) ||
       (m.type === "bed" && sel?.kind === "bed" && sel.s.xuid === m.s.xuid);
     const markers: Marker[] = [];
     const mark = (m: Marker) => {
@@ -1303,6 +1578,16 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     // Beacons and gates (§M26), in the binding order: the protected squares, the gates'
     // lines and the places they lead to, under every tile; their tiles cluster with the
     // point markers below. Not on the replay: they are where the pack last reported them.
+    // Saved places (places A): where each one's pin stands, so a gate aimed at that very
+    // block ends at the place's pin, not its own violet one (X1). Like the beacons, not on
+    // the replay: a place is where it is now.
+    const herePlaces =
+      st.ov.places && !replay ? (st.places?.places ?? []).filter((p) => p.dim === st.dim) : [];
+    const placedAt = new Set(herePlaces.map((p) => spotKey(p.dim, p.x, p.y, p.z)));
+    // The tapped place's goal reach, among the lines under every tile (DESIGN draw order).
+    if (sel?.kind === "place" && sel.p.dim === st.dim && !replay) {
+      reachCircle(ctx, v, f, sel.p, tokColor(sel.p.xuid, sel.p.gamertag), t);
+    }
     const world = drawWorldMarkers(ctx, v, f, t, {
       beacons: st.marks?.beacons ?? [],
       gates: st.marks?.gates ?? [],
@@ -1311,6 +1596,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       showGates: st.ov.gates && !replay,
       selBeacon: sel?.kind === "beacon" ? beaconKey(sel.b) : null,
       selGate: sel?.kind === "gate" ? sel.g.id : null,
+      placedAt,
     });
     const avoid: Avoid = { rects: [...world.avoid.rects], segs: [...world.avoid.segs] };
     // Live scans (§M25): every online scanner's square, over the areas and under the tiles,
@@ -1386,8 +1672,58 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       });
     }
     labels.push(...world.labels);
+    for (const p of herePlaces) {
+      const [sx, sy] = toScreen(v, f, p.x + 0.5, p.z + 0.5);
+      const tok = tokenFor(st.roster, p.xuid, p.gamertag);
+      // A place a gate leads to shares the gate's key: its label may touch its own line.
+      const own = p.gates[0] !== undefined ? `g:${p.gates[0]}` : `pl:${p.id}`;
+      mark({ type: "place", p, tok, own, x: p.x, z: p.z, sx, sy, pr: 1.5 });
+    }
+    // Villagers (A): zoomed out, a village is one tile with its count — the located one
+    // keeps its amber tile; from SPLIT_SCALE a block, each villager by its job.
+    const e = !replay && st.ents?.dimension === st.dim ? st.ents : null;
+    const villageStructs = new Set<MinecraftStructure>();
+    if (e && st.ov.villagers) {
+      if (v.s < SPLIT_SCALE) {
+        for (const vm of villageMarks(e, st.structs?.structures ?? [], st.vfilter)) {
+          if (vm.struct) villageStructs.add(vm.struct);
+          const [sx, sy] = toScreen(v, f, vm.x + 0.5, vm.z + 0.5);
+          mark({ type: "village", v: vm, x: vm.x, z: vm.z, sx, sy, pr: 1.7 });
+        }
+      } else {
+        const named = st.vfilter.kind !== "all";
+        for (const vv of e.villagers) {
+          if (!matches(vv, st.vfilter)) continue;
+          const [sx, sy] = toScreen(v, f, vv.x + 0.5, vv.z + 0.5);
+          mark({
+            type: "villager",
+            v: vv,
+            label: named ? villagerTitle(vv) : null,
+            x: vv.x,
+            z: vv.z,
+            sx,
+            sy,
+            pr: 1.8,
+            cr: VILLAGER_CLUSTER_PX,
+          });
+        }
+      }
+    }
+    if (e && st.ov.pets) {
+      const shownMobs = petsShown(e, st.petsOf);
+      for (const m of shownMobs.pets) {
+        const [sx, sy] = toScreen(v, f, m.x + 0.5, m.z + 0.5);
+        const tok = m.owner_name ? tokenFor(st.roster, null, m.owner_name) : null;
+        mark({ type: "pet", m, tok, x: m.x, z: m.z, sx, sy, pr: 1.6 });
+      }
+      for (const m of shownMobs.named) {
+        const [sx, sy] = toScreen(v, f, m.x + 0.5, m.z + 0.5);
+        mark({ type: "named", m, x: m.x, z: m.z, sx, sy, pr: 1.65 });
+      }
+    }
     if (st.ov.structures && st.structs && st.structs.dimension === st.dim) {
       for (const s of st.structs.structures) {
+        if (villageStructs.has(s)) continue;
         const [sx, sy] = toScreen(v, f, s.x + 0.5, s.z + 0.5);
         mark({ type: "struct", s, x: s.x, z: s.z, sx, sy, pr: 5 });
       }
@@ -1413,12 +1749,16 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     for (const cl of clusterMarkers(markers.filter((m) => !isSel(m)))) {
       const one = cl.members[0];
       if (cl.members.length === 1 && one) {
-        markerGlyph(ctx, one, t, false);
-        const txt = markerLabel(one);
         const own = markerOwn(one);
-        // A bed's name sits beside its tile by the side rule, as M26's tiles' do.
-        if (txt && one.type === "bed")
-          labels.push({ txt, x: one.sx, y: one.sy, pr: one.pr, own, side: 12 });
+        if (one.type === "village") {
+          // Its count goes on a corner no line crosses, and labels keep off it too.
+          const box = villageTile(ctx, one.v, one.sx, one.sy, t, avoid.segs);
+          avoid.rects.push({ ...box, own });
+        } else markerGlyph(ctx, one, t, false);
+        const txt = markerLabel(one);
+        // This round's names go to the side, as a gate's place does (M26's rule).
+        if (txt && (LAYER_TYPES.has(one.type) || one.type === "bed"))
+          labels.push({ txt, x: one.sx, y: one.sy, pr: 2, own, side: 12 });
         else if (txt && (v.s >= 0.25 || one.type === "spawn"))
           labels.push({ txt, x: one.sx, y: one.sy - 8, pr: one.pr });
         if (own) avoid.rects.push({ x: one.sx - 12, y: one.sy - 12, w: 24, h: 24, own });
@@ -1512,16 +1852,21 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       }
     }
 
-    // the tapped marker, on top with its ring and label
+    // the tapped marker, on top with its ring and label; no other label sits on its ring
     for (const m of tapped) {
       markerGlyph(ctx, m, t, true);
-      if (m.type === "bed") {
-        avoid.rects.push({ x: m.sx - 18, y: m.sy - 18, w: 36, h: 36, own: markerOwn(m) });
-        labels.push({ txt: bedTitle(m.s), x: m.sx, y: m.sy, pr: -1, own: markerOwn(m), side: 18 });
-      } else {
-        const txt = markerLabel(m);
-        if (txt) labels.push({ txt, x: m.sx, y: m.sy - 8, pr: -1 });
-      }
+      avoid.rects.push({ x: m.sx - 18, y: m.sy - 18, w: 36, h: 36, own: markerOwn(m) });
+      const txt =
+        m.type === "bed"
+          ? bedTitle(m.s)
+          : m.type === "villager"
+            ? villagerTitle(m.v)
+            : m.type === "pet"
+              ? mobWords(m.m).title
+              : markerLabel(m);
+      if (txt && (LAYER_TYPES.has(m.type) || m.type === "bed"))
+        labels.push({ txt, x: m.sx, y: m.sy, pr: -1, own: markerOwn(m), side: 18 });
+      else if (txt) labels.push({ txt, x: m.sx, y: m.sy - 8, pr: -1 });
       nextHits.push({ kind: "marker", sx: m.sx, sy: m.sy, m });
     }
 
@@ -1586,6 +1931,11 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     const who = owed && sel?.kind === "player" && sel.p.xuid === owed ? aimer : undefined;
     const to = moved && who ? scanFrame(who, frame.current) : null;
     if (to) glide(to);
+    const pf = placeFramed.current;
+    if (moved && pf && sel?.kind === "place" && sel.p.id === pf.id) {
+      const fit = reachFrame(pf, frame.current);
+      if (fit) glide(fit);
+    }
     redraw();
   });
 
@@ -1607,6 +1957,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   function onPointerDown(e: ReactPointerEvent<HTMLDivElement>) {
     if ((e.target as Element).closest("button")) return;
     reframe.current = null;
+    placeFramed.current = null;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY });
     const g = gesture.current;
@@ -1690,11 +2041,46 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     else if (m.type === "beacon") select({ kind: "beacon", b: m.b });
     else if (m.type === "gate") select({ kind: "gate", g: m.g });
     else if (m.type === "bed") select({ kind: "bed", s: m.s });
-    else select({ kind: "spawn", x: m.x, z: m.z });
+    else if (m.type === "place") selectPlace(m.p);
+    else if (m.type === "villager") select({ kind: "villager", v: m.v, dim });
+    else if (m.type === "pet" || m.type === "named") select({ kind: "pet", m: m.m, dim });
+    else if (m.type === "village") {
+      // A village opens into its villagers: zoom in until they split.
+      glide({ x: m.x + 0.5, z: m.z + 0.5, s: Math.max(view.current.s, SPLIT_SCALE * 1.2) });
+    } else select({ kind: "spawn", x: m.x, z: m.z });
+  }
+
+  /** A tapped place, framed with its 48-block reach in the visible map (M26's 72 px
+   *  margin), so the circle the card speaks of is always in view (the review's S4). */
+  function selectPlace(p: MinecraftPlace) {
+    // Into its dimension first: switching dimension clears what's tapped.
+    if (p.dim !== state.current.dim) jumpDim(p.dim);
+    select({ kind: "place", p });
+    placeFramed.current = p;
+    const fit = reachFrame(p, frame.current);
+    if (fit) glide(fit);
+  }
+
+  /** A villager from the ranked list: selected, and its village split round it. */
+  function flyToVillager(vv: MinecraftVillager) {
+    select({ kind: "villager", v: vv, dim });
+    setSnap("min");
+    glide({ x: vv.x + 0.5, z: vv.z + 0.5, s: Math.max(view.current.s, SPLIT_SCALE * 1.4) });
   }
 
   /** A gate or beacon from the Layers list: select it and bring it to the visible map's
    *  middle, clear of the floating controls, in its own dimension. */
+  function flyToPet(m: MinecraftMob) {
+    select({ kind: "pet", m, dim });
+    setSnap("min");
+    glide({ x: m.x + 0.5, z: m.z + 0.5, s: Math.max(view.current.s, 1.4) });
+  }
+
+  function flyToPlace(p: MinecraftPlace) {
+    setSnap("min");
+    selectPlace(p);
+  }
+
   function fly(row: ListRow) {
     const [d, x, z] =
       row.kind === "beacon" ? [row.b.dim, row.b.x, row.b.z] : [row.g.dim, ...gateCenter(row.g)];
@@ -1867,6 +2253,20 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     }
     showPlace(p.dim, p.x, p.z, 1.25);
   }
+
+  // C's ranked list under a villager chip: nearest whoever is on in this dimension.
+  const onHere = players?.players.find((q) => q.online && q.dim === dim);
+  const rankFrom = onHere
+    ? { x: onHere.x, z: onHere.z, who: onHere.gamertag }
+    : { x: view.current.x, z: view.current.z, who: null };
+  const petOwner = petsOf
+    ? players?.players.find(
+        (q) => q.dim === dim && q.gamertag.toLowerCase() === petsOf.toLowerCase(),
+      )
+    : undefined;
+  const petFrom = petOwner
+    ? { x: petOwner.x, z: petOwner.z, who: petOwner.gamertag }
+    : { x: view.current.x, z: view.current.z, who: null };
 
   const short = vis < SHORT_PX;
   const tiny = vis < TINY_PX;
@@ -2057,6 +2457,17 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                     : undefined
                 }
                 onShowBed={showBed}
+                layers={{
+                  gates: marks?.gates ?? [],
+                  players: players?.players ?? [],
+                  roster,
+                  world: places?.world ?? "",
+                  goals: goalsGot,
+                  vcard,
+                  ents,
+                  filter: vfilter,
+                  now: host.nowMs / 1000,
+                }}
                 playerToken={
                   sel.kind === "player" || sel.kind === "bed"
                     ? (roster.find(
@@ -2158,6 +2569,18 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                   setSnap("min");
                   showBed(b);
                 }}
+                places={source.places ? places : undefined}
+                ents={source.entities ? ents : undefined}
+                vfilter={vfilter}
+                setVfilter={setVfilter}
+                petsOf={petsOf}
+                setPetsOf={setPetsOf}
+                rankFrom={rankFrom}
+                petFrom={petFrom}
+                onPlace={flyToPlace}
+                onVillager={flyToVillager}
+                onPet={flyToPet}
+                now={host.nowMs / 1000}
               />
             </>
           )}
@@ -2248,6 +2671,7 @@ function Detail({
   bedOwner,
   onShowBed,
   playerToken: tok,
+  layers,
 }: {
   sel: Sel;
   point: MinecraftMapPoint | null;
@@ -2277,6 +2701,8 @@ function Detail({
   bedOwner: MinecraftMapPlayer | undefined;
   onShowBed: (p: { dim: MinecraftDim; x: number; z: number; xuid: string }) => void;
   playerToken: string;
+  /** What this round's cards read (minecraft-map-layers). */
+  layers: LayerCtx;
 }) {
   let icon: ReactNode;
   let title: string;
@@ -2297,10 +2723,60 @@ function Detail({
             ? sel.b.dim
             : sel.kind === "gate"
               ? sel.g.dim
-              : sel.kind === "bed"
-                ? (sel.s.dim ?? "overworld")
-                : sel.dim;
-  if (sel.kind === "bed") {
+              : sel.kind === "place"
+                ? sel.p.dim
+                : sel.kind === "bed"
+                  ? (sel.s.dim ?? "overworld")
+                  : sel.dim;
+  if (sel.kind === "place") {
+    const p = sel.p;
+    icon = (
+      <span
+        className="mc-map-det-ic"
+        style={tintOf(tokenFor(layers.roster, p.xuid, p.gamertag))}
+        aria-hidden="true"
+      >
+        <Glyph k="pin" />
+      </span>
+    );
+    title = p.name;
+    sub = placeSub(p);
+    x = p.x;
+    y = p.y;
+    z = p.z;
+  } else if (sel.kind === "villager") {
+    const v = sel.v;
+    icon = (
+      <span className="mc-map-det-ic" aria-hidden="true">
+        <Glyph k={jobOf(v.job).glyph} />
+      </span>
+    );
+    title = villagerTitle(v);
+    const size = layers.ents?.villages.find((q) => q.id === v.village)?.count ?? 0;
+    sub = size > 1 ? `in the village of${NB}${size}` : "on its own";
+    if (v.name) sub = `${v.name} · ${sub}`;
+    pill = v.locked_in ? <span className="mc-map-state dorm">job locked in</span> : null;
+    x = v.x;
+    y = v.y;
+    z = v.z;
+  } else if (sel.kind === "pet") {
+    const m = sel.m;
+    const w = mobWords(m);
+    icon = (
+      <span
+        className="mc-map-det-ic"
+        style={tintOf(w.whose ? tokenFor(layers.roster, null, w.whose) : null)}
+        aria-hidden="true"
+      >
+        <Glyph k={m.tamed ? "paw" : "tag"} />
+      </span>
+    );
+    title = w.title;
+    sub = w.sub;
+    x = m.x;
+    y = m.y;
+    z = m.z;
+  } else if (sel.kind === "bed") {
     const b = sel.s;
     icon = (
       <span className="mc-map-det-ic bed" style={tintOf(tok)} aria-hidden="true">
@@ -2527,6 +3003,9 @@ function Detail({
       )}
       {sel.kind === "beacon" && <BeaconNote b={sel.b} beacons={beacons} />}
       {sel.kind === "bed" && <BedNote b={sel.s} owner={bedOwner} wakes={bedWakes} now={now} />}
+      {sel.kind === "place" && <PlaceCard p={sel.p} layers={layers} />}
+      {sel.kind === "villager" && <VillagerCard v={sel.v} layers={layers} />}
+      {sel.kind === "pet" && <MobCard m={sel.m} dim={sel.dim} layers={layers} />}
       {sel.kind === "gate" && <GateLead g={sel.g} onShow={onShowGate} />}
       {tricorder && !compact && (
         <p className="mc-map-det-tri">
@@ -2704,6 +3183,201 @@ function GateLead({ g, onShow }: { g: MinecraftGate; onShow: (g: MinecraftGate) 
   );
 }
 
+/** The view that frames a place's 48-block reach with M26's 72 px margin. */
+function reachFrame(p: { x: number; z: number }, f: Frame): MapView | null {
+  const r = 48;
+  return fitView(
+    [
+      [p.x + 0.5 - r, p.z + 0.5 - r],
+      [p.x + 0.5 + r, p.z + 0.5 + r],
+    ],
+    f,
+    72,
+    4,
+  );
+}
+
+/** What this round's cards read (GUI gate minecraft-map-layers). */
+interface LayerCtx {
+  gates: MinecraftGate[];
+  players: MinecraftMapPlayer[];
+  roster: RosterEntry[];
+  /** The world's folder, to pick its goals out of a player's count. */
+  world: string;
+  goals: MinecraftGoalProgress | "loading" | "failed" | null;
+  vcard: MinecraftVillagerCard | "loading" | "failed" | null;
+  ents: MinecraftMapEntities | null;
+  filter: VillagerFilter;
+  now: number;
+}
+
+const NB = "\u00a0";
+
+/** A player's tint and text for a card's icon tile; nobody's keeps the neutral one. */
+function tintOf(tok: string | null): React.CSSProperties | undefined {
+  if (!tok) return undefined;
+  const pair: Record<string, [string, string]> = {
+    "--steel": ["--steel-tint", "--steel-text"],
+    "--green": ["--green-tint", "--ok-text"],
+    "--amber": ["--amber-tint", "--warn-text"],
+    "--violet": ["--violet-tint", "--violet-text"],
+  };
+  const [bg, fg] = pair[tok] ?? ["--steel-tint", "--steel-text"];
+  return { background: `var(${bg})`, color: `var(${fg})`, borderColor: "transparent" };
+}
+
+/** A Lucide glyph from the map's own set, for the chrome. */
+function Glyph({ k, size = 18 }: { k: GlyphKey | "target"; size?: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {k === "target" ? (
+        <>
+          <circle cx="12" cy="12" r="10" />
+          <circle cx="12" cy="12" r="6" />
+          <circle cx="12" cy="12" r="2" />
+        </>
+      ) : (
+        <path d={GLYPHS[k]} />
+      )}
+    </svg>
+  );
+}
+
+function LineIcon({ icon }: { icon: CardLine["icon"] }) {
+  if (icon === "shield") return <ShieldIcon size={16} />;
+  if (icon === "user") return <UserIcon size={16} />;
+  if (icon === "portal") return <PortalIcon size={16} />;
+  return <Glyph k="target" size={16} />;
+}
+
+function Ln({ line }: { line: CardLine }) {
+  return (
+    <p className={`mc-map-ln${line.tone ? ` ${line.tone}` : ""}`}>
+      <LineIcon icon={line.icon} />
+      <span>
+        {line.lead && <b>{line.lead}</b>}
+        {line.text}
+      </span>
+    </p>
+  );
+}
+
+/** A saved place's card (places A): protected or not, where its player is, the gates aimed
+ *  at its block, and its share of each counted goal — no Tricorder button (owner). */
+function PlaceCard({ p, layers }: { p: MinecraftPlace; layers: LayerCtx }) {
+  const player =
+    layers.players.find((q) => q.xuid === p.xuid) ??
+    layers.players.find((q) => q.gamertag.toLowerCase() === p.gamertag.toLowerCase()) ??
+    null;
+  const g = goalWords(p, layers.world, layers.goals);
+  return (
+    <div className="mc-map-lns">
+      {placeLines(p, layers.gates, player).map((l) => (
+        <Ln key={l.text} line={l} />
+      ))}
+      <p className="mc-map-ln">
+        <Glyph k="target" size={16} />
+        <span>
+          <b>{g.head}</b> (the circle) · {g.lines.join(" · ")}
+        </span>
+      </p>
+      {g.foot && <p className="mc-note mc-map-det-note">{g.foot}</p>}
+    </div>
+  );
+}
+
+/** A villager's card (villagers A): every trade it offers now, by level, with how much
+ *  each has been used — and what isn't told yet. */
+function VillagerCard({ v, layers }: { v: MinecraftVillager; layers: LayerCtx }) {
+  const near = layers.players
+    .filter((q) => q.online && q.dim === layers.ents?.dimension)
+    .map((q) => ({ q, d: Math.hypot(q.x - v.x, q.z - v.z) }))
+    .sort((a, b) => a.d - b.d)[0]?.q;
+  const c = layers.vcard;
+  const age = entitiesAge(layers.ents, layers.now);
+  const card = c && c !== "loading" && c !== "failed" ? c.found : null;
+  const tiers = tradeTiers(card, layers.filter);
+  return (
+    <div className="mc-map-lns">
+      {near && (
+        <Ln
+          line={{
+            tone: "",
+            icon: "user",
+            text: (() => {
+              const { way, blocks } = bearingTo(near.x, near.z, v.x + 0.5, v.z + 0.5);
+              return `${blocks}${NB}blocks ${way} of ${near.gamertag}`;
+            })(),
+          }}
+        />
+      )}
+      {c === "loading" && <p className="mc-note mc-map-det-note">Reading its trades…</p>}
+      {c === "failed" && (
+        <p className="mc-note mc-map-det-note">Can&apos;t read its trades right now.</p>
+      )}
+      {c && c !== "loading" && c !== "failed" && !card && (
+        <p className="mc-note mc-map-det-note">
+          The saved world doesn&apos;t have this villager any more: it may have died, or the world
+          has been saved since.
+        </p>
+      )}
+      {tiers.length > 0 && (
+        <div className="mc-map-trades">
+          {tiers.map((tier) => (
+            <div key={tier.level} className="mc-map-tier">
+              <div className="mc-map-tier-h">{tier.level}</div>
+              {tier.trades.map((tr) => (
+                <div
+                  key={tr.key}
+                  className={`mc-map-tr${tr.gone ? " gone" : ""}${tr.hit ? " hit" : ""}`}
+                >
+                  <span className="mc-map-tr-l">
+                    {tr.what}
+                    {tr.enchant && (
+                      <>
+                        {" · "}
+                        <b>{tr.enchant}</b>
+                      </>
+                    )}
+                    <small>{tr.price}</small>
+                  </span>
+                  <span className="mc-map-tr-u">{tr.uses}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      {card && <p className="mc-note mc-map-det-note">{tradesNote(card, age)}</p>}
+    </div>
+  );
+}
+
+/** A pet's or named mob's card: whose (or that the owner isn't known yet), where it was
+ *  at the last save, and that it may have moved. */
+function MobCard({ m, dim, layers }: { m: MinecraftMob; dim: MinecraftDim; layers: LayerCtx }) {
+  const owner = m.owner_name
+    ? (layers.players.find((q) => q.gamertag.toLowerCase() === m.owner_name?.toLowerCase()) ?? null)
+    : null;
+  const from = mobFrom(m, owner, dim);
+  return (
+    <div className="mc-map-lns">
+      {from && <Ln line={{ tone: "", icon: "user", text: from }} />}
+      <p className="mc-note mc-map-det-note">{petNote(m, entitiesAge(layers.ents, layers.now))}</p>
+    </div>
+  );
+}
+
 function NudgeBtn({
   label,
   onClick,
@@ -2760,6 +3434,18 @@ function Layers({
   onFly,
   beds,
   onBed,
+  places,
+  ents,
+  vfilter,
+  setVfilter,
+  petsOf,
+  setPetsOf,
+  rankFrom,
+  petFrom,
+  onPlace,
+  onVillager,
+  onPet,
+  now,
 }: {
   gridRef: React.RefObject<HTMLDivElement>;
   ov: Overlays;
@@ -2782,6 +3468,20 @@ function Layers({
   /** Every player's respawn point the pack has told of (the owner's map only). */
   beds: BedRow[];
   onBed: (s: MinecraftSpawnPoint) => void;
+  /** Saved places, and the villagers and pets: undefined where the map has none to show
+   *  (a share link — owner-only). */
+  places: MinecraftMapPlaces | null | undefined;
+  ents: MinecraftMapEntities | null | undefined;
+  vfilter: VillagerFilter;
+  setVfilter: (f: VillagerFilter) => void;
+  petsOf: string | null;
+  setPetsOf: (x: string | null) => void;
+  rankFrom: { x: number; z: number; who: string | null };
+  petFrom: { x: number; z: number; who: string | null };
+  onPlace: (p: MinecraftPlace) => void;
+  onVillager: (v: MinecraftVillager) => void;
+  onPet: (m: MinecraftMob) => void;
+  now: number;
 }) {
   const forest: [number, number, number] = [5, 102, 33];
   const plains: [number, number, number] = [141, 179, 96];
@@ -2797,6 +3497,11 @@ function Layers({
   const hasMarks = marks !== undefined;
   const lines = overlayLines(marks ?? null);
   const rows = listRows(marks ?? null);
+  const hasPlaces = places !== undefined;
+  const hasEnts = ents !== undefined;
+  const groups = placeGroups(places ?? null, roster);
+  const ranked = ov.villagers ? rankedVillagers(ents ?? null, vfilter, rankFrom) : [];
+  const rankedP = ov.pets ? rankedPets(ents ?? null, petsOf, petFrom) : [];
   return (
     <>
       <h3 className="mc-sect mc-map-sect">Map</h3>
@@ -2910,6 +3615,119 @@ function Layers({
             />
           </>
         )}
+        {hasPlaces && (
+          <OverlayRow
+            icon={<Glyph k="pin" />}
+            title="Saved places"
+            sub={placesLine(places ?? null)}
+            on={ov.places}
+            onToggle={() => toggle("places")}
+          />
+        )}
+        {hasEnts && (
+          <>
+            <OverlayRow
+              icon={<Glyph k="house" />}
+              title="Villagers"
+              sub={villagersLine(ents ?? null, now)}
+              on={ov.villagers}
+              onToggle={() => toggle("villagers")}
+            />
+            {ov.villagers && (
+              <div className="mc-chips mc-map-who" role="radiogroup" aria-label="Which villagers">
+                {villagerChips(ents ?? null).map((c) => (
+                  <button
+                    key={filterKey(c.f)}
+                    type="button"
+                    className="mc-chip"
+                    // biome-ignore lint/a11y/useSemanticElements: a styled chip; a native radio can't carry this layout.
+                    role="radio"
+                    aria-checked={filterKey(vfilter) === filterKey(c.f)}
+                    onClick={() => setVfilter(c.f)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {ranked.length > 0 && (
+              <div className="mc-map-list mc-map-ranked" aria-label="Nearest first">
+                {ranked.map((r, i) => (
+                  <button
+                    key={r.key}
+                    type="button"
+                    className="mc-map-li"
+                    onClick={() => onVillager(r.v)}
+                  >
+                    <span className="mc-map-det-ic mc-map-rank" aria-hidden="true">
+                      {i + 1}
+                    </span>
+                    <span className="mc-map-li-tx">
+                      <b>{r.title}</b>
+                      <span>{r.sub}</span>
+                    </span>
+                    <ChevronRightIcon size={18} />
+                  </button>
+                ))}
+              </div>
+            )}
+            <OverlayRow
+              icon={<Glyph k="paw" />}
+              title="Pets & named mobs"
+              sub={petsLine(ents ?? null, now)}
+              on={ov.pets}
+              onToggle={() => toggle("pets")}
+            />
+            {ov.pets && petChips(ents ?? null).length > 0 && (
+              <div className="mc-chips mc-map-who" role="radiogroup" aria-label="Whose pets">
+                {[null, ...petChips(ents ?? null)].map((who) => {
+                  const tok = who ? tokenFor(roster, null, who) : null;
+                  return (
+                    <button
+                      key={who ?? "everyone"}
+                      type="button"
+                      className="mc-chip"
+                      // biome-ignore lint/a11y/useSemanticElements: a styled chip; a native radio can't carry this layout.
+                      role="radio"
+                      aria-checked={petsOf === who}
+                      onClick={() => setPetsOf(who)}
+                    >
+                      {tok && (
+                        <span
+                          className="pd"
+                          style={{ background: `var(${tok})` }}
+                          aria-hidden="true"
+                        />
+                      )}
+                      {who ? `${who}'s` : "Everyone's"}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {rankedP.length > 0 && (
+              <div className="mc-map-list mc-map-ranked" aria-label="Their pets, nearest first">
+                {rankedP.map((r, i) => (
+                  <button
+                    key={r.key}
+                    type="button"
+                    className="mc-map-li"
+                    onClick={() => onPet(r.m)}
+                  >
+                    <span className="mc-map-det-ic mc-map-rank" aria-hidden="true">
+                      {i + 1}
+                    </span>
+                    <span className="mc-map-li-tx">
+                      <b>{r.title}</b>
+                      <span>{r.sub}</span>
+                    </span>
+                    <ChevronRightIcon size={18} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
         <OverlayRow
           icon={<EyeIcon size={18} />}
           title="Explored by…"
@@ -2955,28 +3773,57 @@ function Layers({
           on={ov.grid}
           onToggle={() => toggle("grid")}
         />
-        <div className="mc-map-ov later">
-          <span className="mc-map-ov-gl" aria-hidden="true">
-            <PinIcon size={18} />
-          </span>
-          <span className="mc-map-ov-t">
-            Saved places
-            <small>with Minecraft_Dave&apos;s places</small>
-          </span>
-          <span className="badge off">later</span>
-        </div>
       </div>
 
-      {rows.length + beds.length > 0 && (
+      {(rows.length > 0 || groups.length > 0 || beds.length > 0) && (
         <>
           <h3 className="mc-sect mc-map-sect">In this world</h3>
+          {groups.map((g) => (
+            <div key={g.gamertag}>
+              <div className="mc-map-grp">
+                <span
+                  className="pd"
+                  style={{ background: g.token ? `var(${g.token})` : "var(--text-2)" }}
+                  aria-hidden="true"
+                />
+                {g.gamertag}&apos;s places
+              </div>
+              <div className="mc-map-list">
+                {g.rows.map((r) => (
+                  <button
+                    key={r.key}
+                    type="button"
+                    className="mc-map-li"
+                    onClick={() => onPlace(r.p)}
+                  >
+                    <span className="mc-map-det-ic" style={tintOf(g.token)} aria-hidden="true">
+                      <Glyph k="pin" size={16} />
+                    </span>
+                    <span className="mc-map-li-tx">
+                      <b>{r.title}</b>
+                      <span>{r.sub}</span>
+                    </span>
+                    <ChevronRightIcon size={18} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          {/* Respawn points come after the places, each player's one, before the world's
+              beacons and gates. */}
+          {beds.length > 0 && (
+            <div className="mc-map-grp">
+              <BedIcon size={14} />
+              Respawn points
+            </div>
+          )}
           <div className="mc-map-list">
             {beds.map((r) =>
               placed(r.s) ? (
                 <button key={r.key} type="button" className="mc-map-li" onClick={() => onBed(r.s)}>
                   <span
                     className="mc-map-det-ic bed"
-                    style={tintOf(tokenFor(roster, r.s.xuid))}
+                    style={tintOf(tokenFor(roster, r.s.xuid, r.s.gamertag))}
                     aria-hidden="true"
                   >
                     {r.s.kind === "anchor" ? <AnchorIcon size={16} /> : <BedIcon size={16} />}
@@ -2999,6 +3846,11 @@ function Layers({
                 </div>
               ),
             )}
+          </div>
+          {beds.length > 0 && rows.length > 0 && (
+            <div className="mc-map-grp">Beacons and gates</div>
+          )}
+          <div className="mc-map-list">
             {rows.map((r) => (
               <button key={r.key} type="button" className="mc-map-li" onClick={() => onFly(r)}>
                 <span
@@ -3129,6 +3981,69 @@ function Layers({
             </p>
           </>
         )}
+        {hasPlaces && (
+          <>
+            <div className="mc-map-lg-row">
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="place" />
+                Saved place (ring: whose)
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="reach" />
+                Where goals count chests (tapped)
+              </span>
+            </div>
+            <p className="mc-note">
+              Places are each player&apos;s own, saved through Dave where they stood. The circle is
+              the 48&nbsp;blocks Dave counts a goal&apos;s chests in.
+            </p>
+          </>
+        )}
+        {hasEnts && (ov.villagers || ov.pets) && (
+          <>
+            <div className="mc-map-lg-row">
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="village" />
+                Village (count)
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="villager" />
+                Villager, by job
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="pet" />
+                Pet (ring: whose)
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="named" />
+                Named mob
+              </span>
+            </div>
+            <div className="mc-map-lg-row">
+              {(
+                [
+                  ["book", "Librarian"],
+                  ["flask", "Cleric"],
+                  ["wheat", "Farmer"],
+                  ["hammer", "Smiths"],
+                  ["fish", "Fisherman"],
+                  ["mapFold", "Cartographer"],
+                  ["user", "Others"],
+                ] as [GlyphKey, string][]
+              ).map(([k, name]) => (
+                <span className="mc-map-lg-i" key={k}>
+                  <Glyph k={k} size={14} />
+                  {name}
+                </span>
+              ))}
+            </div>
+            <p className="mc-note">
+              From the saved world, {entitiesAge(ents ?? null, now)}: villagers and pets move, so a
+              live world can differ. Only the trades a villager offers now are told; wandering
+              traders are visitors and aren&apos;t shown.
+            </p>
+          </>
+        )}
         {ov.explored && (
           <div className="mc-map-lg-row">
             <span className="mc-map-lg-i">
@@ -3147,7 +4062,22 @@ function Layers({
 function MarkSwatch({
   kind,
 }: {
-  kind: "beacon" | "area" | "open" | "dormant" | "link" | "bed" | "anchor" | "unseen" | "jump";
+  kind:
+    | "beacon"
+    | "area"
+    | "open"
+    | "dormant"
+    | "link"
+    | "place"
+    | "reach"
+    | "village"
+    | "villager"
+    | "pet"
+    | "named"
+    | "bed"
+    | "anchor"
+    | "unseen"
+    | "jump";
 }) {
   const tile = (ring: string, dashed: boolean) => (
     <>
@@ -3199,6 +4129,66 @@ function MarkSwatch({
             <path d={GLYPHS.portalFrame} fill={kind === "open" ? "var(--violet)" : "none"} />
             <path d={GLYPHS.swirl} fill="none" />
           </g>
+        </>
+      )}
+      {(kind === "place" || kind === "villager") && (
+        <>
+          <circle cx="12" cy="12" r="8" fill="var(--map-halo)" />
+          <circle
+            cx="12"
+            cy="12"
+            r="7"
+            fill="none"
+            stroke={kind === "place" ? "var(--steel)" : "var(--map-ink)"}
+            strokeOpacity={kind === "place" ? 1 : 0.55}
+            strokeWidth="1.2"
+          />
+          <path
+            d={kind === "place" ? GLYPHS.pin : GLYPHS.book}
+            transform="translate(7 7) scale(0.42)"
+            fill="none"
+            stroke="var(--map-ink)"
+            strokeWidth="2.4"
+          />
+        </>
+      )}
+      {kind === "reach" && (
+        <circle
+          cx="12"
+          cy="12"
+          r="8"
+          fill="color-mix(in srgb, var(--steel) 10%, transparent)"
+          stroke="var(--steel)"
+          strokeWidth="1.2"
+        />
+      )}
+      {(kind === "village" || kind === "pet" || kind === "named") && (
+        <>
+          <rect x="4" y="4" width="16" height="16" rx="5" fill="var(--map-halo)" />
+          <rect
+            x="5"
+            y="5"
+            width="14"
+            height="14"
+            rx="4"
+            fill="none"
+            stroke={
+              kind === "village"
+                ? "var(--amber)"
+                : kind === "pet"
+                  ? "var(--steel)"
+                  : "var(--map-ink)"
+            }
+            strokeOpacity={kind === "named" ? 0.55 : 1}
+            strokeWidth="1.2"
+          />
+          <path
+            d={GLYPHS[kind === "village" ? "house" : kind === "pet" ? "paw" : "tag"]}
+            transform="translate(7 7) scale(0.42)"
+            fill="none"
+            stroke="var(--map-ink)"
+            strokeWidth="2.4"
+          />
         </>
       )}
       {kind === "link" && (
@@ -3277,22 +4267,6 @@ function OverlayRow({
 }
 
 // ---- canvas drawing ----
-
-/** A player's thing on their tint, glyph in their readable text colour (the mock's `pic`). */
-const TEXT_OF: Record<string, string> = {
-  "--steel": "--steel-text",
-  "--green": "--ok-text",
-  "--amber": "--warn-text",
-  "--violet": "--violet-text",
-};
-const tintOf = (tok: string) => ({
-  background: `var(${tok}-tint)`,
-  color: `var(${TEXT_OF[tok] ?? "--text-2"})`,
-});
-
-/** A player's colour token from the roster. */
-const tokenFor = (roster: RosterEntry[], xuid: string) =>
-  roster.find((r) => r.xuid === xuid)?.token ?? "--steel";
 
 /** What labels must stay clear of: the floating controls, the panel and the scale bar. */
 function keepOuts(el: HTMLElement, f: Frame, scale: Rect): Rect[] {

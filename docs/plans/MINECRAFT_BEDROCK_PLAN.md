@@ -8,12 +8,13 @@ owner's call:
 - **R1:** the `mc.hopkinsbrain.com` name and IP updater (put off), a UPnP helper, an
   Internet-play switch with a Test button; a brother joining from his own house is unrecorded.
 - **M4:** built (§M4e, 2026-10-13: villagers and trades, pets, named mobs, the Nether
-  pointer). Left: pets and villagers on the map, chest minecarts in `mc_find_item`, and
-  a fast-path answer for "where's my dog" (§M4e "Not built").
+  pointer, and, the same day, villagers and pets on the map). Left: chest minecarts in
+  `mc_find_item`, and a fast-path answer for "where's my dog" (§M4e "Not built").
 - **M7:** a companion NPC, scheduled backups, the other §3b tools.
-- **M8:** saved places on the map, height / slice / changes layers, Dave's in-game "map of
-  here" link. Beds are built (variant B, 2026-10-13; "Beds and respawn points" in §M8); their
-  box checks are in the home-test runbook.
+- **M8:** height / slice / changes layers, Dave's in-game "map of here" link. Saved places,
+  villagers and pets are on the map (2026-10-13, §M8 "Saved places, villagers and pets"), and
+  beds (variant B, 2026-10-13, §M8 "Beds and respawn points"; their box checks are in the
+  home-test runbook).
 - **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
   switch, a latency measurement, and `auto` log entries for crafting.
 - **P1 follow-up:** done: goals in the PWA (§M24, "Goals in the app") and §M25's scan on
@@ -774,8 +775,18 @@ with our own `leveldb.py`/`nbt.py`).**
   nearest of those ("Nether portal · 40 blocks"), and still names the target's dimension.
   A portal record can outlive a broken portal, so before a portal is sent, `BlockIndex`
   checks that `minecraft:portal` is still at its `Tp` spot (a box check).
+- **On the map (built 2026-10-13):** the GUI gate `docs/mocks/minecraft-map-layers/` picked
+  variant A — a village is one tile with its count, splitting into job discs from 3 px a
+  block; pets and named mobs drawn; filter chips with a ranked list; every trade a villager
+  offers now on its card. The sidecar's `GET /map/entities?slot&dim[&x0&z0&x1&z1]`
+  (`entities.listing`) groups villagers by single link at 48 blocks (a grid, so linear),
+  leaves wandering traders out (counted only), lists a named pet once, and caps the listed
+  villagers at 4,000 (`villagers_truncated`; the villages still count them all);
+  `/map/villagers?id=` is one villager's card (the id is its `UniqueID`, or where it stands
+  when it has none). The api passes them through as `GET /api/minecraft/map/entities` and
+  `/map/villager`, owner-only; it never flushes. Details in §M8 "Saved places, villagers and
+  pets" and DESIGN.md.
 - **Not built (later):**
-  - Pets and villagers on the map (an overlay, as §M26's beacons).
   - Chest minecarts and chest boats in `mc_find_item` (they are actors, so this sweep
     makes them cheap; §M23's "Not built").
   - Allays, which aren't tamed in the files' sense.
@@ -925,7 +936,10 @@ should be able to do once we're live").** Not yet tried from a real client.
   `"quoted phrase"` — a comma or a bare number is a syntax error the player sees. So
   "Dave, …" (the comma) and coordinates go in quotes: `/jb:dave "Dave, mark this
   location as tree farm"`; a leading "Dave," is dropped either way. A console origin is
-  refused ("Only a player can ask Dave").
+  refused ("Only a player can ask Dave"). `/jb:dave`, `/jb:d` and `/jb:ai` register with
+  `permissionLevel: Any` and **`cheatsRequired: false`**: a custom command defaults to
+  needing cheats, which shut Dave out of every world with cheats off until 2026-10-13
+  (owner: "I have to have cheats enabled to ask AI things").
 - **The sidecar** (`bds.py`) turns the line into a `dave` event carrying the **xuid BDS
   logged when that name connected** — the script API has no xuid, and the line's own
   fields are never trusted for identity. A name that never connected, or an empty
@@ -1163,7 +1177,9 @@ timeline (DESIGN.md "The Minecraft map"):
   world's page: the full-bleed tile map (zoom 0–4 from the box, then nearest-neighbour up to
   8 px per block), pan, pinch, wheel, + / −, show everyone, the dimension switch, the scale
   bar, and the persistent panel with the world picker, the honest status line and Layers.
-  Tiles are re-fetched after a minute while the world is live. `dev:mock` paints the
+  Tiles are re-fetched after a minute while the world is live, and the ones round a trail's
+  new steps when it has grown, at most once a minute (2026-10-13: explored ground had lagged
+  the trail by up to two minutes). `dev:mock` paints the
   reviewed fixture's world procedurally (`frontend/src/minecraftMapFixtures.ts`).
 - **Tap a spot** → `GET /api/minecraft/map/point?x&z&slot&dim` (the owner twin of the debug
   route, same bounds): biome, y (`~` for the survey), source, **Copy X Z**. **Long-press** pins
@@ -1193,10 +1209,13 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 - **API:** `GET /api/minecraft/timeline?slot&from&to&players&include&dim` (owner-only, the
   slot's world folder resolved like `/map/players`; query logic in
   `backend/src/jbrain/minecraft/timeline.py`). Over one range of at most 92 days it returns:
-  - **trails**: each player's samples cut into *segments* at every session, dimension and
-    respawn, then down to at most 2,000 points a player, keeping each segment's first and
-    last point so nothing is ever drawn or interpolated across a portal, a log-off or a
-    respawn (`downsampled` says when gaps no longer mean "standing still");
+  - **trails**: each player's samples cut into *segments* at every session, dimension,
+    death and respawn, then down to at most 2,000 points a player, keeping each segment's
+    first and last point so nothing is ever drawn or interpolated across a portal, a log-off
+    or a respawn (`downsampled` says when gaps no longer mean "standing still"). A life's
+    segment ends on its death's own place (the pack's position), not the last sample before
+    it: sampled every 10 s, a player who respawns at once leaves no sample where they fell,
+    and the trail stopped short of the skull (fixed 2026-10-13);
   - **events**: joins and leaves (placed at the player's first and last sample, since the
     console gives them no position), deaths with the behavior pack's `cause` and `killer`,
     respawns, and dimension changes derived from the trail (a respawn's jump is not one);
@@ -1227,9 +1246,35 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 - **Overlays made real:** Trails, Deaths, Spawn (the **world spawn**, which the
   sidecar's `/map/info` now reads from `level.dat`) and *Explored by* (Anyone or one player,
   lifting by first-seen time as the timeline plays).
-- **Beds:** built 2026-10-13 (below). **Saved places** (`mc_places`) are kept but not drawn
-  yet; the overlay stays *later*.
-- **Next:** saved places on the map.
+- **Keeping up (fixed 2026-10-13).** Positions are read every 10 s and the trails every
+  minute, so a disc ran up to a minute past its trail's end, and *Explored by* was read once,
+  when switched on. Now a `/map/players` sample newer than the log the trails came from (its
+  `now`) reads only the stretch since — from the walkers' last drawn point, for the walkers
+  only, trails and events — and joins it on (`mergeGap`: a piece carries on only when the box
+  put the seam point in it, so a death, respawn or portal at the seam starts a new one), once
+  per new sample, live or pinned to now; the minute's full read stays the backstop. When a
+  trail has grown, at most once a minute (the box re-reads the world no oftener), *Explored
+  by* is read again and the tiles within 16 chunks of the new steps are re-fetched,
+  cache-busted. A minute of walking costs at most six small reads, one full read, one fog
+  read and one refresh of the tiles round the steps.
+- **Beds:** built 2026-10-13 (below).
+- **Saved places, villagers and pets (built 2026-10-13;** GUI gate
+  `docs/mocks/minecraft-map-layers/`, places A and villagers-and-pets A, its review's blocking
+  findings fixed; DESIGN.md "Saved places, villagers and pets on the Minecraft map"):
+  - `GET /api/minecraft/map/places?slot[&dim]` (`minecraft/places.py`, owner RLS on
+    `app.mc_places`, no migration): every player's places in the slot's world folder, each
+    with its player's newest gamertag, `saved_at` (`updated_at`: saving a name again moves the
+    place) and `moved`, the beacons that cover it (`markers.covers`), the gates aimed at its
+    block (`gates`) and the gates still named for it but aimed where it was (`gates_moved`).
+    Matching by block, not by name, is the review's X1: a gate keeps its own target copy.
+  - The map draws them on by default, in the player's colour, always named; a gate aimed at a
+    place's block ends at the place's pin. The card shows protection, where the player is, the
+    gates, and this place's share of each open counted goal (`/goals/progress`, read once per
+    player while the map is open) with the 48-block circle; no Tricorder button (owner).
+  - Villagers and pets: §M4e "On the map"; both off by default. Owner-only, never on a share
+    link; none of the three on the timeline's replay.
+  - Dave's map card gained the `villager` and `pet` focuses (`mc_show_map` v4).
+- **Next:** the height, slice and changes layers.
 
 **Beds and respawn points (built 2026-10-13; the owner's pick, beds variant B of
 `docs/mocks/minecraft-map-layers/`; DESIGN.md "Beds and respawn points on the Minecraft
@@ -1251,7 +1296,7 @@ the bed**), one of their deaths (a curve from the skull to where they woke), or 
   `mc_player_events`, which 0230 opens to share links (review X3). `GET
   /api/minecraft/map/markers` gains `spawns` (each player's current point, `set_at` across
   a bed read `other` while broken) and `spawn_log` (the last 8 days and the point before).
-  `mc_show_map` gains focus `bed` (tool v4): the chat player's or a named player's current
+  `mc_show_map` gains focus `bed` (tool v5): the chat player's or a named player's current
   point, `spawn` saying which.
 - **Map:** the death card says only where they woke — matched to the point they had then
   (within 4 blocks) and the world spawn (within 16) — never why. Not on share links, not on
@@ -1270,7 +1315,8 @@ tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
   clamps every slot before the box is asked anything, resolves the loaded world, and fills
   `focus: death` from the chat player's newest death in that world's travel log (placed at
   the last sample before it when the pack gave no position), `player` from their last
-  sample, `place` from their saved places. It returns the data-only view and a fenced text
+  sample, `place` from their saved places; `villager` and `pet` (v4, 2026-10-13) take the
+  x and z a finder gave and open the full map with that layer on. It returns the data-only view and a fenced text
   summary with the coordinates and, in the Nether, the Overworld side (×8). The view holds
   no URL: the card builds its own tile requests from the on-box route — the carve-out
   approved with the GUI gate, written into DESIGN.
@@ -1520,8 +1566,9 @@ it. In game the answer also says which way and how far the target is.
 and its set-A icon (`../mocks/minecraft-items/`) moved from the home-test kit into the
 always-installed `jbrain` behavior pack and a new `jbrain` resource pack, which the
 wrapper installs into every world it loads and BDS pushes on join
-(`texturepacks-required=true` is pinned). Each copy is named "<Player>'s Tricorder" with
-the lore "Points where Dave says", created with `lockMode = inventory` and
+(`texturepacks-required=true` is pinned). Each copy is named "<Player>'s Tricorder" (it
+carried the lore "Points where Dave says" until 2026-10-13, see DW1's "What the item
+shows"), created with `lockMode = inventory` and
 `keepOnDeath = true`, and carries its owner's `player.id` and a serial as item dynamic
 properties: the world keeps each owner's current serial, so a new copy retires every
 older one wherever it is (it reads "This tricorder is retired", and is unlocked so it
@@ -1568,7 +1615,8 @@ sessions; the icon download on join; home test rows 5, 10–12.
 **The item itself: a true custom item, `jbrain:tricorder`** (owner, 2026-10-10: a small
 pack that downloads automatically on join is fine, §3c rule 2).
 - **Its own icon** comes from the server-pushed `jbrain` resource pack (§3c rule 2).
-- Stack size 1. Lore: "Points where Dave says". It can't be crafted by players.
+- Stack size 1. No lore (dropped 2026-10-13, DW1 "What the item shows"). It can't be
+  crafted by players.
 - The game's own `minecraft:display_name` is "Tricorder". Each copy's name tag is set to
   **"<Player>'s Tricorder"** when Dave gives it.
 - It's never confused with a real item, because the script recognises the item type.
@@ -3375,6 +3423,21 @@ lore page (2026-10-11), so DW1 can be built from them.
   following M9's one-at-a-time rule.
 - **Power Pack uses (M10)** need the player's own Tricorder on them too, above.
 
+**What the item shows (owner bug report, 2026-10-13).** Bedrock's vanilla held-item
+pop-up (above the hotbar) shows an item's name and every lore line for about 2 s each
+time it is selected, over the actionbar where the heading is drawn; a pack cannot turn
+it off. So the Tricorder carries **no lore**: only its name, "<Player>'s Tricorder",
+which is where ownership shows. Copies beamed before this have their old "Points where
+Dave says" line cleared on the next once-a-second look at what the player carries
+(`tricorderLoreStale` in `rules.js`, beside the Power Pack's lore rewrite); a retired
+copy keeps "This tricorder is retired". What the item does is said instead **once a
+session** on the actionbar: the first time a player holds their own Tricorder after
+joining, "Your Tricorder points where Dave says · ask with /dave" (`TRICORDER_HINT`,
+plain words, not one of Dave's lines) for about 3 s, then the heading; never again until
+they rejoin (in memory, so a server restart shows it once more). The heading itself is
+re-sent on every 5-tick frame, changed or not, so after a re-select it is back as soon as
+the pop-up clears.
+
 **First-time beats.** Each is once per player per world. A world dynamic property keyed
 by xuid records which beats each player has had, so the pack needs no backend for them.
 - **Waking** (first `playerSpawn` with `initialSpawn` in this world). The sequence, timed
@@ -3424,7 +3487,11 @@ copied verbatim from the lore page. `main.js`'s quiet `firstWaking()` is gone.
   the player: `camera.fade` to black for 2 s with "…where am I?"; end-rod sparkles falling
   in a column onto them (`Player.spawnParticle`) with a climbing `note.chime`; "…what's
   this?"; at 5 s a chime and their Tricorder beamed into the selected slot; a crackle and
-  the **SIGNAL ACQUIRED** title; then Dave's six lines 3 s apart. Each step re-checks the
+  the **SIGNAL ACQUIRED** title; then Dave's six lines 6 s apart, at 8, 14, 20, 26, 32
+  and 38 s (3 s until 2026-10-13, when the owner found it too fast to read; the lore
+  table moved with it), so the welcome runs about 40 s and everything that waits for its
+  end (queued first-time beats, the re-beam stand-down) waits that long; `/dave hello`
+  replays the lines at the same 6 s pace. Each step re-checks the
   player, so leaving mid-welcome ends it quietly.
 - **Who gets it:** once per player per world, on a join with no `welcome` beat, which
   includes **players who joined before it shipped** (owner, 2026-10-12: they see it on

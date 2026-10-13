@@ -178,7 +178,7 @@ test("planting the seed in a ring of diamond blocks: the seed goes, a dormant ga
 test("Dave speaks up at a player's first planted gate, through their own Tricorder, once", () => {
   const mira = crew("Mira", "-1");
   sim.spawn(mira, true);
-  sim.advance(500); // the welcome plays out
+  sim.advance(800); // the welcome plays out
   mira.messages.length = 0;
   const first = build();
   const seed = () => {
@@ -211,7 +211,7 @@ test("a gate planted mid-welcome: Dave's line waits for the welcome to end (#168
   sim.advance(40);
   const dave = () => mira.messages.filter((m) => m.startsWith("§b[Dave]§r "));
   assert.ok(!dave().includes(`§b[Dave]§r ${LINES.firstWormhole}`));
-  sim.advance(500);
+  sim.advance(800);
   assert.equal(dave().at(-1), `§b[Dave]§r ${LINES.firstWormhole}`);
   assert.equal(dave().length, LINES.welcome("Mira", false).length + 1);
 });
@@ -219,7 +219,7 @@ test("a gate planted mid-welcome: Dave's line waits for the welcome to end (#168
 test("Dave's first-gate line holds the floor: a hello or a death inside it doesn't cut in (#1698)", () => {
   const mira = crew("Mira", "-1");
   sim.spawn(mira, true);
-  sim.advance(500);
+  sim.advance(800);
   mira.messages.length = 0;
   const first = build();
   mira.selectedSlotIndex = 1;

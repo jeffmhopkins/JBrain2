@@ -35,6 +35,8 @@ static int16_t mock_voice(bool dad, uint32_t i);
 #include <math.h>
 
 #include "caption.h"
+#include "poop.h"
+#include "tickle.h"
 #include "confirm.h"
 #include "cue_names.gen.h"
 #include "emotion.h"
@@ -109,6 +111,10 @@ static rig_walk_t r_walk;
 static action_t r_action;
 static uint32_t r_action_at;
 static uint32_t r_recue_from;
+/* As the panel does: three snacks in a minute and he has to go (`poop.h`). */
+static poop_t r_poop;
+static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
+static uint32_t r_poop_last;
 static float r_recue_p;
 static float r_flinch;
 static int r_frame;
@@ -449,6 +455,15 @@ static void frame(void)
         r_action = r_pending_act;
         r_action_at = now;
         r_pending_act = ACT_NONE;
+        if (r_action == ACT_EAT && poop_ate(&r_poop, now)) say("pet", "three meals in a minute");
+        if (r_action == ACT_BRACE) tickle_arm(&r_tickle, now);
+        if (r_action == ACT_EAT) {
+            static const char *const FOOD[FOOD_COUNT] = {"cookie", "apple",  "banana", "pizza",
+                                                         "donut",  "carrot", "watermelon",
+                                                         "strawberry"};
+            r_fst.food = food_pick(r_fst.food, now * 2654435761u);
+            say("pet", "eats a %s", FOOD[r_fst.food]);
+        }
         /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
            is a voice command, and those are deaf while a message plays. */
         if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
@@ -459,9 +474,27 @@ static void frame(void)
         say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
                          : r_action == ACT_LOVE ? "heard \"i love you\""
                          : r_action == ACT_EAT  ? "heard \"have a snack\""
-                                                : "heard \"tickle tickle\"");
+                                                : "heard \"im going to tickle you\"");
     }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
+    /* As the panel does: warned, a poke is a tickle. The bench has no poke pools, so an
+       unwarned poke stays a flinch. */
+    if (s_out.pet_press && facts.pet_only && !rig_holds_pokes(r_action)) {
+        const tickle_poke_t tk = tickle_poke(&r_tickle, now);
+        if (tk != TICKLE_NO) {
+            r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_GIGGLE;
+            r_action_at = now;
+            const cue_t c = cue_for_action((int)r_action);
+            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+            say("cue", "%s (press slot)", cue_name(c));
+            say("pet", "%s", tk == TICKLE_BIG ? "tickled: the fifth gets him" : "tickled");
+        }
+    }
+    if (r_poop.owed && r_action == ACT_NONE && s_sm.mode == SM_PET) {
+        r_action = ACT_POOP;
+        r_action_at = now;
+        say("pet", "has to go");
+    }
 
     /* The screen's stages, simplified: standby is pinned dark, anything else dims and darkens on
        the idle clock, and a person or a message brings it back. */
@@ -511,6 +544,10 @@ static void frame(void)
         (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
         say("cue", "%s (press slot, again)", cue_name(c));
     }
+    if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
+        poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF);
+        say("pet", "plop");
+    }
     r_recue_p = p;
     const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD || view->think;
     const bool dozing = screen_dozing(r_sleep, conversing, facts.speaker_busy);
@@ -541,6 +578,13 @@ static void frame(void)
         rig_walk(&r_walk, (float)(r_lean - was), &r_fst.rig);
         r_fst.lean = r_lean;
         r_fst.upright = r_upright;
+        const uint32_t dt = r_poop_last != 0 ? now - r_poop_last : 0u;
+        r_poop_last = now;
+        /* 2400 is `display.c`'s LEAN_FULL, the same copied number the lean above uses. */
+        poop_step(&r_poop, now, (float)tilt / 2400.0f, dt > 100u ? 100u : dt, POOP_HALF);
+        r_fst.poop_x = r_poop.x;
+        r_fst.poop_size = poop_scale(&r_poop, now);
+        r_fst.poop_t = (float)(now - r_poop.born) * 0.001f;
     }
     rig_figure(r_action, p, 1.0f, now, r_fst.eyes.face_ang, &r_fst.fig);
     r_fst.bob = bob_step(r_frame++);
@@ -677,7 +721,7 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 11:
         r_pending_act = value == 1   ? ACT_DIZZY
                         : value == 2 ? ACT_LOVE
-                        : value == 3 ? ACT_TICKLE
+                        : value == 3 ? ACT_BRACE
                         : value == 4 ? ACT_EAT
                                      : ACT_NONE;
         break;

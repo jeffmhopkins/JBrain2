@@ -398,6 +398,36 @@ async def test_the_debug_entity_finders_pass_their_search_through(sidecar) -> No
     assert dict(seen[3].url.params) == {"slot": "slot1", "check": "1"}
 
 
+async def test_the_debug_entities_are_counts_and_the_villages(sidecar) -> None:
+    """The map's Villagers and Pets layers for the box check of the 48-block grouping:
+    each village's centre and jobs, every other list only counted."""
+    seen, replies = sidecar
+    village = {"id": "v1", "x": -120, "z": -110, "count": 23, "jobs": {"librarian": 4}}
+    replies["/map/entities"] = httpx.Response(
+        200,
+        json={
+            "dimension": "overworld",
+            "villages": [village],
+            "villagers": [{"id": "1"}, {"id": "2"}],
+            "villagers_truncated": False,
+            "pets": [{"owner": "7", "owner_name": ""}, {"owner": None, "owner_name": ""}],
+            "named": [{"name": "Clover"}],
+            "traders": 1,
+            "live": True,
+            "as_of": 5.0,
+            "age_s": 3,
+            "records": 40,
+        },
+    )
+    req = _request(FakeSupervisor([]))
+    got = await mc.minecraft_map_entities(req, SETTINGS, PRINCIPAL, slot="slot2", dim="nether")
+    assert dict(seen[0].url.params) == {"slot": "slot2", "dim": "nether"}
+    assert got["villages"] == [village] and got["villagers_listed"] == 2
+    assert (got["pets"], got["pets_owner_unknown"], got["named"], got["traders"]) == (2, 1, 1, 1)
+    assert got["index"]["records"] == 40 and got["live"] is True
+    assert "villagers" not in got
+
+
 async def test_the_debug_structure_index_and_sweep_pass_through(sidecar) -> None:
     seen, replies = sidecar
     replies["/map/structures"] = httpx.Response(200, json={"structures": [], "stale": None})

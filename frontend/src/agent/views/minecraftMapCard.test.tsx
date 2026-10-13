@@ -402,6 +402,35 @@ describe("the minecraft_map chat card", () => {
     ).toBeInTheDocument();
   });
 
+  it("a villager or pet a finder found: marked as of the last save, opening with its layer", async () => {
+    show(
+      deathCard({
+        dim: "overworld",
+        overworld: null,
+        focus: { kind: "villager", label: "Librarian · Expert", x: -122, y: 66, z: -104 },
+      }),
+    );
+    expect(await screen.findByText("Librarian · Expert")).toBeInTheDocument();
+    expect(
+      screen.getByText("Villager · as of the world's last save · Overworld"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open the full map" }));
+    expect(opened[0]).toMatchObject({ x: -122, z: -104, mark: true, show: "villagers" });
+    cleanup();
+    show(
+      deathCard({
+        dim: "overworld",
+        overworld: null,
+        focus: { kind: "pet", label: "Rex", x: 52, y: 70, z: 52 },
+      }),
+    );
+    expect(
+      await screen.findByText("Pet · as of the world's last save · Overworld"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open the full map" }));
+    expect(opened[1]).toMatchObject({ x: 52, z: 52, show: "pets" });
+  });
+
   it("a malformed payload draws nothing it shouldn't", () => {
     const { container } = show({ slot: "../../etc", dim: "<img src=x onerror=alert(1)>" });
     expect(screen.getByText("This map can't be shown.")).toBeInTheDocument();
