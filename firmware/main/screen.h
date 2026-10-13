@@ -81,6 +81,13 @@ screen_stage_t screen_stage(uint32_t idle_ms);
  * which is the whole reason it was split out. */
 bool screen_dozing(screen_stage_t stage, bool conversing, bool speaking);
 
+/* A POKE OVER SOUND: whether it may start a reaction, or only flinches. The agent talking and a
+   message playing are not the pet's to talk over (the owner: *"when the agent is talking we
+   should prohibit beeps from cutting it off"*). The pet's own action sounds are not that: a meal
+   crunches through two-thirds of its 4.8 s, and counting those turned most pokes during one
+   into a flinch (0.4.10). A new press cue simply replaces the one sounding. */
+bool screen_poke_reacts(bool agent_talking, bool message_playing);
+
 /* What the panel should be showing, as against the brightness the BOX asked for — which has
    to survive a night's sleep unchanged, because it is a setting and this is a mood. */
 uint8_t screen_level(uint8_t configured, screen_stage_t stage, int dim_percent);

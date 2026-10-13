@@ -2523,8 +2523,10 @@ in flight. Two faults the owner saw within the hour:
   the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
   requests, turned on only after speech has started (`firmware/README.md`).
 
-**0.4.10, tickle tickle.** A new laughing action from `tickle tickle` / `tickle me`, and the
-dizzy and love actions last twice as long (`firmware/README.md`).
+**0.4.10, tickle tickle and a real meal.** A new laughing action from `tickle tickle` /
+`tickle me`; eating becomes five bites of a cookie with a crunch on each; the dizzy and love
+actions last twice as long; and a poke over the pet's own sounds reacts again rather than only
+flinching (`firmware/README.md`).
 
 **0.4.9, a ring round the play button.** It fills as the message plays, from the length the box
 now sends as `X-Jpanel-Duration-Ms` on `/next` and on a replay (`firmware/README.md`).

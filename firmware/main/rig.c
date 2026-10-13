@@ -85,6 +85,11 @@ static float eat_chew(float w)
     return 0.0f;
 }
 
+bool rig_cue_on_start(action_t a)
+{
+    return a != ACT_EAT;
+}
+
 int rig_eat_bites(float p, float *since)
 {
     const float b = p * (float)EAT_BITES - BITE_AT;
@@ -100,12 +105,13 @@ int rig_eat_bites(float p, float *since)
 bool rig_recue(action_t a, float p0, float p)
 {
     /* The tickle: two more laughs after the first, 1.6 s apart, the last well before he winds
-       down. The meal: a crunch on each bite after the first, which the action's own cue is. */
+       down. The meal: a crunch on every bite, the first included (`rig_cue_on_start`). */
     static const float TICKLE[] = {0.33f, 0.62f};
-    static const float EAT[] = {(1.0f + BITE_AT) / EAT_BITES, (2.0f + BITE_AT) / EAT_BITES,
-                                (3.0f + BITE_AT) / EAT_BITES, (4.0f + BITE_AT) / EAT_BITES};
+    static const float EAT[] = {BITE_AT / EAT_BITES,          (1.0f + BITE_AT) / EAT_BITES,
+                                (2.0f + BITE_AT) / EAT_BITES, (3.0f + BITE_AT) / EAT_BITES,
+                                (4.0f + BITE_AT) / EAT_BITES};
     const float *at = a == ACT_TICKLE ? TICKLE : a == ACT_EAT ? EAT : NULL;
-    const unsigned n = a == ACT_TICKLE ? 2u : a == ACT_EAT ? 4u : 0u;
+    const unsigned n = a == ACT_TICKLE ? 2u : a == ACT_EAT ? 5u : 0u;
     for (unsigned i = 0; i < n; i++) {
         if (p0 < at[i] && p >= at[i]) return true;
     }

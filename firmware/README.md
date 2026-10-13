@@ -167,8 +167,16 @@ now 4.8 s and five bites of a cookie (`EXTRA_FOOD`): the robot carries it from i
 corner of its mouth, the bird pecks it off its wing, a piece goes out of it on each bite with
 crumbs falling, and the fifth finishes it. The mouth opens wide before each bite, snaps shut
 on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside `talk`).
-`CUE_EAT` is now a crunch and two munches, said on every bite through `rig_recue`. The bench
-has a "Have a snack" button.
+`CUE_EAT` is now a crunch and two munches, said on every bite through `rig_recue`, the first
+included: the meal is the one action that does not sound as it starts
+(`rig_cue_on_start`), since its hand is still on the way up. The bench has a "Have a snack"
+button.
+
+**A poke over the pet's own sound reacts again.** A poke over any sound used to only flinch,
+which with the meal crunching through two-thirds of its length and the tickle laughing through
+half of its own made most pokes during them do nothing. Now only the agent talking or a message
+playing holds a poke to a flinch (`screen_poke_reacts`); a new reaction's cue replaces the one
+sounding.
 
 ## Where you poke him changes what he does
 

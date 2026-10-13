@@ -451,7 +451,7 @@ static void frame(void)
         r_pending_act = ACT_NONE;
         /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
            is a voice command, and those are deaf while a message plays. */
-        if (s_sm.mode == SM_PET && !facts.speaker_busy) {
+        if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
             const cue_t c = cue_for_action((int)r_action);
             (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
             say("cue", "%s (press slot)", cue_name(c));

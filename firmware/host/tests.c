@@ -1057,14 +1057,27 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
     }
 }
 
+static void test_a_poke_over_the_pets_own_sound_still_reacts(void)
+{
+    /* The reviewer on 0.4.10: the meal crunches through two-thirds of its 4.8 s and the tickle
+       laughs through half of it, and a poke over ANY sound only flinched, so most pokes during
+       either did nothing. Only the agent and a message are not the pet's to talk over. */
+    CHECK(screen_poke_reacts(false, false), "over the pet's own crunch or laugh: it reacts");
+    CHECK(!screen_poke_reacts(true, false), "over the agent talking: a flinch, nothing more");
+    CHECK(!screen_poke_reacts(false, true), "over a message: a flinch, nothing more");
+}
+
 static void test_a_meal_is_five_bites_of_a_cookie(void)
 {
     /* The owner: "the eat animation can probably be better with multiple bites being taken and
        kind of a longer animation and sound effect too." */
     CHECK(rig_spec(ACT_EAT)->dur_ms == 4800, "a meal, not a 1.6 s nibble");
 
-    /* A CRUNCH ON EVERY BITE: the action's cue says the first, four re-cues the rest, at the
-       panel's 25 fps and at a ragged 7. */
+    /* A CRUNCH ON EVERY BITE, ON THE BITE: nothing as it starts (the hand is still on its way
+       up), then a re-cue as each of the five lands, at the panel's 25 fps and at a ragged 7. */
+    CHECK(!rig_cue_on_start(ACT_EAT), "the meal does not crunch before the first bite");
+    CHECK(rig_cue_on_start(ACT_TICKLE) && rig_cue_on_start(ACT_DIZZY),
+          "everything else sounds as it starts");
     for (int step = 40; step <= 140; step += 100) {
         const int dur = rig_spec(ACT_EAT)->dur_ms;
         int again = 0, bites = 0;
@@ -1075,7 +1088,16 @@ static void test_a_meal_is_five_bites_of_a_cookie(void)
             p0 = p;
         }
         bites = rig_eat_bites(1.0f, NULL);
-        CHECK(again == 4 && bites == EAT_BITES, "a crunch for each of the five bites");
+        CHECK(again == 5 && bites == EAT_BITES, "a crunch for each of the five bites");
+        /* Each crunch on the frame its bite's count goes up. */
+        p0 = 0.0f;
+        for (int t = 0; t < dur; t += step) {
+            const float p = (float)t / (float)dur;
+            if (rig_recue(ACT_EAT, p0, p)) {
+                CHECK(rig_eat_bites(p, NULL) > rig_eat_bites(p0, NULL), "on the bite itself");
+            }
+            p0 = p;
+        }
     }
 
     /* THE COOKIE GETS SMALLER WITH EVERY BITE and is gone at the end, on both forms. */
@@ -4903,6 +4925,7 @@ int main(void)
     test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
     test_tickle_tickle_makes_him_laugh_and_laugh_again();
     test_a_meal_is_five_bites_of_a_cookie();
+    test_a_poke_over_the_pets_own_sound_still_reacts();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();

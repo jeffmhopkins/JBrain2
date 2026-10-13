@@ -2006,7 +2006,7 @@ static void face_task(void *arg)
                     action = (action_t)v->arg;
                     action_mag = 1.0f;
                     action_start = now;
-                    heard_cue = cue_for_action((int)action);
+                    heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
                     break;
                 }
                 if (heard_cue != CUE_COUNT && sound) {
@@ -2171,7 +2171,7 @@ static void face_task(void *arg)
         if (s_out.pet_press) {
             s_flinch = 1.0f;
             dirty = true;
-            if (facts.speaker_busy) {
+            if (!screen_poke_reacts(facts.reply_busy, facts.stream_live)) {
                 /* the flinch alone */
             } else if (label_hit(ox, oy, over_y0)) {
                 /* THE LABEL IS ITS OWN BUTTON, checked before the zones so a corner of the glass
@@ -2194,7 +2194,9 @@ static void face_task(void *arg)
                          s_tap_x, s_tap_y, s_fig_x, s_fig_y, s_tap_zone, colour, (int)action,
                          (double)action_mag);
                 PHASE(3);
-                if (sound) stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                if (sound && rig_cue_on_start(action)) {
+                    stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                }
             }
         }
 

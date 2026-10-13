@@ -160,6 +160,10 @@ typedef struct {
    the frame `p` crosses one of the action's re-cue points (from `p0`, the last frame's). */
 bool rig_recue(action_t a, float p0, float p);
 
+/* Whether `a` sounds its cue the moment it starts. The meal does not: its first crunch is a
+   re-cue on the first bite, a quarter of a second in, so every crunch lands on its bite. */
+bool rig_cue_on_start(action_t a);
+
 /* EATING: bites taken by progress `p` (0..EAT_BITES), and how long ago the last one was as a
    fraction of a bite's time (for the crumbs), or -1 before the first. */
 #define EAT_BITES 5
