@@ -204,7 +204,7 @@ cap with room to spare):
 | --- | --- | --- |
 | `touch=` | `ok` | `failed:<step>` at start — `rst`/`int` (GPIO config), `bus` (no bus to borrow: the PMIC service never opened it), `i2c` (no answer at 0x5A after the reset), `task`: the panel runs without touch. `failed:lost`: it answered, then stopped (read `tp_err`, `tp_rst`). `off`: a fault boot, which starts neither display nor touch. |
 | `taps=` | one more per finger-down (the wake stroke and swipes count too) | stays 0 while tapping: the chip reports no pressed point — read `tp_noack`. |
-| `tp_last=` | `rawA,rawB>x,y` for the last four touch-downs, oldest first | a corner tap that does not land near its corner. Tap top-left, top-right, bottom-right, bottom-left: expect `x,y` near `0,0`, `479,0`, `479,479`, `0,479` (raw a,b near `0,479`, `0,0`, `479,0`, `479,479`). A swapped or mirrored pattern is the mapping; corners that stop short (e.g. never below 20) are the edge accuracy calibration will fix. |
+| `tp_last=` | `rawA,rawB>x,y` for the last four touch-downs, oldest first | a corner tap that does not land near its corner. Tap top-left, top-right, bottom-right, bottom-left: expect `x,y` near `0,0`, `479,0`, `479,479`, `0,479` (raw a,b near `0,479`, `0,0`, `479,0`, `479,479`). A swapped or mirrored pattern is the mapping; corners that stop short (e.g. never below 20) are the edge accuracy calibration fixes. From 0.0.18 `x,y` is after the calibration and the rotation (`cal=`, `tp_rot=`). |
 | `tp_err=` / `tp_rst=` | `0` / `0` | climbing: failed reads, and how often the chip was reset. The PMIC's `i2c_err=` must stay 0 whatever these do. |
 | `tp_noack=down/all` | `down` 0 or tiny | `all` counts reads without `0xAB` (normal while idle if the chip only acks fresh reports); `down` counts those inside a stroke — held over, up to 3 in a row. Large `down` with broken drags: strokes are being cut. |
 | `tp_int=down/up` | (a measurement) | polls with GPIO5 low while pressed / while not. `down` near the press polls and `up` near 0: INT is a level, and a later image can sleep on it. |
@@ -225,12 +225,12 @@ Wi-Fi last.
 
 | Card | Real now | Still not real |
 | --- | --- | --- |
-| Brightness | The slider (10-100 %, 10 % floor, 5 % steps) reaches the glass on every tick through `svc_display` (the UI task records, sends between frames) and is **saved** and **restored at boot**. Auto-rotate is a saved switch. | Auto-rotate turns nothing yet (plan §2b); its line says "from a later update". |
+| Brightness | The slider (10-100 %, 10 % floor, 5 % steps) reaches the glass on every tick through `svc_display` (the UI task records, sends between frames) and is **saved** and **restored at boot**. Auto-rotate is a saved switch. | Auto-rotate turned nothing until 0.0.18 ("What 0.0.18 adds"). |
 | Battery | The AXP2101's readings: percent, voltage and charging when a cell is fitted, otherwise "No battery fitted · USB x.xx V". | — |
 | Notifications | Three saved switches; the quiet-hours note names the night window. | Nothing polls the box for notices yet, so they decide nothing (C3b). |
 | Jerv | "Read replies aloud", saved. | No audio, so nothing is read aloud. |
 | Firmware | The running version (the app descriptor's). **Update now** really checks: it raises a request and wakes the update loop, which fetches the manifest at once and shows Checking → Already on the newest version, or Downloading x · N % → Restarting into x, or Update failed (why) — each from what the loop is actually doing. The boot after an install that marked itself good says "Updated". | — |
-| Touch screen | — | Calibrate says it is coming in a later update. |
+| Touch screen | — | Calibrate said it was coming in a later update, until 0.0.18 ("What 0.0.18 adds"). |
 | Wi-Fi | The network the radio is on and its signal (`esp_wifi`), the state (Connected / Connecting / Off) from the driver's events. **Disconnect takes two taps within 3 s** (the first turns it rose: "Tap again to disconnect") and drops the radio at once; nothing re-joins until **Connect** or a restart. Connect is carried to the update loop, which re-joins. | — |
 
 **Why the UI never touches the box or the radio's join itself.** The box connection belongs to
@@ -246,8 +246,9 @@ backoff a failed install earns — the owner asked. Disconnect is the one direct
 
 `svc_settings` keeps every setting in NVS namespace **`jpanel`**, one `i32` per key named as
 `svc_settings_name` (`brightness`, `tts`, `notif_accept`, `notif_quiet`, `notif_chime`,
-`night_on`, `night_color`, `night_from`, `night_to`, `show_date`, `auto_rotate`, `tz`). The box's
-provisioning (`jbrain`) is never written.
+`night_on`, `night_color`, `night_from`, `night_to`, `show_date`, `auto_rotate`, `tz`; later
+`volume`, `mic_gain` and, from 0.0.18, `imu_axes`). The touch calibration (0.0.18) is a blob of its
+own beside them, `tp_cal`. The box's provisioning (`jbrain`) is never written.
 
 - **One writer.** Loaded on the main task before the UI starts; written only from the UI task,
   where every setter runs (the glass and the debug commands).
@@ -1591,6 +1592,185 @@ open (above).
 4. Stop one, play the next, a few times; then the snapshot: `system.int_min` and `int_min_at`
    (expect ≈ 56 KB at `play+ring`), and the `app` section's `rebuilds` unchanged by the plays.
 
+## What 0.0.18 adds: a play's own ring, auto-rotate, and touch calibration
+
+The owner approved this scope on 2026-10-13 (*"Go ahead with 0.0.18."*): the memory 0.0.17 left at
+a play, and the two Settings rows that had said "a later update" since 0.0.8 — Auto-rotate (plan
+§2b, wave C2r) and Touch screen → Calibrate (the mock's `Calib.dc.html`).
+
+### The memory: what a play holds, and the lever pulled
+
+0.0.17 on the board, after a power-on and three plays of the twins' messages: `system.int_min`
+**43,548 B at `play+ring`**, `int_free` 71.7 KB with the kept session up, `int_largest` 52 KB, the UI's
+start low-water 63 KB. 0.0.17 had expected ~56 KB (72 − 16 for the ring), so about **12 KB more is
+held during a play than it modelled** — and the label says when: inside `listen_exchange`, after its
+handshake (no `+handshake`), with the ring held.
+
+What is live during a play's stream, from the code:
+
+| What | Internal RAM | During a play | Counted in 0.0.17's model? |
+| --- | --- | --- | --- |
+| The kept TLS session (mbedTLS in 16 KB + out 4 KB, context, the peer's chain) | ~24-28 KB | yes — the play rides it | yes, inside the 71.7 KB baseline |
+| A second TLS session | — | **never**: the image has one `esp_http_client` (`box_http.c`); a play's GET goes on it, a dropped connection is closed (and its mbedTLS context freed) before the next opens on the same client, and the OTA download's own session opens only after `box_http_close` | — |
+| mbedTLS record buffers growing | — | **no**: `CONFIG_MBEDTLS_DYNAMIC_BUFFER` is off, so in/out are allocated at the handshake at their full size and never grow | — |
+| The play's ring | 16,384 B | yes | yes |
+| **The receive window, full** | ~6.5 KB | **the whole play**: the box sends a stored clip as fast as TCP lets it and the reader is paced by the speaker, so lwIP's window (`TCP_WND` 5,760 B = 4 × 1,440) sits full of unread data, each segment in a Wi-Fi dynamic RX buffer sized to its frame (~1.6 KB with the 802.11 headers, the RX control block and the pbuf) | **no** |
+| A loss in flight (AMPDU reorder, lwIP's out-of-order queue) | up to a few more frames | while a gap is filled | no |
+| The "played" stamp's NVS write (UI task, ~2 s into the play) | a few hundred bytes | briefly | no |
+| The JT2 decoder, the 1 KB slice buffer, the SHA-256 context | static | — | — |
+| A thread's fetch buffer (3,074 B) and its parse | — | **not during a play**: the main task makes one request at a time, after `talk_link_run` returns, and the low would be labelled `post` | — |
+| The speaker | — | the I2S DMA buffers are allocated at boot; opening the speaker reconfigures TX at the same size, and `esp_codec_dev_open` allocates nothing | — |
+
+So the ~12 KB is what the network holds behind the ring: the full receive window for certain (~6.5
+KB), the rest most likely loss-and-reorder frames and the stamp's write. The host cannot measure
+Wi-Fi buffers, so this image measures them on the board: the snapshot's `audio` section now keeps
+the last play's free heap **before its GET** (`play_before`), **once the box answered**
+(`play_answered`), **with the ring taken** (`play_ring_free`) and **the lowest seen while it
+streamed** (`play_low`). `play_ring_free − play_low` is exactly what lwIP and mbedTLS held behind the
+ring.
+
+**The lever: a play's ring is 6 KB, not a talk's 16 KB** (`tk_ring_bytes`, `TK_RING_PLAY`). The
+network already buffers a stored message (the window, and mbedTLS's decrypted record), and an
+underrun re-arms the speaker's start (0.0.12's gate: a pause, never a stutter), so the play's ring
+needs only the speaker's 150 ms start (4,800 B) plus one network slice (1 KB). Talks and voice
+messages keep 16 KB, which they need: a talk's ring is the microphone's while the upload connects.
+The arithmetic, against the board's own numbers:
+
+| | 0.0.17 (measured) | 8 KB ring | **0.0.18: 6 KB ring** |
+| --- | --- | --- | --- |
+| Free with the session up | 71.7 KB | 71.7 KB | 71.7 KB |
+| The ring | − 16.4 KB | − 8.2 KB | **− 6.1 KB** |
+| What the network held behind it (71.7 − 16.4 − 43.5) | − 11.8 KB | − 11.8 KB | − 11.8 KB |
+| `int_min` at `play+ring` | **43.5 KB** | 51.7 KB — short of 52 | **≈ 53.8 KB** |
+
+8 KB, the first number weighed, lands under the 52 KB target; 6 KB clears it by ~1.8 KB (by ~0.5 KB
+reading every KB as 1,024 B). The buffered audio is ~0.19 s in the ring plus ~0.18 s in the window
+plus whatever of mbedTLS's record is still unread. The other lever weighed — streaming the play over
+the kept session rather than a new one — is what 0.0.16 already does: there is only ever one.
+
+One more fix on the way: a KEY hold refused while a play was still being fetched took a 16 KB talk
+ring before finding the exchange busy, and the play then adopted it. A hold now takes a ring only when
+it can start (`tk_can_begin`), and a play takes its own size.
+
+### Auto-rotate
+
+- **Which way is down** comes from the QMI8658's accelerometer in the glass's plane (±2 g, 62.5 Hz,
+  the gyroscope off), read at 8 Hz **on the UI task's own passes** — no task of its own — only while
+  the screen is lit and the switch is on; dark or off, the accelerometer is powered down.
+- **Hysteresis** (`orient_logic.c`, host-tested): a new edge counts only **25° past the 45° line**
+  into its quadrant (within 20° of that edge's axis), and only after **700 ms** of every reading
+  saying so. A lean near 45° holds whatever is showing. **Flat** (under 0.5 g in the glass's plane:
+  within 30° of lying face up or down) changes nothing; **moving** (a total more than 0.2 g from 1 g)
+  starts the dwell again.
+- **How it turns: in the flush, not in LVGL and not in the CO5300.** LVGL keeps drawing the same
+  upright 480×480 screen (the glass is square, so nothing is laid out again); each strip is turned on
+  its way to the glass. **Upside down** reverses the strip where it lies and sends it to the mirrored
+  window — no memory at all. **On its side**, the strip's columns are gathered into a 2.5 KB piece
+  buffer and sent a few glass rows at a time (`disp_rot_piece`; an area LVGL draws narrow is tall, so
+  the rows per piece are worked out per area). Every window stays even-aligned, as the CO5300 needs.
+  Why not the alternatives: LVGL 9.2's own rotation in partial mode still leaves the flush to turn
+  the pixels, with a second ~38 KB strip buffer for 90°/270° — RAM this board does not have; and the
+  CO5300's MADCTL has no row/column exchange (HARDWARE.md §2), only mirrors, which would cover 180°
+  alone and change the one init table proven on the glass.
+- **Touch turns with it**, in the one place that maps it (`tp_xform`): raw → the 0.0.7 mapping → the
+  calibration → the rotation undone. The buttons do not move: KEY, BOOT and PWR mean what they did.
+- **Off** is the panel's own upright, at once. **No sensor** (no answer at 0x6B, or not a QMI8658):
+  the panel stays upright for the boot, Settings draws the switch dead with "The tilt sensor did not
+  start, so the screen stays upright", and telemetry says `orient=failed:<step>`.
+- **Screenshots stay upright**: the debug screenshot taps the strips before they are turned, so it is
+  what LVGL drew; `display.rotation` and `orient.rotation` say how the glass shows it.
+- **The chip's axes against the glass are not known** (HARDWARE.md §6). `imu_axes` (NVS, 0-7, the
+  debug `set`) swaps the chip's X/Y and flips either axis; 0 assumes +X right, +Y down.
+
+### Touch calibration
+
+- **Settings → Touch screen → Calibrate** puts up the mock's screen: "Tap the cross", "1 of 4 · BOOT
+  cancels", an amber cross with a ring and three dots, **one at each corner** (the mock's outer knots,
+  44 px in) rather than the mock's sixteen. Three taps per cross that agree (each within 24 px of
+  their mean) turn it green and bring the next; a tap more than 64 px from the cross is not counted
+  ("Tap the centre of the cross"); three that disagree start that cross again ("Those taps disagreed:
+  again"). **BOOT cancels** and stays in Settings with the old calibration (or none) in force; KEY
+  still talks to Jerv. While it runs the screen holds whichever way up it is.
+- **The fit** (`tp_cal_fit`, host-tested): an affine least-squares fit, x' = a·x + b·y + c and y' =
+  d·x + e·y + f, **in the glass's own frame**, over the 0.0.7 measured mapping (x = 479 − rawB, y =
+  rawA), from the four crosses' true places and the taps' means (both turned back into the glass's
+  frame). Four points for six numbers leave a residual to judge it by. Refused, with "Not saved:
+  those taps did not agree. Try again", when the taps span no plane (`few`), when it needs a scale
+  past 15 %, a shear past 0.1 or a shift past 48 px anywhere on the glass (`wild`), or when a tap
+  ends more than 12 px from its cross after it (`scattered`).
+- **Kept** in NVS namespace `jpanel`, key `tp_cal` (a 32-byte blob: layout, the six numbers in Q16,
+  the day), and applied to every touch from then on; **"Reset calibration"** (shown once there is
+  one) erases it and puts the measured mapping back. The card's corner says Never, Today, or the day.
+- **With rotation**: the calibration is applied in the glass's frame, then the rotation, so one
+  calibration made in any orientation serves all four.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_audio` | `tk_ring_bytes` (`TK_RING_TALK` 16 KB, `TK_RING_PLAY` 6 KB), `tk_can_begin`, a ring sized per exchange (`talk_ring_bytes`), `talk_net_mem` and the `audio.play_*` fields. |
+| `main/talk_link.c` | The play's free heap before, answered, with its ring, and its low while streaming. |
+| `svc_orient` (new) | `orient_logic.c` (pure: down from a raw reading, the margin, the dwell, flat and moving), `svc_orient.c` (the 8 Hz read on the UI task, the switch, the hold, the `orient` snapshot section and `orient=` note), `esp/orient_port_qmi8658.c` (id, reset, ±2 g at 62.5 Hz, power up/down, the 6-byte read, all through `svc_power_i2c_xfer`), `orient_port_fake.c` (the sim's and the host's tilt). |
+| `svc_display` | `disp_rot_point`, `disp_rot_area`, `disp_reverse`, `disp_rot_piece`, `disp_rot_piece_rows` (pure, host-tested); the flush turning each strip, the turn applied between frames with the whole screen redrawn, `display.rotation`. |
+| `svc_touch` | `tp_xform` (map → calibrate → unrotate), `tp_cal_fit` / `tp_cal_apply`, `tp_rotate` / `tp_unrotate` (pure); `svc_calib.c` (the fit's bookkeeping, the `calib` snapshot section); `esp/tp_cal_port_esp.c` (NVS); the touch task maps through a copy of the mapping each poll. |
+| `svc_settings` | `imu_axes` (0-7, default 0). |
+| `app_settings` | The Auto-rotate row live or dead; the calibration screen and its flow (`calib_flow_*`, pure); the Touch screen card's day and Reset calibration. |
+| `main` | `svc_orient_start` after touch; the UI task's pass, the calibration loaded and touch following each turn; `low=` moved near the front of the note so a long note never cuts it. |
+| `sim/` | Every strip also turned onto a glass framebuffer exactly as the flush turns it; `home-turned` (on its right edge) and `clock-upside-down` render the glass; `settings-no-imu`; `calib`, `calib-missed`, `calib-saved`; `--touch` runs a calibration, BOOT over it, and Reset. |
+
+### Debugging it
+
+- `orient`: `imu` (`ok` / `failed:<step>`), `auto`, `rotation` (degrees) and `down` (the edge showing
+  as the bottom), `seen` (`edge` / `between` / `flat` / `moving`) and `seen_edge`, `raw` (counts) and
+  `raw_mg` (milli-g), `axes`, `axes_if_upright`, `powered`, `held`, `reads`, `read_errors`, `changes`,
+  `chip` and `id` (WHO_AM_I / revision). Telemetry: `orient=ok,rot:90,chg:N,rd:N,err:N,axes:N`.
+- `calib`: `custom`, `capturing`, `date`, `fit` (a,b,c,d,e,f: scales and shears in thousandths,
+  offsets in pixels — `1000,0,0,0,1000,0` is none), `fits`, `refused`, `last`. Telemetry's touch
+  tokens gain `cal=custom|none` and `tp_rot=`; `tp_last`'s `x,y` are now after both.
+- `display.rotation`, `rot_changes`, `rot_no_memory` (a quarter turn that found no 2.5 KB).
+- `audio.ring` is the ring's real size; `audio.play_before` / `play_answered` / `play_ring_free` /
+  `play_low` as above.
+- A calibration can be driven from the box: `open` settings, then `inject` `touch` at each cross
+  (44,44), (436,44), (436,436), (44,436), three times each; `inject boot` cancels.
+
+```sh
+scripts/debug-connect.sh panel-cmd c6 snapshot                       # orient, calib, audio.play_*
+scripts/debug-connect.sh panel-cmd c6 set --arg name=imu_axes --arg value=4
+scripts/debug-connect.sh panel-cmd c6 set --arg name=auto_rotate --arg value=0
+```
+
+### The memory budget
+
+Static DIRAM (`.dram0.data` + `.dram0.bss`): 152,800 → 153,104 B, **+304 B**: the orientation state
+and its describer, the calibration's coefficients and bookkeeping, the touch task's mapping, the
+calibration screen's view, the play's heap readings. App: 1,979,632 → 1,992,416 B (+12.5 KB; 52% of
+the slot free). No new task, no new stack. On the heap: a play's ring is **10 KB smaller** for its
+whole length; the quarter-turn piece buffer is **2,560 B only while the panel is on its side**
+(upright and upside down take none); the calibration's NVS write is a transient handle. CPU: one
+6-byte bus read every 125 ms while lit (~0.3 ms each, well under 1 % of the UI task); a turned frame
+adds the strip's reversal (180°) or gather plus a window per piece (90°/270°, ~15 pieces a full-width
+strip). LVGL's pool peaks at 38.5 KB in `calib` (the screen over Settings; 64-bit host), under its
+64 KB.
+
+### What to check on the glass
+
+1. **The play's memory.** Play three of her messages (stop one part way), then a snapshot:
+   `system.int_min` at `play+ring` should read **≥ 52 KB** (expect ~53-54 KB); `audio.ring` 6144
+   during a play; `play_ring_free − play_low` is what the network held behind the ring (expect
+   ~6-12 KB). The sound should be as before; an underrun is a short pause, not a stutter.
+2. **Auto-rotate.** With the panel standing on the desk, the screen must stay as it is. Turn it onto
+   its right edge and hold it still: within a second the content turns to read upright; the same on
+   its left edge and upside down. Lean it at about 45°: nothing flickers. Lay it flat: it keeps the
+   last turn. Tap a tile in each orientation: it opens what is under the finger. If it turns the wrong
+   way, or turns while standing normally, take a snapshot with the panel upright: `orient.raw_mg`
+   and `orient.axes_if_upright` say which `imu_axes` to set (or switch Auto-rotate off in Settings —
+   touch works whichever way the screen shows).
+3. **Settings → Auto-rotate off**: the screen goes straight back to the panel's own upright.
+4. **Touch calibration.** Settings → Touch screen → Calibrate: tap each cross until it turns green
+   (three taps). The card then says Today and offers Reset calibration. Taps near the edges should
+   land better than before; `calib.fit` in the snapshot shows the correction. Try it once with the
+   panel turned, then upright: one calibration serves both. BOOT mid-way leaves the old one.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -1734,7 +1914,8 @@ components/
                     (PCF85063 + the box's clock), svc_net, svc_box and svc_audio (ES8311 + ES7210,
                     the talk to Jerv and Dave, the alarm sounds), svc_siblings (the twins' panels'
                     names, NVS-cached), svc_alarms (the box's alarms, NVS-cached), svc_convo (an
-                    agent's conversations) and svc_post (the voice post with the twins) are real: the device builds their esp/ file and pure logic, the sim and host
+                    agent's conversations), svc_post (the voice post with the twins) and svc_orient
+                    (auto-rotate from the QMI8658, 0.0.18) are real: the device builds their esp/ file and pure logic, the sim and host
                     the top-level files
   convo/            the one conversation view every agent's app instantiates (Jerv, Dave)
   svc_debug/        the debug surface: describer registry, log ring, commands, stripe screenshots
@@ -1801,7 +1982,9 @@ person's thread since 0.0.15), from 0.0.15 `jerv-menu`, `jerv-recent`, `jerv-rec
 `jerv-recent-end`, `jerv-recent-empty`, `jerv-switched`, `jerv-new`, `dave-menu` and
 `dave-recent` (the box's conversations answered by the sim from the mock's sessions), from 0.0.16
 `quorra-playing`, `quorra-sending`, `quorra-sent`, `quorra-new`, `home-new` and `clock-new`, and
-from 0.0.17 `quorra-mid` and `quorra-heard` (the
+from 0.0.17 `quorra-mid` and `quorra-heard`, from 0.0.18 `home-turned` and `clock-upside-down` (the
+panel turned: the PNG is the glass, each strip turned the device's way), `settings-no-imu`, `calib`,
+`calib-missed` and `calib-saved` (the
 twins' threads answered by the sim as `api/panel_messages.py` does, with placeholder names and
 words — her message playing, a voice message to her on its way and filed, a new one live in her
 thread, on her tile's badge and on the clock face's), and from
@@ -1860,7 +2043,9 @@ The memory budget). 0.0.11: app 1.91 MB (+0.5 KB; 54% of the slot free), 265 KB 
 +768 B ("What 0.0.11 adds", From the first talks). 0.0.16: app 1.98 MB (+14 KB; 53% of the slot
 free), 152 KB of DIRAM static (+2.4 KB; "What 0.0.16 adds", The memory budget). 0.0.17: app
 1.98 MB (+2.7 KB), DIRAM static +592 B, and a play's 16 KB ring taken after its connection's
-handshake rather than before it ("What 0.0.17 adds", The memory).
+handshake rather than before it ("What 0.0.17 adds", The memory). 0.0.18: app 1.99 MB (+12.5 KB;
+52% of the slot free), DIRAM static +304 B, a play's ring 6 KB instead of 16, and a 2.5 KB piece
+buffer only while the panel is on its side ("What 0.0.18 adds", The memory budget).
 
 ## Recovery
 
