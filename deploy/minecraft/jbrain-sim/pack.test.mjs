@@ -3,7 +3,7 @@
 // pack out beside it and runs this file, so CI does too.
 import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
-import { CustomCommandStatus, Dimension, ItemLockMode, ItemStack, sim } from "@minecraft/server";
+import { CommandPermissionLevel, CustomCommandStatus, Dimension, ItemLockMode, ItemStack, sim } from "@minecraft/server";
 import { FormCancelationReason, forms } from "@minecraft/server-ui";
 import { LINES } from "./pack/scripts/rules.js";
 
@@ -19,10 +19,15 @@ const ask = (p, ...words) => {
 };
 
 // A first join plays Dave's welcome (welcome.test.mjs); these tests start after it.
-const WELCOME_TICKS = 500;
+const WELCOME_TICKS = 800;
+// The once-a-session hint on first holding the Tricorder, past by the time a test looks.
+const TRI_HINT = "Your Tricorder points where Dave says · ask with /dave";
+const HINT_TICKS = 60;
 const wake = (p) => {
   sim.spawn(p, true);
   sim.advance(WELCOME_TICKS);
+  sim.tick();
+  sim.advance(HINT_TICKS);
   p.messages.length = 0;
   p.sounds.length = 0;
 };
@@ -40,7 +45,8 @@ test("the welcome's Tricorder is bound to its owner", () => {
   assert.equal(t.lockMode, ItemLockMode.inventory);
   assert.equal(t.keepOnDeath, true);
   assert.equal(t.nameTag, "Steve 42's Tricorder");
-  assert.deepEqual(t.lore, ["Points where Dave says"]);
+  // No description: Bedrock's held-item pop-up shows lore over the heading (2026-10-13).
+  assert.deepEqual(t.lore, []);
   assert.equal(t.getDynamicProperty("jb:owner"), "-111");
 });
 
@@ -68,6 +74,85 @@ test("waking without your own Tricorder re-beams one with Dave's line; with it, 
   assert.deepEqual(relabelled.lore, [LINES.retired]);
   assert.equal(relabelled.lockMode, ItemLockMode.none); // it can be thrown away now
   assert.equal(relabelled.keepOnDeath, false);
+});
+
+test("an owned Tricorder's old description is cleared on the next look; a retired one keeps its", () => {
+  const p = sim.player("Lored Tri", "-5");
+  wake(p);
+  const slot = p.inventory.slots.findIndex((s) => s?.typeId === "jbrain:tricorder");
+  const own = p.inventory.slots[slot];
+  own.setLore(["Points where Dave says"]); // a copy beamed before 2026-10-13
+  p.inventory.setItem(slot, own);
+  const retired = own.clone();
+  retired.setDynamicProperty("jb:serial", -1);
+  retired.setLore([LINES.retired]);
+  p.inventory.setItem(20, retired);
+  const stale = own.clone(); // an outdated copy with the old line, not yet held
+  stale.setDynamicProperty("jb:serial", -2);
+  p.inventory.setItem(21, stale);
+  for (let i = 0; i < 4; i++) sim.tick();
+  const now = p.inventory.slots[slot];
+  assert.deepEqual(now.lore, []);
+  assert.equal(now.nameTag, "Lored Tri's Tricorder");
+  assert.equal(now.lockMode, ItemLockMode.inventory);
+  assert.equal(now.keepOnDeath, true);
+  assert.deepEqual(p.inventory.slots[20].lore, [LINES.retired]);
+  p.selectedSlotIndex = 21; // held, it reads as retired, as before
+  sim.tick();
+  assert.deepEqual(p.inventory.slots[21].lore, [LINES.retired]);
+});
+
+test("the Tricorder's hint shows on the first hold of a session only, then the heading", () => {
+  const p = sim.player("Hinted", "-6");
+  sim.spawn(p, true);
+  sim.advance(WELCOME_TICKS); // the welcome hands it over, in their hand
+  p.location = { x: 0, y: 64, z: 100 };
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), TRI_HINT);
+  sim.advance(HINT_TICKS - 1);
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), TRI_HINT); // about 3 s on screen
+  sim.advance(1);
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), "↑ World spawn · 100 blocks");
+
+  const slot = p.selectedSlotIndex;
+  p.selectedSlotIndex = (slot + 1) % 9; // put away, and back: no hint again
+  sim.tick();
+  p.selectedSlotIndex = slot;
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), "↑ World spawn · 100 blocks");
+  sim.spawn(p, false); // a respawn is the same session
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), "↑ World spawn · 100 blocks");
+
+  sim.leave(p); // a rejoin is a new session: the hint once more
+  sim.join(p);
+  sim.spawn(p, true);
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), TRI_HINT);
+  sim.advance(HINT_TICKS);
+  sim.tick();
+  assert.equal(p.actionbar.at(-1), "↑ World spawn · 100 blocks");
+  assert.ok(!p.messages.includes(TRI_HINT)); // the actionbar only, never chat
+});
+
+test("the heading is re-sent every frame, so a re-select shows it as the pop-up clears", () => {
+  const p = sim.player("Reequip", "-7");
+  wake(p);
+  p.location = { x: 0, y: 64, z: 100 };
+  const slot = p.selectedSlotIndex;
+  p.selectedSlotIndex = (slot + 1) % 9;
+  sim.tick();
+  const away = p.actionbar.length;
+  p.selectedSlotIndex = slot;
+  sim.tick(); // the first frame after the re-select
+  assert.equal(p.actionbar.length, away + 1);
+  assert.equal(p.actionbar.at(-1), "↑ World spawn · 100 blocks");
+  // Unchanged, it is still sent each frame: Bedrock's actionbar fades after 2-3 s.
+  for (let i = 0; i < 12; i++) sim.tick();
+  assert.equal(p.actionbar.length, away + 13);
+  assert.ok(p.actionbar.slice(away).every((l) => l === "↑ World spawn · 100 blocks"));
 });
 
 test("a full inventory still gets the Tricorder; the selected stack makes room", () => {
@@ -155,6 +240,16 @@ test("/d and /ai are the same door as /dave", () => {
     sim.flush();
     assert.equal(res.status, CustomCommandStatus.Success);
     assert.match(daveEvents().at(-1), new RegExp(`"text":"point me ${name}"`));
+  }
+});
+
+test("/dave, /d and /ai need no cheats and no operator: anyone can ask", () => {
+  // A custom command defaults to cheatsRequired: true (owner, 2026-10-13: "I have to have
+  // cheats enabled to ask AI things").
+  for (const name of ["jb:dave", "jb:d", "jb:ai"]) {
+    const { def } = sim.command(name);
+    assert.equal(def.cheatsRequired, false, name);
+    assert.equal(def.permissionLevel, CommandPermissionLevel.Any, name);
   }
 });
 
@@ -452,9 +547,7 @@ test("every Power Pack carried gets the lore within a second, keeping all else",
   // A stale line is rewritten, so every pack carries the same lore and they stack alike.
   assert.deepEqual(p.equipment.Offhand.lore, [LINES.powerPackLore]);
   assert.deepEqual(p.inventory.slots[5].lore, []); // only packs
-  assert.deepEqual(p.inventory.slots.find((s) => s?.typeId === "jbrain:tricorder").lore, [
-    "Points where Dave says",
-  ]);
+  assert.deepEqual(p.inventory.slots.find((s) => s?.typeId === "jbrain:tricorder").lore, []);
 });
 
 test("a lored pack is left alone: the look writes nothing back", () => {

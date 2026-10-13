@@ -12,7 +12,7 @@ await import("./pack/scripts/main.js");
 sim.startup();
 
 const DAVE = "§b[Dave]§r ";
-const WELCOME_TICKS = 500;
+const WELCOME_TICKS = 800;
 const tricorders = (p) => p.inventory.slots.filter((s) => s?.typeId === "jbrain:tricorder");
 const daveEvents = () => sim.logs.filter((l) => l.includes('"ev":"dave"'));
 const beats = (p) => JSON.parse(sim.props.get(`jb:beats:${p.id}`) ?? "[]");
@@ -69,9 +69,15 @@ test("a new player's welcome follows the lore table, private to them", () => {
 
   sim.advance(39);
   assert.deepEqual(said(p), []);
-  sim.advance(1); // 8 s: Dave's first line, then one every 3 s
+  sim.advance(1); // 8 s: Dave's first line, then one every 6 s
   assert.deepEqual(said(p), [LINES.welcome("BlockyFox", false)[0]]);
-  sim.advance(300);
+  sim.advance(119);
+  assert.equal(said(p).length, 1); // still reading the first
+  sim.advance(1); // 14 s
+  assert.equal(said(p).length, 2);
+  sim.advance(479);
+  assert.equal(said(p).length, 5);
+  sim.advance(1); // 38 s: the last
   assert.deepEqual(said(p), LINES.welcome("BlockyFox", false)); // a world never told: no wreck
   assert.equal(p.messages.length, 6);
   assert.equal(daveEvents().length, 0); // scripted, never an AI turn
@@ -140,7 +146,7 @@ test("leaving mid-welcome ends it quietly; rejoining doesn't replay it", () => {
 
   const late = sim.player("Late", "-6");
   sim.spawn(late, true);
-  sim.advance(220); // two of Dave's lines in (8 s and 11 s)
+  sim.advance(340); // two of Dave's lines in (8 s and 14 s)
   late.isValid = false;
   sim.advance(WELCOME_TICKS);
   assert.equal(said(late).length, 2);
@@ -311,7 +317,7 @@ test("a pre-DW1 player's beats wait for the welcome to finish, then play once (#
   p.inventory.setItem(4, new ItemStack("minecraft:ender_pearl", 2));
 
   sim.spawn(p, true); // the welcome starts
-  for (let t = 0; t < 470; t += 20) {
+  for (let t = 0; t < 790; t += 20) {
     sim.advance(20);
     look();
   }
@@ -390,9 +396,9 @@ test("/dave hello replays the welcome's lines, no darkness, no Tricorder, no bac
   const fades = p.fades.length;
   ask(p, "jb:dave", "hello");
   assert.deepEqual(said(p), [LINES.welcome("Hi", true)[0]]); // at once
-  sim.advance(59);
+  sim.advance(119);
   assert.equal(said(p).length, 1);
-  sim.advance(1);
+  sim.advance(1); // at the welcome's pace, 6 s apart
   assert.equal(said(p).length, 2);
   ask(p, "jb:dave", "hello"); // asked again mid-telling: one telling
   sim.advance(WELCOME_TICKS);
@@ -425,8 +431,9 @@ test("the rules: timeline, hello, beats, death and pack lines, the wreck flag", 
   assert.deepEqual(t.slice(0, 5).map((s) => [s.at, s.step]), [
     [0, "dark"], [50, "sparkles"], [90, "whatsThis"], [100, "tricorder"], [120, "signal"],
   ]);
-  assert.deepEqual(t.slice(5).map((s) => s.at), [160, 220, 280, 340, 400, 460]); // 8 s to 23 s
-  assert.deepEqual(helloTimeline("A", true).map((s) => s.at), [0, 60, 120, 180, 240, 300]);
+  // 8 s to 38 s, 6 s apart (owner, 2026-10-13: 3 s went by too fast to read).
+  assert.deepEqual(t.slice(5).map((s) => s.at), [160, 280, 400, 520, 640, 760]);
+  assert.deepEqual(helloTimeline("A", true).map((s) => s.at), [0, 120, 240, 360, 480, 600]);
   assert.match(LINES.welcome("BlockyFox", false)[0], /there you are, BlockyFox\./);
   assert.match(LINES.welcome("x", true).at(-1), /Type \/dave and ask/);
   for (const yes of ["hello", " Hello ", "HELLO"]) assert.ok(isHello(yes));
