@@ -5,6 +5,10 @@
 import type {
   MinecraftAllowlist,
   MinecraftBackup,
+  MinecraftGoal,
+  MinecraftGoalCount,
+  MinecraftGoalProgress,
+  MinecraftGoals,
   MinecraftJob,
   MinecraftPlayer,
   MinecraftPlayers,
@@ -468,4 +472,207 @@ export function minecraftWorldsScenario(name: string | null): {
     default:
       return { worlds: mcWorlds(), backups: mcBackups(), job: null };
   }
+}
+
+// ---- goals and their progress (§M24; GUI gate docs/mocks/minecraft-goals/, B, look-only).
+// The gate's fixture on this file's players: BlockyFox (on) partway on iron with a far
+// place, a plain goal, one done and one abandoned; Mira_P (off) with chests only, and a
+// goal in Creative test, which isn't loaded; Steve42 reached; Pebble_J none.
+
+function mcGoal(id: string, title: string, overrides: Partial<MinecraftGoal> = {}): MinecraftGoal {
+  return {
+    id,
+    title,
+    notes: "",
+    status: "open",
+    world: "slot2",
+    world_name: "Castle Hill",
+    loaded: true,
+    item: null,
+    item_count: null,
+    created_at: nowS() - 86400,
+    finished_at: null,
+    ...overrides,
+  };
+}
+
+export function mcGoals(): MinecraftGoals {
+  const h = (hours: number) => nowS() - hours * 3600;
+  return {
+    world: "slot2",
+    players: [
+      {
+        xuid: "x-BlockyFox",
+        gamertag: "BlockyFox",
+        goals: [
+          mcGoal("g-iron", "Get 23 iron blocks", { item: "iron_block", item_count: 23 }),
+          mcGoal("g-beacon", "Beacon at the base", { created_at: h(72) }),
+          mcGoal("g-obsidian", "20 obsidian for the portal", {
+            item: "obsidian",
+            item_count: 20,
+            status: "done",
+            created_at: h(96),
+            finished_at: h(48),
+          }),
+          mcGoal("g-horse", "Tame a horse", {
+            status: "abandoned",
+            created_at: h(120),
+            finished_at: h(96),
+          }),
+        ],
+        journal: [
+          {
+            id: "j1",
+            goal_id: "g-iron",
+            at: h(0.4),
+            text: "got 5 iron blocks from the mine",
+            source: "player",
+          },
+          {
+            id: "j2",
+            goal_id: "g-iron",
+            at: h(1.8),
+            text: "Summed up when BlockyFox asked: 9 of 23, all carried. Home's chests had none yet.",
+            source: "dave",
+          },
+          {
+            id: "j3",
+            goal_id: "g-iron",
+            at: h(24),
+            text: "smelted a stack of iron ore",
+            source: "player",
+          },
+        ],
+      },
+      {
+        xuid: "x-Mira_P",
+        gamertag: "Mira_P",
+        goals: [
+          mcGoal("g-oak", "Get 64 oak logs", { item: "oak_log", item_count: 64 }),
+          mcGoal("g-glass", "Glass for the sky bridge", {
+            item: "glass",
+            item_count: 200,
+            world: "slot3",
+            world_name: "Creative test",
+            loaded: false,
+          }),
+        ],
+        journal: [
+          {
+            id: "j4",
+            goal_id: "g-oak",
+            at: h(20),
+            text: "tree farm is planted, need to wait",
+            source: "player",
+          },
+        ],
+      },
+      {
+        xuid: "x-Steve42",
+        gamertag: "Steve42",
+        goals: [
+          mcGoal("g-torch", "Get 16 torches", { item: "torch", item_count: 16, created_at: h(3) }),
+        ],
+        journal: [],
+      },
+    ],
+  };
+}
+
+function mcCount(
+  id: string,
+  need: number,
+  overrides: Partial<MinecraftGoalCount>,
+): MinecraftGoalCount {
+  return {
+    id,
+    world: "slot2",
+    world_name: "Castle Hill",
+    loaded: true,
+    item: "minecraft:item",
+    need,
+    have: 0,
+    carried: null,
+    carried_why: null,
+    boxes: 0,
+    chests: [],
+    here: null,
+    chests_why: null,
+    detail: null,
+    age_s: 180,
+    as_of: nowS() - 180,
+    flush: "not asked",
+    ...overrides,
+  };
+}
+
+/** What counting one player's goals answers now; `flushed` is Count again's fresher read. */
+export function mcGoalProgress(xuid: string, flushed = false): MinecraftGoalProgress {
+  const asOf = flushed ? { age_s: 0, as_of: nowS(), flush: "flushed" } : {};
+  if (xuid === "x-BlockyFox") {
+    return {
+      xuid,
+      online: true,
+      goals: [
+        mcCount("g-iron", 23, {
+          item: "minecraft:iron_block",
+          have: 14,
+          carried: 9,
+          boxes: 1,
+          here: 0,
+          chests: [
+            { place: "Home", count: 5, distance: 14, far: false },
+            { place: "Mine outpost", count: 0, distance: 620, far: true },
+          ],
+          ...asOf,
+        }),
+      ],
+    };
+  }
+  if (xuid === "x-Mira_P") {
+    return {
+      xuid,
+      online: false,
+      goals: [
+        mcCount("g-oak", 64, {
+          item: "minecraft:oak_log",
+          have: 40,
+          carried_why: "offline",
+          chests: [{ place: "Tree farm", count: 40, distance: null, far: false }],
+          age_s: 840,
+          as_of: nowS() - 840,
+          ...asOf,
+        }),
+        mcCount("g-glass", 200, {
+          item: "minecraft:glass",
+          world: "slot3",
+          world_name: "Creative test",
+          loaded: false,
+          have: 120,
+          carried_why: "not_loaded",
+          chests: [{ place: "Sky base", count: 120, distance: null, far: false }],
+          age_s: 3 * 86400,
+          as_of: nowS() - 3 * 86400,
+        }),
+      ],
+    };
+  }
+  if (xuid === "x-Steve42") {
+    return {
+      xuid,
+      online: false,
+      goals: [
+        mcCount("g-torch", 16, {
+          item: "minecraft:torch",
+          have: 18,
+          carried_why: "offline",
+          chests: [{ place: "Base", count: 18, distance: null, far: false }],
+          age_s: 60,
+          as_of: nowS() - 60,
+          ...asOf,
+        }),
+      ],
+    };
+  }
+  return { xuid, online: false, goals: [] };
 }

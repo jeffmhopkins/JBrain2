@@ -15,8 +15,8 @@ owner's call:
   "map of here" link.
 - **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
   switch, a latency measurement, and `auto` log entries for crafting.
-- **P1 follow-up:** goals in the PWA, and (§M25) the scan target on the map: both in the mock
-  gate.
+- **P1 follow-up:** (§M25) the scan target on the map, in the mock gate. Goals in the PWA
+  are built (§M24, "Goals in the app").
 - **Box checks:** `docs/runbooks/MINECRAFT_HOME_TEST.md`.
 
 The owner wants a Minecraft **Bedrock** dedicated server on the box. They need to start and
@@ -2832,9 +2832,32 @@ any chest in the world, not "my stock".
 - Prompt `agent-minecraft-dave-v20` (v19 on its own branch; v20 once merged with §M25): "remind me I need N X" makes a goal with an item and
   a count, the progress wording, and the deep-scan rule for far places.
 
+**Goals in the app (owner, 2026-10-13; GUI gate `docs/mocks/minecraft-goals/`, variant B,
+"expandable if clicked", look-only).** Built:
+- **A goal knows its world.** `mc_goal_create` now writes `app.mc_goals.world`: the world
+  folder places are filed under (the in-game asker's world, else the loaded one). No
+  migration: the column was there since 0226 and was never filled. A goal with no world
+  (made before this, or when the server couldn't say) reads as the loaded world's.
+- **`GET /api/minecraft/goals`** (owner RLS): every player's goals and the newest ten
+  journal entries of each goal, each goal with its world, the world's name and whether
+  it is the loaded one. A database read; with the sidecar down it still answers.
+- **`GET /api/minecraft/goals/progress?xuid=&flush=`** counts one player's open counted
+  goals at once (`minecraft/goals.py`): one `jb:carry` for all their items and one
+  `/map/stock` a dimension (eight items an ask), per world. It counts what Dave counts:
+  the pockets (the goal's own player, online, in the loaded world), the chests near each
+  saved place in the goal's world, and the chests near where they stand. It never calls
+  `scans.charge`; a place beyond 48 blocks (or in another dimension) is counted and only
+  marked `far`. A world that isn't loaded is counted from its saved files, without
+  pockets. The screen counts when it shows the goals (no forced save); **Count again**
+  passes `flush`, which saves the running world at most every 30 s.
+- **The screen**: a glance line under each player with goals in the Players table, which
+  opens all their goals in place; a goal opens its detail in place (sources, far, file
+  age, the shulker caveat, the no-deep-scan line, its journal); the player Sheet gains
+  the same Goals list and the latest journal. DESIGN.md "Players' goals" has the pattern.
+
 **Not built.**
-- **The goals list in the PWA doesn't show progress.** Any screen change goes through
-  the GUI mock gate (`docs/reference/DESIGN.md`), so this is a follow-up for the owner.
+- **Dave's in-game count still uses the loaded world's places** for every goal, even one
+  made in another world (the app counts each goal in its own world).
 - **No fast path.** There is no signed-off fixed line for progress on the lore page.
 - **Ender chests** are never counted, and neither are minecart chests or chest boats
   (§M23).
@@ -3464,7 +3487,8 @@ progress toward a player's goals**, and Dave helps that player get there. Everyt
 tied to a **Minecraft player**, keyed by xuid like the play history, so a gamertag change
 doesn't lose it.
 
-- **Goals** (`app.mc_goals`): player xuid, world slot, title (for example "Beacon at the
+- **Goals** (`app.mc_goals`): player xuid, world folder (written since the app's goals,
+  §M24; empty reads as the loaded world), title (for example "Beacon at the
   base" or "20 obsidian for the portal"), optional target notes, status
   (open / done / abandoned), created and finished times; and since §M24 an optional item
   and count ("iron_block ×23"), which `mc_goal_progress` counts against what the player

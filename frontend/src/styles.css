@@ -31190,6 +31190,547 @@ button.wf-sigpill {
   inset: 0;
 }
 
+/* ---- players' goals (plan §M24; GUI gate docs/mocks/minecraft-goals/, B, expandable) ---- */
+
+.mc-ptr.has-glance {
+  padding-bottom: 0;
+}
+
+.mc-pgl,
+.mc-pgx,
+.mc-pgl > td,
+.mc-pgx > td {
+  display: block;
+}
+
+/* The glance line: its own 44px button under the row, so the row's overlay never takes it. */
+.mc-glance {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0 0 32px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  text-align: left;
+}
+
+.mc-glance > svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.mc-glance-bar {
+  width: 44px;
+  flex: none;
+}
+
+.mc-glance-txt {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+  min-width: 0;
+}
+
+.mc-glance-n {
+  flex: none;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mc-glance-t {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-glance-x {
+  flex: none;
+  white-space: nowrap;
+}
+
+.mc-glance .mc-gchev {
+  margin-left: auto;
+}
+
+@media (max-width: 360px) {
+  .mc-glance {
+    padding-left: 0;
+  }
+}
+
+.mc-pgx > td {
+  padding: 0 0 8px;
+}
+
+.mc-goals {
+  display: flex;
+  flex-direction: column;
+}
+
+.mc-pgx .mc-goals {
+  border-top: 1px dashed var(--border);
+}
+
+.mc-goal-item + .mc-goal-item,
+.mc-goal-item + .mc-fin,
+.mc-fin + .mc-goal,
+.mc-goal + .mc-goal {
+  border-top: 1px solid var(--border);
+}
+
+.mc-goal {
+  appearance: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 14px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+
+.mc-pgx .mc-goal {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.mc-gic {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.mc-gic.count {
+  background: var(--steel-tint);
+  border-color: transparent;
+  color: var(--steel-text);
+}
+
+.mc-gic.done {
+  background: var(--green-tint);
+  border-color: transparent;
+  color: var(--ok-text);
+}
+
+.mc-gbody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mc-gtop {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.mc-gt {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.mc-gt.muted {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.mc-gn {
+  flex: none;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mc-gn small {
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.mc-gs {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+
+.mc-gs b,
+.mc-goal-open b {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.mc-gchev {
+  flex: none;
+  align-self: center;
+  display: flex;
+  color: var(--text-3);
+}
+
+.mc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  line-height: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+
+.mc-pill.done,
+.mc-pill.reached {
+  color: var(--ok-text);
+  background: var(--green-tint);
+}
+
+.mc-pill.aband {
+  color: var(--text-2);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.mc-pill.later {
+  color: var(--warn-text);
+  background: var(--amber-tint);
+}
+
+/* Carried solid, chests at 45%, the rest the track; reached is green all through; a count
+   that can't be made now is the track, hatched. */
+.mc-gbar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.mc-gbar.lg {
+  height: 12px;
+}
+
+.mc-gbar i {
+  display: block;
+  height: 100%;
+}
+
+.mc-gbar .c,
+.mc-key .c {
+  background: var(--steel);
+}
+
+.mc-gbar .h,
+.mc-key .h {
+  background: color-mix(in srgb, var(--steel) 45%, transparent);
+}
+
+.mc-gbar.reached .c,
+.mc-gbar.reached .h {
+  background: var(--green);
+}
+
+.mc-gbar.unknown {
+  background: repeating-linear-gradient(135deg, var(--surface-2) 0 5px, var(--border) 5px 7px);
+}
+
+.mc-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.mc-key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mc-key i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.mc-key .h {
+  box-shadow: inset 0 0 0 1px var(--steel);
+}
+
+/* A goal opened in place: no card in a card, just the goal's own column. */
+.mc-goal-open {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 14px 14px 52px;
+}
+
+.mc-pgx .mc-goal-open {
+  padding: 0 0 14px 38px;
+}
+
+@media (max-width: 360px) {
+  .mc-goal-open,
+  .mc-pgx .mc-goal-open {
+    padding-left: 14px;
+  }
+
+  .mc-pgx .mc-goal-open {
+    padding-left: 0;
+  }
+}
+
+.mc-goal-big {
+  margin: 0;
+  font-size: var(--fs-screen);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-goal-big small {
+  margin-left: 6px;
+  font-size: var(--fs-secondary);
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.mc-where {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mc-wr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 6px 0;
+}
+
+.mc-wr + .mc-wr {
+  border-top: 1px solid var(--border);
+}
+
+.mc-wi {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.mc-wt {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  overflow-wrap: anywhere;
+}
+
+.mc-wt small {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.4;
+}
+
+.mc-wn {
+  flex: none;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-wn.none {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.mc-chip-far {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  color: var(--warn-text);
+  background: var(--amber-tint);
+  white-space: nowrap;
+}
+
+.mc-goal-asof {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.mc-goal-asof .mc-note {
+  flex: 1 1 180px;
+}
+
+.mc-goal-jh {
+  margin: 4px 0 0;
+  font-size: var(--fs-micro);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.mc-fin {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  text-align: left;
+}
+
+.mc-pgx .mc-fin {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.mc-fin svg {
+  margin-left: auto;
+}
+
+.mc-goal.flat {
+  cursor: default;
+}
+
+.mc-goals-foot {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.mc-pgx .mc-goals-foot {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.mc-goals-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 18px;
+  text-align: center;
+}
+
+.mc-goals-empty b {
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+
+.mc-goals-eic {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+
+.mc-goals-empty i {
+  color: var(--text);
+}
+
+.mc-journal {
+  margin-bottom: 20px;
+}
+
+.mc-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mc-le {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-secondary);
+}
+
+.mc-le:first-child {
+  border-top: 0;
+}
+
+.mc-le-src {
+  grid-row: 1 / 3;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.mc-le-t {
+  overflow-wrap: anywhere;
+}
+
+.mc-le small {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.mc-log-empty {
+  padding: 4px 2px;
+}
+
 .mc-addon {
   display: flex;
   gap: 10px;
