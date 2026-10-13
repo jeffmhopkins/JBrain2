@@ -486,9 +486,13 @@ dbg_poll_t dbg_link_poll(void)
     s_stats.cmds++;
     snprintf(s_stats.last_cmd, sizeof s_stats.last_cmd, "%s", r.cmd);
     const int64_t t0 = esp_timer_get_time();
-    const int answered = parsed == DBG_PARSE_OK && !strcmp(r.cmd, "screenshot")
-                             ? answer_screenshot(path, &r)
-                             : answer_json(path, &r);
+    /* A screenshot's stream (two 4 KB chunks and the radio's send queue on a fresh session) is
+       ~6 KB under any pickup's low; named as itself, it no longer reads as the pickup's. The
+       loop names "idle" once the poll returns. */
+    const bool shot = parsed == DBG_PARSE_OK && !strcmp(r.cmd, "screenshot");
+    dbg_sys_doing(dbg_answer_phase(shot ? "screenshot" : ""));
+    const int answered = shot ? answer_screenshot(path, &r) : answer_json(path, &r);
+    dbg_sys_doing("pickup");
     s_stats.last_status = (int16_t)answered;
     ESP_LOGI(TAG, "%s answered: HTTP %d in %lu ms", r.cmd, answered,
              (unsigned long)((esp_timer_get_time() - t0) / 1000));

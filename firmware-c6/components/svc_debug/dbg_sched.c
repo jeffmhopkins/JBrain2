@@ -53,6 +53,11 @@ void dbg_stats_note(const dbg_stats_t *s, char *out, size_t len)
              (unsigned long)s->shot_ms);
 }
 
+const char *dbg_answer_phase(const char *cmd)
+{
+    return cmd && !strcmp(cmd, "screenshot") ? "screenshot" : "answer";
+}
+
 bool dbg_req_id_ok(const char *id)
 {
     size_t n = 0;
