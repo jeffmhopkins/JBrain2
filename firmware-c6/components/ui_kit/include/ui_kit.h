@@ -71,6 +71,14 @@ lv_obj_t *ui_tile(lv_obj_t *parent, int x, int y, const char *title, const ui_ic
                   ui_accent_t accent, const ui_tile_state_t *st, lv_event_cb_t cb, void *user);
 lv_obj_t *ui_tile_empty(lv_obj_t *parent, int x, int y);
 
+/* A voice bubble's moving parts, for a view that changes it where it stands rather than
+ * rebuilding its list (0.0.17: a rebuild lost the reader's scroll on every play). */
+typedef struct {
+    lv_obj_t *glyph; /* the play button's ▶ or ⏸ */
+    lv_obj_t *bar;   /* the progress bar's fill */
+    lv_obj_t *dot;   /* the amber "not heard yet" dot */
+} ui_bubble_parts_t;
+
 typedef struct {
     bool mine;
     bool voice;
@@ -84,11 +92,16 @@ typedef struct {
     const char *dur;
     const char *status;
     uintptr_t tag; /* the control's user data: which message a press was on */
+    /* Filled for one of theirs with play when set: then the dot is made clear rather than
+       left out, so ui_bubble_set can show it again without the row changing width. */
+    ui_bubble_parts_t *parts;
 } ui_bubble_t;
 /* `accent` colours their play button; LV_EVENT_CLICKED on Play or Listen reaches `cb` with
  * `user`, and the control carries `tag` (lv_obj_get_user_data of the event's target). */
 lv_obj_t *ui_bubble(lv_obj_t *parent, const ui_bubble_t *b, ui_accent_t accent, lv_event_cb_t cb,
                     void *user);
+/* The parts' new state: nothing moves but the glyph, the fill's width and the dot. */
+void ui_bubble_set(const ui_bubble_parts_t *p, bool playing, uint8_t prog, bool unplayed);
 
 /* Full-screen black base for everything modal: the talk ring, the push pop-up, the alarm. It
  * takes every press inside it, so nothing under it can be reached while it is drawn. */

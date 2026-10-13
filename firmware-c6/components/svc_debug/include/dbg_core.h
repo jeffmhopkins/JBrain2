@@ -30,6 +30,26 @@ void dbg_sys_crumb(uint32_t stage);
 uint32_t dbg_sys_crumb_at_boot(void);
 uint32_t dbg_sys_crumb_now(void);
 
+/* The internal heap's low-water mark and what the panel was doing when it was set (0.0.17: 0.0.16
+ * read 44 KB and nothing said when). The main task names its work as it starts each piece
+ * (`dbg_sys_doing`: "pickup", "report", "play", …, "idle" between) and brackets a TLS handshake;
+ * whichever task first sees a new low — the main task at each change, the UI task every pass —
+ * records it with that work, "+handshake" inside one and "+ring" while a talk's or a play's ring
+ * is held. Reported as the snapshot's `system.int_min_at` and telemetry's `low=<B>@<what>`. */
+void dbg_sys_low_probe(bool (*ring_held)(void));
+void dbg_sys_doing(const char *what);
+void dbg_sys_handshake(bool on);
+void dbg_sys_low_check(void);
+void dbg_sys_low_note(char *out, size_t len);
+/* Pure, host-tested: a reading of the low-water mark. True when it is a new low, which is then
+ * remembered as `<doing>[+handshake][+ring]`. */
+#define DBG_LOW_AT 40
+typedef struct {
+    uint32_t min; /* 0: none yet */
+    char at[DBG_LOW_AT];
+} dbg_low_t;
+bool dbg_low_feed(dbg_low_t *l, uint32_t min_now, const char *doing, bool handshake, bool ring);
+
 /* ---- log ring ---- */
 #define DBG_LOG_BYTES 3072
 #define DBG_LOG_LINE_MAX 120

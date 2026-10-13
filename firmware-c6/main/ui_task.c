@@ -134,6 +134,8 @@ static void ui_loop(void *arg)
            must not find a transfer of the last one in flight. */
         dbg_sys_crumb(ST_DEBUG);
         dbg_link_ui_service();
+        /* Every pass: a new low of the heap is named with whatever the main task is doing. */
+        dbg_sys_low_check();
         s_beat_ms = now;
         if (!s_heap_free && (uint32_t)(now - started) >= HEAP_AFTER_MS) {
             s_heap_free = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
