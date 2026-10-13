@@ -671,8 +671,9 @@ services:
     # share recipient could fill it for every session by forking, deleting, repeating.
     init: true
     environment:
-      # Bearer token the api presents on every control call (fail-closed: no token,
-      # the service refuses to start). Shared with the api via JBRAIN_JCODE_TOKEN.
+      # Bearer token the api presents on every control call (fail-closed: an unset or
+      # empty token and the service refuses to start). Shared with the api via
+      # JBRAIN_JCODE_TOKEN.
       JCODE_TOKEN: ${JCODE_TOKEN:-}
       JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       # Logged only (the ctl never calls it): grok reaches its models through the api.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -10,16 +10,19 @@ class Settings(BaseSettings):
     """Runtime settings sourced from ``JCODE_``-prefixed environment variables.
 
     ``jcode_token`` has no default on purpose: a control server without a token
-    must refuse to start rather than run unauthenticated (mirrors the
-    supervisor's ``SUPERVISOR_TOKEN``). The api presents it as a bearer token on
-    every proxied call.
+    must refuse to start rather than run unauthenticated. The api presents it as a
+    bearer token on every proxied call.
     """
 
     model_config = SettingsConfigDict(env_prefix="jcode_", case_sensitive=False)
 
     # Shared secret the JBrain api presents on every control call. No default —
-    # fail-closed: no token, no service.
-    token: str
+    # fail-closed: no token, no service. Compose passes `${JCODE_TOKEN:-}`, so an
+    # unset key arrives as "" and would otherwise start a ctl that admits `Bearer `.
+    # Only empty is refused, not a short token: every enabled box has had one minted
+    # (jcode-setup.sh, and update-inner.sh's self-heal since June 2026), and a length
+    # floor could stop a hand-set one from starting with no terminal to fix it.
+    token: str = Field(min_length=1)
 
     # Root of the per-session git checkouts, on the sandbox volume. Each session
     # gets its own subdirectory; nothing here is a JBrain blob or note.
