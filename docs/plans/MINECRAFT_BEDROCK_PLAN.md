@@ -1393,7 +1393,9 @@ tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
   `mc_player_explored` chunks, a zlib'd bitmap), and the sidecar draws the prediction
   there at **full strength** instead of as the survey (`mapping.tile`, `visited`). Saved
   chunks still win. It is biome colours and predicted heights, not blocks, so in the
-  Surface layer crossed desert reads orange beside the pale sand of saved chunks.
+  Surface layer crossed desert reads orange beside the pale sand of saved chunks. The
+  tile routes bound `tx`/`tz` to the sidecar's ±200,000 before that read (past it the
+  chunk numbers overflow), and `(world, dim, cx, cz)` is indexed for it.
 
   Checked against a 1.26 server generating the same seed:
   - biomes match at **97%** of 4,311 real columns, and every miss sits on a border

@@ -559,8 +559,8 @@ async def map_info(
 async def map_tile(
     dim: Annotated[str, Path(pattern=_DIM)],
     zoom: Annotated[int, Path(ge=0, le=4)],
-    tx: int,
-    tz: int,
+    tx: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
+    tz: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
     request: Request,
     settings: SettingsDep,
     slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",

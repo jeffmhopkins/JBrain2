@@ -243,6 +243,19 @@ def test_tiles_check_the_world_once_per_burst_and_again_after_it_lapses(fake) ->
     assert _worlds_read(fake) == 2 and len(fake["images"]) == 6
 
 
+def test_a_tile_past_the_worlds_edge_is_refused_before_any_read(fake) -> None:
+    """A stranger's URL can name any tile: one past the edge would overflow the crossed
+    ground's integer chunk read, so it is a 422, not a 500, and reads nothing."""
+    client = _client()
+    for tx, tz in ((100_000_000, 0), (0, -200_001)):
+        resp = client.get(f"/api/mc-share/good/map/tile/overworld/4/{tx}/{tz}.png")
+        assert resp.status_code == 422
+    assert fake["crossed"] == [] and fake["images"] == []
+    assert (
+        client.get("/api/mc-share/good/map/tile/overworld/4/200000/-200000.png").status_code == 200
+    )
+
+
 def test_a_cached_slot_holding_another_world_answers_gone_without_the_sidecar(fake) -> None:
     client = _client()
     assert client.get("/api/mc-share/good/map/tile/overworld/0/0/0.png").status_code == 200

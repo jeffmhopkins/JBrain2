@@ -697,8 +697,8 @@ async def minecraft_map_sweep(
 async def minecraft_map_tile(
     dim: Annotated[str, Path(pattern=r"^(overworld|nether|the_end)$")],
     zoom: Annotated[int, Path(ge=0, le=4)],
-    tx: int,
-    tz: int,
+    tx: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
+    tz: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,

@@ -29,6 +29,9 @@ from jbrain.minecraft import client as mc
 
 _OWNER = SessionContext(principal_kind="owner")
 CHUNKS_PER_TILE = 16  # a zoom-0 tile is 256 blocks
+# The sidecar's own tile bound. Checked before the chunk read too: past it, a zoomed-out
+# tile's chunk numbers overflow the fog's integer columns and the read fails as a 500.
+TILE_LIMIT = 200_000
 # A slot's folder changes only when a world is created into it or imported, and a tile
 # view asks for dozens of tiles at once: one /worlds read serves them all.
 FOLDER_TTL_S = 30.0

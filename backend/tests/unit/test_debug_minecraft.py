@@ -323,6 +323,16 @@ async def test_the_debug_map_serves_a_picture_not_the_world(
     assert [r.url.path for r in seen] == ["/map/tile/the_end/0/1/1.png", "/map/info"]
 
 
+def test_the_debug_map_bounds_its_tile_like_the_owners() -> None:
+    from fastapi.routing import APIRoute
+
+    (route,) = [r for r in mc.router.routes if isinstance(r, APIRoute) and r.path.endswith(".png")]
+    bounds = {p.name: p.field_info.metadata for p in route.dependant.path_params}
+    for name in ("tx", "tz"):
+        limits = {type(m).__name__: m for m in bounds[name]}
+        assert limits["Ge"].ge == -200_000 and limits["Le"].le == 200_000
+
+
 async def test_the_debug_point_and_nearby_pass_their_coordinates_through(sidecar) -> None:
     seen, replies = sidecar
     replies["/map/point"] = httpx.Response(200, json={"source": "survey", "biome": "Plains"})
