@@ -17,6 +17,8 @@
 #define OBJ_R 17.0f   /* a thing's radius at size 1, roughly: what touching him means */
 #define SPAWN_M 30.0f /* how far outside the field they appear */
 
+static float clampf(float v, float lo, float hi);
+
 static uint32_t rnd(game_t *g)
 {
     /* xorshift32: deterministic for a seed, so the host suite can replay a round. */
@@ -69,14 +71,19 @@ void game_start(game_t *g, uint32_t now, uint32_t seed, float home_x, float home
         new_round(g, now);
         return;
     }
+    /* Asked again mid-walk: turn round where he is, at the size he is (review), rather than
+       snapping back to his full size at home. */
+    float fx = home_x, fy = home_y, fs = 1.0f;
+    if (g->phase == GAME_WALK_IN || g->phase == GAME_WALK_OUT) game_figure(g, now, &fx, &fy, &fs);
     memset(g->obj, 0, sizeof(g->obj));
     g->phase = GAME_WALK_IN;
     g->since = now;
     g->last_active = now;
     g->home_x = home_x;
     g->home_y = home_y;
-    g->from_x = home_x;
-    g->from_y = home_y;
+    g->from_x = fx;
+    g->from_y = fy;
+    g->from_s = fs;
     g->x = 0.0f;
     g->y = 20.0f;
     g->vx = g->vy = 0.0f;
@@ -112,7 +119,7 @@ void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale
     case GAME_WALK_IN:
         *x = g->from_x + (0.0f - g->from_x) * k;
         *y = g->from_y + (20.0f - g->from_y) * k;
-        *scale = 1.0f + (GAME_SCALE - 1.0f) * k;
+        *scale = g->from_s + (GAME_SCALE - g->from_s) * k;
         return;
     case GAME_WALK_OUT:
         *x = g->x + (g->home_x - g->x) * k;
@@ -132,6 +139,19 @@ void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale
         *scale = 1.0f;
         return;
     }
+}
+
+float game_pitch(int az, int down)
+{
+    return atan2f((float)az, (float)down);
+}
+
+float game_tilt_y(float pitch, float pitch0)
+{
+    float d = pitch - pitch0;
+    if (d > 3.14159265f) d -= 6.2831853f;
+    if (d < -3.14159265f) d += 6.2831853f;
+    return clampf(d / GAME_PITCH_FULL, -1.0f, 1.0f);
 }
 
 float game_play_s(const game_t *g, uint32_t now)

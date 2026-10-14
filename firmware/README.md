@@ -212,10 +212,13 @@ and host-tested; a new voice kind, `VOCAB_GAME`. He walks to the middle shrinkin
 an anvil, a donut, a rocket, a sock, a flying saucer, a fish, a slice of pizza) fly in spinning
 from all four sides, most aimed at him. Their speed and rate climb with the time survived. Tilt
 is acceleration, so he runs downhill and skids: left/right is the lean's own tilt, and
-forward/back is the accelerometer across the glass, both taken from where the panel was when the
-game began, so it plays held upright or leaning back. **The sign of forward/back is unverified on
-hardware**: tipping the top away is meant to run him down the screen; the start's raw `az` is
-logged (`game: start`) to check it. A thing touching him ends the round (dazed, score and best);
+forward/back is the panel's ANGLE back from upright (`game_pitch`, the accelerometer across the
+glass against the one along it), both taken from where the panel was when the game began, so the
+same tip of the wrist steers the same held upright, leaning back or lying flat. (Raw `az` fades
+as the panel lies back, to nothing flat on a table: review.) Asked again mid-walk, he turns round
+where he is, at the size he is. **The sign of forward/back is unverified on
+hardware**: tipping the top away is meant to run him down the screen; the start's raw `az` and
+`down` are logged (`game: start`) to check it. A thing touching him ends the round (dazed, score and best);
 a tap plays again, and with no tap within 15 s of the hit (`GAME_OVER_WAIT_MS`, however the
 panel is held) the game ends; so do the name, any other command, leaving the pet screen and a
 minute with nobody tilting, and he walks back, growing. During a game a poke is the game's, a shake is

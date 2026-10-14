@@ -1562,6 +1562,51 @@ static void test_the_dodging_game(void)
         CHECK(GAME_OVER_WAIT_MS <= 20000u, "not long: a child who walked off is not coming back");
     }
 
+    /* FORWARD AND BACK STEER THE SAME HOWEVER FAR BACK IT IS HELD (review): the steering is
+       the change in angle, so the same tip of the wrist gives the same push upright, leaning
+       back, or lying flat, and tipping either way from there is even. */
+    {
+        const float g = 8192.0f;
+        float push[3][2];
+        const float start_deg[3] = {0.0f, 60.0f, 88.0f};
+        for (int k = 0; k < 3; k++) {
+            for (int dir = 0; dir < 2; dir++) {
+                const float a0 = start_deg[k] * (float)M_PI / 180.0f;
+                const float a1 = a0 + (dir ? -10.0f : 10.0f) * (float)M_PI / 180.0f;
+                const float p0 = game_pitch((int)lrintf(sinf(a0) * g), (int)lrintf(cosf(a0) * g));
+                const float p1 = game_pitch((int)lrintf(sinf(a1) * g), (int)lrintf(cosf(a1) * g));
+                push[k][dir] = game_tilt_y(p1, p0);
+            }
+        }
+        for (int k = 0; k < 3; k++) {
+            CHECK(push[k][0] > 0.4f && fabsf(push[k][0] + push[k][1]) < 0.02f,
+                  "ten degrees either way is the same push, and an even one");
+            CHECK(fabsf(push[k][0] - push[0][0]) < 0.02f, "upright, leaning back or flat alike");
+        }
+    }
+
+    /* ASKED AGAIN MID-WALK (review): he turns round where he is, at the size he is, rather than
+       snapping back to his full size at home and shrinking again. */
+    {
+        game_t q;
+        game_reset(&q);
+        game_start(&q, 0, 17, 40.0f, 20.0f);
+        uint32_t u;
+        for (u = 0; u <= GAME_WALK_MS + 400; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        game_stop(&q, u);
+        for (const uint32_t s0 = u; u < s0 + GAME_WALK_MS / 2; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        float bx, by, bs, ax2, ay2, as2;
+        game_figure(&q, u, &bx, &by, &bs);
+        game_start(&q, u, 19, 40.0f, 20.0f);
+        game_figure(&q, u, &ax2, &ay2, &as2);
+        CHECK(q.phase == GAME_WALK_IN && fabsf(ax2 - bx) < 0.5f && fabsf(ay2 - by) < 0.5f &&
+                  fabsf(as2 - bs) < 0.01f,
+              "asked again on the way out: he turns round where he is, at his size");
+        for (const uint32_t s1 = u; u < s1 + GAME_WALK_MS + 80; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        game_figure(&q, u, &ax2, &ay2, &as2);
+        CHECK(q.phase == GAME_PLAY && as2 == GAME_SCALE, "and shrinks the rest of the way in");
+    }
+
     /* AND IT ENDS: a minute of nobody playing, or stopped, and he walks back, growing. */
     const uint32_t r1 = g.since;
     for (t = r1; t < r1 + GAME_IDLE_MS + 400 && g.phase == GAME_PLAY; t += 40) {

@@ -947,11 +947,13 @@ static float s_tilt_g;
    The game (`game.h`) steers by its change from where it was when the game began, so it works
    held upright or leaning back alike (0.4.14). */
 static int s_az;
+/* Gravity along the glass, toward the viewer's down (`orient_axes`): the pitch's other leg. */
+static int s_grav_down;
 /* THE GAME, when one is on, and the tilt it started from. Static rather than on the render
    task's stack: half a kilobyte the 8 KB stack has better uses for. */
 static game_t s_game;
 static float s_game_tx0;
-static int s_game_az0;
+static float s_game_pitch0;
 /* THE HEAD RIGHTING (`face_state_t.upright`), in degrees — `orient_upright`. */
 static float s_upright;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
@@ -1364,6 +1366,7 @@ static void update_orientation(void)
     orient_axes(s_quarter, ax, ay, &tilt, &down);
     s_tilt_g = (float)tilt / (float)LEAN_FULL;
     s_az = az;
+    s_grav_down = down;
     const int lean_max = side ? FACE_LEAN_MAX_SIDE : FACE_LEAN_MAX;
     int target = tilt * lean_max / LEAN_FULL;
     if (target > lean_max) target = lean_max;
@@ -2033,8 +2036,9 @@ static void face_task(void *arg)
                         action = ACT_NONE;
                         game_start(&s_game, now, esp_random(), hx, hy);
                         s_game_tx0 = s_tilt_g;
-                        s_game_az0 = s_az;
-                        ESP_LOGI(TAG, "game: start (tilt %.2f, az %d)", (double)s_tilt_g, s_az);
+                        s_game_pitch0 = game_pitch(s_az, s_grav_down);
+                        ESP_LOGI(TAG, "game: start (tilt %.2f, az %d, down %d)", (double)s_tilt_g,
+                                 s_az, s_grav_down);
                         heard_cue = CUE_HEARD;
                     }
                     break;
@@ -2499,7 +2503,8 @@ static void face_task(void *arg)
             float hw, hh;
             face_game_field(&hw, &hh);
             const float tx = s_tilt_g - s_game_tx0;
-            const float ty = (float)(s_az - s_game_az0) / (float)LEAN_FULL;
+            /* The change in angle, not in `az`, which fades as the panel lies back (review). */
+            const float ty = game_tilt_y(game_pitch(s_az, s_grav_down), s_game_pitch0);
             static uint32_t game_last;
             const uint32_t gdt = game_last != 0 && now - game_last < 200u ? now - game_last : 40u;
             game_last = now;

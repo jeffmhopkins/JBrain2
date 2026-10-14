@@ -67,6 +67,7 @@ typedef struct {
     float vx, vy;
     float home_x, home_y; /* where he stood, to walk back to */
     float from_x, from_y; /* where the walk in started */
+    float from_s;         /* and at what size: 1, or less when asked again on the way out */
     int score, best;
     float spawn_in;       /* seconds to the next one */
     game_obj_t obj[GAME_MAX_OBJ];
@@ -91,6 +92,15 @@ void game_stop(game_t *g, uint32_t now);
 
 /* Where to draw him and how big (1 = his own size). */
 void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale);
+
+/* FORWARD AND BACK, AS AN ANGLE. `az` across the glass and `down` along it (`orient_axes`):
+   the panel's lean back from upright, in radians. The game steers by its change since the
+   start (`game_tilt_y`), so the same tip of the wrist is the same push however far back the
+   panel is held, where the raw `az` fades to nothing as it lies flat (review). */
+float game_pitch(int az, int down);
+/* The forward/back steer, -1..1: full at GAME_PITCH_FULL past where it started. */
+#define GAME_PITCH_FULL 0.30f /* radians, about 17 degrees: the lean's own full tilt */
+float game_tilt_y(float pitch, float pitch0);
 
 /* Seconds into the round, and the level it has reached (1 + one per 12 s). */
 float game_play_s(const game_t *g, uint32_t now);

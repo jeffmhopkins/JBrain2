@@ -520,7 +520,7 @@ static void frame(void)
             r_action = ACT_NONE;
             game_start(&r_game, now, r_now_rnd() | 1u, hx, hy);
             r_game_tx0 = sinf((float)r_tilt_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f;
-            r_game_ty0 = sinf((float)r_fwd_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f;
+            r_game_ty0 = (float)r_fwd_deg * (float)M_PI / 180.0f; /* the pitch it started at */
             (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, CUE_HEARD);
             say("pet", "heard \"lets play a game\"");
         }
@@ -551,7 +551,11 @@ static void frame(void)
         float hw, hh;
         face_game_field(&hw, &hh);
         const float tx = sinf((float)r_tilt_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f - r_game_tx0;
-        const float ty = sinf((float)r_fwd_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f - r_game_ty0;
+        /* As the panel does: the change in angle (`game_pitch` of az against down). */
+        const float fa = (float)r_fwd_deg * (float)M_PI / 180.0f;
+        const float ty = game_tilt_y(game_pitch((int)lrintf(sinf(fa) * 8192.0f),
+                                                (int)lrintf(cosf(fa) * 8192.0f)),
+                                     r_game_ty0);
         static uint32_t last;
         const uint32_t dt = last != 0 && now - last < 200u ? now - last : 40u;
         last = now;
