@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MinecraftMapPoint, MinecraftServer } from "../api/client";
 import {
   mcAllowlist,
+  mcGoalProgress,
   mcPlayers,
   mcServer,
   mcServerSettings,
@@ -12,12 +13,18 @@ import {
   mcWorlds,
 } from "../minecraftFixtures";
 import {
+  GOAL_KEYS,
+  mcMapEntities,
   mcMapInfo,
   mcMapMarkers,
+  mcMapPlaces,
   mcMapPlayers,
   mcMapPoint,
   mcMapStructures,
+  mcMapVillager,
+  mcTimeline,
 } from "../minecraftMapFixtures";
+import { shareMap } from "../minecraftMapSource";
 import { MinecraftScreen } from "./MinecraftScreen";
 
 function json(body: unknown, status = 200): Response {
@@ -32,6 +39,8 @@ describe("the Minecraft map", () => {
   let server: MinecraftServer;
   let point: (x: number, z: number, dim: string) => MinecraftMapPoint;
   let down = false;
+  // The travel log behind deaths and wakings, served only to the tests that read it.
+  let withLog = false;
 
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
@@ -39,6 +48,7 @@ describe("the Minecraft map", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     server = mcServer();
     down = false;
+    withLog = false;
     point = (x, z, dim) => mcMapPoint("slot2", dim as "overworld", x, z);
     fetchMock.mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://box");
@@ -62,6 +72,25 @@ describe("the Minecraft map", () => {
       }
       if (path === "/api/minecraft/map/structures") return json(mcMapStructures(slot, dim));
       if (path === "/api/minecraft/map/markers") return json(mcMapMarkers(slot));
+      if (path === "/api/minecraft/timeline" && withLog) {
+        const parts = (q.get("include") ?? "trails,events,sessions").split(",");
+        return json(
+          mcTimeline(slot, Number(q.get("from")), Number(q.get("to")), {
+            include: parts as never,
+            players: [],
+            dim,
+          }),
+        );
+      }
+      if (path === "/api/minecraft/map/places") return json(mcMapPlaces(slot));
+      if (path === "/api/minecraft/map/entities") return json(mcMapEntities(slot, dim));
+      if (path === "/api/minecraft/map/villager") {
+        return json(mcMapVillager(slot, q.get("id") ?? ""));
+      }
+      if (path === "/api/minecraft/goals/progress") {
+        const who = q.get("xuid") ?? "";
+        return json(mcGoalProgress(GOAL_KEYS[who] ?? who));
+      }
       if (path === "/api/minecraft/map/point") {
         return json(point(Number(q.get("x")), Number(q.get("z")), dim));
       }
@@ -244,7 +273,7 @@ describe("the Minecraft map", () => {
     expect(screen.getByText("Explored")).toBeInTheDocument();
     expect(screen.getByText("Satellite survey")).toBeInTheDocument();
     expect(screen.getByText("Wormhole gates")).toBeInTheDocument();
-    for (const name of ["Trails", "Deaths", "Beds & spawn", "Explored by…"]) {
+    for (const name of ["Trails", "Deaths", "Spawn · beds on tap", "Explored by…"]) {
       expect(screen.getByRole("switch", { name })).toBeInTheDocument();
     }
     expect(screen.getByText("Saved places")).toBeInTheDocument();
@@ -264,8 +293,8 @@ describe("the Minecraft map", () => {
     expect(
       screen.getByText("2 open · 1 dormant · a dotted line to where each leads"),
     ).toBeInTheDocument();
-    // Only saved places are still to come.
-    expect(screen.getAllByText("later")).toHaveLength(1);
+    // Saved places arrived (minecraft-map-layers): nothing on the map is "later" now.
+    expect(screen.queryByText("later")).toBeNull();
     fireEvent.click(gates);
     expect(gates).toHaveAttribute("aria-checked", "false");
     expect(screen.getByRole("heading", { name: "In this world" })).toBeInTheDocument();
@@ -303,7 +332,7 @@ describe("the Minecraft map", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Show more" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Gate 3 · BlockyFox/ }));
-    expect(screen.getByText(/in the Nether · X \u221220 · Z 40/)).toBeInTheDocument();
+    expect(screen.getByText(/in the Nether · X \u221220 · Z 40$/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show it in the Nether" }));
     expect(screen.getByRole("radio", { name: "Nether" })).toHaveAttribute("aria-checked", "true");
   });
@@ -368,6 +397,275 @@ describe("the Minecraft map", () => {
     const tiles = at(f, (k, a) => k === "roundRect" && a[2] === 21);
     const rings = at(f, (k, a) => k === "arc" && a[2] === 18);
     expect(Math.max(...tiles, ...rings)).toBeLessThan(Math.min(...discs));
+  });
+
+  it("beds: the row says they come on a tap, and every respawn point is listed", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const row = screen.getByRole("switch", { name: "Spawn · beds on tap" });
+    expect(row).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(
+        "the world spawn, in the Overworld · a player's bed shows when you tap them or one of their deaths",
+      ),
+    ).toBeInTheDocument();
+    for (const name of [
+      /^BlockyFox's bed/,
+      /^Mira_P's respawn anchor/,
+      /^Pebble_J's spawn point/,
+    ]) {
+      expect(await screen.findByRole("button", { name })).toBeInTheDocument();
+    }
+    // Known to have none: said, but nothing to fly to.
+    expect(screen.getByText("Steve42 · no bed set")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Steve42 · no bed set/ })).toBeNull();
+    expect(screen.getByText(/respawns at the world spawn · X 32 · Z \u22128/)).toBeInTheDocument();
+    expect(screen.getByText("No bed seen there")).toBeInTheDocument();
+    expect(screen.getByText("Respawned here")).toBeInTheDocument();
+  });
+
+  it("a bed from the list: its card, the deaths its player woke at it, as the pack sent it", async () => {
+    withLog = true;
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^BlockyFox's bed/ }));
+    const card = document.querySelector(".mc-map-sel") as HTMLElement;
+    await waitFor(() => expect(card).toHaveTextContent(/Respawned here after/));
+    expect(card).toHaveTextContent("BlockyFox's bed");
+    expect(within(card).getByText("respawn point")).toBeInTheDocument();
+    expect(card).toHaveTextContent(
+      /Respawned here after 3 deaths since it was set · burned in lava/,
+    );
+    expect(card).toHaveTextContent("As the pack last sent it.");
+    expect(card).toHaveTextContent(/BlockyFox is \d+ blocks [a-z-]+ of it · online/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Pebble_J's spawn point/ }));
+    const unseen = document.querySelector(".mc-map-sel") as HTMLElement;
+    expect(within(unseen).getByText("not seen there")).toBeInTheDocument();
+    expect(unseen).toHaveTextContent(
+      /No bed or respawn anchor was seen at this point when the pack last looked/,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Mira_P's respawn anchor/ }));
+    expect(screen.getByRole("radio", { name: "Nether" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("tapping a player adds their bed line and Show the bed; a death says where they woke", async () => {
+    withLog = true;
+    vi.stubGlobal("Path2D", class {});
+    const log: [string, unknown[]][] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (t, k: string) =>
+        k in t
+          ? t[k]
+          : k === "measureText"
+            ? (x: string) => ({ width: x.length * 6 })
+            : (...a: unknown[]) => {
+                log.push([k, a]);
+              },
+      set: (t, k: string, v) => {
+        t[k] = v;
+        return true;
+      },
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 390,
+      bottom: 844,
+      width: 390,
+      height: 844,
+      toJSON: () => ({}),
+    });
+    const map = await openMap();
+    const lastFrame = () => log.slice(log.map(([k]) => k).lastIndexOf("setTransform"));
+    // A player's disc carries their initial: BlockyFox's "B".
+    const disc = async (initial: string) => {
+      let at: [number, number] | null = null;
+      await waitFor(() => {
+        const hit = lastFrame().find(([k, a]) => k === "fillText" && a[0] === initial);
+        expect(hit).toBeTruthy();
+        at = [Number(hit?.[1][1]), Number(hit?.[1][2]) - 0.5];
+      });
+      return at as unknown as [number, number];
+    };
+    const [bx, by] = await disc("B");
+    tapAt(map, bx, by);
+    const card = () => document.querySelector(".mc-map-sel") as HTMLElement;
+    await waitFor(() => expect(card()).toHaveTextContent("BlockyFox"));
+    expect(card()).toHaveTextContent(/Bed · \d+ blocks [a-z-]+ · X \u2212136 · Z 94/);
+    // The bed is drawn now: a tile with Lucide's bed in the frame.
+    await waitFor(() =>
+      expect(lastFrame().some(([k, a]) => k === "roundRect" && a[2] === 21)).toBe(true),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show the bed" }));
+    await waitFor(() => expect(card()).toHaveTextContent("BlockyFox's bed"));
+
+    // A death: its skull (the 9-px rose disc), tapped, says only where its player woke,
+    // and draws the curve there.
+    fireEvent.click(screen.getByRole("button", { name: "Show everyone" }));
+    let skull: [number, number] | null = null;
+    await waitFor(() => {
+      const hit = lastFrame().find(([k, a]) => k === "arc" && a[2] === 9);
+      expect(hit).toBeTruthy();
+      skull = [Number(hit?.[1][0]), Number(hit?.[1][1])];
+    });
+    const [kx, ky] = skull as unknown as [number, number];
+    tapAt(map, kx, ky);
+    await waitFor(() =>
+      expect(card()).toHaveTextContent(
+        /Respawned (at their bed|at their respawn anchor|at their spawn point|at the world spawn| · )/,
+      ),
+    );
+    expect(card()).not.toHaveTextContent(/missing|blocked/);
+  });
+
+  it("saved places: on, listed by player, and a card with no Tricorder button", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const row = screen.getByRole("switch", { name: "Saved places" });
+    expect(row).toHaveAttribute("aria-checked", "true");
+    expect(
+      await screen.findByText(/^7 in this world · BlockyFox.3 · Mira_P.2 · Steve42.2/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("BlockyFox's places")).toBeInTheDocument();
+    expect(screen.getByText(/^Lookout$/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Home X.70 · Z.12 · protected/ }));
+    expect(
+      screen.getByText(/^BlockyFox's saved place · saved .* · in the Overworld$/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Protected")).toBeInTheDocument();
+    expect(screen.getByText(/by their No-Spawn Beacon at X.90 · Z.\u221210/)).toBeInTheDocument();
+    // This place's share of the goal, never the goal's total (the review's S2).
+    expect(
+      await screen.findByText(/5 of the 23 iron blocks are in chests here/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/toward its nearest saved place, or toward BlockyFox/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Tricorder/ })).toBeNull();
+    const asked = calls("/api/minecraft/goals/progress");
+    expect(asked).toEqual(["/api/minecraft/goals/progress?xuid=2535411"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Tree farm/ }));
+    expect(screen.getByText(/^Wormhole gate.1 leads here, from X.30 · Z.14$/)).toBeInTheDocument();
+    expect(screen.getByText("Not protected · no No-Spawn Beacon covers it")).toBeInTheDocument();
+    // Back to Home: its count is kept for the open map, not read again.
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Home/ }));
+    expect(await screen.findByText(/5 of the 23 iron blocks/)).toBeInTheDocument();
+    expect(calls("/api/minecraft/goals/progress")).toHaveLength(1);
+
+    // A place in the Nether switches the map there and keeps its card.
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Nether base/ }));
+    expect(screen.getByRole("radio", { name: "Nether" })).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(/^BlockyFox's saved place · moved .* · in the Nether$/),
+    ).toBeInTheDocument();
+    expect(calls("/api/minecraft/map/places")[0]).toBe("/api/minecraft/map/places?slot=slot2");
+  });
+
+  it("villagers: off by default; on, a Mending chip ranks them and a card lists its trades", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const villagers = screen.getByRole("switch", { name: "Villagers" });
+    expect(villagers).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByRole("switch", { name: "Pets & named mobs" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(calls("/api/minecraft/map/entities")).toEqual([]);
+    fireEvent.click(villagers);
+    // A live world: no minutes, only that it's re-read (the review's S3).
+    expect(
+      await screen.findByText(
+        "31 in 2 villages · as of the world's last save, re-read every minute · a village is one tile",
+      ),
+    ).toBeInTheDocument();
+    expect(calls("/api/minecraft/map/entities")[0]).toBe(
+      "/api/minecraft/map/entities?slot=slot2&dim=overworld",
+    );
+    expect(screen.getByRole("radio", { name: "All jobs" })).toHaveAttribute("aria-checked", "true");
+    // The owner asked for no "Read the world again": the automatic re-read only.
+    expect(screen.queryByRole("button", { name: /Read the world again/ })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "Sells Mending" }));
+    const ranked = screen.getByLabelText("Nearest first");
+    const rows = within(ranked).getAllByRole("button");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent(/^1Librarian · Master.*sells Mending · job locked in/);
+    expect(rows[1]).toHaveTextContent(/^2Librarian · Expert\d+.blocks north-east of BlockyFox/);
+    fireEvent.click(rows[1] as HTMLElement);
+    const card = document.querySelector(".mc-map-sel") as HTMLElement;
+    expect(within(card).getByText("Librarian · Expert")).toBeInTheDocument();
+    expect(within(card).getByText("job locked in")).toBeInTheDocument();
+    expect(screen.getByText(/in the village of.23/)).toBeInTheDocument();
+    expect(await screen.findByText("Apprentice")).toBeInTheDocument();
+    expect(screen.getByText(/^Mending.I$/)).toBeInTheDocument();
+    expect(screen.getByText("used up · restocks")).toBeInTheDocument();
+    expect(
+      screen.getByText(/^Its trades now, levels Novice to Expert\. Master trades/),
+    ).toBeInTheDocument();
+    expect(calls("/api/minecraft/map/villager")[0]).toMatch(/\?slot=slot2&id=-8589934000$/);
+  });
+
+  it("pets: a player's chip lists theirs nearest first; a card says whose and how old", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Pets & named mobs" }));
+    expect(
+      await screen.findByText(
+        "6 pets · 2 named · as of the world's last save, re-read every minute",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Steve42's" }));
+    const list = screen.getByLabelText("Their pets, nearest first");
+    const rows = within(list).getAllByRole("button");
+    expect(rows.map((r) => r.querySelector("b")?.textContent)).toEqual(["Biscuit", "Luna"]);
+    fireEvent.click(rows[1] as HTMLElement);
+    expect(screen.getByText("Steve42's dog · black · sitting")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /^Where Luna was as of the world's last save, re-read every minute\. A sitting pet stays put/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("a villager or pet card from the chat opens the map with that layer on", async () => {
+    render(
+      <MinecraftScreen
+        openMap={{
+          slot: "slot2",
+          dim: "overworld",
+          x: 52,
+          z: 52,
+          zoom: -1,
+          mark: true,
+          show: "pets",
+        }}
+      />,
+    );
+    await screen.findByRole("application");
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    expect(screen.getByRole("switch", { name: "Pets & named mobs" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByRole("switch", { name: "Villagers" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("a share link has none of them: places, villagers and pets are owner-only", () => {
+    const src = shareMap("tok");
+    expect([src.places, src.entities, src.villager, src.goals]).toEqual([null, null, null, null]);
   });
 
   it("picks the base layer: Surface (true colour) by default, Biomes on a tap, remembered", async () => {

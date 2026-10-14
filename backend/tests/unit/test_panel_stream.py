@@ -179,7 +179,51 @@ def test_speech_is_every_group_in_order_one_synthesised_ahead() -> None:
     body, stats = asyncio.run(go())
     assert order == ["One.", "Two. Three."]
     assert stats["speech_bytes"] == 12000 and stats["groups"] == 2
-    assert len(body) == 12000 + 4 * 3  # each 6,000-byte group in two records of ≤ 4,096
+    # Each 6,000-byte group in two records of ≤ 4,096, after its 8-byte SPOKEN mark (0.0.21).
+    assert len(body) == 12000 + 4 * 3 + 2 * (3 + 8)
+
+
+def test_each_group_s_speech_says_which_part_of_the_text_it_is() -> None:
+    """SPOKEN (0.0.21): the panel's Listen ring fills by how much of the answer has been said,
+    so each group's PCM is preceded by where it starts and ends in the text and its length."""
+
+    async def synth(words: str, budget: int) -> bytes:
+        return _pcm(len(words) * 10)
+
+    text = "One. " + "Two and three are longer. " * 3
+    body = asyncio.run(collect(panel_stream.speech(text.strip(), synth, {})))
+    recs = parse(b"JT2" + body)
+    marks = [struct.unpack("<HHI", p) for k, p in recs if k == panel_stream.SPOKEN]
+    groups = panel_stream.speech_groups(text.strip())
+    assert len(marks) == len(groups) == 2
+    assert marks[0][0] == 0 and marks[-1][1] == 1000
+    assert marks[0][1] == marks[1][0], "the marks tile the text with no gap"
+    for (_, _, n), g in zip(marks, groups, strict=True):
+        assert n == len(g) * 20  # the bytes of PCM that follow it
+    # Every mark comes right before its own PCM.
+    kinds = [k for k, _ in recs]
+    assert kinds[0] == panel_stream.SPOKEN and kinds[1] == panel_stream.PCM
+    assert panel_stream.group_marks([]) == []
+
+
+def test_listen_is_magic_the_speech_and_end() -> None:
+    async def synth(words: str, budget: int) -> bytes:
+        return _pcm(100)
+
+    async def broken(words: str, budget: int) -> bytes:
+        raise RuntimeError("kokoro down")
+
+    stats: dict[str, Any] = {}
+    recs = parse(
+        asyncio.run(collect(panel_stream.listen("Low at 14:52. High at 21:07.", synth, stats)))
+    )
+    kinds = [k for k, _ in recs]
+    assert kinds[0] == panel_stream.SPOKEN and kinds[-1] == panel_stream.END
+    assert recs[-1][1] == bytes([panel_stream.END_OK])
+    assert panel_stream.HEARD not in kinds and panel_stream.ANSWER not in kinds
+    assert stats["groups"] == 2
+    failed = parse(asyncio.run(collect(panel_stream.listen("A.", broken, {}))))
+    assert failed[-1][0] == panel_stream.END and failed[-1][1][0] == panel_stream.END_FAILED
 
 
 def test_speech_stops_at_the_cap_and_after_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -373,6 +417,42 @@ def test_a_busy_thread_answers_at_once_without_pointing_at_the_app() -> None:
         panel_agent.BUSY_STREAM.encode()
     )
     assert "app" not in panel_agent.BUSY_STREAM
+
+
+def test_a_finished_turn_names_its_question_and_answer_after_the_words() -> None:
+    """IDS (0.0.21): the turn's two `seq`s, right after ANSWER, so the panel names the bubbles it
+    just made to Listen and Load earlier; never for a turn still running or answered early."""
+    asked: list[str] = []
+
+    async def ids(started: panel_agent.Started) -> tuple[int, int] | None:
+        asked.append(started.session_id)
+        return (41, 42)
+
+    turn = _turn(_Live([], _acc("Low at 14:52.")))
+    turn.ids = ids
+    recs = _run(turn)
+    kinds = [k for k, _ in recs]
+    at = kinds.index(panel_stream.IDS)
+    assert kinds[at - 1] == panel_stream.ANSWER and kinds[at + 1] == panel_stream.SPOKEN
+    assert struct.unpack("<QQ", recs[at][1]) == (41, 42) and asked == ["session-1"]
+
+    busy = panel_agent.Answer(panel_agent.BUSY, "busy", "s", 0, panel_agent.BUSY_STREAM)
+    early = _turn(early=busy, voice=False)
+    early.ids = ids
+    assert panel_stream.IDS not in [k for k, _ in _run(early)]
+
+    async def none(started: panel_agent.Started) -> tuple[int, int] | None:
+        return None
+
+    async def broken(started: panel_agent.Started) -> tuple[int, int] | None:
+        raise RuntimeError("db down")
+
+    for named in (none, broken):
+        quiet = _turn(_Live([], _acc("Done.")), voice=False)
+        quiet.ids = named
+        recs = _run(quiet)
+        assert panel_stream.IDS not in [k for k, _ in recs]
+        assert recs[-1] == (panel_stream.END, bytes([panel_stream.END_OK]))
 
 
 def test_a_question_says_what_it_is() -> None:

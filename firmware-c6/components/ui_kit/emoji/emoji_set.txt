@@ -1,0 +1,430 @@
+# The emoji the panel draws in colour — exactly these, and nothing else (README "Emoji").
+#
+# Source: Noto Color Emoji, googlefonts/noto-emoji at tag v2.051, png/128/emoji_u<cp>.png.
+# License: Apache License 2.0 (images); see NOTICE beside this file.
+#
+# Each line: code point (hex), SHA-256 of its source PNG, the emoji, its Unicode name.
+# firmware-c6/tools/gen_emoji.py builds emoji_set.c and emoji_img.c from this file and refuses a
+# source whose checksum differs; `--check` (CI) regenerates and compares. To add one: append its
+# code point on a line of its own, run `gen_emoji.py --pin`, then `gen_emoji.py`. Every emoji
+# costs ~2.4 KB of app image (two sizes, RGB565A8), so the set is curated, not complete.
+#
+# Single code points only. A sequence draws code point by code point (emoji_logic.c): a
+# variation selector, skin tone, ZWJ or flag letter takes no room, so a ZWJ sequence shows its
+# parts (list them here) and a toned hand its yellow base.
+
+# Faces: the CLDR frequency top set first, then the everyday rest
+1f602  7e8f1147812f52fbfeb21fd235cbd0a1058e645c9195e4f9a226ecbef4ff3d36  😂  face with tears of joy
+1f923  7a276a351cae58bf58be799bed895e6024237db466e13f5cc67ad81e0fb1cc6f  🤣  rolling on the floor laughing
+1f62d  fdf0c0522ab1b9ad0e7a5df69b187bddb0f337eb27628a630d6f87e63ffa4470  😭  loudly crying face
+1f970  58db00e16c4c57c972019f1b05870f2d36b4fbccf820eab2eea266d48b165dc1  🥰  smiling face with smiling eyes and three hearts
+1f60d  af8ae97e92dc3e2bb0d5015376e5d15f1b0b258ffbd33aab7ed91d9d51033f2b  😍  smiling face with heart-shaped eyes
+1f60a  e630f6e4d93ef69fb3877abfef50d8cab91e79fa3cf7c7512175d4c9398b13e3  😊  smiling face with smiling eyes
+1f601  66b70e04ba6a7c27a51bc9d4e0ec2252b5135fed3cbae83399c614e5bc47cb75  😁  grinning face with smiling eyes
+1f605  6d8480a73f9d2ef611b2312c1948e742bd0363b1a1dc525948e6eb24f8213daa  😅  smiling face with open mouth and cold sweat
+1f618  4d35109fb51858a57788cf208dc7999186e1408417022fd8d807157bb1466c22  😘  face throwing a kiss
+1f97a  d3a61c606e4eb985154643f366b7ebb3f1b5f058d51f12098b819b08d5789f8e  🥺  face with pleading eyes
+1f64f  622fe626654195732630b7be5683109dc48944001f23688099d03ead4c023bd8  🙏  person with folded hands
+1f606  a8e8288a62b21c2ff276a127b979983b7f9324d88d21c38069058271647eb380  😆  smiling face with open mouth and tightly-closed eyes
+1f609  cdd35eeae29b2c005ba8c8fbd6e2f9944db98b271bf1d24cc21227eee38b8965  😉  winking face
+1f914  edeaf6288438ab168f2d596336ff95f485351eac733c4161e74f787d150cbad4  🤔  thinking face
+1f642  9ed881adb8af0058cea476819536564ae21183289743b9ce474af326e58e3905  🙂  slightly smiling face
+1f633  10780612844d8226bc7303671ebc382b3ff31a58a15e9d422315cfe3bb2b7a4b  😳  flushed face
+1f973  94d85219535688a9fd7eb4b76ca3e1d5445504bde82ec3407168f5359303f344  🥳  face with party horn and party hat
+1f60e  e89120098daf8e159bf901e59e2c0caf09e61b3c8794a37c7759f6de0e90fdc1  😎  smiling face with sunglasses
+1f60b  c791bebd7ae1cbb36dc86ad4f153fa721309234412c1d6e52b064a8f80aecf6c  😋  face savouring delicious food
+1f60f  94b9d609695532f1fc7ebb6ff6b9d18aa1fafc61512100829d01b3ce183f5222  😏  smirking face
+1f622  353563b8de071d432bf342f52b5b8eee9baf784210e47759c5d48996d7dce34d  😢  crying face
+1f629  8789a51862952ec3ec3b9d8f30b1f961b175c6eb0a2df17926eaba2a64e68d85  😩  weary face
+1f603  269299d8e69bf899451d10c1ae19892c5db149bc7782824afc5d03f4c71070d2  😃  smiling face with open mouth
+1f621  bf71a38d3f555b6deaea83bbb192a75e0eea00bb4c74a408bc11d95e7d905be8  😡  pouting face
+1f61c  e7343da9dab83a42a13e2dbb743cdc7edf7b4876c8db4fe8a8219a7bdc0f4df8  😜  face with stuck-out tongue and winking eye
+1f92a  f4f80298d4d7487aa14aa131d5aee028bf04b4b31990490b5c81107e0ba47629  🤪  grinning face with one large and one small eye
+1f604  9c87031e24be61aa29c462163d87fdbfc21d6ff88b09cc5ec627d4438b369386  😄  smiling face with open mouth and smiling eyes
+1f924  812beb90500170d317e4a21c4c11b269e4b431f92a8435a145e42211f8ed859e  🤤  drooling face
+1f600  88df38e1a578f360c1df99b41387ec370bb568a58a6e846631422e39e6473530  😀  grinning face
+1f60c  c31feec270ee3cfe0534c445a63c114cb369c1aab1ebcf03dc915ab0e65e123b  😌  relieved face
+1f929  2f55057ca4e8d4e93af515d5d7f26e2473a1a9a0c0982eb20065bb14a5d819a3  🤩  grinning face with star eyes
+1f643  bad0eaf7a0fd4982cce7b537f2e92874f95faaf968fa652317cad975ba2cad23  🙃  upside-down face
+1f62c  8f66270d28b7aabf37012b287ff69c9e9f115b95cec24ddb6c97f7c700a1d5e0  😬  grimacing face
+1f631  e026724b469cb129ab1f5cddcf080ed88be0874a662b6c8fc2b6b11448adaf05  😱  face screaming in fear
+1f634  eb5434992fb15976be312b5ced584a98d6d6cec495c06054784c4d0d57d93457  😴  sleeping face
+1f92d  5494c817e8f59dfc4d650ae25de411762a3e8f52de2cc6c713fc69705c75caf4  🤭  smiling face with smiling eyes and hand covering mouth
+1f610  f9d68519ee3095764b3c495507e9d28ec81f7aaf6fb7d59b25c28505112d9627  😐  neutral face
+1f612  231a25c94873fe8105456a0a7f5674e087b6511599727b98fca5caea2c1fe503  😒  unamused face
+1f607  687a72b75c66f975d94d22fad41487a6c35df4a5dcb9add4fcc6b6a9f06e6db3  😇  smiling face with halo
+1f608  9dc0845ffb53d4c4c446d5a69207f227538f5e7d583375f81411524441d2524d  😈  smiling face with horns
+1f61a  01c7a4770bfe62a8e54f1e76f01c0f1e36e1406bedcba1e2b4e486f6055e57fb  😚  kissing face with closed eyes
+1f611  70b2ad6f702e55a563c2f1172ff6c6760f83b4cfccd51bdefd2e977f1b252ad4  😑  expressionless face
+1f974  c5dee39fafdc55dfa2ccf770fd3199ab1455486ad49566c40697d3a84dfcbed5  🥴  face with uneven eyes and wavy mouth
+1f624  665299b03ef4ce51dcf1e654fc15cb8462bbb18f1355203de05b45cd909ec9de  😤  face with look of triumph
+1f922  5d3b3f78daf34561f252f26ddd5ba65d50397a9e1df03a686af1191b957cd88b  🤢  nauseated face
+1f61d  821dd50fa9df4bb39f12668eb62eb81233394eb83ac0601bbfa4f9f52b45c27c  😝  face with stuck-out tongue and tightly-closed eyes
+1f62b  c68bcda0660a9d5cf4fa0045c1f6ea7a93c5d87eb9685712b31faeba48a4857b  😫  tired face
+1f632  efeb7ed675d7ddf8becb7cf0cc632212443ac540455b1620b9d3292c41fc2e96  😲  astonished face
+1f92f  c03c5b4d46dfcb6e521af0b2f0f69295d42ac49a4bf9cffb41751190ea41e871  🤯  shocked face with exploding head
+1f92c  6080be80183f49d97d831d17e3350b668da942881fbbb64a409d0b7766e56685  🤬  serious face with symbols covering mouth
+1f615  350011a31f3f89f46664ec12a919375265652d2b78d31e28fb412a786bb0367c  😕  confused face
+1f928  5f8ad0e0a58353ebdcd7febe40563ee8f33bd573e1614d9bdedcd14f8c58d9f0  🤨  face with one eyebrow raised
+1f920  b3c0c661c22b30063113a4aa31c6d233331b86e190bea4f4def8e8f9ee73cc2c  🤠  face with cowboy hat
+1f61b  dacc74b251944d46e0efd14f063afe9bcb944af247c63de924cbfa5c835f3cc1  😛  face with stuck-out tongue
+1f61f  fae3cff7917edc82c84c728eaf247d666d6f07f7b82fe5474e26ae00019b4a9c  😟  worried face
+1f623  6388e60e61a3a900f314351c2f5d5904223a9cc34a0d8a39574f05231574434c  😣  persevering face
+1f9d0  9969e181476215da552e8a1f3f5cd4d0087a9b84c0d1e3d106438f89a5571056  🧐  face with monocle
+1f620  00bf9e224d990838531a4d65dee965d4779070eeb5fc9ea48ce23429de53cdc1  😠  angry face
+1f614  06f073159ecafc519e2f532a312c538c18a169fbbb7a273280c5a78a1f373cbf  😔  pensive face
+1f979  b213d845e05503a0c47d7874346ca30de309e3974ea8a786c64645771069de16  🥹  face holding back tears
+1f644  46e2bb47e97f04e511432bd1f80b2548ed05474a9f7075188de98f4c6c5d7471  🙄  face with rolling eyes
+1f917  65f1ac1b91f92ecc8ae687faa6784e3f8524e5e7379b19c4d11a12da3045e181  🤗  hugging face
+1f92b  638ef736d14397677fe01e522a73506bfe3698b031c94d6c742c0ca78ca8ebfc  🤫  face with finger covering closed lips
+1f910  9f15ba1a6c6a063ad89b5efeced6e90f9e174eeeda9553ad33dcf760bee08559  🤐  zipper-mouth face
+1f636  e2c3b9a09af53b4ed21cbefb910d5bb3288db4511b2e784da3aa39668964cb35  😶  face without mouth
+1f62e  b58b11bfc499167c13398ad47885560f81b1e76947d8cbeb9d633c017d8b7b68  😮  face with open mouth
+1f62f  f69243801596ccd4cee617a0c4fe1e017912682dbe2d646b97a40627014b477a  😯  hushed face
+1f628  7888ccc8d9f576d234665bcc3f0fc01e5ceee861059b8223022da6031b3e950f  😨  fearful face
+1f630  06462ed74fe853e7b5f5c1653a6b3ba3672559c00fa26b16069c2b09f3bb5f01  😰  face with open mouth and cold sweat
+1f625  c3891795c89f57be4fc0586b0d5be01e93035a9f68dbf55f5280e00d6250a612  😥  disappointed but relieved face
+1f613  bdde631856901f8a08da4c4c328610d5c7241d78424e251a414e6df7e826c07e  😓  face with cold sweat
+1f61e  907e7bfd2cdb1f8cbb91049db2771450b3db8a73b4db163072d310b43728e20e  😞  disappointed face
+1f975  b337ad0dfddd4aa0433fe885598ac8b596f81ccd55de752193438f6645a3c902  🥵  overheated face
+1f976  06bc35dbb209cf758dce4d55fc8e4858dc8459e80391f185fc40389633ed77ea  🥶  freezing face
+1f635  ad52bfed45800415749c93a29f505f2653c8eeefe48b092a950c9dcbfc5caea6  😵  dizzy face
+1f92e  c240730057e958cdfd0e56d93cce2fa71c5bb04ea1cf227a5432053d047a051d  🤮  face with open mouth vomiting
+1f927  b4a268c8fcfd47b03f57ed13c95cb45aa40dea0a28d87c82093f0c90cf3f25f4  🤧  sneezing face
+1f637  77ebc3d6e70a8fb1d5ea5ebdcfc6944c0c7329506df9f92ab8108a38f6745c2e  😷  face with medical mask
+1f912  76c45aeb22f8e5f65edd6ddc32b1387eb92d483a3f7aa7eafa5afc9c4109d31c  🤒  face with thermometer
+1f913  7c4ecab29cec6a5718a40aea83d6af650b8e8d6a82129bb1f4238630f4f0a634  🤓  nerd face
+1f971  8d5b6e06a88e94ffb7ee0acae7b1a18357e2755f9773c079723f1192c44761e1  🥱  yawning face
+263a   e7cdf988b262822d0a90eca128f02c28d0c6ec401856dc9e3b8342ecee39d042  ☺  white smiling face
+1fae0  9e7b19ce625b466669769e86e65d262eb2236f4a615e435d0e6414bc88b5fc20  🫠  melting face
+1fae1  4abb11e9f707444b9f63d57e8c426e5b49489c22838da8a72799d5fe008e0d0b  🫡  saluting face
+1f911  75a00e7113da6735bb3879957f150dcd24513581b061cbb8089482fd96b5a07c  🤑  money-mouth face
+1f972  dc58dc7cb096d1e0d4c5594070bd67e60ddd70e8647320d9b435f71d9aee50cf  🥲  smiling face with tear
+1f480  31e4bedf24c16b7d630129f8faa11c3cd6e494dcb60a1eccc53fa75ccfc26b66  💀  skull
+2620   5c0171c097b40d3c6a70fedc4e000725f7e77ad9be7cbbe5f824e8ed468c91cb  ☠  skull and crossbones
+1f4a9  e2628aedb92737f91ac38894f78b5f74c4bd3c4c545bcdb7f964ee6e6cf0b827  💩  pile of poo
+1f921  f38db8286015bb47c6b9228e2acb01b29dade80dec156043d1674f9ab029cafc  🤡  clown face
+1f47b  c2d9e8ee4f77886b7e3844477be8b4b46978bda984afe8f3a73533079e59a6ae  👻  ghost
+1f47d  7b31af52b0ab78459cdd49457b1af5eb15308addf905b7a060d9d2207c93f3cb  👽  extraterrestrial alien
+1f916  562ebd6e0cdfedb3fcd699969e04b5e9d6a94338fe0d73cc30efe37cb4434a2b  🤖  robot face
+
+# Cat and monkey faces
+1f639  5fd1408a98dff6a486ff1407ea63b6a7924e15bb9305f5235de559a86b077e9f  😹  cat face with tears of joy
+1f63b  eef7daf6291e0293e27e1d081ff3ec2148730e7b97e4edcd9c117646220e94a9  😻  smiling cat face with heart-shaped eyes
+1f648  5ddda9eb858bfcd4da36e251bd08c71d1f08bdb828516822a223117f7febc56f  🙈  see-no-evil monkey
+1f649  bfa9b8b46c0ee3a7f5f4a30ce370031e7ab3fa84c0c0ced8ed7d22e447aee50b  🙉  hear-no-evil monkey
+1f64a  13547db2ad4289922f471392eefdaefc68d398e1aea046e04ded35deb9730d78  🙊  speak-no-evil monkey
+
+# Hearts and marks
+2764   1d41a1bc85be895f01f0b07997e3a5619ab3f685e3edbf8c0ad6853d378e6fe0  ❤  heavy black heart
+1f495  d0a3e1b2ed153b36d09c0243c304249442562eab5cf2fd5e5e5506d66575aaa9  💕  two hearts
+1f496  db762c47aeacd7617fbe8221a57ae9928d2d99f00a35e324d239e3f5362bc233  💖  sparkling heart
+1f497  2f9d139a44f8a7f4a77de5623e1ca8cd504690fe99fa7e4e37729c234e7ccc2d  💗  growing heart
+1f493  05ebf7fc42e6aaf963f42ec61ac3718d2ce22490240c5c3121329fbfbbded2ac  💓  beating heart
+1f49e  e65da424f4f19376607012094ec9dcbf6d4d39907efdad62954d1508c97d8809  💞  revolving hearts
+1f498  0473a4eca371d6a812e89350cb27e7c1caa4b5b4fe8917d487653203c4ddf8ee  💘  heart with arrow
+1f494  6be817230f5bd73a190ced57389d221b3b22f85193c50a862c11b5489e64272e  💔  broken heart
+2763   15a91484b469a3e1d7703de7a9ff6cad5209a56b18a69616a0182bf6317d67c8  ❣  heavy heart exclamation mark ornament
+1f9e1  34f4b823bea9e020153a5f93e037de6c1b1d92b7e37017797cd8ea9b5c242ec0  🧡  orange heart
+1f49b  d6dc83c9800dfa15eab158c500257b1a7b642d4e8cd444415d1e5576e5d96c7c  💛  yellow heart
+1f49a  1fa2b75388068a2b0c5e82875f840f1af1eec5a369e9edc75cfb690df308fccd  💚  green heart
+1f499  2aae232dffdfd1f68b9bc6da34e7ce0024bb9d07211fcad03d0bb13b27290c6b  💙  blue heart
+1f49c  69f205feb432e639fba98cf9c6295006e2145f05410ec9cdec59cfb86e458243  💜  purple heart
+1f5a4  8a058464bf2320f69f4ee01894bacf65135ee49ecdefbaba902029e7e6ea1418  🖤  black heart
+1f90d  815d58632e8499f7a609a1686836067c8412bafbe4a44af1b2a94552318efedd  🤍  white heart
+1fa77  99be7d358a35e0d343e120093ae8bd581072d77c482b9a6a7e29834193d70e41  🩷  pink heart
+1f48b  35e19ebc5d6572029f9e960898f58111a4398f11bc36e31a8f4b9d3bc10cd2c9  💋  kiss mark
+1f4af  90b4590abcca8d6225d0020a81ae4cbc544ac48bb2b5158c39fb15b25d3bb538  💯  hundred points symbol
+1f4a5  642a88c313b4094fcf8dcfde69307da99296cac86134fa6ea6259ba6195a61d8  💥  collision symbol
+1f4ab  0e6d9cf5ea84a3d17f9db8526894d283ba5ec0b0bf91b1684aaa67af60856b71  💫  dizzy symbol
+1f4a6  3deea3fa417b6b3748f6f78d8adb50262f6b1a8f931ba9178a0def6c875a0b9a  💦  splashing sweat symbol
+1f4a8  26b3b9e559835db84b225cc406227f97f3a1794454b77d4b325a70592a9a1891  💨  dash symbol
+1f4ac  4d9f79c3b149dfa6b80bae0b961d5728a97a4d15fc815959d2eda1f7fe0a1968  💬  speech balloon
+1f4a4  fa69aa6baaf4ad28676c1118ee2ff0da765cb3f2559e8d5e33656f03cb54f78a  💤  sleeping symbol
+
+# Hands
+1f44d  a17fcf51fee3abc247210f28b130802fc381e01971699bbefa40eaf89adb3a02  👍  thumbs up sign
+1f44e  1c3d1ef61ee63facdeb6c5b80e5b0566689c1e909697673e8a2da282dd2cfa45  👎  thumbs down sign
+1f44f  8c64101727234ab7f2b10cfb5ace2ec98f2360ca0823ce77074ac35e6319534a  👏  clapping hands sign
+1f64c  4c3e869eac434d6dc0ef6126e9099938b5ff879fe82a398429b093236eac21f5  🙌  person raising both hands in celebration
+1f44b  3aa97de7a71fe81bfbe53d49d5c008ef911fdb37e2e811050666e94dd7ffbe3b  👋  waving hand sign
+1f91a  f27b30c8d914c9b82b02698a42aad6ce5ed8a923c2381330a2e65b067e9f7091  🤚  raised back of hand
+270b   9aff204c2de5072623df7eae25bc971b09cb2d8a3b15c6cdc5d7b6e2bf30d1ab  ✋  raised hand
+1f44c  d4e30d08bcd1bda2220bd688a1e984a7e3f25ca72231739d0bab007e25dd9899  👌  ok hand sign
+1f90c  8e7d46c608834c57c9350fc2fa0c67bc226fda9f6f7f48e1a0227d82d59602ad  🤌  pinched fingers
+1f90f  1d3fd724689868fece404b5019e08b0cfea986fc389ae861d5d17c11db487652  🤏  pinching hand
+270c   0f30ec99a703f3ad82cc8c2033ff9983e441c0191603f6cc98245db0dcf99685  ✌  victory hand
+1f91e  7c31c3e7208452d99f76b2005f87329726d778f677e7668825360b77a59a1d27  🤞  hand with index and middle fingers crossed
+1f91f  8b2f1d4023c7f11d5dc1d3a1d4ae04ddd59fa5ee676dbf1730bf6793b982b3e3  🤟  i love you hand sign
+1f918  dc5bb082ef621d40c31bbf220ce805d1f96a9e4db192a45a2d7af5650ba33d71  🤘  sign of the horns
+1f919  921ed74e5e312271896a0f988a41ef6a4f5667518efffe865ecae5a7f16351e9  🤙  call me hand
+1f448  1172c5b0cffdff4d8b3b145d02c2d11e8ba2bbbcfad31828e634ab8aec765a22  👈  white left pointing backhand index
+1f449  11ed3f3c7fa69f61d1d113a082cf4e44af4a95125a43cd6c93797f979d327f4c  👉  white right pointing backhand index
+1f446  3a2df86bf5a04a3a859519bd6890fda7e023b956a2f2b74e74dbcf6bd66788dc  👆  white up pointing backhand index
+1f447  16db9e18d60ecd4b806b35e841330df75bb6f3cfdde45bc9e62cccb365b0de56  👇  white down pointing backhand index
+261d   b429b774ee399c6c8cc62a7af4ac30e4223feadab20245075ee1749b7c39fa0c  ☝  white up pointing index
+1f44a  6561882bdcd2467216282b0ebdbd0f1565b6460c5c47d8774476cd9e0e54686a  👊  fisted hand sign
+270a   4147423ea09d9c615a6a8dbed827136bc858a01090fd0a09055c10dfa578a3de  ✊  raised fist
+1faf6  0b3fb52f9389db8881f3d3bd0e5b46643fb84ca247ae4cc6456c7cc5d4022939  🫶  heart hands
+1f932  81988b254a0c0d17952c5e2ea9ea01c08d6f3eeb7598a5d2d6eee93c8a62ee4e  🤲  palms up together
+1f91d  ece70d50775522b067df9824e0288a167cc240c08c679805be060936b2a52df8  🤝  handshake
+1f4aa  6b045c171481c0eab16be4967cd1e3e2d93e2f9161de8c727fb143119ae3f354  💪  flexed biceps
+
+# People and body
+1f440  d815fafb52776522bb3656515e939102bbaa7afd8d5d410fe8e0a24390ba1624  👀  eyes
+1f9e0  21693f4e82fbe351a509fb81b0daedad297fb27c1217c88fd0169ea3871bbd28  🧠  brain
+1f476  03b0eeb80051baa59c13f5c45a65c43ca2bb1b94b65e7dea54a951d89b9e415d  👶  baby
+1f466  364414f179ac5a56f6dcf1dfbf6fa1e92416ef00febed296f113b9dec4475a89  👦  boy
+1f467  7c83f35e96a5ed592c11a1823e68f4d0671d6e2ec0d7245ee444b4e1635254e4  👧  girl
+1f468  777375bd8161bf7da40390d64232bf44f1747e155e713d59fe1639fe2c932195  👨  man
+1f469  41808a44f41e4e8dd1c965daf4d273642b0d0ae3c09329179ef3b60bf80ce0ef  👩  woman
+1f64b  02c8cfa3a167f5544800088aba9258ce79f1e40ef6d19193c28f344798721459  🙋  happy person raising one hand
+1f937  f8198c0ad99a60f938e32cc9108a95189dcb7405ce9ff1a620259fae4499c5bc  🤷  shrug
+1f926  1e93ef63a0f8c2b8461e315fb079eb25a436236cbac6b3e495840f7ffcd5e5dd  🤦  face palm
+1f647  ece941f0a84a5e02482a9a70663bf2a25b3a99a522944b8876a1f181226adeb4  🙇  person bowing deeply
+1f646  69ce3e4cf5362fb52f0a6e179a8e3404ed758cc0d774aba620418dba0411bd46  🙆  face with ok gesture
+1f645  745d94778588112142edbf85ffcd3f1e327f6531a8058ad18164de1b0a47a94d  🙅  face with no good gesture
+1f3c3  6cf5f75c1b23ebea3bd1895e328e2474a8ef557d92d4904ee935c71c4fe38790  🏃  runner
+1f483  36d538b54d156697b2b460af0e6b66f10b3b4a3348c0cdb6dcf81192e737fff9  💃  dancer
+1f46a  b7db9a220a643d0f893e36c20b2dd57c8b63c00e9b8d1f57903b9aed544d0310  👪  family
+
+# Animals
+1f436  64d89dcb252701b0923e7d08fb9dddda7a4937b971595043d96d141288cf6d47  🐶  dog face
+1f415  6a46719a9c975c520f352f1ce4609d1658a7b337285f5e94ce29312da6ef76a4  🐕  dog
+1f43a  1f9d6e187edb3866bf0d1009918e1000c6899feb28db1253bf535c365bf6fd3c  🐺  wolf face
+1f98a  0f7730ca357c0386239a4ff3431f1fb16c25ad1eec3c715f53f4d9a7a72c37ce  🦊  fox face
+1f431  81cba1f23a3dfe65f9081f65f17deb3ac9c0d49a4eb00454438230a953fbdf32  🐱  cat face
+1f408  096b49d4bfae56cb6f08ea8d31c7ee6f92d5933f28e8ef61d58f05e22ee774f4  🐈  cat
+1f981  c81e4d0b4f158f9ae9d6a246f633b031080328c9c053c4a3b20ca8986dc2c996  🦁  lion face
+1f42f  4ee150059fde671135080bd6ffc27e78dfdf0a3b5324e947440f8bce522a3820  🐯  tiger face
+1f434  5096516d823b2bf52847f7ae1ac15823e174bc6da0254a4dfa1d353c7ddd614c  🐴  horse face
+1f984  dcf1effa7beb50c726faa57fb6848cfec8afb591feadcdcf48ff90ad1bd43afa  🦄  unicorn face
+1f42e  d828f448b8769520d16fae43d835291a80e13af6a3fe57ea4b087ce424f89259  🐮  cow face
+1f437  8632f9c298175551b2cc0f2f881cadbb012b1b142421332e9835099955adbab8  🐷  pig face
+1f438  cdbfa980af2abdd88dd0dc458a8cccb6be06be86d8b2b4d701800339266c623d  🐸  frog face
+1f435  4c85d10547b807af63b36a59948da3f89a8df47fc8581107f99d55f9ae7d3292  🐵  monkey face
+1f414  5156f7ce5d6fca5758e824d65361ade71a6425c1b4e4f6ff46a5979e06ad8566  🐔  chicken
+1f427  d71a470c07865c84c9385445f6c6194bc9556e7b533d45b9bd45e40be13e37da  🐧  penguin
+1f426  d64fffb967389d61fb72514d4557bb8054cf16ae9285778101f7eac87b65f18e  🐦  bird
+1f986  13556a4b8e591b923cd8a8ae9ad464942579f9f8aa7e51f3dca3111249be5723  🦆  duck
+1f989  d714d6452b9fe4acae74b1c02dc3e6b42bf1c2762c11a74090cd1d53d2553a5e  🦉  owl
+1f43b  1494d7b17d215a7027ac6cfccd50bf94918dab972c629c896e1eee14667c0373  🐻  bear face
+1f43c  8457712a07ec49049bd0f2bf63101d443f3cfb38a47ee1bc90f08997b5832cb7  🐼  panda face
+1f430  5e82e58bbedc2892810b0cded7f6027f955ea761bfd8a5ddbc6648d8bb4f8e68  🐰  rabbit face
+1f439  fb79baf091e0a32a5ffeb3dab62dec84a2a63675cd8e84d563aede63756b514a  🐹  hamster face
+1f422  4489cffff80bd6e7b3599e754d5cdeedabee4a8fccc6e9ea97086f38205c66e8  🐢  turtle
+1f433  ab3975e24dfa1e524a90c4556ea2b2317ab2b205ec36016a46a6cf84fdf163d8  🐳  spouting whale
+1f42c  c894d456dcd90cbcc9c687214ea44f828dd8bfba8ff695d9840a417b57e771d8  🐬  dolphin
+1f41f  64170ffc41e71265a4566304ddc61c6c9f53f3ef0dae30d34f5aad043f1eea28  🐟  fish
+1f98b  db8bed6411a85cfb267f93f6fbf4daf63316e43121f4d864d313b8dcc3822dc6  🦋  butterfly
+1f41d  1600250a183109b42716f70e22411008eaaa03bd57d334ea422fed02e40e926a  🐝  honeybee
+1f43e  c1b9206ad6f6481eb37c528653a8fba649024e33057226b72294a122e698c01d  🐾  paw prints
+1f9ba  f1af582c9e46f8f8a405adc229359fe1dab3e60197fa63ec7ca4f437319fcab1  🦺  safety vest
+
+# Plants
+1f490  6792fb82cf2b12ba295c6927de34cfe9c9f07ce979c213533e0a36f14c0b0f01  💐  bouquet
+1f338  c292b54068604cd4ed0caf7e4daecdff42056be8faa5655b299f30b8cf6ce191  🌸  cherry blossom
+1f339  441b78faef0855a5ab9c60f7eca8ab05fe5995be4b7370d9a46007cfc409aa6c  🌹  rose
+1f33a  5c770435e40a0a9cf8f82d1df4121e7921df85e9735400e2eca90b273e478ca0  🌺  hibiscus
+1f33b  f1129a646cd7cf5d0c425372823e19a7a309578ae615b1d7629e8178c8f0d61e  🌻  sunflower
+1f337  79e0e9ee41430b0e4d13704787570fe4aab320a52163931c0e662e2cc6653861  🌷  tulip
+1f331  182bb76bd4f67b0a813ea0e9c015b94acc1405c5624560e08ae5af3a38ddf579  🌱  seedling
+1f332  822b0e17bfbd6666f74a245c4f7a2f3f9a33b955a6851b8468a96d643daa19fa  🌲  evergreen tree
+1f334  17b1af42830d705710134accb0ac2e8c95ab6c7761948dd06859dd5201e610ce  🌴  palm tree
+1f335  b204898e56fc41864c1a2774c6638b98fd80e9689091601a6da522fad3863c8c  🌵  cactus
+1f340  8908f743dee316b2520e87e99dbbe9e05e81540a27c40dcba248c424c0f976de  🍀  four leaf clover
+1f341  58cb2c48c74b332368ffaea47603877f2c0cad624fc30c41358d79e1bc7ac3c0  🍁  maple leaf
+1f342  b39f6670b3831160e5b17c4013e3c5148b6b7cd988bc1abe563c6df722f66562  🍂  fallen leaf
+
+# Food and drink
+1f34e  8d7efa8b2352bce103c3de55bcc6eceb0faa0dd9f2f54adc6e21534eea99406a  🍎  red apple
+1f353  f9b2624b01c200e3b5fb6f150f5b0878bf4c42feac1239e8b859d228b735c75c  🍓  strawberry
+1f352  5fb0eceb49e2a34c21c65ddba7456c420ba5c482e7d19b41a49f1607c6781301  🍒  cherries
+1f351  a900673702352920e4fb1352ea66868c94a4bce7946bbc60d92021be4a3dd917  🍑  peach
+1f349  3b68b2896626a7b04a8116bc4e436358ad738d04be27bdd399a4a07836a96884  🍉  watermelon
+1f34b  814038c581274a25377852f91aa63a6214747841f4c2851b702455e3a52d9f98  🍋  lemon
+1f34c  2753366e0877a0aef1437e2e1870400767f71747ebe828eb7dfcea4ab4278fcd  🍌  banana
+1f951  10b26f3fdf9e1357ef1b73b37fbadbb39b98a748b8f0259159a05100af10de2a  🥑  avocado
+1f955  57caa3d73c07af61fe0e3f6b459733577d5565988596a6a0db9d79b39a5fcc96  🥕  carrot
+1f35e  f719b760a8295bdf8858216f69bec489ce44d748964695da6d77490ca9e92aee  🍞  bread
+1f9c0  18558360dce1d8735ead54d0d7f28fbc894e6dc6178c308b3a793b75d971f42c  🧀  cheese wedge
+1f95a  72b5a5bb4d96f2fda0c5a0a63a07fb6bb4779ea21baa75bdfddcc7100eadf531  🥚  egg
+1f953  83237fc99b9bba4285bf1e590a8a26abe7dfd1d79c82245c978b67d72c05f138  🥓  bacon
+1f373  7b85cc4322d8597776c1b9bd9cc7d569af16b5cef428467d8a6357c14d515df1  🍳  cooking
+1f95e  337874cd18f9ed8e3c77d3ab6afb41914f9e1cf88e1e6ee53fb821fb61fb4608  🥞  pancakes
+1f354  dc600fda6321e1d43ce74dea0c386d7229122f2da7b556ae6f97bbf5d6b1ee75  🍔  hamburger
+1f35f  84f52f84582d5ead3a2a7bd39f5007765162ba984cf0e2a93d906f658ffc9865  🍟  french fries
+1f355  6e9339da5af40cbfbb04d87bd554d35f60dc9582ceffedcb7daa6c2e50e4d288  🍕  slice of pizza
+1f32d  b73f04b7f7398f36b445f4acf9682946769cd35776faded308b7de06cc1be295  🌭  hot dog
+1f32e  1a79cef9a506ec8300ca0752ed5ee759a1afafcd9d31e1aeabbef8faff4975b9  🌮  taco
+1f957  ddd99a4c7c320fb6f295cd7e163874800b0568b057737df9dd6f5cc717d1dbe7  🥗  green salad
+1f35d  f03e301336f8fa8be427eed98d131ee7829f406078eeb03f0c58213fb8d4f124  🍝  spaghetti
+1f35c  cbab5776d62dbe250687bf67bbb174f66f1995d54dc2641453901f6554b41319  🍜  steaming bowl
+1f363  b53f61dad587859eecb2ee8d8b44a0d8359f5415564d7e210772b6a0d7a3e092  🍣  sushi
+1f366  e5b8b8127cbbff88344123f9da98a947bed8c5adc95249858df0b30c59df1959  🍦  soft ice cream
+1f369  f0b337739ab2e03e2bfb54c4bd218554d0a5d4858f2aac7c62e7d193fce11b40  🍩  doughnut
+1f36a  f7da005acccdec1a70edd7246a5e7766abc60974bc8bc076912d33e37e1591bb  🍪  cookie
+1f382  443132575b72424951acabf320b3498ccf22ac0ed657a18da4b5a299c468108a  🎂  birthday cake
+1f370  e32a6770401e97bce87554a55d6d5463b5c98100944e9e80fb3b37ba93c93852  🍰  shortcake
+1f9c1  1ebcf1635bfc9f818f8bd4f8fc6fb21aac4b68eb2ebb87f9232a019975f6fcc8  🧁  cupcake
+1f36b  b0bdcd8ad3585152a45a8ec9c2187e677c417c7132450f3b0a383fd470fcebd9  🍫  chocolate bar
+1f36c  b5b5fb5a56b6d747f9f8b2225ec9ceb86891ce03a97e1d1a71dbfc1cca6732d3  🍬  candy
+1f37f  c342249fb8af3d4b00539006156a89c743cf7cc27ae73046bcee5b3ad51ab8da  🍿  popcorn
+2615   935f15a04ff24911bef524216559dfb5314a818fdfbd50064273c3d7fecaea35  ☕  hot beverage
+1f375  17ef3bf2d93d3429aefad5c9576de53f6ccb40a395553211c71f98fde931a47b  🍵  teacup without handle
+1f37a  25dc8a5802d885c0e47e714d25fe86f4340b25135416180d6914e0cada51a404  🍺  beer mug
+1f37b  e69588176b3fdcbd7f9e5f0d88845aa5045b2cad5f142c65c8c70f7644223e92  🍻  clinking beer mugs
+1f942  8838f409a1c4d92f9a9a978fe8ff558468b75b803a782f16e823e14fbc8515f2  🥂  clinking glasses
+1f377  17ec2f0310b819933fb8ad4b8c9bec5b10652825d307ab3c0cafd619e3bfd991  🍷  wine glass
+1f379  eefaf1ba3a34d42e9b500ebbbabb1cd9b43e74380f1a30182bc078ad8c6ed55a  🍹  tropical drink
+1f37e  d6d585e1f48e7c10f520cabb97450c11a16be828782de8496ac0de20910b1f71  🍾  bottle with popping cork
+1f95b  8d8ae2f926acfbdcc21e9dc579b55ae116478e944298bc5e13bd08de7e770b6c  🥛  glass of milk
+
+# Weather and sky
+2600   60e35ea0d682e0ea787333b5952ac3e6168b2bea4d276cd74d615e0599d2f772  ☀  black sun with rays
+1f324  6dcf782085d29a0dbe94dc079071dcbaac94cc1e331c1a4a9201247713a2997e  🌤  white sun with small cloud
+26c5   e75b92e439e9ebdb4046ae92d3598aaa010157343b6aa5caf791ef20dc3882c3  ⛅  sun behind cloud
+2601   54d1d612d32f4174570ac7b4d7af0a8e7896d96c984e72a47329ded26614cfed  ☁  cloud
+1f327  de44a2d817f31341085a3c51b09ff4f5f9e9d6dbb8867db8c059a04f5516e10b  🌧  cloud with rain
+26c8   48d27647d1c13dd42178f80f4e723be1d12edc861f352ee2653fa7f027f6ef65  ⛈  thunder cloud and rain
+1f329  8e3228663b61fe3216ab3c34a6dec721a9a21fba05af9073919b3c509cb713d0  🌩  cloud with lightning
+1f328  d9590c2bca9a5779f21aa7c02e2b5e4905ea7ecc127496334834f20f4c95d3e5  🌨  cloud with snow
+2744   214b9ff47c06649fbe87b19ca12d2dbc5387dc19119b38737708cbc729e64320  ❄  snowflake
+2603   944216384a4db1e33e124c51572ef2afb8d7c9c97ec71806761dca04715e5f79  ☃  snowman
+26c4   be98d4987786da9e81823805c620bd8cb6c68235d36502aa86d25d517c314534  ⛄  snowman without snow
+1f308  7c9ad249dd1257d312821fed49babbb95c2656709e335dadbbff15a682c82465  🌈  rainbow
+2614   ed775ceeff0b71360a6262c4a31eb991ae6bf2122f12fa5196c5a81c95dd9d72  ☔  umbrella with rain drops
+26a1   20ba944c0ba2d9e067c50754d860ea58df0cfa269b8f630cf9a65e0c847bf03d  ⚡  high voltage sign
+1f525  24bf25eb9bdb8b89a5254fe303b9d4d8f3f96d722b9a8eff1afdec5cf40369a5  🔥  fire
+1f4a7  f523b07e40891a9765bac75766fc426c4cbcf405eaf9bde95a2657971755a463  💧  droplet
+1f30a  846d2c1f5c7bc12bfa5019edffcf1f35a9cc5a5f242d5287705e0aeb1eea6c41  🌊  water wave
+1f319  1f8c7b12f29e745e72f8c90cf1cedcc3dad3176ce840e899affb7507f6b233ff  🌙  crescent moon
+1f31e  78e14591ed79db580f7c8eec17a564ba89a60826de8e73a6ef5d7e532b5e6997  🌞  sun with face
+2b50   34e9cfe858de23b7643b21c8b58872c9c0099b8160a6bff42c79dc0d26e8f497  ⭐  white medium star
+1f31f  593eae0fdb268a3d1bcbcb4f0152445de91f80e2ce2a9b8810c43912ad458778  🌟  glowing star
+2728   b2b75dce4ea6dc9790fa424285f92781b2e06394682350a943b1fea8ea411d84  ✨  sparkles
+1f30d  3aef04d64546df36f2e6efaf220372ea6d84d75589e1c612b621f70e69311cf6  🌍  earth globe europe-africa
+
+# Celebration and play
+1f389  d761a0d17048bfe3e96842f3dfe444fe18780f3a2285792f6da7ce1697fc2a19  🎉  party popper
+1f38a  0d3b694f129df05d18db169fe178cdb128a26b9f2b174bafb32cab29f516543e  🎊  confetti ball
+1f388  7efbfa64b59cbee4a61a17b1d5af8887cb70dda9b94e9e8463a557fe6e01cd11  🎈  balloon
+1f381  bb3d856ad41f446ff7a1608c022d63a79c0bfd9711e20801ee8b28b88686608f  🎁  wrapped present
+1f384  0e068c279a3402e5e9c3847cfa71ddfff04656b2da1a5697ee453e7fd6f3648d  🎄  christmas tree
+1f383  0216f8a3c80a99aa2b63ffac75299a43ad548800bb09a19bdc34ad5510cea312  🎃  jack-o-lantern
+1f386  49679afccfff771d26b1143976fcdbdf95785b6f50f65f9eb1916b56bcf019f3  🎆  fireworks
+1f3c6  0bcb3953b021377ea5846997d19c4d7d988d7fec416312cf4633de4746e569b4  🏆  trophy
+1f947  eebd0bc6161d451b0eafcf413def086f846825d3bfdbd8e7529d7dcda2a4bef9  🥇  first place medal
+1f3c5  4790c64e48ef0513b06f701066efc8872265bb6836211abd3e4c6c7e2a7a5535  🏅  sports medal
+26bd   517e3321dbfec323eb9327dd3f5bddfc11a513705b51bef9af368107dbede1b7  ⚽  soccer ball
+1f3c0  b6bb882a595358be1fca20059d11e21aa8da0431277503cda128fc68bb69e088  🏀  basketball and hoop
+1f3c8  a26676b0f5cf519950dcdc5a29d134ec4fef32147c1e53ef9bbd42bd70b22422  🏈  american football
+26be   2ff3bb7b0f9b92c8c90bd5e48b038c27c58cc39009f7e3ac6fb355f6bfb31cf9  ⚾  baseball
+1f3ae  0a2185f610a764f74799dade32c14ba5bb1a939b08023042b96776ba00764c3f  🎮  video game
+1f3b2  6cadd2300f97f0deb0d0e36764ce8da3bd85f419560e50bfc1d7ccacba2ac9fe  🎲  game die
+1f9e9  3cd25893942e34f889ef57503a0faa8632fb6871a36addb4980d510f9d100f03  🧩  jigsaw puzzle piece
+1f3af  5a4648cdcdc881467cc54ef09c6bd8434a4a4f725699c4cd1c3609ecd1b3f937  🎯  direct hit
+1f3a8  42f48597850674e91b13aba3aa556d881aa2ed7a3d4eaab762c261d048d58cfd  🎨  artist palette
+1f3a4  bab5dab2cda7a859745eb52308a6250242e4593d98145e03300dec4676d5660d  🎤  microphone
+1f3a7  e3371920f5e48c9bb2704f8e03b0a642144122965b2412ef9f1ecef230be3754  🎧  headphone
+1f3b5  587e905d1cdb41ca27e0b0cff9f4d7bcc58b3aaf6c60703162074f0ab2acf59f  🎵  musical note
+1f3b6  be3dbd6f6879231624a5f1d6839b59ab859ebb61890a8f2158c0b62bccddce8e  🎶  multiple musical notes
+1f3b8  6f986c12825653c93b7f58cf44c05cfaf0f56cab692115ec5168f190abf4439c  🎸  guitar
+
+# Places and travel
+1f3e0  4a0915a7c2fc04fcc742e64a7d4424e528dad7b4782be67a10b590992bee2822  🏠  house building
+1f3e1  d0271df9bbf9f3dbe8860ff1aa6a0d51632db6b6596f318a3a67b6e659709735  🏡  house with garden
+1f3eb  239b7027eccf9e49208c198996b912744afa2e2cc58bd5354a36bcc691448ce3  🏫  school
+1f3e5  c02feaa3819724352163607236741807d24fc77925737b315681b22b8dfee5dd  🏥  hospital
+1f3d6  770b6971c7301a2379136230fda173a639c23fdeacf1ef7f5209c6a08998fac2  🏖  beach with umbrella
+1f697  4ea67660883cc63adb17d34b44a340be15ad85745d785991742d7dbad1f12f83  🚗  automobile
+1f68c  0d9cf707058658243e9b5db663547855d70462993ca652e4bfea93a220578c83  🚌  bus
+1f691  38bcff106c8935e7c63661228e408c32c3240e3a419bd908a37414ebeb37c19f  🚑  ambulance
+1f6b2  64a4b1cc8a369174b4c05d62f700bad8fbf27eeaf3c22212c3b31150f76285e6  🚲  bicycle
+2708   d0129aa0203a92b9de4c4c170be221fc0e24e112259a0465ec2731a051d006a2  ✈  airplane
+1f680  d7818c5f67ff7eff8b281cc0944ef150cc7799c9b35c9fa769b7bd4e76ca96e6  🚀  rocket
+26f5   63c811d77428b07f33772030cd00a0426376ef4f82d3b26d38fe51080eb1d369  ⛵  sailboat
+1f4cd  af7256663634706f94ce9f4852c9106586fbc7030d971936721e2bedccd76932  📍  round pushpin
+1f6a7  2763aed3cb2a69a50a8fc6fa28f396e4f173c5823103c9c5e7559ea3bb016d89  🚧  construction sign
+
+# Objects
+1f4f1  8c257b622f16addc7f7911db5410db1582682b0b7bb1e81eed9657735097f67d  📱  mobile phone
+1f4bb  c9c507c210c42658b9516cd42534b62dc933d60ba3059c6ce197a3504bd03380  💻  personal computer
+1f4f7  605c65945d9b8bcd1d3855cf96c881149b86fb378eec5ba9c270bd3da7bc0670  📷  camera
+1f4fa  8d68b1953dbb2c7871ac9d94b4f4252b2a40e0de53202d6c995b2afb0bed0998  📺  television
+23f0   18d1b80c94b6c3a54a4117fd2b051c02d818bcada1e234a5f78749496b5dcb79  ⏰  alarm clock
+23f3   ef17080c1f619921cd727080775b7797618fcef5bfc4fd426517335fdbc1abe1  ⏳  hourglass with flowing sand
+231b   56c8ff0a7996d8ef89862e90e1a2939ad49d71a7af38361441c41ef0d1745581  ⌛  hourglass
+1f50b  93439e0b42e0e6ccd003debdc2c1d8b4c5d8d8f84bff9acf8b33cfe4f57ddc9b  🔋  battery
+1f4a1  3b57447c18ca9a6bd2df7f17fdf22fb5ee1135bd07fda592e2a34c705060c1c2  💡  electric light bulb
+1f4da  90ff1e0862641d7c3bc20fc6d538e6ee013e92ea18521de984efc98e560ba27a  📚  books
+1f4d6  434fd2ad43bf5f6f1671bded9a37c464abf75a35bd10712a13ea695952aebe97  📖  open book
+1f4dd  8e82ef5de620ca9d369120ce07693c83c96a13bc009e64319333fcb624c87119  📝  memo
+270f   01766899ede0a34b13132faed154318d8d8765846de34ad7f504322e445acd3f  ✏  pencil
+1f4cc  65d271cca2e326eb53f3e86aae11f6a8cd7352bc1f34c32783aaaf9d82dce9da  📌  pushpin
+1f511  1b74e064b98054fc363ac00c95ef017da051455af1ca787af10146d19a119e31  🔑  key
+1f512  ceb7dce999dc3487ae9598c66e546d72f04967eb65d9221faeacaa91f92be087  🔒  lock
+1f514  546f1d98cd071a2b80c094b1e5c4b40f1bf3c963d94eca6a891ea624ae7bd8bd  🔔  bell
+1f4e3  31198085ac86c3105b704044dfec2eb1c8070835591a4b1ab836db20e227c1cf  📣  cheering megaphone
+1f4b0  bf5d05ca51639a358bd9a979f255310685cb6478e261d0cc3fcf5a23922b2609  💰  money bag
+1f4b5  17806acc957d81285ea411e2de3763194ac04d3ca6e7af3efe283546c42662c2  💵  banknote with dollar sign
+1f4b3  1a5615bd6296f351210247772d8665b9766f3d1b0777bdfbd3ab714c3f7465ed  💳  credit card
+2709   c336b8f029778da21f3ce36ef1fa9add32bba6084c18f6a4296bac44c0147484  ✉  envelope
+1f4e6  02497073f64f479301985122ce5eb9e435b4153ac114d392271913c878cd40aa  📦  package
+1f4c5  e70375f7b1a0b69e82ee9062c7606f4e1ac533601843c3c8af2c461f479ed647  📅  calendar
+1f6d2  b95ccee8d8e690f259872f37211eb0fcb72413e6f94ab465f56b2705b54e2810  🛒  shopping trolley
+1f9f8  50879830771a6f15fc2f0869c5177f793ffa83f58c5429a98633a434ac7f3fde  🧸  teddy bear
+1f453  fa9cbf3d302b32ff6eeedca4fdd143f18679e1403673ff260e35e317550914ed  👓  eyeglasses
+1f576  8a88635a21cf9c9afa6d48023f2d9e4fdfab9209476ccf8c325c286e7cf08944  🕶  dark sunglasses
+1f451  9869f7f4bb127938fa0ab2cafd1606a1a9c808d290bb255ffeaad02ae12ce8f1  👑  crown
+1f48d  69b54acca32c03db1a7c0f60555f56440839acf225421dfdc59c5aecbc37baff  💍  ring
+1f48e  e4627a675c18ceb6a8cc09ab51d4f4fcc4a8f1cfa97cc6e0aabaeb119c36078a  💎  gem stone
+1fa79  925f642f2920598ef165682c3ffe9f4ce664424af631e24b427e77c7a32e0cf7  🩹  adhesive bandage
+1f48a  074c63be33fd6a999aabeb32964e3d9d8ebd0b209c648381ccd299d38a872506  💊  pill
+1f527  a7143f02c2f9c37c5200f25b0f02d3018c55056a8d7f6ebeffdad78ab9f1ab58  🔧  wrench
+1f528  737f5801dd1bd0a44c4b1ac4b695cb06f581e2ce674736452c6bff0cbec52053  🔨  hammer
+1f6e0  ce006f45a878891182c81d1782a87eeca6284a9a26a756d227429df69a04b886  🛠  hammer and wrench
+2699   a9be91aaf97236fc0ecb1c0c83f468795451f36093e9627f28f167757528a23e  ⚙  gear
+
+# Symbols
+2705   9b5a6051081eda2337cd7ce3b883de0d69f7e864c9429c1c48a0654bd6b8508d  ✅  white heavy check mark
+2611   691c090acf48fde666b54fd160c20a116c72a80dab7e5347d0d78a92f2e53180  ☑  ballot box with check
+2714   f2d0be6b703ea0e436b78fb093869e87f590327f21c2fb7398a5a1b84fdeec5b  ✔  heavy check mark
+274c   aa88eafec6c432b5939c502fceec3b72a4b759bac4e50ee750644facc455e380  ❌  cross mark
+274e   366a670305a2de5b1e8f452f608d174d5f7ce79f159b0216ff218cd2e0d6bad6  ❎  negative squared cross mark
+2795   552feba5dbabad0a0219767784ba28eb48fc5027191b75fa64122545ec0fa90f  ➕  heavy plus sign
+2796   9bb8ef1e2b77a632c53a1699944c6595b8941da817155786e5a38d0ca4ef257b  ➖  heavy minus sign
+2753   6fa0420b0f17380e9964925b7e4fee02abe08642010b5377339f3084c64840ca  ❓  black question mark ornament
+2757   9e8825eda5227a34b3ad4e73411a6cea9d2b3a775234bf52d2934a20cda33f86  ❗  heavy exclamation mark symbol
+203c   8e97cc43cfab0a9e47ee85333ea655c5b1a23b4b6f732ed208b407df084b4fc9  ‼  double exclamation mark
+2049   f61df13b5260a051c3be692c7843c1b42f0bafbb3a5958e4e51f9f5d6d070134  ⁉  exclamation question mark
+2b55   0e45ba70c4fea7c0da5996ce0b49e92aeb38c0f5d5712add6c144d5a273cb048  ⭕  heavy large circle
+1f6ab  ab4c115fb12ff933cad650d53c90a12601d337dbe9826198ad87f7a10c866bd1  🚫  no entry sign
+26d4   8492b6ac257b3d9a01962d42c4fb6c94ec238b3ae95d44b2bfd4d3614dad77f7  ⛔  no entry
+26a0   b89ee096456aa8ba6b1867e9477e9f204f14e9d0bc7df55e1271ae9ebf44816f  ⚠  warning sign
+1f534  0eec80e1a7f3dc3bcf898f70a75211493e4ef5f2372b4ca013e8292564c4ff6a  🔴  large red circle
+1f7e0  1acb6b49f4ec670b6639e6b8569d732f8c613a4e0f6d438b18365605255af7f7  🟠  large orange circle
+1f7e1  df7f223cfc250b2789e0268889b5eaf199afa2216320a1304fa300ca657fafac  🟡  large yellow circle
+1f7e2  e9a6f5d46d586e7ee6f4f315bf536fafdb0bdbe6cb51a5deea1d0842e5ee5de1  🟢  large green circle
+1f535  614e4847d4740d118ec6396a68836ec7725c5cb6eecfe88a86a999362ebd26c7  🔵  large blue circle
+1f7e3  f9db18ea961aa0464e643bb12130b175501274ded76b3cf476714806870ed7b1  🟣  large purple circle
+26ab   aa1c5da8822da62581da8a288582d76a8031a2fb3731167b69f3dc69d3d5d0a9  ⚫  medium black circle
+26aa   5d437689bfe5991103fc099c12be052c9df1857d527f0b172e57a7c18e9aad04  ⚪  medium white circle
+1f197  62327942b73ca912b0e2acf3e6c3759415d13efb4e85b898e52962e5995acfab  🆗  squared ok
+1f195  92951aa515d6e7a0dedca94cc6e8570e9f00f1c3f777b89316ea98cdcf48c14b  🆕  squared new
+1f198  217a82d24ef1f36baccef6ace3aa01b56647ae4d126c41a97f6e0defb939e03b  🆘  squared sos
+1f51c  edb12eff4cbdcf24f32df692e834c57293cf7cf7f456d72391e5e3ba228f9fee  🔜  soon with rightwards arrow above
+267b   8346a116af3860325132eb62a346abbca8f6950f7c215830189c450c266c63e1  ♻  black universal recycling symbol
+27a1   2d526555626e80c83d125425cfed131d9dc7310c03c3b2e4141b8bb23039c914  ➡  black rightwards arrow
+2b05   cab9a36b4b97202a1e9bb8696e73194a0cdc609d027ca11f176c5b0a7114647b  ⬅  leftwards black arrow
+2b06   4f24dfef956f708d91fc14cd1fb00d525c95eda4072e9b52cd02f5815de7ba9e  ⬆  upwards black arrow
+2b07   85e274a8705cf447b2d9edfcbbf0d4dc53e0ad2dc87aaebdfa143d7c4bfb4648  ⬇  downwards black arrow
+1f504  5db03a219369fa4cd75196c065add5a2e640ff21a3470f6d910eebc279643feb  🔄  anticlockwise downwards and upwards open circle arrows
+25b6   3079313ece3fd3e143a77036e5de62591a87b7b18041ce1aca4e76994f29ad41  ▶  black right-pointing triangle
+23f8   f12311d8bc49bbeb41b147f6f103d2de8934c6f40dfaa1b4242be092cfbea0a6  ⏸  double vertical bar
+1f50a  6132cfcd1c2a50893b86932c7d26f5508ed50692e76421e9ce6bbd8549898d6e  🔊  speaker with three sound waves
+1f507  2ba60f6ca219e1e269e199d18cf930f84fc443bf47d7ff82a576d92b09afdbd0  🔇  speaker with cancellation stroke
+1f3c1  facba94cf215382714b36aa296952d317755f84e010afdb0d5639441e5de0813  🏁  chequered flag
+1f6a9  84f744cde9b3ab16c29c5a6bd8b267fd60629228313170b03b551ed38429b863  🚩  triangular flag on post
+1f3f3  5ad702ad3d5f0c9c99deef80a2ce7f041a09e18472e678a1fe221253bb240fb1  🏳  waving white flag
+1f3f4  8f00cf5d04dec0033242828ed0535ee1f381d1c931b577786dfb67add82289c3  🏴  waving black flag

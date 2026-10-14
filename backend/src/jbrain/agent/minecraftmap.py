@@ -40,7 +40,7 @@ from jbrain.agent.minecrafttools import (
 )
 from jbrain.db.session import scoped_session
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import livescan, travel
+from jbrain.minecraft import livescan, spawnpoints, travel
 from jbrain.minecraft.asker import asker_for
 
 if TYPE_CHECKING:
@@ -52,8 +52,27 @@ VIEW = "minecraft_map"
 # `gate` and `beacon` (§M26): the card draws that gate or beacon selected from the box's
 # own records — the payload carries only where it is. `scan` (§M25): a player's live
 # Tricorder scan, which the card reads from the live players route; the payload carries
-# only whose it is and where they were.
-FOCUS_KINDS = ("death", "player", "place", "structure", "spot", "gate", "beacon", "scan")
+# only whose it is and where they were. `villager` and `pet` (§M4e on the map, owner
+# 2026-10-13): one mc_find_villager or mc_find_pet found, where the saved world has it; the
+# full map opens on it with that layer on. `bed` (§M8): a player's respawn point, a bed or a
+# respawn anchor, from the drain's record of the pack's lines; `spawn` says which.
+FOCUS_KINDS = (
+    "death",
+    "player",
+    "place",
+    "structure",
+    "spot",
+    "gate",
+    "beacon",
+    "scan",
+    "villager",
+    "pet",
+    "bed",
+)
+# Focuses that are only ever a spot the model was told: they need their x and z.
+_NEEDS_XZ = ("structure", "spot", "gate", "beacon", "villager", "pet")
+# What a `bed` focus's point was when the pack last looked, as the card draws it.
+_SPAWN_NOUNS = {"bed": "bed", "anchor": "respawn anchor", "other": "spawn point"}
 OVERLAYS = ("trails", "deaths", "structures", "players", "beacons", "gates")
 # The chat card's own default: the asker's trail and deaths over the located structures,
 # the beacons' squares and the gates' lines. Live player dots are the full map's job; on a
@@ -190,6 +209,16 @@ def map_summary(view: ViewPayload) -> str:
         facts.append(f"Overworld side: X {d['overworld']['x']}, Z {d['overworld']['z']}")
     if not d["loaded"]:
         lines.append("That world isn't the loaded one, so the map is as of when it was played.")
+    if focus and focus["kind"] in ("villager", "pet"):
+        lines.append(
+            "The card marks where it was when the world was last saved; a mob may have"
+            " moved since, so say it's as of the last save."
+        )
+    if focus and focus["kind"] == "bed" and focus.get("spawn") == "other":
+        lines.append(
+            "No bed or respawn anchor was seen at that point when the pack last looked: the"
+            " game keeps a spawn point after its bed is broken, until the next death."
+        )
     if focus and focus["kind"] == "scan":
         lines.append(
             "The card draws their Tricorder's scan live: the square it searches and the block"
@@ -291,7 +320,7 @@ def build_minecraft_map_handlers(
             if x is None or z is None:
                 return "x and z must be block coordinates inside the world."
             at_xz = (x, z)
-        if kind in ("structure", "spot", "gate", "beacon") and at_xz is None:
+        if kind in _NEEDS_XZ and at_xz is None:
             return f"A {kind} needs its x and z."
         if kind == "place" and at_xz is None and not place_name(label):
             return "Name the saved place in label (mc_places lists them), or give x and z."
@@ -323,6 +352,8 @@ def build_minecraft_map_handlers(
         moment: float | None = None
         if kind == "scan":
             return await scan_card(rec, slot, folder, world, label, zoom, overlays, ctx)
+        if kind == "bed" and at_xz is None:
+            return await bed_card(rec, slot, folder, world, label, zoom, overlays, ctx)
         async with scoped_session(maker, ctx.session) as s:
             player: Player | None = await chat_player_for(
                 s, settings_store, ctx.session, ctx.agent_session_id
@@ -479,6 +510,69 @@ def build_minecraft_map_handlers(
         )
         return ToolOutput(
             map_summary(view), view=view, result_brief=f"scan · {_DIMENSION_NAMES[dim]}"
+        )
+
+    async def bed_card(
+        rec: dict[str, Any],
+        slot: str,
+        folder: str,
+        world: str,
+        label: str,
+        zoom: int,
+        overlays: dict[str, bool],
+        ctx: ToolContext,
+    ) -> str | ToolOutput:
+        """The `bed` card with no coordinates: whose is the label's gamertag, else this
+        chat's player; the point is their current one as the pack last sent it."""
+        async with scoped_session(maker, ctx.session) as s:
+            chat = await chat_player_for(s, settings_store, ctx.session, ctx.agent_session_id)
+            if label:
+                row = await spawnpoints.current_by_name(s, folder, label)
+            elif chat is not None:
+                row = await spawnpoints.current(s, folder, chat.key)
+            else:
+                return (
+                    "Say whose bed in label (a gamertag), or set this chat's player with mc_player."
+                )
+        who = label or (chat.gamertag if chat is not None else "")
+        if row is None:
+            return ToolOutput(
+                f"The pack hasn't reported {fence(who)}'s respawn point in this world yet.",
+                result_brief="not reported",
+            )
+        name = str(row.gamertag or who)
+        if row.kind == "none":
+            return ToolOutput(
+                f"{fence(name)} has no bed or respawn anchor set, so they wake at the world spawn.",
+                result_brief="no bed set",
+            )
+        dim = str(row.dim)
+        focus = {
+            "kind": "bed",
+            "label": _clean_label(f"{name}'s {_SPAWN_NOUNS.get(row.kind, 'bed')}"),
+            "x": int(row.x),
+            "y": int(row.y),
+            "z": int(row.z),
+            "spawn": str(row.kind),
+        }
+        trail = (
+            {"player": chat.key, "gamertag": chat.gamertag, "from": None, "to": None}
+            if chat is not None and chat.gamertag.casefold() == name.casefold()
+            else None
+        )
+        view = map_view(
+            slot=slot,
+            world=world,
+            loaded=bool(rec.get("active")),
+            dim=dim,
+            center=(focus["x"], focus["z"]),
+            zoom=zoom,
+            overlays=overlays,
+            focus=focus,
+            trail=trail,
+        )
+        return ToolOutput(
+            map_summary(view), view=view, result_brief=f"bed · {_DIMENSION_NAMES[dim]}"
         )
 
     return {"mc_show_map": _guarded("mc_show_map", mc_show_map)}

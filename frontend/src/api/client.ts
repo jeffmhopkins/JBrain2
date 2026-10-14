@@ -693,14 +693,168 @@ export interface MinecraftGate {
   aimed_at: number | null;
 }
 
+/** What stood at a player's respawn point when the pack last looked (§M8, beds): `other`
+ *  is a point with no bed or anchor seen there (a /spawnpoint, or a bed broken since — the
+ *  game keeps the point until the next death); `none` is no point, so no place. */
+export type MinecraftSpawnKind = "bed" | "anchor" | "other" | "none";
+
+/** One change of a player's respawn point, as the drain kept it. Epoch seconds. */
+export interface MinecraftSpawnChange {
+  xuid: string;
+  at: number;
+  kind: MinecraftSpawnKind;
+  dim: MinecraftDim | null;
+  x: number | null;
+  y: number | null;
+  z: number | null;
+}
+
+/** A player's current respawn point: `set_at` when they got this place, `at` the latest
+ *  change (a bed read as `other` since, say). */
+export interface MinecraftSpawnPoint extends MinecraftSpawnChange {
+  gamertag: string;
+  set_at: number;
+}
+
 /** GET /map/markers: a world's beacons and gates, kept by the api from the pack's own
- *  lines, so they answer for a world that isn't loaded; `as_of` is the newest report. */
+ *  lines, so they answer for a world that isn't loaded; `as_of` is the newest report. With
+ *  them (owner-only, like the route), each player's respawn point and its recent changes;
+ *  absent from an api older than beds. */
 export interface MinecraftMapMarkers {
   slot: string;
   world: string;
   beacons: MinecraftBeacon[];
   gates: MinecraftGate[];
   as_of: number | null;
+  spawns?: MinecraftSpawnPoint[];
+  spawn_log?: MinecraftSpawnChange[];
+}
+
+/** A No-Spawn Beacon that covers a saved place (the pack's chunk rule). */
+export interface MinecraftPlaceCover {
+  x: number;
+  y: number;
+  z: number;
+  placed_by: string;
+}
+
+/** A saved place (`app.mc_places`) as the map draws it (GUI gate minecraft-map-layers,
+ *  places A). `gamertag` is the player's newest, `saved_at` when it was put here (saving a
+ *  name again moves it); `gates` lead to its block, `gates_moved` are named for it but
+ *  still aimed where it was. */
+export interface MinecraftPlace {
+  id: string;
+  xuid: string;
+  gamertag: string;
+  name: string;
+  dim: MinecraftDim;
+  x: number;
+  y: number | null;
+  z: number;
+  saved_at: number;
+  moved: boolean;
+  covered: MinecraftPlaceCover[];
+  gates: number[];
+  gates_moved: number[];
+}
+
+/** GET /map/places: every player's saved places in one world, owner-only. */
+export interface MinecraftMapPlaces {
+  slot: string;
+  world: string;
+  places: MinecraftPlace[];
+  as_of: number | null;
+}
+
+/** A group of villagers within 48 blocks of each other (the sidecar's single link). */
+export interface MinecraftVillage {
+  id: string;
+  x: number;
+  z: number;
+  count: number;
+  jobs: Record<string, number>;
+}
+
+/** A villager on the map, without its trades (GET /map/villager has them). */
+export interface MinecraftVillager {
+  id: string;
+  job: string;
+  level: number;
+  locked_in: boolean;
+  name: string;
+  x: number;
+  y: number;
+  z: number;
+  village: string;
+  trades: number;
+  /** The enchanted books it offers now ("mending"), for the filter chips. */
+  enchants: string[];
+}
+
+/** A tamed animal or a named mob, as the saved world has it. `owner` is the owner's
+ *  script id, `owner_name` their gamertag where the world knows it (they've asked Dave). */
+export interface MinecraftMob {
+  id: string;
+  kind: string;
+  name: string;
+  tamed: boolean;
+  owner: string | null;
+  owner_name?: string;
+  sitting: boolean;
+  baby: boolean;
+  coat: string[];
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** GET /map/entities: villagers, pets and named mobs in one dimension, from the saved
+ *  world (§M4e). `as_of` is the newest write to the world's files; `live` says the world
+ *  is the running one, where that age undersells how old a mob's position can be. */
+export interface MinecraftMapEntities {
+  dimension: MinecraftDim;
+  villages: MinecraftVillage[];
+  villagers: MinecraftVillager[];
+  villagers_truncated: boolean;
+  pets: MinecraftMob[];
+  named: MinecraftMob[];
+  traders: number;
+  live: boolean;
+  as_of: number | null;
+  age_s: number | null;
+}
+
+/** One trade a villager offers now: [item id, count] stacks. */
+export interface MinecraftTrade {
+  tier: number;
+  buy: [string, number];
+  buy2: [string, number] | null;
+  sell: [string, number];
+  enchantments: [string, number][];
+  uses: number;
+  max_uses: number;
+  used_up: boolean;
+}
+
+/** GET /map/villager: one villager's card, every trade it offers now; `found` is null when
+ *  the saved world no longer has it. */
+export interface MinecraftVillagerCard {
+  found: {
+    id: string;
+    job: string;
+    level: number;
+    level_name: string;
+    locked_in: boolean;
+    name: string;
+    x: number;
+    y: number;
+    z: number;
+    dimension: MinecraftDim;
+    trades: MinecraftTrade[];
+    locked_trades: number;
+  } | null;
+  as_of: number | null;
+  age_s: number | null;
 }
 
 // ---- the timeline (§M8a): one world's travel log over a range, epoch seconds ----
@@ -3822,6 +3976,40 @@ export interface PanelAlarms {
   panel_seen_s: number | null;
 }
 
+/** The desk panel's settings the PWA may change (firmware-c6 0.0.21), by the box's names. Every
+ *  value is a whole number in the panel's own encoding: switches 0/1, minutes of the day,
+ *  `night_color` 0 red / 1 amber / 2 grey, `tz` an index into `zones`, percentages 10-100.
+ *  Microphone gain and the tilt sensor's axes stay in the debug console. */
+export type PanelSettingKey =
+  | "night_on"
+  | "night_from"
+  | "night_to"
+  | "night_color"
+  | "show_date"
+  | "tz"
+  | "notif_accept"
+  | "notif_quiet"
+  | "notif_chime"
+  | "brightness"
+  | "volume"
+  | "read_aloud"
+  | "auto_rotate";
+
+export type PanelSettingValues = Partial<Record<PanelSettingKey, number>>;
+
+/** What the panel last reported and what waits for it on the box. `reported` is null until a
+ *  panel whose firmware reports its settings has picked up; the panel's word always wins. */
+export interface PanelSettingsOut {
+  supported: boolean;
+  reported: PanelSettingValues | null;
+  reported_s: number | null;
+  online: boolean;
+  pending: PanelSettingValues;
+  version: number;
+  zones: string[];
+  night_colors: string[];
+}
+
 /** Letters and spaces only, and short. TWO unrelated systems constrain this and the stricter one
  *  wins: the panel's 5x7 font has no glyph for an apostrophe and draws it as NOTHING, and the
  *  wake word runs through MultiNet, which matches phonemes — so digits and punctuation are not
@@ -5335,6 +5523,31 @@ export const api = {
   async minecraftMapMarkers(slot: string): Promise<MinecraftMapMarkers> {
     const response = await request(`/api/minecraft/map/markers?slot=${encodeURIComponent(slot)}`);
     return (await response.json()) as MinecraftMapMarkers;
+  },
+
+  async minecraftMapPlaces(slot: string): Promise<MinecraftMapPlaces> {
+    const response = await request(`/api/minecraft/map/places?slot=${encodeURIComponent(slot)}`);
+    const body = (await response.json()) as MinecraftMapPlaces;
+    if (!body || !Array.isArray(body.places)) {
+      throw new ApiError(502, "Unexpected response from the saved places.");
+    }
+    return body;
+  },
+
+  async minecraftMapEntities(slot: string, dim: MinecraftDim): Promise<MinecraftMapEntities> {
+    const q = new URLSearchParams({ slot, dim });
+    const response = await request(`/api/minecraft/map/entities?${q}`);
+    const body = (await response.json()) as MinecraftMapEntities;
+    if (!body || !Array.isArray(body.villages) || !Array.isArray(body.pets)) {
+      throw new ApiError(502, "Unexpected response from the villagers and pets.");
+    }
+    return body;
+  },
+
+  async minecraftMapVillager(slot: string, id: string): Promise<MinecraftVillagerCard> {
+    const q = new URLSearchParams({ slot, id });
+    const response = await request(`/api/minecraft/map/villager?${q}`);
+    return (await response.json()) as MinecraftVillagerCard;
   },
 
   async minecraftMapSweep(slot: string): Promise<MinecraftSweep> {
@@ -6866,6 +7079,20 @@ export const api = {
     await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/alarms/${id}`, {
       method: "DELETE",
     });
+  },
+
+  async panelSettings(deviceId: string): Promise<PanelSettingsOut> {
+    const response = await request(`/api/endpoint/panels/${encodeURIComponent(deviceId)}/settings`);
+    return (await response.json()) as PanelSettingsOut;
+  },
+
+  /** Queued on the box until the panel takes it, however long it is offline. */
+  async setPanelSettings(deviceId: string, changes: PanelSettingValues): Promise<PanelSettingsOut> {
+    const response = await request(
+      `/api/endpoint/panels/${encodeURIComponent(deviceId)}/settings`,
+      jsonInit("PUT", { changes }),
+    );
+    return (await response.json()) as PanelSettingsOut;
   },
 
   // STOP A UNIT WORKING, from the screen the owner watches it on. Revokes every live key for

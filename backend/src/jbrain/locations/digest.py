@@ -7,7 +7,7 @@ computed at request time from the owner's own device dwells (`app.events` geofen
 transitions, paired into stays by `SqlLocationRepo.dwells`).
 
 Two of the tables behind this — `app.events` and `place_geofence` — admit a narrowed
-owner (and, through explicit arms, a device's own rows, 0245), so the digest
+owner (and, through explicit arms, a device's own rows, 0247), so the digest
 MUST run under a *full owner* context. The repo's `dwells`/`places` already gate on
 `require_full_owner`, and the endpoint gates again — RLS will not fail these closed.
 

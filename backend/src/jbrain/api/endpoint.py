@@ -2274,6 +2274,11 @@ async def _panel_speech(
     return out
 
 
+#: The same synthesis for a stored answer the desk panel asks to hear again (Listen, 0.0.21,
+#: `panel_convo.speech`): one voice path for a reply and its replay.
+panel_speech = _panel_speech
+
+
 # ---- Jerv on the owner's desk panel (firmware-c6, 0.0.10) --------------------------------
 
 # THE OWNER'S ASSISTANT, SPEAKING — NOT THE PET, AND NOT THE PWA'S JERV EITHER. The C6 panel
@@ -2548,8 +2553,17 @@ def _agent_stream(
 
         return say
 
+    async def ids(turn: panel_agent.Started) -> tuple[int, int] | None:
+        return await panel_agent.exchange_ids(request.app.state.session_maker, turn)
+
     turn = panel_stream.Turn(
-        transcribe=transcribe, start=start, synth=synth, agent=agent, voice=voice, steps=steps
+        transcribe=transcribe,
+        start=start,
+        synth=synth,
+        agent=agent,
+        voice=voice,
+        steps=steps,
+        ids=ids,
     )
 
     async def body() -> AsyncIterator[bytes]:

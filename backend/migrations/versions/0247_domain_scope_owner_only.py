@@ -24,15 +24,15 @@ names that kind, through `app.has_kind_scope(kind, code)`, so each grant is expl
 Every other context that sets `domain_scopes` is an owner (narrowed or not), whose
 behaviour is unchanged.
 
-Revision ID: 0245
-Revises: 0244
+Revision ID: 0247
+Revises: 0246
 Create Date: 2026-10-13
 """
 
 from alembic import op
 
-revision = "0245"
-down_revision = "0244"
+revision = "0247"
+down_revision = "0246"
 branch_labels = None
 depends_on = None
 

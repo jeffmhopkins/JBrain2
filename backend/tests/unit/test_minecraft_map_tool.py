@@ -370,3 +370,105 @@ async def test_no_scan_or_no_scanner_is_said_not_drawn(scanning) -> None:
     assert out.view is None and out.result_brief == "not seen"
     scanning["player"] = None
     assert "Say whose scan" in await _show({"focus": "scan"})
+
+
+@pytest.fixture
+def beds(box, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """The drain's respawn points (§M8): each player's current one, by key and by name."""
+    rows = {
+        "2535400000000001": SimpleNamespace(
+            gamertag="BlockyFox", kind="bed", dim="overworld", x=70, y=64, z=40, at=1.0
+        ),
+        "mira": SimpleNamespace(
+            xuid="m", gamertag="Mira_P", kind="anchor", dim="nether", x=-20, y=71, z=40, at=2.0
+        ),
+        "steve42": SimpleNamespace(
+            xuid="s", gamertag="Steve42", kind="none", dim=None, x=None, y=None, z=None, at=3.0
+        ),
+    }
+
+    async def current(_s: Any, world: str, key: str) -> Any:
+        box["asked"].append(("bed", key, world))
+        return rows.get(key)
+
+    async def by_name(_s: Any, world: str, name: str) -> Any:
+        box["asked"].append(("bed by name", name, world))
+        return rows.get(name.casefold().removesuffix("_p"))
+
+    monkeypatch.setattr(mm.spawnpoints, "current", current)
+    monkeypatch.setattr(mm.spawnpoints, "current_by_name", by_name)
+    return rows
+
+
+async def test_where_is_my_bed_is_the_chat_players_current_point(beds, box) -> None:
+    out = await _show({"focus": "bed"})
+    assert isinstance(out, ToolOutput) and out.view is not None
+    d = out.view.data
+    assert d["dim"] == "overworld" and d["center"] == {"x": 70, "z": 40}
+    assert d["focus"] == {
+        "kind": "bed",
+        "label": "BlockyFox's bed",
+        "x": 70,
+        "y": 64,
+        "z": 40,
+        "spawn": "bed",
+    }
+    assert d["trail"]["gamertag"] == "BlockyFox"
+    assert box["asked"] == [("bed", "2535400000000001", "Castle Hill")]
+    assert out.result_brief == "bed · Overworld"
+
+
+async def test_someone_elses_anchor_is_in_the_nether_with_no_trail(beds, box) -> None:
+    out = await _show({"focus": "bed", "label": "Mira_P"})
+    assert isinstance(out, ToolOutput) and out.view is not None
+    d = out.view.data
+    assert d["dim"] == "nether" and d["overworld"] == {"x": -160, "z": 320}
+    assert d["focus"]["label"] == "Mira_P's respawn anchor"
+    assert d["focus"]["spawn"] == "anchor" and d["trail"] is None
+
+
+async def test_a_point_with_no_bed_seen_says_so_and_none_is_a_sentence(beds, box) -> None:
+    beds["2535400000000001"].kind = "other"
+    out = await _show({"focus": "bed"})
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["focus"]["label"] == "BlockyFox's spawn point"
+    assert "No bed or respawn anchor was seen at that point" in out
+
+    none = await _show({"focus": "bed", "label": "Steve42"})
+    assert isinstance(none, ToolOutput) and none.view is None
+    assert "no bed or respawn anchor set" in none and none.result_brief == "no bed set"
+
+    beds.pop("2535400000000001")
+    unheard = await _show({"focus": "bed"})
+    assert isinstance(unheard, ToolOutput) and unheard.result_brief == "not reported"
+
+
+async def test_a_bed_with_coordinates_is_just_drawn_there(beds, box) -> None:
+    out = await _show({"focus": "bed", "x": 5, "z": 6, "label": "Old bed"})
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["focus"]["kind"] == "bed" and box["asked"] == []
+
+
+async def test_a_bed_card_with_nobody_to_ask_about_asks_who(beds, box) -> None:
+    box["player"] = None
+    out = await _show({"focus": "bed"})
+    assert isinstance(out, str) and "whose bed" in out
+
+
+async def test_a_villager_or_pet_a_finder_found_is_a_focus_with_its_spot(box) -> None:
+    """§M4e on the map (owner 2026-10-13): the card marks the saved world's spot and says
+    it's as of the last save; with no x and z there's nothing to mark."""
+    for kind, label in (("villager", "Librarian · Expert"), ("pet", "Rex")):
+        out = await _show({"focus": kind, "x": -122, "z": -104, "label": label})
+        assert isinstance(out, ToolOutput) and out.view is not None
+        focus = out.view.data["focus"]
+        assert (focus["kind"], focus["label"], focus["x"], focus["z"]) == (
+            kind,
+            label,
+            -122,
+            -104,
+        )
+        assert "as of the last save" in out
+        assert _urlish(out.view.data) == []
+        refused = await _show({"focus": kind, "label": label})
+        assert isinstance(refused, str) and "x and z" in refused

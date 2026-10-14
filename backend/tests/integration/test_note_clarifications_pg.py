@@ -247,7 +247,7 @@ async def test_append_works_under_the_narrowed_owner_session_w3_will_use(
 async def test_append_fails_closed_under_a_capability_token(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    """This method is OWNER-ONLY. A non-owner's `domain_scopes` grant it nothing (0245:
+    """This method is OWNER-ONLY. A non-owner's `domain_scopes` grant it nothing (0247:
     `has_domain_scope` is owner-only), so even a token claiming the note's domain cannot
     see the note and gets the not-found answer — no block, no re-ingest job."""
     note_id = await make_note(maker)

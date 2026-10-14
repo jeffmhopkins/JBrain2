@@ -224,7 +224,7 @@ OWNER = SessionContext(principal_id=str(uuid.uuid4()), principal_kind="owner")
 
 def scoped_owner(*scopes: str) -> SessionContext:
     """A reader firewalled to `scopes`: the owner narrowed by `owner_scoped`, the shape
-    every production scoped read takes (`agent.session.read_context`). Since 0245 a
+    every production scoped read takes (`agent.session.read_context`). Since 0247 a
     NON-owner's `domain_scopes` grant nothing unless a policy names its kind, so a
     capability token with scopes is no longer a stand-in for a scoped reader."""
     return SessionContext(
@@ -357,7 +357,7 @@ async def test_domain_scope_firewall_pattern(app_engine: AsyncEngine, database_u
             await session.execute(text("SELECT count(*) FROM app.firewall_probe"))
         ).scalar() == 3
 
-    # A non-owner's scope claim is no grant (0245): a token naming every domain sees
+    # A non-owner's scope claim is no grant (0247): a token naming every domain sees
     # nothing, so a scoped reader must be a narrowed owner.
     claimant = SessionContext(
         principal_kind="capability_token", domain_scopes=("general", "health", "finance")

@@ -128,6 +128,7 @@ from jbrain.api import (
     panel_debug,
     panel_messages,
     panel_notice,
+    panel_settings,
     plans,
     proposals,
     research_library,
@@ -1937,6 +1938,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(panel_messages.router, prefix="/api")
     # The desk panel's alarms: the PWA's editor and the panel's own sync and switch.
     app.include_router(panel_alarms.router, prefix="/api")
+    # Its settings from the PWA (0.0.21): asked for here, taken by the panel, reported back.
+    app.include_router(panel_settings.router, prefix="/api")
     # The panel's half of the debug relay. Mounted with or without debug access: with it
     # off nothing can queue a request, so a pickup is always an empty 204.
     app.include_router(panel_debug.router, prefix="/api")

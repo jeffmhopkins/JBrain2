@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mcMapMarkers } from "../../minecraftMapFixtures";
 import { type MapIntent, setMapOpener } from "../../minecraftMapNav";
@@ -374,6 +374,63 @@ describe("the minecraft_map chat card", () => {
     expect(texts.some((t) => t.includes("Scanning"))).toBe(false);
   });
 
+  it("Dave's answer about a bed draws it with its words; one not seen there says so", async () => {
+    const bed = {
+      kind: "bed",
+      label: "BlockyFox's bed",
+      x: -136,
+      y: 70,
+      z: 94,
+      spawn: "bed",
+    };
+    show(deathCard({ dim: "overworld", overworld: null, focus: bed, center: { x: -136, z: 94 } }));
+    expect(screen.getByText("BlockyFox's bed")).toBeInTheDocument();
+    expect(screen.getByText("Respawn point · Overworld")).toBeInTheDocument();
+    await waitFor(() => expect(texts).toContain("BlockyFox's bed"));
+    cleanup();
+    show(
+      deathCard({
+        dim: "nether",
+        focus: { ...bed, label: "Mira_P's respawn anchor", spawn: "anchor" },
+      }),
+    );
+    expect(screen.getByText("Respawn point · Nether")).toBeInTheDocument();
+    cleanup();
+    show(deathCard({ dim: "overworld", overworld: null, focus: { ...bed, spawn: "other" } }));
+    expect(
+      screen.getByText("No bed seen there when the pack last looked · Overworld"),
+    ).toBeInTheDocument();
+  });
+
+  it("a villager or pet a finder found: marked as of the last save, opening with its layer", async () => {
+    show(
+      deathCard({
+        dim: "overworld",
+        overworld: null,
+        focus: { kind: "villager", label: "Librarian · Expert", x: -122, y: 66, z: -104 },
+      }),
+    );
+    expect(await screen.findByText("Librarian · Expert")).toBeInTheDocument();
+    expect(
+      screen.getByText("Villager · as of the world's last save · Overworld"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open the full map" }));
+    expect(opened[0]).toMatchObject({ x: -122, z: -104, mark: true, show: "villagers" });
+    cleanup();
+    show(
+      deathCard({
+        dim: "overworld",
+        overworld: null,
+        focus: { kind: "pet", label: "Rex", x: 52, y: 70, z: 52 },
+      }),
+    );
+    expect(
+      await screen.findByText("Pet · as of the world's last save · Overworld"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open the full map" }));
+    expect(opened[1]).toMatchObject({ x: 52, z: 52, show: "pets" });
+  });
+
   it("a malformed payload draws nothing it shouldn't", () => {
     const { container } = show({ slot: "../../etc", dim: "<img src=x onerror=alert(1)>" });
     expect(screen.getByText("This map can't be shown.")).toBeInTheDocument();
@@ -436,6 +493,13 @@ describe("parseMinecraftMap", () => {
     ).toMatchObject({ kind: "gate", x: 30, z: 14 });
     expect(parseMinecraftMap({ slot: "slot0" })).toBeNull();
     expect(parseMinecraftMap({})).toBeNull();
+    const bed = (spawn: unknown) =>
+      parseMinecraftMap({ slot: "slot1", focus: { kind: "bed", x: 1, z: 2, spawn } })?.focus;
+    expect(bed("anchor")).toMatchObject({ kind: "bed", spawn: "anchor" });
+    expect(bed("sofa")?.spawn).toBeNull();
+    // The pack's `unknown` is judged by the box and never served; nor is it drawn.
+    expect(bed("unknown")?.spawn).toBeNull();
+    expect(bed(undefined)?.spawn).toBeNull();
   });
 });
 

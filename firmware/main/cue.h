@@ -60,11 +60,16 @@ typedef enum {
                        transposed a semitone is the same fart and these are the twins'
                        favourite thing the panel does. */
     CUE_BURP,       /* the dry one, and still a single character */
-    CUE_EAT,        /* two soft noise bites */
+    CUE_EAT,        /* crunch, munch, munch: said on every bite of a meal */
     CUE_KICK,       /* a thud: noise plus a pitch drop */
     CUE_SPIN,       /* three rising sweeps, each starting higher */
     CUE_DIZZY,      /* a slow warble sliding down an octave — the room going round */
     CUE_LOVE,       /* THE COO, twice, the second higher: the happiest thing it says */
+    CUE_TICKLE,     /* a laugh: a run of breathy "ha"s tumbling down — said three times a tickle */
+    CUE_POOP,       /* plop: a round note dropping fast, with a wobble as it lands */
+    CUE_BRACE,      /* a nervous titter, three "hee"s going UP: he knows what is coming */
+    CUE_TICKLED,    /* "hehehe": the laugh, short, held in — one of the four tickles */
+    CUE_MEGAFART,   /* one piece of the seven-second fart: each play is the next character */
 
     /* --- the interface, which is not an action ----------------------------------------- */
     CUE_BLIP,   /* a tap that resolved to nothing to do */

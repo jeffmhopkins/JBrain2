@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-14
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -153,6 +153,105 @@ Two actions that answer one thing each, so neither is in a poke pool:
 
 The bench has a Shake button and an "I love you" voice button.
 
+**0.4.10: tickle tickle, and both of these twice as long.** `tickle tickle` / `tickle me` makes
+him laugh helplessly for 4.8 s: he squirms side to side, bounces on every "ha", tosses his head,
+kicks his legs out in turn, and tickle marks flicker either side of his body. `CUE_TICKLE` is a
+laugh (`SH_LAUGH`: seven breathy "ha"s tumbling down), and because a cue is at most 0.8 s the
+action says it again (`rig_recue`), three laughs in all, each only into a free speaker. The
+dizzy spell is now 6.4 s and the love 5.6 s, twice what they were, with their motions'
+cycle counts doubled so the head shakes and the hearts rise at the speed they did: twelve
+hearts now, not five. The bench has a "Tickle tickle" button.
+
+**And eating is a meal.** `ACT_EAT` was three pecks in 1.6 s and a 300 ms double bite. It is
+now 4.8 s and five bites of a cookie (three since 0.4.11) (`EXTRA_FOOD`): the robot carries it from its hand to the
+corner of its mouth, the bird pecks it off its wing, a piece goes out of it on each bite with
+crumbs falling, and the fifth finishes it. The mouth opens wide before each bite, snaps shut
+on it and chews after (`figure_pose_t.chew`, which the renderer takes alongside `talk`).
+`CUE_EAT` is now a crunch and two munches, said on every bite through `rig_recue`, the first
+included: the meal is the one action that does not sound as it starts
+(`rig_cue_on_start`), since its hand is still on the way up. The bench has a "Have a snack"
+button.
+
+**0.4.11: three bites, and a laugh that does not freeze him.** The meal was too long at five
+bites (owner), so it is three, 0.96 s apiece as before, each bite a bigger piece of the cookie.
+And the tickle froze for a moment as it started and at each laugh after (owner). Cues are
+rendered on the render task, and the laugh summed a band-limited triangle and a pulse per
+sample over 740 ms: 7.3 ms on a desktop, the costliest cue in the table, and a multiple of that
+on the panel. Its voice is now a triangle and a sawtooth straight off the phase, 0.46 ms for
+the same laugh, cheaper than the giggle.
+
+**"I'm going to tickle you" (0.4.11).** Owner: *"let's change tickle, to 'I'm going to tickle
+you' and then when that happens, pokes make him be tickled ... after five tickles."* The phrase
+(`im going to tickle you`, `gonna tickle you`; `tickle tickle` / `tickle me` are gone) is a
+warning: `ACT_BRACE` hunches him with a nervous titter (`CUE_BRACE`, the laugh's shape run
+upwards). `tickle.c` (pure, host-tested) then holds for 10 s, renewed by each tickle: a poke that
+reaches him is a tickle rather than the zone's pool, the first four a giggle and the fifth the
+laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during the fit
+itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
+poking, and the sixth poke used to cut the fit off after its first laugh.
+
+**0.4.13: tickled out.** Owner: *"on tickle mode, if tickled 5 times, he should fart and go
+dazed."* The fifth tickle now starts a run, `rig_run_tickled_out`: the laughing fit, then a
+fart, then `ACT_DIZZY`, sitting down hard with the stars going round. `display.c` keeps where
+in the run he is and, as each step ends, starts the next with its own sound (`rig_run_next`).
+Anything else taking over — a nod, a shake, a poke after the fit — ends the run, and a fart
+asked for by voice never knocks him dizzy: what ends has to be the run's own step, the same
+action started at the same moment (`rig_run_t.since`), for the run to go on — a voice "fart"
+over the run's own fart is the same action, but a takeover all the same.
+
+**0.4.12: a tickle that looks like a tickle.** Owner: *"when he's in tickle mode if I touch him
+he still acts like I'm poking him versus tickling."* He did: the four tickles were `ACT_GIGGLE`,
+one of the poke pools' own reactions, with the poke's flinch and colour change. Now each is
+`ACT_TICKLED` — the fit's squirm, short, with the tickle marks and `CUE_TICKLED`, a held-in
+"hehehe" — at a magnitude that rises tickle by tickle (`tickle_mag`), and a tickle neither
+flinches him nor changes his colour. And while he is warned and doing nothing else he holds the
+brace, hunched and shivering (`tickle_wait_p`), so the game is visibly on.
+
+**One fart in ten is the long one (0.4.12).** Owner: *"about a 1 in 10 chance that when he
+farts on command, that the fart lasts a good 7 seconds, and make sure the fart sounds funny."*
+A voice `fart` is `rig_fart_pick(esp_random())`: one time in ten it is `ACT_MEGAFART`, 7 s of
+him straining and wobbling, wide-eyed, as a cloud of gas piles up behind him (`EXTRA_GAS`). A
+cue cannot run past 0.8 s, so the noise is `CUE_MEGAFART` re-cued whenever the speaker is free
+(`rig_recue_continuous`) until the release at 0.93, each piece the next of eight characters —
+a rumble, a climb, a sputter, a squeaker, a wet one, a balloon, a putt-putt and a trumpet — so
+seven seconds of it never sounds like one tone looped (and each long one picks up where the
+last left off, so no two start alike). A poke cannot cut it off.
+
+**A different snack every time (0.4.11).** Owner: *"Kids are also requesting a random item to
+eat, maybe one out of eight possibilities."* `food_t`: a cookie, an apple, a banana, a slice of
+pizza, a donut, a carrot, a slice of watermelon or a strawberry, each a per-pixel shape in its
+own colours (`food_px` in `face.c`), bitten and crumbed exactly as the cookie was. `display.c`
+picks one per meal with `food_pick`, which never brings the last one again.
+
+**What goes in must come out (0.4.11).** Owner: *"If he eats three times and within 1 minute,
+he should have to poop afterwards. The poop should stay on the screen for say 20 seconds. And
+should slide around with the angle of the device."* `poop.c` (pure, host-tested) counts meals
+and owes one at the third inside 60 s; `display.c` starts `ACT_POOP` at the first moment he is
+free on the pet screen. He squats (`figure_pose_t.sit`, as dizzy does), strains, and at
+`POOP_AT` it lands behind him with `CUE_POOP`, a falling plop. On the floor it is the swirl
+with a face and stink lines, behind the figure, and it SLIDES: the unsmoothed tilt pushes it,
+friction slows it, the floor's ends bounce it back, and below a small tilt it does not start
+at all, so it stays put on a table. It plops in, and shrinks away after 20 s.
+
+**Eight poops (0.4.12).** Owner: *"make eight variations of poops also. Maybe we can vary
+graphic, that poops expression, and the amount of stink, and maybe it has flies or not."*
+`poop_drop` picks a kind, never the last one, from `POOP_LOOKS` (`poop.c`): each row a shape
+(the swirl, a four-tier tower, a puddle, a pile of pellets, a log), a face (smiling, cool in
+sunglasses, asleep, shocked, tongue out, grumpy, queasy with a sweat drop, winking), a stink
+of 0–3 (more lines, rising higher and faster) and 0–3 flies on figure-of-eight paths. The
+classic brown swirl, a golden one in shades, a sleepy puddle with flies, surprised bunny
+pellets, a tower blowing a raspberry, a grumpy log in a swarm, a queasy green one and a pink
+unicorn one that does not smell at all. No two are near-twins: every pair differs in at least
+two of the four, which the host test holds the table to.
+
+**A poke over the pet's own sound reacts again, and is heard.** A poke over any sound used to
+only flinch, which with the meal crunching through two-thirds of its length and the tickle
+laughing through half of its own made most pokes during them do nothing. Two halves to it: the
+arbiter now lets a press cue cut a sounding PRESS-slot cue (the pet's own noise; never a reply
+or another slot's result or chime, which a press is still dropped behind), and
+`stream_facts_t.pet_only` tells `display.c` when that is all that is sounding, so it reacts
+there and flinches everywhere else. `stream_tests` drives it through the real arbiter.
+
 ## Where you poke him changes what he does
 
 `face_zone()` maps a panel coordinate onto the rest silhouette — head (with the antenna), body,
@@ -243,6 +342,25 @@ body slides downhill, the head turns back toward true up by 0.6 of the panel's a
 (`orient_upright`, `face_state_t.upright`): the ostrich's head swings about its neck and its
 crest, eyes and beak turn about the head's centre; the robot, with no neck, nods its head over a
 little. The browser bench has a tilt slider for it.
+
+**0.4.8: the righted head's eyes and beak turn with it.** 0.4.6 turned where each feature sat
+but drew every one square to the glass, so on a panel held on its side the happy lower lid sat
+beside each eye instead of under it and the beak's four segments stacked into level bars (owner,
+with a photo). Each eye is now drawn turned through `upright` — outline, pupil, glint and both
+lids — and the beak, its line and the cheeks turn about the head's centre with the jaw opening
+along the head's own down. Upright the drawing is unchanged, pixel for pixel; the host test
+turns the upright face and requires the turned one to match it.
+
+**0.4.9: the play button rings with how much has been heard.** While a message plays, a ring
+round the play/pause button fills clockwise from twelve o'clock (owner: *"a little circle border
+that progresses to show how far it is until it's all the way complete"*). The whole track shows
+from the first moment in grey, so how much is left is visible, and a paused message keeps its
+ring where it got to. The panel streams a message and never holds all of it, so the length comes
+from the box: `X-Jpanel-Duration-Ms` on `/next` and on a replay's `/message/{id}/pcm`, which the
+engine publishes with the stream (`jp_cur_t.duration_ms`) and the machine turns into
+`sm_view_t.progress` from the arbiter's audible ms. A box that sends no length draws no ring.
+The same header switches on the engine's existing "80% of a short one" heard rule, which was
+written for it and had been waiting on the box to send it.
 
 ## One task owns the codec, one owns the panel
 

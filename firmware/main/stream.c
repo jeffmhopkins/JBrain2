@@ -17,6 +17,7 @@
 #define BUSY_CLIP 2u
 #define BUSY_REPLY 4u
 #define BUSY_LIVE 8u
+#define BUSY_PET 16u /* what sounds is a press-slot cue: the pet's own noise */
 
 #ifdef STREAM_TEST_HOOKS
 void (*stream_hook)(stream_t *s, stream_hook_t point);
@@ -138,6 +139,9 @@ stream_facts_t stream_facts(const stream_t *s)
     f.clip_busy = (busy & BUSY_CLIP) != 0;
     f.reply_busy = (busy & BUSY_REPLY) != 0;
     f.stream_live = (busy & BUSY_LIVE) != 0;
+    /* Quiet, or only the pet's own noise sounding; cleared below by anything else pending. */
+    f.pet_only = (busy & BUSY_SPEAKER) == 0 ||
+                 ((busy & BUSY_PET) != 0 && (busy & (BUSY_REPLY | BUSY_LIVE)) == 0);
     f.arb_hb = LOAD(&s->arb_hb, relaxed);
     f.cue_expired = LOAD(&s->cue_expired, relaxed);
     /* THE STREAM IS READ OFF THE RING ITSELF, NOT OFF THE ARBITER'S LAST TICK. The busy word is a
@@ -149,6 +153,7 @@ stream_facts_t stream_facts(const stream_t *s)
     if (WORD_ID(word) != 0 && WORD_GEN(word) == (stream_gen(s) & 0xFFFFu) &&
         ((word & WORD_OPEN) != 0 || ring_filled(&s->ring) != 0)) {
         f.stream_live = f.speaker_busy = true;
+        f.pet_only = false;
     }
     /* WHAT THE ARBITER HAS NOT PICKED UP YET COUNTS. Without this the frame after a cue is
        written would read a quiet speaker and post a PLAY on top of it. Every disposal writes a
@@ -157,11 +162,15 @@ stream_facts_t stream_facts(const stream_t *s)
         uint32_t seq = LOAD(&s->slot[i], acquire) >> 8;
         if (seq == 0) continue;
         if (seq & 1u) seq = (seq + 1u) & SEQ_MASK;
-        if (!seq24_ge(LOAD(&s->done[i], acquire), seq)) f.speaker_busy = f.clip_busy = true;
+        if (!seq24_ge(LOAD(&s->done[i], acquire), seq)) {
+            f.speaker_busy = f.clip_busy = true;
+            if (i != STREAM_SLOT_PRESS) f.pet_only = false;
+        }
     }
     const uint32_t rid = LOAD(&s->reply_id, acquire);
     if (rid != 0 && rid != LOAD(&s->reply_done, acquire)) {
         f.reply_busy = f.speaker_busy = f.clip_busy = true;
+        f.pet_only = false;
     }
     return f;
 }
@@ -397,8 +406,16 @@ stream_tick_t stream_tick(stream_t *s, uint32_t now, int16_t *out, size_t chunk)
             continue;
         }
         if (i == STREAM_SLOT_PRESS) {
-            /* Today's rule: a press never cuts a cue or a reply, it is dropped behind one. The
-               stream does not count; it yields chunk by chunk below. */
+            /* A press never cuts a reply or another slot's cue (a result, the chime); it is
+               dropped behind one. The stream does not count; it yields chunk by chunk below.
+               BUT IT CUTS THE PET'S OWN NOISE (0.4.10): a meal crunches through two-thirds of
+               its 4.8 s, and a poke into it would otherwise react in silence. The old cue is
+               finished first, so the copy never overwrites samples still being played. NOT
+               with a reply waiting on that noise: the reply is next, and a press cut in ahead
+               of it would delay the agent by a whole cue. */
+            if (s->snd == STREAM_SND_CUE && s->snd_slot == STREAM_SLOT_PRESS && !reply_active) {
+                finish_sound(s);
+            }
             if (s->snd != STREAM_SND_NONE) {
                 dispose_cue(s, i, seq);
             } else {
@@ -467,11 +484,12 @@ stream_tick_t stream_tick(stream_t *s, uint32_t now, int16_t *out, size_t chunk)
     /* 7. the busy facts. A stale stream counts in none of them. */
     const bool live = current && (open || ring_filled(&s->ring) != 0);
     const bool clip = s->snd != STREAM_SND_NONE;
+    const bool pet = s->snd == STREAM_SND_CUE && s->snd_slot == STREAM_SLOT_PRESS;
     const uint32_t rd = LOAD(&s->reply_done, relaxed);
     const bool reply = s->snd == STREAM_SND_REPLY || (rid != 0 && rid != rd);
     STORE(&s->busy,
           (clip || live ? BUSY_SPEAKER : 0u) | (clip ? BUSY_CLIP : 0u) | (reply ? BUSY_REPLY : 0u) |
-              (live ? BUSY_LIVE : 0u),
+              (live ? BUSY_LIVE : 0u) | (pet ? BUSY_PET : 0u),
           release);
     atomic_fetch_add_explicit(&s->arb_hb, 1u, memory_order_release);
     return t;

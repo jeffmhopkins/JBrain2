@@ -26,6 +26,8 @@
 #include "gesture.h"
 #include "orient.h"
 #include "ring.h"
+#include "poop.h"
+#include "tickle.h"
 #include "screen.h"
 #include "rig.h"
 #include "variants.h"
@@ -329,6 +331,8 @@ static void test_every_face_and_action_draws(void)
 /* The renderer's own RGB565-byte-swapped packing, so the test can name a colour. Counting
    non-black pixels cannot see a blink at all: the eye is drawn OVER the head, so shutting it
    swaps one non-black colour for another and the silhouette is identical. */
+#define CUE_RATE 16000
+
 static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
 {
     const uint16_t c = (uint16_t)(((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3));
@@ -940,6 +944,574 @@ static void test_dizzy_sits_down_and_love_shows_hearts(void)
     }
 }
 
+/* THE HEAD SHAKE'S SPEED, in sign changes a second of the figure's tilt. */
+static float dizzy_shakes_per_s(void)
+{
+    const int dur = rig_spec(ACT_DIZZY)->dur_ms;
+    int flips = 0;
+    float last = 0.0f;
+    for (int t = 0; t < dur; t += 5) {
+        figure_pose_t f;
+        rig_figure(ACT_DIZZY, (float)t / (float)dur, 1.0f, 0, 0.0f, &f);
+        if ((f.tilt > 0.0f) != (last > 0.0f) && t > 0) flips++;
+        last = f.tilt;
+    }
+    return (float)flips * 1000.0f / (float)dur;
+}
+
+static void test_dizzy_and_love_last_twice_as_long_at_the_same_speed(void)
+{
+    /* The owner: "the dizziness after being shaken. It should last twice as long. Go ahead and
+       make the love animation twice as long also." Twice as LONG, not twice as slow: their
+       motions are written against progress, so a longer duration on its own would have halved
+       the speed of the head shake, the orbit and the hearts' climb. */
+    CHECK(rig_spec(ACT_DIZZY)->dur_ms == 6400, "dizzy: 3.2 s became 6.4");
+    CHECK(rig_spec(ACT_LOVE)->dur_ms == 5600, "love: 2.8 s became 5.6");
+    const float hz = dizzy_shakes_per_s();
+    CHECK(hz > 3.0f && hz < 3.9f, "the head shakes at 0.4.7's 3.4 flips a second, not half of it");
+
+    /* The hearts: one at a time for most of the 5.6 s, each rising as fast as before. */
+    const uint16_t heart = rgb565(0xFF, 0x4F, 0x7B);
+    face_state_t st;
+    face_rest(&st);
+    int lit = 0;
+    for (float p = 0.05f; p < 0.95f; p += 0.05f) {
+        rig_for(ACT_LOVE, p, 1.0f, 0, &st.rig);
+        rig_figure(ACT_LOVE, p, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        if (count_colour(heart) > 100) lit++;
+    }
+    CHECK(lit >= 16, "hearts rise right through the longer love, with no empty stretch");
+}
+
+static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
+{
+    /* The owner, first: "I want to say tickle tickle, and have it have an animation of giggling
+       and laughing and being tickled." Then: "let's change tickle, to 'I'm going to tickle
+       you' and then when that happens, pokes make him be tickled ... after five tickles." So
+       the phrases WARN him (ACT_BRACE) and nothing said tickles him: fingers do. */
+    int warned = 0;
+    for (int i = 0; i < vocab_count(); i++) {
+        const vocab_t *v = vocab_get(i);
+        if (v->kind != VOCAB_ACTION) continue;
+        CHECK(v->arg != ACT_TICKLE, "no phrase tickles him; the pokes do");
+        if (v->arg == ACT_BRACE) {
+            warned++;
+            CHECK(strcmp(v->phrase, "im going to tickle you") == 0 ||
+                      strcmp(v->phrase, "gonna tickle you") == 0,
+                  "warned as a child warns, never by a bare 'tickle' a television says");
+        }
+    }
+    CHECK(warned == 2, "both ways of saying it");
+    CHECK(cue_for_action(ACT_BRACE) == CUE_BRACE && cue_for_action(ACT_TICKLE) == CUE_TICKLE,
+          "the titter of the warning and the laugh of the tickle, each its own");
+
+    /* FIVE TICKLES: four he holds out against, the fifth gets him, and the warning is spent. */
+    tickle_t tk;
+    tickle_reset(&tk);
+    CHECK(tickle_poke(&tk, 1000) == TICKLE_NO, "unwarned, a poke is a poke");
+    tickle_arm(&tk, 2000);
+    for (int i = 1; i < TICKLE_POKES; i++) {
+        CHECK(tickle_poke(&tk, 2000 + (uint32_t)i * 900) == TICKLE_SMALL, "a giggle each");
+    }
+    CHECK(tickle_poke(&tk, 7000) == TICKLE_BIG, "and the fifth sets him off");
+    CHECK(tickle_poke(&tk, 7500) == TICKLE_NO, "after which a poke is a poke again");
+    /* AND A TICKLE LOOKS LIKE A TICKLE (owner: "if I touch him he still acts like I'm poking
+       him versus tickling"). The four were ACT_GIGGLE, one of the poke pools' own reactions,
+       with the poke's flinch and colour change: indistinguishable from a poke. Now each is its
+       own squirm with the tickle marks and its own sound, rising tickle by tickle. */
+    CHECK(cue_for_action(ACT_TICKLED) == CUE_TICKLED && CUE_TICKLED != CUE_GIGGLE,
+          "a tickle has its own held-in laugh, not the poke giggle");
+    {
+        figure_pose_t fig;
+        rig_figure(ACT_TICKLED, 0.4f, 1.0f, 0, 0.0f, &fig);
+        CHECK(fig.extra == EXTRA_TICKLE, "and the tickle marks, as the fit has");
+        tickle_t tm;
+        tickle_reset(&tm);
+        tickle_arm(&tm, 0);
+        float last = 0.0f;
+        for (int i = 1; i < TICKLE_POKES; i++) {
+            tickle_poke(&tm, (uint32_t)i * 100);
+            CHECK(tickle_mag(&tm) > last && tickle_mag(&tm) <= 1.0f,
+                  "each tickle harder than the last");
+            last = tickle_mag(&tm);
+        }
+    }
+    /* WAITING TO BE TICKLED, the game is visibly on: the brace held, never easing out of it. */
+    for (uint32_t ms = 0; ms < 5000; ms += 37) {
+        const float wp = tickle_wait_p(ms);
+        rig_pose_t a, b;
+        rig_for(ACT_BRACE, wp, 1.0f, 0, &a);
+        rig_for(ACT_BRACE, 0.5f, 1.0f, 0, &b);
+        CHECK(wp > 0.2f && wp < 0.78f && fabsf(a.leg_l - b.leg_l) < 0.01f,
+              "the waiting pose holds the hunch the whole time");
+    }
+
+    /* BUT NOT DURING THE FIT IT SET OFF: a child tickling keeps poking, and the sixth poke
+       picking from the zone's pool cut the 4.8 s fit off after its first laugh (review). */
+    CHECK(rig_holds_pokes(ACT_TICKLE), "a poke mid-fit only flinches");
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a != ACT_TICKLE && a != ACT_MEGAFART) {
+            CHECK(!rig_holds_pokes((action_t)a), "everything else gives way");
+        }
+    }
+    /* The warning holds for TICKLE_WAIT_MS, renewed by each tickle, then passes. */
+    tickle_arm(&tk, 10000);
+    CHECK(tickle_poke(&tk, 10000 + TICKLE_WAIT_MS - 100) == TICKLE_SMALL, "late, but in time");
+    CHECK(tickle_poke(&tk, 10000 + 2 * TICKLE_WAIT_MS - 200) == TICKLE_SMALL,
+          "each tickle renews the wait");
+    CHECK(!tickle_armed(&tk, 10000 + 3 * TICKLE_WAIT_MS),
+          "and with nobody tickling, the moment passes");
+    CHECK(tickle_poke(&tk, 10000 + 3 * TICKLE_WAIT_MS) == TICKLE_NO, "and pokes are pokes");
+    tickle_arm(&tk, 50000);
+    tickle_poke(&tk, 50100);
+    tickle_poke(&tk, 50200);
+    tickle_arm(&tk, 50300);
+    for (int i = 1; i < TICKLE_POKES; i++) {
+        CHECK(tickle_poke(&tk, 50300 + (uint32_t)i * 100) == TICKLE_SMALL,
+              "warned again, the count starts again");
+    }
+
+    /* THREE LAUGHS: the first as he hears it, two more as it goes, walked at the panel's 25 fps
+       and at a ragged 7 fps, so a dropped frame cannot drop a laugh. Nothing else re-cues. */
+    for (int step = 40; step <= 140; step += 100) {
+        const int dur = rig_spec(ACT_TICKLE)->dur_ms;
+        int again = 0;
+        float p0 = 0.0f;
+        for (int t = 0; t < dur; t += step) {
+            const float p = (float)t / (float)dur;
+            again += rig_recue(ACT_TICKLE, p0, p);
+            p0 = p;
+        }
+        CHECK(again == 2, "he laughs twice more after the first");
+    }
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a == ACT_TICKLE || a == ACT_EAT || a == ACT_POOP) continue;
+        CHECK(!rig_recue((action_t)a, 0.0f, 1.0f), "every other action sounds once");
+    }
+
+    /* A LAUGH IS SEPARATE SYLLABLES: count the gaps in its 10 ms envelope. GIGGLE's blips run
+       together; this must not. */
+    static int16_t buf[CUE_MAX_SAMPLES];
+    const int n = cue_render(CUE_TICKLE, buf, CUE_RATE, 100, 0);
+    const int win = CUE_RATE / 100;
+    int peak = 0, sylls = 0;
+    bool loud = false;
+    for (int i = 0; i < n; i++) peak = abs(buf[i]) > peak ? abs(buf[i]) : peak;
+    for (int w0 = 0; w0 + win <= n; w0 += win) {
+        int m = 0;
+        for (int i = w0; i < w0 + win; i++) m = abs(buf[i]) > m ? abs(buf[i]) : m;
+        if (!loud && m > peak / 2) {
+            loud = true;
+            sylls++;
+        } else if (loud && m < peak / 8) {
+            loud = false;
+        }
+    }
+    CHECK(sylls >= 6 && sylls <= 8, "a run of separate 'ha's, not one tone");
+
+    /* And while he laughs, the tickle marks beside him, gone again at the end. */
+    const uint16_t mark = rgb565(0xFF, 0xF0, 0xA0);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        int seen = 0;
+        for (float p = 0.1f; p < 0.7f; p += 0.05f) {
+            rig_for(ACT_TICKLE, p, 1.0f, 0, &st.rig);
+            rig_figure(ACT_TICKLE, p, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            if (count_colour(mark) > 100) seen++;
+        }
+        CHECK(seen >= 6, "tickle marks flicker beside him while it lasts");
+        rig_for(ACT_TICKLE, 0.9f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_TICKLE, 0.9f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(mark) == 0, "and gone as he gets his breath back");
+    }
+}
+
+/* ONE FART IN TEN IS THE LONG ONE (owner: "about a 1 in 10 chance that when he farts on
+   command, that the fart lasts a good 7 seconds, and make sure the fart sounds funny"). */
+static void test_one_fart_in_ten_goes_on_for_seven_seconds(void)
+{
+    int mega = 0;
+    for (uint32_t r = 0; r < 10000; r++) {
+        const action_t a = rig_fart_pick(r * 2654435761u);
+        CHECK(a == ACT_FART || a == ACT_MEGAFART, "a fart is still a fart");
+        mega += a == ACT_MEGAFART;
+    }
+    CHECK(mega > 800 && mega < 1200, "about one in ten");
+    CHECK(rig_spec(ACT_MEGAFART)->dur_ms >= 7000, "a good seven seconds");
+    CHECK(cue_for_action(ACT_MEGAFART) == CUE_MEGAFART && CUE_MEGAFART != CUE_FART,
+          "with its own noise");
+
+    /* A cue tops out under a second, so seven seconds is the speaker kept busy: re-cued
+       whenever it is free, right up to the release, and nothing else is. */
+    CHECK(rig_recue_continuous(ACT_MEGAFART, 0.0f) && rig_recue_continuous(ACT_MEGAFART, 0.9f),
+          "kept going all the way through");
+    CHECK(!rig_recue_continuous(ACT_MEGAFART, 0.97f), "and lets the last one ring out");
+    for (int a = ACT_NONE; a < ACT_COUNT; a++) {
+        if (a == ACT_MEGAFART) continue;
+        CHECK(!rig_recue_continuous((action_t)a, 0.5f), "nothing else goes on and on");
+    }
+    CHECK(rig_holds_pokes(ACT_MEGAFART), "and a poke cannot cut him off mid-fart");
+
+    /* FUNNY is variety: each piece in a run is a different character, not one tone looped. */
+    static int16_t a[CUE_MAX_SAMPLES], b[CUE_MAX_SAMPLES];
+    int distinct = 0;
+    for (unsigned v = 0; v < 8; v++) {
+        const int na = cue_render(CUE_MEGAFART, a, CUE_RATE, 100, v);
+        const int nb = cue_render(CUE_MEGAFART, b, CUE_RATE, 100, v + 1);
+        CHECK(na > CUE_RATE / 4, "each piece is a proper length");
+        distinct += na != nb || memcmp(a, b, (size_t)na * sizeof a[0]) != 0;
+    }
+    CHECK(distinct == 8, "and the next piece always sounds different");
+
+    /* And the clouds pile up behind him while it lasts, on both forms. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        rig_for(ACT_MEGAFART, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_MEGAFART, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_GAS, "gas is the extra");
+        face_draw(fb, 0, &st);
+        const long with = count_colour(rgb565(0x8C, 0x9A, 0x8C));
+        st.fig.extra = EXTRA_NONE;
+        face_draw(fb, 0, &st);
+        CHECK(with > count_colour(rgb565(0x8C, 0x9A, 0x8C)) + 2000, "a cloud of it");
+    }
+}
+
+/* EIGHT POOPS (owner: "make eight variations of poops also. Maybe we can vary graphic, that
+   poops expression, and the amount of stink, and maybe it has flies or not"). */
+static void test_eight_poops_each_its_own(void)
+{
+    /* Every kind tells apart from every other by at least two of shape, face, stink, flies. */
+    int shapes = 0, faces = 0, stinks = 0, flies = 0, with_flies = 0;
+    for (int a = 0; a < POOP_KINDS; a++) {
+        const poop_look_t *x = poop_look(a);
+        shapes |= 1 << x->shape;
+        faces |= 1 << x->face;
+        stinks |= 1 << x->stink;
+        flies |= 1 << x->flies;
+        with_flies += x->flies > 0;
+        for (int b = a + 1; b < POOP_KINDS; b++) {
+            const poop_look_t *y = poop_look(b);
+            const int differ = (x->shape != y->shape) + (x->face != y->face) +
+                               (x->stink != y->stink) + (x->flies != y->flies);
+            CHECK(differ >= 2, "no two poops are near-twins");
+        }
+    }
+    CHECK(shapes == (1 << POOP_SHAPE_COUNT) - 1, "every shape is used");
+    CHECK(faces == (1 << POOP_FACE_COUNT) - 1, "and every face, one each");
+    CHECK(stinks == 0xF && flies == 0xF, "stink 0..3 and flies 0..3 all appear");
+    CHECK(with_flies > 0 && with_flies < POOP_KINDS, "some have flies, some do not");
+
+    /* The pick: never the one before, and all eight come round. */
+    poop_t pp;
+    poop_reset(&pp);
+    int seen = 0;
+    for (uint32_t i = 0; i < 400; i++) {
+        const int prev = pp.kind;
+        poop_drop(&pp, i, 0.0f, POOP_HALF, i * 2654435761u);
+        CHECK(pp.kind != prev && pp.kind >= 0 && pp.kind < POOP_KINDS, "never the same twice");
+        seen |= 1 << pp.kind;
+    }
+    CHECK(seen == (1 << POOP_KINDS) - 1, "and every one turns up");
+    /* Including first after boot: a fresh one has no "last" to avoid (review). */
+    int first = 0;
+    for (uint32_t r = 0; r < POOP_KINDS; r++) {
+        poop_reset(&pp);
+        poop_drop(&pp, 0, 0.0f, POOP_HALF, r);
+        first |= 1 << pp.kind;
+    }
+    CHECK(first == (1 << POOP_KINDS) - 1, "any of the eight can be the first");
+
+    /* On the glass: eight different pictures; the stink as much as the kind says; flies
+       only on the ones that have them. Drawn at a moment every stink line is on screen. */
+    const uint16_t stink = rgb565(0x9C, 0xC8, 0x6A), fly = rgb565(0x6A, 0x70, 0x7C);
+    static uint32_t sums[POOP_KINDS];
+    long stink_px[POOP_KINDS];
+    for (int k = 0; k < POOP_KINDS; k++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = FORM_OSTRICH;
+        st.poop_size = 0.0f;
+        face_draw(fb, 0, &st);
+        const long bare_stink = count_colour(stink), bare_fly = count_colour(fly);
+        st.poop_kind = k;
+        st.poop_size = 1.0f;
+        st.poop_x = -110.0f;
+        long most = 0, flies_px = 0;
+        for (float t = 1.0f; t < 3.0f; t += 0.1f) {
+            st.poop_t = t;
+            face_draw(fb, 0, &st);
+            const long n = count_colour(stink) - bare_stink;
+            most = n > most ? n : most;
+            const long f = count_colour(fly) - bare_fly;
+            flies_px = f > flies_px ? f : flies_px;
+        }
+        stink_px[k] = most;
+        CHECK((poop_look(k)->flies > 0) == (flies_px > 20), "flies buzz only where they belong");
+        CHECK((poop_look(k)->stink > 0) == (most > 20), "an odourless one gives off nothing");
+        st.poop_t = 1.0f;
+        face_draw(fb, 0, &st);
+        uint32_t h = 2166136261u;
+        for (long i = 0; i < (long)FACE_W * FACE_H; i++) h = (h ^ fb[i]) * 16777619u;
+        sums[k] = h;
+        for (int j = 0; j < k; j++) CHECK(sums[j] != h, "each looks like itself");
+    }
+    for (int a = 0; a < POOP_KINDS; a++) {
+        for (int b = 0; b < POOP_KINDS; b++) {
+            if (poop_look(a)->stink > poop_look(b)->stink) {
+                CHECK(stink_px[a] > stink_px[b], "a ranker one smells visibly worse");
+            }
+        }
+    }
+}
+
+/* TICKLED OUT (owner: "on tickle mode, if tickled 5 times, he should fart and go dazed"). */
+static void test_tickled_out_he_farts_and_sits_dazed(void)
+{
+    rig_run_t run;
+    rig_run_start(&run, rig_run_tickled_out(), 1000);
+    CHECK(run.at[0] == ACT_TICKLE, "it starts with the laughing fit the fifth tickle sets off");
+    CHECK(rig_run_next(&run, ACT_TICKLE, 1000, 5800) == ACT_FART, "he laughs till he farts");
+    CHECK(rig_run_next(&run, ACT_FART, 5800, 7300) == ACT_DIZZY, "and the fart leaves him dazed");
+    CHECK(rig_run_next(&run, ACT_DIZZY, 7300, 13700) == ACT_NONE && run.at == NULL,
+          "and then it is over");
+    CHECK(rig_run_next(&run, ACT_FART, 20000, 21500) == ACT_NONE,
+          "a fart with no run behind it is just a fart");
+
+    /* Something else taking over ends the run: what ends is not the run's, so nothing follows,
+       and a later fart of his own does not pick it up again. */
+    rig_run_start(&run, rig_run_tickled_out(), 1000);
+    CHECK(rig_run_next(&run, ACT_NOD, 2000, 3000) == ACT_NONE && run.at == NULL,
+          "a nod cut in: no fart");
+    CHECK(rig_run_next(&run, ACT_FART, 3000, 4500) == ACT_NONE, "nor dazed after a later one");
+
+    /* AND THE SAME ACTION TAKING OVER IS STILL A TAKEOVER (review): a voice "fart" over the
+       run's own fart is a different fart, started later, and must not knock him dizzy. */
+    rig_run_start(&run, rig_run_tickled_out(), 1000);
+    CHECK(rig_run_next(&run, ACT_TICKLE, 1000, 5800) == ACT_FART, "the run's fart");
+    CHECK(rig_run_next(&run, ACT_FART, 6200, 7700) == ACT_NONE && run.at == NULL,
+          "a voice fart over it ends the run, no daze");
+
+    /* Each step sounds as it starts, and each has its own sound. */
+    for (const action_t *a = rig_run_tickled_out(); *a != ACT_NONE; a++) {
+        CHECK(rig_cue_on_start(*a) && cue_for_action(*a) != CUE_COUNT, "every step is heard");
+    }
+}
+
+static void test_a_meal_is_three_bites_of_a_cookie(void)
+{
+    /* The owner: "the eat animation can probably be better with multiple bites being taken and
+       kind of a longer animation and sound effect too." */
+    /* Three bites (0.4.11, owner: "a little too long. Have it only three bites"). */
+    CHECK(EAT_BITES == 3 && rig_spec(ACT_EAT)->dur_ms == 2880, "three bites, 0.96 s apiece");
+
+    /* A CRUNCH ON EVERY BITE, ON THE BITE: nothing as it starts (the hand is still on its way
+       up), then a re-cue as each one lands, at the panel's 25 fps and at a ragged 7. */
+    CHECK(!rig_cue_on_start(ACT_EAT), "the meal does not crunch before the first bite");
+    CHECK(rig_cue_on_start(ACT_TICKLE) && rig_cue_on_start(ACT_DIZZY),
+          "everything else sounds as it starts");
+    for (int step = 40; step <= 140; step += 100) {
+        const int dur = rig_spec(ACT_EAT)->dur_ms;
+        int again = 0, bites = 0;
+        float p0 = 0.0f;
+        for (int t = 0; t < dur; t += step) {
+            const float p = (float)t / (float)dur;
+            again += rig_recue(ACT_EAT, p0, p);
+            p0 = p;
+        }
+        bites = rig_eat_bites(1.0f, NULL);
+        CHECK(again == EAT_BITES && bites == EAT_BITES, "a crunch for each bite");
+        /* Each crunch on the frame its bite's count goes up. */
+        p0 = 0.0f;
+        for (int t = 0; t < dur; t += step) {
+            const float p = (float)t / (float)dur;
+            if (rig_recue(ACT_EAT, p0, p)) {
+                CHECK(rig_eat_bites(p, NULL) > rig_eat_bites(p0, NULL), "on the bite itself");
+            }
+            p0 = p;
+        }
+    }
+
+    /* THE COOKIE GETS SMALLER WITH EVERY BITE and is gone at the end, on both forms. */
+    const uint16_t dough = rgb565(0xD9, 0xA0, 0x5B);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        long last = -1;
+        for (int b = 0; b <= EAT_BITES; b++) {
+            /* Just before bite b+1 lands: crumbs from bite b have fallen, the cookie is still. */
+            const float p = b < EAT_BITES ? ((float)b + 0.2f) / EAT_BITES : 0.999f;
+            rig_for(ACT_EAT, p, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, p, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            const long n = count_colour(dough);
+            if (b == 0) CHECK(n > 1000, "a whole cookie to start");
+            if (b > 0 && b < EAT_BITES) CHECK(n < last - 100, "each bite takes a piece out of it");
+            if (b == EAT_BITES) CHECK(n == 0, "and the last one finishes it");
+            last = n;
+        }
+    }
+
+    /* HE CHEWS: the mouth opens with no speech at all, before a bite and after it. */
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        static uint16_t shut[FACE_W * FACE_H];
+        rig_for(ACT_EAT, 0.6f / EAT_BITES, 1.0f, 0, &st.rig);
+        rig_figure(ACT_EAT, 0.6f / EAT_BITES, 1.0f, 0, 0.0f, &st.fig);
+        st.fig.chew = 0.0f;
+        face_draw(fb, 0, &st);
+        memcpy(shut, fb, sizeof(shut));
+        rig_figure(ACT_EAT, 0.6f / EAT_BITES, 1.0f, 0, 0.0f, &st.fig);
+        st.fig.chew = 0.45f;
+        face_draw(fb, 0, &st);
+        CHECK(memcmp(shut, fb, sizeof(shut)) != 0, "chewing opens the mouth, with nothing said");
+    }
+}
+
+static void test_a_snack_is_one_of_eight_and_never_the_same_twice(void)
+{
+    /* The owner: "Kids are also requesting a random item to eat, maybe one out of eight
+       possibilities." */
+    CHECK(FOOD_COUNT == 8, "eight things he might eat");
+    int seen[FOOD_COUNT] = {0};
+    food_t f = FOOD_COOKIE;
+    uint32_t rnd = 12345u;
+    for (int i = 0; i < 400; i++) {
+        rnd = rnd * 1103515245u + 12345u;
+        const food_t next = food_pick(f, rnd >> 8);
+        CHECK((unsigned)next < (unsigned)FOOD_COUNT, "always one of the eight");
+        CHECK(next != f, "and never the same twice running");
+        seen[next]++;
+        f = next;
+    }
+    for (int k = 0; k < FOOD_COUNT; k++) CHECK(seen[k] > 20, "every one of them turns up");
+
+    /* EACH ONE IS DRAWN AND EATEN: its own colour on the screen to start, none of it left
+       after the last bite. Its crumb colour is its body's, so that is what is counted. */
+    static const uint32_t BODY[FOOD_COUNT] = {0xD9A05B, 0xE03030, 0xF5D040, 0xF6C645,
+                                              0xF07CB0, 0xF0861E, 0xF04A5A, 0xE82E3C};
+    for (int k = 0; k < FOOD_COUNT; k++) {
+        const uint16_t body = rgb565((uint8_t)(BODY[k] >> 16), (uint8_t)(BODY[k] >> 8),
+                                     (uint8_t)BODY[k]);
+        for (int form = 0; form < FORM_COUNT; form++) {
+            face_state_t st;
+            face_rest(&st);
+            st.form = (face_form_t)form;
+            st.food = (food_t)k;
+            rig_for(ACT_EAT, 0.0f, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, 0.0f, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            CHECK(count_colour(body) > 250, "the food is there to see");
+            rig_for(ACT_EAT, 0.999f, 1.0f, 0, &st.rig);
+            rig_figure(ACT_EAT, 0.999f, 1.0f, 0, 0.0f, &st.fig);
+            face_draw(fb, 0, &st);
+            CHECK(count_colour(body) == 0, "and it is all gone after the last bite");
+        }
+    }
+}
+
+static void test_three_meals_in_a_minute_and_he_has_to_go(void)
+{
+    /* The owner: "If he eats three times and within 1 minute, he should have to poop
+       afterwards. The poop should stay on the screen for say 20 seconds. And should slide
+       around with the angle of the device." */
+    poop_t pp;
+    poop_reset(&pp);
+    CHECK(!poop_ate(&pp, 1000) && !poop_ate(&pp, 20000), "one and two meals owe nothing");
+    CHECK(poop_ate(&pp, 59000) && pp.owed, "the third inside the minute does");
+    CHECK(!poop_ate(&pp, 61000), "and the count starts again: a fourth does not owe a second");
+
+    poop_reset(&pp);
+    poop_ate(&pp, 0);
+    poop_ate(&pp, 40000);
+    CHECK(!poop_ate(&pp, 70000), "three meals over seventy seconds owe nothing");
+    CHECK(poop_ate(&pp, 90000), "but the last three of four inside a minute do");
+
+    /* ON THE FLOOR FOR TWENTY SECONDS, popping in and shrinking away. */
+    poop_reset(&pp);
+    poop_ate(&pp, 0);
+    poop_ate(&pp, 1);
+    poop_ate(&pp, 2);
+    poop_drop(&pp, 10000, 0.0f, POOP_HALF, 0u);
+    CHECK(!pp.owed && pp.on, "dropping it pays off what was owed");
+    CHECK(poop_scale(&pp, 10000) < 0.05f && poop_scale(&pp, 10000 + POOP_POP_MS) > 0.99f,
+          "it plops in");
+    CHECK(poop_scale(&pp, 10000 + POOP_SHOW_MS - 100) < 0.5f, "and shrinks away at the end");
+    uint32_t t = 10000;
+    for (; t < 10000 + POOP_SHOW_MS + 200; t += 40) poop_step(&pp, t, 0.0f, 40, 150.0f);
+    CHECK(!pp.on && poop_scale(&pp, t) == 0.0f, "gone after twenty seconds");
+
+    /* DROPPED BEYOND THE FLOOR'S END (on its side the lean runs to 110, so behind him can be
+       -220 against a floor of 150), it lands on the end of the floor, not off it — and on a
+       level panel it would otherwise have stayed off it all twenty seconds (review on 0.4.11). */
+    poop_drop(&pp, 0, -220.0f, POOP_HALF, 0u);
+    for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.0f, 40, POOP_HALF);
+    CHECK(pp.x >= -POOP_HALF && pp.x <= POOP_HALF, "it lands on the floor, never past its end");
+
+    /* IT SLIDES DOWNHILL, and stays put on the level. */
+    poop_drop(&pp, 0, 0.0f, POOP_HALF, 0u);
+    for (t = 0; t < 1000; t += 40) poop_step(&pp, t, 0.03f, 40, 150.0f);
+    CHECK(pp.x == 0.0f, "a panel a hair off level does not make it creep");
+    for (t = 1000; t < 1600; t += 40) poop_step(&pp, t, 0.5f, 40, 150.0f);
+    CHECK(pp.x > 40.0f, "tilted right side down, it slides right");
+    const float right = pp.x;
+    for (t = 1600; t < 3600; t += 40) poop_step(&pp, t, -0.5f, 40, 150.0f);
+    CHECK(pp.x < right - 60.0f, "and back the other way when the tilt turns");
+    for (t = 3600; t < 8000; t += 40) poop_step(&pp, t, -1.0f, 40, 150.0f);
+    CHECK(pp.x >= -150.0f && pp.x < -140.0f, "and stops at the edge rather than leaving");
+    for (t = 8000; t < 10000; t += 40) poop_step(&pp, t, 0.0f, 40, 150.0f);
+    const float rest = pp.x;
+    poop_step(&pp, 10040, 0.0f, 40, 150.0f);
+    CHECK(pp.x == rest, "levelled, it settles and stays");
+
+    /* THE PLOP: no sound as he squats, one as it lands, exactly once. */
+    CHECK(!rig_cue_on_start(ACT_POOP), "silent while he squats");
+    int plops = 0;
+    float p0 = 0.0f;
+    for (int ms = 0; ms < rig_spec(ACT_POOP)->dur_ms; ms += 40) {
+        const float p = (float)ms / (float)rig_spec(ACT_POOP)->dur_ms;
+        plops += rig_recue(ACT_POOP, p0, p);
+        p0 = p;
+    }
+    CHECK(plops == 1, "and one plop as it lands");
+
+    /* DRAWN ON THE FLOOR, where `poop_x` says, on both forms. */
+    const uint16_t brown = rgb565(0x8A, 0x55, 0x2B);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(brown) == 0, "nothing on the floor until there is");
+        double cx[2];
+        for (int k = 0; k < 2; k++) {
+            st.poop_size = 1.0f;
+            st.poop_x = k ? 120.0f : -120.0f;
+            face_draw(fb, 0, &st);
+            double sum = 0, n = 0;
+            for (int i = 0; i < FACE_W * FACE_H; i++) {
+                if (fb[i] == brown) {
+                    sum += i % FACE_W;
+                    n++;
+                }
+            }
+            CHECK(n > 800, "a poop you can see across a room");
+            cx[k] = sum / n;
+        }
+        CHECK(cx[1] - cx[0] > 200.0, "and it is where it has slid to");
+    }
+}
+
 static void test_the_square_slides_into_the_bands_with_one_mapping(void)
 {
     static unsigned char seen[FACE_W * FACE_H];
@@ -1046,6 +1618,67 @@ static void test_the_head_rights_itself_against_the_tilt(void)
         }
         CHECK(cx[1] - cx[0] > (f == FORM_ROBOT ? 8.0f : 40.0f),
               "a clockwise righting carries the head right, anticlockwise left");
+    }
+}
+
+/* The face's features — what a back view takes away: eyes, lids, beak — at `up` degrees. */
+static int face_features(float up, float talk, uint16_t *front, uint16_t *back, double *cx,
+                         double *cy)
+{
+    face_state_t st;
+    face_rest(&st);
+    st.upright = up;
+    st.talk = talk;
+    face_draw(front, 0, &st);
+    st.fig.facing = -1.0f;
+    face_draw(back, 0, &st);
+    double sx = 0, sy = 0;
+    int n = 0;
+    for (int i = 0; i < FACE_W * FACE_H; i++) {
+        if (front[i] != back[i]) {
+            sx += i % FACE_W;
+            sy += i / FACE_W;
+            n++;
+        }
+    }
+    *cx = sx / n;
+    *cy = sy / n;
+    return n;
+}
+
+static void test_the_righted_head_turns_its_eyes_and_beak_too(void)
+{
+    /* The owner, with a photo of a panel on its side: "you can see how the eye position being
+       redrawn without the bottom eyelid parts being done again. Looks a little funny and beak
+       needs to be redrawn correctly." 0.4.6 turned WHERE each feature sat and drew every one
+       square to the glass, so the happy cheek arc sat beside each eye and the beak's four bars
+       stacked into a ladder.
+
+       So: the features of a turned head are the upright features, turned. Each upright pixel is
+       turned by the same angle about the features' centroid and must find its own colour there.
+       Square-to-the-glass features match 65-77% at 30-45 degrees; turned ones 96-97%, the rest
+       being where two roundings of one edge disagree. */
+    static uint16_t a[FACE_W * FACE_H], b[FACE_W * FACE_H];
+    static uint16_t c[FACE_W * FACE_H], d[FACE_W * FACE_H];
+    for (int t = 0; t < 2; t++) {
+        const float talk = t ? 0.6f : 0.0f; /* the jaw open as well as shut */
+        double ax, ay, cx, cy;
+        face_features(0.0f, talk, a, b, &ax, &ay);
+        const float ups[] = {30.0f, 45.0f, -30.0f, -45.0f};
+        for (unsigned k = 0; k < sizeof(ups) / sizeof(ups[0]); k++) {
+            face_features(ups[k], talk, c, d, &cx, &cy);
+            const double r = ups[k] * M_PI / 180.0, cs = cos(r), sn = sin(r);
+            int hit = 0, all = 0;
+            for (int i = 0; i < FACE_W * FACE_H; i++) {
+                if (a[i] == b[i]) continue;
+                const double x = i % FACE_W - ax, y = i / FACE_W - ay;
+                const int X = (int)lround(cx + x * cs - y * sn);
+                const int Y = (int)lround(cy + x * sn + y * cs);
+                all++;
+                if (X >= 0 && X < FACE_W && Y >= 0 && Y < FACE_H && c[Y * FACE_W + X] == a[i]) hit++;
+            }
+            CHECK((double)hit / all > 0.93, "a righted head's eyes, lids and beak turn with it");
+        }
     }
 }
 
@@ -2552,7 +3185,6 @@ static void test_vocab_has_no_ambiguity(void)
  * wrong with generated audio rather than the things that are easy to assert.
  */
 
-#define CUE_RATE 16000
 
 static int cue_fill(cue_t c, int16_t *buf)
 {
@@ -3517,6 +4149,46 @@ static void test_a_face_of_nobody_draws_nothing(void)
  * pause button"*. So the discs must not move between them — only the glyph may differ. A
  * control that shifted by a few pixels when a message ended would be a second button as far as
  * a four-year-old's finger is concerned. */
+/* THE RING FILLS CLOCKWISE FROM TWELVE, as a clock hand does: half heard is the right half of the
+ * ring lit and the left half still the dim track, all of it outside the button so the glyph and
+ * its target are untouched. With no length to go on there is no ring at all. */
+static void test_the_play_button_ring_fills_clockwise_from_the_top(void)
+{
+    static uint16_t fb[FACE_W * FACE_H];
+    static uint16_t bare[FACE_W * FACE_H];
+    const int over_h = FACE_H, cx = CONFIRM_CX_CANCEL, cy = confirm_cy(over_h);
+    const int r = CONFIRM_R + 7; /* the middle of the ring */
+#define AT(dx, dy) fb[(cy + (dy)) * FACE_W + cx + (dx)]
+    memset(bare, 0, sizeof(bare));
+    confirm_draw_transport(bare, FACE_W, FACE_H, over_h, true, false, -1);
+
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, 500);
+    CHECK(AT(r, 0) == CONFIRM_GLYPH, "half heard: three o'clock is lit");
+    CHECK(AT(5, r) == CONFIRM_GLYPH, "and on round to just short of six");
+    CHECK(AT(-r, 0) != CONFIRM_GLYPH && AT(-r, 0) != 0, "nine o'clock is still the track");
+    for (int y = 0; y < FACE_H; y++) {
+        for (int x = 0; x < FACE_W; x++) {
+            const int dx = x - cx, dy = y - cy;
+            if (dx * dx + dy * dy <= CONFIRM_R * CONFIRM_R) {
+                CHECK(fb[y * FACE_W + x] == bare[y * FACE_W + x], "the button itself is untouched");
+            }
+        }
+    }
+
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, 0);
+    CHECK(AT(r, 0) != CONFIRM_GLYPH && AT(r, 0) != 0, "nothing heard: the whole track, unlit");
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, 1000);
+    CHECK(AT(-r, 0) == CONFIRM_GLYPH && AT(-3, -r) == CONFIRM_GLYPH, "all heard: all the way round");
+    CHECK(memcmp(fb, bare, sizeof(fb)) != 0, "a ring is drawn");
+    memset(fb, 0, sizeof(fb));
+    confirm_draw_transport(fb, FACE_W, FACE_H, over_h, true, false, -1);
+    CHECK(memcmp(fb, bare, sizeof(fb)) == 0, "no length, no ring");
+#undef AT
+}
+
 static void test_the_transport_discs_do_not_move_between_play_and_pause(void)
 {
     static uint16_t a[FACE_W * FACE_H];
@@ -3524,8 +4196,8 @@ static void test_the_transport_discs_do_not_move_between_play_and_pause(void)
     const int over_h = FACE_H;
     memset(a, 0, sizeof(a));
     memset(b, 0, sizeof(b));
-    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false, true); /* play */
-    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true, true);  /* pause */
+    confirm_draw_transport(a, FACE_W, FACE_H, over_h, false, true, -1); /* play */
+    confirm_draw_transport(b, FACE_W, FACE_H, over_h, true, true, -1); /* pause */
 
     /* The RIGHT half is the reply envelope in both, so it must be pixel-identical. */
     int right_diff = 0, left_diff = 0;
@@ -3566,7 +4238,7 @@ static void test_pause_reads_as_two_bars_and_play_as_one_shape(void)
 
     for (int pass = 0; pass < 2; pass++) {
         memset(fbt, 0, sizeof(fbt));
-        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1, true);
+        confirm_draw_transport(fbt, FACE_W, FACE_H, over_h, pass == 1, true, -1);
         int runs = 0;
         bool in_run = false;
         for (int x = 0; x < FACE_W / 2; x++) {
@@ -4623,7 +5295,16 @@ int main(void)
     test_the_square_slides_into_the_bands_with_one_mapping();
     test_a_shake_is_several_jerks_not_one_bump();
     test_dizzy_sits_down_and_love_shows_hearts();
+    test_dizzy_and_love_last_twice_as_long_at_the_same_speed();
+    test_tickle_tickle_makes_him_laugh_and_laugh_again();
+    test_a_meal_is_three_bites_of_a_cookie();
+    test_a_snack_is_one_of_eight_and_never_the_same_twice();
+    test_one_fart_in_ten_goes_on_for_seven_seconds();
+    test_eight_poops_each_its_own();
+    test_tickled_out_he_farts_and_sits_dazed();
+    test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
+    test_the_righted_head_turns_its_eyes_and_beak_too();
     test_the_case_geometry_is_the_case();
     test_the_mouth_moves_only_while_talking();
     test_the_open_mouth_is_the_smile_opening();
@@ -4718,6 +5399,7 @@ int main(void)
     test_a_face_survives_being_resized();
     test_a_face_of_nobody_draws_nothing();
     test_the_transport_discs_do_not_move_between_play_and_pause();
+    test_the_play_button_ring_fills_clockwise_from_the_top();
     test_the_low_tap_counts_are_free_for_the_menu();
     test_the_moved_gestures_still_fire_end_to_end();
     test_pause_reads_as_two_bars_and_play_as_one_shape();

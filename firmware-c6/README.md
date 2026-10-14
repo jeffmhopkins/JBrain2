@@ -1554,7 +1554,7 @@ the case, and the 8 KB ring is the next lever.
 note **`low=<bytes>@<what>`**: when the internal heap reaches a new low, the first task to see it —
 the main task at each change of work, the UI task every pass — records what the main task was
 doing (`pickup`, `report`, `manifest`, `ota`, `talk`, `message`, `play`, `post`, `convo`,
-`siblings`, `alarms`, `idle`), `+handshake` inside a new connection's TLS handshake, and `+ring`
+`siblings`, `alarms`, `idle`; since 0.0.20 `answer` and `screenshot` for a debug command's reply), `+handshake` inside a new connection's TLS handshake, and `+ring`
 while a talk's or a play's ring is held. A reading of `low=…@play+ring` at or above ~52 KB is this
 image working.
 
@@ -1740,7 +1740,7 @@ it can start (`tk_can_begin`), and a play takes its own size.
 - `calib`: `custom`, `capturing`, `date`, `fit` (a,b,c,d,e,f: scales and shears in thousandths,
   offsets in pixels — `1000,0,0,0,1000,0` is none), `fits`, `refused`, `last`. Telemetry's touch
   tokens gain `cal=custom|none` and `tp_rot=`; `tp_last`'s `x,y` are now after both.
-- `display.rotation`, `rot_changes`, `rot_no_memory` (a quarter turn that found no 2.5 KB).
+- `display.rotation`, `rot_changes`, `rot_no_memory` (a quarter turn that found no 2.5 KB; gone in 0.0.22, whose turn needs no memory).
 - `audio.ring` is the ring's real size; `audio.play_before` / `play_answered` / `play_ring_free` /
   `play_low` as above.
 - A calibration can be driven from the box: `open` settings, then `inject` `touch` at each cross
@@ -1970,6 +1970,376 @@ scripts/debug-connect.sh panel-cmd c6 snapshot                 # notice, audio, 
 8. **An outage.** Answer a question with Wi-Fi off (Settings → Disconnect), then Connect: the
    answer still reaches the box.
 
+## What 0.0.20 adds: a debug screenshot's low named as its own
+
+After 0.0.19 booted, `system.int_min` read 57.9 KB at `post`; after a test notice and a
+`panel-shot` it read **50,972 B at `pickup`**, under 0.0.18's 56-60 KB. Measured on the board on
+2026-10-13, from a reboot (`panel-cmd c6 reboot --confirm`, the one way to reset the mark), one
+step at a time:
+
+| Step | `int_min` | `int_min_at` | `int_free` |
+| --- | --- | --- | --- |
+| Booted, 56 s | 60,980 | `post` | 69,544 |
+| Two minutes of idle pickups | 57,656 | `pickup` | 69,564 |
+| One `panel-shot` | **51,448** | `pickup` | 69,564 |
+| One plain test notice, on the glass | 51,448 | `pickup` | 69,564 (`fetch.heap_low` 62,584) |
+| The same, hidden (`expired`) | 51,448 | `pickup` | 69,552 |
+
+So the low was the **screenshot**, ~6.2 KB under the idle pickups' — not the pickup, not
+`X-Notice`, not the overlay (its widgets live in LVGL's own pool) and not littlefs (`mount_heap`
+1,048 B, there from boot). The screenshot is answered inside `dbg_link_poll`, which the main loop
+names `pickup`, so the capture's cost read as the pickup's: its stream opens a fresh session and
+then holds the 8 KB chunk pair while the radio's send queue fills, with Wi-Fi power save off.
+That path is unchanged since 0.0.9; 0.0.19's own permanent cost is ~1.6 KB (the mount and
+552 B of statics), so on 0.0.18 a screenshot would have read ~53 KB too.
+
+It is debug-only: nothing in normal use takes a screenshot, and 51 KB is above the ~45 KB the
+memory notes treat as the line. Shrinking it would mean smaller chunks against the capture's 2 s
+ceiling, so this image changes only the name: **a debug command's reply is its own phase** —
+`screenshot` for the capture's stream, `answer` for every other command's (a snapshot's 6 KB
+POST) — and `pickup` names the GET alone (`dbg_answer_phase`, host-tested). A low at
+`@screenshot` says a debug session took one; a low at `@pickup` or anything else is the panel's
+own. App: 2,054,352 → 2,054,464 B; only the app image and its sum move in `dist/`.
+
+### What to check on the glass
+
+1. After the update, idle pickups and a snapshot or two: `int_min_at` reads `pickup`, `answer` or
+   `post`, at about 0.0.19's 57-61 KB.
+2. One `panel-shot`: `int_min` ≈ 51 KB at **`screenshot`**.
+
+## What 0.0.21 adds: Listen on replies, Load earlier, settings from the PWA
+
+Three features from the boards the owner approved on 2026-10-13 (`docs/mocks/jpanel-c6/`, Listen,
+History and PanelSettings), with the owner's four answers, and the folded steps line asked for the
+same day.
+
+### On the glass
+
+- **Listen.** Every finished Jerv or Dave reply carries a 56 px speaker button, even with Read
+  aloud on (owner answer 1). A tap asks the box to speak that reply's **full** text: "Starting… ·
+  tap to stop" while the box synthesises, then a ring filling with how much of the text has been
+  spoken and the elapsed time. A tap on it, KEY or BOOT stops it. One reply speaks at a time: a tap
+  on another stops the first and starts it. While a turn runs the buttons are dimmed, and a tap says
+  "Listen waits for this answer". A reply being read aloud as it arrives shows the same playing
+  state on its own button, so the one control stops either.
+- **Load earlier.** A thread opens on its newest messages. When the box has more, the top row is
+  "Load earlier · N more"; a tap fetches ten older ones (a spinner in the row while it waits) and
+  the message that was at the top stays where it was. The window holds **at most 20 messages**
+  (owner answer 3): past that the newest drop and a "Newer messages · N more" row at the bottom
+  fetches them back ten at a time. At the true start the top row is "Start of conversation · <when>".
+  A new KEY message, or closing the thread, jumps back to the newest. This replaces 0.0.15's
+  "Earlier messages are in the app" chip, in Jerv's and Dave's threads and in the twins' threads.
+- **Settings from the PWA.** The display panel's card in the PWA (jpanel → Panels) has Clock,
+  Notices, and Screen and sound: the night clock and its hours and colour, the date under the time,
+  the zone; accept notices, refuse at night, the chime; brightness, volume, read aloud, auto-rotate.
+  Mic gain and the IMU axes stay in the debug console. **The panel's last report wins** (owner
+  answer 2): a change waits on the box only while the panel still reports the value it was asked
+  over, and is dropped if the panel reports anything else. Every setting stays settable at the
+  glass, the night colour included (owner answer 4).
+- **Three or more tool steps fold to two lines** (owner request, 2026-10-13). Under a running turn
+  with one or two steps the list is unchanged. From the third, line 1 is "✓ N tools used" (every
+  call started, the running one included) and line 2 is the running step with its spinner, or
+  "◌ Thinking… 0:37" between tools. The same two lines stay once the answer arrives.
+
+### The protocol
+
+- **`GET {api}/endpoint/convo/{agent}/speech/{turn_id}`** speaks one stored reply as a JT2 stream:
+  PCM groups, each preceded by a new **SPOKEN** record (`0x09`: from u16, to u16, the text's
+  length u32) that says which characters the group covers, which is what fills the ring. It ends
+  with END, or END failed when nothing could be spoken. It returns 404 for anything that is not this
+  owner's assistant turn, and 503 `tts_unavailable` with no voice. The panel learns a reply's turn
+  id from a new **IDS** record (`0x0A`: asked u64, answer u64) at the end of a live turn, and from
+  `…/messages` and `…/history`, which now carry ids.
+- **`GET {api}/endpoint/convo/{agent}/history?before=|after=&limit=`** and **`GET
+  {api}/endpoint/messages/{device}/history?before=|after=&limit=`** page at most ten messages either
+  side of a message id, inside 4 KB, with how many are left `older` / `newer` and `start_at` at the
+  true start. Jerv's and Dave's ids are the box's turn numbers; a twin's are her messages' uuids.
+- **The pickup reports the settings** the PWA shows that the notice switches do not already carry
+  (`&no=…&nk=…&sd=…&br=…&vo=…&ra=…&ar=…`, `settings_sync_query`). A pending change answers the
+  pickup with **`X-Panel-Settings: <version>`**; the main loop then fetches **`GET
+  {api}/endpoint/panel-settings`** (`{"v":7,"s":{"br":[60,50],…}}`: each value and the value it was
+  asked over) and the UI task applies each change through `svc_settings` (which clamps) only while
+  the setting still holds that old value. The next report tells the box, which settles or drops
+  each. A version still signalled after a fetch is fetched again no sooner than 15 s.
+
+### The memory
+
+| | Internal RAM | When |
+| --- | --- | --- |
+| Static (`.data` + `.bss`) | **+4,304 B** (153,808 → 158,112 B against 0.0.20) | always: `app_thread`'s drawn rows for 20 messages (+1,824 B over its two instances), `svc_convo`'s request queue now carrying a history path (+1,396 B), `main`'s settings fetch body (514 B) and the pickup's longer query (+707 B), `svc_messages`'s per-thread counts and the window pointer (+200 B), Listen's marks and ids in `svc_audio` (+104 B), the convo views' Listen state (+72 B) |
+| `msg_t` | +4 B each (the box's id), inside the existing message stores | always |
+| The history window | ~4.3 KB of heap: 20 entries (~36 B) and a 3.5 KB text arena | only while a thread is paged; freed when it is back at its newest |
+| A page arriving | ~7 KB of heap: the 4 KB body (main task, until the UI task has applied it), then ten texts, a scratch text and the fill state (UI task) | the length of one fetch and apply |
+| Listen | a play's 6 KB ring and its stream session; no recording buffer | while it speaks, like any reply |
+| Settings from the PWA | none beyond the static body above | a fetch is one short GET |
+
+**Why 20 messages.** The window has to fit the drawn thread and not the box's history: 20 bubbles
+of up to 256 bytes each are the most the thread view has ever drawn, and the sim's worst state
+(`jerv-history-capped`, 20 long messages and both rows) peaks LVGL's pool at 54,048 B with 64-bit
+pointers, inside the device's 64 KB with 32-bit ones. Ten a page is what fits the 4 KB body. The
+window is the only new lasting heap, and it exists only while someone is reading back. The app is
+2,054,464 → 2,072,112 B (51% of the slot free). Bootloader, partition table and `ota_data_initial`
+are byte-identical to 0.0.20's: this is an app-only OTA.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_messages` | `hist_logic.c` (pure: the 20-message window, its text arena, what it drops and counts, the rows' words); the fake service's window ops and window-aware reads; `svc_messages_hist`. |
+| `svc_convo` | `convo_wire.c`: the history path and the page parser; `svc_convo_hist_open/earlier/newer/live` and `CONVO_RQ_HISTORY` on the request queue. |
+| `svc_audio` | `TK_KIND_SPEAK`, the SPOKEN and IDS events, `svc_audio_speak` / `svc_audio_speech`, one queued Listen after the playing one. |
+| `svc_settings` | `settings_sync.c` (pure: the report, the header, when to fetch, the parse, apply-if-unchanged). |
+| `ui_kit` | `ui_listen_set` (the button, ring and caption), `ui_hist_row`, `ui_hist_start`. |
+| `convo`, `app_thread` | Listen on each reply, the history rows and the anchor that keeps a message in place, the folded steps (`convo_work_lines`, `convo_tools_used`). |
+| `main` | `talk_link.c` (the Listen exchange; SPOKEN and IDS), `convo_link.c` (the history fetch), `set_link.c` (the settings fetch and apply), `dbg_link.c` and `box_http.c` (the report and `X-Panel-Settings`). |
+| `sim/` | A fake box answering history pages and speech; states below. |
+| `host/` | The window and its arena, the page parser and paths, Load earlier end to end, Listen one at a time and while a turn runs, the new records, the folded steps, and the settings sync against a glass change. |
+
+### Debugging it
+
+- `audio.kind` says `speak` during a Listen; `audio.listen_id` and `audio.listens`.
+- Each thread under `messages`: `older` (left out when 0) and, while it is paged back, `paged`
+  as `"<messages>/<older>/<newer>/<text bytes>"`; an open Jerv or Dave thread's `history` as
+  `"<top row>:<older>/<newer>"` and `speaking` (the reply Listen is on). Kept terse on purpose:
+  the snapshot's answer is capped at 6 KB (`OUT_MAX`), and these add ~100 B at most (~70 B while
+  nothing is paged) — measured in the sim's `session` snapshot, which is 5,287 B whole.
+- Telemetry `sync=v:N,fetch:N,applied:N,kept:N,last:<status>`: the last version fetched, the
+  changes applied, and the ones kept as set at the glass.
+
+### What to check on the glass
+
+1. **Listen** on an old Jerv reply: "Starting…", then the ring fills to the end with the whole
+   reply read. Tap mid-way: it stops. KEY and BOOT stop it the same way.
+2. Ask Jerv something and tap an older reply's Listen while it works: "Listen waits for this
+   answer".
+3. **Load earlier** in a long Jerv thread: ten more each tap with the top message held still; at
+   30 loaded the newest drop and "Newer messages" appears; KEY jumps back to the newest.
+4. In the PWA, change brightness: "Sending to panel…", then "On the panel" within a pickup or two,
+   and the glass is brighter. Change it at the glass while the PWA's change waits: the glass's
+   value stays and the PWA shows it.
+5. A Jerv question that uses four tools: two lines, the count and the running step.
+
+## What 0.0.22 adds: a quarter turn at nearly upright speed, and a talk's low lifted to a play's
+
+Two things the owner reported on 2026-10-13: *"The slow refresh is actually only when it's turned
+at 90°"*, and a new heap low, `system.int_min` **38,248 B at `talk+ring`** on 0.0.20 (`int_free`
+~67-69 KB), under the ~45 KB line these notes have drawn since 0.0.11.
+
+### The turn: one window a strip, its pieces streamed and overlapped
+
+**What 0.0.18 did on its side.** Each 480×40 strip was gathered, 1,280 pixels at a time, into a
+2.5 KB piece buffer (32 glass rows × 40), and every piece was its own `esp_lcd_panel_draw_bitmap`:
+CASET and RASET, each a polled command transaction and a polled parameter transaction, then RAMWR
+as a fifth polled transaction before the piece's DMA, which was waited for with nothing gathered
+meanwhile. 15 pieces a strip, **180 a full frame — 900 polled transactions and 180 DMAs**, against
+12 strips (60 polled, 12 DMAs) upright. 180° was and stays one transaction a strip.
+
+**What 0.0.22 does** (`send_sideways`, `disp_rot_step`):
+
+- **One window per strip.** All of a strip's pieces land in the same turned window (h wide, 480
+  tall), so CASET/RASET are sent once and the pieces stream into it: the first as **RAMWR (0x2C)**,
+  the rest as **RAMWRC (0x3C), "Memory Continuous Write"** — CO-DS §7.5.33 writes it "continuing
+  from the pixel location following the previous write", and §5.2 lists 0x002C00 and 0x003C00 as
+  the two addresses of the QSPI pixel opcode 0x32 (HARDWARE.md §2). Each piece goes out through
+  `esp_lcd_panel_io_tx_color` with the sh8601 driver's own framing (`0x32 << 24 | reg << 8`).
+- **Pipelined.** Two piece buffers: piece N+1 is gathered while piece N's DMA runs. A buffer is
+  gathered into only after the transfer that last read it was waited for.
+- **Larger pieces, from no new memory.** On its side LVGL is given only the first **32 rows** of
+  its own 38.4 KB strip buffer, and the 7.5 KB tail it gives up holds the two pieces (1,920 pixels
+  each: 60 glass rows of a full-width strip). Upright and upside down it has all 40 rows again.
+  So the turn needs **no heap at all**: 0.0.18's 2,560 B piece buffer is gone, and with it the
+  only way a turn could be refused (`display.rot_no_memory` is dropped from the snapshot).
+
+| A full frame | Strips | Pieces | Polled transactions | DMAs |
+| --- | --- | --- | --- | --- |
+| Upright / 180° | 12 | — | 60 | 12 |
+| 90° / 270°, 0.0.18 | 12 | 180 × 2.5 KB | 900 | 180 |
+| **90° / 270°, 0.0.22** | **15** | **120 × 3.75 KB** | **180** | **120** |
+
+**The estimate** (the host and the sim cannot time the SPI; the board's numbers come after the
+update). The wire itself is the same in every case: 460.8 KB at 40 MHz × 4 lines (20 MB/s) is
+**23 ms** a full frame. What a rotation adds on top is per-transaction cost, taken here as 15-30
+µs for a polled transaction (IDF's acquire, set-up and spin) and ~15 µs to queue a DMA and wake on
+its end, with a gather at ~25 ns a pixel:
+
+| Flush of a full frame | at 15 µs a polled transaction | at 30 µs |
+| --- | --- | --- |
+| Upright | ~24 ms | ~25 ms |
+| 90° / 270°, 0.0.18 | ~45 ms | ~59 ms |
+| **90° / 270°, 0.0.22** | **~28 ms** | **~31 ms** |
+
+So a sideways flush should be **~1.6-1.9× faster**, from about twice upright's to within ~20% of
+it; the gather is hidden under the DMA (48 µs against 192 µs a piece). LVGL's drawing is the same
+in every orientation, plus a little for three more strips. The sim renders all 80 states
+byte-identically, `home-turned` and `notify-picture-turned` included: its glass is now written the
+device's way, through a model of the controller's window and write pointer.
+
+**Measured on the board from now on.** The snapshot's `display` gains `rot_ms`, which covers **whole-glass frames** only: a turn or an app opened, the
+only frames that compare across rotations. `rot_ms` has one entry per rotation that has drawn one,
+`"<deg>:<mean>,<worst>,<count>,<wall>"` in ms and space-separated, e.g. `"0:24,26,120,58 90:29,33,45,70"`.
+`<wall>` is the last such frame's drawing and sending together, from LVGL's render start. It is
+one string because the snapshot's answer is nearly at its 6 KB cap (see the budget below).
+Telemetry's display token gains `full_ms=` and `full_max=`, each as `"0°/90°/180°/270°"`.
+`flush_ms` is still the last frame's.
+
+### The heap: what a talk holds at `talk+ring`, and the levers pulled
+
+Read from the code and the board's own numbers (0.0.20's snapshot on 2026-10-13: `int_free`
+69,528 with the kept session up; the last play `play_before` 69,492, `play_ring_free` 55,672,
+`play_low` 52,024):
+
+| What | Internal RAM | At `talk+ring` | New since the last fixed low? |
+| --- | --- | --- | --- |
+| The kept TLS session (in 16 KB + out 4 KB, context, the chain) | in the 69.5 KB baseline | yes | no |
+| The talk's ring | **16,384 B** | from KEY down to the exchange's end — **the whole spoken reply** | no: 0.0.18 shrank a play's to 6 KB, a talk kept 16 KB |
+| What the network holds behind the ring | ~11-12 KB | while the reply streams: the box sends synthesised speech faster than it plays, so the receive window sits full, as it does for a play (69,492 − 52,024 − 6,144 = 11.3 KB on the last play) | no |
+| The quarter-turn piece buffer | **2,560 B** | while the panel is on its side | **yes, 0.0.18** |
+| littlefs's mount, 0.0.19's statics | ~1.6 KB | always (already in the baseline) | yes, 0.0.19 |
+| The JT2 reader, its text record, STEP labels | static | — | — |
+| The steps' and the answer's widgets | LVGL's own 64 KB pool | — | — |
+| A thread's or a list's fetch buffer | — | never: the main task does one request at a time | — |
+
+69.5 − 16.4 (ring) − 2.6 (on its side) − ~12 (network) ≈ **38.5 KB**: the board's 38,248 B. So the
+low is a play's low with a talk's ring — a talk's reply was never given 0.0.18's play lever — with
+the panel held sideways on top. The talk was likely long and stepped; that changes how long the
+state lasts, not what it holds.
+
+**The levers, both with nothing the owner sees changed:**
+
+1. **The turn takes no memory** (above): −2,560 B whenever the panel is on its side.
+2. **A talk's ring shrinks to a play's 6 KB when its spoken reply starts** (`tk_reply_ring_bytes`,
+   in `talk_net_reply`): −10,240 B for the whole reply. The 16 KB were for the microphone, which
+   records into the ring while the upload's connection opens; by the reply the microphone is done,
+   the ring has just been emptied for the speaker anyway, and the shrink is the heap's in-place
+   `realloc` (no copy, no second block, no failure that loses the ring). What the speaker has
+   ahead of it is unchanged: a sentence the ring has no room for waits in the box's TCP buffers, a
+   pause comes only when the box has not synthesised the next one, and the speaker's 150 ms start
+   is the same. Only a radio stall longer than the ring plus the window (~0.37 s instead of ~0.68
+   s) would now pause a reply — the margin plays have run on since 0.0.18.
+
+| `int_min` at `talk+ring` | 0.0.20 (measured) | **0.0.22 (expected)** |
+| --- | --- | --- |
+| Free with the session up | 69.5 KB | 69.5 KB |
+| The ring during the reply | − 16.4 KB | **− 6.1 KB** |
+| On its side | − 2.6 KB | **0** |
+| The network behind the ring | − ~12.3 KB | − ~12.3 KB |
+| **The low** | **38.2 KB** | **≈ 51 KB** |
+
+That assumes the reply set the low, as a play's stream does. The upload half (16 KB ring, ~32 KB/s
+up on a LAN with power save off: little unacknowledged) is expected near 50 KB. **The board says
+which**: the snapshot's `audio` gains the last talk's `talk_mem`, `"<before>/<up low>/<reply
+low>"`: the free heap as its upload began (ring held), and its low going up and coming down. If the
+up low is the lower and under ~45 KB, the next lever is the upload's ring (an 8 KB talk ring was weighed in 0.0.10).
+
+### The memory budget
+
+Static DIRAM (`.bss`): **+224 B** (the four rotations' frame costs, the talk's three readings).
+App: 0.0.21's 2,072,112 → 2,073,712 B (+1.6 KB; only the app image and its sum move in `dist/` —
+bootloader, partition table and otadata are byte-identical). No new task, stack or heap: the turn
+gives back 2,560 B while sideways and a talk's reply 10,240 B.
+
+**The snapshot is near its cap.** The board's 0.0.20 answer measured 5,834 B of the 6,144 B
+`OUT_MAX`. Applying 0.0.21's fields (every thread paged back) and these to it gives about 6,010 B,
+and about 6,050 B once all four rotations have drawn: under 100 B to spare. That is why the new
+fields are two strings (`rot_ms`, `talk_mem`, +~90 B). The six separate per-rotation fields first
+written would have reached ~6,200 B, over the cap. The next field added to the snapshot must make
+room first, for example by folding `audio.play_*` into one string the way `talk_mem` is.
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_display` | `disp_rot_step` (a piece's rows, its RAMWR/RAMWRC, its buffer), `DISP_SIDE_ROWS`, `disp_stat_*` (pure, host-tested against a model of the controller's window and write pointer); `send_sideways`, the strip height switched between frames, `display.rot_ms`, the `full_ms=`/`full_max=` token. |
+| `svc_audio` | `tk_reply_ring_bytes`; the reply's ring shrunk in place (a Listen's is a play's already); `audio.talk_mem`. |
+| `main/talk_link.c` | A talk's free heap as its upload began and its low each way. |
+| `sim/sim_main.c` | The glass written through the same stream. |
+
+### What to check on the glass
+
+1. **The turn's speed.** Upright, open an app or two; turn the panel on its side, open the same
+   apps; then a snapshot: `display.rot_ms`, the mean and worst for `0:` against `90:` or `270:`
+   (expect ~24 and ~28-31 ms; 0.0.18-0.0.20's sideways would have read ~45-60). The fourth number
+   is the whole frame, drawing included. The picture must look the same as before in all four
+   orientations, with no torn or shifted band at a strip's edges — the one thing RAMWRC could get
+   wrong — and touch still lands where it is drawn.
+2. **The talk's low.** Hold the panel on its side and talk to Jerv with a question that takes a
+   few steps and a long spoken answer; then the snapshot: `system.int_min` at `talk+ring` should
+   read **≈ 50-51 KB** (above the 45 KB line either way), `audio.ring` 6144 while the reply plays,
+   and `audio.talk_mem`'s two lows say which half set it.
+3. **The reply sounds as before**: no new pauses mid-sentence (a pause between sentences, while the
+   box synthesises, was always there).
+
+## What 0.0.23 adds: colour emoji
+
+Before 0.0.23 an emoji in a bubble, a notice or a title drew as LVGL's empty box. Now 390 of them
+draw in colour, at every text size, everywhere ui_kit puts text. No screen builder changed for
+this. The sim's `jerv-emoji` and `notify-emoji` states show it.
+
+### Emoji
+
+**Which.** `components/ui_kit/emoji/emoji_set.txt` lists exactly the emoji the panel carries,
+each pinned by the SHA-256 of its source PNG. The set is the CLDR most-used faces first, then
+hearts, hands, people, animals (🐶 among them), plants, food, weather, celebration, travel,
+objects and symbols (✅ ❌ ⭐ 🎉 🔥). The images are Noto Color Emoji v2.051, Apache 2.0
+(`emoji/NOTICE`). To add one, append its code point and run:
+
+```sh
+python3 firmware-c6/tools/gen_emoji.py --pin   # fetch it and record its checksum
+python3 firmware-c6/tools/gen_emoji.py         # rewrite emoji_set.c and emoji_img.c
+```
+
+The script is plain Python with no dependencies. It caches the PNGs in `~/.cache/jbrain-emoji`
+and refuses any whose checksum differs. CI runs `--check`, so the list, the sources and the
+committed C cannot drift apart. Only the C is committed, so the IDF build never fetches anything
+and clean builds stay byte-identical.
+
+**Two sizes.** Each emoji is cut at 18 px and 24 px. Text up to 20 px uses the 18 px cut (steps,
+rows, Settings); text above 20 px uses the 24 px cut (bubbles at 22, titles at 26 and 30). One
+cut per font size would cost about twice the flash for little visible gain. Each image is an
+area average of the 128 px source, stored as RGB565A8 (what LVGL blends with alpha straight from
+flash) and trimmed to its visible box. Every emoji costs about 2.4 KB of app image.
+
+**How it draws.** `ui_emoji.c` is an LVGL font per Montserrat size, chained behind it:
+Montserrat, then emoji, then the marks font (`· – — … → −`, see Fonts). A code point Montserrat
+lacks reaches the emoji font. That font answers with an image glyph (`LV_USE_IMGFONT`) whose
+source is the const image in flash, so nothing is decoded or copied to draw it. The cell is
+centred on the line using the Montserrat size's own line height and baseline, and `--lifecycle`
+in the sim fails if LVGL ever moves them (`ui_emoji_metrics_ok`).
+
+**Sequences.** LVGL 9.2.2 asks for each glyph with no next letter, so the font sees one code point
+at a time. `emoji_logic.c` (host-tested) decides what each code point does:
+
+| What | On the glass |
+| --- | --- |
+| An emoji in the set | in colour |
+| Variation selectors (❤️ is ❤ + VS16) | nothing: the base emoji alone |
+| A skin tone (👍🏽) | nothing: the default yellow base |
+| A ZWJ sequence (🐕‍🦺) | its parts side by side (🐕🦺), Unicode's own fallback for a font that lacks it |
+| A flag's regional indicators, tag characters, the keycap mark | nothing: flags are not carried |
+| Any other emoji (Unicode's Extended_Pictographic) | a dim grey disc, never LVGL's box |
+| Everything else | plain text, exactly as before |
+
+The box needs no change. Every place it cuts text for the panel (`screen_text`, `panel_stream`'s
+`cut_utf8` and `fit_line`) cuts on a whole code point, so it never leaves half an emoji. A test
+pins this. A 255-byte bubble holds about 60 emoji.
+
+### The memory
+
+| | Cost |
+| --- | --- |
+| App image | 0.0.22's 2,073,712 → 3,025,120 B (+951,408 B: 927,728 B of pixels, ~19 KB of image descriptors, the table and the code). 28% of the 4 MB slot is still free. Only the app image and its sum move in `dist/`. |
+| Static RAM | none: every emoji object's `.data` and `.bss` is empty in the map. `.data` + `.bss` total 158,344 B. The debug snapshot gains no field. |
+| Drawing | an emoji is blended from flash like any glyph. No decoded copy is expected, but this has not yet been measured on the board. |
+
+### What to check on the glass
+
+1. A Jerv answer or a notice with 🐶, ✅ or 🎉 in it: colour, centred on the line, with a pixel
+   of space each side.
+2. ❤️ and 👍🏽 show a plain heart and a yellow thumb. 🐕‍🦺 shows a dog and a vest. A flag shows
+   nothing. An emoji newer than the set shows a dim disc.
+3. After a few emoji answers, `int_min` is where 0.0.22 left it: no lower than before the update,
+   at the same phase.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -2007,6 +2377,10 @@ The same protocol as the S3 panels, so the box needs no new route for it:
   0.0.19) are the push notices: the oldest one waiting as a JN1 stream, the same stream again
   after a torn one, and what became of it on the glass; the debug pickup carries the notice switches
   (`&na=…&tz=…`) and its answer `X-Notice` says when one waits ("What 0.0.19 adds").
+- **`GET {api}/endpoint/convo/{agent}/speech/{turn_id}`**, **`GET …/history`** and **`GET
+  {api}/endpoint/messages/{device}/history`** (since 0.0.21) are Listen and Load earlier; **`GET
+  {api}/endpoint/panel-settings`** is the PWA's pending settings, fetched when the pickup's answer
+  carries `X-Panel-Settings` ("What 0.0.21 adds").
 - **`GET {api}/endpoint/settings`** is not polled by this image. When a later one polls it, it
   must send the same `?board=` — the response's `fw_version` is per board.
 - **`POST {api}/endpoint/telemetry`** is the heartbeat, in the S3's `TelemetryIn` shape:
@@ -2188,7 +2562,11 @@ person's thread since 0.0.15), from 0.0.15 `jerv-menu`, `jerv-recent`, `jerv-rec
 `quorra-playing`, `quorra-sending`, `quorra-sent`, `quorra-new`, `home-new` and `clock-new`, and
 from 0.0.17 `quorra-mid` and `quorra-heard`, from 0.0.18 `home-turned` and `clock-upside-down` (the
 panel turned: the PNG is the glass, each strip turned the device's way), `settings-no-imu`, `calib`,
-`calib-missed` and `calib-saved` (the
+`calib-missed` and `calib-saved`, from 0.0.21 `jerv-listen`, `jerv-listen-starting`,
+`jerv-listen-playing`, `jerv-listen-working`, `dave-listen`, `jerv-reply-reading`,
+`jerv-history`, `jerv-history-loading`, `jerv-history-loaded`, `jerv-history-capped`,
+`dave-history-start`, `quorra-history`, `quorra-history-loaded`, `jerv-steps-two`,
+`jerv-steps-four`, `jerv-steps-four-thinking` and `settings-from-pwa` (the
 twins' threads answered by the sim as `api/panel_messages.py` does, with placeholder names and
 words — her message playing, a voice message to her on its way and filed, a new one live in her
 thread, on her tile's badge and on the clock face's), and from

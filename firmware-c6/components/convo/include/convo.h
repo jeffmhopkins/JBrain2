@@ -46,6 +46,14 @@ typedef struct {
     int later_arg;
 } convo_recent_t;
 
+/* Load earlier's anchor (0.0.21): the message that keeps its place on the glass while a page
+ * lands above or below it, and where it was (its top, in screen pixels). */
+typedef struct {
+    uint32_t id;
+    int32_t y;
+    bool on;
+} convo_anchor_t;
+
 typedef struct {
     const convo_config_t *cfg;
     const app_host_t *host;
@@ -55,6 +63,11 @@ typedef struct {
     convo_work_t work;
     convo_sig_t drawn;
     convo_recent_t recent;
+    /* Listen (0.0.21): the speaking bubble's button and caption, changed in place by `speech`
+       (a 200 ms timer, only while something is said). */
+    ui_listen_parts_t speaking;
+    lv_timer_t *speech;
+    convo_anchor_t anchor;
     char listening[40];
 } convo_t;
 
@@ -83,6 +96,9 @@ const char *convo_new(convo_t *c);
 /* Opens Recent over the thread and asks the box for the list. */
 void convo_recent(convo_t *c);
 void convo_describe(const convo_t *c, dbg_json_t *w);
+
+/* The panel's zone now, local minus UTC seconds: Recent's row times and the start of a thread. */
+int32_t convo_zone_offset(int64_t now);
 
 /* ---- convo_recent.c: the Recent screen, the convo's own ---- */
 void convo_recent_open(convo_t *c);

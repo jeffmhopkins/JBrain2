@@ -23,13 +23,17 @@ only way to find out whether they do.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import hashlib
+import math
 import string
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import Literal, cast
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Literal, cast
 
 import httpx
 import structlog
@@ -426,6 +430,9 @@ async def send(
     if not audio:
         # Silence is not an error; it is a child who pressed and said nothing.
         raise HTTPException(status_code=400, detail="nothing said")
+    # The twins' panels run a fixed microphone gain too, so a message said from across the
+    # room is evened out the same way Dad's are.
+    audio = await asyncio.to_thread(_level_voice, audio)
     duration_ms = len(audio) * 1000 // (PANEL_RATE * 2)
 
     settings = cast(Settings, request.app.state.settings)
@@ -768,6 +775,7 @@ async def next_message(principal: PanelDep, request: Request, at: int = 0) -> Re
             # acknowledge what it could not verify, which leaves the message unplayed and the
             # pop-up standing.
             "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+            "X-Jpanel-Duration-Ms": _duration_ms(body),
         },
     )
 
@@ -813,6 +821,13 @@ async def message_pcm(message_id: str, principal: PanelDep, request: Request) ->
     return await pcm_reply(request, str(row[0]), message_id)
 
 
+def _duration_ms(body: bytes) -> str:
+    """How long `body` plays, for the ring that fills round the panel's play button as a message
+    plays. The panel streams the audio and never holds all of it, so it cannot measure this
+    itself."""
+    return str(len(body) * 1000 // (PANEL_RATE * 2))
+
+
 async def pcm_reply(request: Request, blob_sha: str, message_id: str) -> Response:
     """A stored message as the panels play it: 16 kHz mono s16, with the digest the panel checks
     as it plays. One body for a twin's replay and the desk panel's play, so both hear exactly
@@ -826,6 +841,7 @@ async def pcm_reply(request: Request, blob_sha: str, message_id: str) -> Respons
         headers={
             "X-Jpanel-Id": message_id,
             "X-Jpanel-Sha256": hashlib.sha256(body).hexdigest(),
+            "X-Jpanel-Duration-Ms": _duration_ms(body),
         },
     )
 
@@ -927,6 +943,110 @@ async def thread_with(maker, ctx: SessionContext, device_id: str, limit: int) ->
         ).all()
     names = await _panel_names(maker)
     return [_row_to_message(row, names) for row in reversed(rows)]
+
+
+@dataclass(frozen=True)
+class ThreadPage:
+    """A page of the owner's conversation with one twin (oldest first), how many messages remain
+    before its first and after its last, and when the conversation began — known only on the
+    page that reaches it (`older == 0`)."""
+
+    messages: list[Message]
+    older: int
+    newer: int
+    start_at: datetime | None
+
+
+_PAGE_COLUMNS = """id, sender_kind, sender_device, recipient_kind, recipient_device,
+    transcript, composed, duration_ms, created_at, played_at, deliveries"""
+
+
+async def thread_page(
+    maker,
+    ctx: SessionContext,
+    device_id: str,
+    *,
+    before: str | None = None,
+    after: str | None = None,
+    limit: int,
+) -> ThreadPage | None:
+    """Older (or newer) pages of `thread_with`'s conversation, for the desk panel's Load earlier
+    (firmware-c6 0.0.21): the `limit` messages just before `before` (the newest, with neither) or
+    just after `after`, in the order `thread_with` keeps — `created_at`, ties broken by id. None
+    when the anchor is not a message of this conversation. `ctx` is the owner's."""
+    anchor = after or before
+    if anchor is not None:
+        try:
+            uuid.UUID(anchor)
+        except ValueError:
+            return None
+    async with scoped_session(maker, ctx) as session:
+
+        async def count(cmp: str, at: Any, mid: str) -> int:
+            got = await session.execute(
+                text(
+                    f"SELECT count(*) FROM app.jpanel_message WHERE {_WITH_OWNER}"  # noqa: S608
+                    f" AND (created_at, id) {cmp} (:at, CAST(:mid AS uuid))"
+                ),
+                {"dev": device_id, "at": at, "mid": mid},
+            )
+            return int(got.scalar_one())
+
+        pivot = None
+        if anchor is not None:
+            pivot = (
+                await session.execute(
+                    text(
+                        f"SELECT created_at, id::text FROM app.jpanel_message"  # noqa: S608
+                        f" WHERE id = CAST(:id AS uuid) AND {_WITH_OWNER}"
+                    ),
+                    {"id": anchor, "dev": device_id},
+                )
+            ).first()
+            if pivot is None:
+                return None
+        where = _WITH_OWNER
+        params: dict[str, Any] = {"dev": device_id, "lim": limit}
+        if pivot is not None:
+            where += f" AND (created_at, id) {'>' if after else '<'} (:at, CAST(:mid AS uuid))"
+            params |= {"at": pivot[0], "mid": pivot[1]}
+        order = "created_at, id" if after else "created_at DESC, id DESC"
+        rows = (
+            await session.execute(
+                text(
+                    f"SELECT {_PAGE_COLUMNS} FROM app.jpanel_message"  # noqa: S608
+                    f" WHERE {where} ORDER BY {order} LIMIT :lim"
+                ),
+                params,
+            )
+        ).all()
+        if not after:
+            rows = list(reversed(rows))
+        if rows:
+            older = await count("<", rows[0][8], str(rows[0][0]))
+            newer = await count(">", rows[-1][8], str(rows[-1][0]))
+        elif pivot is not None:
+            older = await count("<=" if after else "<", pivot[0], pivot[1])
+            newer = await count(">", pivot[0], pivot[1])
+        else:
+            total = await session.execute(
+                text(f"SELECT count(*) FROM app.jpanel_message WHERE {_WITH_OWNER}"),  # noqa: S608
+                {"dev": device_id},
+            )
+            older, newer = int(total.scalar_one()), 0
+        start_at = None
+        if older == 0:
+            start_at = (
+                await session.execute(
+                    text(
+                        f"SELECT min(created_at) FROM app.jpanel_message"  # noqa: S608
+                        f" WHERE {_WITH_OWNER}"
+                    ),
+                    {"dev": device_id},
+                )
+            ).scalar_one()
+    names = await _panel_names(maker)
+    return ThreadPage([_row_to_message(r, names) for r in rows], older, newer, start_at)
 
 
 async def owner_row(
@@ -1398,6 +1518,59 @@ async def send_audio(
     return await file_owner_voice(request, ctx_for(owner), audio[:MAX_MESSAGE_BYTES], to_device)
 
 
+# THE LEVEL A MESSAGE IS FILED AT, in both directions. No panel auto-gains its microphone: the
+# twins' run a fixed PGA with the codec's AGC off (`endpoint.mic_agc`), and the desk panel's is
+# set low on purpose — a talk to Jerv held close peaked within 2 dB of clipping at 30 dB, so
+# 0.0.11 settled on 24, and a message said at arm's length then played back as quiet as it was
+# recorded (*"it seems really under gain"*, owner, 2026-10-13). So the box evens it out: the
+# voiced part is raised to a comfortable speech level, never by more than 18 dB (past that it is
+# the room being amplified, not a voice), never turned down (a phone's own AGC already got it
+# right), and its peaks are rounded off below full scale rather than clipped.
+_LEVEL_TARGET_RMS = 3300  # about -20 dBFS over the voiced frames
+_LEVEL_MAX_GAIN = 8.0  # +18 dB
+_LEVEL_KNEE = 0.7  # of full scale, where the soft limit begins
+
+
+def _level_voice(pcm: bytes) -> bytes:
+    """`pcm` (16 kHz mono s16) with its voiced part at a steady speech level; unchanged when it
+    is already there or there is nothing voiced to measure."""
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) - len(pcm) % 2])
+    frame = PANEL_RATE // 50
+    energies = [
+        sum(x * x for x in samples[i : i + frame]) / frame
+        for i in range(0, len(samples) - frame + 1, frame)
+    ]
+    if not energies:
+        return pcm
+    # Voiced: within 20 dB of the 95th-percentile frame, so the pauses between words do not
+    # drag the measure down. The reference is a percentile and the voiced frames are capped at
+    # it, because one bump, cough or click at the microphone must not stand in for the voice
+    # and switch the levelling off for the whole message (review of #1735).
+    # Over the frames with any sound at all: a long hold that is mostly digital silence between
+    # two sentences would otherwise put the percentile on a zero.
+    heard = sorted(e for e in energies if e > 0)
+    if not heard:
+        return pcm
+    ref = heard[(len(heard) - 1) * 95 // 100]
+    voiced = [min(e, ref) for e in heard if e >= ref / 100]
+    rms = math.sqrt(sum(voiced) / len(voiced))
+    gain = min(_LEVEL_MAX_GAIN, _LEVEL_TARGET_RMS / rms)
+    if gain <= 1.05:
+        return pcm
+    knee = _LEVEL_KNEE * 32767
+    room = 32767 - knee
+    out = array.array("h", bytes(len(samples) * 2))
+    for i, x in enumerate(samples):
+        y = x * gain
+        mag = abs(y)
+        if mag > knee:
+            mag = knee + room * math.tanh((mag - knee) / room)
+            y = math.copysign(mag, y)
+        out[i] = int(y)
+    return out.tobytes()
+
+
 async def file_owner_voice(
     request: Request, ctx: SessionContext, audio: bytes, to_device: str
 ) -> Message:
@@ -1409,6 +1582,8 @@ async def file_owner_voice(
         # The owner pressed record and said nothing, or held the wrong microphone. Refused
         # rather than filed: an empty message would draw a pop-up on a child's wall for silence.
         raise HTTPException(status_code=400, detail="nothing said")
+    # Off the event loop: a minute of audio is a million samples of pure Python.
+    audio = await asyncio.to_thread(_level_voice, audio)
     duration_ms = len(audio) * 1000 // (PANEL_RATE * 2)
 
     settings = cast(Settings, request.app.state.settings)

@@ -4,6 +4,6 @@
 idf_component_register(
     SRCS "esp/convo_port_esp.c" "convo_wire.c" "svc_convo.c"
     INCLUDE_DIRS "include"
-    REQUIRES app_api
-    PRIV_REQUIRES svc_audio svc_debug svc_messages
+    REQUIRES app_api svc_messages
+    PRIV_REQUIRES svc_audio svc_debug svc_post
 )

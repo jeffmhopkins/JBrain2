@@ -1,6 +1,6 @@
-"""A device's `location` scope grants only its explicit arms (SECURITY round 2, 0245).
+"""A device's `location` scope grants only its explicit arms (SECURITY round 2, 0247).
 
-`device_context` carries `domain_scopes=('location',)`. Before 0245 `has_domain_scope`
+`device_context` carries `domain_scopes=('location',)`. Before 0247 `has_domain_scope`
 honoured that claim for any principal kind, so a member phone passed every
 location-domain policy guarded by it alone — notes, chunks, entities, facts, events,
 review items. These prove the scope arm is owner-only now: a device reads and writes none

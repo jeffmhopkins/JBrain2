@@ -585,7 +585,7 @@ class SqlLocationRepo:
         `location.geofence_transition` events in time order.
 
         Reads `app.events`, whose RLS admits any location-scoped owner (narrowed
-        too) and, since 0245, a device's own/family crossings — so this MUST gate on
+        too) and, since 0247, a device's own/family crossings — so this MUST gate on
         `require_full_owner` first: RLS will NOT fail it closed. An enter still open
         at `until` is clamped to `until`; an exit with no preceding enter is dropped,
         as is any non-positive interval. `place_entity_id` optionally restricts to one place."""
@@ -627,7 +627,7 @@ class SqlLocationRepo:
         `place_entity_id`. A crossing whose place entity was since deleted falls back
         to a generic label rather than vanishing from the audit.
 
-        `app.events` RLS admits a narrowed owner (and a device's own crossings, 0245),
+        `app.events` RLS admits a narrowed owner (and a device's own crossings, 0247),
         so the full-owner gate here is the real barrier — a narrowed owner is refused,
         not handed rows."""
         require_full_owner(ctx)
@@ -669,7 +669,7 @@ class SqlLocationRepo:
         self-rendered map can project them without a geometry lib client-side.
 
         `place_geofence` READ also admits a device key through its explicit arm
-        (subject-less or own-subject fences, 0245), so the full-owner gate here is the
+        (subject-less or own-subject fences, 0247), so the full-owner gate here is the
         real barrier."""
         require_full_owner(ctx)
         async with scoped_session(self._maker, ctx) as session:
@@ -707,7 +707,7 @@ class SqlLocationRepo:
         own RLS additionally limits a device to subject-less / own-subject fences, so
         an un-shared or owner-private fence never reaches a member. Names come from
         `place_geofence`, never `entities`: a device's location scope is honoured only
-        by the explicit device arms (migration 0245), and `entities` has none, so no
+        by the explicit device arms (migration 0247), and `entities` has none, so no
         fence the owner did not share is ever named to a member."""
         async with scoped_session(self._maker, ctx) as session:
             rows = (
@@ -745,7 +745,7 @@ class SqlLocationRepo:
         limit: int,
     ) -> list[TimelineEntry]:
         """A member's timeline: geofence crossings at SHARED places for the subjects
-        the member may see (JBrain360 M4c). RLS (`events_device_geofence_read`, 0245)
+        the member may see (JBrain360 M4c). RLS (`events_device_geofence_read`, 0247)
         already limits a device to geofence crossings about its own or a family
         subject; the SQL repeats that subject predicate and adds the `place_share`
         join, which admits only owner-shared places. The place name comes from
@@ -821,7 +821,7 @@ class SqlLocationRepo:
         query so a coordinate never crosses the repo boundary into model-facing text.
 
         Reads `place_geofence` (the fence names/geometry), whose READ also admits a device key
-        through its explicit arm (0245), so this MUST gate on `require_full_owner` first — RLS will
+        through its explicit arm (0247), so this MUST gate on `require_full_owner` first — RLS will
         NOT fail it closed, and the distance to a private fence is itself a leak. Bounded by
         `ST_DWithin` and ordered by the `<->` KNN operator over the `place_geofence_center_idx` GiST
         index; circular fences only (a fence stores center XOR polygon)."""

@@ -190,3 +190,22 @@ def test_daves_welcome_and_first_time_beats(tmp_path: Path) -> None:
     the world's switches built, and `/dave hello` answered in the pack."""
     root = _node_root(tmp_path)
     _node_test(root / "welcome.test.mjs", cwd=root)
+
+
+def test_each_players_respawn_point_is_sent_when_it_changes() -> None:
+    """spawnpoint.test.mjs (§M8, beds): a bed or anchor's kind read from the block at
+    the point, so a bed broken under a remembered point is `other`; a line a tick after
+    a bed or anchor is used, on every join, after a respawn and from the ten-second
+    check, and only on a change."""
+    if shutil.which("node") is None:
+        pytest.fail("node is needed to run the jbrain pack's script (dev-setup has it)")
+    _node_test(MC / "jbrain-sim" / "spawnpoint.test.mjs")
+
+
+def test_main_only_starts_the_spawn_points() -> None:
+    """The spawn point's logic lives in its own module; main.js hands it the API."""
+    main = (PACK / "scripts" / "main.js").read_text()
+    assert 'import { initSpawnPoints } from "./spawnpoint.js";' in main
+    assert main.count("initSpawnPoints(") == 1
+    for name in ("spawnpoint.js", "spawnpoint_rules.js"):
+        assert "@minecraft/server" not in (PACK / "scripts" / name).read_text()

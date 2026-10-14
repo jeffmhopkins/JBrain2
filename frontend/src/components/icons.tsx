@@ -753,6 +753,14 @@ export const BedIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const AnchorIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 22V8" />
+    <path d="M5 12H2a10 10 0 0 0 20 0h-3" />
+    <circle cx="12" cy="5" r="3" />
+  </Icon>
+);
+
 export const EyeIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />

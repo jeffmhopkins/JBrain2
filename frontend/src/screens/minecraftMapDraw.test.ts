@@ -1,13 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BaseLayer, TileSpot } from "../minecraftMap";
-import { mcMapMarkers } from "../minecraftMapFixtures";
+import { mcMapEntities, mcMapMarkers, mcMapPlaces } from "../minecraftMapFixtures";
+import { spotKey } from "../minecraftMapLayers";
 import {
   type TileEntry,
   type Tokens,
+  bedGlyph,
   drawTiles,
   drawWorldMarkers,
   gateGlyph,
+  markerOwn,
   placeLabels,
+  respawnCurve,
   scanSquare,
 } from "./minecraftMapDraw";
 
@@ -159,6 +163,59 @@ describe("drawing beacons and gates", () => {
     ]);
   });
 
+  it("a gate aimed at a saved place's very block ends at that place's pin (X1)", () => {
+    const { ctx, log } = recordingCtx();
+    const out = drawWorldMarkers(ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -160, 68, -140)]),
+    });
+    // The line is still drawn to it; the violet pin, its label and its tap are the place's.
+    expect(out.avoid.segs).toHaveLength(1);
+    expect(out.pins).toEqual([]);
+    expect(out.labels.map((l) => l.txt)).toEqual(["to Nether base · in the Nether"]);
+    expect(log.some(([k, a]) => k === "arc" && a[2] === 12)).toBe(false);
+    // A place saved somewhere else keeps the gate's own pin where it still leads.
+    const moved = drawWorldMarkers(recordingCtx().ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -100, 68, -140)]),
+    });
+    expect(moved.pins.map((p) => p.g.id)).toEqual([1]);
+    // A mine saved under it, on the same column, isn't where the gate leads.
+    const below = drawWorldMarkers(recordingCtx().ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -160, 12, -140)]),
+    });
+    expect(below.pins.map((p) => p.g.id)).toEqual([1]);
+    // A place saved without a height can only be matched by its column.
+    const noHeight = drawWorldMarkers(recordingCtx().ctx, VIEW, FRAME, TOK, {
+      ...base,
+      placedAt: new Set([spotKey("overworld", -160, null, -140)]),
+    });
+    expect(noHeight.pins).toEqual([]);
+  });
+
+  it("this round's markers are keyed one by one, never by kind (X5)", () => {
+    const e = mcMapEntities("slot2", "overworld");
+    const [a, b] = e.pets;
+    const own = (m: (typeof e.pets)[number]) =>
+      markerOwn({ type: "pet", m, tok: null, x: 0, z: 0, sx: 0, sy: 0, pr: 1.6 });
+    expect(own(a as never)).not.toBe(own(b as never));
+    const place = mcMapPlaces("slot2").places[0];
+    expect(
+      markerOwn({
+        type: "place",
+        p: place as never,
+        tok: null,
+        own: "pl:p1",
+        x: 0,
+        z: 0,
+        sx: 0,
+        sy: 0,
+        pr: 1,
+      }),
+    ).toBe("pl:p1");
+  });
+
   it("fills only the tapped square, and keeps the tapped gate apart for its ring", () => {
     const { ctx, log } = recordingCtx();
     const out = drawWorldMarkers(ctx, VIEW, FRAME, TOK, {
@@ -198,6 +255,41 @@ describe("drawing beacons and gates", () => {
     expect(dorm.log.filter(([k]) => k === "fill")).toHaveLength(1); // halo only
     expect(dorm.log.filter(([k]) => k === "stroke")).toHaveLength(3); // ring, frame, swirl
     vi.unstubAllGlobals();
+  });
+});
+
+describe("beds and the respawn curve (§M8)", () => {
+  it("a bed is its player's ring, dashed only when no bed was seen at the point", () => {
+    vi.stubGlobal("Path2D", class {});
+    const dashed = (log: [string, unknown[]][]) =>
+      log.some(([k, a]) => k === "setLineDash" && JSON.stringify(a) === "[[3,2.5]]");
+    const bed = recordingCtx();
+    bedGlyph(bed.ctx, 50, 50, "bed", "#7fa7c9", TOK, false);
+    const unseen = recordingCtx();
+    bedGlyph(unseen.ctx, 50, 50, "other", "#7fa7c9", TOK, true);
+    expect(dashed(bed.log)).toBe(false);
+    expect(dashed(unseen.log)).toBe(true);
+    // The tapped one carries the selection ring.
+    expect(unseen.log.some(([k, a]) => k === "arc" && a[2] === 18)).toBe(true);
+    expect(bed.log.some(([k, a]) => k === "arc" && a[2] === 18)).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it("curves from the skull to the waking with an arrowhead, clear of both ends", () => {
+    const { ctx, log } = recordingCtx();
+    const segs = respawnCurve(ctx, 0, 200, 200, 0, "#7fa7c9", TOK);
+    expect(segs.length).toBeGreaterThan(4);
+    // It bows off the straight line between the ends: a jump, not a path.
+    const mid = segs[Math.floor(segs.length / 2)];
+    expect(Math.abs((mid?.ax ?? 0) + (mid?.ay ?? 0) - 200)).toBeGreaterThan(20);
+    // Halo then colour, twice: the curve and its arrowhead.
+    expect(log.filter(([k]) => k === "stroke")).toHaveLength(4);
+    const first = segs[0];
+    expect(Math.hypot(first?.ax ?? 0, (first?.ay ?? 0) - 200)).toBeGreaterThan(10);
+    // Ends that touch draw nothing.
+    const near = recordingCtx();
+    expect(respawnCurve(near.ctx, 0, 0, 20, 20, "#7fa7c9", TOK)).toEqual([]);
+    expect(near.log).toEqual([]);
   });
 });
 

@@ -965,9 +965,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         # v23: v22's two halves merged: the scan's status read and the map's scan focus
         # (§M25), and `mc_find_villager` / `mc_find_pet` with the lore's two lines and the
         # Tricorder pointing through a known portal (§M4e).
+        # v24: `mc_show_map`'s villager and pet focuses, after a finder (§M4e on the map).
         "minecraft_dave": (
-            "agent-minecraft-dave-v23",
-            "2aa99b2b8be2cb0d392e08a5c68cc92a3b0b0060edc7ebfaa6cc1453423b9955",
+            "agent-minecraft-dave-v24",
+            "119dbb39bfc245a932a0ef87889058f8739dcd530438f8f7992287071202ced4",
         ),
         # v10 is O16 decided (option 1): unprompted owner text now becomes an `addition`
         # block on the note (migration 0203), so the persona's rule for `assert_fact` —

@@ -1,4 +1,5 @@
-/* The CO5300 AMOLED over QSPI, drawn by LVGL in 480×40 strips from one internal DMA buffer.
+/* The CO5300 AMOLED over QSPI, drawn by LVGL in 480×40 strips (480×32 on its side) from one
+ * internal DMA buffer.
  *
  * Portions (the panel init table `INIT_CMDS`, the bus and IO setup, the ALDO3 reset order and
  * the even-alignment rounding) are ported from Waveshare's board support package
@@ -35,11 +36,15 @@
 
 static const char *TAG = "display";
 
-#define W 480
-#define H 480
+#define W DISP_N
+#define H DISP_N
 /* 38.4 KB: the sim's strip and the README's budget. Even, as the CO5300 needs every window. */
-#define STRIP_ROWS 40
+#define STRIP_ROWS DISP_STRIP_ROWS
 #define BUF_BYTES (W * STRIP_ROWS * 2)
+/* On its side LVGL is given the head of the same buffer and the tail holds the two pieces. */
+#define SIDE_PX (W * DISP_SIDE_ROWS)
+_Static_assert(SIDE_PX + DISP_ROT_PIECES * DISP_ROT_PIECE_PX == W * STRIP_ROWS,
+               "the pieces are exactly the rows LVGL gives up on its side");
 #define PIN_CS 15
 #define PIN_SCLK 0
 #define PIN_D0 1
@@ -54,6 +59,9 @@ static const char *TAG = "display";
    reach this glass. */
 #define BRIGHTNESS_HOLD_MS 2000
 #define QSPI_WRITE_CMD(reg) ((0x02u << 24) | ((uint32_t)(reg) << 8))
+/* The sh8601 driver's own pixel framing (its LCD_OPCODE_WRITE_COLOR): opcode 0x32, four lines from
+   the address on. CO-DS §5.2 gives 0x002C00 and 0x003C00 as the two addresses it takes. */
+#define QSPI_PIXEL_CMD(reg) ((0x32u << 24) | ((uint32_t)(reg) << 8))
 
 /* The vendor table, byte for byte (HARDWARE.md §2). Page-0x20 registers 0x19/0x1C are opaque
    panel tuning; MADCTL's 0x30 sets bits the CO5300 datasheet calls don't-care. */
@@ -96,9 +104,13 @@ static char s_state[28] = "off";
 static const char *s_lcdrst = "-";
 static bool s_ok;
 
+static lv_display_t *s_disp;
 static uint32_t s_frames, s_flush_errs, s_last_frame_ms;
 static uint64_t s_frame_us;
+static uint32_t s_frame_px;
+static int64_t s_render_t0;
 static uint32_t s_first_frame_ms;
+static disp_stat_t s_stat[4]; /* by rotation */
 
 /* Recorded by any task, applied by the UI task. */
 static volatile uint8_t s_req_pct = 50;
@@ -127,23 +139,59 @@ static svc_display_strip_fn s_tap;
 static void *s_tap_ctx;
 
 /* Auto-rotate (0.0.18, disp_logic.h): asked for by svc_orient from the UI task, applied by the
-   same task between frames. A quarter turn needs the piece buffer, which exists only while the
-   panel is on its side: upright or upside down it is never allocated. */
-#define PIECE_BYTES (DISP_ROT_PIECE_PX * 2)
+   same task between frames. On its side (0.0.22) the two pieces are the strip buffer's own tail,
+   given up by LVGL while the panel is turned, so a turn asks the heap for nothing. */
 static volatile uint8_t s_rot_req;
 static uint8_t s_rot;
-static uint16_t *s_piece;
-static uint32_t s_rot_changes, s_rot_fail;
+static uint32_t s_rot_changes;
 static void (*s_rotated)(uint8_t quarters);
 
-/* One window to the glass, waited for: the buffer is LVGL's strip or the one piece buffer, and
-   neither may be touched again until the DMA has finished with it. */
+static esp_err_t wait_sent(void)
+{
+    return xSemaphoreTake(s_done, pdMS_TO_TICKS(FLUSH_TIMEOUT_MS)) == pdTRUE ? ESP_OK
+                                                                              : ESP_ERR_TIMEOUT;
+}
+
+/* One window to the glass, waited for: LVGL may not draw into its strip again until the DMA has
+   finished with it. */
 static esp_err_t send(const disp_win_t *g, const uint16_t *px)
 {
-    esp_err_t e = esp_lcd_panel_draw_bitmap(s_panel, g->x1, g->y1, g->x2 + 1, g->y2 + 1, px);
-    if (e == ESP_OK && xSemaphoreTake(s_done, pdMS_TO_TICKS(FLUSH_TIMEOUT_MS)) != pdTRUE)
-        e = ESP_ERR_TIMEOUT;
-    return e;
+    const esp_err_t e =
+        esp_lcd_panel_draw_bitmap(s_panel, g->x1, g->y1, g->x2 + 1, g->y2 + 1, px);
+    return e == ESP_OK ? wait_sent() : e;
+}
+
+static esp_err_t set_window(const disp_win_t *g)
+{
+    const uint8_t cols[] = {g->x1 >> 8, g->x1 & 0xFF, g->x2 >> 8, g->x2 & 0xFF};
+    const uint8_t rows[] = {g->y1 >> 8, g->y1 & 0xFF, g->y2 >> 8, g->y2 & 0xFF};
+    const esp_err_t e = esp_lcd_panel_io_tx_param(s_io, QSPI_WRITE_CMD(0x2A), cols, sizeof cols);
+    return e == ESP_OK ? esp_lcd_panel_io_tx_param(s_io, QSPI_WRITE_CMD(0x2B), rows, sizeof rows)
+                       : e;
+}
+
+/* A quarter turn (0.0.22): the strip's turned window set once, then its pieces streamed into it,
+ * each gathered while the one before it is on the wire. A piece buffer is gathered into only
+ * after the transfer that last read it was waited for — the one two pieces back, waited before
+ * the one between was sent. Before, every 2.5 KB piece was its own draw_bitmap (CASET, RASET and
+ * RAMWR: five polled transactions) and its DMA was waited for with nothing gathered meanwhile.
+ * Each piece is the bus's queued transfer, so color_done still marks its end. */
+static esp_err_t send_sideways(const disp_win_t *l, const uint16_t *px)
+{
+    const int32_t w = l->x2 - l->x1 + 1, h = l->y2 - l->y1 + 1, k = disp_rot_piece_rows(h);
+    const disp_win_t g = disp_rot_area(s_rot, W, *l);
+    esp_err_t e = set_window(&g);
+    bool in_flight = false;
+    disp_piece_t p;
+    for (int32_t i = 0; e == ESP_OK && disp_rot_step(w, k, i, &p); i++) {
+        uint16_t *piece = s_buf + SIDE_PX + p.buf * DISP_ROT_PIECE_PX;
+        disp_rot_piece(s_rot, W, *l, px, p.r0, p.rows, piece);
+        if (in_flight && (e = wait_sent()) != ESP_OK) return e;
+        e = esp_lcd_panel_io_tx_color(s_io, QSPI_PIXEL_CMD(p.cmd), piece,
+                                      (size_t)(p.rows * h) * sizeof *piece);
+        in_flight = e == ESP_OK;
+    }
+    return in_flight ? wait_sent() : e;
 }
 
 static esp_err_t send_turned(const lv_area_t *a, uint16_t *px)
@@ -155,13 +203,7 @@ static esp_err_t send_turned(const lv_area_t *a, uint16_t *px)
         const disp_win_t g = disp_rot_area(2, W, l);
         return send(&g, px);
     }
-    const int32_t w = a->x2 - a->x1 + 1, k = disp_rot_piece_rows(a->y2 - a->y1 + 1);
-    esp_err_t e = ESP_OK;
-    for (int32_t r0 = 0; r0 < w && e == ESP_OK; r0 += k) {
-        const disp_win_t g = disp_rot_piece(s_rot, W, l, px, r0, k, s_piece);
-        e = send(&g, s_piece);
-    }
-    return e;
+    return send_sideways(&l, px);
 }
 
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
@@ -172,6 +214,7 @@ static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
         lv_draw_sw_rgb565_swap(px, lv_area_get_size(a));
         const esp_err_t e = send_turned(a, (uint16_t *)px);
         s_frame_us += (uint64_t)(esp_timer_get_time() - t0);
+        s_frame_px += lv_area_get_size(a);
         if (e != ESP_OK) {
             s_flush_errs++;
             s_ok = false;
@@ -182,7 +225,10 @@ static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px)
     if (lv_display_flush_is_last(d)) {
         s_frames++;
         s_last_frame_ms = (uint32_t)(s_frame_us / 1000);
+        disp_stat_add(&s_stat[s_rot & 3], (uint32_t)s_frame_us,
+                      (uint32_t)(esp_timer_get_time() - s_render_t0), s_frame_px >= W * H);
         s_frame_us = 0;
+        s_frame_px = 0;
         if (!s_first_frame_ms) s_first_frame_ms = now_ms() | 1;
     }
     lv_display_flush_ready(d);
@@ -194,12 +240,32 @@ static void rounder(lv_event_t *e)
     disp_area_even(&a->x1, &a->y1, &a->x2, &a->y2, W, H);
 }
 
+static void render_start(lv_event_t *e)
+{
+    (void)e;
+    s_render_t0 = esp_timer_get_time();
+}
+
 static bool fail(const char **failed_step, const char *step, esp_err_t e)
 {
     snprintf(s_state, sizeof s_state, "failed:%s", step);
     ESP_LOGE(TAG, "%s: %s — running headless", step, esp_err_to_name(e));
     *failed_step = step;
     return false;
+}
+
+static uint32_t st_full_max(const disp_stat_t *s)
+{
+    return s->full_max_ms;
+}
+
+/* One number per rotation, "0°/90°/180°/270°". */
+static const char *rot4(char *out, size_t len, uint32_t (*get)(const disp_stat_t *))
+{
+    snprintf(out, len, "%lu/%lu/%lu/%lu", (unsigned long)get(&s_stat[0]),
+             (unsigned long)get(&s_stat[1]), (unsigned long)get(&s_stat[2]),
+             (unsigned long)get(&s_stat[3]));
+    return out;
 }
 
 static void describe(void *ctx, dbg_json_t *w)
@@ -214,7 +280,9 @@ static void describe(void *ctx, dbg_json_t *w)
     dbg_json_int(w, "flush_errors", s_flush_errs);
     dbg_json_int(w, "rotation", s_rot * 90);
     dbg_json_int(w, "rot_changes", s_rot_changes);
-    dbg_json_int(w, "rot_no_memory", s_rot_fail);
+    char v[112];
+    disp_stat_fmt(v, sizeof v, s_stat);
+    dbg_json_str(w, "rot_ms", v);
     dbg_json_str(w, "driver", "co5300");
 }
 
@@ -272,10 +340,12 @@ bool svc_display_start(const char **failed_step)
     dbg_sys_crumb(ST_LVGL);
     lv_display_t *d = lv_display_create(W, H);
     if (!d) return fail(failed_step, "lvgl", ESP_ERR_NO_MEM);
+    s_disp = d;
     lv_display_set_color_format(d, LV_COLOR_FORMAT_RGB565);
     lv_display_set_buffers(d, s_buf, NULL, BUF_BYTES, LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(d, flush);
     lv_display_add_event_cb(d, rounder, LV_EVENT_INVALIDATE_AREA, NULL);
+    lv_display_add_event_cb(d, render_start, LV_EVENT_RENDER_START, NULL);
 
     s_ok = true;
     snprintf(s_state, sizeof s_state, "ok");
@@ -283,28 +353,21 @@ bool svc_display_start(const char **failed_step)
     return true;
 }
 
-/* Between frames: the new turn and a whole screen drawn in it. With no memory for a quarter
-   turn's piece buffer the glass stays as it was and the next pass tries again. */
+/* Between frames: the new turn and a whole screen drawn in it. Onto or off its side, LVGL's strip
+   changes height first. No strip is in flight here, and LVGL takes each strip's height from the
+   buffer it holds, through the rounder, so it stays even (lv_refr.c get_max_row). */
 static void apply_rotation(void)
 {
     const uint8_t want = s_rot_req;
     if (want == s_rot) return;
-    if ((want & 1) && !s_piece) {
-        s_piece = heap_caps_malloc(PIECE_BYTES, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-        if (!s_piece) {
-            s_rot_fail++;
-            return;
-        }
-    }
+    if ((want & 1) != (s_rot & 1))
+        lv_display_set_buffers(s_disp, s_buf, NULL, (want & 1) ? SIDE_PX * 2 : BUF_BYTES,
+                               LV_DISPLAY_RENDER_MODE_PARTIAL);
     s_rot = want;
-    if (!(want & 1)) {
-        heap_caps_free(s_piece);
-        s_piece = NULL;
-    }
     s_rot_changes++;
     lv_obj_invalidate(lv_screen_active());
-    /* Touch turns with the glass, not with the request: a turn refused for memory leaves taps
-       mapped to what is showing. */
+    /* Touch turns with the glass, not with the request: until this pass taps stay mapped to what
+       is showing. */
     if (s_rotated) s_rotated(want);
     ESP_LOGI(TAG, "turned to %u°", (unsigned)want * 90);
 }
@@ -366,12 +429,16 @@ void svc_display_mark_skipped(void)
 void svc_display_note(char *out, size_t len)
 {
     const char *bri = s_pending ? "pend" : s_bri_err == ESP_OK ? "sent" : "err";
+    /* `full_ms` is each rotation's mean whole-glass flush, 0°/90°/180°/270°, and `full_max` its
+       worst: 0 for a rotation not shown this boot. */
+    char full[48], worst[48];
     snprintf(out, len,
              "display=%s lcdrst=%s frames=%lu flush_ms=%lu flush_err=%lu bri=%u/%u/%s bri_n=%lu "
-             "dark=%d rot=%u",
+             "dark=%d rot=%u full_ms=%s full_max=%s",
              s_state, s_lcdrst, (unsigned long)s_frames, (unsigned long)s_last_frame_ms,
              (unsigned long)s_flush_errs, s_req_pct, s_sent, bri, (unsigned long)s_writes,
-             s_dark ? 1 : 0, (unsigned)s_rot * 90);
+             s_dark ? 1 : 0, (unsigned)s_rot * 90, rot4(full, sizeof full, disp_stat_full_avg_ms),
+             rot4(worst, sizeof worst, st_full_max));
 }
 
 /* ---- svc_display.h: any task records, the UI task applies ---- */

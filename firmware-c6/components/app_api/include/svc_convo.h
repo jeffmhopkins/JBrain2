@@ -67,3 +67,17 @@ bool svc_convo_earlier(const char *agent);
 void svc_convo_new(const char *agent);
 /* Moves whenever anything above does: a view redraws when it is not what it drew. */
 uint32_t svc_convo_rev(void);
+
+/* ---- Load earlier (0.0.21, owner-approved 2026-10-13) ----
+ * The thread views' rows above and below their messages (svc_messages_hist), asked of the box
+ * here: `thread` is the svc_messages thread, `who` the agent ("jerv", "dave") or, for a person's
+ * thread, her panel's device id. The answers land in svc_messages and announce the thread. */
+/* The live view's "Load earlier · N more": asked once a thread is open and again whenever its
+ * oldest message changes. Cheap to call on every redraw. */
+void svc_convo_hist_open(const char *thread, const char *who);
+/* "Load earlier": the window begins (the live messages copied) and ten older are asked for. */
+void svc_convo_hist_earlier(const char *thread, const char *who);
+/* "Newer messages": ten after the window's last. */
+void svc_convo_hist_newer(const char *thread, const char *who);
+/* Back to the newest: a new KEY message, or the thread closing. */
+void svc_convo_hist_live(const char *thread);

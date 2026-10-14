@@ -1,6 +1,6 @@
 # jpanel messaging — the fix plan after the adversarial review
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** FW🟡 (firmware 0.4.0–0.4.7, §15) W1◻️ W2◻️ W3◻️ P1◻️
+> **Status:** In progress · **Last verified:** 2026-10-14 · **Waves:** FW🟡 (firmware 0.4.0–0.4.13, §15) W1◻️ W2◻️ W3◻️ P1◻️
 >
 > **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
 > until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs
@@ -2522,6 +2522,30 @@ in flight. Two faults the owner saw within the hour:
 - *The animation was choppy.* With the socket off, every request was a fresh TLS handshake, and
   the 3 s settings poll made that one every 3 s. `link.c` now keeps one connection between
   requests, turned on only after speech has started (`firmware/README.md`).
+
+**0.4.13, tickled out.** The laughing fit the fifth tickle sets off leads into a fart, and the
+fart into sitting dazed (`firmware/README.md`).
+
+**0.4.12, a tickle that looks like a tickle.** Each tickle is its own squirm and "hehehe", not
+the poke giggle, and he waits visibly braced while the game is on. And one fart in ten is the
+long one: seven seconds of different rude noises back to back, with a cloud. And the poop is
+one of eight, each its own shape, face, stink and flies (`firmware/README.md`).
+
+**0.4.11, from the owner trying 0.4.10.** The meal is three bites of one of eight snacks, and the tickle's laugh is
+cheap enough to render that the squirming no longer freezes at each one. Three meals in a
+minute and he poops, and the poop slides with the panel's tilt for 20 s; and "I'm going to tickle
+you" warns him, after which five pokes tickle him into the laughing fit (`firmware/README.md`).
+
+**0.4.10, tickle tickle and a real meal.** A new laughing action from `tickle tickle` /
+`tickle me`; eating becomes five bites of a cookie with a crunch on each; the dizzy and love
+actions last twice as long; and a poke over the pet's own sounds reacts again rather than only
+flinching (`firmware/README.md`).
+
+**0.4.9, a ring round the play button.** It fills as the message plays, from the length the box
+now sends as `X-Jpanel-Duration-Ms` on `/next` and on a replay (`firmware/README.md`).
+
+**0.4.8, from the owner's photo of the head righting itself.** The eyes, their lids and the beak
+now turn with the head instead of only moving to where it turned (`firmware/README.md`).
 
 **0.4.7, two animations the owner asked for.** Shaking the panel makes the pet sit down dazed
 with stars round his head, and `i love you` / `love you` brings hearts and a double coo

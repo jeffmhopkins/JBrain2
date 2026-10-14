@@ -1696,6 +1696,59 @@ class Rig:
             **self._fresh(folder, flushed),
         }
 
+    def map_entities(
+        self,
+        slot_id: str,
+        dim: str,
+        box: tuple[int, int, int, int] | None = None,
+    ) -> dict[str, Any]:
+        """Every villager, pet and named mob the map draws in one dimension, or in `box`
+        (§M4e on the map): the villages by 48-block grouping, each villager without its
+        trades (`map_villager` has them), and each pet's owner by name where the world
+        knows them. Never flushes: the automatic re-read is the only one. `live` says the
+        world is the running one, where the files' age undersells how old a mob's
+        position is (a loaded chunk's actors are written when it saves, not every tick)."""
+        if dim not in mapping.DIMENSIONS:
+            raise ValueError("dimension must be overworld, nether or the_end")
+        if box is not None:
+            x0, z0, x1, z1 = box
+            if x0 > x1 or z0 > z1 or max(abs(v) for v in box) > 30_000_000:
+                raise ValueError("box is x0,z0,x1,z1 inside the world, low corner first")
+        folder = self._world_folder(slot_id)
+        names = {
+            v["id"]: v["name"]
+            for v in self.player_ids(folder).values()
+            if isinstance(v, dict)
+        }
+        with self._map_lock:
+            index = self._entities(folder, "not asked")
+            got = entities.listing(index.mobs, mapping.DIMENSIONS[dim], box)
+            stats = index.counts()
+        for p in got["pets"]:
+            p["owner_name"] = names.get(p["owner"] or "", "")
+            p.pop("dim", None)
+        for m in got["named"]:
+            m.pop("dim", None)
+        return {
+            "dimension": dim,
+            **got,
+            "live": folder == self.active_folder() and self.bds.running,
+            **stats,
+            **_freshness(self.world_dir(folder) / "db"),
+        }
+
+    def map_villager(self, slot_id: str, key: str) -> dict[str, Any]:
+        """One villager by its map id, with every trade it offers now; `found` is None
+        when the index no longer has it (it died, or the files moved on)."""
+        if not _MOB_KEY.fullmatch(key):
+            raise ValueError("id is a villager's id from /map/entities")
+        folder = self._world_folder(slot_id)
+        with self._map_lock:
+            got = entities.villager_by_id(self._entities(folder, "not asked").mobs, key)
+        if got is not None:
+            got["dimension"] = _DIMENSIONS.get(got.pop("dim"), "overworld")
+        return {"found": got, **_freshness(self.world_dir(folder) / "db")}
+
     def map_pets(
         self,
         slot_id: str,
@@ -2269,6 +2322,36 @@ class Handler(BaseHTTPRequestHandler):
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/entities":
+            q = {k: v[0] for k, v in query.items()}
+            corners = [q.get(k, "") for k in ("x0", "z0", "x1", "z1")]
+            box: tuple[int, int, int, int] | None = None
+            try:
+                if any(corners):
+                    x0, z0, x1, z1 = (int(v) for v in corners)
+                    box = (x0, z0, x1, z1)
+            except ValueError:
+                self._send(400, {"detail": "a box is x0, z0, x1 and z1, whole numbers"})
+                return
+            try:
+                self._send(
+                    200,
+                    rig.map_entities(
+                        q.get("slot", "slot1"), q.get("dim", "overworld"), box
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
+        elif url.path == "/map/villagers" and query.get("id"):
+            try:
+                self._send(
+                    200,
+                    rig.map_villager(
+                        query.get("slot", ["slot1"])[0], query.get("id", [""])[0]
+                    ),
+                )
+            except ValueError as exc:
+                self._send(400, {"detail": str(exc)})
         elif url.path in ("/map/villagers", "/map/pets"):
             q = {k: v[0] for k, v in query.items()}
             try:
@@ -2593,6 +2676,8 @@ _ITEM_NAME = re.compile(r"^([a-z0-9_]{1,32}:)?[a-z0-9_]{2,64}$")
 
 
 _PLAYER_ID = re.compile(r"^-?\d{1,20}$")
+# An entity's map id: its UniqueID, or where it stood when it had none.
+_MOB_KEY = re.compile(r"^(-?\d{1,20}|at:-?\d{1,2}:-?\d{1,9}:-?\d{1,4}:-?\d{1,9})$")
 _WORD = re.compile(r"^[a-z0-9_:]{0,64}$")
 
 

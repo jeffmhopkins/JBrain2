@@ -35,6 +35,8 @@ static int16_t mock_voice(bool dad, uint32_t i);
 #include <math.h>
 
 #include "caption.h"
+#include "poop.h"
+#include "tickle.h"
 #include "confirm.h"
 #include "cue_names.gen.h"
 #include "emotion.h"
@@ -108,6 +110,21 @@ static face_state_t r_fst;
 static rig_walk_t r_walk;
 static action_t r_action;
 static uint32_t r_action_at;
+static uint32_t r_recue_from;
+/* A random number for the bench's 1-in-10 fart and its poops, from the panel clock: the bench has no RNG,
+   and a fixed sequence would make "Fart" always the same one. */
+static uint32_t r_now_rnd(void)
+{
+    return (g_now / 40u) * 2654435761u >> 7;
+}
+
+/* As the panel does: three snacks in a minute and he has to go (`poop.h`). */
+static poop_t r_poop;
+static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
+static rig_run_t r_run; /* what follows r_action (`rig_run_next`) */
+static float r_mag = 1.0f; /* the action's magnitude: the tickles rise */
+static uint32_t r_poop_last;
+static float r_recue_p;
 static float r_flinch;
 static int r_frame;
 /* The page's tilt slider, in degrees right-side down. Upright only: the bench does not turn. */
@@ -440,23 +457,61 @@ static void frame(void)
         r_mode_was = s_sm.mode;
     }
     if (execute(now)) {
+        r_mag = 1.0f;
         r_action = ACT_NOD;
         r_action_at = now;
     }
     if (r_pending_act != ACT_NONE) {
+        r_mag = 1.0f;
         r_action = r_pending_act;
         r_action_at = now;
         r_pending_act = ACT_NONE;
+        if (r_action == ACT_EAT && poop_ate(&r_poop, now)) say("pet", "three meals in a minute");
+        if (r_action == ACT_BRACE) tickle_arm(&r_tickle, now);
+        if (r_action == ACT_EAT) {
+            static const char *const FOOD[FOOD_COUNT] = {"cookie", "apple",  "banana", "pizza",
+                                                         "donut",  "carrot", "watermelon",
+                                                         "strawberry"};
+            r_fst.food = food_pick(r_fst.food, now * 2654435761u);
+            say("pet", "eats a %s", FOOD[r_fst.food]);
+        }
         /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
            is a voice command, and those are deaf while a message plays. */
-        if (s_sm.mode == SM_PET && !facts.speaker_busy) {
+        if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
             const cue_t c = cue_for_action((int)r_action);
             (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
             say("cue", "%s (press slot)", cue_name(c));
         }
-        say("pet", "%s", r_action == ACT_DIZZY ? "shaken: dizzy" : "heard \"i love you\"");
+        say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
+                         : r_action == ACT_LOVE ? "heard \"i love you\""
+                         : r_action == ACT_EAT  ? "heard \"have a snack\""
+                         : r_action == ACT_FART ? "heard \"fart\": a short one"
+                         : r_action == ACT_MEGAFART ? "heard \"fart\": THE LONG ONE"
+                                                : "heard \"im going to tickle you\"");
     }
     if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
+    /* As the panel does: warned, a poke is a tickle. The bench has no poke pools, so an
+       unwarned poke stays a flinch. */
+    if (s_out.pet_press && facts.pet_only && !rig_holds_pokes(r_action)) {
+        const tickle_poke_t tk = tickle_poke(&r_tickle, now);
+        if (tk != TICKLE_NO) {
+            r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
+            r_mag = tk == TICKLE_BIG ? 1.0f : tickle_mag(&r_tickle);
+            if (tk == TICKLE_BIG) rig_run_start(&r_run, rig_run_tickled_out(), now);
+            r_flinch = 0.0f;
+            r_action_at = now;
+            const cue_t c = cue_for_action((int)r_action);
+            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+            say("cue", "%s (press slot)", cue_name(c));
+            say("pet", "%s", tk == TICKLE_BIG ? "tickled: the fifth gets him" : "tickled");
+        }
+    }
+    if (r_poop.owed && r_action == ACT_NONE && s_sm.mode == SM_PET) {
+        r_mag = 1.0f;
+        r_action = ACT_POOP;
+        r_action_at = now;
+        say("pet", "has to go");
+    }
 
     /* The screen's stages, simplified: standby is pinned dark, anything else dims and darkens on
        the idle clock, and a person or a message brings it back. */
@@ -490,22 +545,63 @@ static void frame(void)
         const int dur = rig_spec(r_action)->dur_ms;
         const uint32_t el = now - r_action_at;
         if (dur <= 0 || (int)el >= dur) {
-            r_action = ACT_NONE;
-        } else {
-            p = (float)el / (float)dur;
+            /* As the panel does: tickled out, the fit leads into a fart and then dazed. */
+            r_action = rig_run_next(&r_run, r_action, r_action_at, now);
+            if (r_action != ACT_NONE) {
+                r_mag = 1.0f;
+                r_action_at = now;
+                if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
+                    const cue_t c = cue_for_action((int)r_action);
+                    (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+                    say("cue", "%s (press slot)", cue_name(c));
+                }
+                say("pet", "laughed out: %s", r_action == ACT_FART ? "a fart" : "dazed");
+            }
+        }
+        if (r_action != ACT_NONE) {
+            p = (float)(now - r_action_at) / (float)rig_spec(r_action)->dur_ms;
         }
     }
+    /* As the panel does: warned and idle, he holds the brace, shivering (`tickle_wait_p`). */
+    action_t shown = r_action;
+    float shown_p = p;
+    float shown_mag = r_mag;
+    if (r_action == ACT_NONE && tickle_armed(&r_tickle, now)) {
+        shown = ACT_BRACE;
+        shown_p = tickle_wait_p(now);
+        shown_mag = 1.0f;
+    }
+    /* As the panel does (`display.c`): an action that outlasts its sound says it again. */
+    if (r_action_at != r_recue_from) {
+        r_recue_from = r_action_at;
+        r_recue_p = 0.0f;
+    }
+    /* Not on the frame it started: `facts` was read before that start cue went in, so the
+       speaker still looks free, where the panel reads its facts after (review). */
+    if (r_action != ACT_NONE &&
+        (rig_recue(r_action, r_recue_p, p) ||
+         (rig_recue_continuous(r_action, p) && r_action_at != now)) &&
+        view->mode == SM_PET && !facts.speaker_busy) {
+        const cue_t c = cue_for_action((int)r_action);
+        (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+        say("cue", "%s (press slot, again)", cue_name(c));
+    }
+    if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
+        poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF, r_now_rnd());
+        say("pet", "plop (kind %d)", r_poop.kind);
+    }
+    r_recue_p = p;
     const bool conversing = view->mode == SM_LISTEN || view->mode == SM_RECORD || view->think;
     const bool dozing = screen_dozing(r_sleep, conversing, facts.speaker_busy);
     face_params_t target;
     emotion_resolve(dozing                    ? FACE_SLEEPY
                     : view->mode == SM_LISTEN ? FACE_CURIOUS
                     : view->dash              ? FACE_BEWILDERED
-                                              : rig_spec(r_action)->face,
+                                              : rig_spec(shown)->face,
                     &target);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
     emotion_approach_face(&r_fst.eyes, &target, target.rate);
-    rig_for(r_action, p, 1.0f, now, &r_fst.rig);
+    rig_for(shown, shown_p, shown_mag, now, &r_fst.rig);
     /* `display.c`'s `update_orientation`, upright: the lean and the head's righting from a
        panel turned `r_tilt_deg`, as the accelerometer (one g = 8192) would report it. The
        lean's arithmetic is copied; the axes and the righting are `orient.c`'s own. */
@@ -524,8 +620,16 @@ static void frame(void)
         rig_walk(&r_walk, (float)(r_lean - was), &r_fst.rig);
         r_fst.lean = r_lean;
         r_fst.upright = r_upright;
+        const uint32_t dt = r_poop_last != 0 ? now - r_poop_last : 0u;
+        r_poop_last = now;
+        /* 2400 is `display.c`'s LEAN_FULL, the same copied number the lean above uses. */
+        poop_step(&r_poop, now, (float)tilt / 2400.0f, dt > 100u ? 100u : dt, POOP_HALF);
+        r_fst.poop_x = r_poop.x;
+        r_fst.poop_size = poop_scale(&r_poop, now);
+        r_fst.poop_t = (float)(now - r_poop.born) * 0.001f;
+        r_fst.poop_kind = r_poop.kind;
     }
-    rig_figure(r_action, p, 1.0f, now, r_fst.eyes.face_ang, &r_fst.fig);
+    rig_figure(shown, shown_p, shown_mag, now, r_fst.eyes.face_ang, &r_fst.fig);
     r_fst.bob = bob_step(r_frame++);
     const uint32_t blink = now % 4200;
     r_fst.open = dozing ? 0.0f : blink < 120 ? 1.0f - blink / 120.0f : blink < 240 ? (blink - 120) / 120.0f : 1.0f;
@@ -580,6 +684,7 @@ EXPORT(sim_init) void sim_init(void)
     stream_init(&g_st, g_ring, s_play, bufs);
     stream_set_arbiter(&g_st, true);
     sm_init(&s_sm, g_now);
+    poop_reset(&r_poop);
     face_rest(&r_fst);
     caption_reset(&r_cap);
     r_active_at = g_now;
@@ -635,6 +740,7 @@ EXPORT(sim_message) void sim_message(int from_dad, int ms)
 }
 
 /* The box's knobs. */
+
 EXPORT(sim_set) void sim_set(int knob, int value)
 {
     switch (knob) {
@@ -657,7 +763,15 @@ EXPORT(sim_set) void sim_set(int knob, int value)
     case 8: g_mode = value ? BOX_NEW : BOX_TODAY; break;
     case 9: p_autotalk_ms = (uint32_t)value; break;
     case 10: r_tilt_deg = value; break; /* the panel tilted, degrees right-side down */
-    case 11: r_pending_act = value == 1 ? ACT_DIZZY : value == 2 ? ACT_LOVE : ACT_NONE; break;
+    case 11:
+        r_pending_act = value == 1   ? ACT_DIZZY
+                        : value == 2 ? ACT_LOVE
+                        : value == 3 ? ACT_BRACE
+                        : value == 4 ? ACT_EAT
+                        : value == 5 ? rig_fart_pick(r_now_rnd())
+                        : value == 6 ? ACT_MEGAFART
+                                     : ACT_NONE;
+        break;
     }
 }
 

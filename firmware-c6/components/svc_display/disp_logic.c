@@ -1,5 +1,7 @@
 #include "disp_logic.h"
 
+#include <stdio.h>
+
 static int32_t clip(int32_t v, int32_t max)
 {
     return v < 0 ? 0 : v > max ? max : v;
@@ -86,4 +88,57 @@ disp_win_t disp_rot_piece(uint8_t rot, int32_t n, disp_win_t l, const uint16_t *
             for (int32_t c = 0; c < h; c++) o[c] = px[(h - 1 - c) * w + col];
     }
     return (disp_win_t){g.x1, g.y1 + r0, g.x2, g.y1 + r0 + k - 1};
+}
+
+bool disp_rot_step(int32_t w, int32_t k, int32_t i, disp_piece_t *out)
+{
+    if (k <= 0 || i < 0 || i >= (w + k - 1) / k) return false;
+    const int32_t r0 = i * k;
+    *out = (disp_piece_t){r0, r0 + k > w ? w - r0 : k, i ? DISP_RAMWRC : DISP_RAMWR,
+                          (uint8_t)(i % DISP_ROT_PIECES)};
+    return true;
+}
+
+static uint32_t ms(uint64_t us)
+{
+    return (uint32_t)((us + 500) / 1000);
+}
+
+void disp_stat_add(disp_stat_t *s, uint32_t flush_us, uint32_t wall_us, bool full)
+{
+    s->frames++;
+    s->sum_us += flush_us;
+    s->last_ms = ms(flush_us);
+    if (s->last_ms > s->max_ms) s->max_ms = s->last_ms;
+    if (!full) return;
+    s->full++;
+    s->full_sum_us += flush_us;
+    s->full_ms = s->last_ms;
+    s->full_wall_ms = ms(wall_us);
+    if (s->full_ms > s->full_max_ms) s->full_max_ms = s->full_ms;
+}
+
+uint32_t disp_stat_avg_ms(const disp_stat_t *s)
+{
+    return s->frames ? ms(s->sum_us / s->frames) : 0;
+}
+
+uint32_t disp_stat_full_avg_ms(const disp_stat_t *s)
+{
+    return s->full ? ms(s->full_sum_us / s->full) : 0;
+}
+
+void disp_stat_fmt(char *out, size_t len, const disp_stat_t st[4])
+{
+    size_t at = 0;
+    if (len) out[0] = '\0';
+    for (int r = 0; r < 4 && at < len; r++) {
+        if (!st[r].full) continue;
+        const int n = snprintf(out + at, len - at, "%s%d:%lu,%lu,%lu,%lu", at ? " " : "", r * 90,
+                               (unsigned long)disp_stat_full_avg_ms(&st[r]),
+                               (unsigned long)st[r].full_max_ms, (unsigned long)st[r].full,
+                               (unsigned long)st[r].full_wall_ms);
+        if (n < 0) break;
+        at += (size_t)n;
+    }
 }

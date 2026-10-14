@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -44,6 +45,11 @@ typedef enum {
     /* Neither is in a poke pool: each answers one thing a child does on purpose. */
     ACT_DIZZY, /* shaken hard: he sits down hard and shakes his head, stars going round */
     ACT_LOVE,  /* "I love you": hearts float up and he coos */
+    ACT_TICKLE, /* the fifth tickle (`tickle.h`): he squirms and laughs, and laughs again */
+    ACT_BRACE,  /* "I'm going to tickle you": he braces, giggling nervously */
+    ACT_TICKLED, /* one of the four tickles before the fifth: a squirm and a "hehehe" */
+    ACT_MEGAFART, /* one "fart" in ten (`rig_fart_pick`): seven seconds of it */
+    ACT_POOP,   /* three meals in a minute (`poop.h`): he squats, strains, and plop */
     ACT_COUNT,
 } action_t;
 
@@ -116,7 +122,16 @@ typedef struct {
 void rig_walk(rig_walk_t *w, float dlean_px, rig_pose_t *p);
 
 /* Whole-figure transform. `extra` is a one-shot the renderer draws on top. */
-typedef enum { EXTRA_NONE = 0, EXTRA_PUFF, EXTRA_BLUSH, EXTRA_STARS, EXTRA_HEARTS } extra_t;
+typedef enum {
+    EXTRA_NONE = 0,
+    EXTRA_PUFF,
+    EXTRA_BLUSH,
+    EXTRA_STARS,
+    EXTRA_HEARTS,
+    EXTRA_TICKLE, /* wiggle marks either side of him: where the tickling is */
+    EXTRA_FOOD,   /* a cookie, a bite gone at each bite (`rig_eat_bites`), crumbs falling */
+    EXTRA_GAS,    /* clouds puffing out behind him and drifting off, the whole time */
+} extra_t;
 
 typedef struct {
     float ox;
@@ -137,7 +152,77 @@ typedef struct {
     /* SITTING, 0..1: the renderer lowers the body by what the legs' splay takes off their
        height, which only it can know — the two forms' legs are 54 and 92 px long. */
     float sit;
+    /* THE MOUTH, 0..1, opened by the action rather than by speech: wide before a bite, snapped
+       shut on it, and chewing after. The renderer opens it by the larger of this and `talk`. */
+    float chew;
+    /* EATING: how far the food has come to the mouth, 0..1 (the robot carries it there; the
+       bird's beak goes down to it). */
+    float reach;
 } figure_pose_t;
+
+/* AN ACTION LONGER THAN ITS SOUND SAYS IT AGAIN. A cue is at most `CUE_MAX_MS` (0.8 s), which a
+   four-second laugh outlasts several times over, so the tickle laughs again as it goes. True on
+   the frame `p` crosses one of the action's re-cue points (from `p0`, the last frame's). */
+bool rig_recue(action_t a, float p0, float p);
+
+/* Whether `a` sounds its cue the moment it starts. The meal does not: its first crunch is a
+   re-cue on the first bite, a quarter of a second in, so every crunch lands on its bite. */
+bool rig_cue_on_start(action_t a);
+
+/* Whether a poke while `a` runs only flinches rather than starting something else. The
+   laughing fit is the payoff for five pokes, and the child doing the tickling keeps poking:
+   the sixth replacing it cut it off after its first laugh. */
+bool rig_holds_pokes(action_t a);
+
+/* A RUN: actions that lead straight into one another (0.4.13, owner: *"on tickle mode, if
+   tickled 5 times, he should fart and go dazed"*). Five tickles start `rig_run_tickled_out`:
+   the laughing fit, then he laughs so hard he farts, then he sits there dazed. A run is a
+   list ending in ACT_NONE. `rig_run_next` is what follows `ended` (started at `ended_start`),
+   now at `now`, advancing the run; or ACT_NONE, the run cleared, at its end or when what ended
+   is not the run's own step. The step is known by its action AND its start, since anything
+   taking over restarts the clock: a voice "fart" over the run's own fart is the same action,
+   and must not knock him dizzy (review). */
+typedef struct {
+    const action_t *at; /* the step running now, NULL for no run */
+    uint32_t since;     /* when it started */
+} rig_run_t;
+
+const action_t *rig_run_tickled_out(void);
+void rig_run_start(rig_run_t *r, const action_t *run, uint32_t now);
+action_t rig_run_next(rig_run_t *r, action_t ended, uint32_t ended_start, uint32_t now);
+
+/* An action whose sound is a run of cues back to back for as long as it lasts: the next is
+   started the moment the speaker is free, rather than at fixed points (`rig_recue`). */
+bool rig_recue_continuous(action_t a, float p);
+
+/* What "fart" brings, from a random `rnd`: one time in ten the seven-second one. */
+action_t rig_fart_pick(uint32_t rnd);
+
+/* EATING: bites taken by progress `p` (0..EAT_BITES), and how long ago the last one was as a
+   fraction of a bite's time (for the crumbs), or -1 before the first. */
+#define EAT_BITES 3
+
+/* WHAT HE EATS (0.4.11, owner: *"Kids are also requesting a random item to eat, maybe one out
+   of eight possibilities"*). Drawn by `face.c`, picked per meal by `food_pick`. */
+typedef enum {
+    FOOD_COOKIE = 0,
+    FOOD_APPLE,
+    FOOD_BANANA,
+    FOOD_PIZZA,
+    FOOD_DONUT,
+    FOOD_CARROT,
+    FOOD_WATERMELON,
+    FOOD_STRAWBERRY,
+    FOOD_COUNT,
+} food_t;
+
+/* The next meal's food, from a random `rnd`: any of the eight but `prev`, so asking for a snack
+   twice never brings the same thing twice running. */
+food_t food_pick(food_t prev, uint32_t rnd);
+
+/* THE PLOP: where in ACT_POOP the poop lands on the floor and its sound plays. */
+#define POOP_AT 0.6f
+int rig_eat_bites(float p, float *since);
 
 /* Limb pose for `a` at progress `p` (0..1), scaled by `mag` (the repetition penalty), with
    `t_ms` driving the idle sway that runs underneath everything: a character that is ever

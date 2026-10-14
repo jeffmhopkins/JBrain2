@@ -31,6 +31,8 @@ import type {
   NoteOut,
   PanelAlarm,
   PanelAlarmIn,
+  PanelSettingKey,
+  PanelSettingValues,
   PetCommand,
   PetState,
   Principal,
@@ -3905,6 +3907,33 @@ const MOCK_ALARMS: { alarms: PanelAlarm[]; next: number; version: number; change
   changedAt: 0,
 };
 
+// The mock's own panel settings (PwaPanelSettings.dc.html's defaults), as the panel reports them.
+const MOCK_SETTINGS: {
+  reported: PanelSettingValues;
+  pending: PanelSettingValues;
+  version: number;
+  askedAt: number;
+} = {
+  reported: {
+    night_on: 1,
+    night_from: 21 * 60 + 30,
+    night_to: 6 * 60 + 30,
+    night_color: 0,
+    show_date: 1,
+    tz: 5,
+    notif_accept: 1,
+    notif_quiet: 1,
+    notif_chime: 1,
+    brightness: 50,
+    volume: 80,
+    read_aloud: 1,
+    auto_rotate: 1,
+  },
+  pending: {},
+  version: 0,
+  askedAt: 0,
+};
+
 function alarmsChanged(): void {
   MOCK_ALARMS.version++;
   MOCK_ALARMS.changedAt = Date.now();
@@ -4172,6 +4201,11 @@ export const mockFetch: typeof fetch = async (input, init) => {
       }
       if (path === "/api/minecraft/map/structures") return json(m.mcMapStructures(slot, dim));
       if (path === "/api/minecraft/map/markers") return json(m.mcMapMarkers(slot));
+      if (path === "/api/minecraft/map/places") return json(m.mcMapPlaces(slot));
+      if (path === "/api/minecraft/map/entities") return json(m.mcMapEntities(slot, dim));
+      if (path === "/api/minecraft/map/villager") {
+        return json(m.mcMapVillager(slot, url.searchParams.get("id") ?? ""));
+      }
       if (path === "/api/minecraft/map/structures/sweep") {
         return running && slotOf(slot)?.active
           ? json({ state: "running", done: 0, total: 1200 }, 202)
@@ -4282,7 +4316,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
         );
       }
       const q = url.searchParams;
-      return json(mc.mcGoalProgress(q.get("xuid") ?? "", q.get("flush") === "true"));
+      // The map's place cards ask by the travel log's keys; the goals fixture's are its own.
+      const { GOAL_KEYS } = await import("../minecraftMapFixtures");
+      const who = q.get("xuid") ?? "";
+      return json(mc.mcGoalProgress(GOAL_KEYS[who] ?? who, q.get("flush") === "true"));
     }
     if (path === "/api/minecraft/settings" && method === "PUT") {
       return json(JSON.parse(String(init?.body ?? "{}")));
@@ -6179,6 +6216,47 @@ export const mockFetch: typeof fetch = async (input, init) => {
     MOCK_ALARMS.alarms = MOCK_ALARMS.alarms.filter((a) => a.id !== Number(alarmOne[1]));
     alarmsChanged();
     return new Response(null, { status: 204 });
+  }
+  // --- the desk panel's settings. The panel "takes" a request a few seconds after it is made,
+  // so a row's "Waiting for the panel" settles to "On the panel" as it would on the box.
+  if (/^\/api\/endpoint\/panels\/[^/]+\/settings$/.test(path)) {
+    if (method === "PUT") {
+      const { changes } = JSON.parse(String(init?.body ?? "{}")) as {
+        changes: PanelSettingValues;
+      };
+      for (const [k, v] of Object.entries(changes) as [PanelSettingKey, number][]) {
+        if (MOCK_SETTINGS.reported[k] === v) delete MOCK_SETTINGS.pending[k];
+        else MOCK_SETTINGS.pending[k] = v;
+      }
+      MOCK_SETTINGS.version++;
+      MOCK_SETTINGS.askedAt = Date.now();
+    } else if (Date.now() - MOCK_SETTINGS.askedAt > 4_000) {
+      Object.assign(MOCK_SETTINGS.reported, MOCK_SETTINGS.pending);
+      MOCK_SETTINGS.pending = {};
+    }
+    return json({
+      supported: true,
+      reported: MOCK_SETTINGS.reported,
+      reported_s: 3,
+      online: true,
+      pending: MOCK_SETTINGS.pending,
+      version: MOCK_SETTINGS.version,
+      zones: [
+        "Honolulu",
+        "Anchorage",
+        "Los Angeles",
+        "Denver",
+        "Chicago",
+        "New York",
+        "Phoenix",
+        "UTC",
+        "London",
+        "Paris",
+        "Athens",
+        "Sydney",
+      ],
+      night_colors: ["Red", "Amber", "Grey"],
+    });
   }
   // --- jpanel. `unplayed` is served by the box rather than counted off `messages`,
   // so it survives a truncating `limit`; the fixture keeps that honest by summing the

@@ -64,7 +64,7 @@ def _jmolt_data_read_ctx(pid: str) -> SessionContext:
     """Reads jmolt's OWN tables (scratch/archive/outbox/ledger) with a MECHANICAL
     read-only guarantee (M19(a)). A NON-owner principal carrying only the jmolt domain
     scope: its kind's explicit arm on the `jmolt_*_read` policies grants SELECT
-    (`has_kind_scope('jmolt_observer', 'jmolt')`, 0245; `has_domain_scope` is
+    (`has_kind_scope('jmolt_observer', 'jmolt')`, 0247; `has_domain_scope` is
     owner-only), while `is_owner()` is FALSE (so the
     outbox advance/purge policies, keyed on `is_owner() AND auth_ctx()<>'jmolt'`, deny
     every UPDATE/DELETE) and `auth_ctx()` is not 'jmolt' (so the scratch/outbox/ledger

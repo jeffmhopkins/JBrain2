@@ -163,6 +163,7 @@ typedef enum {
     SH_NOISE,    /* filtered noise, optionally over a falling tone */
     SH_RUDE,     /* the body noises */
     SH_PAIR,     /* two detuned voices, falling together */
+    SH_LAUGH,    /* `a` syllables of "ha", tumbling `b` semitones down across the run */
 } shape_t;
 
 #define STEPS_MAX 4
@@ -243,8 +244,30 @@ static const rude_t FARTS[] = {
    it exactly: these are the numbers the single RUDE row used to carry inline. */
 static const rude_t BURP = {560, 140.0f, 65.0f, 0.0f, 27.0f, 0.38f, 0.30f};
 
+/* THE MEGA FART (0.4.12, owner: *"about a 1 in 10 chance that when he farts on command, that
+   the fart lasts a good 7 seconds, and make sure the fart sounds funny"*). A cue is at most
+   0.8 s, so seven seconds is a run of these, back to back (`rig_recue_continuous`), each the
+   next in the list — the play counter steps through it and is never reset, so each long one
+   starts wherever the last left off and no two begin alike. What makes a long one funny is
+   that it will not stay the same noise: it rumbles, climbs, sputters, squeaks, goes wet,
+   deflates like a balloon, putters and trumpets, and the tiny gap between pieces is a catch
+   of breath. */
+static const rude_t MEGA[] = {
+    {700, 95.0f, 30.0f, 0.12f, 17.0f, 0.36f, 0.32f},   /* a rumble */
+    {700, 120.0f, -60.0f, 0.10f, 23.0f, 0.40f, 0.42f}, /* climbing */
+    {650, 160.0f, 60.0f, 0.15f, 11.0f, 0.92f, 0.40f},  /* sputtering: separate bursts */
+    {700, 230.0f, -130.0f, 0.00f, 38.0f, 0.30f, 0.58f}, /* the squeaker, rising high */
+    {700, 115.0f, 45.0f, 0.65f, 29.0f, 0.38f, 0.24f},  /* wet */
+    {650, 330.0f, 230.0f, 0.05f, 46.0f, 0.50f, 0.52f}, /* the balloon letting go */
+    {700, 88.0f, 18.0f, 0.20f, 9.0f, 0.70f, 0.36f},    /* putt... putt... putt */
+    {700, 250.0f, -70.0f, 0.00f, 33.0f, 0.34f, 0.62f}, /* the trumpet */
+};
+
+#define MEGA_COUNT ((int)(sizeof(MEGA) / sizeof(MEGA[0])))
+
 static const rude_t *rude_def(cue_t c, unsigned variant)
 {
+    if (c == CUE_MEGAFART) return &MEGA[variant % (unsigned)MEGA_COUNT];
     return c == CUE_FART ? &FARTS[variant % (unsigned)FART_COUNT] : &BURP;
 }
 
@@ -290,8 +313,11 @@ static const cue_def_t DEF[CUE_COUNT] = {
        per-variant length comes from `cue_ms`. */
     [CUE_FART] = {SH_RUDE, 700, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
     [CUE_BURP] = {SH_RUDE, 560, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
-    /* Two soft bites. Noise, but low-clocked and short, so it chews rather than hisses. */
-    [CUE_EAT] = {SH_NOISE, 300, 0.0f, 0, 2.6f, 0.0f, {0, 0, END}, 3, 20},
+    [CUE_MEGAFART] = {SH_RUDE, 700, 0.0f, 0.0f, 0.0f, 0.0f, {END}, 3, 0},
+    /* CRUNCH, MUNCH, MUNCH: a bite and two chews, sounded on every bite of the meal (0.4.10).
+       Noise, low-clocked so it chews rather than hisses; the clock falls across the run, so
+       the crunch is crisper than the munches after it. Was two soft bites in 300 ms. */
+    [CUE_EAT] = {SH_NOISE, 620, 0.0f, 0, 3.4f, 0.0f, {0, 0, 0, END}, 3, 35},
     /* A thud: a noise burst over a tone dropping fast. Contact, then nothing. */
     [CUE_KICK] = {SH_NOISE, 200, 0.0f, 0, 4.2f, 260.0f, {END}, 1, 60},
     /* Three rises, each starting higher than the last — a spiral, which one sweep cannot be. */
@@ -302,6 +328,19 @@ static const cue_def_t DEF[CUE_COUNT] = {
     /* Two coos, a major third apart — the blush's warm arc said twice, which is how pleased
        sounds rather than merely content. */
     [CUE_LOVE] = {SH_COO, 620, 440.0f, 0.0f, 0.4f, 0, {0, 4, END}, 30, 0},
+    /* A LAUGH, which none of the shapes above could make: GIGGLE is four clean blips, and real
+       laughter is a run of separate breathy syllables whose pitch tumbles DOWN as the breath
+       runs out. Seven "ha"s in 740 ms (the most a cue can be once the variant stretches it). */
+    [CUE_TICKLE] = {SH_LAUGH, 740, 620.0f, 0.0f, 7.0f, 7.0f, {END}, 4, 0},
+    /* PLOP: a short flat hold, then down most of two octaves, wobbling on the way — the sweep's
+       boing run backwards. Played as it lands, not as he squats (`rig_cue_on_start`). */
+    [CUE_POOP] = {SH_SWEEP, 300, 640.0f, 0.5f, -1.7f, 25.0f, {END}, 2, 30},
+    /* UH-OH: the laugh's shape run the other way, three short "hee"s climbing a fourth, higher
+       and quicker than the real thing. Anticipation rises; release (CUE_TICKLE) falls. */
+    [CUE_BRACE] = {SH_LAUGH, 460, 900.0f, 0.0f, 3.0f, -5.0f, {END}, 4, 0},
+    /* HEHEHE: the real laugh's shape, four "he"s and quick, trying to hold it in — the fit
+       (CUE_TICKLE) is what it sounds like once he cannot. */
+    [CUE_TICKLED] = {SH_LAUGH, 380, 700.0f, 0.0f, 4.0f, 3.0f, {END}, 4, 0},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -371,7 +410,8 @@ static const cue_def_t DEF[CUE_COUNT] = {
    700 ms — and a single `ms` field cannot say that. */
 static float cue_ms(cue_t c, unsigned variant)
 {
-    return c == CUE_FART ? (float)rude_def(c, variant)->ms : (float)DEF[c].ms;
+    return c == CUE_FART || c == CUE_MEGAFART ? (float)rude_def(c, variant)->ms
+                                              : (float)DEF[c].ms;
 }
 
 /* The longest `c` can nominally be, across every variant. Computed rather than read off the
@@ -379,10 +419,10 @@ static float cue_ms(cue_t c, unsigned variant)
    and it has to be the worst case rather than the typical one. */
 static float cue_ms_max(cue_t c)
 {
-    if (c != CUE_FART) return (float)DEF[c].ms;
+    if (c != CUE_FART && c != CUE_MEGAFART) return (float)DEF[c].ms;
     float ms = 0.0f;
-    for (int i = 0; i < FART_COUNT; i++) {
-        if ((float)FARTS[i].ms > ms) ms = (float)FARTS[i].ms;
+    for (unsigned v = 0; v < (unsigned)(FART_COUNT > MEGA_COUNT ? FART_COUNT : MEGA_COUNT); v++) {
+        if ((float)rude_def(c, v)->ms > ms) ms = (float)rude_def(c, v)->ms;
     }
     return ms;
 }
@@ -417,6 +457,11 @@ cue_t cue_for_action(int action)
     case ACT_SPIN:   return CUE_SPIN;
     case ACT_DIZZY:  return CUE_DIZZY;
     case ACT_LOVE:   return CUE_LOVE;
+    case ACT_TICKLE: return CUE_TICKLE;
+    case ACT_POOP:   return CUE_POOP;
+    case ACT_BRACE:  return CUE_BRACE;
+    case ACT_TICKLED: return CUE_TICKLED;
+    case ACT_MEGAFART: return CUE_MEGAFART;
     default:         return CUE_BLIP;
     }
 }
@@ -590,6 +635,31 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             e.hold_ms = dur * 0.12f;
             e.decay_ms = dur * 0.88f - (float)d->attack_ms;
             v = s;
+            break;
+        }
+
+        case SH_LAUGH: {
+            /* Each syllable a fast-in, slower-out pulse with a gap after it, so the ear counts
+               separate "ha"s. A buzzy voice for the vowel, breath riding it (the "h" is mostly
+               air), and each one pitched a little lower than the last, sagging as it goes. */
+            const float syl = u * d->a;
+            const float k = floorf(syl), w = syl - k;
+            const float gate = w < 0.12f ? w / 0.12f : w < 0.62f ? 1.0f - (w - 0.12f) / 0.5f
+                                                                 : 0.0f;
+            const float hz = semi(base, -d->b * k / (d->a - 1.0f)) * (1.0f - 0.06f * w);
+            const float ph = step_osc(&a, hz, rate);
+            /* NO HARMONIC SUMS: a triangle and a sawtooth straight off the phase. The laugh is
+               the longest cue, it is rendered on the render task, and it was summing a
+               band-limited triangle AND pulse per sample — the costliest cue in the table, and
+               the squirming froze for a moment at every laugh (owner, 0.4.11). A triangle's
+               partials fall as 1/n^2, so the naive one's folding is far under the breath at
+               these pitches; the soft saw is the buzz. */
+            const float ramp = ph / (float)M_PI - 1.0f; /* -1..1 */
+            const float voice = 0.75f * (1.0f - 2.0f * fabsf(ramp)) + 0.18f * ramp;
+            const float breath = noise_next(&nz, 5200.0f * vary, rate) * (w < 0.2f ? 0.55f : 0.2f);
+            e.hold_ms = dur * 0.8f;
+            e.decay_ms = dur * 0.2f - (float)d->attack_ms;
+            v = (voice + breath) * gate;
             break;
         }
 

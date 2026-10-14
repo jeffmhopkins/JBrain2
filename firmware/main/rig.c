@@ -20,11 +20,24 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_HIDE] = {2400, FACE_SILLY, 0},
     [ACT_FART] = {1500, FACE_BEWILDERED, 1},
     [ACT_BURP] = {1400, FACE_BEWILDERED, 1},
-    [ACT_EAT] = {1600, FACE_HAPPY, 0},
+    /* A MEAL, NOT A NIBBLE (0.4.10, owner: *"the eat animation can probably be better with
+       multiple bites being taken and kind of a longer animation and sound effect too"*): bites
+       of a cookie, a crunch each, chewing between. Three of them, 0.96 s apart (0.4.11, owner:
+       *"a little too long. Have it only three bites"* — five was 4.8 s). */
+    [ACT_EAT] = {960 * EAT_BITES, FACE_HAPPY, 0},
     [ACT_KICK] = {900, FACE_EXCITED, 0},
     [ACT_SPIN] = {1200, FACE_EXCITED, 0},
-    [ACT_DIZZY] = {3200, FACE_BEWILDERED, 0},
-    [ACT_LOVE] = {2800, FACE_HAPPY, 0},
+    /* TWICE AS LONG AS 0.4.7's (owner, 0.4.10: *"the dizziness after being shaken. It should
+       last twice as long. Go ahead and make the love animation twice as long also"*). Their
+       motions are written against progress, so each doubles its cycle count with them: the
+       head shakes and the hearts rise at the speed they did, for longer. */
+    [ACT_DIZZY] = {6400, FACE_BEWILDERED, 0},
+    [ACT_LOVE] = {5600, FACE_HAPPY, 0},
+    [ACT_TICKLE] = {4800, FACE_HAPPY, 0},
+    [ACT_POOP] = {2600, FACE_SILLY, 0},
+    [ACT_BRACE] = {1600, FACE_EXCITED, 0},
+    [ACT_TICKLED] = {1100, FACE_HAPPY, 0},
+    [ACT_MEGAFART] = {7000, FACE_BEWILDERED, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -33,8 +46,9 @@ static const action_spec_t SPECS[ACT_COUNT] = {
 
 static float sit_amount(float p)
 {
-    if (p < 0.12f) return p / 0.12f;
-    if (p > 0.85f) return (1.0f - p) / 0.15f;
+    /* The same 0.38 s down and 0.48 s up as at 3.2 s: he plonks, he does not settle. */
+    if (p < 0.06f) return p / 0.06f;
+    if (p > 0.925f) return (1.0f - p) / 0.075f;
     return 1.0f;
 }
 
@@ -42,7 +56,149 @@ static float sit_amount(float p)
    clearing their head, not a no. */
 static float dizzy_shake(float p)
 {
-    return sinf(p * (float)M_PI * 11.0f) * (1.0f - p) * (1.0f - p);
+    return sinf(p * (float)M_PI * 22.0f) * (1.0f - p) * (1.0f - p);
+}
+
+/* THE TICKLE'S INTENSITY: up fast, held while he laughs, and dying away over the last quarter as
+   he gets his breath back. Everything it drives is a fast oscillation times this. */
+static float tickle_env(float p)
+{
+    if (p < 0.08f) return p / 0.08f;
+    if (p > 0.75f) return (1.0f - p) / 0.25f;
+    return 1.0f;
+}
+
+/* ONE BITE of the meal, `w` 0..1 through it: up to the mouth by a quarter, held while it
+   bites, back down by 0.6, then chewing. The bite itself lands at BITE_AT. */
+#define BITE_AT 0.25f
+
+static float eat_reach(float w)
+{
+    if (w < BITE_AT) {
+        const float t = w / BITE_AT;
+        return t * t * (3.0f - 2.0f * t);
+    }
+    if (w < 0.4f) return 1.0f;
+    if (w < 0.6f) return 1.0f - (w - 0.4f) / 0.2f;
+    return 0.0f;
+}
+
+static float eat_chew(float w)
+{
+    if (w > 0.12f && w < BITE_AT) return (w - 0.12f) / (BITE_AT - 0.12f); /* opening wide */
+    if (w >= 0.42f) return fabsf(sinf((w - 0.42f) / 0.58f * (float)M_PI * 3.0f)) * 0.45f;
+    return 0.0f;
+}
+
+bool rig_cue_on_start(action_t a)
+{
+    return a != ACT_EAT && a != ACT_POOP;
+}
+
+food_t food_pick(food_t prev, uint32_t rnd)
+{
+    const unsigned p = (unsigned)prev < (unsigned)FOOD_COUNT ? (unsigned)prev : 0u;
+    return (food_t)((p + 1u + rnd % (FOOD_COUNT - 1u)) % FOOD_COUNT);
+}
+
+bool rig_holds_pokes(action_t a)
+{
+    /* The fit is the payoff for five pokes; the seven seconds are the joke. */
+    return a == ACT_TICKLE || a == ACT_MEGAFART;
+}
+
+static const action_t TICKLED_OUT[] = {ACT_TICKLE, ACT_FART, ACT_DIZZY, ACT_NONE};
+
+const action_t *rig_run_tickled_out(void)
+{
+    return TICKLED_OUT;
+}
+
+void rig_run_start(rig_run_t *r, const action_t *run, uint32_t now)
+{
+    r->at = run;
+    r->since = now;
+}
+
+action_t rig_run_next(rig_run_t *r, action_t ended, uint32_t ended_start, uint32_t now)
+{
+    if (r->at == NULL || *r->at != ended || ended == ACT_NONE || r->since != ended_start) {
+        r->at = NULL;
+        return ACT_NONE;
+    }
+    r->at++;
+    r->since = now;
+    if (*r->at == ACT_NONE) r->at = NULL;
+    return r->at != NULL ? *r->at : ACT_NONE;
+}
+
+bool rig_recue_continuous(action_t a, float p)
+{
+    /* Not in the last moment: a piece started there would run on after he has finished. */
+    return a == ACT_MEGAFART && p < 0.93f;
+}
+
+action_t rig_fart_pick(uint32_t rnd)
+{
+    return rnd % 10u == 0u ? ACT_MEGAFART : ACT_FART;
+}
+
+/* THE MEGA FART's effort: up over the first moment, held, let go at the very end. */
+static float mega_amount(float p)
+{
+    if (p < 0.06f) return p / 0.06f;
+    if (p > 0.92f) return (1.0f - p) / 0.08f;
+    return 1.0f;
+}
+
+/* THE SQUAT: down over the first fifth, held while he strains and through the plop, up after.
+   The legs splay by SQUAT_SPLAY and `face.c` lowers him by what that takes off the legs. */
+#define SQUAT_SPLAY 40.0f
+
+static float squat_amount(float p)
+{
+    if (p < 0.2f) return p / 0.2f;
+    if (p > 0.78f) return (1.0f - p) / 0.22f;
+    return 1.0f;
+}
+
+/* Straining: a fast shiver building towards the plop, gone after it. */
+static float strain(float p)
+{
+    if (p < 0.2f || p >= POOP_AT) return 0.0f;
+    return sinf(p * (float)M_PI * 44.0f) * (p - 0.2f) / (POOP_AT - 0.2f);
+}
+
+int rig_eat_bites(float p, float *since)
+{
+    const float b = p * (float)EAT_BITES - BITE_AT;
+    if (b < 0.0f) {
+        if (since != NULL) *since = -1.0f;
+        return 0;
+    }
+    const int n = (int)b + 1;
+    if (since != NULL) *since = b - floorf(b);
+    return n > EAT_BITES ? EAT_BITES : n;
+}
+
+bool rig_recue(action_t a, float p0, float p)
+{
+    /* The tickle: two more laughs after the first, 1.6 s apart, the last well before he winds
+       down. The meal: a crunch on every bite, the first included (`rig_cue_on_start`). */
+    static const float TICKLE[] = {0.33f, 0.62f};
+    if (a == ACT_TICKLE) {
+        for (unsigned i = 0; i < sizeof(TICKLE) / sizeof(TICKLE[0]); i++) {
+            if (p0 < TICKLE[i] && p >= TICKLE[i]) return true;
+        }
+    } else if (a == ACT_EAT) {
+        for (int k = 0; k < EAT_BITES; k++) {
+            const float at = ((float)k + BITE_AT) / (float)EAT_BITES;
+            if (p0 < at && p >= at) return true;
+        }
+    } else if (a == ACT_POOP) {
+        return p0 < POOP_AT && p >= POOP_AT; /* the plop, not the squat */
+    }
+    return false;
 }
 
 const action_spec_t *rig_spec(action_t a)
@@ -165,10 +321,11 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         if (p > 0.12f && p < 0.6f) out->neck += 30.0f * mag;
         break;
     case ACT_EAT: {
-        /* A BIRD EATS BY PECKING THE GROUND, which is the single most recognisable thing an
-           ostrich does and costs nothing this rig did not already have: the neck goes down
-           and forward, three times, and the head follows it. */
-        const float q = fabsf(sinf(p * (float)M_PI * 3.0f)) * mag;
+        /* A BIRD EATS BY PECKING, which is the single most recognisable thing an ostrich does:
+           the neck goes down and forward to the cookie on its wing, once a bite, and the head
+           follows it. */
+        const float w = p * (float)EAT_BITES - floorf(p * (float)EAT_BITES);
+        const float q = eat_reach(w) * mag;
         out->bob += q * 78.0f;
         out->neck += q * 30.0f;
         out->tail -= q * 14.0f; /* the tail comes up as the head goes down */
@@ -192,10 +349,51 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         break;
     case ACT_LOVE: {
         /* A slow happy sway, the head nuzzling side to side, tail going. */
-        const float q = sinf(p * (float)M_PI * 4.0f) * mag;
+        const float q = sinf(p * (float)M_PI * 8.0f) * mag;
         out->neck += q * 14.0f;
         out->bob -= fabsf(q) * 6.0f;
-        out->tail += sinf(p * (float)M_PI * 10.0f) * 14.0f * mag;
+        out->tail += sinf(p * (float)M_PI * 20.0f) * 14.0f * mag;
+        break;
+    }
+    case ACT_MEGAFART: {
+        /* Head back, tail up and shaking with it, the whole bird rumbling. */
+        const float k = mega_amount(p) * mag;
+        out->neck -= 18.0f * k + sinf(p * (float)M_PI * 90.0f) * 4.0f * k;
+        out->tail += 30.0f * k + sinf(p * (float)M_PI * 120.0f) * 10.0f * k;
+        out->bob += sinf(p * (float)M_PI * 70.0f) * 3.0f * k;
+        break;
+    }
+    case ACT_BRACE:
+        /* UH-OH: head pulled down into the shoulders, a nervous shiver, tail tucked. */
+        out->bob += squat_amount(p) * 10.0f;
+        out->neck += sinf(p * (float)M_PI * 28.0f) * 5.0f * mag;
+        out->tail -= squat_amount(p) * 10.0f;
+        break;
+    case ACT_POOP:
+        /* Head down and straining, tail up out of the way; a shake of relief after. */
+        out->neck += strain(p) * 6.0f * mag;
+        if (p > POOP_AT) out->neck += sinf(p * (float)M_PI * 12.0f) * 8.0f * mag;
+        out->bob += squat_amount(p) * 8.0f;
+        out->tail += squat_amount(p) * 22.0f;
+        break;
+    case ACT_TICKLED: {
+        /* ONE TICKLE: the fit's squirm, short and at `mag` — which rises tickle by tickle, so
+           the four build to the fifth rather than repeating. */
+        const float k = tickle_env(p) * mag;
+        out->neck += sinf(p * (float)M_PI * 14.0f) * 16.0f * k;
+        out->bob -= fabsf(sinf(p * (float)M_PI * 12.0f)) * 10.0f * k;
+        out->tail += sinf(p * (float)M_PI * 18.0f) * 24.0f * k;
+        break;
+    }
+    case ACT_TICKLE: {
+        /* HELPLESS LAUGHTER: the head tosses, he bounces with every "ha", the tail wags flat
+           out and the feet kick. Each channel at its own rate so it never settles into one
+           rhythm, which is what makes it squirming rather than dancing. */
+        const float k = tickle_env(p) * mag;
+        out->neck += sinf(p * (float)M_PI * 30.0f) * 18.0f * k;
+        out->bob -= fabsf(sinf(p * (float)M_PI * 26.0f)) * 12.0f * k;
+        out->tail += sinf(p * (float)M_PI * 38.0f) * 26.0f * k;
+        out->step += sinf(p * (float)M_PI * 18.0f) * 16.0f * k; /* in time with the kicks */
         break;
     }
     default:
@@ -277,10 +475,10 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
         break;
     case ACT_EAT: {
         /* THE ROBOT EATS WITH A HAND; THE BIRD PECKS (`bird_channels`). Same action, two
-           anatomies, which is the whole reason the bird has channels of its own. Three trips
-           to the mouth: one reads as a mistake, three read as a meal. */
-        const float q = sinf(p * (float)M_PI * 6.0f);
-        out->arm_r = -120.0f - 45.0f * fabsf(q) * mag;
+           anatomies, which is the whole reason the bird has channels of its own. A trip to the
+           mouth a bite: one reads as a mistake, three read as a meal. */
+        const float w = p * (float)EAT_BITES - floorf(p * (float)EAT_BITES);
+        out->arm_r = -120.0f - 45.0f * eat_reach(w) * mag;
         out->arm_l = 20.0f;
         break;
     }
@@ -320,9 +518,54 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
     }
     case ACT_LOVE: {
         /* Arms up and swaying: delighted. A 2D rig cannot hug itself. */
-        const float q = sinf(p * (float)M_PI * 4.0f) * mag;
+        const float q = sinf(p * (float)M_PI * 8.0f) * mag;
         out->arm_l = 120.0f + q * 12.0f;
         out->arm_r = -120.0f + q * 12.0f;
+        break;
+    }
+    case ACT_MEGAFART: {
+        /* The fart's own pose — arms out, a leg up — held for seven seconds, trembling. */
+        const float k = mega_amount(p);
+        const float j = sinf(p * (float)M_PI * 110.0f) * 4.0f * k;
+        out->arm_l = 12.0f + 83.0f * k + j;
+        out->arm_r = -out->arm_l;
+        out->leg_l = 4.0f + 22.0f * k;
+        break;
+    }
+    case ACT_BRACE: {
+        /* HUNCHED: arms pulled in to guard his sides, knees together. */
+        const float k = squat_amount(p);
+        out->arm_l = 12.0f - 22.0f * k + sinf(p * (float)M_PI * 28.0f) * 4.0f * k;
+        out->arm_r = -out->arm_l;
+        out->leg_l = 4.0f - 6.0f * k;
+        out->leg_r = -out->leg_l;
+        break;
+    }
+    case ACT_POOP: {
+        /* SQUATTING: legs out, arms in tight with the effort. */
+        const float k = squat_amount(p);
+        out->leg_l = 4.0f + (SQUAT_SPLAY - 4.0f) * k;
+        out->leg_r = -out->leg_l;
+        out->arm_l = 12.0f - 8.0f * k;
+        out->arm_r = -out->arm_l;
+        break;
+    }
+    case ACT_TICKLED: {
+        /* Arms snapping in to guard the tickled side, and back. */
+        const float k = tickle_env(p) * mag;
+        out->arm_l = 25.0f + sinf(p * (float)M_PI * 12.0f) * 40.0f * k;
+        out->arm_r = -(25.0f + sinf(p * (float)M_PI * 12.0f + 1.3f) * 40.0f * k);
+        break;
+    }
+    case ACT_TICKLE: {
+        /* Arms flailing, out of step with each other; legs kicking OUT in turn, never across
+           (a kick through the middle crossed his legs). */
+        const float k = tickle_env(p) * mag;
+        const float kick = p * (float)M_PI * 18.0f;
+        out->arm_l = 70.0f + sinf(p * (float)M_PI * 26.0f) * 35.0f * k;
+        out->arm_r = -(70.0f + sinf(p * (float)M_PI * 26.0f + 1.3f) * 35.0f * k);
+        out->leg_l = 4.0f + fmaxf(0.0f, sinf(kick)) * 30.0f * k;
+        out->leg_r = -(4.0f + fmaxf(0.0f, -sinf(kick)) * 30.0f * k);
         break;
     }
     case ACT_HIDE:
@@ -354,6 +597,8 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
     out->extra = EXTRA_NONE;
     out->extra_p = p;
     out->sit = 0.0f;
+    out->chew = 0.0f;
+    out->reach = 0.0f;
 
     if (a != ACT_NONE && (unsigned)a < (unsigned)ACT_COUNT) {
         switch (a) {
@@ -388,10 +633,15 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
         case ACT_NOD:
             out->oy += sinf(p * (float)M_PI * 5.0f) * 12.0f * mag;
             break;
-        case ACT_EAT:
-            /* Down to the food and back, under the pecking. */
-            out->oy += fabsf(sinf(p * (float)M_PI * 3.0f)) * 14.0f * mag;
+        case ACT_EAT: {
+            /* Down to the food and back, under the pecking; the cookie, the mouth's work. */
+            const float w = p * (float)EAT_BITES - floorf(p * (float)EAT_BITES);
+            out->oy += eat_reach(w) * 14.0f * mag;
+            out->reach = eat_reach(w);
+            out->chew = eat_chew(w);
+            out->extra = EXTRA_FOOD;
             break;
+        }
         case ACT_KICK: {
             const float q = fabsf(sinf(p * (float)M_PI * 2.0f)) * mag;
             out->ox -= q * 14.0f; /* the body shifts away from the kicking leg */
@@ -435,9 +685,47 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
             out->extra = EXTRA_STARS;
             break;
         case ACT_LOVE:
-            out->tilt += sinf(p * (float)M_PI * 4.0f) * 7.0f * mag;
+            out->tilt += sinf(p * (float)M_PI * 8.0f) * 7.0f * mag;
             out->extra = EXTRA_HEARTS;
             break;
+        case ACT_MEGAFART: {
+            /* RUMBLING: a fast shake of the whole figure, eyes wide, the clouds coming. */
+            const float k = mega_amount(p) * mag;
+            out->ox += sinf(p * (float)M_PI * 130.0f) * 3.0f * k;
+            out->oy += sinf(p * (float)M_PI * 96.0f) * 2.0f * k;
+            out->tilt -= 6.0f * k;
+            out->extra = EXTRA_GAS;
+            break;
+        }
+        case ACT_BRACE:
+            /* Shrinking down and leaning away from the hand that is coming, shivering. */
+            out->sy -= squat_amount(p) * 0.06f;
+            out->oy += squat_amount(p) * 8.0f;
+            out->tilt += sinf(p * (float)M_PI * 28.0f) * 3.0f * mag - squat_amount(p) * 5.0f;
+            break;
+        case ACT_POOP:
+            out->sit = squat_amount(p);
+            out->tilt += strain(p) * 3.0f * mag;
+            /* Up on his toes with relief once it is out. */
+            if (p > POOP_AT) out->oy -= sinf((p - POOP_AT) / (1.0f - POOP_AT) * (float)M_PI) * 10.0f;
+            break;
+        case ACT_TICKLED: {
+            const float k = tickle_env(p) * mag;
+            out->ox += sinf(p * (float)M_PI * 10.0f) * 9.0f * k;
+            out->oy -= fabsf(sinf(p * (float)M_PI * 12.0f)) * 8.0f * k;
+            out->tilt += sinf(p * (float)M_PI * 8.0f) * 9.0f * k;
+            out->extra = EXTRA_TICKLE;
+            break;
+        }
+        case ACT_TICKLE: {
+            /* Wriggling side to side and bouncing on the laughs. */
+            const float k = tickle_env(p) * mag;
+            out->ox += sinf(p * (float)M_PI * 22.0f) * 9.0f * k;
+            out->oy -= fabsf(sinf(p * (float)M_PI * 26.0f)) * 10.0f * k;
+            out->tilt += sinf(p * (float)M_PI * 16.0f) * 10.0f * k;
+            out->extra = EXTRA_TICKLE;
+            break;
+        }
         default:
             break;
         }

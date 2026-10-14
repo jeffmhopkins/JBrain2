@@ -78,11 +78,68 @@ p.set(KNOB.TILT_DEG, 0);
 // Shaken, then told it is loved: each starts its action and sounds its cue.
 const pets = events.length;
 p.set(KNOB.PET_ACT, 1);
-p.advance(3400);
+p.advance(6600);
 p.set(KNOB.PET_ACT, 2);
-p.advance(3000);
+p.advance(5800);
 check(events.slice(pets).some((e) => e.includes('cue DIZZY')), 'a shake makes him dizzy, and says so');
 check(events.slice(pets).some((e) => e.includes('cue LOVE')), '"I love you" makes him coo');
+// "I'm going to tickle you": he braces; then pokes are tickles, and the fifth gets him.
+const tickled = events.length;
+p.set(KNOB.PET_ACT, 3);
+p.advance(1800);
+check(events.slice(tickled).some((e) => e.includes('cue BRACE')), 'warned, he braces with a titter');
+for (let i = 0; i < 5; i++) {
+  tap(W / 2, H * 0.62);
+  p.advance(i < 4 ? 1300 : 500);
+}
+// A child tickling keeps poking: a poke mid-fit is a flinch, and the fit runs its course.
+tap(W / 2, H * 0.62);
+p.advance(4600);
+const tk = events.slice(tickled);
+check(tk.filter((e) => e.includes('cue TICKLED')).length === 4,
+  'four tickles, a held-in "hehehe" each, not the poke giggle');
+check(!tk.some((e) => e.includes('cue GIGGLE')), 'nothing about a tickle sounds like a poke');
+check(tk.filter((e) => e.includes('cue TICKLE (')).length === 3,
+  'and the fifth sets him laughing, and laughing again, and again');
+// Laughed out, he farts, and the fart leaves him sitting dazed (owner: "if tickled 5 times,
+// he should fart and go dazed").
+p.advance(1500 + 6400 + 300);
+const out = events.slice(tickled);
+const fit = out.findLastIndex((e) => e.includes('cue TICKLE ('));
+const fart = out.findIndex((e) => e.includes('cue FART'));
+const dazed = out.findIndex((e) => e.includes('cue DIZZY'));
+check(fart > fit && dazed > fart, `then a fart, then dazed (${fit}, ${fart}, ${dazed})`);
+const later = events.length;
+tap(W / 2, H * 0.62);
+p.advance(1500);
+check(!events.slice(later).some((e) => e.includes('tickled')), 'after which a poke is a poke');
+const fed = events.length;
+p.set(KNOB.PET_ACT, 4);
+p.advance(3200);
+check(events.slice(fed).filter((e) => e.includes('cue EAT')).length === 3,
+  'a snack is three bites, a crunch each');
+const snacks = () => events.slice(fed).filter((e) => e.includes('eats a ')).map((e) => e.split('eats a ')[1]);
+// Two more snacks inside the minute: he has to go, and it plops out after the third.
+p.set(KNOB.PET_ACT, 4);
+p.advance(3200);
+p.set(KNOB.PET_ACT, 4);
+p.advance(3200);
+p.advance(3000);
+const after = events.slice(fed);
+check(after.some((e) => e.includes('three meals in a minute')), 'three snacks in a minute owe one');
+const ate = snacks();
+check(ate.length === 3 && ate[0] !== ate[1] && ate[1] !== ate[2], 'a different snack each time');
+check(after.some((e) => e.includes('plop')) && after.some((e) => e.includes('cue POOP')),
+  'and he poops, with a plop');
+
+// The one-in-ten fart: seven seconds of it, a new piece the moment the last one ends.
+const farted = events.length;
+p.set(KNOB.PET_ACT, 6);
+p.advance(7300);
+const pieces = events.slice(farted).filter((e) => e.includes('cue MEGAFART'));
+check(pieces.length >= 8, `seven seconds of fart, back to back (${pieces.length} pieces)`);
+const stamps = pieces.map((e) => e.split(' ')[0]);
+check(new Set(stamps).size === stamps.length, `one piece at a time, never two in a frame (${stamps})`);
 
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);
