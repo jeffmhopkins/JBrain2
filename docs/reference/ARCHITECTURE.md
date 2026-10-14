@@ -98,6 +98,21 @@ scoped to (subject, domain). Wiki builds run per-domain, so a health fact can
 never be cited in a general article. Every new table ships with RLS tests
 proving a scoped session cannot see other domains' rows.
 
+The scope set is an *owner* narrowing, never a grant to anyone else: `app.has_domain_scope`
+holds for the full owner, or for an owner narrowed (`owner_scoped`) to that domain, and for
+no other kind (security round 2, migration 0247). A non-owner kind's `domain_scopes` claim
+counts only where a policy names that kind through `app.has_kind_scope(kind, domain)`:
+`device_key` + `location` on the tables a phone's fixed queries touch (its own fixes and its
+family's, geofence state and fences, shared places, its FCM token, the who-saw-whom audit,
+and a SELECT-only arm on `events` for geofence crossings it may see), and `jmolt_observer` +
+`jmolt` on the five `jmolt_*_read` policies. So a phone reads and writes no location note,
+chunk, entity or fact, and a panel (a `device_key` with no scope) earns none of the location
+arms. `tests/integration/test_rls_catalog_pg.py` fails on any table in `app`/`public`
+without RLS enabled, forced, and at least one policy (exempt: `alembic_version`,
+PostGIS's `spatial_ref_sys`). The workflow dispatcher runs a stamped job with owner
+identity, so it entitles only an owner-stamped event (`authorize_domain`); geofence
+transitions are emitted owner-stamped, the device named in the payload.
+
 RLS protects rows, not the side effects around them (loading a model, spending an
 API key, writing a blob, reading a credential under an owner context), so the HTTP
 layer gates by principal kind as well. Only four kinds ever hold a session cookie —

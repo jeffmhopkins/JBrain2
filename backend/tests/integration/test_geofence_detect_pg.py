@@ -54,6 +54,16 @@ async def _device(maker: async_sessionmaker) -> tuple[str, str]:
     return pid, sid
 
 
+async def _owner(maker: async_sessionmaker) -> None:
+    """The owner principal a transition event is stamped with (emit_event resolves it)."""
+    oid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("INSERT INTO app.principals (id, kind, key_hash) VALUES (:p, 'owner', :kh)"),
+            {"p": oid, "kh": uuid.uuid4().hex},
+        )
+
+
 async def _fence(maker: async_sessionmaker, radius_m: int = 120) -> None:
     async with scoped_session(maker, OWNER) as session:
         eid = (
@@ -87,6 +97,7 @@ async def _detect(maker, pid: str, sid: str, point: tuple[float, float], minute:
 
 
 async def test_walk_in_and_out_emits_one_enter_and_one_exit(maker: async_sessionmaker) -> None:
+    await _owner(maker)
     pid, sid = await _device(maker)
     await _fence(maker)
 
@@ -98,27 +109,30 @@ async def test_walk_in_and_out_emits_one_enter_and_one_exit(maker: async_session
     exit_ = await _detect(maker, pid, sid, _AWAY, 3)
     assert [t["transition"] for t in exit_] == ["exit"]
 
-    # Exactly the two transition events landed, typed and stamped to location.
+    # Exactly the two transition events landed, typed and stamped to location — and
+    # to the OWNER, never the device: the dispatcher entitles only an owner stamp, and
+    # a device stamp would be laundered into an owner-narrowed job (security round 2).
     async with scoped_session(maker, OWNER) as session:
-        events = (
-            (
-                await session.execute(
-                    text(
-                        "SELECT payload->>'transition' FROM app.events"
-                        " WHERE type = 'location.geofence_transition' AND domain_code = 'location'"
-                        " ORDER BY occurred_at"
-                    )
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT e.payload->>'transition' AS tr, p.kind AS k,"
+                    "   e.payload->>'subject_id' AS s"
+                    " FROM app.events e JOIN app.principals p ON p.id = e.principal_id"
+                    " WHERE e.type = 'location.geofence_transition'"
+                    "   AND e.domain_code = 'location'"
+                    " ORDER BY e.occurred_at"
                 )
             )
-            .scalars()
-            .all()
-        )
+        ).all()
+        events = [r.tr for r in rows]
         state = (
             await session.execute(
                 text("SELECT state FROM app.geofence_state WHERE subject_id = :s"), {"s": sid}
             )
         ).scalar()
     assert list(events) == ["enter", "exit"]
+    assert {(r.k, r.s) for r in rows} == {("owner", sid)}
     assert state == "outside"
 
 

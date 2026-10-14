@@ -2956,8 +2956,8 @@ coordinate** (this is why neither needs a basemap):
   owner-only footnote. It **defaults to the WEEKLY period**, with a nightly⇄weekly
   pill toggle (nightly expands a single day's hour-track) and a "computed just now ↻"
   recompute affordance that keeps it honestly compute-on-read (`GET
-  /api/locations/digest?period=week|night`, owner + full-owner gated — the digest reads
-  WEAK-RLS `app.events`/`place_geofence`, so the endpoint gate is the barrier, not RLS).
+  /api/locations/digest?period=week|night`, owner + full-owner gated — `app.events`/
+  `place_geofence` RLS admits a narrowed owner, so the endpoint gate is the barrier).
   The panel is a regular surface element (not a modal): it follows the inline-expansion
   paradigm, collapsed/expanded by its header.
 

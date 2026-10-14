@@ -35,6 +35,16 @@
 	}
 
 	handle /api/* {
+		# The credential-exchange POSTs answer anyone, so cap their bodies here: an
+		# unauthenticated caller could otherwise stream an unbounded JSON body into the api.
+		# Scoped to exactly these paths, never /api/*, so uploads and imports keep their size.
+		@unauthed_post {
+			method POST
+			path /api/auth/session /api/session/mint /api/intake/redeem /api/jcode/share/redeem /api/pairing/redeem
+		}
+		request_body @unauthed_post {
+			max_size 64KB
+		}
 		reverse_proxy api:8000 {
 			flush_interval -1
 			# The api's per-client limits and panel nudges read this, and trust it only from
@@ -74,11 +84,13 @@
 }
 
 {$JBRAIN_SITE_ADDR} {
-	# The owner debug console is LAN-only: its page must not be reachable from the
-	# public internet, so 404 its entry here. The LAN site below (which also imports
-	# app) still serves it. The shared hash-named /assets/* carry no secrets, and
-	# the /api/debug/* surface stays reachable (an external assistant connects to it
-	# with a token) — it is only the human-facing console PAGE that is LAN-gated.
+	# The owner debug console's page is not served under the public name: 404 its
+	# entry here, while the LAN site below (which also imports app) still serves it.
+	# That is a routing choice by Host, not a network gate — a client that reaches this
+	# proxy and names the LAN host (or SNI) gets the page. It is safe only because the
+	# page is static and every action it takes needs a debug token. The shared
+	# hash-named /assets/* carry no secrets, and /api/debug/* stays reachable here (an
+	# external assistant connects to it with a token).
 	handle /debug-console* {
 		respond 404
 	}

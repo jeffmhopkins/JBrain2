@@ -1950,6 +1950,36 @@ async def test_reader_fallback_recovers_an_empty_js_shell() -> None:
     assert "Rendered by the reader" in result.text
 
 
+async def test_a_reader_redirect_is_a_miss_not_followed() -> None:
+    # The reader runs hostile page JS; a 3xx from it must not steer the api at an internal
+    # service. The redirect is a reader miss: the internal host is never fetched and the
+    # ladder moves on to the solver, which recovers the page.
+    internal_hits: list[httpx.URL] = []
+    solved = _tiered_handler(
+        httpx.Response(403, headers={"content-type": "text/html"}),
+        reader=None,
+        solver_response={"url": "https://x.example/walled", "response": _SOLVED_HTML},
+    )
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(302, headers={"location": "http://api-internal:8000/secret"})
+        if request.url.host == "api-internal":
+            internal_hits.append(request.url)
+            return httpx.Response(200, content=b"INTERNAL-SECRET")
+        return solved(request)
+
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(handle),
+        reader_url="http://reader:3000",
+        solver_url="http://byparr:8191",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert internal_hits == []
+    assert "INTERNAL-SECRET" not in result.text
+    assert "Real article content" in result.text
+
+
 async def test_no_reader_configured_surfaces_the_block() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, headers={"content-type": "text/html"})

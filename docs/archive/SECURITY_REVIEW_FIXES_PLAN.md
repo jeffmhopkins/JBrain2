@@ -1,6 +1,6 @@
 # Security review fixes — third-party access hardening
 
-> **Status:** Shipped 2026-10 · migrations 0241–0243 · **Waves:** S1✅ S2✅ S3✅ S4✅ S5✅ · **Superseded-by:** —
+> **Status:** Shipped 2026-10 · migrations 0241–0243, 0247 · **Waves:** S1✅ S2✅ S3✅ S4✅ S5✅ · **Superseded-by:** —
 
 A whole-codebase security review (2026-10-12; six independent reviewers, the serious
 findings re-verified by hand) looked for programming errors and structural mistakes that
@@ -555,6 +555,60 @@ devices" fences).
   grows a supported hook.
 - **A lone planted legacy cookie** on a browser with no session of its own is believed (as
   its own kind, never promoted) until the owner signs in.
+
+## Round 2 (post-ship cold review)
+
+A cold reviewer read the shipped fixes again (2026-10-13). Fixed:
+
+- **A device's `location` scope.** `app.has_domain_scope` granted any context whose
+  `domain_scopes` named the domain, so a family phone's `device_context` (`device_key` +
+  `location`) had full read and write on every location-domain row of the tables guarded
+  only by the scope: notes, chunks, entities, facts, events, review items and others.
+  Nothing reached that, because device queries are fixed, but RLS didn't hold it.
+  `has_domain_scope` is now owner-only (migration `0247`). Non-owner kinds get explicit
+  `app.has_kind_scope(kind, code)` arms only where their queries need them:
+  - `device_key`: `location_fixes`, `geofence_state`, `place_geofence`, `place_share`,
+    `fcm_token` and `view_audit`, plus a SELECT-only `events` arm for geofence crossings at
+    owner-shared places by its own or a visible subject.
+  - `jmolt_observer`: the read policies on the five jmolt tables.
+- **Dispatch entitlement.** `authorize_domain` now grants an entitlement only to an
+  owner-stamped event, and fails closed for any other principal kind. Geofence crossings
+  are emitted owner-stamped, with the phone named by `subject_id` in the payload, so a
+  device-originated event can't launder into an owner-narrowed job. A
+  device-stamped event still undispatched at deploy is marked dispatched with an error
+  rather than run.
+- **An RLS catalog test.** Every table in `app`/`public` must have RLS enabled and forced
+  and at least one policy (exempt: `alembic_version`, `spatial_ref_sys`), and no
+  materialized view may exist.
+- **Reader redirects.** `_fetch_via_reader` followed the reader's 3xx with no SSRF check per
+  hop, so a hostile page could steer the api (on the internal networks) at an internal
+  service and get the body back as page text. A reader 3xx is now a reader miss.
+- **htmlrender popups.** The request and WebSocket routes were page-scoped, so a
+  `window.open` or a `target=_blank` form post ran in a second page they never saw. They are
+  on the browser context now, and any second page is closed.
+- **jcode preview errors.** The preview status/open routes, open to share recipients, echoed
+  the control server's error text and so its internal URL. Fixed detail; cause logged.
+- **`mc_log` source.** An entry written in an in-game turn was labelled `owner`; it is
+  `player` (or `dave`) now.
+- **Unauthenticated POST bodies.** Login, session mint and the intake, jcode-share and
+  pairing redeems had no body bound. Caddy caps exactly those paths at 64 KB, and their
+  token fields have a max length.
+
+Recorded, not changed:
+
+- **Untrusted PDFs are parsed in the api.** `POST /api/jcode/llm/v1/ocr` (reachable only
+  from the jcode container with its gateway key) rasterizes a PDF with MuPDF inside the api
+  process, so a MuPDF bug is reached by sandbox-authored bytes there. Moving the rasterize
+  step into the RapidOCR sidecar would keep it out of the api.
+- **The ComfyUI image is unpinned.** `COMFYUI_IMAGE` defaults to
+  `kyuz0/amd-strix-halo-comfyui:latest`, unlike the digest-pinned local-LLM base, so an
+  upstream push changes what runs on the next pull.
+- **The LAN-only debug-console page is reachable by naming the LAN host.** Caddy serves it
+  only on the LAN site, which is routing by `Host`/SNI, not a network fence. Accepted: the
+  page is static and every action it takes needs a debug token (`DEBUG_ACCESS.md`).
+- **`mc_player_memory.source` is always `owner`.** The memory tools insert `'owner'` even
+  on an in-game turn (`agent/minecrafttools.py`, `memory_edit`). Nothing reads the column
+  today; label it like `mc_log` before anything does.
 
 ## Provenance
 

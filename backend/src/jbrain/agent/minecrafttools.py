@@ -2604,7 +2604,10 @@ def build_minecraft_handlers(
         entry = " ".join(str(arguments.get("text") or "").split())
         if not entry or len(entry) > LOG_MAX:
             return f"A log entry is 1–{LOG_MAX} characters."
-        source = "dave" if arguments.get("by_dave") else "owner"
+        # In game the words are the asking player's, not the owner's: an `owner` label would
+        # give a player's text the owner's authority wherever the log is read back.
+        writer = "player" if asker_for(ctx.agent_session_id) is not None else "owner"
+        source = "dave" if arguments.get("by_dave") else writer
         async with scoped_session(maker, ctx.session) as s:
             player = await chat_player(s, ctx)
             if player is None:

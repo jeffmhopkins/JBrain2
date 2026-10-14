@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool
 
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.db.session import scoped_session
 from jbrain.embed import ResearchReportEmbedder
 from jbrain.external.report_titler import ResearchReportTitler
 from jbrain.external.research_corpus import (
@@ -34,16 +34,16 @@ from jbrain.external.research_corpus import (
     search_reports,
 )
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, UNSCOPED, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
-HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
-EXTERNAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("external",))
+GENERAL_ONLY = scoped_owner("general")
+HEALTH_ONLY = scoped_owner("health")
+EXTERNAL_ONLY = scoped_owner("external")
 DIMS = 384
 
 

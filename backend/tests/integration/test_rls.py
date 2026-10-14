@@ -222,6 +222,19 @@ UNSCOPED = SessionContext()
 OWNER = SessionContext(principal_id=str(uuid.uuid4()), principal_kind="owner")
 
 
+def scoped_owner(*scopes: str) -> SessionContext:
+    """A reader firewalled to `scopes`: the owner narrowed by `owner_scoped`, the shape
+    every production scoped read takes (`agent.session.read_context`). Since 0247 a
+    NON-owner's `domain_scopes` grant nothing unless a policy names its kind, so a
+    capability token with scopes is no longer a stand-in for a scoped reader."""
+    return SessionContext(
+        principal_id=OWNER.principal_id,
+        principal_kind="owner",
+        domain_scopes=scopes,
+        owner_scoped=True,
+    )
+
+
 async def test_full_auth_flow_through_real_rls(app_engine: AsyncEngine) -> None:
     repo = SqlAuthRepo(maker(app_engine))
     key = await service.rotate_owner_key(repo)
@@ -324,14 +337,12 @@ async def test_domain_scope_firewall_pattern(app_engine: AsyncEngine, database_u
         )
     await admin.dispose()
 
-    general_only = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    general_only = scoped_owner("general")
     async with scoped_session(maker(app_engine), general_only) as session:
         rows = list((await session.execute(text("SELECT body FROM app.firewall_probe"))).scalars())
         assert rows == ["grocery thoughts"]
 
-    health_and_general = SessionContext(
-        principal_kind="capability_token", domain_scopes=("general", "health")
-    )
+    health_and_general = scoped_owner("general", "health")
     async with scoped_session(maker(app_engine), health_and_general) as session:
         count = (await session.execute(text("SELECT count(*) FROM app.firewall_probe"))).scalar()
         assert count == 2
@@ -345,6 +356,16 @@ async def test_domain_scope_firewall_pattern(app_engine: AsyncEngine, database_u
         assert (
             await session.execute(text("SELECT count(*) FROM app.firewall_probe"))
         ).scalar() == 3
+
+    # A non-owner's scope claim is no grant (0247): a token naming every domain sees
+    # nothing, so a scoped reader must be a narrowed owner.
+    claimant = SessionContext(
+        principal_kind="capability_token", domain_scopes=("general", "health", "finance")
+    )
+    async with scoped_session(maker(app_engine), claimant) as session:
+        assert (
+            await session.execute(text("SELECT count(*) FROM app.firewall_probe"))
+        ).scalar() == 0
 
     # Scoped writers cannot smuggle rows into other domains either.
     from sqlalchemy.exc import ProgrammingError

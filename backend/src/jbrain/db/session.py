@@ -91,6 +91,12 @@ def device_context(principal_id: str, subject_id: str) -> SessionContext:
     *non-owner* principal pinned to its own subject — `is_full_owner()` is false,
     so the RLS subject pin (`subject_id = app.subject_id`) is load-bearing and a
     stolen key can touch only its own device's fixes. Scoped to `location` alone.
+
+    The scope is no blanket grant: `has_domain_scope` honours `domain_scopes` for an
+    owner only (migration 0247), so this claim counts solely where a policy names
+    `has_kind_scope('device_key', ...)` — the location tables a phone's fixed queries
+    touch. It still matters there: it is what tells a phone from a panel, which is also
+    a `device_key` but carries no scope (`panel_context`).
     """
     return SessionContext(
         principal_id=principal_id,

@@ -145,7 +145,7 @@ class SubmissionDetailOut(SubmissionOut):
 
 
 class RedeemRequest(BaseModel):
-    secret: str = Field(min_length=1)
+    secret: str = Field(min_length=1, max_length=1024)  # unauthenticated, so bounded
 
 
 class RedeemOut(BaseModel):

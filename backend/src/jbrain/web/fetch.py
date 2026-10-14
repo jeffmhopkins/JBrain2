@@ -1603,8 +1603,12 @@ class WebFetcher:
         guard_public_host(url, skip_dns=self._transport is not None)  # the TARGET must be public
         target = f"{self._reader_url}/{url}"
         try:
+            # Redirects are NOT followed: the reader runs hostile page JS on the fenced
+            # network and is unguarded here, so a 3xx it returns would steer the api (on the
+            # internal networks) at an internal service and launder that body back as page
+            # text. A 3xx is a reader miss like any other non-2xx.
             async with httpx.AsyncClient(
-                timeout=_TIMEOUT, transport=self._transport, follow_redirects=True
+                timeout=_TIMEOUT, transport=self._transport, follow_redirects=False
             ) as client:
                 headers = {**BROWSER_HEADERS, "X-Respond-With": "markdown"}
                 if self._reader_proxy_url:
@@ -1612,6 +1616,9 @@ class WebFetcher:
                     # beside the proxy env compose gives its Chromium.
                     headers["X-Proxy-Url"] = self._reader_proxy_url
                 resp = await client.get(target, headers=headers)
+                if resp.is_redirect:
+                    log.warning("web.reader_redirect_refused", status=resp.status_code)
+                    return None
                 resp.raise_for_status()
                 raw, body_truncated = await _read_capped(resp)
                 text = raw.decode(

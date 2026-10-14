@@ -26,21 +26,21 @@ from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import Settings
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.db.session import scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.main import create_app
 from jbrain.models.analysis import Entity, EntityAlias, EntityMention, Fact
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, UNSCOPED, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+GENERAL_ONLY = scoped_owner("general")
 
 
 @pytest.fixture

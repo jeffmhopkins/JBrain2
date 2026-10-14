@@ -42,15 +42,15 @@ from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.runlog import PipelineRunLog
 from jbrain.workflow.scheduler import PURGE_ACTION
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-HEALTH_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
-GENERAL_ONLY = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+HEALTH_ONLY = scoped_owner("health")
+GENERAL_ONLY = scoped_owner("general")
 
 
 def _registry():  # noqa: ANN202
@@ -572,6 +572,51 @@ async def test_e2e_note_created_event_drives_ingest_with_a_logged_run(
     assert len(runs) == 1 and runs[0]["step_count"] == 1
     job_ids = await _run_step_job_ids(maker, run_id=runs[0]["id"])
     assert len(job_ids) == 1 and job_ids[0] is not None
+
+
+async def test_live_tick_refuses_a_device_stamped_event(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    """A stamped job runs with OWNER identity (narrowed_context), so a stamp naming any
+    other principal must fail closed — the same note.created that drives ingest above,
+    stamped with a device key, is marked dispatched with an error and enqueues nothing
+    (security round 2). Geofence transitions are emitted owner-stamped for this reason."""
+    await _seed_owner_principal(maker)
+    device = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        sid = (
+            await s.execute(
+                text(
+                    "INSERT INTO app.subjects (id, display_name, kind)"
+                    " VALUES (gen_random_uuid(), 'phone', 'device')"
+                    " RETURNING id::text"
+                )
+            )
+        ).scalar_one()
+        await s.execute(
+            text(
+                "INSERT INTO app.principals (id, kind, subject_id, key_hash)"
+                " VALUES (:id, 'device_key', :s, :kh)"
+            ),
+            {"id": device, "s": sid, "kh": f"disp-{device}"},
+        )
+    note_id = await _make_note(maker, domain="general", body="device-stamped")
+    event_id = await _insert_event(
+        maker,
+        type=wf_events.NOTE_CREATED,
+        domain="general",
+        principal_id=device,
+        payload={"note_id": note_id},
+    )
+
+    diffs = await dispatcher.dispatcher_tick(
+        maker, _registry(), live=True, run_log=PipelineRunLog(maker)
+    )
+    [mine] = [d for d in diffs if d.event_id == event_id]
+    assert mine.error is not None and "not the owner" in mine.error
+    assert await _count_jobs(maker, kind="ingest_note", note_id=note_id) == 0
+    events = await _undispatched_events(maker, type=wf_events.NOTE_CREATED, note_id=note_id)
+    assert [e["dispatched_at"] is not None for e in events] == [True]
 
 
 async def test_e2e_redelivered_event_is_exactly_once_under_live(

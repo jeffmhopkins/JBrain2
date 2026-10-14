@@ -4,7 +4,7 @@ One umbrella tool, `jmolt_observe`, that reads jmolt's nights, its action ledger
 scratchpad (current + archived history), and its outbox — everything the owner needs to
 study what jmolt becomes. Reads of jmolt's OWN tables (scratch/archive/outbox/ledger)
 run under a NON-owner jmolt-scoped context, so the M19 RLS split makes the read-only
-guarantee MECHANICAL: `has_domain_scope('jmolt')` grants SELECT while `is_owner()` is
+guarantee MECHANICAL: the observer kind's read arm grants SELECT while `is_owner()` is
 false and `auth_ctx()` is not 'jmolt', so every INSERT/UPDATE/DELETE policy denies. The
 owner-only night infrastructure (agent_sessions/agent_turns/runs — jmolt's session rows
 and transcript) is gated on `is_owner()`, so those SELECTs run under an owner context;
@@ -63,7 +63,9 @@ _OBSERVE_SAFE_TOOLS = frozenset({"jmolt_observe", "current_time"})
 def _jmolt_data_read_ctx(pid: str) -> SessionContext:
     """Reads jmolt's OWN tables (scratch/archive/outbox/ledger) with a MECHANICAL
     read-only guarantee (M19(a)). A NON-owner principal carrying only the jmolt domain
-    scope: `has_domain_scope('jmolt')` grants SELECT, while `is_owner()` is FALSE (so the
+    scope: its kind's explicit arm on the `jmolt_*_read` policies grants SELECT
+    (`has_kind_scope('jmolt_observer', 'jmolt')`, 0247; `has_domain_scope` is
+    owner-only), while `is_owner()` is FALSE (so the
     outbox advance/purge policies, keyed on `is_owner() AND auth_ctx()<>'jmolt'`, deny
     every UPDATE/DELETE) and `auth_ctx()` is not 'jmolt' (so the scratch/outbox/ledger
     write policies deny every INSERT). So even a mis-behaving observer turn can only read.

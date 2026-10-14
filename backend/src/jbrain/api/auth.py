@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jbrain.api.deps import AuthRepoDep, PrincipalDep, SettingsDep
 from jbrain.api.session_cookie import delete_session_cookies, session_token, set_session_cookie
@@ -10,8 +10,10 @@ router = APIRouter(prefix="/auth")
 
 
 class LoginRequest(BaseModel):
-    owner_key: str
-    device_label: str = ""
+    # Unauthenticated: bounded so a caller can't make the api normalize and hash megabytes.
+    owner_key: str = Field(max_length=1024)
+    # The PWA's login input carries the same bound (LoginScreen maxLength).
+    device_label: str = Field(default="", max_length=200)
 
 
 @router.post("/session", status_code=204)

@@ -32,15 +32,15 @@ from sqlalchemy.pool import NullPool
 
 from jbrain.db.session import SessionContext, scoped_session
 from tests.conftest import docker_available
-from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, UNSCOPED, database_url, scoped_owner  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-HEALTH_TOKEN = SessionContext(principal_kind="capability_token", domain_scopes=("health",))
-GENERAL_TOKEN = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+HEALTH_TOKEN = scoped_owner("health")
+GENERAL_TOKEN = scoped_owner("general")
 # A narrowed owner session (0015): owner identity, firewalled to its domain scopes —
 # the shape a note conversation runs as.
 OWNER_HEALTH = SessionContext(
