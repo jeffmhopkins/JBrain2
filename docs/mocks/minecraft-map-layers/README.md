@@ -1,6 +1,6 @@
 # GUI gate — saved places, villagers and pets, and beds on the Minecraft map
 
-> **Status:** Living · **Last verified:** 2026-10-13
+> **Status:** Living · **Last verified:** 2026-10-14
 >
 > **Decided and built, all three sections (owner, 2026-10-13):** places and villagers and
 > pets (their sections' decisions), and beds, variant B (§3's decision block). The owner
@@ -322,7 +322,9 @@ answers to questions 4 and 10–13, which override the shared text below where t
   bed is tapped. The player card gains the bed line and **Show the bed**; tapping a death
   draws the curve from the skull to where they woke.
 - **Q11:** the pack change is approved: `{"ev":"spawnpoint", player, kind: bed | anchor |
-  other | none, dim, x, y, z}` a tick after a bed or anchor is used, on join, and from a 10 s
+  other | none, dim, x, y, z}` (built with a fifth kind, `unknown`, for blocks the pack couldn't
+  read at a point it hadn't seen this session; the box keeps that point's stored kind, or
+  stores a new point as `other`) a tick after a bed or anchor is used, on join, and from a 10 s
   change check of everyone online (`getSpawnPoint()`), sent only on a change.
 - **Q12:** the death card says **only where they woke** — *Respawned at their bed*, *…at
   their respawn anchor · in the Nether*, *Respawned at the world spawn* — and **never**

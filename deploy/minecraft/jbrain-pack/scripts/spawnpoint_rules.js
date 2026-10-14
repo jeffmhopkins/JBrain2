@@ -6,7 +6,11 @@
 // its broken bed until the next death (review X4), so the kind is read from the block at
 // the point every time, never assumed from how it was set.
 
-export const KINDS = ["bed", "anchor", "other", "none"];
+// `unknown`: the blocks couldn't be read (an unloaded chunk) and this session hasn't seen
+// the point. The box keeps the last kind it stored for a point, so it decides: the same
+// point keeps its kind, a new one is `other`. Never `other` here — a rejoin far from home
+// would report a good bed as gone.
+export const KINDS = ["bed", "anchor", "other", "none", "unknown"];
 // Bedrock has one bed block whatever its colour; the coloured ids are Java's, which a
 // later Bedrock could take up.
 const COLOURS = ["white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",

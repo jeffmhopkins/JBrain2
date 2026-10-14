@@ -22,6 +22,9 @@ from jbrain.db.session import SessionContext, scoped_session
 _OWNER = SessionContext(principal_kind="owner")
 
 KINDS = ("bed", "anchor", "other", "none")
+# The pack couldn't read the blocks at a point it hadn't seen this session (a join far
+# from home, a reload): judged here against the stored rows, never stored itself.
+UNKNOWN = "unknown"
 DIMS = ("overworld", "nether", "the_end")
 # How far back the map's death cards look: the live view's week, and a day to spare.
 LOG_DAYS = 8
@@ -47,6 +50,12 @@ _INSERT = text(
 )
 
 
+_LATEST = text(
+    "SELECT kind, dim, x, y, z FROM app.mc_spawn_points"
+    " WHERE world = :w AND xuid = :key AND at <= :at ORDER BY at DESC, id DESC LIMIT 1"
+)
+
+
 def _key(e: dict[str, Any]) -> str:
     # The travel log's player key (sessions.player_key), kept local to avoid the cycle.
     xuid = str(e.get("xuid") or "")
@@ -67,7 +76,7 @@ async def apply(s: AsyncSession, boot: str, e: dict[str, Any], at: datetime) -> 
         return
     spawn = e.get("spawn")
     name = str(e.get("name") or "")
-    if spawn not in KINDS or not name:
+    if (spawn not in KINDS and spawn != UNKNOWN) or not name:
         return
     place: dict[str, Any] = {"dim": None, "x": None, "y": None, "z": None}
     if spawn != "none":
@@ -77,6 +86,17 @@ async def apply(s: AsyncSession, boot: str, e: dict[str, Any], at: datetime) -> 
             return
         if place["dim"] not in DIMS:
             return
+    if spawn == UNKNOWN:
+        latest = (await s.execute(_LATEST, {"w": world, "key": _key(e), "at": at})).first()
+        if latest is not None and (latest.dim, latest.x, latest.y, latest.z) == (
+            place["dim"],
+            place["x"],
+            place["y"],
+            place["z"],
+        ):
+            return  # the point it already holds: nothing changed
+        # A point never seen with a bed or anchor at it is one with none seen there.
+        spawn = "other"
     await s.execute(
         _INSERT,
         {

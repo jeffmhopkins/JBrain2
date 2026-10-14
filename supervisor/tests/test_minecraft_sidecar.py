@@ -1486,6 +1486,18 @@ def test_spawn_points_become_events_under_the_connected_xuid(tmp_path: Path) -> 
     assert other["dim"] == "overworld" and "player" not in other
 
 
+def test_an_unread_spawn_point_is_passed_on_as_unknown(tmp_path: Path) -> None:
+    """The pack couldn't read the blocks at a point it hadn't seen this session (a join
+    far from home): `unknown`, with its place, for the api to judge against its rows."""
+    b = bds.Bds(tmp_path)
+    b._record("[x INFO] Player connected: BlockyFox, xuid: 111")
+    point = {"ev": "spawnpoint", "player": "BlockyFox", "dim": "overworld"}
+    _pack(b, {**point, "kind": "unknown", "x": 70, "y": 64, "z": 40})
+    _pack(b, {**point, "kind": "unknown", "x": 70, "y": 64})  # needs its whole block
+    (got,) = [e for e in b.events_after(0) if e["kind"] == "spawnpoint"]
+    assert (got["spawn"], got["x"], got["z"], got["xuid"]) == ("unknown", 70, 40, "111")
+
+
 def test_scans_become_events_type_checked_and_clamped(tmp_path: Path) -> None:
     """§M25 on the map: a Tricorder scan's lines ride the M26 pipe — op and dimension
     from their lists, coordinates clamped, the label cut, at most eight block ids, and

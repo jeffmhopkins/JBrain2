@@ -58,8 +58,9 @@ MARKER_EVENTS = ("beacon", "gate", "beacons", "gates")
 # (§M25): the map's and Dave's read of what each scan is finding.
 SCAN_EVENTS = ("scan", "scans")
 # `spawnpoint` is a player's respawn point changing, and every join's resend (§M8, beds):
-# the kind read from the block at it, `none` with no coordinates when there is none.
-SPAWN_KINDS = ("bed", "anchor", "other", "none")
+# the kind read from the block at it, `none` with no coordinates when there is none, and
+# `unknown` when the pack couldn't read the blocks (the api judges it against its rows).
+SPAWN_KINDS = ("bed", "anchor", "other", "none", "unknown")
 PACK_EVENTS = (
     "death",
     "respawn",

@@ -497,6 +497,8 @@ describe("parseMinecraftMap", () => {
       parseMinecraftMap({ slot: "slot1", focus: { kind: "bed", x: 1, z: 2, spawn } })?.focus;
     expect(bed("anchor")).toMatchObject({ kind: "bed", spawn: "anchor" });
     expect(bed("sofa")?.spawn).toBeNull();
+    // The pack's `unknown` is judged by the box and never served; nor is it drawn.
+    expect(bed("unknown")?.spawn).toBeNull();
     expect(bed(undefined)?.spawn).toBeNull();
   });
 });

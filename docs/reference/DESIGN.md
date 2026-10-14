@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-13
+> **Status:** Living · **Last verified:** 2026-10-14
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3940,7 +3940,9 @@ is tapped.
   a respawn anchor uses Lucide `anchor` and is drawn on the Nether map only. A point with
   **no bed or anchor seen there** (the pack read the block and found none — Bedrock keeps a
   spawn point after its bed is broken, until the next death; review X4) has the same tile
-  with a **dashed** ring (3 / 2.5), M26's *not active*. Labelled **Bed** (*Respawn anchor*,
+  with a **dashed** ring (3 / 2.5), M26's *not active*. A rejoin far from home (the bed's
+  chunk unloaded) never turns a known bed dashed: the pack sends `unknown` and the box keeps
+  the point's stored kind until a readable check says otherwise. Labelled **Bed** (*Respawn anchor*,
   *Spawn point*) by the side rule; the tapped one **BlockyFox's bed** with the selection
   ring. It joins the one cluster pass with every other non-player marker (review X2), and
   its label obstacle is keyed per marker, `bed:` and the player (X5).

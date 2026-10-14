@@ -27,9 +27,10 @@ export const initSpawnPoints = (world, system) => {
     const kind = kindAt((dx, dy, dz) =>
       sp.dimension.getBlock({ x: point.x + dx, y: point.y + dy, z: point.z + dz })?.typeId);
     const before = sent.get(player.name);
-    // Unreadable (an unloaded chunk): what was known of this same point stands, and a new
-    // point nobody has seen yet is "other", drawn on the map as not seen there.
-    const known = kind ?? (samePoint(before, point) ? before.kind : "other");
+    // Unreadable (an unloaded chunk): what this session knew of the same point stands;
+    // with no such memory (a join, a reload, a new point) it is "unknown", and the box,
+    // which keeps the last kind per point, decides.
+    const known = kind ?? (samePoint(before, point) ? before.kind : "unknown");
     return spawnLine(player.name, point, known);
   };
 

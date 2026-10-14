@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** M0✅ M1✅ T1✅ M2✅ M3✅ M4✅ M5✅ M6✅ M7◻️ M8✅ M8a✅ M9✅ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2✅ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-14 · **Waves:** M0✅ M1✅ T1✅ M2✅ M3✅ M4✅ M5✅ M6✅ M7◻️ M8✅ M8a✅ M9✅ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2✅ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 **What's left (audited against the code, 2026-10-13).** M0, M5, M6, M8, M9 and P2 are built;
 each section's "Remaining" paragraph names its small leftovers. Genuinely open, each the
@@ -1282,18 +1282,23 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
 map").** A bed shows with its player: tap a player (their card gains a bed line and **Show
 the bed**), one of their deaths (a curve from the skull to where they woke), or the bed.
 - **Pack** (`spawnpoint.js`, `spawnpoint_rules.js`; pack 1.14.0): `{"ev":"spawnpoint",
-  player, kind, dim, x, y, z}` with `kind` `bed` / `anchor` / `other` / `none` (no place).
-  The kind is read from the block at `getSpawnPoint()` (or touching it) every time, so a bed
-  broken under a point the game keeps reads `other` (review X4); an unloaded chunk keeps what
-  was known of the same point. Sent a tick after a bed or respawn anchor is used, a tick
+  player, kind, dim, x, y, z}` with `kind` `bed` / `anchor` / `other` / `none` (no place) /
+  `unknown`. The kind is read from the block at `getSpawnPoint()` (or touching it) every
+  time, so a bed broken under a point the game keeps reads `other` (review X4). An unloaded
+  chunk keeps what this session knew of the same point; with no such memory — a join or a
+  reload far from home — the pack sends `unknown` rather than guess `other`, and the backend
+  decides (below); the first readable check sends the real kind. Sent a tick after a bed or respawn anchor is used, a tick
   after every join (always: the resync) and respawn, and from a 10 s check of everyone
   online, only on a change.
-- **Sidecar** (`bds.py`): `spawnpoint` in `PACK_EVENTS`, validated like M26's lines (kind
+- **Sidecar** (`bds.py`): `spawnpoint` in `PACK_EVENTS`, validated like M26's lines (kind,
+  `unknown` included,
   and dimension from their lists, coordinates clamped, the name cut to 32), filed under the
   xuid BDS logged at connect; the kind travels as `spawn` (an event's `kind` is its own).
 - **Backend:** `app.mc_spawn_points` (migration 0246): one row per change — a line that
   repeats the latest adds nothing, a re-read adds nothing (`(boot_id, event_id)`) — and a
-  world reset or import clears it. **Owner-only in RLS, no share policy**: not in
+  world reset or import clears it. An `unknown` for the player's latest stored point adds
+  nothing (nothing changed); for a new point, or a first one, it is stored as `other` (no bed
+  seen there yet); `unknown` is never stored or served. **Owner-only in RLS, no share policy**: not in
   `mc_player_events`, which 0230 opens to share links (review X3). `GET
   /api/minecraft/map/markers` gains `spawns` (each player's current point, `set_at` across
   a bed read `other` while broken) and `spawn_log` (the last 8 days and the point before).

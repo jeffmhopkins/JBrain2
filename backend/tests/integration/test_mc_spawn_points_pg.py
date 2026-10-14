@@ -245,3 +245,31 @@ async def test_the_table_refuses_a_place_that_doesnt_fit_its_kind(maker) -> None
                         f" event_id, at, kind, dim, x, y, z) VALUES {row}"
                     )
                 )
+
+
+async def test_unknown_keeps_a_known_points_kind_and_a_new_one_is_other(maker, sidecar) -> None:
+    """The pack couldn't read the blocks (a join far from home): the same point as the
+    player's latest row is no change; a new point, or a first one, is stored as `other`;
+    `unknown` itself is never stored or served."""
+    sidecar.point(T0, "bed", **BED)
+    sidecar.point(T0 + 10, "unknown", **BED)  # rejoined far from home: still one row
+    await _drain(maker)
+    got = await spawnpoints.for_world(maker, "castle", now=NOW)
+    assert [(p["kind"], p["at"]) for p in got["spawns"]] == [("bed", T0)]
+    assert await _count(maker) == 1
+
+    sidecar.point(T0 + 20, "unknown", dim="overworld", x=500, y=70, z=500)  # a new point
+    sidecar.point(T0 + 30, "unknown", dim="overworld", x=500, y=70, z=500)  # and again
+    sidecar.point(T0, "unknown", name="Mira_P", xuid="m", **ANCHOR)  # nothing before it
+    await _drain(maker)
+    got = await spawnpoints.for_world(maker, "castle", now=NOW)
+    by = {p["gamertag"]: p for p in got["spawns"]}
+    assert (by["BlockyFox"]["kind"], by["BlockyFox"]["x"]) == ("other", 500)
+    assert (by["Mira_P"]["kind"], by["Mira_P"]["dim"]) == ("other", "nether")
+    assert await _count(maker) == 3
+    assert all(r["kind"] != "unknown" for r in got["spawn_log"])
+    async with scoped_session(maker, OWNER) as s:
+        kinds = (await s.execute(text("SELECT DISTINCT kind FROM app.mc_spawn_points"))).all()
+        mine = await spawnpoints.current(s, "castle", FOX)
+    assert {k.kind for k in kinds} == {"bed", "other"}
+    assert mine.kind == "other"

@@ -36,7 +36,7 @@ test("a line is whole blocks in a known dimension, and none carries no coordinat
   assert.deepEqual(r.spawnLine("Mira_P", { dim: "nether", x: -20.7, y: 71.2, z: 40.5 }, "anchor"),
     { ev: "spawnpoint", player: "Mira_P", kind: "anchor", dim: "nether", x: -21, y: 71, z: 40 });
   assert.deepEqual(r.spawnLine("Steve42", null), { ev: "spawnpoint", player: "Steve42", kind: "none" });
-  assert.ok(r.KINDS.every((k) => ["bed", "anchor", "other", "none"].includes(k)));
+  assert.deepEqual(r.KINDS, ["bed", "anchor", "other", "none", "unknown"]);
   assert.equal(r.CHECK_TICKS, 200); // ten seconds
 });
 
@@ -155,7 +155,7 @@ test("a bed broken while the spawn point stays is sent as other: not seen there"
   assert.deepEqual(lines().at(-1), { ev: "spawnpoint", player: "BlockyFox", kind: "none" });
 });
 
-test("an unloaded chunk keeps what was known of the same point, and a new one is other", () => {
+test("an unloaded chunk keeps what was known of the same point, and a new one is unknown", () => {
   const p = new Player("BlockyFox", ow);
   join(p);
   sleep(p, { x: 70, y: 64, z: 40 });
@@ -164,7 +164,7 @@ test("an unloaded chunk keeps what was known of the same point, and a new one is
   assert.equal(lines().length, 2); // still the bed: nothing new to say
   p.spawn = { dimension: ow, x: 500, y: 70, z: 500 }; // a /spawnpoint far off
   check();
-  assert.equal(lines().at(-1).kind, "other");
+  assert.equal(lines().at(-1).kind, "unknown");
   ow.loaded = true;
   ow.blocks["500,70,501"] = mc("bed"); // the chunk loads: a bed beside the point after all
   check();
@@ -194,4 +194,41 @@ test("a player gone, or a spawn point that throws, sends nothing and stops nothi
   check();
   assert.deepEqual(lines(), [{ ev: "spawnpoint", player: "Fine", kind: "none" }]);
   assert.ok(logs.some((l) => l.includes("spawn point unreadable for Odd")));
+});
+
+test("a join with the bed's chunk unloaded and nothing remembered sends unknown, not other", () => {
+  // A previous session confirmed the bed; this one starts empty (a rejoin, a reload).
+  const p = new Player("BlockyFox", ow);
+  join(p);
+  sleep(p, { x: 70, y: 64, z: 40 });
+  ev.playerLeave({ playerName: "BlockyFox" });
+  players = [];
+  ow.loaded = false;
+  join(p);
+  assert.deepEqual(lines().at(-1),
+    { ev: "spawnpoint", player: "BlockyFox", kind: "unknown", dim: "overworld", x: 70, y: 64, z: 40 });
+  // Still unreadable: nothing new to say. Readable again: the real kind, as usual.
+  check();
+  assert.equal(lines().at(-1).kind, "unknown");
+  const n = lines().length;
+  check();
+  assert.equal(lines().length, n);
+  ow.loaded = true;
+  check();
+  assert.equal(lines().at(-1).kind, "bed");
+});
+
+test("a bed broken while its player was away is corrected by the first readable check", () => {
+  const p = new Player("BlockyFox", ow);
+  join(p);
+  sleep(p, { x: 70, y: 64, z: 40 });
+  ev.playerLeave({ playerName: "BlockyFox" });
+  players = [];
+  ow.loaded = false;
+  join(p);
+  assert.equal(lines().at(-1).kind, "unknown");
+  delete ow.blocks["70,64,40"];
+  ow.loaded = true;
+  check();
+  assert.equal(lines().at(-1).kind, "other");
 });
