@@ -416,6 +416,69 @@ export function mcMapMarkers(slot: string): MinecraftMapMarkers {
       },
     ],
     as_of: t - 60,
+    ...fixtureSpawns(t),
+  };
+}
+
+// Each player's respawn point (beds, variant B): BlockyFox's bed by the castle, the one he
+// wakes at after the lava death; Mira_P's bed by the village, swapped this morning for a
+// respawn anchor in the Nether (so her creeper death still wakes her at the bed); Steve42
+// never set one, so he wakes at the world spawn; and Pebble_J's point has no bed seen at
+// it (review X4: a bed broken under a point the game keeps).
+function fixtureSpawns(t: number): Pick<MinecraftMapMarkers, "spawns" | "spawn_log"> {
+  const week = t - 7 * 86_400;
+  const ow = "overworld" as MinecraftDim;
+  const bed = (xuid: string, at: number, x: number, z: number) => ({
+    xuid,
+    at,
+    kind: "bed" as const,
+    dim: ow,
+    x,
+    y: 70,
+    z,
+  });
+  const none = (xuid: string, at: number) => ({
+    xuid,
+    at,
+    kind: "none" as const,
+    dim: null,
+    x: null,
+    y: null,
+    z: null,
+  });
+  const [fox, mira, steve, pebble] = FX_PLAYERS.map((p) => p.xuid) as [
+    string,
+    string,
+    string,
+    string,
+  ];
+  const anchor = {
+    xuid: mira,
+    at: t - 5 * 3600,
+    kind: "anchor" as const,
+    dim: "nether" as MinecraftDim,
+    x: -12,
+    y: 71,
+    z: 36,
+  };
+  const unseen = { ...bed(pebble, t - 3 * 3600, 10, 10), kind: "other" as const };
+  const spawn_log = [
+    bed(fox, week, -136, 94),
+    bed(mira, week, 226, -296),
+    none(steve, week),
+    none(pebble, week),
+    { ...bed(pebble, t - 26 * 3600, 10, 10) },
+    anchor,
+    unseen,
+  ].sort((a, b) => a.at - b.at);
+  return {
+    spawns: [
+      { ...bed(fox, week, -136, 94), gamertag: "BlockyFox", set_at: week },
+      { ...anchor, gamertag: "Mira_P", set_at: anchor.at },
+      { ...none(steve, week), gamertag: "Steve42", set_at: week },
+      { ...unseen, gamertag: "Pebble_J", set_at: t - 26 * 3600 },
+    ],
+    spawn_log,
   };
 }
 

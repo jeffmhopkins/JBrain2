@@ -1,6 +1,6 @@
 # Minecraft Bedrock — an on-box world server, its backups, and a companion that knows the world
 
-> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** M0✅ M1✅ T1✅ M2✅ M3✅ M4✅ M5✅ M6✅ M7◻️ M8✅ M8a✅ M9✅ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2✅ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
+> **Status:** In progress · **Last verified:** 2026-10-14 · **Waves:** M0✅ M1✅ T1✅ M2✅ M3✅ M4✅ M5✅ M6✅ M7◻️ M8✅ M8a✅ M9✅ M10✅ M11⏸️ M12✅ M13⏸️ M14⏸️ M15✅ M16✅ M17✅ M18✅ M19✅ M20✅ M21✅ M22✅ M23✅ M24✅ M25✅ M26✅ R1◻️ P1✅ P2✅ P3✅ SW1✅ SW2✅ SW3✅ SW4✅ DW1✅
 
 **What's left (audited against the code, 2026-10-13).** M0, M5, M6, M8, M9 and P2 are built;
 each section's "Remaining" paragraph names its small leftovers. Genuinely open, each the
@@ -11,8 +11,10 @@ owner's call:
   pointer, and, the same day, villagers and pets on the map). Left: chest minecarts in
   `mc_find_item`, and a fast-path answer for "where's my dog" (§M4e "Not built").
 - **M7:** a companion NPC, scheduled backups, the other §3b tools.
-- **M8:** beds on the map, height / slice / changes layers, Dave's in-game "map of here"
-  link. Saved places are on the map (2026-10-13, §M8 "Saved places, villagers and pets").
+- **M8:** height / slice / changes layers, Dave's in-game "map of here" link. Saved places,
+  villagers and pets are on the map (2026-10-13, §M8 "Saved places, villagers and pets"), and
+  beds (variant B, 2026-10-13, §M8 "Beds and respawn points"; their box checks are in the
+  home-test runbook).
 - **M5/M6/P2:** the companion's name as a setting, per-player rate limits, an in-game web
   switch, a latency measurement, and `auto` log entries for crafting.
 - **P1 follow-up:** done: goals in the PWA (§M24, "Goals in the app") and §M25's scan on
@@ -1241,7 +1243,7 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
   switches dimension with a toast, deaths pinned with their cause and **Replay the minutes
   before**, and the status line reads *Not live · yesterday 4:48 pm — replaying at 600× ·
   positions from the travel log · terrain as of now*, with **Back to live**.
-- **Overlays made real:** Trails, Deaths, Beds & spawn (the **world spawn**, which the
+- **Overlays made real:** Trails, Deaths, Spawn (the **world spawn**, which the
   sidecar's `/map/info` now reads from `level.dat`) and *Explored by* (Anyone or one player,
   lifting by first-seen time as the timeline plays).
 - **Keeping up (fixed 2026-10-13).** Positions are read every 10 s and the trails every
@@ -1255,10 +1257,7 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
   by* is read again and the tiles within 16 chunks of the new steps are re-fetched,
   cache-busted. A minute of walking costs at most six small reads, one full read, one fog
   read and one refresh of the tiles round the steps.
-- **Not yet (the box doesn't record it):** **beds**. The behavior pack reads a player's spawn
-  point only when they ask Dave something (`/jb:dave`), and nothing keeps it, so the overlay
-  draws the world spawn and says beds aren't recorded. A pack event on a bed or respawn
-  anchor being set, kept per player, would close it.
+- **Beds:** built 2026-10-13 (below).
 - **Saved places, villagers and pets (built 2026-10-13;** GUI gate
   `docs/mocks/minecraft-map-layers/`, places A and villagers-and-pets A, its review's blocking
   findings fixed; DESIGN.md "Saved places, villagers and pets on the Minecraft map"):
@@ -1275,7 +1274,45 @@ session navigation *3 · Days* (DESIGN.md "The Minecraft map"):
   - Villagers and pets: §M4e "On the map"; both off by default. Owner-only, never on a share
     link; none of the three on the timeline's replay.
   - Dave's map card gained the `villager` and `pet` focuses (`mc_show_map` v4).
-- **Next:** beds and the player share link.
+- **Next:** the player share link ("map of here", below), then the height, slice and changes
+  layers.
+
+**Beds and respawn points (built 2026-10-13; the owner's pick, beds variant B of
+`docs/mocks/minecraft-map-layers/`; DESIGN.md "Beds and respawn points on the Minecraft
+map").** A bed shows with its player: tap a player (their card gains a bed line and **Show
+the bed**), one of their deaths (a curve from the skull to where they woke), or the bed.
+- **Pack** (`spawnpoint.js`, `spawnpoint_rules.js`; pack 1.14.0): `{"ev":"spawnpoint",
+  player, kind, dim, x, y, z}` with `kind` `bed` / `anchor` / `other` / `none` (no place) /
+  `unknown`. The kind is read from the block at `getSpawnPoint()` (or touching it) every
+  time, so a bed broken under a point the game keeps reads `other` (review X4). An unloaded
+  chunk keeps what this session knew of the same point; with no such memory — a join or a
+  reload far from home — the pack sends `unknown` rather than guess `other`, and the backend
+  decides (below); the first readable check sends the real kind. Sent a tick after a bed or respawn anchor is used, a tick
+  after every join (always: the resync) and respawn, and from a 10 s check of everyone
+  online, only on a change.
+- **Sidecar** (`bds.py`): `spawnpoint` in `PACK_EVENTS`, validated like M26's lines (kind,
+  `unknown` included,
+  and dimension from their lists, coordinates clamped, the name cut to 32), filed under the
+  xuid BDS logged at connect; the kind travels as `spawn` (an event's `kind` is its own).
+- **Backend:** `app.mc_spawn_points` (migration 0246): one row per change — a line that
+  repeats the latest adds nothing, a re-read adds nothing (`(boot_id, event_id)`) — and a
+  world reset or import clears it. An `unknown` for the player's latest stored point adds
+  nothing (nothing changed); for a new point, or a first one, it is stored as `other` (no bed
+  seen there yet); `unknown` is never stored or served. **Owner-only in RLS, no share policy**: not in
+  `mc_player_events`, which 0230 opens to share links (review X3). `GET
+  /api/minecraft/map/markers` gains `spawns` (each player's current point, `set_at` across
+  a bed read `other` while broken) and `spawn_log` (the last 8 days and the point before).
+  `mc_show_map` gains focus `bed` (tool v5): the chat player's or a named player's current
+  point, `spawn` saying which.
+- **Map:** the death card says only where they woke — matched to the point they had then
+  (within 4 blocks) and the world spawn (within 16) — never why. Not on share links, not on
+  the timeline's replay.
+- **Box checks** (the home-test runbook): that `getSpawnPoint()` names the bed's block (or
+  touches it); that a broken bed reads *no bed seen there* on the 10 s check before the next
+  death; what an anchor at zero charges reports; and how far from the bed and from the world
+  spawn a player really wakes.
+- **Not built:** the overview of every bed (variant A), shared and pod beds as one tile with
+  a count (review S8: B draws one player's at a time), and the curve on the replay (S11).
 
 **Viewer, wave 3 — the chat card, P3 (shipped 2026-10-11).** Minecraft_Dave's `minecraft_map`
 tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:

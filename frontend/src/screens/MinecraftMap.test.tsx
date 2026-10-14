@@ -22,6 +22,7 @@ import {
   mcMapPoint,
   mcMapStructures,
   mcMapVillager,
+  mcTimeline,
 } from "../minecraftMapFixtures";
 import { shareMap } from "../minecraftMapSource";
 import { MinecraftScreen } from "./MinecraftScreen";
@@ -38,6 +39,8 @@ describe("the Minecraft map", () => {
   let server: MinecraftServer;
   let point: (x: number, z: number, dim: string) => MinecraftMapPoint;
   let down = false;
+  // The travel log behind deaths and wakings, served only to the tests that read it.
+  let withLog = false;
 
   beforeEach(() => {
     vi.stubGlobal("fetch", fetchMock);
@@ -45,6 +48,7 @@ describe("the Minecraft map", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     server = mcServer();
     down = false;
+    withLog = false;
     point = (x, z, dim) => mcMapPoint("slot2", dim as "overworld", x, z);
     fetchMock.mockImplementation(async (input, init) => {
       const url = new URL(String(input), "http://box");
@@ -68,6 +72,16 @@ describe("the Minecraft map", () => {
       }
       if (path === "/api/minecraft/map/structures") return json(mcMapStructures(slot, dim));
       if (path === "/api/minecraft/map/markers") return json(mcMapMarkers(slot));
+      if (path === "/api/minecraft/timeline" && withLog) {
+        const parts = (q.get("include") ?? "trails,events,sessions").split(",");
+        return json(
+          mcTimeline(slot, Number(q.get("from")), Number(q.get("to")), {
+            include: parts as never,
+            players: [],
+            dim,
+          }),
+        );
+      }
       if (path === "/api/minecraft/map/places") return json(mcMapPlaces(slot));
       if (path === "/api/minecraft/map/entities") return json(mcMapEntities(slot, dim));
       if (path === "/api/minecraft/map/villager") {
@@ -259,7 +273,7 @@ describe("the Minecraft map", () => {
     expect(screen.getByText("Explored")).toBeInTheDocument();
     expect(screen.getByText("Satellite survey")).toBeInTheDocument();
     expect(screen.getByText("Wormhole gates")).toBeInTheDocument();
-    for (const name of ["Trails", "Deaths", "Beds & spawn", "Explored by…"]) {
+    for (const name of ["Trails", "Deaths", "Spawn · beds on tap", "Explored by…"]) {
       expect(screen.getByRole("switch", { name })).toBeInTheDocument();
     }
     expect(screen.getByText("Saved places")).toBeInTheDocument();
@@ -383,6 +397,132 @@ describe("the Minecraft map", () => {
     const tiles = at(f, (k, a) => k === "roundRect" && a[2] === 21);
     const rings = at(f, (k, a) => k === "arc" && a[2] === 18);
     expect(Math.max(...tiles, ...rings)).toBeLessThan(Math.min(...discs));
+  });
+
+  it("beds: the row says they come on a tap, and every respawn point is listed", async () => {
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    const row = screen.getByRole("switch", { name: "Spawn · beds on tap" });
+    expect(row).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByText(
+        "the world spawn, in the Overworld · a player's bed shows when you tap them or one of their deaths",
+      ),
+    ).toBeInTheDocument();
+    for (const name of [
+      /^BlockyFox's bed/,
+      /^Mira_P's respawn anchor/,
+      /^Pebble_J's spawn point/,
+    ]) {
+      expect(await screen.findByRole("button", { name })).toBeInTheDocument();
+    }
+    // Known to have none: said, but nothing to fly to.
+    expect(screen.getByText("Steve42 · no bed set")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Steve42 · no bed set/ })).toBeNull();
+    expect(screen.getByText(/respawns at the world spawn · X 32 · Z \u22128/)).toBeInTheDocument();
+    expect(screen.getByText("No bed seen there")).toBeInTheDocument();
+    expect(screen.getByText("Respawned here")).toBeInTheDocument();
+  });
+
+  it("a bed from the list: its card, the deaths its player woke at it, as the pack sent it", async () => {
+    withLog = true;
+    await openMap();
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^BlockyFox's bed/ }));
+    const card = document.querySelector(".mc-map-sel") as HTMLElement;
+    await waitFor(() => expect(card).toHaveTextContent(/Respawned here after/));
+    expect(card).toHaveTextContent("BlockyFox's bed");
+    expect(within(card).getByText("respawn point")).toBeInTheDocument();
+    expect(card).toHaveTextContent(
+      /Respawned here after 3 deaths since it was set · burned in lava/,
+    );
+    expect(card).toHaveTextContent("As the pack last sent it.");
+    expect(card).toHaveTextContent(/BlockyFox is \d+ blocks [a-z-]+ of it · online/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Pebble_J's spawn point/ }));
+    const unseen = document.querySelector(".mc-map-sel") as HTMLElement;
+    expect(within(unseen).getByText("not seen there")).toBeInTheDocument();
+    expect(unseen).toHaveTextContent(
+      /No bed or respawn anchor was seen at this point when the pack last looked/,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Show more" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Mira_P's respawn anchor/ }));
+    expect(screen.getByRole("radio", { name: "Nether" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("tapping a player adds their bed line and Show the bed; a death says where they woke", async () => {
+    withLog = true;
+    vi.stubGlobal("Path2D", class {});
+    const log: [string, unknown[]][] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (t, k: string) =>
+        k in t
+          ? t[k]
+          : k === "measureText"
+            ? (x: string) => ({ width: x.length * 6 })
+            : (...a: unknown[]) => {
+                log.push([k, a]);
+              },
+      set: (t, k: string, v) => {
+        t[k] = v;
+        return true;
+      },
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as never);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 390,
+      bottom: 844,
+      width: 390,
+      height: 844,
+      toJSON: () => ({}),
+    });
+    const map = await openMap();
+    const lastFrame = () => log.slice(log.map(([k]) => k).lastIndexOf("setTransform"));
+    // A player's disc carries their initial: BlockyFox's "B".
+    const disc = async (initial: string) => {
+      let at: [number, number] | null = null;
+      await waitFor(() => {
+        const hit = lastFrame().find(([k, a]) => k === "fillText" && a[0] === initial);
+        expect(hit).toBeTruthy();
+        at = [Number(hit?.[1][1]), Number(hit?.[1][2]) - 0.5];
+      });
+      return at as unknown as [number, number];
+    };
+    const [bx, by] = await disc("B");
+    tapAt(map, bx, by);
+    const card = () => document.querySelector(".mc-map-sel") as HTMLElement;
+    await waitFor(() => expect(card()).toHaveTextContent("BlockyFox"));
+    expect(card()).toHaveTextContent(/Bed · \d+ blocks [a-z-]+ · X \u2212136 · Z 94/);
+    // The bed is drawn now: a tile with Lucide's bed in the frame.
+    await waitFor(() =>
+      expect(lastFrame().some(([k, a]) => k === "roundRect" && a[2] === 21)).toBe(true),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Show the bed" }));
+    await waitFor(() => expect(card()).toHaveTextContent("BlockyFox's bed"));
+
+    // A death: its skull (the 9-px rose disc), tapped, says only where its player woke,
+    // and draws the curve there.
+    fireEvent.click(screen.getByRole("button", { name: "Show everyone" }));
+    let skull: [number, number] | null = null;
+    await waitFor(() => {
+      const hit = lastFrame().find(([k, a]) => k === "arc" && a[2] === 9);
+      expect(hit).toBeTruthy();
+      skull = [Number(hit?.[1][0]), Number(hit?.[1][1])];
+    });
+    const [kx, ky] = skull as unknown as [number, number];
+    tapAt(map, kx, ky);
+    await waitFor(() =>
+      expect(card()).toHaveTextContent(
+        /Respawned (at their bed|at their respawn anchor|at their spawn point|at the world spawn| · )/,
+      ),
+    );
+    expect(card()).not.toHaveTextContent(/missing|blocked/);
   });
 
   it("saved places: on, listed by player, and a card with no Tricorder button", async () => {

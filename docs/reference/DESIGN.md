@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-13
+> **Status:** Living · **Last verified:** 2026-10-14
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -3734,8 +3734,9 @@ opens this screen on its spot.
   the trails every minute, so a disc newer than its trail has the stretch since read and
   joined on at once —
   and a life's trail ends on its skull); **Deaths** (the last week's live, the range's up to the moment on the
-  timeline); **Beds & spawn** (the world spawn from `level.dat` — beds aren't recorded, so its
-  line says so); **Structures** (its line says *from the server's locate · exact*, or
+  timeline); **Spawn · beds on tap** (the world spawn from `level.dat`, and a player's bed
+  when you tap them or one of their deaths — see "Beds and respawn points on the Minecraft
+  map" below; a shared map, which has no beds, calls the row **World spawn**); **Structures** (its line says *from the server's locate · exact*, or
   *searching the world · N%* while the box sweeps, with **Search again** when the world is
   live); **Explored by…** (off by default; chips *Anyone* or one player; a `--map-fog` veil at
   62 % over every chunk they hadn't come near, lifted by each chunk's first-seen time as the
@@ -3925,6 +3926,70 @@ the owner's) — and **not on the timeline's replay**: they are where they are n
 - **Legend:** *Saved place (ring: whose) · Where goals count chests (tapped)*, and while a
   mobs layer is on *Village (count) · Villager, by job · Pet (ring: whose) · Named mob* and the
   seven job glyphs.
+
+### Beds and respawn points on the Minecraft map (owner, 2026-10-13 — binding mock: `docs/mocks/minecraft-map-layers/beds-b-with-the-player.html`, variant B; plan §M8)
+
+Each player's one respawn point — their bed, a respawn anchor, or none (the world spawn) —
+from the pack's own `spawnpoint` lines (`spawns` and `spawn_log` in
+`/api/minecraft/map/markers`). **A bed shows with its player** (variant B): nothing is added
+to the overview; the bed is drawn while its player, one of their deaths, or the bed itself
+is tapped.
+
+- **Marker grammar** (M26's square tile): a `--map-halo` tile ringed 1.5 px in **its
+  player's colour** (the same token as their disc and trail), Lucide `bed` in `--map-ink`;
+  a respawn anchor uses Lucide `anchor` and is drawn on the Nether map only. A point with
+  **no bed or anchor seen there** (the pack read the block and found none — Bedrock keeps a
+  spawn point after its bed is broken, until the next death; review X4) has the same tile
+  with a **dashed** ring (3 / 2.5), M26's *not active*. A rejoin far from home (the bed's
+  chunk unloaded) never turns a known bed dashed: the pack sends `unknown` and the box keeps
+  the point's stored kind until a readable check says otherwise. Labelled **Bed** (*Respawn anchor*,
+  *Spawn point*) by the side rule; the tapped one **BlockyFox's bed** with the selection
+  ring. It joins the one cluster pass with every other non-player marker (review X2), and
+  its label obstacle is keyed per marker, `bed:` and the player (X5).
+- **The respawn curve:** tapping a death draws a quadratic curve from the skull to where its
+  player woke — their bed or anchor (the point they had *then*, from the change log), the
+  world spawn's star, or the spot itself — 2 px in the player's colour over a 5 px halo,
+  with an arrowhead at the waking. Curved because it is a jump, not a path: never a trail
+  (solid, straight), the Tricorder bearing (8 / 6) or a gate line (dotted). No curve when
+  they woke in another dimension. It sits with the gate lines, under every tile; labels
+  keep off it. A tapped bed draws the curve from each death its player woke at it after.
+- **The player card** gains one line under the coordinates: *Bed · 32 blocks south-east ·
+  X 70 · Z 40*, *Respawn anchor · in the Nether · X −12 · Z 36*, *Spawn point · no bed seen
+  there · …*, or *No bed set · respawns at the world spawn* — said only when the pack has
+  reported the player (no line otherwise) — and a primary **Show the bed** (*Show the
+  anchor*, *Show the spawn point*) beside Follow and Sessions, which selects the bed and
+  brings it to the middle of the visible map in its own dimension.
+- **The death card** gains one line: **only where they woke** — *Respawned at their bed ·
+  164 blocks north-east · X 70 · Z 40*, *Respawned at their respawn anchor · in the Nether
+  · …*, *Respawned at the world spawn*, or *Respawned · 120 blocks north · X … · Z …* —
+  matched to the point they had then (within 4 blocks) and the world spawn (within 16).
+  **Never** an inferred *why* (no *bed missing or blocked*: the owner's ruling). **Show the
+  bed** beside Replay the minutes before when they woke at their point.
+- **Tapping a bed:** the bed (or anchor) on the player's `-tint` in their text colour,
+  **BlockyFox's bed**, a *respawn point* pill (`--steel-text` on `--steel-tint`) — *not
+  seen there* (the dormant pill) for a dashed one — and *set Oct 11, 9:02 pm*; X · Y · Z
+  with Copy; *BlockyFox is 32 blocks north-west of it · online*; *Respawned here after 1
+  death since it was set · burned in lava, yesterday 4:48 pm (the curve)*; and *As the pack
+  last sent it.* (or, dashed, *No bed or respawn anchor was seen at this point when the
+  pack last looked, Oct 13 9:40 am. The game keeps a spawn point after its bed is broken,
+  until the next death.*).
+- **Layers:** the row is **Spawn · beds on tap**, *the world spawn, in the Overworld · a
+  player's bed shows when you tap them or one of their deaths* — so it never promises beds
+  the overview doesn't draw (review B1); off, it hides the star, the beds and the curves.
+  **In this world** lists every player the pack has told of under a *Respawn points* heading,
+  after the places (by player) and before the beacons and gates:
+  *BlockyFox's bed · X −136 · Z 94 · set Oct 6*, *Mira_P's respawn anchor · in the Nether ·
+  …*, *Pebble_J's spawn point · … · no bed seen there since …* (a tap selects and flies
+  there), and *Steve42 · no bed set · respawns at the world spawn · X 32 · Z −8* (a plain
+  row: nowhere to fly). Legend swatches: *Bed (ring: whose) · Respawn anchor · No bed seen
+  there · Respawned here*, with *Each player has one respawn point, sent by the pack when
+  it changes and again at every join. It shows when you tap its player or one of their
+  deaths.*
+- **The chat card** (`minecraft_map`, focus `bed`): the tile in `--steel` (dashed for
+  `spawn: other`), *Respawn point · Overworld*, or *No bed seen there when the pack last
+  looked · Overworld*.
+- **Owner-only, live only:** not on a share link's map (the rows are owner-only in RLS),
+  not on the timeline's replay, and not on the compact (timeline) card.
 
 ### The Tricorder target on the Minecraft map (owner, 2026-10-12; plan §M21)
 

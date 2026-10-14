@@ -336,21 +336,28 @@ def test_map_markers_read_the_slots_world_whether_or_not_it_is_loaded(
     client, sidecar, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """§M26: the drain's rows for the slot's world, in one dimension or all, with the
-    server stopped too — the rows outlive the session."""
+    server stopped too — the rows outlive the session. The respawn points (§M8) come
+    with them, always in every dimension."""
     asked: list[tuple[str, str | None]] = []
     rows = {"beacons": [{"dim": "overworld", "x": 1}], "gates": [], "as_of": 7.0}
+    beds = {"spawns": [{"xuid": "111", "kind": "bed"}], "spawn_log": []}
 
     async def read(_m: Any, world: str, dim: str | None = None) -> dict[str, Any]:
         asked.append((world, dim))
         return rows
 
+    async def read_beds(_m: Any, world: str) -> dict[str, Any]:
+        asked.append((world, "beds"))
+        return beds
+
     monkeypatch.setattr(api.markers, "for_world", read)
+    monkeypatch.setattr(api.spawnpoints, "for_world", read_beds)
     client.app.state.session_maker = object()
     _players_world(sidecar, active=False, state="stopped")
     got = client.get("/api/minecraft/map/markers?slot=slot2").json()
-    assert got == {"slot": "slot2", "world": "castle", **rows}
+    assert got == {"slot": "slot2", "world": "castle", **rows, **beds}
     client.get("/api/minecraft/map/markers?slot=slot2&dim=nether")
-    assert asked == [("castle", None), ("castle", "nether")]
+    assert asked == [("castle", None), ("castle", "beds"), ("castle", "nether"), ("castle", "beds")]
     assert client.get("/api/minecraft/map/markers?slot=slot2&dim=moon").status_code == 422
     assert client.get("/api/minecraft/map/markers?slot=slot5").status_code == 404
 

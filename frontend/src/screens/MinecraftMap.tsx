@@ -42,6 +42,7 @@ import {
   type MinecraftPlace,
   type MinecraftSession,
   type MinecraftSlot,
+  type MinecraftSpawnPoint,
   type MinecraftStructure,
   type MinecraftTimeline,
   type MinecraftTimelineEvent,
@@ -51,6 +52,7 @@ import {
 import { useBackLayer } from "../backLayers";
 import { Sheet } from "../components/Sheet";
 import {
+  AnchorIcon,
   ArrowRightIcon,
   BedIcon,
   CastleIcon,
@@ -149,6 +151,21 @@ import {
   zoomAt,
 } from "../minecraftMap";
 import {
+  type Line as BedLine,
+  type BedRow,
+  type Wake,
+  bedRows,
+  bedTitle,
+  curveEnd,
+  placed,
+  playerBedLine,
+  showLabel,
+  spawnOf,
+  wakeLine,
+  wakeOf,
+  wakesHere,
+} from "../minecraftMapBeds";
+import {
   ALL_JOBS,
   type CardLine,
   SPLIT_SCALE,
@@ -190,6 +207,7 @@ import {
   gateWords,
   listRows,
   overlayLines,
+  shortDate,
 } from "../minecraftMapMarkers";
 import type { MapIntent } from "../minecraftMapNav";
 import { type MapSource, OWNER_MAP } from "../minecraftMapSource";
@@ -223,6 +241,7 @@ import {
   reachCircle,
   readTokens,
   reducedMotion,
+  respawnCurve,
   scaleRect,
   scanSquare,
   spotMark,
@@ -272,7 +291,9 @@ type Sel =
   | { kind: "gate"; g: MinecraftGate }
   | { kind: "place"; p: MinecraftPlace }
   | { kind: "villager"; v: MinecraftVillager; dim: MinecraftDim }
-  | { kind: "pet"; m: MinecraftMob; dim: MinecraftDim };
+  | { kind: "pet"; m: MinecraftMob; dim: MinecraftDim }
+  /** A player's respawn point, as the pack last sent it (§M8, beds). */
+  | { kind: "bed"; s: MinecraftSpawnPoint };
 
 type Hit =
   | { kind: "player"; sx: number; sy: number; p: MinecraftMapPlayer }
@@ -321,6 +342,8 @@ const OVERLAYS: Overlays = {
   players: true,
   trails: true,
   deaths: true,
+  // The world spawn, and (beds variant B) a player's bed and where a death's player woke,
+  // drawn only when you tap them or one of their deaths.
   spawn: true,
   structures: true,
   // Always drawn while on (variant A): every protected square and every open gate's line.
@@ -458,6 +481,9 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
   const [playersFailed, setPlayersFailed] = useState(false);
   const [structs, setStructs] = useState<MinecraftMapStructures | null>(null);
   const [marks, setMarks] = useState<MinecraftMapMarkers | null>(null);
+  /** The Overworld's spawn, kept while another dimension is shown: a Nether death's player
+   *  wakes in the Overworld, and its card says whether that was at the world spawn. */
+  const [worldSpawn, setWorldSpawn] = useState<{ x: number; z: number } | null>(null);
   const [places, setPlaces] = useState<MinecraftMapPlaces | null>(null);
   const [ents, setEnts] = useState<MinecraftMapEntities | null>(null);
   const [vfilter, setVfilter] = useState<VillagerFilter>(ALL_JOBS);
@@ -547,6 +573,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     roster,
     fog,
     exBy,
+    worldSpawn,
   });
   state.current = {
     slot,
@@ -567,6 +594,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     roster,
     fog,
     exBy,
+    worldSpawn,
   };
 
   const redraw = useCallback(() => {
@@ -615,6 +643,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       .then((i) => {
         if (gone) return;
         setInfo(i);
+        if (i.dimension === "overworld" && i.spawn) setWorldSpawn(i.spawn);
         setUnreachable(false);
         setProblem(null);
       })
@@ -1080,6 +1109,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     setPlayers(null);
     setStructs(null);
     setMarks(null);
+    setWorldSpawn(null);
     setPlaces(null);
     setEnts(null);
     goalCache.current.clear();
@@ -1539,7 +1569,8 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       (m.type === "spawn" && sel?.kind === "spawn") ||
       (m.type === "place" && sel?.kind === "place" && sel.p.id === m.p.id) ||
       (m.type === "villager" && sel?.kind === "villager" && sel.v.id === m.v.id) ||
-      ((m.type === "pet" || m.type === "named") && sel?.kind === "pet" && sel.m.id === m.m.id);
+      ((m.type === "pet" || m.type === "named") && sel?.kind === "pet" && sel.m.id === m.m.id) ||
+      (m.type === "bed" && sel?.kind === "bed" && sel.s.xuid === m.s.xuid);
     const markers: Marker[] = [];
     const mark = (m: Marker) => {
       if (!off(m.sx, m.sy)) markers.push(m);
@@ -1588,6 +1619,46 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         }
         targetMark(ctx, sx, sy, col, t);
         avoid.rects.push({ x: sx - 12, y: sy - 12, w: 24, h: 24, own: `scan:${p.xuid}` });
+      }
+    }
+    // Beds (variant B): only the tapped player's, or the tapped death's player's, or the
+    // tapped bed — with the curve from each death to where its player woke, under every
+    // tile. The owner's map only (a share has no `marks`), and not on the replay: the bed is
+    // where it is now, not where it was then.
+    if (st.ov.spawn && !replay && st.marks?.spawns) {
+      const bedFor =
+        sel?.kind === "player" && sel.at === undefined
+          ? sel.p
+          : sel?.kind === "event" && sel.e.kind === "death"
+            ? sel.e
+            : sel?.kind === "bed"
+              ? sel.s
+              : null;
+      const bed = bedFor ? spawnOf(st.marks, bedFor.xuid, bedFor.gamertag) : null;
+      const events = lg?.events ?? [];
+      const spawnLog = st.marks.spawn_log ?? [];
+      const curves =
+        sel?.kind === "event" && sel.e.kind === "death"
+          ? [sel.e]
+          : sel?.kind === "bed"
+            ? wakesHere(sel.s, events, spawnLog, st.worldSpawn).map((w) => w.death)
+            : [];
+      for (const death of curves) {
+        if (death.dim !== st.dim || death.x === null || death.z === null) continue;
+        const w = wakeOf(death, events, spawnLog, st.worldSpawn);
+        const end = w ? curveEnd(w, st.dim, st.worldSpawn) : null;
+        if (!end) continue;
+        const [ax, ay] = toScreen(v, f, death.x + 0.5, death.z + 0.5);
+        const [bx, by] = toScreen(v, f, end.x + 0.5, end.z + 0.5);
+        const col = colorOf(t, tokenOf(death.xuid));
+        for (const seg of respawnCurve(ctx, ax, ay, bx, by, col, t)) {
+          avoid.segs.push({ ...seg, own: `bed:${death.xuid}` });
+        }
+      }
+      if (placed(bed) && bed.dim === st.dim) {
+        const [sx, sy] = toScreen(v, f, bed.x + 0.5, bed.z + 0.5);
+        const col = colorOf(t, tokenOf(bed.xuid));
+        mark({ type: "bed", s: bed, col, x: bed.x, z: bed.z, sx, sy, pr: 2 });
       }
     }
     for (const m of world.markers) mark(m);
@@ -1686,7 +1757,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         } else markerGlyph(ctx, one, t, false);
         const txt = markerLabel(one);
         // This round's names go to the side, as a gate's place does (M26's rule).
-        if (txt && LAYER_TYPES.has(one.type))
+        if (txt && (LAYER_TYPES.has(one.type) || one.type === "bed"))
           labels.push({ txt, x: one.sx, y: one.sy, pr: 2, own, side: 12 });
         else if (txt && (v.s >= 0.25 || one.type === "spawn"))
           labels.push({ txt, x: one.sx, y: one.sy - 8, pr: one.pr });
@@ -1786,12 +1857,14 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
       markerGlyph(ctx, m, t, true);
       avoid.rects.push({ x: m.sx - 18, y: m.sy - 18, w: 36, h: 36, own: markerOwn(m) });
       const txt =
-        m.type === "villager"
-          ? villagerTitle(m.v)
-          : m.type === "pet"
-            ? mobWords(m.m).title
-            : markerLabel(m);
-      if (txt && LAYER_TYPES.has(m.type))
+        m.type === "bed"
+          ? bedTitle(m.s)
+          : m.type === "villager"
+            ? villagerTitle(m.v)
+            : m.type === "pet"
+              ? mobWords(m.m).title
+              : markerLabel(m);
+      if (txt && (LAYER_TYPES.has(m.type) || m.type === "bed"))
         labels.push({ txt, x: m.sx, y: m.sy, pr: -1, own: markerOwn(m), side: 18 });
       else if (txt) labels.push({ txt, x: m.sx, y: m.sy - 8, pr: -1 });
       nextHits.push({ kind: "marker", sx: m.sx, sy: m.sy, m });
@@ -1967,6 +2040,7 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
     else if (m.type === "event") select({ kind: "event", e: m.e });
     else if (m.type === "beacon") select({ kind: "beacon", b: m.b });
     else if (m.type === "gate") select({ kind: "gate", g: m.g });
+    else if (m.type === "bed") select({ kind: "bed", s: m.s });
     else if (m.type === "place") selectPlace(m.p);
     else if (m.type === "villager") select({ kind: "villager", v: m.v, dim });
     else if (m.type === "pet" || m.type === "named") select({ kind: "pet", m: m.m, dim });
@@ -2151,6 +2225,34 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
         dim,
         explored: info ? info.extent !== null : true,
       });
+
+  // What the cards say about beds (variant B): the owner's map only, live view only.
+  const bedsShown = !!source.markers && !timeTravel;
+  const spawnLog = marks?.spawn_log ?? [];
+  const liveEvents = liveLog?.events ?? [];
+  const selBed =
+    !bedsShown || !sel
+      ? null
+      : sel.kind === "bed"
+        ? sel.s
+        : sel.kind === "player" && sel.at === undefined
+          ? spawnOf(marks, sel.p.xuid, sel.p.gamertag)
+          : null;
+  const selWake =
+    bedsShown && sel?.kind === "event" && sel.e.kind === "death"
+      ? wakeOf(sel.e, log?.events ?? [], spawnLog, worldSpawn)
+      : null;
+  const bedWakes = sel?.kind === "bed" ? wakesHere(sel.s, liveEvents, spawnLog, worldSpawn) : [];
+
+  /** "Show the bed": the player's current point selected and brought to the middle of the
+   *  map, in its own dimension; an older point they woke at is only flown to. */
+  function showBed(p: { dim: MinecraftDim; x: number; z: number; xuid: string }) {
+    const now$ = spawnOf(marks, p.xuid);
+    if (placed(now$) && now$.dim === p.dim && now$.x === p.x && now$.z === p.z) {
+      select({ kind: "bed", s: now$ });
+    }
+    showPlace(p.dim, p.x, p.z, 1.25);
+  }
 
   // C's ranked list under a villager chip: nearest whoever is on in this dimension.
   const onHere = players?.players.find((q) => q.online && q.dim === dim);
@@ -2346,6 +2448,15 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                 scan={scan}
                 beacons={marks?.beacons ?? []}
                 onShowGate={showGateEnds}
+                bed={selBed}
+                wake={selWake}
+                bedWakes={bedWakes}
+                bedOwner={
+                  sel.kind === "bed"
+                    ? players?.players.find((q) => q.xuid === sel.s.xuid)
+                    : undefined
+                }
+                onShowBed={showBed}
                 layers={{
                   gates: marks?.gates ?? [],
                   players: players?.players ?? [],
@@ -2358,8 +2469,10 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                   now: host.nowMs / 1000,
                 }}
                 playerToken={
-                  sel.kind === "player"
-                    ? (roster.find((r) => r.xuid === sel.p.xuid)?.token ?? "--steel")
+                  sel.kind === "player" || sel.kind === "bed"
+                    ? (roster.find(
+                        (r) => r.xuid === (sel.kind === "player" ? sel.p.xuid : sel.s.xuid),
+                      )?.token ?? "--steel")
                     : "--steel"
                 }
               />
@@ -2450,6 +2563,12 @@ export function MapPage({ host, at }: { host: MapHost; at?: MapIntent | undefine
                 fog={fog}
                 marks={source.markers ? marks : undefined}
                 onFly={fly}
+                beds={source.markers ? bedRows(marks, worldSpawn, shortDate) : []}
+                onBed={(b) => {
+                  if (!placed(b)) return;
+                  setSnap("min");
+                  showBed(b);
+                }}
                 places={source.places ? places : undefined}
                 ents={source.entities ? ents : undefined}
                 vfilter={vfilter}
@@ -2546,6 +2665,11 @@ function Detail({
   scan,
   beacons,
   onShowGate,
+  bed,
+  wake,
+  bedWakes,
+  bedOwner,
+  onShowBed,
   playerToken: tok,
   layers,
 }: {
@@ -2567,6 +2691,15 @@ function Detail({
   /** Every beacon in the world, for a tapped one's overlaps. */
   beacons: MinecraftBeacon[];
   onShowGate: (g: MinecraftGate) => void;
+  /** The tapped player's respawn point, or the tapped bed; null when there's none to say. */
+  bed: MinecraftSpawnPoint | null;
+  /** Where the tapped death's player woke, matched to the point they had then. */
+  wake: Wake | null;
+  /** The tapped bed's deaths: each one its player woke at it after, newest first. */
+  bedWakes: { death: MinecraftTimelineEvent; wake: Wake }[];
+  /** The tapped bed's player, where they are now. */
+  bedOwner: MinecraftMapPlayer | undefined;
+  onShowBed: (p: { dim: MinecraftDim; x: number; z: number; xuid: string }) => void;
   playerToken: string;
   /** What this round's cards read (minecraft-map-layers). */
   layers: LayerCtx;
@@ -2592,7 +2725,9 @@ function Detail({
               ? sel.g.dim
               : sel.kind === "place"
                 ? sel.p.dim
-                : sel.dim;
+                : sel.kind === "bed"
+                  ? (sel.s.dim ?? "overworld")
+                  : sel.dim;
   if (sel.kind === "place") {
     const p = sel.p;
     icon = (
@@ -2641,6 +2776,24 @@ function Detail({
     x = m.x;
     y = m.y;
     z = m.z;
+  } else if (sel.kind === "bed") {
+    const b = sel.s;
+    icon = (
+      <span className="mc-map-det-ic bed" style={tintOf(tok)} aria-hidden="true">
+        {b.kind === "anchor" ? <AnchorIcon size={18} /> : <BedIcon size={18} />}
+      </span>
+    );
+    title = bedTitle(b);
+    sub = `set ${shortDate(b.set_at)}, ${fmtClock(b.set_at)}`;
+    pill =
+      b.kind === "other" ? (
+        <span className="mc-map-state dorm">not seen there</span>
+      ) : (
+        <span className="mc-map-state pt">respawn point</span>
+      );
+    x = b.x ?? 0;
+    y = b.y;
+    z = b.z ?? 0;
   } else if (sel.kind === "beacon") {
     const w = beaconWords(sel.b, beacons);
     icon = (
@@ -2849,6 +3002,7 @@ function Detail({
         </div>
       )}
       {sel.kind === "beacon" && <BeaconNote b={sel.b} beacons={beacons} />}
+      {sel.kind === "bed" && <BedNote b={sel.s} owner={bedOwner} wakes={bedWakes} now={now} />}
       {sel.kind === "place" && <PlaceCard p={sel.p} layers={layers} />}
       {sel.kind === "villager" && <VillagerCard v={sel.v} layers={layers} />}
       {sel.kind === "pet" && <MobCard m={sel.m} dim={sel.dim} layers={layers} />}
@@ -2862,6 +3016,9 @@ function Detail({
         </p>
       )}
       {scan && !compact && <ScanLines scan={scan} />}
+      {sel.kind === "player" && bed && (
+        <BedLineRow line={playerBedLine(bed, { dim: sel.p.dim, x: sel.p.x, z: sel.p.z })} />
+      )}
       {sel.kind === "player" && (
         <div className="mc-btnrow mc-map-det-acts">
           <button type="button" className="mc-btn" onClick={() => onFollow(sel.p.xuid)}>
@@ -2872,17 +3029,125 @@ function Detail({
             <ClockIcon size={18} />
             Sessions
           </button>
+          {placed(bed) && (
+            <button
+              type="button"
+              className="mc-btn mc-btn-primary mc-map-bedbtn"
+              onClick={() => onShowBed({ ...bed, xuid: bed.xuid })}
+            >
+              {bed.kind === "anchor" ? <AnchorIcon size={18} /> : <BedIcon size={18} />}
+              {showLabel(bed)}
+            </button>
+          )}
         </div>
       )}
-      {sel.kind === "event" && sel.e.kind === "death" && onReplay && (
-        <div className="mc-btnrow mc-map-det-acts">
-          <button type="button" className="mc-btn" onClick={() => onReplay(sel.e)}>
-            <RewindIcon size={18} />
-            Replay the minutes before
-          </button>
+      {sel.kind === "event" && sel.e.kind === "death" && wake && (
+        <BedLineRow line={wakeLine(wake, sel.e)} />
+      )}
+      {sel.kind === "event" && sel.e.kind === "death" && (onReplay || wakeBed(wake)) && (
+        // Two long labels: one a row, as the mock stacks them.
+        <div className="mc-btnrow mc-map-det-acts mc-map-det-stack">
+          {onReplay && (
+            <button type="button" className="mc-btn" onClick={() => onReplay(sel.e)}>
+              <RewindIcon size={18} />
+              Replay the minutes before
+            </button>
+          )}
+          {wake && wakeBed(wake) && placed(wake.spawn) && (
+            <button
+              type="button"
+              className="mc-btn mc-btn-primary mc-map-bedbtn"
+              onClick={() =>
+                wake.spawn && placed(wake.spawn) && onShowBed({ ...wake.spawn, xuid: sel.e.xuid })
+              }
+            >
+              {wake.woke === "anchor" ? <AnchorIcon size={18} /> : <BedIcon size={18} />}
+              {wake.woke === "anchor"
+                ? "Show the anchor"
+                : wake.woke === "point"
+                  ? "Show the spawn point"
+                  : "Show the bed"}
+            </button>
+          )}
         </div>
       )}
     </div>
+  );
+}
+
+/** A waking at the point they had (not the world spawn, not somewhere else). */
+const wakeBed = (w: Wake | null) =>
+  !!w && (w.woke === "bed" || w.woke === "anchor" || w.woke === "point");
+
+/** One of the beds' card lines: its glyph, a bold lead and the rest. */
+function BedLineRow({ line }: { line: BedLine | null }) {
+  if (!line) return null;
+  const glyph =
+    line.glyph === "anchor" ? (
+      <AnchorIcon size={18} />
+    ) : line.glyph === "flag" ? (
+      <FlagIcon size={18} />
+    ) : line.glyph === "spot" ? (
+      <CrosshairIcon size={18} />
+    ) : (
+      <BedIcon size={18} />
+    );
+  return (
+    <p className="mc-map-lead mc-map-bedln">
+      {glyph}
+      <span>
+        <b>{line.head}</b>
+        {line.rest ? ` · ${line.rest}` : ""}
+      </span>
+    </p>
+  );
+}
+
+/** A tapped bed's lines: where its player is from it, the deaths they woke at it after,
+ *  and how old the record is (X4: a point the game keeps after its bed is broken). */
+function BedNote({
+  b,
+  owner,
+  wakes,
+  now,
+}: {
+  b: MinecraftSpawnPoint;
+  owner: MinecraftMapPlayer | undefined;
+  wakes: { death: MinecraftTimelineEvent; wake: Wake }[];
+  now: number;
+}) {
+  const away =
+    owner && placed(b) && owner.dim === b.dim
+      ? bearingTo(b.x + 0.5, b.z + 0.5, owner.x, owner.z)
+      : null;
+  const last = wakes[0];
+  return (
+    <>
+      {owner && away && (
+        <p className="mc-map-lead mc-map-bedln">
+          <UserIcon size={18} />
+          <span>
+            {owner.gamertag} is {away.blocks}&nbsp;blocks {away.way} of it ·{" "}
+            {owner.online ? "online" : "offline"}
+          </span>
+        </p>
+      )}
+      {last && (
+        <p className="mc-map-lead mc-map-bedln">
+          <SkullIcon size={18} />
+          <span>
+            Respawned here after {wakes.length} {wakes.length === 1 ? "death" : "deaths"} since it
+            was set · <i>{eventWords(last.death).replace(`${b.gamertag} `, "")}</i>,{" "}
+            {fmtDay(last.death.at, now).toLowerCase()} {fmtClock(last.death.at)} (the curve)
+          </span>
+        </p>
+      )}
+      <p className="mc-note mc-map-det-note">
+        {b.kind === "other"
+          ? `No bed or respawn anchor was seen at this point when the pack last looked, ${shortDate(b.at)} ${fmtClock(b.at)}. The game keeps a spawn point after its bed is broken, until the next death.`
+          : "As the pack last sent it."}
+      </p>
+    </>
   );
 }
 
@@ -3167,6 +3432,8 @@ function Layers({
   fog,
   marks,
   onFly,
+  beds,
+  onBed,
   places,
   ents,
   vfilter,
@@ -3198,6 +3465,9 @@ function Layers({
   /** The world's beacons and gates; undefined where the map has none to show (a share). */
   marks: MinecraftMapMarkers | null | undefined;
   onFly: (row: ListRow) => void;
+  /** Every player's respawn point the pack has told of (the owner's map only). */
+  beds: BedRow[];
+  onBed: (s: MinecraftSpawnPoint) => void;
   /** Saved places, and the villagers and pets: undefined where the map has none to show
    *  (a share link — owner-only). */
   places: MinecraftMapPlaces | null | undefined;
@@ -3301,14 +3571,14 @@ function Layers({
           on={ov.deaths}
           onToggle={() => toggle("deaths")}
         />
+        {/* Beds variant B: the overview draws only the star, so the row says beds come
+            on a tap (review B1); a shared map has no beds at all. */}
         <OverlayRow
           icon={<BedIcon size={18} />}
-          title="Beds & spawn"
-          sub={
-            spawn === false
-              ? "the box hasn't read this world's spawn · beds aren't recorded yet"
-              : "the world spawn, in the Overworld · beds aren't recorded yet"
-          }
+          title={hasMarks ? "Spawn · beds on tap" : "World spawn"}
+          sub={`${spawn === false ? "the box hasn't read this world's spawn" : "the world spawn, in the Overworld"}${
+            hasMarks ? " · a player's bed shows when you tap them or one of their deaths" : ""
+          }`}
           on={ov.spawn}
           onToggle={() => toggle("spawn")}
         />
@@ -3505,7 +3775,7 @@ function Layers({
         />
       </div>
 
-      {(rows.length > 0 || groups.length > 0) && (
+      {(rows.length > 0 || groups.length > 0 || beds.length > 0) && (
         <>
           <h3 className="mc-sect mc-map-sect">In this world</h3>
           {groups.map((g) => (
@@ -3539,6 +3809,47 @@ function Layers({
               </div>
             </div>
           ))}
+          {/* Respawn points come after the places, each player's one, before the world's
+              beacons and gates. */}
+          {beds.length > 0 && (
+            <div className="mc-map-grp">
+              <BedIcon size={14} />
+              Respawn points
+            </div>
+          )}
+          <div className="mc-map-list">
+            {beds.map((r) =>
+              placed(r.s) ? (
+                <button key={r.key} type="button" className="mc-map-li" onClick={() => onBed(r.s)}>
+                  <span
+                    className="mc-map-det-ic bed"
+                    style={tintOf(tokenFor(roster, r.s.xuid, r.s.gamertag))}
+                    aria-hidden="true"
+                  >
+                    {r.s.kind === "anchor" ? <AnchorIcon size={16} /> : <BedIcon size={16} />}
+                  </span>
+                  <span className="mc-map-li-tx">
+                    <b>{r.title}</b>
+                    <span>{r.sub}</span>
+                  </span>
+                  <ChevronRightIcon size={18} />
+                </button>
+              ) : (
+                <div key={r.key} className="mc-map-li">
+                  <span className="mc-map-det-ic" aria-hidden="true">
+                    <UserIcon size={16} />
+                  </span>
+                  <span className="mc-map-li-tx">
+                    <b>{r.title}</b>
+                    <span>{r.sub}</span>
+                  </span>
+                </div>
+              ),
+            )}
+          </div>
+          {beds.length > 0 && rows.length > 0 && (
+            <div className="mc-map-grp">Beacons and gates</div>
+          )}
           <div className="mc-map-list">
             {rows.map((r) => (
               <button key={r.key} type="button" className="mc-map-li" onClick={() => onFly(r)}>
@@ -3646,6 +3957,28 @@ function Layers({
               Positions are the pack&apos;s own records, sent when a beacon or gate changes and
               again at every start.
             </p>
+            <div className="mc-map-lg-row">
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="bed" />
+                Bed (ring: whose)
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="anchor" />
+                Respawn anchor
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="unseen" />
+                No bed seen there
+              </span>
+              <span className="mc-map-lg-i">
+                <MarkSwatch kind="jump" />
+                Respawned here
+              </span>
+            </div>
+            <p className="mc-note">
+              Each player has one respawn point, sent by the pack when it changes and again at every
+              join. It shows when you tap its player or one of their deaths.
+            </p>
           </>
         )}
         {hasPlaces && (
@@ -3740,7 +4073,11 @@ function MarkSwatch({
     | "village"
     | "villager"
     | "pet"
-    | "named";
+    | "named"
+    | "bed"
+    | "anchor"
+    | "unseen"
+    | "jump";
 }) {
   const tile = (ring: string, dashed: boolean) => (
     <>
@@ -3862,6 +4199,26 @@ function MarkSwatch({
           strokeLinecap="round"
           strokeDasharray="0.1 4.5"
         />
+      )}
+      {(kind === "bed" || kind === "anchor" || kind === "unseen") && (
+        <>
+          {tile(kind === "anchor" ? "var(--green)" : "var(--steel)", kind === "unseen")}
+          <path
+            d={kind === "anchor" ? GLYPHS.anchor : GLYPHS.bed}
+            transform="translate(7 7) scale(0.42)"
+            fill="none"
+            stroke="var(--map-ink)"
+            strokeWidth="2.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </>
+      )}
+      {kind === "jump" && (
+        <g fill="none" stroke="var(--steel)" strokeWidth="2" strokeLinecap="round">
+          <path d="M4 19Q5 6 18 6" />
+          <path d="M13 3l5 3-4 4" />
+        </g>
       )}
     </svg>
   );

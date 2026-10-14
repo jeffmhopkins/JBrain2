@@ -57,7 +57,19 @@ MARKER_EVENTS = ("beacon", "gate", "beacons", "gates")
 # `scan` is a player's Tricorder scan changing, `scans` every kept one after each load
 # (§M25): the map's and Dave's read of what each scan is finding.
 SCAN_EVENTS = ("scan", "scans")
-PACK_EVENTS = ("death", "respawn", "dave", "wreck", *MARKER_EVENTS, *SCAN_EVENTS)
+# `spawnpoint` is a player's respawn point changing, and every join's resend (§M8, beds):
+# the kind read from the block at it, `none` with no coordinates when there is none, and
+# `unknown` when the pack couldn't read the blocks (the api judges it against its rows).
+SPAWN_KINDS = ("bed", "anchor", "other", "none", "unknown")
+PACK_EVENTS = (
+    "death",
+    "respawn",
+    "dave",
+    "wreck",
+    "spawnpoint",
+    *MARKER_EVENTS,
+    *SCAN_EVENTS,
+)
 DIMENSIONS = ("overworld", "nether", "the_end")
 BEACON_OPS = ("on", "off")
 GATE_OPS = ("planted", "opened", "aimed", "dormant", "collapsed")
@@ -265,6 +277,13 @@ class Bds:
             scan = scan_event(data)
             if scan is not None:
                 self._event(str(data["ev"]), "", "", **scan)
+            return
+        if data["ev"] == "spawnpoint":
+            point = spawnpoint_event(data)
+            if point is not None:
+                who = point.pop("player")
+                seen = self.players.get(who)
+                self._event("spawnpoint", who, seen["xuid"] if seen else "", **point)
             return
         name = str(data.get("name", ""))[:32]
         extra: dict[str, Any] = _place(data)
@@ -579,6 +598,22 @@ def scan_event(data: dict[str, Any]) -> dict[str, Any] | None:
         spot = _spot(data)
         return None if spot is None else {"op": op, **who, **spot}
     return {"op": op, **who}
+
+
+def spawnpoint_event(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A spawn point line's fields, type-checked and clamped, or None when the line can't
+    be one: the player a gamertag cut short, the kind from its list (as `spawn`: an
+    event's `kind` is its own), and a whole block in a known dimension unless the kind is
+    `none`, which carries no place."""
+    player = data.get("player")
+    kind = data.get("kind")
+    if not isinstance(player, str) or not player.strip() or kind not in SPAWN_KINDS:
+        return None
+    who = player.strip()[:PLAYER_MAX]
+    if kind == "none":
+        return {"player": who, "spawn": kind}
+    spot = _spot(data)
+    return None if spot is None else {"player": who, "spawn": kind, **spot}
 
 
 def _is_file_list(text: str) -> bool:

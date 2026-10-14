@@ -231,6 +231,11 @@ describe("the shared map, as the visitor sees it", () => {
     expect(document.querySelector(".mc-map-det-tri")).toHaveTextContent(
       /Tricorder · Diamonds · \d+ blocks north-east · y -58/,
     );
+    // Beds are the owner's (§M8): no bed line, no Show the bed, and the row is the spawn's.
+    expect(document.querySelector(".mc-map-sel")).not.toHaveTextContent(/Bed ·|No bed set/);
+    expect(screen.queryByRole("button", { name: /^Show the / })).toBeNull();
+    expect(screen.getByRole("switch", { name: "World spawn" })).toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: /beds/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "Back" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Share this map" })).toBeNull();
     expect(screen.queryByRole("button", { name: /World: .* change/ })).toBeNull();

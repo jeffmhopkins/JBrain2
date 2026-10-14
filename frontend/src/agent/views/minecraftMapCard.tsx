@@ -24,6 +24,8 @@ import {
   api,
 } from "../../api/client";
 import {
+  AnchorIcon,
+  BedIcon,
   CastleIcon,
   CopyIcon,
   CrosshairIcon,
@@ -85,6 +87,7 @@ import {
   asSurvey,
   beaconGlyph,
   bearingLine,
+  bedGlyph,
   clusterBadge,
   colorOf,
   drawScale,
@@ -121,7 +124,8 @@ export type McFocusKind =
   | "beacon"
   | "scan"
   | "villager"
-  | "pet";
+  | "pet"
+  | "bed";
 export type McOverlay = "trails" | "deaths" | "structures" | "players" | "beacons" | "gates";
 
 export interface McFocus {
@@ -134,6 +138,8 @@ export interface McFocus {
   at: number | null;
   cause: string | null;
   killer: string | null;
+  /** A `bed` focus's point as the pack last saw it (§M8): `other` is no bed seen there. */
+  spawn?: "bed" | "anchor" | "other" | null | undefined;
 }
 
 export interface McMapCard {
@@ -162,7 +168,9 @@ const FOCUS_KINDS: McFocusKind[] = [
   "scan",
   "villager",
   "pet",
+  "bed",
 ];
+const SPAWN_KINDS = ["bed", "anchor", "other"] as const;
 const OVERLAY_IDS: McOverlay[] = ["trails", "deaths", "structures", "players", "beacons", "gates"];
 /** The world's edge: Bedrock's ±30 million blocks. */
 const WORLD_MAX = 30_000_000;
@@ -205,6 +213,7 @@ export function parseMinecraftMap(data: Record<string, unknown>): McMapCard | nu
       at: num(f.at),
       cause: str(f.cause, 40) || null,
       killer: str(f.killer, 60) || null,
+      spawn: SPAWN_KINDS.find((k) => k === f.spawn) ?? null,
     };
   }
   const c = obj(data.center);
@@ -283,6 +292,18 @@ function focusShown(f: McFocus, dim: MinecraftDim, who: string, now: number): Sh
       tone: gate ? "gate" : "bea",
       title: f.label || (gate ? "Wormhole gate" : "No-Spawn Beacon"),
       sub: dimName(dim),
+    };
+  }
+  if (f.kind === "bed") {
+    return {
+      ...at,
+      icon: f.spawn === "anchor" ? <AnchorIcon size={18} /> : <BedIcon size={18} />,
+      tone: "",
+      title: f.label || "Respawn point",
+      sub:
+        f.spawn === "other"
+          ? `No bed seen there when the pack last looked · ${dimName(dim)}`
+          : `Respawn point · ${dimName(dim)}`,
     };
   }
   if (f.kind === "scan") {
@@ -876,6 +897,8 @@ function McCard({ card }: { card: McMapCard }): ReactNode {
         next.push({ kind: "focus", sx: px, sy: py });
       } else if (focus.kind === "structure") {
         structGlyph(ctx, sx, sy, focus.label.toLowerCase().replace(/\s+/g, "_"), t, true);
+      } else if (focus.kind === "bed") {
+        bedGlyph(ctx, sx, sy, focus.spawn ?? "bed", steel, t, true);
       } else if (focus.kind === "villager") {
         villagerDisc(ctx, sx, sy, focus.label.split(" ")[0] ?? "", t, true);
       } else if (focus.kind === "pet") {

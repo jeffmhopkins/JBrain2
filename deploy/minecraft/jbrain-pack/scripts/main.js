@@ -17,9 +17,11 @@ import { initReplicator } from "./replicator.js";
 import { initBeacon } from "./beacon.js";
 import { initWelcome } from "./welcome.js";
 import { initScan } from "./scan.js";
+import { initSpawnPoints } from "./spawnpoint.js";
 import { isHello } from "./welcome_rules.js";
 
 initBeacon(world, system);
+initSpawnPoints(world, system);
 
 const DIMENSIONS = {
   "minecraft:overworld": "overworld",

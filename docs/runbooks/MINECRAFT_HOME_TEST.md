@@ -1,6 +1,6 @@
 # Minecraft home test — the at-home checks, in one sitting
 
-> **Status:** Living · **Last verified:** 2026-10-13 against the code (rows added, not yet run on the box: /dave with cheats off; Dave's welcome lines 6 s apart; the Tricorder's equip pop-up and once-a-session hint; villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
+> **Status:** Living · **Last verified:** 2026-10-13 against the code (rows added, not yet run on the box: beds and respawn points on the map, §M8 rows 29–32; /dave with cheats off; Dave's welcome lines 6 s apart; the Tricorder's equip pop-up and once-a-session hint; villagers, pets and the portal arrow, §M4e; the /dave quick menu and the arrival chime; prior: Dave's welcome and first-time beats, DW1)
 
 The checks in `../plans/MINECRAFT_BEDROCK_PLAN.md` §M0b that need a real player on a real
 client. Every in-game feature waits on them: Dave in game (M5/M6), the tricorder (M9),
@@ -18,6 +18,11 @@ Rows 17–21 are **Dave's welcome and the first-time beats** (DW1). They happen 
 the rows above: the welcome on your first join (rows 1–2), the Ender Pearl and Power Pack
 beats at row 4, the first death at row 7. Each is once per player per world, so they are
 checked where they happen; the rows only say what to look for.
+
+Rows 29–32 are **beds and respawn points on the map** (§M8, beds): what the game really
+reports for a bed, a broken bed and a respawn anchor, which the map's dashed "no bed seen
+there" tile and the death card's "Respawned at …" line rest on. Play them on the test world,
+then look at the map in the PWA (tap yourself; tap the death).
 
 **The owner just plays, and the assistant reads the answers.** The test kit logs each
 finding as a `[jbrain-probe]` line on the server, the `jbrain` pack logs its own as
@@ -78,6 +83,10 @@ world** in slot 1, never on an imported real world.
 | 26 | Light a Nether portal, go through, ask Dave to point you home | In the Nether the held Tricorder reads `↑ Nether portal · N blocks · Home is in the Overworld`, pointing at the portal; back through, it points home | `GET /api/debug/minecraft/map/portals` lists the portal; break one and `check=false` still lists it while the default leaves it out |
 | 27 | Rejoin, select your Tricorder, wait, then switch to another slot and back to it a few times | **The heading isn't hidden:** the first hold this session shows "Your Tricorder points where Dave says · ask with /dave" on the actionbar for about 3 s, then the heading; it doesn't come back on a re-select (only after leaving and rejoining). The held-item pop-up over the hotbar shows just "<you>'s Tricorder", one line, no description, and the heading ("↑ World spawn · N blocks") is readable within about 2 s of each re-select. A Tricorder from before this fix loses its old "Points where Dave says" line within a second | your eyes |
 | 28 | On a world with **cheats off** (the slot's allow-cheats off in the PWA), as a non-operator if you can: `/dave where am I` | **Dave answers**, with no "cheats must be enabled" error; `/d` and `/ai` work too | log `"ev":"dave"` line |
+| 29 | Place a bed and sleep in it (or tap it); note the bed's block coordinates | **Which block `getSpawnPoint()` names** (the bed's own, the other half, or the spot beside it): the pack counts a bed at or touching the point, and the map's **Bed** line and **Show the bed** tile sit on it. A join always resends the line | `GET /api/debug/minecraft/logs`: `[jbrain] {"ev":"spawnpoint","player":…,"kind":"bed",…}` a tick after; its x/y/z against the bed's; the PWA map, tap yourself |
+| 30 | Standing near it, break that bed and wait 10 s; then die (`/kill @s`) and respawn | **A broken bed before the next death:** the 10 s check reads `kind` `other` at the same point (the game keeps the point), so the map draws the bed **dashed**, *no bed seen there*; after the respawn the line is `none` and the death card says only *Respawned at the world spawn* | log `"kind":"other"` then `"kind":"none"`; the PWA map: tap yourself, then the death |
+| 31 | In the Nether, set a respawn anchor with glowstone and use it; then die until its charges run out | **An anchor:** `kind` `anchor` with `"dim":"nether"`; and **what an anchor at zero charges reports** (still `anchor`, or `none` once the game gives up on it) — record which | log `"kind":"anchor"` lines; the PWA's Layers → In this world |
+| 32 | With the bed back, die somewhere away from it and respawn; and once with no bed set | **How far a waking lands:** the death card says *Respawned at their bed* only within 4 blocks of the point, and *at the world spawn* within 16 of it (the box's `spawnRadius` is 10) — record the real distances; the curve ends at the bed or the star | log `"ev":"respawn"` x/z against the bed's and the world spawn's; the PWA map, tap the death |
 
 ## After (assistant)
 
