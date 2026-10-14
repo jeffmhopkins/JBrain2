@@ -114,15 +114,22 @@ const action_t *rig_run_tickled_out(void)
     return TICKLED_OUT;
 }
 
-action_t rig_run_next(const action_t **run, action_t ended)
+void rig_run_start(rig_run_t *r, const action_t *run, uint32_t now)
 {
-    if (*run == NULL || **run != ended || ended == ACT_NONE) {
-        *run = NULL;
+    r->at = run;
+    r->since = now;
+}
+
+action_t rig_run_next(rig_run_t *r, action_t ended, uint32_t ended_start, uint32_t now)
+{
+    if (r->at == NULL || *r->at != ended || ended == ACT_NONE || r->since != ended_start) {
+        r->at = NULL;
         return ACT_NONE;
     }
-    (*run)++;
-    if (**run == ACT_NONE) *run = NULL;
-    return *run != NULL ? **run : ACT_NONE;
+    r->at++;
+    r->since = now;
+    if (*r->at == ACT_NONE) r->at = NULL;
+    return r->at != NULL ? *r->at : ACT_NONE;
 }
 
 bool rig_recue_continuous(action_t a, float p)

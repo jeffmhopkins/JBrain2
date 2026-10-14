@@ -177,11 +177,19 @@ bool rig_holds_pokes(action_t a);
 /* A RUN: actions that lead straight into one another (0.4.13, owner: *"on tickle mode, if
    tickled 5 times, he should fart and go dazed"*). Five tickles start `rig_run_tickled_out`:
    the laughing fit, then he laughs so hard he farts, then he sits there dazed. A run is a
-   list ending in ACT_NONE; `rig_run_next` is what follows `ended` along `*run`, advancing it,
-   or ACT_NONE (and `*run` cleared) at its end or when `ended` is not the run's own — something
-   else took over, so a fart asked for by voice never knocks him dizzy. */
+   list ending in ACT_NONE. `rig_run_next` is what follows `ended` (started at `ended_start`),
+   now at `now`, advancing the run; or ACT_NONE, the run cleared, at its end or when what ended
+   is not the run's own step. The step is known by its action AND its start, since anything
+   taking over restarts the clock: a voice "fart" over the run's own fart is the same action,
+   and must not knock him dizzy (review). */
+typedef struct {
+    const action_t *at; /* the step running now, NULL for no run */
+    uint32_t since;     /* when it started */
+} rig_run_t;
+
 const action_t *rig_run_tickled_out(void);
-action_t rig_run_next(const action_t **run, action_t ended);
+void rig_run_start(rig_run_t *r, const action_t *run, uint32_t now);
+action_t rig_run_next(rig_run_t *r, action_t ended, uint32_t ended_start, uint32_t now);
 
 /* An action whose sound is a run of cues back to back for as long as it lasts: the next is
    started the moment the speaker is free, rather than at fixed points (`rig_recue`). */

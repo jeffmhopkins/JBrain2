@@ -195,8 +195,9 @@ dazed."* The fifth tickle now starts a run, `rig_run_tickled_out`: the laughing 
 fart, then `ACT_DIZZY`, sitting down hard with the stars going round. `display.c` keeps where
 in the run he is and, as each step ends, starts the next with its own sound (`rig_run_next`).
 Anything else taking over — a nod, a shake, a poke after the fit — ends the run, and a fart
-asked for by voice never knocks him dizzy: what ends has to be the run's own step for the run
-to go on.
+asked for by voice never knocks him dizzy: what ends has to be the run's own step, the same
+action started at the same moment (`rig_run_t.since`), for the run to go on — a voice "fart"
+over the run's own fart is the same action, but a takeover all the same.
 
 **0.4.12: a tickle that looks like a tickle.** Owner: *"when he's in tickle mode if I touch him
 he still acts like I'm poking him versus tickling."* He did: the four tickles were `ACT_GIGGLE`,

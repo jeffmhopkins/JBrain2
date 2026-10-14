@@ -1885,7 +1885,7 @@ static void face_task(void *arg)
     face_state_t fst;
     face_rest(&fst);
     action_t action = ACT_NONE;
-    const action_t *run = NULL; /* what follows `action` (`rig_run_next`), if anything */
+    rig_run_t run = {0}; /* what follows `action` (`rig_run_next`), if anything */
     uint32_t action_start = 0;
     uint32_t recue_from = 0;
     float recue_p = 0.0f;
@@ -2216,7 +2216,7 @@ static void face_task(void *arg)
                     s_flinch = 0.0f;
                     action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
                     action_mag = tk == TICKLE_BIG ? 1.0f : tickle_mag(&tickle);
-                    if (tk == TICKLE_BIG) run = rig_run_tickled_out(); /* ...then a fart, dazed */
+                    if (tk == TICKLE_BIG) rig_run_start(&run, rig_run_tickled_out(), now);
                 } else {
                     colour = (colour + 1) % face_colour_count();
                     const pool_t pool = ZONE_POOL[s_tap_zone];
@@ -2464,7 +2464,7 @@ static void face_task(void *arg)
                 if (dur <= 0 || (int)el >= dur) {
                     /* TICKLED OUT (`rig_run_next`): the fit leads into a fart, the fart into
                        sitting dazed; anything else simply ends. */
-                    action = rig_run_next(&run, action);
+                    action = rig_run_next(&run, action, action_start, now);
                     if (action != ACT_NONE) {
                         action_mag = 1.0f;
                         action_start = now;

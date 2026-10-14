@@ -1275,23 +1275,33 @@ static void test_eight_poops_each_its_own(void)
 /* TICKLED OUT (owner: "on tickle mode, if tickled 5 times, he should fart and go dazed"). */
 static void test_tickled_out_he_farts_and_sits_dazed(void)
 {
-    const action_t *run = rig_run_tickled_out();
-    CHECK(run[0] == ACT_TICKLE, "it starts with the laughing fit the fifth tickle sets off");
-    CHECK(rig_run_next(&run, ACT_TICKLE) == ACT_FART, "he laughs till he farts");
-    CHECK(rig_run_next(&run, ACT_FART) == ACT_DIZZY, "and the fart leaves him dazed");
-    CHECK(rig_run_next(&run, ACT_DIZZY) == ACT_NONE && run == NULL, "and then it is over");
-    CHECK(rig_run_next(&run, ACT_FART) == ACT_NONE, "a fart with no run behind it is just a fart");
+    rig_run_t run;
+    rig_run_start(&run, rig_run_tickled_out(), 1000);
+    CHECK(run.at[0] == ACT_TICKLE, "it starts with the laughing fit the fifth tickle sets off");
+    CHECK(rig_run_next(&run, ACT_TICKLE, 1000, 5800) == ACT_FART, "he laughs till he farts");
+    CHECK(rig_run_next(&run, ACT_FART, 5800, 7300) == ACT_DIZZY, "and the fart leaves him dazed");
+    CHECK(rig_run_next(&run, ACT_DIZZY, 7300, 13700) == ACT_NONE && run.at == NULL,
+          "and then it is over");
+    CHECK(rig_run_next(&run, ACT_FART, 20000, 21500) == ACT_NONE,
+          "a fart with no run behind it is just a fart");
 
     /* Something else taking over ends the run: what ends is not the run's, so nothing follows,
        and a later fart of his own does not pick it up again. */
-    run = rig_run_tickled_out();
-    CHECK(rig_run_next(&run, ACT_NOD) == ACT_NONE && run == NULL, "a nod cut in: no fart");
-    CHECK(rig_run_next(&run, ACT_FART) == ACT_NONE, "nor dazed after a later one");
+    rig_run_start(&run, rig_run_tickled_out(), 1000);
+    CHECK(rig_run_next(&run, ACT_NOD, 2000, 3000) == ACT_NONE && run.at == NULL,
+          "a nod cut in: no fart");
+    CHECK(rig_run_next(&run, ACT_FART, 3000, 4500) == ACT_NONE, "nor dazed after a later one");
+
+    /* AND THE SAME ACTION TAKING OVER IS STILL A TAKEOVER (review): a voice "fart" over the
+       run's own fart is a different fart, started later, and must not knock him dizzy. */
+    rig_run_start(&run, rig_run_tickled_out(), 1000);
+    CHECK(rig_run_next(&run, ACT_TICKLE, 1000, 5800) == ACT_FART, "the run's fart");
+    CHECK(rig_run_next(&run, ACT_FART, 6200, 7700) == ACT_NONE && run.at == NULL,
+          "a voice fart over it ends the run, no daze");
 
     /* Each step sounds as it starts, and each has its own sound. */
-    run = rig_run_tickled_out();
-    for (action_t a = run[0]; a != ACT_NONE; a = rig_run_next(&run, a)) {
-        CHECK(rig_cue_on_start(a) && cue_for_action(a) != CUE_COUNT, "every step is heard");
+    for (const action_t *a = rig_run_tickled_out(); *a != ACT_NONE; a++) {
+        CHECK(rig_cue_on_start(*a) && cue_for_action(*a) != CUE_COUNT, "every step is heard");
     }
 }
 
