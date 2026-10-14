@@ -21,10 +21,8 @@ import { initTheme } from "./theme";
 import "./styles/tokens.css";
 import "./styles.css";
 
-// Resolve the theme before first paint so there is no flash of wrong theme. A shared
-// Minecraft map opens in Dark+ for a recipient who never picked a theme: the map tiles
-// read best on dark, and the stronger edges keep its floating controls legible.
-initTheme(parseMcSharePath() ? "dark-bright" : "system");
+// Resolve the theme before first paint so there is no flash of wrong theme.
+initTheme();
 initFontScale();
 
 // When the app asks whether a new build exists — `swUpdate` carries the reasoning, and

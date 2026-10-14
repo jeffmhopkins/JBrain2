@@ -40,13 +40,13 @@ Dual theme, dark-first. Implementation:
 
 - All colors are CSS custom properties on `:root`, overridden by
   `[data-theme="light"]`. Components reference tokens only.
-- Default follows `prefers-color-scheme`; a Settings option overrides it
-  (`system | dark | dark-bright | light`), persisted locally and (later) as a
-  user setting.
+- Default is Dark+ (`dark-bright`, the owner's standard) on every surface —
+  the app, dash, debug console, and every share link — for a viewer with no
+  saved theme; the default is not persisted. A Settings option overrides it
+  (`system | dark | dark-bright | light`), persisted locally (including an
+  explicit `system`, which follows `prefers-color-scheme`).
 - `dark-bright` ("Dark+") is a dark variant that inherits every dark neutral
   and only lifts `--border` to `#464A52` for stronger, brighter hairlines.
-- A shared Minecraft map link (`/mc/s/{token}`) defaults to Dark+ when the
-  viewer has no saved theme; it is not persisted, and a saved pick still wins.
 - The PWA `theme-color` meta updates with the active theme.
 - **Text size**: every type token is `calc(px × var(--font-scale))`; a
   Settings "Text size" control (65 / 75 / 90 / 100%) sets the scale,
