@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-13
+> **Status:** Living · **Last verified:** 2026-10-14
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -189,6 +189,15 @@ reaches him is a tickle rather than the zone's pool, the first four a giggle and
 laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during the fit
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
+
+**0.4.13: tickled out.** Owner: *"on tickle mode, if tickled 5 times, he should fart and go
+dazed."* The fifth tickle now starts a run, `rig_run_tickled_out`: the laughing fit, then a
+fart, then `ACT_DIZZY`, sitting down hard with the stars going round. `display.c` keeps where
+in the run he is and, as each step ends, starts the next with its own sound (`rig_run_next`).
+Anything else taking over — a nod, a shake, a poke after the fit — ends the run, and a fart
+asked for by voice never knocks him dizzy: what ends has to be the run's own step, the same
+action started at the same moment (`rig_run_t.since`), for the run to go on — a voice "fart"
+over the run's own fart is the same action, but a takeover all the same.
 
 **0.4.12: a tickle that looks like a tickle.** Owner: *"when he's in tickle mode if I touch him
 he still acts like I'm poking him versus tickling."* He did: the four tickles were `ACT_GIGGLE`,

@@ -101,6 +101,14 @@ check(tk.filter((e) => e.includes('cue TICKLED')).length === 4,
 check(!tk.some((e) => e.includes('cue GIGGLE')), 'nothing about a tickle sounds like a poke');
 check(tk.filter((e) => e.includes('cue TICKLE (')).length === 3,
   'and the fifth sets him laughing, and laughing again, and again');
+// Laughed out, he farts, and the fart leaves him sitting dazed (owner: "if tickled 5 times,
+// he should fart and go dazed").
+p.advance(1500 + 6400 + 300);
+const out = events.slice(tickled);
+const fit = out.findLastIndex((e) => e.includes('cue TICKLE ('));
+const fart = out.findIndex((e) => e.includes('cue FART'));
+const dazed = out.findIndex((e) => e.includes('cue DIZZY'));
+check(fart > fit && dazed > fart, `then a fart, then dazed (${fit}, ${fart}, ${dazed})`);
 const later = events.length;
 tap(W / 2, H * 0.62);
 p.advance(1500);

@@ -121,6 +121,7 @@ static uint32_t r_now_rnd(void)
 /* As the panel does: three snacks in a minute and he has to go (`poop.h`). */
 static poop_t r_poop;
 static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
+static rig_run_t r_run; /* what follows r_action (`rig_run_next`) */
 static float r_mag = 1.0f; /* the action's magnitude: the tickles rise */
 static uint32_t r_poop_last;
 static float r_recue_p;
@@ -496,6 +497,7 @@ static void frame(void)
         if (tk != TICKLE_NO) {
             r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
             r_mag = tk == TICKLE_BIG ? 1.0f : tickle_mag(&r_tickle);
+            if (tk == TICKLE_BIG) rig_run_start(&r_run, rig_run_tickled_out(), now);
             r_flinch = 0.0f;
             r_action_at = now;
             const cue_t c = cue_for_action((int)r_action);
@@ -543,9 +545,21 @@ static void frame(void)
         const int dur = rig_spec(r_action)->dur_ms;
         const uint32_t el = now - r_action_at;
         if (dur <= 0 || (int)el >= dur) {
-            r_action = ACT_NONE;
-        } else {
-            p = (float)el / (float)dur;
+            /* As the panel does: tickled out, the fit leads into a fart and then dazed. */
+            r_action = rig_run_next(&r_run, r_action, r_action_at, now);
+            if (r_action != ACT_NONE) {
+                r_mag = 1.0f;
+                r_action_at = now;
+                if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
+                    const cue_t c = cue_for_action((int)r_action);
+                    (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+                    say("cue", "%s (press slot)", cue_name(c));
+                }
+                say("pet", "laughed out: %s", r_action == ACT_FART ? "a fart" : "dazed");
+            }
+        }
+        if (r_action != ACT_NONE) {
+            p = (float)(now - r_action_at) / (float)rig_spec(r_action)->dur_ms;
         }
     }
     /* As the panel does: warned and idle, he holds the brace, shivering (`tickle_wait_p`). */
