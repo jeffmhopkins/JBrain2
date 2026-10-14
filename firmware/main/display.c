@@ -2021,11 +2021,12 @@ static void face_task(void *arg)
             const vocab_t *v = vocab_get(said_id);
             if (v != NULL) {
                 cue_t heard_cue = CUE_COUNT;
+                /* ANY COMMAND BUT THE GAME'S OWN ENDS THE GAME, "stop" above all (review): he
+                   walks back and grows, and then does what was asked. */
+                if (v->kind != VOCAB_GAME) game_stop(&s_game, now);
                 switch (v->kind) {
                 case VOCAB_LISTEN:
                     voice = SM_VOICE_WAKE;
-                    /* The name ends a game: he walks back and grows, and then listens. */
-                    game_stop(&s_game, now);
                     break;
                 case VOCAB_GAME:
                     /* LET'S PLAY A GAME (`game.h`): he walks to the middle and shrinks. The
@@ -2063,9 +2064,6 @@ static void face_task(void *arg)
                     /* ASKING FOR A THING SOUNDS LIKE THE THING: the acknowledgement IS the
                        action's cue, not a bleep followed by one. */
                     action = (action_t)v->arg;
-                    /* Asked for something else mid-game: the game ends, and he does it as he
-                       walks back. */
-                    game_stop(&s_game, now);
                     /* One "fart" in ten is the seven-second one (`rig_fart_pick`). */
                     if (action == ACT_FART) action = rig_fart_pick(esp_random());
                     action_mag = 1.0f;

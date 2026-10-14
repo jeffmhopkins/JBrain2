@@ -170,6 +170,16 @@ p.voice(VOICE.WAKE);
 check(until(() => events.slice(played).some((e) => e.includes('back to his own size')), 4000),
   'the wake word ends the game, and he walks back');
 
+// "Stop" mid-game ends it too: any command but the game's own does (review).
+until(() => p.state().mode === 'PET', 15000);
+const stopped = events.length;
+p.set(KNOB.PET_ACT, 8);
+check(until(() => events.slice(stopped).some((e) => e.includes('cue GAME_GO')), 4000), 'a new game');
+p.advance(1500);
+p.voice(VOICE.STOP);
+check(until(() => events.slice(stopped).some((e) => e.includes('back to his own size')), 4000),
+  '"stop" ends the game, and he walks back');
+
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);
 p.advance(200);

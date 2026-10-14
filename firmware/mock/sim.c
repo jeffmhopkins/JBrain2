@@ -440,6 +440,8 @@ static void frame(void)
                   p_down_y >= TALK_MARGIN_PX && p_down_y < FACE_H - TALK_MARGIN_PX;
     s_in.swipe = swipe;
     s_in.voice = p_voice;
+    /* As the panel does: any command but the game's own ends the game. */
+    if (p_voice != SM_VOICE_NONE) game_stop(&r_game, g_now);
     s_in.btn_short = p_btn_short;
     s_in.btn_hold = p_btn_hold;
     p_voice = SM_VOICE_NONE;
