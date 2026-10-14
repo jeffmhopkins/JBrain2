@@ -93,6 +93,7 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
 .legend span { font-family: var(--font-mono); font-size: 11px; padding: 2px 6px; border-radius: 4px; color: #fff; }
 .err { color: var(--red); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+  .tiltpad { margin-top: 8px; height: 96px; border: 1px dashed currentColor; border-radius: 12px; display: grid; place-items: center; opacity: .75; touch-action: none; user-select: none; cursor: grab; font-size: 13px; }
 </style>
 
 <div class="wrap">
@@ -149,6 +150,8 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
           <button id="v-eat">“Have a snack”</button>
           <button id="v-fart">“Fart”</button>
           <button id="v-megafart" title="The one-in-ten seven-second one, every time">“Fart” (the long one)</button>
+          <button id="v-bday">“Happy birthday”</button>
+          <button id="v-game">“Let’s play a game”</button>
         </div>
         <label>When the microphone opens
           <select id="autotalk"><option value="2500" selected>she talks for 2.5 s</option><option value="6000">she talks for 6 s</option><option value="0">she says nothing</option></select>
@@ -180,6 +183,8 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
           <button id="shake">Shake the panel</button>
         </div>
         <label>Tilt the panel <input type="range" id="tilt" min="-40" max="40" step="1" value="0"> <output id="tilt-out">0°</output></label>
+        <label>Tip the top away <input type="range" id="fwd" min="-40" max="40" step="1" value="0"> <output id="fwd-out">0°</output></label>
+        <div class="tiltpad" id="tiltpad" role="application" aria-label="Tilt pad: drag to tilt both ways at once, let go to level">drag to tilt</div>
         <div class="legend" id="legend" hidden></div>
         <p class="note">Tilt turns the panel right side down: he slides downhill and his head rights itself toward true up. Upright only; on its side the square also slides into the glass's side bands, which the bench does not show.</p>
         <p class="note">10× skips the waits: the notice shrinks to a badge after 15 s, and the again/reply pair stands after 10 s.</p>
@@ -355,6 +360,40 @@ $('v-tickle').onclick = () => panel.set(KNOB.PET_ACT, 3);
 $('v-eat').onclick = () => panel.set(KNOB.PET_ACT, 4);
 $('v-fart').onclick = () => panel.set(KNOB.PET_ACT, 5);
 $('v-megafart').onclick = () => panel.set(KNOB.PET_ACT, 6);
+$('v-bday').onclick = () => panel.set(KNOB.PET_ACT, 7);
+$('v-game').onclick = () => panel.set(KNOB.PET_ACT, 8);
+// The game is played by tilting both ways at once: the pad is a joystick for the two sliders
+// (left/right and toward/away), the arrow keys too, and letting go levels the panel.
+const setTilt = (x, y) => {
+  const t = $('tilt'), f = $('fwd');
+  t.value = String(Math.round(x)); t.dispatchEvent(new Event('input'));
+  f.value = String(Math.round(y)); f.dispatchEvent(new Event('input'));
+};
+$('fwd').oninput = (e) => {
+  $('fwd-out').textContent = `${e.target.value}°`;
+  panel.set(KNOB.FWD_DEG, Number(e.target.value));
+};
+{
+  const pad = $('tiltpad');
+  let from = null;
+  pad.addEventListener('pointerdown', (e) => { from = { x: e.clientX, y: e.clientY }; pad.setPointerCapture(e.pointerId); });
+  pad.addEventListener('pointermove', (e) => {
+    if (!from) return;
+    const k = (d) => Math.max(-30, Math.min(30, d / 2));
+    setTilt(k(e.clientX - from.x), k(e.clientY - from.y));
+  });
+  const end = () => { from = null; setTilt(0, 0); };
+  pad.addEventListener('pointerup', end);
+  pad.addEventListener('pointercancel', end);
+  const held = new Set();
+  const fromKeys = () => setTilt((held.has('ArrowRight') - held.has('ArrowLeft')) * 25,
+    (held.has('ArrowDown') - held.has('ArrowUp')) * 25);
+  addEventListener('keydown', (e) => {
+    if (!e.key.startsWith('Arrow') || e.target.closest('input, select, textarea')) return;
+    e.preventDefault(); held.add(e.key); fromKeys();
+  });
+  addEventListener('keyup', (e) => { if (held.delete(e.key)) fromKeys(); });
+}
 $('shake').onclick = () => {
   const box = document.querySelector('.case');
   box.animate([{ translate: '0 0' }, { translate: '-14px 0' }, { translate: '14px 0' }, { translate: '-10px 0' }, { translate: '10px 0' }, { translate: '0 0' }], { duration: 450 });

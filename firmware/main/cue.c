@@ -164,6 +164,7 @@ typedef enum {
     SH_RUDE,     /* the body noises */
     SH_PAIR,     /* two detuned voices, falling together */
     SH_LAUGH,    /* `a` syllables of "ha", tumbling `b` semitones down across the run */
+    SH_TUNE,     /* notes of a melody, each its own length (`TUNE_LEN`), detached like beeps */
 } shape_t;
 
 #define STEPS_MAX 4
@@ -181,6 +182,14 @@ typedef struct {
 } cue_def_t;
 
 #define END 127
+
+/* THE SONG'S RHYTHM: each note's share of its cue, in order. "Hap-py" is the dotted pickup,
+   three to one; the rest are even. Indexed from CUE_BDAY_1. */
+static const float TUNE_LEN[3][STEPS_MAX] = {
+    {0.375f, 0.125f, 0.5f, 0.0f},
+    {0.5f, 0.5f, 0.0f, 0.0f},
+    {1.0f, 0.0f, 0.0f, 0.0f},
+};
 
 /* Ordered exactly as `cue_t` declares them. */
 /* --- THE FIVE FARTS -------------------------------------------------------------------
@@ -341,6 +350,19 @@ static const cue_def_t DEF[CUE_COUNT] = {
     /* HEHEHE: the real laugh's shape, four "he"s and quick, trying to hold it in — the fit
        (CUE_TICKLE) is what it sounds like once he cannot. */
     [CUE_TICKLED] = {SH_LAUGH, 380, 700.0f, 0.0f, 4.0f, 3.0f, {END}, 4, 0},
+    /* HAPPY BIRTHDAY (0.4.14, owner: *"plays the first phrase of happy birthday beeps"*). The
+       first line, G G A G C B from G4, in three cues because one cannot run past 0.8 s: the
+       panel plays them at the action's re-cue points (`rig_recue`). Square beeps, each note
+       detached, which is what makes it the panel singing rather than a recording. */
+    [CUE_BDAY_1] = {SH_TUNE, 680, 392.0f, 0.5f, 0, 0, {0, 0, 2, END}, 4, 0},
+    [CUE_BDAY_2] = {SH_TUNE, 640, 392.0f, 0.5f, 0, 0, {0, 5, END}, 4, 0},
+    [CUE_BDAY_3] = {SH_TUNE, 700, 392.0f, 0.5f, 0, 0, {4, END}, 4, 0},
+    /* THE GAME. Go: a quick rising triad, the start of a race. A dodge: the lightest thing
+       that still says "point", an upward chirp, since a run of them is the soundtrack. A hit:
+       low and falling, two voices rubbing, the bump and the "aww". */
+    [CUE_GAME_GO] = {SH_STEPS, 300, 659.25f, 0.5f, 0, 0, {0, 3, 8, END}, 2, 10},
+    [CUE_DODGE] = {SH_SWEEP, 70, 1046.5f, 0.5f, 0.6f, 0.0f, {END}, 1, 0},
+    [CUE_GAME_HIT] = {SH_PAIR, 420, 196.0f, 0.5f, -1.1f, 0.0f, {END}, 2, 40},
 
     /* -- the interface --------------------------------------------------------------- */
     /* Neutrality comes from REMOVING contour: anything that moves imports a mood, and a tap
@@ -433,6 +455,19 @@ int cue_samples(cue_t c, int rate)
     return (int)(cue_ms_max(c) * STRETCH_MAX * (float)rate / 1000.0f + 0.5f);
 }
 
+cue_t cue_for_action_at(int action, float p)
+{
+    if (action == ACT_BIRTHDAY) {
+        return p < RIG_BDAY_AT_2 ? CUE_BDAY_1 : p < RIG_BDAY_AT_3 ? CUE_BDAY_2 : CUE_BDAY_3;
+    }
+    return cue_for_action(action);
+}
+
+bool cue_is_tune(cue_t c)
+{
+    return c == CUE_BDAY_1 || c == CUE_BDAY_2 || c == CUE_BDAY_3;
+}
+
 cue_t cue_for_action(int action)
 {
     switch (action) {
@@ -462,6 +497,7 @@ cue_t cue_for_action(int action)
     case ACT_BRACE:  return CUE_BRACE;
     case ACT_TICKLED: return CUE_TICKLED;
     case ACT_MEGAFART: return CUE_MEGAFART;
+    case ACT_BIRTHDAY: return CUE_BDAY_1;
     default:         return CUE_BLIP;
     }
 }
@@ -660,6 +696,24 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             e.hold_ms = dur * 0.8f;
             e.decay_ms = dur * 0.2f - (float)d->attack_ms;
             v = (voice + breath) * gate;
+            break;
+        }
+
+        case SH_TUNE: {
+            /* The note `u` falls in, by the cue's own rhythm; each note an attack, a hold and
+               a quick release with a breath of silence after, so two equal notes in a row are
+               heard as two. */
+            const float *len = TUNE_LEN[c - CUE_BDAY_1];
+            int k = 0;
+            float at = 0.0f;
+            while (k < n_steps - 1 && u >= at + len[k]) at += len[k++];
+            const float w = (u - at) / len[k]; /* 0..1 through this note */
+            const float gate = w < 0.02f ? w / 0.02f : w < 0.78f ? 1.0f
+                                                    : w < 0.9f ? (0.9f - w) / 0.12f : 0.0f;
+            const float hz = semi(base, (float)d->steps[k]);
+            e.hold_ms = dur;
+            e.decay_ms = 1.0f;
+            v = pulse(step_osc(&a, hz, rate), d->duty, hz) * gate;
             break;
         }
 

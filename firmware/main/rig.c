@@ -38,6 +38,7 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_BRACE] = {1600, FACE_EXCITED, 0},
     [ACT_TICKLED] = {1100, FACE_HAPPY, 0},
     [ACT_MEGAFART] = {7000, FACE_BEWILDERED, 0},
+    [ACT_BIRTHDAY] = {7000, FACE_HAPPY, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -151,6 +152,26 @@ static float mega_amount(float p)
     return 1.0f;
 }
 
+/* SINGING: a little hop on every note of the song, and arms up from the last ("you") on.
+   The notes' onsets, as progress through the 7 s: G G A | G C | B. */
+static float bday_hop(float p)
+{
+    static const float NOTE[] = {0.0f, 0.0364f, 0.0486f, 0.12f, 0.1686f, 0.24f};
+    float h = 0.0f;
+    for (unsigned i = 0; i < sizeof(NOTE) / sizeof(NOTE[0]); i++) {
+        const float d = (p - NOTE[i]) / 0.025f;
+        if (d >= 0.0f && d < 1.0f) h = fmaxf(h, sinf(d * (float)M_PI));
+    }
+    return h;
+}
+
+static float bday_cheer(float p)
+{
+    if (p < RIG_BDAY_AT_3) return 0.0f;
+    if (p > 0.94f) return (1.0f - p) / 0.06f;
+    return fminf(1.0f, (p - RIG_BDAY_AT_3) / 0.04f);
+}
+
 /* THE SQUAT: down over the first fifth, held while he strains and through the plop, up after.
    The legs splay by SQUAT_SPLAY and `face.c` lowers him by what that takes off the legs. */
 #define SQUAT_SPLAY 40.0f
@@ -197,6 +218,9 @@ bool rig_recue(action_t a, float p0, float p)
         }
     } else if (a == ACT_POOP) {
         return p0 < POOP_AT && p >= POOP_AT; /* the plop, not the squat */
+    } else if (a == ACT_BIRTHDAY) {
+        return (p0 < RIG_BDAY_AT_2 && p >= RIG_BDAY_AT_2) ||
+               (p0 < RIG_BDAY_AT_3 && p >= RIG_BDAY_AT_3);
     }
     return false;
 }
@@ -347,6 +371,14 @@ static void bird_channels(action_t a, float p, float mag, uint32_t t_ms, rig_pos
         out->bob += sit_amount(p) * 10.0f;
         out->tail -= sit_amount(p) * 12.0f;
         break;
+    case ACT_BIRTHDAY: {
+        /* Bobbing on every note, then head up and tail going for "you" and the confetti. */
+        const float c = bday_cheer(p) * mag;
+        out->bob -= bday_hop(p) * 10.0f * mag;
+        out->neck += sinf(p * (float)M_PI * 10.0f) * 10.0f * mag - c * 10.0f;
+        out->tail += c * (20.0f + sinf(p * (float)M_PI * 24.0f) * 12.0f);
+        break;
+    }
     case ACT_LOVE: {
         /* A slow happy sway, the head nuzzling side to side, tail going. */
         const float q = sinf(p * (float)M_PI * 8.0f) * mag;
@@ -514,6 +546,15 @@ void rig_for(action_t a, float p, float mag, uint32_t t_ms, rig_pose_t *out)
         out->leg_r = -out->leg_l;
         out->arm_l = 12.0f + 30.0f * k;
         out->arm_r = -out->arm_l;
+        break;
+    }
+    case ACT_BIRTHDAY: {
+        /* Arms swinging in time while he sings, flung up and waving for "you". */
+        const float c = bday_cheer(p) * mag;
+        const float sw = sinf(p * (float)M_PI * 10.0f) * 14.0f * (1.0f - c);
+        const float wave = sinf(p * (float)M_PI * 30.0f) * 8.0f * c;
+        out->arm_l = 14.0f + sw + c * 128.0f + wave;
+        out->arm_r = -14.0f + sw - c * 128.0f - wave;
         break;
     }
     case ACT_LOVE: {
@@ -687,6 +728,11 @@ void rig_figure(action_t a, float p, float mag, uint32_t t_ms, float face_tilt,
         case ACT_LOVE:
             out->tilt += sinf(p * (float)M_PI * 8.0f) * 7.0f * mag;
             out->extra = EXTRA_HEARTS;
+            break;
+        case ACT_BIRTHDAY:
+            out->oy -= bday_hop(p) * 12.0f * mag;
+            out->tilt += sinf(p * (float)M_PI * 10.0f) * 6.0f * mag;
+            out->extra = EXTRA_PARTY;
             break;
         case ACT_MEGAFART: {
             /* RUMBLING: a fast shake of the whole figure, eyes wide, the clouds coming. */

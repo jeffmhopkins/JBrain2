@@ -49,6 +49,7 @@ typedef enum {
     ACT_BRACE,  /* "I'm going to tickle you": he braces, giggling nervously */
     ACT_TICKLED, /* one of the four tickles before the fifth: a squirm and a "hehehe" */
     ACT_MEGAFART, /* one "fart" in ten (`rig_fart_pick`): seven seconds of it */
+    ACT_BIRTHDAY, /* "happy birthday": the song, a party hat, confetti (0.4.14) */
     ACT_POOP,   /* three meals in a minute (`poop.h`): he squats, strains, and plop */
     ACT_COUNT,
 } action_t;
@@ -131,6 +132,7 @@ typedef enum {
     EXTRA_TICKLE, /* wiggle marks either side of him: where the tickling is */
     EXTRA_FOOD,   /* a cookie, a bite gone at each bite (`rig_eat_bites`), crumbs falling */
     EXTRA_GAS,    /* clouds puffing out behind him and drifting off, the whole time */
+    EXTRA_PARTY,  /* a party hat on his head, confetti falling over everything */
 } extra_t;
 
 typedef struct {
@@ -159,6 +161,12 @@ typedef struct {
        bird's beak goes down to it). */
     float reach;
 } figure_pose_t;
+
+/* HAPPY BIRTHDAY's three phrases start at 0, and at these points of the 7 s action, 0.84 s
+   apart: no phrase runs past 0.70 s (0.75 at its longest variant), so the next always finds the
+   speaker free. `cue_for_action_at` picks the phrase from the same numbers. */
+#define RIG_BDAY_AT_2 0.12f
+#define RIG_BDAY_AT_3 0.24f
 
 /* AN ACTION LONGER THAN ITS SOUND SAYS IT AGAIN. A cue is at most `CUE_MAX_MS` (0.8 s), which a
    four-second laugh outlasts several times over, so the tickle laughs again as it goes. True on

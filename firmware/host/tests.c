@@ -28,6 +28,7 @@
 #include "ring.h"
 #include "poop.h"
 #include "tickle.h"
+#include "game.h"
 #include "screen.h"
 #include "rig.h"
 #include "variants.h"
@@ -586,6 +587,9 @@ static void test_the_side_mounted_fit_stays_in_the_square(void)
     int poses = 0, clipped = 0;
     for (int f = 0; f < FORM_COUNT; f++) {
         for (int a = ACT_NONE + 1; a < ACT_COUNT; a++) {
+            /* The birthday's confetti covers the whole frame on purpose, and the hat drops in
+               from above it: neither is the figure being cropped. */
+            if (a == ACT_BIRTHDAY) continue;
             for (int step = 0; step <= 16; step++) {
                 const float q = (float)step / 16.0f;
                 face_state_t st;
@@ -1086,7 +1090,7 @@ static void test_tickle_tickle_makes_him_laugh_and_laugh_again(void)
         CHECK(again == 2, "he laughs twice more after the first");
     }
     for (int a = ACT_NONE; a < ACT_COUNT; a++) {
-        if (a == ACT_TICKLE || a == ACT_EAT || a == ACT_POOP) continue;
+        if (a == ACT_TICKLE || a == ACT_EAT || a == ACT_POOP || a == ACT_BIRTHDAY) continue;
         CHECK(!rig_recue((action_t)a, 0.0f, 1.0f), "every other action sounds once");
     }
 
@@ -1302,6 +1306,377 @@ static void test_tickled_out_he_farts_and_sits_dazed(void)
     /* Each step sounds as it starts, and each has its own sound. */
     for (const action_t *a = rig_run_tickled_out(); *a != ACT_NONE; a++) {
         CHECK(rig_cue_on_start(*a) && cue_for_action(*a) != CUE_COUNT, "every step is heard");
+    }
+}
+
+/* HAPPY BIRTHDAY (owner: "plays the first phrase of happy birthday beeps, and robot puts on a
+   birthday hat and confetti drops"). */
+static void test_happy_birthday_sings_with_a_hat_and_confetti(void)
+{
+    const vocab_t *v = vocab_all();
+    bool heard = false;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (strcmp(v[i].phrase, "happy birthday") == 0) {
+            heard = v[i].kind == VOCAB_ACTION && v[i].arg == ACT_BIRTHDAY;
+        }
+    }
+    CHECK(heard, "\"happy birthday\" starts it");
+
+    /* THE SONG, in three pieces at the start and the two re-cue points, in order, walked at
+       the panel's 25 fps and a ragged 7, so a dropped frame cannot drop a phrase. */
+    const int dur = rig_spec(ACT_BIRTHDAY)->dur_ms;
+    CHECK(dur >= 6000, "long enough for the confetti to fall");
+    CHECK(rig_cue_on_start(ACT_BIRTHDAY) && cue_for_action_at(ACT_BIRTHDAY, 0.0f) == CUE_BDAY_1,
+          "the first phrase as he hears it");
+    for (int step = 40; step <= 140; step += 100) {
+        cue_t heard_c[3];
+        int n = 0;
+        float p0 = 0.0f;
+        for (int t = 0; t < dur; t += step) {
+            const float p = (float)t / (float)dur;
+            if (rig_recue(ACT_BIRTHDAY, p0, p) && n < 3) heard_c[n++] = cue_for_action_at(ACT_BIRTHDAY, p);
+            p0 = p;
+        }
+        CHECK(n == 2 && heard_c[0] == CUE_BDAY_2 && heard_c[1] == CUE_BDAY_3,
+              "then the second phrase and the third, once each, in order");
+    }
+    /* Each phrase is over before the next is due, at its longest variant, so the speaker is
+       always free for it; and each is under the 0.8 s a cue can be. */
+    static int16_t buf[CUE_MAX_SAMPLES];
+    const float at[3] = {0.0f, RIG_BDAY_AT_2, RIG_BDAY_AT_3};
+    for (int k = 0; k < 3; k++) {
+        CHECK(cue_is_tune((cue_t)(CUE_BDAY_1 + k)), "the song's pieces share a key");
+        for (unsigned var = 0; var < 32; var++) {
+            const int n = cue_render((cue_t)(CUE_BDAY_1 + k), buf, CUE_RATE, 100, var);
+            CHECK(n > 0, "every phrase renders");
+            if (k < 2) {
+                CHECK((float)n / (float)CUE_RATE < (at[k + 1] - at[k]) * (float)dur / 1000.0f,
+                      "a phrase ends before the next begins");
+            }
+        }
+    }
+    /* THE NOTES: G G A | G C | B, counted as separate beeps. "Hap-py" is two notes on one
+       pitch, so it is the gaps between them that make them two. */
+    const int want[3] = {3, 2, 1};
+    for (int k = 0; k < 3; k++) {
+        const int n = cue_render((cue_t)(CUE_BDAY_1 + k), buf, CUE_RATE, 100, 0);
+        const int win = CUE_RATE / 200;
+        int peak = 0, notes = 0;
+        bool loud = false;
+        for (int i = 0; i < n; i++) peak = abs(buf[i]) > peak ? abs(buf[i]) : peak;
+        for (int w0 = 0; w0 + win <= n; w0 += win) {
+            int m = 0;
+            for (int i = w0; i < w0 + win; i++) m = abs(buf[i]) > m ? abs(buf[i]) : m;
+            if (!loud && m > peak / 2) {
+                loud = true;
+                notes++;
+            } else if (loud && m < peak / 10) {
+                loud = false;
+            }
+        }
+        CHECK(notes == want[k], "each phrase is its notes, one beep each");
+    }
+
+    /* THE HAT ON BOTH FORMS, dropping onto the head and staying; CONFETTI over the frame,
+       spreading down it as it falls, and gone by the end. */
+    const uint16_t pink = rgb565(0xFF, 0x5F, 0xA2);
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        rig_for(ACT_BIRTHDAY, 0.5f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_BIRTHDAY, 0.5f, 1.0f, 0, 0.0f, &st.fig);
+        CHECK(st.fig.extra == EXTRA_PARTY, "the party is the extra");
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(pink) > 400, "a pink party hat on his head");
+        int lowest = -1;
+        for (int y = 0; y < FACE_H; y++) {
+            for (int x = 0; x < FACE_W; x++) {
+                if (fb[y * FACE_W + x] == rgb565(0x4D, 0xD2, 0xFF)) lowest = y;
+            }
+        }
+        CHECK(lowest > FACE_H / 2, "confetti halfway through has reached the bottom half");
+        rig_for(ACT_BIRTHDAY, 0.999f, 1.0f, 0, &st.rig);
+        rig_figure(ACT_BIRTHDAY, 0.999f, 1.0f, 0, 0.0f, &st.fig);
+        face_draw(fb, 0, &st);
+        CHECK(count_colour(rgb565(0x7C, 0xF0, 0x8B)) == 0, "and all of it has landed by the end");
+    }
+    /* Arms up for "you". */
+    rig_pose_t a, b;
+    rig_for(ACT_BIRTHDAY, 0.05f, 1.0f, 0, &a);
+    rig_for(ACT_BIRTHDAY, 0.5f, 1.0f, 0, &b);
+    CHECK(b.arm_l > 100.0f && b.arm_r < -100.0f && a.arm_l < 60.0f, "arms flung up for \"you\"");
+}
+
+/* LET'S PLAY A GAME (owner: "uses the accelerometer to tilt the robot left and right, forwards
+   and backwards, and scrolls objects from random directions ... 1/4 to 1/5 normal size, starts
+   center screen (he walks there while getting smaller) ... start of slow and go faster, giving
+   a score for each one dodged"). */
+static void test_the_dodging_game(void)
+{
+    const vocab_t *v = vocab_all();
+    bool asked = false;
+    for (int i = 0; i < vocab_count(); i++) {
+        if (strcmp(v[i].phrase, "lets play a game") == 0) asked = v[i].kind == VOCAB_GAME;
+    }
+    CHECK(asked, "\"lets play a game\" starts it");
+
+    const float hw = 184.0f, hh = 224.0f;
+    game_t g;
+    game_reset(&g);
+    CHECK(!game_on(&g), "off until asked");
+    game_start(&g, 1000, 7, 40.0f, 20.0f);
+    float x, y, s;
+    game_figure(&g, 1000, &x, &y, &s);
+    CHECK(s == 1.0f && x == 40.0f, "he starts where he stood, full size");
+    game_figure(&g, 1000 + GAME_WALK_MS / 2, &x, &y, &s);
+    CHECK(s < 0.9f && s > GAME_SCALE && x < 40.0f && x > 0.0f, "walking in, shrinking");
+    uint32_t t = 1000;
+    unsigned ev = 0;
+    for (; t < 1000 + GAME_WALK_MS + 40; t += 40) ev |= game_step(&g, t, 40, 0, 0, hw, hh);
+    game_figure(&g, t, &x, &y, &s);
+    CHECK(g.phase == GAME_PLAY && s == GAME_SCALE && fabsf(x) < 1.0f, "a fifth his size, in the middle");
+    CHECK(GAME_SCALE >= 0.2f && GAME_SCALE <= 0.25f, "between a quarter and a fifth");
+
+    /* "Ready... go!": nothing comes during the ready, then they do. */
+    const uint32_t go = g.since;
+    for (; t < go + GAME_READY_MS - 40; t += 40) {
+        ev = game_step(&g, t, 40, 0, 0, hw, hh);
+        CHECK(!(ev & GAME_EV_GO), "not yet");
+    }
+    bool live = false;
+    for (int i = 0; i < GAME_MAX_OBJ; i++) live |= g.obj[i].live;
+    CHECK(!live, "nothing comes during the ready");
+    ev = 0;
+    for (int k = 0; k < 4; k++, t += 40) ev |= game_step(&g, t, 40, 0, 0, hw, hh);
+    CHECK(ev & GAME_EV_GO, "then go");
+
+    /* TILT RUNS HIM, both ways on both axes, and he skids to a stop; the field's edge holds. */
+    game_reset(&g);
+    game_start(&g, 0, 3, 0.0f, 20.0f);
+    for (t = 0; t <= GAME_WALK_MS; t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+    const float x0 = g.x, y0 = g.y;
+    for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 1.0f, 0, hw, hh);
+    CHECK(g.x > x0 + 20.0f, "tilt right: he runs right");
+    for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, 1.0f, hw, hh);
+    CHECK(g.y > y0 + 20.0f, "tilt the bottom down: he runs down");
+    const float xs = g.x;
+    for (int k = 0; k < 25; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+    CHECK(g.x > xs && g.x - xs < 60.0f && fabsf(g.vx) < 15.0f, "level again, he skids to a stop");
+    for (int k = 0; k < 200; k++, t += 40) game_step(&g, t, 40, -1.0f, -1.0f, hw, hh);
+    CHECK(g.x > -hw && g.y > -hh, "the edge of the field holds him");
+
+    /* SLOW, THEN FASTER: what comes later comes quicker and closer together. Measured over
+       many rounds, so a lucky draw cannot pass it. */
+    float early = 0.0f, late = 0.0f;
+    int ne = 0, nl = 0;
+    for (uint32_t seed = 1; seed < 40; seed++) {
+        game_reset(&g);
+        game_start(&g, 0, seed, 0.0f, 20.0f);
+        for (t = 0; t <= GAME_WALK_MS; t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+        const uint32_t r0 = g.since;
+        /* Each arrival is measured as it appears and taken away before it can reach him, so
+           the round runs its full length. */
+        for (t = r0; t < r0 + 45000 && g.phase == GAME_PLAY; t += 40) {
+            game_step(&g, t, 40, 0, 0, hw, hh);
+            for (int i = 0; i < GAME_MAX_OBJ; i++) {
+                if (!g.obj[i].live) continue;
+                const float sp = hypotf(g.obj[i].vx, g.obj[i].vy);
+                if (t - r0 < 12000) {
+                    early += sp;
+                    ne++;
+                } else if (t - r0 > 30000) {
+                    late += sp;
+                    nl++;
+                }
+                g.obj[i].live = false;
+            }
+        }
+    }
+    CHECK(ne > 30 && nl > 30, "enough of them to compare");
+    CHECK(late / (float)nl > 1.6f * (early / (float)ne), "and the late ones are much faster");
+
+    /* FROM ALL FOUR SIDES, AND ALL TWELVE KINDS, SPINNING. */
+    int sides = 0, kinds = 0;
+    bool spun = false;
+    for (uint32_t seed = 1; seed < 30; seed++) {
+        game_reset(&g);
+        game_start(&g, 0, seed, 0.0f, 20.0f);
+        for (t = 0; t <= GAME_WALK_MS + GAME_READY_MS + 3000; t += 40) {
+            game_step(&g, t, 40, 0, 0, hw, hh);
+            for (int i = 0; i < GAME_MAX_OBJ; i++) {
+                const game_obj_t *o = &g.obj[i];
+                if (!o->live) continue;
+                kinds |= 1 << o->kind;
+                spun |= fabsf(o->va) > 0.3f;
+                if (o->x < -hw) sides |= 1;
+                if (o->x > hw) sides |= 2;
+                if (o->y < -hh) sides |= 4;
+                if (o->y > hh) sides |= 8;
+            }
+            if (g.phase == GAME_OVER) break;
+        }
+    }
+    CHECK(sides == 15, "they come from every side");
+    CHECK(kinds == (1 << GAME_KINDS) - 1 && GAME_KINDS >= 10, "ten or more kinds, every one used");
+    CHECK(spun, "turning as they fly");
+
+    /* A POINT FOR EVERY ONE THAT GOES BY, AND A HIT ENDS THE ROUND. */
+    game_reset(&g);
+    game_start(&g, 0, 11, 0.0f, 20.0f);
+    for (t = 0; t <= GAME_WALK_MS + GAME_READY_MS; t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+    memset(g.obj, 0, sizeof(g.obj));
+    g.spawn_in = 100.0f; /* nothing new: just these two */
+    g.obj[0] = (game_obj_t){-hw + 5.0f, -hh + 80.0f, -400.0f, 0, 0, 0, 1.0f, 0, true, true};
+    unsigned e2 = 0;
+    for (int k = 0; k < 10; k++, t += 40) e2 |= game_step(&g, t, 40, 0, 0, hw, hh);
+    CHECK((e2 & GAME_EV_DODGE) && g.score == 1 && g.phase == GAME_PLAY, "one went by: a point");
+    g.obj[1] = (game_obj_t){g.x + 60.0f, g.y - 8.0f, -300.0f, 0, 0, 0, 1.0f, 3, true, true};
+    e2 = 0;
+    for (int k = 0; k < 10 && g.phase == GAME_PLAY; k++, t += 40) e2 |= game_step(&g, t, 40, 0, 0, hw, hh);
+    CHECK((e2 & GAME_EV_HIT) && g.phase == GAME_OVER && g.best == 1, "one hit him: game over, the best kept");
+    const uint32_t hit = t;
+    game_tap(&g, hit + 100);
+    CHECK(g.phase == GAME_OVER, "the tap that was still going on is not a replay");
+    game_tap(&g, hit + GAME_REPLAY_MS + 10);
+    CHECK(g.phase == GAME_PLAY && g.score == 0 && g.best == 1, "a tap plays again, best kept");
+
+    /* NOBODY TAPS TO PLAY AGAIN (owner: "a timeout to exit the game when not clicked"): the
+       score stands for a while and then he walks back, even with the panel still held at an
+       angle, which a minute's idle never noticed because a held tilt counts as playing. */
+    {
+        game_t q;
+        game_reset(&q);
+        game_start(&q, 0, 13, 0.0f, 20.0f);
+        uint32_t u;
+        for (u = 0; u <= GAME_WALK_MS + GAME_READY_MS; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        memset(q.obj, 0, sizeof(q.obj));
+        q.obj[0] = (game_obj_t){q.x + 30.0f, q.y - 8.0f, -300.0f, 0, 0, 0, 1.0f, 2, true, true};
+        for (int k = 0; k < 10 && q.phase == GAME_PLAY; k++, u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        CHECK(q.phase == GAME_OVER, "hit");
+        const uint32_t over = q.since;
+        for (; u < over + GAME_OVER_WAIT_MS - 200; u += 40) game_step(&q, u, 40, 0.6f, 0.4f, hw, hh);
+        CHECK(q.phase == GAME_OVER, "the score stands a while for a tap");
+        for (; u < over + GAME_OVER_WAIT_MS + 200; u += 40) game_step(&q, u, 40, 0.6f, 0.4f, hw, hh);
+        CHECK(q.phase == GAME_WALK_OUT, "and with no tap, held tilted or not, the game ends");
+        CHECK(GAME_OVER_WAIT_MS <= 20000u, "not long: a child who walked off is not coming back");
+    }
+
+    /* FORWARD AND BACK STEER THE SAME HOWEVER FAR BACK IT IS HELD (review): the steering is
+       the change in angle, so the same tip of the wrist gives the same push upright, leaning
+       back, or lying flat, and tipping either way from there is even. */
+    {
+        const float g = 8192.0f;
+        float push[3][2];
+        const float start_deg[3] = {0.0f, 60.0f, 88.0f};
+        for (int k = 0; k < 3; k++) {
+            for (int dir = 0; dir < 2; dir++) {
+                const float a0 = start_deg[k] * (float)M_PI / 180.0f;
+                const float a1 = a0 + (dir ? -10.0f : 10.0f) * (float)M_PI / 180.0f;
+                const float p0 = game_pitch((int)lrintf(sinf(a0) * g), (int)lrintf(cosf(a0) * g));
+                const float p1 = game_pitch((int)lrintf(sinf(a1) * g), (int)lrintf(cosf(a1) * g));
+                push[k][dir] = game_tilt_y(p1, p0);
+            }
+        }
+        for (int k = 0; k < 3; k++) {
+            CHECK(push[k][0] > 0.4f && fabsf(push[k][0] + push[k][1]) < 0.02f,
+                  "ten degrees either way is the same push, and an even one");
+            CHECK(fabsf(push[k][0] - push[0][0]) < 0.02f, "upright, leaning back or flat alike");
+        }
+    }
+
+    /* ASKED AGAIN MID-WALK (review): he turns round where he is, at the size he is, rather than
+       snapping back to his full size at home and shrinking again. */
+    {
+        game_t q;
+        game_reset(&q);
+        game_start(&q, 0, 17, 40.0f, 20.0f);
+        uint32_t u;
+        for (u = 0; u <= GAME_WALK_MS + 400; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        game_stop(&q, u);
+        for (const uint32_t s0 = u; u < s0 + GAME_WALK_MS / 2; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        float bx, by, bs, ax2, ay2, as2;
+        game_figure(&q, u, &bx, &by, &bs);
+        game_start(&q, u, 19, 40.0f, 20.0f);
+        game_figure(&q, u, &ax2, &ay2, &as2);
+        CHECK(q.phase == GAME_WALK_IN && fabsf(ax2 - bx) < 0.5f && fabsf(ay2 - by) < 0.5f &&
+                  fabsf(as2 - bs) < 0.01f,
+              "asked again on the way out: he turns round where he is, at his size");
+        for (const uint32_t s1 = u; u < s1 + GAME_WALK_MS + 80; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        game_figure(&q, u, &ax2, &ay2, &as2);
+        CHECK(q.phase == GAME_PLAY && as2 == GAME_SCALE, "and shrinks the rest of the way in");
+
+        /* And the mirror (review): stopped early in the walk in, he grows back from the size
+           he had reached, not from a fifth. */
+        game_reset(&q);
+        game_start(&q, 0, 23, 40.0f, 20.0f);
+        u = GAME_WALK_MS / 5;
+        game_figure(&q, u, &bx, &by, &bs);
+        game_stop(&q, u);
+        game_figure(&q, u, &ax2, &ay2, &as2);
+        CHECK(bs > 0.8f && fabsf(as2 - bs) < 0.01f && fabsf(ax2 - bx) < 0.5f,
+              "stopped on the way in: he turns round at the size he is");
+    }
+
+    /* AND IT ENDS: a minute of nobody playing, or stopped, and he walks back, growing. */
+    const uint32_t r1 = g.since;
+    for (t = r1; t < r1 + GAME_IDLE_MS + 400 && g.phase == GAME_PLAY; t += 40) {
+        g.spawn_in = 100.0f;
+        memset(g.obj, 0, sizeof(g.obj));
+        game_step(&g, t, 40, 0.05f, 0.0f, hw, hh);
+    }
+    CHECK(g.phase == GAME_WALK_OUT, "a minute with nobody tilting and the game ends");
+    ev = 0;
+    for (const uint32_t s0 = t; t < s0 + GAME_WALK_MS + 80; t += 40) ev |= game_step(&g, t, 40, 0, 0, hw, hh);
+    game_figure(&g, t, &x, &y, &s);
+    CHECK((ev & GAME_EV_DONE) && !game_on(&g) && s == 1.0f, "back to his own size");
+
+    /* ON THE GLASS: small, and the things in flight drawn round him with the score. */
+    game_reset(&g);
+    game_start(&g, 0, 5, 0.0f, 20.0f);
+    for (t = 0; t <= GAME_WALK_MS + GAME_READY_MS + 4000; t += 40) {
+        game_step(&g, t, 40, 0.4f, 0, hw, hh);
+        memset(g.obj, 0, sizeof(g.obj)); /* nothing reaches him: still playing, no banner */
+    }
+    CHECK(g.phase == GAME_PLAY, "mid-round");
+    for (int f = 0; f < FORM_COUNT; f++) {
+        face_state_t st;
+        face_rest(&st);
+        st.form = (face_form_t)f;
+        /* Lit pixels below the score line: the figure, and nothing else once the things in
+           flight are cleared. */
+        face_draw(fb, 0, &st);
+        long full = 0;
+        for (long i = 70L * FACE_W; i < (long)FACE_W * FACE_H; i++) full += fb[i] != 0;
+        st.game = &g;
+        st.game_ms = t;
+        memset(g.obj, 0, sizeof(g.obj));
+        face_draw(fb, 0, &st);
+        long small = 0;
+        for (long i = 70L * FACE_W; i < (long)FACE_W * FACE_H; i++) small += fb[i] != 0;
+        CHECK(small > 0 && small * 12 < full, "the shrunken figure is a small fraction of his own");
+    }
+    /* Every kind draws something, and they differ. */
+    uint32_t sums[GAME_KINDS];
+    for (int k = 0; k < GAME_KINDS; k++) {
+        face_state_t st;
+        face_rest(&st);
+        memset(g.obj, 0, sizeof(g.obj));
+        g.obj[0] = (game_obj_t){-100.0f, -100.0f, 0, 0, 0.7f, 0, 1.2f, (uint8_t)k, true, true};
+        st.game = &g;
+        st.game_ms = t;
+        face_draw(fb, 0, &st);
+        long lit = 0;
+        uint32_t h = 2166136261u;
+        for (int yy = 224 - 160; yy < 224 - 40; yy++) {
+            for (int xx = 184 - 160; xx < 184 - 40; xx++) {
+                lit += fb[yy * FACE_W + xx] != 0;
+                h = (h ^ fb[yy * FACE_W + xx]) * 16777619u;
+            }
+        }
+        sums[k] = h;
+        CHECK(lit > 250, "each thing is drawn, big enough to see");
+        for (int j = 0; j < k; j++) CHECK(sums[j] != h, "and each looks like itself");
     }
 }
 
@@ -3699,7 +4074,7 @@ static void test_vocab_arguments_are_real(void)
 {
     const vocab_t *v = vocab_all();
     int forms = 0, actions = 0, colours = 0, named_colours = 0, listens = 0, stops = 0;
-    int to_panel = 0, to_dad = 0;
+    int to_panel = 0, to_dad = 0, games = 0;
     for (int i = 0; i < vocab_count(); i++) {
         switch (v[i].kind) {
         case VOCAB_ACTION:
@@ -3723,6 +4098,11 @@ static void test_vocab_arguments_are_real(void)
             /* No argument to be wrong: it names no action, form or colour. Counted so the
                table cannot lose the only way out of a self-continuing conversation. */
             stops++;
+            break;
+        case VOCAB_GAME:
+            /* No argument: the game is the game. Counted, so the table cannot lose its only
+               way in (the game has no other). */
+            games++;
             break;
         case VOCAB_SEND:
             /* THE ARGUMENT IS A RECIPIENT, and `vocab.c` spells it as a bare 0 or 1. So the
@@ -3783,6 +4163,7 @@ static void test_vocab_arguments_are_real(void)
        reintroduced here by a table that offers a choice the child cannot see. */
     CHECK(to_panel == 1, "there is one way to send to the other panel");
     CHECK(to_dad == 1, "and one way to send to dad");
+    CHECK(games >= 1, "the game can be asked for");
 }
 
 /* THE SEND PHRASES ARE "tell <recipient>", AND THE RECIPIENT IS THE LAST WORD.
@@ -5302,6 +5683,8 @@ int main(void)
     test_one_fart_in_ten_goes_on_for_seven_seconds();
     test_eight_poops_each_its_own();
     test_tickled_out_he_farts_and_sits_dazed();
+    test_happy_birthday_sings_with_a_hat_and_confetti();
+    test_the_dodging_game();
     test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();

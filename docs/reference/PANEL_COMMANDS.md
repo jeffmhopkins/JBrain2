@@ -152,6 +152,16 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   free, he squats, strains and a poop plops out behind him (0.4.11): it stays on the floor for
   20 s and slides downhill as the panel is tilted. It is one of eight (0.4.12), never the same
   twice running: each its own shape, colour and face, some stinkier than others, some with flies
+· **happy birthday** (0.4.14): `happy birthday` — he beeps the first line of the song (three
+  phrases, one key per birthday), a striped party hat drops onto his head, he bobs on every note
+  and throws his arms up on "you", and confetti falls over the whole screen for 7 s
+· **the game** (0.4.14): `lets play a game` — he walks to the middle, shrinking to a fifth of his
+  size. Tilt the panel to run him: left/right as the lean, and tipping the top away or toward you
+  for down/up (measured from how it was held when the game began). Twelve kinds of thing fly in
+  spinning from every side, slow at first and faster every few seconds; each one that goes by
+  scores a point. One that hits him ends the round (dazed, score and best shown); a tap plays
+  again, and with no tap for 15 s the game ends. The name, any other command, or a minute with
+  nobody playing ends it too, and he walks back, growing
 
 **Not a phrase: shaking the panel** (0.4.7). Four hard jerks inside a second and a half
 (`screen_shaken`) and he sits down hard, dazed, shaking his head with stars going round, and

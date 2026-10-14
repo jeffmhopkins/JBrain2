@@ -180,6 +180,11 @@ static vocab_t VOCAB[] = {
        television says. */
     {"im going to tickle you", "iM Gbgl To TgKcL Yo", VOCAB_ACTION, ACT_BRACE},
     {"gonna tickle you", "GnNc TgKcL Yo", VOCAB_ACTION, ACT_BRACE},
+    /* THE PARTY AND THE GAME (0.4.14), phonemes from the box's g2p. "Lets" without its
+       apostrophe (rule 1); "play a game" alone would be a suffix of it, which the decoder
+       does not mind, but one way to ask is enough while it is new. */
+    {"happy birthday", "haPm BkvDd", VOCAB_ACTION, ACT_BIRTHDAY},
+    {"lets play a game", "LfTS PLd c GdM", VOCAB_GAME, 0},
     {"bounce around", "BtNS ktND", VOCAB_ACTION, ACT_BOING},
     {"nod your head", "NnD YeR hfD", VOCAB_ACTION, ACT_NOD},
     {"be silly", "Bm SgLm", VOCAB_ACTION, ACT_WIGGLE},

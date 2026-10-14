@@ -5,6 +5,7 @@
 
 #include "emotion.h"
 #include "rig.h"
+#include "game.h"
 
 #define FACE_W 368
 #define FACE_H 448
@@ -84,6 +85,10 @@ typedef struct {
     float poop_size;
     float poop_t;
     int poop_kind; /* which of the eight (`poop_look`) */
+    /* THE GAME (`game.h`), when one is on: it places and sizes the figure and draws over it.
+       NULL, or a game that is off, is the pet as usual. `game_ms` is the game's clock. */
+    const game_t *game;
+    uint32_t game_ms;
     float open;     /* eyelids: 1 fully open, 0 shut. Blink, not emotion. */
     float startle;  /* 0 calm, 1 wide-eyed. The poke recoil, on top of whatever face is worn. */
     /* 0 shut, 1 fully open — the mouth while the pet is SPEAKING. The owner: "we should make
@@ -135,6 +140,12 @@ face_zone_t face_zone(face_form_t form, int x, int y, bool upside_down, int lean
 /* Scale the whole figure and move its vertical origin, for a panel mounted on its side —
    see the comment on `s_fit` in `face.c`. `origin_y` below zero keeps the portrait default. */
 void face_set_fit(float scale, int origin_y);
+
+/* The game's field (`game.h`): its half extents in pixels, for `game_step`; and where the
+   figure stands now in field pixels, given his lean, for `game_start` to walk him from and
+   back to. Both follow `face_set_fit`'s orientation. */
+void face_game_field(float *hw, float *hh);
+void face_game_home(int lean, float *x, float *y);
 
 /* A rest state: happy, open-eyed, idle limbs, no figure transform. The caller starts here and
    tweens away from it, so nothing has to enumerate seventeen floats to get a first frame. */

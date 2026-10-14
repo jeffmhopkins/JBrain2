@@ -8,7 +8,7 @@
 export const VOICE = { WAKE: 1, STOP: 2, SEND_SISTER: 3, SEND_DAD: 4 };
 export const KNOB = {
   OFFLINE: 0, LATENCY: 1, UPLOAD_BPS: 2, TRANSCRIBE_MS: 3, NEXT_SEND_STATUS: 4,
-  SPEECH_OK: 5, TALK_OUTCOME: 6, TALK_MS: 7, NEW_BOX: 8, AUTOTALK_MS: 9, TILT_DEG: 10, PET_ACT: 11,
+  SPEECH_OK: 5, TALK_OUTCOME: 6, TALK_MS: 7, NEW_BOX: 8, AUTOTALK_MS: 9, TILT_DEG: 10, PET_ACT: 11, FWD_DEG: 12,
 };
 
 export async function createPanel(bytes, hooks = {}) {
