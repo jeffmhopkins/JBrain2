@@ -22,7 +22,7 @@ from jbrain.api import minecraft, minecraft_share
 from jbrain.api.deps import owner_only
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import livescan, shares, targets, timeline, travel
+from jbrain.minecraft import livescan, shares, targets, timeline, travel, visited
 from jbrain.minecraft.shares import ShareLink
 
 WHEN = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -129,6 +129,13 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     state["scans"] = []
     monkeypatch.setattr(livescan, "for_world", scans)
+
+    async def crossed(_m: Any, world: str, *args: Any) -> dict[str, str]:
+        state["crossed"].append((world, *args))
+        return {}
+
+    state["crossed"] = []
+    monkeypatch.setattr(visited, "tile_params", crossed)
     # Each test starts with no slot folder cached, at a clock it can move.
     monkeypatch.setattr(minecraft_share, "_folders", {})
     state["now"] = 1000.0
@@ -303,6 +310,10 @@ def test_the_sidecar_reads_are_pinned_to_the_links_slot(fake) -> None:
     ]
     # Only the page open counts a view, not each read behind it.
     assert {v for _t, v in fake["resolved"]} == {False}
+    # The crossed ground it draws is the link's world's, read under the share's RLS.
+    ((world, dim, zoom, tx, tz, tile_ctx),) = fake["crossed"]
+    assert (world, dim, zoom, tx, tz) == ("castle", "the_end", 3, -2, 4)
+    assert tile_ctx.auth_context == "mc_share" and tile_ctx.principal_id == "link-1"
 
 
 def test_players_and_the_timeline_read_under_the_shares_context(fake) -> None:

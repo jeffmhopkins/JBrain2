@@ -37,6 +37,7 @@ from jbrain.minecraft import (
     targets,
     timeline,
     travel,
+    visited,
 )
 from jbrain.minecraft import client as mc
 
@@ -560,14 +561,19 @@ async def map_tile(
     zoom: Annotated[int, Path(ge=0, le=4)],
     tx: int,
     tz: int,
+    request: Request,
     settings: SettingsDep,
     slot: Annotated[str, Query(pattern=_SLOT)] = "slot1",
     layer: Annotated[str, Query(pattern=_LAYER)] = "surface",
 ) -> Response:
     """One 256×256 map tile of a base layer, rendered on the box from the world's own
-    files. Cached briefly: a tile changes only as the world is explored."""
+    files and the ground the travel log saw players cross. Cached briefly: a tile changes
+    only as the world is explored."""
+    seen = await visited.for_slot(_maker(request), settings, slot, dim, zoom, tx, tz)
     png = await mc.image(
-        settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot, "layer": layer}
+        settings,
+        f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png",
+        params={"slot": slot, "layer": layer, **seen},
     )
     return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
 

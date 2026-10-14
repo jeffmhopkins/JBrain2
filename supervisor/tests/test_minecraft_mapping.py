@@ -8,6 +8,7 @@ format rather than against itself. The chunk layout pinned here (heights indexed
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import struct
 import sys
@@ -273,6 +274,76 @@ def test_unvisited_ground_is_predicted_and_the_real_world_drawn_over_it(
     assert _decode_png(mapping.tile(index, 0, 0, 0, 0, predictor, None))[200][803] == 0
     broken = mapping.Predictor(tmp_path / "missing")
     assert _decode_png(mapping.tile(index, 0, 0, 0, 0, broken, "123"))[200][803] == 0
+
+
+def _visited(chunks: set[tuple[int, int]], span: int) -> str:
+    """The api's `visited` bitmap (backend `minecraft/visited.py`, `encode`)."""
+    bits = bytearray(span * span // 8)
+    for dx, dz in chunks:
+        i = dz * span + dx
+        bits[i >> 3] |= 1 << (i & 7)
+    return base64.urlsafe_b64encode(zlib.compress(bytes(bits))).decode().rstrip("=")
+
+
+def test_a_visited_bitmap_names_its_chunks_and_refuses_anything_else() -> None:
+    marked = {(0, 0), (15, 0), (3, 7), (15, 15)}
+    assert mapping.decode_visited(_visited(marked, 16), 16) == marked
+    assert mapping.decode_visited(_visited(set(), 16), 16) == frozenset()
+    with pytest.raises(ValueError):  # a zoom-0 bitmap sent for a zoom-1 tile
+        mapping.decode_visited(_visited(marked, 16), 32)
+    with pytest.raises(ValueError):
+        mapping.decode_visited("not a bitmap!", 16)
+    with pytest.raises(ValueError):
+        mapping.decode_visited("A" * (mapping.VISITED_MAX + 1), 16)
+    # A small blob that inflates past the tile's size is refused, not inflated.
+    bomb = zlib.compress(bytes(1 << 20))
+    with pytest.raises(ValueError):
+        mapping.decode_visited(base64.urlsafe_b64encode(bomb).decode(), 16)
+
+
+def test_ground_a_player_crossed_is_drawn_at_full_strength(tmp_path: Path) -> None:
+    """Bedrock never saves a chunk nothing changed in, so a crossed chunk can be missing
+    from the files: the travel log marks it, and the prediction there is the real
+    ground, not the survey."""
+    db = tmp_path / "db"
+    db.mkdir()
+    write_table(
+        db / "000005.ldb",
+        [(mapping.chunk_key(0, 0, 0, mapping.DATA3D), 1, data3d(lambda x, z: 80, 1))],
+    )
+    index = mapping.WorldIndex(db)
+    index.refresh()
+    predictor = mapping.Predictor(_fake_predictor(tmp_path, biome=184))
+    full = (*mapping.BIOME_COLORS[191], 255)
+
+    # Zoom 0: chunk (12, 12) was crossed, chunk (2, 12) wasn't, chunk (0, 0) is saved.
+    crossed = mapping.decode_visited(_visited({(12, 12), (0, 0)}, 16), 16)
+    rows = _decode_png(
+        mapping.tile(index, 0, 0, 0, 0, predictor, "123", "surface", crossed)
+    )
+    assert tuple(rows[200][200 * 4 : 200 * 4 + 4]) == full
+    assert tuple(rows[207][192 * 4 : 192 * 4 + 4]) == full  # the whole chunk
+    survey = rows[200][40 * 4 : 40 * 4 + 4]
+    assert 0 < sum(survey[:3]) < sum(mapping.BIOME_COLORS[191])
+    assert tuple(rows[0][0:4]) == (
+        *mapping.BIOME_COLORS[1],
+        255,
+    )  # the saved chunk wins
+
+    # Zoom 4: one pixel per chunk.
+    crossed = mapping.decode_visited(_visited({(12, 12)}, 256), 256)
+    rows = _decode_png(
+        mapping.tile(index, 0, 4, 0, 0, predictor, "123", "biomes", crossed)
+    )
+    assert tuple(rows[12][12 * 4 : 12 * 4 + 4]) == full
+    assert sum(rows[12][13 * 4 : 13 * 4 + 3]) < sum(mapping.BIOME_COLORS[191])
+
+    # Without a prediction there is nothing to draw: crossed ground stays empty.
+    crossed = mapping.decode_visited(_visited({(12, 12)}, 16), 16)
+    rows = _decode_png(
+        mapping.tile(index, 0, 0, 0, 0, predictor, None, "surface", crossed)
+    )
+    assert rows[200][200 * 4 + 3] == 0
 
 
 def test_the_nether_is_predicted_in_bedrock_ids_at_its_roof(tmp_path: Path) -> None:

@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from jbrain.api import minecraft as api
 from jbrain.api.deps import owner_only
 from jbrain.minecraft import client as mc
+from jbrain.minecraft import visited
 
 SETTINGS: Any = SimpleNamespace(minecraft_url="http://mc", minecraft_token="tok")
 
@@ -39,11 +40,26 @@ def sidecar(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def client(sidecar) -> TestClient:
+def crossed(monkeypatch: pytest.MonkeyPatch) -> list[tuple[Any, ...]]:
+    """The travel log's crossed ground for a tile (a DB read, tested against Postgres in
+    test_minecraft_visited_pg): recorded here, and none unless a test sets it."""
+    asked: list[tuple[Any, ...]] = []
+
+    async def for_slot(_maker: Any, _settings: Any, *args: Any) -> dict[str, str]:
+        asked.append(args)
+        return {"visited": "eJw"} if asked[0] == ("slot9", "overworld", 0, 0, 0) else {}
+
+    monkeypatch.setattr(visited, "for_slot", for_slot)
+    return asked
+
+
+@pytest.fixture
+def client(sidecar, crossed) -> TestClient:
     app = FastAPI()
     app.include_router(api.router, prefix="/api")
     app.dependency_overrides[owner_only] = lambda: SimpleNamespace(id="owner")
     app.state.settings = SETTINGS
+    app.state.session_maker = object()
     return TestClient(app)
 
 
@@ -195,6 +211,14 @@ def test_map_tiles_pass_through_as_png_and_bad_input_never_reaches_the_box(clien
     ):
         assert client.get(bad).status_code == 422, bad
     assert len(seen) == count
+
+
+def test_a_tile_carries_the_ground_players_crossed(client, sidecar, crossed) -> None:
+    seen, replies = sidecar
+    replies["/map/tile/overworld/0/0/0.png"] = httpx.Response(200, content=b"\x89PNG")
+    client.get("/api/minecraft/map/tile/overworld/0/0/0.png?slot=slot9")
+    assert crossed == [("slot9", "overworld", 0, 0, 0)]
+    assert seen[-1].url.params["visited"] == "eJw"
 
 
 def test_a_refused_tile_is_the_boxs_reason(client, sidecar) -> None:
