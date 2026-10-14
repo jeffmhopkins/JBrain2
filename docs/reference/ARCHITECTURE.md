@@ -100,7 +100,7 @@ proving a scoped session cannot see other domains' rows.
 
 The scope set is an *owner* narrowing, never a grant to anyone else: `app.has_domain_scope`
 holds for the full owner, or for an owner narrowed (`owner_scoped`) to that domain, and for
-no other kind (security round 2, migration 0245). A non-owner kind's `domain_scopes` claim
+no other kind (security round 2, migration 0247). A non-owner kind's `domain_scopes` claim
 counts only where a policy names that kind through `app.has_kind_scope(kind, domain)`:
 `device_key` + `location` on the tables a phone's fixed queries touch (its own fixes and its
 family's, geofence state and fences, shared places, its FCM token, the who-saw-whom audit,

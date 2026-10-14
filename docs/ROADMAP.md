@@ -583,7 +583,7 @@ decided by the server from the stored turns; opening an intake link no longer si
 jcode and jlaunch refuse an empty control token). S5 ✅
 (view-scope helpers and the who-saw-whom write pinned to the caller). Round 2 ✅
 (database: `has_domain_scope` is owner-only, so a phone's `location` scope grants only
-explicit device arms (migration 0245); the dispatcher entitles only an owner-stamped event;
+explicit device arms (migration 0247); the dispatcher entitles only an owner-stamped event;
 a catalog test holds every table to forced RLS with a policy). *Residuals* (the plan's
 "Out of scope / recorded" list, in full there):
 - **Wall (F18).** `deploy/wall/serve.py` is unauthenticated on `${BRAIN_HOST_BIND:-0.0.0.0}:8800`:
