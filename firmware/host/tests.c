@@ -1541,6 +1541,27 @@ static void test_the_dodging_game(void)
     game_tap(&g, hit + GAME_REPLAY_MS + 10);
     CHECK(g.phase == GAME_PLAY && g.score == 0 && g.best == 1, "a tap plays again, best kept");
 
+    /* NOBODY TAPS TO PLAY AGAIN (owner: "a timeout to exit the game when not clicked"): the
+       score stands for a while and then he walks back, even with the panel still held at an
+       angle, which a minute's idle never noticed because a held tilt counts as playing. */
+    {
+        game_t q;
+        game_reset(&q);
+        game_start(&q, 0, 13, 0.0f, 20.0f);
+        uint32_t u;
+        for (u = 0; u <= GAME_WALK_MS + GAME_READY_MS; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        memset(q.obj, 0, sizeof(q.obj));
+        q.obj[0] = (game_obj_t){q.x + 30.0f, q.y - 8.0f, -300.0f, 0, 0, 0, 1.0f, 2, true, true};
+        for (int k = 0; k < 10 && q.phase == GAME_PLAY; k++, u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        CHECK(q.phase == GAME_OVER, "hit");
+        const uint32_t over = q.since;
+        for (; u < over + GAME_OVER_WAIT_MS - 200; u += 40) game_step(&q, u, 40, 0.6f, 0.4f, hw, hh);
+        CHECK(q.phase == GAME_OVER, "the score stands a while for a tap");
+        for (; u < over + GAME_OVER_WAIT_MS + 200; u += 40) game_step(&q, u, 40, 0.6f, 0.4f, hw, hh);
+        CHECK(q.phase == GAME_WALK_OUT, "and with no tap, held tilted or not, the game ends");
+        CHECK(GAME_OVER_WAIT_MS <= 20000u, "not long: a child who walked off is not coming back");
+    }
+
     /* AND IT ENDS: a minute of nobody playing, or stopped, and he walks back, growing. */
     const uint32_t r1 = g.since;
     for (t = r1; t < r1 + GAME_IDLE_MS + 400 && g.phase == GAME_PLAY; t += 40) {

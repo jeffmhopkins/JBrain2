@@ -244,7 +244,13 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
         game_stop(g, now);
         return 0;
     }
-    if (g->phase == GAME_OVER) return 0;
+    /* THE SCORE STANDS FOR A TAP, and only so long: a held tilt keeps the idle clock above
+       alive, so the round over is timed from the hit (owner: "a timeout to exit the game when
+       not clicked"). */
+    if (g->phase == GAME_OVER) {
+        if (now - g->since >= GAME_OVER_WAIT_MS) game_stop(g, now);
+        return 0;
+    }
 
     /* PLAY. */
     const float t = (float)(now - g->since) / 1000.0f;

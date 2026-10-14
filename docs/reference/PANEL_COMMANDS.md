@@ -160,8 +160,8 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   for down/up (measured from how it was held when the game began). Twelve kinds of thing fly in
   spinning from every side, slow at first and faster every few seconds; each one that goes by
   scores a point. One that hits him ends the round (dazed, score and best shown); a tap plays
-  again. The name, any other command, or a minute with nobody playing ends the game and he walks
-  back, growing
+  again, and with no tap for 15 s the game ends. The name, any other command, or a minute with
+  nobody playing ends it too, and he walks back, growing
 
 **Not a phrase: shaking the panel** (0.4.7). Four hard jerks inside a second and a half
 (`screen_shaken`) and he sits down hard, dazed, shaking his head with stars going round, and

@@ -216,8 +216,9 @@ forward/back is the accelerometer across the glass, both taken from where the pa
 game began, so it plays held upright or leaning back. **The sign of forward/back is unverified on
 hardware**: tipping the top away is meant to run him down the screen; the start's raw `az` is
 logged (`game: start`) to check it. A thing touching him ends the round (dazed, score and best);
-a tap plays again; the name, any other command, leaving the pet screen or a minute with nobody
-tilting ends the game and he walks back, growing. During a game a poke is the game's, a shake is
+a tap plays again, and with no tap within 15 s of the hit (`GAME_OVER_WAIT_MS`, however the
+panel is held) the game ends; so do the name, any other command, leaving the pet screen and a
+minute with nobody tilting, and he walks back, growing. During a game a poke is the game's, a shake is
 not dizzy, no poop comes due, and the name label gives its corner to the score.
 
 **0.4.13: tickled out.** Owner: *"on tickle mode, if tickled 5 times, he should fart and go
