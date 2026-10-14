@@ -1272,6 +1272,29 @@ static void test_eight_poops_each_its_own(void)
     }
 }
 
+/* TICKLED OUT (owner: "on tickle mode, if tickled 5 times, he should fart and go dazed"). */
+static void test_tickled_out_he_farts_and_sits_dazed(void)
+{
+    const action_t *run = rig_run_tickled_out();
+    CHECK(run[0] == ACT_TICKLE, "it starts with the laughing fit the fifth tickle sets off");
+    CHECK(rig_run_next(&run, ACT_TICKLE) == ACT_FART, "he laughs till he farts");
+    CHECK(rig_run_next(&run, ACT_FART) == ACT_DIZZY, "and the fart leaves him dazed");
+    CHECK(rig_run_next(&run, ACT_DIZZY) == ACT_NONE && run == NULL, "and then it is over");
+    CHECK(rig_run_next(&run, ACT_FART) == ACT_NONE, "a fart with no run behind it is just a fart");
+
+    /* Something else taking over ends the run: what ends is not the run's, so nothing follows,
+       and a later fart of his own does not pick it up again. */
+    run = rig_run_tickled_out();
+    CHECK(rig_run_next(&run, ACT_NOD) == ACT_NONE && run == NULL, "a nod cut in: no fart");
+    CHECK(rig_run_next(&run, ACT_FART) == ACT_NONE, "nor dazed after a later one");
+
+    /* Each step sounds as it starts, and each has its own sound. */
+    run = rig_run_tickled_out();
+    for (action_t a = run[0]; a != ACT_NONE; a = rig_run_next(&run, a)) {
+        CHECK(rig_cue_on_start(a) && cue_for_action(a) != CUE_COUNT, "every step is heard");
+    }
+}
+
 static void test_a_meal_is_three_bites_of_a_cookie(void)
 {
     /* The owner: "the eat animation can probably be better with multiple bites being taken and
@@ -5268,6 +5291,7 @@ int main(void)
     test_a_snack_is_one_of_eight_and_never_the_same_twice();
     test_one_fart_in_ten_goes_on_for_seven_seconds();
     test_eight_poops_each_its_own();
+    test_tickled_out_he_farts_and_sits_dazed();
     test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();

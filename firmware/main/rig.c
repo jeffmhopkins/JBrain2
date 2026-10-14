@@ -107,6 +107,24 @@ bool rig_holds_pokes(action_t a)
     return a == ACT_TICKLE || a == ACT_MEGAFART;
 }
 
+static const action_t TICKLED_OUT[] = {ACT_TICKLE, ACT_FART, ACT_DIZZY, ACT_NONE};
+
+const action_t *rig_run_tickled_out(void)
+{
+    return TICKLED_OUT;
+}
+
+action_t rig_run_next(const action_t **run, action_t ended)
+{
+    if (*run == NULL || **run != ended || ended == ACT_NONE) {
+        *run = NULL;
+        return ACT_NONE;
+    }
+    (*run)++;
+    if (**run == ACT_NONE) *run = NULL;
+    return *run != NULL ? **run : ACT_NONE;
+}
+
 bool rig_recue_continuous(action_t a, float p)
 {
     /* Not in the last moment: a piece started there would run on after he has finished. */

@@ -174,6 +174,15 @@ bool rig_cue_on_start(action_t a);
    the sixth replacing it cut it off after its first laugh. */
 bool rig_holds_pokes(action_t a);
 
+/* A RUN: actions that lead straight into one another (0.4.13, owner: *"on tickle mode, if
+   tickled 5 times, he should fart and go dazed"*). Five tickles start `rig_run_tickled_out`:
+   the laughing fit, then he laughs so hard he farts, then he sits there dazed. A run is a
+   list ending in ACT_NONE; `rig_run_next` is what follows `ended` along `*run`, advancing it,
+   or ACT_NONE (and `*run` cleared) at its end or when `ended` is not the run's own — something
+   else took over, so a fart asked for by voice never knocks him dizzy. */
+const action_t *rig_run_tickled_out(void);
+action_t rig_run_next(const action_t **run, action_t ended);
+
 /* An action whose sound is a run of cues back to back for as long as it lasts: the next is
    started the moment the speaker is free, rather than at fixed points (`rig_recue`). */
 bool rig_recue_continuous(action_t a, float p);

@@ -1885,6 +1885,7 @@ static void face_task(void *arg)
     face_state_t fst;
     face_rest(&fst);
     action_t action = ACT_NONE;
+    const action_t *run = NULL; /* what follows `action` (`rig_run_next`), if anything */
     uint32_t action_start = 0;
     uint32_t recue_from = 0;
     float recue_p = 0.0f;
@@ -2215,6 +2216,7 @@ static void face_task(void *arg)
                     s_flinch = 0.0f;
                     action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
                     action_mag = tk == TICKLE_BIG ? 1.0f : tickle_mag(&tickle);
+                    if (tk == TICKLE_BIG) run = rig_run_tickled_out(); /* ...then a fart, dazed */
                 } else {
                     colour = (colour + 1) % face_colour_count();
                     const pool_t pool = ZONE_POOL[s_tap_zone];
@@ -2460,9 +2462,20 @@ static void face_task(void *arg)
                 const int dur = rig_spec(action)->dur_ms;
                 const uint32_t el = now - action_start;
                 if (dur <= 0 || (int)el >= dur) {
-                    action = ACT_NONE;
-                } else {
-                    p = (float)el / (float)dur;
+                    /* TICKLED OUT (`rig_run_next`): the fit leads into a fart, the fart into
+                       sitting dazed; anything else simply ends. */
+                    action = rig_run_next(&run, action);
+                    if (action != ACT_NONE) {
+                        action_mag = 1.0f;
+                        action_start = now;
+                        if (sound && view->mode == SM_PET && !facts.speaker_busy &&
+                            rig_cue_on_start(action)) {
+                            stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                        }
+                    }
+                }
+                if (action != ACT_NONE) {
+                    p = (float)(now - action_start) / (float)rig_spec(action)->dur_ms;
                 }
             }
             /* WAITING TO BE TICKLED (`tickle_wait_p`): warned and doing nothing else, he holds

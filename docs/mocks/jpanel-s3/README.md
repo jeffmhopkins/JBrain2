@@ -1,6 +1,6 @@
 # The twins' panels (ESP32-S3-Touch-AMOLED-1.8): the bench
 
-Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.12's own UI code** · Last verified: 2026-10-13
+Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.13's own UI code** · Last verified: 2026-10-14
 
 An interactive mock of the twins' panel, with one difference from Jeff's C6 set
 (`../jpanel-c6/`): nothing here is a drawing of the panel. `sim.wasm` is the firmware's own UI
@@ -45,7 +45,7 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
   slides the figure's square into the glass's side bands, which the page does not draw.
 - **Shake, love, tickle and a snack.** "Shake the panel" shakes the drawn case and starts the
   dizzy action the panel's shake detector starts; the "I love you" voice button starts the
-  hearts, "I'm going to tickle you" the warning (then poke him five times) and "Have a snack" a snack (three snacks inside a
+  hearts, "I'm going to tickle you" the warning (then poke him five times: he laughs, farts and sits dazed) and "Have a snack" a snack (three snacks inside a
   minute and he poops; tilt the panel to slide it); "Fart (the long one)" forces the
   one-in-ten seven-second fart. The bench does not run the shake detector itself.
 - **F4.** The SENDING / SENT / NOBODY / NOT SENT / DROPPED visuals are 0.4.x placeholders until
