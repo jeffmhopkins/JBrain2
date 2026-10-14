@@ -1382,6 +1382,21 @@ tool-view (DESIGN.md "`minecraft_map` tool-view"), the GUI gate's *Chat card*:
   seen stands out. **Lore:** the server's AI connection comes from an AI satellite in
   orbit; the survey is its view. Minecraft_Dave can speak from that later.
 
+  **Crossed ground counts as explored** (owner, 2026-10-14: "not all the chunks show
+  explored where I was"). Bedrock saves a chunk only once something in it changes (a mob
+  spawns, a block is placed); ground a player only crossed is generated, shown, and
+  dropped, because the seed regenerates it exactly. Checked on 1.26.52.3: four ticking
+  areas loaded about 50 chunks and a clean stop saved 9, and Mojang's own LevelDB read
+  the same 155 keys as `leveldb.py`. On the box, 4 of the 11 chunks a player stood in on
+  one flight were missing from the files. So every tile request carries the travel log's
+  fog of war for that tile (`backend/src/jbrain/minecraft/visited.py`: every player's
+  `mc_player_explored` chunks, a zlib'd bitmap), and the sidecar draws the prediction
+  there at **full strength** instead of as the survey (`mapping.tile`, `visited`). Saved
+  chunks still win. It is biome colours and predicted heights, not blocks, so in the
+  Surface layer crossed desert reads orange beside the pale sand of saved chunks. The
+  tile routes bound `tx`/`tz` to the sidecar's ±200,000 before that read (past it the
+  chunk numbers overflow), and `(world, dim, cx, cz)` is indexed for it.
+
   Checked against a 1.26 server generating the same seed:
   - biomes match at **97%** of 4,311 real columns, and every miss sits on a border
     between two biomes (re-measured 2026-10-11 over all 122,624 columns of the dev

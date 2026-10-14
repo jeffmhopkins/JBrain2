@@ -22,7 +22,7 @@ from jbrain.api import minecraft, minecraft_share
 from jbrain.api.deps import owner_only
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import livescan, shares, targets, timeline, travel
+from jbrain.minecraft import livescan, shares, targets, timeline, travel, visited
 from jbrain.minecraft.shares import ShareLink
 
 WHEN = datetime(2026, 10, 11, 12, 0, tzinfo=UTC)
@@ -129,6 +129,13 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     state["scans"] = []
     monkeypatch.setattr(livescan, "for_world", scans)
+
+    async def crossed(_m: Any, world: str, *args: Any) -> dict[str, str]:
+        state["crossed"].append((world, *args))
+        return {}
+
+    state["crossed"] = []
+    monkeypatch.setattr(visited, "tile_params", crossed)
     # Each test starts with no slot folder cached, at a clock it can move.
     monkeypatch.setattr(minecraft_share, "_folders", {})
     state["now"] = 1000.0
@@ -236,6 +243,19 @@ def test_tiles_check_the_world_once_per_burst_and_again_after_it_lapses(fake) ->
     assert _worlds_read(fake) == 2 and len(fake["images"]) == 6
 
 
+def test_a_tile_past_the_worlds_edge_is_refused_before_any_read(fake) -> None:
+    """A stranger's URL can name any tile: one past the edge would overflow the crossed
+    ground's integer chunk read, so it is a 422, not a 500, and reads nothing."""
+    client = _client()
+    for tx, tz in ((100_000_000, 0), (0, -200_001)):
+        resp = client.get(f"/api/mc-share/good/map/tile/overworld/4/{tx}/{tz}.png")
+        assert resp.status_code == 422
+    assert fake["crossed"] == [] and fake["images"] == []
+    assert (
+        client.get("/api/mc-share/good/map/tile/overworld/4/200000/-200000.png").status_code == 200
+    )
+
+
 def test_a_cached_slot_holding_another_world_answers_gone_without_the_sidecar(fake) -> None:
     client = _client()
     assert client.get("/api/mc-share/good/map/tile/overworld/0/0/0.png").status_code == 200
@@ -303,6 +323,10 @@ def test_the_sidecar_reads_are_pinned_to_the_links_slot(fake) -> None:
     ]
     # Only the page open counts a view, not each read behind it.
     assert {v for _t, v in fake["resolved"]} == {False}
+    # The crossed ground it draws is the link's world's, read under the share's RLS.
+    ((world, dim, zoom, tx, tz, tile_ctx),) = fake["crossed"]
+    assert (world, dim, zoom, tx, tz) == ("castle", "the_end", 3, -2, 4)
+    assert tile_ctx.auth_context == "mc_share" and tile_ctx.principal_id == "link-1"
 
 
 def test_players_and_the_timeline_read_under_the_shares_context(fake) -> None:

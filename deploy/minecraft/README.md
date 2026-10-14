@@ -72,7 +72,7 @@ wreck and Dave's welcome.
 | `worlds.py` | World slots (one loaded at a time; slot 1's folder is `world`) and the backup index (which slot, automatic vs the owner's, pinned, last downloaded). |
 | `leveldb.py` | A read-only reader for Mojang's LevelDB fork (zlib instead of Snappy). |
 | `nbt.py` | Little-endian NBT, bounds-checked for untrusted input. |
-| `mapping.py` | Map tiles: the biome atlas and the true-colour surface layer, with unexplored ground predicted from the seed via `jbrain-predict`. |
+| `mapping.py` | Map tiles: the biome atlas and the true-colour surface layer, with unexplored ground predicted from the seed via `jbrain-predict`. Bedrock saves only chunks something changed in, so ground players merely crossed is missing from the files; the api sends that ground with each tile (from the travel log), and it is drawn as the prediction at full strength. |
 | `blockcolors.py` | What colour each block looks from above, for the surface layer. |
 | `blocks.py` | "Where's the nearest diamond?" — block search over explored chunks. |
 | `containers.py` | "Which chest has my diamonds?" — chests, barrels, shulkers, frames, pots, lecterns. Ender chests are never read. |
@@ -110,7 +110,8 @@ through the debug console. Routes, by area:
   `POST /worlds/slotN/power-pack`, `POST /worlds/slotN/power-pack-transport`.
 - **Backups:** `GET /snapshots`, `POST /snapshot`, `GET /snapshots/<name>.mcworld/file`
   (download), `POST /snapshots/<name>.mcworld/{pin,delete,restore}`.
-- **Map and world index:** `GET /map/info`, `GET /map/tile/<dim>/<zoom>/<x>/<z>.png`,
+- **Map and world index:** `GET /map/info`, `GET /map/tile/<dim>/<zoom>/<x>/<z>.png`
+  (`?visited=` is the api's bitmap of the tile's crossed chunks),
   `GET /map/find`, `/map/items`, `/map/stock`, `/map/entities`, `/map/villagers`,
   `/map/pets`, `/map/portals`, `/map/structures`, `/map/point`, `/map/nearby`,
   `POST /map/structures/sweep`.

@@ -26,7 +26,7 @@ from jbrain.api.deps import SettingsDep
 from jbrain.db.session import mc_share_context
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import shares, timeline
+from jbrain.minecraft import shares, timeline, visited
 from jbrain.minecraft.shares import ShareLink
 
 router = APIRouter(prefix="/mc-share/{token}")
@@ -155,8 +155,8 @@ async def map_tile(
     token: Token,
     dim: Annotated[str, Path(pattern=_DIM)],
     zoom: Annotated[int, Path(ge=0, le=4)],
-    tx: int,
-    tz: int,
+    tx: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
+    tz: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
     request: Request,
     settings: SettingsDep,
     layer: Annotated[str, Query(pattern=_LAYER)] = "surface",
@@ -166,10 +166,13 @@ async def map_tile(
     _allow(request, _tile_limiter(request))
     link = await _link(request, token)
     await _tile_world(settings, link)
+    seen = await visited.tile_params(
+        _maker(request), link.world, dim, zoom, tx, tz, mc_share_context(link.id)
+    )
     png = await mc.image(
         settings,
         f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png",
-        params={"slot": link.slot, "layer": layer},
+        params={"slot": link.slot, "layer": layer, **seen},
     )
     return Response(
         png,

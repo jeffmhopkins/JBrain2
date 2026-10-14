@@ -27,6 +27,7 @@ What the record looks like on 1.26 (checked against a real world, plan §M8 note
 
 from __future__ import annotations
 
+import base64
 import functools
 import math
 import os
@@ -720,6 +721,48 @@ def _over(base: list[bytearray], top: list[bytearray]) -> list[bytearray]:
     return base
 
 
+# A tile's `visited` bitmap, compressed: a zoom-4 tile's 256 × 256 chunks are 8 KB raw.
+VISITED_MAX = 16384
+
+
+def decode_visited(blob: str, span: int) -> frozenset[tuple[int, int]]:
+    """The chunks a tile's `visited` bitmap marks, as offsets (dx, dz) into its span×span
+    square: bit `dz * span + dx`, least significant first in each byte. The api builds it
+    from the travel log's fog of war (backend `minecraft/visited.py`)."""
+    if len(blob) > VISITED_MAX:
+        raise ValueError("visited is too long")
+    try:
+        raw = base64.urlsafe_b64decode(blob + "=" * (-len(blob) % 4))
+        bits = zlib.decompressobj().decompress(raw, span * span // 8 + 1)
+    except (ValueError, zlib.error) as exc:
+        raise ValueError("visited is not a chunk bitmap") from exc
+    if len(bits) != span * span // 8:
+        raise ValueError("visited is the wrong size for this zoom")
+    out: set[tuple[int, int]] = set()
+    for at, byte in enumerate(bits):
+        for bit in range(8):
+            if byte >> bit & 1:
+                i = at * 8 + bit
+                out.add((i % span, i // span))
+    return frozenset(out)
+
+
+def _lift(
+    survey: list[bytearray],
+    full: list[bytearray],
+    visited: frozenset[tuple[int, int]],
+    step: int,
+) -> list[bytearray]:
+    """The full-strength prediction over the survey in every visited chunk: ground a
+    player crossed is real, though Bedrock never saved it (see `tile`)."""
+    side = max(1, 16 // step)  # a chunk's pixels each way
+    for dx, dz in visited:
+        o, end = dx * side * 4, (dx + 1) * side * 4
+        for pz in range(dz * side, (dz + 1) * side):
+            survey[pz][o:end] = full[pz][o:end]
+    return survey
+
+
 def true_colour_of(layer: str, dim: int) -> bool:
     """Whether a tile reads block sections: the Surface layer, outside the Nether."""
     return layer == "surface" and dim != DIMENSIONS["nether"]
@@ -734,13 +777,19 @@ def tile(
     predictor: Predictor | None = None,
     seed: str | None = None,
     layer: str = "surface",
+    visited: frozenset[tuple[int, int]] = frozenset(),
 ) -> bytes:
     """One 256×256 PNG tile. Zoom 0 is one pixel per block; zoom k is one pixel per 2^k
     blocks, down to one pixel per chunk. Tile (0, 0) at any zoom starts at block (0, 0).
     The `surface` layer draws explored ground in its real block colours, the `biomes`
     layer in biome colours; the Nether is biomes either way. With a predictor and the
     world's seed, ground nobody has been to is drawn too, as the survey (dimmed, always
-    biomes: the seed predicts no blocks) beneath the explored ground."""
+    biomes: the seed predicts no blocks) beneath the explored ground.
+
+    Bedrock saves a chunk only once something in it changes, so ground a player merely
+    crossed is missing from the files. `visited` (offsets into the tile's chunk square,
+    from the travel log) marks that ground: there the prediction is drawn at full
+    strength, since the seed regenerates exactly what the player saw."""
     span = CHUNKS_PER_TILE << zoom
     cx0, cz0 = tx * span, tz * span
     step = 1 << zoom
@@ -761,7 +810,11 @@ def tile(
     predicted = predictor.grid(seed, dim, cx0 * 16, cz0 * 16, TILE, step)
     if not predicted:
         return png(real)
-    survey = _as_survey(render_sampled(predicted, cx0 * 16, cz0 * 16, TILE, step))
+    rows = render_sampled(predicted, cx0 * 16, cz0 * 16, TILE, step)
+    full = [bytearray(r) for r in rows] if visited else []
+    survey = _as_survey(rows)
+    if visited:
+        survey = _lift(survey, full, visited, step)
     return png(_over(survey, real))
 
 

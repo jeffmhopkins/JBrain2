@@ -24,7 +24,7 @@ from jbrain.minecraft.asker import Asker, Spot, asking
 from tests.unit.test_debug_minecraft import PRINCIPAL, FakeSupervisor, _request
 from tests.unit.test_debug_minecraft import SETTINGS as DEBUG_SETTINGS
 from tests.unit.test_minecraft_door import FakeExecutor, _door, _event, world  # noqa: F401
-from tests.unit.test_minecraft_worlds_api import client, sidecar  # noqa: F401
+from tests.unit.test_minecraft_worlds_api import client, crossed, sidecar  # noqa: F401
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=(), agent_session_id="s-1")
 

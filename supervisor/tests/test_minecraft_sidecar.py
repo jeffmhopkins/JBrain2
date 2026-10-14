@@ -9,6 +9,7 @@ and always resumes saving, and an update never overwrites the world or the allow
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import io
 import json
@@ -21,6 +22,7 @@ import textwrap
 import threading
 import time
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -1844,6 +1846,28 @@ def test_map_routes_check_their_input_and_serve_a_png(tmp_path: Path) -> None:
         server.mapping.tile = real_tile
     assert drawn[:8] == png[:8]
     assert not any(k[3] == 2 for k in rig._tiles)
+
+
+def test_a_tile_with_crossed_ground_is_its_own_tile() -> None:
+    """The api sends the chunks players crossed (Bedrock may never have saved them):
+    the same tile with more ground crossed is a different picture, never the cached
+    one."""
+    mapping = sys.modules.get("mapping") or __import__("mapping")
+    _make_world("world")
+    rig = _world_rig()
+    bits = bytearray(32)
+    bits[0] = 1  # chunk (0, 0)
+    crossed = base64.urlsafe_b64encode(zlib.compress(bytes(bits))).decode()
+    plain = rig.map_tile("slot1", "overworld", 0, 0, 0)
+    marked = rig.map_tile("slot1", "overworld", 0, 0, 0, visited=crossed)
+    assert marked is not plain
+    assert rig.map_tile("slot1", "overworld", 0, 0, 0, visited=crossed) is marked
+    assert rig.map_tile("slot1", "overworld", 0, 0, 0) is plain
+    with pytest.raises(ValueError):  # a zoom-0 bitmap for a zoom-1 tile
+        rig.map_tile("slot1", "overworld", 1, 0, 0, visited=crossed)
+    with pytest.raises(ValueError):
+        rig.map_tile("slot1", "overworld", 0, 0, 0, visited="garbage!")
+    assert mapping.decode_visited(crossed, 16) == {(0, 0)}
 
 
 def test_a_point_is_explored_ground_the_survey_or_unknown() -> None:

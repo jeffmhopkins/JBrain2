@@ -23,7 +23,7 @@ from jbrain.api.deps import DebugDep, SettingsDep
 from jbrain.api.minecraft import WORLD_JOB_TIMEOUT_S
 from jbrain.config import Settings
 from jbrain.minecraft import client as mc
-from jbrain.minecraft import markers, scans, timeline, travel
+from jbrain.minecraft import markers, scans, timeline, travel, visited
 
 router = APIRouter(prefix="/debug/minecraft")
 
@@ -697,8 +697,8 @@ async def minecraft_map_sweep(
 async def minecraft_map_tile(
     dim: Annotated[str, Path(pattern=r"^(overworld|nether|the_end)$")],
     zoom: Annotated[int, Path(ge=0, le=4)],
-    tx: int,
-    tz: int,
+    tx: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
+    tz: Annotated[int, Path(ge=-visited.TILE_LIMIT, le=visited.TILE_LIMIT)],
     request: Request,
     settings: SettingsDep,
     _p: DebugDep,
@@ -708,7 +708,11 @@ async def minecraft_map_tile(
     """A map tile picture — a rendering, not the world's files, so it doesn't break the
     no-world-download rule above."""
     request.state.debug_detail = f"minecraft map tile {slot} {dim} {zoom}/{tx}/{tz} {layer}"
+    maker = cast(async_sessionmaker[AsyncSession], request.app.state.session_maker)
+    seen = await visited.for_slot(maker, settings, slot, dim, zoom, tx, tz)
     png = await mc.image(
-        settings, f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png", params={"slot": slot, "layer": layer}
+        settings,
+        f"/map/tile/{dim}/{zoom}/{tx}/{tz}.png",
+        params={"slot": slot, "layer": layer, **seen},
     )
     return Response(png, media_type="image/png")

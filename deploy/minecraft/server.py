@@ -2038,8 +2038,18 @@ class Rig:
         return self.sweep_view()
 
     def map_tile(
-        self, slot_id: str, dim: str, zoom: int, tx: int, tz: int, layer: str = "surface"
+        self,
+        slot_id: str,
+        dim: str,
+        zoom: int,
+        tx: int,
+        tz: int,
+        layer: str = "surface",
+        visited: str = "",
     ) -> bytes:
+        """`visited` is the api's bitmap of the tile's chunks players crossed, which
+        Bedrock may never have saved (mapping.tile); the same bitmap draws the same tile,
+        so it is part of the cache key."""
         if dim not in mapping.DIMENSIONS:
             raise ValueError("dimension must be overworld, nether or the_end")
         if layer not in mapping.LAYERS:
@@ -2048,14 +2058,27 @@ class Rig:
             raise ValueError(f"zoom is 0 to {mapping.MAX_ZOOM}")
         if abs(tx) > 200_000 or abs(tz) > 200_000:
             raise ValueError("that tile is outside the world")
+        seen = (
+            mapping.decode_visited(visited, mapping.CHUNKS_PER_TILE << zoom)
+            if visited
+            else frozenset()
+        )
         with self._map_lock:
             folder, index = self._map_for(slot_id)
-            key = (folder, dim, zoom, tx, tz, layer)
+            key = (folder, dim, zoom, tx, tz, layer, visited)
             cached = self._tiles.get(key)
             signature, seed = index._signature, self._map_seed.get(folder)
             if cached is None and not mapping.true_colour_of(layer, mapping.DIMENSIONS[dim]):
                 image = mapping.tile(
-                    index, mapping.DIMENSIONS[dim], zoom, tx, tz, self._predictor, seed, layer
+                    index,
+                    mapping.DIMENSIONS[dim],
+                    zoom,
+                    tx,
+                    tz,
+                    self._predictor,
+                    seed,
+                    layer,
+                    seen,
                 )
                 cached = self._keep_tile(key, image)
         if cached is not None:
@@ -2065,7 +2088,15 @@ class Rig:
         # it meanwhile are never queued behind it. One true-colour draw at a time.
         with self._surface_lock:
             image = mapping.tile(
-                index, mapping.DIMENSIONS[dim], zoom, tx, tz, self._predictor, seed, layer
+                index,
+                mapping.DIMENSIONS[dim],
+                zoom,
+                tx,
+                tz,
+                self._predictor,
+                seed,
+                layer,
+                seen,
             )
         with self._map_lock:
             if index._signature == signature:  # not drawn from a world since re-read
@@ -2449,6 +2480,7 @@ class Handler(BaseHTTPRequestHandler):
                     int(m.group(3)),
                     int(m.group(4)),
                     query.get("layer", ["surface"])[0],
+                    query.get("visited", [""])[0],
                 )
             except ValueError as exc:
                 self._send(400, {"detail": str(exc)})
