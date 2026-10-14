@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PWA — send to the panel</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&amp;display=swap">
+<style>
+body{margin:0}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; box-sizing: border-box; background: #0E0F11; color: #E6E7E9; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; display: flex; flex-direction: column; overflow: hidden; position: relative;">
+
+  <svg width="0" height="0" style="position: absolute;" aria-hidden="true">
+    <defs>
+      <linearGradient id="dogsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#27365F"></stop><stop offset="0.45" stop-color="#9A5A6E"></stop><stop offset="0.75" stop-color="#E58A62"></stop><stop offset="1" stop-color="#F6C47E"></stop></linearGradient>
+      <linearGradient id="doglawn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5E7D3A"></stop><stop offset="1" stop-color="#2F4A24"></stop></linearGradient>
+      <linearGradient id="dogfur" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#C98B47"></stop><stop offset="0.55" stop-color="#E2AE66"></stop><stop offset="1" stop-color="#F0C27C"></stop></linearGradient>
+      <g id="dogphoto">
+        <rect x="0" y="0" width="640" height="420" fill="url(#dogsky)"></rect>
+        <circle cx="500" cy="372" r="80" fill="#FCD58E" opacity="0.25"></circle>
+        <circle cx="500" cy="372" r="58" fill="#FCD58E"></circle>
+        <path d="M0 392 L80 360 L170 380 L250 346 L340 378 L430 352 L520 384 L640 356 L640 430 L0 430 Z" fill="#5A3F5E"></path>
+        <rect x="0" y="414" width="640" height="226" fill="url(#doglawn)"></rect>
+        <g fill="#7A9A4C" opacity="0.6"><path d="M40 470 l6 -16 l6 16 Z"></path><path d="M120 520 l6 -18 l6 18 Z"></path><path d="M560 470 l6 -16 l6 16 Z"></path><path d="M610 600 l6 -18 l6 18 Z"></path><path d="M80 600 l6 -18 l6 18 Z"></path></g>
+        <ellipse cx="330" cy="624" rx="170" ry="20" fill="#1C2B15" opacity="0.55"></ellipse>
+        <rect x="448" y="520" width="128" height="88" rx="4" fill="#B98552"></rect>
+        <path d="M448 520 L476 498 L604 498 L576 520 Z" fill="#D2A06A"></path>
+        <path d="M576 520 L604 498 L604 586 L576 608 Z" fill="#9A6C40"></path>
+        <rect x="500" y="520" width="22" height="88" fill="#E7D3A8" opacity="0.8"></rect>
+        <rect x="462" y="540" width="30" height="18" fill="#F1ECE2"></rect>
+        <path d="M392 560 C470 560 470 470 438 446" fill="none" stroke="#D49A55" stroke-width="26" stroke-linecap="round"></path>
+        <ellipse cx="300" cy="510" rx="112" ry="118" fill="url(#dogfur)"></ellipse>
+        <ellipse cx="378" cy="566" rx="62" ry="54" fill="#C98B47"></ellipse>
+        <rect x="246" y="500" width="36" height="116" rx="18" fill="#E2AE66"></rect>
+        <rect x="320" y="500" width="36" height="116" rx="18" fill="#E8B670"></rect>
+        <ellipse cx="262" cy="614" rx="26" ry="14" fill="#F1CC8E"></ellipse>
+        <ellipse cx="340" cy="614" rx="26" ry="14" fill="#F1CC8E"></ellipse>
+        <ellipse cx="300" cy="470" rx="62" ry="80" fill="#F2D19B"></ellipse>
+        <path d="M240 404 Q300 430 360 404 L356 422 Q300 446 244 422 Z" fill="#3E6FA8"></path>
+        <circle cx="300" cy="446" r="11" fill="#E9C46A"></circle>
+        <ellipse cx="226" cy="352" rx="32" ry="62" fill="#B07436" transform="rotate(18 226 352)"></ellipse>
+        <ellipse cx="374" cy="352" rx="32" ry="62" fill="#B07436" transform="rotate(-18 374 352)"></ellipse>
+        <circle cx="300" cy="326" r="80" fill="#E2AE66"></circle>
+        <ellipse cx="300" cy="300" rx="62" ry="40" fill="#E9B86F"></ellipse>
+        <ellipse cx="300" cy="372" rx="46" ry="36" fill="#F2D19B"></ellipse>
+        <path d="M300 362 L300 380 M300 380 Q286 392 274 384 M300 380 Q314 392 326 384" fill="none" stroke="#5A3A22" stroke-width="4" stroke-linecap="round"></path>
+        <ellipse cx="300" cy="398" rx="13" ry="17" fill="#E07A7E"></ellipse>
+        <ellipse cx="300" cy="352" rx="17" ry="12" fill="#2A1D16"></ellipse>
+        <circle cx="268" cy="310" r="9" fill="#2A1D16"></circle>
+        <circle cx="332" cy="310" r="9" fill="#2A1D16"></circle>
+        <circle cx="271" cy="307" r="3" fill="#FFFFFF"></circle>
+        <circle cx="335" cy="307" r="3" fill="#FFFFFF"></circle>
+        <path d="M256 290 Q268 282 280 288 M320 288 Q332 282 344 290" fill="none" stroke="#B07436" stroke-width="4" stroke-linecap="round"></path>
+      </g>
+    </defs>
+  </svg>
+
+  <div style="height: 56px; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #26282C; flex-shrink: 0;">
+    <button aria-label="Back" onClick="{{back}}" style="width: 44px; height: 44px; border-radius: 22px; border: none; background: transparent; color: #E6E7E9; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5 L8 12 L15 19"></path></svg>
+    </button>
+    <span style="font-size: 18px; font-weight: 600; flex-grow: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{barTitle}}</span>
+    <sc-if value="{{barOnline}}" hint-placeholder-val="{{true}}">
+      <span style="display: flex; align-items: center; gap: 6px; margin-right: 8px; font-size: 13px; font-weight: 600; color: {{online.color}};"><span style="width: 8px; height: 8px; border-radius: 4px; background: {{online.color}};"></span>{{online.text}}</span>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{isCard}}" hint-placeholder-val="{{false}}">
+    <div style="padding: 12px 16px 0; flex-shrink: 0;">
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: #1E2024;">
+        <button style="height: 44px; border-radius: 10px; border: none; background: transparent; color: #9A9DA3; font-family: inherit; font-size: 15px; font-weight: 600;">Messages</button>
+        <button aria-pressed="true" style="height: 44px; border-radius: 10px; border: none; background: rgba(127,167,201,0.13); color: #7FA7C9; font-family: inherit; font-size: 15px; font-weight: 600;">Panels</button>
+        <button style="height: 44px; border-radius: 10px; border: none; background: transparent; color: #9A9DA3; font-family: inherit; font-size: 15px; font-weight: 600;">Flash</button>
+      </div>
+    </div>
+  </sc-if>
+
+  <div style="flex-grow: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+
+    <sc-if value="{{isCard}}" hint-placeholder-val="{{false}}">
+      <div style="flex-shrink: 0; background: #17181B; border: 1px solid #26282C; border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <div style="display: flex; align-items: baseline; gap: 10px;">
+            <span style="font-size: 18px; font-weight: 600;">Jeff's</span>
+            <span style="font-size: 12px; color: #9A9DA3; border: 1px solid #26282C; border-radius: 999px; padding: 0 6px;">display</span>
+            <span style="margin-left: auto; font-size: 13px; color: #9A9DA3;">3 s ago</span>
+          </div>
+          <span style="font-size: 13px; color: #9A9DA3;"><span style="font-family: ui-monospace, Menlo, monospace;">0.4.14</span> · Jerv</span>
+        </div>
+        <label style="display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px;">
+          <input type="checkbox" checked style="width: 20px; height: 20px; margin: 0; accent-color: #7FA7C9;">
+          <span>Talks to the full Jerv and Dave</span>
+        </label>
+        <button onClick="{{openComposer}}" style="height: 52px; border-radius: 12px; border: none; background: rgba(127,167,201,0.13); color: #7FA7C9; font-family: inherit; font-size: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8 a2 2 0 0 1 2 -2 h2 l1.5 -2 h5 L16 6 h2 a2 2 0 0 1 2 2 v9 a2 2 0 0 1 -2 2 H6 a2 2 0 0 1 -2 -2 Z"></path><circle cx="12" cy="12.5" r="3.5"></circle></svg>
+          Send to panel
+        </button>
+
+        <div style="display: flex; flex-direction: column; padding-top: 12px; border-top: 1px solid #26282C;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 15px; font-weight: 600; color: #9A9DA3;">Sent to this panel</span>
+            <button onClick="{{openHistory}}" style="height: 44px; padding: 0 4px; border: none; background: transparent; color: #7FA7C9; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;">All sent</button>
+          </div>
+          <div style="display: flex; flex-direction: column; border-top: 1px solid #26282C;">
+            <sc-for list="{{recent}}" as="h" hint-placeholder-count="3">
+              <div style="display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 6px 0; border-bottom: 1px solid #26282C;">
+                <div style="width: 44px; height: 44px; border-radius: 8px; overflow: hidden; background: #000000; flex-shrink: 0; border: 1px solid #26282C; box-sizing: border-box;">
+                  <svg width="42" height="42" viewBox="{{h.viewBox}}" aria-hidden="true">
+                    <sc-if value="{{h.dog}}" hint-placeholder-val="{{true}}"><g transform="{{h.photoT}}"><use href="#dogphoto"></use></g></sc-if>
+                    <sc-if value="{{h.word}}" hint-placeholder-val="{{false}}"><text x="240" y="{{h.wordY}}" text-anchor="middle" dominant-baseline="central" font-family="system-ui, sans-serif" font-weight="800" font-size="{{h.wordSize}}" fill="#FFFFFF" stroke="#111214" stroke-width="10" paint-order="stroke" stroke-linejoin="round">{{h.word}}</text></sc-if>
+                    <sc-if value="{{h.ask}}" hint-placeholder-val="{{false}}"><text x="240" y="250" text-anchor="middle" dominant-baseline="central" font-family="Montserrat, sans-serif" font-weight="700" font-size="240" fill="#7FA7C9">?</text></sc-if>
+                  </svg>
+                </div>
+                <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+                  <span style="font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{h.title}}</span>
+                  <span style="font-size: 13px; color: #9A9DA3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{h.when}} · <span style="color: {{h.color}}; font-weight: 600;">{{h.outcome}}</span></span>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid #26282C;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <span style="font-size: 15px; font-weight: 600; color: #9A9DA3;">Alarms</span>
+            <span style="font-size: 13px; color: #8FBC9A;">On the panel</span>
+          </div>
+          <span style="font-size: 13px; color: #9A9DA3;">06:45 weekdays · 21:00 every day · 1 off</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid #26282C;">
+          <span style="font-size: 15px; font-weight: 600; color: #9A9DA3;">Panel settings</span>
+          <span style="font-size: 13px; color: #9A9DA3;">Clock, notices, screen and sound</span>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{hasGlass}}" hint-placeholder-val="{{false}}">
+      <div style="flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 8px;">
+        <div aria-label="{{g.aria}}" role="img" onPointerDown="{{g.down}}" onPointerMove="{{g.move}}" onPointerUp="{{g.up}}" style="width: {{g.size}}px; height: {{g.size}}px; border-radius: {{g.radius}}px; overflow: hidden; position: relative; background: #000000; box-shadow: 0 0 0 1px #26282C; touch-action: none; flex-shrink: 0;">
+          <div style="position: absolute; left: 0; top: 0; width: 480px; height: 480px; transform: scale({{g.scale}}); transform-origin: 0 0; font-family: 'Montserrat', sans-serif; color: #E6E7E9;">
+
+            <sc-if value="{{g.empty}}" hint-placeholder-val="{{false}}">
+              <div style="position: absolute; inset: 24px; border: 3px dashed #3A3D42; border-radius: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; color: #9A9DA3; text-align: center; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;">
+                <svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="9" cy="10" r="1.8"></circle><path d="M4 17 L10 12.5 L14 15.5 L17 13 L20 15.5"></path></svg>
+                <span style="font-size: 26px; font-weight: 600; color: #C4C7CC;">The panel's whole screen</span>
+                <span style="font-size: 21px; line-height: 1.4; max-width: 340px;">Add a photo, some words, or just a question</span>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{g.picture}}" hint-placeholder-val="{{true}}">
+              <svg width="480" height="{{g.picH}}" viewBox="0 0 480 {{g.picH}}" style="position: absolute; left: 0; top: 0;" aria-hidden="true">
+                <rect x="0" y="0" width="480" height="{{g.picH}}" fill="#000000"></rect>
+                <sc-if value="{{g.hasPhoto}}" hint-placeholder-val="{{true}}">
+                  <g transform="{{g.photoT}}"><use href="#dogphoto"></use></g>
+                </sc-if>
+                <sc-if value="{{g.userPhoto}}" hint-placeholder-val="{{false}}">
+                  <image href="{{g.userPhotoUrl}}" x="0" y="0" width="480" height="{{g.picH}}" preserveAspectRatio="xMidYMid slice"></image>
+                </sc-if>
+                <sc-if value="{{g.plate}}" hint-placeholder-val="{{false}}">
+                  <rect x="{{g.plateX}}" y="{{g.plateY}}" width="{{g.plateW}}" height="{{g.plateH}}" rx="{{g.plateR}}" fill="{{g.plateFill}}"></rect>
+                </sc-if>
+                <sc-for list="{{g.lines}}" as="ln" hint-placeholder-count="1">
+                  <text x="{{g.tx}}" y="{{ln.y}}" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="{{g.fontSize}}" fill="{{g.fill}}" stroke="{{g.stroke}}" stroke-width="{{g.strokeW}}" paint-order="stroke" stroke-linejoin="round">{{ln.text}}</text>
+                </sc-for>
+                <sc-if value="{{g.selected}}" hint-placeholder-val="{{false}}">
+                  <rect x="{{g.selX}}" y="{{g.selY}}" width="{{g.selW}}" height="{{g.selH}}" rx="10" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-dasharray="12 8"></rect>
+                  <circle cx="{{g.knobX}}" cy="{{g.knobY}}" r="14" fill="#FFFFFF" stroke="#111214" stroke-width="3"></circle>
+                </sc-if>
+              </svg>
+            </sc-if>
+
+            <sc-if value="{{g.full}}" hint-placeholder-val="{{true}}">
+              <div style="position: absolute; left: 20px; top: 20px; height: 40px; padding: 0 14px; border-radius: 20px; background: rgba(0,0,0,0.55); color: #E6E7E9; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
+                <span>You</span>
+              </div>
+              <span style="position: absolute; right: 20px; top: 20px; height: 40px; padding: 0 14px; border-radius: 20px; background: rgba(0,0,0,0.55); display: flex; align-items: center; font-size: 18px; font-weight: 600; color: rgba(255,255,255,0.85);">{{g.picHint}}</span>
+            </sc-if>
+
+            <sc-if value="{{g.card}}" hint-placeholder-val="{{false}}">
+              <div style="position: absolute; left: 0; top: {{g.picH}}px; width: 480px; height: {{g.cardH}}px; box-sizing: border-box; padding: {{g.cardPad}}; display: flex; flex-direction: column; gap: 14px; background: #000000;">
+                <div style="display: flex; align-items: center; gap: 10px; color: #7FA7C9;">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 16 L6 11 a6 6 0 0 1 12 0 L18 16 L20 18 L4 18 Z"></path><path d="M10 21 a2 2 0 0 0 4 0"></path></svg>
+                  <span style="font-size: 18px; font-weight: 700; letter-spacing: 0.02em;">You</span>
+                </div>
+                <span style="font-size: {{g.titleSize}}px; font-weight: 700; line-height: 1.2; color: #E6E7E9;">{{g.title}}</span>
+                <span style="flex-grow: 1;"></span>
+                <div style="display: grid; grid-template-columns: repeat({{g.cols}}, minmax(0, 1fr)); gap: 10px;">
+                  <sc-for list="{{g.choices}}" as="ch" hint-placeholder-count="2">
+                    <span style="height: 64px; border-radius: 20px; box-sizing: border-box; border: 1px solid {{ch.border}}; background: {{ch.bg}}; color: {{ch.color}}; font-size: 22px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 8px; white-space: nowrap; overflow: hidden;">{{ch.label}}</span>
+                  </sc-for>
+                </div>
+                <span style="font-size: 18px; font-weight: 500; color: #9A9DA3; text-align: center;">Tap an answer · tap elsewhere to hide</span>
+              </div>
+            </sc-if>
+
+            <sc-if value="{{g.timer}}" hint-placeholder-val="{{false}}">
+              <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,0.10);"><div style="height: 4px; width: 100%; background: rgba(255,255,255,0.85);"></div></div>
+            </sc-if>
+          </div>
+        </div>
+        <span style="font-size: 13px; color: #9A9DA3; text-align: center;">{{g.caption}}</span>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isCompose}}" hint-placeholder-val="{{false}}">
+      <div role="tablist" style="flex-shrink: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: #1E2024;">
+        <sc-for list="{{tabs}}" as="t" hint-placeholder-count="3">
+          <button role="tab" aria-selected="{{t.selected}}" onClick="{{t.pick}}" style="height: 44px; border-radius: 10px; border: none; background: {{t.bg}}; color: {{t.color}}; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">{{t.label}}<sc-if value="{{t.on}}" hint-placeholder-val="{{false}}"><span style="width: 6px; height: 6px; border-radius: 3px; background: #7FA7C9;"></span></sc-if></button>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{tabPhoto}}" hint-placeholder-val="{{true}}">
+        <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 12px;">
+          <sc-if value="{{noPhoto}}" hint-placeholder-val="{{true}}">
+            <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;">
+              <label style="height: 56px; border-radius: 12px; background: rgba(127,167,201,0.13); color: #7FA7C9; font-size: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8 a2 2 0 0 1 2 -2 h2 l1.5 -2 h5 L16 6 h2 a2 2 0 0 1 2 2 v9 a2 2 0 0 1 -2 2 H6 a2 2 0 0 1 -2 -2 Z"></path><circle cx="12" cy="12.5" r="3.5"></circle></svg>
+                Take photo
+                <input type="file" accept="image/*" capture="environment" onChange="{{pickFile}}" style="display: none;">
+              </label>
+              <label style="height: 56px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-size: 16px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; box-sizing: border-box;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"></rect><circle cx="9" cy="10" r="1.8"></circle><path d="M4 17 L10 12.5 L14 15.5 L17 13 L20 15.5"></path></svg>
+                Choose photo
+                <input type="file" accept="image/*" onChange="{{pickFile}}" style="display: none;">
+              </label>
+            </div>
+            <span style="font-size: 13px; color: #9A9DA3; line-height: 1.4;">A photo is optional. Words alone go on black; a question alone is the panel's own question card.</span>
+          </sc-if>
+          <sc-if value="{{hasPhoto}}" hint-placeholder-val="{{false}}">
+            <label style="display: flex; flex-direction: column; gap: 4px; font-size: 15px;">
+              <span style="display: flex; justify-content: space-between;"><span>Zoom</span><strong style="font-variant-numeric: tabular-nums;">{{zoomText}}</strong></span>
+              <input type="range" min="100" max="300" step="5" value="{{zoomPct}}" onInput="{{setZoom}}" style="width: 100%; height: 28px; margin: 0; accent-color: #7FA7C9;">
+            </label>
+            <span style="font-size: 13px; color: #9A9DA3; line-height: 1.4;">Drag the photo in the square to frame it, or pinch. What is outside the square is not sent.</span>
+            <div style="display: flex; gap: 8px;">
+              <label style="height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-size: 15px; display: flex; align-items: center; cursor: pointer; box-sizing: border-box;">Retake<input type="file" accept="image/*" capture="environment" onChange="{{pickFile}}" style="display: none;"></label>
+              <label style="height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-size: 15px; display: flex; align-items: center; cursor: pointer; box-sizing: border-box;">Choose another<input type="file" accept="image/*" onChange="{{pickFile}}" style="display: none;"></label>
+              <button onClick="{{removePhoto}}" style="height: 44px; padding: 0 14px; border-radius: 12px; border: none; background: rgba(207,138,143,0.13); color: #CF8A8F; font-family: inherit; font-size: 15px; cursor: pointer;">Remove</button>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{tabText}}" hint-placeholder-val="{{false}}">
+        <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 12px;">
+          <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+            <span style="display: flex; justify-content: space-between;"><span>Words on the picture</span><span style="font-variant-numeric: tabular-nums;">{{wordsCount}}</span></span>
+            <input type="text" value="{{words}}" onInput="{{setWords}}" placeholder="One word or a short message" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 16px; padding: 0 12px;">
+          </label>
+          <label style="display: flex; flex-direction: column; gap: 4px; font-size: 15px;">
+            <span style="display: flex; justify-content: space-between;"><span>Size</span><strong style="font-variant-numeric: tabular-nums;">{{sizeText}}</strong></span>
+            <input type="range" min="28" max="160" step="2" value="{{size}}" onInput="{{setSize}}" style="width: 100%; height: 28px; margin: 0; accent-color: #7FA7C9;">
+          </label>
+          <div role="radiogroup" aria-label="Text style" style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px;">
+            <sc-for list="{{styles}}" as="st" hint-placeholder-count="4">
+              <button role="radio" aria-checked="{{st.checked}}" onClick="{{st.pick}}" style="display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 4px; border-radius: 12px; border: 2px solid {{st.ring}}; background: #17181B; font-family: inherit; cursor: pointer;">
+                <svg width="100%" height="40" viewBox="0 0 80 40" preserveAspectRatio="none" aria-hidden="true" style="border-radius: 8px; display: block;">
+                  <rect x="0" y="0" width="40" height="40" fill="#D8CFC0"></rect><rect x="40" y="0" width="40" height="40" fill="#3B4048"></rect>
+                  <sc-if value="{{st.plate}}" hint-placeholder-val="{{false}}"><rect x="14" y="8" width="52" height="24" rx="5" fill="{{st.plateFill}}"></rect></sc-if>
+                  <text x="40" y="21" text-anchor="middle" dominant-baseline="central" font-family="system-ui, sans-serif" font-weight="800" font-size="20" fill="{{st.fill}}" stroke="{{st.stroke}}" stroke-width="{{st.sw}}" paint-order="stroke" stroke-linejoin="round">Aa</text>
+                </svg>
+                <span style="font-size: 12px; color: {{st.labelColor}}; text-align: center;">{{st.label}}</span>
+              </button>
+            </sc-for>
+          </div>
+          <span style="font-size: 13px; color: #9A9DA3; line-height: 1.4;">Drag the words to move them. They are drawn into the picture on your phone, so the panel only shows a picture.</span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{tabQuestion}}" hint-placeholder-val="{{false}}">
+        <div style="flex-shrink: 0; display: flex; flex-direction: column; gap: 12px;">
+          <div style="min-height: 44px; display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+            <span style="display: flex; flex-direction: column; gap: 2px;">
+              <span style="font-size: 15px;">Ask a question</span>
+              <span style="font-size: 13px; color: #9A9DA3;">The tapped answer comes back here</span>
+            </span>
+            <button role="switch" aria-checked="{{askChecked}}" aria-label="Ask a question" onClick="{{flipAsk}}" style="position: relative; flex-shrink: 0; width: 52px; height: 32px; border-radius: 16px; border: 1px solid {{askSw.border}}; background: {{askSw.track}}; cursor: pointer; padding: 0;"><span style="position: absolute; top: 4px; left: {{askSw.knobX}}px; width: 22px; height: 22px; border-radius: 11px; background: {{askSw.knob}};"></span></button>
+          </div>
+          <sc-if value="{{ask}}" hint-placeholder-val="{{true}}">
+            <label style="display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #9A9DA3;">
+              <span style="display: flex; justify-content: space-between;"><span>Question</span><span style="font-variant-numeric: tabular-nums;">{{questionCount}}</span></span>
+              <input type="text" value="{{question}}" onInput="{{setQuestion}}" placeholder="Did the package come?" style="height: 44px; box-sizing: border-box; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 16px; padding: 0 12px;">
+            </label>
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <span style="font-size: 13px; color: #9A9DA3;">Answers · up to 4, 16 letters each</span>
+              <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                <sc-for list="{{answerChips}}" as="a" hint-placeholder-count="2">
+                  <span style="height: 44px; display: inline-flex; align-items: center; gap: 2px; padding: 0 0 0 14px; border-radius: 999px; background: #1E2024; border: 1px solid #26282C; font-size: 15px; box-sizing: border-box;">{{a.label}}<button aria-label="{{a.removeLabel}}" onClick="{{a.remove}}" style="width: 40px; height: 42px; border: none; background: transparent; color: #9A9DA3; font-family: inherit; font-size: 18px; cursor: pointer; border-radius: 999px;">×</button></span>
+                </sc-for>
+                <sc-if value="{{canAdd}}" hint-placeholder-val="{{true}}">
+                  <button onClick="{{addAnswer}}" style="height: 44px; padding: 0 14px; border-radius: 999px; border: 1px dashed #3A3D42; background: transparent; color: #7FA7C9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">+ Answer</button>
+                </sc-if>
+                <sc-if value="{{showYesNo}}" hint-placeholder-val="{{false}}">
+                  <button onClick="{{yesNo}}" style="height: 44px; padding: 0 14px; border-radius: 999px; border: none; background: rgba(127,167,201,0.13); color: #7FA7C9; font-family: inherit; font-size: 15px; font-weight: 600; cursor: pointer;">Yes / No</button>
+                </sc-if>
+              </div>
+            </div>
+            <span style="font-size: 13px; color: #9A9DA3; line-height: 1.4;">{{questionNote}}</span>
+          </sc-if>
+        </div>
+      </sc-if>
+    </sc-if>
+
+    <sc-if value="{{isReview}}" hint-placeholder-val="{{false}}">
+      <sc-if value="{{refusal.on}}" hint-placeholder-val="{{false}}">
+        <div role="alert" style="flex-shrink: 0; padding: 12px 14px; border-radius: 12px; background: rgba(201,163,106,0.10); display: flex; flex-direction: column; gap: 4px;">
+          <span style="font-size: 15px; font-weight: 600; color: #C9A36A;">Not sent — {{refusal.title}}</span>
+          <span style="font-size: 13px; color: #C4C7CC; line-height: 1.4;">{{refusal.body}}</span>
+        </div>
+      </sc-if>
+      <div style="flex-shrink: 0; background: #17181B; border: 1px solid #26282C; border-radius: 16px; padding: 4px 16px; display: flex; flex-direction: column;">
+        <div style="min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #26282C;">
+          <span style="font-size: 15px;">To</span>
+          <span style="display: flex; align-items: center; gap: 6px; font-size: 15px; color: #C4C7CC;">Jeff's panel <span style="color: {{online.color}}; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px;"><span style="width: 7px; height: 7px; border-radius: 4px; background: {{online.color}};"></span>{{online.text}}</span></span>
+        </div>
+        <div style="min-height: 56px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #26282C;">
+          <span style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 15px;">Chime when it arrives</span>
+            <span style="font-size: 13px; color: #9A9DA3;">The panel's chime switch still decides</span>
+          </span>
+          <button role="switch" aria-checked="{{chimeChecked}}" aria-label="Chime when it arrives" onClick="{{flipChime}}" style="position: relative; flex-shrink: 0; width: 52px; height: 32px; border-radius: 16px; border: 1px solid {{chimeSw.border}}; background: {{chimeSw.track}}; cursor: pointer; padding: 0;"><span style="position: absolute; top: 4px; left: {{chimeSw.knobX}}px; width: 22px; height: 22px; border-radius: 11px; background: {{chimeSw.knob}};"></span></button>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px 0;">
+          <span style="display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-size: 15px;">{{stayLabel}}</span>
+            <span style="font-size: 13px; color: #9A9DA3;">{{staySub}}</span>
+          </span>
+          <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: #1E2024;">
+            <sc-for list="{{stayOpts}}" as="o" hint-placeholder-count="4">
+              <button aria-pressed="{{o.pressed}}" onClick="{{o.pick}}" style="height: 44px; border-radius: 10px; border: none; background: {{o.bg}}; color: {{o.color}}; font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer; padding: 0 2px; white-space: nowrap;">{{o.label}}</button>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+      <sc-if value="{{reviewNote}}" hint-placeholder-val="{{true}}"><span style="flex-shrink: 0; font-size: 13px; color: #6B6E75; line-height: 1.4;">{{reviewNote}}</span></sc-if>
+    </sc-if>
+
+    <sc-if value="{{isStatus}}" hint-placeholder-val="{{false}}">
+      <sc-if value="{{result.on}}" hint-placeholder-val="{{false}}">
+        <div aria-live="polite" style="flex-shrink: 0; padding: 14px 16px; border-radius: 16px; background: {{result.bg}}; display: flex; flex-direction: column; gap: 2px;">
+          <span style="font-size: 13px; font-weight: 600; color: {{result.color}};">{{result.kicker}}</span>
+          <span style="font-size: 28px; font-weight: 600; color: #E6E7E9;">{{result.big}}</span>
+          <span style="font-size: 13px; color: #9A9DA3;">{{result.sub}}</span>
+        </div>
+      </sc-if>
+      <div style="flex-shrink: 0; background: #17181B; border: 1px solid #26282C; border-radius: 16px; padding: 4px 16px; display: flex; flex-direction: column;">
+        <sc-for list="{{steps}}" as="sp" hint-placeholder-count="3">
+          <div style="min-height: 52px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid {{sp.rule}};">
+            <span style="width: 24px; height: 24px; border-radius: 12px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: {{sp.dotBg}}; color: {{sp.dotColor}}; box-sizing: border-box; border: {{sp.dotBorder}};">
+              <sc-if value="{{sp.done}}" hint-placeholder-val="{{true}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 L10 17 L19 7"></path></svg></sc-if>
+              <sc-if value="{{sp.live}}" hint-placeholder-val="{{false}}"><span style="width: 8px; height: 8px; border-radius: 4px; background: #C9A36A;"></span></sc-if>
+            </span>
+            <span style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px;">
+              <span style="font-size: 15px; color: {{sp.color}};">{{sp.label}}</span>
+              <sc-if value="{{sp.hasSub}}" hint-placeholder-val="{{false}}"><span style="font-size: 13px; color: #9A9DA3;">{{sp.sub}}</span></sc-if>
+            </span>
+            <span style="font-size: 13px; color: #9A9DA3; font-variant-numeric: tabular-nums;">{{sp.time}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{isRefusals}}" hint-placeholder-val="{{false}}">
+      <span style="flex-shrink: 0; font-size: 13px; color: #9A9DA3; line-height: 1.4;">When the box turns a notice away it says why at once, and nothing waits on the box to pop up later. The picture stays here, ready to send again.</span>
+      <sc-for list="{{refusalCards}}" as="rf" hint-placeholder-count="4">
+        <div style="flex-shrink: 0; padding: 12px 14px; border-radius: 12px; background: rgba(201,163,106,0.10); display: flex; flex-direction: column; gap: 6px;">
+          <span style="font-size: 12px; color: #9A9DA3; font-family: ui-monospace, Menlo, monospace;">{{rf.code}}</span>
+          <span style="font-size: 15px; font-weight: 600; color: #C9A36A;">Not sent — {{rf.title}}</span>
+          <span style="font-size: 13px; color: #C4C7CC; line-height: 1.4;">{{rf.body}}</span>
+          <sc-if value="{{rf.hasAction}}" hint-placeholder-val="{{false}}">
+            <div style="display: flex;"><button style="height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 15px;">{{rf.action}}</button></div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </sc-if>
+
+    <sc-if value="{{isHistory}}" hint-placeholder-val="{{false}}">
+      <sc-for list="{{historyGroups}}" as="hg" hint-placeholder-count="2">
+        <div style="flex-shrink: 0; display: flex; flex-direction: column;">
+          <span style="font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: #6B6E75; padding: 4px 0 6px;">{{hg.label}}</span>
+          <div style="background: #17181B; border: 1px solid #26282C; border-radius: 16px; padding: 0 16px; display: flex; flex-direction: column;">
+            <sc-for list="{{hg.rows}}" as="h" hint-placeholder-count="3">
+              <button onClick="{{h.open}}" style="display: flex; align-items: center; gap: 12px; min-height: 68px; padding: 8px 0; border: none; border-bottom: 1px solid {{h.rule}}; background: transparent; color: #E6E7E9; font-family: inherit; text-align: left; cursor: pointer;">
+                <div style="width: 52px; height: 52px; border-radius: 8px; overflow: hidden; background: #000000; flex-shrink: 0; border: 1px solid #26282C; box-sizing: border-box;">
+                  <svg width="50" height="50" viewBox="{{h.viewBox}}" aria-hidden="true">
+                    <sc-if value="{{h.dog}}" hint-placeholder-val="{{true}}"><g transform="{{h.photoT}}"><use href="#dogphoto"></use></g></sc-if>
+                    <sc-if value="{{h.word}}" hint-placeholder-val="{{false}}"><text x="240" y="{{h.wordY}}" text-anchor="middle" dominant-baseline="central" font-family="system-ui, sans-serif" font-weight="800" font-size="{{h.wordSize}}" fill="#FFFFFF" stroke="#111214" stroke-width="10" paint-order="stroke" stroke-linejoin="round">{{h.word}}</text></sc-if>
+                    <sc-if value="{{h.ask}}" hint-placeholder-val="{{false}}"><text x="240" y="250" text-anchor="middle" dominant-baseline="central" font-family="Montserrat, sans-serif" font-weight="700" font-size="240" fill="#7FA7C9">?</text></sc-if>
+                  </svg>
+                </div>
+                <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+                  <span style="font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{h.title}}</span>
+                  <span style="font-size: 13px; font-weight: 600; color: {{h.color}};">{{h.outcome}}</span>
+                </div>
+                <span style="font-size: 13px; color: #9A9DA3; font-variant-numeric: tabular-nums; flex-shrink: 0;">{{h.time}}</span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+      <span style="flex-shrink: 0; font-size: 13px; color: #6B6E75; line-height: 1.4;">What you sent from the app, as the box recorded it. The box clears a notice a day after it ends. Tap one to see it again or send it again.</span>
+    </sc-if>
+  </div>
+
+  <sc-if value="{{hasFoot}}" hint-placeholder-val="{{false}}">
+    <div style="flex-shrink: 0; padding: 12px 16px 16px; border-top: 1px solid #26282C; display: flex; gap: 8px;">
+      <sc-if value="{{foot.hasSecondary}}" hint-placeholder-val="{{false}}">
+        <button onClick="{{foot.secondary}}" style="height: 52px; padding: 0 18px; border-radius: 12px; border: 1px solid #26282C; background: #1E2024; color: #E6E7E9; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer;">{{foot.secondaryLabel}}</button>
+      </sc-if>
+      <button onClick="{{foot.primary}}" aria-disabled="{{foot.disabled}}" style="flex-grow: 1; height: 52px; border-radius: 12px; border: none; background: {{foot.bg}}; color: {{foot.color}}; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+        <sc-if value="{{foot.sendIcon}}" hint-placeholder-val="{{false}}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12 L20 4 L14 20 L11 13 Z"></path><path d="M11 13 L20 4"></path></svg></sc-if>
+        {{foot.primaryLabel}}
+      </button>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"view":{"editor":"enum","options":["card","empty","photo","text","question","review","review-question","waiting","answered","refused","refusals","history"],"default":"card","section":"State"},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  // Where the sample photo sits in each frame, in the panel's own 480 px: the square fills the
+  // glass; with a question the picture is a 480 × 240 strip over the words (plan §2 "banner").
+  frame(layout) {
+    return layout === 'banner' ? { z: 0.78, x: -10, y: -185 } : { z: 0.86, x: -20, y: -60 };
+  }
+
+  styleDefs() {
+    return {
+      outline: { label: 'Outline', fill: '#FFFFFF', stroke: '#111214', sw: 0.14, plate: '' },
+      dark: { label: 'Dark plate', fill: '#FFFFFF', stroke: 'none', sw: 0, plate: 'rgba(10,10,12,0.72)' },
+      light: { label: 'Light plate', fill: '#111214', stroke: 'none', sw: 0, plate: 'rgba(255,255,255,0.9)' },
+      yellow: { label: 'Yellow', fill: '#FFD447', stroke: '#111214', sw: 0.14, plate: '' }
+    };
+  }
+
+  initial() {
+    const view = this.props.view || 'card';
+    const s = {
+      ready: true, view: view, screen: 'compose', tab: 'photo',
+      photo: false, userPhotoUrl: '', zoom: 1, panX: 0, panY: 0,
+      words: '', size: 64, style: 'outline', pos: { full: { x: 240, y: 128 }, banner: { x: 240, y: 52 } },
+      ask: false, question: '', answers: [],
+      chime: true, stayPlain: 20, stayAsk: 900,
+      status: 'queued', answer: '', refusal: ''
+    };
+    const photo = { photo: true };
+    const words = { words: 'Home soon!' };
+    const asked = { ask: true, question: 'Did the package come?', answers: ['Yes', 'No'] };
+    const v = {
+      card: { screen: 'card' },
+      empty: {},
+      photo: Object.assign({}, photo),
+      text: Object.assign({ tab: 'text' }, photo, words),
+      question: Object.assign({ tab: 'question' }, photo, asked),
+      review: Object.assign({ screen: 'review' }, photo, words),
+      'review-question': Object.assign({ screen: 'review' }, photo, asked),
+      waiting: Object.assign({ screen: 'status', status: 'shown', frozen: true }, photo, asked),
+      answered: Object.assign({ screen: 'status', status: 'answered', answer: 'Yes', frozen: true }, photo, asked),
+      refused: Object.assign({ screen: 'review', refusal: 'quiet_hours' }, photo, words),
+      refusals: { screen: 'refusals' },
+      history: { screen: 'history' }
+    }[view] || {};
+    return Object.assign(s, v);
+  }
+
+  base(prev) {
+    return prev && prev.ready && prev.view === (this.props.view || 'card') ? prev : this.initial();
+  }
+
+  put(fn) {
+    this.setState((prev) => {
+      const b = this.base(prev);
+      return Object.assign({}, b, typeof fn === 'function' ? fn(b) : fn);
+    });
+  }
+
+  componentWillUnmount() {
+    (this.timers || []).forEach(clearTimeout);
+  }
+
+  later(ms, fn) {
+    this.timers = this.timers || [];
+    this.timers.push(setTimeout(fn, ms));
+  }
+
+  sw(on) {
+    return { track: on ? 'rgba(143,188,154,0.22)' : '#1E2024', border: on ? 'transparent' : '#3A3D42', knob: on ? '#8FBC9A' : '#9A9DA3', knobX: on ? 25 : 4 };
+  }
+
+  bytes(t) {
+    return new TextEncoder().encode(t).length;
+  }
+
+  // Picture whenever there is a photo or words; a question puts that picture in a strip above
+  // it. A question alone is the panel's own card, and nothing at all is the empty square.
+  layout(s) {
+    const pic = s.photo || !!s.words.trim();
+    if (pic) return s.ask ? 'banner' : 'full';
+    return s.ask ? 'plain' : 'empty';
+  }
+
+  // The words wrapped the way the phone will draw them into the picture: an estimate here, the
+  // real build measures with the canvas it draws on.
+  lines(s) {
+    const text = s.words.trim();
+    if (!text) return [];
+    const per = Math.max(4, Math.floor(440 / (s.size * 0.6)));
+    const out = [];
+    let cur = '';
+    text.split(/\s+/).forEach((w) => {
+      if (cur && (cur + ' ' + w).length > per) { out.push(cur); cur = w; } else cur = cur ? cur + ' ' + w : w;
+    });
+    if (cur) out.push(cur);
+    return out.slice(0, 4);
+  }
+
+  glass(s, size, opts) {
+    const layout = this.layout(s);
+    const st = this.styleDefs()[s.style];
+    const picH = layout === 'banner' ? 240 : 480;
+    const f = this.frame(layout);
+    const pos = s.pos[layout === 'banner' ? 'banner' : 'full'];
+    const m = s.zoom;
+    const photoT = 'translate(' + (240 + s.panX) + ' ' + (picH / 2 + s.panY) + ') scale(' + m + ') translate(' + (-240) + ' ' + (-picH / 2) + ') translate(' + f.x + ' ' + f.y + ') scale(' + f.z + ')';
+    const lines = this.lines(s);
+    const lh = s.size * 1.12;
+    const widest = lines.reduce((w, l) => Math.max(w, l.length * s.size * 0.6), 0);
+    const top = pos.y - (lines.length - 1) * lh / 2;
+    const padX = s.size * 0.32;
+    const padY = s.size * 0.12;
+    const boxW = widest + padX * 2;
+    const boxH = lines.length * lh + padY * 2;
+    const boxX = pos.x - boxW / 2;
+    const boxY = pos.y - boxH / 2;
+    const scale = size / 480;
+    const hide = s.stayPlain;
+    const ch = s.answers;
+    return {
+      size: size, scale: scale.toFixed(5), radius: Math.round(44 * scale),
+      aria: layout === 'empty' ? 'Empty preview' : 'Preview of the panel',
+      empty: layout === 'empty',
+      picture: layout === 'full' || layout === 'banner',
+      full: layout === 'full',
+      card: layout === 'banner' || layout === 'plain',
+      timer: layout === 'full' && hide > 0,
+      picH: layout === 'plain' ? 0 : picH,
+      cardH: layout === 'banner' ? 240 : 480,
+      cardPad: layout === 'banner' ? '14px 32px 26px' : '40px 32px 30px',
+      titleSize: layout === 'banner' ? 26 : 30,
+      title: s.question || 'Your question',
+      cols: Math.max(1, ch.length === 3 ? 3 : ch.length),
+      choices: ch.map((label, k) => ({ label: label, bg: k === 0 ? 'rgba(127,167,201,0.18)' : '#1E2024', color: k === 0 ? '#7FA7C9' : '#E6E7E9', border: k === 0 ? 'transparent' : '#3A3D42' })),
+      hasPhoto: s.photo && !s.userPhotoUrl,
+      userPhoto: !!s.userPhotoUrl,
+      userPhotoUrl: s.userPhotoUrl,
+      photoT: photoT,
+      lines: lines.map((t, k) => ({ text: t, y: (top + k * lh).toFixed(1) })),
+      tx: pos.x, fontSize: s.size, fill: st.fill, stroke: st.stroke, strokeW: (st.sw * s.size).toFixed(1),
+      plate: !!st.plate && lines.length > 0, plateFill: st.plate,
+      plateX: boxX.toFixed(1), plateY: boxY.toFixed(1), plateW: boxW.toFixed(1), plateH: boxH.toFixed(1), plateR: (s.size * 0.22).toFixed(1),
+      selected: !!(opts && opts.select) && lines.length > 0,
+      selX: (boxX - 8).toFixed(1), selY: (boxY - 8).toFixed(1), selW: (boxW + 16).toFixed(1), selH: (boxH + 16).toFixed(1),
+      knobX: (boxX + boxW + 8).toFixed(1), knobY: (boxY + boxH + 8).toFixed(1),
+      picHint: 'Tap to hide' + (hide ? ' · ' + this.stayShort(hide) : ''),
+      caption: (opts && opts.caption) || '',
+      down: (e) => this.drag(e, 'down', scale, layout),
+      move: (e) => this.drag(e, 'move', scale, layout),
+      up: (e) => this.drag(e, 'up', scale, layout)
+    };
+  }
+
+  // On the Text tab a drag moves the words; on the Photo tab it pans the photo.
+  drag(e, phase, scale, layout) {
+    const b = this.base(this.state);
+    if (b.screen !== 'compose' || layout === 'empty' || layout === 'plain') return;
+    if (phase === 'down') { this.dragging = { x: e.clientX, y: e.clientY }; if (e.currentTarget.setPointerCapture) e.currentTarget.setPointerCapture(e.pointerId); return; }
+    if (phase === 'up') { this.dragging = null; return; }
+    if (!this.dragging) return;
+    const dx = (e.clientX - this.dragging.x) / scale;
+    const dy = (e.clientY - this.dragging.y) / scale;
+    this.dragging = { x: e.clientX, y: e.clientY };
+    const key = layout === 'banner' ? 'banner' : 'full';
+    const h = layout === 'banner' ? 240 : 480;
+    if (b.tab === 'text') {
+      this.put((c) => {
+        const p = c.pos[key];
+        const next = { x: Math.max(0, Math.min(480, p.x + dx)), y: Math.max(0, Math.min(h, p.y + dy)) };
+        return { pos: Object.assign({}, c.pos, { [key]: next }) };
+      });
+    } else if (b.photo) {
+      this.put((c) => ({ panX: c.panX + dx, panY: c.panY + dy }));
+    }
+  }
+
+  stayShort(sec) {
+    if (!sec) return 'until tapped';
+    if (sec < 60) return sec + ' s';
+    if (sec < 3600) return (sec / 60) + ' min';
+    return (sec / 3600) + ' h';
+  }
+
+  send() {
+    const b = this.base(this.state);
+    if (this.layout(b) === 'empty') return;
+    this.put({ screen: 'status', status: 'queued', answer: '', refusal: '' });
+    this.later(1200, () => this.put({ status: 'shown' }));
+    if (!b.ask) this.later(1200 + 20000, () => this.put({ status: 'expired' }));
+  }
+
+  thumb(kind, word) {
+    const full = kind === 'photo' || kind === 'words';
+    return {
+      dog: kind === 'photo' || kind === 'banner',
+      viewBox: kind === 'banner' ? '120 0 240 240' : '0 0 480 480',
+      photoT: kind === 'banner' ? 'translate(-10 -185) scale(0.78)' : 'translate(-20 -60) scale(0.86)',
+      word: full && word ? word : '',
+      wordY: kind === 'words' ? 240 : 128,
+      wordSize: kind === 'words' ? 110 : 64,
+      ask: kind === 'question'
+    };
+  }
+
+  historyRows() {
+    const c = { ok: '#8FBC9A', warn: '#C9A36A', dim: '#9A9DA3', live: '#7FA7C9' };
+    return [
+      { day: 'Today', time: '14:02', kind: 'banner', title: 'Did the package come?', outcome: 'Answered “Yes”', color: c.ok },
+      { day: 'Today', time: '13:41', kind: 'photo', word: 'Home soon!', title: 'Home soon!', outcome: 'Shown · hid itself after 20 s', color: c.dim },
+      { day: 'Today', time: '12:15', kind: 'question', title: 'Did the plumber show up?', outcome: 'No answer in 15 min', color: c.warn },
+      { day: 'Today', time: '09:30', kind: 'words', word: 'Lunch?', title: 'Lunch?', outcome: 'Tapped away on the panel', color: c.dim },
+      { day: 'Yesterday', time: '19:05', kind: 'banner', title: 'Is the oven off?', outcome: 'Hidden without an answer', color: c.warn },
+      { day: 'Yesterday', time: '18:20', kind: 'photo', title: 'Photo', outcome: 'Shown · hid itself after 20 s', color: c.dim }
+    ];
+  }
+
+  renderVals() {
+    const s = this.base(this.state);
+    const layout = this.layout(s);
+    const screen = s.screen;
+    const blue = '#7FA7C9';
+    const online = { text: 'Online', color: '#8FBC9A' };
+    const titles = { card: 'jpanel', compose: 'Send to Jeff\'s panel', review: 'Review', status: 'Sent to Jeff\'s panel', refusals: 'Review', history: 'Sent to Jeff\'s panel' };
+
+    const captions = {
+      empty: 'Nothing yet · the panel\'s glass, 480 × 480',
+      full: 'Fills the glass · 480 × 480' + (s.words.trim() ? ' · words drawn in' : ''),
+      banner: 'Picture over the question · 480 × 240 strip',
+      plain: 'The panel\'s own question card · no picture'
+    };
+    const hasGlass = screen === 'compose' || screen === 'review' || screen === 'status';
+    const gSize = screen === 'status' ? 220 : s.refusal ? 250 : 320;
+    const g = this.glass(s, gSize, {
+      select: screen === 'compose' && s.tab === 'text',
+      caption: screen === 'review' ? 'This is what the panel will show' : screen === 'status' ? '' : captions[layout]
+    });
+
+    const tabDefs = [['photo', 'Photo', s.photo], ['text', 'Text', !!s.words.trim()], ['question', 'Question', s.ask]];
+    const tabs = tabDefs.map(([key, label, on]) => ({
+      label: label, on: on && s.tab !== key, selected: s.tab === key ? 'true' : 'false',
+      bg: s.tab === key ? 'rgba(127,167,201,0.13)' : 'transparent', color: s.tab === key ? blue : '#9A9DA3',
+      pick: () => this.put({ tab: key })
+    }));
+
+    const styles = Object.entries(this.styleDefs()).map(([key, d]) => ({
+      label: d.label, checked: s.style === key ? 'true' : 'false', ring: s.style === key ? blue : '#26282C',
+      labelColor: s.style === key ? '#E6E7E9' : '#9A9DA3',
+      fill: d.fill, stroke: d.stroke, sw: d.sw ? 3 : 0, plate: !!d.plate, plateFill: d.plate,
+      pick: () => this.put({ style: key })
+    }));
+
+    const qBytes = this.bytes(s.question);
+    const twoLines = s.question.length > 28;
+    const answerChips = s.answers.map((a, k) => ({
+      label: a, removeLabel: 'Remove ' + a,
+      remove: () => this.put((b) => ({ answers: b.answers.filter((_, j) => j !== k) }))
+    }));
+
+    const stayOpts = s.ask
+      ? [[900, '15 min'], [3600, '1 h'], [28800, '8 h'], [86400, '24 h']].map(([v, label]) => ({
+          label: label, pressed: s.stayAsk === v ? 'true' : 'false',
+          bg: s.stayAsk === v ? 'rgba(127,167,201,0.13)' : 'transparent', color: s.stayAsk === v ? blue : '#9A9DA3',
+          pick: () => this.put({ stayAsk: v })
+        }))
+      : [[20, '20 s'], [60, '1 min'], [300, '5 min'], [0, 'Until tap']].map(([v, label]) => ({
+          label: label, pressed: s.stayPlain === v ? 'true' : 'false',
+          bg: s.stayPlain === v ? 'rgba(127,167,201,0.13)' : 'transparent', color: s.stayPlain === v ? blue : '#9A9DA3',
+          pick: () => this.put({ stayPlain: v })
+        }));
+
+    const refusalText = {
+      offline: { title: 'your panel is offline', body: 'It was last heard from 2 h ago. Nothing waits on the box: send it again once the panel is back.', code: '503 offline', action: '' },
+      not_accepting: { title: 'notices are off on the panel', body: 'Accept notices is switched off. Turn it on here or on the panel, then send again.', code: '409 not_accepting', action: 'Panel settings → Notices' },
+      quiet_hours: { title: 'it’s night hours on the panel until 06:30', body: 'Refuse during night hours is on. Send it after 06:30, or switch that off in Panel settings.', code: '409 quiet_hours', action: 'Panel settings → Notices' },
+      busy: { title: '4 notices already waiting', body: 'The panel holds four at a time. Send again once one is answered or hidden.', code: '429 busy', action: '' }
+    };
+    const rf = s.refusal ? refusalText[s.refusal] : null;
+
+    // The status card: Sent, On the panel, then how it ended.
+    const at = { queued: 0, shown: 2, answered: 3, dismissed: 3, expired: 3 }[s.status];
+    const endLabel = s.ask
+      ? ({ answered: 'Answered “' + s.answer + '”', dismissed: 'Hidden without an answer', expired: 'No answer in ' + this.stayShort(s.stayAsk) }[s.status] || 'Waiting for an answer')
+      : ({ dismissed: 'Tapped away on the panel', expired: 'Hid itself after ' + this.stayShort(s.stayPlain) }[s.status] || 'On the glass for ' + this.stayShort(s.stayPlain));
+    const step = (k, label, sub, time) => {
+      const done = at > k;
+      const live = at === k && !done;
+      return {
+        label: label, sub: sub, hasSub: !!sub, time: done || live ? time : '',
+        done: done, live: live,
+        color: done || live ? '#E6E7E9' : '#6B6E75',
+        dotBg: done ? 'rgba(143,188,154,0.22)' : 'transparent', dotColor: '#8FBC9A',
+        dotBorder: done ? 'none' : live ? '2px solid #C9A36A' : '2px solid #3A3D42',
+        rule: k === 2 ? 'transparent' : '#26282C'
+      };
+    };
+    const steps = [
+      step(0, at === 0 ? 'Sending…' : 'Sent', '', '14:02:10'),
+      step(1, 'On the panel', at >= 2 ? 'Shown on the glass' : 'The panel picks it up within a few seconds', '14:02:13'),
+      step(2, endLabel, s.ask && at === 2 ? 'Answers accepted until 14:17' : '', s.status === 'answered' ? '14:05:41' : at === 3 ? '14:17:13' : '')
+    ];
+    const result = s.status === 'answered'
+      ? { on: true, kicker: 'Answered on the panel', big: s.answer, sub: 'Tapped at 14:05 · 3 min after it showed', bg: 'rgba(143,188,154,0.13)', color: '#8FBC9A' }
+      : s.status === 'shown' && s.ask
+        ? { on: true, kicker: 'On the panel', big: 'Waiting for a tap…', sub: 'You can leave this screen — the answer lands in Sent', bg: 'rgba(127,167,201,0.10)', color: blue }
+        : { on: false };
+
+    const hist = this.historyRows();
+    const histRow = (h, i, arr) => Object.assign({}, this.thumb(h.kind, h.word), h, {
+      rule: i === arr.length - 1 ? 'transparent' : '#26282C',
+      open: () => this.put({ screen: 'status', status: 'answered', answer: 'Yes', photo: true, ask: true, question: 'Did the package come?', answers: ['Yes', 'No'], words: '' })
+    });
+    const groups = ['Today', 'Yesterday'].map((d) => {
+      const rows = hist.filter((h) => h.day === d);
+      return { label: d, rows: rows.map(histRow) };
+    });
+    const recent = hist.slice(0, 3).map((h) => Object.assign({}, this.thumb(h.kind, h.word), h, { when: h.time }));
+
+    const canReview = layout !== 'empty';
+    const foot = screen === 'compose'
+      ? { primaryLabel: 'Review', primary: () => { if (canReview) this.put({ screen: 'review' }); }, disabled: canReview ? 'false' : 'true', bg: canReview ? 'rgba(127,167,201,0.13)' : '#1E2024', color: canReview ? blue : '#5C5F66', hasSecondary: false, sendIcon: false }
+      : screen === 'review'
+        ? { primaryLabel: rf ? 'Try again' : 'Send to panel', primary: () => this.send(), disabled: 'false', bg: 'rgba(127,167,201,0.13)', color: blue, hasSecondary: true, secondaryLabel: 'Edit', secondary: () => this.put({ screen: 'compose', refusal: '' }), sendIcon: true }
+        : screen === 'status'
+          ? { primaryLabel: 'Done', primary: () => this.put({ screen: 'card' }), disabled: 'false', bg: 'rgba(127,167,201,0.13)', color: blue, hasSecondary: true, secondaryLabel: 'Send another', secondary: () => this.put(Object.assign(this.initial(), { view: s.view, screen: 'compose', photo: false, words: '', ask: false, answers: [], question: '' })), sendIcon: false }
+          : null;
+
+    const reviewNote = s.refusal ? '' : s.ask
+      ? 'A tap off the answers hides it unanswered. On the clock face it waits as a corner badge; at night it shows in the night colour.'
+      : 'On the clock face it waits as a corner badge; at night the picture waits behind Show picture.';
+
+    return {
+      barTitle: titles[screen], barOnline: screen === 'compose' || screen === 'status', online: online,
+      back: () => this.put({ screen: screen === 'review' ? 'compose' : 'card', refusal: '' }),
+      isCard: screen === 'card', isCompose: screen === 'compose', isReview: screen === 'review' || false,
+      isStatus: screen === 'status', isRefusals: screen === 'refusals', isHistory: screen === 'history',
+      hasGlass: hasGlass, g: g,
+      openComposer: () => this.put({ screen: 'compose' }),
+      openHistory: () => this.put({ screen: 'history' }),
+      recent: recent,
+      tabs: tabs, tabPhoto: s.tab === 'photo', tabText: s.tab === 'text', tabQuestion: s.tab === 'question',
+      noPhoto: !s.photo, hasPhoto: s.photo,
+      pickFile: (e) => {
+        const file = e.target.files && e.target.files[0];
+        this.put({ photo: true, userPhotoUrl: file ? URL.createObjectURL(file) : '', zoom: 1, panX: 0, panY: 0 });
+      },
+      removePhoto: () => this.put({ photo: false, userPhotoUrl: '' }),
+      zoomPct: Math.round(s.zoom * 100), zoomText: s.zoom.toFixed(1) + '×',
+      setZoom: (e) => this.put({ zoom: Number(e.target.value) / 100 }),
+      words: s.words, wordsCount: this.bytes(s.words) + ' / 60',
+      setWords: (e) => this.put({ words: e.target.value.slice(0, 60) }),
+      size: s.size, sizeText: s.size + ' px on the panel',
+      setSize: (e) => this.put({ size: Number(e.target.value) }),
+      styles: styles,
+      ask: s.ask, askChecked: s.ask ? 'true' : 'false', askSw: this.sw(s.ask),
+      flipAsk: () => this.put((b) => ({ ask: !b.ask, answers: !b.ask && !b.answers.length ? ['Yes', 'No'] : b.answers })),
+      question: s.question, questionCount: qBytes + ' / 60',
+      setQuestion: (e) => this.put({ question: e.target.value }),
+      answerChips: answerChips, canAdd: s.answers.length < 4, showYesNo: s.answers.length === 0,
+      addAnswer: () => this.put((b) => ({ answers: b.answers.concat(['Maybe']).slice(0, 4) })),
+      yesNo: () => this.put({ answers: ['Yes', 'No'] }),
+      questionNote: layout === 'banner'
+        ? (twoLines ? 'Two lines of question: the picture strip shrinks to 480 × 200 so the answers still fit.' : 'With a picture, the panel shows it as a strip above the question. Drag in the square to frame the strip.')
+        : 'No picture: the panel draws the question on its own card, answers underneath.',
+      refusal: rf ? { on: true, title: rf.title, body: rf.body } : { on: false, title: '', body: '' },
+      chimeChecked: s.chime ? 'true' : 'false', chimeSw: this.sw(s.chime),
+      flipChime: () => this.put((b) => ({ chime: !b.chime })),
+      stayLabel: s.ask ? 'Waits for an answer' : 'Stays on the panel',
+      staySub: s.ask ? 'Until tapped, up to this long' : 'Then it hides itself; a tap hides it sooner',
+      stayOpts: stayOpts,
+      reviewNote: reviewNote,
+      steps: steps, result: result,
+      refusalCards: ['offline', 'not_accepting', 'quiet_hours', 'busy'].map((k) => Object.assign({ hasAction: !!refusalText[k].action }, refusalText[k])),
+      historyGroups: groups,
+      hasFoot: !!foot, foot: foot || { primaryLabel: '', primary: () => {}, disabled: 'false', bg: '', color: '', hasSecondary: false, secondaryLabel: '', secondary: () => {}, sendIcon: false }
+    };
+  }
+}
+</script>
+</body>
+</html>

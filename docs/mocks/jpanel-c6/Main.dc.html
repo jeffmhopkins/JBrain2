@@ -15,6 +15,50 @@ body{margin:0}
 </style>
 </helmet>
 <div style="width: 720px; height: 720px; position: relative; overflow: hidden; background: #E4E4E0; font-family: 'Montserrat', sans-serif; color: #1A1B1E;">
+<svg width="0" height="0" style="position: absolute;" aria-hidden="true">
+    <defs>
+      <linearGradient id="dogsky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#27365F"></stop><stop offset="0.45" stop-color="#9A5A6E"></stop><stop offset="0.75" stop-color="#E58A62"></stop><stop offset="1" stop-color="#F6C47E"></stop></linearGradient>
+      <linearGradient id="doglawn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5E7D3A"></stop><stop offset="1" stop-color="#2F4A24"></stop></linearGradient>
+      <linearGradient id="dogfur" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#C98B47"></stop><stop offset="0.55" stop-color="#E2AE66"></stop><stop offset="1" stop-color="#F0C27C"></stop></linearGradient>
+      <g id="dogphoto">
+        <rect x="0" y="0" width="640" height="420" fill="url(#dogsky)"></rect>
+        <circle cx="500" cy="372" r="80" fill="#FCD58E" opacity="0.25"></circle>
+        <circle cx="500" cy="372" r="58" fill="#FCD58E"></circle>
+        <path d="M0 392 L80 360 L170 380 L250 346 L340 378 L430 352 L520 384 L640 356 L640 430 L0 430 Z" fill="#5A3F5E"></path>
+        <rect x="0" y="414" width="640" height="226" fill="url(#doglawn)"></rect>
+        <g fill="#7A9A4C" opacity="0.6"><path d="M40 470 l6 -16 l6 16 Z"></path><path d="M120 520 l6 -18 l6 18 Z"></path><path d="M560 470 l6 -16 l6 16 Z"></path><path d="M610 600 l6 -18 l6 18 Z"></path><path d="M80 600 l6 -18 l6 18 Z"></path></g>
+        <ellipse cx="330" cy="624" rx="170" ry="20" fill="#1C2B15" opacity="0.55"></ellipse>
+        <rect x="448" y="520" width="128" height="88" rx="4" fill="#B98552"></rect>
+        <path d="M448 520 L476 498 L604 498 L576 520 Z" fill="#D2A06A"></path>
+        <path d="M576 520 L604 498 L604 586 L576 608 Z" fill="#9A6C40"></path>
+        <rect x="500" y="520" width="22" height="88" fill="#E7D3A8" opacity="0.8"></rect>
+        <rect x="462" y="540" width="30" height="18" fill="#F1ECE2"></rect>
+        <path d="M392 560 C470 560 470 470 438 446" fill="none" stroke="#D49A55" stroke-width="26" stroke-linecap="round"></path>
+        <ellipse cx="300" cy="510" rx="112" ry="118" fill="url(#dogfur)"></ellipse>
+        <ellipse cx="378" cy="566" rx="62" ry="54" fill="#C98B47"></ellipse>
+        <rect x="246" y="500" width="36" height="116" rx="18" fill="#E2AE66"></rect>
+        <rect x="320" y="500" width="36" height="116" rx="18" fill="#E8B670"></rect>
+        <ellipse cx="262" cy="614" rx="26" ry="14" fill="#F1CC8E"></ellipse>
+        <ellipse cx="340" cy="614" rx="26" ry="14" fill="#F1CC8E"></ellipse>
+        <ellipse cx="300" cy="470" rx="62" ry="80" fill="#F2D19B"></ellipse>
+        <path d="M240 404 Q300 430 360 404 L356 422 Q300 446 244 422 Z" fill="#3E6FA8"></path>
+        <circle cx="300" cy="446" r="11" fill="#E9C46A"></circle>
+        <ellipse cx="226" cy="352" rx="32" ry="62" fill="#B07436" transform="rotate(18 226 352)"></ellipse>
+        <ellipse cx="374" cy="352" rx="32" ry="62" fill="#B07436" transform="rotate(-18 374 352)"></ellipse>
+        <circle cx="300" cy="326" r="80" fill="#E2AE66"></circle>
+        <ellipse cx="300" cy="300" rx="62" ry="40" fill="#E9B86F"></ellipse>
+        <ellipse cx="300" cy="372" rx="46" ry="36" fill="#F2D19B"></ellipse>
+        <path d="M300 362 L300 380 M300 380 Q286 392 274 384 M300 380 Q314 392 326 384" fill="none" stroke="#5A3A22" stroke-width="4" stroke-linecap="round"></path>
+        <ellipse cx="300" cy="398" rx="13" ry="17" fill="#E07A7E"></ellipse>
+        <ellipse cx="300" cy="352" rx="17" ry="12" fill="#2A1D16"></ellipse>
+        <circle cx="268" cy="310" r="9" fill="#2A1D16"></circle>
+        <circle cx="332" cy="310" r="9" fill="#2A1D16"></circle>
+        <circle cx="271" cy="307" r="3" fill="#FFFFFF"></circle>
+        <circle cx="335" cy="307" r="3" fill="#FFFFFF"></circle>
+        <path d="M256 290 Q268 282 280 288 M320 288 Q332 282 344 290" fill="none" stroke="#B07436" stroke-width="4" stroke-linecap="round"></path>
+      </g>
+    </defs>
+  </svg>
 <div style="position: absolute; inset: 0; transform: rotate({{tiltDeg}}deg); transform-origin: 360px 395px; transition: transform 300ms ease;">
 
   <div style="position: absolute; left: 423px; top: 30px; width: 120px; display: flex; flex-direction: column; align-items: center; gap: 2px;">
@@ -470,6 +514,11 @@ body{margin:0}
                     <rect x="236" y="60" width="44" height="32" fill="#B0B0B0"></rect><rect x="236" y="60" width="44" height="6" fill="#8F8F8F"></rect><rect x="250" y="74" width="16" height="18" fill="#5A5A5A"></rect>
                   </svg>
                 </sc-if>
+                <sc-if value="{{note.imgDog}}" hint-placeholder-val="{{false}}">
+                  <svg width="480" height="{{note.bannerH}}" viewBox="0 0 480 240" aria-hidden="true">
+                    <g transform="translate(-10 -185) scale(0.78)"><use href="#dogphoto"></use></g>
+                  </svg>
+                </sc-if>
                 <span style="position: absolute; right: 12px; bottom: 8px; font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.75);">{{note.imageCaption}}</span>
               </div>
             </sc-if>
@@ -523,6 +572,19 @@ body{margin:0}
                   <text x="40" y="196" font-family="Montserrat, sans-serif" font-size="88" font-weight="700" fill="#FFFFFF">72°</text>
                   <text x="44" y="404" font-family="Montserrat, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF">Rain at 3 pm</text>
                   <text x="44" y="440" font-family="Montserrat, sans-serif" font-size="20" font-weight="600" fill="#F2D6C2">Take the umbrella · clears by 6</text>
+                </svg>
+              </sc-if>
+              <sc-if value="{{note.imgDog}}" hint-placeholder-val="{{false}}">
+                <svg width="480" height="480" viewBox="0 0 480 480" aria-hidden="true">
+                  <g transform="translate(-20 -60) scale(0.86)"><use href="#dogphoto"></use></g>
+                  <text x="240" y="128" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="64" fill="#FFFFFF" stroke="#111214" stroke-width="9" paint-order="stroke" stroke-linejoin="round">{{note.burned}}</text>
+                </svg>
+              </sc-if>
+              <sc-if value="{{note.imgWords}}" hint-placeholder-val="{{false}}">
+                <svg width="480" height="480" viewBox="0 0 480 480" aria-hidden="true">
+                  <rect x="0" y="0" width="480" height="480" fill="#000000"></rect>
+                  <text x="240" y="196" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="104" fill="#FFD447">Back</text>
+                  <text x="240" y="312" text-anchor="middle" dominant-baseline="central" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-weight="800" font-size="104" fill="#FFD447">by 6</text>
                 </svg>
               </sc-if>
               <div style="position: absolute; left: 20px; top: 20px; height: 40px; padding: 0 14px; border-radius: 20px; background: rgba(0,0,0,0.55); color: #E6E7E9; display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 700;">
@@ -666,7 +728,7 @@ body{margin:0}
 </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question","notify-question-sound","notify-picture","notify-night","notify-banner","notify-audio","dave","jerv-menu","jerv-recent","jerv-recent-loading","jerv-recent-empty","jerv-switched","jerv-new","dave-menu","dave-recent","jerv-listen","jerv-listen-starting","jerv-listen-playing","jerv-listen-working","dave-listen-playing","jerv-history","jerv-history-loading","jerv-history-loaded","jerv-history-capped","dave-history-start","quorra-history"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent","picture","picture at night","banner question","with a sound","question with a sound"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
+<script type="text/x-dc" data-dc-script data-props='{"start":{"editor":"enum","options":["home","home-p2","jerv","rec-jerv","quorra","rec-quorra","tamsin","minecraft","settings","updating","calib","clock","clock-night","clock-badge","clock-alarms","ringing","notify-info","notify-question","notify-question-sound","notify-picture","notify-night","notify-banner","notify-audio","notify-photo","notify-photo-question","notify-words","dave","jerv-menu","jerv-recent","jerv-recent-loading","jerv-recent-empty","jerv-switched","jerv-new","dave-menu","dave-recent","jerv-listen","jerv-listen-starting","jerv-listen-playing","jerv-listen-working","dave-listen-playing","jerv-history","jerv-history-loading","jerv-history-loaded","jerv-history-capped","dave-history-start","quorra-history"],"default":"home","section":"Starting screen"},"incoming":{"editor":"enum","options":["none","info","yes/no question","three choices","urgent","picture","picture at night","banner question","with a sound","question with a sound","photo from you","photo question from you"],"default":"none","section":"Send a test message"},"tilt":{"editor":"enum","options":["upright","turned left","upside down","turned right"],"default":"upright","section":"Device"},"power":{"editor":"enum","options":["charging","on battery","low battery","no battery"],"default":"charging","section":"Device"},"$preview":{"width":720,"height":720}}'>
 class Component extends DCLogic {
   accents() {
     return {
@@ -972,6 +1034,9 @@ class Component extends DCLogic {
     if (start === 'notify-picture') { s.notes = [this.sample('picture')]; s.noteAge = 3; s.noteFrozen = true; }
     if (start === 'notify-night') { s.forceNight = true; s.notes = [this.sample('picture at night')]; s.noteAge = 2; s.noteFrozen = true; }
     if (start === 'notify-banner') { s.notes = [this.sample('banner question')]; s.noteFrozen = true; }
+    if (start === 'notify-photo') { s.notes = [this.sample('photo from you')]; s.noteReveal = s.notes[0].id; s.noteAge = 4; s.noteFrozen = true; }
+    if (start === 'notify-photo-question') { s.notes = [this.sample('photo question from you')]; s.noteFrozen = true; }
+    if (start === 'notify-words') { s.notes = [this.sample('words from you')]; s.noteReveal = s.notes[0].id; s.noteAge = 2; s.noteFrozen = true; }
     if (start === 'notify-audio') { s.notes = [this.sample('with a sound')]; s.noteAge = 2.6; s.noteFrozen = true; }
     if (start === 'clock-night') { s.screen = 'clock'; s.page = 1; s.forceNight = true; }
     if (start === 'clock-badge') { s.screen = 'clock'; s.page = 1; s.forceNight = true; s.notes = [this.sample('yes/no question')]; }
@@ -1278,7 +1343,14 @@ class Component extends DCLogic {
       'with a sound': { from: 'Jerv', title: 'The pizza is here', body: 'The driver is at the front door.', choices: [], audio: 6 },
       // A question carries a sound like any notice: it plays once as it arrives, and a tap on
       // the speaker row plays it again.
-      'question with a sound': { from: 'Jerv', title: 'Let the plumber in?', body: 'He is at the front door. I can unlock it for ten minutes.', choices: ['Yes', 'No'], audio: 5 }
+      'question with a sound': { from: 'Jerv', title: 'Let the plumber in?', body: 'He is at the front door. I can unlock it for ten minutes.', choices: ['Yes', 'No'], audio: 5 },
+      // From the owner's own phone (PwaNoticeComposer, proposed 2026-10-14): the words are burned
+      // into the picture on the phone, so the panel draws pixels like any sender's picture.
+      'photo from you': { from: 'You', title: 'Home soon!', body: '', choices: [], image: 'dog', burned: 'Home soon!', mode: 'full' },
+      // With a question the photo is a 480 × 240 strip over the panel's own words and answers.
+      'photo question from you': { from: 'You', title: 'Did the package come?', body: '', choices: ['Yes', 'No'], image: 'dog', mode: 'banner', bannerH: 240 },
+      // Words with no photo: still a picture, drawn on black at the size he picked.
+      'words from you': { from: 'You', title: 'Back by 6', body: '', choices: [], image: 'words', mode: 'full' }
     }[kind];
     this.noteSeq = (this.noteSeq || 0) + 1;
     return Object.assign({ id: this.noteSeq, urgent: false }, k);
@@ -1722,7 +1794,7 @@ class Component extends DCLogic {
       })(),
       note: (() => {
         const n = s.notes[0];
-        if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', picHint: '', accent: '#7FA7C9', titleColor: '#E6E7E9', bodyColor: '#C4C7CC', mutedColor: '#9A9DA3', inkOpacity: 1, aria: '', pad: '40px 32px 30px', titleSize: 30, hasButtons: false, hasBanner: false, isPicture: false, nightAsk: false, revealBg: '', reveal: () => {}, hasAudio: false, hasTimer: false, audio: { pct: 0, time: '', aria: '', tint: '', waveOpacity: 1, playing: false, done: false, replay: () => {} }, timerPct: 0, timerColor: '#7FA7C9', timerAria: '', bannerH: 0, imgMinecraft: false, imgWeather: false, imageAlt: '', imageCaption: '', tapCard: () => {} };
+        if (!n) return { from: '', title: '', body: '', choices: [], cols: 1, count: '', hint: '', picHint: '', accent: '#7FA7C9', titleColor: '#E6E7E9', bodyColor: '#C4C7CC', mutedColor: '#9A9DA3', inkOpacity: 1, aria: '', pad: '40px 32px 30px', titleSize: 30, hasButtons: false, hasBanner: false, isPicture: false, nightAsk: false, revealBg: '', reveal: () => {}, hasAudio: false, hasTimer: false, audio: { pct: 0, time: '', aria: '', tint: '', waveOpacity: 1, playing: false, done: false, replay: () => {} }, timerPct: 0, timerColor: '#7FA7C9', timerAria: '', bannerH: 0, imgMinecraft: false, imgWeather: false, imgDog: false, imgWords: false, burned: '', imageAlt: '', imageCaption: '', tapCard: () => {} };
         // A button inside the card must not also count as the tap that hides it.
         const own = (fn) => (e) => { if (e && e.stopPropagation) e.stopPropagation(); if (!this.swiped) fn(); };
         const answer = (label) => own(() => {
@@ -1767,10 +1839,13 @@ class Component extends DCLogic {
           titleSize: n.mode === 'banner' ? 26 : 30,
           hasButtons: n.choices.length > 0,
           hasBanner: n.mode === 'banner',
-          bannerH: 140,
+          bannerH: n.bannerH || 140,
           isPicture: isPicture,
           imgMinecraft: n.image === 'minecraft',
           imgWeather: n.image === 'weather',
+          imgDog: n.image === 'dog',
+          imgWords: n.image === 'words',
+          burned: n.burned || '',
           imageAlt: n.title,
           imageCaption: n.image === 'minecraft' ? 'drawn by the sender' : '',
           hasAudio: !!n.audio,
