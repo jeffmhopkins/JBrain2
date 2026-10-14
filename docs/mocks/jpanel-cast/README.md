@@ -1,6 +1,6 @@
 # jpanel Cast — notices on the house's Chromecast TVs
 
-> **Status:** Proposed, awaiting the owner's review · **Last verified:** 2026-10-14
+> **Status:** **Approved by the owner** (2026-10-14), not yet built · **Last verified:** 2026-10-14
 
 Open `index.html` in a browser. It is one standalone page: the PWA side (launcher tile, TVs,
 one TV's settings, Send, the result sheet, Sent) and the 16:9 frames a TV shows.
