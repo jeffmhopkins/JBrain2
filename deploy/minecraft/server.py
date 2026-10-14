@@ -1178,7 +1178,13 @@ class Rig:
             return pack_id  # a world BDS hasn't generated yet: next start installs it
         self.remove_pack(dir_name, pack_id, kind)
         if install_it:
-            shutil.copytree(src, world / f"{kind}_packs" / dir_name)
+            # A pack's README is for the repo: a world's packs go out in its .mcworld
+            # and a resource pack to every client on join.
+            shutil.copytree(
+                src,
+                world / f"{kind}_packs" / dir_name,
+                ignore=shutil.ignore_patterns("README.md"),
+            )
             listing = world / f"world_{kind}_packs.json"
             packs = json.loads(listing.read_text())
             packs.append({"pack_id": pack_id, "version": manifest["header"]["version"]})
