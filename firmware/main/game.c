@@ -100,12 +100,15 @@ void game_tap(game_t *g, uint32_t now)
 void game_stop(game_t *g, uint32_t now)
 {
     if (g->phase == GAME_OFF || g->phase == GAME_WALK_OUT) return;
+    g->out_s = GAME_SCALE;
     if (g->phase == GAME_WALK_IN) {
-        /* Turned back halfway: walk out from where the walk in had got to. */
+        /* Turned back halfway: walk out from where the walk in had got to, at the size it had
+           reached (review), not snapped down to a fifth. */
         float x, y, s;
         game_figure(g, now, &x, &y, &s);
         g->x = x;
         g->y = y;
+        g->out_s = s;
     }
     memset(g->obj, 0, sizeof(g->obj));
     g->phase = GAME_WALK_OUT;
@@ -124,7 +127,7 @@ void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale
     case GAME_WALK_OUT:
         *x = g->x + (g->home_x - g->x) * k;
         *y = g->y + (g->home_y - g->y) * k;
-        *scale = GAME_SCALE + (1.0f - GAME_SCALE) * k;
+        *scale = g->out_s + (1.0f - g->out_s) * k;
         return;
     case GAME_PLAY:
     case GAME_OVER:

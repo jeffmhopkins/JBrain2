@@ -1605,6 +1605,17 @@ static void test_the_dodging_game(void)
         for (const uint32_t s1 = u; u < s1 + GAME_WALK_MS + 80; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
         game_figure(&q, u, &ax2, &ay2, &as2);
         CHECK(q.phase == GAME_PLAY && as2 == GAME_SCALE, "and shrinks the rest of the way in");
+
+        /* And the mirror (review): stopped early in the walk in, he grows back from the size
+           he had reached, not from a fifth. */
+        game_reset(&q);
+        game_start(&q, 0, 23, 40.0f, 20.0f);
+        u = GAME_WALK_MS / 5;
+        game_figure(&q, u, &bx, &by, &bs);
+        game_stop(&q, u);
+        game_figure(&q, u, &ax2, &ay2, &as2);
+        CHECK(bs > 0.8f && fabsf(as2 - bs) < 0.01f && fabsf(ax2 - bx) < 0.5f,
+              "stopped on the way in: he turns round at the size he is");
     }
 
     /* AND IT ENDS: a minute of nobody playing, or stopped, and he walks back, growing. */

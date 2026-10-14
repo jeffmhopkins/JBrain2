@@ -68,6 +68,7 @@ typedef struct {
     float home_x, home_y; /* where he stood, to walk back to */
     float from_x, from_y; /* where the walk in started */
     float from_s;         /* and at what size: 1, or less when asked again on the way out */
+    float out_s;          /* the size the walk out starts at: a fifth, or more if stopped early */
     int score, best;
     float spawn_in;       /* seconds to the next one */
     game_obj_t obj[GAME_MAX_OBJ];
