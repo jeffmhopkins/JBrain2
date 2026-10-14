@@ -5,7 +5,8 @@ the two builds look like?* The owner signed off on the look from the preview ren
 The build into worlds is planned as waves SW1–SW3 in
 `docs/plans/MINECRAFT_BEDROCK_PLAN.md`. `export.py` hands the builds to the sidecar as
 `deploy/minecraft/wreck/*.json.gz`, which `deploy/minecraft/structures.py` turns into
-structure files at image build.
+structure files at image build. How the pack places them in a new world is
+`deploy/minecraft/wreck-pack/README.md`.
 
 ## The two builds
 

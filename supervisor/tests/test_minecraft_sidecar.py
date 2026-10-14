@@ -504,6 +504,25 @@ def test_a_failed_backup_installs_nothing(
     assert rig.bds.running  # never stopped
 
 
+def test_a_packs_readme_stays_in_the_repo_and_out_of_the_world(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A world's packs are exported in its .mcworld and the resource pack is pushed to
+    every client on join, so the repo's notes for developers never ride along."""
+    monkeypatch.setattr(server, "SERVER_DIR", tmp_path / "server")
+    monkeypatch.setattr(server, "OVERRIDES", tmp_path / "properties.json")
+    rig = server.Rig(env={})
+    world = tmp_path / "server" / "worlds" / "world"
+    world.mkdir(parents=True)
+    packs = ((server.JBRAIN_PACK_SRC, "behavior"), (server.JBRAIN_RP_SRC, "resource"))
+    for src, kind in packs:
+        assert (src / "README.md").exists()
+        rig.install_pack(src, server.JBRAIN_PACK_DIR, True, kind=kind)
+        dest = world / f"{kind}_packs" / server.JBRAIN_PACK_DIR
+        assert (dest / "manifest.json").exists()
+        assert not list(dest.rglob("README.md"))
+
+
 def test_an_up_to_date_server_is_not_restarted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
