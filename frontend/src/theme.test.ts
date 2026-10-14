@@ -37,17 +37,18 @@ describe("theme manager", () => {
     expect(resolveTheme("dark-bright", false)).toBe("dark-bright");
   });
 
-  it("defaults to system and persists explicit picks", () => {
+  it("defaults to Dark+ and persists explicit picks", () => {
     stubMatchMedia(true);
-    expect(getThemePref()).toBe("system");
+    expect(getThemePref()).toBe("dark-bright");
 
     setThemePref("light");
     expect(getThemePref()).toBe("light");
     expect(localStorage.getItem("jbrain.theme")).toBe("light");
 
-    // Back to system clears the override entirely.
+    // System is stored explicitly, so it isn't mistaken for "never picked".
     setThemePref("system");
-    expect(localStorage.getItem("jbrain.theme")).toBeNull();
+    expect(localStorage.getItem("jbrain.theme")).toBe("system");
+    expect(getThemePref()).toBe("system");
   });
 
   it("applies data-theme and the theme-color meta", () => {
@@ -70,6 +71,7 @@ describe("theme manager", () => {
 
   it("follows OS changes only while the pref is system", () => {
     const media = stubMatchMedia(false);
+    localStorage.setItem("jbrain.theme", "system");
     initTheme();
     expect(document.documentElement.dataset.theme).toBe("light");
 
@@ -82,16 +84,16 @@ describe("theme manager", () => {
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 
-  it("uses an unpersisted fallback only while nothing is stored", () => {
+  it("opens in Dark+ for a viewer who never picked, without persisting it", () => {
     const media = stubMatchMedia(false);
-    initTheme("dark-bright");
+    initTheme();
     expect(document.documentElement.dataset.theme).toBe("dark-bright");
     expect(localStorage.getItem("jbrain.theme")).toBeNull();
     media.fireChange(true);
     expect(document.documentElement.dataset.theme).toBe("dark-bright");
 
     localStorage.setItem("jbrain.theme", "light");
-    initTheme("dark-bright");
+    initTheme();
     expect(document.documentElement.dataset.theme).toBe("light");
   });
 });
