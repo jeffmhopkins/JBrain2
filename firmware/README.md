@@ -190,6 +190,36 @@ laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
 
+**0.4.14: happy birthday, and a game.** Agreed against a playable mock first (artifact
+`HoUATxevCfmDDiJdHZKM5A`), then built.
+
+*"Happy Birthday where it plays the first phrase of happy birthday beeps, and robot puts on a
+birthday hat and confetti drops."* `ACT_BIRTHDAY`, 7 s. The line is G G A G C B, 2.4 s, and a cue
+cannot pass 0.8 s, so it is three cues (`CUE_BDAY_1..3`, a new `SH_TUNE` shape: notes with their
+own lengths, detached like beeps) at the start and at the action's two re-cue points, 0.84 s
+apart, each over before the next is due. A tune's pieces must share a key, so they are played
+with one explicit variant per birthday (`cue_is_tune`, `display.c` `play_action_cue`), not each
+cue's own counter, which would sing each phrase in a different key. `EXTRA_PARTY` puts a striped
+party hat on the head (`draw_overhead`, so it fits the robot's and the bird's) and drops confetti
+over everything, a pure function of progress, all landed by the end.
+
+*"Let's play a game ... it uses the accelerometer to tilt the robot left and right, forwards and
+backwards, and scrolls objects from random directions. The robot is 1/4 to 1/5 normal size,
+starts center screen (he walks there while getting smaller) ... 10 or more item types, various
+rotations ... start of slow and go faster, giving a score for each one dodged."* `game.c`, pure
+and host-tested; a new voice kind, `VOCAB_GAME`. He walks to the middle shrinking to 0.21 over
+1.6 s, "READY", "GO!", and twelve kinds of thing (a football, a duck, a banana, a boot, a cactus,
+an anvil, a donut, a rocket, a sock, a flying saucer, a fish, a slice of pizza) fly in spinning
+from all four sides, most aimed at him. Their speed and rate climb with the time survived. Tilt
+is acceleration, so he runs downhill and skids: left/right is the lean's own tilt, and
+forward/back is the accelerometer across the glass, both taken from where the panel was when the
+game began, so it plays held upright or leaning back. **The sign of forward/back is unverified on
+hardware**: tipping the top away is meant to run him down the screen; the start's raw `az` is
+logged (`game: start`) to check it. A thing touching him ends the round (dazed, score and best);
+a tap plays again; the name, any other command, leaving the pet screen or a minute with nobody
+tilting ends the game and he walks back, growing. During a game a poke is the game's, a shake is
+not dizzy, no poop comes due, and the name label gives its corner to the score.
+
 **0.4.13: tickled out.** Owner: *"on tickle mode, if tickled 5 times, he should fart and go
 dazed."* The fifth tickle now starts a run, `rig_run_tickled_out`: the laughing fit, then a
 fart, then `ACT_DIZZY`, sitting down hard with the stars going round. `display.c` keeps where

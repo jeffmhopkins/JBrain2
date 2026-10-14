@@ -36,6 +36,7 @@ static int16_t mock_voice(bool dad, uint32_t i);
 
 #include "caption.h"
 #include "poop.h"
+#include "game.h"
 #include "tickle.h"
 #include "confirm.h"
 #include "cue_names.gen.h"
@@ -123,6 +124,13 @@ static poop_t r_poop;
 static tickle_t r_tickle; /* "I'm going to tickle you", then pokes (`tickle.h`) */
 static rig_run_t r_run; /* what follows r_action (`rig_run_next`) */
 static float r_mag = 1.0f; /* the action's magnitude: the tickles rise */
+/* As the panel does: the game (`game.h`), the forward tilt slider it steers by, the tilts it
+   started from, and which "happy birthday" this is (`cue_is_tune`). */
+static game_t r_game;
+static int r_fwd_deg;
+static float r_game_tx0, r_game_ty0;
+static unsigned r_song;
+static bool r_game_ask;
 static uint32_t r_poop_last;
 static float r_recue_p;
 static float r_flinch;
@@ -360,6 +368,18 @@ static void sweep_box(void)
     if (g_nouts > 60) g_nouts = 0;
 }
 
+/* As the panel does (`display.c` `play_action_cue`): a tune's piece in this song's key. */
+static void r_play_cue(action_t a, float p, const char *how)
+{
+    const cue_t c = cue_for_action_at((int)a, p);
+    if (cue_is_tune(c)) {
+        (void)stream_cue(&g_st, STREAM_SLOT_PRESS, c, STREAM_CUE_GAIN, r_song);
+    } else {
+        (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
+    }
+    say("cue", "%s (%s)", cue_name(c), how);
+}
+
 static void frame(void)
 {
     /* ONE RENDER FRAME PER 40 ms OF PANEL TIME, as `display.c` runs. The box's waits advance the
@@ -468,6 +488,8 @@ static void frame(void)
         r_pending_act = ACT_NONE;
         if (r_action == ACT_EAT && poop_ate(&r_poop, now)) say("pet", "three meals in a minute");
         if (r_action == ACT_BRACE) tickle_arm(&r_tickle, now);
+        game_stop(&r_game, now); /* as the panel does: asked for something, the game ends */
+        if (r_action == ACT_BIRTHDAY) r_song++;
         if (r_action == ACT_EAT) {
             static const char *const FOOD[FOOD_COUNT] = {"cookie", "apple",  "banana", "pizza",
                                                          "donut",  "carrot", "watermelon",
@@ -478,21 +500,38 @@ static void frame(void)
         /* As the panel does: the shake's cue only when nothing else owns the speaker; a phrase
            is a voice command, and those are deaf while a message plays. */
         if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
-            const cue_t c = cue_for_action((int)r_action);
-            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
-            say("cue", "%s (press slot)", cue_name(c));
+            r_play_cue(r_action, 0.0f, "press slot");
         }
         say("pet", "%s", r_action == ACT_DIZZY  ? "shaken: dizzy"
+                         : r_action == ACT_BIRTHDAY ? "heard \"happy birthday\""
                          : r_action == ACT_LOVE ? "heard \"i love you\""
                          : r_action == ACT_EAT  ? "heard \"have a snack\""
                          : r_action == ACT_FART ? "heard \"fart\": a short one"
                          : r_action == ACT_MEGAFART ? "heard \"fart\": THE LONG ONE"
                                                 : "heard \"im going to tickle you\"");
     }
-    if (s_out.pet_press && r_action == ACT_NONE) r_flinch = 1.0f;
+    /* As the panel does: "lets play a game" walks him to the middle, shrinking; the tilt he is
+       held at now is level. */
+    if (r_game_ask) {
+        r_game_ask = false;
+        if (s_sm.mode == SM_PET) {
+            float hx, hy;
+            face_game_home(r_lean, &hx, &hy);
+            r_action = ACT_NONE;
+            game_start(&r_game, now, r_now_rnd() | 1u, hx, hy);
+            r_game_tx0 = sinf((float)r_tilt_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f;
+            r_game_ty0 = sinf((float)r_fwd_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f;
+            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, CUE_HEARD);
+            say("pet", "heard \"lets play a game\"");
+        }
+    }
+    /* As the panel does: playing, a tap is the game's. */
+    const bool poke = s_out.pet_press && !game_on(&r_game);
+    if (s_out.pet_press && game_on(&r_game)) game_tap(&r_game, now);
+    if (poke && r_action == ACT_NONE) r_flinch = 1.0f;
     /* As the panel does: warned, a poke is a tickle. The bench has no poke pools, so an
        unwarned poke stays a flinch. */
-    if (s_out.pet_press && facts.pet_only && !rig_holds_pokes(r_action)) {
+    if (poke && facts.pet_only && !rig_holds_pokes(r_action)) {
         const tickle_poke_t tk = tickle_poke(&r_tickle, now);
         if (tk != TICKLE_NO) {
             r_action = tk == TICKLE_BIG ? ACT_TICKLE : ACT_TICKLED;
@@ -506,7 +545,33 @@ static void frame(void)
             say("pet", "%s", tk == TICKLE_BIG ? "tickled: the fifth gets him" : "tickled");
         }
     }
-    if (r_poop.owed && r_action == ACT_NONE && s_sm.mode == SM_PET) {
+    /* As the panel does: the game's step, its sounds; off the pet screen it ends. */
+    if (game_on(&r_game)) {
+        if (s_sm.mode != SM_PET) game_stop(&r_game, now);
+        float hw, hh;
+        face_game_field(&hw, &hh);
+        const float tx = sinf((float)r_tilt_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f - r_game_tx0;
+        const float ty = sinf((float)r_fwd_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f - r_game_ty0;
+        static uint32_t last;
+        const uint32_t dt = last != 0 && now - last < 200u ? now - last : 40u;
+        last = now;
+        const unsigned ev = game_step(&r_game, now, dt, tx, ty, hw, hh);
+        static const struct {
+            unsigned bit;
+            cue_t c;
+            const char *what;
+        } SAY[] = {{GAME_EV_GO, CUE_GAME_GO, "go!"},
+                   {GAME_EV_DODGE, CUE_DODGE, "dodged one"},
+                   {GAME_EV_HIT, CUE_GAME_HIT, "hit"}};
+        for (unsigned i = 0; i < sizeof(SAY) / sizeof(SAY[0]); i++) {
+            if (!(ev & SAY[i].bit)) continue;
+            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, SAY[i].c);
+            say("cue", "%s (press slot)", cue_name(SAY[i].c));
+            say("game", "%s, score %d", SAY[i].what, r_game.score);
+        }
+        if (ev & GAME_EV_DONE) say("game", "over: back to his own size");
+    }
+    if (r_poop.owed && r_action == ACT_NONE && s_sm.mode == SM_PET && !game_on(&r_game)) {
         r_mag = 1.0f;
         r_action = ACT_POOP;
         r_action_at = now;
@@ -551,9 +616,7 @@ static void frame(void)
                 r_mag = 1.0f;
                 r_action_at = now;
                 if (s_sm.mode == SM_PET && !facts.speaker_busy && rig_cue_on_start(r_action)) {
-                    const cue_t c = cue_for_action((int)r_action);
-                    (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
-                    say("cue", "%s (press slot)", cue_name(c));
+                    r_play_cue(r_action, 0.0f, "press slot");
                 }
                 say("pet", "laughed out: %s", r_action == ACT_FART ? "a fart" : "dazed");
             }
@@ -582,9 +645,7 @@ static void frame(void)
         (rig_recue(r_action, r_recue_p, p) ||
          (rig_recue_continuous(r_action, p) && r_action_at != now)) &&
         view->mode == SM_PET && !facts.speaker_busy) {
-        const cue_t c = cue_for_action((int)r_action);
-        (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, c);
-        say("cue", "%s (press slot, again)", cue_name(c));
+        r_play_cue(r_action, p, "press slot, again");
     }
     if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
         poop_drop(&r_poop, now, (float)r_lean - POOP_BEHIND, POOP_HALF, r_now_rnd());
@@ -617,7 +678,17 @@ static void frame(void)
         r_lean += (target - r_lean) / 4;
         const float up = orient_upright(tilt, down, ORIENT_UPRIGHT_SHARE, ORIENT_UPRIGHT_MAX_DEG);
         r_upright += (up - r_upright) / 4.0f;
-        rig_walk(&r_walk, (float)(r_lean - was), &r_fst.rig);
+        /* As the panel does: playing, the legs go with how far the game moved him. */
+        static float gpx, gpy;
+        if (game_on(&r_game)) {
+            float gx, gy, gs;
+            game_figure(&r_game, now, &gx, &gy, &gs);
+            rig_walk(&r_walk, hypotf(gx - gpx, gy - gpy) / gs, &r_fst.rig);
+            gpx = gx;
+            gpy = gy;
+        } else {
+            rig_walk(&r_walk, (float)(r_lean - was), &r_fst.rig);
+        }
         r_fst.lean = r_lean;
         r_fst.upright = r_upright;
         const uint32_t dt = r_poop_last != 0 ? now - r_poop_last : 0u;
@@ -630,6 +701,12 @@ static void frame(void)
         r_fst.poop_kind = r_poop.kind;
     }
     rig_figure(shown, shown_p, shown_mag, now, r_fst.eyes.face_ang, &r_fst.fig);
+    r_fst.game = game_on(&r_game) ? &r_game : NULL;
+    r_fst.game_ms = now;
+    if (r_game.phase == GAME_OVER) {
+        r_fst.fig.extra = EXTRA_STARS;
+        r_fst.fig.extra_p = 0.1f + fmodf((float)(now - r_game.since) * 0.0001f, 0.8f);
+    }
     r_fst.bob = bob_step(r_frame++);
     const uint32_t blink = now % 4200;
     r_fst.open = dozing ? 0.0f : blink < 120 ? 1.0f - blink / 120.0f : blink < 240 ? (blink - 120) / 120.0f : 1.0f;
@@ -645,7 +722,7 @@ static void frame(void)
     r_flinch *= 0.82f;
     if (r_flinch < 0.02f) r_flinch = 0.0f;
     face_draw(s_fb, 0, &r_fst);
-    font_draw(s_fb, FACE_W, FACE_H, 16, 18, 2, MOCK_NAME, SWAP16(0x8410));
+    if (!game_on(&r_game)) font_draw(s_fb, FACE_W, FACE_H, 16, 18, 2, MOCK_NAME, SWAP16(0x8410));
     if (dozing) {
         const uint32_t phase = (now / 700u) % 4u;
         char z[4] = {0};
@@ -770,8 +847,11 @@ EXPORT(sim_set) void sim_set(int knob, int value)
                         : value == 4 ? ACT_EAT
                         : value == 5 ? rig_fart_pick(r_now_rnd())
                         : value == 6 ? ACT_MEGAFART
+                        : value == 7 ? ACT_BIRTHDAY
                                      : ACT_NONE;
+        if (value == 8) r_game_ask = true; /* "lets play a game" */
         break;
+    case 12: r_fwd_deg = value; break; /* the top tipped away from you, degrees */
     }
 }
 

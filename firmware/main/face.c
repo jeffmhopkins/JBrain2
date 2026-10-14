@@ -13,9 +13,13 @@
  */
 
 #include "face.h"
+#include "font.h"
+#include "game.h"
+#include "orient.h"
 #include "poop.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -802,9 +806,128 @@ static void draw_tickle(uint16_t *fb, const face_state_t *st, int cx, int cy, in
     }
 }
 
+/* A FILLED TRIANGLE, by rows: what the party hat, the game's things and their rotations need,
+   since a 2D rig with no rotation draws turned shapes as triangles turned in source space. */
+static void fill_tri(uint16_t *fb, float x0, float y0, float x1, float y1, float x2, float y2,
+                     uint16_t c)
+{
+    float t;
+    if (y1 < y0) { t = y0; y0 = y1; y1 = t; t = x0; x0 = x1; x1 = t; }
+    if (y2 < y0) { t = y0; y0 = y2; y2 = t; t = x0; x0 = x2; x2 = t; }
+    if (y2 < y1) { t = y1; y1 = y2; y2 = t; t = x1; x1 = x2; x2 = t; }
+    if (y2 - y0 < 0.5f) return;
+    int ya = (int)ceilf(y0 - 0.5f), yb = (int)floorf(y2 - 0.5f);
+    if (ya < 0) ya = 0;
+    if (yb >= FACE_H) yb = FACE_H - 1;
+    for (int y = ya; y <= yb; y++) {
+        const float fy = (float)y + 0.5f;
+        const float xl = x0 + (x2 - x0) * (fy - y0) / (y2 - y0);
+        float xr;
+        if (fy < y1) xr = y1 - y0 > 0.0f ? x0 + (x1 - x0) * (fy - y0) / (y1 - y0) : x1;
+        else xr = y2 - y1 > 0.0f ? x1 + (x2 - x1) * (fy - y1) / (y2 - y1) : x1;
+        const float lo = xl < xr ? xl : xr, hi = xl < xr ? xr : xl;
+        hspan(fb, y, (int)lrintf(lo), (int)lrintf(hi) - 1, c);
+    }
+}
+
+/* A SHAPE IN ITS OWN TURNED FRAME: centre, rotation and size, so the hat and each of the
+   game's things can be drawn in their own units and come out turned. */
+typedef struct {
+    float cx, cy, c, s, r;
+} xf_t;
+
+static xf_t xf(float cx, float cy, float a, float r)
+{
+    const xf_t t = {cx, cy, cosf(a), sinf(a), r};
+    return t;
+}
+
+static float xx(const xf_t *t, float u, float v)
+{
+    return t->cx + (u * t->c - v * t->s) * t->r;
+}
+
+static float xy(const xf_t *t, float u, float v)
+{
+    return t->cy + (u * t->s + v * t->c) * t->r;
+}
+
+static void t_tri(uint16_t *fb, const xf_t *t, float u0, float v0, float u1, float v1, float u2,
+                  float v2, uint16_t c)
+{
+    fill_tri(fb, xx(t, u0, v0), xy(t, u0, v0), xx(t, u1, v1), xy(t, u1, v1), xx(t, u2, v2),
+             xy(t, u2, v2), c);
+}
+
+static void t_quad(uint16_t *fb, const xf_t *t, float u, float v, float w, float h, uint16_t c)
+{
+    t_tri(fb, t, u, v, u + w, v, u + w, v + h, c);
+    t_tri(fb, t, u, v, u + w, v + h, u, v + h, c);
+}
+
+static void t_circ(uint16_t *fb, const xf_t *t, float u, float v, float r, uint16_t c)
+{
+    fill_circle(fb, (int)lrintf(xx(t, u, v)), (int)lrintf(xy(t, u, v)), (int)lrintf(r * t->r), c);
+}
+
+/* THE PARTY HAT (0.4.14): a striped cone with spots, a white brim and a pompom, dropped onto
+   the head over the first tenth of the song with a bounce, then worn at a jaunty angle. Sized
+   from the head it sits on, so it fits the robot's 216 px head and the bird's 128 alike. */
+static void draw_party_hat(uint16_t *fb, int cx, int top, int half, float s, float p)
+{
+    const float k = p < 0.1f ? p / 0.1f : 1.0f;
+    const float e = k * k * (3.0f - 2.0f * k);
+    const float drop = (1.0f - e) * -260.0f * s - sinf(k * (float)M_PI) * 30.0f * s;
+    const float w = 1.04f * (float)half, h = 1.18f * w;
+    const xf_t t = xf((float)cx + 0.24f * (float)half, (float)top + 0.09f * (float)half + drop,
+                      0.22f + 0.03f * sinf(p * 40.0f), 1.0f);
+    const uint16_t pink = rgb(0xFF, 0x5F, 0xA2), yellow = rgb(0xFF, 0xE1, 0x4D);
+    const uint16_t blue = rgb(0x4D, 0xD2, 0xFF), white = rgb(0xF6, 0xF9, 0xFC);
+    t_tri(fb, &t, -w / 2, 0, w / 2, 0, 0, -h, pink);
+    /* Two stripes across the cone: each a slice of the triangle between two heights. */
+    for (int band = 0; band < 2; band++) {
+        const float f0 = 0.22f + 0.3f * (float)band, f1 = f0 + 0.13f;
+        const float a0 = w / 2 * (1.0f - f0), a1 = w / 2 * (1.0f - f1);
+        t_tri(fb, &t, -a0, -h * f0, a0, -h * f0, a1, -h * f1, yellow);
+        t_tri(fb, &t, -a0, -h * f0, a1, -h * f1, -a1, -h * f1, yellow);
+    }
+    t_circ(fb, &t, -w * 0.14f, -h * 0.12f, w * 0.06f, blue);
+    t_circ(fb, &t, w * 0.12f, -h * 0.44f, w * 0.05f, blue);
+    t_quad(fb, &t, -w / 2 - w * 0.04f, -w * 0.07f, w * 1.08f, w * 0.14f, white);
+    t_circ(fb, &t, 0, -h, w * 0.12f, white);
+}
+
+/* CONFETTI over everything, a pure function of the action's progress: each piece has its own
+   column, start, speed, sway and flutter from its index, so the same moment draws the same
+   picture and nothing is stored. All of it has landed by the end. */
+static void draw_confetti(uint16_t *fb, float p, float scale)
+{
+    static const uint8_t COLS[6][3] = {{0xFF, 0x5F, 0xA2}, {0xFF, 0xE1, 0x4D}, {0x4D, 0xD2, 0xFF},
+                                       {0x7C, 0xF0, 0x8B}, {0xB9, 0x8C, 0xFF}, {0xFF, 0x8A, 0x3D}};
+    const float secs = p * 7.0f;
+    for (int i = 0; i < 70; i++) {
+        uint32_t hsh = (uint32_t)i * 2654435761u;
+        const float r1 = (float)((hsh >> 8) & 0xFFFF) / 65535.0f;
+        hsh = hsh * 1103515245u + 12345u;
+        const float r2 = (float)((hsh >> 8) & 0xFFFF) / 65535.0f;
+        hsh = hsh * 1103515245u + 12345u;
+        const float r3 = (float)((hsh >> 8) & 0xFFFF) / 65535.0f;
+        const float t = secs - r2 * 2.1f;
+        if (t < 0.0f) continue;
+        const float y = -16.0f + t * (110.0f + 70.0f * r3) * scale;
+        if (y > (float)FACE_H + 12.0f) continue;
+        const float x = r1 * (float)FACE_W + sinf(t * (1.5f + 2.0f * r3) + r1 * 6.0f) * 14.0f;
+        const float flip = fabsf(cosf(t * (4.0f + 5.0f * r2) + r3 * 6.0f));
+        const int w = 2 + (int)lrintf(6.0f * flip * scale), h = (int)lrintf((8.0f + 5.0f * r3) * scale);
+        const uint8_t *c = COLS[i % 6];
+        fill_rect(fb, (int)lrintf(x) - w / 2, (int)lrintf(y) - h / 2, w, h, rgb(c[0], c[1], c[2]));
+    }
+}
+
 static void draw_overhead(uint16_t *fb, const face_state_t *st, int cx, int top, int half,
                           float s)
 {
+    if (st->fig.extra == EXTRA_PARTY) draw_party_hat(fb, cx, top, half, s, st->fig.extra_p);
     const float p = st->fig.extra_p;
     if (st->fig.extra == EXTRA_STARS) {
         const uint16_t star = rgb(0xFF, 0xD8, 0x4A);
@@ -1271,6 +1394,8 @@ void face_rest(face_state_t *st)
     st->lean = 0;
     st->upright = 0.0f;
     st->poop_x = st->poop_size = st->poop_t = 0.0f;
+    st->game = NULL;
+    st->game_ms = 0;
     st->food = FOOD_COOKIE;
     st->talk = 0.0f;
     st->open = 1.0f;
@@ -1292,18 +1417,194 @@ static int upright_dx(face_form_t form, float deg, float s)
     return (int)lrintf(sinf(deg * (float)M_PI / 180.0f) * arm * s);
 }
 
+/* THE GAME'S FIELD: the whole frame upright, the square on its side — the part the viewer
+   sees. Its centre, and how far it reaches either way. */
+static void field(float *cy, float *hw, float *hh)
+{
+    const bool side = s_fit_oy >= 0;
+    *cy = side ? (float)ORIENT_SQ_Y0 + (float)ORIENT_SQ / 2.0f : (float)FACE_H / 2.0f;
+    *hw = (float)FACE_W / 2.0f;
+    *hh = side ? (float)ORIENT_SQ / 2.0f : (float)FACE_H / 2.0f;
+}
+
+void face_game_field(float *hw, float *hh)
+{
+    float cy;
+    field(&cy, hw, hh);
+}
+
+void face_game_home(int lean, float *x, float *y)
+{
+    float cy, hw, hh;
+    field(&cy, &hw, &hh);
+    *x = (float)lean * s_fit;
+    *y = (float)(s_fit_oy >= 0 ? s_fit_oy : OY) - cy;
+}
+
+/* THE TWELVE THINGS TO DODGE, each in its own unit frame, about a unit across, turned by the
+   thing's own spin. Chunky shapes and loud colours: they are 30 px across on a panel a child
+   holds at arm's length, so each has to read from its silhouette. */
+static void draw_thing(uint16_t *fb, int kind, const xf_t *t)
+{
+    const uint16_t white = rgb(0xF4, 0xF6, 0xF8), black = rgb(0x20, 0x24, 0x2C);
+    const uint16_t yellow = rgb(0xFF, 0xD2, 0x3F), orange = rgb(0xFF, 0x8A, 0x1F);
+    const uint16_t brown = rgb(0x8A, 0x5A, 0x2B), green = rgb(0x3F, 0xBF, 0x5A);
+    const uint16_t red = rgb(0xE8, 0x47, 0x3C), grey = rgb(0x8C, 0x95, 0xA4);
+    const uint16_t pink = rgb(0xFF, 0x7E, 0xB6), blue = rgb(0x4D, 0xD2, 0xFF);
+    switch (kind) {
+    case 0: /* a football */
+        t_circ(fb, t, 0, 0, 1.0f, white);
+        t_circ(fb, t, 0, 0, 0.36f, black);
+        for (int i = 0; i < 5; i++) {
+            const float a = (float)i * 1.2566f - 1.5708f;
+            t_circ(fb, t, cosf(a) * 0.8f, sinf(a) * 0.8f, 0.2f, black);
+        }
+        break;
+    case 1: /* a rubber duck */
+        t_circ(fb, t, -0.15f, 0.25f, 0.62f, yellow);
+        t_circ(fb, t, 0.35f, 0.3f, 0.48f, yellow);
+        t_circ(fb, t, 0.45f, -0.35f, 0.42f, yellow);
+        t_tri(fb, t, 0.82f, -0.45f, 1.25f, -0.3f, 0.82f, -0.15f, orange);
+        t_circ(fb, t, 0.55f, -0.45f, 0.09f, black);
+        break;
+    case 2: /* a banana */
+        for (int i = 0; i <= 9; i++) {
+            const float a = 0.45f + 2.25f * (float)i / 9.0f;
+            t_circ(fb, t, cosf(a) * 1.0f, -0.55f + sinf(a) * 1.0f, 0.22f, yellow);
+        }
+        t_circ(fb, t, cosf(0.45f), -0.55f + sinf(0.45f), 0.12f, brown);
+        break;
+    case 3: /* a boot */
+        t_quad(fb, t, -0.55f, -1.0f, 0.7f, 1.5f, brown);
+        t_quad(fb, t, -0.55f, 0.2f, 1.45f, 0.55f, brown);
+        t_quad(fb, t, -0.6f, 0.68f, 1.55f, 0.2f, rgb(0x5A, 0x3A, 0x1A));
+        break;
+    case 4: /* a cactus in a pot */
+        t_quad(fb, t, -0.25f, -1.0f, 0.5f, 1.6f, green);
+        t_quad(fb, t, -0.75f, -0.4f, 0.28f, 0.7f, green);
+        t_quad(fb, t, 0.47f, -0.65f, 0.28f, 0.7f, green);
+        t_quad(fb, t, -0.75f, 0.1f, 0.6f, 0.22f, green);
+        t_quad(fb, t, 0.2f, -0.15f, 0.6f, 0.22f, green);
+        t_quad(fb, t, -0.5f, 0.55f, 1.0f, 0.45f, rgb(0xD0, 0x70, 0x3A));
+        break;
+    case 5: /* an anvil */
+        t_quad(fb, t, -1.0f, -0.5f, 1.8f, 0.35f, grey);
+        t_tri(fb, t, 0.8f, -0.5f, 1.2f, -0.5f, 0.8f, -0.15f, grey);
+        t_quad(fb, t, -0.35f, -0.15f, 0.7f, 0.5f, grey);
+        t_quad(fb, t, -0.7f, 0.35f, 1.4f, 0.35f, grey);
+        break;
+    case 6: /* a donut */
+        t_circ(fb, t, 0, 0, 1.0f, rgb(0xD9, 0x9A, 0x52));
+        t_circ(fb, t, 0, -0.05f, 0.86f, pink);
+        for (int i = 0; i < 8; i++) {
+            const float a = (float)i * 0.785f;
+            t_circ(fb, t, cosf(a) * 0.6f, sinf(a) * 0.6f, 0.09f,
+                   (i % 3) == 0 ? yellow : (i % 3) == 1 ? blue : white);
+        }
+        t_circ(fb, t, 0, 0, 0.32f, 0);
+        break;
+    case 7: /* a rocket */
+        t_tri(fb, t, -0.22f, 0.7f, 0.22f, 0.7f, 0, 1.2f, orange);
+        t_quad(fb, t, -0.3f, -0.6f, 0.6f, 1.3f, white);
+        t_tri(fb, t, -0.3f, -0.6f, 0.3f, -0.6f, 0, -1.15f, red);
+        t_tri(fb, t, -0.3f, 0.3f, -0.62f, 0.8f, -0.3f, 0.7f, red);
+        t_tri(fb, t, 0.3f, 0.3f, 0.62f, 0.8f, 0.3f, 0.7f, red);
+        t_circ(fb, t, 0, -0.15f, 0.16f, blue);
+        break;
+    case 8: /* a stripy sock */
+        for (int i = 0; i < 4; i++) t_quad(fb, t, -0.4f, -1.0f + (float)i * 0.35f, 0.8f, 0.36f, i % 2 ? white : red);
+        t_quad(fb, t, -0.4f, 0.36f, 1.2f, 0.5f, red);
+        t_circ(fb, t, 0.8f, 0.61f, 0.25f, red);
+        break;
+    case 9: /* a flying saucer */
+        t_circ(fb, t, 0, -0.25f, 0.45f, rgb(0x8E, 0xF0, 0xA0));
+        t_quad(fb, t, -0.75f, -0.15f, 1.5f, 0.38f, grey);
+        t_circ(fb, t, -0.75f, 0.04f, 0.19f, grey);
+        t_circ(fb, t, 0.75f, 0.04f, 0.19f, grey);
+        for (int i = -1; i <= 1; i++) t_circ(fb, t, 0.55f * (float)i, 0.05f, 0.09f, yellow);
+        break;
+    case 10: /* a fish */
+        t_circ(fb, t, -0.35f, 0, 0.45f, orange);
+        t_circ(fb, t, 0.15f, 0, 0.42f, orange);
+        t_tri(fb, t, 0.45f, 0, 1.1f, -0.5f, 1.1f, 0.5f, orange);
+        t_circ(fb, t, -0.45f, -0.1f, 0.14f, white);
+        t_circ(fb, t, -0.48f, -0.1f, 0.07f, black);
+        break;
+    default: /* a slice of pizza */
+        t_tri(fb, t, -0.95f, -0.75f, 0.95f, -0.75f, 0, 1.05f, rgb(0xE0, 0xA5, 0x4A));
+        t_tri(fb, t, -0.75f, -0.55f, 0.75f, -0.55f, 0, 0.82f, rgb(0xFF, 0xD5, 0x6B));
+        t_circ(fb, t, -0.3f, -0.3f, 0.14f, rgb(0xC8, 0x40, 0x2F));
+        t_circ(fb, t, 0.3f, -0.25f, 0.14f, rgb(0xC8, 0x40, 0x2F));
+        t_circ(fb, t, 0, 0.2f, 0.14f, rgb(0xC8, 0x40, 0x2F));
+        break;
+    }
+}
+
+static void draw_text_c(uint16_t *fb, int cx, int y, int scale, const char *s, uint16_t c)
+{
+    font_draw(fb, FACE_W, FACE_H, cx - font_text_w(s, scale) / 2, y, scale, s, c);
+}
+
+/* The things in flight, the score and level, and the banner: over the figure, so a hit is
+   seen to be a hit. */
+static void draw_game(uint16_t *fb, const game_t *g, uint32_t now)
+{
+    float cy, hw, hh;
+    field(&cy, &hw, &hh);
+    for (int i = 0; i < GAME_MAX_OBJ; i++) {
+        const game_obj_t *o = &g->obj[i];
+        if (!o->live) continue;
+        const xf_t t = xf((float)OX + o->x, cy + o->y, o->a, 17.0f * o->size);
+        draw_thing(fb, o->kind, &t);
+    }
+    if (g->phase != GAME_PLAY && g->phase != GAME_OVER) return;
+    const uint16_t gold = rgb(0xFF, 0xE1, 0x4D), dim = rgb(0x9A, 0xA5, 0xB8);
+    const uint16_t white = rgb(0xE9, 0xED, 0xF3);
+    const int top = (int)lrintf(cy - hh) + 10;
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%d", g->score);
+    font_draw(fb, FACE_W, FACE_H, 14, top, 4, buf, gold);
+    snprintf(buf, sizeof(buf), "BEST %d", g->best);
+    font_draw(fb, FACE_W, FACE_H, FACE_W - 14 - font_text_w(buf, 2), top, 2, buf, dim);
+    snprintf(buf, sizeof(buf), "LEVEL %d", game_level(g, now));
+    font_draw(fb, FACE_W, FACE_H, FACE_W - 14 - font_text_w(buf, 2), top + 20, 2, buf, dim);
+    const int by = (int)lrintf(cy - hh * 0.5f);
+    if (g->phase == GAME_PLAY && now - g->since < GAME_READY_MS) {
+        draw_text_c(fb, OX, by - 14, 5, now - g->since < GAME_READY_MS / 2 ? "READY" : "GO!", gold);
+    } else if (g->phase == GAME_OVER) {
+        snprintf(buf, sizeof(buf), "SCORE %d", g->score);
+        draw_text_c(fb, OX, by - 24, 4, buf, gold);
+        draw_text_c(fb, OX, by + 14, 2,
+                    g->score > 0 && g->score >= g->best ? "NEW BEST! TAP TO PLAY" : "TAP TO PLAY AGAIN",
+                    white);
+    }
+}
+
 void face_draw(uint16_t *fb, int colour, const face_state_t *st)
 {
     /* Everything hangs off these, so one pair of offsets moves the whole figure. See
        ROOM_ENDPOINT_PLAN.md §10.4s: consecutive frames have to DIFFER, not merely arrive. */
-    const int ox = OX + (int)lrintf(((float)st->lean + st->fig.ox) * s_fit);
-    const float sx = st->fig.sx * s_fit, sy = st->fig.sy * s_fit;
+    int ox = OX + (int)lrintf(((float)st->lean + st->fig.ox) * s_fit);
+    float sx = st->fig.sx * s_fit, sy = st->fig.sy * s_fit;
+    /* PLAYING: the game says where he is and how big (`game_figure`), in field pixels. */
+    const bool playing = st->game != NULL && game_on(st->game);
+    float gy = 0.0f;
+    if (playing) {
+        float gx, gs, cy, hw, hh;
+        game_figure(st->game, st->game_ms, &gx, &gy, &gs);
+        field(&cy, &hw, &hh);
+        ox = OX + (int)lrintf(gx);
+        gy += cy;
+        sx *= gs;
+        sy *= gs;
+    }
     /* SITTING: the body comes down by what the legs' splay took off their height, so the feet
        stay on the floor. This form's leg, which is why it is here and not in the rig. */
     const float leg = st->form == FORM_ROBOT ? (float)LEG_L : (float)OS_LEG_L;
     const float sit = st->fig.sit * leg * (1.0f - cosf(st->rig.leg_l * (float)M_PI / 180.0f)) * sy;
-    const int oy = (s_fit_oy >= 0 ? s_fit_oy : OY) +
-                   (int)lrintf(((float)st->bob + st->fig.oy) * s_fit + sit);
+    const int oy = playing ? (int)lrintf(gy + ((float)st->bob + st->fig.oy) * sy + sit)
+                           : (s_fit_oy >= 0 ? s_fit_oy : OY) +
+                                 (int)lrintf(((float)st->bob + st->fig.oy) * s_fit + sit);
     /* One scalar for radii and stroke widths, which cannot take independent x and y. */
     const float s = (sx + sy) * 0.5f;
     /* The head tilt stands in for the web rig's whole-figure rotation — see rig.h. Offsetting
@@ -1332,6 +1633,8 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
     } else {
         draw_ostrich(fb, hex, st, ox, oy, sx, sy, s, tilt);
     }
+    if (playing) draw_game(fb, st->game, st->game_ms);
+    if (st->fig.extra == EXTRA_PARTY) draw_confetti(fb, st->fig.extra_p, s_fit);
 }
 #undef SX
 #undef SY

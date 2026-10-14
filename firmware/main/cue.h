@@ -70,6 +70,12 @@ typedef enum {
     CUE_BRACE,      /* a nervous titter, three "hee"s going UP: he knows what is coming */
     CUE_TICKLED,    /* "hehehe": the laugh, short, held in — one of the four tickles */
     CUE_MEGAFART,   /* one piece of the seven-second fart: each play is the next character */
+    CUE_BDAY_1,     /* "happy birth-": the song's first phrase (`cue_for_action_at`) */
+    CUE_BDAY_2,     /* "-day to" */
+    CUE_BDAY_3,     /* "you" */
+    CUE_GAME_GO,    /* the game: "go!", here they come */
+    CUE_DODGE,      /* the game: one went by, a point */
+    CUE_GAME_HIT,   /* the game: one got him */
 
     /* --- the interface, which is not an action ----------------------------------------- */
     CUE_BLIP,   /* a tap that resolved to nothing to do */
@@ -141,3 +147,10 @@ int cue_render(cue_t c, int16_t *out, int rate, int gain, unsigned variant);
 /* The cue for an action, so the sound and the animation cannot drift apart. `rig.h`'s
    `action_t` is the argument; an action with no sound of its own returns CUE_BLIP. */
 cue_t cue_for_action(int action);
+
+/* The cue for `action` at progress `p`: the same as `cue_for_action` except for a sound that is
+   longer than one cue can be, played in pieces at its re-cue points. "Happy birthday" is three
+   (`CUE_BDAY_1..3`). A tune's pieces must share one `variant` to stay in one key, so they are
+   played with an explicit one (`cue_is_tune`), not the per-cue counter. */
+cue_t cue_for_action_at(int action, float p);
+bool cue_is_tune(cue_t c);

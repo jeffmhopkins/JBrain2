@@ -56,6 +56,7 @@
 #include "variants.h"
 #include "orient.h"
 #include "poop.h"
+#include "game.h"
 #include "tickle.h"
 #include "screen.h"
 #include "ota.h"
@@ -942,6 +943,15 @@ static int s_lean;
 /* The tilt along the viewer's horizontal, -1..1 of LEAN_FULL, unsmoothed: what the poop slides
    on (`poop.h`). The lean is a position the tilt picks; the poop has momentum of its own. */
 static float s_tilt_g;
+/* THE OTHER TILT, toward and away from the viewer: the accelerometer across the glass, raw.
+   The game (`game.h`) steers by its change from where it was when the game began, so it works
+   held upright or leaning back alike (0.4.14). */
+static int s_az;
+/* THE GAME, when one is on, and the tilt it started from. Static rather than on the render
+   task's stack: half a kilobyte the 8 KB stack has better uses for. */
+static game_t s_game;
+static float s_game_tx0;
+static int s_game_az0;
 /* THE HEAD RIGHTING (`face_state_t.upright`), in degrees — `orient_upright`. */
 static float s_upright;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
@@ -1353,6 +1363,7 @@ static void update_orientation(void)
     int tilt = 0, down = 0;
     orient_axes(s_quarter, ax, ay, &tilt, &down);
     s_tilt_g = (float)tilt / (float)LEAN_FULL;
+    s_az = az;
     const int lean_max = side ? FACE_LEAN_MAX_SIDE : FACE_LEAN_MAX;
     int target = tilt * lean_max / LEAN_FULL;
     if (target > lean_max) target = lean_max;
@@ -1650,6 +1661,22 @@ static void reassert_panel(void)
  * The machine's effects, run in the order it emitted them, after the step that emitted them. The
  * only calls into the engine and the speaker this file makes are here (and the per-frame copies
  * the sampler takes); `check_no_logic_in_display` holds the list. */
+
+/* WHICH "HAPPY BIRTHDAY" THIS IS, so all three phrases of one song share a variant and stay
+   in one key, while the next birthday is sung a little differently (`cue_is_tune`). */
+static unsigned s_song;
+
+/* An action's sound at progress `p`: a tune's piece in this song's key, anything else with
+   its own per-cue counter. */
+static void play_action_cue(stream_t *st, action_t a, float p)
+{
+    const cue_t c = cue_for_action_at((int)a, p);
+    if (cue_is_tune(c)) {
+        stream_cue(st, STREAM_SLOT_PRESS, c, STREAM_CUE_GAIN, s_song);
+    } else {
+        stream_cue_play(st, STREAM_SLOT_PRESS, c);
+    }
+}
 
 /* A SEND takes the capture into the post: the buffer is what the engine uploads, and lease 1 —
    taken BEFORE the post, released by the engine at every end of the SEND, or here if the post
@@ -1994,6 +2021,22 @@ static void face_task(void *arg)
                 switch (v->kind) {
                 case VOCAB_LISTEN:
                     voice = SM_VOICE_WAKE;
+                    /* The name ends a game: he walks back and grows, and then listens. */
+                    game_stop(&s_game, now);
+                    break;
+                case VOCAB_GAME:
+                    /* LET'S PLAY A GAME (`game.h`): he walks to the middle and shrinks. The
+                       tilt he is held at now is level, for the whole game. */
+                    if (s_out.view.mode == SM_PET) { /* last frame's screen: the pet's */
+                        float hx, hy;
+                        face_game_home(s_lean, &hx, &hy);
+                        action = ACT_NONE;
+                        game_start(&s_game, now, esp_random(), hx, hy);
+                        s_game_tx0 = s_tilt_g;
+                        s_game_az0 = s_az;
+                        ESP_LOGI(TAG, "game: start (tilt %.2f, az %d)", (double)s_tilt_g, s_az);
+                        heard_cue = CUE_HEARD;
+                    }
                     break;
                 case VOCAB_STOP:
                     voice = SM_VOICE_STOP;
@@ -2016,11 +2059,19 @@ static void face_task(void *arg)
                     /* ASKING FOR A THING SOUNDS LIKE THE THING: the acknowledgement IS the
                        action's cue, not a bleep followed by one. */
                     action = (action_t)v->arg;
+                    /* Asked for something else mid-game: the game ends, and he does it as he
+                       walks back. */
+                    game_stop(&s_game, now);
                     /* One "fart" in ten is the seven-second one (`rig_fart_pick`). */
                     if (action == ACT_FART) action = rig_fart_pick(esp_random());
                     action_mag = 1.0f;
                     action_start = now;
                     heard_cue = rig_cue_on_start(action) ? cue_for_action((int)action) : CUE_COUNT;
+                    if (action == ACT_BIRTHDAY) {
+                        s_song++;
+                        heard_cue = CUE_COUNT;
+                        if (sound) play_action_cue(st, action, 0.0f);
+                    }
                     if (action == ACT_BRACE) tickle_arm(&tickle, now);
                     /* A different snack every time (`food_pick`): never the last one again. */
                     if (action == ACT_EAT) fst.food = food_pick(fst.food, esp_random());
@@ -2136,6 +2187,8 @@ static void face_task(void *arg)
         }
         /* SHAKEN: he sits down hard, dazed. Always the picture; the sound only when nothing
            else owns the speaker, since a message playing is not the pet's to talk over. */
+        /* A game is played by tilting, and tilting hard is how a shake reads: not dizzy then. */
+        if (game_on(&s_game)) s_shaken = false;
         if (s_shaken) {
             s_shaken = false;
             action = ACT_DIZZY;
@@ -2190,7 +2243,11 @@ static void face_task(void *arg)
            sound only flinches, because ignoring a finger entirely reads as a frozen pet.
            EXCEPT OVER THE PET'S OWN NOISE (`pet_only`, 0.4.10): a meal crunches through two
            thirds of its 4.8 s, and the speaker cuts that cue for the poke's, so it is heard. */
-        if (s_out.pet_press) {
+        if (s_out.pet_press && game_on(&s_game)) {
+            /* PLAYING, a tap is the game's: the next round once one is over (`game_tap`). */
+            game_tap(&s_game, now);
+            dirty = true;
+        } else if (s_out.pet_press) {
             s_flinch = 1.0f;
             dirty = true;
             if (!facts.pet_only || rig_holds_pokes(action)) {
@@ -2230,7 +2287,7 @@ static void face_task(void *arg)
                          (double)action_mag);
                 PHASE(3);
                 if (sound && rig_cue_on_start(action)) {
-                    stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                    play_action_cue(st, action, 0.0f);
                 }
             }
         }
@@ -2435,7 +2492,28 @@ static void face_task(void *arg)
            moment he is free, on the pet screen. It lands at POOP_AT (below); from then it
            slides on the tilt for its twenty seconds. A frame whenever it moves, plops in or
            shrinks away; the stink lines make do with the floor rate. */
-        if (poop.owed && action == ACT_NONE && view->mode == SM_PET) {
+        /* THE GAME'S FRAME (`game.h`): the tilt from where it began, a step, its sounds. Off the
+           pet screen it ends; while it is on, every frame is drawn. */
+        if (game_on(&s_game)) {
+            if (view->mode != SM_PET) game_stop(&s_game, now);
+            float hw, hh;
+            face_game_field(&hw, &hh);
+            const float tx = s_tilt_g - s_game_tx0;
+            const float ty = (float)(s_az - s_game_az0) / (float)LEAN_FULL;
+            static uint32_t game_last;
+            const uint32_t gdt = game_last != 0 && now - game_last < 200u ? now - game_last : 40u;
+            game_last = now;
+            const unsigned ev = game_step(&s_game, now, gdt, tx, ty, hw, hh);
+            if (sound && (ev & GAME_EV_GO)) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_GAME_GO);
+            if (sound && (ev & GAME_EV_DODGE)) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_DODGE);
+            if (sound && (ev & GAME_EV_HIT)) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_GAME_HIT);
+            if (ev & GAME_EV_HIT) {
+                ESP_LOGI(TAG, "game: hit, score %d (best %d)", s_game.score, s_game.best);
+            }
+            if (ev & GAME_EV_DONE) ESP_LOGI(TAG, "game: over");
+            dirty = true;
+        }
+        if (poop.owed && action == ACT_NONE && view->mode == SM_PET && !game_on(&s_game)) {
             action = ACT_POOP;
             action_mag = 1.0f;
             action_start = now;
@@ -2470,7 +2548,7 @@ static void face_task(void *arg)
                         action_start = now;
                         if (sound && view->mode == SM_PET && !facts.speaker_busy &&
                             rig_cue_on_start(action)) {
-                            stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                            play_action_cue(st, action, 0.0f);
                         }
                     }
                 }
@@ -2500,7 +2578,7 @@ static void face_task(void *arg)
             if (action != ACT_NONE &&
                 (rig_recue(action, recue_p, p) || rig_recue_continuous(action, p)) && sound &&
                 view->mode == SM_PET && !facts.speaker_busy) {
-                stream_cue_play(st, STREAM_SLOT_PRESS, cue_for_action((int)action));
+                play_action_cue(st, action, p);
             }
             /* The plop: behind him, where a bird's tail is. */
             if (action == ACT_POOP && recue_p < POOP_AT && p >= POOP_AT) {
@@ -2524,9 +2602,30 @@ static void face_task(void *arg)
             emotion_approach_face(&fst.eyes, &target, target.rate);
             emotion_approach_face(&fst.eyes, &target, target.rate);
             rig_for(shown, shown_p, shown_mag, now, &fst.rig);
-            rig_walk(&walk, (float)(s_lean - walked_from), &fst.rig);
+            /* PLAYING, the legs go with how far the game moved him, in his own size's steps:
+               a fifth of the size, five times the strides for the same distance. */
+            static float game_px, game_py;
+            {
+                /* Followed between games too, so the first step of the next is not a leap. */
+                float gx, gy, gs;
+                game_figure(&s_game, now, &gx, &gy, &gs);
+                if (game_on(&s_game)) {
+                    rig_walk(&walk, hypotf(gx - game_px, gy - game_py) / gs, &fst.rig);
+                } else {
+                    rig_walk(&walk, (float)(s_lean - walked_from), &fst.rig);
+                }
+                game_px = gx;
+                game_py = gy;
+            }
             walked_from = s_lean;
             rig_figure(shown, shown_p, shown_mag, now, fst.eyes.face_ang, &fst.fig);
+            fst.game = game_on(&s_game) ? &s_game : NULL;
+            fst.game_ms = now;
+            if (s_game.phase == GAME_OVER) {
+                /* HIT: dazed, the stars going round, until the tap. */
+                fst.fig.extra = EXTRA_STARS;
+                fst.fig.extra_p = 0.1f + fmodf((float)(now - s_game.since) * 0.0001f, 0.8f);
+            }
             fst.bob = bob_step(frame++);
             fst.lean = s_lean;
             fst.upright = s_upright;
@@ -2554,8 +2653,11 @@ static void face_task(void *arg)
             PHASE(6);
             face_draw(fb, colour, &fst);
             PHASE(7);
-            font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
-                      s_show_version ? ota_running_version() : s_name_up, LABEL_COLOUR);
+            /* Not over the game's score, which has that corner. */
+            if (!game_on(&s_game)) {
+                font_draw(fb, FACE_W, FACE_H, LABEL_X, over_y0 + LABEL_Y, LABEL_SCALE,
+                          s_show_version ? ota_running_version() : s_name_up, LABEL_COLOUR);
+            }
             if (dozing) {
                 const uint32_t phase = (now / 700u) % 4u; /* 0..3: one Z, two, three, rest */
                 char z[4] = {0};

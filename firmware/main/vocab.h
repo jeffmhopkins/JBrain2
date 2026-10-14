@@ -68,6 +68,7 @@ typedef enum {
     VOCAB_LISTEN,     /* the panel's NAME: start a conversation turn, hands-free */
     VOCAB_STOP,       /* end the conversation: no reply, no follow-up */
     VOCAB_SEND,       /* record a message for someone else; `arg` is a `jp_to_t` */
+    VOCAB_GAME,       /* start the dodging game (`game.h`) */
 } vocab_kind_t;
 
 typedef struct {
