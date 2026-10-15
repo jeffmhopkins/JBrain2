@@ -149,7 +149,7 @@ const song = events.slice(sang).filter((e) => e.includes('cue BDAY_')).map((e) =
 check(song.join(',') === 'BDAY_1,BDAY_2,BDAY_3', `the song's three phrases, in order (${song})`);
 
 // "Let's play a game": he walks in shrinking, "go", things fly; held level he is soon hit; a
-// tap plays again; and the wake word ends it, walking him back to his own size.
+// tap plays again; and "stop" ends it, walking him back to his own size.
 const played = events.length;
 p.set(KNOB.PET_ACT, 8);
 check(until(() => events.slice(played).some((e) => e.includes('cue GAME_GO')), 4000), 'ready, then go');
@@ -164,20 +164,18 @@ p.advance(3000);
 p.set(KNOB.TILT_DEG, 0);
 const g = events.slice(played);
 check(!g.some((e) => e.includes('flinch') || e.includes('tickled')), 'a tap mid-game is the game\'s, not a poke');
-// The name is refused as busy over any sound, the hit's included: say it into a quiet moment.
+// Playing, what is said is not for the pet (owner, 0.4.15): the name and an action phrase go by,
+// the game plays on; only "stop" ends it.
 p.advance(1500);
+const said = events.length;
 p.voice(VOICE.WAKE);
-check(until(() => events.slice(played).some((e) => e.includes('back to his own size')), 4000),
-  'the wake word ends the game, and he walks back');
-
-// "Stop" mid-game ends it too: any command but the game's own does (review).
-until(() => p.state().mode === 'PET', 15000);
-const stopped = events.length;
-p.set(KNOB.PET_ACT, 8);
-check(until(() => events.slice(stopped).some((e) => e.includes('cue GAME_GO')), 4000), 'a new game');
+p.set(KNOB.PET_ACT, 2);
 p.advance(1500);
+check(!events.slice(said).some((e) => e.includes('back to his own size')) && p.state().mode === 'PET',
+  'the name and an action mid-game leave it playing');
+check(events.slice(said).filter((e) => e.includes('not for the pet')).length === 2, 'both went by unheeded');
 p.voice(VOICE.STOP);
-check(until(() => events.slice(stopped).some((e) => e.includes('back to his own size')), 4000),
+check(until(() => events.slice(said).some((e) => e.includes('back to his own size')), 4000),
   '"stop" ends the game, and he walks back');
 
 // The wake phrase while idle opens a turn with the pet.

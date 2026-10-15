@@ -154,3 +154,15 @@ cue_t cue_for_action(int action);
    played with an explicit one (`cue_is_tune`), not the per-cue counter. */
 cue_t cue_for_action_at(int action, float p);
 bool cue_is_tune(cue_t c);
+
+/* Whether `c`, due again at an action's re-cue point, may go to the speaker now. A tune's next
+   phrase cuts its last over the pet's own noise (`pet_only`): waiting for silence dropped "day
+   to" whenever the first phrase ran late (0.4.15). Anything else waits for a free speaker, and
+   nothing cuts a reply or a message. */
+bool cue_may_recue(cue_t c, bool speaker_busy, bool pet_only);
+
+/* The two band-limited voices every pitched cue is built from, one sample at `phase` (radians)
+   of a note at `f0` Hz. Exposed for the host suite, which holds them to the direct Fourier sums
+   their recurrences replaced. */
+float cue_pulse(float phase, float duty, float f0);
+float cue_triangle(float phase, float f0);
