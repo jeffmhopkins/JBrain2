@@ -66,13 +66,18 @@ def verdict(r: Reading) -> tuple[str, str]:
     """`(state, why)`. `why` is said in the owner's words, for the PWA row."""
     if not r.connected or not r.has_status:
         return "unknown", "not connected" if not r.connected else "no status yet"
-    if r.is_stand_by is True:
-        return "standby", "off"
+    # An open app is checked before standby: measured 2026-10-15, the house's Philips
+    # sets report is_stand_by while lit, Netflix included, so standby alone would cast
+    # over a show. A stale app on a TV that is really off is refused, the safe miss.
     if r.player_state in ACTIVE_PLAYER_STATES:
         what = r.display_name or r.media_title or "something"
         return "busy", f"{what} · {r.player_state.lower()}"
     if r.app_id is not None and r.app_id not in IDLE_APP_IDS:
         return "busy", f"{r.display_name or r.app_id} open"
+    # Before the input check: a TV that is really off reads standby with its input
+    # inactive (measured on all three Philips), so the other order never wakes one.
+    if r.is_stand_by is True:
+        return "standby", "off"
     # An external input (a console, a cable box) leaves the cast receiver idle; the TV
     # says so only when it reports CEC, and None means it does not.
     if r.is_active_input is False:

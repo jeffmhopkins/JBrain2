@@ -50,8 +50,18 @@ ON = {"connected": True, "has_status": True}
         (R(**ON), "idle"),
         (R(**ON, app_id=gate.BACKDROP_APP_ID, display_name="Backdrop"), "idle"),
         (R(**ON, is_stand_by=True), "standby"),
-        # Off wins over a stale app id: a TV in standby shows nothing to anybody.
-        (R(**ON, is_stand_by=True, app_id="233637DE"), "standby"),
+        # An open app wins over standby: Parents (a Philips) reported is_stand_by
+        # while it played Netflix opened with the remote.
+        (R(**ON, is_stand_by=True, app_id="Netflix", display_name="Netflix"), "busy"),
+        (
+            R(**ON, is_stand_by=True, app_id="CA5E8412", player_state="PLAYING"),
+            "busy",
+        ),
+        (R(**ON, is_stand_by=True, app_id=gate.BACKDROP_APP_ID), "standby"),
+        # Standby before the input: every TV that was really off read exactly this
+        # (Big TV, Parents, Twins Room), so the other order would never wake one. A lit
+        # set on another input is unmeasured.
+        (R(**ON, is_stand_by=True, is_active_input=False), "standby"),
         (
             R(**ON, app_id="233637DE", display_name="YouTube", player_state="PLAYING"),
             "busy",
