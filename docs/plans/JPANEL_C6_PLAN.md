@@ -1,6 +1,6 @@
 # Jeff's jpanel — the ESP32-C6 panel as a set of small apps
 
-> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C2r🟡 C3🟡 C3b🟡 C4🟡
+> **Status:** In progress · **Last verified:** 2026-10-15 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C2r🟡 C3🟡 C3b🟡 C4🟡
 > — C0 and C1 are proven on the board (2026-10-11): USB-flashed 0.0.1 from the PWA's board
 > picker, it joined Wi-Fi 6, reached the box over TLS, and took 0.0.2 over the air and kept it
 > across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
@@ -48,7 +48,7 @@
 > and a sound of up to eight seconds, hidden by a tap or by a timeout (three owner decisions
 > that day): `panel_notice` and its RLS, the send/read routes and the debug route, the refusal
 > at the door from what the panel reports on its pickup, the `JN1` stream with test vectors,
-> Jerv's `panel_notify` and the PWA's *Send test notice* (§2). The panel half is 0.0.19
+> Jerv's `panel_notify` and the PWA's test control, since grown into Send to panel (§2). The panel half is 0.0.19
 > (below).
 > **0.0.15 (built, awaiting the board) is the conversation switcher** the owner approved on
 > 2026-10-12: in Jerv's or Dave's thread the long press offers New conversation (one tap) and
@@ -106,6 +106,12 @@
 > behind each Montserrat size. Sequences fall back the way Unicode's own fallback does, and any
 > other emoji is a dim disc instead of LVGL's box. It costs +951 KB of app image and no RAM
 > (firmware README "What 0.0.23 adds").
+> **0.0.24 (built, awaiting the board)** takes a notice the owner unsent from the PWA back off
+> the glass: the pickup's `X-Notice-Withdraw: <id>[,<id>]` (at most four) names held notices,
+> dropped silently through the lapsed path — nothing posted back, no snapshot field (firmware
+> README "What 0.0.24 adds"). It is the panel's half of **Send to panel** (§2 "The composer"),
+> the PWA's composer for a photo, words drawn on it, or a question, approved on mocks 45-59
+> on 2026-10-14.
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
@@ -814,8 +820,50 @@ changes (`JPANEL_NOTICE_REGEN=1` rewrites them after a deliberate format change)
   `"workflow:<name>"` and get a `Sent` back or a `NoticeRefused` saying why; `wait(id, s)`
   awaits the answer. No Ops alert or workflow action sends one yet — the first is a follow-up,
   and a workflow action needs its `app.actions` row (WORKFLOW_ENGINE_PLAN §2).
-- **The PWA** has a *Send test notice* control on the display panel's card (jpanel → Panels):
-  a question goes to the panel and the tap — or the refusal, in words — comes back on the card.
+- **The PWA** has **Send to panel** on the display panel's card (jpanel → Panels), the
+  composer below. It replaced the *Send test notice* control it grew from.
+
+### The composer: Send to panel from the PWA (owner, 2026-10-14; firmware-c6 0.0.24)
+
+The owner, on mocks 45-59 (`../mocks/jpanel-c6/PwaNotice*.dc.html`, `NotifyPhoto*`,
+`NotifyWords`), approved a composer for his own notices, with these defaults: a **share target**,
+**7 days** of history, the sender shown as **"You"**, **Unsend**, and four text styles —
+**Outline, Dark plate, Light plate, Yellow**. It lives in
+`frontend/src/screens/PanelNoticeComposer.tsx`; its rules (layout, wrapping, the payload, how
+each notice ended, every refusal in words) are `frontend/src/panelNotice.ts`, tested without a
+canvas.
+
+- **The panel only ever gets a picture.** A photo (taken or chosen, kept at most 1440 px a side
+  so zoom has pixels to spend), framed by drag and pinch in the 480 × 480 square, and words drawn
+  INTO it on the phone in one of the four styles, dragged where they go, 28-160 px. Words alone
+  go on black. A question puts the picture in a 480 × 240 strip (200 when the question takes two
+  lines) over the panel's own question card; a question alone is that card. The panel needs no
+  fonts or layout for any of it. The picture goes as JPEG (PNG for words on black, whose flat
+  runs the encoder likes) at exactly the panel's size.
+- **Review shows what lands:** `POST /panel/notify/preview` runs the box's own fit and encoder
+  over the picture, so a photo posterized to fit the 320 KiB cap looks posterized before it is
+  sent. Chime (the panel's switch still decides) and how long it stays: 20 s / 1 min / 5 min /
+  until tapped for a plain one (until tapped keeps it 24 h), 15 min / 1 h / 8 h / 24 h for a
+  question's answer.
+- **Status** after Send: Sent, On the panel, then how it ended, from `GET …/{id}?wait=20` reads
+  paced at least 2 s apart. **Unsend** (`POST …/{id}/withdraw`) while it is queued, held or
+  shown: a queued one is never delivered, a held one leaves on the panel's next pickup (0.0.24).
+- **A refusal** (offline with how long, notices off, night hours until when, four waiting, a
+  picture too detailed) lands on Review with the draft intact and **Try again**; notices off and
+  night hours offer **Panel settings → Notices**, which closes onto that group on the card. The
+  draft is kept per panel for the life of the app, so going to flip the switch costs nothing.
+- **History:** the card lists the last three ("Sent to this panel", `GET /panel/notify?device_id=
+  &limit=3`), **All sent** the week grouped by day; any one opens its status, with **Send again**
+  (its picture fetched back from `GET …/{id}/image` exactly as the panel drew it). The box keeps
+  the owner's own notices 7 days after they end, everyone else's 24 h (migration 0249).
+- **Ways in, none of them a second app:** the deep link `/panel/send` opens jpanel straight into
+  the composer for the display panel; the manifest's `shortcuts` puts **Send to panel** (96 and
+  192 px icons) on a long press of the app icon; the manifest's `share_target` takes a photo (and
+  words) shared from any app — `public/panel-share-sw.js`, imported into the service worker, keeps
+  it in the `panel-share` cache and opens `/panel/send?shared=1`, and the proxy redirects a
+  `/panel/share` POST that no service worker caught to `/panel/send`. An iPhone has neither, so
+  while the composer is open the address is `/panel/send` with its own apple-touch-icon and title,
+  and on iOS a tip line says: in Safari, Share → Add to Home Screen.
 
 ### The panel side (C3b; built in 0.0.19)
 
@@ -897,7 +945,7 @@ this section's first sketch of 20° and ~500 ms):
 | **C2d** 🟡 | The debug relay (§4): `panel_debug_request` + RLS test, the command/result routes, settings-poll pickup and result upload, the `JPS1` → PNG decoder, the device's stripe handoff to the network task, Ops → Panels buttons. | A session holding the owner's token gets a snapshot and a screenshot of the live panel, and `reboot` is refused without `confirm`. **Box side built 2026-10-12** (table + RLS test, routes, decoder, CLI). **0.0.9 (built, awaiting the board):** the pickup every 3 s from the update loop (manifest first, backoff to 60 s on a silent box, none while the box is unreachable), one kept-alive session for every box request, commands on the UI task through a one-slot job (3 s, else `ui busy`; inline on a boot with no UI), the screenshot streamed chunked from the renderer (2 × 4 KB, ≤ 2 s of stillness, `net slow` / `capture torn` as JSON), the `esp_log` ring hook with clip-aware secret scrubbing, `dbg=` / `tls=` / `sec=` telemetry. **Left:** proving it on the glass, Ops → Panels buttons. |
 | **C3** 🟡 | The apps (descriptors, models and partial views already in `components/app_*`), each independently: Settings (Wi-Fi, battery, Jerv read-aloud, brightness, update now, calibrate), Clock (+ alarm service + PWA alarm editor + box API), Jerv (streamed hold-to-talk), Thread ×2 (voice post, playback). **0.0.8 (built, awaiting the board):** Settings in the mock's final order with real battery, Wi-Fi (two-tap Disconnect, Connect) and Firmware (Update now through the update loop), every setting saved in NVS; the Clock face with generated 124 px digits, the day and date, the night clock and the corner badge; the time from the PCF85063 and the box's `Date` header, in a zone set on the panel; KEY to Jerv from anywhere. **0.0.10 (built, awaiting the board):** Jerv's streamed hold-to-talk end to end — the ES8311/ES7210 under `svc_audio` (one task, priority 1), the upload chunked while KEY is held, the reply frame (transcript, Jerv's words, then speech) over the S3s' `/endpoint/converse` with `persona=jerv`, the speech streamed through a 16 KB ring, text only when read-aloud is off, KEY/BOOT stops a reply, a speaker-volume slider, `audio=` telemetry, the debug `play_tone`. Jerv here is a tool-less spoken persona, not the owner's agent (§5). **0.0.11 (built, awaiting the board):** Jerv is the owner's real agent, Dave is Minecraft_Dave in a conversation of his own a level under the Minecraft tile (Compass a work-in-progress page), one shared conversation view (`components/convo`) with an instance per agent, Clear chat by a long press, the people's threads named and bound by device id from `GET /endpoint/siblings`, the reply waited for 130 s, the audio stack 4.25 KB and microphone gain 24 dB from the first talks' numbers. **0.0.12 (built, awaiting the board):** the agent turn streamed (JT2: transcript at once, a live status line per tool, keep-alives, no 100 s cut-off, 5-minute cap), the whole answer kept (1,000 bytes) and read in full sentence by sentence (5-minute cap), KEY while Jerv works says so and BOOT leaves the turn running, the speaker's start gated so the first word is never clipped, the Clock's alarms on a 2 s hold, the PWA's icon and blue for Jerv. **0.0.14 (built, awaiting the board):** each tool Jerv or Dave runs listed under the question (✓, a dim ✗, the spinner on the running one, "+N more" past four) and folded into "2 steps · 58 s" over the answer, "Thinking… 0:42" between tools, a spinner that never restarts, and KEY outside a conversation starting a new Jerv conversation (§1 "KEY routing"); on the box, the voice prefix gone from the owner's words and a panel turn shown live in an open PWA chat. **0.0.15 (built, awaiting the board):** the conversation switcher (§1 "Switching conversations") — New conversation and Recent conversations on the agents' long press, ten rows from `GET /endpoint/convo/{agent}/recent`, a switch through `…/select` and `…/messages`, the conversation's title in the thread's header, `agent_sessions.origin` (0239) and panel chats titled in-turn. **0.0.13 (built, awaiting the board):** alarms end to end — the box's table, RLS and routes, the PWA editor on the desk panel's card, `svc_alarms` (etag fetch, NVS cache, UTC + daylight-saving schedule, snooze, 10-minute cap, the switch queued back to the box), the Ringing screen over everything with three synthesised ramping sounds, `inject event=alarm_test`, `alarm=` telemetry. **0.0.16 (built, awaiting the board):** voice post with the twins (§1 "Voice messages with the twins") — the person threads from `GET /endpoint/messages/{device}`, a tap streams one and marks it played on the box, KEY in a twin's thread sends her a voice message (digest as a trailer), the pickup's `X-Jpanel-Post` signal, her tile's and the clock's badges and a chime. **0.0.17 (built, awaiting the board):** the owner's first use of 0.0.16 — her thread changed in place during a play (no rebuild, no scroll jump), the bar filling left to right from the speaker's sample count at 10 Hz, heard once its audio starts (the unread rule), a play's ring after its handshake (`int_min` 44 KB → ~56 KB expected) and `int_min_at` naming the phase of the low. **0.0.18 (built, awaiting the board):** touch calibration (mock `Calib.dc.html`, with four corner crosses rather than its sixteen, at the owner's word): three taps that agree per cross, BOOT cancelling, an affine least-squares fit in the glass's own frame over the 0.0.7 mapping, refused when degenerate, wild or scattered, kept in NVS (`jpanel`/`tp_cal`) and applied before the rotation, Reset calibration; and a play's own 6 KB ring. **0.0.21 (built, awaiting the board):** Listen on every finished reply (the box speaks the stored reply's full text, a progress ring from its SPOKEN records, one at a time), Load earlier into a 20-message window with Newer messages and Start of conversation, the panel's settings from the PWA's Panels card (the night clock's hours among them; the panel's last report wins), and three or more tool steps folded to two lines. **Left:** proving 0.0.21 on the glass. | Each app's mock states reproduced on the glass and in `sim/`. |
 | **C2r** 🟡 | Auto-rotate (§2b): QMI8658 read in a service, `orient_logic` with host tests, software rotation, touch mapped through it, the Settings switch. **0.0.18 (built, awaiting the board):** `svc_orient` (no task of its own: the UI task's passes at 8 Hz), the 25° / 700 ms / 0.5 g rules host-tested, the flush turning each strip (180° in place, 90°/270° through a 2.5 KB piece buffer), touch through the same turn, `imu_axes` for the chip's unknown axes, `home-turned` and `clock-upside-down` in `sim/`. **Left:** the chip's axes against the glass, which only the board can settle (HARDWARE.md §6). | The panel turned on its side reads upright; leaned at 45° it does not flicker; flat it holds. |
-| **C3b** 🟡 | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tool, `svc_notice` and the overlay; pictures, sounds and hide-by-tap-or-time (owner, 2026-10-12). **Box side built 2026-10-12:** migration 0235 + `test_panel_notice_rls.py`, `POST/GET /api/panel/notify`, the debug route + `debug-connect.sh panel-notify`, the panel's `notice/next`, `…/body` and `…/state`, the refusal table from the pickup's `na nq nc nf nt tz`, the picture (fit, rgb565 runs, 320 KiB cap) and sound (16 kHz s16, ≤ 8 s, WAV/ffmpeg/`say`) pipelines, `JN1` with fixtures, Jerv's `panel_notify`, the PWA's *Send test notice*. **Panel half built (0.0.19, awaiting the board):** the pickup's report, `X-Notice` → `notice/next` until 204, each JN1 stream checked as `decode()` checks it and written record by record to its own file on `storage` (littlefs; torn or refused → discarded and fetched again from `…/{id}/body`, three tries), at most four open, files deleted when finished and swept at boot (whole ones re-queued only inside their answer window, kept as an instant in the file's name), `shown` / `answered` / `dismissed` / `expired` retried from an NVS list, the sound played once from the file (never over an alarm), the reader host-tested against every fixture; and the overlay on the boards approved 2026-10-13 — the countdown line and hint, a tap anywhere hiding any notice, the picture full-screen or as a banner through an LVGL image decoder reading the file eight rows at a time, the speaker row with Play again, the night clock's colours and Show picture at night, KEY over a notice's sound stopping it, the 56 px clock badge; on the box, `hide_after_s` defaults to 20 s for a plain notice (`0`: until tapped). **Left:** proving it on the glass. | Jerv asks a yes/no on the panel and acts on the tap. |
+| **C3b** 🟡 | The push path (§2): `panel_notice` + RLS test, the notify routes, the Jerv tool, `svc_notice` and the overlay; pictures, sounds and hide-by-tap-or-time (owner, 2026-10-12). **Box side built 2026-10-12:** migration 0235 + `test_panel_notice_rls.py`, `POST/GET /api/panel/notify`, the debug route + `debug-connect.sh panel-notify`, the panel's `notice/next`, `…/body` and `…/state`, the refusal table from the pickup's `na nq nc nf nt tz`, the picture (fit, rgb565 runs, 320 KiB cap) and sound (16 kHz s16, ≤ 8 s, WAV/ffmpeg/`say`) pipelines, `JN1` with fixtures, Jerv's `panel_notify`, the PWA's *Send test notice*. **Panel half built (0.0.19, awaiting the board):** the pickup's report, `X-Notice` → `notice/next` until 204, each JN1 stream checked as `decode()` checks it and written record by record to its own file on `storage` (littlefs; torn or refused → discarded and fetched again from `…/{id}/body`, three tries), at most four open, files deleted when finished and swept at boot (whole ones re-queued only inside their answer window, kept as an instant in the file's name), `shown` / `answered` / `dismissed` / `expired` retried from an NVS list, the sound played once from the file (never over an alarm), the reader host-tested against every fixture; and the overlay on the boards approved 2026-10-13 — the countdown line and hint, a tap anywhere hiding any notice, the picture full-screen or as a banner through an LVGL image decoder reading the file eight rows at a time, the speaker row with Play again, the night clock's colours and Show picture at night, KEY over a notice's sound stopping it, the 56 px clock badge; on the box, `hide_after_s` defaults to 20 s for a plain notice (`0`: until tapped). **Send to panel (2026-10-14/15, §2 "The composer"):** the owner's history, picture, preview and withdraw routes (migration 0249, the owner's notices kept 7 days), the PWA's composer with Review, status, Unsend, refusals and history, the `/panel/send` deep link, launcher shortcut and share target, and 0.0.24 dropping an unsent notice on the glass. **Left:** proving it on the glass. | Jerv asks a yes/no on the panel and acts on the tap. |
 | **C4** 🟡 | Minecraft. **0.0.11:** the tile is a menu of Dave (the real Minecraft_Dave, a conversation of his own) and Compass (work in progress). **0.0.12:** Dave's talks stream like Jerv's (status line, the whole answer, read in full). | Compass scoped and built. |
 
 ## 4. Debugging a panel through the box
