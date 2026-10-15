@@ -106,6 +106,11 @@
 > behind each Montserrat size. Sequences fall back the way Unicode's own fallback does, and any
 > other emoji is a dim disc instead of LVGL's box. It costs +951 KB of app image and no RAM
 > (firmware README "What 0.0.23 adds").
+> **0.0.25** brings a sideways frame down to an upright one's (0.0.23 measured 65 ms upright and
+> 414 ms on its side): the DMA-done callback now yields to the UI task itself instead of leaving
+> it asleep until the next tick, strips are queued from two 480×20 halves of the same buffer while
+> LVGL draws the next, a turned strip goes out as one window and one transfer, and a dark panel
+> draws nothing until its wake redraws at brightness 0 (firmware README "What 0.0.25 adds").
 > **C2d's Ops → Panels buttons are built (2026-10-15):** a C6 that is picking up has Snapshot and
 > Screenshot on its Ops row, through the owner's own `/api/panel/look` (§4 "The box side"); no
 > firmware change.

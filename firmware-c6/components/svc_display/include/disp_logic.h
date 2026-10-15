@@ -20,13 +20,13 @@ uint8_t disp_level(uint8_t pct, bool dark);
  * is the edge now at the bottom: 0 its own bottom, 1 its right edge, 2 its top, 3 its left edge.
  * LVGL draws the same upright 480×480 screen whatever the panel does (the glass is square, so
  * nothing is laid out again); each strip it draws is turned on its way to the glass. The CO5300
- * has no row/column exchange (HARDWARE.md §2), and a second 38 KB strip buffer for LVGL's own
- * rotation is RAM this board does not have, so:
- *   - 180° reverses the strip where it lies and sends it to the mirrored window: no memory;
- *   - 90° and 270° (0.0.22) give LVGL only DISP_SIDE_ROWS of its strip buffer, and gather each
- *     strip's columns into rows of two pieces carved from the tail it no longer draws in. The
- *     strip's whole turned window is set once and the pieces stream into it, RAMWR then RAMWRC,
- *     one gathered while the other is on the wire: no memory beyond the strip buffer either.
+ * has no row/column exchange (HARDWARE.md §2), and a second strip buffer for LVGL's own rotation
+ * is RAM this board does not have, so the one 38.4 KB buffer is used as two 480×20 halves
+ * (0.0.25):
+ *   - upright and 180° LVGL draws into either half while the other is on the wire; 180° reverses
+ *     its strip where it lies and sends it to the mirrored window;
+ *   - 90° and 270° LVGL draws into the first half only, and each strip is gathered whole, turned,
+ *     into the second, which goes out as one transfer while LVGL draws the next strip.
  * Every window stays even-aligned: a strip LVGL rounded to even starts and sizes maps to even
  * starts and sizes on a side of even length. */
 typedef struct {
@@ -34,33 +34,14 @@ typedef struct {
 } disp_win_t;
 
 #define DISP_N 480
-/* LVGL's strip upright and upside down: 480×40, the whole 38.4 KB buffer. */
-#define DISP_STRIP_ROWS 40
-/* On its side LVGL draws 480×32 strips (30 KB) and the last 8 rows' 7.5 KB are the two pieces. */
-#define DISP_SIDE_ROWS 32
-#define DISP_ROT_PIECES 2
-#define DISP_ROT_PIECE_PX ((DISP_STRIP_ROWS - DISP_SIDE_ROWS) * DISP_N / DISP_ROT_PIECES)
-/* The CO5300's memory writes (CO-DS §7.5.32-33): RAMWR starts at the window's first pixel and
-   RAMWRC carries on from where the last write stopped, so a window can be filled piece by piece
-   with no CASET/RASET between them. Both ride the QSPI pixel opcode 0x32. */
+/* The strip buffer, 480×40 (38.4 KB, the README's budget), and the 480×20 halves LVGL draws in.
+   A half holds any area LVGL draws (it fills its buffer by area, so a narrow area is tall), and so
+   does that area turned: its pixel count is the same. */
+#define DISP_BUF_ROWS 40
+#define DISP_STRIP_ROWS (DISP_BUF_ROWS / 2)
+#define DISP_STRIP_PX (DISP_N * DISP_STRIP_ROWS)
+/* The CO5300's memory write (CO-DS §7.5.32): from the window's first pixel, row by row. */
 #define DISP_RAMWR 0x2C
-#define DISP_RAMWRC 0x3C
-
-/* Glass rows per piece for an area `h` logical rows tall: as many as fit DISP_ROT_PIECE_PX,
-   always even (the CO5300's windows), never under 2 — h is at most the glass's 480, a quarter of
-   DISP_ROT_PIECE_PX. An area LVGL draws narrow is taller than a strip (it fills its buffer by
-   area, not by rows), so this is worked out per area. */
-int32_t disp_rot_piece_rows(int32_t h);
-
-/* The i-th piece of a quarter-turned area `w` logical columns wide (so `w` glass rows tall), `k`
- * glass rows a piece: its first glass row, its rows and its memory-write command — RAMWR for the
- * first, RAMWRC for the rest — and which of the DISP_ROT_PIECES buffers it is gathered into.
- * False once i is past the last piece. */
-typedef struct {
-    int32_t r0, rows;
-    uint8_t cmd, buf;
-} disp_piece_t;
-bool disp_rot_step(int32_t w, int32_t k, int32_t i, disp_piece_t *out);
 
 /* Where a logical pixel (lx, ly) lands on an n×n glass. */
 void disp_rot_point(uint8_t rot, int32_t n, int32_t lx, int32_t ly, int32_t *px, int32_t *py);
@@ -68,27 +49,32 @@ void disp_rot_point(uint8_t rot, int32_t n, int32_t lx, int32_t ly, int32_t *px,
 disp_win_t disp_rot_area(uint8_t rot, int32_t n, disp_win_t logical);
 /* 180°: the area's pixels reversed in place, which is the area turned half way round. */
 void disp_reverse(uint16_t *px, uint32_t count);
-/* 90° / 270°: the area (w × h logical pixels, row-major in `px`) is h wide and w tall on the
- * glass. Glass rows [r0, r0 + k) of it are gathered into `out` (k × h pixels, row-major), and
- * the window they go to is returned. */
-disp_win_t disp_rot_piece(uint8_t rot, int32_t n, disp_win_t logical, const uint16_t *px,
-                          int32_t r0, int32_t k, uint16_t *out);
+/* 90° / 270°: the area (w × h logical pixels, row-major in `px`, in LVGL's byte order) is h wide
+ * and w tall on the glass. All of it is gathered into `out` (w × h pixels, row-major as the glass
+ * takes them) with each pixel's two bytes swapped for the wire, so a turned strip needs no swap
+ * pass of its own. Returns the glass window it goes to. */
+disp_win_t disp_rot_gather(uint8_t rot, int32_t n, disp_win_t logical, const uint16_t *px,
+                           uint16_t *out);
 
-/* ---- what a frame costs (0.0.22): the debug snapshot's `display.flush` and telemetry ----
+/* ---- what a frame costs (0.0.22): the debug snapshot's `display.rot_ms` and telemetry ----
  * Per rotation, so a turned panel's frames are never averaged with upright ones. `flush` is the
- * time spent sending a frame's strips (the turn included), `wall` the frame from LVGL's render
- * start to its last strip sent (drawing and sending). A full frame is one that covered the whole
- * glass — a turn, an app opened — the only kind whose numbers compare across rotations. */
+ * UI task's time in the flush callback over a frame's strips: the swap or gather, the commands,
+ * and `wait` (0.0.25), the part of it spent blocked on a transfer still on the wire. `wall` is
+ * the frame from LVGL's render start to its last strip sent (drawing and sending). A full frame
+ * is one that covered the whole glass — a turn, an app opened — the only kind whose numbers
+ * compare across rotations. */
 typedef struct {
     uint32_t frames, last_ms, max_ms;
     uint64_t sum_us;
     uint32_t full, full_ms, full_max_ms, full_wall_ms;
-    uint64_t full_sum_us;
+    uint64_t full_sum_us, full_wait_us;
 } disp_stat_t;
-void disp_stat_add(disp_stat_t *s, uint32_t flush_us, uint32_t wall_us, bool full);
+void disp_stat_add(disp_stat_t *s, uint32_t flush_us, uint32_t wait_us, uint32_t wall_us,
+                   bool full);
 uint32_t disp_stat_avg_ms(const disp_stat_t *s);
 uint32_t disp_stat_full_avg_ms(const disp_stat_t *s);
 /* The snapshot's `display.rot_ms`: for each rotation that has had a whole-glass frame,
- * "<deg>:<mean>,<worst>,<count>,<last wall>" in ms, space-separated, "" before any. One short
- * string because the snapshot's answer is capped at 6 KB (dbg_link's OUT_MAX) and nearly full. */
+ * "<deg>:<mean>,<worst>,<count>,<last wall>,<mean wait>" in ms, space-separated, "" before any.
+ * One short string because the snapshot's answer is capped at 6 KB (dbg_link's OUT_MAX) and
+ * nearly full. */
 void disp_stat_fmt(char *out, size_t len, const disp_stat_t st[4]);

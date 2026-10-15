@@ -64,39 +64,20 @@ void disp_reverse(uint16_t *px, uint32_t count)
     }
 }
 
-int32_t disp_rot_piece_rows(int32_t h)
-{
-    const int32_t k = (h > 0 ? DISP_ROT_PIECE_PX / h : DISP_ROT_PIECE_PX) & ~(int32_t)1;
-    return k < 2 ? 2 : k;
-}
-
-disp_win_t disp_rot_piece(uint8_t rot, int32_t n, disp_win_t l, const uint16_t *px, int32_t r0,
-                          int32_t k, uint16_t *out)
+disp_win_t disp_rot_gather(uint8_t rot, int32_t n, disp_win_t l, const uint16_t *px,
+                           uint16_t *out)
 {
     const int32_t w = l.x2 - l.x1 + 1, h = l.y2 - l.y1 + 1;
-    const disp_win_t g = disp_rot_area(rot, n, l);
-    if (r0 + k > w) k = w - r0;
-    /* Glass row r of the area is logical column w-1-r (90°) or r (270°); glass column c is
-       logical row c (90°) or h-1-c (270°). */
+    /* Logical (x, y) is the area's glass row w-1-x, column y at 90°, and row x, column h-1-y at
+       270°: each of LVGL's rows is read in order and written down one glass column. */
     const bool cw = (rot & 3) == 1;
-    for (int32_t r = 0; r < k; r++) {
-        const int32_t col = cw ? w - 1 - (r0 + r) : r0 + r;
-        uint16_t *o = out + r * h;
-        if (cw)
-            for (int32_t c = 0; c < h; c++) o[c] = px[c * w + col];
-        else
-            for (int32_t c = 0; c < h; c++) o[c] = px[(h - 1 - c) * w + col];
+    const int32_t step = cw ? -h : h;
+    for (int32_t y = 0; y < h; y++) {
+        const uint16_t *row = px + y * w;
+        uint16_t *o = out + (cw ? (w - 1) * h + y : h - 1 - y);
+        for (int32_t x = 0; x < w; x++, o += step) *o = (uint16_t)(row[x] << 8 | row[x] >> 8);
     }
-    return (disp_win_t){g.x1, g.y1 + r0, g.x2, g.y1 + r0 + k - 1};
-}
-
-bool disp_rot_step(int32_t w, int32_t k, int32_t i, disp_piece_t *out)
-{
-    if (k <= 0 || i < 0 || i >= (w + k - 1) / k) return false;
-    const int32_t r0 = i * k;
-    *out = (disp_piece_t){r0, r0 + k > w ? w - r0 : k, i ? DISP_RAMWRC : DISP_RAMWR,
-                          (uint8_t)(i % DISP_ROT_PIECES)};
-    return true;
+    return disp_rot_area(rot, n, l);
 }
 
 static uint32_t ms(uint64_t us)
@@ -104,7 +85,8 @@ static uint32_t ms(uint64_t us)
     return (uint32_t)((us + 500) / 1000);
 }
 
-void disp_stat_add(disp_stat_t *s, uint32_t flush_us, uint32_t wall_us, bool full)
+void disp_stat_add(disp_stat_t *s, uint32_t flush_us, uint32_t wait_us, uint32_t wall_us,
+                   bool full)
 {
     s->frames++;
     s->sum_us += flush_us;
@@ -113,6 +95,7 @@ void disp_stat_add(disp_stat_t *s, uint32_t flush_us, uint32_t wall_us, bool ful
     if (!full) return;
     s->full++;
     s->full_sum_us += flush_us;
+    s->full_wait_us += wait_us;
     s->full_ms = s->last_ms;
     s->full_wall_ms = ms(wall_us);
     if (s->full_ms > s->full_max_ms) s->full_max_ms = s->full_ms;
@@ -134,10 +117,11 @@ void disp_stat_fmt(char *out, size_t len, const disp_stat_t st[4])
     if (len) out[0] = '\0';
     for (int r = 0; r < 4 && at < len; r++) {
         if (!st[r].full) continue;
-        const int n = snprintf(out + at, len - at, "%s%d:%lu,%lu,%lu,%lu", at ? " " : "", r * 90,
-                               (unsigned long)disp_stat_full_avg_ms(&st[r]),
+        const int n = snprintf(out + at, len - at, "%s%d:%lu,%lu,%lu,%lu,%lu", at ? " " : "",
+                               r * 90, (unsigned long)disp_stat_full_avg_ms(&st[r]),
                                (unsigned long)st[r].full_max_ms, (unsigned long)st[r].full,
-                               (unsigned long)st[r].full_wall_ms);
+                               (unsigned long)st[r].full_wall_ms,
+                               (unsigned long)ms(st[r].full_wait_us / st[r].full));
         if (n < 0) break;
         at += (size_t)n;
     }

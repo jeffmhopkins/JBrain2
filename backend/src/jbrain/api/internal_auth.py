@@ -25,7 +25,11 @@ from jbrain.storage import InternalSecrets
 
 WALL = "wall"
 MQTT = "mqtt"
-CALLERS = (WALL, MQTT)
+# Not an /internal caller: the reverse direction. The api presents `cast.token` TO the
+# host-networked cast sidecar (deploy/cast), whose control port is on the LAN. Minted here
+# with the others so the secret arrives with the update, never as a host step.
+CAST = "cast"
+CALLERS = (WALL, MQTT, CAST)
 
 
 def _expected(request: Request, caller: str) -> bytes | None:

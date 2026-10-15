@@ -12,8 +12,10 @@
  * failed; the panel is then left alone for the rest of the boot. */
 bool svc_display_start(const char **failed_step);
 
-/* UI task, between frames: applies a recorded brightness. Never while a pixel transfer is in
- * flight — on the S3's CO5300, a framed command arriving mid-frame took the renderer down. */
+/* UI task, between frames: applies a recorded turn and brightness. Never while a pixel transfer
+ * is in flight — on the S3's CO5300, a framed command arriving mid-frame took the renderer down.
+ * Once dark is on the glass LVGL draws nothing until the wake, which redraws the whole screen
+ * before the brightness comes back (0.0.25). */
 void svc_display_service(void);
 
 /* The debug screenshot (plan §4): UI task, between frames. Re-renders the whole screen once and

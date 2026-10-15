@@ -20,6 +20,10 @@ dev = [
     # proving an API the image cannot have is the failure this pin exists to
     # stop. Bump it when the image's Debian does.
     "numpy~=2.2.4",
+    # The cast sidecar's one pip dependency, for the same reason: the suite loads
+    # deploy/cast/*.py by path and pyright checks them against the real library. Pinned
+    # to the version Dockerfile.cast installs.
+    "PyChromecast==14.0.10",
     "pyright>=1.1",
     "pytest>=8",
     "pytest-asyncio>=0.24",
@@ -47,7 +51,14 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 # dead configuration until this line existed, describing files pyright never opened.
 # It is this package's job because this package's pytest already loads those files by
 # path (CLAUDE.md #8).
-include = ["src", "tests", "../deploy/sdr", "../deploy/endpoint", "../deploy/minecraft"]
+include = [
+    "src",
+    "tests",
+    "../deploy/sdr",
+    "../deploy/endpoint",
+    "../deploy/minecraft",
+    "../deploy/cast",
+]
 typeCheckingMode = "standard"
 pythonVersion = "3.11"
 venvPath = "."
@@ -84,6 +95,14 @@ pythonVersion = "3.12"
 root = "../deploy/minecraft"
 extraPaths = ["../deploy/minecraft"]
 pythonVersion = "3.13"
+
+# The cast sidecar, same bare-name imports. Its one pip dependency, PyChromecast, is in
+# this package's dev extra, so an unresolved import here is a real defect.
+[[tool.pyright.executionEnvironments]]
+root = "../deploy/cast"
+extraPaths = ["../deploy/cast"]
+# python:3.12-slim, like the panel flasher.
+pythonVersion = "3.12"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

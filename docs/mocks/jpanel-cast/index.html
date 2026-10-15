@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jpanel Cast mock</title>
+<style>
+/* Tokens lifted from frontend/src/styles/tokens.css (dark), font-scale 1 for legibility. */
+:root {
+  color-scheme: dark;
+  --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+  --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66; --surface-composer: #141518;
+  --steel: #7fa7c9; --steel-tint: rgba(127,167,201,.13);
+  --green: #8fbc9a; --green-tint: rgba(143,188,154,.13);
+  --amber: #c9a36a; --amber-tint: rgba(201,163,106,.13);
+  --rose: #cf8a8f; --rose-tint: rgba(207,138,143,.13);
+  --violet: #a493c9; --violet-tint: rgba(164,147,201,.13);
+  --accent: var(--steel); --accent-tint: var(--steel-tint);
+  --fs-micro: 12px; --fs-head: 13px; --fs-secondary: 14px; --fs-body: 16px;
+  --fs-title: 18px; --fs-screen: 22px;
+  --r-input: 12px; --r-seg: 14px; --r-card: 16px; --r-pill: 999px;
+  --page: #0a0b0c;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) { --page: #e9eaec; }
+}
+:root[data-theme="light"] { --page: #e9eaec; }
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--text);
+  font: 400 var(--fs-body)/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  padding: 24px 16px 64px;
+}
+.doc { max-width: 1240px; margin: 0 auto; }
+.doc > header h1 { font-size: 26px; margin: 0 0 6px; font-weight: 600; }
+.doc > header p { margin: 0; color: var(--text-2); max-width: 760px; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .doc > header, :root:not([data-theme="dark"]) .stage > h2,
+  :root:not([data-theme="dark"]) .stage > p, :root:not([data-theme="dark"]) .cap { color: #1b1c1f; }
+}
+:root[data-theme="light"] .doc > header, :root[data-theme="light"] .stage > h2,
+:root[data-theme="light"] .stage > p, :root[data-theme="light"] .cap { color: #1b1c1f; }
+.stage { margin-top: 40px; }
+.stage > h2 { font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-2); margin: 0 0 4px; font-weight: 600; }
+.stage > p { margin: 0 0 16px; color: var(--text-2); max-width: 760px; font-size: 14px; }
+.row { display: flex; flex-wrap: wrap; gap: 28px; align-items: flex-start; }
+.frame { display: flex; flex-direction: column; gap: 10px; }
+.cap { font-size: 13px; color: var(--text-2); max-width: 360px; }
+.cap b { color: inherit; font-weight: 600; }
+
+/* ---------- phone ---------- */
+.phone {
+  width: 360px; max-width: 100%; height: 820px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 28px; overflow: hidden;
+  display: flex; flex-direction: column; position: relative;
+}
+.bar { display: flex; align-items: center; gap: 10px; padding: 14px 16px 10px; }
+.bar .back { width: 36px; height: 36px; border-radius: var(--r-pill); display: grid; place-items: center; color: var(--text-2); }
+.bar h3 { margin: 0; font-size: var(--fs-screen); font-weight: 600; flex: 1; }
+.bar .act { color: var(--accent); font-size: var(--fs-secondary); font-weight: 500; }
+.scroll { flex: 1; overflow: hidden; padding: 0 16px 16px; }
+.section-header { font-size: var(--fs-micro); letter-spacing: .08em; text-transform: uppercase; color: var(--text-3); margin: 18px 2px 8px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); }
+svg.i { width: 24px; height: 24px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+svg.s { width: 18px; height: 18px; }
+
+/* launcher */
+.launch-head { display: flex; justify-content: center; padding: 10px 0 2px; }
+.launch-head i { width: 40px; height: 4px; border-radius: 4px; background: var(--border); display: block; }
+.tile-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: 16px 8px 14px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  min-height: 92px; font-size: var(--fs-secondary); position: relative; }
+.tile.new { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-tint); }
+.tile .badge { position: absolute; top: 8px; right: 8px; min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: var(--r-pill); background: var(--green-tint); color: var(--green); font-size: 11px;
+  display: grid; place-items: center; font-weight: 600; }
+
+/* tv list */
+.tv { display: flex; gap: 12px; align-items: center; padding: 12px 14px; }
+.tv + .tv { border-top: 1px solid var(--border); }
+.tv .glyph { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; flex: none; }
+.tv .meta { flex: 1; min-width: 0; }
+.tv .name { font-weight: 500; }
+.tv .sub { font-size: var(--fs-head); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--r-pill);
+  font-size: 12px; font-weight: 500; white-space: nowrap; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.c-ok { background: var(--green-tint); color: var(--green); }
+.c-wake { background: var(--steel-tint); color: var(--steel); }
+.c-busy { background: var(--amber-tint); color: var(--amber); }
+.c-off { background: var(--surface-2); color: var(--text-3); }
+.c-bad { background: var(--rose-tint); color: var(--rose); }
+.g-ok { background: var(--green-tint); color: var(--green); }
+.g-wake { background: var(--steel-tint); color: var(--steel); }
+.g-busy { background: var(--amber-tint); color: var(--amber); }
+.g-off { background: var(--surface-2); color: var(--text-3); }
+.rule { font-size: var(--fs-head); color: var(--text-2); padding: 12px 14px; display: flex; gap: 10px; align-items: flex-start; }
+.rule b { color: var(--text); font-weight: 500; }
+.toggle { width: 42px; height: 26px; border-radius: 13px; background: var(--green); position: relative; flex: none; }
+.toggle::after { content: ""; position: absolute; right: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; }
+.toggle.offt { background: var(--surface-2); border: 1px solid var(--border); }
+.toggle.offt::after { left: 3px; right: auto; background: var(--text-3); }
+.setrow { display: flex; align-items: center; gap: 12px; padding: 12px 14px; }
+.setrow + .setrow { border-top: 1px solid var(--border); }
+.setrow .meta { flex: 1; }
+.setrow .meta div:last-child { font-size: var(--fs-head); color: var(--text-2); }
+.btn { height: 44px; border-radius: var(--r-input); display: inline-flex; align-items: center; justify-content: center;
+  gap: 8px; padding: 0 16px; font-weight: 500; font-size: var(--fs-body); border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
+.btn.primary { background: var(--accent); color: #0e0f11; border-color: transparent; }
+.btn.block { width: 100%; }
+.fab { position: absolute; left: 16px; right: 16px; bottom: 16px; }
+
+/* composer */
+.seg { display: flex; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-seg); padding: 3px; gap: 3px; margin: 2px 0 6px; }
+.seg span { flex: 1; text-align: center; padding: 7px 0; border-radius: 11px; font-size: var(--fs-secondary); color: var(--text-2); }
+.seg span.on { background: var(--surface-2); color: var(--text); font-weight: 500; }
+.field { background: var(--surface-composer); border: 1px solid var(--border); border-radius: var(--r-input); padding: 10px 12px; }
+.field .lbl { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .06em; }
+.field .val { margin-top: 2px; }
+.field + .field { margin-top: 8px; }
+.ph { color: var(--text-3); }
+.attach { display: flex; gap: 8px; margin-top: 8px; }
+.attach .a { flex: 1; height: 56px; border-radius: var(--r-input); border: 1px dashed var(--border); display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-2); font-size: var(--fs-secondary); }
+.attach .a.has { border-style: solid; background: var(--surface); color: var(--text); justify-content: flex-start; padding: 0 8px; }
+.thumb { width: 40px; height: 40px; border-radius: 8px; overflow: hidden; flex: none; }
+.targets { display: flex; flex-wrap: wrap; gap: 8px; }
+.tgt { height: 34px; border-radius: var(--r-pill); padding: 0 12px; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); font-size: var(--fs-secondary); color: var(--text-2); }
+.tgt.on { background: var(--accent-tint); border-color: var(--accent); color: var(--text); }
+.tgt.dis { opacity: .5; text-decoration: line-through; }
+.tgt .dot { width: 7px; height: 7px; border-radius: 50%; }
+.preview-wrap { margin-top: 6px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+.hint { font-size: var(--fs-head); color: var(--text-2); margin-top: 6px; }
+.hint.warn { color: var(--amber); }
+
+/* sheet */
+.scrim { position: absolute; inset: 0; background: rgba(14,15,17,.6); }
+.sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--surface); border-top: 1px solid var(--border);
+  border-radius: 20px 20px 0 0; padding: 10px 16px 18px; }
+.sheet .grab { width: 40px; height: 4px; border-radius: 4px; background: var(--border); margin: 0 auto 12px; }
+.sheet h4 { margin: 0 0 2px; font-size: var(--fs-title); font-weight: 600; }
+.sheet .lead { color: var(--text-2); font-size: var(--fs-secondary); margin-bottom: 10px; }
+.res { display: flex; gap: 12px; align-items: center; padding: 10px 0; }
+.res + .res { border-top: 1px solid var(--border); }
+.res .meta { flex: 1; }
+.res .meta div:last-child { font-size: var(--fs-head); color: var(--text-2); }
+.sent-item { display: flex; gap: 12px; padding: 12px 14px; align-items: center; }
+.sent-item + .sent-item { border-top: 1px solid var(--border); }
+.sent-item .meta { flex: 1; min-width: 0; }
+.sent-item .t { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sent-item .s { font-size: var(--fs-head); color: var(--text-2); }
+.mini16 { width: 64px; aspect-ratio: 16/9; border-radius: 6px; overflow: hidden; flex: none; border: 1px solid var(--border); }
+
+/* ---------- TV (16:9; everything sized in cqw so it scales with the frame) ---------- */
+.tvset { width: min(720px, 100%); }
+.bezel { background: #050506; border-radius: 14px; padding: 10px; border: 1px solid #1c1d20; }
+.screen { container-type: inline-size; aspect-ratio: 16/9; position: relative; overflow: hidden; border-radius: 4px; background: #000; }
+.stand { width: 22%; height: 10px; margin: 0 auto; background: #141518; border-radius: 0 0 6px 6px; }
+.n { position: absolute; inset: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #eef0f2; }
+.n-bg { position: absolute; inset: 0; background:
+  radial-gradient(70% 90% at 15% 20%, rgba(127,167,201,.22), transparent 60%),
+  radial-gradient(60% 80% at 90% 100%, rgba(164,147,201,.18), transparent 60%), #0c0d10; }
+.n-from { position: absolute; left: 6cqw; top: 5.5cqw; display: flex; align-items: center; gap: 1.2cqw; font-size: 1.8cqw; color: rgba(238,240,242,.7); letter-spacing: .02em; }
+.n-from .av { width: 3.4cqw; height: 3.4cqw; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 1.6cqw; color: #0c0d10; }
+.n-clock { position: absolute; right: 6cqw; top: 5.5cqw; font-size: 1.8cqw; color: rgba(238,240,242,.55); font-variant-numeric: tabular-nums; }
+.n-title { position: absolute; left: 6cqw; right: 6cqw; top: 36%; font-size: 7cqw; font-weight: 700; line-height: 1.05; letter-spacing: -.01em; }
+.n-body { position: absolute; left: 6cqw; right: 22cqw; top: 56%; font-size: 2.6cqw; line-height: 1.35; color: rgba(238,240,242,.78); }
+.n-bar { position: absolute; left: 0; bottom: 0; height: .5cqw; background: rgba(238,240,242,.12); width: 100%; }
+.n-bar i { display: block; height: 100%; width: 62%; background: var(--steel); }
+.n-tag { position: absolute; right: 6cqw; bottom: 4.5cqw; font-size: 1.5cqw; color: rgba(238,240,242,.4); display: flex; align-items: center; gap: .8cqw; }
+.n-sound { position: absolute; left: 6cqw; bottom: 4.5cqw; display: flex; align-items: center; gap: 1cqw; font-size: 1.6cqw; color: rgba(238,240,242,.7); }
+.eq { display: flex; gap: .35cqw; align-items: flex-end; height: 2cqw; }
+.eq i { width: .45cqw; background: var(--green); border-radius: .2cqw; }
+/* split: picture left */
+.n-pic { position: absolute; left: 0; top: 0; bottom: 0; width: 56%; overflow: hidden; }
+.n-pic::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent 70%, #0c0d10); }
+.n-side { position: absolute; left: 58%; right: 5cqw; top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; }
+.n-side .n-title2 { font-size: 4.6cqw; font-weight: 700; line-height: 1.08; }
+.n-side .n-body2 { font-size: 2.2cqw; line-height: 1.4; color: rgba(238,240,242,.75); margin-top: 1.6cqw; }
+/* full picture with caption */
+.n-full { position: absolute; inset: 0; }
+.n-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 10cqw 6cqw 5cqw; background: linear-gradient(transparent, rgba(0,0,0,.82)); }
+.n-cap .t { font-size: 4.4cqw; font-weight: 700; }
+.n-cap .b { font-size: 2.1cqw; color: rgba(238,240,242,.78); margin-top: .6cqw; }
+/* ambient (what we will NOT cover) */
+.amb { position: absolute; inset: 0; background: linear-gradient(160deg, #3b5a6e, #20303b 45%, #13191e); }
+.amb .clk { position: absolute; left: 5cqw; bottom: 5cqw; font-size: 6cqw; font-weight: 300; color: rgba(255,255,255,.9); }
+.amb .lbl { position: absolute; left: 5cqw; bottom: 13cqw; font-size: 1.6cqw; color: rgba(255,255,255,.6); }
+.busy { position: absolute; inset: 0; background: linear-gradient(120deg, #2a1a12, #5a2f1d 40%, #1c120d); }
+.busy .play { position: absolute; left: 5cqw; right: 5cqw; bottom: 4cqw; height: .5cqw; background: rgba(255,255,255,.25); }
+.busy .play i { display: block; height: 100%; width: 38%; background: #e50914; }
+.busy .ttl { position: absolute; left: 5cqw; bottom: 7cqw; font-size: 2.4cqw; color: rgba(255,255,255,.85); }
+.gate { position: absolute; inset: 0; display: grid; place-items: center; }
+.gate span { background: rgba(10,11,12,.8); border: 1px solid rgba(255,255,255,.15); border-radius: 999px; padding: 1.2cqw 2.4cqw; font-size: 2cqw; }
+.legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+@media (max-width: 420px) { .phone { height: 820px; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="tv" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="cast" viewBox="0 0 24 24"><path d="M3 9V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-6"/><path d="M3 13a6 6 0 0 1 6 6M3 17a2 2 0 0 1 2 2"/><circle cx="3.2" cy="19" r=".6" fill="currentColor"/></symbol>
+    <symbol id="chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+    <symbol id="gauge" viewBox="0 0 24 24"><path d="M4 16a8 8 0 1 1 16 0"/><path d="M12 16l4-5"/></symbol>
+    <symbol id="cube" viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5l8 4.5 8-4.5M12 12v9"/></symbol>
+    <symbol id="radio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 7.8a6 6 0 0 1 0 8.4M5 5a10 10 0 0 0 0 14M19 5a10 10 0 0 1 0 14"/></symbol>
+    <symbol id="pin" viewBox="0 0 24 24"><path d="M12 21s-6-6.1-6-11a6 6 0 0 1 12 0c0 4.9-6 11-6 11z"/><circle cx="12" cy="10" r="2"/></symbol>
+    <symbol id="cal" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></symbol>
+    <symbol id="list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+    <symbol id="img" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/></symbol>
+    <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+    <symbol id="back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+    <symbol id="play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+    <symbol id="power" viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/></symbol>
+    <symbol id="speaker" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9a4 4 0 0 1 0 6"/></symbol>
+    <symbol id="undo" viewBox="0 0 24 24"><path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 0 1 0 12"/></symbol>
+    <!-- a placeholder "photo": the kids' fort, drawn -->
+    <symbol id="photo" viewBox="0 0 160 120" preserveAspectRatio="xMidYMid slice">
+      <rect width="160" height="120" fill="#7fb2d6"/>
+      <rect y="70" width="160" height="50" fill="#5d8a4c"/>
+      <circle cx="128" cy="26" r="12" fill="#f3d27a"/>
+      <path d="M40 70l28-26 28 26z" fill="#c9a36a"/>
+      <rect x="44" y="70" width="48" height="30" fill="#e6d3b3"/>
+      <rect x="62" y="80" width="12" height="20" fill="#5a3b28"/>
+      <circle cx="108" cy="92" r="5" fill="#f0c9a0"/><rect x="104" y="97" width="8" height="12" rx="2" fill="#cf8a8f"/>
+      <circle cx="122" cy="92" r="5" fill="#f0c9a0"/><rect x="118" y="97" width="8" height="12" rx="2" fill="#a493c9"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="doc">
+<header>
+  <h1>jpanel Cast: notices on the TVs</h1>
+  <p>Mock for the owner's review, 2026-10-14. A Cast tile in the launcher, a list of the house's Chromecast TVs, a composer that is
+  the panel composer (being built in the "Dad's jpanel" session) with a 16:9 preview, and what lands on the glass. The box casts
+  only when a TV is on its ambient screen or switched off, and never covers anything someone is watching.</p>
+</header>
+
+<!-- ======================= PWA ======================= -->
+<section class="stage">
+  <h2>1 · PWA</h2>
+  <p>Its own launcher tile. The badge counts TVs that would take a notice right now.</p>
+  <div class="row">
+
+    <div class="frame">
+      <div class="phone">
+        <div class="launch-head"><i></i></div>
+        <div class="scroll">
+          <div class="section-header">Apps</div>
+          <div class="tile-grid">
+            <div class="tile"><svg class="i"><use href="#cal"/></svg>Calendar</div>
+            <div class="tile"><svg class="i"><use href="#list"/></svg>Lists</div>
+            <div class="tile"><svg class="i"><use href="#pin"/></svg>Location</div>
+            <div class="tile"><svg class="i"><use href="#chat"/></svg>jpanel</div>
+            <div class="tile new"><span class="badge">3</span><svg class="i" style="color:var(--steel)"><use href="#cast"/></svg>Cast</div>
+            <div class="tile"><svg class="i"><use href="#pin"/></svg>Endpoints</div>
+            <div class="tile"><svg class="i"><use href="#radio"/></svg>Radio</div>
+            <div class="tile"><svg class="i"><use href="#img"/></svg>Image</div>
+            <div class="tile"><svg class="i"><use href="#gauge"/></svg>Ops</div>
+            <div class="tile"><svg class="i"><use href="#cube"/></svg>Minecraft</div>
+          </div>
+        </div>
+      </div>
+      <div class="cap"><b>Launcher.</b> "Cast" sits beside jpanel. Same family of thing, a different door, because what you reach for
+      is "put this on the TV".</div>
+    </div>
+
+    <div class="frame">
+      <div class="phone">
+        <div class="bar"><span class="back"><svg class="i"><use href="#back"/></svg></span><h3>Cast</h3><span class="act">Refresh</span></div>
+        <div class="scroll">
+          <div class="seg"><span class="on">TVs</span><span>Send</span><span>Sent</span></div>
+          <div class="section-header">5 found on the network</div>
+          <div class="card">
+            <div class="tv"><div class="glyph g-ok"><svg class="i"><use href="#tv"/></svg></div>
+              <div class="meta"><div class="name">Living room</div><div class="sub">Ambient screen · photos</div></div>
+              <span class="chip c-ok"><span class="dot"></span>Ready</span></div>
+            <div class="tv"><div class="glyph g-wake"><svg class="i"><use href="#power"/></svg></div>
+              <div class="meta"><div class="name">Girls' room</div><div class="sub">Off · will turn on</div></div>
+              <span class="chip c-wake"><span class="dot"></span>Off</span></div>
+            <div class="tv"><div class="glyph g-ok"><svg class="i"><use href="#tv"/></svg></div>
+              <div class="meta"><div class="name">Basement</div><div class="sub">Home screen, nothing playing</div></div>
+              <span class="chip c-ok"><span class="dot"></span>Ready</span></div>
+            <div class="tv"><div class="glyph g-busy"><svg class="i"><use href="#play"/></svg></div>
+              <div class="meta"><div class="name">Kitchen</div><div class="sub">Netflix · playing</div></div>
+              <span class="chip c-busy"><span class="dot"></span>In use</span></div>
+            <div class="tv"><div class="glyph g-off"><svg class="i"><use href="#tv"/></svg></div>
+              <div class="meta"><div class="name">Garage</div><div class="sub">Not answering · last seen 2 d ago</div></div>
+              <span class="chip c-off">Gone</span></div>
+          </div>
+          <div class="section-header">Rules</div>
+          <div class="card">
+            <div class="rule"><svg class="i s" style="color:var(--green);flex:none;margin-top:1px"><use href="#check"/></svg>
+              <div><b>Only an idle TV.</b> Ambient, screensaver or home screen with nothing playing. Anything else is skipped, never covered.</div></div>
+            <div class="rule" style="border-top:1px solid var(--border)"><svg class="i s" style="color:var(--steel);flex:none;margin-top:1px"><use href="#power"/></svg>
+              <div><b>Off is fine.</b> Casting turns it on, shows the notice, then puts it back to sleep.</div></div>
+            <div class="rule" style="border-top:1px solid var(--border)"><svg class="i s" style="color:var(--violet);flex:none;margin-top:1px"><use href="#moon"/></svg>
+              <div><b>Quiet hours</b> 21:00–07:00 hold it. Waking a dark bedroom is never the default.</div></div>
+          </div>
+        </div>
+        <div class="fab"><div class="btn primary block"><svg class="i s"><use href="#cast"/></svg>Send to TVs</div></div>
+      </div>
+      <div class="cap"><b>TVs tab.</b> What each TV is reporting, live. Each row is said in words, so you never have to decode a
+      color. Tap a row to rename it, turn it off for notices, or send it a test.</div>
+    </div>
+
+    <div class="frame">
+      <div class="phone">
+        <div class="bar"><span class="back"><svg class="i"><use href="#back"/></svg></span><h3>Girls' room</h3></div>
+        <div class="scroll">
+          <div class="card" style="padding:14px;display:flex;gap:12px;align-items:center">
+            <div class="glyph g-wake" style="width:44px;height:44px;border-radius:12px;display:grid;place-items:center"><svg class="i"><use href="#power"/></svg></div>
+            <div style="flex:1"><div style="font-weight:500">Off</div><div style="font-size:var(--fs-head);color:var(--text-2)">Checked 4 s ago · TCL 55″ Google TV</div></div>
+          </div>
+          <div class="section-header">Notices</div>
+          <div class="card">
+            <div class="setrow"><div class="meta"><div>Takes notices</div><div>Leave on; off drops it from Send</div></div><span class="toggle"></span></div>
+            <div class="setrow"><div class="meta"><div>Turn on if off</div><div>Otherwise skipped while off</div></div><span class="toggle"></span></div>
+            <div class="setrow"><div class="meta"><div>Back to sleep after</div><div>If it was off before the cast</div></div><span class="toggle"></span></div>
+            <div class="setrow"><div class="meta"><div>Volume for sound</div><div>Restored afterwards</div></div><span style="color:var(--text-2);font-size:var(--fs-secondary)">35%</span></div>
+            <div class="setrow"><div class="meta"><div>Quiet hours</div><div>Uses the house default</div></div><span style="color:var(--text-2);font-size:var(--fs-secondary)">21:00–07:00</span></div>
+          </div>
+          <div class="section-header">Name</div>
+          <div class="field"><div class="lbl">Shown as</div><div class="val">Girls' room</div></div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <div class="btn" style="flex:1"><svg class="i s"><use href="#cast"/></svg>Send a test</div>
+          </div>
+        </div>
+      </div>
+      <div class="cap"><b>One TV.</b> The per-TV knobs. Sound plays at a fixed volume and the old volume is put back afterwards, so a
+      notice never blasts.</div>
+    </div>
+
+    <div class="frame">
+      <div class="phone">
+        <div class="bar"><span class="back"><svg class="i"><use href="#back"/></svg></span><h3>Cast</h3></div>
+        <div class="scroll">
+          <div class="seg"><span>TVs</span><span class="on">Send</span><span>Sent</span></div>
+          <div class="section-header">To</div>
+          <div class="targets">
+            <span class="tgt on"><span class="dot" style="background:var(--green)"></span>Living room</span>
+            <span class="tgt on"><span class="dot" style="background:var(--steel)"></span>Girls' room</span>
+            <span class="tgt on"><span class="dot" style="background:var(--green)"></span>Basement</span>
+            <span class="tgt dis"><span class="dot" style="background:var(--amber)"></span>Kitchen</span>
+          </div>
+          <div class="hint warn">Kitchen is playing Netflix and will be skipped.</div>
+          <div class="section-header">Message</div>
+          <div class="field"><div class="lbl">Title</div><div class="val">Look what we built!</div></div>
+          <div class="field"><div class="lbl">Text</div><div class="val">The fort is finished. Come out back before it gets dark.</div></div>
+          <div class="attach">
+            <div class="a has"><span class="thumb"><svg width="40" height="40"><use href="#photo"/></svg></span>fort.jpg</div>
+            <div class="a"><svg class="i s"><use href="#mic"/></svg>Sound</div>
+          </div>
+          <div class="section-header">On the TV · 30 s</div>
+          <div class="preview-wrap">
+            <div class="screen">
+              <div class="n">
+                <div class="n-bg"></div>
+                <div class="n-pic"><svg width="100%" height="100%"><use href="#photo"/></svg></div>
+                <div class="n-side"><div class="n-title2">Look what we built!</div><div class="n-body2">The fort is finished. Come out back before it gets dark.</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="fab"><div class="btn primary block"><svg class="i s"><use href="#cast"/></svg>Cast to 3 TVs</div></div>
+      </div>
+      <div class="cap"><b>Send.</b> The same fields as the panel composer (title, text, picture, sound), with no reply choices because a
+      cast cannot be answered. The preview is the 16:9 the TV gets. A TV that is in use is struck through before you hit send.</div>
+    </div>
+
+    <div class="frame">
+      <div class="phone">
+        <div class="bar"><span class="back"><svg class="i"><use href="#back"/></svg></span><h3>Cast</h3></div>
+        <div class="scroll" style="opacity:.5">
+          <div class="seg"><span>TVs</span><span class="on">Send</span><span>Sent</span></div>
+        </div>
+        <div class="scrim"></div>
+        <div class="sheet">
+          <div class="grab"></div>
+          <h4>Cast to 2 of 3</h4>
+          <div class="lead">"Look what we built!" · on screen for 30 s</div>
+          <div class="res"><span class="chip c-ok"><svg class="i s" style="width:14px;height:14px"><use href="#check"/></svg>On screen</span>
+            <div class="meta"><div>Living room</div><div>Over the ambient photos · 18 s left</div></div></div>
+          <div class="res"><span class="chip c-wake"><svg class="i s" style="width:14px;height:14px"><use href="#power"/></svg>Turned on</span>
+            <div class="meta"><div>Girls' room</div><div>Woke, showing · back to sleep after</div></div></div>
+          <div class="res"><span class="chip c-busy">Skipped</span>
+            <div class="meta"><div>Basement</div><div>Someone opened YouTube a moment ago</div></div></div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <div class="btn" style="flex:1"><svg class="i s"><use href="#undo"/></svg>Take it down</div>
+            <div class="btn" style="flex:1"><svg class="i s"><use href="#clock"/></svg>Retry when idle</div>
+          </div>
+        </div>
+      </div>
+      <div class="cap"><b>Result.</b> Every TV is rechecked at the moment of casting, not when the screen was opened. Basement went
+      busy in between and was left alone. <b>Take it down</b> is the composer's Unsend. <b>Retry when idle</b> is opt-in per send,
+      for up to 30 min.</div>
+    </div>
+
+    <div class="frame">
+      <div class="phone">
+        <div class="bar"><span class="back"><svg class="i"><use href="#back"/></svg></span><h3>Cast</h3></div>
+        <div class="scroll">
+          <div class="seg"><span>TVs</span><span>Send</span><span class="on">Sent</span></div>
+          <div class="section-header">Today</div>
+          <div class="card">
+            <div class="sent-item"><div class="mini16"><svg width="100%" height="100%"><use href="#photo"/></svg></div>
+              <div class="meta"><div class="t">Look what we built!</div><div class="s">18:42 · Living room, Girls' room · 1 skipped</div></div></div>
+            <div class="sent-item"><div class="mini16" style="background:#0c0d10;display:grid;place-items:center;font-size:9px;font-weight:700">Dinner</div>
+              <div class="meta"><div class="t">Dinner's ready</div><div class="s">17:55 · from Jerv · all 4 idle TVs</div></div></div>
+            <div class="sent-item"><div class="mini16" style="background:#0c0d10;display:grid;place-items:center;font-size:9px;font-weight:700;color:var(--amber)">Ops</div>
+              <div class="meta"><div class="t">Backup failed</div><div class="s">03:10 · from Ops · held for quiet hours, shown 07:00</div></div></div>
+          </div>
+          <div class="hint">Jerv, Ops alerts and workflows can cast too. Each shows who sent it.</div>
+        </div>
+      </div>
+      <div class="cap"><b>Sent.</b> The composer's history, per send rather than per TV. "Held for quiet hours" shows that a
+      refusal is a delay, not a loss.</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ======================= TV ======================= -->
+<section class="stage">
+  <h2>2 · On the TV (1920×1080, cast as an image or a short clip)</h2>
+  <p>The box renders one 16:9 frame from the notice. With a sound, or the text read aloud, it becomes a short clip with that
+  audio. Google's own media player shows it, so the TVs need no app and no custom receiver. A thin bar runs down the time left.</p>
+  <div class="row">
+
+    <div class="frame tvset">
+      <div class="bezel"><div class="screen"><div class="n">
+        <div class="n-bg"></div>
+        <div class="n-from"><span class="av" style="background:var(--steel)">D</span>Dad · via jbrain</div>
+        <div class="n-clock">17:55</div>
+        <div class="n-title">Dinner's ready</div>
+        <div class="n-body">Tacos. Wash your hands and come up, the girls are already at the table.</div>
+        <div class="n-sound"><span class="eq"><i style="height:40%"></i><i style="height:90%"></i><i style="height:60%"></i><i style="height:100%"></i><i style="height:35%"></i></span>Playing a 4 s message</div>
+        <div class="n-bar"><i></i></div>
+      </div></div></div>
+      <div class="stand"></div>
+      <div class="cap"><b>Text.</b> Big enough to read from the couch across a room: the title is about 7% of the screen width.
+      Sender and time sit at the top. Sound is shown as "playing" so nobody hunts for the volume.</div>
+    </div>
+
+    <div class="frame tvset">
+      <div class="bezel"><div class="screen"><div class="n">
+        <div class="n-bg"></div>
+        <div class="n-pic"><svg width="100%" height="100%"><use href="#photo"/></svg></div>
+        <div class="n-side">
+          <div style="font-size:1.6cqw;color:rgba(238,240,242,.6);margin-bottom:1.4cqw;display:flex;align-items:center;gap:1cqw"><span class="av" style="width:3cqw;height:3cqw;border-radius:50%;background:var(--steel);display:grid;place-items:center;color:#0c0d10;font-weight:700;font-size:1.4cqw">D</span>Dad · 18:42</div>
+          <div class="n-title2">Look what we built!</div>
+          <div class="n-body2">The fort is finished. Come out back before it gets dark.</div>
+        </div>
+        <div class="n-bar"><i style="width:40%"></i></div>
+      </div></div></div>
+      <div class="stand"></div>
+      <div class="cap"><b>Picture + text.</b> The picture fills the left 56%, cropped and never stretched, and fades into the text.
+      This is the default whenever there is a picture and a title.</div>
+    </div>
+
+    <div class="frame tvset">
+      <div class="bezel"><div class="screen"><div class="n">
+        <div class="n-full"><svg width="100%" height="100%"><use href="#photo"/></svg></div>
+        <div class="n-from" style="color:rgba(255,255,255,.85);text-shadow:0 1px 6px rgba(0,0,0,.6)"><span class="av" style="background:var(--violet)">J</span>Jerv</div>
+        <div class="n-cap"><div class="t">Fort, day 3</div><div class="b">Photo from the back yard camera</div></div>
+        <div class="n-bar"><i style="width:80%"></i></div>
+      </div></div></div>
+      <div class="stand"></div>
+      <div class="cap"><b>Picture first.</b> When the picture is the point (no text, or a one-line caption), it goes full screen
+      with the caption over a scrim at the bottom.</div>
+    </div>
+
+    <div class="frame tvset">
+      <div class="bezel"><div class="screen"><div class="n">
+        <div class="n-bg" style="background:radial-gradient(70% 90% at 15% 20%, rgba(207,138,143,.25), transparent 60%), #0c0d10"></div>
+        <div class="n-from"><span class="av" style="background:var(--rose)">!</span>Ops · via jbrain</div>
+        <div class="n-clock">07:00</div>
+        <div class="n-title" style="color:#f2d6d8">Backup failed</div>
+        <div class="n-body">Last night's backup could not reach the drive. Open Ops on your phone to retry.</div>
+        <div class="n-tag">held since 03:10 for quiet hours</div>
+        <div class="n-bar"><i style="background:var(--rose);width:25%"></i></div>
+      </div></div></div>
+      <div class="stand"></div>
+      <div class="cap"><b>Alert.</b> An Ops or workflow notice takes its sender's tint, rose for a failure. A held notice says how
+      long it waited.</div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ======================= the gate ======================= -->
+<section class="stage">
+  <h2>3 · The idle check: what gets cast over, and what never does</h2>
+  <p>Checked again the instant before every cast. One open question to test on the real sets is whether an app opened with the
+  remote (rather than cast to the TV) reports itself to Cast. If a set does not, it is marked <i>can't tell when busy</i>, and
+  it only takes notices when it is off.</p>
+  <div class="row">
+    <div class="frame" style="width:min(340px,100%)">
+      <div class="bezel"><div class="screen"><div class="amb"><div class="lbl">Ambient</div><div class="clk">6:41</div></div>
+        <div class="gate"><span style="color:var(--green)">✓ cast</span></div></div></div>
+      <div class="cap"><b>Ambient or screensaver.</b> Cast. When it ends, the TV goes back to ambient.</div>
+    </div>
+    <div class="frame" style="width:min(340px,100%)">
+      <div class="bezel"><div class="screen" style="background:#000"><div class="gate"><span style="color:var(--steel)">⏻ wake, cast, sleep</span></div></div></div>
+      <div class="cap"><b>Off (standby).</b> Turn on, cast, then back to standby. Never during quiet hours.</div>
+    </div>
+    <div class="frame" style="width:min(340px,100%)">
+      <div class="bezel"><div class="screen"><div class="busy"><div class="ttl">Stranger Things · S5 E3</div><div class="play"><i></i></div></div>
+        <div class="gate"><span style="color:var(--amber)">✕ skip</span></div></div></div>
+      <div class="cap"><b>Playing, paused, or any app open.</b> Skip, even when paused. Paused still means someone is there.</div>
+    </div>
+  </div>
+</section>
+</div>
+</body>
+</html>

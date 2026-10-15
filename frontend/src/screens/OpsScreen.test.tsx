@@ -523,6 +523,7 @@ describe("OpsScreen", () => {
       container("pysandbox"),
       container("wall"),
       container("endpoint"),
+      container("cast"),
       container("minecraft"),
       container("jlaunch"),
     ]);
@@ -533,7 +534,7 @@ describe("OpsScreen", () => {
       Core: ["proxy"],
       Models: ["flash-next", "rapidocr"],
       "Assistant tools": ["byparr", "browser", "pysandbox"],
-      Devices: ["wall", "endpoint"],
+      Devices: ["wall", "endpoint", "cast"],
       Apps: ["minecraft", "jlaunch"],
     };
     for (const [group, services] of Object.entries(expected)) {

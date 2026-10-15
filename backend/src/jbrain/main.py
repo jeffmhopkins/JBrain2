@@ -90,6 +90,7 @@ from jbrain.api import (
     chat_attachments,
     chat_share,
     debug,
+    debug_cast,
     debug_minecraft,
     debug_panel,
     debug_tokens,
@@ -1925,6 +1926,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.debug_access_enabled:
         app.include_router(debug.router, prefix="/api")
         app.include_router(debug_minecraft.router, prefix="/api")
+        app.include_router(debug_cast.router, prefix="/api")
         app.include_router(debug_panel.router, prefix="/api")
         app.include_router(panel_agent.debug_router, prefix="/api")
         app.include_router(panel_notice.debug_router, prefix="/api")
