@@ -8,9 +8,9 @@ from the box's own LAN address.
 So the control routes are on the LAN and take a bearer — `cast.token`, which the api
 mints into the `internal_secrets` volume this container mounts read-only (no `.env` key,
 no host step). Read per request, so it works whichever of the two starts first; no token
-yet fails closed. The one unauthenticated route is `/frame/<nonce>.png`: a TV cannot
-send a header, so the card is served under a random name that lives only as long as its
-test.
+yet fails closed. The one unauthenticated route is `/frame/<nonce>.png` (or `.jpg`):
+a TV cannot send a header, so the frame is served under a random name that lives only as
+long as its cast.
 
     GET  /healthz
     GET  /tvs                         every TV found, its live verdict and reading,
@@ -18,8 +18,9 @@ test.
     GET  /tvs/<id>/history?since=<t>  that TV's timeline of readings and events
     POST /tvs/<id>/test {"seconds": n}
                                       gate, cast the card, quit after n s if ours
-    POST /tvs/<id>/cast {"png_b64", "seconds", "title"}
-                                      the same for a notice the api rendered; 202
+    POST /tvs/<id>/cast {"image_b64", "seconds", "title"}
+                                      the same for a notice's frame (a PNG, or a
+                                      JPEG for a photo the phone drew on); 202
                                       carries the `cast_id` that names it
     POST /tvs/<id>/stop {"cast_id"}   take that cast down now, if still ours
 """
@@ -52,7 +53,7 @@ CAST_MAX_BODY = 8 * 1024 * 1024
 FRAME_GRACE_S = 60
 
 _TV = re.compile(r"^/tvs/([0-9a-f-]{36})(/history|/test|/cast|/stop)?$")
-_FRAME = re.compile(r"^/frame/([0-9a-f]{32})\.png$")
+_FRAME = re.compile(r"^/frame/([0-9a-f]{32})\.(?:png|jpg)$")
 
 
 class FleetLike(Protocol):
@@ -61,13 +62,15 @@ class FleetLike(Protocol):
     def history(self, key: str, since: float = 0.0) -> list[dict[str, Any]]: ...
     def host_of(self, key: str) -> str: ...
     def test(self, key: str, url: str, seconds: int) -> dict[str, Any]: ...
-    def cast(self, key: str, url: str, seconds: int, title: str) -> dict[str, Any]: ...
+    def cast(
+        self, key: str, url: str, seconds: int, title: str, mime: str = "image/png"
+    ) -> dict[str, Any]: ...
     def stop(self, key: str, cast_id: str) -> bool: ...
 
 
 class Frames:
     """The frames on offer, by nonce, each until its cast is over: the test card, or a
-    notice's own PNG."""
+    notice's own frame."""
 
     def __init__(self, now: Callable[[], float] = time.time):
         self._now = now
@@ -133,7 +136,9 @@ def route(
     if method == "GET" and (m := _FRAME.match(path)):
         card = frames.get(m.group(1))
         return (
-            (200, "image/png", card) if card else _json(404, {"error": "no such frame"})
+            (200, mime_of(card) or "image/png", card)
+            if card
+            else _json(404, {"error": "no such frame"})
         )
     if not authorised(auth_header, token()):
         return _json(401, {"error": "unauthorized"})
@@ -165,18 +170,19 @@ def route(
         if method == "POST" and leaf == "/cast":
             try:
                 req = json.loads(body or b"{}")
-                png = base64.b64decode(str(req["png_b64"]), validate=True)
+                image = base64.b64decode(str(req["image_b64"]), validate=True)
                 seconds = gate.clamp_notice_seconds(int(req.get("seconds", 30)))
                 title = str(req.get("title") or "jbrain")[:80]
             except (ValueError, TypeError, KeyError, binascii.Error):
                 return _json(
-                    400, {"error": 'body must be {"png_b64", "seconds", "title"}'}
+                    400, {"error": 'body must be {"image_b64", "seconds", "title"}'}
                 )
-            if not png.startswith(b"\x89PNG"):
-                return _json(400, {"error": "png_b64 is not a PNG"})
-            url_out = _frame_url(frames, fleet, key, seconds, png, address_for, port)
+            mime = mime_of(image)
+            if mime is None:
+                return _json(400, {"error": "image_b64 is not a PNG or a JPEG"})
+            url_out = _frame_url(frames, fleet, key, seconds, image, address_for, port)
             try:
-                return _json(202, fleet.cast(key, url_out, seconds, title))
+                return _json(202, fleet.cast(key, url_out, seconds, title, mime))
             except gate.Refused as exc:
                 return _refused(exc)
         if method == "POST" and leaf == "/stop":
@@ -201,6 +207,15 @@ def body_cap(
     return MAX_BODY
 
 
+def mime_of(data: bytes) -> str | None:
+    """What a frame is, by its first bytes: the Default Media Receiver shows either."""
+    if data.startswith(b"\x89PNG"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    return None
+
+
 def _refused(exc: gate.Refused) -> Reply:
     return _json(409, {"error": "not idle", "state": exc.state, "why": exc.why})
 
@@ -219,7 +234,8 @@ def _frame_url(
     host = fleet.host_of(key)
     nonce = frames.offer(ttl_s=seconds + FRAME_GRACE_S, png=png)
     box = (address_for or _address_for)(host)
-    return f"http://{box}:{port}/frame/{nonce}.png"
+    ext = "jpg" if png is not None and mime_of(png) == "image/jpeg" else "png"
+    return f"http://{box}:{port}/frame/{nonce}.{ext}"
 
 
 def _address_for(host: str) -> str:

@@ -3958,6 +3958,8 @@ export interface CastSendIn {
   body?: string;
   /** A photo, base64 (JPEG, PNG or WebP); the box draws the frame from it. */
   picture_b64?: string | null;
+  /** The whole 16:9 frame drawn on the phone, base64; the box casts it as drawn. */
+  frame_b64?: string | null;
   seconds?: number;
 }
 
@@ -7266,11 +7268,6 @@ export const api = {
 
   async castSent(limit = 30): Promise<CastNoticeList> {
     return (await (await request(`/api/cast/sent?limit=${limit}`)).json()) as CastNoticeList;
-  },
-
-  /** The frame the TVs would get, drawn by the box; nothing is cast. */
-  async castPreview(body: Omit<CastSendIn, "tv_ids" | "seconds">): Promise<Blob> {
-    return (await request("/api/cast/preview", jsonInit("POST", body))).blob();
   },
 
   async castStop(id: string): Promise<{ id: string; stopped: Record<string, boolean> }> {

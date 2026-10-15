@@ -81,12 +81,14 @@ later, if wanted.
 
 **Shipped (K2a):** the **Cast** launcher tile with a badge counting the TVs that would take a
 notice now; the TV list with each verdict in plain words ("Showing a notice" for our own card);
-Send with title, text, a picture and how long it stays up, every TV that would take it picked to
-start with and an in-use one struck through, and a preview drawn by the box (`POST
-/api/cast/preview`); the per-TV result sheet with Take it down; and Sent, per send. Send is its
-own form rather than the panel composer from #1756: that composer draws the words onto the
-picture on the phone at the panel's 480 px, where for a TV the box draws the frame, so only its
-fields carry over.
+Send, every TV that would take it picked to start with and an in-use one struck through; the
+per-TV result sheet with Take it down; and Sent, per send. After the first real cast the owner
+asked for Send to compose like the panel composer, the picture always under the words (2026-10-15):
+the photo fills a 16:9 canvas (drag, pinch, zoom) and the words are dragged into place and sized
+over it in the panel's four styles. The phone draws the 1920×1080 frame and sends it whole
+(`frame_b64`); the box keeps it as drawn (letterboxed only if it is the wrong shape) and the
+sidecar casts it as a JPEG, since a PNG of a photo can run past the sidecar's body cap. The box's
+own renderer (title, text, picture) stays for the debug route and later senders such as Jerv.
 
 **Still to do in K2:** one TV's settings (on/off for notices, quiet hours, allow waking), once
 K1's per-TV settings land.

@@ -1,7 +1,8 @@
 """Draw a notice as the one 1920x1080 frame a TV is cast (JPANEL_CAST_PLAN.md K1; the mock's
 "On the TV" boards, docs/mocks/jpanel-cast/).
 
-Pure: words and picture bytes in, PNG bytes out. Three layouts, picked by what the notice has:
+Pure: words and picture bytes in, PNG bytes out. Three layouts, picked by what the notice has
+(the PWA's composer draws its own frame instead, and `take` only holds it to the screen):
 
 - **words** — no picture: title and text on the dark sheet, big enough to read across a room
   (the title is about 7% of the screen's width).
@@ -73,6 +74,20 @@ def render(title: str, body: str = "", picture: bytes | None = None, *, meta: st
         return page.get_pixmap(alpha=False).tobytes("png")
     finally:
         doc.close()
+
+
+def take(data: bytes) -> bytes:
+    """A frame the phone drew itself (the composer: a photo with words placed over it), held to
+    the screen: 1920x1080 as sent, else letterboxed onto the sheet, never stretched. JPEG,
+    because a PNG of a photo can run past what the sidecar takes in one request."""
+    img = _photo(data)
+    if img.size != (W, H):
+        img = Image.open(io.BytesIO(_contain(img, W, H)))
+    return _jpeg(img)
+
+
+def mime_of(data: bytes) -> str:
+    return "image/jpeg" if data.startswith(b"\xff\xd8\xff") else "image/png"
 
 
 def _photo(data: bytes) -> Image.Image:

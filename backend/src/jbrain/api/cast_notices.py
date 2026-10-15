@@ -53,6 +53,9 @@ class CastIn(BaseModel):
     picture_b64: str | None = None
     #: How long it stays up before the box takes it down (5-300 s).
     seconds: int = Field(default=30, ge=5, le=300)
+    #: The whole 16:9 frame, drawn on the phone (the composer's photo with its words placed
+    #: over it), base64. With it, `body` and `picture_b64` are not drawn; `title` names it.
+    frame_b64: str | None = None
 
 
 class PreviewIn(BaseModel):
@@ -97,7 +100,7 @@ def _out(v: CastView) -> CastOut:
     )
 
 
-def _picture(value: str | None) -> bytes | None:
+def _picture(value: str | None, field: str = "picture_b64") -> bytes | None:
     if value is None:
         return None
     if len(value) > PICTURE_MAX * 4 // 3 + 4:
@@ -106,7 +109,7 @@ def _picture(value: str | None) -> bytes | None:
         return base64.b64decode(value, validate=True)
     except (binascii.Error, ValueError):
         raise HTTPException(
-            422, detail={"reason": "bad_field", "field": "picture_b64", "want": "base64"}
+            422, detail={"reason": "bad_field", "field": field, "want": "base64"}
         ) from None
 
 
@@ -130,6 +133,7 @@ async def send(request: Request, body: CastIn, sender: str) -> CastOut:
             tv_ids=body.tv_ids,
             seconds=body.seconds,
             meta=await _meta(request, sender),
+            frame=_picture(body.frame_b64, "frame_b64"),
         )
     except CastRefused as exc:
         raise HTTPException(exc.status, detail=exc.detail()) from None
@@ -195,7 +199,7 @@ async def owner_frame(notice_id: str, request: Request, _o: OwnerDep) -> Respons
         raise HTTPException(404, detail={"reason": "no_such_notice"})
     return Response(
         content=png,
-        media_type="image/png",
+        media_type=F.mime_of(png),
         headers={"Cache-Control": "private, max-age=604800, immutable"},
     )
 

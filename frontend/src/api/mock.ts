@@ -2937,6 +2937,8 @@ const MOCK_CASTS: CastNotice[] = [
   },
 ];
 
+const MOCK_CAST_FRAMES = new Map<string, string>();
+
 const MOCK_FRAME_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"><rect width="1920" height="1080" fill="#0c0d10"/><text x="120" y="560" font-size="132" fill="#f0f0f2" font-family="sans-serif">jbrain</text></svg>';
 
@@ -6311,14 +6313,14 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/cast/sent" && method === "GET") {
     return json({ notices: MOCK_CASTS, kept_s: 604800 });
   }
-  if (path === "/api/cast/preview" && method === "POST") {
-    return new Response(MOCK_FRAME_SVG, { headers: { "Content-Type": "image/svg+xml" } });
-  }
   if (path === "/api/cast/send" && method === "POST") {
     const body = JSON.parse(String(init?.body ?? "{}")) as CastSendIn;
     if (!body.title?.trim()) return json({ detail: { reason: "bad_field" } }, 422);
+    const id = `mock-cast-${Date.now()}`;
+    // The phone drew the frame; Sent shows it back as the box would.
+    if (body.frame_b64) MOCK_CAST_FRAMES.set(id, body.frame_b64);
     const n: CastNotice = {
-      id: `mock-cast-${Date.now()}`,
+      id,
       sender: "owner",
       title: body.title.trim(),
       body: body.body ?? "",
@@ -6339,6 +6341,11 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
   const castFrame = path.match(/^\/api\/cast\/([^/]+)\/frame$/);
   if (castFrame && method === "GET") {
+    const drawn = MOCK_CAST_FRAMES.get(castFrame[1] ?? "");
+    if (drawn) {
+      const bytes = Uint8Array.from(atob(drawn), (c) => c.charCodeAt(0));
+      return new Response(bytes, { headers: { "Content-Type": "image/jpeg" } });
+    }
     return new Response(MOCK_FRAME_SVG, { headers: { "Content-Type": "image/svg+xml" } });
   }
   const castStop = path.match(/^\/api\/cast\/([^/]+)\/stop$/);

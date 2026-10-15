@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { CastNotice, CastTv } from "./api/client";
 import {
   MEDIA_RECEIVER,
+  TV_H,
+  TV_W,
   canTakeDown,
-  fitSize,
+  draftReady,
+  draftTitle,
+  dragDraft,
+  drawFrame,
+  emptyCastDraft,
   outcomeLabel,
   outcomeSub,
   readyCount,
@@ -161,14 +167,57 @@ describe("the result", () => {
 });
 
 describe("helpers", () => {
-  it("never sends a photo bigger than the TV draws it", () => {
-    expect(fitSize(4000, 3000)).toEqual({ w: 1920, h: 1440 });
-    expect(fitSize(1000, 3000)).toEqual({ w: 640, h: 1920 });
-    expect(fitSize(800, 600)).toEqual({ w: 800, h: 600 });
-  });
-
   it("says seconds as a person would", () => {
     expect(secondsLabel(30)).toBe("30 s");
     expect(secondsLabel(120)).toBe("2 min");
+  });
+});
+
+describe("the composer", () => {
+  const photo = { source: {} as CanvasImageSource, w: 4000, h: 3000 };
+
+  it("needs a photo or words, and names the notice by its words", () => {
+    const d = emptyCastDraft();
+    expect(draftReady(d)).toBe(false);
+    expect(draftReady({ ...d, words: "  " })).toBe(false);
+    expect(draftReady({ ...d, photo })).toBe(true);
+    expect(draftTitle({ ...d, photo })).toBe("Picture");
+    expect(draftTitle({ ...d, words: " Dinner\n is   ready " })).toBe("Dinner is ready");
+  });
+
+  it("moves the words when placing them, and holds them on the screen", () => {
+    const d = { ...emptyCastDraft(), words: "Hi" };
+    expect(dragDraft(d, "words", 100, -50).pos).toEqual({ x: 1060, y: 490 });
+    expect(dragDraft(d, "words", 5000, 5000).pos).toEqual({ x: TV_W, y: TV_H });
+  });
+
+  it("pans the photo, held to its edges, and leaves a draft with no photo alone", () => {
+    const d = { ...emptyCastDraft(), photo };
+    // 4000x3000 covering 1920x1080 is 1920x1440: 180 px of slack above and below, none sideways.
+    const moved = dragDraft(d, "photo", 300, 500);
+    expect(moved.panX).toBe(0);
+    expect(moved.panY).toBe(180);
+    const none = emptyCastDraft();
+    expect(dragDraft(none, "photo", 10, 10)).toBe(none);
+    // Words that are empty can't be placed, so the drag pans the photo instead.
+    expect(dragDraft(d, "words", 0, -500).panY).toBe(-180);
+  });
+
+  it("draws the photo first and the words over it", () => {
+    const calls: string[] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (_o, k) =>
+        k === "measureText"
+          ? (t: string) => ({ width: t.length * 50 })
+          : (...a: unknown[]) => calls.push(`${String(k)}${k === "fillText" ? `:${a[0]}` : ""}`),
+      set: () => true,
+    }) as unknown as CanvasRenderingContext2D;
+    drawFrame(ctx, { ...emptyCastDraft(), photo, words: "Dinner", style: "dark" });
+    const image = calls.indexOf("drawImage");
+    const plate = calls.indexOf("roundRect");
+    const words = calls.indexOf("fillText:Dinner");
+    expect(image).toBeGreaterThan(-1);
+    expect(plate).toBeGreaterThan(image);
+    expect(words).toBeGreaterThan(plate);
   });
 });

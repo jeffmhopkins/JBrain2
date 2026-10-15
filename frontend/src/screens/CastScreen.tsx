@@ -2,17 +2,36 @@
 // docs/mocks/jpanel-cast/index.html, "1 · PWA"). Three tabs over one box service: the TVs and
 // what each is doing, Send, and Sent. The box draws the frame and re-checks every TV at the
 // instant of casting, so what this screen shows before Send is a forecast and the result sheet
-// is the truth.
+// is the truth. Send composes like the panel composer: the photo fills the 16:9 screen, the
+// words are placed and sized over it, and the phone draws the frame the TV gets, so the
+// preview is exactly what lands.
 
-import { type ChangeEvent, useCallback, useEffect, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { ApiError, type CastNotice, type CastTv, api, castFrameUrl } from "../api/client";
 import {
-  BODY_MAX,
+  type CastDraft,
+  PHOTO_WORKING_MAX,
   SECONDS,
   SECONDS_DEFAULT,
-  TITLE_MAX,
+  SIZE_MAX,
+  SIZE_MIN,
+  TV_H,
+  TV_W,
+  WORDS_MAX,
+  ZOOM_MAX,
   canTakeDown,
-  fitSize,
+  draftReady,
+  draftTitle,
+  dragDraft,
+  drawFrame,
+  emptyCastDraft,
   outcomeLabel,
   outcomeSub,
   resultTitle,
@@ -23,13 +42,21 @@ import {
   utf8Bytes,
 } from "../cast";
 import { Sheet } from "../components/Sheet";
-import { ImageIcon, MonitorIcon, RefreshIcon, SendIcon, XIcon } from "../components/icons";
+import { MonitorIcon, RefreshIcon, SendIcon } from "../components/icons";
+import {
+  type Photo,
+  TEXT_STYLES,
+  type TextStyle,
+  clamp,
+  clipBytes,
+  workingSize,
+} from "../panelNotice";
 import "./cast.css";
+import "./panelNotice.css";
 
 type Tab = "tvs" | "send" | "sent";
 
 const TV_POLL_MS = 10_000;
-const PREVIEW_DEBOUNCE_MS = 700;
 
 /** The box's refusals, in words. */
 const REFUSALS: Record<string, string> = {
@@ -40,17 +67,14 @@ const REFUSALS: Record<string, string> = {
   picture_too_big: "That picture is too big to send.",
 };
 
-interface Picture {
-  b64: string;
-  name: string;
-  thumb: string;
-}
-
 export function CastScreen() {
   const [tab, setTab] = useState<Tab>("tvs");
   const [tvs, setTvs] = useState<CastTv[] | null>(null);
   const [tvError, setTvError] = useState<string | null>(null);
   const [result, setResult] = useState<CastNotice | null>(null);
+  // Held here, not in Send, so a look at the TVs or Sent doesn't lose what was composed.
+  const [draft, setDraftState] = useState<CastDraft>(emptyCastDraft);
+  const setDraft = useCallback((fn: (d: CastDraft) => CastDraft) => setDraftState(fn), []);
 
   const loadTvs = useCallback(async () => {
     try {
@@ -105,6 +129,8 @@ export function CastScreen() {
       {tab === "send" && (
         <SendTab
           tvs={tvs}
+          draft={draft}
+          setDraft={setDraft}
           onSent={(n) => {
             setResult(n);
             void loadTvs();
@@ -187,55 +213,30 @@ function TvsTab({
   );
 }
 
-function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice) => void }) {
+function SendTab({
+  tvs,
+  draft,
+  setDraft,
+  onSent,
+}: {
+  tvs: CastTv[] | null;
+  draft: CastDraft;
+  setDraft: (fn: (d: CastDraft) => CastDraft) => void;
+  onSent: (n: CastNotice) => void;
+}) {
   const [picked, setPicked] = useState<Set<string> | null>(null);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [picture, setPicture] = useState<Picture | null>(null);
+  const [part, setPart] = useState<"photo" | "words">("photo");
   const [seconds, setSeconds] = useState<number>(SECONDS_DEFAULT);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [previewFailed, setPreviewFailed] = useState(false);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [wrap, width] = useWidth();
 
   // Every TV that would take it is picked to start with; the owner unpicks.
   const chosen = picked ?? new Set((tvs ?? []).filter((t) => t.castable).map((t) => t.id));
   const targets = (tvs ?? []).filter((t) => chosen.has(t.id));
   const willTake = targets.filter((t) => t.castable).length;
   const skips = targets.map(skipReason).filter((r): r is string => r !== null);
-  const titleOver = utf8Bytes(title.trim()) > TITLE_MAX;
-  const bodyOver = utf8Bytes(body.trim()) > BODY_MAX;
-  const ready = title.trim() !== "" && !titleOver && !bodyOver && targets.length > 0;
-
-  useEffect(() => {
-    if (!title.trim() || titleOver || bodyOver) {
-      setPreview(null);
-      return;
-    }
-    let stale = false;
-    let url: string | null = null;
-    const t = setTimeout(() => {
-      api
-        .castPreview({ title, body, picture_b64: picture?.b64 ?? null })
-        .then((blob) => {
-          if (stale) return;
-          url = URL.createObjectURL(blob);
-          setPreview(url);
-          setPreviewFailed(false);
-        })
-        .catch(() => {
-          if (stale) return;
-          setPreview(null);
-          setPreviewFailed(true);
-        });
-    }, PREVIEW_DEBOUNCE_MS);
-    return () => {
-      stale = true;
-      clearTimeout(t);
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [title, body, picture, titleOver, bodyOver]);
+  const ready = draftReady(draft) && targets.length > 0;
 
   function toggle(id: string) {
     const next = new Set(chosen);
@@ -244,12 +245,10 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
     setPicked(next);
   }
 
-  async function onFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
+  async function onFile(file: File) {
     try {
-      setPicture(await loadPicture(file));
+      const photo = await loadPhoto(file);
+      setDraft((d) => ({ ...d, photo, zoom: 1, panX: 0, panY: 0 }));
       setProblem(null);
     } catch {
       setProblem(REFUSALS.bad_picture ?? null);
@@ -262,9 +261,8 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
     try {
       const out = await api.castSend({
         tv_ids: targets.map((t) => t.id),
-        title,
-        body,
-        picture_b64: picture?.b64 ?? null,
+        title: draftTitle(draft),
+        frame_b64: exportFrame(draft),
         seconds,
       });
       if ("sent" in out) onSent(out.sent);
@@ -307,80 +305,163 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
         </p>
       ))}
 
-      <div className="cast-label">Message</div>
-      <label className="cast-field">
-        <span>Title</span>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Dinner's ready"
-          enterKeyHint="next"
-        />
-      </label>
-      {titleOver && <p className="cast-error">That title is too long for the screen.</p>}
-      <label className="cast-field">
-        <span>Text</span>
-        <textarea
-          value={body}
-          rows={3}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Optional"
-        />
-      </label>
-      {bodyOver && <p className="cast-error">That's more text than a TV can show.</p>}
-      <div className="cast-attach">
-        {picture ? (
-          <span className="cast-thumb">
-            <img src={picture.thumb} alt="" />
-            <span className="cast-thumb-name">{picture.name}</span>
-            <button
-              type="button"
-              className="cast-icon-btn"
-              aria-label="Remove the picture"
-              onClick={() => setPicture(null)}
-            >
-              <XIcon size={16} />
-            </button>
-          </span>
-        ) : (
-          <button type="button" className="cast-ghost" onClick={() => fileRef.current?.click()}>
-            <ImageIcon size={16} /> Add a picture
+      <div className="cast-label">On the TV · {secondsLabel(seconds)}</div>
+      <div className="cast-screen-16x9" ref={wrap}>
+        {width > 0 && <FrameCanvas draft={draft} cssW={width} part={part} onDraft={setDraft} />}
+      </div>
+      <p className="cast-note">
+        {part === "words"
+          ? "Drag the words to place them. The picture always stays under them."
+          : "Drag the photo to frame it, or pinch to zoom. It fills the screen."}
+      </p>
+
+      <div className="pn-tabs" role="tablist" aria-label="Photo or Words">
+        {(
+          [
+            ["photo", "Photo", draft.photo !== null],
+            ["words", "Words", draft.words.trim() !== ""],
+          ] as const
+        ).map(([key, label, on]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={part === key}
+            className={part === key ? "on" : ""}
+            onClick={() => setPart(key)}
+          >
+            {label}
+            {on && part !== key && <span className="pn-tab-dot" aria-label="(added)" />}
           </button>
-        )}
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          hidden
-          data-testid="cast-file"
-          onChange={(e) => void onFile(e)}
-        />
-        <label className="cast-seconds">
-          <span>On screen</span>
-          <select value={seconds} onChange={(e) => setSeconds(Number(e.target.value))}>
-            {SECONDS.map((s) => (
-              <option key={s} value={s}>
-                {secondsLabel(s)}
-              </option>
-            ))}
-          </select>
-        </label>
+        ))}
       </div>
 
-      <div className="cast-label">On the TV · {secondsLabel(seconds)}</div>
-      <div className="cast-screen-16x9">
-        {preview ? (
-          <img src={preview} alt="What the TV will show" />
-        ) : (
-          <span className="muted">
-            {!title.trim()
-              ? "Type a title to see it"
-              : previewFailed
-                ? "Couldn't draw the preview"
-                : "Drawing…"}
-          </span>
-        )}
-      </div>
+      {part === "photo" && (
+        <div className="pn-panel">
+          <div className="pn-row">
+            <label className="pn-btn">
+              {draft.photo ? "Choose another" : "Choose photo"}
+              <input
+                type="file"
+                accept="image/*"
+                data-testid="cast-file"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  if (f) void onFile(f);
+                }}
+              />
+            </label>
+            {draft.photo && (
+              <button
+                type="button"
+                className="pn-btn"
+                onClick={() => setDraft((d) => ({ ...d, photo: null, zoom: 1, panX: 0, panY: 0 }))}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+          {draft.photo ? (
+            <label className="pn-field">
+              <span className="pn-field-head">
+                <span>Zoom</span>
+                <strong>{draft.zoom.toFixed(1)}×</strong>
+              </span>
+              <input
+                type="range"
+                min={100}
+                max={ZOOM_MAX * 100}
+                step={5}
+                value={Math.round(draft.zoom * 100)}
+                onChange={(e) => {
+                  const zoom = Number(e.target.value) / 100;
+                  setDraft((d) => ({ ...d, zoom }));
+                }}
+              />
+            </label>
+          ) : (
+            <span className="pn-note">A photo is optional. Words alone go on a dark screen.</span>
+          )}
+        </div>
+      )}
+
+      {part === "words" && (
+        <div className="pn-panel">
+          <label className="pn-field">
+            <span className="pn-field-head">
+              <span>Words on the picture</span>
+              <span className="pn-count">
+                {utf8Bytes(draft.words)} / {WORDS_MAX}
+              </span>
+            </span>
+            <input
+              type="text"
+              value={draft.words}
+              placeholder="Dinner's ready"
+              onChange={(e) => {
+                const words = clipBytes(e.target.value, WORDS_MAX);
+                setDraft((d) => ({ ...d, words }));
+              }}
+            />
+          </label>
+          <label className="pn-field">
+            <span className="pn-field-head">
+              <span>Size</span>
+              <strong>{draft.size} px on the TV</strong>
+            </span>
+            <input
+              type="range"
+              min={SIZE_MIN}
+              max={SIZE_MAX}
+              step={4}
+              value={draft.size}
+              onChange={(e) => {
+                const size = Number(e.target.value);
+                setDraft((d) => ({ ...d, size }));
+              }}
+            />
+          </label>
+          <fieldset className="pn-styles" aria-label="Text style">
+            {(Object.keys(TEXT_STYLES) as TextStyle[]).map((key) => {
+              const st = TEXT_STYLES[key];
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={draft.style === key}
+                  className={draft.style === key ? "on" : ""}
+                  onClick={() => setDraft((d) => ({ ...d, style: key }))}
+                >
+                  <span
+                    className="pn-style-swatch"
+                    style={{
+                      color: st.fill,
+                      background: st.plate ?? "#3a4a5c",
+                      WebkitTextStroke: st.stroke ? `1px ${st.stroke}` : undefined,
+                    }}
+                    aria-hidden="true"
+                  >
+                    Aa
+                  </span>
+                  <span>{st.label}</span>
+                </button>
+              );
+            })}
+          </fieldset>
+        </div>
+      )}
+
+      <label className="cast-seconds">
+        <span>On screen for</span>
+        <select value={seconds} onChange={(e) => setSeconds(Number(e.target.value))}>
+          {SECONDS.map((s) => (
+            <option key={s} value={s}>
+              {secondsLabel(s)}
+            </option>
+          ))}
+        </select>
+      </label>
 
       {problem && <p className="cast-error">{problem}</p>}
       <button
@@ -398,6 +479,111 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
       </button>
     </>
   );
+}
+
+/** The frame on a canvas at the slot's width, redrawn on every change. A drag moves the words
+ *  (Words) or pans the photo (Photo); a pinch zooms the photo. */
+function FrameCanvas({
+  draft,
+  cssW,
+  part,
+  onDraft,
+}: {
+  draft: CastDraft;
+  cssW: number;
+  part: "photo" | "words";
+  onDraft: (fn: (d: CastDraft) => CastDraft) => void;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const cssH = (cssW * TV_H) / TV_W;
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; zoom: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const canvas = ref.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    ctx.setTransform(canvas.width / TV_W, 0, 0, canvas.height / TV_H, 0, 0);
+    drawFrame(ctx, draft);
+  }, [draft, cssW, cssH]);
+
+  function spread(): number {
+    const [a, b] = [...pointers.current.values()];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  }
+
+  function down(e: ReactPointerEvent<HTMLCanvasElement>) {
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) pinch.current = { dist: spread(), zoom: draft.zoom };
+  }
+
+  function move(e: ReactPointerEvent<HTMLCanvasElement>) {
+    const last = pointers.current.get(e.pointerId);
+    if (!last) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2 && pinch.current && draft.photo) {
+      const p = pinch.current;
+      const zoom = clamp((p.zoom * spread()) / (p.dist || 1), 1, ZOOM_MAX);
+      onDraft((d) => ({ ...d, zoom }));
+      return;
+    }
+    const k = TV_W / cssW;
+    const dx = (e.clientX - last.x) * k;
+    const dy = (e.clientY - last.y) * k;
+    onDraft((d) => dragDraft(d, part, dx, dy));
+  }
+
+  function up(e: ReactPointerEvent<HTMLCanvasElement>) {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+  }
+
+  return (
+    <canvas
+      ref={ref}
+      className="pn-canvas edit"
+      aria-label="What the TV will show"
+      style={{ width: cssW, height: cssH }}
+      onPointerDown={down}
+      onPointerMove={move}
+      onPointerUp={up}
+      onPointerCancel={up}
+    />
+  );
+}
+
+/** The slot's width, kept current as the screen turns. */
+function useWidth(): [React.RefObject<HTMLDivElement>, number] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [w, setW] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => setW(el.clientWidth || 320);
+    read();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w];
+}
+
+/** The frame as the TV gets it: 1920x1080, JPEG (a photo's PNG would be several times the
+ *  size), base64. */
+function exportFrame(d: CastDraft): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = TV_W;
+  canvas.height = TV_H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no canvas");
+  drawFrame(ctx, d);
+  const url = canvas.toDataURL("image/jpeg", 0.9);
+  return url.slice(url.indexOf(",") + 1);
 }
 
 function tvCount(n: number): string {
@@ -507,19 +693,19 @@ function ResultSheet({
   );
 }
 
-/** The photo as the box wants it: no bigger than the TV draws it, as JPEG, base64. */
-async function loadPicture(file: File): Promise<Picture> {
+/** A camera photo scaled once to the working size, so zooming and dragging redraw from a
+ *  small copy. Never scaled up. */
+async function loadPhoto(file: File): Promise<Photo> {
   const bmp = await createImageBitmap(file);
   try {
-    const size = fitSize(bmp.width, bmp.height);
+    const size = workingSize(bmp.width, bmp.height, PHOTO_WORKING_MAX);
     const canvas = document.createElement("canvas");
     canvas.width = size.w;
     canvas.height = size.h;
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("no canvas");
     ctx.drawImage(bmp, 0, 0, size.w, size.h);
-    const url = canvas.toDataURL("image/jpeg", 0.88);
-    return { b64: url.slice(url.indexOf(",") + 1), name: file.name || "picture", thumb: url };
+    return { source: canvas, w: size.w, h: size.h };
   } finally {
     bmp.close();
   }
