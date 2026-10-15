@@ -178,3 +178,36 @@ describe("api.chatEvents", () => {
     expect(hit).toHaveBeenCalledWith("/api/chat/events", expect.anything());
   });
 });
+
+describe("errorDetail", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says a validation failure's messages rather than its status (C8)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              detail: [
+                { loc: ["body", "text"], msg: "String should have at most 600 characters" },
+                { loc: ["body", "to_device"], msg: "Field required" },
+              ],
+            }),
+            { status: 422, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    await expect(api.sendJpanelMessage("panel-quorra", "x")).rejects.toThrow(
+      "String should have at most 600 characters; Field required",
+    );
+  });
+
+  it("falls back to the status when the list carries nothing to say", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail: [{}] }), { status: 422 })),
+    );
+    await expect(api.sendJpanelMessage("panel-quorra", "x")).rejects.toThrow("Request failed: 422");
+  });
+});

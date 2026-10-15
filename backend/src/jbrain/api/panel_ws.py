@@ -84,8 +84,8 @@ HEARTBEAT_S = 20.0
 #: heartbeat every `HEARTBEAT_S`, so this is three missed beats and change.
 IDLE_S = 75.0
 #: How long a response may sit waiting for the panel to ack more window before it is dropped.
-#: Longer than any message the box stores (`MAX_MESSAGE_MS` is 30 s, and the panel acks as the
-#: speaker drains), shorter than forever.
+#: Longer than any message the box stores (`jpanel.MAX_SEND_BYTES`, the cap plus its slack, and
+#: the panel acks as the speaker drains), shorter than forever.
 WINDOW_STALL_S = 90.0
 #: Response bytes per binary frame. The panel's receive buffer is smaller than this and
 #: `esp_websocket_client` hands a large frame over in pieces, which `wsproto.c` reassembles.

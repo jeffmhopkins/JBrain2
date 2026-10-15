@@ -23,6 +23,11 @@ export const PANEL_RATE = 16000;
  *  the bug `audio_play` had on the panel, and it should not be reintroduced from this end. */
 export const MAX_MESSAGE_MS = 30_000;
 
+/** The same cap in samples. The recorder's stop is a timer, and a backgrounded tab runs it
+ *  late, so the PCM is clamped here too: the box would trim it, but a trim is a cut it logs,
+ *  and this end can avoid making one. */
+export const MAX_MESSAGE_SAMPLES = (MAX_MESSAGE_MS * PANEL_RATE) / 1000;
+
 /* WHAT A RECORDING IS SCALED TO, AND WHY IT HAS TO BE SCALED AT ALL.
  *
  * The owner: *"my pwa recording seems to be way lower gain than the robot voices."* Kokoro
@@ -84,7 +89,7 @@ export function toPanelPcm(buffer: AudioBuffer): ArrayBuffer {
   const gain = normalisingGain(mono);
 
   const ratio = buffer.sampleRate / PANEL_RATE;
-  const outLength = Math.max(0, Math.floor(mono.length / ratio));
+  const outLength = Math.max(0, Math.min(MAX_MESSAGE_SAMPLES, Math.floor(mono.length / ratio)));
   const out = new Int16Array(outLength);
   for (let i = 0; i < outLength; i++) {
     const at = i * ratio;

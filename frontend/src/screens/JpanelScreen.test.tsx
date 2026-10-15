@@ -456,6 +456,86 @@ describe("JpanelScreen messages", () => {
     expect(String(del?.[0])).toBe("/api/jpanel/messages?device=panel-quorra");
   });
 
+  it("names whose unheard messages a clear kept, per child", async () => {
+    /* C9: her thread holds what her sister sent her, so what was kept is not always hers. */
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith("/api/jpanel/messages") && init?.method === "DELETE") {
+        return json({
+          deleted: 3,
+          kept: 2,
+          kept_for: [
+            { device_id: "panel-mabel", name: "Mabel", kept: 1 },
+            { device_id: "panel-quorra", name: "Quorra", kept: 1 },
+          ],
+        });
+      }
+      return box()(input, init);
+    });
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Clear messages" }));
+    expect(
+      await screen.findByText(
+        "Cleared 3. Kept 1 Mabel hasn't heard yet and 1 Quorra hasn't heard yet — they'll stay until played.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("keeps the draft and fetches the panels again when the box no longer knows one", async () => {
+    /* C2: a chip left over from a stale render. The box answers 404 before it synthesises
+       anything; the words stay in the box and the chips are fetched again. */
+    fetchMock.mockImplementation(box({ post: () => json({ detail: "no such panel" }, 404) }));
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    const input = (await screen.findByLabelText("Message Quorra")) as HTMLInputElement;
+    expect(input.maxLength).toBe(600);
+    const lists = () =>
+      fetchMock.mock.calls.filter(
+        (c) => String(c[0]).startsWith("/api/jpanel/messages") && !c[1]?.method,
+      ).length;
+    const before = lists();
+    fireEvent.change(input, { target: { value: "Bath time." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Quorra" }));
+
+    expect(await screen.findByText(/Not sent — no such panel/)).toBeTruthy();
+    await waitFor(() => expect(lists()).toBeGreaterThan(before));
+    expect(input.value).toBe("Bath time.");
+  });
+
+  it("never lets a poll that left before a send remove the bubble it sent", async () => {
+    /* C11, E3.7. A poll is in flight when the message goes; it answers afterwards with the
+       thread as it was before the send. Painting it would take the bubble away again. */
+    vi.spyOn(window, "prompt").mockReturnValue("Nora");
+    let release: (r: Response) => void = () => {};
+    let gets = 0;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.startsWith("/api/jpanel/messages") && !init?.method && ++gets === 2) {
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      }
+      return box()(input, init);
+    });
+    render(<JpanelScreen onClose={vi.fn()} />);
+
+    // A rename refetches the lists: that is the poll left hanging.
+    fireEvent.click(await screen.findByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(gets).toBe(2));
+
+    fireEvent.change(screen.getByLabelText("Message Quorra"), {
+      target: { value: "Five more minutes then teeth." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send to Quorra" }));
+    await screen.findByText("Five more minutes then teeth.");
+
+    await act(async () => {
+      release(json({ panels: THREADS }));
+    });
+    expect(screen.getByText("Five more minutes then teeth.")).toBeTruthy();
+  });
+
   it("names a panel from here, and says how many device keys moved", async () => {
     /* THE CABLE THIS REMOVES. A panel's name lives on the box — `/flash` writes it onto the
        device key it mints — so a unit enrolled without one calls itself "the other one" to its

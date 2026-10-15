@@ -138,20 +138,32 @@ function ConversationTab() {
   const seenRef = useRef<Set<string>>(new Set());
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const foreground = useForeground();
+  /* WHICH POLL MAY PAINT (C11). `issued` numbers every fetch and `painted` is the newest that
+     landed, so a slow answer never overwrites a newer one. `epoch` moves whenever this screen
+     changes the lists itself — a send, a clear — so a poll that left before the change, and
+     would draw the thread without the bubble just sent, is dropped rather than painted. */
+  const issued = useRef(0);
+  const painted = useRef(0);
+  const epoch = useRef(0);
 
   const refresh = useCallback(async () => {
+    const seq = ++issued.current;
+    const at = epoch.current;
+    const current = () => seq > painted.current && at === epoch.current;
     try {
       /* BOTH, TOGETHER. Two awaits in series would paint a thread whose pet half was one
          round trip older than its message half — and the merge is by time, so the seam would
          show as lines appearing above ones already on screen. */
       const [msgs, pet] = await Promise.all([api.jpanelMessages(), api.jpanelChats()]);
+      if (!current()) return;
+      painted.current = seq;
       setThreads(msgs.panels);
       setChats(pet.panels);
       setError("");
     } catch (e) {
       // What is on screen stays: a poll that failed on a train is not evidence the inbox is
       // empty, and blanking it would be the one lie this surface must not tell.
-      setError(e instanceof Error ? e.message : String(e));
+      if (current()) setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
@@ -290,38 +302,44 @@ function ConversationTab() {
     });
   }
 
-  const stopRecording = useCallback(async (deviceId: string) => {
-    const active = recorder.current;
-    recorder.current = null;
-    if (recordTimer.current !== null) {
-      window.clearTimeout(recordTimer.current);
-      recordTimer.current = null;
-    }
-    setRecording(null);
-    if (!active) return;
-    setSending(deviceId);
-    setSendError("");
-    try {
-      const pcm = await active.stop();
-      if (pcm.byteLength < 2) throw new Error("nothing was recorded");
-      const sent = await api.sendJpanelVoice(deviceId, pcm);
-      /* From the server's own row, exactly as the typed path does: the box decides the id,
+  const stopRecording = useCallback(
+    async (deviceId: string) => {
+      const active = recorder.current;
+      recorder.current = null;
+      if (recordTimer.current !== null) {
+        window.clearTimeout(recordTimer.current);
+        recordTimer.current = null;
+      }
+      setRecording(null);
+      if (!active) return;
+      setSending(deviceId);
+      setSendError("");
+      try {
+        const pcm = await active.stop();
+        if (pcm.byteLength < 2) throw new Error("nothing was recorded");
+        const sent = await api.sendJpanelVoice(deviceId, pcm);
+        /* From the server's own row, exactly as the typed path does: the box decides the id,
          the duration and the transcript, and a message that exists only on this phone is
          precisely the message a parent believes they sent and did not. */
-      setThreads(
-        (cur) =>
-          cur?.map((t) =>
-            t.device_id === deviceId ? { ...t, messages: [sent, ...t.messages] } : t,
-          ) ?? cur,
-      );
-      // Saying something is always a jump to the bottom, wherever he had scrolled to.
-      stick.current = true;
-    } catch (e) {
-      setSendError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSending(null);
-    }
-  }, []);
+        epoch.current++;
+        setThreads(
+          (cur) =>
+            cur?.map((t) =>
+              t.device_id === deviceId ? { ...t, messages: [sent, ...t.messages] } : t,
+            ) ?? cur,
+        );
+        // Saying something is always a jump to the bottom, wherever he had scrolled to.
+        stick.current = true;
+      } catch (e) {
+        setSendError(e instanceof Error ? e.message : String(e));
+        // A panel the box no longer knows: the chips are stale, so fetch the ones it does.
+        if (e instanceof ApiError && e.status === 404) void refresh();
+      } finally {
+        setSending(null);
+      }
+    },
+    [refresh],
+  );
 
   const beginRecording = useCallback(
     async (deviceId: string) => {
@@ -415,17 +433,23 @@ function ConversationTab() {
     setClearing(deviceId);
     setSendError("");
     try {
-      const { deleted, kept } = await api.clearJpanelHistory(deviceId);
+      const { deleted, kept, kept_for } = await api.clearJpanelHistory(deviceId);
+      epoch.current++;
       setThreads(
         (cur) => cur?.map((t) => (t.device_id === deviceId ? { ...t, messages: [] } : t)) ?? cur,
       );
       /* SAID OUT LOUD WHEN SOMETHING SURVIVED. The box refuses to delete a message a child has
          not heard yet, and a clear that silently leaves rows behind is worse than one that
-         refuses — the list afterwards has to match what he expects. */
+         refuses — the list afterwards has to match what he expects. Named per child (C9): the
+         thread holds her sister's messages to her too, and what her sister has not yet heard
+         is kept under the sister's name. */
+      const whose = kept_for?.length ? kept_for : kept ? [{ name, kept }] : [];
       setCleared((c) => ({
         ...c,
-        [deviceId]: kept
-          ? `Cleared ${deleted}. Kept ${kept} ${name} hasn't heard yet — they'll stay until played.`
+        [deviceId]: whose.length
+          ? `Cleared ${deleted}. Kept ${whose
+              .map((k) => `${k.kept} ${k.name} hasn't heard yet`)
+              .join(" and ")} — they'll stay until played.`
           : `Cleared ${deleted}.`,
       }));
       await refresh();
@@ -448,6 +472,7 @@ function ConversationTab() {
     setSendError("");
     try {
       const { deleted } = await api.jpanelClearChats(deviceId);
+      epoch.current++;
       setChats(
         (cur) => cur?.map((c) => (c.device_id === deviceId ? { ...c, turns: [] } : c)) ?? cur,
       );
@@ -468,6 +493,7 @@ function ConversationTab() {
     try {
       const sent = await api.sendJpanelMessage(deviceId, text);
       setDrafts((d) => ({ ...d, [deviceId]: "" }));
+      epoch.current++;
       // Shown from the server's own row rather than an optimistic one: the box decides
       // the id and how long the spoken version runs, and a message that only exists on
       // this phone is exactly the message a parent thinks they sent and did not.
@@ -482,6 +508,8 @@ function ConversationTab() {
       // The draft is deliberately kept: retyping what you wanted to say to your child
       // because the network blipped is the worst outcome this form has.
       setSendError(e instanceof Error ? e.message : String(e));
+      // A panel the box no longer knows (C2): the chips are stale, so fetch the ones it does.
+      if (e instanceof ApiError && e.status === 404) void refresh();
     } finally {
       setSending(null);
     }
@@ -644,6 +672,9 @@ function ConversationTab() {
           onChange={(e) => setDrafts((d) => ({ ...d, [active.device_id]: e.target.value }))}
           placeholder={`Say something to ${active.name}`}
           aria-label={`Message ${active.name}`}
+          /* The box's own limit (`SendText.text`), so a long message stops here rather than
+             coming back as a refusal after he has typed it. */
+          maxLength={600}
           enterKeyHint="send"
         />
         {/* The microphone yields to a typed draft rather than sitting beside it armed:

@@ -3545,6 +3545,18 @@ async function errorDetail(response: Response): Promise<string> {
   try {
     const body = (await response.clone().json()) as { detail?: unknown };
     if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
+    // A validation failure's detail is a LIST of `{loc, msg, type}`, which used to fall through
+    // to "Request failed: 422" — a parent told nothing about the message he typed.
+    if (Array.isArray(body.detail)) {
+      const said = body.detail
+        .map((d: unknown) =>
+          d && typeof d === "object" && typeof (d as { msg?: unknown }).msg === "string"
+            ? (d as { msg: string }).msg.trim()
+            : "",
+        )
+        .filter(Boolean);
+      if (said.length) return said.join("; ");
+    }
   } catch {
     // not a JSON body — fall through to the status line
   }
@@ -4067,6 +4079,9 @@ export interface JpanelChats {
 export interface JpanelCleared {
   deleted: number;
   kept: number;
+  /** Whose unheard messages were kept, per panel. A thread holds what her sister sent her
+   *  too, so the kept count is not always the thread's own child's. Absent from an older box. */
+  kept_for?: { device_id: string; name: string; kept: number }[];
 }
 
 /** Playable URL for one message's audio.
@@ -7186,11 +7201,11 @@ export const api = {
   // yet (JPANEL_PLAN.md §5: a message nobody heard must not evaporate), and returns how many
   // it kept so this surface can SAY so — a clear that silently leaves rows behind is worse
   // than one that refuses.
-  async clearJpanelHistory(toDevice: string): Promise<{ deleted: number; kept: number }> {
+  async clearJpanelHistory(toDevice: string): Promise<JpanelCleared> {
     const response = await request(`/api/jpanel/messages?device=${encodeURIComponent(toDevice)}`, {
       method: "DELETE",
     });
-    return (await response.json()) as { deleted: number; kept: number };
+    return (await response.json()) as JpanelCleared;
   },
 
   // What clears the unplayed badge. Reading is the interaction this surface is built

@@ -532,7 +532,7 @@ async def test_a_message_too_long_is_refused_rather_than_cut(
             "/api/devices", json={"label": "panel Quorra", "device_role": "jpet"}
         ).json()
         client.cookies.clear()
-        too_long = b"\x10\x20" * (jpanel.MAX_MESSAGE_BYTES // 2 + 1000)
+        too_long = b"\x10\x20" * (jpanel.MAX_SEND_BYTES // 2 + 1000)
         answer = client.post(
             "/api/jpanel/send?to=dad",
             content=too_long,

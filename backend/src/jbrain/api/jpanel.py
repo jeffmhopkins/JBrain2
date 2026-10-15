@@ -26,6 +26,7 @@ from __future__ import annotations
 import array
 import asyncio
 import hashlib
+import json
 import math
 import string
 import time
@@ -55,6 +56,7 @@ from jbrain.api.endpoint import (
     panel_display_name,
 )
 from jbrain.api.notes import ctx_for
+from jbrain.blob_refs import blob_referenced
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.transcribe import WhisperCppClient
@@ -67,6 +69,19 @@ router = APIRouter(prefix="/jpanel", tags=["jpanel"])
 # than an answer, and short enough that a pocket-dial cannot fill the box.
 MAX_MESSAGE_MS = 30_000
 MAX_MESSAGE_BYTES = PANEL_RATE * 2 * MAX_MESSAGE_MS // 1000
+
+# HALF A SECOND OVER THE CAP IS STILL A MESSAGE (A3, E1.1 of the messaging fixes plan). A
+# recording made right at the cap arrives a few frames long — a timer that fires late, a capture
+# that finishes its buffer — and a 413 is final on the panel, so the child's longest message was
+# the one most likely to be lost. Past this the panel's `/send` refuses; the owner's routes trim
+# to it instead (C10, `send_audio`).
+SEND_SLACK_MS = 500
+MAX_SEND_BYTES = PANEL_RATE * 2 * (MAX_MESSAGE_MS + SEND_SLACK_MS) // 1000
+
+# How long a transcription may take before the message is filed without one. httpx's timeout is
+# per operation, not in total, so a whisper that trickles its answer could otherwise hold a send
+# open for as long as it liked while the panel's own deadline ran out.
+STT_TIMEOUT_S = 60.0
 
 # DAD'S VOICE, AND THE `kokoro-` PREFIX IS NOT DECORATION.
 #
@@ -339,6 +354,35 @@ def _name_of(names: dict[str, str], kind: str, device: str | None) -> str:
     return DAD_NAME if kind == "owner" else names.get(device or "", "the other one")
 
 
+# THE LONGEST NAME A PANEL IS SENT, IN BYTES OF ITS JSON ESCAPING. 0.3.39 reads `/waiting` into
+# 1,023 bytes, and eight queued names plus a sibling at this length leave it two bytes of
+# headroom (§6 of the messaging fixes plan). The rename rule keeps new names far shorter, but a
+# label stored before that rule — quotes, control or non-ASCII characters included — is still on
+# the box, and one long enough would truncate the whole poll on the panel.
+_WIRE_NAME_MAX = 31
+
+
+def _wire_name(name: str) -> str:
+    """`name`, cut on a character boundary so its `ensure_ascii` escaping is at most 31 bytes.
+
+    The escaped length bounds the UTF-8 body too, which is never longer."""
+    kept: list[str] = []
+    used = 0
+    for ch in name:
+        cost = len(json.dumps(ch)) - 2
+        if used + cost > _WIRE_NAME_MAX:
+            break
+        kept.append(ch)
+        used += cost
+    return "".join(kept)
+
+
+def _header_name(name: str) -> str:
+    """`_wire_name` for a header: printable ASCII only, because Starlette refuses to encode
+    anything else and the whole `/next` answer would fail with it."""
+    return _wire_name("".join(c if " " <= c <= "~" else "?" for c in name))
+
+
 def _row_to_message(row, names: dict[str, str]) -> Message:
     (mid, s_kind, s_dev, r_kind, r_dev, transcript, composed, dur, created, played, deliveries) = (
         row
@@ -404,7 +448,7 @@ async def send(
     audio = await request.body()
     if not audio:
         raise HTTPException(status_code=400, detail="no audio")
-    if len(audio) > MAX_MESSAGE_BYTES:
+    if len(audio) > MAX_SEND_BYTES:
         # REFUSED RATHER THAN TRUNCATED. This used to silently keep the first N bytes, which is
         # the same fault the hash exists to catch, committed deliberately: a child's message
         # stored with its end cut off and nothing anywhere saying so.
@@ -515,12 +559,16 @@ async def _transcribe(settings: Settings, audio: bytes) -> str:
             timeout=min(settings.whisper_timeout, 60.0),
         )
         seconds = len(audio) / (PANEL_RATE * 2)
-        result = await client.transcribe(
-            _wav(audio),
-            filename="jpanel.wav",
-            media_type="audio/wav",
-            audio_ctx=max(160, min(1500, int(seconds * 50 * 1.5))),
-            language="en",
+        # Inside the `try`, so a timeout is one more transcription failure and the send succeeds.
+        result = await asyncio.wait_for(
+            client.transcribe(
+                _wav(audio),
+                filename="jpanel.wav",
+                media_type="audio/wav",
+                audio_ctx=max(160, min(1500, int(seconds * 50 * 1.5))),
+                language="en",
+            ),
+            STT_TIMEOUT_S,
         )
         return (result.text or "").strip()
     except Exception as exc:  # noqa: BLE001 — a mute transcript never costs a delivery
@@ -663,12 +711,16 @@ async def waiting(principal: PanelDep, request: Request) -> Waiting:
             )
         ).all()
         queue = [
-            WaitingOne(from_name=_name_of(names, r[0], r[1]), from_owner=r[0] == "owner")
+            WaitingOne(
+                from_name=_wire_name(_name_of(names, r[0], r[1])), from_owner=r[0] == "owner"
+            )
             for r in rows
         ]
+        # Compared UNCUT and cut afterwards, so a legacy name past the wire limit still finds
+        # its sibling rather than mistaking a shared prefix for itself.
         me = _display_name(principal.label)
         others = [n for pid, n in names.items() if pid != str(principal.id) and n != me]
-        sibling = others[0] if len(others) == 1 else ""
+        sibling = _wire_name(others[0]) if len(others) == 1 else ""
     # THE HEAD IS THE QUEUE'S FIRST ENTRY, SAID TWICE ON PURPOSE. A panel running older firmware
     # reads only `from_name`/`from_owner`, so they must keep meaning what they meant — and
     # deriving them from the list here is what stops the two answers from ever disagreeing.
@@ -758,7 +810,7 @@ async def next_message(principal: PanelDep, request: Request, at: int = 0) -> Re
         media_type="application/octet-stream",
         headers={
             "X-Jpanel-Id": row[0],
-            "X-Jpanel-From": _name_of(names, row[2], row[3]),
+            "X-Jpanel-From": _header_name(_name_of(names, row[2], row[3])),
             # WHO TO REPLY TO, AS A KIND RATHER THAN A NAME. `X-Jpanel-From` is what the child
             # HEARS — a name the owner chooses and can change — and the panel needs to know
             # where a reply goes, which is a different question with only two answers.
@@ -868,48 +920,133 @@ async def played(principal: PanelDep, request: Request, body: Played) -> Respons
 # --- the owner's three routes ---------------------------------------------------------------
 
 
+async def _owner_unread(session, names: dict[str, str]) -> dict[str, int]:
+    """Panel id → unplayed messages to the owner, for the panels a thread is drawn for.
+
+    The ONE count behind both the thread chips and `/summary` (E3.9), so the launcher badge can
+    never show a number the screen does not: a panel not in the roster has no chip, so its rows
+    are not counted here either."""
+    unplayed = await _unplayed_by_panel(session)
+    return {pid: unplayed.get(pid, 0) for pid in names}
+
+
+#: Every row placed in the thread it is drawn in: a panel's own sends, and what was sent to it.
+#: A twin-to-twin row is in BOTH twins' threads (C5), so it is placed twice.
+_PLACED = """
+    SELECT sender_device AS dev, id, sender_kind, sender_device, recipient_kind,
+           recipient_device, transcript, composed, duration_ms, created_at, played_at, deliveries
+    FROM app.jpanel_message WHERE sender_kind = 'panel'
+    UNION ALL
+    SELECT recipient_device AS dev, id, sender_kind, sender_device, recipient_kind,
+           recipient_device, transcript, composed, duration_ms, created_at, played_at, deliveries
+    FROM app.jpanel_message WHERE recipient_kind = 'panel'
+"""
+
+
+async def _thread_rows(session, *, limit: int, before: str | None) -> list[Any]:
+    """`(thread device, *message row)`, newest first: each thread's newest `limit` rows, plus —
+    on the first page — every message to the owner he has not read, however old.
+
+    PER THREAD, NOT ACROSS ALL OF THEM (C6). A global limit let a chatty twin push her
+    sister's thread off the page, and an unread message past it was counted on the chip but
+    never drawn, so the badge pointed at something he could not find. `before` (a message id)
+    pages back from that message in every thread."""
+    pivot = ""
+    if before is not None:
+        pivot = (
+            "WHERE (created_at, id) < (SELECT created_at, id FROM app.jpanel_message"
+            " WHERE id = CAST(:before AS uuid))"
+        )
+    unread = " OR (recipient_kind = 'owner' AND played_at IS NULL)" if before is None else ""
+    return list(
+        (
+            await session.execute(
+                text(
+                    f"""
+                    WITH placed AS ({_PLACED}), ranked AS (
+                        SELECT *, row_number() OVER (
+                            PARTITION BY dev ORDER BY created_at DESC, id DESC
+                        ) AS rn
+                        FROM placed {pivot}
+                    )
+                    SELECT dev, id, sender_kind, sender_device, recipient_kind,
+                           recipient_device, transcript, composed, duration_ms, created_at,
+                           played_at, deliveries
+                    FROM ranked
+                    WHERE rn <= :lim{unread}
+                    ORDER BY created_at DESC, id DESC
+                    """  # noqa: S608 — both fragments are constants chosen above
+                ),
+                {"lim": limit, "before": before},
+            )
+        ).all()
+    )
+
+
 @router.get("/messages")
-async def messages(owner: OwnerDep, request: Request, limit: int = 100) -> Threads:
+async def messages(
+    owner: OwnerDep, request: Request, limit: int = 100, before: str | None = None
+) -> Threads:
     """Everything, grouped by the panel it concerns — which is the question asked at work.
 
-    `limit` bounds the ROWS RETURNED across all panels, not the unplayed counts: those come
-    from `_unplayed_by_panel` precisely so a truncating limit cannot deflate a badge.
+    `limit` bounds the rows returned PER THREAD, and every unplayed message to the owner is
+    returned on top of it (`_thread_rows`). The unplayed counts come from `_owner_unread`, the
+    same function `/summary` reads, so a truncating limit cannot deflate a badge.
 
     EVERY ENROLLED PANEL IS LISTED, including one that has never sent anything. Otherwise the
     owner could not message a twin who has not yet spoken into her panel — exactly the child he
     would most want to reach."""
+    if before is not None and not _is_uuid(before):
+        raise HTTPException(status_code=404, detail="no such message")
+    names = await _panel_names(request.app.state.session_maker)
     async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
-        names = await _panel_names(request.app.state.session_maker)
-        unplayed = await _unplayed_by_panel(session)
-        rows = (
-            await session.execute(
-                text(
-                    """
-                    SELECT id, sender_kind, sender_device, recipient_kind, recipient_device,
-                           transcript, composed, duration_ms, created_at, played_at, deliveries
-                    FROM app.jpanel_message
-                    ORDER BY created_at DESC
-                    LIMIT :lim
-                    """
-                ),
-                {"lim": max(1, min(limit, 500))},
-            )
-        ).all()
+        unplayed = await _owner_unread(session, names)
+        rows = await _thread_rows(session, limit=max(1, min(limit, 500)), before=before)
 
     threads: dict[str, PanelThread] = {
-        pid: PanelThread(device_id=pid, name=name, unplayed=unplayed.get(pid, 0), messages=[])
+        pid: PanelThread(device_id=pid, name=name, unplayed=unplayed[pid], messages=[])
         for pid, name in names.items()
     }
     for row in rows:
-        # A row belongs to the thread of whichever end is a PANEL — the owner is the other end
-        # of every conversation he can see, so grouping by him would make one undifferentiated
-        # list and lose the only axis he cares about.
-        pid = row[2] if row[1] == "panel" else row[4]
-        thread = threads.get(str(pid or ""))
-        if thread is None:
-            continue
-        thread.messages.append(_row_to_message(row, names))
+        # A panel no longer in the roster has no thread to land in; W2's grouping gives it one.
+        thread = threads.get(str(row[0] or ""))
+        if thread is not None:
+            thread.messages.append(_row_to_message(row[1:], names))
     return Threads(panels=list(threads.values()))
+
+
+class ThreadUnread(BaseModel):
+    device_id: str
+    unread: int
+
+
+class Summary(BaseModel):
+    """The launcher's badge: the same counts the thread chips draw, without the messages."""
+
+    unread: int
+    threads: list[ThreadUnread]
+
+
+@router.get("/summary")
+async def summary(owner: OwnerDep, request: Request) -> Summary:
+    """How many messages are waiting for the owner, in total and per thread (E3.9)."""
+    names = await _panel_names(request.app.state.session_maker)
+    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        unread = await _owner_unread(session, names)
+    return Summary(
+        unread=sum(unread.values()),
+        threads=[ThreadUnread(device_id=pid, unread=n) for pid, n in unread.items()],
+    )
+
+
+def _is_uuid(value: str) -> bool:
+    """A path or query id that is not a uuid would reach a cast and come back as a 500, which
+    reads as the box being broken rather than as a message that is not there."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 #: The rows of one twin's conversation with the owner: what she sent HIM and what he sent HER.
@@ -1244,9 +1381,17 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
     base = (settings.brain_tts_url or "").rstrip("/")
     if not base:
         raise HTTPException(status_code=503, detail="speech synthesis not configured")
+    # The addressee BEFORE the synthesis (C2), as `file_owner_voice` does: a chip left over from
+    # a stale render answers in milliseconds with a 404 the PWA can act on, rather than after a
+    # render, with a row filed for a key nothing will ever poll.
+    names = await _panel_names(request.app.state.session_maker)
+    if body.to_device not in names:
+        raise HTTPException(status_code=404, detail="no such panel")
     started = time.monotonic()
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
+        # Sixty seconds: the longest text renders for most of thirty on a busy box, and a
+        # timeout here loses Dad's message where a slow one only delays it.
+        async with httpx.AsyncClient(timeout=60.0) as http:
             resp = await http.get(
                 f"{base}/tts", params={"text": body.text[:600], "voice": DAD_VOICE}
             )
@@ -1278,7 +1423,6 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
             )
         ).first()
         await session.commit()
-        names = await _panel_names(request.app.state.session_maker)
     if row is None:  # pragma: no cover — RETURNING on a successful INSERT always yields
         raise HTTPException(status_code=500, detail="message not stored")
     log.info(
@@ -1291,9 +1435,18 @@ async def send_text(owner: OwnerDep, request: Request, body: SendText) -> Messag
     return _row_to_message(row, names)
 
 
+class KeptFor(BaseModel):
+    device_id: str
+    name: str
+    kept: int
+
+
 class Cleared(BaseModel):
     deleted: int
     kept: int
+    # WHOSE UNHEARD MESSAGES WERE KEPT (C9). A twin's thread now holds what her sister sent her
+    # as well as what she sent, so "kept 1 she hasn't heard yet" could name the wrong child.
+    kept_for: list[KeptFor] = []
 
 
 # --- what the children said to the pet (migration 0219) ---------------------------------------
@@ -1422,13 +1575,51 @@ async def clear_pet_chats(
     return Cleared(deleted=deleted, kept=0)
 
 
+async def clear_thread(session, device: str) -> tuple[list[str], dict[str, int]]:
+    """Delete one panel's thread in `session`, uncommitted: the digests of what went, and how
+    many unheard messages were kept, per recipient panel.
+
+    The rows are exactly what the thread SHOWS (`_PLACED`): what the panel sent, to the owner
+    or its sibling, and everything sent to it. A twin-to-twin message is in both threads, so
+    clearing either one takes it (C5)."""
+    rows = (
+        await session.execute(
+            text(
+                """
+                WITH mine AS (
+                    SELECT id, recipient_kind, recipient_device, played_at
+                    FROM app.jpanel_message
+                    WHERE (sender_kind = 'panel' AND sender_device = :dev)
+                       OR (recipient_kind = 'panel' AND recipient_device = :dev)
+                ), gone AS (
+                    DELETE FROM app.jpanel_message
+                    WHERE id IN (
+                        SELECT id FROM mine
+                        WHERE NOT (recipient_kind = 'panel' AND played_at IS NULL)
+                    )
+                    RETURNING blob_sha256
+                )
+                SELECT 'gone', blob_sha256, 1 FROM gone
+                UNION ALL
+                SELECT 'kept', recipient_device, count(*) FROM mine
+                WHERE recipient_kind = 'panel' AND played_at IS NULL
+                GROUP BY recipient_device
+                """
+            ),
+            {"dev": device},
+        )
+    ).all()
+    gone = [str(r[1] or "") for r in rows if r[0] == "gone"]
+    kept = {str(r[1]): int(r[2]) for r in rows if r[0] == "kept"}
+    return gone, kept
+
+
 @router.delete("/messages")
 async def clear_history(owner: OwnerDep, request: Request, device: str = Query(...)) -> Cleared:
-    """Clear one panel's conversation.
+    """Clear one panel's conversation (`clear_thread`).
 
-    Deletes exactly the rows that panel's thread SHOWS — what it sent (to the owner or to its
-    sibling) and what the owner sent to it — because a button under a conversation that cleared
-    something else would be a button nobody could predict.
+    A button under a conversation that cleared something else would be a button nobody could
+    predict, so it deletes exactly the rows that thread shows.
 
     **EXCEPT A MESSAGE A CHILD HAS NOT HEARD YET, and that exception is not a nicety.**
     `JPANEL_PLAN.md` §5: *"unplayed messages are kept indefinitely — a message nobody heard is
@@ -1440,39 +1631,41 @@ async def clear_history(owner: OwnerDep, request: Request, device: str = Query(.
     A panel's unread message to the OWNER is a different thing and is deleted: that is his own
     badge, he is looking at the thread, and clearing is exactly the call he is making.
 
-    The count of what was kept comes back so the PWA can SAY so. A clear that silently leaves
-    rows behind is worse than one that refuses — the whole point of the button is that the list
-    afterwards matches what he expects."""
-    async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
-        row = (
-            await session.execute(
-                text(
-                    """
-                    WITH mine AS (
-                        SELECT id, recipient_kind, played_at
-                        FROM app.jpanel_message
-                        WHERE (sender_kind = 'panel' AND sender_device = :dev)
-                           OR (sender_kind = 'owner' AND recipient_device = :dev)
-                    ), gone AS (
-                        DELETE FROM app.jpanel_message
-                        WHERE id IN (
-                            SELECT id FROM mine
-                            WHERE NOT (recipient_kind = 'panel' AND played_at IS NULL)
-                        )
-                        RETURNING 1
-                    )
-                    SELECT (SELECT count(*) FROM gone),
-                           (SELECT count(*) FROM mine
-                            WHERE recipient_kind = 'panel' AND played_at IS NULL)
-                    """
-                ),
-                {"dev": device},
-            )
-        ).first()
+    What was kept comes back, and for whom, so the PWA can SAY so. A clear that silently leaves
+    rows behind is worse than one that refuses.
+
+    **THE AUDIO GOES WITH THE ROWS.** This used to delete the rows and leave their recordings
+    in the store with nothing pointing at them. Each digest is offered for collection after the
+    commit, through `blob_referenced`, exactly as the retention sweep does."""
+    maker = request.app.state.session_maker
+    names = await _panel_names(maker)
+    async with scoped_session(maker, ctx_for(owner)) as session:
+        gone, kept = await clear_thread(session, device)
         await session.commit()
-    deleted, kept = (int(row[0]), int(row[1])) if row else (0, 0)
-    log.info("jpanel.history_cleared", device=device, deleted=deleted, kept=kept)
-    return Cleared(deleted=deleted, kept=kept)
+    freed = 0
+    for sha in {sha for sha in gone if sha}:
+        # A fresh session per digest, after the commit, so the rows just deleted are not
+        # counted as holders of their own blob (`jpanel/sweep.py`).
+        async with scoped_session(maker, ctx_for(owner)) as session:
+            if await blob_referenced(session, sha):
+                continue
+        if await request.app.state.blob_store.delete(sha):
+            freed += 1
+    log.info(
+        "jpanel.history_cleared",
+        device=device,
+        deleted=len(gone),
+        kept=sum(kept.values()),
+        blobs_freed=freed,
+    )
+    return Cleared(
+        deleted=len(gone),
+        kept=sum(kept.values()),
+        kept_for=[
+            KeptFor(device_id=dev, name=_name_of(names, "panel", dev), kept=n)
+            for dev, n in sorted(kept.items())
+        ],
+    )
 
 
 @router.post("/messages/audio", status_code=201)
@@ -1515,7 +1708,14 @@ async def send_audio(
     audio = await request.body()
     if not audio:
         raise HTTPException(status_code=400, detail="no audio")
-    return await file_owner_voice(request, ctx_for(owner), audio[:MAX_MESSAGE_BYTES], to_device)
+    if len(audio) > MAX_SEND_BYTES:
+        # TRIMMED, NOT REFUSED, unlike a panel's `/send` (C10). The PWA's own stop at the cap is
+        # a timer, and a phone that backgrounds the tab throttles it past the slack: refusing
+        # would lose Dad's whole message for running a moment long. Logged, so a trim is never
+        # silent.
+        log.info("jpanel.owner_audio_trimmed", bytes=len(audio), kept=MAX_SEND_BYTES)
+        audio = audio[:MAX_SEND_BYTES]
+    return await file_owner_voice(request, ctx_for(owner), audio, to_device)
 
 
 # THE LEVEL A MESSAGE IS FILED AT, in both directions. No panel auto-gains its microphone: the
@@ -1644,6 +1844,8 @@ async def mark_read(owner: OwnerDep, request: Request, message_id: str) -> Respo
 
     Idempotent, and `played_at IS NULL` keeps the FIRST time: when he saw it is a real answer,
     and a second look should not overwrite it."""
+    if not _is_uuid(message_id):
+        raise HTTPException(status_code=404, detail="no such message")
     await mark_owner_played(request, ctx_for(owner), message_id)
     return Response(status_code=204)
 
@@ -1665,7 +1867,13 @@ async def mark_owner_played(request: Request, ctx: SessionContext, message_id: s
 @router.get("/messages/{message_id}/audio")
 async def message_audio(owner: OwnerDep, request: Request, message_id: str) -> Response:
     """The fallback for when the transcript does not make sense — which, given how the
-    transcriber handles four-year-olds, is often."""
+    transcriber handles four-year-olds, is often.
+
+    **RANGES, BECAUSE iOS SAFARI WILL NOT PLAY WITHOUT THEM** (C7). Its media element opens
+    with `Range: bytes=0-1` and gives up on a server that answers the whole file with a 200, so
+    the play button did nothing on exactly the phone the owner carries."""
+    if not _is_uuid(message_id):
+        raise HTTPException(status_code=404, detail="no such message")
     async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
         row = (
             await session.execute(
@@ -1675,4 +1883,39 @@ async def message_audio(owner: OwnerDep, request: Request, message_id: str) -> R
         ).first()
     if row is None:
         raise HTTPException(status_code=404, detail="no such message")
-    return Response(content=await request.app.state.blob_store.get(row[0]), media_type="audio/wav")
+    body = await request.app.state.blob_store.get(row[0])
+    return _ranged(body, request.headers.get("range"), "audio/wav")
+
+
+def _ranged(body: bytes, header: str | None, media_type: str) -> Response:
+    """`body`, or the one byte range `header` asks for (RFC 9110 §14).
+
+    One range only: a multi-range request is answered whole, which the RFC allows and no media
+    element sends. A range that starts past the end is a 416."""
+    size = len(body)
+    whole = Response(content=body, media_type=media_type, headers={"Accept-Ranges": "bytes"})
+    if not header or not header.startswith("bytes=") or "," in header:
+        return whole
+    first, _, last = header[len("bytes=") :].strip().partition("-")
+    try:
+        if first:
+            start = int(first)
+            end = int(last) if last else size - 1
+        elif last:
+            start, end = max(0, size - int(last)), size - 1
+        else:
+            return whole
+    except ValueError:
+        return whole
+    if start >= size or end < start:
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"},
+        )
+    end = min(end, size - 1)
+    return Response(
+        content=body[start : end + 1],
+        status_code=206,
+        media_type=media_type,
+        headers={"Content-Range": f"bytes {start}-{end}/{size}", "Accept-Ranges": "bytes"},
+    )

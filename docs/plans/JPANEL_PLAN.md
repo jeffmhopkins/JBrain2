@@ -1,6 +1,6 @@
 # jpanel — the panels as a product: voice post, and a screen that sleeps
 
-> **Status:** In progress · **Last verified:** 2026-10-12 · **Waves:** W1◻️ W2✅ W3✅ W4✅
+> **Status:** In progress · **Last verified:** 2026-10-15 · **Waves:** W1◻️ W2✅ W3✅ W4✅
 > — **voice post's panel side was rewritten in firmware 0.4.0** after the 2026-10 adversarial
 > review (`JPANEL_MESSAGING_FIXES_PLAN.md`): the interaction below is now one state machine
 > (`panel_sm.c`), the engine one host-tested core and the speaker one arbiter. What this plan says
@@ -643,9 +643,9 @@ section gets edited first.
 
 | route | takes | gives |
 |---|---|---|
-| `POST /send?to=panel\|dad` | the raw 16 kHz mono s16 body, exactly as `/converse` takes it | `200 {id, to_name}`; `409` when `to=panel` and there is not exactly one other panel |
-| `GET /waiting` | — | `200 {count, from_name}` — tiny on purpose, polled ~30 s per panel forever |
-| `GET /next` | — | `200` raw 16-bit PCM at 16 kHz with `X-Jpanel-Id` and `X-Jpanel-From`; `204` when the inbox is empty |
+| `POST /send?to=panel\|dad` | the raw 16 kHz mono s16 body, exactly as `/converse` takes it | `200 {id, to_name}`; `409` when `to=panel` and there is not exactly one other panel; `413` past `MAX_MESSAGE_MS` + 0.5 s (refused, never cut) |
+| `GET /waiting` | — | `200 {count, from_name}` — tiny on purpose, polled ~30 s per panel forever; every name is cut to 31 bytes of its JSON escaping, so the poll fits 0.3.39's buffer |
+| `GET /next` | — | `200` raw 16-bit PCM at 16 kHz with `X-Jpanel-Id` and `X-Jpanel-From` (printable ASCII, cut the same way); `204` when the inbox is empty |
 | `POST /played` | `{id}` | `204` |
 
 **The body is raw PCM, not multipart**, and the first cut of this contract said multipart
@@ -662,18 +662,20 @@ survive a reboot mid-playback instead of being lost by having been handed over.
 
 | route | takes | gives |
 |---|---|---|
-| `GET /messages` | `limit` (default 100) | `200 {panels: [PanelThread]}` |
-| `POST /messages` | `{to_device, text}` | `201 Message` — TTS renders it, the typed text is kept as the transcript |
-| `POST /messages/audio?to_device=` | the raw 16 kHz mono s16 body, exactly as the panel's `/send` takes it | `201 Message` — Dad's own voice; transcribed on the way in, `composed: "voice"`; `404` for an unknown panel |
-| `POST /messages/{id}/played` | — | `204` — the owner has dealt with it; idempotent, keeps the first timestamp |
-| `GET /messages/{id}/audio` | — | `200 audio/wav` |
+| `GET /messages` | `limit` (per thread, default 100), `before` (a message id: page back from it) | `200 {panels: [PanelThread]}` |
+| `GET /summary` | — | `200 {unread, threads: [{device_id, unread}]}` — the same counts the thread chips carry, for a badge |
+| `POST /messages` | `{to_device, text}` (text ≤ 600) | `201 Message` — TTS renders it, the typed text is kept as the transcript; `404` for an unknown panel, checked before the synthesis |
+| `POST /messages/audio?to_device=` | the raw 16 kHz mono s16 body, exactly as the panel's `/send` takes it | `201 Message` — Dad's own voice; transcribed on the way in, `composed: "voice"`; `404` for an unknown panel; past the cap + 0.5 s it is trimmed and logged, never refused |
+| `POST /messages/{id}/played` | — | `204` — the owner has dealt with it; idempotent, keeps the first timestamp; `404` for an id that is not a uuid |
+| `GET /messages/{id}/audio` | `Range` (one range) | `200 audio/wav` with `Accept-Ranges`, `206` for a range (iOS Safari will not play without one), `416` past the end; `404` for an id that is not a uuid |
+| `DELETE /messages?device=` | — | `200 {deleted, kept, kept_for: [{device_id, name, kept}]}` — see below |
 
 ```ts
 type Message = {
   id: string;
   from_name: string;          // "Quorra", "Dad"
   to_name: string;
-  direction: "in" | "out";    // relative to the OWNER: in = from a panel
+  direction: "in" | "out" | "between"; // relative to the OWNER; between = twin to twin
   transcript: string;         // STT for a panel's; the typed text for Dad's
   composed: "voice" | "text";
   duration_ms: number;
@@ -693,7 +695,10 @@ type PanelThread = {
 `limit`.** Two bugs live in the obvious implementation, and the PWA found the first by being
 built against this: counting the fetched rows deflates the badge as soon as `limit` truncates,
 and counting everything a panel sent includes twin-to-twin post, which is not the owner's to
-clear and would leave a badge he cannot make go away. `limit` bounds rows across all panels.
+clear and would leave a badge he cannot make go away. `limit` bounds rows **per thread**, and every
+unplayed message to the owner is returned on top of it, so the chip never counts a message the
+page cannot draw. `GET /summary` reads the same count. A twin-to-twin message is in **both**
+twins' threads.
 
 **Every enrolled panel is listed, including one that has never sent anything.** Otherwise the
 owner could not message a twin who has not yet spoken into her panel — exactly the child he
@@ -722,9 +727,11 @@ heard yet.** §5 says a message nobody heard must not evaporate, and a row addre
 with `played_at IS NULL` is sitting on a bedroom wall waiting for a four-year-old to come back
 to it — the owner tidying his own view is not a decision about her post. A panel's unread
 message to the OWNER is a different thing and goes: that is his own badge and clearing is
-exactly the call he is making. The route returns how many it kept so the PWA can **say so**; a
-clear that silently leaves rows behind is worse than one that refuses, because the whole point
-of the button is that the list afterwards matches what he expects.
+exactly the call he is making. The route returns how many it kept, and for whom (`kept_for`: the
+thread holds what her sister sent her too), so the PWA can **say so**; a clear that silently
+leaves rows behind is worse than one that refuses, because the whole point of the button is that
+the list afterwards matches what he expects. The deleted rows' audio is released through
+`blob_referenced`, as the retention sweep does.
 
 **`transcript` is the primary content in the PWA, not a caption.** The text is what gets read at
 work; the audio is the fallback for when the transcript does not make sense — which, given how
