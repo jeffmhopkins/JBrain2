@@ -115,6 +115,11 @@ void game_stop(game_t *g, uint32_t now)
     g->since = now;
 }
 
+bool game_deaf(const game_t *g)
+{
+    return g->phase == GAME_WALK_IN || g->phase == GAME_PLAY || g->phase == GAME_OVER;
+}
+
 void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale)
 {
     const float k = ease((float)(now - g->since) / (float)GAME_WALK_MS);

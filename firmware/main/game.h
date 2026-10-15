@@ -11,8 +11,8 @@
  * run and a quick one is a hop. Things fly in from all four edges, spinning, most aimed at where
  * he is and some just crossing, so standing still is neither safe nor certain death. Each one
  * that leaves the field without touching him scores; one touching him ends the round, and a tap
- * starts the next. No tap within GAME_OVER_WAIT_MS of the hit, or a minute with nobody tilting
- * or tapping, and he walks back and grows.
+ * starts the next. No tap within GAME_OVER_WAIT_MS of the hit, a minute with nobody tilting
+ * or tapping, or "stop", and he walks back and grows. Nothing else said ends it (0.4.15).
  *
  * Pure, and host-tested. Coordinates are pixels from the centre of the visible field (the whole
  * frame upright, the square on its side); `display.c` feeds it the tilt and draws it (`face.c`). */
@@ -27,7 +27,9 @@
 #define GAME_READY_MS 1200u    /* "ready... go!" before the first one comes */
 #define GAME_REPLAY_MS 600u    /* a tap this soon after the hit is the same tap, not a replay */
 #define GAME_IDLE_MS 60000u    /* nobody tilting or tapping this long and the game ends */
-#define GAME_OVER_WAIT_MS 15000u /* the score stands this long for a tap, then the game ends */
+/* The score stands this long for a tap, then the game ends: short enough that a round nobody
+   comes back to is plainly over (owner, 0.4.15: "if it times out it should exit the game"). */
+#define GAME_OVER_WAIT_MS 8000u
 #define GAME_HIT_R 24.0f       /* his hit circle, px: a little forgiving, as a child wants */
 #define GAME_ACTIVE_TILT 0.15f /* tilt past this is somebody playing */
 
@@ -88,8 +90,14 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
 /* A tap on the panel: the next round once one is over. */
 void game_tap(game_t *g, uint32_t now);
 
-/* Walk back and grow (the wake word, a minute idle, leaving the pet screen). */
+/* Walk back and grow ("stop", a minute idle, leaving the pet screen). */
 void game_stop(game_t *g, uint32_t now);
+
+/* WHILE A GAME IS ON, WHAT IS SAID IS NOT FOR THE PET. Children playing shout, and any phrase
+   the panel caught (the name, "jump", a colour) ended the game (owner, 0.4.15: "if it recognizes
+   a word, it exits out of the game. That shouldn't happen"). True from the walk in to the round
+   over: every phrase but "stop" and the game's own is then dropped. */
+bool game_deaf(const game_t *g);
 
 /* Where to draw him and how big (1 = his own size). */
 void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale);
