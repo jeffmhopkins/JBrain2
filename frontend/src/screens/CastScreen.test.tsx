@@ -109,6 +109,24 @@ async function addText(words: string) {
 }
 
 describe("Cast", () => {
+  it("swallows touch so a downward drag never closes the card", async () => {
+    const onParentTouchStart = vi.fn();
+    const onParentTouchMove = vi.fn();
+    render(
+      // Stands in for App's swipe-armed subscreen wrapper.
+      <div onTouchStart={onParentTouchStart} onTouchMove={onParentTouchMove}>
+        <CastScreen />
+      </div>,
+    );
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+    const canvas = screen.getByText("Add text or a picture to start");
+    fireEvent.touchStart(canvas as HTMLElement, { touches: [{ clientX: 0, clientY: 0 }] });
+    fireEvent.touchMove(canvas as HTMLElement, { touches: [{ clientX: 0, clientY: 200 }] });
+    expect(onParentTouchStart).not.toHaveBeenCalled();
+    expect(onParentTouchMove).not.toHaveBeenCalled();
+  });
+
   it("lists each TV with what it is doing, in words", async () => {
     render(<CastScreen />);
     expect(await screen.findByText("3 found on the network")).toBeInTheDocument();

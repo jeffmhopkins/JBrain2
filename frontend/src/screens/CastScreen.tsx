@@ -122,7 +122,14 @@ export function CastScreen() {
   }, [loadTvs]);
 
   return (
-    <main className="screen-body cast-screen">
+    // Send is a canvas you drag, pinch and twist; App's down-swipe dismiss on the
+    // subscreen would take a downward drag as "leave" and close the card under the
+    // finger. Swallow touch here so it never arms over Cast; the chevron climbs out.
+    <main
+      className="screen-body cast-screen"
+      onTouchStart={(e) => e.stopPropagation()}
+      onTouchMove={(e) => e.stopPropagation()}
+    >
       <fieldset
         className="seg-row cast-seg"
         aria-label="Cast"
