@@ -60,6 +60,7 @@ from jbrain.db.session import SessionContext, panel_context, scoped_session
 from jbrain.devices import service as devices
 from jbrain.devices.repo import DeviceRole
 from jbrain.g2p import phonemes_for
+from jbrain.jpanel import debug_relay
 from jbrain.llm.router import LlmRouter
 from jbrain.settings_store import ENDPOINT_WIFI_KEY, SqlSettingsStore
 from jbrain.transcribe import WhisperCppClient
@@ -1303,10 +1304,22 @@ class PanelStatus(BaseModel):
     # asleep, and "last seen 4 minutes in the future" is how a working fleet looks broken.
     age_s: int = -1
     report: dict[str, Any] = Field(default_factory=dict)
+    # Whether Ops can ask this panel for a snapshot or a screenshot right now
+    # (`/api/panel/look`): "online" while it picks up debug requests, "offline" once it has
+    # stopped, None for a panel with no debug surface (an S3, or a C6 not seen since the box
+    # started). The relay's own 30 s rule, so a button never offers what the route refuses.
+    look: Literal["online", "offline"] | None = None
 
 
 class PanelStatuses(BaseModel):
     panels: list[PanelStatus] = Field(default_factory=list)
+
+
+def _look_state(device_id: str) -> Literal["online", "offline"] | None:
+    seen = debug_relay.last_seen(device_id)
+    if seen is None or seen[1] != debug_relay.DEBUG_BOARD:
+        return None
+    return "online" if seen[0] <= debug_relay.OFFLINE_AFTER_S else "offline"
 
 
 @router.get("/status")
@@ -1359,6 +1372,7 @@ async def panel_status(owner: OwnerDep, request: Request) -> PanelStatuses:
                 version=str(row[4] or ""),
                 age_s=int(row[6]) if row[6] is not None else -1,
                 report=dict(row[5] or {}),
+                look=_look_state(str(row[0])),
             )
             # `DISTINCT ON (label)` is belt to the braces of retiring a replaced key at flash
             # time: a panel re-flashed before that landed still has several live keys under one

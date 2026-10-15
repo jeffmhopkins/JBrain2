@@ -71,6 +71,7 @@ class Box:
     sibling_device: str
     maker: Maker
     blob_dir: Path
+    owner_cookies: dict[str, str]
 
     def as_panel(  # noqa: ANN201
         self,
@@ -89,6 +90,19 @@ class Box:
 
     def pickup(self, who: dict[str, str] | None = None, board: str = C6):  # noqa: ANN201
         return self.as_panel("GET", f"/api/endpoint/debug/next?board={board}", who)
+
+    def as_owner(self, method: str, path: str, **kw):  # noqa: ANN201
+        self.client.cookies.clear()
+        self.client.cookies.update(self.owner_cookies)
+        try:
+            return self.client.request(method, path, **kw)
+        finally:
+            self.client.cookies.clear()
+
+    def look(self, what: str, device: str | None = None):  # noqa: ANN201
+        return self.as_owner(
+            "POST", f"/api/panel/look/{device or self.device}", json={"what": what}
+        )
 
     def command(self, device: str | None = None, **body):  # noqa: ANN201
         return self.client.post(
@@ -124,6 +138,7 @@ def box(database_url: str, maker: Maker, tmp_path: Path) -> Iterator[Box]:  # no
         sibling = client.post(
             "/api/devices", json={"label": "panel Nora", "device_role": "jpet"}
         ).json()
+        owner_cookies = dict(client.cookies)
         client.cookies.clear()
         dbg = {"Authorization": f"Bearer {debug_key}"}
         listed = client.get("/api/debug/panel", headers=dbg)
@@ -138,6 +153,7 @@ def box(database_url: str, maker: Maker, tmp_path: Path) -> Iterator[Box]:  # no
             sibling_device=ids["Nora"],
             maker=maker,
             blob_dir=tmp_path,
+            owner_cookies=owner_cookies,
         )
 
 
@@ -569,3 +585,127 @@ def test_jps1_helper_matches_the_header_layout() -> None:
     assert s[:4] == b"JPS1" and struct.unpack_from("<HH", s, 4) == (2, 1)
     assert struct.unpack_from("<HHI", s, 8) == (0, 1, 3)
     assert s[-2:] == b"\xff\xff"
+
+
+# ---- the owner's looks, from Ops → Panels ------------------------------------------------
+
+
+def test_the_owner_takes_a_screenshot_from_the_pwa(box: Box) -> None:
+    box.pickup()
+    queued = box.look("screenshot")
+    assert queued.status_code == 202, queued.text
+    rid = queued.json()["request_id"]
+    assert box.pickup().json() == {"id": rid, "cmd": "screenshot"}
+    up = box.as_panel(
+        "POST",
+        f"/api/endpoint/debug/{rid}",
+        content=jps1(480, 480, _frame(480, 480)),
+        ctype="application/octet-stream",
+    )
+    assert up.status_code == 204, up.text
+
+    out = box.as_owner("GET", f"/api/panel/look/{box.device}/{rid}?wait=5").json()
+    assert out["state"] == "done" and out["command"] == "screenshot"
+    url = out["screenshot"]
+    assert url == f"/api/panel/look/{box.device}/{rid}/screenshot.png"
+    png = box.as_owner("GET", url)
+    assert png.status_code == 200 and png.headers["content-type"] == "image/png"
+    assert Image.open(io.BytesIO(png.content)).size == (480, 480)
+
+
+def test_the_owner_reads_a_snapshot_and_the_ask_is_on_the_record(box: Box) -> None:
+    box.pickup()
+    rid = box.look("snapshot").json()["request_id"]
+    box.pickup()
+    answer = {"id": rid, "cmd": "snapshot", "ok": True, "data": {"v": 1}}
+    assert box.as_panel("POST", f"/api/endpoint/debug/{rid}", json=answer).status_code == 204
+    out = box.as_owner("GET", f"/api/panel/look/{box.device}/{rid}").json()
+    assert out["result"] == answer and out["screenshot"] is None
+    import asyncio
+
+    async def by() -> str:
+        async with scoped_session(box.maker, OWNER) as s:
+            return str(
+                (
+                    await s.execute(
+                        text("SELECT created_by FROM app.panel_debug_request WHERE id = :id"),
+                        {"id": rid},
+                    )
+                ).scalar_one()
+            )
+
+    assert asyncio.run(by()).startswith("owner PWA (")
+
+
+def test_the_owner_may_only_look(box: Box) -> None:
+    box.pickup()
+    for what in ("reboot", "inject", "logs", "set"):
+        assert box.look(what).status_code == 422, what
+    assert box.pickup().status_code == 204, "nothing was queued"
+
+
+def test_a_look_is_refused_as_the_debug_route_refuses(box: Box) -> None:
+    offline = box.look("snapshot")
+    assert offline.status_code == 503 and offline.json()["detail"]["reason"] == "offline"
+    box.pickup(board="s3-amoled-18")
+    s3 = box.look("snapshot")
+    assert s3.status_code == 409 and s3.json()["detail"]["reason"] == "no_debug_surface"
+    assert box.look("snapshot", device="00000000-0000-0000-0000-000000000000").status_code == 404
+
+
+def test_the_look_routes_need_the_owner(box: Box) -> None:
+    box.pickup()
+    path = f"/api/panel/look/{box.device}"
+    assert box.client.post(path, json={"what": "snapshot"}).status_code == 401
+    assert box.client.post(path, headers=box.dbg, json={"what": "snapshot"}).status_code == 401
+    by_panel = box.as_panel("POST", path, json={"what": "snapshot"})
+    assert by_panel.status_code in (401, 403)
+    gone = "00000000-0000-0000-0000-000000000000"
+    assert box.client.get(f"{path}/{gone}").status_code == 401
+    assert box.client.get(f"{path}/{gone}/screenshot.png").status_code == 401
+
+
+def test_ops_status_says_which_panels_can_be_looked_at(box: Box) -> None:
+    def look_states() -> dict[str, str | None]:
+        panels = box.as_owner("GET", "/api/endpoint/status").json()["panels"]
+        return {p["name"]: p["look"] for p in panels}
+
+    assert look_states() == {"Jeff": None, "Nora": None}
+    box.pickup()
+    assert look_states() == {"Jeff": "online", "Nora": None}
+    relay.mark_seen(box.device, C6, now=time.monotonic() - 45)
+    assert look_states()["Jeff"] == "offline"
+    box.pickup(who=box.sibling, board="s3-amoled-18")
+    assert look_states()["Nora"] is None, "an S3 has no debug surface"
+
+
+def test_the_looks_are_mounted_with_debug_access_off(
+    database_url: str,  # noqa: F811
+    maker: Maker,
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    owner_key = asyncio.run(service.rotate_owner_key(SqlAuthRepo(maker)))
+    app = create_app(
+        Settings(
+            secure_cookies=False,
+            database_url=database_url,
+            debug_access_enabled=False,
+            blob_dir=str(tmp_path),
+        )
+    )
+    with TestClient(app) as client:
+        client.post("/api/auth/session", json={"owner_key": owner_key, "device_label": "t"})
+        panel = client.post(
+            "/api/devices", json={"label": "panel Jeff", "device_role": "display"}
+        ).json()
+        device = client.get("/api/endpoint/status").json()["panels"][0]["device_id"]
+        assert client.get("/api/debug/panel").status_code == 404, "the token surface is off"
+        cookies = dict(client.cookies)
+        client.cookies.clear()
+        key = {"Authorization": f"Bearer {panel['key']}"}
+        assert client.get(f"/api/endpoint/debug/next?board={C6}", headers=key).status_code == 204
+        client.cookies.update(cookies)
+        queued = client.post(f"/api/panel/look/{device}", json={"what": "snapshot"})
+        assert queued.status_code == 202, queued.text
