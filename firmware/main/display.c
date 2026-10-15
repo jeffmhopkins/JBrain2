@@ -2583,14 +2583,12 @@ static void face_task(void *arg)
                 recue_from = action_start;
                 recue_p = 0.0f;
             }
-            /* A song's next phrase CUTS its last (`facts.pet_only`): waiting for a free speaker
-               dropped "day to" whenever the first phrase ran late, and the song was "happy
-               birth- ... -day" (owner, 0.4.15). */
+            /* A song's next phrase cuts its last (`cue_may_recue`). */
             if (action != ACT_NONE &&
                 (rig_recue(action, recue_p, p) || rig_recue_continuous(action, p)) && sound &&
                 view->mode == SM_PET &&
-                (cue_is_tune(cue_for_action_at((int)action, p)) ? facts.pet_only
-                                                                 : !facts.speaker_busy)) {
+                cue_may_recue(cue_for_action_at((int)action, p), facts.speaker_busy,
+                              facts.pet_only)) {
                 play_action_cue(st, action, p);
             }
             /* The plop: behind him, where a bird's tail is. */

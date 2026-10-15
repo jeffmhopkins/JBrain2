@@ -34,6 +34,7 @@ static float harm_gain(float hz)
 #define PA(n) (4.0f / ((float)(n) * (float)M_PI))
 #define TA(n) \
     (((((n) - 1) / 2) & 1 ? -8.0f : 8.0f) / ((float)M_PI * (float)M_PI * (float)((n) * (n))))
+_Static_assert(MAX_HARM == 24, "PULSE_A and TRI_A list 24 partials: extend them with MAX_HARM");
 static const float PULSE_A[MAX_HARM + 1] = {
     0.0f,
     PA(1), PA(2), PA(3), PA(4), PA(5), PA(6), PA(7), PA(8),
@@ -57,7 +58,7 @@ static const float TRI_A[MAX_HARM + 1] = {
    sines peaks near 2.7 — every partial aligned at the origin — and throws away 7 dB of
    headroom. The cost is that a cosine pulse STARTS at its peak, which makes the attack ramp
    below mandatory rather than polite. */
-static float pulse(float phase, float duty, float f0)
+float cue_pulse(float phase, float duty, float f0)
 {
     /* cos(n*phase) and sin(n*pi*duty) by their recurrences (x_n = 2cos(t)x_{n-1} - x_{n-2}),
        two trig calls a sample rather than two per partial. A low two-voice cue was summing 96
@@ -82,7 +83,7 @@ static float pulse(float phase, float duty, float f0)
 
 /* Odd harmonics falling as 1/n^2, on sines. Almost no high partials, so this is the round,
    quiet thing to build a coo from or slide under a pulse without adding harshness. */
-static float triangle(float phase, float f0)
+float cue_triangle(float phase, float f0)
 {
     /* sin(n*phase) by recurrence over the odd n, a step of two: as `pulse`, for speed. */
     const float s1 = sinf(phase), k = 2.0f * cosf(2.0f * phase);
@@ -501,6 +502,11 @@ bool cue_is_tune(cue_t c)
     return c == CUE_BDAY_1 || c == CUE_BDAY_2 || c == CUE_BDAY_3;
 }
 
+bool cue_may_recue(cue_t c, bool speaker_busy, bool pet_only)
+{
+    return cue_is_tune(c) ? pet_only : !speaker_busy;
+}
+
 cue_t cue_for_action(int action)
 {
     switch (action) {
@@ -602,7 +608,7 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
         case SH_TONE:
             e.hold_ms = dur * 0.2f;
             e.decay_ms = dur * 0.8f - (float)d->attack_ms;
-            v = pulse(step_osc(&a, base, rate), d->duty, base);
+            v = cue_pulse(step_osc(&a, base, rate), d->duty, base);
             break;
 
         case SH_STEPS: {
@@ -614,8 +620,8 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             const float hz = semi(base, (float)d->steps[idx]);
             e.hold_ms = dur * 0.55f;
             e.decay_ms = dur * 0.45f - (float)d->attack_ms;
-            v = d->duty > 0.0f ? pulse(step_osc(&a, hz, rate), d->duty, hz)
-                               : triangle(step_osc(&a, hz, rate), hz);
+            v = d->duty > 0.0f ? cue_pulse(step_osc(&a, hz, rate), d->duty, hz)
+                               : cue_triangle(step_osc(&a, hz, rate), hz);
             break;
         }
 
@@ -625,7 +631,7 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
                                       : base * exp2f(d->a * (t - flat) / (dur - flat));
             e.hold_ms = dur * 0.7f;
             e.decay_ms = dur * 0.3f - (float)d->attack_ms;
-            v = pulse(step_osc(&a, hz, rate), d->duty > 0.0f ? d->duty : 0.5f, hz);
+            v = cue_pulse(step_osc(&a, hz, rate), d->duty > 0.0f ? d->duty : 0.5f, hz);
             /* The boing's wobble on the way back down, and only on the way back. */
             if (d->punch_pct >= 25 && u > 0.5f) {
                 v *= 1.0f + 0.25f * sinf(TWO_PI * 22.0f * t * 0.001f);
@@ -639,7 +645,7 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             const float hz = base * slide * (1.0f + d->b * sinf(TWO_PI * d->a * t * 0.001f));
             e.hold_ms = dur * 0.75f;
             e.decay_ms = dur * 0.25f - (float)d->attack_ms;
-            v = pulse(step_osc(&a, hz, rate), d->duty, hz);
+            v = cue_pulse(step_osc(&a, hz, rate), d->duty, hz);
             break;
         }
 
@@ -657,8 +663,8 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
                              exp2f(d->a * arc);
             e.hold_ms = dur * 0.45f;
             e.decay_ms = dur * 0.55f - (float)d->attack_ms;
-            v = triangle(step_osc(&a, hz, rate), hz) +
-                0.28f * triangle(step_osc(&b, hz * 1.5f, rate), hz * 1.5f);
+            v = cue_triangle(step_osc(&a, hz, rate), hz) +
+                0.28f * cue_triangle(step_osc(&b, hz * 1.5f, rate), hz * 1.5f);
             if (arcs > 1) v *= 0.3f + 0.7f * sqrtf(arc);
             break;
         }
@@ -673,7 +679,7 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             noise_next(&nz, d->a * vary * 1000.0f * (1.0f - 0.55f * u), rate) * gate * bite;
             if (d->b > 0.0f) {
                 const float hz = d->b * vary * exp2f(-1.4f * u);
-                s += 0.75f * triangle(step_osc(&a, hz, rate), hz);
+                s += 0.75f * cue_triangle(step_osc(&a, hz, rate), hz);
             }
             e.hold_ms = dur * 0.2f;
             e.decay_ms = dur * 0.8f - (float)d->attack_ms;
@@ -746,7 +752,7 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             const float hz = semi(base, (float)d->steps[k]);
             e.hold_ms = dur;
             e.decay_ms = 1.0f;
-            v = pulse(step_osc(&a, hz, rate), d->duty, hz) * gate;
+            v = cue_pulse(step_osc(&a, hz, rate), d->duty, hz) * gate;
             break;
         }
 
@@ -756,8 +762,8 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
             const float fa = base * fall, fb = base * 1.0905f * fall;
             e.hold_ms = dur * 0.45f;
             e.decay_ms = dur * 0.55f - (float)d->attack_ms;
-            v = 0.5f * (pulse(step_osc(&a, fa, rate), d->duty, fa) +
-                        pulse(step_osc(&b, fb, rate), d->duty, fb));
+            v = 0.5f * (cue_pulse(step_osc(&a, fa, rate), d->duty, fa) +
+                        cue_pulse(step_osc(&b, fb, rate), d->duty, fb));
             break;
         }
 

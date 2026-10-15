@@ -659,7 +659,7 @@ static void frame(void)
         (rig_recue(r_action, r_recue_p, p) ||
          (rig_recue_continuous(r_action, p) && r_action_at != now)) &&
         view->mode == SM_PET &&
-        (cue_is_tune(cue_for_action_at((int)r_action, p)) ? facts.pet_only : !facts.speaker_busy)) {
+        cue_may_recue(cue_for_action_at((int)r_action, p), facts.speaker_busy, facts.pet_only)) {
         r_play_cue(r_action, p, "press slot, again");
     }
     if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
