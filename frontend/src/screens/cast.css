@@ -116,31 +116,6 @@
   color: var(--text);
   font-weight: 600;
 }
-.cast-picker {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
-  border-radius: var(--r-input);
-  border: 1px solid var(--border);
-  background: var(--surface-2);
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-}
-.cast-picker svg {
-  flex: none;
-  color: var(--steel-text);
-}
-.cast-picker-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 .cast-choices {
   margin: 0 0 14px;
   padding: 0;
@@ -161,6 +136,12 @@
 /* Picked but in use: it will be skipped, so it reads struck through. */
 .cast-choice.on.busy .cast-tv-name {
   text-decoration: line-through;
+}
+/* The sub line is inline text, so its dot needs a box to show. */
+.cast-choice .cast-dot {
+  display: inline-block;
+  margin-right: 2px;
+  vertical-align: middle;
 }
 .cast-check {
   display: grid;
@@ -243,8 +224,41 @@
 }
 .cast-add {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1fr 56px;
   gap: 10px;
+}
+.cast-pick-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 56px;
+  border-radius: var(--r-input);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.cast-pick-btn.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+.cast-pick-btn:disabled {
+  opacity: 0.5;
+}
+.cast-pick-count {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+  color: var(--bg);
+  font-size: var(--fs-micro);
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
 }
 .cast-add-btn {
   display: inline-flex;

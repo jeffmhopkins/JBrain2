@@ -62,7 +62,6 @@ import { Sheet } from "../components/Sheet";
 import {
   CastIcon,
   CheckIcon,
-  ChevronDownIcon,
   FitIcon,
   ImageIcon,
   MonitorIcon,
@@ -476,6 +475,24 @@ function SendTab({
           <ImageIcon size={20} />
           Add image
         </button>
+        {/* The cast button, the way a video app picks a TV: tap it for the list. The badge
+            counts the TVs it goes to. */}
+        <button
+          type="button"
+          className={`cast-pick-btn${targets.length ? " on" : ""}`}
+          disabled={tvs === null}
+          aria-haspopup="dialog"
+          aria-expanded={choosing}
+          aria-label={tvs === null ? "Looking for TVs" : `TVs: ${pickedLabel(targets)}`}
+          onClick={() => setChoosing(true)}
+        >
+          <CastIcon size={24} />
+          {targets.length > 0 && (
+            <span className="cast-pick-count" aria-hidden="true">
+              {targets.length}
+            </span>
+          )}
+        </button>
         <input
           ref={file}
           type="file"
@@ -567,24 +584,6 @@ function SendTab({
       )}
       {!room && <p className="cast-note">That's as many as one notice holds.</p>}
 
-      <div className="cast-label">To</div>
-      {tvs === null ? (
-        <p className="muted">Looking for TVs…</p>
-      ) : (
-        // One control that opens the list, the way casting from a video app picks a TV.
-        <button
-          type="button"
-          className="cast-picker"
-          aria-haspopup="dialog"
-          aria-expanded={choosing}
-          aria-label={`TVs: ${pickedLabel(targets)}`}
-          onClick={() => setChoosing(true)}
-        >
-          <CastIcon size={20} />
-          <span className="cast-picker-text">{pickedLabel(targets)}</span>
-          <ChevronDownIcon size={18} />
-        </button>
-      )}
       {choosing && tvs && (
         <Sheet title="Cast to" onClose={() => setChoosing(false)}>
           <fieldset className="cast-card cast-choices" aria-label="TVs">

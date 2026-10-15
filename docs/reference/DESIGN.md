@@ -4148,12 +4148,12 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   fills the screen; later ones come in at half size, and any can shrink to 0.15 of fitting or
   grow to 4x. Up to eight layers. The phone draws the frame the TV gets, so the canvas is
   exactly what lands. Words too long or too big for the screen are drawn smaller until every
-  word fits, and a line under the canvas says so. Under the editor: the TVs, as one picker
-  naming who it goes to (*Big TV, Parents + 1 more*) that opens a Sheet *Cast to* listing every
-  TV with its state and a check, the way a video app picks a TV to cast to (owner: *"should be
-  a drop down menu, similar to casting YouTube to Chromecast"*). Every one that would take it is
+  word fits, and a line under the canvas says so. The TVs are a **cast button** beside Add text
+  and Add image: the cast glyph, with a badge counting the TVs it goes to, that opens a Sheet
+  *Cast to* listing every TV with its state and a check, the way a video app picks a TV (owner:
+  *"replaced by a cast icon button that lets me choose tvs"*). Every one that would take it is
   picked to start with; one in use can still be picked, struck through, with a line saying it
-  will be skipped. Then *On screen for*: a number with a seconds/minutes picker
+  will be skipped. Under the editor, *On screen for*: a number with a seconds/minutes picker
   (owner: *"just needs an input a number, and a selector for seconds or minutes"*). Switching the
   unit keeps the same time; outside the box's 5 s to 5 min the line under it says so and Cast
   waits.
