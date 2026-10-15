@@ -4178,25 +4178,32 @@ static uint16_t logical_px(int32_t x, int32_t y)
     return (uint16_t)(x * 131 + y * 7 + (x ^ y));
 }
 
-/* The CO5300 as the flush drives it: a window set by CASET/RASET, RAMWR writing from its first
-   pixel and RAMWRC carrying on from the last one written, row by row (CO-DS §7.5.32-33). */
+static uint16_t wire(uint16_t v)
+{
+    return (uint16_t)(v << 8 | v >> 8);
+}
+
+/* The CO5300 as the flush drives it: a window set by CASET/RASET, then RAMWR writing from its
+   first pixel, row by row (CO-DS §7.5.32). It stores what the wire carried, big-endian. */
 static struct {
     uint16_t glass[480 * 480];
     disp_win_t win;
-    int32_t x, y;
+    int32_t x, y, windows, writes;
     bool even, inside;
 } s_co;
 
 static void co_window(disp_win_t g)
 {
     s_co.win = g;
+    s_co.windows++;
     s_co.even &= !(g.x1 & 1) && !(g.y1 & 1) && (g.x2 & 1) && (g.y2 & 1);
     s_co.inside &= g.x1 >= 0 && g.y1 >= 0 && g.x2 < 480 && g.y2 < 480 && g.x1 <= g.x2 && g.y1 <= g.y2;
 }
 
-static void co_write(uint8_t cmd, const uint16_t *px, int32_t n)
+static void co_write(const uint16_t *px, int32_t n)
 {
-    if (cmd == DISP_RAMWR) s_co.x = s_co.win.x1, s_co.y = s_co.win.y1;
+    s_co.writes++;
+    s_co.x = s_co.win.x1, s_co.y = s_co.win.y1;
     for (int32_t i = 0; i < n; i++) {
         s_co.glass[s_co.y * 480 + s_co.x] = px[i];
         if (++s_co.x > s_co.win.x2) {
@@ -4207,18 +4214,18 @@ static void co_write(uint8_t cmd, const uint16_t *px, int32_t n)
 }
 
 /* Every strip LVGL could hand the flush, turned the device's way onto a glass, which must then
-   hold the upright screen turned. LVGL's buffer is the device's: 40 rows upright and upside down,
-   DISP_SIDE_ROWS on its side with the two pieces in the tail it gave up. */
+   hold the upright screen turned. LVGL's buffers are the device's: either 480×20 half upright
+   and upside down, the first half on its side with the turned strip gathered into the second. */
 static void test_turned_strips_build_the_turned_screen(void)
 {
-    static uint16_t buf[480 * DISP_STRIP_ROWS];
-    const disp_win_t areas[] = {{0, 0, 479, 39}, {100, 202, 323, 241}, {0, 440, 479, 479},
+    static uint16_t buf[480 * DISP_BUF_ROWS];
+    uint16_t *const lvgl = buf, *const turned = buf + DISP_STRIP_PX;
+    const int32_t cap = DISP_STRIP_PX, rows = DISP_STRIP_ROWS;
+    const disp_win_t areas[] = {{0, 0, 479, 19}, {100, 202, 323, 241}, {0, 440, 479, 479},
                                 {6, 6, 7, 7}, {470, 0, 479, 479}, {138, 0, 279, 479}};
     const int na = (int)(sizeof areas / sizeof *areas);
     for (uint8_t rot = 0; rot < 4; rot++) {
-        const int32_t rows = rot & 1 ? DISP_SIDE_ROWS : DISP_STRIP_ROWS, cap = 480 * rows;
-        uint16_t *const piece0 = buf + cap;
-        bool whole = true, stream = true, apart = true;
+        bool whole = true, one = true;
         s_co.even = s_co.inside = true;
         memset(s_co.glass, 0, sizeof s_co.glass);
         /* The whole screen in strips, then the odd areas over it. */
@@ -4235,101 +4242,90 @@ static void test_turned_strips_build_the_turned_screen(void)
             const int32_t w = a.x2 - a.x1 + 1, h = a.y2 - a.y1 + 1;
             whole &= w * h <= cap;
             for (int32_t j = 0; j < h; j++)
-                for (int32_t i = 0; i < w; i++) buf[j * w + i] = logical_px(a.x1 + i, a.y1 + j);
+                for (int32_t i = 0; i < w; i++) lvgl[j * w + i] = logical_px(a.x1 + i, a.y1 + j);
+            const int32_t windows = s_co.windows, writes = s_co.writes;
             if (!(rot & 1)) {
-                if (rot == 2) disp_reverse(buf, (uint32_t)(w * h));
+                /* lv_draw_sw_rgb565_swap, then the reverse for 180°. */
+                for (int32_t i = 0; i < w * h; i++) lvgl[i] = wire(lvgl[i]);
+                if (rot == 2) disp_reverse(lvgl, (uint32_t)(w * h));
                 const disp_win_t g = disp_rot_area(rot, 480, a);
                 whole &= (g.x2 - g.x1 + 1) * (g.y2 - g.y1 + 1) == w * h;
                 co_window(g);
-                co_write(DISP_RAMWR, buf, w * h);
-                continue;
+                co_write(lvgl, w * h);
+            } else {
+                /* The device's turn: the whole strip gathered into the other half, one window. */
+                const disp_win_t g = disp_rot_gather(rot, 480, a, lvgl, turned);
+                whole &= g.x2 - g.x1 + 1 == h && g.y2 - g.y1 + 1 == w;
+                co_window(g);
+                co_write(turned, w * h);
             }
-            /* The device's stream: one window, the pieces into it, each gathered while the one
-               before is "in flight" — never into the buffer that one is being sent from. */
-            const disp_win_t g = disp_rot_area(rot, 480, a);
-            co_window(g);
-            const int32_t k = disp_rot_piece_rows(h);
-            stream &= !(k & 1) && k * h <= DISP_ROT_PIECE_PX;
-            disp_piece_t p;
-            int in_flight = -1;
-            int32_t sent = 0, n = 0;
-            for (int32_t i = 0; disp_rot_step(w, k, i, &p); i++, n++) {
-                apart &= p.buf != in_flight && p.rows > 0 && !(p.rows & 1);
-                uint16_t *piece = piece0 + p.buf * DISP_ROT_PIECE_PX;
-                const disp_win_t pw = disp_rot_piece(rot, 480, a, buf, p.r0, p.rows, piece);
-                stream &= pw.y1 == g.y1 + sent && pw.x1 == g.x1 && pw.x2 == g.x2;
-                stream &= (p.cmd == DISP_RAMWR) == (i == 0) && (p.cmd == DISP_RAMWR || p.cmd == DISP_RAMWRC);
-                co_write(p.cmd, piece, p.rows * h);
-                sent += p.rows;
-                in_flight = p.buf;
-            }
-            stream &= sent == w && n == (w + k - 1) / k;
+            one &= s_co.windows == windows + 1 && s_co.writes == writes + 1;
         }
         bool same = true;
         for (int32_t y = 0; y < 480; y++)
             for (int32_t x = 0; x < 480; x++) {
                 int32_t px, py;
                 disp_rot_point(rot, 480, x, y, &px, &py);
-                same &= s_co.glass[py * 480 + px] == logical_px(x, y);
+                same &= s_co.glass[py * 480 + px] == wire(logical_px(x, y));
             }
         char m[112];
         snprintf(m, sizeof m, "turned %d°: every strip lands on the glass as the turned screen", rot * 90);
         CHECK(same && whole, m);
         snprintf(m, sizeof m, "turned %d°: every window even-aligned and on the glass", rot * 90);
         CHECK(s_co.even && s_co.inside, m);
-        if (rot & 1) {
-            snprintf(m, sizeof m, "turned %d°: RAMWR then RAMWRC fill each window exactly, piece by piece", rot * 90);
-            CHECK(stream, m);
-            snprintf(m, sizeof m, "turned %d°: no piece is gathered into the buffer still on the wire", rot * 90);
-            CHECK(apart, m);
-        }
+        snprintf(m, sizeof m, "turned %d°: every strip is one window and one transfer", rot * 90);
+        CHECK(one, m);
     }
 }
 
-/* What a quarter turn costs on the wire, in the numbers the README's estimate is built on. */
-static void test_a_turned_strip_is_a_few_large_pieces_in_one_window(void)
+/* What a frame costs on the wire, in the numbers the README's estimate is built on. */
+static void test_a_turned_strip_is_one_transfer_from_the_other_half(void)
 {
-    CHECK(DISP_SIDE_ROWS * 480 + DISP_ROT_PIECES * DISP_ROT_PIECE_PX == DISP_STRIP_ROWS * 480,
-          "the two pieces are exactly the strip rows LVGL gives up on its side: no new memory");
-    CHECK(DISP_ROT_PIECE_PX == 1920 && disp_rot_piece_rows(DISP_SIDE_ROWS) == 60,
-          "a full-width 32-row strip goes in pieces of 60 glass rows");
-    disp_piece_t p;
-    int n = 0;
-    while (disp_rot_step(480, disp_rot_piece_rows(DISP_SIDE_ROWS), n, &p)) n++;
-    CHECK(n == 8, "8 pieces a strip, 15 strips a frame: 120 pieces, down from 0.0.18's 180");
-    CHECK(disp_rot_piece_rows(480) == 4 && disp_rot_piece_rows(2) == 960,
-          "a glass-tall area still gets even pieces that fit");
-    CHECK(disp_rot_step(10, 4, 2, &p) && p.r0 == 8 && p.rows == 2 && p.cmd == DISP_RAMWRC && p.buf == 0,
-          "the last piece is what is left, and the buffers alternate");
-    CHECK(!disp_rot_step(10, 4, 3, &p) && !disp_rot_step(10, 0, 0, &p) && !disp_rot_step(10, 4, -1, &p),
-          "and nothing past it");
+    CHECK(2 * DISP_STRIP_PX == 480 * DISP_BUF_ROWS && !(DISP_STRIP_ROWS & 1),
+          "two even-height halves are exactly the strip buffer: no new memory");
+    CHECK(480 / DISP_STRIP_ROWS == 24 && DISP_STRIP_PX * 2 == 19200,
+          "a frame is 24 strips of 19.2 KB in every rotation: 24 transfers on its side, not 120");
+    /* The area LVGL draws narrowest still fits the other half once turned. */
+    static uint16_t px[DISP_STRIP_PX + 2], out[DISP_STRIP_PX + 2];
+    px[DISP_STRIP_PX] = out[DISP_STRIP_PX] = 0xBEEF;
+    const disp_win_t tall = {0, 0, 19, 479}, wide = {0, 0, 479, 19};
+    disp_rot_gather(1, 480, tall, px, out);
+    disp_rot_gather(3, 480, wide, px, out);
+    CHECK(out[DISP_STRIP_PX] == 0xBEEF, "a gather never writes past the half it is given");
+    /* 2×2 at 90°: logical a b / c d is glass b d / a c, bytes swapped. */
+    const uint16_t q[4] = {0x0102, 0x0304, 0x0506, 0x0708};
+    uint16_t g[4];
+    const disp_win_t w = disp_rot_gather(1, 480, (disp_win_t){0, 0, 1, 1}, q, g);
+    CHECK(w.x1 == 0 && w.y1 == 478 && w.x2 == 1 && w.y2 == 479, "the window is the turned area");
+    CHECK(g[0] == 0x0403 && g[1] == 0x0807 && g[2] == 0x0201 && g[3] == 0x0605,
+          "turned a quarter clockwise and swapped for the wire in one pass");
 }
 
 static void test_frame_costs_are_kept_per_rotation_and_whole_frames_apart(void)
 {
     disp_stat_t s = {0};
     CHECK(disp_stat_avg_ms(&s) == 0 && disp_stat_full_avg_ms(&s) == 0, "nothing drawn: zeros, no division");
-    disp_stat_add(&s, 2400, 9000, false);
-    disp_stat_add(&s, 30600, 61000, true);
-    disp_stat_add(&s, 24400, 52000, true);
+    disp_stat_add(&s, 2400, 1000, 9000, false);
+    disp_stat_add(&s, 30600, 2600, 61000, true);
+    disp_stat_add(&s, 24400, 1400, 52000, true);
     CHECK(s.frames == 3 && s.last_ms == 24 && s.max_ms == 31 && disp_stat_avg_ms(&s) == 19,
           "every frame: the last, the worst and the mean");
     CHECK(s.full == 2 && s.full_ms == 24 && s.full_max_ms == 31 && disp_stat_full_avg_ms(&s) == 28 &&
-              s.full_wall_ms == 52,
+              s.full_wall_ms == 52 && s.full_wait_us == 4000,
           "whole-glass frames on their own: a clock tick never dilutes a turn's cost");
 
     disp_stat_t four[4] = {{0}};
-    char out[96];
+    char out[128];
     disp_stat_fmt(out, sizeof out, four);
     CHECK(strcmp(out, "") == 0, "rot_ms: nothing before a whole-glass frame");
     four[1] = s;
-    disp_stat_add(&four[0], 9000, 20000, false);
+    disp_stat_add(&four[0], 9000, 0, 20000, false);
     disp_stat_fmt(out, sizeof out, four);
-    CHECK(strcmp(out, "90:28,31,2,52") == 0, "rot_ms: only a rotation that drew the whole glass");
-    disp_stat_add(&four[0], 24000, 60000, true);
+    CHECK(strcmp(out, "90:28,31,2,52,2") == 0, "rot_ms: only a rotation that drew the whole glass, its mean wait last");
+    disp_stat_add(&four[0], 24000, 1000, 60000, true);
     four[3] = s;
     disp_stat_fmt(out, sizeof out, four);
-    CHECK(strcmp(out, "0:24,24,1,60 90:28,31,2,52 270:28,31,2,52") == 0,
+    CHECK(strcmp(out, "0:24,24,1,60,1 90:28,31,2,52,2 270:28,31,2,52,2") == 0,
           "rot_ms: each in order, space-separated");
     char tiny[8];
     disp_stat_fmt(tiny, sizeof tiny, four);
@@ -5536,7 +5532,7 @@ static uint32_t take_with_id(const char *fixture, uint8_t last)
 #define WD_B "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c01"
 #define WD_X "00000000-0000-4000-8000-000000000000"
 
-/* 0.0.24: a notice the owner took back from the PWA leaves the glass as a lapsed one does. */
+/* 0.0.26: a notice the owner took back from the PWA leaves the glass as a lapsed one does. */
 static void test_a_withdrawn_notice_leaves_the_glass_quietly(void)
 {
     notice_withdrawn_t w;
@@ -6394,7 +6390,7 @@ int main(void)
     test_a_play_rides_a_smaller_ring_than_a_talk();
     test_a_turn_and_its_touch_inverse_agree_everywhere();
     test_turned_strips_build_the_turned_screen();
-    test_a_turned_strip_is_a_few_large_pieces_in_one_window();
+    test_a_turned_strip_is_one_transfer_from_the_other_half();
     test_frame_costs_are_kept_per_rotation_and_whole_frames_apart();
     test_down_needs_a_clear_margin_and_a_dwell();
     test_the_service_reads_only_while_lit_and_on();

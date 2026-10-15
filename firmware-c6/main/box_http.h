@@ -17,7 +17,7 @@
 /* The reply's headers this panel reads, caught as they arrive: the Date, the pickup's
  * new-message tag (`X-Jpanel-Post`, 0.0.16), a played message's digest (`X-Jpanel-Sha256`), the
  * pickup's count of notices waiting (`X-Notice`, 0.0.19) and of the PWA's settings (0.0.21),
- * and the notices the owner took back (`X-Notice-Withdraw`, 0.0.24). */
+ * and the notices the owner took back (`X-Notice-Withdraw`, 0.0.26). */
 typedef struct {
     char date[32];
     char post[12];

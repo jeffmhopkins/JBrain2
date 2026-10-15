@@ -376,4 +376,11 @@ fi
 # deploy/sdr (CLAUDE.md #11). Mentioned per rule #8; see
 # docs/plans/ROOM_ENDPOINT_PLAN.md §10.
 
+# --- TV casting / `cast` sidecar (stock stack, NOT bootstrapped here) ---
+# deploy/cast/ watches the house's Chromecast TVs (the jpanel Cast spike). Its one dependency,
+# PyChromecast, is pinned in its image (deploy/Dockerfile.cast) AND in supervisor's dev extra,
+# which the supervisor venv above already installs: supervisor's pytest loads deploy/cast/*.py
+# by path and its pyright typechecks them (CLAUDE.md #11). No compose runs here, so there is
+# nothing else to set up. Mentioned per rule #8; see deploy/cast/README.md.
+
 log "done"

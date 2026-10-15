@@ -23,7 +23,7 @@ void notice_pickup_query(const notice_prefs_t *p, char *out, size_t cap);
 /* The pickup's `X-Notice: <n>`: how many wait, 0 for none or anything that is not a count. */
 uint8_t notice_waiting_count(const char *header);
 
-/* ---- the notices the owner took back (0.0.24) ----
+/* ---- the notices the owner took back (0.0.26) ----
  * The pickup's `X-Notice-Withdraw: <id>[,<id>]`: at most NOTICE_OPEN_MAX ids, comma-separated,
  * no spaces, repeated on every pickup until each one's answer window closes. */
 #define NOTICE_WITHDRAW_BYTES (NOTICE_OPEN_MAX * (NOTICE_ID_TEXT - 1) + NOTICE_OPEN_MAX)

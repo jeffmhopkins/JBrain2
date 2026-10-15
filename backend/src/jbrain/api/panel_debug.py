@@ -66,7 +66,7 @@ async def next_request(
     at night, chime: 0/1), `nf`, `nt` (the night window, minutes after local midnight) and
     `tz` (the panel's zone index) — and either answer carries `X-Notice: <n>` when n notices
     wait for it (JPANEL_C6_PLAN.md §2), and `X-Notice-Withdraw: <id>,…` naming the notices it
-    collected that the owner has since taken back (0.0.24). For the owner's desk panel (the
+    collected that the owner has since taken back (0.0.26). For the owner's desk panel (the
     talk's gate) either answer also carries `X-Jpanel-Post: <tag>`, which moves whenever his
     voice post does (`panel_messages.post_tag`, 0.0.16): the panel fetches its person threads
     only then. Since 0.0.21 the query also carries the rest of the PWA-managed settings (`no nk
@@ -109,7 +109,7 @@ async def next_request(
     # `/endpoint/notice/next` (api/panel_notice.py), so an idle pickup stays one request.
     hint = {"X-Notice": str(waiting)} if waiting else {}
     # `X-Notice-Withdraw: <id>[,<id>]` while a notice it collected has been taken back by the
-    # owner (0.0.24): the panel drops each it still holds, silently, and ignores the rest.
+    # owner (0.0.26): the panel drops each it still holds, silently, and ignores the rest.
     if withdrawn:
         hint[notice.WITHDRAW_HEADER] = ",".join(withdrawn)
     tag = await panel_messages.pickup_tag(_maker(request), principal)

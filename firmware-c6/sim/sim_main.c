@@ -48,10 +48,10 @@
 
 #define W UI_W
 #define H UI_H
-/* The device's strip height: 40 rows of RGB565 is 38 KB a buffer, two of them for DMA. */
-#define STRIP_ROWS 40
+/* The device's strips (0.0.25): the two 480×20 halves of its one 38.4 KB DMA buffer. */
+#define STRIP_ROWS DISP_STRIP_ROWS
 
-static uint16_t s_strip[2][W * STRIP_ROWS];
+static uint16_t s_strip[2][DISP_STRIP_PX];
 static uint32_t s_ms;
 
 static struct {
@@ -70,43 +70,33 @@ static uint32_t sim_ms(void)
    (disp_logic.c), so a rotated state's PNG is what the panel shows, not what LVGL drew. */
 static uint16_t s_glass[W * H];
 
-/* The controller's write pointer (0.0.22): RAMWR starts at the window's first pixel, RAMWRC goes
-   on from the last one written, row by row inside the window. */
-static struct {
-    disp_win_t win;
-    int32_t x, y;
-} s_ctl;
-
-static void ctl_write(uint8_t cmd, const uint16_t *px, int32_t n)
+/* The controller's RAMWR: from the window's first pixel, row by row inside it. The wire carries
+   each pixel big-endian; the glass here holds it as LVGL drew it, for the PNG. */
+static void ctl_write(disp_win_t win, const uint16_t *px, int32_t n)
 {
-    if (cmd == DISP_RAMWR) s_ctl.x = s_ctl.win.x1, s_ctl.y = s_ctl.win.y1;
+    int32_t x = win.x1, y = win.y1;
     for (int32_t i = 0; i < n; i++) {
-        s_glass[s_ctl.y * W + s_ctl.x] = px[i];
-        if (++s_ctl.x > s_ctl.win.x2) {
-            s_ctl.x = s_ctl.win.x1;
-            if (++s_ctl.y > s_ctl.win.y2) s_ctl.y = s_ctl.win.y1;
+        s_glass[y * W + x] = (uint16_t)(px[i] << 8 | px[i] >> 8);
+        if (++x > win.x2) {
+            x = win.x1;
+            if (++y > win.y2) y = win.y1;
         }
     }
 }
 
 static void to_glass(const lv_area_t *a, const uint16_t *px)
 {
-    static uint16_t strip[W * STRIP_ROWS], piece[DISP_ROT_PIECES][DISP_ROT_PIECE_PX];
+    static uint16_t strip[DISP_STRIP_PX];
     const uint8_t rot = svc_display_rotation();
     const disp_win_t l = {a->x1, a->y1, a->x2, a->y2};
     const int32_t w = a->x2 - a->x1 + 1, h = a->y2 - a->y1 + 1;
-    memcpy(strip, px, (size_t)(w * h) * 2);
     if (rot == 1 || rot == 3) {
-        /* The device's stream: the turned window once, then the pieces into it. */
-        s_ctl.win = disp_rot_area(rot, W, l);
-        const int32_t k = disp_rot_piece_rows(h);
-        disp_piece_t p;
-        for (int32_t i = 0; disp_rot_step(w, k, i, &p); i++) {
-            disp_rot_piece(rot, W, l, strip, p.r0, p.rows, piece[p.buf]);
-            ctl_write(p.cmd, piece[p.buf], p.rows * h);
-        }
+        /* The device's turn: the whole strip gathered into the other half, one window. */
+        const disp_win_t g = disp_rot_gather(rot, W, l, px, strip);
+        ctl_write(g, strip, w * h);
         return;
     }
+    memcpy(strip, px, (size_t)(w * h) * 2);
     if (rot == 2) disp_reverse(strip, (uint32_t)(w * h));
     const disp_win_t g = disp_rot_area(rot, W, l);
     for (int32_t y = g.y1; y <= g.y2; y++) memcpy(&s_glass[y * W + g.x1], &strip[(y - g.y1) * w], (size_t)w * 2);
