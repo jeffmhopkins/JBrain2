@@ -347,6 +347,24 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Full history, for the revision check below: it diffs against main's tip.
+          fetch-depth: 0
+      # A PR MAY NOT DELETE A MIGRATION REVISION FILE (JPANEL_MESSAGING_FIXES_PLAN.md §6).
+      # Ops -> Update rolls the box back with `git reset --hard` and then `alembic upgrade
+      # head`, which never downgrades: a revert that deleted a revision would leave the
+      # database stamped at a head the code no longer has, and every later upgrade fails on a
+      # box with no terminal. So a reverted wave keeps its file, and a re-land does not add it
+      # again. In this job because it is the required check, and outside the path filter
+      # because it is one git command with nothing to install.
+      - name: No migration revision is deleted
+        working-directory: .
+        run: |
+          deleted=$(git diff --no-renames --diff-filter=D --name-only origin/main...HEAD -- backend/migrations/versions/)
+          if [ -n "$deleted" ]; then
+            echo "::error::migration revision files deleted: $deleted"
+            exit 1
+          fi
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:

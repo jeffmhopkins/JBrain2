@@ -242,6 +242,7 @@ class TestTheOwnerFacingRoutesAreWhereThePwaLooks:
         assert ("/jpanel/messages/audio", "POST") in paths
         assert ("/jpanel/messages/{message_id}/played", "POST") in paths
         assert ("/jpanel/messages/{message_id}/audio", "GET") in paths
+        assert ("/jpanel/summary", "GET") in paths
 
     def test_the_pwa_calls_exactly_those(self) -> None:
         src = (
@@ -288,6 +289,79 @@ class TestTheOwnerFacingRoutesAreWhereThePwaLooks:
         cap_ms = int(m.group(1))
         assert cap_ms <= jpanel.MAX_MESSAGE_MS, (cap_ms, jpanel.MAX_MESSAGE_MS)
         assert jpanel.PANEL_RATE * 2 * cap_ms // 1000 <= jpanel.MAX_MESSAGE_BYTES
+
+    def test_capture_caps_pinned(self) -> None:
+        """The skew pins of A3: the converse route holds a full capture, the panel's socket
+        relay carries the largest send the box accepts, and the slack is half a second."""
+        from jbrain.api import panel_ws
+
+        src = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "stream.h").read_text(
+            encoding="utf-8"
+        )
+        m = re.search(r"^#define CAPTURE_MAX_MS (\d+)$", src, re.M)
+        assert m
+        cap_ms = int(m.group(1))
+        assert cap_ms * 32 <= endpoint_api.PANEL_AUDIO_MAX
+        assert panel_ws.MAX_BODY > endpoint_api.PANEL_AUDIO_MAX
+        assert panel_ws.MAX_BODY > jpanel.MAX_SEND_BYTES
+        assert jpanel.MAX_SEND_BYTES - jpanel.MAX_MESSAGE_BYTES == jpanel.PANEL_RATE * 2 // 2
+
+
+class TestNamesOnTheWire:
+    """§6 of the messaging fixes plan: a name the panel is sent fits 0.3.39's poll buffer."""
+
+    @staticmethod
+    def _escaped(name: str) -> int:
+        import json
+
+        return len(json.dumps(name)) - 2
+
+    def test_a_short_name_is_untouched(self) -> None:
+        assert jpanel._wire_name("Quorra") == "Quorra"
+        assert jpanel._header_name("Dad") == "Dad"
+
+    def test_a_long_name_is_cut_on_a_character_boundary(self) -> None:
+        for raw in ("Q" * 40, "é" * 40, '"' * 40, "\x01" * 40, "😀" * 10, "ab" + "é" * 30):
+            cut = jpanel._wire_name(raw)
+            assert raw.startswith(cut)
+            assert self._escaped(cut) <= 31
+            # Nothing that would still have fitted was dropped.
+            assert cut == raw or self._escaped(raw[: len(cut) + 1]) > 31
+
+    def test_a_header_name_is_printable_ascii(self) -> None:
+        said = jpanel._header_name("Zoë\n😀 " + "x" * 40)
+        assert said.startswith("Zo??? x")
+        assert all(" " <= c <= "~" for c in said)
+        assert self._escaped(said) <= 31
+
+
+class TestRanges:
+    """C7: the byte ranges a phone's media element asks for."""
+
+    body = bytes(range(10))
+
+    def _get(self, header: str | None):
+        return jpanel._ranged(self.body, header, "audio/wav")
+
+    def test_no_range_is_the_whole_file(self) -> None:
+        for header in (None, "", "items=0-1", "bytes=0-1,4-5", "bytes=x-y", "bytes=-"):
+            got = self._get(header)
+            assert got.status_code == 200 and got.body == self.body, header
+            assert got.headers["accept-ranges"] == "bytes"
+
+    def test_one_range(self) -> None:
+        cases = {"bytes=0-1": (0, 1), "bytes=8-": (8, 9), "bytes=-3": (7, 9), "bytes=5-99": (5, 9)}
+        for header, (start, end) in cases.items():
+            got = self._get(header)
+            assert got.status_code == 206, header
+            assert got.body == self.body[start : end + 1]
+            assert got.headers["content-range"] == f"bytes {start}-{end}/10"
+
+    def test_an_unsatisfiable_range_is_416(self) -> None:
+        for header in ("bytes=10-", "bytes=5-2", "bytes=-0"):
+            got = self._get(header)
+            assert got.status_code == 416, header
+            assert got.headers["content-range"] == "bytes */10"
 
 
 class TestDadsVoice:

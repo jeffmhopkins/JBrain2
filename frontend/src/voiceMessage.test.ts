@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_MESSAGE_MS, PANEL_RATE, normalisingGain, toPanelPcm } from "./voiceMessage";
+import {
+  MAX_MESSAGE_MS,
+  MAX_MESSAGE_SAMPLES,
+  PANEL_RATE,
+  normalisingGain,
+  toPanelPcm,
+} from "./voiceMessage";
 
 /** An AudioBuffer stand-in: jsdom has no Web Audio, and the conversion under test only ever
  *  asks for `numberOfChannels`, `sampleRate`, `length` and `getChannelData`. */
@@ -15,6 +21,15 @@ function fakeBuffer(channels: Float32Array[], sampleRate: number): AudioBuffer {
 }
 
 describe("toPanelPcm", () => {
+  it("clamps_to_cap: a recording that ran past the cap is cut to it", () => {
+    /* The stop is a timer, and a backgrounded tab fires it late (C10). Two seconds over at
+       48 kHz comes out at exactly the cap, never past it. */
+    const input = new Float32Array(48 * (MAX_MESSAGE_MS + 2_000)).fill(0.25);
+    const out = new Int16Array(toPanelPcm(fakeBuffer([input], 48_000)));
+    expect(out.length).toBe(MAX_MESSAGE_SAMPLES);
+    expect(MAX_MESSAGE_SAMPLES).toBe((MAX_MESSAGE_MS / 1000) * PANEL_RATE);
+  });
+
   it("resamples to the rate the panels speak", () => {
     // One second at 48 kHz in, one second at 16 kHz out.
     const input = new Float32Array(48_000);

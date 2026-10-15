@@ -506,36 +506,15 @@ async def test_clearing_a_history_keeps_what_a_child_has_not_heard(
         )
         await s.commit()
 
+    from jbrain.api.jpanel import clear_thread
+
     async with scoped_session(maker, OWNER) as s:
-        row = (
-            await s.execute(
-                text(
-                    """
-                    WITH mine AS (
-                        SELECT id, recipient_kind, played_at
-                        FROM app.jpanel_message
-                        WHERE (sender_kind = 'panel' AND sender_device = :dev)
-                           OR (sender_kind = 'owner' AND recipient_device = :dev)
-                    ), gone AS (
-                        DELETE FROM app.jpanel_message
-                        WHERE id IN (
-                            SELECT id FROM mine
-                            WHERE NOT (recipient_kind = 'panel' AND played_at IS NULL)
-                        )
-                        RETURNING 1
-                    )
-                    SELECT (SELECT count(*) FROM gone),
-                           (SELECT count(*) FROM mine
-                            WHERE recipient_kind = 'panel' AND played_at IS NULL)
-                    """
-                ),
-                {"dev": "panel-one"},
-            )
-        ).first()
+        gone, kept = await clear_thread(s, "panel-one")
         await s.commit()
-    assert row is not None
-    assert row[0] == 3, "everything but the message still waiting to be heard"
-    assert row[1] == 1, "and the count of what survived, so the PWA can say so"
+    assert sorted(gone) == ["clr-heard", "clr-read-to-dad", "clr-unread-to-dad"], (
+        "everything but the message still waiting to be heard"
+    )
+    assert kept == {"panel-one": 1}, "and the count of what survived, so the PWA can say so"
 
     async with scoped_session(maker, OWNER) as s:
         left = [
