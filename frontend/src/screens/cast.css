@@ -165,8 +165,7 @@
   color: var(--text-2);
 }
 .cast-field input,
-.cast-field textarea,
-.cast-seconds select {
+.cast-field textarea {
   font: inherit;
   font-size: 16px;
   color: var(--text);
@@ -179,54 +178,99 @@
 .cast-field textarea {
   resize: vertical;
 }
-.cast-attach {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.cast-seconds {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
-}
-.cast-thumb {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  font-size: var(--fs-secondary);
-}
-.cast-thumb img {
-  width: 44px;
-  height: 44px;
-  object-fit: cover;
-  border-radius: 8px;
-}
-.cast-thumb-name {
-  max-width: 10em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 /* The TV frame's own near-black (cast/frame.py), in both themes: a picture of a dark
-   screen, like the panel composer's glass (DESIGN.md "Cast"). */
-.cast-screen-16x9 {
+   screen, like the panel composer's glass (DESIGN.md "Cast"). The stage is the editor's
+   surface, so it comes first and runs the screen's full width. */
+.cast-stage {
+  position: relative;
   aspect-ratio: 16 / 9;
-  display: grid;
-  place-items: center;
   border-radius: var(--r-card);
   border: 1px solid var(--border);
   background: #0c0d10;
   overflow: hidden;
 }
-.cast-screen-16x9 img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+.cast-stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: var(--fs-secondary);
+  pointer-events: none;
+}
+.cast-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.cast-add-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  border-radius: var(--r-input);
+  border: 1px solid var(--steel);
+  background: var(--steel-tint);
+  color: var(--steel-text);
+  font: inherit;
+  font-weight: 600;
+}
+.cast-add-btn:disabled {
+  opacity: 0.5;
+}
+.cast-add-aa {
+  font-weight: 800;
+  font-size: 18px;
+  line-height: 1;
+}
+.cast-layer-bar {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.cast-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+.cast-chip-danger {
+  margin-left: auto;
+  min-width: 44px;
+  padding: 0;
+  justify-content: center;
+  color: var(--rose);
+}
+.cast-swatch {
+  width: 44px;
+  flex: none;
+  height: 44px;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  font: inherit;
+  font-weight: 800;
+}
+.cast-swatch.on {
+  border-color: var(--steel);
+}
+.cast-words-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }
 .cast-mini {
   width: 64px;

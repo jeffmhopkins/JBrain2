@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CastNotice, CastTv } from "./api/client";
 import {
+  LAYERS_MAX,
   MEDIA_RECEIVER,
   SIZE_MAX,
   SIZE_MIN,
@@ -8,30 +9,38 @@ import {
   TV_W,
   ZOOM_MAX,
   ZOOM_MIN,
+  addPicture,
+  addWords,
+  canAdd,
   canTakeDown,
-  castPhotoPlacement,
+  coverZoom,
   draftReady,
   draftTitle,
-  dragDraft,
   drawFrame,
+  drawOrder,
   emptyCastDraft,
   fitNote,
   fitWords,
   handleAt,
+  inside,
+  layerAt,
+  layerById,
+  layerScale,
+  moveLayer,
   outcomeLabel,
   outcomeSub,
-  partAt,
-  partScale,
-  partTurn,
-  photoRect,
-  quarterTurn,
+  pictureRect,
   readyCount,
+  removeLayer,
   resultTitle,
-  scaleDraft,
+  scaleLayer,
   secondsLabel,
   sentSummary,
+  setStyle,
+  setWords,
+  settleTurn,
   skipReason,
-  turnDraft,
+  turnLayer,
   turnPoint,
   tvWords,
 } from "./cast";
@@ -192,87 +201,6 @@ describe("helpers", () => {
 describe("the composer", () => {
   const photo = { source: {} as CanvasImageSource, w: 4000, h: 3000 };
 
-  it("needs a photo or words, and names the notice by its words", () => {
-    const d = emptyCastDraft();
-    expect(draftReady(d)).toBe(false);
-    expect(draftReady({ ...d, words: "  " })).toBe(false);
-    expect(draftReady({ ...d, photo })).toBe(true);
-    expect(draftTitle({ ...d, photo })).toBe("Picture");
-    expect(draftTitle({ ...d, words: " Dinner\n is   ready " })).toBe("Dinner is ready");
-  });
-
-  it("moves the words when placing them, and holds them on the screen", () => {
-    const d = { ...emptyCastDraft(), words: "Hi" };
-    expect(dragDraft(d, "words", 100, -50).pos).toEqual({ x: 1060, y: 490 });
-    expect(dragDraft(d, "words", 5000, 5000).pos).toEqual({ x: TV_W, y: TV_H });
-  });
-
-  it("pans the photo, held to its edges, and leaves a draft with no photo alone", () => {
-    const d = { ...emptyCastDraft(), photo };
-    // 4000x3000 covering 1920x1080 is 1920x1440: 180 px of slack above and below, none sideways.
-    const moved = dragDraft(d, "photo", 300, 500);
-    expect(moved.panX).toBe(0);
-    expect(moved.panY).toBe(180);
-    const none = emptyCastDraft();
-    expect(dragDraft(none, "photo", 10, 10)).toBe(none);
-    // Words that are empty can't be moved, and a drag on them leaves the photo where it is.
-    expect(dragDraft(d, "words", 0, -500)).toBe(d);
-  });
-
-  it("lets a photo shrink below the screen and go anywhere on it, wholly on screen", () => {
-    const d = scaleDraft({ ...emptyCastDraft(), photo }, "photo", 0.5);
-    // Half of 1920x1440 is 960x720: 480 px of room each side, 180 above and below.
-    expect(castPhotoPlacement(photo, d)).toMatchObject({ w: 960, h: 720, x: 480, y: 180 });
-    const corner = dragDraft(d, "photo", -5000, 5000);
-    expect(castPhotoPlacement(photo, corner)).toMatchObject({ x: 0, y: 360 });
-    expect(photoRect(corner)).toEqual({ x: 0, y: 360, w: 960, h: 720 });
-    // Growing it back past the screen re-holds the pan so no gap shows at its edge.
-    const big = scaleDraft(corner, "photo", 1);
-    expect(big.panX).toBeCloseTo(0);
-    expect(big.panY).toBe(180);
-    expect(photoRect(big)).toEqual({ x: 0, y: 0, w: TV_W, h: TV_H });
-  });
-
-  it("resizes each part within its slider's range", () => {
-    const d = { ...emptyCastDraft(), photo, words: "Hi" };
-    expect(scaleDraft(d, "photo", 9).zoom).toBe(ZOOM_MAX);
-    expect(scaleDraft(d, "photo", 0.01).zoom).toBe(ZOOM_MIN);
-    expect(scaleDraft(d, "words", 1000).size).toBe(SIZE_MAX);
-    expect(scaleDraft(d, "words", 100.4).size).toBe(100);
-    expect(partScale(d, "words")).toBe(140);
-    expect(partScale(d, "photo")).toBe(1);
-    expect(scaleDraft(emptyCastDraft(), "photo", 2)).toEqual(emptyCastDraft());
-  });
-
-  it("a touch takes the words where they sit over the photo, else the photo, else nothing", () => {
-    const words = { x: 100, y: 100, w: 200, h: 100 };
-    const whole = { x: 0, y: 0, w: TV_W, h: TV_H };
-    expect(partAt(words, whole, { x: 150, y: 150 })).toBe("words");
-    expect(partAt(words, whole, { x: 500, y: 500 })).toBe("photo");
-    expect(partAt(words, null, { x: 500, y: 500 })).toBeNull();
-    // A finger's slack around the words still takes them.
-    expect(partAt(words, null, { x: 310, y: 150 }, 20)).toBe("words");
-    expect(partAt(null, null, { x: 1, y: 1 })).toBeNull();
-  });
-
-  it("draws the photo first and the words over it", () => {
-    const calls: string[] = [];
-    const ctx = new Proxy({} as Record<string, unknown>, {
-      get: (_o, k) =>
-        k === "measureText"
-          ? (t: string) => ({ width: t.length * 50 })
-          : (...a: unknown[]) => calls.push(`${String(k)}${k === "fillText" ? `:${a[0]}` : ""}`),
-      set: () => true,
-    }) as unknown as CanvasRenderingContext2D;
-    drawFrame(ctx, { ...emptyCastDraft(), photo, words: "Dinner", style: "dark" });
-    const image = calls.indexOf("drawImage");
-    const plate = calls.indexOf("roundRect");
-    const words = calls.indexOf("fillText:Dinner");
-    expect(image).toBeGreaterThan(-1);
-    expect(plate).toBeGreaterThan(image);
-    expect(words).toBeGreaterThan(plate);
-  });
-
   /** A context that measures at half the font size a letter, as a bold face roughly does. */
   function measuring(): CanvasRenderingContext2D {
     let px = 10;
@@ -283,6 +211,144 @@ describe("the composer", () => {
       },
     } as unknown as CanvasRenderingContext2D;
   }
+
+  it("needs a picture or words, and names the notice by its words", () => {
+    const d = emptyCastDraft();
+    expect(draftReady(d)).toBe(false);
+    expect(draftReady(addWords(d, "  "))).toBe(false);
+    expect(draftReady(addPicture(d, photo))).toBe(true);
+    expect(draftTitle(addPicture(d, photo))).toBe("Picture");
+    const two = addWords(addWords(d, " Dinner\n is   ready "), "Come down");
+    expect(draftTitle(two)).toBe("Dinner is ready · Come down");
+    expect(new TextEncoder().encode(draftTitle(addWords(d, "é".repeat(200)))).length).toBe(120);
+  });
+
+  it("adds things centred, words a step apart, the first picture filling the screen", () => {
+    let d = addWords(emptyCastDraft(), "One");
+    d = addWords(d, "Two");
+    d = addPicture(d, photo);
+    d = addPicture(d, photo);
+    const [one, two, first, second] = d.layers;
+    expect(one).toMatchObject({ id: 1, x: 960, y: 540, size: 140, turn: 0 });
+    expect(two?.y).toBeGreaterThan(540);
+    // 4000x3000 fits the screen at 1440x1080; covering it takes 1920 wide, 4/3 as big.
+    expect(first).toMatchObject({ kind: "picture", zoom: coverZoom(photo) });
+    expect(coverZoom(photo)).toBeCloseTo(4 / 3);
+    expect(pictureRect(first as never)).toMatchObject({ x: 0, w: 1920 });
+    expect(second).toMatchObject({ zoom: 0.5 });
+    expect(d.nextId).toBe(5);
+    expect(layerById(d, 3)).toBe(first);
+    expect(layerById(d, null)).toBeNull();
+  });
+
+  it("holds no more than a notice can carry", () => {
+    let d = emptyCastDraft();
+    for (let i = 0; i < LAYERS_MAX + 2; i++) d = addWords(d, `w${i}`);
+    expect(d.layers).toHaveLength(LAYERS_MAX);
+    expect(canAdd(d)).toBe(false);
+    expect(addPicture(d, photo)).toBe(d);
+  });
+
+  it("draws pictures under words, whatever order they were added in", () => {
+    const d = addPicture(addWords(emptyCastDraft(), "Hi"), photo);
+    expect(drawOrder(d).map((l) => l.kind)).toEqual(["picture", "words"]);
+    const calls: string[] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (_o, k) =>
+        k === "measureText"
+          ? (t: string) => ({ width: t.length * 50 })
+          : (...a: unknown[]) => calls.push(`${String(k)}${k === "fillText" ? `:${a[0]}` : ""}`),
+      set: () => true,
+    }) as unknown as CanvasRenderingContext2D;
+    drawFrame(ctx, setStyle(d, 1, "dark"));
+    const image = calls.indexOf("drawImage");
+    const plate = calls.indexOf("roundRect");
+    const words = calls.indexOf("fillText:Hi");
+    expect(image).toBeGreaterThan(-1);
+    expect(plate).toBeGreaterThan(image);
+    expect(words).toBeGreaterThan(plate);
+  });
+
+  it("changes the words, and drops a layer emptied of them", () => {
+    const d = addWords(emptyCastDraft(), "Hi");
+    expect(setWords(d, 1, "Hello").layers[0]).toMatchObject({ text: "Hello" });
+    expect(setWords(d, 1, "  ").layers).toHaveLength(0);
+    expect(removeLayer(d, 1).layers).toHaveLength(0);
+    // Asking for a change that changes nothing hands the same draft back.
+    expect(setStyle(addPicture(d, photo), 2, "dark").layers[1]).not.toHaveProperty("style");
+  });
+
+  it("moves a layer, its centre held on the screen", () => {
+    const d = addWords(emptyCastDraft(), "Hi");
+    expect(moveLayer(d, 1, 100, -50).layers[0]).toMatchObject({ x: 1060, y: 490 });
+    expect(moveLayer(d, 1, 5000, 5000).layers[0]).toMatchObject({ x: TV_W, y: TV_H });
+    expect(moveLayer(d, 9, 10, 10)).toBe(d);
+  });
+
+  it("resizes each layer within its range", () => {
+    const d = addPicture(addWords(emptyCastDraft(), "Hi"), photo);
+    expect(scaleLayer(d, 2, 9).layers[1]).toMatchObject({ zoom: ZOOM_MAX });
+    expect(scaleLayer(d, 2, 0.01).layers[1]).toMatchObject({ zoom: ZOOM_MIN });
+    expect(scaleLayer(d, 1, 1000).layers[0]).toMatchObject({ size: SIZE_MAX });
+    expect(scaleLayer(d, 1, 100.4).layers[0]).toMatchObject({ size: 100 });
+    expect(layerScale(d.layers[0] as never)).toBe(140);
+  });
+
+  it("turns a layer, kept within a revolution and settled square near a quarter", () => {
+    const deg = (n: number) => (n * Math.PI) / 180;
+    expect(settleTurn(deg(30))).toBeCloseTo(deg(30));
+    expect(settleTurn(deg(93))).toBe(Math.PI / 2);
+    expect(settleTurn(deg(-2))).toBe(0);
+    expect(settleTurn(deg(400))).toBeCloseTo(deg(40));
+    expect(settleTurn(deg(-182))).toBe(Math.PI);
+    const d = addWords(emptyCastDraft(), "Hi");
+    expect(turnLayer(d, 1, deg(45)).layers[0]?.turn).toBeCloseTo(deg(45));
+  });
+
+  it("a touch takes the topmost layer as drawn: words over pictures, else nothing", () => {
+    const ctx = measuring();
+    // "Hi" at 140 px is a 229.6 x 185.6 box on the centre.
+    const d = addPicture(addWords(emptyCastDraft(), "Hi"), { ...photo, w: 1920, h: 1080 });
+    const small = scaleLayer(d, 2, 0.5);
+    expect(layerAt(ctx, small, { x: 960, y: 540 })).toBe(1);
+    expect(layerAt(ctx, small, { x: 1300, y: 540 })).toBe(2);
+    expect(layerAt(ctx, small, { x: 10, y: 10 })).toBeNull();
+    // A finger's slack around the words still takes them, but not around a picture.
+    expect(layerAt(ctx, addWords(emptyCastDraft(), "Hi"), { x: 1090, y: 540 }, 20)).toBe(1);
+  });
+
+  it("a turned layer is touched, and its handle found, where it is drawn", () => {
+    // A 400x100 bar on the screen's centre, turned a quarter: it now stands 100 wide, 400 tall.
+    const bar = { x: 760, y: 490, w: 400, h: 100, turn: Math.PI / 2 };
+    expect(inside(bar, { x: 960, y: 700 })).toBe(true);
+    expect(inside(bar, { x: 1120, y: 540 })).toBe(false);
+    const h = handleAt(bar);
+    expect(h.x).toBeCloseTo(910);
+    expect(h.y).toBeCloseTo(740);
+    expect(turnPoint({ x: 1, y: 0 }, { x: 0, y: 0 }, Math.PI / 2).y).toBeCloseTo(1);
+  });
+
+  it("draws turned layers about their own centres, each in its own save", () => {
+    const calls: string[] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (_o, k) =>
+        k === "measureText"
+          ? (t: string) => ({ width: t.length * 50 })
+          : (...a: unknown[]) =>
+              calls.push(
+                `${String(k)}(${a.map((n) => Math.round(Number(n) * 100) / 100).join(",")})`,
+              ),
+      set: () => true,
+    }) as unknown as CanvasRenderingContext2D;
+    let d = addPicture(addWords(emptyCastDraft(), "Hi"), photo);
+    d = turnLayer(turnLayer(d, 2, 0.5), 1, -0.25);
+    drawFrame(ctx, moveLayer(d, 1, 100, 0));
+    expect(calls.filter((c) => c.startsWith("rotate"))).toEqual(["rotate(0.5)", "rotate(-0.25)"]);
+    expect(calls.filter((c) => c.startsWith("save")).length).toBe(2);
+    expect(calls.filter((c) => c.startsWith("restore")).length).toBe(2);
+    expect(calls).toContain("translate(960,540)");
+    expect(calls).toContain("translate(1060,540)");
+  });
 
   it("keeps the asked size when the words fit, and shrinks them until every word does", () => {
     expect(fitWords(measuring(), "Dinner", 140)).toEqual({
@@ -309,56 +375,6 @@ describe("the composer", () => {
       "Shrunk to 100 px so every word fits on the screen.",
     );
     expect(fitNote({ lines: ["a"], size: 140, whole: true }, 140)).toBeNull();
-    expect(fitNote(null, 140)).toBeNull();
-  });
-
-  it("turns a part, kept within a revolution and settled square near a quarter", () => {
-    const d = { ...emptyCastDraft(), photo, words: "Hi" };
-    const deg = (n: number) => (n * Math.PI) / 180;
-    expect(turnDraft(d, "photo", deg(30)).turn).toBeCloseTo(deg(30));
-    expect(turnDraft(d, "photo", deg(93)).turn).toBe(Math.PI / 2);
-    expect(turnDraft(d, "photo", deg(-2)).turn).toBe(0);
-    expect(turnDraft(d, "words", deg(400)).wordsTurn).toBeCloseTo(deg(40));
-    expect(turnDraft(d, "words", deg(-182)).wordsTurn).toBe(Math.PI);
-    expect(partTurn(turnDraft(d, "words", deg(45)), "words")).toBeCloseTo(deg(45));
-    // Nothing to turn is left alone.
-    const none = emptyCastDraft();
-    expect(turnDraft(none, "photo", 1)).toBe(none);
-    expect(turnDraft(none, "words", 1)).toBe(none);
-    // The button goes to the next quarter from the nearest one.
-    expect(quarterTurn(turnDraft(d, "photo", deg(30)), "photo").turn).toBe(Math.PI / 2);
-    expect(quarterTurn(turnDraft(d, "photo", Math.PI), "photo").turn).toBe(-Math.PI / 2);
-  });
-
-  it("a turned part is touched, and its handle found, where it is drawn", () => {
-    // A 400x100 bar on the screen's centre, turned a quarter: it now stands 100 wide, 400 tall.
-    const bar = { x: 760, y: 490, w: 400, h: 100, turn: Math.PI / 2 };
-    expect(partAt(bar, null, { x: 960, y: 700 })).toBe("words");
-    expect(partAt(bar, null, { x: 1120, y: 540 })).toBeNull();
-    const h = handleAt(bar);
-    expect(h.x).toBeCloseTo(910);
-    expect(h.y).toBeCloseTo(740);
-    expect(turnPoint({ x: 1, y: 0 }, { x: 0, y: 0 }, Math.PI / 2).y).toBeCloseTo(1);
-  });
-
-  it("draws a turned photo and turned words about their own centres", () => {
-    const calls: string[] = [];
-    const ctx = new Proxy({} as Record<string, unknown>, {
-      get: (_o, k) =>
-        k === "measureText"
-          ? (t: string) => ({ width: t.length * 50 })
-          : (...a: unknown[]) =>
-              calls.push(
-                `${String(k)}(${a.map((n) => Math.round(Number(n) * 100) / 100).join(",")})`,
-              ),
-      set: () => true,
-    }) as unknown as CanvasRenderingContext2D;
-    drawFrame(ctx, { ...emptyCastDraft(), photo, turn: 0.5, words: "Hi", wordsTurn: -0.25 });
-    const turns = calls.filter((c) => c.startsWith("rotate"));
-    expect(turns).toEqual(["rotate(0.5)", "rotate(-0.25)"]);
-    // Each turn is wrapped in its own save and restore, so the words don't inherit the photo's.
-    expect(calls.filter((c) => c.startsWith("save")).length).toBe(2);
-    expect(calls.filter((c) => c.startsWith("restore")).length).toBe(2);
-    expect(calls).toContain("translate(960,540)");
+    expect(fitNote(undefined, 140)).toBeNull();
   });
 });

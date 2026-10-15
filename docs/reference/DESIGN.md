@@ -4135,20 +4135,22 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   state as a word with its dot, never the dot alone: *Ready*, *Off*, *In use*, *Not
   answering*, with what it is doing under its name. Our own notice reads *Showing a notice*,
   not as somebody watching.
-- **Send** picks every TV that would take it to start with. A TV in use can still be picked,
-  struck through, with a line saying it will be skipped. It composes like the panel composer
-  (owner, 2026-10-15: *"picture always under text"*): a 16:9 canvas with the photo under the
-  words, in the panel's four styles. Both are handled directly (owner: *"drag and move things
-  (text and image) and scale them"*): a touch picks up whichever is under the finger (the words
-  where they overlap, as they are on top), outlined with a corner handle; a drag moves it, and a
-  pinch-and-twist or a pull-and-turn of the handle resizes and rotates it (owner: *"probably need
-  rotate too"*), settling level within 5° of a quarter turn. The Zoom and Size sliders and a
-  Turn 90° button do the same by hand. The photo
-  starts filling the screen and can shrink to a fifth of that; larger than the screen it shows
-  no gap at an edge, smaller it stays wholly on it. The phone draws the frame the TV gets, so the
-  canvas is exactly what lands. Words too long or too big for the screen are drawn smaller
-  until every word fits, and a line under the canvas says so, so the TV never drops the end of
-  a message that Sent still lists. Limits are said while typing, not refused after.
+- **Send** is a touch editor (owner, 2026-10-15: *"just click 'add text' or 'add image' and
+  then use mobile touch to zoom rotate, place the things"*). The 16:9 canvas comes first, full
+  width, with two large buttons under it: **Add text** opens a Sheet with the words field
+  focused and the panel's four styles, and **Add image** opens the photo picker. Each adds a
+  layer, held at once, outlined with a corner handle. A touch picks up the topmost layer under
+  the finger; a drag moves it, and a pinch-and-twist anywhere on the canvas (or a pull-and-turn
+  of the handle) resizes and rotates the held one, settling level within 5° of a quarter turn.
+  A double-tap on words reopens them. A bar under the buttons acts on the held layer: words get
+  Edit, the four style swatches and Delete; a picture gets Replace, Fill screen and Delete.
+  Pictures always draw under words (owner: *"picture always under text"*). The first picture
+  fills the screen; later ones come in at half size, and any can shrink to 0.15 of fitting or
+  grow to 4x. Up to eight layers. The phone draws the frame the TV gets, so the canvas is
+  exactly what lands. Words too long or too big for the screen are drawn smaller until every
+  word fits, and a line under the canvas says so. Under the editor: the TVs (every one that
+  would take it picked to start with; one in use can still be picked, struck through, with a
+  line saying it will be skipped) and *On screen for* as chips.
 - **The result is a Sheet** titled *Cast to 2 of 3*, a tag per TV (*On screen*, *Turned on*,
   *Skipped*, *Didn't cast*) and why. A TV that was woken *stays on*, and the sheet says so,
   because a cast cannot turn a TV off. **Take it down** is the destructive button, shown only
