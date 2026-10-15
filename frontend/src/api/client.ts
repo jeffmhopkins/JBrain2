@@ -7252,14 +7252,16 @@ export const api = {
     }
     const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (response.ok) return { sent: data as unknown as CastNotice };
-    const detail = data.detail;
-    const reason =
-      detail && typeof detail === "object"
-        ? String((detail as { reason?: unknown }).reason ?? response.status)
-        : typeof detail === "string"
-          ? detail
-          : `HTTP ${response.status}`;
-    return { refused: { status: response.status, reason } };
+    // Only the box's own refusal ({reason}) is an answer; a missing sidecar (503), a refused
+    // token (502) or anything else is a failure the screen words for itself.
+    const detail = data.detail as { reason?: unknown } | undefined;
+    if (response.status < 500 && detail && typeof detail.reason === "string") {
+      return { refused: { status: response.status, reason: detail.reason } };
+    }
+    throw new ApiError(
+      response.status,
+      typeof data.detail === "string" ? data.detail : `Request failed: ${response.status}`,
+    );
   },
 
   async castSent(limit = 30): Promise<CastNoticeList> {

@@ -133,6 +133,27 @@ describe("Cast", () => {
     expect(await screen.findByText("That picture couldn't be read.")).toBeInTheDocument();
   });
 
+  it("says when the box can't reach the TVs to send", async () => {
+    vi.spyOn(api, "castSend").mockRejectedValue(new ApiError(503, "cast sidecar unreachable"));
+    render(<CastScreen />);
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Look" } });
+    fireEvent.click(screen.getByRole("button", { name: /Cast to 2 TVs/ }));
+    expect(await screen.findByText("The box can't reach the TVs right now.")).toBeInTheDocument();
+  });
+
+  it("says when the preview couldn't be drawn", async () => {
+    vi.spyOn(api, "castPreview").mockRejectedValue(new ApiError(415, "bad picture"));
+    render(<CastScreen />);
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "Look" } });
+    expect(
+      await screen.findByText("Couldn't draw the preview", undefined, { timeout: 2000 }),
+    ).toBeInTheDocument();
+  });
+
   it("refuses a title too long for the screen before sending", async () => {
     render(<CastScreen />);
     await screen.findByText("3 found on the network");

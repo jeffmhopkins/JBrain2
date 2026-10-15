@@ -59,7 +59,7 @@ export function CastScreen() {
       setTvError(null);
     } catch (err) {
       setTvError(
-        err instanceof ApiError && err.status === 503
+        err instanceof ApiError && (err.status === 502 || err.status === 503)
           ? "The box can't reach its TV finder right now."
           : "Couldn't read the TVs.",
       );
@@ -194,6 +194,7 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
   const [picture, setPicture] = useState<Picture | null>(null);
   const [seconds, setSeconds] = useState<number>(SECONDS_DEFAULT);
   const [preview, setPreview] = useState<string | null>(null);
+  const [previewFailed, setPreviewFailed] = useState(false);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -221,9 +222,12 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
           if (stale) return;
           url = URL.createObjectURL(blob);
           setPreview(url);
+          setPreviewFailed(false);
         })
         .catch(() => {
-          if (!stale) setPreview(null);
+          if (stale) return;
+          setPreview(null);
+          setPreviewFailed(true);
         });
     }, PREVIEW_DEBOUNCE_MS);
     return () => {
@@ -267,7 +271,7 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
       else setProblem(REFUSALS[out.refused.reason] ?? `The box said no (${out.refused.reason}).`);
     } catch (err) {
       setProblem(
-        err instanceof ApiError && err.status === 503
+        err instanceof ApiError && (err.status === 502 || err.status === 503)
           ? "The box can't reach the TVs right now."
           : "That didn't send. Try again.",
       );
@@ -368,7 +372,13 @@ function SendTab({ tvs, onSent }: { tvs: CastTv[] | null; onSent: (n: CastNotice
         {preview ? (
           <img src={preview} alt="What the TV will show" />
         ) : (
-          <span className="muted">{title.trim() ? "Drawing…" : "Type a title to see it"}</span>
+          <span className="muted">
+            {!title.trim()
+              ? "Type a title to see it"
+              : previewFailed
+                ? "Couldn't draw the preview"
+                : "Drawing…"}
+          </span>
         )}
       </div>
 
