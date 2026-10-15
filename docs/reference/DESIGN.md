@@ -4171,6 +4171,7 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   row has a pencil, *Edit again* (owner: *"to quickly iterate on previous casts"*): it opens
   Send with that cast's TVs and time on screen, and its layers still movable when it was sent
   from this phone since the app opened; otherwise its frame comes back as one picture to build on.
+  It replaces whatever Send held, unasked: iterating on a past cast is the point of the pencil.
 - The TV preview's sheet is drawn in the TV frame's own near-black in both themes, like the
   panel composer's glass: it is a picture of a dark screen, not a themed surface.
 

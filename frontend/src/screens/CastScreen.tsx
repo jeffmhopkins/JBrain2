@@ -129,7 +129,8 @@ async function composeFrom(n: CastNotice): Promise<Compose> {
   const minutes = n.seconds >= 60 && n.seconds % 60 === 0;
   return {
     draft,
-    picked: new Set(n.tvs.map((t) => t.tv_id)),
+    // One that reached no TV falls back to every TV that would take it now.
+    picked: n.tvs.length ? new Set(n.tvs.map((t) => t.tv_id)) : null,
     amount: String(minutes ? n.seconds / 60 : n.seconds),
     unit: minutes ? "min" : "s",
   };
@@ -150,6 +151,16 @@ export function CastScreen() {
     [],
   );
   const patch = useCallback((p: Partial<Compose>) => setCompose((c) => ({ ...c, ...p })), []);
+  const editSeq = useRef(0);
+  const live = useRef(true);
+  const tabNow = useRef(tab);
+  tabNow.current = tab;
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
 
   const loadTvs = useCallback(async () => {
     try {
@@ -229,7 +240,12 @@ export function CastScreen() {
         <SentTab
           onOpen={setResult}
           onEdit={async (n) => {
-            setCompose(await composeFrom(n));
+            const seq = ++editSeq.current;
+            const next = await composeFrom(n);
+            // A frame can take a moment to load: a later tap, a move off Sent, or leaving Cast
+            // since then wins, so a slow one never lands on top of newer work.
+            if (seq !== editSeq.current || !live.current || tabNow.current !== "sent") return;
+            setCompose(next);
             setTab("send");
           }}
         />
@@ -560,6 +576,7 @@ function SendTab({
           type="button"
           className="cast-picker"
           aria-haspopup="dialog"
+          aria-expanded={choosing}
           aria-label={`TVs: ${pickedLabel(targets)}`}
           onClick={() => setChoosing(true)}
         >
@@ -1116,8 +1133,6 @@ function ResultSheet({
   );
 }
 
-/** A camera photo scaled once to the working size, so zooming and dragging redraw from a
- *  small copy. Never scaled up. */
 /** A past cast's frame as a picture: it is exactly TV-sized, so it fills the screen as one. */
 async function loadFrame(id: string): Promise<Photo> {
   const img = new Image();
@@ -1140,6 +1155,8 @@ function pickedLabel(targets: CastTv[]): string {
   return `${targets[0]?.name}, ${targets[1]?.name} + ${targets.length - 2} more`;
 }
 
+/** A camera photo scaled once to the working size, so zooming and dragging redraw from a
+ *  small copy. Never scaled up. */
 async function loadPhoto(file: File): Promise<Photo> {
   const bmp = await createImageBitmap(file);
   try {

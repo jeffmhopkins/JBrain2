@@ -94,7 +94,10 @@ beforeEach(() => {
   vi.spyOn(api, "castTvs").mockResolvedValue({ tvs: TVS });
   fakeCanvas();
 });
+const nativeDecode = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "decode");
 afterEach(() => {
+  if (nativeDecode) Object.defineProperty(HTMLImageElement.prototype, "decode", nativeDecode);
+  else Reflect.deleteProperty(HTMLImageElement.prototype, "decode");
   vi.restoreAllMocks();
 });
 
@@ -443,7 +446,43 @@ describe("Cast", () => {
     });
     expect(decode).toHaveBeenCalled();
     expect(screen.queryByText("Add text or a picture to start")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "TVs: Pick a TV" })).toBeInTheDocument();
+    // It reached no TV, so every TV that would take it now is picked.
+    expect(screen.getByRole("button", { name: "TVs: Big TV, Parents" })).toBeInTheDocument();
+  });
+
+  it("drops a slow frame when another past cast was opened since", async () => {
+    let finish: () => void = () => {};
+    Object.defineProperty(HTMLImageElement.prototype, "decode", {
+      value: () =>
+        new Promise<void>((r) => {
+          finish = r;
+        }),
+      configurable: true,
+    });
+    vi.spyOn(api, "castSend").mockResolvedValue({ sent: sent({ id: "new", title: "Fresh" }) });
+    vi.spyOn(api, "castSent").mockResolvedValue({
+      notices: [sent({ id: "new", title: "Fresh" }), sent({ id: "old", title: "Stale" })],
+      kept_s: 604800,
+    });
+    render(<CastScreen />);
+    await addText("Fresh");
+    fireEvent.click(screen.getByRole("button", { name: /^Cast to/ }));
+    await screen.findByText("Cast to 2 of 2");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sent" }));
+
+    // The old one waits on its frame; the fresh one opens at once from what was kept.
+    fireEvent.click(await screen.findByRole("button", { name: "Edit Stale again" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Edit Fresh again" }));
+    });
+    drawn.length = 0;
+    await act(async () => finish());
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Sent" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    expect(drawn).toContain("Fresh");
   });
 
   it("says when a past cast can't be opened to edit", async () => {
