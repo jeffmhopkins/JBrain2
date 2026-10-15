@@ -4,7 +4,11 @@ JPANEL_C6_PLAN.md §2 (wave C3b). The owner: *"an API … that just shows a pop-
 maybe even with a response of choices"*, a picture the sender drew, a sound of up to eight
 seconds, hidden by a tap or by a timeout. Three routers, one service (`jpanel.notice_service`):
 
-- `router` — the owner (`OwnerDep`): `POST /panel/notify`, `GET /panel/notify/{id}?wait=`.
+- `router` — the owner (`OwnerDep`): `POST /panel/notify`, `GET /panel/notify/{id}?wait=`, and
+  the composer's (2026-10-14): `GET /panel/notify?limit=&device_id=` (his own notices, newest
+  first), `GET /panel/notify/{id}/image` (the picture as the panel draws it), `POST
+  /panel/notify/{id}/withdraw` (Unsend) and `POST /panel/notify/preview` (the box's encoder
+  over a picture, nothing sent). No panel key reaches any of them: `OwnerDep` refuses one.
 - `debug_router` — a debug token (`DebugDep`, mounted only with debug access on):
   `POST /debug/panel/{device_id}/notice`, `GET /debug/panel/{device_id}/notice/{id}?wait=`,
   so a session holding the token can put a test notice on the glass and read the tap.
@@ -19,6 +23,7 @@ Refusals are `{"detail": {"reason": …}}` with the status the plan's table give
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import uuid
@@ -120,6 +125,31 @@ class NoticeOut(BaseModel):
     hide_after_s: int | None
     image: dict[str, Any] | None
     audio_ms: int | None
+    expires_at: str | None
+    ttl_s: int
+    chime: bool
+    kind: str
+
+
+class NoticeList(BaseModel):
+    notices: list[NoticeOut]
+    #: How long the box keeps a finished one of these, so the list can say so.
+    kept_s: int
+
+
+class PreviewIn(BaseModel):
+    image_b64: str
+    image_mode: Literal["full", "banner"] = "full"
+
+
+class PreviewOut(BaseModel):
+    #: The picture exactly as the panel will draw it (fitted, rgb565, posterized if it had to
+    #: be), as a base64 PNG.
+    png_b64: str
+    w: int
+    h: int
+    bytes: int
+    posterize: int
 
 
 def _sent(s: Sent) -> NoticeSent:
@@ -174,6 +204,73 @@ async def owner_send(body: NoticeIn, request: Request, owner: OwnerDep) -> Notic
     """Put a notice on the panel. 202 `{id, state: "queued", …}`; poll `GET …/{id}?wait=`.
     The owner may send as any sender — the PWA's test control sends as `owner`."""
     return await send(request, body, sender=body.sender, created_by=f"owner ({owner.label})")
+
+
+@router.get("")
+async def owner_history(
+    request: Request,
+    _o: OwnerDep,
+    limit: Annotated[int, Query(ge=1, le=100)] = 30,
+    device_id: str | None = None,
+) -> NoticeList:
+    """The owner's own notices (sender `owner`, the composer's), newest first, with how each
+    ended — the composer's "Sent to this panel" (`device_id` narrows it to one panel). Kept a
+    week after they end."""
+    svc = service(request)
+    await svc.sweep()
+    views = await svc.history(limit, device_id)
+    return NoticeList(notices=[_out(v) for v in views], kept_s=N.OWNER_RESULT_TTL_S)
+
+
+@router.post("/preview")
+async def owner_preview(body: PreviewIn, request: Request, _o: OwnerDep) -> PreviewOut:
+    """Run the box's own fitting and encoding over a picture without sending anything, so
+    Review can show what the panel will draw — a photograph posterized to fit the panel's cap
+    looks different from the phone's copy."""
+    try:
+        data = _b64("image", body.image_b64, N.IMAGE_UPLOAD_MAX) or b""
+        fitted, png = await asyncio.to_thread(N.preview_png, data, body.image_mode)
+    except N.NoticeRefused as exc:
+        raise _refuse(exc) from None
+    return PreviewOut(
+        png_b64=base64.b64encode(png).decode(),
+        w=fitted.width,
+        h=fitted.height,
+        bytes=fitted.stream_bytes,
+        posterize=fitted.posterize,
+    )
+
+
+@router.get("/{notice_id}/image", response_model=None)
+async def owner_image(
+    notice_id: str,
+    request: Request,
+    _o: OwnerDep,
+    w: Annotated[int, Query(ge=32, le=N.SCREEN)] = 160,
+) -> Response:
+    """The notice's picture as the panel draws it, decoded from the stored stripes, as a PNG at
+    most `w` wide. A notice's picture never changes, so the phone may keep it."""
+    png = await service(request).image_png(notice_id, w)
+    if png is None:
+        raise HTTPException(status_code=404, detail={"reason": "no_picture"})
+    return Response(
+        content=png,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=604800, immutable"},
+    )
+
+
+@router.post("/{notice_id}/withdraw")
+async def owner_withdraw(notice_id: str, request: Request, owner: OwnerDep) -> NoticeOut:
+    """Unsend: take a queued, delivered or shown notice back off the panel. A queued one is
+    never delivered; one the panel holds goes on its next pickup, silently. 404 for no such
+    notice; 409 `already_finished` (+ `state`) for one that has already ended."""
+    try:
+        view = await service(request).withdraw(notice_id)
+    except N.NoticeRefused as exc:
+        raise _refuse(exc) from None
+    log.info("panel.notice_unsent", id=notice_id, by=owner.label)
+    return _out(view)
 
 
 @router.get("/{notice_id}")

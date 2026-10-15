@@ -227,6 +227,7 @@ async def test_a_question_waits_for_the_tap() -> None:
     [
         ("dismissed", "dismissed it"),
         ("expired", "expired"),
+        ("withdrawn", "took it back"),
         (None, "expired"),
         ("shown", "No answer yet after 90 s"),
     ],

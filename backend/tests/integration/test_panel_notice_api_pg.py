@@ -509,7 +509,8 @@ def test_an_uncollected_notice_expires_and_a_finished_one_is_swept_with_its_blob
     box: Box, tmp_path: Path
 ) -> None:
     box.pickup(**DAY)
-    nid = box.send(title="Look", image_b64=_png(64, 64)).json()["id"]
+    # Jerv's, so it is kept the day every sender but the owner's composer gets.
+    nid = box.send(title="Look", sender="jerv", image_b64=_png(64, 64)).json()["id"]
     _owner_sql(
         box,
         "UPDATE app.panel_notice SET expires_at = now() - interval '1 second'"
@@ -588,3 +589,180 @@ def test_the_pickup_still_hands_over_a_debug_request_with_the_hint(box: Box) -> 
     got = box.pickup(**DAY)
     assert got.status_code == 200 and got.json() == {"id": rid, "cmd": "snapshot"}
     assert got.headers["X-Notice"] == "1"
+
+
+# ---- the owner's composer (2026-10-14): history, picture, unsend, preview -------------------
+
+
+def _owner_get(box: Box, path: str):  # noqa: ANN202
+    box.client.cookies.clear()
+    box.client.cookies.update(box.owner)
+    return box.client.get(path)
+
+
+def _owner_post(box: Box, path: str, **body: Any):  # noqa: ANN202
+    box.client.cookies.clear()
+    box.client.cookies.update(box.owner)
+    return box.client.post(path, json=body)
+
+
+def test_the_history_is_the_owner_s_own_newest_first(box: Box) -> None:
+    box.pickup(**DAY)
+    first = box.send(title="Photo", image_b64=_png(480, 480)).json()["id"]
+    box.send(title="From Jerv", sender="jerv")
+    last = box.send(title="Did the package come?", choices=["Yes", "No"]).json()["id"]
+    out = _owner_get(box, "/api/panel/notify?limit=10")
+    assert out.status_code == 200
+    body = out.json()
+    assert body["kept_s"] == N.OWNER_RESULT_TTL_S
+    assert [n["id"] for n in body["notices"]] == [last, first], "jerv's is not the owner's"
+    newest = body["notices"][0]
+    assert (newest["kind"], newest["state"], newest["ttl_s"]) == ("question", "queued", 900)
+    assert newest["expires_at"] and newest["chime"] is False
+    assert body["notices"][1]["kind"] == "picture"
+    assert len(_owner_get(box, "/api/panel/notify?limit=1").json()["notices"]) == 1
+    assert _owner_get(box, "/api/panel/notify?limit=0").status_code == 422
+
+
+def test_the_picture_comes_back_as_the_panel_draws_it(box: Box) -> None:
+    box.pickup(**DAY)
+    nid = box.send(title="Look", image_b64=_png(480, 480, (200, 40, 90))).json()["id"]
+    got = _owner_get(box, f"/api/panel/notify/{nid}/image?w=96")
+    assert got.status_code == 200 and got.headers["content-type"] == "image/png"
+    assert "immutable" in got.headers["cache-control"]
+    assert Image.open(io.BytesIO(got.content)).size == (96, 96)
+    banner = box.send(title="Strip", choices=["Yes", "No"], image_b64=_png(480, 200)).json()
+    whole = _owner_get(box, f"/api/panel/notify/{banner['id']}/image?w=480")
+    assert Image.open(io.BytesIO(whole.content)).size == (480, 200)
+    plain = box.send(title="No picture").json()["id"]
+    assert _owner_get(box, f"/api/panel/notify/{plain}/image").status_code == 404
+    assert _owner_get(box, "/api/panel/notify/nope/image").status_code == 404
+
+
+def test_a_composer_banner_is_taken_at_its_own_size(box: Box) -> None:
+    box.pickup(**DAY)
+    for h in (240, 200):
+        sent = box.send(
+            title="Did the package come?",
+            choices=["Yes", "No"],
+            image_b64=_png(480, h),
+            image_mode="banner",
+        ).json()
+        assert (sent["image"]["w"], sent["image"]["h"]) == (480, h)
+
+
+def test_unsend_a_queued_notice_and_it_is_never_delivered(box: Box) -> None:
+    box.pickup(**DAY)
+    nid = box.send(title="Oops").json()["id"]
+    out = _owner_post(box, f"/api/panel/notify/{nid}/withdraw")
+    assert out.status_code == 200 and out.json()["state"] == "withdrawn"
+    assert out.json()["finished_at"]
+    hint = box.pickup(**DAY)
+    assert "X-Notice" not in hint.headers and "X-Notice-Withdraw" not in hint.headers, (
+        "never collected, so nothing to tell the panel"
+    )
+    assert box.collect().status_code == 204
+    again = _owner_post(box, f"/api/panel/notify/{nid}/withdraw")
+    assert again.status_code == 409
+    assert again.json()["detail"] == {"reason": "already_finished", "state": "withdrawn"}
+
+
+def test_unsend_a_shown_notice_and_the_panel_hears_it_on_its_pickup(box: Box) -> None:
+    box.pickup(**DAY)
+    nid = box.send(title="Did the package come?", choices=["Yes", "No"]).json()["id"]
+    other = box.send(title="Stays").json()["id"]
+    box.collect()
+    box.collect()
+    box.state(nid, state="shown")
+    assert _owner_post(box, f"/api/panel/notify/{nid}/withdraw").status_code == 200
+    hint = box.pickup(**DAY)
+    assert hint.headers["X-Notice-Withdraw"] == nid
+    assert box.state(nid, state="answered", choice=0).status_code == 404, "too late to answer"
+    assert box.as_panel("GET", f"/api/endpoint/notice/{nid}/body").status_code == 404
+    assert box.read(nid).json()["state"] == "withdrawn"
+    assert box.read(other).json()["state"] == "delivered"
+    assert "X-Notice-Withdraw" not in box.pickup(box.sibling, **DAY).headers
+    # Past the answer window it was sent with, the panel has dropped it on its own.
+    _owner_sql(
+        box,
+        "UPDATE app.panel_notice SET expires_at = now() - interval '1 second'"
+        " WHERE id = CAST(:i AS uuid)",
+        i=nid,
+    )
+    assert "X-Notice-Withdraw" not in box.pickup(**DAY).headers
+
+
+def test_unsend_what_has_ended_or_does_not_exist(box: Box) -> None:
+    box.pickup(**DAY)
+    nid = box.send(title="Read me", choices=["Yes"]).json()["id"]
+    box.collect()
+    box.state(nid, state="answered", choice=0)
+    out = _owner_post(box, f"/api/panel/notify/{nid}/withdraw")
+    assert out.status_code == 409 and out.json()["detail"]["state"] == "answered"
+    missing = "00000000-0000-0000-0000-000000000000"
+    assert _owner_post(box, f"/api/panel/notify/{missing}/withdraw").status_code == 404
+    assert _owner_post(box, "/api/panel/notify/nope/withdraw").status_code == 404
+
+
+def test_the_preview_is_the_box_s_encoder_and_sends_nothing(box: Box) -> None:
+    box.pickup(**DAY)
+    out = _owner_post(
+        box, "/api/panel/notify/preview", image_b64=_png(480, 240), image_mode="banner"
+    )
+    assert out.status_code == 200, out.text
+    body = out.json()
+    assert (body["w"], body["h"], body["posterize"]) == (480, 240, 0)
+    shown = Image.open(io.BytesIO(base64.b64decode(body["png_b64"])))
+    assert shown.size == (480, 240)
+    assert _owner_get(box, "/api/panel/notify").json()["notices"] == []
+    assert _owner_post(box, "/api/panel/notify/preview", image_b64="!!!").status_code == 422
+
+
+@pytest.mark.parametrize("who", ["panel", "sibling", "nobody"])
+def test_no_panel_key_reaches_the_composer_s_routes(box: Box, who: str) -> None:
+    box.pickup(**DAY)
+    nid = box.send(title="Look", image_b64=_png(64, 64)).json()["id"]
+    headers = {"panel": box.panel, "sibling": box.sibling, "nobody": {}}[who]
+    box.client.cookies.clear()
+    calls = [
+        box.client.get("/api/panel/notify", headers=headers),
+        box.client.get(f"/api/panel/notify/{nid}/image", headers=headers),
+        box.client.post(f"/api/panel/notify/{nid}/withdraw", headers=headers),
+        box.client.post(
+            "/api/panel/notify/preview", headers=headers, json={"image_b64": _png(8, 8)}
+        ),
+    ]
+    assert all(c.status_code in (401, 403) for c in calls), [c.status_code for c in calls]
+    assert box.read(nid).json()["state"] == "queued"
+
+
+def test_the_owner_s_notices_are_kept_a_week_the_rest_a_day(box: Box) -> None:
+    box.pickup(**DAY)
+    mine = box.send(title="Mine").json()["id"]
+    jerv = box.send(title="Jerv's", sender="jerv").json()["id"]
+    _owner_sql(
+        box,
+        "UPDATE app.panel_notice SET state = 'dismissed', finished_at = now() - interval '2 days'",
+    )
+    box.send(title="trigger a sweep")
+    assert box.read(mine).status_code == 200
+    assert box.read(jerv).status_code == 404
+    _owner_sql(
+        box,
+        "UPDATE app.panel_notice SET finished_at = now() - interval '8 days'"
+        " WHERE id = CAST(:i AS uuid)",
+        i=mine,
+    )
+    box.send(title="another sweep")
+    assert box.read(mine).status_code == 404
+
+
+def test_the_history_narrows_to_one_panel(box: Box) -> None:
+    box.pickup(**DAY)
+    nid = box.send(title="Here").json()["id"]
+    dev = box.read(nid).json()["device_id"]
+    mine = _owner_get(box, f"/api/panel/notify?device_id={dev}").json()["notices"]
+    assert [n["id"] for n in mine] == [nid]
+    other = "00000000-0000-0000-0000-000000000000"
+    assert _owner_get(box, f"/api/panel/notify?device_id={other}").json()["notices"] == []
+    assert _owner_get(box, "/api/panel/notify?device_id=nope").json()["notices"] == []

@@ -304,6 +304,43 @@ async def test_an_expired_notice_is_invisible_and_unanswerable(maker: Maker) -> 
     assert (await _row(maker, nid))["state"] == "delivered"
 
 
+# ---- withdrawn (migration 0249) -------------------------------------------------------------
+
+
+async def _withdraw(maker: Maker, nid: str) -> int:
+    return await _update(maker, OWNER, nid, "state = 'withdrawn', finished_at = now()")
+
+
+async def test_a_panel_sees_a_withdrawn_notice_it_collected_while_it_could_hold_it(
+    maker: Maker,
+) -> None:
+    held = await _send(maker, PANEL)
+    await _update(maker, PANEL_CTX, held, "state = 'delivered'")
+    never = await _send(maker, PANEL)
+    assert await _withdraw(maker, held) == 1
+    assert await _withdraw(maker, never) == 1
+    assert await _visible(maker, PANEL_CTX) == {held}, "only one it collected"
+    assert await _visible(maker, SIBLING_CTX) == set()
+    await _update(maker, OWNER, held, "expires_at = now() - interval '1 second'")
+    assert await _visible(maker, PANEL_CTX) == set(), "past its window it is gone again"
+
+
+async def test_a_panel_cannot_move_a_withdrawn_notice(maker: Maker) -> None:
+    nid = await _send(maker, PANEL)
+    await _update(maker, PANEL_CTX, nid, "state = 'delivered'")
+    await _withdraw(maker, nid)
+    for sets in ("state = 'shown'", "state = 'answered', answer = 'Yes'", "state = 'dismissed'"):
+        assert await _update(maker, PANEL_CTX, nid, sets) == 0
+    assert (await _row(maker, nid))["state"] == "withdrawn"
+
+
+async def test_withdrawn_is_a_state_the_table_takes(maker: Maker) -> None:
+    nid = await _send(maker, PANEL)
+    assert await _withdraw(maker, nid) == 1
+    with pytest.raises(DBAPIError):
+        await _update(maker, OWNER, nid, "state = 'recalled'")
+
+
 # ---- the sibling -----------------------------------------------------------------------
 
 
