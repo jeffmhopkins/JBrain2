@@ -26,6 +26,9 @@ void svc_notice_set_wake(void (*wake)(void));
 void svc_notice_pickup_query(bool ui_up, char *out, size_t cap);
 /* The pickup's `X-Notice` header ("" for none). */
 void svc_notice_waiting(const char *header);
+/* The pickup's `X-Notice-Withdraw` ("" for none, 0.0.24): each held notice it names leaves the
+ * glass on the UI task's next pass exactly as a lapsed one does, and nothing is told back. */
+void svc_notice_withdraw(const char *header);
 /* The next stream to collect: a torn one again (`…/{id}/body`) when its retry is due, else
  * `/endpoint/notice/next` while the box says one waits and there is room. */
 bool svc_notice_want_fetch(char *path, size_t cap);

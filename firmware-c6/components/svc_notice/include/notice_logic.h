@@ -23,6 +23,19 @@ void notice_pickup_query(const notice_prefs_t *p, char *out, size_t cap);
 /* The pickup's `X-Notice: <n>`: how many wait, 0 for none or anything that is not a count. */
 uint8_t notice_waiting_count(const char *header);
 
+/* ---- the notices the owner took back (0.0.24) ----
+ * The pickup's `X-Notice-Withdraw: <id>[,<id>]`: at most NOTICE_OPEN_MAX ids, comma-separated,
+ * no spaces, repeated on every pickup until each one's answer window closes. */
+#define NOTICE_WITHDRAW_BYTES (NOTICE_OPEN_MAX * (NOTICE_ID_TEXT - 1) + NOTICE_OPEN_MAX)
+typedef struct {
+    uint8_t n;
+    char id[NOTICE_OPEN_MAX][NOTICE_ID_TEXT];
+} notice_withdrawn_t;
+/* Anything that is not a whole id is skipped, so a header cut short names nothing it did not
+ * name in full; past NOTICE_OPEN_MAX the rest is ignored (the panel holds no more than that). */
+void notice_withdrawn_parse(const char *header, notice_withdrawn_t *out);
+bool notice_withdrawn_has(const notice_withdrawn_t *w, const char *id);
+
 /* ---- the box's paths ---- */
 /* `/endpoint/notice/next` */
 #define NOTICE_NEXT_PATH "/endpoint/notice/next"
