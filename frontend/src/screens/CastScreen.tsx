@@ -18,6 +18,8 @@ import { ApiError, type CastNotice, type CastTv, api, castFrameUrl } from "../ap
 import {
   type CastDraft,
   PHOTO_WORKING_MAX,
+  type Part,
+  type Rect,
   SECONDS,
   SECONDS_DEFAULT,
   SIZE_MAX,
@@ -27,6 +29,7 @@ import {
   WORDS_MAX,
   type WordsFit,
   ZOOM_MAX,
+  ZOOM_MIN,
   canTakeDown,
   draftReady,
   draftTitle,
@@ -34,22 +37,31 @@ import {
   drawFrame,
   emptyCastDraft,
   fitNote,
+  handleAt,
   outcomeLabel,
   outcomeSub,
+  partAt,
+  partScale,
+  partTurn,
+  photoRect,
+  quarterTurn,
   resultTitle,
+  scaleDraft,
   secondsLabel,
   sentSummary,
   skipReason,
+  turnDraft,
   tvWords,
   utf8Bytes,
+  wordsRect,
 } from "../cast";
 import { Sheet } from "../components/Sheet";
 import { MonitorIcon, RefreshIcon, SendIcon } from "../components/icons";
 import {
   type Photo,
+  type Point,
   TEXT_STYLES,
   type TextStyle,
-  clamp,
   clipBytes,
   workingSize,
 } from "../panelNotice";
@@ -227,7 +239,9 @@ function SendTab({
   onSent: (n: CastNotice) => void;
 }) {
   const [picked, setPicked] = useState<Set<string> | null>(null);
-  const [part, setPart] = useState<"photo" | "words">("photo");
+  const [part, setPart] = useState<Part>("photo");
+  // What is outlined on the canvas, with a handle: the last part touched, or the tab's own.
+  const [held, setHeld] = useState<Part | null>(null);
   const [fit, setFit] = useState<WordsFit | null>(null);
   const [seconds, setSeconds] = useState<number>(SECONDS_DEFAULT);
   const [sending, setSending] = useState(false);
@@ -251,7 +265,7 @@ function SendTab({
   async function onFile(file: File) {
     try {
       const photo = await loadPhoto(file);
-      setDraft((d) => ({ ...d, photo, zoom: 1, panX: 0, panY: 0 }));
+      setDraft((d) => ({ ...d, photo, zoom: 1, panX: 0, panY: 0, turn: 0 }));
       setProblem(null);
     } catch {
       setProblem(REFUSALS.bad_picture ?? null);
@@ -311,14 +325,23 @@ function SendTab({
       <div className="cast-label">On the TV · {secondsLabel(seconds)}</div>
       <div className="cast-screen-16x9" ref={wrap}>
         {width > 0 && (
-          <FrameCanvas draft={draft} cssW={width} part={part} onDraft={setDraft} onFit={setFit} />
+          <FrameCanvas
+            draft={draft}
+            cssW={width}
+            part={held}
+            onPart={(p) => {
+              setHeld(p);
+              if (p) setPart(p);
+            }}
+            onDraft={setDraft}
+            onFit={setFit}
+          />
         )}
       </div>
       {fitNote(fit, draft.size) && <p className="cast-note">{fitNote(fit, draft.size)}</p>}
       <p className="cast-note">
-        {part === "words"
-          ? "Drag the words to place them. The picture always stays under them."
-          : "Drag the photo to frame it, or pinch to zoom. It fills the screen."}
+        Touch the photo or the words to pick it up. Drag to move it; pinch and twist, or pull and
+        turn its corner, to resize and rotate it. The picture always stays under the words.
       </p>
 
       <div className="pn-tabs" role="tablist" aria-label="Photo or Words">
@@ -334,7 +357,10 @@ function SendTab({
             role="tab"
             aria-selected={part === key}
             className={part === key ? "on" : ""}
-            onClick={() => setPart(key)}
+            onClick={() => {
+              setPart(key);
+              setHeld(on ? key : null);
+            }}
           >
             {label}
             {on && part !== key && <span className="pn-tab-dot" aria-label="(added)" />}
@@ -362,9 +388,20 @@ function SendTab({
               <button
                 type="button"
                 className="pn-btn"
-                onClick={() => setDraft((d) => ({ ...d, photo: null, zoom: 1, panX: 0, panY: 0 }))}
+                onClick={() =>
+                  setDraft((d) => ({ ...d, photo: null, zoom: 1, panX: 0, panY: 0, turn: 0 }))
+                }
               >
                 Remove
+              </button>
+            )}
+            {draft.photo && (
+              <button
+                type="button"
+                className="pn-btn"
+                onClick={() => setDraft((d) => quarterTurn(d, "photo"))}
+              >
+                Turn 90°
               </button>
             )}
           </div>
@@ -376,7 +413,7 @@ function SendTab({
               </span>
               <input
                 type="range"
-                min={100}
+                min={ZOOM_MIN * 100}
                 max={ZOOM_MAX * 100}
                 step={5}
                 value={Math.round(draft.zoom * 100)}
@@ -428,6 +465,17 @@ function SendTab({
               }}
             />
           </label>
+          {draft.words.trim() && (
+            <div className="pn-row">
+              <button
+                type="button"
+                className="pn-btn"
+                onClick={() => setDraft((d) => quarterTurn(d, "words"))}
+              >
+                Turn 90°
+              </button>
+            </div>
+          )}
           <fieldset className="pn-styles" aria-label="Text style">
             {(Object.keys(TEXT_STYLES) as TextStyle[]).map((key) => {
               const st = TEXT_STYLES[key];
@@ -487,25 +535,49 @@ function SendTab({
   );
 }
 
-/** The frame on a canvas at the slot's width, redrawn on every change. A drag moves the words
- *  (Words) or pans the photo (Photo); a pinch zooms the photo. */
+/** A gesture in progress: one finger moving a part, or two fingers (or the corner handle)
+ *  resizing and turning it from where it started. `dist` and `angle` are the fingers' spread
+ *  and slant (or the handle's reach from the centre) at the start; `from` and `fromTurn` the
+ *  part's size and turn then. */
+type Gesture =
+  | { kind: "move"; part: Part }
+  | {
+      kind: "pinch" | "handle";
+      part: Part;
+      centre: Point;
+      dist: number;
+      angle: number;
+      from: number;
+      fromTurn: number;
+    };
+
+/** The handle's radius on the phone, in CSS pixels: a fingertip. */
+const HANDLE_CSS = 14;
+
+/** The frame on a canvas at the slot's width, redrawn on every change. Touching the words or
+ *  the photo picks it (the words win where they overlap, as they are drawn on top): a drag moves
+ *  it, and a pinch or a pull on its corner handle resizes it. The outline and handle are drawn
+ *  only here, never into the frame that is sent. */
 function FrameCanvas({
   draft,
   cssW,
   part,
+  onPart,
   onDraft,
   onFit,
 }: {
   draft: CastDraft;
   cssW: number;
-  part: "photo" | "words";
+  part: Part | null;
+  onPart: (p: Part | null) => void;
   onDraft: (fn: (d: CastDraft) => CastDraft) => void;
   onFit: (fit: WordsFit | null) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const cssH = (cssW * TV_H) / TV_W;
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const pinch = useRef<{ dist: number; zoom: number } | null>(null);
+  const k = TV_W / cssW;
+  const pointers = useRef(new Map<number, Point>());
+  const gesture = useRef<Gesture | null>(null);
 
   useLayoutEffect(() => {
     const canvas = ref.current;
@@ -516,42 +588,101 @@ function FrameCanvas({
     canvas.height = Math.round(cssH * dpr);
     ctx.setTransform(canvas.width / TV_W, 0, 0, canvas.height / TV_H, 0, 0);
     onFit(drawFrame(ctx, draft));
-  }, [draft, cssW, cssH, onFit]);
+    const r = rectOf(ctx, part);
+    if (r) drawPicked(ctx, r, TV_W / cssW);
+  }, [draft, cssW, cssH, onFit, part]);
 
-  function spread(): number {
+  function rectOf(ctx: CanvasRenderingContext2D | null | undefined, p: Part | null): Rect | null {
+    if (p === "photo") return photoRect(draft);
+    if (p === "words" && ctx) return wordsRect(ctx, draft);
+    return null;
+  }
+
+  /** A pointer's place on the screen, in TV pixels. */
+  function at(e: ReactPointerEvent<HTMLCanvasElement>): Point {
+    const box = e.currentTarget.getBoundingClientRect();
+    return { x: (e.clientX - box.left) * k, y: (e.clientY - box.top) * k };
+  }
+
+  /** The two fingers' spread and slant. */
+  function twoFingers(): { dist: number; angle: number } {
     const [a, b] = [...pointers.current.values()];
-    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    if (!a || !b) return { dist: 0, angle: 0 };
+    return { dist: Math.hypot(b.x - a.x, b.y - a.y), angle: Math.atan2(b.y - a.y, b.x - a.x) };
+  }
+
+  /** The handle's reach and slant from the part's centre. */
+  function fromCentre(p: Point, centre: Point): { dist: number; angle: number } {
+    return {
+      dist: Math.hypot(p.x - centre.x, p.y - centre.y),
+      angle: Math.atan2(p.y - centre.y, p.x - centre.x),
+    };
+  }
+
+  /** A resize-and-turn gesture on `target`: between two fingers (a pinch) or from the part's
+   *  centre to the handle. */
+  function grab(kind: "pinch" | "handle", target: Part, p: Point, centre: Point): Gesture {
+    return {
+      kind,
+      part: target,
+      centre,
+      ...(kind === "pinch" ? twoFingers() : fromCentre(p, centre)),
+      from: partScale(draft, target),
+      fromTurn: partTurn(draft, target),
+    };
   }
 
   function down(e: ReactPointerEvent<HTMLCanvasElement>) {
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.current.size === 2) pinch.current = { dist: spread(), zoom: draft.zoom };
+    const p = at(e);
+    pointers.current.set(e.pointerId, p);
+    const ctx = ref.current?.getContext("2d");
+    if (pointers.current.size === 2) {
+      const target = gesture.current?.part ?? part ?? (draft.photo ? "photo" : null);
+      gesture.current = target ? grab("pinch", target, p, p) : null;
+      return;
+    }
+    if (pointers.current.size > 2) return;
+    const picked = rectOf(ctx, part);
+    if (part && picked) {
+      const h = handleAt(picked);
+      if (Math.hypot(p.x - h.x, p.y - h.y) <= HANDLE_CSS * k * 1.6) {
+        const centre = { x: picked.x + picked.w / 2, y: picked.y + picked.h / 2 };
+        gesture.current = grab("handle", part, p, centre);
+        return;
+      }
+    }
+    const hit = partAt(rectOf(ctx, "words"), photoRect(draft), p, HANDLE_CSS * k);
+    onPart(hit);
+    gesture.current = hit ? { kind: "move", part: hit } : null;
   }
 
   function move(e: ReactPointerEvent<HTMLCanvasElement>) {
     const last = pointers.current.get(e.pointerId);
     if (!last) return;
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    // Two fingers only ever pinch: with no photo to zoom, they must not also drag the words
-    // by the sum of both.
-    if (pointers.current.size >= 2) {
-      const p = pinch.current;
-      if (p && draft.photo) {
-        const zoom = clamp((p.zoom * spread()) / (p.dist || 1), 1, ZOOM_MAX);
-        onDraft((d) => ({ ...d, zoom }));
-      }
+    const p = at(e);
+    pointers.current.set(e.pointerId, p);
+    const g = gesture.current;
+    if (!g) return;
+    if (g.kind !== "move") {
+      if (g.kind === "pinch" && pointers.current.size < 2) return;
+      const now = g.kind === "pinch" ? twoFingers() : fromCentre(p, g.centre);
+      const value = (g.from * now.dist) / (g.dist || 1);
+      const turn = g.fromTurn + now.angle - g.angle;
+      onDraft((d) => turnDraft(scaleDraft(d, g.part, value), g.part, turn));
       return;
     }
-    const k = TV_W / cssW;
-    const dx = (e.clientX - last.x) * k;
-    const dy = (e.clientY - last.y) * k;
-    onDraft((d) => dragDraft(d, part, dx, dy));
+    // One finger only moves: a second one down turned this into a pinch.
+    if (pointers.current.size !== 1) return;
+    const dx = p.x - last.x;
+    const dy = p.y - last.y;
+    onDraft((d) => dragDraft(d, g.part, dx, dy));
   }
 
   function up(e: ReactPointerEvent<HTMLCanvasElement>) {
     pointers.current.delete(e.pointerId);
-    if (pointers.current.size < 2) pinch.current = null;
+    // Lifting one finger of a pinch ends it: the one left doesn't jump into a drag.
+    if (pointers.current.size === 0 || gesture.current?.kind === "pinch") gesture.current = null;
   }
 
   return (
@@ -566,6 +697,30 @@ function FrameCanvas({
       onPointerCancel={up}
     />
   );
+}
+
+/** The picked part's outline and its corner handle, turned with it, sized in phone pixels
+ *  (`k` TV pixels to one) so they read the same on any screen. */
+function drawPicked(ctx: CanvasRenderingContext2D, r: Rect, k: number) {
+  ctx.save();
+  if (r.turn) {
+    ctx.translate(r.x + r.w / 2, r.y + r.h / 2);
+    ctx.rotate(r.turn);
+    ctx.translate(-(r.x + r.w / 2), -(r.y + r.h / 2));
+  }
+  ctx.lineWidth = 2 * k;
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.setLineDash?.([6 * k, 4 * k]);
+  ctx.strokeRect(r.x, r.y, r.w, r.h);
+  ctx.setLineDash?.([]);
+  ctx.beginPath();
+  ctx.arc(r.x + r.w, r.y + r.h, HANDLE_CSS * k, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = 2 * k;
+  ctx.strokeStyle = "rgba(0,0,0,0.6)";
+  ctx.stroke();
+  ctx.restore();
 }
 
 /** The slot's width, kept current as the screen turns. */

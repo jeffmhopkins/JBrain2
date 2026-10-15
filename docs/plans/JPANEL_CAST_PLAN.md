@@ -89,6 +89,9 @@ over it in the panel's four styles. The phone draws the 1920×1080 frame and sen
 (`frame_b64`); the box keeps it as drawn (letterboxed only if it is the wrong shape) and the
 sidecar casts it as a JPEG, since a PNG of a photo can run past the sidecar's body cap. The box's
 own renderer (title, text, picture) stays for the debug route and later senders such as Jerv.
+Then the owner asked to drag and scale both the text and the image directly: a touch picks
+either up, a drag moves it, a pinch-and-twist or its corner handle resizes and rotates it, and
+the photo can shrink below the screen and sit anywhere on it.
 
 **Still to do in K2:** one TV's settings (on/off for notices, quiet hours, allow waking), once
 K1's per-TV settings land.

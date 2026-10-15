@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { CastNotice, CastTv } from "./api/client";
 import {
   MEDIA_RECEIVER,
+  SIZE_MAX,
   SIZE_MIN,
   TV_H,
   TV_W,
+  ZOOM_MAX,
+  ZOOM_MIN,
   canTakeDown,
+  castPhotoPlacement,
   draftReady,
   draftTitle,
   dragDraft,
@@ -13,13 +17,22 @@ import {
   emptyCastDraft,
   fitNote,
   fitWords,
+  handleAt,
   outcomeLabel,
   outcomeSub,
+  partAt,
+  partScale,
+  partTurn,
+  photoRect,
+  quarterTurn,
   readyCount,
   resultTitle,
+  scaleDraft,
   secondsLabel,
   sentSummary,
   skipReason,
+  turnDraft,
+  turnPoint,
   tvWords,
 } from "./cast";
 
@@ -202,8 +215,44 @@ describe("the composer", () => {
     expect(moved.panY).toBe(180);
     const none = emptyCastDraft();
     expect(dragDraft(none, "photo", 10, 10)).toBe(none);
-    // Words that are empty can't be placed, so the drag pans the photo instead.
-    expect(dragDraft(d, "words", 0, -500).panY).toBe(-180);
+    // Words that are empty can't be moved, and a drag on them leaves the photo where it is.
+    expect(dragDraft(d, "words", 0, -500)).toBe(d);
+  });
+
+  it("lets a photo shrink below the screen and go anywhere on it, wholly on screen", () => {
+    const d = scaleDraft({ ...emptyCastDraft(), photo }, "photo", 0.5);
+    // Half of 1920x1440 is 960x720: 480 px of room each side, 180 above and below.
+    expect(castPhotoPlacement(photo, d)).toMatchObject({ w: 960, h: 720, x: 480, y: 180 });
+    const corner = dragDraft(d, "photo", -5000, 5000);
+    expect(castPhotoPlacement(photo, corner)).toMatchObject({ x: 0, y: 360 });
+    expect(photoRect(corner)).toEqual({ x: 0, y: 360, w: 960, h: 720 });
+    // Growing it back past the screen re-holds the pan so no gap shows at its edge.
+    const big = scaleDraft(corner, "photo", 1);
+    expect(big.panX).toBeCloseTo(0);
+    expect(big.panY).toBe(180);
+    expect(photoRect(big)).toEqual({ x: 0, y: 0, w: TV_W, h: TV_H });
+  });
+
+  it("resizes each part within its slider's range", () => {
+    const d = { ...emptyCastDraft(), photo, words: "Hi" };
+    expect(scaleDraft(d, "photo", 9).zoom).toBe(ZOOM_MAX);
+    expect(scaleDraft(d, "photo", 0.01).zoom).toBe(ZOOM_MIN);
+    expect(scaleDraft(d, "words", 1000).size).toBe(SIZE_MAX);
+    expect(scaleDraft(d, "words", 100.4).size).toBe(100);
+    expect(partScale(d, "words")).toBe(140);
+    expect(partScale(d, "photo")).toBe(1);
+    expect(scaleDraft(emptyCastDraft(), "photo", 2)).toEqual(emptyCastDraft());
+  });
+
+  it("a touch takes the words where they sit over the photo, else the photo, else nothing", () => {
+    const words = { x: 100, y: 100, w: 200, h: 100 };
+    const whole = { x: 0, y: 0, w: TV_W, h: TV_H };
+    expect(partAt(words, whole, { x: 150, y: 150 })).toBe("words");
+    expect(partAt(words, whole, { x: 500, y: 500 })).toBe("photo");
+    expect(partAt(words, null, { x: 500, y: 500 })).toBeNull();
+    // A finger's slack around the words still takes them.
+    expect(partAt(words, null, { x: 310, y: 150 }, 20)).toBe("words");
+    expect(partAt(null, null, { x: 1, y: 1 })).toBeNull();
   });
 
   it("draws the photo first and the words over it", () => {
@@ -261,5 +310,55 @@ describe("the composer", () => {
     );
     expect(fitNote({ lines: ["a"], size: 140, whole: true }, 140)).toBeNull();
     expect(fitNote(null, 140)).toBeNull();
+  });
+
+  it("turns a part, kept within a revolution and settled square near a quarter", () => {
+    const d = { ...emptyCastDraft(), photo, words: "Hi" };
+    const deg = (n: number) => (n * Math.PI) / 180;
+    expect(turnDraft(d, "photo", deg(30)).turn).toBeCloseTo(deg(30));
+    expect(turnDraft(d, "photo", deg(93)).turn).toBe(Math.PI / 2);
+    expect(turnDraft(d, "photo", deg(-2)).turn).toBe(0);
+    expect(turnDraft(d, "words", deg(400)).wordsTurn).toBeCloseTo(deg(40));
+    expect(turnDraft(d, "words", deg(-182)).wordsTurn).toBe(Math.PI);
+    expect(partTurn(turnDraft(d, "words", deg(45)), "words")).toBeCloseTo(deg(45));
+    // Nothing to turn is left alone.
+    const none = emptyCastDraft();
+    expect(turnDraft(none, "photo", 1)).toBe(none);
+    expect(turnDraft(none, "words", 1)).toBe(none);
+    // The button goes to the next quarter from the nearest one.
+    expect(quarterTurn(turnDraft(d, "photo", deg(30)), "photo").turn).toBe(Math.PI / 2);
+    expect(quarterTurn(turnDraft(d, "photo", Math.PI), "photo").turn).toBe(-Math.PI / 2);
+  });
+
+  it("a turned part is touched, and its handle found, where it is drawn", () => {
+    // A 400x100 bar on the screen's centre, turned a quarter: it now stands 100 wide, 400 tall.
+    const bar = { x: 760, y: 490, w: 400, h: 100, turn: Math.PI / 2 };
+    expect(partAt(bar, null, { x: 960, y: 700 })).toBe("words");
+    expect(partAt(bar, null, { x: 1120, y: 540 })).toBeNull();
+    const h = handleAt(bar);
+    expect(h.x).toBeCloseTo(910);
+    expect(h.y).toBeCloseTo(740);
+    expect(turnPoint({ x: 1, y: 0 }, { x: 0, y: 0 }, Math.PI / 2).y).toBeCloseTo(1);
+  });
+
+  it("draws a turned photo and turned words about their own centres", () => {
+    const calls: string[] = [];
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (_o, k) =>
+        k === "measureText"
+          ? (t: string) => ({ width: t.length * 50 })
+          : (...a: unknown[]) =>
+              calls.push(
+                `${String(k)}(${a.map((n) => Math.round(Number(n) * 100) / 100).join(",")})`,
+              ),
+      set: () => true,
+    }) as unknown as CanvasRenderingContext2D;
+    drawFrame(ctx, { ...emptyCastDraft(), photo, turn: 0.5, words: "Hi", wordsTurn: -0.25 });
+    const turns = calls.filter((c) => c.startsWith("rotate"));
+    expect(turns).toEqual(["rotate(0.5)", "rotate(-0.25)"]);
+    // Each turn is wrapped in its own save and restore, so the words don't inherit the photo's.
+    expect(calls.filter((c) => c.startsWith("save")).length).toBe(2);
+    expect(calls.filter((c) => c.startsWith("restore")).length).toBe(2);
+    expect(calls).toContain("translate(960,540)");
   });
 });

@@ -4137,9 +4137,15 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   not as somebody watching.
 - **Send** picks every TV that would take it to start with. A TV in use can still be picked,
   struck through, with a line saying it will be skipped. It composes like the panel composer
-  (owner, 2026-10-15: *"picture always under text"*): a 16:9 canvas where the photo fills the
-  screen (drag to frame, pinch or the Zoom slider) and the words sit over it, dragged into place,
-  sized by a slider, in the panel's four styles. The phone draws the frame the TV gets, so the
+  (owner, 2026-10-15: *"picture always under text"*): a 16:9 canvas with the photo under the
+  words, in the panel's four styles. Both are handled directly (owner: *"drag and move things
+  (text and image) and scale them"*): a touch picks up whichever is under the finger (the words
+  where they overlap, as they are on top), outlined with a corner handle; a drag moves it, and a
+  pinch-and-twist or a pull-and-turn of the handle resizes and rotates it (owner: *"probably need
+  rotate too"*), settling level within 5° of a quarter turn. The Zoom and Size sliders and a
+  Turn 90° button do the same by hand. The photo
+  starts filling the screen and can shrink to a fifth of that; larger than the screen it shows
+  no gap at an edge, smaller it stays wholly on it. The phone draws the frame the TV gets, so the
   canvas is exactly what lands. Words too long or too big for the screen are drawn smaller
   until every word fits, and a line under the canvas says so, so the TV never drops the end of
   a message that Sent still lists. Limits are said while typing, not refused after.
