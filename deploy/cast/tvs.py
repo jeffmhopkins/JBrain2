@@ -7,10 +7,10 @@ whenever its app, standby or input changes, and a media status whenever playback
 so the history records the owner's experiments as they happen instead of whenever
 somebody next asks.
 
-A test cast plays the box's test card on the Default Media Receiver (no registered app,
-no HTTPS origin) and quits it after a while — but only if our card is still what the TV
-is showing, so a child who picked up the remote mid-test is never interrupted by the
-quit.
+A cast — the test card, or a notice the api rendered — plays one PNG on the Default
+Media Receiver (no registered app, no HTTPS origin) and quits it after a while, but only
+if that same cast is still what the TV is showing, so a child who picked up the remote
+mid-notice is never interrupted by the quit.
 """
 
 from __future__ import annotations
@@ -48,6 +48,9 @@ class Tv:
     connected: bool = False
     found_at: float = field(default_factory=time.time)
     last_test_at: float | None = None
+    #: The cast this box last put up, until it is quit or taken down: the only one a
+    #: quit may end.
+    casting: str | None = None
 
 
 def local_address_for(host: str) -> str:
@@ -207,33 +210,74 @@ class Fleet:
         return self._get(key).cc.cast_info.host
 
     def test(self, key: str, url: str, seconds: int) -> dict[str, Any]:
-        """Re-check the gate NOW, cast the card, and quit after `seconds` if it is still
-        ours. Raises KeyError for an unknown TV and gate.Refused when the gate says no."""
+        """Re-check the gate NOW, cast the card, and quit after `seconds` if it is
+        still ours. Raises KeyError for an unknown TV and gate.Refused when the gate
+        says no."""
         tv = self._get(key)
-        seconds = gate.clamp_seconds(seconds)
+        tv.last_test_at = time.time()
+        out = self._play(tv, url, gate.clamp_seconds(seconds), TEST_TITLE, "test")
+        out.pop("cast_id")
+        return {"id": key, **out}
+
+    def cast(self, key: str, url: str, seconds: int, title: str) -> dict[str, Any]:
+        """A notice: the same gate, cast and quit as a test, under the notice's title.
+        `cast_id` names it for `stop`."""
+        out = self._play(
+            self._get(key), url, gate.clamp_notice_seconds(seconds), title, "notice"
+        )
+        return {"id": key, **out}
+
+    def stop(self, key: str, cast_id: str) -> bool:
+        """Take a cast down now, if it is still the one on the screen."""
+        return self._quit_if_ours(self._get(key), cast_id, "stop")
+
+    def _play(
+        self, tv: Tv, url: str, seconds: int, title: str, kind: str
+    ) -> dict[str, Any]:
         before = reading(tv)
         state, why = gate.verdict(before)
         if not gate.castable(state):
-            tv.history.note("test_refused", state=state, why=why)
+            tv.history.note(f"{kind}_refused", state=state, why=why)
             raise gate.Refused(state, why)
-        tv.last_test_at = time.time()
-        tv.history.note("test_cast", state_before=state, seconds=seconds, url=url)
-        tv.cc.media_controller.play_media(url, "image/png", title=TEST_TITLE)
+        cast_id = uuidlib.uuid4().hex
+        tv.history.note(
+            f"{kind}_cast",
+            state_before=state,
+            seconds=seconds,
+            url=url,
+            cast_id=cast_id,
+        )
+        tv.casting = cast_id
+        tv.cc.media_controller.play_media(url, "image/png", title=title)
         threading.Thread(
-            target=self._end_test,
-            args=(tv, seconds, state),
+            target=self._end,
+            args=(tv, seconds, cast_id, kind, state),
             daemon=True,
-            name="cast-test",
+            name=f"cast-{kind}",
         ).start()
-        return {"id": key, "state_before": state, "why_before": why, "seconds": seconds}
+        return {
+            "state_before": state,
+            "why_before": why,
+            "seconds": seconds,
+            "cast_id": cast_id,
+        }
 
-    def _end_test(self, tv: Tv, seconds: int, state_before: str) -> None:
+    def _end(
+        self, tv: Tv, seconds: int, cast_id: str, kind: str, state_before: str
+    ) -> None:
         time.sleep(seconds)
-        r = reading(tv)
-        if r.app_id == APP_MEDIA_RECEIVER and r.media_title == TEST_TITLE:
-            tv.cc.quit_app()
-            tv.history.note("test_quit", state_before=state_before)
-        else:
-            # Somebody took the TV over during the test: leave whatever they chose
-            # alone.
-            tv.history.note("test_left", app_id=r.app_id, display_name=r.display_name)
+        if not self._quit_if_ours(tv, cast_id, kind, state_before=state_before):
+            r = reading(tv)
+            # Somebody took the TV over, or a newer cast replaced this one: leave
+            # whatever is on now alone.
+            tv.history.note(
+                f"{kind}_left", app_id=r.app_id, display_name=r.display_name
+            )
+
+    def _quit_if_ours(self, tv: Tv, cast_id: str, kind: str, **extra: Any) -> bool:
+        if tv.casting != cast_id or reading(tv).app_id != APP_MEDIA_RECEIVER:
+            return False
+        tv.casting = None
+        tv.cc.quit_app()
+        tv.history.note(f"{kind}_quit", **extra)
+        return True
