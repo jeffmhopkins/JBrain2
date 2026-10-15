@@ -2,9 +2,9 @@
 // docs/mocks/jpanel-cast/index.html, "1 · PWA"). Three tabs over one box service: the TVs and
 // what each is doing, Send, and Sent. The box draws the frame and re-checks every TV at the
 // instant of casting, so what this screen shows before Send is a forecast and the result sheet
-// is the truth. Send composes like the panel composer: the photo fills the 16:9 screen, the
-// words are placed and sized over it, and the phone draws the frame the TV gets, so the
-// preview is exactly what lands.
+// is the truth. Send is a touch editor over a 16:9 canvas: Add text and Add image put a layer
+// on it, and the owner drags, pinches and twists each into place; the phone draws the frame the
+// TV gets, so the preview is exactly what lands.
 
 import {
   type PointerEvent as ReactPointerEvent,
@@ -17,46 +17,56 @@ import {
 import { ApiError, type CastNotice, type CastTv, api, castFrameUrl } from "../api/client";
 import {
   type CastDraft,
+  type Layer,
   PHOTO_WORKING_MAX,
-  type Part,
   type Rect,
   SECONDS,
   SECONDS_DEFAULT,
-  SIZE_MAX,
-  SIZE_MIN,
   TV_H,
   TV_W,
   WORDS_MAX,
   type WordsFit,
-  ZOOM_MAX,
-  ZOOM_MIN,
+  addPicture,
+  addWords,
+  canAdd,
   canTakeDown,
+  coverZoom,
   draftReady,
   draftTitle,
-  dragDraft,
   drawFrame,
   emptyCastDraft,
   fitNote,
   handleAt,
+  layerAt,
+  layerById,
+  layerRect,
+  layerScale,
+  moveLayer,
   outcomeLabel,
   outcomeSub,
-  partAt,
-  partScale,
-  partTurn,
-  photoRect,
-  quarterTurn,
+  removeLayer,
   resultTitle,
-  scaleDraft,
+  scaleLayer,
   secondsLabel,
   sentSummary,
+  setStyle,
+  setWords,
   skipReason,
-  turnDraft,
+  turnLayer,
   tvWords,
+  updateLayer,
   utf8Bytes,
-  wordsRect,
 } from "../cast";
 import { Sheet } from "../components/Sheet";
-import { MonitorIcon, RefreshIcon, SendIcon } from "../components/icons";
+import {
+  FitIcon,
+  ImageIcon,
+  MonitorIcon,
+  PencilIcon,
+  RefreshIcon,
+  SendIcon,
+  TrashIcon,
+} from "../components/icons";
 import {
   type Photo,
   type Point,
@@ -239,21 +249,27 @@ function SendTab({
   onSent: (n: CastNotice) => void;
 }) {
   const [picked, setPicked] = useState<Set<string> | null>(null);
-  const [part, setPart] = useState<Part>("photo");
-  // What is outlined on the canvas, with a handle: the last part touched, or the tab's own.
-  const [held, setHeld] = useState<Part | null>(null);
-  const [fit, setFit] = useState<WordsFit | null>(null);
+  // The layer held on the canvas, outlined with its handle, that the bar under it acts on.
+  const [held, setHeld] = useState<number | null>(null);
+  const [editing, setEditing] = useState<Editing | null>(null);
+  const [fits, setFits] = useState<Map<number, WordsFit>>(new Map());
   const [seconds, setSeconds] = useState<number>(SECONDS_DEFAULT);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const file = useRef<HTMLInputElement>(null);
+  // Whether the picture chosen next is added, or replaces the held one.
+  const replacing = useRef<number | null>(null);
   const [wrap, width] = useWidth();
 
+  const layer = layerById(draft, held);
   // Every TV that would take it is picked to start with; the owner unpicks.
   const chosen = picked ?? new Set((tvs ?? []).filter((t) => t.castable).map((t) => t.id));
   const targets = (tvs ?? []).filter((t) => chosen.has(t.id));
   const willTake = targets.filter((t) => t.castable).length;
   const skips = targets.map(skipReason).filter((r): r is string => r !== null);
   const ready = draftReady(draft) && targets.length > 0;
+  const room = canAdd(draft);
+  const note = layer?.kind === "words" ? fitNote(fits.get(layer.id), layer.size) : null;
 
   function toggle(id: string) {
     const next = new Set(chosen);
@@ -262,14 +278,46 @@ function SendTab({
     setPicked(next);
   }
 
-  async function onFile(file: File) {
+  function choosePicture(replace: number | null) {
+    replacing.current = replace;
+    file.current?.click();
+  }
+
+  async function onFile(f: File) {
     try {
-      const photo = await loadPhoto(file);
-      setDraft((d) => ({ ...d, photo, zoom: 1, panX: 0, panY: 0, turn: 0 }));
+      const photo = await loadPhoto(f);
+      const replace = replacing.current;
+      if (replace !== null) {
+        setDraft((d) =>
+          updateLayer(d, replace, (l) => (l.kind === "picture" ? { ...l, photo } : l)),
+        );
+      } else {
+        setHeld(draft.nextId);
+        setDraft((d) => addPicture(d, photo));
+      }
       setProblem(null);
     } catch {
       setProblem(REFUSALS.bad_picture ?? null);
     }
+  }
+
+  function saveWords(e: Editing) {
+    if (e.id === null) {
+      if (e.text.trim()) {
+        setHeld(draft.nextId);
+        setDraft((d) => addWords(d, e.text, e.style));
+      }
+    } else {
+      const id = e.id;
+      if (!e.text.trim()) setHeld(null);
+      setDraft((d) => setStyle(setWords(d, id, e.text), id, e.style));
+    }
+    setEditing(null);
+  }
+
+  function editWords(id: number) {
+    const l = layerById(draft, id);
+    if (l?.kind === "words") setEditing({ id, text: l.text, style: l.style });
   }
 
   async function send() {
@@ -297,6 +345,135 @@ function SendTab({
 
   return (
     <>
+      <div className="cast-stage" ref={wrap}>
+        {width > 0 && (
+          <FrameCanvas
+            draft={draft}
+            cssW={width}
+            held={held}
+            onHold={setHeld}
+            onEdit={editWords}
+            onDraft={setDraft}
+            onFits={setFits}
+          />
+        )}
+        {draft.layers.length === 0 && (
+          <p className="cast-stage-empty">Add text or a picture to start</p>
+        )}
+      </div>
+
+      <div className="cast-add">
+        <button
+          type="button"
+          className="cast-add-btn"
+          disabled={!room}
+          onClick={() => setEditing({ id: null, text: "", style: "outline" })}
+        >
+          <span className="cast-add-aa" aria-hidden="true">
+            Aa
+          </span>
+          Add text
+        </button>
+        <button
+          type="button"
+          className="cast-add-btn"
+          disabled={!room}
+          onClick={() => choosePicture(null)}
+        >
+          <ImageIcon size={20} />
+          Add image
+        </button>
+        <input
+          ref={file}
+          type="file"
+          accept="image/*"
+          hidden
+          data-testid="cast-file"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (f) void onFile(f);
+          }}
+        />
+      </div>
+
+      {layer && (
+        <fieldset
+          className="cast-layer-bar"
+          aria-label={layer.kind === "words" ? "Selected text" : "Selected image"}
+        >
+          {layer.kind === "words" ? (
+            <>
+              <button type="button" className="cast-chip" onClick={() => editWords(layer.id)}>
+                <PencilIcon size={16} /> Edit
+              </button>
+              {(Object.keys(TEXT_STYLES) as TextStyle[]).map((key) => {
+                const st = TEXT_STYLES[key];
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`cast-swatch${layer.style === key ? " on" : ""}`}
+                    aria-label={st.label}
+                    aria-pressed={layer.style === key}
+                    onClick={() => setDraft((d) => setStyle(d, layer.id, key))}
+                    style={{
+                      color: st.fill,
+                      background: st.plate ?? "#3a4a5c",
+                      WebkitTextStroke: st.stroke ? `1px ${st.stroke}` : undefined,
+                    }}
+                  >
+                    Aa
+                  </button>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              <button type="button" className="cast-chip" onClick={() => choosePicture(layer.id)}>
+                <ImageIcon size={16} /> Replace
+              </button>
+              <button
+                type="button"
+                className="cast-chip"
+                onClick={() =>
+                  setDraft((d) =>
+                    updateLayer(d, layer.id, (l) =>
+                      l.kind === "picture"
+                        ? { ...l, zoom: coverZoom(l.photo), x: TV_W / 2, y: TV_H / 2, turn: 0 }
+                        : l,
+                    ),
+                  )
+                }
+              >
+                <FitIcon size={16} /> Fill screen
+              </button>
+            </>
+          )}
+          <button
+            type="button"
+            className="cast-chip cast-chip-danger"
+            aria-label="Delete"
+            onClick={() => {
+              setDraft((d) => removeLayer(d, layer.id));
+              setHeld(null);
+            }}
+          >
+            <TrashIcon size={18} />
+          </button>
+        </fieldset>
+      )}
+      {note && <p className="cast-note">{note}</p>}
+      {draft.layers.length > 0 && (
+        <p className="cast-note">
+          {layer
+            ? "Drag to move it. Pinch to resize, twist to rotate, or pull its corner."
+            : "Tap something on the screen to move, resize or rotate it."}
+          {layer?.kind === "words" ? " Double-tap to change the words." : ""}
+        </p>
+      )}
+      {!room && <p className="cast-note">That's as many as one notice holds.</p>}
+
       <div className="cast-label">To</div>
       {tvs === null ? (
         <p className="muted">Looking for TVs…</p>
@@ -322,200 +499,20 @@ function SendTab({
         </p>
       ))}
 
-      <div className="cast-label">On the TV · {secondsLabel(seconds)}</div>
-      <div className="cast-screen-16x9" ref={wrap}>
-        {width > 0 && (
-          <FrameCanvas
-            draft={draft}
-            cssW={width}
-            part={held}
-            onPart={(p) => {
-              setHeld(p);
-              if (p) setPart(p);
-            }}
-            onDraft={setDraft}
-            onFit={setFit}
-          />
-        )}
-      </div>
-      {fitNote(fit, draft.size) && <p className="cast-note">{fitNote(fit, draft.size)}</p>}
-      <p className="cast-note">
-        Touch the photo or the words to pick it up. Drag to move it; pinch and twist, or pull and
-        turn its corner, to resize and rotate it. The picture always stays under the words.
-      </p>
-
-      <div className="pn-tabs" role="tablist" aria-label="Photo or Words">
-        {(
-          [
-            ["photo", "Photo", draft.photo !== null],
-            ["words", "Words", draft.words.trim() !== ""],
-          ] as const
-        ).map(([key, label, on]) => (
+      <div className="cast-label">On screen for</div>
+      <fieldset className="cast-targets" aria-label="On screen for">
+        {SECONDS.map((s) => (
           <button
-            key={key}
+            key={s}
             type="button"
-            role="tab"
-            aria-selected={part === key}
-            className={part === key ? "on" : ""}
-            onClick={() => {
-              setPart(key);
-              setHeld(on ? key : null);
-            }}
+            className={`cast-target${seconds === s ? " on" : ""}`}
+            aria-pressed={seconds === s}
+            onClick={() => setSeconds(s)}
           >
-            {label}
-            {on && part !== key && <span className="pn-tab-dot" aria-label="(added)" />}
+            {secondsLabel(s)}
           </button>
         ))}
-      </div>
-
-      {part === "photo" && (
-        <div className="pn-panel">
-          <div className="pn-row">
-            <label className="pn-btn">
-              {draft.photo ? "Choose another" : "Choose photo"}
-              <input
-                type="file"
-                accept="image/*"
-                data-testid="cast-file"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (f) void onFile(f);
-                }}
-              />
-            </label>
-            {draft.photo && (
-              <button
-                type="button"
-                className="pn-btn"
-                onClick={() =>
-                  setDraft((d) => ({ ...d, photo: null, zoom: 1, panX: 0, panY: 0, turn: 0 }))
-                }
-              >
-                Remove
-              </button>
-            )}
-            {draft.photo && (
-              <button
-                type="button"
-                className="pn-btn"
-                onClick={() => setDraft((d) => quarterTurn(d, "photo"))}
-              >
-                Turn 90°
-              </button>
-            )}
-          </div>
-          {draft.photo ? (
-            <label className="pn-field">
-              <span className="pn-field-head">
-                <span>Zoom</span>
-                <strong>{draft.zoom.toFixed(1)}×</strong>
-              </span>
-              <input
-                type="range"
-                min={ZOOM_MIN * 100}
-                max={ZOOM_MAX * 100}
-                step={5}
-                value={Math.round(draft.zoom * 100)}
-                onChange={(e) => {
-                  const zoom = Number(e.target.value) / 100;
-                  setDraft((d) => ({ ...d, zoom }));
-                }}
-              />
-            </label>
-          ) : (
-            <span className="pn-note">A photo is optional. Words alone go on a dark screen.</span>
-          )}
-        </div>
-      )}
-
-      {part === "words" && (
-        <div className="pn-panel">
-          <label className="pn-field">
-            <span className="pn-field-head">
-              <span>Words on the picture</span>
-              <span className="pn-count">
-                {utf8Bytes(draft.words)} / {WORDS_MAX}
-              </span>
-            </span>
-            <input
-              type="text"
-              value={draft.words}
-              placeholder="Dinner's ready"
-              onChange={(e) => {
-                const words = clipBytes(e.target.value, WORDS_MAX);
-                setDraft((d) => ({ ...d, words }));
-              }}
-            />
-          </label>
-          <label className="pn-field">
-            <span className="pn-field-head">
-              <span>Size</span>
-              <strong>{draft.size} px on the TV</strong>
-            </span>
-            <input
-              type="range"
-              min={SIZE_MIN}
-              max={SIZE_MAX}
-              step={4}
-              value={draft.size}
-              onChange={(e) => {
-                const size = Number(e.target.value);
-                setDraft((d) => ({ ...d, size }));
-              }}
-            />
-          </label>
-          {draft.words.trim() && (
-            <div className="pn-row">
-              <button
-                type="button"
-                className="pn-btn"
-                onClick={() => setDraft((d) => quarterTurn(d, "words"))}
-              >
-                Turn 90°
-              </button>
-            </div>
-          )}
-          <fieldset className="pn-styles" aria-label="Text style">
-            {(Object.keys(TEXT_STYLES) as TextStyle[]).map((key) => {
-              const st = TEXT_STYLES[key];
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={draft.style === key}
-                  className={draft.style === key ? "on" : ""}
-                  onClick={() => setDraft((d) => ({ ...d, style: key }))}
-                >
-                  <span
-                    className="pn-style-swatch"
-                    style={{
-                      color: st.fill,
-                      background: st.plate ?? "#3a4a5c",
-                      WebkitTextStroke: st.stroke ? `1px ${st.stroke}` : undefined,
-                    }}
-                    aria-hidden="true"
-                  >
-                    Aa
-                  </span>
-                  <span>{st.label}</span>
-                </button>
-              );
-            })}
-          </fieldset>
-        </div>
-      )}
-
-      <label className="cast-seconds">
-        <span>On screen for</span>
-        <select value={seconds} onChange={(e) => setSeconds(Number(e.target.value))}>
-          {SECONDS.map((s) => (
-            <option key={s} value={s}>
-              {secondsLabel(s)}
-            </option>
-          ))}
-        </select>
-      </label>
+      </fieldset>
 
       {problem && <p className="cast-error">{problem}</p>}
       <button
@@ -531,19 +528,108 @@ function SendTab({
             ? `Cast to ${tvCount(targets.length)}`
             : `Cast to ${willTake} of ${tvCount(targets.length)}`}
       </button>
+
+      {editing && (
+        <WordsSheet editing={editing} onSave={saveWords} onClose={() => setEditing(null)} />
+      )}
     </>
   );
 }
 
-/** A gesture in progress: one finger moving a part, or two fingers (or the corner handle)
- *  resizing and turning it from where it started. `dist` and `angle` are the fingers' spread
- *  and slant (or the handle's reach from the centre) at the start; `from` and `fromTurn` the
- *  part's size and turn then. */
+/** Words being written: new (`id` null) or a layer's, with the style they'll be drawn in. */
+interface Editing {
+  id: number | null;
+  text: string;
+  style: TextStyle;
+}
+
+/** Writing the words, in a sheet so the phone's keyboard has the room: the field takes focus at
+ *  once, and Enter or Done puts them on the screen. */
+function WordsSheet({
+  editing,
+  onSave,
+  onClose,
+}: {
+  editing: Editing;
+  onSave: (e: Editing) => void;
+  onClose: () => void;
+}) {
+  const [text, setText] = useState(editing.text);
+  const [style, setStyle] = useState<TextStyle>(editing.style);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+  }, []);
+  const save = () => onSave({ ...editing, text, style });
+  return (
+    <Sheet title={editing.id === null ? "Add text" : "Edit text"} onClose={onClose}>
+      <form
+        className="cast-words-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          save();
+        }}
+      >
+        <label className="cast-field">
+          <span className="pn-field-head">
+            <span>Words</span>
+            <span className="pn-count">
+              {utf8Bytes(text)} / {WORDS_MAX}
+            </span>
+          </span>
+          <input
+            ref={input}
+            type="text"
+            value={text}
+            placeholder="Dinner's ready"
+            enterKeyHint="done"
+            onChange={(e) => setText(clipBytes(e.target.value, WORDS_MAX))}
+          />
+        </label>
+        <fieldset className="pn-styles" aria-label="Text style">
+          {(Object.keys(TEXT_STYLES) as TextStyle[]).map((key) => {
+            const st = TEXT_STYLES[key];
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={style === key}
+                className={style === key ? "on" : ""}
+                onClick={() => setStyle(key)}
+              >
+                <span
+                  className="pn-style-swatch"
+                  style={{
+                    color: st.fill,
+                    background: st.plate ?? "#3a4a5c",
+                    WebkitTextStroke: st.stroke ? `1px ${st.stroke}` : undefined,
+                  }}
+                  aria-hidden="true"
+                >
+                  Aa
+                </span>
+                <span>{st.label}</span>
+              </button>
+            );
+          })}
+        </fieldset>
+        <button type="submit" className="cast-primary">
+          {editing.id === null ? "Add to screen" : "Done"}
+        </button>
+      </form>
+    </Sheet>
+  );
+}
+
+/** A gesture in progress on one layer: one finger moving it, or two fingers (or one on the
+ *  corner handle) resizing and turning it from where it started. `dist` and `angle` are the
+ *  fingers' spread and slant (or the handle's reach from the centre) at the start; `from` and
+ *  `fromTurn` the layer's size and turn then. */
 type Gesture =
-  | { kind: "move"; part: Part }
+  | { kind: "move"; id: number }
   | {
       kind: "pinch" | "handle";
-      part: Part;
+      id: number;
       centre: Point;
       dist: number;
       angle: number;
@@ -553,31 +639,36 @@ type Gesture =
 
 /** The handle's radius on the phone, in CSS pixels: a fingertip. */
 const HANDLE_CSS = 14;
+/** Two taps on the same words within this are a double-tap: open them to edit. */
+const DOUBLE_TAP_MS = 350;
 
-/** The frame on a canvas at the slot's width, redrawn on every change. Touching the words or
- *  the photo picks it (the words win where they overlap, as they are drawn on top): a drag moves
- *  it, and a pinch or a pull on its corner handle resizes it. The outline and handle are drawn
- *  only here, never into the frame that is sent. */
+/** The frame on a canvas at the slot's width, redrawn on every change. A touch picks up the
+ *  topmost layer under the finger (words over pictures): a drag moves it, and a pinch-and-twist
+ *  anywhere on the canvas, or a pull on its corner handle, resizes and turns it. The outline and
+ *  handle are drawn only here, never into the frame that is sent. */
 function FrameCanvas({
   draft,
   cssW,
-  part,
-  onPart,
+  held,
+  onHold,
+  onEdit,
   onDraft,
-  onFit,
+  onFits,
 }: {
   draft: CastDraft;
   cssW: number;
-  part: Part | null;
-  onPart: (p: Part | null) => void;
+  held: number | null;
+  onHold: (id: number | null) => void;
+  onEdit: (id: number) => void;
   onDraft: (fn: (d: CastDraft) => CastDraft) => void;
-  onFit: (fit: WordsFit | null) => void;
+  onFits: (fits: Map<number, WordsFit>) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const cssH = (cssW * TV_H) / TV_W;
   const k = TV_W / cssW;
   const pointers = useRef(new Map<number, Point>());
   const gesture = useRef<Gesture | null>(null);
+  const lastTap = useRef<{ id: number; at: number } | null>(null);
 
   useLayoutEffect(() => {
     const canvas = ref.current;
@@ -587,15 +678,14 @@ function FrameCanvas({
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     ctx.setTransform(canvas.width / TV_W, 0, 0, canvas.height / TV_H, 0, 0);
-    onFit(drawFrame(ctx, draft));
-    const r = rectOf(ctx, part);
+    onFits(drawFrame(ctx, draft));
+    const l = layerById(draft, held);
+    const r = l && layerRect(ctx, l);
     if (r) drawPicked(ctx, r, TV_W / cssW);
-  }, [draft, cssW, cssH, onFit, part]);
+  }, [draft, cssW, cssH, onFits, held]);
 
-  function rectOf(ctx: CanvasRenderingContext2D | null | undefined, p: Part | null): Rect | null {
-    if (p === "photo") return photoRect(draft);
-    if (p === "words" && ctx) return wordsRect(ctx, draft);
-    return null;
+  function ctx(): CanvasRenderingContext2D | null {
+    return ref.current?.getContext("2d") ?? null;
   }
 
   /** A pointer's place on the screen, in TV pixels. */
@@ -611,7 +701,7 @@ function FrameCanvas({
     return { dist: Math.hypot(b.x - a.x, b.y - a.y), angle: Math.atan2(b.y - a.y, b.x - a.x) };
   }
 
-  /** The handle's reach and slant from the part's centre. */
+  /** The handle's reach and slant from the layer's centre. */
   function fromCentre(p: Point, centre: Point): { dist: number; angle: number } {
     return {
       dist: Math.hypot(p.x - centre.x, p.y - centre.y),
@@ -619,16 +709,15 @@ function FrameCanvas({
     };
   }
 
-  /** A resize-and-turn gesture on `target`: between two fingers (a pinch) or from the part's
-   *  centre to the handle. */
-  function grab(kind: "pinch" | "handle", target: Part, p: Point, centre: Point): Gesture {
+  function grab(kind: "pinch" | "handle", l: Layer, p: Point): Gesture {
+    const centre = { x: l.x, y: l.y };
     return {
       kind,
-      part: target,
+      id: l.id,
       centre,
       ...(kind === "pinch" ? twoFingers() : fromCentre(p, centre)),
-      from: partScale(draft, target),
-      fromTurn: partTurn(draft, target),
+      from: layerScale(l),
+      fromTurn: l.turn,
     };
   }
 
@@ -636,25 +725,42 @@ function FrameCanvas({
     e.currentTarget.setPointerCapture?.(e.pointerId);
     const p = at(e);
     pointers.current.set(e.pointerId, p);
-    const ctx = ref.current?.getContext("2d");
+    const c = ctx();
     if (pointers.current.size === 2) {
-      const target = gesture.current?.part ?? part ?? (draft.photo ? "photo" : null);
-      gesture.current = target ? grab("pinch", target, p, p) : null;
+      // Two fingers anywhere work the layer in hand: a small one is hard to land both on.
+      const l = layerById(draft, gesture.current?.id ?? held);
+      gesture.current = l ? grab("pinch", l, p) : null;
+      if (l) onHold(l.id);
       return;
     }
-    if (pointers.current.size > 2) return;
-    const picked = rectOf(ctx, part);
-    if (part && picked) {
-      const h = handleAt(picked);
+    if (pointers.current.size > 2 || !c) return;
+    const l = layerById(draft, held);
+    const r = l && layerRect(c, l);
+    if (l && r) {
+      const h = handleAt(r);
       if (Math.hypot(p.x - h.x, p.y - h.y) <= HANDLE_CSS * k * 1.6) {
-        const centre = { x: picked.x + picked.w / 2, y: picked.y + picked.h / 2 };
-        gesture.current = grab("handle", part, p, centre);
+        gesture.current = grab("handle", l, p);
         return;
       }
     }
-    const hit = partAt(rectOf(ctx, "words"), photoRect(draft), p, HANDLE_CSS * k);
-    onPart(hit);
-    gesture.current = hit ? { kind: "move", part: hit } : null;
+    const hit = layerAt(c, draft, p, HANDLE_CSS * k);
+    onHold(hit);
+    gesture.current = hit === null ? null : { kind: "move", id: hit };
+    const now = e.timeStamp || Date.now();
+    const words = layerById(draft, hit)?.kind === "words";
+    if (
+      hit !== null &&
+      words &&
+      lastTap.current?.id === hit &&
+      now - lastTap.current.at < DOUBLE_TAP_MS
+    ) {
+      lastTap.current = null;
+      gesture.current = null;
+      pointers.current.clear();
+      onEdit(hit);
+      return;
+    }
+    lastTap.current = hit === null ? null : { id: hit, at: now };
   }
 
   function move(e: ReactPointerEvent<HTMLCanvasElement>) {
@@ -669,14 +775,15 @@ function FrameCanvas({
       const now = g.kind === "pinch" ? twoFingers() : fromCentre(p, g.centre);
       const value = (g.from * now.dist) / (g.dist || 1);
       const turn = g.fromTurn + now.angle - g.angle;
-      onDraft((d) => turnDraft(scaleDraft(d, g.part, value), g.part, turn));
+      onDraft((d) => turnLayer(scaleLayer(d, g.id, value), g.id, turn));
       return;
     }
     // One finger only moves: a second one down turned this into a pinch.
     if (pointers.current.size !== 1) return;
     const dx = p.x - last.x;
     const dy = p.y - last.y;
-    onDraft((d) => dragDraft(d, g.part, dx, dy));
+    if (Math.hypot(dx, dy) > 0) lastTap.current = null;
+    onDraft((d) => moveLayer(d, g.id, dx, dy));
   }
 
   function up(e: ReactPointerEvent<HTMLCanvasElement>) {
@@ -699,7 +806,7 @@ function FrameCanvas({
   );
 }
 
-/** The picked part's outline and its corner handle, turned with it, sized in phone pixels
+/** The held layer's outline and its corner handle, turned with it, sized in phone pixels
  *  (`k` TV pixels to one) so they read the same on any screen. */
 function drawPicked(ctx: CanvasRenderingContext2D, r: Rect, k: number) {
   ctx.save();

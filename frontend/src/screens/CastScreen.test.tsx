@@ -55,6 +55,8 @@ function sent(over: Partial<CastNotice> = {}): CastNotice {
 const drawn: string[] = [];
 const drawnAt: number[][] = [];
 const turned: number[] = [];
+/** The font size each line was drawn at. */
+const measuredAt: number[] = [];
 function fakeCanvas() {
   let px = 10;
   const ctx = new Proxy(
@@ -63,6 +65,7 @@ function fakeCanvas() {
       rotate: (a: number) => turned.push(a),
       fillText: (t: string, x: number, y: number) => {
         drawn.push(t);
+        measuredAt.push(px);
         drawnAt.push([x, y]);
       },
     } as Record<string, unknown>,
@@ -86,12 +89,24 @@ beforeEach(() => {
   drawn.length = 0;
   drawnAt.length = 0;
   turned.length = 0;
+  measuredAt.length = 0;
   vi.spyOn(api, "castTvs").mockResolvedValue({ tvs: TVS });
   fakeCanvas();
 });
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/** Open Send and put words on the screen the way the owner does: Add text, type, add. */
+async function addText(words: string) {
+  if (!screen.queryByRole("button", { name: "Add text" })) {
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+  }
+  fireEvent.click(screen.getByRole("button", { name: "Add text" }));
+  fireEvent.change(screen.getByLabelText(/^Words/), { target: { value: words } });
+  fireEvent.click(screen.getByRole("button", { name: "Add to screen" }));
+}
 
 describe("Cast", () => {
   it("lists each TV with what it is doing, in words", async () => {
@@ -128,13 +143,11 @@ describe("Cast", () => {
     const cast = screen.getByRole("button", { name: /Cast to 2 TVs/ });
     expect(cast).toBeDisabled();
 
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    fireEvent.change(screen.getByLabelText(/Words on the picture/), {
-      target: { value: "Dinner's ready" },
-    });
-    // The words are drawn over the picture on the phone, as the TV will get them.
-    expect(screen.getByLabelText("What the TV will show")).toBeInTheDocument();
+    await addText("Dinner's ready");
+    // The words are drawn on the phone, as the TV will get them, and held to be placed.
     expect(drawn).toContain("Dinner's ready");
+    expect(screen.getByRole("group", { name: "Selected text" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "1 min" }));
 
     // Picking a TV that is in use says so before sending.
     fireEvent.click(picks.getByRole("button", { name: /Twins room/ }));
@@ -148,7 +161,7 @@ describe("Cast", () => {
       tv_ids: ["a", "b", "c"],
       title: "Dinner's ready",
       frame_b64: "RlJBTUU=",
-      seconds: 30,
+      seconds: 60,
     });
     const sheet = within(screen.getByRole("dialog"));
     expect(sheet.getByText("On screen")).toBeInTheDocument();
@@ -160,10 +173,7 @@ describe("Cast", () => {
       refused: { status: 415, reason: "bad_picture" },
     });
     render(<CastScreen />);
-    await screen.findByText("3 found on the network");
-    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Look" } });
+    await addText("Look");
     fireEvent.click(screen.getByRole("button", { name: /Cast to 2 TVs/ }));
     expect(await screen.findByText("That picture couldn't be read.")).toBeInTheDocument();
   });
@@ -171,59 +181,62 @@ describe("Cast", () => {
   it("says when the box can't reach the TVs to send", async () => {
     vi.spyOn(api, "castSend").mockRejectedValue(new ApiError(503, "cast sidecar unreachable"));
     render(<CastScreen />);
-    await screen.findByText("3 found on the network");
-    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Look" } });
+    await addText("Look");
     fireEvent.click(screen.getByRole("button", { name: /Cast to 2 TVs/ }));
     expect(await screen.findByText("The box can't reach the TVs right now.")).toBeInTheDocument();
   });
 
-  it("needs a photo or words before it can cast, and keeps words to what the box takes", async () => {
+  it("needs something on the screen before it can cast, and keeps words to what the box takes", async () => {
     render(<CastScreen />);
     await screen.findByText("3 found on the network");
     fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
     expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeDisabled();
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    const words = screen.getByLabelText(/Words on the picture/) as HTMLInputElement;
+    expect(screen.getByText("Add text or a picture to start")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Add text" }));
+    const words = screen.getByLabelText(/^Words/) as HTMLInputElement;
     fireEvent.change(words, { target: { value: "x".repeat(200) } });
     expect(words.value).toHaveLength(120);
+    fireEvent.click(screen.getByRole("button", { name: "Add to screen" }));
     expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeEnabled();
+  });
+
+  it("adding nothing in the words sheet adds nothing", async () => {
+    render(<CastScreen />);
+    await addText("   ");
+    expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeDisabled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("shrinks words that would run off the screen, and says so", async () => {
     render(<CastScreen />);
-    await screen.findByText("3 found on the network");
-    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    const words = screen.getByLabelText(/Words on the picture/);
-    fireEvent.change(words, { target: { value: "Dinner" } });
+    await addText("Dinner");
     expect(screen.queryByText(/so every word fits/)).toBeNull();
-    fireEvent.change(words, { target: { value: "word ".repeat(24).trim() } });
+    fireEvent.click(screen.getByRole("button", { name: /Edit/ }));
+    fireEvent.change(screen.getByLabelText(/^Words/), {
+      target: { value: "word ".repeat(24).trim() },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     expect(await screen.findByText(/^Shrunk to \d+ px so every word fits/)).toBeInTheDocument();
     expect(drawn.slice(-4).join(" ").split(" ").filter(Boolean)).toHaveLength(24);
   });
 
-  it("picks the words up to move them, and pinches or pulls their corner to resize them", async () => {
+  it("drags the words to move them, and pinches or pulls their corner to resize them", async () => {
     render(<CastScreen />);
-    await screen.findByText("3 found on the network");
-    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
+    await addText("Hi");
     const canvas = screen.getByLabelText("What the TV will show");
-    const size = () => screen.getByText(/px on the TV$/).textContent;
     // The canvas is 320 CSS px wide here: 6 TV px to one, so the words sit at (160, 90).
     fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 160, clientY: 90 });
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 170, clientY: 90 });
     fireEvent.pointerUp(canvas, { pointerId: 1 });
     expect(drawnAt.at(-1)?.[0]).toBe(1020);
-    expect(size()).toBe("140 px on the TV");
+    const width = () => measuredAt.at(-1);
+    expect(width()).toBe(140);
 
     // Two fingers pinch: the words grow with the spread and don't also move.
-    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 170, clientY: 90 });
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 170, clientY: 90, timeStamp: 1000 });
     fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 190, clientY: 90 });
     fireEvent.pointerMove(canvas, { pointerId: 2, clientX: 200, clientY: 90 });
-    expect(size()).toBe("210 px on the TV");
+    expect(width()).toBe(210);
     expect(drawnAt.at(-1)?.[0]).toBe(1020);
     // Lifting one finger ends the pinch: the one left doesn't jump into a drag.
     fireEvent.pointerUp(canvas, { pointerId: 2 });
@@ -236,16 +249,13 @@ describe("Cast", () => {
     fireEvent.pointerDown(canvas, { pointerId: 3, clientX: 198.7, clientY: 113.8 });
     fireEvent.pointerMove(canvas, { pointerId: 3, clientX: 227.4, clientY: 137.6 });
     fireEvent.pointerUp(canvas, { pointerId: 3 });
-    expect(Number(size()?.split(" ")[0])).toBeGreaterThan(300);
+    expect(width()).toBeGreaterThan(300);
     expect(drawnAt.at(-1)?.[0]).toBe(1020);
   });
 
   it("a twist of two fingers turns the words, settling square near a quarter turn", async () => {
     render(<CastScreen />);
-    await screen.findByText("3 found on the network");
-    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
+    await addText("Hi");
     const canvas = screen.getByLabelText("What the TV will show");
     fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 160, clientY: 90 });
     fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 180, clientY: 90 });
@@ -256,7 +266,7 @@ describe("Cast", () => {
       clientY: 90 + 20 * Math.sin(Math.PI / 6),
     });
     expect(turned.at(-1)).toBeCloseTo(Math.PI / 6);
-    expect(screen.getByText(/px on the TV$/)).toHaveTextContent("140 px on the TV");
+    expect(measuredAt.at(-1)).toBe(140);
     // 87 degrees settles at 90.
     const a = (87 * Math.PI) / 180;
     fireEvent.pointerMove(canvas, {
@@ -265,35 +275,49 @@ describe("Cast", () => {
       clientY: 90 + 20 * Math.sin(a),
     });
     expect(turned.at(-1)).toBe(Math.PI / 2);
-    fireEvent.pointerUp(canvas, { pointerId: 2 });
-    fireEvent.pointerUp(canvas, { pointerId: 1 });
-    // Turn 90° goes on to the next quarter.
-    fireEvent.click(screen.getByRole("button", { name: "Turn 90°" }));
-    expect(turned.at(-1)).toBe(Math.PI);
   });
 
-  it("touching the sheet away from the words lets go of them", async () => {
+  it("touching the screen away from everything lets go, and a drag there moves nothing", async () => {
     render(<CastScreen />);
-    await screen.findByText("3 found on the network");
-    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
+    await addText("Hi");
     const canvas = screen.getByLabelText("What the TV will show");
     fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
     fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 60, clientY: 40 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
     expect(drawnAt.at(-1)).toEqual([960, 540]);
+    expect(screen.queryByRole("group", { name: "Selected text" })).toBeNull();
+    expect(screen.getByText(/Tap something on the screen/)).toBeInTheDocument();
+  });
+
+  it("a double-tap on the words opens them to edit; a style and Delete act on the held one", async () => {
+    render(<CastScreen />);
+    await addText("Hi");
+    const canvas = screen.getByLabelText("What the TV will show");
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 160, clientY: 90, timeStamp: 100 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 160, clientY: 90, timeStamp: 300 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Words/)).toHaveValue("Hi");
+    fireEvent.change(screen.getByLabelText(/^Words/), { target: { value: "Bye" } });
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(drawn.at(-1)).toBe("Bye");
+
+    const bar = within(screen.getByRole("group", { name: "Selected text" }));
+    fireEvent.click(bar.getByRole("button", { name: "Yellow" }));
+    expect(bar.getByRole("button", { name: "Yellow" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(bar.getByRole("button", { name: "Delete" }));
+    expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeDisabled();
   });
 
   it("keeps the draft while the owner looks at the TVs", async () => {
     render(<CastScreen />);
-    await screen.findByText("3 found on the network");
-    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
+    await addText("Hi");
     fireEvent.click(screen.getByRole("button", { name: "TVs" }));
+    drawn.length = 0;
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
-    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
-    expect(screen.getByLabelText(/Words on the picture/)).toHaveValue("Hi");
+    expect(drawn).toContain("Hi");
+    expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeEnabled();
   });
 
   it("lists what was sent and takes one down from its sheet", async () => {

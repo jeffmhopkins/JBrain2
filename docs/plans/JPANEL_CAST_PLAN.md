@@ -91,7 +91,9 @@ sidecar casts it as a JPEG, since a PNG of a photo can run past the sidecar's bo
 own renderer (title, text, picture) stays for the debug route and later senders such as Jerv.
 Then the owner asked to drag and scale both the text and the image directly: a touch picks
 either up, a drag moves it, a pinch-and-twist or its corner handle resizes and rotates it, and
-the photo can shrink below the screen and sit anywhere on it.
+the photo can shrink below the screen and sit anywhere on it. On the phone that still read as a
+form (owner: "This is awful"), so Send became a touch editor: Add text and Add image put layers on
+the canvas, each placed with drag, pinch and twist, with no tabs or sliders.
 
 **Still to do in K2:** one TV's settings (on/off for notices, quiet hours, allow waking), once
 K1's per-TV settings land.
