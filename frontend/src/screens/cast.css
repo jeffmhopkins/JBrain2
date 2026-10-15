@@ -1,0 +1,330 @@
+/* Cast — notices on the house's TVs (CastScreen.tsx; mock docs/mocks/jpanel-cast). Steel, like
+   jpanel, its sibling. A state is always a word with its dot, never the dot alone. */
+
+.cast-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+.cast-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: var(--fs-secondary);
+}
+.cast-label {
+  margin-top: 8px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.cast-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.cast-tv,
+.cast-sent,
+.cast-res {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 14px;
+}
+.cast-tv + .cast-tv,
+.cast-sent + .cast-sent {
+  border-top: 1px solid var(--border);
+}
+.cast-sent {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+}
+.cast-tv-ic {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  flex: none;
+}
+.cast-tv-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cast-tv-name {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cast-tv-sub {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.cast-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  flex: none;
+}
+.cast-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex: none;
+}
+.cast-ready .cast-dot,
+.cast-dot.cast-ready {
+  background: var(--green);
+}
+.cast-off .cast-dot,
+.cast-dot.cast-off {
+  background: var(--steel);
+}
+.cast-busy .cast-dot,
+.cast-dot.cast-busy {
+  background: var(--amber);
+}
+.cast-rules p {
+  margin: 0;
+  padding: 12px 14px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.cast-rules p + p {
+  border-top: 1px solid var(--border);
+}
+.cast-rules b {
+  color: var(--text);
+  font-weight: 600;
+}
+.cast-targets {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cast-target {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+.cast-target.on {
+  background: var(--steel-tint);
+  color: var(--text);
+  border-color: var(--steel);
+}
+.cast-target.on.busy {
+  text-decoration: line-through;
+}
+.cast-note {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.cast-error {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--danger-text);
+}
+.cast-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.cast-field input,
+.cast-field textarea,
+.cast-seconds select {
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 10px 12px;
+  min-height: 44px;
+}
+.cast-field textarea {
+  resize: vertical;
+}
+.cast-attach {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.cast-seconds {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.cast-thumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+}
+.cast-thumb img {
+  width: 44px;
+  height: 44px;
+  object-fit: cover;
+  border-radius: 8px;
+}
+.cast-thumb-name {
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The TV frame's own near-black (cast/frame.py), in both themes: a picture of a dark
+   screen, like the panel composer's glass (DESIGN.md "Cast"). */
+.cast-screen-16x9 {
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-card);
+  border: 1px solid var(--border);
+  background: #0c0d10;
+  overflow: hidden;
+}
+.cast-screen-16x9 img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cast-mini {
+  width: 64px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #0c0d10;
+  flex: none;
+}
+.cast-ghost,
+.cast-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  background: transparent;
+  border: 0;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+}
+.cast-icon-btn {
+  min-width: 44px;
+  justify-content: center;
+  padding: 0;
+}
+.cast-primary,
+.cast-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 20px;
+  border-radius: var(--r-input);
+  font: inherit;
+  font-weight: 600;
+}
+.cast-primary {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+  border: 1px solid var(--steel);
+}
+.cast-primary:disabled {
+  opacity: 0.5;
+}
+.cast-fab {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  z-index: 2;
+  box-shadow: var(--shadow-card);
+}
+.cast-danger {
+  width: 100%;
+  margin-top: 12px;
+  background: var(--rose-tint);
+  color: var(--rose);
+  border: 1px solid transparent;
+}
+.cast-lead {
+  margin: 0 0 8px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.cast-results {
+  display: flex;
+  flex-direction: column;
+}
+.cast-res {
+  padding: 10px 0;
+}
+.cast-res-tag {
+  flex: none;
+  min-width: 6.5em;
+  padding: 4px 10px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  text-align: center;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.cast-res-shown {
+  background: var(--green-tint);
+  color: var(--ok-text);
+}
+.cast-res-woke {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+.cast-res-failed {
+  background: var(--danger-tint);
+  color: var(--danger-text);
+}
+.cast-empty,
+.cast-hint {
+  font-size: var(--fs-secondary);
+}

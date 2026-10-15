@@ -7,6 +7,9 @@ import type {
   AppSettings,
   AttachmentExtract,
   AttachmentOut,
+  CastNotice,
+  CastSendIn,
+  CastTv,
   ContainerStatus,
   DeviceSummary,
   EgoGraph,
@@ -2892,6 +2895,50 @@ function mockNoticeNow(n: PanelNoticeOut & { withdrawn?: string }): PanelNoticeO
     ? { ...shown, state: "answered", answer: n.choices[0] ?? null, finished_at: iso(ends) }
     : { ...shown, state: "expired", finished_at: iso(ends) };
 }
+
+const MOCK_CAST_TVS: CastTv[] = [
+  ["c0000000-0000-4000-8000-000000000001", "Big TV", "idle", "Ambient", null],
+  ["c0000000-0000-4000-8000-000000000002", "Parents", "standby", "off", null],
+  ["c0000000-0000-4000-8000-000000000003", "Twins room", "busy", "Netflix · playing", "Netflix"],
+  ["c0000000-0000-4000-8000-000000000004", "Basement", "unknown", "not connected", null],
+].map(([id, name, state, why, app]) => ({
+  id: id as string,
+  name: name as string,
+  model: "Philips Google TV",
+  state: state as CastTv["state"],
+  why: why as string,
+  castable: state === "idle" || state === "standby",
+  reading: { app_id: app ?? null, display_name: app ?? null, connected: state !== "unknown" },
+}));
+
+const MOCK_CASTS: CastNotice[] = [
+  {
+    id: "mock-cast-1",
+    sender: "owner",
+    title: "Dinner's ready",
+    body: "Come down now",
+    seconds: 30,
+    created_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+    stopped_at: null,
+    tvs: [
+      {
+        tv_id: "c0000000-0000-4000-8000-000000000001",
+        name: "Big TV",
+        outcome: "shown",
+        why: "Ambient",
+      },
+      {
+        tv_id: "c0000000-0000-4000-8000-000000000003",
+        name: "Twins room",
+        outcome: "skipped",
+        why: "Netflix open",
+      },
+    ],
+  },
+];
+
+const MOCK_FRAME_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"><rect width="1920" height="1080" fill="#0c0d10"/><text x="120" y="560" font-size="132" fill="#f0f0f2" font-family="sans-serif">jbrain</text></svg>';
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -6255,6 +6302,54 @@ export const mockFetch: typeof fetch = async (input, init) => {
         },
       ],
     });
+  }
+  // --- Cast: four TVs in the states the gate knows, so every row and outcome is on screen.
+  // A send re-reads them like the box does: the busy and unanswering ones are skipped.
+  if (path === "/api/cast/tvs" && method === "GET") {
+    return json({ tvs: MOCK_CAST_TVS, ignored: [] });
+  }
+  if (path === "/api/cast/sent" && method === "GET") {
+    return json({ notices: MOCK_CASTS, kept_s: 604800 });
+  }
+  if (path === "/api/cast/preview" && method === "POST") {
+    return new Response(MOCK_FRAME_SVG, { headers: { "Content-Type": "image/svg+xml" } });
+  }
+  if (path === "/api/cast/send" && method === "POST") {
+    const body = JSON.parse(String(init?.body ?? "{}")) as CastSendIn;
+    if (!body.title?.trim()) return json({ detail: { reason: "bad_field" } }, 422);
+    const n: CastNotice = {
+      id: `mock-cast-${Date.now()}`,
+      sender: "owner",
+      title: body.title.trim(),
+      body: body.body ?? "",
+      seconds: body.seconds ?? 30,
+      created_at: new Date().toISOString(),
+      stopped_at: null,
+      tvs: body.tv_ids.map((id) => {
+        const tv = MOCK_CAST_TVS.find((t) => t.id === id);
+        if (!tv) return { tv_id: id, name: "TV", outcome: "skipped", why: "not on the network" };
+        if (tv.state === "idle") return { tv_id: id, name: tv.name, outcome: "shown", why: tv.why };
+        if (tv.state === "standby")
+          return { tv_id: id, name: tv.name, outcome: "woke", why: "was off" };
+        return { tv_id: id, name: tv.name, outcome: "skipped", why: tv.why };
+      }),
+    };
+    MOCK_CASTS.unshift(n);
+    return json(n);
+  }
+  const castFrame = path.match(/^\/api\/cast\/([^/]+)\/frame$/);
+  if (castFrame && method === "GET") {
+    return new Response(MOCK_FRAME_SVG, { headers: { "Content-Type": "image/svg+xml" } });
+  }
+  const castStop = path.match(/^\/api\/cast\/([^/]+)\/stop$/);
+  if (castStop && method === "POST") {
+    const n = MOCK_CASTS.find((c) => c.id === castStop[1]);
+    if (!n) return json({ detail: { reason: "no_such_notice" } }, 404);
+    n.stopped_at = new Date().toISOString();
+    const stopped = Object.fromEntries(
+      n.tvs.filter((t) => t.outcome !== "skipped").map((t) => [t.tv_id, true]),
+    );
+    return json({ id: n.id, stopped });
   }
   // --- Send to panel. A sent notice shows on the "glass" after a moment and a question is
   // answered "Yes" a few seconds later, so the composer's status screen walks every step.

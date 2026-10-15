@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-14
+> **Status:** Living · **Last verified:** 2026-10-15
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -4123,6 +4123,29 @@ The round's record and its independent review are `docs/mocks/minecraft-goals/`.
   server that can't answer reads *Can't count right now — {why}*.
 - **Glyphs**: a cube for a goal that counts an item, a flag for a plain goal, a check and a
   ban for finished ones. Never the Tricorder target's rings (review X7).
+
+## Cast — notices on the house's TVs
+
+Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the owner
+2026-10-14; plan `docs/plans/JPANEL_CAST_PLAN.md` K2. Steel, like jpanel, its sibling.
+
+- **Its own launcher tile**, "Cast", beside jpanel. Its badge counts the TVs that would take
+  a notice right now; no badge when none would, or when the box has no TV finder.
+- **Three tabs**: TVs, Send, Sent (the shared segmented control). The TVs tab says each TV's
+  state as a word with its dot, never the dot alone: *Ready*, *Off*, *In use*, *Not
+  answering*, with what it is doing under its name. Our own notice reads *Showing a notice*,
+  not as somebody watching.
+- **Send** picks every TV that would take it to start with. A TV in use can still be picked,
+  struck through, with a line saying it will be skipped. The preview is the 16:9 frame the box
+  will cast, drawn by the box itself, so what the owner sees is what lands. Limits are said
+  while typing, not refused after.
+- **The result is a Sheet** titled *Cast to 2 of 3*, a tag per TV (*On screen*, *Turned on*,
+  *Skipped*, *Didn't cast*) and why. A TV that was woken *stays on*, and the sheet says so,
+  because a cast cannot turn a TV off. **Take it down** is the destructive button, shown only
+  while something it cast may still be up.
+- **Sent** is one row per send with the frame as its thumbnail, newest first, kept a week.
+- The TV preview's sheet is drawn in the TV frame's own near-black in both themes, like the
+  panel composer's glass: it is a picture of a dark screen, not a themed surface.
 
 ## Implementation rules
 
