@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type CastNotice, type CastTv, api } from "../api/client";
-import { CastScreen } from "./CastScreen";
+import { CastScreen, forgetCastDraft } from "./CastScreen";
 
 const TVS: CastTv[] = [
   {
@@ -86,6 +86,7 @@ function fakeCanvas() {
 }
 
 beforeEach(() => {
+  forgetCastDraft();
   drawn.length = 0;
   drawnAt.length = 0;
   turned.length = 0;
@@ -109,6 +110,18 @@ async function addText(words: string) {
 }
 
 describe("Cast", () => {
+  it("keeps what was composed when the card is left and reopened", async () => {
+    const first = render(<CastScreen />);
+    await addText("Dinner");
+    expect(screen.queryByText("Add text or a picture to start")).not.toBeInTheDocument();
+    first.unmount();
+    render(<CastScreen />);
+    // Back on Send, with the words still on the canvas.
+    expect(screen.getByRole("button", { name: "Add text" })).toBeInTheDocument();
+    expect(screen.queryByText("Add text or a picture to start")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /^Cast to/ })).toBeEnabled();
+  });
+
   it("swallows touch so a downward drag never closes the card", async () => {
     const onParentTouchStart = vi.fn();
     const onParentTouchMove = vi.fn();

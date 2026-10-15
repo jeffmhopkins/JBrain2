@@ -295,6 +295,8 @@
   flex: none;
 }
 .cast-time select {
+  /* The global select is width: 100%, which pushed this one past the screen's edge. */
+  width: auto;
   flex: none;
 }
 .cast-words-form {

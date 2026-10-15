@@ -4161,6 +4161,8 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
 - **No down-swipe dismiss.** Cast swallows touch so the card's down-swipe never arms over it
   (owner, 2026-10-15: *"Cast page should not hide on swipe down"*): a downward drag on the
   canvas is a move, not a way out. The chevron and the platform back gesture still climb.
+- **What was composed is kept** (owner, 2026-10-15): leaving Cast and coming back reopens Send
+  with every layer where it was left. It lives in memory, so a reload of the app starts clean.
 - **Sent** is one row per send with the frame as its thumbnail, newest first, kept a week.
 - The TV preview's sheet is drawn in the TV frame's own near-black in both themes, like the
   panel composer's glass: it is a picture of a dark screen, not a themed surface.

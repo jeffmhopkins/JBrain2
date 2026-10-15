@@ -92,13 +92,26 @@ const REFUSALS: Record<string, string> = {
   picture_too_big: "That picture is too big to send.",
 };
 
+// What was composed outlives the card: leaving Cast and coming back finds the layers where
+// they were, and Send still open. Memory, not storage, because a picture is a decoded bitmap;
+// a reload of the app starts clean.
+let kept: { tab: Tab; draft: CastDraft } | null = null;
+
+/** Drop what Cast kept, so the next open starts fresh. */
+export function forgetCastDraft(): void {
+  kept = null;
+}
+
 export function CastScreen() {
-  const [tab, setTab] = useState<Tab>("tvs");
+  const [tab, setTab] = useState<Tab>(() => kept?.tab ?? "tvs");
   const [tvs, setTvs] = useState<CastTv[] | null>(null);
   const [tvError, setTvError] = useState<string | null>(null);
   const [result, setResult] = useState<CastNotice | null>(null);
   // Held here, not in Send, so a look at the TVs or Sent doesn't lose what was composed.
-  const [draft, setDraftState] = useState<CastDraft>(emptyCastDraft);
+  const [draft, setDraftState] = useState<CastDraft>(() => kept?.draft ?? emptyCastDraft());
+  useEffect(() => {
+    kept = { tab, draft };
+  }, [tab, draft]);
   const setDraft = useCallback((fn: (d: CastDraft) => CastDraft) => setDraftState(fn), []);
 
   const loadTvs = useCallback(async () => {
