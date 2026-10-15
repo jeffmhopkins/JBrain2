@@ -1,6 +1,6 @@
 # jpanel Cast — notices on the house's Chromecast TVs
 
-> **Status:** **Approved by the owner** (2026-10-14); the spike is built (`deploy/cast/`), the rest is not · **Last verified:** 2026-10-15
+> **Status:** **Approved by the owner** (2026-10-14); the spike has run on the real TVs and the build is planned in `../../plans/JPANEL_CAST_PLAN.md` · **Last verified:** 2026-10-15
 
 Open `index.html` in a browser. It is one standalone page: the PWA side (launcher tile, TVs,
 one TV's settings, Send, the result sheet, Sent) and the 16:9 frames a TV shows.
@@ -25,17 +25,10 @@ on. But it would always have to be idle … I'd also want this to show up as a l
 - **Its own launcher tile**, "Cast", beside jpanel. Its badge counts the TVs that would take a
   notice now.
 
-## Open before a plan
+## Answered by the spike
 
-- **Does an app opened with the remote report to Cast?** On Android TVs with Chromecast
-  built in, receiver status reliably covers cast sessions. Whether Netflix opened from the home
-  screen shows up is unverified. The first wave is a probe that lists what each TV reports in
-  each state. A set that hides local apps is marked *can't tell when busy* and only takes
-  notices while off. **That probe is built:** the `cast` sidecar (`deploy/cast/README.md`) and
-  `/api/debug/cast*` (`docs/runbooks/DEBUG_ACCESS.md`) list every TV's verdict and timeline
-  and cast a gated test card.
-- **Does a cast wake a TV that is off, and what does it go back to?** There is no "turn off"
-  in Cast, so "back to sleep after" in the mock is unproven. The test card's timeline
-  answers it.
-- Discovery is mDNS, so the cast sender runs on the host network (like the Minecraft sidecar),
-  not in the api container.
+The questions this mock left open were answered on the house's TVs on 2026-10-15
+(`../../plans/JPANEL_CAST_PLAN.md` §K0). An app opened with the remote does report to Cast, and a
+cast wakes a Philips from off once its power setting keeps Cast available in standby. Whether a
+woken TV goes back to sleep is still open, so this mock's "back to sleep after" is not yet a
+promise.

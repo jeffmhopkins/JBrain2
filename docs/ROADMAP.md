@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-13
+> **Status:** Living · **Last verified:** 2026-10-15
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -282,6 +282,11 @@ The location + family + intake slices shipped; build records are under
   voice post (`plans/JPANEL_PLAN.md`): stops undone mid-fetch, stuck runs, the recording-cap
   mismatch, mail orphaned by a re-flash, undeliverable rows that never clear, and "heard" that is
   not true. The engine and the panel state machine move into host-tested cores first.
+
+- **jpanel Cast (notices on the TVs)** — In progress (`plans/JPANEL_CAST_PLAN.md`; K0 spike ✅) —
+  the owner's notices cast to the house's Chromecast TVs with no app on them, only over an idle
+  TV or one that is off, which a cast wakes. Binding mock `mocks/jpanel-cast/`; the composer is
+  the panel's Send to panel.
 
 - **JPet — the family wall play-pet** ✅ (`archive/JPET_PLAN.md` v1, `archive/JPET_V2_PLAN.md` v2,
   `archive/JPET_V3_PLAN.md` v3)
