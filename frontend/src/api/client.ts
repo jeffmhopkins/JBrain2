@@ -3857,6 +3857,23 @@ export interface PanelStatusOut {
   /** Seconds since that report, computed on the box; -1 when there has never been one. */
   age_s: number;
   report: PanelReport;
+  /** Whether Ops can ask it for a snapshot or a screenshot now: "online" while it picks up
+   *  debug requests, "offline" once it stopped, null (or absent) for a panel with no debug
+   *  surface. */
+  look?: "online" | "offline" | null;
+}
+
+export type PanelLookWhat = "snapshot" | "screenshot";
+
+/** A look's state (`/api/panel/look/{device}/{request_id}`). `result` is the panel's own
+ *  answer — `{ok, data?, err?}` — or for a screenshot the box's summary of it. */
+export interface PanelLookResult {
+  request_id: string;
+  command: string;
+  state: "queued" | "sent" | "done" | "expired";
+  result: { ok?: boolean; err?: string; data?: unknown } | null;
+  /** The decoded PNG's URL, when this look produced one. */
+  screenshot: string | null;
 }
 
 export interface PanelStatuses {
@@ -7013,6 +7030,27 @@ export const api = {
   async panelStatus(): Promise<PanelStatuses> {
     const response = await request("/api/endpoint/status");
     return (await response.json()) as PanelStatuses;
+  },
+
+  // A LOOK AT A LIVE PANEL, without a debug token: the box queues it, the panel collects it on
+  // its 3 s pickup, and `panelLookResult` long-polls (≤ 25 s a call) for its answer.
+  async panelLook(deviceId: string, what: PanelLookWhat): Promise<{ request_id: string }> {
+    const response = await request(
+      `/api/panel/look/${encodeURIComponent(deviceId)}`,
+      jsonInit("POST", { what }),
+    );
+    return (await response.json()) as { request_id: string };
+  },
+
+  async panelLookResult(
+    deviceId: string,
+    requestId: string,
+    waitS: number,
+  ): Promise<PanelLookResult> {
+    const response = await request(
+      `/api/panel/look/${encodeURIComponent(deviceId)}/${encodeURIComponent(requestId)}?wait=${waitS}`,
+    );
+    return (await response.json()) as PanelLookResult;
   },
 
   // THE SHARED PANEL KNOBS. Owner-only, and until now reachable ONLY from the debug console —
