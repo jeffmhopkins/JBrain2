@@ -200,6 +200,10 @@ class PanelThread(BaseModel):
     name: str
     unplayed: int
     messages: list[Message]
+    # WHERE THIS THREAD'S NEXT PAGE STARTS (`?before=`), or None when there is nothing older.
+    # Not the oldest message shown: the first page also carries every unread message to the
+    # owner however old, and paging from one of those would skip what lies between.
+    earlier: str | None = None
 
 
 class Threads(BaseModel):
@@ -950,7 +954,11 @@ async def _thread_rows(session, *, limit: int, before: str | None) -> list[Any]:
     PER THREAD, NOT ACROSS ALL OF THEM (C6). A global limit let a chatty twin push her
     sister's thread off the page, and an unread message past it was counted on the chip but
     never drawn, so the badge pointed at something he could not find. `before` (a message id)
-    pages back from that message in every thread."""
+    pages back from that message in every thread.
+
+    Each row also carries its rank in its thread and the thread's length past `before`, from
+    which `messages` names each thread's `earlier` cursor. An unread row from beyond the page
+    comes back again when paging reaches it; the client keys rows by id."""
     pivot = ""
     if before is not None:
         pivot = (
@@ -966,12 +974,12 @@ async def _thread_rows(session, *, limit: int, before: str | None) -> list[Any]:
                     WITH placed AS ({_PLACED}), ranked AS (
                         SELECT *, row_number() OVER (
                             PARTITION BY dev ORDER BY created_at DESC, id DESC
-                        ) AS rn
+                        ) AS rn, count(*) OVER (PARTITION BY dev) AS total
                         FROM placed {pivot}
                     )
                     SELECT dev, id, sender_kind, sender_device, recipient_kind,
                            recipient_device, transcript, composed, duration_ms, created_at,
-                           played_at, deliveries
+                           played_at, deliveries, rn, total
                     FROM ranked
                     WHERE rn <= :lim{unread}
                     ORDER BY created_at DESC, id DESC
@@ -999,9 +1007,21 @@ async def messages(
     if before is not None and not _is_uuid(before):
         raise HTTPException(status_code=404, detail="no such message")
     names = await _panel_names(request.app.state.session_maker)
+    lim = max(1, min(limit, 500))
     async with scoped_session(request.app.state.session_maker, ctx_for(owner)) as session:
+        if before is not None:
+            # A cursor whose message has since been cleared or swept would page from nothing
+            # and answer every thread empty, which reads as "no more history".
+            gone = (
+                await session.execute(
+                    text("SELECT 1 FROM app.jpanel_message WHERE id = CAST(:id AS uuid)"),
+                    {"id": before},
+                )
+            ).first() is None
+            if gone:
+                raise HTTPException(status_code=404, detail="no such message")
         unplayed = await _owner_unread(session, names)
-        rows = await _thread_rows(session, limit=max(1, min(limit, 500)), before=before)
+        rows = await _thread_rows(session, limit=lim, before=before)
 
     threads: dict[str, PanelThread] = {
         pid: PanelThread(device_id=pid, name=name, unplayed=unplayed[pid], messages=[])
@@ -1010,8 +1030,11 @@ async def messages(
     for row in rows:
         # A panel no longer in the roster has no thread to land in; W2's grouping gives it one.
         thread = threads.get(str(row[0] or ""))
-        if thread is not None:
-            thread.messages.append(_row_to_message(row[1:], names))
+        if thread is None:
+            continue
+        thread.messages.append(_row_to_message(row[1:12], names))
+        if int(row[12]) == lim and int(row[13]) > lim:
+            thread.earlier = str(row[1])
     return Threads(panels=list(threads.values()))
 
 

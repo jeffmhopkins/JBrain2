@@ -7,8 +7,9 @@
 > C8–C11, names cut to 31 escaped bytes, the skew pins, and the revision-delete check in the
 > backend job. Two notes for W2: `?include_retired=1` is not accepted yet, because W1 has no
 > retired, unknown or "Displays" groups for it to gate — W2 adds it to `/messages` and
-> `/summary` with those groups; and `?before=` is a message id, paging back from it in every
-> thread at once (P1's "Load earlier" reads the thread it is on).
+> `/summary` with those groups; and `?before=` takes a thread's `earlier` cursor (its
+> limit-th row, never an old unread one), pages every thread from it, and is a 404 once that
+> message is gone. A row can repeat across pages, so P1 keys rows by id.
 >
 > **FW's code has landed** — firmware 0.4.0, agents A–E of §15 — and stays open rather than ticked
 > until it has run on hardware: `SPEECH_MIN_INTERNAL` is provisional until the panels' boot logs

@@ -255,12 +255,23 @@ async def test_every_unplayed_owner_row_is_returned(
         ]
         assert [m["id"] for m in threads[tamsin]["messages"]] == [quiet]
 
-        # Paging back from the oldest row shown: the played one, and no unread extras.
-        earlier = client.get(f"/api/jpanel/messages?limit=2&before={recent[1]}").json()["panels"]
-        back = {t["device_id"]: [m["id"] for m in t["messages"]] for t in earlier}
-        assert back[quorra] == [recent[0], played]
-        assert back[tamsin] == [quiet]
+        # The cursor is the limit-th row, not the old unread one drawn below it: paging
+        # from that would skip what lies between.
+        assert threads[quorra]["earlier"] == recent[1]
+        assert threads[tamsin]["earlier"] is None
+        cursor = threads[quorra]["earlier"]
+        earlier = client.get(f"/api/jpanel/messages?limit=2&before={cursor}").json()["panels"]
+        back = {t["device_id"]: t for t in earlier}
+        assert [m["id"] for m in back[quorra]["messages"]] == [recent[0], played]
+        assert back[quorra]["earlier"] == played
+        last = client.get(f"/api/jpanel/messages?limit=2&before={played}").json()["panels"]
+        tail = {t["device_id"]: t for t in last}
+        assert [m["id"] for m in tail[quorra]["messages"]] == [old_unread]
+        assert tail[quorra]["earlier"] is None
         assert client.get("/api/jpanel/messages?before=nope").status_code == 404
+        # A cursor whose message is gone is a 404, not an empty page.
+        missing = client.get(f"/api/jpanel/messages?before={uuid.uuid4()}")
+        assert missing.status_code == 404
 
         summary = client.get("/api/jpanel/summary").json()
         assert summary == {

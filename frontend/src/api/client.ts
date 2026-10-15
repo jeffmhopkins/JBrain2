@@ -4045,6 +4045,8 @@ export interface JpanelThread {
   unplayed: number;
   /** Newest first, as the route serves them. */
   messages: JpanelMessage[];
+  /** Where this thread's next older page starts (`?before=`); null when nothing is older. */
+  earlier?: string | null;
 }
 
 export interface JpanelMessages {

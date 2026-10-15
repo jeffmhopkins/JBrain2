@@ -662,7 +662,7 @@ survive a reboot mid-playback instead of being lost by having been handed over.
 
 | route | takes | gives |
 |---|---|---|
-| `GET /messages` | `limit` (per thread, default 100), `before` (a message id: page back from it) | `200 {panels: [PanelThread]}` |
+| `GET /messages` | `limit` (per thread, default 100), `before` (a thread's `earlier` cursor) | `200 {panels: [PanelThread]}`; `404` when the `before` message is gone |
 | `GET /summary` | — | `200 {unread, threads: [{device_id, unread}]}` — the same counts the thread chips carry, for a badge |
 | `POST /messages` | `{to_device, text}` (text ≤ 600) | `201 Message` — TTS renders it, the typed text is kept as the transcript; `404` for an unknown panel, checked before the synthesis |
 | `POST /messages/audio?to_device=` | the raw 16 kHz mono s16 body, exactly as the panel's `/send` takes it | `201 Message` — Dad's own voice; transcribed on the way in, `composed: "voice"`; `404` for an unknown panel; past the cap + 0.5 s it is trimmed and logged, never refused |
@@ -688,6 +688,7 @@ type PanelThread = {
   name: string;
   unplayed: number;           // messages from THIS panel the owner has not played
   messages: Message[];        // newest first
+  earlier: string | null;     // `?before=` for this thread's next page; null = nothing older
 };
 ```
 
