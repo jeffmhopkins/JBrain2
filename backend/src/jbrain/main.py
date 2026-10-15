@@ -87,9 +87,11 @@ from jbrain.api import (
     analysis,
     auth,
     brain,
+    cast_notices,
     chat_attachments,
     chat_share,
     debug,
+    debug_cast,
     debug_minecraft,
     debug_panel,
     debug_tokens,
@@ -173,6 +175,8 @@ from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.owner import owner_principal_id
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.captions import fetch_caption_transcript
+from jbrain.cast.service import CastService
+from jbrain.cast.sidecar import Sidecar
 from jbrain.citygeocode import CityGeocoder
 from jbrain.config import Settings, get_settings
 from jbrain.connectors.base import ConnectorRegistry
@@ -1356,6 +1360,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.panel_notices = NoticeService(
             maker, app.state.blob_store, tts_url=settings.brain_tts_url, voice=_notice_voice
         )
+        app.state.cast_notices = CastService(
+            maker,
+            app.state.blob_store,
+            Sidecar(app.state.internal_secrets, settings.cast_url),
+        )
         panel_handlers = build_panel_handlers(
             app.state.panel_notices,
             maker=maker,
@@ -1925,6 +1934,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.debug_access_enabled:
         app.include_router(debug.router, prefix="/api")
         app.include_router(debug_minecraft.router, prefix="/api")
+        app.include_router(debug_cast.router, prefix="/api")
+        app.include_router(cast_notices.debug_router, prefix="/api")
         app.include_router(debug_panel.router, prefix="/api")
         app.include_router(panel_agent.debug_router, prefix="/api")
         app.include_router(panel_notice.debug_router, prefix="/api")
@@ -1941,11 +1952,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Its settings from the PWA (0.0.21): asked for here, taken by the panel, reported back.
     app.include_router(panel_settings.router, prefix="/api")
     # The panel's half of the debug relay. Mounted with or without debug access: with it
-    # off nothing can queue a request, so a pickup is always an empty 204.
+    # off only the owner's looks below can queue a request, and those only read the panel.
     app.include_router(panel_debug.router, prefix="/api")
+    # Ops → Panels' Snapshot and Screenshot: the owner's cookie, whatever the debug flag says.
+    app.include_router(debug_panel.owner_router, prefix="/api")
     # Notices on the desk panel: the owner's send/read and the panel's collect/answer.
     app.include_router(panel_notice.router, prefix="/api")
     app.include_router(panel_notice.panel_router, prefix="/api")
+    # Notices on the house's Chromecast TVs (JPANEL_CAST_PLAN K1): the owner's TVs, send, Sent.
+    app.include_router(cast_notices.router, prefix="/api")
     # The owner's Minecraft screen (MINECRAFT_BEDROCK_PLAN §M1). Owner-gated; a box
     # whose sidecar is stopped or unconfigured answers with that state, not a 500.
     app.include_router(minecraft_api.router, prefix="/api")

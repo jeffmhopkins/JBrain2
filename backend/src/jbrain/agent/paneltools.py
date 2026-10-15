@@ -128,6 +128,10 @@ def build_panel_handlers(
             return ToolOutput(f"He dismissed it on {on} without answering.", result_brief=state)
         if state == "expired":
             return ToolOutput(f"It expired on {on} unanswered.", result_brief=state)
+        if state == "withdrawn":
+            return ToolOutput(
+                f"He took it back off {on} from the app without answering.", result_brief=state
+            )
         return ToolOutput(
             f"No answer yet after {wait_s} s (the notice is {state} on {on}; the question "
             f"stays up for {N.TTL_DEFAULT_S // 60} minutes). Notice id {sent.id}.",

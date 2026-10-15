@@ -1309,6 +1309,52 @@ static void test_tickled_out_he_farts_and_sits_dazed(void)
     }
 }
 
+/* THE VOICES' RECURRENCES ARE THE SERIES THEY REPLACED (0.4.15): every partial summed directly,
+   with its own trig calls, against `cue_pulse` and `cue_triangle` over a sweep of phase, duty and
+   pitch, the low notes with all 24 partials included. Float error compounding over the partials
+   would be a drift in timbre no other cue test would notice. */
+static float ref_gain(float hz)
+{
+    if (hz >= 7600.0f) return 0.0f;
+    if (hz <= 5800.0f) return 1.0f;
+    return 0.5f * (1.0f + cosf((float)M_PI * (hz - 5800.0f) / 1800.0f));
+}
+
+static void test_cue_voices_match_their_fourier_series(void)
+{
+    const float f0s[] = {92.0f, 196.0f, 392.0f, 659.25f, 1244.51f, 3000.0f, 7000.0f};
+    const float duties[] = {0.125f, 0.25f, 0.4f, 0.5f};
+    float worst = 0.0f;
+    for (unsigned fi = 0; fi < sizeof(f0s) / sizeof(f0s[0]); fi++) {
+        const float f0 = f0s[fi];
+        for (int k = 0; k < 400; k++) {
+            const float ph = (float)k * 6.2831853f / 400.0f;
+            for (unsigned di = 0; di < sizeof(duties) / sizeof(duties[0]); di++) {
+                const float d = duties[di];
+                float want = 0.0f;
+                for (int n = 1; n <= 24; n++) {
+                    const float g = ref_gain((float)n * f0);
+                    if (g == 0.0f) break;
+                    want += g * (4.0f / ((float)n * (float)M_PI)) * sinf((float)n * (float)M_PI * d) *
+                            cosf((float)n * ph);
+                }
+                worst = fmaxf(worst, fabsf(cue_pulse(ph, d, f0) - want));
+            }
+            float want = 0.0f;
+            for (int n = 1; n <= 24; n += 2) {
+                const float g = ref_gain((float)n * f0);
+                if (g == 0.0f) break;
+                const float sign = (((n - 1) / 2) & 1) ? -1.0f : 1.0f;
+                want += g * sign * (8.0f / ((float)M_PI * (float)M_PI)) / (float)(n * n) *
+                        sinf((float)n * ph);
+            }
+            worst = fmaxf(worst, fabsf(cue_triangle(ph, f0) - want));
+        }
+    }
+    /* 1e-4 of a voice that peaks near 1.2 is a sample's least bit at full scale, and less. */
+    CHECK(worst < 1e-4f, "the recurrences are the direct sums, to float precision");
+}
+
 /* HAPPY BIRTHDAY (owner: "plays the first phrase of happy birthday beeps, and robot puts on a
    birthday hat and confetti drops"). */
 static void test_happy_birthday_sings_with_a_hat_and_confetti(void)
@@ -1342,6 +1388,14 @@ static void test_happy_birthday_sings_with_a_hat_and_confetti(void)
     }
     /* Each phrase is over before the next is due, at its longest variant, so the speaker is
        always free for it; and each is under the 0.8 s a cue can be. */
+    /* THE WHOLE LINE, "HAPPY BIRTHDAY TO YOU" (owner, 0.4.15): a phrase due while the last is
+       still sounding cuts it rather than being dropped, which is what lost "day to" when a slow
+       render ran the first one late. Never over a reply or a message, and only for the song. */
+    CHECK(cue_may_recue(CUE_BDAY_2, true, true), "the next phrase cuts the last over his own noise");
+    CHECK(cue_may_recue(CUE_BDAY_3, false, true), "and plays into a quiet speaker");
+    CHECK(!cue_may_recue(CUE_BDAY_2, true, false), "but never over a reply or a message");
+    CHECK(!cue_may_recue(CUE_TICKLE, true, true), "a laugh still waits for a free speaker");
+    CHECK(cue_may_recue(CUE_TICKLE, false, true), "and goes once it is free");
     static int16_t buf[CUE_MAX_SAMPLES];
     const float at[3] = {0.0f, RIG_BDAY_AT_2, RIG_BDAY_AT_3};
     for (int k = 0; k < 3; k++) {
@@ -1437,6 +1491,24 @@ static void test_the_dodging_game(void)
     game_figure(&g, t, &x, &y, &s);
     CHECK(g.phase == GAME_PLAY && s == GAME_SCALE && fabsf(x) < 1.0f, "a fifth his size, in the middle");
     CHECK(GAME_SCALE >= 0.2f && GAME_SCALE <= 0.25f, "between a quarter and a fifth");
+
+    /* PLAYING, WHAT IS SAID IS NOT FOR THE PET (owner, 0.4.15: "if it recognizes a word, it
+       exits out of the game. That shouldn't happen"): deaf from the walk in to the round over,
+       hearing again on the way out and once it is done. */
+    {
+        game_t q;
+        game_reset(&q);
+        CHECK(!game_deaf(&q), "no game: every phrase is heard");
+        game_start(&q, 0, 3, 0.0f, 20.0f);
+        CHECK(game_deaf(&q), "walking in: deaf");
+        uint32_t u;
+        for (u = 0; u <= GAME_WALK_MS + 40; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        CHECK(q.phase == GAME_PLAY && game_deaf(&q), "playing: deaf");
+        q.phase = GAME_OVER;
+        CHECK(game_deaf(&q), "the round over, waiting for a tap: deaf");
+        game_stop(&q, u);
+        CHECK(!game_deaf(&q), "walking out: heard again");
+    }
 
     /* "Ready... go!": nothing comes during the ready, then they do. */
     const uint32_t go = g.since;
@@ -1559,7 +1631,7 @@ static void test_the_dodging_game(void)
         CHECK(q.phase == GAME_OVER, "the score stands a while for a tap");
         for (; u < over + GAME_OVER_WAIT_MS + 200; u += 40) game_step(&q, u, 40, 0.6f, 0.4f, hw, hh);
         CHECK(q.phase == GAME_WALK_OUT, "and with no tap, held tilted or not, the game ends");
-        CHECK(GAME_OVER_WAIT_MS <= 20000u, "not long: a child who walked off is not coming back");
+        CHECK(GAME_OVER_WAIT_MS <= 10000u, "not long: a child who walked off is not coming back");
     }
 
     /* FORWARD AND BACK STEER THE SAME HOWEVER FAR BACK IT IS HELD (review): the steering is
@@ -5683,6 +5755,7 @@ int main(void)
     test_one_fart_in_ten_goes_on_for_seven_seconds();
     test_eight_poops_each_its_own();
     test_tickled_out_he_farts_and_sits_dazed();
+    test_cue_voices_match_their_fourier_series();
     test_happy_birthday_sings_with_a_hat_and_confetti();
     test_the_dodging_game();
     test_three_meals_in_a_minute_and_he_has_to_go();

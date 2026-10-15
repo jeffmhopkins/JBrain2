@@ -54,6 +54,13 @@
 		}
 	}
 
+	# The PWA's share target posts a shared photo here; its service worker answers it. A phone
+	# whose worker is not running yet reaches the proxy instead, and lands in the composer with
+	# nothing shared rather than on a 405 (frontend/public/panel-share-sw.js).
+	handle /panel/share {
+		redir /panel/send 303
+	}
+
 	handle {
 		root * /srv/www
 
@@ -74,7 +81,7 @@
 		# The PWA's update entrypoints must always revalidate, while Vite's
 		# hash-named assets are immutable — this pair is what makes every
 		# launch pick up a new deploy.
-		@entry path / /index.html /debug-console.html /sw.js /manifest.webmanifest /registerSW.js
+		@entry path / /index.html /debug-console.html /sw.js /manifest.webmanifest /registerSW.js /panel-share-sw.js
 		header @entry Cache-Control "no-cache"
 		@hashed path /assets/* /workbox-*.js
 		header @hashed Cache-Control "public, max-age=31536000, immutable"

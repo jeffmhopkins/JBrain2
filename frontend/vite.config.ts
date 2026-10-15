@@ -41,6 +41,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      // The share target's POST handler (public/panel-share-sw.js): Workbox routes only GETs,
+      // and a shared photo arrives as a multipart POST the service worker must answer itself.
+      workbox: { importScripts: ["/panel-share-sw.js"] },
       manifest: {
         name: "JBrain",
         short_name: "JBrain",
@@ -58,6 +61,33 @@ export default defineConfig({
             purpose: "maskable",
           },
         ],
+        // A long-press on the app's icon, not a second app: "Send to panel" straight into the
+        // composer for the owner's desk panel (JPANEL_C6_PLAN.md §2 "The composer").
+        shortcuts: [
+          {
+            name: "Send to panel",
+            short_name: "Send to panel",
+            description: "A photo, words or a question to your desk panel",
+            url: "/panel/send",
+            icons: [
+              { src: "send-to-panel-96.png", sizes: "96x96", type: "image/png" },
+              { src: "send-to-panel-192.png", sizes: "192x192", type: "image/png" },
+            ],
+          },
+        ],
+        // Share a photo (or words) from any app to the panel. The service worker keeps it and
+        // opens /panel/send?shared=1, where the composer picks it up.
+        share_target: {
+          action: "/panel/share",
+          method: "POST",
+          enctype: "multipart/form-data",
+          params: {
+            title: "title",
+            text: "text",
+            url: "url",
+            files: [{ name: "photo", accept: ["image/*"] }],
+          },
+        },
       },
     }),
   ],

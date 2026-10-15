@@ -21,6 +21,7 @@ import re
 import struct
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -413,6 +414,70 @@ def test_blob_is_the_stripe_records_as_sent() -> None:
     f = N.fit_image(png(Image.new("RGB", (480, 50), "red")), "banner")
     assert f.blob() == b"".join(N.record(N.STRIPE, s) for s in f.stripes)
     assert f.stream_bytes == len(f.blob())
+
+
+@pytest.mark.parametrize("h", [240, 200])
+def test_the_composer_s_strips_reach_the_panel_unscaled(h: int) -> None:
+    """The PWA crops its banner to exactly 480 x 240 (or 480 x 200 under a two-line question):
+    the box must take those pixels as they are, never rescale them."""
+    img = Image.new("RGB", (480, h))
+    img.putdata(
+        [((x * 7) % 256, (y * 5) % 256, (x + y) % 256) for y in range(h) for x in range(480)]
+    )
+    f = N.fit_image(png(img), "banner")
+    assert (f.width, f.height) == (480, h)
+    assert pixels_of(f.stripes, 480) == frame_of(img)
+
+
+def test_a_stored_picture_reads_back_to_its_pixels() -> None:
+    img = Image.new("RGB", (480, 120))
+    img.putdata(
+        [((x * 3) % 256, (y * 2) % 256, (x ^ y) % 256) for y in range(120) for x in range(480)]
+    )
+    f = N.fit_image(png(img), "banner")
+    assert N.picture_pixels(f.blob(), 480, 120) == frame_of(img)
+
+
+@pytest.mark.parametrize(
+    "blob",
+    [
+        b"\x05\x04",  # cut inside a record header
+        N.record(N.TITLE, b"x"),  # not a stripe
+        N.record(N.STRIPE, struct.pack("<HH", 0, 1) + struct.pack("<BH", 9, 0)),  # short row
+    ],
+)
+def test_a_damaged_stored_picture_is_refused(blob: bytes) -> None:
+    with pytest.raises(N.WireError):
+        N.picture_pixels(blob, 480, 1)
+
+
+def test_a_picture_that_stops_short_is_refused() -> None:
+    f = N.fit_image(png(Image.new("RGB", (480, 50), "red")), "banner")
+    with pytest.raises(N.WireError):
+        N.picture_pixels(f.blob(), 480, 60)
+
+
+def test_the_thumbnail_is_the_panel_s_colours_scaled_down() -> None:
+    f = N.fit_image(png(Image.new("RGB", (480, 480), (200, 40, 90))), "full")
+    out = Image.open(io.BytesIO(N.png_of(N.picture_pixels(f.blob(), 480, 480), 480, 480, 96)))
+    assert out.format == "PNG" and out.size == (96, 96)
+    r, g, b = cast(tuple[int, int, int], out.convert("RGB").getpixel((48, 48)))
+    assert abs(r - 200) <= 8 and abs(g - 40) <= 4 and abs(b - 90) <= 8
+    same = Image.open(io.BytesIO(N.png_of([0xFFFF] * 4, 2, 2, 480)))
+    assert same.size == (2, 2) and same.convert("RGB").getpixel((0, 0)) == (255, 255, 255)
+
+
+def test_the_preview_is_what_the_panel_draws() -> None:
+    fitted, data = N.preview_png(png(Image.new("RGB", (100, 100), "white")), "full")
+    assert (fitted.width, fitted.height) == (480, 480)
+    shown = Image.open(io.BytesIO(data)).convert("RGB")
+    assert shown.size == (480, 480) and shown.getpixel((240, 240)) == (255, 255, 255)
+
+
+def test_withdrawn_is_final_and_the_owner_keeps_a_week() -> None:
+    assert "withdrawn" in N.FINAL_STATES and "withdrawn" not in N.OPEN_STATES
+    assert N.OWNER_RESULT_TTL_S == 7 * N.RESULT_TTL_S
+    assert N.WITHDRAW_HEADER_MAX == N.MAX_OPEN
 
 
 # ---- the sound ---------------------------------------------------------------------------

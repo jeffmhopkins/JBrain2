@@ -37,7 +37,7 @@ from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import scoped_session
 from jbrain.jpanel import debug_relay as relay
 from jbrain.jpanel import notice
-from jbrain.jpanel.notice_service import queued_count
+from jbrain.jpanel.notice_service import queued_count, withdrawn_ids
 from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
@@ -65,12 +65,14 @@ async def next_request(
     The query may also carry the panel's notice settings — `na`, `nq`, `nc` (accept, refuse
     at night, chime: 0/1), `nf`, `nt` (the night window, minutes after local midnight) and
     `tz` (the panel's zone index) — and either answer carries `X-Notice: <n>` when n notices
-    wait for it (JPANEL_C6_PLAN.md §2). For the owner's desk panel (the talk's gate) either answer
-    also carries `X-Jpanel-Post: <tag>`, which moves whenever his voice post does
-    (`panel_messages.post_tag`, 0.0.16): the panel fetches its person threads only then. Since
-    0.0.21 the query also carries the rest of the PWA-managed settings (`no nk sd br vo ra ar`,
-    `jpanel/panel_settings.py`) and either answer carries `X-Panel-Settings: <version>` while a
-    change asked for in the PWA waits for the panel (`panel_settings.record_report`).
+    wait for it (JPANEL_C6_PLAN.md §2), and `X-Notice-Withdraw: <id>,…` naming the notices it
+    collected that the owner has since taken back (0.0.26). For the owner's desk panel (the
+    talk's gate) either answer also carries `X-Jpanel-Post: <tag>`, which moves whenever his
+    voice post does (`panel_messages.post_tag`, 0.0.16): the panel fetches its person threads
+    only then. Since 0.0.21 the query also carries the rest of the PWA-managed settings (`no nk
+    sd br vo ra ar`, `jpanel/panel_settings.py`) and either answer carries `X-Panel-Settings:
+    <version>` while a change asked for in the PWA waits for the panel
+    (`panel_settings.record_report`).
 
     200 carries exactly the flat object `dbg_cmd_run` takes. Collecting it starts the
     answer window (`relay.ANSWER_WINDOW_S`); a request not collected within
@@ -82,6 +84,7 @@ async def next_request(
     notice.record_prefs(principal.id, notice.parse_prefs(dict(request.query_params)))
     async with scoped_session(_maker(request), ctx_for(principal)) as session:
         waiting = await queued_count(session)
+        withdrawn = await withdrawn_ids(session)
         row = (
             await session.execute(
                 text(
@@ -105,6 +108,10 @@ async def next_request(
     # `X-Notice: <n>` when notices wait: the panel then collects them from
     # `/endpoint/notice/next` (api/panel_notice.py), so an idle pickup stays one request.
     hint = {"X-Notice": str(waiting)} if waiting else {}
+    # `X-Notice-Withdraw: <id>[,<id>]` while a notice it collected has been taken back by the
+    # owner (0.0.26): the panel drops each it still holds, silently, and ignores the rest.
+    if withdrawn:
+        hint[notice.WITHDRAW_HEADER] = ",".join(withdrawn)
     tag = await panel_messages.pickup_tag(_maker(request), principal)
     if tag:
         hint[panel_messages.POST_HEADER] = tag

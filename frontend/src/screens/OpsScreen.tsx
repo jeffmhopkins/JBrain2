@@ -40,6 +40,7 @@ import {
 } from "../minecraft";
 import { agoLabel, panelConcerns, panelFacts, panelHealth } from "../panelStatus";
 import { useForeground, useForegroundRef } from "../visibility";
+import { PanelLook } from "./PanelLook";
 import { RunsScreen } from "./RunsScreen";
 
 function fmtBytes(n: number): string {
@@ -183,7 +184,7 @@ const SERVICE_GROUPS: { label: string; services: string[] }[] = [
     ],
   },
   // Hardware and screens around the house, and the phones' location feed.
-  { label: "Devices", services: ["wall", "endpoint", "sdr", "mqtt", "mqtt-ingest"] },
+  { label: "Devices", services: ["wall", "endpoint", "cast", "sdr", "mqtt", "mqtt-ingest"] },
   { label: "Apps", services: ["minecraft", "jlaunch"] },
   // Run-once maintenance containers — present only while one runs.
   { label: "One-shot jobs", services: ["migrate", "wipe"] },
@@ -214,6 +215,7 @@ const SERVICE_WHAT: Record<string, string> = {
   jcode: "code mode",
   wall: "wall display",
   endpoint: "panel flasher",
+  cast: "TVs in the house",
   sdr: "radio",
   mqtt: "location broker",
   "mqtt-ingest": "location feed",
@@ -912,7 +914,8 @@ function PanelsBody({ panels, error }: { panels: PanelStatusOut[] | null; error:
       {/* READ-ONLY, deliberately. This card is where a fault is NOTICED — a version that did not
           move, a unit that has gone quiet — and jpanel is where a panel is named or retired. Two
           places to revoke would be two places to get it wrong, and jpanel is the door the owner
-          already thinks of as "the panels in my house". */}
+          already thinks of as "the panels in my house". Snapshot and Screenshot keep that: they
+          read a panel and change nothing on it. */}
       {panels !== null && panels.length > 0 && (
         <p className="muted ops-panel-note ops-panel-intro">
           Rename or revoke a panel on the <strong>jpanel</strong> screen, Panels tab.
@@ -945,6 +948,9 @@ function PanelsBody({ panels, error }: { panels: PanelStatusOut[] | null; error:
                 {c}
               </p>
             ))}
+            {p.look && (
+              <PanelLook deviceId={p.device_id} name={p.name} online={p.look === "online"} />
+            )}
           </div>
         );
       })}

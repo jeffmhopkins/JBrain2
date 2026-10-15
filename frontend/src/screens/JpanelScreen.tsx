@@ -46,6 +46,7 @@ import { useForeground } from "../visibility";
 import { MAX_MESSAGE_MS, type Recorder, startRecording } from "../voiceMessage";
 import { EndpointsScreen } from "./EndpointsScreen";
 import { PanelAlarms } from "./PanelAlarms";
+import { type ComposerStart, PanelNoticeComposer, SentToPanel } from "./PanelNoticeComposer";
 import { PanelSettings } from "./PanelSettings";
 import { atLiveEnd, threadItems, threadPanels } from "./jpanelThread";
 import "./jpanel.css";
@@ -54,6 +55,9 @@ export type JpanelTab = "messages" | "panels" | "flash";
 
 interface JpanelScreenProps {
   onClose: () => void;
+  /** Opened by `/panel/send` (the launcher shortcut, the share target, an iPhone home-screen
+   *  icon): straight into Send to panel on the owner's display. */
+  send?: { shared: boolean } | undefined;
   /** Which tab opens. The launcher's Endpoints tile lands straight on Flash: someone
    *  holding a board with a cable in it should not have to find a tab first. */
   initialTab?: JpanelTab;
@@ -802,7 +806,7 @@ function MessageBubble({
  * panel" means a thing on a wall rather than a key in a table. A second listing would have had
  * to re-derive that and would eventually have disagreed with the one in Ops.
  */
-function PanelsTab() {
+function PanelsTab({ send }: { send?: { shared: boolean } | undefined }) {
   const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
@@ -843,6 +847,7 @@ function PanelsTab() {
 
   if (error) return <p className="jp-empty">{error}</p>;
   if (panels === null) return <p className="jp-empty">Reading the panels…</p>;
+  const sendTo = panels.find((p) => p.role === "display")?.device_id;
   if (panels.length === 0) {
     return (
       <p className="jp-empty">No panels yet. Flash one on the Flash tab and it shows up here.</p>
@@ -853,7 +858,13 @@ function PanelsTab() {
     <div className="jp-panels">
       <PanelAudio />
       {panels.map((p) => (
-        <PanelRow key={p.device_id} panel={p} onChanged={() => setTick((t) => t + 1)} />
+        <PanelRow
+          key={p.device_id}
+          panel={p}
+          onChanged={() => setTick((t) => t + 1)}
+          // The deep link means the owner's display: the one panel that takes notices.
+          send={p.device_id === sendTo ? send : undefined}
+        />
       ))}
     </div>
   );
@@ -1201,90 +1212,6 @@ function AgentAccessSwitch({ panel }: { panel: PanelStatusOut }) {
   );
 }
 
-/** The owner's words for a refusal the box answered at the door. */
-export function noticeRefusal(reason: string, until?: string): string {
-  switch (reason) {
-    case "offline":
-      return "The panel is offline, so the box turned it away.";
-    case "not_accepting":
-      return "The panel has notices switched off.";
-    case "quiet_hours":
-      return until
-        ? `The panel is in its night hours until ${until}.`
-        : "The panel is in its night hours.";
-    case "no_notice_surface":
-      return "This panel's firmware cannot show notices yet.";
-    case "busy":
-      return "Four notices are already waiting on it.";
-    default:
-      return `The box refused it: ${reason}.`;
-  }
-}
-
-const NOTICE_ENDS: Record<string, (answer: string | null) => string> = {
-  answered: (answer) => `Answered on the panel: ${answer ?? ""}`,
-  dismissed: () => "Dismissed on the panel without an answer.",
-  expired: () => "Nobody answered it in time.",
-};
-
-/** SEND A TEST NOTICE. The cheap way to see the push path work end to end without a terminal:
- *  a question goes to this panel, and the tap comes back here. The box's refusal (offline,
- *  switched off, night hours) is shown in words, because that is the answer the owner needs. */
-function TestNotice({ panel }: { panel: PanelStatusOut }) {
-  const [line, setLine] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const alive = useRef(true);
-
-  useEffect(() => {
-    alive.current = true;
-    return () => {
-      alive.current = false;
-    };
-  }, []);
-
-  async function send(): Promise<void> {
-    setBusy(true);
-    setLine(null);
-    try {
-      const out = await api.sendPanelNotice({
-        device_id: panel.device_id,
-        title: "Test from the app",
-        body: "Tap an answer: it comes back to your phone.",
-        choices: ["Got it", "Not now"],
-      });
-      if ("refused" in out) {
-        setLine(noticeRefusal(out.refused.reason, out.refused.until));
-        return;
-      }
-      setLine("Sent. Waiting for a tap on the panel…");
-      for (let i = 0; i < 6 && alive.current; i++) {
-        const got = await api.panelNotice(out.sent.id, 20);
-        const end = NOTICE_ENDS[got.state];
-        if (end) {
-          if (alive.current) setLine(end(got.answer));
-          return;
-        }
-      }
-      if (alive.current) setLine("No tap yet. It stays on the panel for 15 minutes.");
-    } catch (err) {
-      if (alive.current) setLine(err instanceof ApiError ? err.message : "Could not send it.");
-    } finally {
-      if (alive.current) setBusy(false);
-    }
-  }
-
-  return (
-    <div className="jp-unit-agent">
-      <div className="jp-unit-actions">
-        <button type="button" disabled={busy} onClick={() => void send()}>
-          Send test notice
-        </button>
-      </div>
-      {line !== null && <p className="jp-unit-hint">{line}</p>}
-    </div>
-  );
-}
-
 /** How long a revoke stays armed. It never disarmed at all: an owner who tapped "revoke",
  *  thought better of it and put the phone down left a panel one stray tap from being retired —
  *  and the next tap on that card, minutes later, would not have looked like a confirmation of
@@ -1293,7 +1220,21 @@ function TestNotice({ panel }: { panel: PanelStatusOut }) {
 const ARMED_MS = 3_000;
 
 /** One unit: what it is, what it last said, and the things the owner can do to it. */
-function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () => void }) {
+function PanelRow({
+  panel,
+  onChanged,
+  send,
+}: {
+  panel: PanelStatusOut;
+  onChanged: () => void;
+  /** Open the composer at once: the `/panel/send` deep link, its launcher shortcut, a share. */
+  send?: { shared: boolean } | undefined;
+}) {
+  const [composer, setComposer] = useState<ComposerStart | null>(
+    send ? { screen: "compose", shared: send.shared } : null,
+  );
+  const [sentTick, setSentTick] = useState(0);
+  const [showNotices, setShowNotices] = useState(0);
   const [renaming, setRenaming] = useState(false);
   const [editingPet, setEditingPet] = useState(false);
   const [draft, setDraft] = useState(panel.name);
@@ -1380,9 +1321,31 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
       </p>
 
       {panel.role === "display" && <AgentAccessSwitch panel={panel} />}
-      {panel.role === "display" && <TestNotice panel={panel} />}
+      {panel.role === "display" && (
+        <SentToPanel
+          deviceId={panel.device_id}
+          tick={sentTick}
+          onCompose={() => setComposer({ screen: "compose" })}
+          onHistory={() => setComposer({ screen: "history" })}
+          onOpen={(notice) => setComposer({ screen: "status", notice })}
+        />
+      )}
+      {composer !== null && (
+        <PanelNoticeComposer
+          panel={panel}
+          start={composer}
+          onClose={() => setComposer(null)}
+          onSent={() => setSentTick((t) => t + 1)}
+          onSettings={() => {
+            setComposer(null);
+            setShowNotices((n) => n + 1);
+          }}
+        />
+      )}
       {panel.role === "display" && <PanelAlarms deviceId={panel.device_id} />}
-      {panel.role === "display" && <PanelSettings deviceId={panel.device_id} />}
+      {panel.role === "display" && (
+        <PanelSettings deviceId={panel.device_id} showNotices={showNotices} />
+      )}
 
       {renaming ? (
         <div className="jp-unit-edit">
@@ -1479,8 +1442,8 @@ function PanelRow({ panel, onChanged }: { panel: PanelStatusOut; onChanged: () =
   );
 }
 
-export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenProps) {
-  const [tab, setTab] = useState<JpanelTab>(initialTab);
+export function JpanelScreen({ onClose, initialTab = "messages", send }: JpanelScreenProps) {
+  const [tab, setTab] = useState<JpanelTab>(send ? "panels" : initialTab);
 
   return (
     <div className="jp-wrap">
@@ -1525,7 +1488,7 @@ export function JpanelScreen({ onClose, initialTab = "messages" }: JpanelScreenP
       {/* Unmounted rather than hidden when another tab is up: Flash holds a USB console
           stream open, and Messages polls — neither should run behind a tab nobody is on. */}
       {tab === "messages" && <ConversationTab />}
-      {tab === "panels" && <PanelsTab />}
+      {tab === "panels" && <PanelsTab send={send} />}
       {tab === "flash" && <EndpointsScreen />}
     </div>
   );

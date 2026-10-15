@@ -131,6 +131,10 @@ jobs:
               # (test_minecraft_sidecar.py), and its image is built on the box.
               - 'deploy/minecraft/**'
               - 'deploy/Dockerfile.minecraft'
+              # The cast sidecar, for the same reason: tested here by path
+              # (test_cast_sidecar.py), and its image is built on the box.
+              - 'deploy/cast/**'
+              - 'deploy/Dockerfile.cast'
               # THE PANEL'S SHIPPED STATE, for the same reason again — and this one had
               # already gone wrong before it was added. `test_deploy_scripts.py` asserts
               # that `firmware/dist/SHA256SUMS` names exactly the images the box flashes,
@@ -424,6 +428,10 @@ jobs:
       - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
         working-directory: .
         run: docker build -f deploy/Dockerfile.minecraft .
+      # The cast sidecar's image: built on the box, and its build draws the test card.
+      - if: needs.changes.outputs.supervisor == 'true' || needs.changes.outputs.full == 'true'
+        working-directory: .
+        run: docker build -f deploy/Dockerfile.cast .
 
   # The jcode control server (opt-in code mode) — a Python service tested like the
   # supervisor: its unit tests run against fakes (no SDK, no model, no network), so

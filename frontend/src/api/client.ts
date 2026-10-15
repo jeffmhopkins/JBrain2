@@ -3869,6 +3869,23 @@ export interface PanelStatusOut {
   /** Seconds since that report, computed on the box; -1 when there has never been one. */
   age_s: number;
   report: PanelReport;
+  /** Whether Ops can ask it for a snapshot or a screenshot now: "online" while it picks up
+   *  debug requests, "offline" once it stopped, null (or absent) for a panel with no debug
+   *  surface. */
+  look?: "online" | "offline" | null;
+}
+
+export type PanelLookWhat = "snapshot" | "screenshot";
+
+/** A look's state (`/api/panel/look/{device}/{request_id}`). `result` is the panel's own
+ *  answer — `{ok, data?, err?}` — or for a screenshot the box's summary of it. */
+export interface PanelLookResult {
+  request_id: string;
+  command: string;
+  state: "queued" | "sent" | "done" | "expired";
+  result: { ok?: boolean; err?: string; data?: unknown } | null;
+  /** The decoded PNG's URL, when this look produced one. */
+  screenshot: string | null;
 }
 
 export interface PanelStatuses {
@@ -3929,25 +3946,148 @@ export interface PanelAppearance {
 /** Whether a DISPLAY panel's spoken turns reach the owner's real Jerv and Minecraft_Dave — full
  *  tools and memory, as the owner (owner decision 2026-10-12). Off by default; the box refuses it
  *  for a pet panel (409), so the twins' units can never be given the agents. */
-/** A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2): what the PWA's test control
- *  sends, and what the box answers. */
+/** The house's Chromecast TVs, live from the box's cast sidecar (JPANEL_CAST_PLAN.md). The
+ *  verdict is the box's: `idle` and `standby` (off) take a notice; `busy` and `unknown` never. */
+export type CastState = "idle" | "standby" | "busy" | "unknown";
+
+export interface CastTv {
+  id: string;
+  name: string;
+  model: string | null;
+  state: CastState;
+  why: string;
+  castable: boolean;
+  reading: { app_id: string | null; display_name: string | null; connected: boolean };
+}
+
+export interface CastTvs {
+  tvs: CastTv[];
+}
+
+export interface CastSendIn {
+  tv_ids: string[];
+  title: string;
+  body?: string;
+  /** A photo, base64 (JPEG, PNG or WebP); the box draws the frame from it. */
+  picture_b64?: string | null;
+  /** The whole 16:9 frame drawn on the phone, base64; the box casts it as drawn. */
+  frame_b64?: string | null;
+  seconds?: number;
+}
+
+export type CastOutcome = "shown" | "woke" | "skipped" | "failed";
+
+export interface CastTvOutcome {
+  tv_id: string;
+  name: string;
+  outcome: CastOutcome;
+  why: string;
+}
+
+export interface CastNotice {
+  id: string;
+  sender: string;
+  title: string;
+  body: string;
+  seconds: number;
+  created_at: string;
+  stopped_at: string | null;
+  tvs: CastTvOutcome[];
+}
+
+export interface CastNoticeList {
+  notices: CastNotice[];
+  kept_s: number;
+}
+
+/** A send either went out (each TV with its outcome) or was turned away before anything was
+ *  cast, with the box's reason. */
+export type CastSendResult = { sent: CastNotice } | { refused: { status: number; reason: string } };
+
+export function castFrameUrl(id: string): string {
+  return `/api/cast/${encodeURIComponent(id)}/frame`;
+}
+
+/** A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2): what the PWA's composer sends,
+ *  and what the box answers. Text limits are UTF-8 bytes, checked on the box. */
 export interface PanelNoticeIn {
   device_id: string;
   title: string;
   body?: string;
   choices?: string[];
+  chime?: boolean;
+  /** 0: until tapped; omitted: 20 s for a plain notice, until answered for a question. */
+  hide_after_s?: number;
+  /** How long it may wait on the panel (an answer's window), 30 s - 24 h. */
+  ttl_s?: number;
+  image_b64?: string;
+  image_mode?: "full" | "banner";
 }
 
-/** `sent`, or the box's refusal (`offline`, `not_accepting`, `quiet_hours` with `until`,
- *  `no_notice_surface`, `busy`, …) with the HTTP status it came with. */
+/** `sent`, or the box's refusal (`offline` with `last_seen_s`, `not_accepting`, `quiet_hours`
+ *  with `until`, `no_notice_surface`, `busy`, a picture it cannot take, …) with the HTTP
+ *  status it came with and the rest of its detail. */
 export type PanelNoticeResult =
   | { sent: { id: string; panel: string } }
-  | { refused: { status: number; reason: string; until?: string } };
+  | {
+      refused: {
+        status: number;
+        reason: string;
+        until?: string;
+        last_seen_s?: number | null;
+      };
+    };
+
+export type PanelNoticeState =
+  | "queued"
+  | "delivered"
+  | "shown"
+  | "answered"
+  | "dismissed"
+  | "expired"
+  | "withdrawn";
 
 export interface PanelNoticeOut {
   id: string;
-  state: "queued" | "delivered" | "shown" | "answered" | "dismissed" | "expired";
+  device_id: string;
+  sender: string;
+  title: string;
+  body: string;
+  choices: string[];
+  state: PanelNoticeState;
   answer: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  shown_at: string | null;
+  finished_at: string | null;
+  hide_after_s: number | null;
+  image: { mode: "full" | "banner"; w?: number; h?: number } | null;
+  audio_ms: number | null;
+  expires_at: string | null;
+  ttl_s: number;
+  chime: boolean;
+  /** What the panel draws: picture (the whole glass), banner, question or plain. */
+  kind: "picture" | "banner" | "question" | "plain";
+}
+
+export interface PanelNoticeList {
+  notices: PanelNoticeOut[];
+  /** How long the box keeps a finished one, in seconds. */
+  kept_s: number;
+}
+
+/** The picture as the panel will draw it, from the box's own encoder. */
+export interface PanelNoticePreview {
+  png_b64: string;
+  w: number;
+  h: number;
+  bytes: number;
+  posterize: number;
+}
+
+/** The notice's picture as the panel draws it, at most `w` wide. Immutable, so cacheable. */
+export function panelNoticeImageUrl(id: string, w: number): string {
+  return `/api/panel/notify/${encodeURIComponent(id)}/image?w=${w}`;
 }
 
 export interface PanelAgentAccess {
@@ -6971,6 +7111,27 @@ export const api = {
     return (await response.json()) as PanelStatuses;
   },
 
+  // A LOOK AT A LIVE PANEL, without a debug token: the box queues it, the panel collects it on
+  // its 3 s pickup, and `panelLookResult` long-polls (≤ 25 s a call) for its answer.
+  async panelLook(deviceId: string, what: PanelLookWhat): Promise<{ request_id: string }> {
+    const response = await request(
+      `/api/panel/look/${encodeURIComponent(deviceId)}`,
+      jsonInit("POST", { what }),
+    );
+    return (await response.json()) as { request_id: string };
+  },
+
+  async panelLookResult(
+    deviceId: string,
+    requestId: string,
+    waitS: number,
+  ): Promise<PanelLookResult> {
+    const response = await request(
+      `/api/panel/look/${encodeURIComponent(deviceId)}/${encodeURIComponent(requestId)}?wait=${waitS}`,
+    );
+    return (await response.json()) as PanelLookResult;
+  },
+
   // THE SHARED PANEL KNOBS. Owner-only, and until now reachable ONLY from the debug console —
   // which needs a token, which the owner has to be handed. That is the same no-terminal gap
   // (CLAUDE.md #10) that hid revoke on the Location screen, so the controls come with the
@@ -7048,11 +7209,13 @@ export const api = {
       detail && typeof detail === "object"
         ? (detail as { reason?: unknown; until?: unknown })
         : { reason: typeof detail === "string" ? detail : `HTTP ${response.status}` };
+    const seen = (refused as { last_seen_s?: unknown }).last_seen_s;
     return {
       refused: {
         status: response.status,
         reason: String(refused.reason ?? response.status),
         ...(typeof refused.until === "string" ? { until: refused.until } : {}),
+        ...(typeof seen === "number" ? { last_seen_s: seen } : {}),
       },
     };
   },
@@ -7060,6 +7223,76 @@ export const api = {
   async panelNotice(id: string, waitS: number): Promise<PanelNoticeOut> {
     const response = await request(`/api/panel/notify/${encodeURIComponent(id)}?wait=${waitS}`);
     return (await response.json()) as PanelNoticeOut;
+  },
+
+  async panelNotices(deviceId: string, limit = 100): Promise<PanelNoticeList> {
+    const q = `device_id=${encodeURIComponent(deviceId)}&limit=${limit}`;
+    const response = await request(`/api/panel/notify?${q}`);
+    return (await response.json()) as PanelNoticeList;
+  },
+
+  async previewPanelNotice(imageB64: string, mode: "full" | "banner"): Promise<PanelNoticePreview> {
+    const response = await request(
+      "/api/panel/notify/preview",
+      jsonInit("POST", { image_b64: imageB64, image_mode: mode }),
+    );
+    return (await response.json()) as PanelNoticePreview;
+  },
+
+  /** Unsend. A notice that has already ended answers 409 `already_finished`; the caller reads
+   *  it again rather than treating that as a failure. */
+  async withdrawPanelNotice(id: string): Promise<PanelNoticeOut> {
+    const response = await request(
+      `/api/panel/notify/${encodeURIComponent(id)}/withdraw`,
+      jsonInit("POST", {}),
+    );
+    return (await response.json()) as PanelNoticeOut;
+  },
+
+  async panelNoticeImage(id: string, w: number): Promise<Blob> {
+    return (await request(panelNoticeImageUrl(id, w))).blob();
+  },
+
+  async castTvs(): Promise<CastTvs> {
+    return (await (await request("/api/cast/tvs")).json()) as CastTvs;
+  },
+
+  // Like a panel notice, a refusal is an answer the owner reads (a field too long, a picture
+  // that is not one), so it comes back whole rather than as an ApiError.
+  async castSend(body: CastSendIn): Promise<CastSendResult> {
+    const transport = await getTransport();
+    const response = await transport("/api/cast/send", {
+      credentials: "same-origin",
+      ...jsonInit("POST", body),
+    });
+    if (response.status === 401) {
+      unauthorizedHandler?.();
+      throw new ApiError(401, "Not authenticated");
+    }
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (response.ok) return { sent: data as unknown as CastNotice };
+    // Only the box's own refusal ({reason}) is an answer; a missing sidecar (503), a refused
+    // token (502) or anything else is a failure the screen words for itself.
+    const detail = data.detail as { reason?: unknown } | undefined;
+    if (response.status < 500 && detail && typeof detail.reason === "string") {
+      return { refused: { status: response.status, reason: detail.reason } };
+    }
+    throw new ApiError(
+      response.status,
+      typeof data.detail === "string" ? data.detail : `Request failed: ${response.status}`,
+    );
+  },
+
+  async castSent(limit = 30): Promise<CastNoticeList> {
+    return (await (await request(`/api/cast/sent?limit=${limit}`)).json()) as CastNoticeList;
+  },
+
+  async castStop(id: string): Promise<{ id: string; stopped: Record<string, boolean> }> {
+    const response = await request(
+      `/api/cast/${encodeURIComponent(id)}/stop`,
+      jsonInit("POST", {}),
+    );
+    return (await response.json()) as { id: string; stopped: Record<string, boolean> };
   },
 
   async setPanelAgentAccess(deviceId: string, agentAccess: boolean): Promise<PanelAgentAccess> {

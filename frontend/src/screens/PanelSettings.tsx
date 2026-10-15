@@ -66,9 +66,21 @@ export function summary(group: Group, v: PanelSettingValues, colours: string[]):
   return `Brightness ${v.brightness ?? "—"}% · volume ${v.volume ?? "—"}%`;
 }
 
-export function PanelSettings({ deviceId }: { deviceId: string }) {
+/** `showNotices` opens the Notices group and brings it into view each time it changes: a notice
+ *  the box turned away for a switch here (notices off, night hours) sends the owner straight to
+ *  that switch. */
+export function PanelSettings({
+  deviceId,
+  showNotices = 0,
+}: { deviceId: string; showNotices?: number }) {
   const [data, setData] = useState<PanelSettingsOut | null>(null);
   const [open, setOpen] = useState<Partial<Record<Group, boolean>>>({});
+  const section = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!showNotices) return;
+    setOpen((o) => ({ ...o, notices: true }));
+    section.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  }, [showNotices]);
   const [error, setError] = useState<string | null>(null);
   // What this screen asked for, and whether the panel has since reported it.
   const [asked, setAsked] = useState<PanelSettingValues>({});
@@ -355,7 +367,7 @@ export function PanelSettings({ deviceId }: { deviceId: string }) {
   ];
 
   return (
-    <section className="jp-settings" aria-label="Panel settings">
+    <section className="jp-settings" aria-label="Panel settings" ref={section}>
       <div className="jp-alarms-head">
         <span className="jp-alarms-title">Panel settings</span>
         <span className={`jp-set-sync ${sync.tone}`} aria-live="polite">

@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-14
+> **Status:** Living · **Last verified:** 2026-10-15
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -4123,6 +4123,44 @@ The round's record and its independent review are `docs/mocks/minecraft-goals/`.
   server that can't answer reads *Can't count right now — {why}*.
 - **Glyphs**: a cube for a goal that counts an item, a flag for a plain goal, a check and a
   ban for finished ones. Never the Tricorder target's rings (review X7).
+
+## Cast — notices on the house's TVs
+
+Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the owner
+2026-10-14; plan `docs/plans/JPANEL_CAST_PLAN.md` K2. Steel, like jpanel, its sibling.
+
+- **Its own launcher tile**, "Cast", beside jpanel. Its badge counts the TVs that would take
+  a notice right now; no badge when none would, or when the box has no TV finder.
+- **Three tabs**: TVs, Send, Sent (the shared segmented control). The TVs tab says each TV's
+  state as a word with its dot, never the dot alone: *Ready*, *Off*, *In use*, *Not
+  answering*, with what it is doing under its name. Our own notice reads *Showing a notice*,
+  not as somebody watching.
+- **Send** is a touch editor (owner, 2026-10-15: *"just click 'add text' or 'add image' and
+  then use mobile touch to zoom rotate, place the things"*). The 16:9 canvas comes first, full
+  width, with two large buttons under it: **Add text** opens a Sheet with the words field
+  focused and the panel's four styles, and **Add image** opens the photo picker. Each adds a
+  layer, held at once, outlined with a corner handle. A touch picks up the topmost layer under
+  the finger; a drag moves it, and a pinch-and-twist anywhere on the canvas (or a pull-and-turn
+  of the handle) resizes and rotates the held one, settling level within 5° of a quarter turn.
+  A double-tap on words reopens them. A bar under the buttons acts on the held layer: words get
+  Edit, the four style swatches and Delete; a picture gets Replace, Fill screen and Delete.
+  Pictures always draw under words (owner: *"picture always under text"*). The first picture
+  fills the screen; later ones come in at half size, and any can shrink to 0.15 of fitting or
+  grow to 4x. Up to eight layers. The phone draws the frame the TV gets, so the canvas is
+  exactly what lands. Words too long or too big for the screen are drawn smaller until every
+  word fits, and a line under the canvas says so. Under the editor: the TVs (every one that
+  would take it picked to start with; one in use can still be picked, struck through, with a
+  line saying it will be skipped) and *On screen for*: a number with a seconds/minutes picker
+  (owner: *"just needs an input a number, and a selector for seconds or minutes"*). Switching the
+  unit keeps the same time; outside the box's 5 s to 5 min the line under it says so and Cast
+  waits.
+- **The result is a Sheet** titled *Cast to 2 of 3*, a tag per TV (*On screen*, *Turned on*,
+  *Skipped*, *Didn't cast*) and why. A TV that was woken *stays on*, and the sheet says so,
+  because a cast cannot turn a TV off. **Take it down** is the destructive button, shown only
+  while something it cast may still be up.
+- **Sent** is one row per send with the frame as its thumbnail, newest first, kept a week.
+- The TV preview's sheet is drawn in the TV frame's own near-black in both themes, like the
+  panel composer's glass: it is a picture of a dark screen, not a themed surface.
 
 ## Implementation rules
 

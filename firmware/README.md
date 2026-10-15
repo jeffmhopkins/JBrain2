@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-14
+> **Status:** Living · **Last verified:** 2026-10-15
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -190,6 +190,22 @@ laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
 
+**0.4.15: the game plays on, the hit sounds at once, the song is whole.** Owner, after playing
+it: *"when the pet is hit by an object, it pauses for a good while before it makes the noise"*;
+*"if it recognizes a word, it exits out of the game. That shouldn't happen"*; *"if it times out
+it should exit the game"*; and the birthday beeps sang only "happy birthday", not "... to you".
+The pause was the hit's cue being RENDERED: `cue_render` runs on the render task, twice (a peak
+pass, then the samples), and `pulse` summed every partial with its own `sinf` and `cosf` — two
+voices at 196 Hz is 24 partials each, ~100 trig calls a sample, the costliest cue in the table,
+and the frame froze until it was done. `pulse` and `triangle` now step their partials by
+recurrence, two trig calls a sample whatever the count, the samples within one LSB of before
+and every cue several times cheaper. The same freeze is what broke the song: the first phrase's
+render ran its sound late, the speaker was still busy at the second phrase's re-cue point, and
+a re-cue skips a busy speaker, so "day to" was dropped. A song's next phrase now cuts its last
+over the pet's own noise (`facts.pet_only`) rather than waiting for silence. During a game only
+"stop" and "lets play a game" are heard (`game_deaf`); the round-over screen ends the game after
+8 s with no tap.
+
 **0.4.14: happy birthday, and a game.** Agreed against a playable mock first (artifact
 `HoUATxevCfmDDiJdHZKM5A`), then built.
 
@@ -219,9 +235,10 @@ as the panel lies back, to nothing flat on a table: review.) Asked again mid-wal
 where he is, at the size he is. **The sign of forward/back is unverified on
 hardware**: tipping the top away is meant to run him down the screen; the start's raw `az` and
 `down` are logged (`game: start`) to check it. A thing touching him ends the round (dazed, score and best);
-a tap plays again, and with no tap within 15 s of the hit (`GAME_OVER_WAIT_MS`, however the
-panel is held) the game ends; so do the name, any other command, leaving the pet screen and a
-minute with nobody tilting, and he walks back, growing. During a game a poke is the game's, a shake is
+a tap plays again, and with no tap within 8 s of the hit (`GAME_OVER_WAIT_MS`, however the
+panel is held; 15 s in 0.4.14) the game ends; so do "stop", leaving the pet screen and a
+minute with nobody tilting, and he walks back, growing. Nothing else said ends it (0.4.15,
+`game_deaf`): children playing shout, and in 0.4.14 any phrase the panel caught did. During a game a poke is the game's, a shake is
 not dizzy, no poop comes due, and the name label gives its corner to the score.
 
 **0.4.13: tickled out.** Owner: *"on tickle mode, if tickled 5 times, he should fart and go

@@ -33,6 +33,31 @@ static bool id_ok(const char *id)
     return true;
 }
 
+void notice_withdrawn_parse(const char *header, notice_withdrawn_t *out)
+{
+    out->n = 0;
+    if (!header) return;
+    for (const char *at = header; *at && out->n < NOTICE_OPEN_MAX;) {
+        const char *end = strchr(at, ',');
+        const size_t len = end ? (size_t)(end - at) : strlen(at);
+        if (len == NOTICE_ID_TEXT - 1) {
+            char *id = out->id[out->n];
+            memcpy(id, at, len);
+            id[len] = '\0';
+            if (id_ok(id)) out->n++;
+        }
+        if (!end) break;
+        at = end + 1;
+    }
+}
+
+bool notice_withdrawn_has(const notice_withdrawn_t *w, const char *id)
+{
+    for (uint8_t i = 0; i < w->n; i++)
+        if (!strcmp(w->id[i], id)) return true;
+    return false;
+}
+
 void notice_body_path(const char *id, char *out, size_t cap)
 {
     snprintf(out, cap, "/endpoint/notice/%s/body", id);

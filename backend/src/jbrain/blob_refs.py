@@ -129,6 +129,7 @@ BLOB_REFERENCES: tuple[BlobRef, ...] = (
         "image_sha256 = :sha OR audio_sha256 = :sha",
         "a desk-panel notice's picture or sound, as the panel takes it",
     ),
+    BlobRef("app.cast_notice", "frame_sha256 = :sha", "a notice's frame, as the TVs were cast it"),
     BlobRef("app.wiki_articles", "image_sha = :sha", "a wiki article's portrait"),
 )
 

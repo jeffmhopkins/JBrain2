@@ -468,6 +468,7 @@ dbg_poll_t dbg_link_poll(void)
     if (status == 200 || status == 204) {
         svc_post_tag(rep.post);
         svc_notice_waiting(rep.notice);
+        svc_notice_withdraw(rep.withdraw);
         /* A change the PWA asked for waits for this panel: the loop fetches it next. */
         set_link_signal(rep.settings);
     }
