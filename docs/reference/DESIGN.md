@@ -4148,9 +4148,12 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   fills the screen; later ones come in at half size, and any can shrink to 0.15 of fitting or
   grow to 4x. Up to eight layers. The phone draws the frame the TV gets, so the canvas is
   exactly what lands. Words too long or too big for the screen are drawn smaller until every
-  word fits, and a line under the canvas says so. Under the editor: the TVs (every one that
-  would take it picked to start with; one in use can still be picked, struck through, with a
-  line saying it will be skipped) and *On screen for*: a number with a seconds/minutes picker
+  word fits, and a line under the canvas says so. Under the editor: the TVs, as one picker
+  naming who it goes to (*Big TV, Parents + 1 more*) that opens a Sheet *Cast to* listing every
+  TV with its state and a check, the way a video app picks a TV to cast to (owner: *"should be
+  a drop down menu, similar to casting YouTube to Chromecast"*). Every one that would take it is
+  picked to start with; one in use can still be picked, struck through, with a line saying it
+  will be skipped. Then *On screen for*: a number with a seconds/minutes picker
   (owner: *"just needs an input a number, and a selector for seconds or minutes"*). Switching the
   unit keeps the same time; outside the box's 5 s to 5 min the line under it says so and Cast
   waits.
@@ -4162,8 +4165,12 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   (owner, 2026-10-15: *"Cast page should not hide on swipe down"*): a downward drag on the
   canvas is a move, not a way out. The chevron and the platform back gesture still climb.
 - **What was composed is kept** (owner, 2026-10-15): leaving Cast and coming back reopens Send
-  with every layer where it was left. It lives in memory, so a reload of the app starts clean.
-- **Sent** is one row per send with the frame as its thumbnail, newest first, kept a week.
+  with every layer, TV pick and time where they were left. It lives in memory, so a reload of
+  the app starts clean.
+- **Sent** is one row per send with the frame as its thumbnail, newest first, kept a week. Each
+  row has a pencil, *Edit again* (owner: *"to quickly iterate on previous casts"*): it opens
+  Send with that cast's TVs and time on screen, and its layers still movable when it was sent
+  from this phone since the app opened; otherwise its frame comes back as one picture to build on.
 - The TV preview's sheet is drawn in the TV frame's own near-black in both themes, like the
   panel composer's glass: it is a picture of a dark screen, not a themed surface.
 

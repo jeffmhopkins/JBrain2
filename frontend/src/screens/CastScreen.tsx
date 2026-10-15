@@ -60,6 +60,9 @@ import {
 } from "../cast";
 import { Sheet } from "../components/Sheet";
 import {
+  CastIcon,
+  CheckIcon,
+  ChevronDownIcon,
   FitIcon,
   ImageIcon,
   MonitorIcon,
@@ -92,27 +95,61 @@ const REFUSALS: Record<string, string> = {
   picture_too_big: "That picture is too big to send.",
 };
 
+/** Everything Send is composing: the layers, the TVs picked (null: every one that would take
+ *  it), and how long it stays up. */
+interface Compose {
+  draft: CastDraft;
+  picked: Set<string> | null;
+  amount: string;
+  unit: TimeUnit;
+}
+
+function freshCompose(): Compose {
+  return { draft: emptyCastDraft(), picked: null, amount: String(SECONDS_DEFAULT), unit: "s" };
+}
+
 // What was composed outlives the card: leaving Cast and coming back finds the layers where
 // they were, and Send still open. Memory, not storage, because a picture is a decoded bitmap;
 // a reload of the app starts clean.
-let kept: { tab: Tab; draft: CastDraft } | null = null;
+let kept: { tab: Tab; compose: Compose } | null = null;
+// Each send's layers, so a past cast reopens with its words and pictures still movable. One
+// sent before this app opened (or from elsewhere) reopens as its frame, one picture to build on.
+const sentDrafts = new Map<string, CastDraft>();
+const SENT_DRAFTS_MAX = 20;
 
 /** Drop what Cast kept, so the next open starts fresh. */
 export function forgetCastDraft(): void {
   kept = null;
+  sentDrafts.clear();
+}
+
+/** A past cast as Send would compose it again: its layers, TVs and time on screen. */
+async function composeFrom(n: CastNotice): Promise<Compose> {
+  const draft = sentDrafts.get(n.id) ?? addPicture(emptyCastDraft(), await loadFrame(n.id));
+  const minutes = n.seconds >= 60 && n.seconds % 60 === 0;
+  return {
+    draft,
+    picked: new Set(n.tvs.map((t) => t.tv_id)),
+    amount: String(minutes ? n.seconds / 60 : n.seconds),
+    unit: minutes ? "min" : "s",
+  };
 }
 
 export function CastScreen() {
   const [tab, setTab] = useState<Tab>(() => kept?.tab ?? "tvs");
+  const [compose, setCompose] = useState<Compose>(() => kept?.compose ?? freshCompose());
   const [tvs, setTvs] = useState<CastTv[] | null>(null);
   const [tvError, setTvError] = useState<string | null>(null);
   const [result, setResult] = useState<CastNotice | null>(null);
   // Held here, not in Send, so a look at the TVs or Sent doesn't lose what was composed.
-  const [draft, setDraftState] = useState<CastDraft>(() => kept?.draft ?? emptyCastDraft());
   useEffect(() => {
-    kept = { tab, draft };
-  }, [tab, draft]);
-  const setDraft = useCallback((fn: (d: CastDraft) => CastDraft) => setDraftState(fn), []);
+    kept = { tab, compose };
+  }, [tab, compose]);
+  const setDraft = useCallback(
+    (fn: (d: CastDraft) => CastDraft) => setCompose((c) => ({ ...c, draft: fn(c.draft) })),
+    [],
+  );
+  const patch = useCallback((p: Partial<Compose>) => setCompose((c) => ({ ...c, ...p })), []);
 
   const loadTvs = useCallback(async () => {
     try {
@@ -174,15 +211,29 @@ export function CastScreen() {
       {tab === "send" && (
         <SendTab
           tvs={tvs}
-          draft={draft}
+          compose={compose}
           setDraft={setDraft}
+          patch={patch}
           onSent={(n) => {
+            sentDrafts.set(n.id, compose.draft);
+            if (sentDrafts.size > SENT_DRAFTS_MAX) {
+              const oldest = sentDrafts.keys().next().value;
+              if (oldest !== undefined) sentDrafts.delete(oldest);
+            }
             setResult(n);
             void loadTvs();
           }}
         />
       )}
-      {tab === "sent" && <SentTab onOpen={setResult} />}
+      {tab === "sent" && (
+        <SentTab
+          onOpen={setResult}
+          onEdit={async (n) => {
+            setCompose(await composeFrom(n));
+            setTab("send");
+          }}
+        />
+      )}
 
       {result && (
         <ResultSheet notice={result} onChange={setResult} onClose={() => setResult(null)} />
@@ -260,22 +311,23 @@ function TvsTab({
 
 function SendTab({
   tvs,
-  draft,
+  compose,
   setDraft,
+  patch,
   onSent,
 }: {
   tvs: CastTv[] | null;
-  draft: CastDraft;
+  compose: Compose;
   setDraft: (fn: (d: CastDraft) => CastDraft) => void;
+  patch: (p: Partial<Compose>) => void;
   onSent: (n: CastNotice) => void;
 }) {
-  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const { draft, picked, amount, unit } = compose;
+  const [choosing, setChoosing] = useState(false);
   // The layer held on the canvas, outlined with its handle, that the bar under it acts on.
   const [held, setHeld] = useState<number | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [fits, setFits] = useState<Map<number, WordsFit>>(new Map());
-  const [amount, setAmount] = useState(String(SECONDS_DEFAULT));
-  const [unit, setUnit] = useState<TimeUnit>("s");
   const time = onScreenSeconds(amount, unit);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -298,7 +350,7 @@ function SendTab({
     const next = new Set(chosen);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    setPicked(next);
+    patch({ picked: next });
   }
 
   function choosePicture(replace: number | null) {
@@ -503,20 +555,53 @@ function SendTab({
       {tvs === null ? (
         <p className="muted">Looking for TVs…</p>
       ) : (
-        <fieldset className="cast-targets" aria-label="TVs">
-          {tvs.map((tv) => (
-            <button
-              key={tv.id}
-              type="button"
-              className={`cast-target${chosen.has(tv.id) ? " on" : ""}${tv.castable ? "" : " busy"}`}
-              aria-pressed={chosen.has(tv.id)}
-              onClick={() => toggle(tv.id)}
-            >
-              <span className={`cast-dot cast-${tvWords(tv).tone}`} aria-hidden="true" />
-              {tv.name}
-            </button>
-          ))}
-        </fieldset>
+        // One control that opens the list, the way casting from a video app picks a TV.
+        <button
+          type="button"
+          className="cast-picker"
+          aria-haspopup="dialog"
+          aria-label={`TVs: ${pickedLabel(targets)}`}
+          onClick={() => setChoosing(true)}
+        >
+          <CastIcon size={20} />
+          <span className="cast-picker-text">{pickedLabel(targets)}</span>
+          <ChevronDownIcon size={18} />
+        </button>
+      )}
+      {choosing && tvs && (
+        <Sheet title="Cast to" onClose={() => setChoosing(false)}>
+          <fieldset className="cast-card cast-choices" aria-label="TVs">
+            {tvs.map((tv) => {
+              const w = tvWords(tv);
+              const on = chosen.has(tv.id);
+              return (
+                <button
+                  key={tv.id}
+                  type="button"
+                  className={`cast-tv cast-choice${on ? " on" : ""}${tv.castable ? "" : " busy"}`}
+                  aria-pressed={on}
+                  onClick={() => toggle(tv.id)}
+                >
+                  <span className="cast-tv-ic" aria-hidden="true">
+                    <MonitorIcon size={20} />
+                  </span>
+                  <span className="cast-tv-meta">
+                    <span className="cast-tv-name">{tv.name}</span>
+                    <span className="cast-tv-sub">
+                      <span className={`cast-dot cast-${w.tone}`} aria-hidden="true" /> {w.label}
+                    </span>
+                  </span>
+                  <span className="cast-check" aria-hidden="true">
+                    {on && <CheckIcon size={20} />}
+                  </span>
+                </button>
+              );
+            })}
+          </fieldset>
+          <button type="button" className="cast-primary" onClick={() => setChoosing(false)}>
+            Done
+          </button>
+        </Sheet>
       )}
       {skips.map((s) => (
         <p key={s} className="cast-note">
@@ -535,7 +620,7 @@ function SendTab({
           min={1}
           step="any"
           value={amount}
-          onChange={(e) => setAmount(e.target.value)}
+          onChange={(e) => patch({ amount: e.target.value })}
         />
         <select
           aria-label="Unit"
@@ -545,9 +630,10 @@ function SendTab({
             const next = e.target.value as TimeUnit;
             if ("seconds" in time) {
               const n = next === "min" ? time.seconds / 60 : time.seconds;
-              setAmount(String(Math.round(n * 100) / 100));
+              patch({ amount: String(Math.round(n * 100) / 100), unit: next });
+            } else {
+              patch({ unit: next });
             }
-            setUnit(next);
           }}
         >
           <option value="s">seconds</option>
@@ -906,9 +992,16 @@ function tvCount(n: number): string {
   return n === 1 ? "1 TV" : `${n} TVs`;
 }
 
-function SentTab({ onOpen }: { onOpen: (n: CastNotice) => void }) {
+function SentTab({
+  onOpen,
+  onEdit,
+}: {
+  onOpen: (n: CastNotice) => void;
+  onEdit: (n: CastNotice) => Promise<void>;
+}) {
   const [notices, setNotices] = useState<CastNotice[] | null>(null);
   const [error, setError] = useState(false);
+  const [editFailed, setEditFailed] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -934,15 +1027,29 @@ function SentTab({ onOpen }: { onOpen: (n: CastNotice) => void }) {
     <>
       <section className="cast-card">
         {notices.map((n) => (
-          <button key={n.id} type="button" className="cast-sent" onClick={() => onOpen(n)}>
-            <img className="cast-mini" src={castFrameUrl(n.id)} alt="" loading="lazy" />
-            <span className="cast-tv-meta">
-              <span className="cast-tv-name">{n.title}</span>
-              <span className="cast-tv-sub">{sentSummary(n)}</span>
-            </span>
-          </button>
+          <div key={n.id} className="cast-sent-row">
+            <button type="button" className="cast-sent" onClick={() => onOpen(n)}>
+              <img className="cast-mini" src={castFrameUrl(n.id)} alt="" loading="lazy" />
+              <span className="cast-tv-meta">
+                <span className="cast-tv-name">{n.title}</span>
+                <span className="cast-tv-sub">{sentSummary(n)}</span>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="cast-ghost cast-again"
+              aria-label={`Edit ${n.title} again`}
+              onClick={() => {
+                setEditFailed(false);
+                onEdit(n).catch(() => setEditFailed(true));
+              }}
+            >
+              <PencilIcon size={18} />
+            </button>
+          </div>
         ))}
       </section>
+      {editFailed && <p className="cast-error">Couldn't open that one to edit.</p>}
       <p className="muted cast-hint">Kept for a week.</p>
     </>
   );
@@ -1011,6 +1118,28 @@ function ResultSheet({
 
 /** A camera photo scaled once to the working size, so zooming and dragging redraw from a
  *  small copy. Never scaled up. */
+/** A past cast's frame as a picture: it is exactly TV-sized, so it fills the screen as one. */
+async function loadFrame(id: string): Promise<Photo> {
+  const img = new Image();
+  img.src = castFrameUrl(id);
+  await img.decode();
+  const size = workingSize(TV_W, TV_H, PHOTO_WORKING_MAX);
+  const canvas = document.createElement("canvas");
+  canvas.width = size.w;
+  canvas.height = size.h;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no canvas");
+  ctx.drawImage(img, 0, 0, size.w, size.h);
+  return { source: canvas, w: size.w, h: size.h };
+}
+
+/** The picker's line: who it goes to, by name while that fits. */
+function pickedLabel(targets: CastTv[]): string {
+  if (targets.length === 0) return "Pick a TV";
+  if (targets.length <= 2) return targets.map((t) => t.name).join(", ");
+  return `${targets[0]?.name}, ${targets[1]?.name} + ${targets.length - 2} more`;
+}
+
 async function loadPhoto(file: File): Promise<Photo> {
   const bmp = await createImageBitmap(file);
   try {

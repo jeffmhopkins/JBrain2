@@ -164,13 +164,17 @@ describe("Cast", () => {
     await screen.findByText("3 found on the network");
     fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
 
-    // The ready and off TVs are picked to start with; the busy one is not.
+    // The ready and off TVs are picked to start with; the busy one is not. The picker is one
+    // control naming them, opening the list the way a video app picks a TV to cast to.
+    const picker = screen.getByRole("button", { name: "TVs: Big TV, Parents" });
+    fireEvent.click(picker);
     const picks = within(screen.getByRole("group", { name: "TVs" }));
     expect(picks.getByRole("button", { name: /Big TV/ })).toHaveAttribute("aria-pressed", "true");
     expect(picks.getByRole("button", { name: /Twins room/ })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
     const cast = screen.getByRole("button", { name: /Cast to 2 TVs/ });
     expect(cast).toBeDisabled();
 
@@ -182,7 +186,14 @@ describe("Cast", () => {
     fireEvent.change(screen.getByLabelText("On screen for"), { target: { value: "1" } });
 
     // Picking a TV that is in use says so before sending.
-    fireEvent.click(picks.getByRole("button", { name: /Twins room/ }));
+    fireEvent.click(screen.getByRole("button", { name: "TVs: Big TV, Parents" }));
+    fireEvent.click(
+      within(screen.getByRole("group", { name: "TVs" })).getByRole("button", {
+        name: /Twins room/,
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("button", { name: "TVs: Big TV, Parents + 1 more" })).toBeVisible();
     expect(
       screen.getByText("Twins room is netflix · playing and will be skipped."),
     ).toBeInTheDocument();
@@ -377,7 +388,7 @@ describe("Cast", () => {
       .mockResolvedValue({ id: "n1", stopped: { a: true, b: false } });
     render(<CastScreen />);
     fireEvent.click(screen.getByRole("button", { name: "Sent" }));
-    fireEvent.click(await screen.findByRole("button", { name: /Dinner's ready/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Dinner's ready/ }));
     expect(screen.getByText("Cast to 2 of 2")).toBeInTheDocument();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Take it down" }));
@@ -385,6 +396,69 @@ describe("Cast", () => {
     expect(stop).toHaveBeenCalledWith("n1");
     expect(screen.getByText("Taken down on 1 TV.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Take it down" })).toBeNull();
+  });
+
+  it("reopens a cast sent from here in Send, its layers still movable", async () => {
+    vi.spyOn(api, "castSend").mockResolvedValue({ sent: sent({ seconds: 120 }) });
+    vi.spyOn(api, "castSent").mockResolvedValue({
+      notices: [sent({ seconds: 120 })],
+      kept_s: 604800,
+    });
+    render(<CastScreen />);
+    await addText("Dinner's ready");
+    fireEvent.click(screen.getByRole("button", { name: /^Cast to/ }));
+    await screen.findByText("Cast to 2 of 2");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    // Start over, so what comes back is the sent one, not what was left on the canvas.
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Sent" }));
+    drawn.length = 0;
+    const again = await screen.findByRole("button", { name: "Edit Dinner's ready again" });
+    await act(async () => {
+      fireEvent.click(again);
+    });
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-pressed", "true");
+    expect(drawn).toContain("Dinner's ready");
+    expect(screen.getByLabelText("On screen for")).toHaveValue(2);
+    expect(screen.getByLabelText("Unit")).toHaveValue("min");
+    expect(screen.getByRole("button", { name: "TVs: Big TV, Parents" })).toBeInTheDocument();
+  });
+
+  it("reopens a cast it has no layers for as its frame, one picture", async () => {
+    const decode = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(HTMLImageElement.prototype, "decode", {
+      value: decode,
+      configurable: true,
+    });
+    vi.spyOn(api, "castSent").mockResolvedValue({
+      notices: [sent({ id: "old", tvs: [] })],
+      kept_s: 604800,
+    });
+    render(<CastScreen />);
+    fireEvent.click(screen.getByRole("button", { name: "Sent" }));
+    const again = await screen.findByRole("button", { name: "Edit Dinner's ready again" });
+    await act(async () => {
+      fireEvent.click(again);
+    });
+    expect(decode).toHaveBeenCalled();
+    expect(screen.queryByText("Add text or a picture to start")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "TVs: Pick a TV" })).toBeInTheDocument();
+  });
+
+  it("says when a past cast can't be opened to edit", async () => {
+    Object.defineProperty(HTMLImageElement.prototype, "decode", {
+      value: vi.fn().mockRejectedValue(new Error("gone")),
+      configurable: true,
+    });
+    vi.spyOn(api, "castSent").mockResolvedValue({ notices: [sent()], kept_s: 604800 });
+    render(<CastScreen />);
+    fireEvent.click(screen.getByRole("button", { name: "Sent" }));
+    const again = await screen.findByRole("button", { name: "Edit Dinner's ready again" });
+    await act(async () => {
+      fireEvent.click(again);
+    });
+    expect(screen.getByText("Couldn't open that one to edit.")).toBeInTheDocument();
   });
 
   it("says when nothing was cast this week", async () => {
