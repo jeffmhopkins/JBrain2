@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { type CastTv, api } from "../api/client";
 import { Launcher } from "./Launcher";
 
 // Tiles navigate by their `target`: clicking one routes the parent to the
@@ -65,6 +66,24 @@ describe("Launcher tile navigation", () => {
     expect(screen.queryByRole("button", { name: "Pet face" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Endpoints" }));
     expect(onNavigate).toHaveBeenCalledWith("endpoints");
+  });
+
+  // Cast sits beside jpanel, and its badge counts the TVs that would take a notice now.
+  it("routes the Cast card and badges the TVs that are ready", async () => {
+    vi.spyOn(api, "castTvs").mockResolvedValue({
+      tvs: [{ castable: true }, { castable: true }, { castable: false }] as unknown as CastTv[],
+    });
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+
+    try {
+      const cast = screen.getByText("Cast").closest("button") as HTMLElement;
+      await waitFor(() => expect(cast.querySelector(".tile-badge")?.textContent).toBe("2"));
+      fireEvent.click(cast);
+      expect(onNavigate).toHaveBeenCalledWith("cast");
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("routes the Data card to its launcher screen", () => {

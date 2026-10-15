@@ -79,10 +79,17 @@ later, if wanted.
 
 ## K2 ◻️ — the PWA
 
-Per the mock: the **Cast** launcher tile with a badge counting TVs that would take a notice now;
-the TV list with each verdict in plain words; one TV's settings (on/off for notices, quiet
-hours, allow waking); Send through the panel composer from #1756 (reply choices removed, since a
-TV can't answer); the per-TV result sheet; and Sent, per send.
+**Shipped (K2a):** the **Cast** launcher tile with a badge counting the TVs that would take a
+notice now; the TV list with each verdict in plain words ("Showing a notice" for our own card);
+Send with title, text, a picture and how long it stays up, every TV that would take it picked to
+start with and an in-use one struck through, and a preview drawn by the box (`POST
+/api/cast/preview`); the per-TV result sheet with Take it down; and Sent, per send. Send is its
+own form rather than the panel composer from #1756: that composer draws the words onto the
+picture on the phone at the panel's 480 px, where for a TV the box draws the frame, so only its
+fields carry over.
+
+**Still to do in K2:** one TV's settings (on/off for notices, quiet hours, allow waking), once
+K1's per-TV settings land.
 
 ## K3 ◻️ — sound
 

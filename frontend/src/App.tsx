@@ -14,6 +14,7 @@ import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNot
 import { SEND_PATH } from "./panelNotice";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
+import { CastScreen } from "./screens/CastScreen";
 import { ControlScreen } from "./screens/ControlScreen";
 import { DataScreen } from "./screens/DataScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
@@ -79,6 +80,7 @@ type Card =
   | "intake"
   | "petcontrol"
   | "jpanel"
+  | "cast"
   | "endpoints"
   | "jcode"
   | "jlaunch"
@@ -121,6 +123,7 @@ const SCREEN_TITLES: Record<
   intake: "Intake Links",
   jmolt: "jmolt",
   minecraft: "Minecraft",
+  cast: "Cast",
 };
 
 const CARD_EXIT_MS = 150;
@@ -680,6 +683,7 @@ export function App() {
             )}
             {card === "llm-settings" && <LLMSettingsScreen />}
             {card === "data" && <DataScreen />}
+            {card === "cast" && <CastScreen />}
             {card === "minecraft" && (
               <MinecraftScreen
                 openMap={minecraftMap}

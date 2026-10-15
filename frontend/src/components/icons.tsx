@@ -642,6 +642,16 @@ export const MonitorIcon = (p: IconProps) => (
   </Icon>
 );
 
+// The Cast tile: a screen with the cast arcs in its corner.
+export const CastIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6" />
+    <path d="M2 12a9 9 0 0 1 8 8" />
+    <path d="M2 16a5 5 0 0 1 4 4" />
+    <path d="M2 20h.01" />
+  </Icon>
+);
+
 // ---- the Minecraft map (docs/mocks/minecraft-map/a-full-bleed.html) ----
 
 export const MapIcon = (p: IconProps) => (

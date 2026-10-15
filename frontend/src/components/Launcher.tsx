@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import { type MinecraftStatus, type MinecraftVersion, api } from "../api/client";
+import { readyCount } from "../cast";
 import { tileOf } from "../minecraft";
 import { countUnviewed, loadViewed } from "../tasks/viewed";
 import { useForeground } from "../visibility";
@@ -20,6 +21,7 @@ import {
   BookIcon,
   BotIcon,
   CalendarIcon,
+  CastIcon,
   ChatIcon,
   CheckSquareIcon,
   CodeIcon,
@@ -65,6 +67,7 @@ export type LauncherTarget =
   | "tasks"
   | "petcontrol"
   | "jpanel"
+  | "cast"
   | "endpoints"
   | "jcode"
   | "jlaunch"
@@ -102,6 +105,9 @@ const TILES: Tile[] = [
   // was a hardware validation surface, and what the owner reaches for at work is a
   // message from a four-year-old. Distinct from "Pet" (the phone remote for the wall).
   { title: "jpanel", icon: <ChatIcon size={24} />, target: "jpanel" },
+  // Notices on the house's TVs, beside jpanel: the same family of thing, a different door,
+  // because what you reach for is "put this on the TV" (docs/mocks/jpanel-cast).
+  { title: "Cast", icon: <CastIcon size={24} />, target: "cast" },
   // Flashing a physical panel over the box's USB port — the same surface, opened on
   // its own tab. It keeps a tile because it is a rare-but-urgent errand done with a
   // board in your hand and a cable in the box, and hunting for a tab behind a
@@ -272,6 +278,9 @@ export function Launcher({
   // (the same device-local "unviewed" state that drives each card's NEW band), not
   // merely runs since Tasks was last opened — opening the screen no longer clears it.
   const [taskCount, setTaskCount] = useState<number | null>(null);
+  // The Cast tile badge: TVs that would take a notice right now. Unknown (no badge) until
+  // read, and on any failure, since a box without the cast sidecar has no TVs to count.
+  const [castReady, setCastReady] = useState<number | null>(null);
   // The Minecraft tile's dot and word. Unknown (no dot) until read, and on any failure.
   const [mc, setMc] = useState<{
     status: MinecraftStatus | null;
@@ -402,6 +411,14 @@ export function Launcher({
           if (!stale) setTaskCount(countUnviewed(tasks, loadViewed()));
         })
         .catch(() => {});
+      api
+        .castTvs()
+        .then((out) => {
+          if (!stale) setCastReady(readyCount(out.tvs));
+        })
+        .catch(() => {
+          if (!stale) setCastReady(null);
+        });
     };
     const refreshMc = () =>
       Promise.all([api.minecraftStatus(), api.minecraftVersion(false).catch(() => null)])
@@ -609,6 +626,9 @@ export function Launcher({
           )}
           {target === "tasks" && taskCount !== null && taskCount > 0 && (
             <span className="tile-badge">{taskCount}</span>
+          )}
+          {target === "cast" && castReady !== null && castReady > 0 && (
+            <span className="tile-badge">{castReady}</span>
           )}
           {target === "minecraft" && mcTile && (
             <>

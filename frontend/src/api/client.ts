@@ -3934,6 +3934,66 @@ export interface PanelAppearance {
 /** Whether a DISPLAY panel's spoken turns reach the owner's real Jerv and Minecraft_Dave — full
  *  tools and memory, as the owner (owner decision 2026-10-12). Off by default; the box refuses it
  *  for a pet panel (409), so the twins' units can never be given the agents. */
+/** The house's Chromecast TVs, live from the box's cast sidecar (JPANEL_CAST_PLAN.md). The
+ *  verdict is the box's: `idle` and `standby` (off) take a notice; `busy` and `unknown` never. */
+export type CastState = "idle" | "standby" | "busy" | "unknown";
+
+export interface CastTv {
+  id: string;
+  name: string;
+  model: string | null;
+  state: CastState;
+  why: string;
+  castable: boolean;
+  reading: { app_id: string | null; display_name: string | null; connected: boolean };
+}
+
+export interface CastTvs {
+  tvs: CastTv[];
+}
+
+export interface CastSendIn {
+  tv_ids: string[];
+  title: string;
+  body?: string;
+  /** A photo, base64 (JPEG, PNG or WebP); the box draws the frame from it. */
+  picture_b64?: string | null;
+  seconds?: number;
+}
+
+export type CastOutcome = "shown" | "woke" | "skipped" | "failed";
+
+export interface CastTvOutcome {
+  tv_id: string;
+  name: string;
+  outcome: CastOutcome;
+  why: string;
+}
+
+export interface CastNotice {
+  id: string;
+  sender: string;
+  title: string;
+  body: string;
+  seconds: number;
+  created_at: string;
+  stopped_at: string | null;
+  tvs: CastTvOutcome[];
+}
+
+export interface CastNoticeList {
+  notices: CastNotice[];
+  kept_s: number;
+}
+
+/** A send either went out (each TV with its outcome) or was turned away before anything was
+ *  cast, with the box's reason. */
+export type CastSendResult = { sent: CastNotice } | { refused: { status: number; reason: string } };
+
+export function castFrameUrl(id: string): string {
+  return `/api/cast/${encodeURIComponent(id)}/frame`;
+}
+
 /** A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2): what the PWA's composer sends,
  *  and what the box answers. Text limits are UTF-8 bytes, checked on the box. */
 export interface PanelNoticeIn {
@@ -7172,6 +7232,53 @@ export const api = {
 
   async panelNoticeImage(id: string, w: number): Promise<Blob> {
     return (await request(panelNoticeImageUrl(id, w))).blob();
+  },
+
+  async castTvs(): Promise<CastTvs> {
+    return (await (await request("/api/cast/tvs")).json()) as CastTvs;
+  },
+
+  // Like a panel notice, a refusal is an answer the owner reads (a field too long, a picture
+  // that is not one), so it comes back whole rather than as an ApiError.
+  async castSend(body: CastSendIn): Promise<CastSendResult> {
+    const transport = await getTransport();
+    const response = await transport("/api/cast/send", {
+      credentials: "same-origin",
+      ...jsonInit("POST", body),
+    });
+    if (response.status === 401) {
+      unauthorizedHandler?.();
+      throw new ApiError(401, "Not authenticated");
+    }
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (response.ok) return { sent: data as unknown as CastNotice };
+    // Only the box's own refusal ({reason}) is an answer; a missing sidecar (503), a refused
+    // token (502) or anything else is a failure the screen words for itself.
+    const detail = data.detail as { reason?: unknown } | undefined;
+    if (response.status < 500 && detail && typeof detail.reason === "string") {
+      return { refused: { status: response.status, reason: detail.reason } };
+    }
+    throw new ApiError(
+      response.status,
+      typeof data.detail === "string" ? data.detail : `Request failed: ${response.status}`,
+    );
+  },
+
+  async castSent(limit = 30): Promise<CastNoticeList> {
+    return (await (await request(`/api/cast/sent?limit=${limit}`)).json()) as CastNoticeList;
+  },
+
+  /** The frame the TVs would get, drawn by the box; nothing is cast. */
+  async castPreview(body: Omit<CastSendIn, "tv_ids" | "seconds">): Promise<Blob> {
+    return (await request("/api/cast/preview", jsonInit("POST", body))).blob();
+  },
+
+  async castStop(id: string): Promise<{ id: string; stopped: Record<string, boolean> }> {
+    const response = await request(
+      `/api/cast/${encodeURIComponent(id)}/stop`,
+      jsonInit("POST", {}),
+    );
+    return (await response.json()) as { id: string; stopped: Record<string, boolean> };
   },
 
   async setPanelAgentAccess(deviceId: string, agentAccess: boolean): Promise<PanelAgentAccess> {
