@@ -1,20 +1,23 @@
 """The `cast` sidecar: the house's Chromecast TVs, watched, and a test card cast to one.
 
-The jpanel Cast spike (docs/mocks/jpanel-cast/README.md). HOST NETWORK, like `minecraft`,
-and for the same kind of reason: Cast devices are found by mDNS multicast, which never
-reaches a container on a bridge network, and the TVs must fetch the card from the box's own
-LAN address.
+The jpanel Cast spike (docs/mocks/jpanel-cast/README.md). HOST NETWORK, like
+`minecraft`, and for the same kind of reason: Cast devices are found by mDNS multicast,
+which never reaches a container on a bridge network, and the TVs must fetch the card
+from the box's own LAN address.
 
-So the control routes are on the LAN and take a bearer — `cast.token`, which the api mints
-into the `internal_secrets` volume this container mounts read-only (no `.env` key, no host
-step). Read per request, so it works whichever of the two starts first; no token yet fails
-closed. The one unauthenticated route is `/frame/<nonce>.png`: a TV cannot send a header,
-so the card is served under a random name that lives only as long as its test.
+So the control routes are on the LAN and take a bearer — `cast.token`, which the api
+mints into the `internal_secrets` volume this container mounts read-only (no `.env` key,
+no host step). Read per request, so it works whichever of the two starts first; no token
+yet fails closed. The one unauthenticated route is `/frame/<nonce>.png`: a TV cannot
+send a header, so the card is served under a random name that lives only as long as its
+test.
 
     GET  /healthz
-    GET  /tvs                          every TV found, with its live verdict and reading
-    GET  /tvs/<id>/history?since=<t>   that TV's timeline of distinct readings and events
-    POST /tvs/<id>/test {"seconds": n} gate, cast the card, quit after n s if still ours
+    GET  /tvs                         every TV found, its live verdict and reading,
+                                      and the non-screen devices set aside
+    GET  /tvs/<id>/history?since=<t>  that TV's timeline of readings and events
+    POST /tvs/<id>/test {"seconds": n}
+                                      gate, cast the card, quit after n s if ours
 """
 
 from __future__ import annotations
@@ -46,6 +49,7 @@ _FRAME = re.compile(r"^/frame/([0-9a-f]{32})\.png$")
 
 class FleetLike(Protocol):
     def snapshot(self) -> list[dict[str, Any]]: ...
+    def ignored(self) -> list[dict[str, Any]]: ...
     def history(self, key: str, since: float = 0.0) -> list[dict[str, Any]]: ...
     def host_of(self, key: str) -> str: ...
     def test(self, key: str, url: str, seconds: int) -> dict[str, Any]: ...
@@ -115,11 +119,13 @@ def route(
         return _json(200, {"ok": True})
     if method == "GET" and (m := _FRAME.match(path)):
         card = frames.get(m.group(1))
-        return (200, "image/png", card) if card else _json(404, {"error": "no such frame"})
+        return (
+            (200, "image/png", card) if card else _json(404, {"error": "no such frame"})
+        )
     if not authorised(auth_header, token()):
         return _json(401, {"error": "unauthorized"})
     if method == "GET" and path == "/tvs":
-        return _json(200, {"tvs": fleet.snapshot()})
+        return _json(200, {"tvs": fleet.snapshot(), "ignored": fleet.ignored()})
     m = _TV.match(path)
     if not m or not m.group(2):
         return _json(404, {"error": "no such route"})
@@ -135,7 +141,9 @@ def route(
             try:
                 seconds = int((json.loads(body or b"{}") or {}).get("seconds", 15))
             except (ValueError, TypeError, AttributeError):
-                return _json(400, {"error": "body must be {\"seconds\": n}"})
+                return _json(400, {"error": 'body must be {"seconds": n}'})
+            # Before the card is offered: its unauthenticated URL lives as long as this.
+            seconds = gate.clamp_seconds(seconds)
             host = fleet.host_of(key)
             nonce = frames.offer(ttl_s=seconds + FRAME_GRACE_S)
             box = (address_for or _address_for)(host)
@@ -143,7 +151,9 @@ def route(
             try:
                 return _json(202, fleet.test(key, url_out, seconds))
             except gate.Refused as exc:
-                return _json(409, {"error": "not idle", "state": exc.state, "why": exc.why})
+                return _json(
+                    409, {"error": "not idle", "state": exc.state, "why": exc.why}
+                )
     except KeyError:
         return _json(404, {"error": f"no TV {key}"})
     return _json(405, {"error": "method not allowed"})
@@ -159,7 +169,7 @@ def serve(fleet: FleetLike, port: int = PORT) -> None:
     frames = Frames()
 
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002 - base signature
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             return
 
         def _reply(self, method: str) -> None:
@@ -173,11 +183,18 @@ def serve(fleet: FleetLike, port: int = PORT) -> None:
                 body = self.rfile.read(length) if length else b""
                 try:
                     code, ctype, raw = route(
-                        method, self.path, self.headers.get("Authorization", ""), body,
-                        fleet, frames, port=port,
+                        method,
+                        self.path,
+                        self.headers.get("Authorization", ""),
+                        body,
+                        fleet,
+                        frames,
+                        port=port,
                     )
                 except Exception as exc:  # noqa: BLE001 - the caller gets the reason
-                    code, ctype, raw = _json(500, {"error": f"{type(exc).__name__}: {exc}"})
+                    code, ctype, raw = _json(
+                        500, {"error": f"{type(exc).__name__}: {exc}"}
+                    )
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(raw)))

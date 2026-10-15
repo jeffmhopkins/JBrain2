@@ -1,14 +1,16 @@
-"""Is this TV free to show a notice? The rule, kept apart from the library so it is testable.
+"""Is this TV free to show a notice? The rule, kept apart from the library so it is
+testable.
 
-The owner, 2026-10-14: *"it would always have to be idle. Or ambient or whatever"*, and a TV
-that is off may be turned on. So a TV is `idle` (cast over it), `standby` (wake it, cast),
-`busy` (never covered, paused included: paused still means somebody is in the room) or
-`unknown`, which is refused like `busy` — a probe that cannot tell must not guess.
+The owner, 2026-10-14: *"it would always have to be idle. Or ambient or whatever"*, and
+a TV that is off may be turned on. So a TV is `idle` (cast over it), `standby` (wake it,
+cast), `busy` (never covered, paused included: paused still means somebody is in the
+room) or `unknown`, which is refused like `busy` — a probe that cannot tell must not
+guess.
 
-Every reading also lands in a per-TV history, because the open question this spike exists to
-answer (docs/mocks/jpanel-cast/README.md) is what a TV reports in each real state, above all
-whether an app opened with the remote shows up at all. The owner changes the TVs' states at
-leisure; the timeline is read back afterwards.
+Every reading also lands in a per-TV history, because the open question this spike
+exists to answer (docs/mocks/jpanel-cast/README.md) is what a TV reports in each real
+state, above all whether an app opened with the remote shows up at all. The owner
+changes the TVs' states at leisure; the timeline is read back afterwards.
 """
 
 from __future__ import annotations
@@ -26,6 +28,22 @@ IDLE_APP_IDS = frozenset({BACKDROP_APP_ID})
 ACTIVE_PLAYER_STATES = frozenset({"PLAYING", "PAUSED", "BUFFERING"})
 
 HISTORY_LEN = 400
+#: A test card's bounds, enforced where the request lands: the LAN control port is not
+#: behind the api's validation, and the card's unauthenticated URL lives this long.
+MIN_TEST_S, MAX_TEST_S = 5, 120
+
+#: pychromecast's cast_type for a device with a screen. "audio" is a speaker, and
+#: "group" a speaker group, which can look idle while a member is busy: neither is ever
+#: tracked.
+DISPLAY_CAST_TYPE = "cast"
+
+
+def is_display(cast_type: str | None) -> bool:
+    return cast_type == DISPLAY_CAST_TYPE
+
+
+def clamp_seconds(seconds: int) -> int:
+    return max(MIN_TEST_S, min(MAX_TEST_S, seconds))
 
 
 @dataclass(frozen=True)
@@ -67,7 +85,8 @@ def castable(state: str) -> bool:
 
 
 class Refused(Exception):
-    """A cast the gate turned down; `state` and `why` are the verdict that refused it."""
+    """A cast the gate turned down; `state` and `why` are the verdict that refused
+    it."""
 
     def __init__(self, state: str, why: str):
         super().__init__(f"{state}: {why}")
@@ -76,10 +95,12 @@ class Refused(Exception):
 
 @dataclass
 class History:
-    """A bounded timeline of distinct readings and events, thread-safe: pychromecast calls
-    its listeners on its own socket threads while the HTTP server reads."""
+    """A bounded timeline of distinct readings and events, thread-safe: pychromecast
+    calls its listeners on its own socket threads while the HTTP server reads."""
 
-    entries: deque[dict[str, Any]] = field(default_factory=lambda: deque(maxlen=HISTORY_LEN))
+    entries: deque[dict[str, Any]] = field(
+        default_factory=lambda: deque(maxlen=HISTORY_LEN)
+    )
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _last: Reading | None = None
 
@@ -91,16 +112,25 @@ class History:
             self._last = r
             state, why = verdict(r)
             self.entries.append(
-                {"at": now if now is not None else time.time(), "kind": "status",
-                 "state": state, "why": why, **asdict(r)}
+                {
+                    "at": now if now is not None else time.time(),
+                    "kind": "status",
+                    "state": state,
+                    "why": why,
+                    **asdict(r),
+                }
             )
             return True
 
     def note(self, event: str, now: float | None = None, **detail: Any) -> None:
         with self._lock:
             self.entries.append(
-                {"at": now if now is not None else time.time(), "kind": "event",
-                 "event": event, **detail}
+                {
+                    "at": now if now is not None else time.time(),
+                    "kind": "event",
+                    "event": event,
+                    **detail,
+                }
             )
 
     def since(self, at: float = 0.0) -> list[dict[str, Any]]:

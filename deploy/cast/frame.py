@@ -1,9 +1,11 @@
-"""The spike's test card: a 1920×1080 PNG drawn with the stdlib, so the image needs no Pillow.
+"""The spike's test card: a 1920×1080 PNG drawn with the stdlib, so the image needs no
+Pillow.
 
-What it has to prove is narrow — the Default Media Receiver shows a still the box served,
-full screen, on each TV — so it is one dark field, a steel band, and a few blocky words big
-enough to read from the couch. The real notice frames (docs/mocks/jpanel-cast/) are rendered
-by the box's htmlrender once the plan is built; this is not that.
+What it has to prove is narrow — the Default Media Receiver shows a still the box
+served, full screen, on each TV — so it is one dark field, a steel band, and a few
+blocky words big enough to read from the couch. The real notice frames
+(docs/mocks/jpanel-cast/) are rendered by the box's htmlrender once the plan is built;
+this is not that.
 """
 
 from __future__ import annotations
@@ -32,7 +34,9 @@ _FONT: dict[str, tuple[str, ...]] = {
 }
 
 
-def _text(canvas: list[bytearray], text: str, x0: int, y0: int, cell: int, rgb: tuple) -> None:
+def _text(
+    canvas: list[bytearray], text: str, x0: int, y0: int, cell: int, rgb: tuple
+) -> None:
     x = x0
     for ch in text:
         for gy, row in enumerate(_FONT[ch]):
@@ -57,7 +61,14 @@ def png(title: str = "JBRAIN CAST TEST") -> bytes:
     cell = 16
     while cell > 4 and text_width(title, cell) > W - 240:
         cell -= 2
-    _text(canvas, title, (W - text_width(title, cell)) // 2, (H - 7 * cell) // 2, cell, INK)
+    _text(
+        canvas,
+        title,
+        (W - text_width(title, cell)) // 2,
+        (H - 7 * cell) // 2,
+        cell,
+        INK,
+    )
     raw = b"".join(b"\x00" + bytes(row) for row in canvas)
 
     def chunk(kind: bytes, data: bytes) -> bytes:

@@ -118,6 +118,9 @@ class FakeFleet:
     def snapshot(self) -> list[dict[str, Any]]:
         return [{"id": TV, "state": "idle"}]
 
+    def ignored(self) -> list[dict[str, Any]]:
+        return [{"name": "Kitchen speaker", "cast_type": "audio"}]
+
     def history(self, key: str, since: float = 0.0) -> list[dict[str, Any]]:
         if key != TV:
             raise KeyError(key)
@@ -202,6 +205,28 @@ def test_a_test_cast_serves_the_card_under_its_nonce_only() -> None:
     )
 
 
+def test_seconds_are_clamped_before_the_card_is_offered() -> None:
+    """The card's URL is unauthenticated and lives for the test plus a grace; the LAN
+    control port is not behind the api's validation, so the bound is enforced here."""
+    clock = [1000.0]
+    fleet, frames = FakeFleet(), server.Frames(now=lambda: clock[0])
+    code, _, _ = _route(
+        "POST",
+        f"/tvs/{TV}/test",
+        body=b'{"seconds": 999999}',
+        fleet=fleet,
+        frames=frames,
+    )
+    assert code == 202
+    ((_, url, seconds),) = fleet.tests
+    assert seconds == gate.MAX_TEST_S
+    nonce = url.rsplit("/", 1)[1].removesuffix(".png")
+    clock[0] += gate.MAX_TEST_S + server.FRAME_GRACE_S + 1
+    assert frames.get(nonce) is None
+    _route("POST", f"/tvs/{TV}/test", body=b'{"seconds": 0}', fleet=fleet)
+    assert fleet.tests[-1][2] == gate.MIN_TEST_S
+
+
 def test_a_frame_expires() -> None:
     clock = [100.0]
     frames = server.Frames(now=lambda: clock[0])
@@ -247,6 +272,58 @@ def test_the_reading_ignores_media_left_behind_by_a_closed_app() -> None:
     assert tvs.reading(tv(None, "PLAYING")).player_state is None
     assert gate.verdict(tvs.reading(tv(None, "PLAYING")))[0] == "idle"
     assert tvs.reading(tv("CA5E8412", "PAUSED")).player_state == "PAUSED"
+
+
+class FakeBrowser:
+    def __init__(self, devices: dict[Any, Any]) -> None:
+        self.devices = devices
+
+
+def _info(cast_type: str | None, name: str = "Living room") -> Any:
+    from types import SimpleNamespace as NS
+
+    return NS(cast_type=cast_type, friendly_name=name, model_name="m", host="10.0.0.9")
+
+
+@pytest.mark.parametrize("cast_type", ["group", "audio"])
+def test_speakers_and_groups_are_set_aside_never_connected(
+    monkeypatch: pytest.MonkeyPatch, cast_type: str
+) -> None:
+    """A group can read idle while a TV in it is busy, so it is never a target."""
+    import uuid
+
+    def never(*_a: Any, **_k: Any) -> Any:
+        raise AssertionError("connected to a non-screen")
+
+    monkeypatch.setattr(tvs.pychromecast, "get_chromecast_from_cast_info", never)
+    fleet = tvs.Fleet()
+    key = uuid.uuid4()
+    fleet._browser = FakeBrowser({key: _info(cast_type, "Upstairs")})  # type: ignore[assignment]
+    fleet._found(key, "svc")
+    assert fleet.snapshot() == []
+    assert fleet.ignored() == [
+        {"id": str(key), "name": "Upstairs", "model": "m", "cast_type": cast_type}
+    ]
+
+
+def test_an_unknown_model_is_asked_what_it_is(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Discovery leaves cast_type empty for models it does not know (most Android TVs):
+    filtering on that would drop every real TV."""
+    import uuid
+
+    asked: list[Any] = []
+
+    def get_cast_type(info: Any, _zconf: Any) -> Any:
+        asked.append(info)
+        return _info("audio", "Soundbar")
+
+    monkeypatch.setattr(tvs, "get_cast_type", get_cast_type)
+    fleet = tvs.Fleet()
+    key = uuid.uuid4()
+    fleet._browser = FakeBrowser({key: _info(None)})  # type: ignore[assignment]
+    fleet._found(key, "svc")
+    assert len(asked) == 1
+    assert fleet.ignored()[0]["cast_type"] == "audio"
 
 
 def test_every_sidecar_module_is_copied_into_the_image() -> None:

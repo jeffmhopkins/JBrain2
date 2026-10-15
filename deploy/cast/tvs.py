@@ -1,13 +1,16 @@
-"""The house's Cast TVs: found by mDNS, each held on an open connection, every status logged.
+"""The house's Cast TVs: found by mDNS, each held on an open connection, every status
+logged.
 
-The one module that imports pychromecast. Holding a connection per TV (rather than asking
-on demand) is what makes the timeline possible: a TV pushes a receiver status whenever its
-app, standby or input changes, and a media status whenever playback does, so the history
-records the owner's experiments as they happen instead of whenever somebody next asks.
+The one module that imports pychromecast. Holding a connection per TV (rather than
+asking on demand) is what makes the timeline possible: a TV pushes a receiver status
+whenever its app, standby or input changes, and a media status whenever playback does,
+so the history records the owner's experiments as they happen instead of whenever
+somebody next asks.
 
-A test cast plays the box's test card on the Default Media Receiver (no registered app, no
-HTTPS origin) and quits it after a while — but only if our card is still what the TV is
-showing, so a child who picked up the remote mid-test is never interrupted by the quit.
+A test cast plays the box's test card on the Default Media Receiver (no registered app,
+no HTTPS origin) and quits it after a while — but only if our card is still what the TV
+is showing, so a child who picked up the remote mid-test is never interrupted by the
+quit.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ import zeroconf
 from pychromecast.config import APP_MEDIA_RECEIVER
 from pychromecast.controllers.media import MediaStatus, MediaStatusListener
 from pychromecast.controllers.receiver import CastStatus, CastStatusListener
+from pychromecast.dial import get_cast_type
 from pychromecast.discovery import CastBrowser, SimpleCastListener
 from pychromecast.socket_client import (
     CONNECTION_STATUS_CONNECTED,
@@ -35,7 +39,6 @@ from pychromecast.socket_client import (
 import gate
 
 TEST_TITLE = "jbrain cast test"
-MIN_TEST_S, MAX_TEST_S = 5, 120
 
 
 @dataclass
@@ -87,9 +90,12 @@ def reading(tv: Tv) -> gate.Reading:
         is_stand_by=st.is_stand_by if st else None,
         is_active_input=st.is_active_input if st else None,
         volume_level=st.volume_level if st else None,
-        # The media controller keeps its last status after the app that sent it has gone,
-        # so it only counts while the receiver still runs an app that could own it.
-        player_state=media.player_state if st and st.app_id and media.player_state else None,
+        # The media controller keeps its last status after the app that sent it has
+        # gone, so it only counts while the receiver still runs an app that could own
+        # it.
+        player_state=media.player_state
+        if st and st.app_id and media.player_state
+        else None,
         media_title=media.title if st and st.app_id else None,
     )
 
@@ -97,6 +103,7 @@ def reading(tv: Tv) -> gate.Reading:
 class Fleet:
     def __init__(self) -> None:
         self._tvs: dict[str, Tv] = {}
+        self._ignored: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
         self._zconf: zeroconf.Zeroconf | None = None
         self._browser: CastBrowser | None = None
@@ -104,21 +111,47 @@ class Fleet:
     def start(self) -> None:
         self._zconf = zeroconf.Zeroconf()
         self._browser = CastBrowser(
-            SimpleCastListener(add_callback=self._found, update_callback=self._found),
+            SimpleCastListener(add_callback=self._spawn, update_callback=self._spawn),
             self._zconf,
         )
         self._browser.start_discovery()
 
+    def _spawn(self, uuid: uuidlib.UUID, service: str) -> None:
+        # Off the zeroconf thread: _found may ask the device over HTTP, and a slow TV
+        # must not hold up the discovery of the next one.
+        threading.Thread(
+            target=self._found, args=(uuid, service), daemon=True, name="cast-found"
+        ).start()
+
     def _found(self, uuid: uuidlib.UUID, _service: str) -> None:
         key = str(uuid)
         with self._lock:
-            if key in self._tvs or self._browser is None:
+            if key in self._tvs or key in self._ignored or self._browser is None:
                 return
             info = self._browser.devices.get(uuid)
-            if info is None:
+        if info is None:
+            return
+        # Discovery leaves cast_type empty for a model it does not know, which is most
+        # Android TVs; the device's own info endpoint says. Outside the lock: it is
+        # HTTP.
+        if not info.cast_type:
+            info = get_cast_type(info, self._zconf)
+        # Screens only. A speaker group especially: it can read idle while a TV in it is
+        # busy, and a card cast to the group would land on that TV.
+        if not gate.is_display(info.cast_type):
+            with self._lock:
+                self._ignored[key] = {
+                    "id": key,
+                    "name": info.friendly_name,
+                    "model": info.model_name,
+                    "cast_type": info.cast_type,
+                }
+            return
+        cc = pychromecast.get_chromecast_from_cast_info(info, self._zconf)
+        tv = Tv(cc=cc)
+        with self._lock:
+            if key in self._tvs:
                 return
-            cc = pychromecast.get_chromecast_from_cast_info(info, self._zconf)
-            tv = Tv(cc=cc)
             self._tvs[key] = tv
         listen = _Listen(lambda: tv.history.record(reading(tv)), tv)
         cc.socket_client.receiver_controller.register_status_listener(listen)
@@ -126,6 +159,13 @@ class Fleet:
         cc.socket_client.register_connection_listener(listen)
         tv.history.note("found", host=info.host, model=info.model_name)
         cc.start()
+
+    def ignored(self) -> list[dict[str, Any]]:
+        """Cast devices that are not screens (speakers, groups), listed so a missing TV
+        can be told from one the box saw and set aside."""
+        with self._lock:
+            items = list(self._ignored.values())
+        return sorted(items, key=lambda d: str(d["name"] or "").lower())
 
     def _get(self, key: str) -> Tv:
         with self._lock:
@@ -167,10 +207,10 @@ class Fleet:
         return self._get(key).cc.cast_info.host
 
     def test(self, key: str, url: str, seconds: int) -> dict[str, Any]:
-        """Re-check the gate NOW, cast the card, and quit after `seconds` if it is still ours.
-        Raises KeyError for an unknown TV and gate.Refused when the gate says no."""
+        """Re-check the gate NOW, cast the card, and quit after `seconds` if it is still
+        ours. Raises KeyError for an unknown TV and gate.Refused when the gate says no."""
         tv = self._get(key)
-        seconds = max(MIN_TEST_S, min(MAX_TEST_S, seconds))
+        seconds = gate.clamp_seconds(seconds)
         before = reading(tv)
         state, why = gate.verdict(before)
         if not gate.castable(state):
@@ -180,7 +220,10 @@ class Fleet:
         tv.history.note("test_cast", state_before=state, seconds=seconds, url=url)
         tv.cc.media_controller.play_media(url, "image/png", title=TEST_TITLE)
         threading.Thread(
-            target=self._end_test, args=(tv, seconds, state), daemon=True, name="cast-test"
+            target=self._end_test,
+            args=(tv, seconds, state),
+            daemon=True,
+            name="cast-test",
         ).start()
         return {"id": key, "state_before": state, "why_before": why, "seconds": seconds}
 
@@ -191,5 +234,6 @@ class Fleet:
             tv.cc.quit_app()
             tv.history.note("test_quit", state_before=state_before)
         else:
-            # Somebody took the TV over during the test: leave whatever they chose alone.
+            # Somebody took the TV over during the test: leave whatever they chose
+            # alone.
             tv.history.note("test_left", app_id=r.app_id, display_name=r.display_name)
