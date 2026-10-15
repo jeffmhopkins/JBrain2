@@ -1,0 +1,32 @@
+# The `cast` sidecar: watch the house's Chromecast TVs and cast a test card to one
+# (docs/mocks/jpanel-cast/README.md, the jpanel Cast spike).
+#
+# `python:3.12-slim` and PIP, the `endpoint` rule: PyChromecast and its zeroconf/protobuf
+# are pure Python or ship wheels, so there is no apt ABI to honour. Pinned to the version
+# supervisor's dev extra tests against.
+#
+# HOST NETWORK (compose): mDNS discovery and a card the TVs fetch from the box's LAN
+# address both need it. NOT egress-free, then — but it fetches nothing itself, holds no
+# owner data, and runs unprivileged as uid 1000, the api's uid, so it can read the
+# 0600 `cast.token` the api mints into the shared secrets volume.
+FROM python:3.12-slim
+
+RUN pip install --no-cache-dir "PyChromecast==14.0.10" \
+    && useradd --uid 1000 --create-home --shell /usr/sbin/nologin cast
+
+WORKDIR /app
+COPY deploy/cast/gate.py ./gate.py
+COPY deploy/cast/frame.py ./frame.py
+COPY deploy/cast/tvs.py ./tvs.py
+COPY deploy/cast/server.py ./server.py
+
+# Fail the BUILD, not the first probe: the box builds this during Ops -> Update with no
+# terminal to read a traceback with (CLAUDE.md #10). The card is drawn, not just imported.
+RUN python -c "import server, tvs, gate, frame; assert frame.png()[:4] == b'\x89PNG'"
+
+USER cast
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["python", "-c", "import os, sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('CAST_PORT', '19190') + '/healthz', timeout=3).status == 200 else 1)"]
+
+CMD ["python", "server.py"]
