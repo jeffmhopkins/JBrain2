@@ -41,10 +41,11 @@ What that settles, and what it corrects:
    in standby. After that, both stayed connected while off and woke on a cast. **This is a
    per-TV setting the owner has to make once**, and the TV list has to make its absence
    visible: "not reachable while off" rather than a silent gap.
-4. **Waking does not reliably go back to sleep.** Cast has no power-off. After its card,
-   Parents stayed on the home screen. Big TV read "off" again about a minute later, and whether
-   the owner or the TV did that is not yet known. The mock's per-TV "back to sleep after" can't
-   be promised until it is.
+4. **A woken TV stays on.** Cast has no power-off, and neither Philips went back to standby by
+   itself. Parents was still on the home screen ten minutes after its card, and Big TV went off
+   only because the owner turned it off. So the mock's per-TV "back to sleep after" can't be
+   built over Cast. Until another control path exists, a TV woken for a notice stays on until
+   its own sleep timer or the remote turns it off, and the PWA says so.
 5. **Reconnects are slow.** A TV that comes back after being unreachable can take a few minutes
    to show as connected, because pychromecast backs off between retries. A notice sent in that
    window gets refused as "unknown". K1 handles that as a hold, not a failure.
@@ -87,8 +88,8 @@ on each TV.
   `is_active_input: false`), the gate can't tell them apart and would switch the TV away from
   the console or cable box. Test this on a TV with something plugged in before K1 ships. If it
   does read like off, the fix is a per-TV "never wake" setting rather than a guess.
-- **Back to sleep.** Find out whether Big TV turned itself off after its card. If the Google TV
-  sets return to standby on their own after a cast wake, "back to sleep after" can stay in the
-  mock. If not, it comes out or waits on another control path.
+- **Back to sleep.** Cast can't do it (finding 4). Whether another path can turn a Google TV off,
+  such as the TV's own sleep timer or a Google Home routine, is unexplored. Until something does,
+  "back to sleep after" comes out of K2, and "allow waking" says the TV will stay on.
 - **Twins Room and Primary Bedroom off.** Neither has been woken by a cast yet. The Vizio has not
   been seen off at all.

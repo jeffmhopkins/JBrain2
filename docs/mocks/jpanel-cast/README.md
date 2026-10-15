@@ -29,6 +29,6 @@ on. But it would always have to be idle … I'd also want this to show up as a l
 
 The questions this mock left open were answered on the house's TVs on 2026-10-15
 (`../../plans/JPANEL_CAST_PLAN.md` §K0). An app opened with the remote does report to Cast, and a
-cast wakes a Philips from off once its power setting keeps Cast available in standby. Whether a
-woken TV goes back to sleep is still open, so this mock's "back to sleep after" is not yet a
-promise.
+cast wakes a Philips from off once its power setting keeps Cast available in standby. A woken TV
+stays on, though: Cast has no power-off and neither Philips went back to standby by itself, so
+this mock's "back to sleep after" can't be built over Cast.
