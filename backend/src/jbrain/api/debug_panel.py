@@ -10,6 +10,12 @@ enabled. The queue runs under an owner context — the table's owner policy is t
 lets anything insert — with the token's label recorded on every row and every log line
 (`debug.panel_command`), so what a session did to a panel is on the record.
 
+`owner_router` is the PWA's half (Ops → Panels): the owner's own cookie may ask for the two
+looks — a `snapshot` or a `screenshot` — and nothing else, through the same queue and the
+same refusals. It is mounted whatever the debug flag says, because looking at a panel is an
+operator's question and the owner has no terminal to turn the flag on (CLAUDE.md #10); what a
+token can do beyond looking stays behind the token.
+
 Refused at the door, never queued for later: an unknown command, an argument the panel's
 flat parser would refuse, a destructive one without `confirm`, and a panel that has not
 picked up in 30 s (§2's offline rule). A request is a question for the panel as it is now.
@@ -20,7 +26,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from typing import Annotated, Any, cast
+from collections.abc import Callable
+from typing import Annotated, Any, Literal, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -28,7 +35,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.api.deps import DebugDep
+from jbrain.api.deps import DebugDep, OwnerDep
 from jbrain.api.endpoint import panel_display_name
 from jbrain.blob_refs import blob_referenced
 from jbrain.db.session import SessionContext, scoped_session
@@ -39,6 +46,7 @@ from jbrain.storage import BlobStore
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/debug/panel")
+owner_router = APIRouter(prefix="/panel/look", tags=["panel"])
 
 # The debug console's fixed synthetic owner identity (the same one `api/debug.py` uses), so
 # the audit trail reads as the console rather than as a person.
@@ -190,18 +198,14 @@ class CommandQueued(BaseModel):
     expires_in_s: int
 
 
-@router.post("/{device_id}/command", status_code=202)
-async def queue_command(
-    device_id: str, body: CommandIn, request: Request, principal: DebugDep
+async def _queue(
+    request: Request,
+    device_id: str,
+    body: CommandIn,
+    *,
+    by_label: str,
+    by_id: str,
 ) -> CommandQueued:
-    """Queue one command for a panel; poll `result/{request_id}` for the answer.
-
-    202 `{request_id}`. Refusals are `{"detail": {"reason": …}}`: 422 `unknown_command` /
-    `bad_arg`, 409 `needs_confirm` (a destructive command without `confirm: true`), 409
-    `unavailable` (this panel's `help` says its firmware does not bind it), 409
-    `no_debug_surface` (the panel is not a C6), 429 `busy` (too many already waiting), 503
-    `offline` with `last_seen_s` (null: not seen since the box started)."""
-    request.state.debug_detail = f"panel {device_id[:8]} {body.command}"
     name = await _panel(request, device_id)
     try:
         info = relay.check_command(device_id, body.command)
@@ -252,7 +256,7 @@ async def queue_command(
                     "cmd": info.name,
                     "args": json.dumps(args),
                     "confirm": body.confirm,
-                    "by": f"{principal.label} ({principal.id})"[:200],
+                    "by": f"{by_label} ({by_id})"[:200],
                     "window": relay.PICKUP_WINDOW_S,
                 },
             )
@@ -260,8 +264,8 @@ async def queue_command(
         await session.commit()
     log.info(
         "debug.panel_command",
-        token=principal.label,
-        token_id=principal.id,
+        token=by_label,
+        token_id=by_id,
         device=device_id,
         panel=name,
         cmd=info.name,
@@ -272,6 +276,21 @@ async def queue_command(
     return CommandQueued(
         request_id=str(request_id), state="queued", expires_in_s=relay.PICKUP_WINDOW_S
     )
+
+
+@router.post("/{device_id}/command", status_code=202)
+async def queue_command(
+    device_id: str, body: CommandIn, request: Request, principal: DebugDep
+) -> CommandQueued:
+    """Queue one command for a panel; poll `result/{request_id}` for the answer.
+
+    202 `{request_id}`. Refusals are `{"detail": {"reason": …}}`: 422 `unknown_command` /
+    `bad_arg`, 409 `needs_confirm` (a destructive command without `confirm: true`), 409
+    `unavailable` (this panel's `help` says its firmware does not bind it), 409
+    `no_debug_surface` (the panel is not a C6), 429 `busy` (too many already waiting), 503
+    `offline` with `last_seen_s` (null: not seen since the box started)."""
+    request.state.debug_detail = f"panel {device_id[:8]} {body.command}"
+    return await _queue(request, device_id, body, by_label=principal.label, by_id=principal.id)
 
 
 class ResultOut(BaseModel):
@@ -290,7 +309,17 @@ class ResultOut(BaseModel):
     screenshot: str | None
 
 
-async def _read_result(request: Request, device_id: str, request_id: str) -> ResultOut | None:
+def _debug_png(device_id: str, request_id: str) -> str:
+    return f"/api/debug/panel/{device_id}/screenshot/{request_id}.png"
+
+
+def _owner_png(device_id: str, request_id: str) -> str:
+    return f"/api/panel/look/{device_id}/{request_id}/screenshot.png"
+
+
+async def _read_result(
+    request: Request, device_id: str, request_id: str, png_url: Callable[[str, str], str]
+) -> ResultOut | None:
     async with scoped_session(_maker(request), _OWNER_CTX) as session:
         row = (
             await session.execute(
@@ -319,7 +348,7 @@ async def _read_result(request: Request, device_id: str, request_id: str) -> Res
         picked_up_at=row[6].isoformat() if row[6] else None,
         result_at=row[7].isoformat() if row[7] else None,
         result=dict(row[8]) if row[8] is not None else None,
-        screenshot=(f"/api/debug/panel/{row[1]}/screenshot/{row[0]}.png" if row[9] else None),
+        screenshot=png_url(str(row[1]), str(row[0])) if row[9] else None,
     )
 
 
@@ -329,6 +358,26 @@ def _ids(device_id: str, request_id: str) -> None:
         uuid.UUID(request_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="no such request") from None
+
+
+async def _await_result(
+    request: Request,
+    device_id: str,
+    request_id: str,
+    wait: float,
+    png_url: Callable[[str, str], str],
+) -> ResultOut:
+    _ids(device_id, request_id)
+    await sweep(request)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + wait
+    while True:
+        out = await _read_result(request, device_id, request_id, png_url)
+        if out is None:
+            raise HTTPException(status_code=404, detail="no such request")
+        if out.state in ("done", "expired") or loop.time() >= deadline:
+            return out
+        await asyncio.sleep(min(_POLL_S, max(0.0, deadline - loop.time())))
 
 
 @router.get("/{device_id}/result/{request_id}")
@@ -343,25 +392,10 @@ async def get_result(
     until it is done or expired; a call that returns `queued` or `sent` is simply asked
     again. 404 once swept (fifteen minutes after it finished)."""
     request.state.debug_detail = f"panel result {request_id[:8]} wait={wait:g}"
-    _ids(device_id, request_id)
-    await sweep(request)
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + wait
-    while True:
-        out = await _read_result(request, device_id, request_id)
-        if out is None:
-            raise HTTPException(status_code=404, detail="no such request")
-        if out.state in ("done", "expired") or loop.time() >= deadline:
-            return out
-        await asyncio.sleep(min(_POLL_S, max(0.0, deadline - loop.time())))
+    return await _await_result(request, device_id, request_id, wait, _debug_png)
 
 
-@router.get("/{device_id}/screenshot/{request_id}.png")
-async def get_screenshot(
-    device_id: str, request_id: str, request: Request, _p: DebugDep
-) -> Response:
-    """The decoded PNG of a `screenshot` request, while its row lives."""
-    request.state.debug_detail = f"panel screenshot {request_id[:8]}"
+async def _png(request: Request, device_id: str, request_id: str) -> Response:
     _ids(device_id, request_id)
     async with scoped_session(_maker(request), _OWNER_CTX) as session:
         sha = (
@@ -380,3 +414,54 @@ async def get_screenshot(
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="screenshot no longer stored") from None
     return Response(content=png, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.get("/{device_id}/screenshot/{request_id}.png")
+async def get_screenshot(
+    device_id: str, request_id: str, request: Request, _p: DebugDep
+) -> Response:
+    """The decoded PNG of a `screenshot` request, while its row lives."""
+    request.state.debug_detail = f"panel screenshot {request_id[:8]}"
+    return await _png(request, device_id, request_id)
+
+
+# ---- the owner's two looks, from Ops → Panels --------------------------------------------
+
+
+class LookIn(BaseModel):
+    #: Only what reads the panel. A press in the PWA that could reboot it or drive its
+    #: screen is a different decision, and today that belongs to the token.
+    what: Literal["snapshot", "screenshot"]
+
+
+@owner_router.post("/{device_id}", status_code=202)
+async def owner_look(
+    device_id: str, body: LookIn, request: Request, owner: OwnerDep
+) -> CommandQueued:
+    """Ask a panel for a snapshot or a screenshot; read it from `{request_id}`.
+
+    The debug route's refusals, from the same checks: 503 `offline`, 409
+    `no_debug_surface` / `unavailable`, 429 `busy`, 404 for no such panel."""
+    return await _queue(
+        request, device_id, CommandIn(command=body.what), by_label="owner PWA", by_id=owner.id
+    )
+
+
+@owner_router.get("/{device_id}/{request_id}")
+async def owner_look_result(
+    device_id: str,
+    request_id: str,
+    request: Request,
+    _o: OwnerDep,
+    wait: Annotated[float, Query(ge=0, le=relay.MAX_WAIT_S)] = 0,
+) -> ResultOut:
+    """As `result/{request_id}`, with the screenshot's URL on the owner's own route."""
+    return await _await_result(request, device_id, request_id, wait, _owner_png)
+
+
+@owner_router.get("/{device_id}/{request_id}/screenshot.png")
+async def owner_look_png(
+    device_id: str, request_id: str, request: Request, _o: OwnerDep
+) -> Response:
+    """The decoded PNG of a look, while its row lives (fifteen minutes after it finished)."""
+    return await _png(request, device_id, request_id)

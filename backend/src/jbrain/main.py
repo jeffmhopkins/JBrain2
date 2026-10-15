@@ -1943,6 +1943,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The panel's half of the debug relay. Mounted with or without debug access: with it
     # off nothing can queue a request, so a pickup is always an empty 204.
     app.include_router(panel_debug.router, prefix="/api")
+    # Ops → Panels' Snapshot and Screenshot: the owner's cookie, whatever the debug flag says.
+    app.include_router(debug_panel.owner_router, prefix="/api")
     # Notices on the desk panel: the owner's send/read and the panel's collect/answer.
     app.include_router(panel_notice.router, prefix="/api")
     app.include_router(panel_notice.panel_router, prefix="/api")

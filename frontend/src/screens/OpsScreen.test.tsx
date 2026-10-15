@@ -340,6 +340,97 @@ describe("OpsScreen panels", () => {
     expect(await screen.findByText("display")).toBeInTheDocument();
   });
 
+  it("takes a screenshot of a C6 that is picking up", async () => {
+    /* Looking at the glass was a debug token's privilege, and the owner has no terminal to
+       mint one from (CLAUDE.md #10). The look is the owner's own, on the card he already reads. */
+    const posted: unknown[] = [];
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/endpoint/status") {
+        return json({ panels: [{ ...PANELS.panels[0], name: "Jeff", look: "online" }] });
+      }
+      if (path === "/api/panel/look/panel-quorra" && init?.method === "POST") {
+        posted.push(JSON.parse(String(init.body)));
+        return json({ request_id: "r1", state: "queued", expires_in_s: 60 }, 202);
+      }
+      if (path.startsWith("/api/panel/look/panel-quorra/r1?wait=")) {
+        return json({
+          request_id: "r1",
+          command: "screenshot",
+          state: "done",
+          result: { ok: true, data: { w: 480 } },
+          screenshot: "/api/panel/look/panel-quorra/r1/screenshot.png",
+        });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    await openTile("Panels");
+    fireEvent.click(await screen.findByRole("button", { name: "Screenshot" }));
+    const shot = await screen.findByRole("img", { name: "Screenshot of Jeff" });
+    expect(shot).toHaveAttribute("src", "/api/panel/look/panel-quorra/r1/screenshot.png");
+    expect(posted).toEqual([{ what: "screenshot" }]);
+  });
+
+  it("shows a snapshot, and says so when the panel is not picking up", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/endpoint/status") {
+        return json({
+          panels: [
+            { ...PANELS.panels[0], name: "Jeff", look: "online" },
+            { ...PANELS.panels[1], look: "offline" },
+          ],
+        });
+      }
+      if (path === "/api/panel/look/panel-quorra" && init?.method === "POST") {
+        return json({ request_id: "r2" }, 202);
+      }
+      if (path.startsWith("/api/panel/look/panel-quorra/r2")) {
+        return json({
+          request_id: "r2",
+          command: "snapshot",
+          state: "done",
+          result: { ok: true, data: { net: { rssi: -51 } } },
+          screenshot: null,
+        });
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    await openTile("Panels");
+    const snaps = await screen.findAllByRole("button", { name: "Snapshot" });
+    expect(snaps).toHaveLength(2);
+    expect(snaps[1]).toBeDisabled();
+    expect(screen.getByText("Not picking up right now.")).toBeInTheDocument();
+    fireEvent.click(snaps[0] as HTMLElement);
+    const snap = await screen.findByLabelText("Snapshot of Jeff");
+    expect(snap.textContent).toContain('"rssi": -51');
+  });
+
+  it("puts no look on a panel without a debug surface, and words a refusal", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/endpoint/status") {
+        return json({
+          panels: [{ ...PANELS.panels[0], look: "online" }, { ...PANELS.panels[1] }],
+        });
+      }
+      if (path === "/api/panel/look/panel-quorra" && init?.method === "POST") {
+        return json({ detail: { reason: "offline", last_seen_s: 40 } }, 503);
+      }
+      return baseMock(input) ?? new Response(null, { status: 404 });
+    });
+    render(<OpsScreen />);
+    await openTile("Panels");
+    const buttons = await screen.findAllByRole("button", { name: "Screenshot" });
+    expect(buttons).toHaveLength(1);
+    fireEvent.click(buttons[0] as HTMLElement);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The panel isn't picking up right now.",
+    );
+  });
+
   it("does not take the whole screen down when the fleet cannot be read", async () => {
     /* One question among many on Ops; a 500 here must not cost the owner the service list
        he came for. */

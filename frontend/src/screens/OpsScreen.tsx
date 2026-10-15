@@ -40,6 +40,7 @@ import {
 } from "../minecraft";
 import { agoLabel, panelConcerns, panelFacts, panelHealth } from "../panelStatus";
 import { useForeground, useForegroundRef } from "../visibility";
+import { PanelLook } from "./PanelLook";
 import { RunsScreen } from "./RunsScreen";
 
 function fmtBytes(n: number): string {
@@ -912,7 +913,8 @@ function PanelsBody({ panels, error }: { panels: PanelStatusOut[] | null; error:
       {/* READ-ONLY, deliberately. This card is where a fault is NOTICED — a version that did not
           move, a unit that has gone quiet — and jpanel is where a panel is named or retired. Two
           places to revoke would be two places to get it wrong, and jpanel is the door the owner
-          already thinks of as "the panels in my house". */}
+          already thinks of as "the panels in my house". Snapshot and Screenshot keep that: they
+          read a panel and change nothing on it. */}
       {panels !== null && panels.length > 0 && (
         <p className="muted ops-panel-note ops-panel-intro">
           Rename or revoke a panel on the <strong>jpanel</strong> screen, Panels tab.
@@ -945,6 +947,9 @@ function PanelsBody({ panels, error }: { panels: PanelStatusOut[] | null; error:
                 {c}
               </p>
             ))}
+            {p.look && (
+              <PanelLook deviceId={p.device_id} name={p.name} online={p.look === "online"} />
+            )}
           </div>
         );
       })}

@@ -4628,6 +4628,43 @@ button.small {
   padding: 0 6px;
 }
 
+/* A C6's Snapshot and Screenshot (PanelLook). The screenshot is the glass at its own 480 px
+   square or the card's width, whichever is less, so a phone shows the whole frame. */
+.ops-panel-look {
+  margin-top: 8px;
+}
+
+.ops-panel-look-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ops-panel-look-actions .ops-panel-note {
+  margin: 0;
+}
+
+.ops-panel-shot {
+  display: block;
+  width: 100%;
+  max-width: 480px;
+  aspect-ratio: 1;
+  margin-top: 8px;
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.ops-panel-snapshot {
+  margin: 8px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .ops-host-row {
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
@@ -20119,7 +20156,7 @@ button.auto-sect[aria-expanded="true"] > svg {
   display: block;
   width: 100%;
   max-height: 320px;
-  background: #000;
+  background: var(--surface-2);
   object-fit: contain;
 }
 .atx-player {
@@ -20311,7 +20348,7 @@ span.atx-w {
   display: block;
   width: 100%;
   max-height: 320px;
-  background: #000;
+  background: var(--surface-2);
   object-fit: contain;
 }
 /* Filmstrip scrubber: the sampled frames ARE the timeline. Tap a frame to seek; the
