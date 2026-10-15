@@ -22,8 +22,26 @@ export const MEDIA_RECEIVER = "CC1AD845";
 /** The box's limits (jbrain/cast/service.py), said while typing rather than refused after. */
 export const TITLE_MAX = 120;
 export const BODY_MAX = 600;
-export const SECONDS = [15, 30, 60, 120, 300] as const;
+export const SECONDS_MIN = 5;
+export const SECONDS_MAX = 300;
 export const SECONDS_DEFAULT = 30;
+
+export type TimeUnit = "s" | "min";
+
+/** How long the owner typed, in seconds, or why it can't be sent: the box takes 5 s to 5 min
+ *  (api/cast_notices.py), so the phone says so rather than quietly clamping. */
+export function onScreenSeconds(
+  amount: string,
+  unit: TimeUnit,
+): { seconds: number } | { problem: string } {
+  const n = Number(amount.trim());
+  if (!amount.trim() || !Number.isFinite(n) || n <= 0) return { problem: "Give it a time." };
+  const seconds = Math.round(unit === "min" ? n * 60 : n);
+  if (seconds < SECONDS_MIN || seconds > SECONDS_MAX) {
+    return { problem: "A notice stays on screen for 5 seconds to 5 minutes." };
+  }
+  return { seconds };
+}
 
 export type Tone = "ready" | "off" | "busy" | "gone";
 

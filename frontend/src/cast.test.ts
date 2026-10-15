@@ -27,6 +27,7 @@ import {
   layerById,
   layerScale,
   moveLayer,
+  onScreenSeconds,
   outcomeLabel,
   outcomeSub,
   pictureRect,
@@ -195,6 +196,18 @@ describe("helpers", () => {
   it("says seconds as a person would", () => {
     expect(secondsLabel(30)).toBe("30 s");
     expect(secondsLabel(120)).toBe("2 min");
+  });
+});
+
+describe("time on screen", () => {
+  it("reads seconds or minutes, and says when it's outside what the box takes", () => {
+    expect(onScreenSeconds("45", "s")).toEqual({ seconds: 45 });
+    expect(onScreenSeconds("1.5", "min")).toEqual({ seconds: 90 });
+    expect(onScreenSeconds("5", "min")).toEqual({ seconds: 300 });
+    expect(onScreenSeconds("6", "min")).toHaveProperty("problem");
+    expect(onScreenSeconds("3", "s")).toHaveProperty("problem");
+    expect(onScreenSeconds("", "s")).toEqual({ problem: "Give it a time." });
+    expect(onScreenSeconds("abc", "s")).toEqual({ problem: "Give it a time." });
   });
 });
 

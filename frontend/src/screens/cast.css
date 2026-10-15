@@ -267,6 +267,36 @@
 .cast-swatch.on {
   border-color: var(--steel);
 }
+.cast-time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.cast-time-label {
+  flex: 1;
+  white-space: nowrap;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.cast-time input,
+.cast-time select {
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  min-height: 44px;
+  padding: 0 12px;
+}
+.cast-time input {
+  width: 5em;
+  flex: none;
+}
+.cast-time select {
+  flex: none;
+}
 .cast-words-form {
   display: flex;
   flex-direction: column;

@@ -4150,7 +4150,10 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   exactly what lands. Words too long or too big for the screen are drawn smaller until every
   word fits, and a line under the canvas says so. Under the editor: the TVs (every one that
   would take it picked to start with; one in use can still be picked, struck through, with a
-  line saying it will be skipped) and *On screen for* as chips.
+  line saying it will be skipped) and *On screen for*: a number with a seconds/minutes picker
+  (owner: *"just needs an input a number, and a selector for seconds or minutes"*). Switching the
+  unit keeps the same time; outside the box's 5 s to 5 min the line under it says so and Cast
+  waits.
 - **The result is a Sheet** titled *Cast to 2 of 3*, a tag per TV (*On screen*, *Turned on*,
   *Skipped*, *Didn't cast*) and why. A TV that was woken *stays on*, and the sheet says so,
   because a cast cannot turn a TV off. **Take it down** is the destructive button, shown only
