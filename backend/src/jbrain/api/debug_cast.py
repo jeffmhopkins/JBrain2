@@ -10,66 +10,23 @@ takes `cast.token` from the internal secrets.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
-import httpx
-from fastapi import APIRouter, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Path, Query, Request
 from pydantic import BaseModel, Field
 
-from jbrain.api import internal_auth
 from jbrain.api.deps import DebugDep, SettingsDep
-from jbrain.storage import InternalSecrets
+from jbrain.cast import sidecar
 
 router = APIRouter(prefix="/debug/cast")
-
-SIDECAR_TIMEOUT_S = 15.0
-# Tests swap in an httpx.MockTransport; None is the real network.
-_transport: httpx.AsyncBaseTransport | None = None
 
 TvId = Annotated[str, Path(pattern=r"^[0-9a-f-]{36}$")]
 
 
 async def _call(
-    request: Request,
-    settings: Any,
-    method: str,
-    path: str,
-    *,
-    json: dict[str, Any] | None = None,
-    params: dict[str, Any] | None = None,
+    request: Request, settings: Any, method: str, path: str, **kw: Any
 ) -> dict[str, Any]:
-    base = str(settings.cast_url or "").strip().rstrip("/")
-    if not base:
-        raise HTTPException(status_code=503, detail="No cast sidecar on this box.")
-    secrets = cast(InternalSecrets, request.app.state.internal_secrets)
-    token = secrets.read(internal_auth.CAST)
-    if not token:
-        raise HTTPException(status_code=503, detail="cast.token is not minted yet")
-    try:
-        async with httpx.AsyncClient(
-            base_url=base,
-            timeout=SIDECAR_TIMEOUT_S,
-            transport=_transport,
-            headers={"Authorization": f"Bearer {token.decode()}"},
-        ) as client:
-            resp = await client.request(method, path, json=json, params=params)
-    except httpx.TransportError as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=f"cast sidecar unreachable ({type(exc).__name__}) — is it running?",
-        ) from exc
-    try:
-        body = resp.json()
-    except ValueError:
-        body = {"error": resp.text[:300]}
-    if resp.status_code == 401:
-        raise HTTPException(status_code=502, detail="cast sidecar refused the api's token")
-    if resp.status_code in (400, 404, 409):
-        # A gate refusal carries the verdict that refused it; pass it through whole.
-        raise HTTPException(status_code=resp.status_code, detail=body)
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=502, detail=body)
-    return cast(dict[str, Any], body)
+    return await sidecar.call(request, settings, method, path, **kw)
 
 
 @router.get("")

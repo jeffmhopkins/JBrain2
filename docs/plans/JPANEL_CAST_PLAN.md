@@ -55,19 +55,27 @@ What that settles, and what it corrects:
 
 ## K1 ◻️ — the box casts a notice
 
-- `cast_notice` (+ RLS isolation test): one row per send, a child row per TV with its outcome
-  (`shown`, `woke`, `held`, `refused: <why>`, `failed`) and timestamps. The owner's rows keep 7
-  days, like the panel's.
-- Render the composer's payload (picture, words, style) to a 1920×1080 PNG on the box, reusing
-  the panel notice's text layout at TV scale. The sidecar serves it under a one-time name, the
-  same way it serves the test card.
-- Fan-out with the gate applied per TV at the moment of casting. `idle` casts, `standby` wakes
-  and casts, anything else is refused with its reason. An `unknown` TV, or quiet hours, holds
-  the notice and retries until it expires.
-- Quiet hours: a house default (21:00–07:00 in the mock) with a per-TV override. Held notices
-  show as "held for quiet hours".
-- Owner routes for Send, the TVs, per-TV settings and Sent. Debug routes for the same, so it can
-  be run without a terminal. Jerv's tool comes later, if wanted.
+**Shipped (K1a):**
+
+- `cast_notice` + `cast_notice_tv` (migration 0250, owner-only RLS with its isolation test): one
+  row per send, a child row per TV with its outcome (`shown`, `woke`, `skipped` with the gate's
+  why, `failed`) and the sidecar's `cast_id`. Kept 7 days like the panel's, swept lazily on
+  every send and read, each frame freed through `blob_refs` once nothing else holds it.
+- `jbrain.cast.frame` draws the notice on the box as one 1920×1080 PNG in the mock's three
+  layouts: words alone, a picture split beside the words, or a picture whole with its title over
+  it. The sender and time sit on top ("Dad · via jbrain · 18:30"). The sidecar serves the PNG
+  under a one-time name for as long as it is up, the same way it serves the test card.
+- Fan-out: the sidecar's `POST /tvs/<id>/cast` re-checks each TV's gate at the instant of
+  casting. `idle` casts, `standby` wakes and casts, anything else comes back skipped with its
+  reason. After `seconds` (5–300) the box quits the receiver, but only if its own cast is still
+  showing; `POST /tvs/<id>/stop` does the same at once (Take it down).
+- Owner routes `/api/cast/{tvs,send,sent,preview,<id>,<id>/frame,<id>/stop}`, and debug routes
+  `POST /api/debug/cast/send` and `GET /api/debug/cast/sent` so it runs without a terminal.
+
+**Still to do in K1:** an `unknown` TV holds the notice and retries until it expires instead of
+being skipped; quiet hours (a house default of 21:00–07:00, per-TV override, "held for quiet
+hours"); per-TV settings (notices on/off, allow waking) and their routes. Jerv's tool comes
+later, if wanted.
 
 ## K2 ◻️ — the PWA
 
@@ -86,8 +94,9 @@ on each TV.
 
 - **A lit TV on an HDMI input.** If it reads like off (`is_stand_by: true`,
   `is_active_input: false`), the gate can't tell them apart and would switch the TV away from
-  the console or cable box. Test this on a TV with something plugged in before K1 ships. If it
-  does read like off, the fix is a per-TV "never wake" setting rather than a guess.
+  the input. Moot in this house for now: the owner has no HDMI devices plugged into any TV
+  (2026-10-15). If one is added, test it, and if it reads like off, the fix is a per-TV "never
+  wake" setting rather than a guess.
 - **Back to sleep.** Cast can't do it (finding 4). Whether another path can turn a Google TV off,
   such as the TV's own sleep timer or a Google Home routine, is unexplored. Until something does,
   "back to sleep after" comes out of K2, and "allow waking" says the TV will stay on.

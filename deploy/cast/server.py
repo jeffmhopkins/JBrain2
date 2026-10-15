@@ -18,10 +18,16 @@ test.
     GET  /tvs/<id>/history?since=<t>  that TV's timeline of readings and events
     POST /tvs/<id>/test {"seconds": n}
                                       gate, cast the card, quit after n s if ours
+    POST /tvs/<id>/cast {"png_b64", "seconds", "title"}
+                                      the same for a notice the api rendered; 202
+                                      carries the `cast_id` that names it
+    POST /tvs/<id>/stop {"cast_id"}   take that cast down now, if still ours
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hmac
 import json
 import os
@@ -40,10 +46,12 @@ import gate
 PORT = int(os.environ.get("CAST_PORT", "19190"))
 TOKEN_PATH = os.environ.get("CAST_TOKEN_PATH", "/run/jbrain-internal/cast.token")
 MAX_BODY = 4096
+#: A notice carries its 1920x1080 frame, base64; nothing else may send this much.
+CAST_MAX_BODY = 8 * 1024 * 1024
 #: A card outlives its test by this much, for a TV that fetches late or twice.
 FRAME_GRACE_S = 60
 
-_TV = re.compile(r"^/tvs/([0-9a-f-]{36})(/history|/test)?$")
+_TV = re.compile(r"^/tvs/([0-9a-f-]{36})(/history|/test|/cast|/stop)?$")
 _FRAME = re.compile(r"^/frame/([0-9a-f]{32})\.png$")
 
 
@@ -53,10 +61,13 @@ class FleetLike(Protocol):
     def history(self, key: str, since: float = 0.0) -> list[dict[str, Any]]: ...
     def host_of(self, key: str) -> str: ...
     def test(self, key: str, url: str, seconds: int) -> dict[str, Any]: ...
+    def cast(self, key: str, url: str, seconds: int, title: str) -> dict[str, Any]: ...
+    def stop(self, key: str, cast_id: str) -> bool: ...
 
 
 class Frames:
-    """The cards on offer, by nonce, each until its test is over."""
+    """The frames on offer, by nonce, each until its cast is over: the test card, or a
+    notice's own PNG."""
 
     def __init__(self, now: Callable[[], float] = time.time):
         self._now = now
@@ -64,14 +75,16 @@ class Frames:
         self._live: dict[str, tuple[bytes, float]] = {}
         self._card: bytes | None = None
 
-    def offer(self, ttl_s: float) -> str:
+    def offer(self, ttl_s: float, png: bytes | None = None) -> str:
         nonce = secrets.token_hex(16)
         with self._lock:
-            if self._card is None:
-                self._card = frame.png()
+            if png is None:
+                if self._card is None:
+                    self._card = frame.png()
+                png = self._card
             now = self._now()
             self._live = {k: v for k, v in self._live.items() if v[1] > now}
-            self._live[nonce] = (self._card, now + ttl_s)
+            self._live[nonce] = (png, now + ttl_s)
         return nonce
 
     def get(self, nonce: str) -> bytes | None:
@@ -144,19 +157,69 @@ def route(
                 return _json(400, {"error": 'body must be {"seconds": n}'})
             # Before the card is offered: its unauthenticated URL lives as long as this.
             seconds = gate.clamp_seconds(seconds)
-            host = fleet.host_of(key)
-            nonce = frames.offer(ttl_s=seconds + FRAME_GRACE_S)
-            box = (address_for or _address_for)(host)
-            url_out = f"http://{box}:{port}/frame/{nonce}.png"
+            url_out = _frame_url(frames, fleet, key, seconds, None, address_for, port)
             try:
                 return _json(202, fleet.test(key, url_out, seconds))
             except gate.Refused as exc:
+                return _refused(exc)
+        if method == "POST" and leaf == "/cast":
+            try:
+                req = json.loads(body or b"{}")
+                png = base64.b64decode(str(req["png_b64"]), validate=True)
+                seconds = gate.clamp_notice_seconds(int(req.get("seconds", 30)))
+                title = str(req.get("title") or "jbrain")[:80]
+            except (ValueError, TypeError, KeyError, binascii.Error):
                 return _json(
-                    409, {"error": "not idle", "state": exc.state, "why": exc.why}
+                    400, {"error": 'body must be {"png_b64", "seconds", "title"}'}
                 )
+            if not png.startswith(b"\x89PNG"):
+                return _json(400, {"error": "png_b64 is not a PNG"})
+            url_out = _frame_url(frames, fleet, key, seconds, png, address_for, port)
+            try:
+                return _json(202, fleet.cast(key, url_out, seconds, title))
+            except gate.Refused as exc:
+                return _refused(exc)
+        if method == "POST" and leaf == "/stop":
+            try:
+                cast_id = str(json.loads(body or b"{}")["cast_id"])
+            except (ValueError, TypeError, KeyError):
+                return _json(400, {"error": 'body must be {"cast_id"}'})
+            return _json(200, {"id": key, "stopped": fleet.stop(key, cast_id)})
     except KeyError:
         return _json(404, {"error": f"no TV {key}"})
     return _json(405, {"error": "method not allowed"})
+
+
+def body_cap(
+    path: str, auth_header: str, token: Callable[[], bytes | None] = read_token
+) -> int:
+    """How much body a request may send, decided before any of it is read: only an
+    authorised notice may send a frame, so nobody on the LAN can make the sidecar
+    buffer megabytes without the token."""
+    if path.endswith("/cast") and authorised(auth_header, token()):
+        return CAST_MAX_BODY
+    return MAX_BODY
+
+
+def _refused(exc: gate.Refused) -> Reply:
+    return _json(409, {"error": "not idle", "state": exc.state, "why": exc.why})
+
+
+def _frame_url(
+    frames: Frames,
+    fleet: FleetLike,
+    key: str,
+    seconds: int,
+    png: bytes | None,
+    address_for: Callable[[str], str] | None,
+    port: int,
+) -> str:
+    """Offer the frame (after `seconds` is clamped: its unauthenticated URL lives this
+    long) and name it at the box's address on the route to the TV."""
+    host = fleet.host_of(key)
+    nonce = frames.offer(ttl_s=seconds + FRAME_GRACE_S, png=png)
+    box = (address_for or _address_for)(host)
+    return f"http://{box}:{port}/frame/{nonce}.png"
 
 
 def _address_for(host: str) -> str:
@@ -177,7 +240,8 @@ def serve(fleet: FleetLike, port: int = PORT) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = -1
-            if length < 0 or length > MAX_BODY:
+            cap = body_cap(self.path, self.headers.get("Authorization", ""))
+            if length < 0 or length > cap:
                 code, ctype, raw = _json(413, {"error": "body too large"})
             else:
                 body = self.rfile.read(length) if length else b""

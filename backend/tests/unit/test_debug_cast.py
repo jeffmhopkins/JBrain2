@@ -16,6 +16,7 @@ import pytest
 from fastapi import HTTPException
 
 from jbrain.api import debug_cast
+from jbrain.cast import sidecar as cast_sidecar
 
 TV = "0f4e6b0a-6c1e-4b0a-9a5e-3f1a2b3c4d5e"
 SETTINGS: Any = SimpleNamespace(cast_url="http://host.docker.internal:19190")
@@ -48,7 +49,7 @@ def sidecar(monkeypatch: pytest.MonkeyPatch):
         seen.append(request)
         return replies.get(request.url.path, httpx.Response(200, json={"tvs": []}))
 
-    monkeypatch.setattr(debug_cast, "_transport", httpx.MockTransport(handler))
+    monkeypatch.setattr(cast_sidecar, "_transport", httpx.MockTransport(handler))
     return seen, replies
 
 
@@ -117,7 +118,7 @@ async def test_unreachable_and_unconfigured_read_as_states(monkeypatch) -> None:
     def refuse(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
-    monkeypatch.setattr(debug_cast, "_transport", httpx.MockTransport(refuse))
+    monkeypatch.setattr(cast_sidecar, "_transport", httpx.MockTransport(refuse))
     with pytest.raises(HTTPException) as err:
         await debug_cast.cast_tvs(_request(), SETTINGS, PRINCIPAL)
     assert err.value.status_code == 503

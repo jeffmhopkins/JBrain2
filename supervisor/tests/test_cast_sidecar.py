@@ -9,6 +9,7 @@ closed.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import json
 import struct
@@ -124,6 +125,7 @@ class FakeFleet:
     def __init__(self, refuse: bool = False) -> None:
         self.refuse = refuse
         self.tests: list[tuple[str, str, int]] = []
+        self.casts: list[tuple[str, str, int, str]] = []
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [{"id": TV, "state": "idle"}]
@@ -146,6 +148,17 @@ class FakeFleet:
             raise gate.Refused("busy", "Netflix · playing")
         self.tests.append((key, url, seconds))
         return {"id": key, "seconds": seconds}
+
+    def cast(self, key: str, url: str, seconds: int, title: str) -> dict[str, Any]:
+        if self.refuse:
+            raise gate.Refused("busy", "Netflix · playing")
+        self.casts.append((key, url, seconds, title))
+        return {"id": key, "seconds": seconds, "cast_id": "c1"}
+
+    def stop(self, key: str, cast_id: str) -> bool:
+        if key != TV:
+            raise KeyError(key)
+        return cast_id == "c1"
 
 
 TV = "0f4e6b0a-6c1e-4b0a-9a5e-3f1a2b3c4d5e"
@@ -261,6 +274,138 @@ def test_bad_bodies_and_routes() -> None:
     assert _route("POST", f"/tvs/{TV}/test", body=b"{nope")[0] == 400
     assert _route("GET", f"/tvs/{TV}")[0] == 404
     assert _route("GET", f"/tvs/{TV}/test")[0] == 405
+
+
+PNG = b"\x89PNG\r\n\x1a\n" + b"notice"
+
+
+def _cast_body(png: bytes = PNG, **extra: Any) -> bytes:
+    return json.dumps(
+        {"png_b64": base64.b64encode(png).decode(), "title": "Dinner", **extra}
+    ).encode()
+
+
+def test_a_notice_is_served_its_own_frame() -> None:
+    fleet, frames = FakeFleet(), server.Frames()
+    code, _, raw = _route(
+        "POST",
+        f"/tvs/{TV}/cast",
+        body=_cast_body(seconds=30),
+        fleet=fleet,
+        frames=frames,
+    )
+    assert code == 202 and json.loads(raw)["cast_id"] == "c1"
+    ((_, url, seconds, title),) = fleet.casts
+    assert (seconds, title) == (30, "Dinner")
+    _, ctype, served = _route("GET", url.split(":19190", 1)[1], auth="", frames=frames)
+    assert (ctype, served) == ("image/png", PNG)
+
+
+def test_a_notice_is_held_to_its_bounds_and_must_be_a_png() -> None:
+    fleet = FakeFleet()
+    _route("POST", f"/tvs/{TV}/cast", body=_cast_body(seconds=99999), fleet=fleet)
+    assert fleet.casts[-1][2] == gate.MAX_NOTICE_S
+    assert _route("POST", f"/tvs/{TV}/cast", body=_cast_body(b"GIF89a"))[0] == 400
+    assert _route("POST", f"/tvs/{TV}/cast", body=b'{"title": "x"}')[0] == 400
+    assert _route("POST", f"/tvs/{TV}/cast", body=b'{"png_b64": "%%"}')[0] == 400
+    code, _, raw = _route(
+        "POST", f"/tvs/{TV}/cast", body=_cast_body(), fleet=FakeFleet(refuse=True)
+    )
+    assert code == 409 and json.loads(raw)["state"] == "busy"
+
+
+def test_stop_names_the_cast() -> None:
+    code, _, raw = _route("POST", f"/tvs/{TV}/stop", body=b'{"cast_id": "c1"}')
+    assert code == 200 and json.loads(raw)["stopped"] is True
+    code, _, raw = _route("POST", f"/tvs/{TV}/stop", body=b'{"cast_id": "old"}')
+    assert json.loads(raw)["stopped"] is False
+    assert _route("POST", f"/tvs/{TV}/stop", body=b"{}")[0] == 400
+
+
+class FakeCc:
+    def __init__(self) -> None:
+        from types import SimpleNamespace as NS
+
+        self.status = NS(
+            app_id=None,
+            display_name=None,
+            status_text=None,
+            is_stand_by=False,
+            is_active_input=True,
+            volume_level=0.2,
+        )
+        self.played: list[tuple[str, str]] = []
+        self.quits = 0
+        self.media_controller = NS(
+            status=NS(player_state=None, title=None, content_id=None)
+        )
+        self.media_controller.play_media = self._play
+
+    def _play(self, url: str, _mime: str, title: str) -> None:
+        self.played.append((url, title))
+        self.status.app_id = tvs.APP_MEDIA_RECEIVER
+        self.media_controller.status.content_id = url
+
+    def quit_app(self) -> None:
+        self.quits += 1
+        self.status.app_id = None
+
+
+def _fleet_with_tv() -> tuple[Any, Any]:
+    fleet = tvs.Fleet()
+    cc = FakeCc()
+    tv = tvs.Tv(cc=cc, connected=True)  # type: ignore[arg-type]
+    fleet._tvs[TV] = tv
+    return fleet, cc
+
+
+def test_only_the_cast_on_screen_is_ever_quit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A quit (timed or Take it down) ends its own cast and nothing else: not a newer
+    notice that replaced it, and not an app somebody opened since."""
+    monkeypatch.setattr(
+        tvs.threading,
+        "Thread",
+        lambda **_k: type("T", (), {"start": lambda self: None})(),
+    )
+    fleet, cc = _fleet_with_tv()
+    first = fleet.cast(TV, "http://x/1.png", 30, "One")["cast_id"]
+    # Our own card reads busy, so a second notice waits rather than stacking.
+    with pytest.raises(gate.Refused):
+        fleet.cast(TV, "http://x/2.png", 30, "Two")
+    # The TV went back to idle on its own; a newer cast is now the one on screen.
+    cc.status.app_id = None
+    second = fleet.cast(TV, "http://x/2.png", 30, "Two")["cast_id"]
+    assert [t for _, t in cc.played] == ["One", "Two"]
+    assert fleet.stop(TV, first) is False and cc.quits == 0
+    assert fleet.stop(TV, second) is True and cc.quits == 1
+    third = fleet.cast(TV, "http://x/3.png", 30, "Three")["cast_id"]
+    cc.status.app_id = "Netflix"
+    assert fleet.stop(TV, third) is False and cc.quits == 1
+    # A kid casts their own photo over ours: the same receiver, but not our frame.
+    cc.status.app_id = None
+    fourth = fleet.cast(TV, "http://x/4.png", 30, "Four")["cast_id"]
+    cc.media_controller.status.content_id = "http://phone/cat.jpg"
+    assert fleet.stop(TV, fourth) is False and cc.quits == 1
+
+
+def test_only_an_authorised_notice_may_send_a_frame_sized_body() -> None:
+    def tok() -> bytes:
+        return b"cast-tok"
+
+    cast = f"/tvs/{TV}/cast"
+    assert server.body_cap(cast, "Bearer cast-tok", tok) == server.CAST_MAX_BODY
+    assert server.body_cap(cast, "Bearer wrong", tok) == server.MAX_BODY
+    assert server.body_cap(cast, "", tok) == server.MAX_BODY
+    assert server.body_cap(f"/tvs/{TV}/test", "Bearer cast-tok", tok) == server.MAX_BODY
+
+
+def test_a_notice_is_refused_over_an_open_app() -> None:
+    fleet, cc = _fleet_with_tv()
+    cc.status.app_id = "Netflix"
+    cc.status.display_name = "Netflix"
+    with pytest.raises(gate.Refused):
+        fleet.cast(TV, "http://x/1.png", 30, "One")
+    assert cc.played == []
 
 
 def test_the_reading_ignores_media_left_behind_by_a_closed_app() -> None:

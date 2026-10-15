@@ -31,6 +31,8 @@ HISTORY_LEN = 400
 #: A test card's bounds, enforced where the request lands: the LAN control port is not
 #: behind the api's validation, and the card's unauthenticated URL lives this long.
 MIN_TEST_S, MAX_TEST_S = 5, 120
+#: A notice may stay up longer than a test card: the mock's default is 30 s.
+MAX_NOTICE_S = 300
 
 #: pychromecast's cast_type for a device with a screen. "audio" is a speaker, and
 #: "group" a speaker group, which can look idle while a member is busy: neither is ever
@@ -44,6 +46,10 @@ def is_display(cast_type: str | None) -> bool:
 
 def clamp_seconds(seconds: int) -> int:
     return max(MIN_TEST_S, min(MAX_TEST_S, seconds))
+
+
+def clamp_notice_seconds(seconds: int) -> int:
+    return max(MIN_TEST_S, min(MAX_NOTICE_S, seconds))
 
 
 @dataclass(frozen=True)
