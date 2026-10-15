@@ -20,10 +20,10 @@ import {
   type Layer,
   PHOTO_WORKING_MAX,
   type Rect,
-  SECONDS,
   SECONDS_DEFAULT,
   TV_H,
   TV_W,
+  type TimeUnit,
   WORDS_MAX,
   type WordsFit,
   addPicture,
@@ -42,6 +42,7 @@ import {
   layerRect,
   layerScale,
   moveLayer,
+  onScreenSeconds,
   outcomeLabel,
   outcomeSub,
   removeLayer,
@@ -253,7 +254,9 @@ function SendTab({
   const [held, setHeld] = useState<number | null>(null);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [fits, setFits] = useState<Map<number, WordsFit>>(new Map());
-  const [seconds, setSeconds] = useState<number>(SECONDS_DEFAULT);
+  const [amount, setAmount] = useState(String(SECONDS_DEFAULT));
+  const [unit, setUnit] = useState<TimeUnit>("s");
+  const time = onScreenSeconds(amount, unit);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const file = useRef<HTMLInputElement>(null);
@@ -267,7 +270,7 @@ function SendTab({
   const targets = (tvs ?? []).filter((t) => chosen.has(t.id));
   const willTake = targets.filter((t) => t.castable).length;
   const skips = targets.map(skipReason).filter((r): r is string => r !== null);
-  const ready = draftReady(draft) && targets.length > 0;
+  const ready = draftReady(draft) && targets.length > 0 && "seconds" in time;
   const room = canAdd(draft);
   const note = layer?.kind === "words" ? fitNote(fits.get(layer.id), layer.size) : null;
 
@@ -321,6 +324,8 @@ function SendTab({
   }
 
   async function send() {
+    if (!("seconds" in time)) return;
+    const seconds = time.seconds;
     setSending(true);
     setProblem(null);
     try {
@@ -499,20 +504,37 @@ function SendTab({
         </p>
       ))}
 
-      <div className="cast-label">On screen for</div>
-      <fieldset className="cast-targets" aria-label="On screen for">
-        {SECONDS.map((s) => (
-          <button
-            key={s}
-            type="button"
-            className={`cast-target${seconds === s ? " on" : ""}`}
-            aria-pressed={seconds === s}
-            onClick={() => setSeconds(s)}
-          >
-            {secondsLabel(s)}
-          </button>
-        ))}
-      </fieldset>
+      <div className="cast-time">
+        <label className="cast-time-label" htmlFor="cast-time-amount">
+          On screen for
+        </label>
+        <input
+          id="cast-time-amount"
+          type="number"
+          inputMode="decimal"
+          min={1}
+          step="any"
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+        />
+        <select
+          aria-label="Unit"
+          value={unit}
+          onChange={(e) => {
+            // The same time in the new unit, so a switch never reads as a mistake.
+            const next = e.target.value as TimeUnit;
+            if ("seconds" in time) {
+              const n = next === "min" ? time.seconds / 60 : time.seconds;
+              setAmount(String(Math.round(n * 100) / 100));
+            }
+            setUnit(next);
+          }}
+        >
+          <option value="s">seconds</option>
+          <option value="min">minutes</option>
+        </select>
+      </div>
+      {"problem" in time && <p className="cast-error">{time.problem}</p>}
 
       {problem && <p className="cast-error">{problem}</p>}
       <button

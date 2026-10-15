@@ -147,7 +147,8 @@ describe("Cast", () => {
     // The words are drawn on the phone, as the TV will get them, and held to be placed.
     expect(drawn).toContain("Dinner's ready");
     expect(screen.getByRole("group", { name: "Selected text" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "1 min" }));
+    fireEvent.change(screen.getByLabelText("Unit"), { target: { value: "min" } });
+    fireEvent.change(screen.getByLabelText("On screen for"), { target: { value: "1" } });
 
     // Picking a TV that is in use says so before sending.
     fireEvent.click(picks.getByRole("button", { name: /Twins room/ }));
@@ -197,6 +198,24 @@ describe("Cast", () => {
     fireEvent.change(words, { target: { value: "x".repeat(200) } });
     expect(words.value).toHaveLength(120);
     fireEvent.click(screen.getByRole("button", { name: "Add to screen" }));
+    expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeEnabled();
+  });
+
+  it("takes a typed time in seconds or minutes, and holds the cast outside 5 s to 5 min", async () => {
+    render(<CastScreen />);
+    await addText("Hi");
+    const amount = screen.getByLabelText("On screen for");
+    expect(amount).toHaveValue(30);
+    // Switching the unit keeps the same time.
+    fireEvent.change(screen.getByLabelText("Unit"), { target: { value: "min" } });
+    expect(amount).toHaveValue(0.5);
+    fireEvent.change(amount, { target: { value: "10" } });
+    expect(screen.getByText(/5 seconds to 5 minutes/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeDisabled();
+    fireEvent.change(amount, { target: { value: "" } });
+    expect(screen.getByText("Give it a time.")).toBeInTheDocument();
+    fireEvent.change(amount, { target: { value: "2" } });
+    expect(screen.queryByText(/5 seconds to 5 minutes/)).toBeNull();
     expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeEnabled();
   });
 
