@@ -190,6 +190,17 @@ def route(
     return _json(405, {"error": "method not allowed"})
 
 
+def body_cap(
+    path: str, auth_header: str, token: Callable[[], bytes | None] = read_token
+) -> int:
+    """How much body a request may send, decided before any of it is read: only an
+    authorised notice may send a frame, so nobody on the LAN can make the sidecar
+    buffer megabytes without the token."""
+    if path.endswith("/cast") and authorised(auth_header, token()):
+        return CAST_MAX_BODY
+    return MAX_BODY
+
+
 def _refused(exc: gate.Refused) -> Reply:
     return _json(409, {"error": "not idle", "state": exc.state, "why": exc.why})
 
@@ -229,7 +240,7 @@ def serve(fleet: FleetLike, port: int = PORT) -> None:
                 length = int(self.headers.get("Content-Length") or 0)
             except ValueError:
                 length = -1
-            cap = CAST_MAX_BODY if self.path.endswith("/cast") else MAX_BODY
+            cap = body_cap(self.path, self.headers.get("Authorization", ""))
             if length < 0 or length > cap:
                 code, ctype, raw = _json(413, {"error": "body too large"})
             else:

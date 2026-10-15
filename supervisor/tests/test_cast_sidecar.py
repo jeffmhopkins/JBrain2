@@ -336,12 +336,15 @@ class FakeCc:
         )
         self.played: list[tuple[str, str]] = []
         self.quits = 0
-        self.media_controller = NS(status=NS(player_state=None, title=None))
+        self.media_controller = NS(
+            status=NS(player_state=None, title=None, content_id=None)
+        )
         self.media_controller.play_media = self._play
 
     def _play(self, url: str, _mime: str, title: str) -> None:
         self.played.append((url, title))
         self.status.app_id = tvs.APP_MEDIA_RECEIVER
+        self.media_controller.status.content_id = url
 
     def quit_app(self) -> None:
         self.quits += 1
@@ -378,6 +381,22 @@ def test_only_the_cast_on_screen_is_ever_quit(monkeypatch: pytest.MonkeyPatch) -
     third = fleet.cast(TV, "http://x/3.png", 30, "Three")["cast_id"]
     cc.status.app_id = "Netflix"
     assert fleet.stop(TV, third) is False and cc.quits == 1
+    # A kid casts their own photo over ours: the same receiver, but not our frame.
+    cc.status.app_id = None
+    fourth = fleet.cast(TV, "http://x/4.png", 30, "Four")["cast_id"]
+    cc.media_controller.status.content_id = "http://phone/cat.jpg"
+    assert fleet.stop(TV, fourth) is False and cc.quits == 1
+
+
+def test_only_an_authorised_notice_may_send_a_frame_sized_body() -> None:
+    def tok() -> bytes:
+        return b"cast-tok"
+
+    cast = f"/tvs/{TV}/cast"
+    assert server.body_cap(cast, "Bearer cast-tok", tok) == server.CAST_MAX_BODY
+    assert server.body_cap(cast, "Bearer wrong", tok) == server.MAX_BODY
+    assert server.body_cap(cast, "", tok) == server.MAX_BODY
+    assert server.body_cap(f"/tvs/{TV}/test", "Bearer cast-tok", tok) == server.MAX_BODY
 
 
 def test_a_notice_is_refused_over_an_open_app() -> None:

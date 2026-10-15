@@ -48,9 +48,9 @@ class Tv:
     connected: bool = False
     found_at: float = field(default_factory=time.time)
     last_test_at: float | None = None
-    #: The cast this box last put up, until it is quit or taken down: the only one a
-    #: quit may end.
-    casting: str | None = None
+    #: The cast this box last put up and the frame URL it played, until it is quit or
+    #: taken down: the only one a quit may end.
+    casting: tuple[str, str] | None = None
 
 
 def local_address_for(host: str) -> str:
@@ -247,7 +247,7 @@ class Fleet:
             url=url,
             cast_id=cast_id,
         )
-        tv.casting = cast_id
+        tv.casting = (cast_id, url)
         tv.cc.media_controller.play_media(url, "image/png", title=title)
         threading.Thread(
             target=self._end,
@@ -275,7 +275,13 @@ class Fleet:
             )
 
     def _quit_if_ours(self, tv: Tv, cast_id: str, kind: str, **extra: Any) -> bool:
-        if tv.casting != cast_id or reading(tv).app_id != APP_MEDIA_RECEIVER:
+        # The app id alone is not enough: a photo cast from a phone uses the same
+        # Default Media Receiver. Only our own frame URL, still playing, is ours.
+        if tv.casting is None or tv.casting[0] != cast_id:
+            return False
+        if reading(tv).app_id != APP_MEDIA_RECEIVER:
+            return False
+        if tv.cc.media_controller.status.content_id != tv.casting[1]:
             return False
         tv.casting = None
         tv.cc.quit_app()
