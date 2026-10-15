@@ -170,7 +170,10 @@ def route(
         if method == "POST" and leaf == "/cast":
             try:
                 req = json.loads(body or b"{}")
-                image = base64.b64decode(str(req["image_b64"]), validate=True)
+                # png_b64 is the key before frames could be JPEGs: an api one release
+                # behind this sidecar (a failed rebuild mid-update) still casts.
+                raw = req["image_b64"] if "image_b64" in req else req["png_b64"]
+                image = base64.b64decode(str(raw), validate=True)
                 seconds = gate.clamp_notice_seconds(int(req.get("seconds", 30)))
                 title = str(req.get("title") or "jbrain")[:80]
             except (ValueError, TypeError, KeyError, binascii.Error):

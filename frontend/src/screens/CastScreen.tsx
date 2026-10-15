@@ -25,6 +25,7 @@ import {
   TV_H,
   TV_W,
   WORDS_MAX,
+  type WordsFit,
   ZOOM_MAX,
   canTakeDown,
   draftReady,
@@ -32,6 +33,7 @@ import {
   dragDraft,
   drawFrame,
   emptyCastDraft,
+  fitNote,
   outcomeLabel,
   outcomeSub,
   resultTitle,
@@ -226,6 +228,7 @@ function SendTab({
 }) {
   const [picked, setPicked] = useState<Set<string> | null>(null);
   const [part, setPart] = useState<"photo" | "words">("photo");
+  const [fit, setFit] = useState<WordsFit | null>(null);
   const [seconds, setSeconds] = useState<number>(SECONDS_DEFAULT);
   const [sending, setSending] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -307,8 +310,11 @@ function SendTab({
 
       <div className="cast-label">On the TV · {secondsLabel(seconds)}</div>
       <div className="cast-screen-16x9" ref={wrap}>
-        {width > 0 && <FrameCanvas draft={draft} cssW={width} part={part} onDraft={setDraft} />}
+        {width > 0 && (
+          <FrameCanvas draft={draft} cssW={width} part={part} onDraft={setDraft} onFit={setFit} />
+        )}
       </div>
+      {fitNote(fit, draft.size) && <p className="cast-note">{fitNote(fit, draft.size)}</p>}
       <p className="cast-note">
         {part === "words"
           ? "Drag the words to place them. The picture always stays under them."
@@ -488,11 +494,13 @@ function FrameCanvas({
   cssW,
   part,
   onDraft,
+  onFit,
 }: {
   draft: CastDraft;
   cssW: number;
   part: "photo" | "words";
   onDraft: (fn: (d: CastDraft) => CastDraft) => void;
+  onFit: (fit: WordsFit | null) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const cssH = (cssW * TV_H) / TV_W;
@@ -507,8 +515,8 @@ function FrameCanvas({
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     ctx.setTransform(canvas.width / TV_W, 0, 0, canvas.height / TV_H, 0, 0);
-    drawFrame(ctx, draft);
-  }, [draft, cssW, cssH]);
+    onFit(drawFrame(ctx, draft));
+  }, [draft, cssW, cssH, onFit]);
 
   function spread(): number {
     const [a, b] = [...pointers.current.values()];
@@ -525,10 +533,14 @@ function FrameCanvas({
     const last = pointers.current.get(e.pointerId);
     if (!last) return;
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.current.size === 2 && pinch.current && draft.photo) {
+    // Two fingers only ever pinch: with no photo to zoom, they must not also drag the words
+    // by the sum of both.
+    if (pointers.current.size >= 2) {
       const p = pinch.current;
-      const zoom = clamp((p.zoom * spread()) / (p.dist || 1), 1, ZOOM_MAX);
-      onDraft((d) => ({ ...d, zoom }));
+      if (p && draft.photo) {
+        const zoom = clamp((p.zoom * spread()) / (p.dist || 1), 1, ZOOM_MAX);
+        onDraft((d) => ({ ...d, zoom }));
+      }
       return;
     }
     const k = TV_W / cssW;

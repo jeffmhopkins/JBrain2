@@ -333,6 +333,13 @@ def test_a_photo_frame_is_cast_and_served_as_a_jpeg() -> None:
     assert (ctype, served) == ("image/jpeg", JPEG)
 
 
+def test_the_old_png_b64_key_still_casts() -> None:
+    fleet = FakeFleet()
+    body = json.dumps({"png_b64": base64.b64encode(PNG).decode()}).encode()
+    code, _, _ = _route("POST", f"/tvs/{TV}/cast", body=body, fleet=fleet)
+    assert code == 202 and fleet.mimes == ["image/png"]
+
+
 def test_stop_names_the_cast() -> None:
     code, _, raw = _route("POST", f"/tvs/{TV}/stop", body=b'{"cast_id": "c1"}')
     assert code == 200 and json.loads(raw)["stopped"] is True

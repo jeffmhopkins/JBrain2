@@ -50,16 +50,27 @@ function sent(over: Partial<CastNotice> = {}): CastNotice {
   };
 }
 
-/** jsdom has no 2D canvas: a context that records the words it is asked to draw, and an
- *  export that reads as a JPEG. */
+/** jsdom has no 2D canvas: a context that records the words it is asked to draw and where,
+ *  measures them at half the font size a letter, and an export that reads as a JPEG. */
 const drawn: string[] = [];
+const drawnAt: number[][] = [];
 function fakeCanvas() {
+  let px = 10;
   const ctx = new Proxy(
     {
-      measureText: (t: string) => ({ width: t.length * 10 }),
-      fillText: (t: string) => drawn.push(t),
+      measureText: (t: string) => ({ width: t.length * px * 0.5 }),
+      fillText: (t: string, x: number, y: number) => {
+        drawn.push(t);
+        drawnAt.push([x, y]);
+      },
     } as Record<string, unknown>,
-    { get: (o, k) => (k in o ? o[k as string] : () => {}), set: () => true },
+    {
+      get: (o, k) => (k in o ? o[k as string] : () => {}),
+      set: (_o, k, v) => {
+        if (k === "font") px = Number(/(\d+)px/.exec(String(v))?.[1] ?? px);
+        return true;
+      },
+    },
   );
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(
     ctx as unknown as CanvasRenderingContext2D,
@@ -71,6 +82,7 @@ function fakeCanvas() {
 
 beforeEach(() => {
   drawn.length = 0;
+  drawnAt.length = 0;
   vi.spyOn(api, "castTvs").mockResolvedValue({ tvs: TVS });
   fakeCanvas();
 });
@@ -174,6 +186,36 @@ describe("Cast", () => {
     fireEvent.change(words, { target: { value: "x".repeat(200) } });
     expect(words.value).toHaveLength(120);
     expect(screen.getByRole("button", { name: /Cast to 2 TVs/ })).toBeEnabled();
+  });
+
+  it("shrinks words that would run off the screen, and says so", async () => {
+    render(<CastScreen />);
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
+    const words = screen.getByLabelText(/Words on the picture/);
+    fireEvent.change(words, { target: { value: "Dinner" } });
+    expect(screen.queryByText(/so every word fits/)).toBeNull();
+    fireEvent.change(words, { target: { value: "word ".repeat(24).trim() } });
+    expect(await screen.findByText(/^Shrunk to \d+ px so every word fits/)).toBeInTheDocument();
+    expect(drawn.slice(-4).join(" ").split(" ").filter(Boolean)).toHaveLength(24);
+  });
+
+  it("two fingers on words alone don't drag them", async () => {
+    render(<CastScreen />);
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
+    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
+    const canvas = screen.getByLabelText("What the TV will show");
+    const before = drawnAt.at(-1);
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 50, clientY: 10 });
+    fireEvent.pointerMove(canvas, { pointerId: 2, clientX: 90, clientY: 40 });
+    expect(drawnAt.at(-1)).toEqual(before);
+    fireEvent.pointerUp(canvas, { pointerId: 2 });
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 30, clientY: 10 });
+    expect(drawnAt.at(-1)?.[0]).toBeGreaterThan(before?.[0] ?? 0);
   });
 
   it("keeps the draft while the owner looks at the TVs", async () => {

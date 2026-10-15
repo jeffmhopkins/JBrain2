@@ -200,10 +200,39 @@ export function draftTitle(d: CastDraft): string {
   return d.words.trim().replace(/\s+/g, " ") || "Picture";
 }
 
+/** How the words were drawn: the lines, at what size, and whether all of them made it. */
+export interface WordsFit {
+  lines: string[];
+  size: number;
+  whole: boolean;
+}
+
+const FIT_STEP = 4;
+
+/** The words as they will be drawn: at the chosen size when they all fit, else the largest
+ *  size down to SIZE_MIN that shows every word on the screen. The wrap keeps four lines and
+ *  drops the rest, and a tall block runs off the top and bottom, so without this the end of a
+ *  message could vanish from the TV while Sent still lists it. `whole` is false only when
+ *  even SIZE_MIN can't hold them. Leaves `ctx.font` at the size returned. */
+export function fitWords(ctx: CanvasRenderingContext2D, text: string, size: number): WordsFit {
+  const want = text.replace(/\s+/g, "").length;
+  const measure = (s: string) => ctx.measureText(s).width;
+  let best: WordsFit = { lines: [], size, whole: false };
+  for (let s = size; s >= SIZE_MIN; s -= FIT_STEP) {
+    ctx.font = `700 ${s}px ${TEXT_FONT}`;
+    const lines = wrapWords(text, TV_W - WORDS_MARGIN * 2, measure);
+    const all = lines.join("").replace(/\s+/g, "").length === want;
+    const box = textBox(lines, s, { x: TV_W / 2, y: TV_H / 2 }, TV_W, TV_H, measure);
+    best = { lines, size: s, whole: all && box.h <= TV_H };
+    if (best.whole) return best;
+  }
+  return best;
+}
+
 /** Draw the frame into `ctx`, whose units are TV pixels: the photo covering the screen
  *  (zoomed and panned), then the words over it. The one drawing serves the preview and what is
- *  sent, so they cannot disagree. */
-export function drawFrame(ctx: CanvasRenderingContext2D, d: CastDraft): void {
+ *  sent, so they cannot disagree. Returns how the words fit, or null with none. */
+export function drawFrame(ctx: CanvasRenderingContext2D, d: CastDraft): WordsFit | null {
   ctx.fillStyle = SHEET;
   ctx.fillRect(0, 0, TV_W, TV_H);
   if (d.photo) {
@@ -213,16 +242,16 @@ export function drawFrame(ctx: CanvasRenderingContext2D, d: CastDraft): void {
     ctx.drawImage(d.photo.source, p.x, p.y, d.photo.w * p.scale, d.photo.h * p.scale);
   }
   const text = d.words.trim();
-  if (!text) return;
+  if (!text) return null;
   const st = TEXT_STYLES[d.style];
-  ctx.font = `700 ${d.size}px ${TEXT_FONT}`;
+  const fit = fitWords(ctx, text, d.size);
+  const { lines, size } = fit;
   const measure = (s: string) => ctx.measureText(s).width;
-  const lines = wrapWords(text, TV_W - WORDS_MARGIN * 2, measure);
-  const box = textBox(lines, d.size, d.pos, TV_W, TV_H, measure);
+  const box = textBox(lines, size, d.pos, TV_W, TV_H, measure);
   if (st.plate) {
     ctx.fillStyle = st.plate;
     ctx.beginPath();
-    ctx.roundRect(box.x, box.y, box.w, box.h, d.size * 0.22);
+    ctx.roundRect(box.x, box.y, box.w, box.h, size * 0.22);
     ctx.fill();
   }
   ctx.textAlign = "center";
@@ -233,12 +262,21 @@ export function drawFrame(ctx: CanvasRenderingContext2D, d: CastDraft): void {
     const y = box.y + box.padY + box.lineH * (i + 0.5);
     if (st.stroke) {
       ctx.strokeStyle = st.stroke;
-      ctx.lineWidth = d.size * 0.14;
+      ctx.lineWidth = size * 0.14;
       ctx.strokeText(line, cx, y);
     }
     ctx.fillStyle = st.fill;
     ctx.fillText(line, cx, y);
   });
+  return fit;
+}
+
+/** What to tell the owner when the words aren't drawn as asked, or null when they are. */
+export function fitNote(fit: WordsFit | null, asked: number): string | null {
+  if (!fit) return null;
+  if (!fit.whole) return "Too long for the screen: the end is cut off. Shorten the words.";
+  if (fit.size < asked) return `Shrunk to ${fit.size} px so every word fits on the screen.`;
+  return null;
 }
 
 /** A drag of (dx, dy) TV pixels: it moves the words when they are what is being placed, else

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CastNotice, CastTv } from "./api/client";
 import {
   MEDIA_RECEIVER,
+  SIZE_MIN,
   TV_H,
   TV_W,
   canTakeDown,
@@ -10,6 +11,8 @@ import {
   dragDraft,
   drawFrame,
   emptyCastDraft,
+  fitNote,
+  fitWords,
   outcomeLabel,
   outcomeSub,
   readyCount,
@@ -219,5 +222,44 @@ describe("the composer", () => {
     expect(image).toBeGreaterThan(-1);
     expect(plate).toBeGreaterThan(image);
     expect(words).toBeGreaterThan(plate);
+  });
+
+  /** A context that measures at half the font size a letter, as a bold face roughly does. */
+  function measuring(): CanvasRenderingContext2D {
+    let px = 10;
+    return {
+      measureText: (t: string) => ({ width: t.length * px * 0.5 }),
+      set font(v: string) {
+        px = Number(/(\d+)px/.exec(v)?.[1]);
+      },
+    } as unknown as CanvasRenderingContext2D;
+  }
+
+  it("keeps the asked size when the words fit, and shrinks them until every word does", () => {
+    expect(fitWords(measuring(), "Dinner", 140)).toEqual({
+      lines: ["Dinner"],
+      size: 140,
+      whole: true,
+    });
+    // Five lines at 140: the wrap would drop the last, so they come down a size.
+    const long = fitWords(measuring(), "word ".repeat(24).trim(), 140);
+    expect(long.size).toBeLessThan(140);
+    expect(long.whole).toBe(true);
+    expect(long.lines.join(" ").split(" ")).toHaveLength(24);
+    // Four lines of 320 px are taller than the screen even though the wrap kept them all.
+    const tall = fitWords(measuring(), "aaaaaaaaa bbbbbbbbb ccccccccc ddddddddd", 320);
+    expect(tall.size).toBeLessThan(320);
+    expect(tall.lines.length * tall.size * 1.12).toBeLessThanOrEqual(1080);
+  });
+
+  it("says when the words were shrunk, or can't all fit even at the smallest size", () => {
+    const none = fitWords(measuring(), "x ".repeat(400), 140);
+    expect(none).toMatchObject({ size: SIZE_MIN, whole: false });
+    expect(fitNote(none, 140)).toMatch(/end is cut off/);
+    expect(fitNote({ lines: ["a"], size: 100, whole: true }, 140)).toBe(
+      "Shrunk to 100 px so every word fits on the screen.",
+    );
+    expect(fitNote({ lines: ["a"], size: 140, whole: true }, 140)).toBeNull();
+    expect(fitNote(null, 140)).toBeNull();
   });
 });
