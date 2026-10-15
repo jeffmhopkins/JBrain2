@@ -1,6 +1,6 @@
 # Jeff's jpanel — the ESP32-C6 panel as a set of small apps
 
-> **Status:** In progress · **Last verified:** 2026-10-13 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C2r🟡 C3🟡 C3b🟡 C4🟡
+> **Status:** In progress · **Last verified:** 2026-10-15 · **Waves:** C0✅ C1✅ C2🟡 C2d🟡 C2r🟡 C3🟡 C3b🟡 C4🟡
 > — C0 and C1 are proven on the board (2026-10-11): USB-flashed 0.0.1 from the PWA's board
 > picker, it joined Wi-Fi 6, reached the box over TLS, and took 0.0.2 over the air and kept it
 > across a reset. The deliberate bad-image test is dropped at the owner's call. C2's framework
@@ -106,6 +106,11 @@
 > behind each Montserrat size. Sequences fall back the way Unicode's own fallback does, and any
 > other emoji is a dim disc instead of LVGL's box. It costs +951 KB of app image and no RAM
 > (firmware README "What 0.0.23 adds").
+> **0.0.25** brings a sideways frame down to an upright one's (0.0.23 measured 65 ms upright and
+> 414 ms on its side): the DMA-done callback now yields to the UI task itself instead of leaving
+> it asleep until the next tick, strips are queued from two 480×20 halves of the same buffer while
+> LVGL draws the next, a turned strip goes out as one window and one transfer, and a dark panel
+> draws nothing until its wake redraws at brightness 0 (firmware README "What 0.0.25 adds").
 
 The owner's own panel: a Waveshare ESP32-C6-Touch-AMOLED-2.16 (480×480 AMOLED, CO5300 over
 QSPI, CST9220 touch, AXP2101, PCF85063, QMI8658, ES8311 + ES7210, three top buttons). It is
