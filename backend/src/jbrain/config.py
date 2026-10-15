@@ -315,6 +315,10 @@ class Settings(BaseSettings):
     # disables the debug routes, which then say so.
     minecraft_url: str = "http://host.docker.internal:19180"
     minecraft_token: str = ""
+    # The cast sidecar (deploy/cast, the jpanel Cast spike): the house's Chromecast TVs.
+    # Host-networked like Minecraft, for mDNS; its bearer is `cast.token` from the
+    # internal secrets, so there is no setting for it. Empty disables the debug routes.
+    cast_url: str = "http://host.docker.internal:19190"
     # Read-only mount of this repo's `firmware/` directory, off the checkout the box
     # already keeps current (deploy/update-inner.sh). The panel firmware IS that checkout:
     # `version.txt` plus the built images in `dist/`, so a flash needs no network and no

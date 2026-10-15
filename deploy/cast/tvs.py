@@ -1,0 +1,195 @@
+"""The house's Cast TVs: found by mDNS, each held on an open connection, every status logged.
+
+The one module that imports pychromecast. Holding a connection per TV (rather than asking
+on demand) is what makes the timeline possible: a TV pushes a receiver status whenever its
+app, standby or input changes, and a media status whenever playback does, so the history
+records the owner's experiments as they happen instead of whenever somebody next asks.
+
+A test cast plays the box's test card on the Default Media Receiver (no registered app, no
+HTTPS origin) and quits it after a while — but only if our card is still what the TV is
+showing, so a child who picked up the remote mid-test is never interrupted by the quit.
+"""
+
+from __future__ import annotations
+
+import socket
+import threading
+import time
+import uuid as uuidlib
+from collections.abc import Callable
+from dataclasses import asdict, dataclass, field
+from typing import Any
+
+import pychromecast
+import zeroconf
+from pychromecast.config import APP_MEDIA_RECEIVER
+from pychromecast.controllers.media import MediaStatus, MediaStatusListener
+from pychromecast.controllers.receiver import CastStatus, CastStatusListener
+from pychromecast.discovery import CastBrowser, SimpleCastListener
+from pychromecast.socket_client import (
+    CONNECTION_STATUS_CONNECTED,
+    ConnectionStatus,
+    ConnectionStatusListener,
+)
+
+import gate
+
+TEST_TITLE = "jbrain cast test"
+MIN_TEST_S, MAX_TEST_S = 5, 120
+
+
+@dataclass
+class Tv:
+    cc: pychromecast.Chromecast
+    history: gate.History = field(default_factory=gate.History)
+    connected: bool = False
+    found_at: float = field(default_factory=time.time)
+    last_test_at: float | None = None
+
+
+def local_address_for(host: str) -> str:
+    """The box's own address on the route to `host`: what a TV must fetch the card from.
+    A UDP connect sends nothing; it only asks the kernel to pick the route."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.connect((host, 8009))
+        return s.getsockname()[0]
+
+
+class _Listen(CastStatusListener, MediaStatusListener, ConnectionStatusListener):
+    def __init__(self, on_change: Callable[[], object], tv: Tv):
+        self._on_change, self._tv = on_change, tv
+
+    def new_cast_status(self, status: CastStatus) -> None:
+        self._on_change()
+
+    def new_media_status(self, status: MediaStatus) -> None:
+        self._on_change()
+
+    def load_media_failed(self, queue_item_id: int, error_code: int) -> None:
+        self._tv.history.note("load_failed", error_code=error_code)
+
+    def new_connection_status(self, status: ConnectionStatus) -> None:
+        self._tv.connected = status.status == CONNECTION_STATUS_CONNECTED
+        self._tv.history.note("connection", status=status.status)
+        self._on_change()
+
+
+def reading(tv: Tv) -> gate.Reading:
+    cc = tv.cc
+    st = cc.status
+    media = cc.media_controller.status
+    return gate.Reading(
+        connected=tv.connected,
+        has_status=st is not None,
+        app_id=st.app_id if st else None,
+        display_name=st.display_name if st else None,
+        status_text=st.status_text if st else None,
+        is_stand_by=st.is_stand_by if st else None,
+        is_active_input=st.is_active_input if st else None,
+        volume_level=st.volume_level if st else None,
+        # The media controller keeps its last status after the app that sent it has gone,
+        # so it only counts while the receiver still runs an app that could own it.
+        player_state=media.player_state if st and st.app_id and media.player_state else None,
+        media_title=media.title if st and st.app_id else None,
+    )
+
+
+class Fleet:
+    def __init__(self) -> None:
+        self._tvs: dict[str, Tv] = {}
+        self._lock = threading.Lock()
+        self._zconf: zeroconf.Zeroconf | None = None
+        self._browser: CastBrowser | None = None
+
+    def start(self) -> None:
+        self._zconf = zeroconf.Zeroconf()
+        self._browser = CastBrowser(
+            SimpleCastListener(add_callback=self._found, update_callback=self._found),
+            self._zconf,
+        )
+        self._browser.start_discovery()
+
+    def _found(self, uuid: uuidlib.UUID, _service: str) -> None:
+        key = str(uuid)
+        with self._lock:
+            if key in self._tvs or self._browser is None:
+                return
+            info = self._browser.devices.get(uuid)
+            if info is None:
+                return
+            cc = pychromecast.get_chromecast_from_cast_info(info, self._zconf)
+            tv = Tv(cc=cc)
+            self._tvs[key] = tv
+        listen = _Listen(lambda: tv.history.record(reading(tv)), tv)
+        cc.socket_client.receiver_controller.register_status_listener(listen)
+        cc.media_controller.register_status_listener(listen)
+        cc.socket_client.register_connection_listener(listen)
+        tv.history.note("found", host=info.host, model=info.model_name)
+        cc.start()
+
+    def _get(self, key: str) -> Tv:
+        with self._lock:
+            tv = self._tvs.get(key)
+        if tv is None:
+            raise KeyError(key)
+        return tv
+
+    def snapshot(self) -> list[dict[str, Any]]:
+        with self._lock:
+            items = list(self._tvs.items())
+        out = []
+        for key, tv in items:
+            info = tv.cc.cast_info
+            r = reading(tv)
+            state, why = gate.verdict(r)
+            out.append(
+                {
+                    "id": key,
+                    "name": info.friendly_name,
+                    "model": info.model_name,
+                    "manufacturer": info.manufacturer,
+                    "cast_type": info.cast_type,
+                    "host": info.host,
+                    "state": state,
+                    "why": why,
+                    "castable": gate.castable(state),
+                    "reading": asdict(r),
+                    "found_at": tv.found_at,
+                    "last_test_at": tv.last_test_at,
+                }
+            )
+        return sorted(out, key=lambda t: str(t["name"] or "").lower())
+
+    def history(self, key: str, since: float = 0.0) -> list[dict[str, Any]]:
+        return self._get(key).history.since(since)
+
+    def host_of(self, key: str) -> str:
+        return self._get(key).cc.cast_info.host
+
+    def test(self, key: str, url: str, seconds: int) -> dict[str, Any]:
+        """Re-check the gate NOW, cast the card, and quit after `seconds` if it is still ours.
+        Raises KeyError for an unknown TV and gate.Refused when the gate says no."""
+        tv = self._get(key)
+        seconds = max(MIN_TEST_S, min(MAX_TEST_S, seconds))
+        before = reading(tv)
+        state, why = gate.verdict(before)
+        if not gate.castable(state):
+            tv.history.note("test_refused", state=state, why=why)
+            raise gate.Refused(state, why)
+        tv.last_test_at = time.time()
+        tv.history.note("test_cast", state_before=state, seconds=seconds, url=url)
+        tv.cc.media_controller.play_media(url, "image/png", title=TEST_TITLE)
+        threading.Thread(
+            target=self._end_test, args=(tv, seconds, state), daemon=True, name="cast-test"
+        ).start()
+        return {"id": key, "state_before": state, "why_before": why, "seconds": seconds}
+
+    def _end_test(self, tv: Tv, seconds: int, state_before: str) -> None:
+        time.sleep(seconds)
+        r = reading(tv)
+        if r.app_id == APP_MEDIA_RECEIVER and r.media_title == TEST_TITLE:
+            tv.cc.quit_app()
+            tv.history.note("test_quit", state_before=state_before)
+        else:
+            # Somebody took the TV over during the test: leave whatever they chose alone.
+            tv.history.note("test_left", app_id=r.app_id, display_name=r.display_name)

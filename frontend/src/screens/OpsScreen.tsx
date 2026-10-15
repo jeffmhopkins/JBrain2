@@ -183,7 +183,7 @@ const SERVICE_GROUPS: { label: string; services: string[] }[] = [
     ],
   },
   // Hardware and screens around the house, and the phones' location feed.
-  { label: "Devices", services: ["wall", "endpoint", "sdr", "mqtt", "mqtt-ingest"] },
+  { label: "Devices", services: ["wall", "endpoint", "cast", "sdr", "mqtt", "mqtt-ingest"] },
   { label: "Apps", services: ["minecraft", "jlaunch"] },
   // Run-once maintenance containers — present only while one runs.
   { label: "One-shot jobs", services: ["migrate", "wipe"] },
@@ -214,6 +214,7 @@ const SERVICE_WHAT: Record<string, string> = {
   jcode: "code mode",
   wall: "wall display",
   endpoint: "panel flasher",
+  cast: "TVs in the house",
   sdr: "radio",
   mqtt: "location broker",
   "mqtt-ingest": "location feed",

@@ -1,6 +1,6 @@
 # jpanel Cast — notices on the house's Chromecast TVs
 
-> **Status:** **Approved by the owner** (2026-10-14), not yet built · **Last verified:** 2026-10-14
+> **Status:** **Approved by the owner** (2026-10-14); the spike is built (`deploy/cast/`), the rest is not · **Last verified:** 2026-10-15
 
 Open `index.html` in a browser. It is one standalone page: the PWA side (launcher tile, TVs,
 one TV's settings, Send, the result sheet, Sent) and the 16:9 frames a TV shows.
@@ -31,6 +31,11 @@ on. But it would always have to be idle … I'd also want this to show up as a l
   built in, receiver status reliably covers cast sessions. Whether Netflix opened from the home
   screen shows up is unverified. The first wave is a probe that lists what each TV reports in
   each state. A set that hides local apps is marked *can't tell when busy* and only takes
-  notices while off.
+  notices while off. **That probe is built:** the `cast` sidecar (`deploy/cast/README.md`) and
+  `/api/debug/cast*` (`docs/runbooks/DEBUG_ACCESS.md`) list every TV's verdict and timeline
+  and cast a gated test card.
+- **Does a cast wake a TV that is off, and what does it go back to?** There is no "turn off"
+  in Cast, so "back to sleep after" in the mock is unproven. The test card's timeline
+  answers it.
 - Discovery is mDNS, so the cast sender runs on the host network (like the Minecraft sidecar),
   not in the api container.

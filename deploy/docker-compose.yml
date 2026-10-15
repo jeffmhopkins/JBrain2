@@ -171,6 +171,8 @@ services:
       # reaches its control port through the host gateway, with the bearer
       # update-inner.sh mints.
       JBRAIN_MINECRAFT_URL: ${MINECRAFT_URL:-http://host.docker.internal:19180}
+      # The host-networked `cast` sidecar (the jpanel Cast spike), reached the same way.
+      JBRAIN_CAST_URL: ${CAST_URL:-http://host.docker.internal:19190}
       JBRAIN_MINECRAFT_TOKEN: ${MINECRAFT_TOKEN:-}
       # The radio sidecar (docs/plans/SDR_RADIO_PLAN.md). Deliberately defaults EMPTY
       # rather than to http://sdr:8000: the service is profile-gated and absent on a box
@@ -1183,6 +1185,28 @@ services:
       MC_TRANSPORT: ${MC_TRANSPORT:-nethernet}
     volumes:
       - minecraft:/data
+
+  # The house's Chromecast TVs (the jpanel Cast spike, docs/mocks/jpanel-cast/README.md):
+  # watches every TV the box can find and casts a test card to one that is idle or off.
+  # STOCK STACK, like `endpoint`, for the CLAUDE.md #10 reason: a profile would make
+  # turning it on an .env edit. HOST NETWORK, like `minecraft`: Cast devices are found by
+  # mDNS multicast, which never reaches a bridge network, and a TV fetches the card from
+  # the box's own LAN address. So the control port is on the LAN and takes `cast.token`,
+  # which the api mints into `internal_secrets` (mounted read-only here); the api reaches
+  # it through `host.docker.internal`.
+  cast:
+    logging: *logbound
+    image: jbrain2-cast:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.cast
+    restart: unless-stopped
+    mem_limit: ${CAST_MEM_LIMIT:-128m}
+    network_mode: host
+    environment:
+      CAST_PORT: ${CAST_PORT:-19190}
+    volumes:
+      - internal_secrets:/run/jbrain-internal:ro
 
   # The panel flasher (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2). PART OF THE STOCK STACK,
   # like `pysandbox` and `htmlrender` and unlike `sdr` — and the difference is the reason
