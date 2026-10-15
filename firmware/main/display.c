@@ -2019,11 +2019,16 @@ static void face_task(void *arg)
         if (speech_live() && speech_take(said, sizeof(said), &said_id)) {
             caption_say(&cap, said);
             const vocab_t *v = vocab_get(said_id);
+            /* PLAYING, ONLY "STOP" ENDS THE GAME (`game_deaf`): the rest is the children
+               playing, and goes by unheeded. */
+            if (v != NULL && game_deaf(&s_game) && v->kind != VOCAB_STOP &&
+                v->kind != VOCAB_GAME) {
+                ESP_LOGI(TAG, "game: not for the pet: \"%s\"", said);
+                v = NULL;
+            }
             if (v != NULL) {
                 cue_t heard_cue = CUE_COUNT;
-                /* ANY COMMAND BUT THE GAME'S OWN ENDS THE GAME, "stop" above all (review): he
-                   walks back and grows, and then does what was asked. */
-                if (v->kind != VOCAB_GAME) game_stop(&s_game, now);
+                if (v->kind == VOCAB_STOP) game_stop(&s_game, now);
                 switch (v->kind) {
                 case VOCAB_LISTEN:
                     voice = SM_VOICE_WAKE;
@@ -2578,9 +2583,14 @@ static void face_task(void *arg)
                 recue_from = action_start;
                 recue_p = 0.0f;
             }
+            /* A song's next phrase CUTS its last (`facts.pet_only`): waiting for a free speaker
+               dropped "day to" whenever the first phrase ran late, and the song was "happy
+               birth- ... -day" (owner, 0.4.15). */
             if (action != ACT_NONE &&
                 (rig_recue(action, recue_p, p) || rig_recue_continuous(action, p)) && sound &&
-                view->mode == SM_PET && !facts.speaker_busy) {
+                view->mode == SM_PET &&
+                (cue_is_tune(cue_for_action_at((int)action, p)) ? facts.pet_only
+                                                                 : !facts.speaker_busy)) {
                 play_action_cue(st, action, p);
             }
             /* The plop: behind him, where a bird's tail is. */

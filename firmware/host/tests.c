@@ -1438,6 +1438,24 @@ static void test_the_dodging_game(void)
     CHECK(g.phase == GAME_PLAY && s == GAME_SCALE && fabsf(x) < 1.0f, "a fifth his size, in the middle");
     CHECK(GAME_SCALE >= 0.2f && GAME_SCALE <= 0.25f, "between a quarter and a fifth");
 
+    /* PLAYING, WHAT IS SAID IS NOT FOR THE PET (owner, 0.4.15: "if it recognizes a word, it
+       exits out of the game. That shouldn't happen"): deaf from the walk in to the round over,
+       hearing again on the way out and once it is done. */
+    {
+        game_t q;
+        game_reset(&q);
+        CHECK(!game_deaf(&q), "no game: every phrase is heard");
+        game_start(&q, 0, 3, 0.0f, 20.0f);
+        CHECK(game_deaf(&q), "walking in: deaf");
+        uint32_t u;
+        for (u = 0; u <= GAME_WALK_MS + 40; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+        CHECK(q.phase == GAME_PLAY && game_deaf(&q), "playing: deaf");
+        q.phase = GAME_OVER;
+        CHECK(game_deaf(&q), "the round over, waiting for a tap: deaf");
+        game_stop(&q, u);
+        CHECK(!game_deaf(&q), "walking out: heard again");
+    }
+
     /* "Ready... go!": nothing comes during the ready, then they do. */
     const uint32_t go = g.since;
     for (; t < go + GAME_READY_MS - 40; t += 40) {
@@ -1559,7 +1577,7 @@ static void test_the_dodging_game(void)
         CHECK(q.phase == GAME_OVER, "the score stands a while for a tap");
         for (; u < over + GAME_OVER_WAIT_MS + 200; u += 40) game_step(&q, u, 40, 0.6f, 0.4f, hw, hh);
         CHECK(q.phase == GAME_WALK_OUT, "and with no tap, held tilted or not, the game ends");
-        CHECK(GAME_OVER_WAIT_MS <= 20000u, "not long: a child who walked off is not coming back");
+        CHECK(GAME_OVER_WAIT_MS <= 10000u, "not long: a child who walked off is not coming back");
     }
 
     /* FORWARD AND BACK STEER THE SAME HOWEVER FAR BACK IT IS HELD (review): the steering is

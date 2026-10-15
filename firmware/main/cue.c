@@ -29,6 +29,24 @@ static float harm_gain(float hz)
     return 0.5f * (1.0f + cosf((float)M_PI * (hz - FADE_LO) / (FADE_HI - FADE_LO)));
 }
 
+/* The partials' fixed weights, a division saved per partial per sample: a pulse's
+   4/(n*pi), and a triangle's odd 8/(pi^2*n^2) with its alternating sign (even n unused). */
+#define PA(n) (4.0f / ((float)(n) * (float)M_PI))
+#define TA(n) \
+    (((((n) - 1) / 2) & 1 ? -8.0f : 8.0f) / ((float)M_PI * (float)M_PI * (float)((n) * (n))))
+static const float PULSE_A[MAX_HARM + 1] = {
+    0.0f,
+    PA(1), PA(2), PA(3), PA(4), PA(5), PA(6), PA(7), PA(8),
+    PA(9), PA(10), PA(11), PA(12), PA(13), PA(14), PA(15), PA(16),
+    PA(17), PA(18), PA(19), PA(20), PA(21), PA(22), PA(23), PA(24),
+};
+static const float TRI_A[MAX_HARM + 1] = {
+    0.0f,
+    TA(1), TA(2), TA(3), TA(4), TA(5), TA(6), TA(7), TA(8),
+    TA(9), TA(10), TA(11), TA(12), TA(13), TA(14), TA(15), TA(16),
+    TA(17), TA(18), TA(19), TA(20), TA(21), TA(22), TA(23), TA(24),
+};
+
 /* A PULSE WAVE, BUILT FROM COSINES. The Fourier series of a duty-d pulse is
    a_n = (4/(n*pi)) * sin(n*pi*d), and the n=0 term — the DC offset, 2d-1, which reaches -0.75
    on a narrow pulse — is simply never summed. That is not tidiness: DC costs headroom, pushes
@@ -41,12 +59,23 @@ static float harm_gain(float hz)
    below mandatory rather than polite. */
 static float pulse(float phase, float duty, float f0)
 {
+    /* cos(n*phase) and sin(n*pi*duty) by their recurrences (x_n = 2cos(t)x_{n-1} - x_{n-2}),
+       two trig calls a sample rather than two per partial. A low two-voice cue was summing 96
+       of them per sample, rendered twice on the render task, and the game's hit froze the
+       panel a good while before it sounded (owner, 0.4.15). */
+    const float c1 = cosf(phase), sd1 = sinf((float)M_PI * duty);
+    const float k = 2.0f * cosf((float)M_PI * duty);
+    float c_prev = 1.0f, c = c1, sd_prev = 0.0f, sd = sd1;
     float s = 0.0f;
     for (int n = 1; n <= MAX_HARM; n++) {
         const float g = harm_gain((float)n * f0);
         if (g == 0.0f) break;
-        s += g * (4.0f / ((float)n * (float)M_PI)) * sinf((float)n * (float)M_PI * duty) *
-             cosf((float)n * phase);
+        s += g * PULSE_A[n] * sd * c;
+        const float c_next = 2.0f * c1 * c - c_prev, sd_next = k * sd - sd_prev;
+        c_prev = c;
+        c = c_next;
+        sd_prev = sd;
+        sd = sd_next;
     }
     return s;
 }
@@ -55,13 +84,17 @@ static float pulse(float phase, float duty, float f0)
    quiet thing to build a coo from or slide under a pulse without adding harshness. */
 static float triangle(float phase, float f0)
 {
+    /* sin(n*phase) by recurrence over the odd n, a step of two: as `pulse`, for speed. */
+    const float s1 = sinf(phase), k = 2.0f * cosf(2.0f * phase);
+    float s_prev = -s1, sn = s1; /* sin(-phase), sin(phase) */
     float s = 0.0f;
     for (int n = 1; n <= MAX_HARM; n += 2) {
         const float g = harm_gain((float)n * f0);
         if (g == 0.0f) break;
-        const float sign = (((n - 1) / 2) & 1) ? -1.0f : 1.0f;
-        s += g * sign * (8.0f / ((float)M_PI * (float)M_PI)) / (float)(n * n) *
-             sinf((float)n * phase);
+        s += g * TRI_A[n] * sn;
+        const float s_next = k * sn - s_prev;
+        s_prev = sn;
+        sn = s_next;
     }
     return s;
 }

@@ -439,9 +439,13 @@ static void frame(void)
     s_in.on_pet = p_down_x >= TALK_MARGIN_PX && p_down_x < FACE_W - TALK_MARGIN_PX &&
                   p_down_y >= TALK_MARGIN_PX && p_down_y < FACE_H - TALK_MARGIN_PX;
     s_in.swipe = swipe;
+    /* As the panel does (`game_deaf`): playing, "stop" ends the game and nothing else is heard. */
+    if (p_voice != SM_VOICE_NONE && p_voice != SM_VOICE_STOP && game_deaf(&r_game)) {
+        say("game", "not for the pet: a phrase");
+        p_voice = SM_VOICE_NONE;
+    }
+    if (p_voice == SM_VOICE_STOP) game_stop(&r_game, g_now);
     s_in.voice = p_voice;
-    /* As the panel does: any command but the game's own ends the game. */
-    if (p_voice != SM_VOICE_NONE) game_stop(&r_game, g_now);
     s_in.btn_short = p_btn_short;
     s_in.btn_hold = p_btn_hold;
     p_voice = SM_VOICE_NONE;
@@ -483,6 +487,11 @@ static void frame(void)
         r_action = ACT_NOD;
         r_action_at = now;
     }
+    /* As the panel does: an action phrase mid-game goes by unheeded. */
+    if (r_pending_act != ACT_NONE && game_deaf(&r_game)) {
+        say("game", "not for the pet: an action");
+        r_pending_act = ACT_NONE;
+    }
     if (r_pending_act != ACT_NONE) {
         r_mag = 1.0f;
         r_action = r_pending_act;
@@ -490,7 +499,6 @@ static void frame(void)
         r_pending_act = ACT_NONE;
         if (r_action == ACT_EAT && poop_ate(&r_poop, now)) say("pet", "three meals in a minute");
         if (r_action == ACT_BRACE) tickle_arm(&r_tickle, now);
-        game_stop(&r_game, now); /* as the panel does: asked for something, the game ends */
         if (r_action == ACT_BIRTHDAY) r_song++;
         if (r_action == ACT_EAT) {
             static const char *const FOOD[FOOD_COUNT] = {"cookie", "apple",  "banana", "pizza",
@@ -650,7 +658,8 @@ static void frame(void)
     if (r_action != ACT_NONE &&
         (rig_recue(r_action, r_recue_p, p) ||
          (rig_recue_continuous(r_action, p) && r_action_at != now)) &&
-        view->mode == SM_PET && !facts.speaker_busy) {
+        view->mode == SM_PET &&
+        (cue_is_tune(cue_for_action_at((int)r_action, p)) ? facts.pet_only : !facts.speaker_busy)) {
         r_play_cue(r_action, p, "press slot, again");
     }
     if (r_action == ACT_POOP && r_recue_p < POOP_AT && p >= POOP_AT) {
