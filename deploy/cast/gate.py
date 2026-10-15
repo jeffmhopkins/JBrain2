@@ -74,6 +74,8 @@ def verdict(r: Reading) -> tuple[str, str]:
         return "busy", f"{what} · {r.player_state.lower()}"
     if r.app_id is not None and r.app_id not in IDLE_APP_IDS:
         return "busy", f"{r.display_name or r.app_id} open"
+    # Before the input check: a TV that is really off reads standby with its input
+    # inactive (measured on all three Philips), so the other order never wakes one.
     if r.is_stand_by is True:
         return "standby", "off"
     # An external input (a console, a cable box) leaves the cast receiver idle; the TV

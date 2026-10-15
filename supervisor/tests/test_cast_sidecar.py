@@ -58,6 +58,10 @@ ON = {"connected": True, "has_status": True}
             "busy",
         ),
         (R(**ON, is_stand_by=True, app_id=gate.BACKDROP_APP_ID), "standby"),
+        # Standby before the input: every TV that was really off read exactly this
+        # (Big TV, Parents, Twins Room), so the other order would never wake one. A lit
+        # set on another input is unmeasured.
+        (R(**ON, is_stand_by=True, is_active_input=False), "standby"),
         (
             R(**ON, app_id="233637DE", display_name="YouTube", player_state="PLAYING"),
             "busy",
