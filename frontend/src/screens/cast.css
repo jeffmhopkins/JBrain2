@@ -37,8 +37,7 @@
   min-height: 56px;
   padding: 10px 14px;
 }
-.cast-tv + .cast-tv,
-.cast-sent + .cast-sent {
+.cast-tv + .cast-tv {
   border-top: 1px solid var(--border);
 }
 .cast-sent {
@@ -117,35 +116,78 @@
   color: var(--text);
   font-weight: 600;
 }
-.cast-targets {
-  margin: 0;
-  padding: 0;
-  border: 0;
-  min-width: 0;
+.cast-picker {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.cast-target {
-  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 44px;
+  gap: 10px;
+  width: 100%;
+  min-height: 48px;
   padding: 0 14px;
-  border-radius: var(--r-pill);
+  border-radius: var(--r-input);
   border: 1px solid var(--border);
   background: var(--surface-2);
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--fs-secondary);
-}
-.cast-target.on {
-  background: var(--steel-tint);
   color: var(--text);
-  border-color: var(--steel);
+  font: inherit;
+  text-align: left;
 }
-.cast-target.on.busy {
+.cast-picker svg {
+  flex: none;
+  color: var(--steel-text);
+}
+.cast-picker-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cast-choices {
+  margin: 0 0 14px;
+  padding: 0;
+  min-width: 0;
+}
+.cast-choice {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+}
+.cast-choice.on .cast-tv-ic {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+/* Picked but in use: it will be skipped, so it reads struck through. */
+.cast-choice.on.busy .cast-tv-name {
   text-decoration: line-through;
+}
+.cast-check {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  flex: none;
+  color: var(--steel-text);
+}
+.cast-choices + .cast-primary {
+  width: 100%;
+}
+.cast-sent-row {
+  display: flex;
+  align-items: center;
+}
+.cast-sent-row + .cast-sent-row {
+  border-top: 1px solid var(--border);
+}
+.cast-sent-row .cast-sent {
+  flex: 1;
+  min-width: 0;
+}
+.cast-again {
+  flex: none;
+  min-width: 44px;
+  justify-content: center;
+  margin-right: 6px;
 }
 .cast-note {
   margin: 0;
@@ -295,6 +337,8 @@
   flex: none;
 }
 .cast-time select {
+  /* The global select is width: 100%, which pushed this one past the screen's edge. */
+  width: auto;
   flex: none;
 }
 .cast-words-form {
