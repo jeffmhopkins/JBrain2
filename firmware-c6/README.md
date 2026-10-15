@@ -1,6 +1,6 @@
 # Jeff's jpanel firmware — ESP32-C6-Touch-AMOLED-2.16
 
-> **Status:** Living · **Last verified:** 2026-10-13
+> **Status:** Living · **Last verified:** 2026-10-15
 
 Plan: `../docs/plans/JPANEL_C6_PLAN.md` — the waves, and the app-module architecture every
 later image follows (§1). Approved screens: `../docs/mocks/jpanel-c6/`.
@@ -82,7 +82,7 @@ yet — the home grid, BOOT, KEY and PWR are what can be exercised).
 | --- | --- |
 | `svc_power` (`esp/svc_power_axp2101.c`) | The I2C bus's ONE owner. Checks chip id 0x4A; enables the battery/VBUS/VSYS ADC and battery detection; sets pre-charge 50 mA, termination 50 mA and constant current **300 mA** (the BSP's 500, lowered until the cell is chosen); latches the PWR key's edges in IRQ register 0x49 and polls them every 50 ms. Every write is read back. |
 | `svc_buttons` (`esp/svc_buttons.c`) | GPIO9 (BOOT, left) and GPIO10 (KEY, right), sampled every 10 ms and debounced over three samples; GPIO18 with its **internal pull-up**, pressed meaning "not the level it idled at", since its polarity is still being measured. |
-| `svc_display` (`esp/svc_display_co5300.c`) | ALDO3 off/on as the panel reset, SPI2 in quad mode at 40 MHz (CS15, SCLK0, D0-D3 GPIO1-4), `espressif/esp_lcd_sh8601` 2.0.1 with the vendor's 480×480 init table, RGB565 byte-swapped, one 480×40 internal DMA strip (38.4 KB), every window rounded to even. |
+| `svc_display` (`esp/svc_display_co5300.c`) | ALDO3 off/on as the panel reset, SPI2 in quad mode at 40 MHz (CS15, SCLK0, D0-D3 GPIO1-4), `espressif/esp_lcd_sh8601` 2.0.1 with the vendor's 480×480 init table, RGB565 byte-swapped, one 480×40 internal DMA buffer (38.4 KB; since 0.0.25 two 480×20 halves LVGL draws into while the other is on the wire), every window rounded to even. |
 | `main/ui_task.c` | The UI task: the one task that touches LVGL, the shell, an app or the panel io handle. |
 
 **PWR** (middle) is screen dark/wake, **BOOT** home/back, **KEY** hold-to-talk to the open app,
@@ -106,10 +106,11 @@ dropped; telemetry names every route that has ever fired (`pwr=`).
 - **Nothing new can starve the update loop.** The UI, power and button tasks all run at the main
   task's priority 1, so FreeRTOS round-robins them: even a UI task stuck in a loop would leave the
   update loop its share. The UI loop always sleeps at least a tick.
-- **One task owns the panel, and brightness waits for the frame.** Flushes are synchronous —
-  with one buffer LVGL could not draw ahead anyway — so no pixel transfer is in flight when the UI
-  task returns from `lv_timer_handler`, and that is the only moment it writes `0x51`. On the S3
-  the same correctly framed write sent mid-frame hung the renderer. A flush that does not complete
+- **One task owns the panel, and brightness waits for the frame.** A frame's last strip is
+  always waited for (since 0.0.25 the strips before it are queued while LVGL draws the next), so
+  no pixel transfer is in flight when the UI task returns from `lv_timer_handler`, and that is
+  the only moment it writes `0x51`. On the S3 the same correctly framed write sent mid-frame hung
+  the renderer. A flush that does not complete
   in 1 s stops the UI (`display=failed:flush`) rather than queue onto a stuck bus.
 - **Dark is brightness 0, never display-off** (svc_display.h), and the PMIC switches no rail but
   ALDO3, and that one only as the reset pulse, back on before anything else runs.
@@ -454,7 +455,7 @@ The answer is `dbg_cmd_run`'s JSON, POSTed as is (≤ 6 KB: anything larger is a
 
 ### The screenshot, without a framebuffer
 
-The UI task re-renders the whole screen once (`svc_display_capture`) and each 480×40 strip is
+The UI task re-renders the whole screen once (`svc_display_capture`) and each strip is
 run-length encoded **as it is flushed** — before the byte swap the CO5300 needs, so the stream
 carries LVGL's little-endian RGB565 — into one of **two 4 KB chunks**; the main task streams
 each full chunk to the box as a chunked `application/octet-stream` POST while the UI fills the
@@ -1740,7 +1741,7 @@ it can start (`tk_can_begin`), and a play takes its own size.
 - `calib`: `custom`, `capturing`, `date`, `fit` (a,b,c,d,e,f: scales and shears in thousandths,
   offsets in pixels — `1000,0,0,0,1000,0` is none), `fits`, `refused`, `last`. Telemetry's touch
   tokens gain `cal=custom|none` and `tp_rot=`; `tp_last`'s `x,y` are now after both.
-- `display.rotation`, `rot_changes`, `rot_no_memory` (a quarter turn that found no 2.5 KB; gone in 0.0.22, whose turn needs no memory).
+- `display.rotation`, `rot_changes` (dropped in 0.0.25), `rot_no_memory` (a quarter turn that found no 2.5 KB; gone in 0.0.22, whose turn needs no memory).
 - `audio.ring` is the ring's real size; `audio.play_before` / `play_answered` / `play_ring_free` /
   `play_low` as above.
 - A calibration can be driven from the box: `open` settings, then `inject` `touch` at each cross
@@ -2339,6 +2340,97 @@ pins this. A 255-byte bubble holds about 60 emoji.
    nothing. An emoji newer than the set shows a dim disc.
 3. After a few emoji answers, `int_min` is where 0.0.22 left it: no lower than before the update,
    at the same phase.
+
+## What 0.0.25 adds: a sideways frame no slower than an upright one, and nothing drawn in the dark
+
+The board's own numbers on 0.0.23 (`display.rot_ms`) said 0.0.22's estimate was wrong by an order
+of magnitude: a whole-glass frame took **65 ms upright and 414 ms on its side**, against the ~24
+and ~28-31 ms predicted. The pieces were not the cost. The waits were.
+
+### Why every wait took a tick
+
+`color_done`, the bus's end-of-transfer callback, gives the semaphore the UI task waits on and
+returns whether that woke a higher-priority task. **esp_lcd's post-transaction hook throws that
+return away**, and the SPI ISR yields only for tasks its own queues woke. So the woken UI task sat
+ready behind the idle task, asleep in WFI, until the next interrupt that switched tasks, at worst
+the 100 Hz tick: every wait for a DMA cost ~3.4 ms on average instead of its 0.2-2 ms transfer.
+12 waits upright (~40 ms of the 65) and 120 on its side (~410 of the 414) is the board's numbers
+almost exactly. The fix is one line: `color_done` calls `portYIELD_FROM_ISR(woken)` itself. It only
+marks the switch for the ISR's exit, so it is safe from inside the bus's handler, and it switches
+only when the UI task outranks what was running.
+
+### Strips queued, not waited for
+
+With the yield fixed, the waits that remain are the wire's own. 0.0.25 hides most of them under
+LVGL's drawing:
+
+- **Two halves of the same buffer.** The one 38.4 KB strip buffer is now two **480×20 halves**
+  (`DISP_BUF_ROWS`, `DISP_STRIP_ROWS`): no new memory. Upright and at 180° LVGL double-buffers: a
+  strip is byte-swapped (and reversed for 180°), queued, and the flush returns at once; LVGL draws
+  the next into the other half, and the next flush waits for the one on the wire only when it needs
+  to queue, a whole strip's drawing later.
+- **On its side, one window and one transfer a strip.** LVGL draws into the first half only, and
+  `disp_rot_gather` turns the whole strip into the second (with the byte swap folded into the same
+  pass), which goes out as **one** CASET/RASET/RAMWR and one DMA while LVGL draws the next strip.
+  0.0.22's eight pieces a strip, RAMWRC and its two piece buffers are gone.
+- **The frame's last strip is still waited for** before the flush returns, so no pixel transfer is
+  ever in flight when the UI task leaves `lv_timer_handler`: brightness and a turn are still
+  applied only between frames, the invariant the S3's renderer hang taught (see the safety rules
+  under "What 0.0.4 adds").
+
+| A full frame | Strips | DMAs | Waits for the wire | Measured / expected |
+| --- | --- | --- | --- | --- |
+| Upright, 0.0.23 | 12 × 480×40 | 12 | 12, each a tick late | **65 ms** (board) |
+| 90° / 270°, 0.0.23 | 15 × 480×32 | 120 | 120, each a tick late | **414 ms** (board) |
+| **Upright / 180°, 0.0.25** | **24 × 480×20** | **24** | **≤ 24, mostly already done** | **~25-35 ms** |
+| **90° / 270°, 0.0.25** | **24 × 480×20** | **24** | **≤ 24** | **~upright's + the gather** |
+
+The expected column is an estimate (the host and the sim cannot time the SPI): 460.8 KB is 23 ms on
+the wire at 40 MHz × 4 lines, now overlapped with drawing, plus five short polled commands a strip.
+The gather is ~0.25 ms a strip. The board says which.
+
+### Nothing drawn in the dark
+
+On 0.0.23 the Clock, rebuilt each minute, redrew the whole glass all night at brightness 0: ~1,300
+frames a dark night, 414 ms each on its side. Now, once the `0x51 = 0` write has been taken by the
+bus, LVGL's invalidation is switched off (`lv_display_enable_invalidation`): nothing is marked
+dirty, LVGL's refresh timer stays paused, and a dark minute costs nothing. On wake the whole screen
+is drawn as it now is **while the glass is still at 0**, and only then is the brightness written,
+so the light never comes up on the picture from before the dark. A debug screenshot of a dark
+panel still works: it switches invalidation on for that one render.
+
+### Measured on the board
+
+`display.rot_ms` gains a fifth number per rotation: `"<deg>:<mean>,<worst>,<count>,<wall>,<wait>"`,
+where `<wait>` is the mean time a whole frame's flushes spent blocked on a transfer still on the
+wire (the rest of `<mean>` is the swap or gather and the polled commands). `display.rot_changes`
+is dropped from the snapshot, which is near its 6 KB cap. `rot_ms` grows by up to ~12 B (one more number for each rotation that has drawn).
+
+### The pieces
+
+| Where | What |
+| --- | --- |
+| `svc_display` | `color_done`'s yield; `queue` / `settle` (one strip in flight, the frame's last waited for); the buffer as two halves; `disp_rot_gather` (pure, host-tested: the whole turned strip, byte-swapped); `freeze` (dark draws nothing, wake redraws at 0 first); `rot_ms`'s `<wait>`. Gone: `send_sideways`, `disp_rot_piece`, `disp_rot_piece_rows`, `disp_rot_step`, `DISP_SIDE_ROWS`, RAMWRC. |
+| `host/tests.c` | The turned-screen test drives the device's halves and checks one window and one transfer a strip; the wait field. |
+| `sim/sim_main.c` | The glass written the device's way (one window a turned strip, the wire's byte order); all states render byte-identically to 0.0.23. |
+
+### The memory
+
+No new RAM: the same 38.4 KB buffer, now two halves, and the SPI bus's largest transfer drops to a
+half's 19.2 KB. App: 0.0.23's 3,025,120 → 3,024,960 B (−160 B: the piece code out, the gather and the freeze in). Only the app image and its sum move in
+`dist/`: bootloader, partition table and otadata are byte-identical.
+
+### What to check on the glass
+
+1. **All four rotations look right**: open the same apps upright, on each side and upside down. No
+   torn, shifted or swapped-colour band at a strip's edge, and touch lands where it is drawn.
+2. **Wake shows the current time**: leave the Clock dark across a minute change, press PWR, and the
+   face lights with the new minute, never the old one first.
+3. **`display.rot_ms`** in a snapshot after a few apps opened in each orientation: upright and
+   sideways means close to each other and far under 0.0.23's 65 and 414; `<wait>` small.
+
+Known and not done here: while lit, the Clock still redraws the whole glass once a minute. That is
+now ~30 ms rather than 65-414, but a minute's change could invalidate only the digits.
 
 ## How it talks to the box
 
