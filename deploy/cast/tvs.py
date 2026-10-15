@@ -7,7 +7,7 @@ whenever its app, standby or input changes, and a media status whenever playback
 so the history records the owner's experiments as they happen instead of whenever
 somebody next asks.
 
-A cast — the test card, or a notice the api rendered — plays one PNG on the Default
+A cast — the test card, or a notice's frame — plays one still image on the Default
 Media Receiver (no registered app, no HTTPS origin) and quits it after a while, but only
 if that same cast is still what the TV is showing, so a child who picked up the remote
 mid-notice is never interrupted by the quit.
@@ -219,12 +219,13 @@ class Fleet:
         out.pop("cast_id")
         return {"id": key, **out}
 
-    def cast(self, key: str, url: str, seconds: int, title: str) -> dict[str, Any]:
+    def cast(
+        self, key: str, url: str, seconds: int, title: str, mime: str = "image/png"
+    ) -> dict[str, Any]:
         """A notice: the same gate, cast and quit as a test, under the notice's title.
         `cast_id` names it for `stop`."""
-        out = self._play(
-            self._get(key), url, gate.clamp_notice_seconds(seconds), title, "notice"
-        )
+        seconds = gate.clamp_notice_seconds(seconds)
+        out = self._play(self._get(key), url, seconds, title, "notice", mime)
         return {"id": key, **out}
 
     def stop(self, key: str, cast_id: str) -> bool:
@@ -232,7 +233,13 @@ class Fleet:
         return self._quit_if_ours(self._get(key), cast_id, "stop")
 
     def _play(
-        self, tv: Tv, url: str, seconds: int, title: str, kind: str
+        self,
+        tv: Tv,
+        url: str,
+        seconds: int,
+        title: str,
+        kind: str,
+        mime: str = "image/png",
     ) -> dict[str, Any]:
         before = reading(tv)
         state, why = gate.verdict(before)
@@ -248,7 +255,7 @@ class Fleet:
             cast_id=cast_id,
         )
         tv.casting = (cast_id, url)
-        tv.cc.media_controller.play_media(url, "image/png", title=title)
+        tv.cc.media_controller.play_media(url, mime, title=title)
         threading.Thread(
             target=self._end,
             args=(tv, seconds, cast_id, kind, state),

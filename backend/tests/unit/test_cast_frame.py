@@ -101,3 +101,24 @@ def test_wrap_breaks_a_word_wider_than_the_line() -> None:
 def test_wrap_keeps_paragraphs_and_drops_trailing_blank_lines() -> None:
     font = pymupdf.Font("cjk")
     assert F.wrap(font, "one\ntwo\n\n", 60, 1000, 5) == ["one", "two"]
+
+
+def test_a_frame_the_phone_drew_is_kept_as_drawn_and_sent_as_jpeg() -> None:
+    out = F.take(_jpeg(F.W, F.H, (30, 200, 30)))
+    assert out.startswith(b"\xff\xd8\xff") and F.mime_of(out) == "image/jpeg"
+    img = Image.open(io.BytesIO(out)).convert("RGB")
+    assert img.size == (F.W, F.H)
+    assert _px(img, 10, 10)[1] > 150
+
+
+def test_a_frame_of_the_wrong_shape_is_letterboxed_not_stretched() -> None:
+    img = Image.open(io.BytesIO(F.take(_jpeg(1000, 1000, (30, 200, 30))))).convert("RGB")
+    assert img.size == (F.W, F.H)
+    assert _px(img, F.W // 2, F.H // 2)[1] > 150
+    assert _px(img, 10, F.H // 2) == pytest.approx((12, 13, 16), abs=3)
+
+
+def test_a_frame_that_is_not_a_picture_is_refused() -> None:
+    with pytest.raises(F.FrameError):
+        F.take(b"nope")
+    assert F.mime_of(F.render("t")) == "image/png"

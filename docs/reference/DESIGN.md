@@ -4136,9 +4136,13 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   answering*, with what it is doing under its name. Our own notice reads *Showing a notice*,
   not as somebody watching.
 - **Send** picks every TV that would take it to start with. A TV in use can still be picked,
-  struck through, with a line saying it will be skipped. The preview is the 16:9 frame the box
-  will cast, drawn by the box itself, so what the owner sees is what lands. Limits are said
-  while typing, not refused after.
+  struck through, with a line saying it will be skipped. It composes like the panel composer
+  (owner, 2026-10-15: *"picture always under text"*): a 16:9 canvas where the photo fills the
+  screen (drag to frame, pinch or the Zoom slider) and the words sit over it, dragged into place,
+  sized by a slider, in the panel's four styles. The phone draws the frame the TV gets, so the
+  canvas is exactly what lands. Words too long or too big for the screen are drawn smaller
+  until every word fits, and a line under the canvas says so, so the TV never drops the end of
+  a message that Sent still lists. Limits are said while typing, not refused after.
 - **The result is a Sheet** titled *Cast to 2 of 3*, a tag per TV (*On screen*, *Turned on*,
   *Skipped*, *Didn't cast*) and why. A TV that was woken *stays on*, and the sheet says so,
   because a cast cannot turn a TV off. **Take it down** is the destructive button, shown only

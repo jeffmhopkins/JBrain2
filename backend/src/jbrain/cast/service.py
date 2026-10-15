@@ -89,7 +89,10 @@ class CastService:
         tv_ids: list[str],
         seconds: int,
         meta: str,
+        frame: bytes | None = None,
     ) -> CastView:
+        """`frame` is a picture the phone drew whole (a photo with the words placed over it);
+        without one, the box draws the frame from `title`, `body` and `picture`."""
         title, body = title.strip(), body.strip()
         if not title:
             raise CastRefused("bad_field", field="title", want="1-120 bytes")
@@ -103,7 +106,10 @@ class CastService:
         await self.sweep()
         names = {str(t["id"]): str(t.get("name") or "TV") for t in (await self.tvs())["tvs"]}
         try:
-            png = await asyncio.to_thread(F.render, title, body, picture, meta=meta)
+            if frame is not None:
+                png = await asyncio.to_thread(F.take, frame)
+            else:
+                png = await asyncio.to_thread(F.render, title, body, picture, meta=meta)
         except F.FrameError:
             raise CastRefused("bad_picture", status=415) from None
         sha = await self._blobs.put(png)
@@ -126,10 +132,10 @@ class CastService:
                 )
             ).scalar_one()
             await s.commit()
-        png_b64 = base64.b64encode(png).decode()
+        image_b64 = base64.b64encode(png).decode()
         unique = list(dict.fromkeys(tv_ids))
         outcomes = await asyncio.gather(
-            *(self._cast_one(tv, names.get(tv), png_b64, seconds, title) for tv in unique)
+            *(self._cast_one(tv, names.get(tv), image_b64, seconds, title) for tv in unique)
         )
         async with scoped_session(self._maker, _OWNER) as s:
             for o in outcomes:
@@ -162,7 +168,7 @@ class CastService:
         return view
 
     async def _cast_one(
-        self, tv_id: str, name: str | None, png_b64: str, seconds: int, title: str
+        self, tv_id: str, name: str | None, image_b64: str, seconds: int, title: str
     ) -> TvOutcome:
         if name is None:
             return TvOutcome(tv_id, "TV", "skipped", "not on the network")
@@ -170,7 +176,7 @@ class CastService:
             out = await self._sidecar.call(
                 "POST",
                 f"/tvs/{tv_id}/cast",
-                json={"png_b64": png_b64, "seconds": seconds, "title": title},
+                json={"image_b64": image_b64, "seconds": seconds, "title": title},
             )
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {"error": exc.detail}

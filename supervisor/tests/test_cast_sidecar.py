@@ -126,6 +126,7 @@ class FakeFleet:
         self.refuse = refuse
         self.tests: list[tuple[str, str, int]] = []
         self.casts: list[tuple[str, str, int, str]] = []
+        self.mimes: list[str] = []
 
     def snapshot(self) -> list[dict[str, Any]]:
         return [{"id": TV, "state": "idle"}]
@@ -149,10 +150,13 @@ class FakeFleet:
         self.tests.append((key, url, seconds))
         return {"id": key, "seconds": seconds}
 
-    def cast(self, key: str, url: str, seconds: int, title: str) -> dict[str, Any]:
+    def cast(
+        self, key: str, url: str, seconds: int, title: str, mime: str = "image/png"
+    ) -> dict[str, Any]:
         if self.refuse:
             raise gate.Refused("busy", "Netflix · playing")
         self.casts.append((key, url, seconds, title))
+        self.mimes.append(mime)
         return {"id": key, "seconds": seconds, "cast_id": "c1"}
 
     def stop(self, key: str, cast_id: str) -> bool:
@@ -277,11 +281,12 @@ def test_bad_bodies_and_routes() -> None:
 
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"notice"
+JPEG = b"\xff\xd8\xff\xe0" + b"photo"
 
 
 def _cast_body(png: bytes = PNG, **extra: Any) -> bytes:
     return json.dumps(
-        {"png_b64": base64.b64encode(png).decode(), "title": "Dinner", **extra}
+        {"image_b64": base64.b64encode(png).decode(), "title": "Dinner", **extra}
     ).encode()
 
 
@@ -307,11 +312,32 @@ def test_a_notice_is_held_to_its_bounds_and_must_be_a_png() -> None:
     assert fleet.casts[-1][2] == gate.MAX_NOTICE_S
     assert _route("POST", f"/tvs/{TV}/cast", body=_cast_body(b"GIF89a"))[0] == 400
     assert _route("POST", f"/tvs/{TV}/cast", body=b'{"title": "x"}')[0] == 400
-    assert _route("POST", f"/tvs/{TV}/cast", body=b'{"png_b64": "%%"}')[0] == 400
+    assert _route("POST", f"/tvs/{TV}/cast", body=b'{"image_b64": "%%"}')[0] == 400
     code, _, raw = _route(
         "POST", f"/tvs/{TV}/cast", body=_cast_body(), fleet=FakeFleet(refuse=True)
     )
     assert code == 409 and json.loads(raw)["state"] == "busy"
+
+
+def test_a_photo_frame_is_cast_and_served_as_a_jpeg() -> None:
+    """A frame the phone drew over a photo comes as a JPEG: a PNG of a photo can run
+    past the body cap, and the Default Media Receiver shows either."""
+    fleet, frames = FakeFleet(), server.Frames()
+    code, _, _ = _route(
+        "POST", f"/tvs/{TV}/cast", body=_cast_body(JPEG), fleet=fleet, frames=frames
+    )
+    assert code == 202 and fleet.mimes == ["image/jpeg"]
+    ((_, url, _, _),) = fleet.casts
+    assert url.endswith(".jpg")
+    _, ctype, served = _route("GET", url.split(":19190", 1)[1], auth="", frames=frames)
+    assert (ctype, served) == ("image/jpeg", JPEG)
+
+
+def test_the_old_png_b64_key_still_casts() -> None:
+    fleet = FakeFleet()
+    body = json.dumps({"png_b64": base64.b64encode(PNG).decode()}).encode()
+    code, _, _ = _route("POST", f"/tvs/{TV}/cast", body=body, fleet=fleet)
+    assert code == 202 and fleet.mimes == ["image/png"]
 
 
 def test_stop_names_the_cast() -> None:

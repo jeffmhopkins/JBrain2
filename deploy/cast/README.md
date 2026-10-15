@@ -7,7 +7,7 @@ spike that answers what each real TV reports before any notice is cast to one. I
 Cast device on the LAN by mDNS, holds a connection to each, and logs every status change, so
 the owner can switch TVs between states and the timeline is read back afterwards. It casts two
 things, and only to a TV that is idle or off: the spike's test card, and a notice's own frame,
-which the api draws and posts here (`POST /tvs/<id>/cast`, plan K1,
+which the api posts here as a PNG or a JPEG (`POST /tvs/<id>/cast`, plan K1,
 `docs/plans/JPANEL_CAST_PLAN.md`). Either is quit when its time is up, or on `POST
 /tvs/<id>/stop`, but only while it is still ours on the screen.
 

@@ -206,7 +206,7 @@ def test_each_tv_takes_the_notice_as_the_sidecar_found_it(box: Box) -> None:
     }
     # One cast per TV the sidecar knows, the duplicate folded; every one the same PNG frame.
     assert sorted(c["tv"] for c in box.sidecar.casts) == sorted([IDLE, OFF, NETFLIX, BROKEN])
-    frames = {c["png_b64"] for c in box.sidecar.casts}
+    frames = {c["image_b64"] for c in box.sidecar.casts}
     assert len(frames) == 1
     png = base64.b64decode(frames.pop())
     assert Image.open(io.BytesIO(png)).size == (1920, 1080)
@@ -261,6 +261,31 @@ def test_a_picture_is_drawn_and_a_bad_one_is_refused_before_anything_is_cast(box
     )
     assert garbled.status_code == 422
     assert box.sidecar.casts == []
+
+
+def test_a_frame_the_phone_drew_is_cast_as_drawn(box: Box) -> None:
+    buf = io.BytesIO()
+    Image.new("RGB", (1920, 1080), (200, 40, 40)).save(buf, format="JPEG")
+    resp = box.as_owner().post(
+        "/api/cast/send",
+        json={
+            "tv_ids": [IDLE],
+            "title": "Look at this",
+            "frame_b64": base64.b64encode(buf.getvalue()).decode(),
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    sent = base64.b64decode(box.sidecar.casts[0]["image_b64"])
+    assert sent.startswith(b"\xff\xd8\xff")
+    shown = Image.open(io.BytesIO(sent)).convert("RGB")
+    assert shown.size == (1920, 1080) and shown.getpixel((960, 540))[0] > 150  # type: ignore[index]
+    frame = box.as_owner().get(f"/api/cast/{resp.json()['id']}/frame")
+    assert frame.headers["content-type"] == "image/jpeg"
+    bad = box.as_owner().post(
+        "/api/cast/send", json={"tv_ids": [IDLE], "title": "x", "frame_b64": "%%%"}
+    )
+    assert bad.status_code == 422
+    assert bad.json()["detail"]["field"] == "frame_b64"
 
 
 @pytest.mark.parametrize(
