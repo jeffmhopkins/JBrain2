@@ -167,9 +167,10 @@ describe("Cast", () => {
     await screen.findByText("3 found on the network");
     fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
 
-    // The ready and off TVs are picked to start with; the busy one is not. The picker is one
-    // control naming them, opening the list the way a video app picks a TV to cast to.
+    // The ready and off TVs are picked to start with; the busy one is not. The cast button
+    // counts them and opens the list, the way a video app picks a TV to cast to.
     const picker = screen.getByRole("button", { name: "TVs: Big TV, Parents" });
+    expect(picker).toHaveTextContent("2");
     fireEvent.click(picker);
     const picks = within(screen.getByRole("group", { name: "TVs" }));
     expect(picks.getByRole("button", { name: /Big TV/ })).toHaveAttribute("aria-pressed", "true");
