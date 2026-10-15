@@ -1682,6 +1682,48 @@ describe("send to panel", () => {
     });
   });
 
+  /** The service worker's share cache, as `panel-share-sw.js` leaves it. */
+  function shareCache(entries: Record<string, Response>): string[] {
+    const deleted: string[] = [];
+    vi.stubGlobal("caches", {
+      open: async () => ({ match: async (key: string) => entries[key]?.clone() }),
+      delete: async (name: string) => {
+        deleted.push(name);
+        return true;
+      },
+    });
+    return deleted;
+  }
+
+  it("offers shared words, and puts them in the draft only when told to", async () => {
+    fetchMock.mockImplementation(box());
+    const deleted = shareCache({
+      "/panel/shared-text": new Response("Home soon!", {
+        headers: { "X-Shared-At": String(Date.now()) },
+      }),
+    });
+    render(<JpanelScreen onClose={vi.fn()} send={{ shared: true }} />);
+    expect(await screen.findByText("Use the shared words?")).toBeInTheDocument();
+    expect(deleted).toEqual(["panel-share"]);
+    fireEvent.click(screen.getByRole("tab", { name: /^Text/ }));
+    expect(screen.getByPlaceholderText("One word or a short message")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "Use it" }));
+    expect(screen.getByPlaceholderText("One word or a short message")).toHaveValue("Home soon!");
+  });
+
+  it("forgets a share left lying in the cache", async () => {
+    fetchMock.mockImplementation(box());
+    const deleted = shareCache({
+      "/panel/shared-text": new Response("planted", {
+        headers: { "X-Shared-At": String(Date.now() - 10 * 60_000) },
+      }),
+    });
+    render(<JpanelScreen onClose={vi.fn()} send={{ shared: true }} />);
+    await screen.findByRole("heading", { name: "Send to Jeff’s panel" });
+    await waitFor(() => expect(deleted).toEqual(["panel-share"]));
+    expect(screen.queryByText("Use the shared words?")).not.toBeInTheDocument();
+  });
+
   it("opens straight into the composer from the deep link", async () => {
     fetchMock.mockImplementation(box());
     render(<JpanelScreen onClose={vi.fn()} send={{ shared: false }} />);

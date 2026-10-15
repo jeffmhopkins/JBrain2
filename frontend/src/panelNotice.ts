@@ -466,5 +466,15 @@ export function clock(iso: string | null, seconds = false): string {
   });
 }
 
+/** How long a share waits in the service worker's cache for the composer to offer it. A share
+ *  opens the composer at once; one found later was left by something else. */
+export const SHARE_FRESH_MS = 2 * 60_000;
+
+/** Whether a share stamped `at` (ms, as the service worker writes `X-Shared-At`) is fresh. */
+export function shareFresh(at: string | null, now: number): boolean {
+  const t = Number(at);
+  return at !== null && Number.isFinite(t) && t <= now + 5_000 && now - t <= SHARE_FRESH_MS;
+}
+
 /** The deep link the launcher shortcut, the share target and an iPhone home-screen icon open. */
 export const SEND_PATH = "/panel/send";

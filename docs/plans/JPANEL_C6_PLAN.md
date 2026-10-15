@@ -868,7 +868,10 @@ canvas.
   the composer for the display panel; the manifest's `shortcuts` puts **Send to panel** (96 and
   192 px icons) on a long press of the app icon; the manifest's `share_target` takes a photo (and
   words) shared from any app — `public/panel-share-sw.js`, imported into the service worker, keeps
-  it in the `panel-share` cache and opens `/panel/send?shared=1`, and the proxy redirects a
+  it in the `panel-share` cache and opens `/panel/send?shared=1`, where the composer *offers* it
+  (Use it / Discard) rather than putting it in the draft — any site can POST to the share URL, so
+  the worker also drops a POST another site visibly started and the composer forgets a share more
+  than two minutes old (review of #1756). The proxy redirects a
   `/panel/share` POST that no service worker caught to `/panel/send`. An iPhone has neither, so
   while the composer is open the address is `/panel/send` with its own apple-touch-icon and title,
   and on iOS a tip line says: in Safari, Share → Add to Home Screen.

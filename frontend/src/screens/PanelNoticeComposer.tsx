@@ -62,6 +62,7 @@ import {
   photoPlacement,
   pictureSize,
   refusalCopy,
+  shareFresh,
   stayShort,
   utf8Bytes,
   workingSize,
@@ -177,6 +178,49 @@ async function sendNotice(
   if ("refused" in got)
     return { refused: { ...refusalCopy(got.refused), reason: got.refused.reason } };
   return { sent: await api.panelNotice(got.sent.id, 0) };
+}
+
+interface SharedOffer {
+  photo: Blob | null;
+  words: string;
+}
+
+/** What another app shared, shown before it touches the draft. */
+function SharedOfferCard({
+  offer,
+  onUse,
+  onDiscard,
+}: {
+  offer: SharedOffer;
+  onUse: () => void;
+  onDiscard: () => void;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!offer.photo || typeof URL.createObjectURL !== "function") return;
+    const url = URL.createObjectURL(offer.photo);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [offer.photo]);
+  return (
+    <section className="pn-card pn-offer" aria-label="Shared to the panel">
+      <div className="pn-offer-body">
+        {src && <img className="pn-thumb" src={src} alt="What was shared" />}
+        <span className="pn-line-text">
+          <span>{offer.photo ? "Use the shared photo?" : "Use the shared words?"}</span>
+          {offer.words && <span className="pn-sub">“{offer.words}”</span>}
+        </span>
+      </div>
+      <div className="pn-row">
+        <button type="button" className="pn-btn" onClick={onDiscard}>
+          Discard
+        </button>
+        <button type="button" className="pn-btn pn-use" onClick={onUse}>
+          Use it
+        </button>
+      </div>
+    </section>
+  );
 }
 
 // ---- the glass ---------------------------------------------------------------------------
@@ -1160,25 +1204,41 @@ export function PanelNoticeComposer({
     [setDraft],
   );
 
-  // A photo (and words) shared from another app, left by the service worker.
+  // A photo (and words) shared from another app, left by the service worker. Offered, never
+  // applied: any site can post to the share URL, so what lands in the draft is what the owner
+  // says yes to, and a share left lying in the cache is forgotten (panel-share-sw.js).
+  const [offer, setOffer] = useState<SharedOffer | null>(null);
   useEffect(() => {
     if (start.screen !== "compose" || !start.shared || typeof caches === "undefined") return;
+    let alive = true;
     void (async () => {
       try {
         const cache = await caches.open(SHARE_CACHE);
         const photo = await cache.match("/panel/shared-photo");
         const text = await cache.match("/panel/shared-text");
-        if (photo) await onFile(await photo.blob());
-        if (text) {
-          const words = clipBytes((await text.text()).trim(), WORDS_MAX);
-          if (words) setDraft((d) => ({ ...d, words }));
-        }
         await caches.delete(SHARE_CACHE);
+        const now = Date.now();
+        const blob =
+          photo && shareFresh(photo.headers.get("X-Shared-At"), now) ? await photo.blob() : null;
+        const words =
+          text && shareFresh(text.headers.get("X-Shared-At"), now)
+            ? clipBytes((await text.text()).trim(), WORDS_MAX)
+            : "";
+        if (alive && (blob || words)) setOffer({ photo: blob, words });
       } catch {
-        setPhotoError("The shared photo could not be read. Choose it here instead.");
+        if (alive) setPhotoError("The shared photo could not be read. Choose it here instead.");
       }
     })();
-  }, [start, onFile, setDraft]);
+    return () => {
+      alive = false;
+    };
+  }, [start]);
+
+  async function acceptOffer(o: SharedOffer): Promise<void> {
+    setOffer(null);
+    if (o.photo) await onFile(o.photo);
+    if (o.words) setDraft((d) => ({ ...d, words: o.words }));
+  }
 
   // Review shows the box's own rendering of the picture: a photograph posterized to fit the
   // panel's cap looks different from the phone's copy, and Review promises what lands. Only on
@@ -1378,6 +1438,13 @@ export function PanelNoticeComposer({
         {(screen === "compose" || screen === "status") && <Online panel={panel} />}
       </header>
       <main className="pn-body">
+        {screen === "compose" && offer && (
+          <SharedOfferCard
+            offer={offer}
+            onUse={() => void acceptOffer(offer)}
+            onDiscard={() => setOffer(null)}
+          />
+        )}
         {screen === "compose" && (
           <Compose
             draft={draft}

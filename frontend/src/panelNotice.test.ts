@@ -13,6 +13,7 @@ import {
   photoPlacement,
   pictureSize,
   refusalCopy,
+  shareFresh,
   textBox,
   workingSize,
   wrapWords,
@@ -259,5 +260,16 @@ describe("the box's refusal in words", () => {
     const r = refusalCopy({ status: 409, reason });
     expect(r.title).toBe(title);
     expect(r.settings).toBe(settings);
+  });
+});
+
+describe("a shared photo waiting for the composer", () => {
+  it("is offered only when it was left moments ago", () => {
+    const now = 1_000_000;
+    expect(shareFresh(String(now - 5_000), now)).toBe(true);
+    expect(shareFresh(String(now - 3 * 60_000), now)).toBe(false);
+    expect(shareFresh(String(now + 60_000), now)).toBe(false);
+    expect(shareFresh(null, now)).toBe(false);
+    expect(shareFresh("soon", now)).toBe(false);
   });
 });

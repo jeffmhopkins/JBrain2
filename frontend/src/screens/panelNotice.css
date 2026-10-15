@@ -711,3 +711,18 @@
   font: inherit;
   font-size: var(--fs-secondary);
 }
+
+.pn-offer-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.pn-offer .pn-row {
+  justify-content: flex-end;
+}
+.pn-btn.pn-use {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+  border-color: transparent;
+  font-weight: 600;
+}
