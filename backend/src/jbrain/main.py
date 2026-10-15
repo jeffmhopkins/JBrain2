@@ -1941,7 +1941,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Its settings from the PWA (0.0.21): asked for here, taken by the panel, reported back.
     app.include_router(panel_settings.router, prefix="/api")
     # The panel's half of the debug relay. Mounted with or without debug access: with it
-    # off nothing can queue a request, so a pickup is always an empty 204.
+    # off only the owner's looks below can queue a request, and those only read the panel.
     app.include_router(panel_debug.router, prefix="/api")
     # Ops → Panels' Snapshot and Screenshot: the owner's cookie, whatever the debug flag says.
     app.include_router(debug_panel.owner_router, prefix="/api")
