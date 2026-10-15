@@ -31,6 +31,8 @@ import type {
   NoteOut,
   PanelAlarm,
   PanelAlarmIn,
+  PanelNoticeIn,
+  PanelNoticeOut,
   PanelSettingKey,
   PanelSettingValues,
   PetCommand,
@@ -2817,6 +2819,78 @@ function mockFullGraph(): EgoGraph {
     };
   });
   return { root: ENTITIES["ent-me"] ? "ent-me" : "", depth: 0, nodes, edges: [...edges.values()] };
+}
+
+/** Sent notices for `npm run dev:mock`, newest first; their state moves with the clock. */
+const MOCK_NOTICES: (PanelNoticeOut & { withdrawn?: string })[] = [
+  {
+    id: "mock-notice-1",
+    device_id: "panel-desk",
+    sender: "owner",
+    title: "Did the package come?",
+    body: "",
+    choices: ["Yes", "No"],
+    state: "answered",
+    answer: "Yes",
+    created_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
+    delivered_at: new Date(Date.now() - 3 * 3600_000 + 3000).toISOString(),
+    shown_at: new Date(Date.now() - 3 * 3600_000 + 3000).toISOString(),
+    finished_at: new Date(Date.now() - 3 * 3600_000 + 200_000).toISOString(),
+    hide_after_s: null,
+    image: null,
+    audio_ms: null,
+    expires_at: null,
+    ttl_s: 900,
+    chime: true,
+    kind: "question",
+  },
+  {
+    id: "mock-notice-2",
+    device_id: "panel-desk",
+    sender: "owner",
+    title: "Lunch?",
+    body: "",
+    choices: [],
+    state: "dismissed",
+    answer: null,
+    created_at: new Date(Date.now() - 27 * 3600_000).toISOString(),
+    delivered_at: new Date(Date.now() - 27 * 3600_000 + 3000).toISOString(),
+    shown_at: new Date(Date.now() - 27 * 3600_000 + 3000).toISOString(),
+    finished_at: new Date(Date.now() - 27 * 3600_000 + 9000).toISOString(),
+    hide_after_s: 20,
+    image: null,
+    audio_ms: null,
+    expires_at: null,
+    ttl_s: 900,
+    chime: true,
+    kind: "plain",
+  },
+];
+
+/** A mock notice as the box would read it now: picked up after 2 s, shown, then answered "Yes"
+ *  (a question) after 8 s or hidden after its own time. */
+function mockNoticeNow(n: PanelNoticeOut & { withdrawn?: string }): PanelNoticeOut {
+  if (n.state !== "queued") return n;
+  const at = new Date(n.created_at).getTime();
+  const iso = (ms: number) => new Date(at + ms).toISOString();
+  const age = Date.now() - at;
+  const { withdrawn, ...base } = n;
+  if (withdrawn) {
+    return {
+      ...base,
+      state: "withdrawn",
+      delivered_at: age > 2000 ? iso(2000) : null,
+      finished_at: withdrawn,
+    };
+  }
+  if (age < 2000) return base;
+  const shown = { ...base, state: "shown" as const, delivered_at: iso(2000), shown_at: iso(2000) };
+  const ends = n.choices.length ? 10_000 : 2000 + (n.hide_after_s ?? 0) * 1000;
+  if (n.choices.length === 0 && !n.hide_after_s) return shown;
+  if (age < ends) return shown;
+  return n.choices.length
+    ? { ...shown, state: "answered", answer: n.choices[0] ?? null, finished_at: iso(ends) }
+    : { ...shown, state: "expired", finished_at: iso(ends) };
 }
 
 function json(body: unknown, status = 200): Response {
@@ -6181,6 +6255,66 @@ export const mockFetch: typeof fetch = async (input, init) => {
         },
       ],
     });
+  }
+  // --- Send to panel. A sent notice shows on the "glass" after a moment and a question is
+  // answered "Yes" a few seconds later, so the composer's status screen walks every step.
+  if (path === "/api/panel/notify" && method === "GET") {
+    const limit = Number(url.searchParams.get("limit") ?? 30);
+    return json({ notices: MOCK_NOTICES.map(mockNoticeNow).slice(0, limit), kept_s: 604800 });
+  }
+  if (path === "/api/panel/notify/preview" && method === "POST") {
+    // No encoder here: Review falls back to the phone's own drawing.
+    return json({ detail: { reason: "image_unreadable" } }, 422);
+  }
+  if (path === "/api/panel/notify" && method === "POST") {
+    const body = JSON.parse(String(init?.body ?? "{}")) as PanelNoticeIn;
+    const n: PanelNoticeOut = {
+      id: `mock-notice-${Date.now()}`,
+      device_id: body.device_id,
+      sender: "owner",
+      title: body.title,
+      body: body.body ?? "",
+      choices: body.choices ?? [],
+      state: "queued",
+      answer: null,
+      created_at: new Date().toISOString(),
+      delivered_at: null,
+      shown_at: null,
+      finished_at: null,
+      hide_after_s: body.hide_after_s || null,
+      image: body.image_mode ? { mode: body.image_mode } : null,
+      audio_ms: null,
+      expires_at: null,
+      ttl_s: body.ttl_s ?? 900,
+      chime: body.chime ?? false,
+      kind:
+        body.image_mode === "full"
+          ? "picture"
+          : body.image_mode
+            ? "banner"
+            : body.choices?.length
+              ? "question"
+              : "plain",
+    };
+    MOCK_NOTICES.unshift(n);
+    return json({ id: n.id, panel: "Jeff" }, 202);
+  }
+  const noticeOne = /^\/api\/panel\/notify\/([^/?]+)(\/withdraw)?/.exec(path);
+  if (noticeOne) {
+    const n = MOCK_NOTICES.find((x) => x.id === noticeOne[1]);
+    if (!n) return json({ detail: { reason: "no_such_notice" } }, 404);
+    if (noticeOne[2] && method === "POST") {
+      const now = mockNoticeNow(n);
+      if (!["queued", "delivered", "shown"].includes(now.state)) {
+        return json({ detail: { reason: "already_finished", state: now.state } }, 409);
+      }
+      n.withdrawn = new Date().toISOString();
+      return json(mockNoticeNow(n));
+    }
+    if (method === "GET" && !path.includes("/image")) {
+      await new Promise((r) => setTimeout(r, 1500));
+      return json(mockNoticeNow(n));
+    }
   }
   if (/^\/api\/endpoint\/panels\/[^/]+\/agent$/.test(path)) {
     if (method === "PUT") return json(JSON.parse(String(init?.body ?? "{}")));

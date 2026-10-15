@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JpanelScreen, durationText, whenText } from "./JpanelScreen";
+import { forgetDrafts } from "./PanelNoticeComposer";
 
 // The reader is a father on a phone at work and the senders are two four-year-olds, so
 // the states this screen has to survive are not edge cases: a transcript that came back
@@ -138,6 +139,8 @@ function box(
     agentPut?: (path: string, init?: RequestInit) => Response;
     notify?: (init?: RequestInit) => Response;
     notice?: (path: string) => Response;
+    sent?: (path: string) => Response;
+    withdraw?: (path: string) => Response;
   } = {},
 ) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -189,6 +192,15 @@ function box(
     }
     if (path === "/api/panel/notify" && method === "POST") {
       return opts.notify ? opts.notify(init) : json({ id: "n-1", panel: "Jeff" }, 202);
+    }
+    if (path.startsWith("/api/panel/notify?") && method === "GET") {
+      return opts.sent ? opts.sent(path) : json({ notices: [], kept_s: 604800 });
+    }
+    if (path === "/api/panel/notify/preview" && method === "POST") {
+      return json({ detail: { reason: "image_unreadable" } }, 422);
+    }
+    if (/^\/api\/panel\/notify\/[^/]+\/withdraw$/.test(path) && method === "POST") {
+      return opts.withdraw ? opts.withdraw(path) : json(NOTICE({ state: "withdrawn" }));
     }
     if (path.startsWith("/api/panel/notify/") && method === "GET") {
       return opts.notice
@@ -1429,10 +1441,37 @@ describe("the desk panel's reach into the real agents", () => {
   });
 });
 
-describe("a test notice from the app", () => {
+/** One notice as the box lists it; the composer's tests vary the state. */
+function NOTICE(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: "n-1",
+    device_id: "panel-desk",
+    sender: "owner",
+    title: "Did the package come?",
+    body: "",
+    choices: ["Yes", "No"],
+    state: "queued",
+    answer: null,
+    created_at: new Date().toISOString(),
+    delivered_at: null,
+    shown_at: null,
+    finished_at: null,
+    hide_after_s: null,
+    image: null,
+    audio_ms: null,
+    expires_at: null,
+    ttl_s: 900,
+    chime: true,
+    kind: "question",
+    ...over,
+  };
+}
+
+describe("send to panel", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    forgetDrafts();
     fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
   });
@@ -1441,93 +1480,214 @@ describe("a test notice from the app", () => {
     vi.unstubAllGlobals();
   });
 
-  async function send(): Promise<void> {
+  /** The composer's own footer: the card it opened from stays underneath, with its own button. */
+  function foot() {
+    return within(screen.getByRole("contentinfo"));
+  }
+
+  async function openComposer(): Promise<void> {
     render(<JpanelScreen onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
     await screen.findByText("the other one");
-    const buttons = await screen.findAllByRole("button", { name: "Send test notice" });
+    const buttons = await screen.findAllByRole("button", { name: "Send to panel" });
     expect(buttons).toHaveLength(1); // the owner's display only, never a pet panel
     fireEvent.click(buttons[0] as HTMLElement);
+    await screen.findByRole("heading", { name: "Send to Jeff’s panel" });
   }
 
-  it("sends a question to the display and shows the tap that comes back", async () => {
+  /** A question alone: the one draft jsdom (no canvas) can carry all the way to the box. */
+  async function askAndReview(): Promise<void> {
+    await openComposer();
+    fireEvent.click(screen.getByRole("tab", { name: /^Question/ }));
+    fireEvent.click(screen.getByRole("switch", { name: "Ask a question" }));
+    fireEvent.change(screen.getByPlaceholderText("Did the package come?"), {
+      target: { value: "Did the package come?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    await screen.findByRole("heading", { name: "Review" });
+  }
+
+  it("lists what was sent to the display, with how each ended", async () => {
+    const asked: string[] = [];
+    fetchMock.mockImplementation(
+      box({
+        sent: (path) => {
+          asked.push(path);
+          return json({
+            notices: [
+              NOTICE({ id: "a", state: "answered", answer: "Yes" }),
+              NOTICE({ id: "b", title: "Lunch?", choices: [], state: "dismissed", kind: "plain" }),
+            ],
+            kept_s: 604800,
+          });
+        },
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+    expect(await screen.findByText("Sent to this panel")).toBeInTheDocument();
+    expect(screen.getByText("Answered “Yes”")).toBeInTheDocument();
+    expect(screen.getByText("Tapped away on the panel")).toBeInTheDocument();
+    expect(asked).toEqual(["/api/panel/notify?device_id=panel-desk&limit=3"]);
+  });
+
+  it("will not reach Review with nothing to send", async () => {
+    fetchMock.mockImplementation(box());
+    await openComposer();
+    expect(screen.getByText("The panel’s whole screen")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(screen.getByRole("heading", { name: "Send to Jeff’s panel" })).toBeInTheDocument();
+  });
+
+  it("sends a question, then shows the tap that comes back", async () => {
     const sent: unknown[] = [];
-    const polled: string[] = [];
-    let polls = 0;
+    let reads = 0;
     fetchMock.mockImplementation(
       box({
         notify: (init) => {
           sent.push(JSON.parse(String(init?.body)));
           return json({ id: "n-1", panel: "Jeff" }, 202);
         },
-        notice: (path) => {
-          polled.push(path);
-          polls += 1;
+        notice: () => {
+          reads += 1;
           return json(
-            polls < 2
-              ? { id: "n-1", state: "shown", answer: null }
-              : { id: "n-1", state: "answered", answer: "Got it" },
+            reads === 1
+              ? NOTICE()
+              : reads === 2
+                ? NOTICE({ state: "shown", delivered_at: "x", shown_at: new Date().toISOString() })
+                : NOTICE({
+                    state: "answered",
+                    answer: "Yes",
+                    finished_at: new Date().toISOString(),
+                  }),
           );
         },
       }),
     );
-    await send();
-    expect(await screen.findByText("Answered on the panel: Got it")).toBeInTheDocument();
+    await askAndReview();
+    // A question alone is the panel's own card, Yes / No by default.
+    expect(screen.getByText("Waits for an answer")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "1 h" }));
+    fireEvent.click(foot().getByRole("button", { name: "Send to panel" }));
+    // Reads the box answers at once are paced two seconds apart, so this one waits a read longer.
+    expect(
+      await screen.findByText("Answered on the panel", undefined, { timeout: 4000 }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Yes").length).toBeGreaterThan(0);
     expect(sent).toEqual([
       {
         device_id: "panel-desk",
-        title: "Test from the app",
-        body: "Tap an answer: it comes back to your phone.",
-        choices: ["Got it", "Not now"],
+        title: "Did the package come?",
+        chime: true,
+        choices: ["Yes", "No"],
+        hide_after_s: 0,
+        ttl_s: 3600,
       },
     ]);
-    expect(polled).toEqual(["/api/panel/notify/n-1?wait=20", "/api/panel/notify/n-1?wait=20"]);
   });
 
-  it.each([
-    [
-      { reason: "quiet_hours", until: "06:30" },
-      409,
-      "The panel is in its night hours until 06:30.",
-    ],
-    [{ reason: "not_accepting" }, 409, "The panel has notices switched off."],
-    [
-      { reason: "offline", last_seen_s: null },
-      503,
-      "The panel is offline, so the box turned it away.",
-    ],
-    [{ reason: "no_notice_surface" }, 409, "This panel's firmware cannot show notices yet."],
-    [{ reason: "busy" }, 429, "Four notices are already waiting on it."],
-    [{ reason: "which_panel" }, 409, "The box refused it: which_panel."],
-    ["plain words", 500, "The box refused it: plain words."],
-  ])("shows the box's refusal %j in words", async (detail, status, words) => {
-    fetchMock.mockImplementation(box({ notify: () => json({ detail }, status) }));
-    await send();
-    expect(await screen.findByText(words)).toBeInTheDocument();
-  });
-
-  it.each([
-    ["dismissed", "Dismissed on the panel without an answer."],
-    ["expired", "Nobody answered it in time."],
-  ])("says how a %s notice ended", async (state, words) => {
-    fetchMock.mockImplementation(box({ notice: () => json({ id: "n-1", state, answer: null }) }));
-    await send();
-    expect(await screen.findByText(words)).toBeInTheDocument();
-  });
-
-  it("gives up waiting politely", async () => {
+  it("keeps the draft and offers Try again when the box turns it away", async () => {
     fetchMock.mockImplementation(
-      box({ notice: () => json({ id: "n-1", state: "shown", answer: null }) }),
+      box({ notify: () => json({ detail: { reason: "quiet_hours", until: "06:30" } }, 409) }),
     );
-    await send();
+    await askAndReview();
+    fireEvent.click(foot().getByRole("button", { name: "Send to panel" }));
     expect(
-      await screen.findByText("No tap yet. It stays on the panel for 15 minutes."),
+      await screen.findByText("Not sent — it’s night hours on the panel until 06:30"),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+    // The remedy is a switch on this card: the composer closes onto it, the draft kept.
+    fireEvent.click(screen.getByRole("button", { name: "Panel settings → Notices" }));
+    expect(screen.queryByRole("heading", { name: "Review" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send to panel" }));
+    fireEvent.click(await screen.findByRole("tab", { name: /^Question/ }));
+    expect(screen.getByPlaceholderText("Did the package come?")).toHaveValue(
+      "Did the package come?",
+    );
   });
 
-  it("reports a read that fails", async () => {
-    fetchMock.mockImplementation(box({ notice: () => json({ detail: "gone" }, 404) }));
-    await send();
-    expect(await screen.findByText("gone")).toBeInTheDocument();
+  it("unsends a notice still on the panel", async () => {
+    const withdrawn: string[] = [];
+    fetchMock.mockImplementation(
+      box({
+        notice: () => json(NOTICE({ state: "shown", delivered_at: "x", shown_at: "x" })),
+        withdraw: (path) => {
+          withdrawn.push(path);
+          return json(NOTICE({ state: "withdrawn", delivered_at: "x" }));
+        },
+      }),
+    );
+    await askAndReview();
+    fireEvent.click(foot().getByRole("button", { name: "Send to panel" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Unsend" }));
+    expect(await screen.findByText("Taken off the panel")).toBeInTheDocument();
+    expect(withdrawn).toEqual(["/api/panel/notify/n-1/withdraw"]);
+    expect(screen.queryByRole("button", { name: "Unsend" })).not.toBeInTheDocument();
+  });
+
+  it("shows how a notice ended when Unsend comes too late", async () => {
+    let reads = 0;
+    fetchMock.mockImplementation(
+      box({
+        notice: () => {
+          reads += 1;
+          return json(
+            reads < 3
+              ? NOTICE({ state: "shown", delivered_at: "x", shown_at: "x" })
+              : NOTICE({ state: "dismissed", delivered_at: "x", shown_at: "x" }),
+          );
+        },
+        withdraw: () => json({ detail: { reason: "already_finished", state: "dismissed" } }, 409),
+      }),
+    );
+    await askAndReview();
+    fireEvent.click(foot().getByRole("button", { name: "Send to panel" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Unsend" }));
+    expect(await screen.findAllByText("Hidden without an answer")).not.toHaveLength(0);
+  });
+
+  it("lists the week and sends one again from it", async () => {
+    const sent: unknown[] = [];
+    fetchMock.mockImplementation(
+      box({
+        sent: () =>
+          json({
+            notices: [NOTICE({ id: "old", state: "expired", delivered_at: "x" })],
+            kept_s: 604800,
+          }),
+        notify: (init) => {
+          sent.push(JSON.parse(String(init?.body)));
+          return json({ id: "n-2", panel: "Jeff" }, 202);
+        },
+        notice: () => json(NOTICE({ id: "n-2" })),
+      }),
+    );
+    render(<JpanelScreen onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Panels" }));
+    fireEvent.click(await screen.findByRole("button", { name: "All sent" }));
+    expect(await screen.findByText(/keeps each one 7 days/)).toBeInTheDocument();
+    fireEvent.click(
+      within(screen.getByRole("main")).getByRole("button", { name: /No answer in 15 min/ }),
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Send again" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({
+      device_id: "panel-desk",
+      title: "Did the package come?",
+      body: "",
+      choices: ["Yes", "No"],
+      chime: true,
+      hide_after_s: 0,
+      ttl_s: 900,
+    });
+  });
+
+  it("opens straight into the composer from the deep link", async () => {
+    fetchMock.mockImplementation(box());
+    render(<JpanelScreen onClose={vi.fn()} send={{ shared: false }} />);
+    expect(
+      await screen.findByRole("heading", { name: "Send to Jeff’s panel" }),
+    ).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/panel/send");
   });
 });
