@@ -54,11 +54,13 @@ function sent(over: Partial<CastNotice> = {}): CastNotice {
  *  measures them at half the font size a letter, and an export that reads as a JPEG. */
 const drawn: string[] = [];
 const drawnAt: number[][] = [];
+const turned: number[] = [];
 function fakeCanvas() {
   let px = 10;
   const ctx = new Proxy(
     {
       measureText: (t: string) => ({ width: t.length * px * 0.5 }),
+      rotate: (a: number) => turned.push(a),
       fillText: (t: string, x: number, y: number) => {
         drawn.push(t);
         drawnAt.push([x, y]);
@@ -83,6 +85,7 @@ function fakeCanvas() {
 beforeEach(() => {
   drawn.length = 0;
   drawnAt.length = 0;
+  turned.length = 0;
   vi.spyOn(api, "castTvs").mockResolvedValue({ tvs: TVS });
   fakeCanvas();
 });
@@ -201,21 +204,84 @@ describe("Cast", () => {
     expect(drawn.slice(-4).join(" ").split(" ").filter(Boolean)).toHaveLength(24);
   });
 
-  it("two fingers on words alone don't drag them", async () => {
+  it("picks the words up to move them, and pinches or pulls their corner to resize them", async () => {
     render(<CastScreen />);
     await screen.findByText("3 found on the network");
     fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
     fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
     fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
     const canvas = screen.getByLabelText("What the TV will show");
-    const before = drawnAt.at(-1);
-    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
-    fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 50, clientY: 10 });
-    fireEvent.pointerMove(canvas, { pointerId: 2, clientX: 90, clientY: 40 });
-    expect(drawnAt.at(-1)).toEqual(before);
+    const size = () => screen.getByText(/px on the TV$/).textContent;
+    // The canvas is 320 CSS px wide here: 6 TV px to one, so the words sit at (160, 90).
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 160, clientY: 90 });
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 170, clientY: 90 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    expect(drawnAt.at(-1)?.[0]).toBe(1020);
+    expect(size()).toBe("140 px on the TV");
+
+    // Two fingers pinch: the words grow with the spread and don't also move.
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 170, clientY: 90 });
+    fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 190, clientY: 90 });
+    fireEvent.pointerMove(canvas, { pointerId: 2, clientX: 200, clientY: 90 });
+    expect(size()).toBe("210 px on the TV");
+    expect(drawnAt.at(-1)?.[0]).toBe(1020);
+    // Lifting one finger ends the pinch: the one left doesn't jump into a drag.
     fireEvent.pointerUp(canvas, { pointerId: 2 });
-    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 30, clientY: 10 });
-    expect(drawnAt.at(-1)?.[0]).toBeGreaterThan(before?.[0] ?? 0);
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 120, clientY: 90 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    expect(drawnAt.at(-1)?.[0]).toBe(1020);
+
+    // The corner handle: at 210 px "Hi" is a 344.4 x 285.6 box centred on (1020, 540), so its
+    // corner is (1192.2, 682.8) TV px, (198.7, 113.8) on the phone. Pulling it out grows them.
+    fireEvent.pointerDown(canvas, { pointerId: 3, clientX: 198.7, clientY: 113.8 });
+    fireEvent.pointerMove(canvas, { pointerId: 3, clientX: 227.4, clientY: 137.6 });
+    fireEvent.pointerUp(canvas, { pointerId: 3 });
+    expect(Number(size()?.split(" ")[0])).toBeGreaterThan(300);
+    expect(drawnAt.at(-1)?.[0]).toBe(1020);
+  });
+
+  it("a twist of two fingers turns the words, settling square near a quarter turn", async () => {
+    render(<CastScreen />);
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
+    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
+    const canvas = screen.getByLabelText("What the TV will show");
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 160, clientY: 90 });
+    fireEvent.pointerDown(canvas, { pointerId: 2, clientX: 180, clientY: 90 });
+    // The second finger swings 30 degrees about the first, at the same spread.
+    fireEvent.pointerMove(canvas, {
+      pointerId: 2,
+      clientX: 160 + 20 * Math.cos(Math.PI / 6),
+      clientY: 90 + 20 * Math.sin(Math.PI / 6),
+    });
+    expect(turned.at(-1)).toBeCloseTo(Math.PI / 6);
+    expect(screen.getByText(/px on the TV$/)).toHaveTextContent("140 px on the TV");
+    // 87 degrees settles at 90.
+    const a = (87 * Math.PI) / 180;
+    fireEvent.pointerMove(canvas, {
+      pointerId: 2,
+      clientX: 160 + 20 * Math.cos(a),
+      clientY: 90 + 20 * Math.sin(a),
+    });
+    expect(turned.at(-1)).toBe(Math.PI / 2);
+    fireEvent.pointerUp(canvas, { pointerId: 2 });
+    fireEvent.pointerUp(canvas, { pointerId: 1 });
+    // Turn 90° goes on to the next quarter.
+    fireEvent.click(screen.getByRole("button", { name: "Turn 90°" }));
+    expect(turned.at(-1)).toBe(Math.PI);
+  });
+
+  it("touching the sheet away from the words lets go of them", async () => {
+    render(<CastScreen />);
+    await screen.findByText("3 found on the network");
+    fireEvent.click(screen.getByRole("button", { name: /Send to TVs/ }));
+    fireEvent.click(screen.getByRole("tab", { name: /Words/ }));
+    fireEvent.change(screen.getByLabelText(/Words on the picture/), { target: { value: "Hi" } });
+    const canvas = screen.getByLabelText("What the TV will show");
+    fireEvent.pointerDown(canvas, { pointerId: 1, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(canvas, { pointerId: 1, clientX: 60, clientY: 40 });
+    expect(drawnAt.at(-1)).toEqual([960, 540]);
   });
 
   it("keeps the draft while the owner looks at the TVs", async () => {

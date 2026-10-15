@@ -12,7 +12,6 @@ import {
   TEXT_STYLES,
   type TextStyle,
   clamp,
-  photoPlacement,
   textBox,
   wrapWords,
 } from "./panelNotice";
@@ -159,6 +158,8 @@ export const WORDS_MAX = TITLE_MAX;
 export const SIZE_MIN = 48;
 export const SIZE_MAX = 320;
 export const ZOOM_MAX = 3;
+/** The smallest a photo goes: a fifth of filling the screen, still big enough to grab. */
+export const ZOOM_MIN = 0.2;
 /** A photo's working copy, long side: enough for 2x zoom on a 1920-wide screen without
  *  keeping a 12 MP original on a canvas. */
 export const PHOTO_WORKING_MAX = TV_W * 2;
@@ -166,15 +167,20 @@ const WORDS_MARGIN = 60;
 
 export interface CastDraft {
   photo: Photo | null;
+  /** 1 fills the screen; below 1 it sits on the sheet, smaller. */
   zoom: number;
   /** Offset of the photo from centred, in TV pixels. */
   panX: number;
   panY: number;
+  /** The photo's turn about its centre, in radians, clockwise. */
+  turn: number;
   words: string;
   size: number;
   style: TextStyle;
   /** Where the words sit (their centre), in TV pixels. */
   pos: Point;
+  /** The words' turn about their centre, in radians, clockwise. */
+  wordsTurn: number;
 }
 
 export function emptyCastDraft(): CastDraft {
@@ -183,10 +189,12 @@ export function emptyCastDraft(): CastDraft {
     zoom: 1,
     panX: 0,
     panY: 0,
+    turn: 0,
     words: "",
     size: 140,
     style: "outline",
     pos: { x: TV_W / 2, y: TV_H / 2 },
+    wordsTurn: 0,
   };
 }
 
@@ -208,6 +216,40 @@ export interface WordsFit {
 }
 
 const FIT_STEP = 4;
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Its turn about its centre, in radians; none when absent. */
+  turn?: number;
+}
+
+/** Turn `ctx` by `turn` about (cx, cy), so what is drawn next in screen pixels lands turned. */
+function turnAbout(ctx: CanvasRenderingContext2D, turn: number, cx: number, cy: number): void {
+  if (!turn) return;
+  ctx.translate(cx, cy);
+  ctx.rotate(turn);
+  ctx.translate(-cx, -cy);
+}
+
+/** The photo on the screen, as a thing the owner moves and sizes: zoom 1 fills the screen, and
+ *  the pan is held, on each axis, so a photo larger than the screen shows no gap at its edge and
+ *  one smaller than it stays wholly on the screen. */
+export function castPhotoPlacement(
+  photo: { w: number; h: number },
+  d: Pick<CastDraft, "zoom" | "panX" | "panY">,
+): Rect & { scale: number; panX: number; panY: number } {
+  const scale = Math.max(TV_W / photo.w, TV_H / photo.h) * d.zoom;
+  const w = photo.w * scale;
+  const h = photo.h * scale;
+  const slackX = Math.abs(w - TV_W) / 2;
+  const slackY = Math.abs(h - TV_H) / 2;
+  const panX = clamp(d.panX, -slackX, slackX);
+  const panY = clamp(d.panY, -slackY, slackY);
+  return { scale, x: (TV_W - w) / 2 + panX, y: (TV_H - h) / 2 + panY, w, h, panX, panY };
+}
 
 /** The words as they will be drawn: at the chosen size when they all fit, else the largest
  *  size down to SIZE_MIN that shows every word on the screen. The wrap keeps four lines and
@@ -236,10 +278,13 @@ export function drawFrame(ctx: CanvasRenderingContext2D, d: CastDraft): WordsFit
   ctx.fillStyle = SHEET;
   ctx.fillRect(0, 0, TV_W, TV_H);
   if (d.photo) {
-    const p = photoPlacement(d.photo, d, TV_W, TV_H);
+    const p = castPhotoPlacement(d.photo, d);
+    ctx.save();
+    turnAbout(ctx, d.turn, p.x + p.w / 2, p.y + p.h / 2);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(d.photo.source, p.x, p.y, d.photo.w * p.scale, d.photo.h * p.scale);
+    ctx.drawImage(d.photo.source, p.x, p.y, p.w, p.h);
+    ctx.restore();
   }
   const text = d.words.trim();
   if (!text) return null;
@@ -248,6 +293,8 @@ export function drawFrame(ctx: CanvasRenderingContext2D, d: CastDraft): WordsFit
   const { lines, size } = fit;
   const measure = (s: string) => ctx.measureText(s).width;
   const box = textBox(lines, size, d.pos, TV_W, TV_H, measure);
+  ctx.save();
+  turnAbout(ctx, d.wordsTurn, box.x + box.w / 2, box.y + box.h / 2);
   if (st.plate) {
     ctx.fillStyle = st.plate;
     ctx.beginPath();
@@ -268,6 +315,7 @@ export function drawFrame(ctx: CanvasRenderingContext2D, d: CastDraft): WordsFit
     ctx.fillStyle = st.fill;
     ctx.fillText(line, cx, y);
   });
+  ctx.restore();
   return fit;
 }
 
@@ -279,21 +327,120 @@ export function fitNote(fit: WordsFit | null, asked: number): string | null {
   return null;
 }
 
-/** A drag of (dx, dy) TV pixels: it moves the words when they are what is being placed, else
- *  pans the photo, held to its edges so a long drag past one banks no slack. */
-export function dragDraft(
-  d: CastDraft,
-  what: "words" | "photo",
-  dx: number,
-  dy: number,
-): CastDraft {
-  if (what === "words" && d.words.trim()) {
+/** The words' box on the screen as they will be drawn, or null with none. */
+export function wordsRect(ctx: CanvasRenderingContext2D, d: CastDraft): Rect | null {
+  const text = d.words.trim();
+  if (!text) return null;
+  const fit = fitWords(ctx, text, d.size);
+  const b = textBox(fit.lines, fit.size, d.pos, TV_W, TV_H, (s) => ctx.measureText(s).width);
+  return { x: b.x, y: b.y, w: b.w, h: b.h, turn: d.wordsTurn };
+}
+
+/** The photo's part of the screen, or null with none. Unturned it is cut to the screen, so its
+ *  outline and handle stay in reach when it is larger than the screen. */
+export function photoRect(d: CastDraft): Rect | null {
+  if (!d.photo) return null;
+  const p = castPhotoPlacement(d.photo, d);
+  if (d.turn) return { x: p.x, y: p.y, w: p.w, h: p.h, turn: d.turn };
+  const x = Math.max(0, p.x);
+  const y = Math.max(0, p.y);
+  return { x, y, w: Math.min(TV_W, p.x + p.w) - x, h: Math.min(TV_H, p.y + p.h) - y };
+}
+
+export type Part = "photo" | "words";
+
+/** What a touch at `at` (TV pixels) takes hold of: the words over the photo, as drawn, with a
+ *  little slack around them for a finger. */
+export function partAt(words: Rect | null, photo: Rect | null, at: Point, slack = 0): Part | null {
+  const inside = (r: Rect | null) => {
+    if (r === null) return false;
+    const p = unturn(r, at);
+    return (
+      p.x >= r.x - slack &&
+      p.x <= r.x + r.w + slack &&
+      p.y >= r.y - slack &&
+      p.y <= r.y + r.h + slack
+    );
+  };
+  if (inside(words)) return "words";
+  if (inside(photo)) return "photo";
+  return null;
+}
+
+/** `at` turned back about the rect's centre, into the rect's own unturned frame. */
+function unturn(r: Rect, at: Point): Point {
+  if (!r.turn) return at;
+  return turnPoint(at, { x: r.x + r.w / 2, y: r.y + r.h / 2 }, -r.turn);
+}
+
+export function turnPoint(p: Point, about: Point, turn: number): Point {
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  const dx = p.x - about.x;
+  const dy = p.y - about.y;
+  return { x: about.x + dx * c - dy * s, y: about.y + dx * s + dy * c };
+}
+
+/** Where a rect's corner handle sits on the screen: its bottom-right corner, turned with it. */
+export function handleAt(r: Rect): Point {
+  const corner = { x: r.x + r.w, y: r.y + r.h };
+  return turnPoint(corner, { x: r.x + r.w / 2, y: r.y + r.h / 2 }, r.turn ?? 0);
+}
+
+/** A drag of (dx, dy) TV pixels on one part: the words move, kept on the screen; the photo
+ *  moves, held as castPhotoPlacement holds it so a long drag past an edge banks no slack. */
+export function dragDraft(d: CastDraft, what: Part, dx: number, dy: number): CastDraft {
+  if (what === "words") {
+    if (!d.words.trim()) return d;
     return {
       ...d,
       pos: { x: clamp(d.pos.x + dx, 0, TV_W), y: clamp(d.pos.y + dy, 0, TV_H) },
     };
   }
   if (!d.photo) return d;
-  const p = photoPlacement(d.photo, { ...d, panX: d.panX + dx, panY: d.panY + dy }, TV_W, TV_H);
+  const p = castPhotoPlacement(d.photo, { ...d, panX: d.panX + dx, panY: d.panY + dy });
   return { ...d, panX: p.panX, panY: p.panY };
+}
+
+/** How big a part is now: the words' size in pixels, the photo's zoom. */
+export function partScale(d: CastDraft, what: Part): number {
+  return what === "words" ? d.size : d.zoom;
+}
+
+/** Resize one part to `value` (as partScale reads it), kept to the sliders' range. */
+export function scaleDraft(d: CastDraft, what: Part, value: number): CastDraft {
+  if (what === "words") return { ...d, size: Math.round(clamp(value, SIZE_MIN, SIZE_MAX)) };
+  if (!d.photo) return d;
+  const zoom = clamp(value, ZOOM_MIN, ZOOM_MAX);
+  const p = castPhotoPlacement(d.photo, { ...d, zoom });
+  return { ...d, zoom, panX: p.panX, panY: p.panY };
+}
+
+/** Within this of square (a multiple of 90 degrees), a turn settles square: a hand can't hold
+ *  a photo exactly level, and level is nearly always what is meant. */
+const SQUARE_SNAP = (5 * Math.PI) / 180;
+const QUARTER = Math.PI / 2;
+
+/** One part's turn now, in radians. */
+export function partTurn(d: CastDraft, what: Part): number {
+  return what === "words" ? d.wordsTurn : d.turn;
+}
+
+/** Turn one part to `turn` radians, kept within one revolution and settled square when near. */
+export function turnDraft(d: CastDraft, what: Part, turn: number): CastDraft {
+  let t = turn % (2 * Math.PI);
+  if (t > Math.PI) t -= 2 * Math.PI;
+  if (t <= -Math.PI) t += 2 * Math.PI;
+  const square = Math.round(t / QUARTER) * QUARTER;
+  if (Math.abs(t - square) <= SQUARE_SNAP) t = square;
+  if (Math.abs(t) === Math.PI) t = Math.PI;
+  t = t || 0;
+  if (what === "words") return d.words.trim() ? { ...d, wordsTurn: t } : d;
+  return d.photo ? { ...d, turn: t } : d;
+}
+
+/** The next quarter turn clockwise from wherever the part is: the Turn button. */
+export function quarterTurn(d: CastDraft, what: Part): CastDraft {
+  const from = Math.round(partTurn(d, what) / QUARTER) * QUARTER;
+  return turnDraft(d, what, from + QUARTER);
 }
