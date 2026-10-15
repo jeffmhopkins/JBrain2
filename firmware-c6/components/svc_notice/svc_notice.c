@@ -39,6 +39,7 @@ typedef struct {
     uint32_t arrived_ms, shown_ms;
     uint32_t deadline; /* UTC seconds the answer window closes, 0 unknown: in the file's name */
     bool shown, announced;
+    bool withdrawn; /* the owner took it back: it goes on the UI task's next pass */
 } entry_t;
 
 typedef struct {
@@ -461,11 +462,12 @@ static bool night_now(void)
 void svc_notice_service(void)
 {
     const uint32_t now = now_ms();
-    /* A notice the box has stopped taking answers for goes quietly: anything said now 404s. */
+    /* A notice the box has stopped taking answers for goes quietly: anything said now 404s. One
+       the owner took back goes the same way, and is counted as lapsed: the box already knows. */
     bool stop_sound = false;
     notice_port_lock();
     for (uint8_t i = 0; i < s_n;) {
-        if (notice_lapsed(s_q[i].arrived_ms, s_q[i].ttl_s, now)) {
+        if (s_q[i].withdrawn || notice_lapsed(s_q[i].arrived_ms, s_q[i].ttl_s, now)) {
             if (s_sound_serial == s_q[i].serial) stop_sound = true;
             drop_at(i);
             s_st.lapsed++;
@@ -510,6 +512,21 @@ void svc_notice_waiting(const char *header)
     const uint8_t n = notice_waiting_count(header);
     notice_port_lock();
     s_want_next = n > 0;
+    notice_port_unlock();
+}
+
+/* Only marked here: the main task must not stop the UI task's sound or move the glass. */
+void svc_notice_withdraw(const char *header)
+{
+    notice_withdrawn_t w;
+    notice_withdrawn_parse(header, &w);
+    if (!w.n) return;
+    notice_port_lock();
+    for (uint8_t i = 0; i < s_n; i++) {
+        char id[NOTICE_ID_TEXT];
+        jn1_uuid_text(s_q[i].id, id);
+        if (notice_withdrawn_has(&w, id)) s_q[i].withdrawn = true;
+    }
     notice_port_unlock();
 }
 

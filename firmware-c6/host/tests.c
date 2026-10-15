@@ -5517,6 +5517,87 @@ static void test_four_open_at_most(void)
     CHECK(svc_notice_want_fetch(path, sizeof path), "one hidden: room again");
 }
 
+static uint32_t take_with_id(const char *fixture, uint8_t last)
+{
+    size_t n = 0;
+    uint8_t *b = read_fixture(fixture, &n);
+    if (!b) return 0;
+    b[3 + 3 + 15] = last;
+    const bool ok = svc_notice_fetch_end(fetch_bytes(NOTICE_NEXT_PATH, b, n, n), true, 200);
+    free(b);
+    return ok;
+}
+
+#define WD_A "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c00"
+#define WD_B "6a1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c01"
+#define WD_X "00000000-0000-4000-8000-000000000000"
+
+/* 0.0.26: a notice the owner took back from the PWA leaves the glass as a lapsed one does. */
+static void test_a_withdrawn_notice_leaves_the_glass_quietly(void)
+{
+    notice_withdrawn_t w;
+    notice_withdrawn_parse(NULL, &w);
+    CHECK(w.n == 0, "no header, nothing taken back");
+    notice_withdrawn_parse("", &w);
+    CHECK(w.n == 0, "an empty one neither");
+    notice_withdrawn_parse("nope,," WD_A "x, " WD_B "," WD_A "-,"
+                           "6A1F2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C00",
+                           &w);
+    CHECK(w.n == 0, "nothing that is not a whole id, exactly as the box writes one");
+    notice_withdrawn_parse("junk," WD_B ",", &w);
+    CHECK(w.n == 1 && notice_withdrawn_has(&w, WD_B) && !notice_withdrawn_has(&w, WD_A),
+          "a good id beside junk is still taken");
+    notice_withdrawn_parse(WD_X "," WD_X "," WD_X "," WD_A "," WD_B, &w);
+    CHECK(w.n == NOTICE_OPEN_MAX && notice_withdrawn_has(&w, WD_A) &&
+              !notice_withdrawn_has(&w, WD_B),
+          "more than four: the first four");
+    /* box_http's buffer cuts a longer header: whatever it cuts short must name nothing. */
+    const char *longer = WD_X "," WD_X "," WD_A "x," WD_B;
+    char cut[NOTICE_WITHDRAW_BYTES];
+    const size_t k = strlen(longer) < sizeof cut - 1 ? strlen(longer) : sizeof cut - 1;
+    memcpy(cut, longer, k);
+    cut[k] = '\0';
+    notice_withdrawn_parse(cut, &w);
+    CHECK(k < strlen(longer) && w.n == 2 && !notice_withdrawn_has(&w, WD_B) &&
+              !notice_withdrawn_has(&w, WD_A),
+          "an id cut short names nothing");
+
+    notice_boot();
+    CHECK(take_with_id("full_sound.jn1", 0x00) && take_with_id("plain.jn1", 0x01), "two held");
+    svc_notice_service();
+    notice_t n;
+    svc_notice_head(&n);
+    svc_notice_on_glass(n.id);
+    CHECK(svc_audio_replying(), "the first is on the glass, its sound playing");
+    char path[NOTICE_PATH_BYTES], json[48];
+    CHECK(svc_notice_post_take(path, sizeof path, json, sizeof json) && strstr(path, WD_A),
+          "its `shown` owed");
+    svc_notice_post_done(204);
+
+    svc_notice_withdraw("garbage");
+    svc_notice_withdraw(WD_X);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 2, "a malformed header or an id not held changes nothing");
+
+    svc_notice_withdraw(WD_X "," WD_A);
+    svc_notice_service();
+    notice_t h;
+    CHECK(svc_notice_count() == 1 && svc_notice_head(&h) && h.id != n.id,
+          "the one on the glass goes, the next takes its place");
+    CHECK(!svc_audio_replying(), "and its sound stops");
+    CHECK(!svc_notice_post_take(path, sizeof path, json, sizeof json), "nothing is told back");
+
+    svc_notice_withdraw(WD_A "," WD_B);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 0 && !svc_notice_post_take(path, sizeof path, json, sizeof json),
+          "one held but never shown goes too, unsaid, while the gone one is ignored");
+    svc_notice_housekeep();
+    CHECK(files_in_storage() == 0, "both files deleted");
+    svc_notice_withdraw(WD_A "," WD_B);
+    svc_notice_service();
+    CHECK(svc_notice_count() == 0, "the box repeating itself is harmless");
+}
+
 /* The review of #1729: a title past the glass's 60 bytes is cut on a character boundary judged
    from the byte that was left out, not from one never read. */
 static void test_a_long_title_is_cut_on_a_character(void)
@@ -6390,6 +6471,7 @@ int main(void)
     test_a_picture_and_a_sound_come_back_out_of_the_file();
     test_a_notice_hides_itself_after_hide_s();
     test_four_open_at_most();
+    test_a_withdrawn_notice_leaves_the_glass_quietly();
     test_an_outage_never_loses_an_answer();
     test_a_long_title_is_cut_on_a_character();
     test_a_reboot_keeps_the_notices_and_what_the_box_is_owed();

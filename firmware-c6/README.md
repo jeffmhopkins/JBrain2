@@ -2432,6 +2432,49 @@ half's 19.2 KB. App: 0.0.23's 3,025,120 → 3,024,960 B (−160 B: the piece cod
 Known and not done here: while lit, the Clock still redraws the whole glass once a minute. That is
 now ~30 ms rather than 65-414, but a minute's change could invalidate only the digits.
 
+## What 0.0.26 adds: unsend on the glass
+
+The owner can take a notice back from the PWA after the panel has collected it. Until 0.0.26 the
+panel kept showing it until it was answered, hidden or lapsed, and the box then 404ed whatever
+the panel said. Now it leaves the glass within a pickup.
+
+**What the box says.** The debug pickup's answer carries `X-Notice-Withdraw: <id>[,<id>]` while
+a notice this panel collected has been withdrawn and its answer window is still open: at most
+four ids (the panel's `NOTICE_OPEN_MAX`), comma-separated, no spaces, newest withdrawal first
+(`notice_service.withdrawn_ids`). It repeats on every pickup until each window closes, so a
+pickup the panel missed costs nothing.
+
+**What the panel does.** `box_http.c` keeps the header in a 148-byte field: four 36-character ids,
+three commas and the terminator. `notice_withdrawn_parse` (`notice_logic.c`, host-tested) takes
+only whole, lowercase ids and ignores everything else, so a header cut short or garbled names
+nothing it did not name in full. Past four ids it stops. The main task marks each held notice
+whose id is named; the UI task's next `svc_notice_service` pass drops it through the same removal
+as a notice past its answer window. The glass moves on exactly as it does for a lapsed notice: the
+next one takes its place, a sound it was playing stops, and its file goes on the main task's next
+housekeeping. **Nothing is said back**: no `dismissed`, no `expired`, because the box already
+knows. An id the panel does not hold is ignored, including one it has already dropped.
+
+**Not covered.** A notice whose stream tore and is waiting to be fetched again from `…/{id}/body`
+is not in the queue yet; its refetch gets the 404 a withdrawn body answers and is given up there,
+as any notice whose window closed.
+
+### The memory
+
+| | Cost |
+| --- | --- |
+| Static RAM | none: the queue entry's new flag sits in existing padding. |
+| Main task stack | 148 B more in each `box_reply_t` (one request's frame at a time), and the parsed ids (149 B) while a pickup's header is read. |
+| Debug snapshot | no new field. A withdrawn notice counts in `notice`'s `lapsed`, so the snapshot stays inside its 6.1 KB budget. |
+| App image | 0.0.25's 3,024,960 → 3,025,504 B (+544 B); only the app image and its sum move in `dist/`, so it is a pure app update over the air. |
+
+### What to check on the glass
+
+1. Send a test notice from the PWA, wait for it on the glass, then take it back: within a pickup
+   it leaves the glass with no sound and nothing on the box's side but `withdrawn`.
+2. With two notices held, take back the one not yet showing: the one on the glass stays, and the
+   badge drops by one.
+3. `notice`'s `lapsed` in the snapshot counts each one taken back.
+
 ## How it talks to the box
 
 The same protocol as the S3 panels, so the box needs no new route for it:
@@ -2468,7 +2511,8 @@ The same protocol as the S3 panels, so the box needs no new route for it:
 - **`GET {api}/endpoint/notice/next`**, **`GET …/{id}/body`** and **`POST …/{id}/state`** (since
   0.0.19) are the push notices: the oldest one waiting as a JN1 stream, the same stream again
   after a torn one, and what became of it on the glass; the debug pickup carries the notice switches
-  (`&na=…&tz=…`) and its answer `X-Notice` says when one waits ("What 0.0.19 adds").
+  (`&na=…&tz=…`) and its answer `X-Notice` says when one waits ("What 0.0.19 adds"), and
+  `X-Notice-Withdraw` which held ones the owner took back ("What 0.0.26 adds").
 - **`GET {api}/endpoint/convo/{agent}/speech/{turn_id}`**, **`GET …/history`** and **`GET
   {api}/endpoint/messages/{device}/history`** (since 0.0.21) are Listen and Load earlier; **`GET
   {api}/endpoint/panel-settings`** is the PWA's pending settings, fetched when the pickup's answer

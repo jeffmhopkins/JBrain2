@@ -88,6 +88,13 @@ class NoticeView:
     hide_after_s: int | None
     image: dict[str, Any] | None
     audio_ms: int | None
+    #: The pickup deadline while queued, the answer deadline once delivered.
+    expires_at: str | None = None
+    ttl_s: int = 0
+    chime: bool = False
+    #: What the panel draws: `picture` (the whole glass), `banner` (a picture over the words),
+    #: `question` (the card with answers), `plain` (the card alone).
+    kind: str = "plain"
 
     @property
     def final(self) -> bool:
@@ -366,14 +373,8 @@ class NoticeService:
                 (
                     await s.execute(
                         text(
-                            """
-                            SELECT id::text, device_id::text, sender, title, body, choices,
-                                   CASE WHEN state IN ('queued', 'delivered', 'shown')
-                                             AND expires_at <= now()
-                                        THEN 'expired' ELSE state END AS state,
-                                   answer, created_at, delivered_at, shown_at, finished_at,
-                                   hide_after_s, image_mode, image_w, image_h, image_bytes,
-                                   audio_ms
+                            f"""
+                            SELECT {_VIEW_COLS}
                             FROM app.panel_notice
                             WHERE id = CAST(:id AS uuid)
                               AND (CAST(:dev AS uuid) IS NULL OR device_id = CAST(:dev AS uuid))
@@ -385,38 +386,101 @@ class NoticeService:
                 .mappings()
                 .first()
             )
+        return None if row is None else _view(row)
+
+    async def history(
+        self, limit: int, device_id: str | None = None, sender: str = "owner"
+    ) -> list[NoticeView]:
+        """`sender`'s notices, newest first, to one panel or to any — the composer's "Sent to
+        this panel" and its history."""
+        if device_id is not None:
+            try:
+                uuid.UUID(device_id)
+            except ValueError:
+                return []
+        async with scoped_session(self._maker, _OWNER) as s:
+            rows = (
+                (
+                    await s.execute(
+                        text(
+                            f"""
+                            SELECT {_VIEW_COLS} FROM app.panel_notice
+                            WHERE sender = :sender
+                              AND (CAST(:dev AS uuid) IS NULL OR device_id = CAST(:dev AS uuid))
+                            ORDER BY created_at DESC
+                            LIMIT :limit
+                            """
+                        ),
+                        {"sender": sender, "dev": device_id, "limit": limit},
+                    )
+                )
+                .mappings()
+                .all()
+            )
+        return [_view(r) for r in rows]
+
+    async def image_png(self, notice_id: str, max_w: int) -> bytes | None:
+        """The notice's picture as the panel draws it, a PNG at most `max_w` wide; None when
+        there is no such notice, it has no picture, or its blob is already gone."""
+        try:
+            uuid.UUID(notice_id)
+        except ValueError:
+            return None
+        async with scoped_session(self._maker, _OWNER) as s:
+            row = (
+                await s.execute(
+                    text(
+                        "SELECT image_sha256, image_w, image_h FROM app.panel_notice"
+                        " WHERE id = CAST(:id AS uuid) AND image_sha256 IS NOT NULL"
+                    ),
+                    {"id": notice_id},
+                )
+            ).first()
         if row is None:
             return None
+        try:
+            blob = await self._blobs.get(str(row[0]))
+        except FileNotFoundError:
+            return None
+        w, h = int(row[1]), int(row[2])
 
-        def iso(v: datetime | None) -> str | None:
-            return v.isoformat() if v else None
+        def draw() -> bytes:
+            return N.png_of(N.picture_pixels(blob, w, h), w, h, max_w)
 
-        return NoticeView(
-            id=row["id"],
-            device_id=row["device_id"],
-            sender=row["sender"],
-            title=row["title"],
-            body=row["body"],
-            choices=list(row["choices"] or []),
-            state=row["state"],
-            answer=row["answer"],
-            created_at=row["created_at"].isoformat(),
-            delivered_at=iso(row["delivered_at"]),
-            shown_at=iso(row["shown_at"]),
-            finished_at=iso(row["finished_at"]),
-            hide_after_s=row["hide_after_s"],
-            image=(
-                {
-                    "mode": row["image_mode"],
-                    "w": row["image_w"],
-                    "h": row["image_h"],
-                    "bytes": row["image_bytes"],
-                }
-                if row["image_mode"]
-                else None
-            ),
-            audio_ms=row["audio_ms"],
-        )
+        return await asyncio.to_thread(draw)
+
+    async def withdraw(self, notice_id: str) -> NoticeView:
+        """Take an open notice back: queued, it is never delivered; delivered or shown, the
+        panel hears it on its next pickup (`withdrawn_ids`) and drops it without a word back.
+        Raises `NoticeRefused` 404 for no such notice, 409 for one that has already ended."""
+        try:
+            uuid.UUID(notice_id)
+        except ValueError:
+            raise N.NoticeRefused("no_such_notice", 404) from None
+        await self.sweep()
+        async with scoped_session(self._maker, _OWNER) as s:
+            done = (
+                await s.execute(
+                    text(
+                        """
+                        UPDATE app.panel_notice
+                        SET state = 'withdrawn', answer = NULL, finished_at = now()
+                        WHERE id = CAST(:id AS uuid)
+                          AND state IN ('queued', 'delivered', 'shown') AND expires_at > now()
+                        RETURNING id
+                        """
+                    ),
+                    {"id": notice_id},
+                )
+            ).first()
+            await s.commit()
+        view = await self.read(notice_id)
+        if view is None:
+            raise N.NoticeRefused("no_such_notice", 404)
+        if done is None:
+            raise N.NoticeRefused("already_finished", 409, state=view.state)
+        log.info("panel.notice_withdrawn", id=notice_id, device=view.device_id)
+        return view
 
     async def wait(
         self, notice_id: str, wait_s: float, device_id: str | None = None
@@ -445,17 +509,21 @@ class NoticeService:
                     """
                 )
             )
+            # The owner's own notices are his record of what he sent, kept a week; the rest a
+            # day (owner, 2026-10-14).
             gone = (
                 await s.execute(
                     text(
                         """
                         DELETE FROM app.panel_notice
-                        WHERE state IN ('answered', 'dismissed', 'expired')
-                          AND finished_at <= now() - make_interval(secs => :ttl)
+                        WHERE state IN ('answered', 'dismissed', 'expired', 'withdrawn')
+                          AND finished_at <= now() - make_interval(secs => CASE
+                              WHEN sender = 'owner' THEN CAST(:owner_ttl AS double precision)
+                              ELSE CAST(:ttl AS double precision) END)
                         RETURNING image_sha256, audio_sha256
                         """
                     ),
-                    {"ttl": N.RESULT_TTL_S},
+                    {"ttl": N.RESULT_TTL_S, "owner_ttl": N.OWNER_RESULT_TTL_S},
                 )
             ).all()
             shas = {str(sha) for row in gone for sha in row if sha}
@@ -594,6 +662,60 @@ class NoticeService:
         )
 
 
+_VIEW_COLS = """
+    id::text, device_id::text, sender, title, body, choices, chime, ttl_s,
+    CASE WHEN state IN ('queued', 'delivered', 'shown') AND expires_at <= now()
+         THEN 'expired' ELSE state END AS state,
+    answer, created_at, expires_at, delivered_at, shown_at, finished_at,
+    hide_after_s, image_mode, image_w, image_h, image_bytes, audio_ms
+"""
+
+
+def kind_of(image_mode: str | None, choices: Sequence[str]) -> str:
+    if image_mode == "full":
+        return "picture"
+    if image_mode == "banner":
+        return "banner"
+    return "question" if choices else "plain"
+
+
+def _view(row: Any) -> NoticeView:
+    def iso(v: datetime | None) -> str | None:
+        return v.isoformat() if v else None
+
+    choices = list(row["choices"] or [])
+    return NoticeView(
+        id=row["id"],
+        device_id=row["device_id"],
+        sender=row["sender"],
+        title=row["title"],
+        body=row["body"],
+        choices=choices,
+        state=row["state"],
+        answer=row["answer"],
+        created_at=row["created_at"].isoformat(),
+        delivered_at=iso(row["delivered_at"]),
+        shown_at=iso(row["shown_at"]),
+        finished_at=iso(row["finished_at"]),
+        hide_after_s=row["hide_after_s"],
+        image=(
+            {
+                "mode": row["image_mode"],
+                "w": row["image_w"],
+                "h": row["image_h"],
+                "bytes": row["image_bytes"],
+            }
+            if row["image_mode"]
+            else None
+        ),
+        audio_ms=row["audio_ms"],
+        expires_at=iso(row["expires_at"]),
+        ttl_s=int(row["ttl_s"]),
+        chime=bool(row["chime"]),
+        kind=kind_of(row["image_mode"], choices),
+    )
+
+
 _WIRE_COLS = (
     "id::text AS id, sender, title, body, choices, chime, hide_after_s, image_mode, image_w,"
     " image_h, image_sha256, audio_sha256, audio_ms, expires_at"
@@ -612,6 +734,23 @@ async def queued_count(session: AsyncSession) -> int:
         )
     ).scalar_one()
     return int(n)
+
+
+async def withdrawn_ids(session: AsyncSession) -> list[str]:
+    """The notices the panel whose session this is collected and the owner has since taken
+    back, while it could still be holding them — the `X-Notice-Withdraw` hint on its pickup.
+    The panel's own policy arm for them (migration 0249) is what lets it read these rows."""
+    rows = (
+        await session.execute(
+            text(
+                "SELECT id::text FROM app.panel_notice"
+                " WHERE state = 'withdrawn' AND delivered_at IS NOT NULL AND expires_at > now()"
+                " ORDER BY finished_at DESC LIMIT :n"
+            ),
+            {"n": N.WITHDRAW_HEADER_MAX},
+        )
+    ).all()
+    return [str(r[0]) for r in rows]
 
 
 async def _ffmpeg_pcm(data: bytes) -> bytes:

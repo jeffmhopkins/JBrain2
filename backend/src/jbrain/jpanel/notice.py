@@ -62,6 +62,12 @@ PICKUP_WINDOW_S = 60
 MAX_OPEN = 4
 #: Finished rows (and their picture and sound) are deleted this long after they finish.
 RESULT_TTL_S = 24 * 3600
+#: The owner's own notices, sent from the PWA's composer, are his history of what he sent, so
+#: they are kept a week (owner, 2026-10-14).
+OWNER_RESULT_TTL_S = 7 * 24 * 3600
+#: How many withdrawn ids one pickup names: the panel holds at most MAX_OPEN notices.
+WITHDRAW_HEADER_MAX = MAX_OPEN
+WITHDRAW_HEADER = "X-Notice-Withdraw"
 #: The long-poll ceiling, under the tunnel's ~100 s edge limit with a wide margin.
 MAX_WAIT_S = 25
 
@@ -98,9 +104,10 @@ _SENDER = re.compile(r"^(jerv|ops|owner|debug|workflow:[a-z0-9][a-z0-9_.-]{0,47}
 #: What the panel shows as the sender, at most this many bytes.
 SENDER_LABEL_BYTES = 32
 
-States = Literal["queued", "delivered", "shown", "answered", "dismissed", "expired"]
+States = Literal["queued", "delivered", "shown", "answered", "dismissed", "expired", "withdrawn"]
 OPEN_STATES = ("queued", "delivered", "shown")
-FINAL_STATES = ("answered", "dismissed", "expired")
+#: `withdrawn` is the owner taking a notice back (migration 0249); the panel never writes it.
+FINAL_STATES = ("answered", "dismissed", "expired", "withdrawn")
 
 
 class NoticeRefused(ValueError):
@@ -674,6 +681,74 @@ class WireError(ValueError):
     pass
 
 
+def _stripe(payload: bytes, w: int, h: int, want_row: int, pixels: list[int]) -> int:
+    """One STRIPE's runs onto `pixels`; the row the next stripe must start at."""
+    size = len(payload)
+    if size < 4:
+        raise WireError("stripe too short")
+    y0, rows = struct.unpack_from("<HH", payload)
+    if y0 != want_row or not rows or y0 + rows > h or rows > STRIPE_ROWS_MAX:
+        raise WireError(f"stripe at row {y0}, expected {want_row}")
+    left = rows * w
+    for i in range(4, size, 3):
+        k = payload[i] + 1
+        if i + 3 > size or k > left:
+            raise WireError(f"run overflows stripe at row {y0}")
+        (c,) = struct.unpack_from("<H", payload, i + 1)
+        pixels.extend([c] * k)
+        left -= k
+    if left:
+        raise WireError(f"stripe at row {y0} short by {left} pixels")
+    return y0 + rows
+
+
+def picture_pixels(blob: bytes, w: int, h: int) -> list[int]:
+    """A stored picture (`FittedImage.blob()`: STRIPE records only) back to rgb565 pixels,
+    checked the way `decode` checks them on the wire."""
+    pixels: list[int] = []
+    at, row = 0, 0
+    while at < len(blob):
+        if at + 3 > len(blob):
+            raise WireError("picture cut short")
+        kind, size = struct.unpack_from("<BH", blob, at)
+        payload = blob[at + 3 : at + 3 + size]
+        if kind != STRIPE or len(payload) != size:
+            raise WireError(f"record at {at} is not a whole STRIPE")
+        row = _stripe(payload, w, h, row, pixels)
+        at += 3 + size
+    if row != h:
+        raise WireError(f"picture ends at row {row} of {h}")
+    return pixels
+
+
+def png_of(pixels: list[int] | tuple[int, ...], w: int, h: int, max_w: int = SCREEN) -> bytes:
+    """rgb565 pixels as an RGB PNG, scaled down to `max_w` wide (never up): the owner's history
+    thumbnail and the composer's preview of what the panel will draw."""
+    from PIL import Image  # noqa: PLC0415 - only where a picture is read back
+
+    raw = bytearray(len(pixels) * 3)
+    for i, p in enumerate(pixels):
+        r, g, b = p >> 11, (p >> 5) & 0x3F, p & 0x1F
+        raw[3 * i] = (r << 3) | (r >> 2)
+        raw[3 * i + 1] = (g << 2) | (g >> 4)
+        raw[3 * i + 2] = (b << 3) | (b >> 2)
+    img = Image.frombytes("RGB", (w, h), bytes(raw))
+    if w > max_w:
+        img = img.resize((max_w, max(1, round(h * max_w / w))), Image.Resampling.LANCZOS)
+    out = io.BytesIO()
+    img.save(out, "PNG", optimize=True)
+    return out.getvalue()
+
+
+def preview_png(data: bytes, mode: ImageMode) -> tuple[FittedImage, bytes]:
+    """What the panel would draw for this picture — fitted, encoded, posterized if it had to
+    be — as a PNG, so the composer's Review shows the panel's colours, not the phone's."""
+    fitted = fit_image(data, mode)
+    return fitted, png_of(
+        picture_pixels(fitted.blob(), fitted.width, fitted.height), fitted.width, fitted.height
+    )
+
+
 @dataclass(frozen=True)
 class Decoded:
     notice: WireNotice
@@ -722,21 +797,7 @@ def decode(buf: bytes) -> Decoded:
         elif kind == CHOICE:
             choices.append(payload.decode())
         elif kind == STRIPE:
-            w, h = meta[5], meta[6]
-            y0, rows = struct.unpack_from("<HH", payload)
-            if y0 != want_row or not rows or y0 + rows > h or rows > STRIPE_ROWS_MAX:
-                raise WireError(f"stripe at row {y0}, expected {want_row}")
-            left = rows * w
-            for i in range(4, size, 3):
-                k = payload[i] + 1
-                if i + 3 > size or k > left:
-                    raise WireError(f"run overflows stripe at row {y0}")
-                (c,) = struct.unpack_from("<H", payload, i + 1)
-                pixels.extend([c] * k)
-                left -= k
-            if left:
-                raise WireError(f"stripe at row {y0} short by {left} pixels")
-            want_row = y0 + rows
+            want_row = _stripe(payload, meta[5], meta[6], want_row, pixels)
             n_stripes += 1
         elif kind == PCM:
             if size % 2:

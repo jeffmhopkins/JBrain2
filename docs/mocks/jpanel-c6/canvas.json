@@ -327,6 +327,111 @@
       "w": 390,
       "h": 844,
       "title": "44 \u00b7 PWA \u2014 panel offline: last report shown, a change waits on the box"
+    },
+    "PwaNoticeComposer.dc.html": {
+      "x": 0,
+      "y": 11587,
+      "w": 390,
+      "h": 844,
+      "title": "45 \u00b7 PWA \u2014 \"Send to panel\" on the display panel's card, with what was sent lately"
+    },
+    "PwaNoticeEmpty.dc.html": {
+      "x": 470,
+      "y": 11587,
+      "w": 390,
+      "h": 844,
+      "title": "46 \u00b7 Send to panel \u2014 empty: take a photo or choose one (both optional)"
+    },
+    "PwaNoticePhoto.dc.html": {
+      "x": 940,
+      "y": 11587,
+      "w": 390,
+      "h": 844,
+      "title": "47 \u00b7 Photo in \u2014 drag or pinch to frame it in the 480 \u00d7 480 square"
+    },
+    "PwaNoticeText.dc.html": {
+      "x": 1410,
+      "y": 11587,
+      "w": 390,
+      "h": 844,
+      "title": "48 \u00b7 Words on the photo \u2014 drag to place, size slider, four styles; drawn into the picture"
+    },
+    "PwaNoticeQuestion.dc.html": {
+      "x": 1880,
+      "y": 11587,
+      "w": 390,
+      "h": 844,
+      "title": "49 \u00b7 Ask a question \u2014 the picture becomes a 480 \u00d7 240 strip over it"
+    },
+    "PwaNoticeReview.dc.html": {
+      "x": 2350,
+      "y": 11587,
+      "w": 390,
+      "h": 844,
+      "title": "50 \u00b7 Review \u2014 exactly what the glass shows, chime, how long it stays, Send"
+    },
+    "PwaNoticeReviewQuestion.dc.html": {
+      "x": 0,
+      "y": 12511,
+      "w": 390,
+      "h": 844,
+      "title": "51 \u00b7 Review a question \u2014 waits for an answer up to 15 min by default"
+    },
+    "PwaNoticeWaiting.dc.html": {
+      "x": 470,
+      "y": 12511,
+      "w": 390,
+      "h": 844,
+      "title": "52 \u00b7 After Send \u2014 on the panel, waiting for a tap"
+    },
+    "PwaNoticeAnswered.dc.html": {
+      "x": 940,
+      "y": 12511,
+      "w": 390,
+      "h": 844,
+      "title": "53 \u00b7 Answered \"Yes\" on the panel"
+    },
+    "PwaNoticeRefused.dc.html": {
+      "x": 1410,
+      "y": 12511,
+      "w": 390,
+      "h": 844,
+      "title": "54 \u00b7 Turned away \u2014 night hours on the panel; the draft stays, Try again"
+    },
+    "PwaNoticeRefusals.dc.html": {
+      "x": 1880,
+      "y": 12511,
+      "w": 390,
+      "h": 844,
+      "title": "55 \u00b7 Every refusal, in words (offline, notices off, night hours, busy)"
+    },
+    "PwaNoticeHistory.dc.html": {
+      "x": 2350,
+      "y": 12511,
+      "w": 390,
+      "h": 844,
+      "title": "56 \u00b7 Sent to the panel \u2014 the last day, with how each one ended"
+    },
+    "NotifyPhoto.dc.html": {
+      "x": 0,
+      "y": 13435,
+      "w": 720,
+      "h": 720,
+      "title": "57 \u00b7 On the panel \u2014 your photo, \"Home soon!\" burned in, whole glass, hides after 20 s"
+    },
+    "NotifyPhotoQuestion.dc.html": {
+      "x": 800,
+      "y": 13435,
+      "w": 720,
+      "h": 720,
+      "title": "58 \u00b7 On the panel \u2014 your photo as a 240 px strip over \"Did the package come?\""
+    },
+    "NotifyWords.dc.html": {
+      "x": 1600,
+      "y": 13435,
+      "w": 720,
+      "h": 720,
+      "title": "59 \u00b7 On the panel \u2014 words only, drawn big on black"
     }
   },
   "order": [
@@ -374,7 +479,22 @@
     "PwaPanelSettings.dc.html",
     "PwaSettingsOpen.dc.html",
     "PwaSettingsWaiting.dc.html",
-    "PwaSettingsOffline.dc.html"
+    "PwaSettingsOffline.dc.html",
+    "PwaNoticeComposer.dc.html",
+    "PwaNoticeEmpty.dc.html",
+    "PwaNoticePhoto.dc.html",
+    "PwaNoticeText.dc.html",
+    "PwaNoticeQuestion.dc.html",
+    "PwaNoticeReview.dc.html",
+    "PwaNoticeReviewQuestion.dc.html",
+    "PwaNoticeWaiting.dc.html",
+    "PwaNoticeAnswered.dc.html",
+    "PwaNoticeRefused.dc.html",
+    "PwaNoticeRefusals.dc.html",
+    "PwaNoticeHistory.dc.html",
+    "NotifyPhoto.dc.html",
+    "NotifyPhotoQuestion.dc.html",
+    "NotifyWords.dc.html"
   ],
   "notes": {
     "states": {
@@ -390,6 +510,13 @@
       "text": "Proposed 2026-10-13: Listen, Load earlier, panel settings in the PWA",
       "kind": "title1",
       "maxW": 4000
+    },
+    "notices": {
+      "x": 0,
+      "y": 11507,
+      "text": "Proposed 2026-10-14: send a picture, words or a question to the panel from the PWA",
+      "kind": "title1",
+      "maxW": 2800
     }
   },
   "designSystems": []

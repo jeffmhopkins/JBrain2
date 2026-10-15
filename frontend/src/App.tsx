@@ -11,6 +11,7 @@ import { closeHomeBackLayer, useHomeBackDepth } from "./homeBack";
 import { type MapIntent, setMapOpener } from "./minecraftMapNav";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
+import { SEND_PATH } from "./panelNotice";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
 import { ControlScreen } from "./screens/ControlScreen";
@@ -126,7 +127,14 @@ const CARD_EXIT_MS = 150;
 
 export function App() {
   const [session, setSession] = useState<Session>({ status: "loading" });
-  const [card, setCard] = useState<Card | null>(null);
+  // `/panel/send` — the launcher shortcut, the share target and an iPhone home-screen icon —
+  // opens jpanel straight into Send to panel; `?shared=1` when a photo was shared to it.
+  const [panelSend] = useState(() =>
+    window.location.pathname === SEND_PATH
+      ? { shared: new URLSearchParams(window.location.search).has("shared") }
+      : undefined,
+  );
+  const [card, setCard] = useState<Card | null>(panelSend ? "jpanel" : null);
   // Minecraft is reached from the launcher AND from Ops' shortcut row; opened from Ops, its
   // back returns to Ops rather than home (the binding mock's "back to where you came from").
   const [minecraftFromOps, setMinecraftFromOps] = useState(false);
@@ -780,6 +788,7 @@ export function App() {
       {(card === "jpanel" || card === "endpoints") && (
         <JpanelScreen
           initialTab={card === "endpoints" ? "flash" : "messages"}
+          send={card === "jpanel" ? panelSend : undefined}
           onClose={() => setCard(null)}
         />
       )}

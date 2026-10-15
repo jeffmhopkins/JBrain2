@@ -3934,25 +3934,86 @@ export interface PanelAppearance {
 /** Whether a DISPLAY panel's spoken turns reach the owner's real Jerv and Minecraft_Dave — full
  *  tools and memory, as the owner (owner decision 2026-10-12). Off by default; the box refuses it
  *  for a pet panel (409), so the twins' units can never be given the agents. */
-/** A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2): what the PWA's test control
- *  sends, and what the box answers. */
+/** A notice on the owner's desk panel (JPANEL_C6_PLAN.md §2): what the PWA's composer sends,
+ *  and what the box answers. Text limits are UTF-8 bytes, checked on the box. */
 export interface PanelNoticeIn {
   device_id: string;
   title: string;
   body?: string;
   choices?: string[];
+  chime?: boolean;
+  /** 0: until tapped; omitted: 20 s for a plain notice, until answered for a question. */
+  hide_after_s?: number;
+  /** How long it may wait on the panel (an answer's window), 30 s - 24 h. */
+  ttl_s?: number;
+  image_b64?: string;
+  image_mode?: "full" | "banner";
 }
 
-/** `sent`, or the box's refusal (`offline`, `not_accepting`, `quiet_hours` with `until`,
- *  `no_notice_surface`, `busy`, …) with the HTTP status it came with. */
+/** `sent`, or the box's refusal (`offline` with `last_seen_s`, `not_accepting`, `quiet_hours`
+ *  with `until`, `no_notice_surface`, `busy`, a picture it cannot take, …) with the HTTP
+ *  status it came with and the rest of its detail. */
 export type PanelNoticeResult =
   | { sent: { id: string; panel: string } }
-  | { refused: { status: number; reason: string; until?: string } };
+  | {
+      refused: {
+        status: number;
+        reason: string;
+        until?: string;
+        last_seen_s?: number | null;
+      };
+    };
+
+export type PanelNoticeState =
+  | "queued"
+  | "delivered"
+  | "shown"
+  | "answered"
+  | "dismissed"
+  | "expired"
+  | "withdrawn";
 
 export interface PanelNoticeOut {
   id: string;
-  state: "queued" | "delivered" | "shown" | "answered" | "dismissed" | "expired";
+  device_id: string;
+  sender: string;
+  title: string;
+  body: string;
+  choices: string[];
+  state: PanelNoticeState;
   answer: string | null;
+  created_at: string;
+  delivered_at: string | null;
+  shown_at: string | null;
+  finished_at: string | null;
+  hide_after_s: number | null;
+  image: { mode: "full" | "banner"; w?: number; h?: number } | null;
+  audio_ms: number | null;
+  expires_at: string | null;
+  ttl_s: number;
+  chime: boolean;
+  /** What the panel draws: picture (the whole glass), banner, question or plain. */
+  kind: "picture" | "banner" | "question" | "plain";
+}
+
+export interface PanelNoticeList {
+  notices: PanelNoticeOut[];
+  /** How long the box keeps a finished one, in seconds. */
+  kept_s: number;
+}
+
+/** The picture as the panel will draw it, from the box's own encoder. */
+export interface PanelNoticePreview {
+  png_b64: string;
+  w: number;
+  h: number;
+  bytes: number;
+  posterize: number;
+}
+
+/** The notice's picture as the panel draws it, at most `w` wide. Immutable, so cacheable. */
+export function panelNoticeImageUrl(id: string, w: number): string {
+  return `/api/panel/notify/${encodeURIComponent(id)}/image?w=${w}`;
 }
 
 export interface PanelAgentAccess {
@@ -7069,11 +7130,13 @@ export const api = {
       detail && typeof detail === "object"
         ? (detail as { reason?: unknown; until?: unknown })
         : { reason: typeof detail === "string" ? detail : `HTTP ${response.status}` };
+    const seen = (refused as { last_seen_s?: unknown }).last_seen_s;
     return {
       refused: {
         status: response.status,
         reason: String(refused.reason ?? response.status),
         ...(typeof refused.until === "string" ? { until: refused.until } : {}),
+        ...(typeof seen === "number" ? { last_seen_s: seen } : {}),
       },
     };
   },
@@ -7081,6 +7144,34 @@ export const api = {
   async panelNotice(id: string, waitS: number): Promise<PanelNoticeOut> {
     const response = await request(`/api/panel/notify/${encodeURIComponent(id)}?wait=${waitS}`);
     return (await response.json()) as PanelNoticeOut;
+  },
+
+  async panelNotices(deviceId: string, limit = 100): Promise<PanelNoticeList> {
+    const q = `device_id=${encodeURIComponent(deviceId)}&limit=${limit}`;
+    const response = await request(`/api/panel/notify?${q}`);
+    return (await response.json()) as PanelNoticeList;
+  },
+
+  async previewPanelNotice(imageB64: string, mode: "full" | "banner"): Promise<PanelNoticePreview> {
+    const response = await request(
+      "/api/panel/notify/preview",
+      jsonInit("POST", { image_b64: imageB64, image_mode: mode }),
+    );
+    return (await response.json()) as PanelNoticePreview;
+  },
+
+  /** Unsend. A notice that has already ended answers 409 `already_finished`; the caller reads
+   *  it again rather than treating that as a failure. */
+  async withdrawPanelNotice(id: string): Promise<PanelNoticeOut> {
+    const response = await request(
+      `/api/panel/notify/${encodeURIComponent(id)}/withdraw`,
+      jsonInit("POST", {}),
+    );
+    return (await response.json()) as PanelNoticeOut;
+  },
+
+  async panelNoticeImage(id: string, w: number): Promise<Blob> {
+    return (await request(panelNoticeImageUrl(id, w))).blob();
   },
 
   async setPanelAgentAccess(deviceId: string, agentAccess: boolean): Promise<PanelAgentAccess> {
