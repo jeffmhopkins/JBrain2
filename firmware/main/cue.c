@@ -225,6 +225,9 @@ static const float TUNE_LEN[3][STEPS_MAX] = {
     {1.0f, 0.0f, 0.0f, 0.0f},
 };
 
+/* Each phrase of the song is two beats (`RIG_BDAY_BEAT_MS`). */
+#define BDAY_PHRASE_MS ((uint16_t)(2.0f * RIG_BDAY_BEAT_MS))
+
 /* Ordered exactly as `cue_t` declares them. */
 /* --- THE FIVE FARTS -------------------------------------------------------------------
  *
@@ -388,9 +391,9 @@ static const cue_def_t DEF[CUE_COUNT] = {
        first line, G G A G C B from G4, in three cues because one cannot run past 0.8 s: the
        panel plays them at the action's re-cue points (`rig_recue`). Square beeps, each note
        detached, which is what makes it the panel singing rather than a recording. */
-    [CUE_BDAY_1] = {SH_TUNE, 680, 392.0f, 0.5f, 0, 0, {0, 0, 2, END}, 4, 0},
-    [CUE_BDAY_2] = {SH_TUNE, 640, 392.0f, 0.5f, 0, 0, {0, 5, END}, 4, 0},
-    [CUE_BDAY_3] = {SH_TUNE, 700, 392.0f, 0.5f, 0, 0, {4, END}, 4, 0},
+    [CUE_BDAY_1] = {SH_TUNE, BDAY_PHRASE_MS, 392.0f, 0.5f, 0, 0, {0, 0, 2, END}, 4, 0},
+    [CUE_BDAY_2] = {SH_TUNE, BDAY_PHRASE_MS, 392.0f, 0.5f, 0, 0, {0, 5, END}, 4, 0},
+    [CUE_BDAY_3] = {SH_TUNE, BDAY_PHRASE_MS, 392.0f, 0.5f, 0, 0, {4, END}, 4, 0},
     /* THE GAME. Go: a quick rising triad, the start of a race. A dodge: the lightest thing
        that still says "point", an upward chirp, since a run of them is the soundtrack. A hit:
        low and falling, two voices rubbing, the bump and the "aww". */
@@ -583,7 +586,10 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
        so pitch variation silently did nothing for exactly the three cues whose character is
        noise, and they repeated identically within a stretch bucket. The noise clock is their
        pitch; it varies with the same number. */
-    const float vary = exp2f(variant_semitones(variant) / 12.0f);
+    /* A tune is never stretched (`cue_render`), so the stretch's turn of the table moves its
+       key instead, or every eighth birthday would be sung exactly as the first. */
+    const unsigned kv = cue_is_tune(c) ? variant + variant / 8u : variant;
+    const float vary = exp2f(variant_semitones(kv) / 12.0f);
     const float base = d->hz * vary;
     const float dur = (float)n * 1000.0f / (float)rate;
     osc_t a = {0.0f}, b = {0.0f};
@@ -792,8 +798,10 @@ static float cue_pass(cue_t c, int n, int rate, unsigned variant, int16_t *out, 
 int cue_render(cue_t c, int16_t *out, int rate, int gain, unsigned variant)
 {
     if (c < 0 || c >= CUE_COUNT || out == NULL || rate <= 0) return 0;
-    const int n =
-    (int)(cue_ms(c, variant) * variant_stretch(variant) * (float)rate / 1000.0f + 0.5f);
+    /* A tune keeps its beat: its pieces are cued on a clock (`RIG_BDAY_AT_2`), so a stretched
+       one would leave a gap at the join or be cut in its last note. */
+    const float stretch = cue_is_tune(c) ? 1.0f : variant_stretch(variant);
+    const int n = (int)(cue_ms(c, variant) * stretch * (float)rate / 1000.0f + 0.5f);
     if (n <= 0 || n > CUE_MAX_SAMPLES) return 0;
 
     /* PEAK-NORMALISE BY MEASUREMENT, not arithmetic. The naive bound (the sum of the

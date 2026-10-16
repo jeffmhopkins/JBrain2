@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-15
+> **Status:** Living · **Last verified:** 2026-10-16
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -189,6 +189,16 @@ reaches him is a tickle rather than the zone's pool, the first four a giggle and
 laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during the fit
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
+
+**0.4.16: a gentler game, and the song on one beat.** Owner: *"object speed in the game need to
+start out at 1/3 current speed"*, and *"happy birthday was a little slow and jumpy"*. The things
+to dodge now start at a third of the old 70 px/s (`GAME_START_SPEED`) and climb at the same
+5.5 px/s each second, so the old starting speed arrives about eight seconds in. The song was
+three phrases of uneven length cued 0.84 s apart, so each join left a 110-160 ms hole and the
+variant stretch moved them further. Each phrase is now exactly two beats of `RIG_BDAY_BEAT_MS`
+(320 ms, the line 1.9 s instead of 2.4 s), a tune is never stretched (its variant moves the key
+instead), and the next phrase is cued 30 ms early, inside the silence that ends every note, so the
+latency of the frame and the render lands it on the beat. He hops on the same beat.
 
 **0.4.15: the game plays on, the hit sounds at once, the song is whole.** Owner, after playing
 it: *"when the pet is hit by an object, it pauses for a good while before it makes the noise"*;

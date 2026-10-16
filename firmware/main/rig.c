@@ -38,7 +38,7 @@ static const action_spec_t SPECS[ACT_COUNT] = {
     [ACT_BRACE] = {1600, FACE_EXCITED, 0},
     [ACT_TICKLED] = {1100, FACE_HAPPY, 0},
     [ACT_MEGAFART] = {7000, FACE_BEWILDERED, 0},
-    [ACT_BIRTHDAY] = {7000, FACE_HAPPY, 0},
+    [ACT_BIRTHDAY] = {(int)RIG_BDAY_MS, FACE_HAPPY, 0},
 };
 
 /* SITTING DOWN: in over the first eighth, held, up over the last. Shared by the legs and the
@@ -153,10 +153,14 @@ static float mega_amount(float p)
 }
 
 /* SINGING: a little hop on every note of the song, and arms up from the last ("you") on.
-   The notes' onsets, as progress through the 7 s: G G A | G C | B. */
+   The notes' onsets, in beats: G G A | G C | B, "hap-py" the dotted pickup. */
 static float bday_hop(float p)
 {
-    static const float NOTE[] = {0.0f, 0.0364f, 0.0486f, 0.12f, 0.1686f, 0.24f};
+    static const float BEATS[] = {0.0f, 0.75f, 1.0f, 2.0f, 3.0f, 4.0f};
+    float NOTE[sizeof(BEATS) / sizeof(BEATS[0])];
+    for (unsigned i = 0; i < sizeof(BEATS) / sizeof(BEATS[0]); i++) {
+        NOTE[i] = BEATS[i] * RIG_BDAY_BEAT_MS / RIG_BDAY_MS;
+    }
     float h = 0.0f;
     for (unsigned i = 0; i < sizeof(NOTE) / sizeof(NOTE[0]); i++) {
         const float d = (p - NOTE[i]) / 0.025f;
