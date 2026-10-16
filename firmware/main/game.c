@@ -176,10 +176,11 @@ int game_level(const game_t *g, uint32_t now)
 }
 
 /* SLOW, THEN NOT. Speed and the rate they come both climb with the time survived: gentle for
-   a four-year-old's first ten seconds, a real test by the end of a minute. */
+   a four-year-old's first ten seconds, a real test by the end of a minute. The climb is 0.4.14's
+   own, from a slower start: today's first speed comes about eight seconds in. */
 static float spawn_speed(float t)
 {
-    const float v = 70.0f + t * 5.5f;
+    const float v = GAME_START_SPEED + t * 5.5f;
     return v < 300.0f ? v : 300.0f;
 }
 

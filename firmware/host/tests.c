@@ -1404,9 +1404,16 @@ static void test_happy_birthday_sings_with_a_hat_and_confetti(void)
             const int n = cue_render((cue_t)(CUE_BDAY_1 + k), buf, CUE_RATE, 100, var);
             CHECK(n > 0, "every phrase renders");
             if (k < 2) {
-                CHECK((float)n / (float)CUE_RATE < (at[k + 1] - at[k]) * (float)dur / 1000.0f,
-                      "a phrase ends before the next begins");
+                /* The next is cued just before this one ends, into its last note's breath: what
+                   that cuts is already silence, and the gap at the join is a note's own. */
+                const int due = (int)lrintf((at[k + 1] - at[k]) * (float)dur / 1000.0f * CUE_RATE);
+                bool quiet = true;
+                for (int i = due; i < n; i++) quiet = quiet && buf[i] == 0;
+                CHECK(quiet, "the next phrase cuts only the silence ending this one");
+                CHECK(due <= n && n - due < CUE_RATE / 25, "and is due within a frame of its end");
             }
+            CHECK(n == (int)lrintf(2.0f * RIG_BDAY_BEAT_MS * CUE_RATE / 1000.0f),
+                  "two beats, every time: a tune is never stretched");
         }
     }
     /* THE NOTES: G G A | G C | B, counted as separate beeps. "Hap-py" is two notes on one
@@ -1567,6 +1574,33 @@ static void test_the_dodging_game(void)
     }
     CHECK(ne > 30 && nl > 30, "enough of them to compare");
     CHECK(late / (float)nl > 1.6f * (early / (float)ne), "and the late ones are much faster");
+
+    /* AND THEY START SLOW: a third of 0.4.14's first speed (owner, 0.4.16). */
+    {
+        CHECK(fabsf(GAME_START_SPEED * 3.0f - 70.0f) < 0.01f, "a third of what it was");
+        float lo = 1e9f, hi = 0.0f;
+        for (uint32_t seed = 1; seed < 40; seed++) {
+            game_t q;
+            game_reset(&q);
+            game_start(&q, 0, seed, 0.0f, 20.0f);
+            uint32_t u;
+            for (u = 0; u <= GAME_WALK_MS; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+            const uint32_t r0 = q.since;
+            for (u = r0; u < r0 + GAME_READY_MS + 2000 && q.phase == GAME_PLAY; u += 40) {
+                game_step(&q, u, 40, 0, 0, hw, hh);
+                for (int i = 0; i < GAME_MAX_OBJ; i++) {
+                    if (!q.obj[i].live) continue;
+                    const float sp = hypotf(q.obj[i].vx, q.obj[i].vy);
+                    lo = fminf(lo, sp);
+                    hi = fmaxf(hi, sp);
+                    q.obj[i].live = false;
+                }
+            }
+        }
+        CHECK(hi > 0.0f && lo >= GAME_START_SPEED * 0.84f &&
+                  hi <= (GAME_START_SPEED + 2.0f * 5.5f) * 1.16f,
+              "the first ones come at a third of the old speed");
+    }
 
     /* FROM ALL FOUR SIDES, AND ALL TWELVE KINDS, SPINNING. */
     int sides = 0, kinds = 0;
@@ -4007,6 +4041,8 @@ static void test_no_two_cues_are_the_same_sound(void)
     }
     for (int i = 0; i < CUE_COUNT; i++) {
         for (int j = i + 1; j < CUE_COUNT; j++) {
+            /* The song's phrases are one sound in pieces, two beats each since 0.4.16. */
+            if (cue_is_tune((cue_t)i) && cue_is_tune((cue_t)j)) continue;
             const float rr = rate[i] > rate[j] ? rate[i] / rate[j] : rate[j] / rate[i];
             const float dl = low[i] > low[j] ? low[i] - low[j] : low[j] - low[i];
             const int dn = len[i] > len[j] ? len[i] - len[j] : len[j] - len[i];

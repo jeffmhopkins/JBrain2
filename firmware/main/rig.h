@@ -162,11 +162,19 @@ typedef struct {
     float reach;
 } figure_pose_t;
 
-/* HAPPY BIRTHDAY's three phrases start at 0, and at these points of the 7 s action, 0.84 s
-   apart: no phrase runs past 0.70 s (0.75 at its longest variant), so the next always finds the
-   speaker free. `cue_for_action_at` picks the phrase from the same numbers. */
-#define RIG_BDAY_AT_2 0.12f
-#define RIG_BDAY_AT_3 0.24f
+/* HAPPY BIRTHDAY'S BEAT AND ITS THREE PHRASES. Two beats each, "hap-py birth" | "day to" | "you",
+   so a phrase's end is the next note's start and the line runs on one beat with no seams
+   (owner, 0.4.16: "a little slow and jumpy" — 0.4.14's phrases left a gap of 110-160 ms at each
+   join, and rode its stretch). The next phrase is cued RIG_BDAY_LEAD_MS before the last ends,
+   inside the breath of silence that ends every note (`SH_TUNE`), so the frame, the render and
+   the speaker's tick that it waits on land it on the beat rather than after it. The 7 s action
+   is the confetti; the line is its first two seconds. `cue_for_action_at` picks the phrase from
+   the same numbers. */
+#define RIG_BDAY_BEAT_MS 320.0f
+#define RIG_BDAY_LEAD_MS 30.0f
+#define RIG_BDAY_MS 7000.0f
+#define RIG_BDAY_AT_2 ((2.0f * RIG_BDAY_BEAT_MS - RIG_BDAY_LEAD_MS) / RIG_BDAY_MS)
+#define RIG_BDAY_AT_3 ((4.0f * RIG_BDAY_BEAT_MS - RIG_BDAY_LEAD_MS) / RIG_BDAY_MS)
 
 /* AN ACTION LONGER THAN ITS SOUND SAYS IT AGAIN. A cue is at most `CUE_MAX_MS` (0.8 s), which a
    four-second laugh outlasts several times over, so the tickle laughs again as it goes. True on
