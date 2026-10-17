@@ -120,7 +120,9 @@ ensure_uv() {
 # Public Suffix List behind the browse tool's fetch-first gate, docs/plans/BROWSER_AGENT_PLAN.md
 # B1), guarded by tests/unit/test_browse_gate.py; and `regex` (a pattern engine with a
 # per-call timeout, for web_fetch's search across a GitHub repo snapshot,
-# docs/archive/GITHUB_FETCH_PLAN.md), guarded by tests/unit/test_web_github.py. All are pure pip deps
+# docs/archive/GITHUB_FETCH_PLAN.md), guarded by tests/unit/test_web_github.py; and `cryptography`
+# (the owner tunnel's CAs, TLS leaf and device-CSR signing, docs/plans/OWNER_TUNNEL_PLAN.md
+# §3.1), guarded by tests/unit/test_owner_keys.py. All are pure pip deps
 # synced here (yt-dlp reuses the ffmpeg installed above); the smoke tests enforce CLAUDE.md
 # rule #8.
 #

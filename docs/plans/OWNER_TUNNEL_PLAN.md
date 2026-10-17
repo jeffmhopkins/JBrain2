@@ -299,7 +299,12 @@ cookie).
   `owner_devices` + RLS isolation test; the §3.5 arm route, the wall's loopback QR view, the
   enroll route and the home-subnet setting; device- and user-bound sessions in the repo lookup;
   Settings → Devices; the public-base-URL setting and the link builders that use it. Security
-  paths at 100% coverage.
+  paths at 100% coverage. Built in five PRs: **A1 keys ✅** (`jbrain/owner_tunnel/keys.py`,
+  the `owner_keys` and `owner_site` volumes, the `owner-keys ensure` one-shot in update and
+  install; the owner CA carries a name constraint to the owner host), A2 the owner site in
+  Caddy, A3 devices and bound sessions, A4 enrollment, A5 Settings → Devices and the
+  public-base-URL links. Still owed from §3.1: the two key volumes in the box backup and
+  restore.
 - **B — box: the tunnel gateway. ◻️** §3.3 with nonce auth, drain and keepalive, the kick
   registry, limits, debug-API counters, a throughput check. Tests with a fake device key
   against real Caddy.

@@ -326,6 +326,16 @@ async def _local_llm_smoketest(engine: str = "standard") -> int:
     return 0 if ok else 1
 
 
+def _owner_keys_ensure() -> int:
+    from jbrain.owner_tunnel import keys
+    from jbrain.storage import FsOwnerKeyFiles
+
+    settings = get_settings()
+    made = keys.ensure(FsOwnerKeyFiles(settings.owner_keys_dir, settings.owner_site_dir))
+    print(f"[owner-keys] made: {', '.join(made)}" if made else "[owner-keys] all current")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jbrain-cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -376,6 +386,11 @@ def main(argv: list[str] | None = None) -> int:
         help="turn the Fast-Qwen-loads patch on/off (the update script clears it on a bad build)",
     )
     p_set_patch.add_argument("state", choices=["on", "off"])
+    p_keys = sub.add_parser(
+        "owner-keys",
+        help="make the owner tunnel's CAs and renew its site certificate (run by every update)",
+    )
+    p_keys.add_argument("action", choices=["ensure"])
     args = parser.parse_args(argv)
 
     if args.command in ("init", "reset-owner-key"):
@@ -413,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "set-local-llm-patch-restore-checkpoint":
         asyncio.run(_set_patch_restore_checkpoint(args.state == "on"))
         return 0
+    if args.command == "owner-keys":
+        return _owner_keys_ensure()
     return 1
 
 

@@ -67,6 +67,9 @@ dependencies = [
     # lump every UK site together (docs/plans/BROWSER_AGENT_PLAN.md B1). Already present
     # through trafilatura → courlan; declared because the gate imports it directly.
     "tld>=0.13",
+    # X.509 for the owner tunnel: the box's owner and enrollment CAs, the owner site's TLS
+    # leaf, and signing device CSRs (docs/plans/OWNER_TUNNEL_PLAN.md §3.1).
+    "cryptography>=50.0.2",
 ]
 
 [project.optional-dependencies]

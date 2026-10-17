@@ -254,6 +254,11 @@ services:
       # `.env` key and no host step. The image pre-owns the mount point, so a fresh volume
       # is writable by the non-root app.
       - internal_secrets:/run/jbrain-internal
+      # The owner tunnel's keys (docs/plans/OWNER_TUNNEL_PLAN.md §3.1), written by the
+      # `owner-keys ensure` one-shot each update. `owner_keys` holds the CA private keys and
+      # is mounted nowhere else; `owner_site` is what the proxy will read.
+      - owner_keys:/run/jbrain-owner-keys
+      - owner_site:/run/jbrain-owner-site
     # `jcode_fenced`: the api proxies the owner's code-mode control surface to the jcode
     # control server (http://jcode:9100), which lives ONLY on that fenced network — so
     # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy
@@ -1348,6 +1353,10 @@ volumes:
   # The /internal callers' tokens (see the api service). Not backed up: the api mints
   # fresh ones into an empty volume on its next start.
   internal_secrets:
+  # The owner tunnel's CA keys (api only) and the owner site's TLS files (api writes, the
+  # proxy reads). See the api service.
+  owner_keys:
+  owner_site:
   db_data:
   caddy_data:
   caddy_config:
