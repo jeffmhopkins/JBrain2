@@ -297,3 +297,66 @@ class FsInternalSecrets:
             return None
         self._cache[name] = data
         return data
+
+
+#: Every owner-tunnel key file, and which volume holds it. A CA private key lives only in the
+#: api's private volume; the owner site's own key and the public certificates live in the
+#: volume the internet-facing Caddy mounts read-only, so Caddy never holds a key that could
+#: mint a certificate (docs/plans/OWNER_TUNNEL_PLAN.md §3.1).
+OWNER_KEY_FILES: dict[str, bool] = {
+    "owner-ca.key": True,
+    "enroll-ca.key": True,
+    "owner-ca.crt": False,
+    "enroll-ca.crt": False,
+    "site.crt": False,
+    "site.key": False,
+}
+
+
+class OwnerKeyFiles(Protocol):
+    """The owner tunnel's CA and site key material, by fixed file name."""
+
+    def read(self, name: str) -> bytes | None:
+        """The file's bytes, or None when it does not exist."""
+        ...
+
+    def write(self, name: str, data: bytes) -> None:
+        """Replace the file whole; a reader sees the old bytes or the new, never a mix."""
+        ...
+
+
+class FsOwnerKeyFiles:
+    def __init__(self, private_root: str | Path, shared_root: str | Path):
+        self._private = Path(private_root)
+        self._shared = Path(shared_root)
+
+    def _path(self, name: str) -> Path:
+        private = OWNER_KEY_FILES.get(name)
+        if private is None:
+            raise ValueError(f"not an owner key file: {name!r}")
+        return (self._private if private else self._shared) / name
+
+    def read(self, name: str) -> bytes | None:
+        try:
+            return self._path(name).read_bytes()
+        except FileNotFoundError:
+            return None
+
+    def write(self, name: str, data: bytes) -> None:
+        target = self._path(name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Private keys are 0600 even in the shared volume: Caddy reads them as root.
+        mode = 0o600 if name.endswith(".key") else 0o644
+        tmp = target.parent / f".{name}.{secrets.token_hex(8)}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
+        try:
+            os.fchmod(fd, mode)
+            os.write(fd, data)
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            os.replace(tmp, target)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            tmp.unlink(missing_ok=True)

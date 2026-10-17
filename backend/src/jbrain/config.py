@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     # ships with the same update as the code that checks it — no `.env` key, no second
     # update (docs/archive/SECURITY_REVIEW_FIXES_PLAN.md S2.2).
     internal_secrets_dir: str = "/run/jbrain-internal"
+    # The owner tunnel's key material (docs/plans/OWNER_TUNNEL_PLAN.md §3.1): CA private
+    # keys in an api-only volume, the owner site's key and the certificates in a volume the
+    # proxy mounts read-only.
+    owner_keys_dir: str = "/run/jbrain-owner-keys"
+    owner_site_dir: str = "/run/jbrain-owner-site"
     embed_url: str = "http://embed:80"
     embed_model: str = "BAAI/bge-small-en-v1.5"
 

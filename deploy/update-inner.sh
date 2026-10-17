@@ -1060,6 +1060,14 @@ fi
 echo "[update] running migrations"
 docker compose run --rm migrate
 
+# The owner tunnel's CAs and site certificate (docs/plans/OWNER_TUNNEL_PLAN.md §3.1), made
+# or renewed before the recreate so the proxy finds them on start. Never fatal: until
+# they exist the owner site is simply not served, and the public site does not depend on
+# them.
+if ! docker compose run --rm --no-deps -T api python -m jbrain.cli owner-keys ensure; then
+  echo "[update] WARNING: owner-keys ensure failed; the owner site stays as it was"
+fi
+
 echo "[update] restarting stack"
 docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d
 

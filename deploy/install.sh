@@ -172,6 +172,10 @@ done
 say "Running migrations"
 docker compose run --rm migrate
 
+# The owner tunnel's CAs (docs/plans/OWNER_TUNNEL_PLAN.md §3.1); every update re-runs it.
+docker compose run --rm --no-deps -T api python -m jbrain.cli owner-keys ensure \
+  || say "Owner tunnel keys not made; the next update retries"
+
 say "Starting the stack"
 docker compose "${PROFILE[@]}" up -d
 
