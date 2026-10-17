@@ -153,13 +153,24 @@ class EnrollmentWindow:
         if window is None or window.claimed or not matches(window.code):
             return None
         window.claimed = True
+        # The phone's insert is in flight; a claim in the window's last moment must not
+        # lapse before its words are recorded for the owner to compare.
+        window.expires_at = max(window.expires_at, self._now() + WINDOW)
         return Claim(window)
+
+    def in_use(self) -> bool:
+        """A phone has spent the code: its words are pending or showing, for the box only
+        to clear."""
+        window = self._live()
+        return window is not None and window.claimed
 
     def record(self, claim: "Claim", enrolled: Enrolled) -> None:
         """Show the new phone's fingerprint for the rest of the window it was claimed from.
         Never another one: the window may have been re-armed and claimed by a second phone
         while this one's insert was in flight, and the owner must see that phone's words."""
-        if self._live() is claim.window:
+        # Identity, not `_live()`: a claim is recorded once, so this can extend a window at
+        # most once, and a slow insert past expiry still shows its words.
+        if self._window is claim.window:
             claim.window.enrolled = enrolled
             # A phone that enrolled in the window's last seconds still gets a full window
             # for the owner to compare the words and reject a mismatch.
@@ -168,7 +179,7 @@ class EnrollmentWindow:
     def abandon(self, claim: "Claim") -> None:
         """The claimed enrollment failed: close its window so the screen asks for a new one
         rather than sitting on "armed" with no code."""
-        if self._live() is claim.window:
+        if self._window is claim.window:
             self._window = None
 
 

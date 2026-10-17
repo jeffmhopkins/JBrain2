@@ -169,7 +169,7 @@ async def arm_enrollment(_owner: OwnerDep, window: EnrollmentWindowDep) -> ArmOu
     """Open the window for the box's screen to show a QR. Reveals nothing, so it answers on
     any site. Except over a phone just added: only someone at the box may clear its words
     (a key there), or a stolen session could wipe them before the owner compares."""
-    if window.snapshot().state == "enrolled":
+    if window.in_use():
         raise HTTPException(
             status_code=409, detail="a phone was just added; compare its words at the box first"
         )
@@ -249,6 +249,9 @@ async def enroll(
     except AlreadyEnrolled as exc:
         window.abandon(claim)
         raise HTTPException(status_code=409, detail="this phone's key is already enrolled") from exc
+    except BaseException:
+        window.abandon(claim)
+        raise
     words = enrollment.fingerprint(issued.key_hash)
     window.record(claim, enrollment.Enrolled(device.id, words))
     # The words are not covered: the app reads them off its own key, never this reply.

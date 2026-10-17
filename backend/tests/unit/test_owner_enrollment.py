@@ -122,10 +122,19 @@ def test_a_late_record_never_lands_on_another_window() -> None:
     assert window.snapshot().enrolled is None
     window.record(second, Enrolled("dev-1", ("second",)))
     assert window.snapshot().enrolled == Enrolled("dev-1", ("second",))
-    # Nor on a window that has lapsed.
-    clock.now += 2 * enrollment.WINDOW
-    window.record(second, Enrolled("dev-1", ("second",)))
-    assert window.snapshot().state == "idle"
+
+
+def test_a_claim_at_the_last_moment_still_shows_its_words() -> None:
+    clock = _Clock()
+    window = EnrollmentWindow(clock)
+    window.arm()
+    clock.now += enrollment.WINDOW - dt.timedelta(milliseconds=1)
+    claim = window.claim(lambda _c: True)
+    assert claim is not None
+    clock.now += dt.timedelta(seconds=1)
+    assert window.in_use()
+    window.record(claim, Enrolled("dev-0", ("late",)))
+    assert window.snapshot().enrolled == Enrolled("dev-0", ("late",))
 
 
 def test_a_failed_enrollment_closes_only_its_own_window() -> None:
@@ -508,6 +517,31 @@ def test_arming_is_owner_only(box: _Box) -> None:
     assert box.window.snapshot().state == "idle"
 
 
+def test_a_session_cannot_arm_over_an_enrollment_in_flight(box: _Box) -> None:
+    # Between the claim and the record (the phone's insert in flight) the screen shows no
+    # code yet, but a re-arm would drop the words before they reach it.
+    _armed(box)
+    claim = box.window.claim(lambda _c: True)
+    assert claim is not None
+    resp = box.client.post("/api/owner-devices/enroll/arm", headers=box.owner())
+    assert resp.status_code == 409
+    box.window.record(claim, Enrolled("dev-0", ("words",)))
+    assert box.window.snapshot().state == "enrolled"
+
+
+def test_an_unexpected_failure_closes_the_window(
+    box: _Box, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def create(label: str, key_hash: str, public_key: bytes) -> Any:
+        raise RuntimeError("database gone")
+
+    monkeypatch.setattr(box.phones, "create", create)
+    code = _armed(box)
+    with pytest.raises(RuntimeError):
+        box.enroll(_csr()[0], code)
+    assert box.window.snapshot().state == "idle"
+
+
 def test_only_the_box_can_arm_over_words_waiting_to_be_compared(box: _Box) -> None:
     assert box.enroll(_csr()[0], _armed(box)).status_code == 200
     resp = box.client.post("/api/owner-devices/enroll/arm", headers=box.owner())
@@ -622,7 +656,11 @@ def test_the_box_keyboard_arms_and_closes(box: _Box) -> None:
 def test_a_mismatch_on_the_screen_revokes_the_phone(box: _Box) -> None:
     assert box.client.post("/internal/owner-enroll/reject", headers=box.wall()).status_code == 404
     assert box.enroll(_csr()[0], _armed(box)).status_code == 200
+    # Whatever the phone has open over the owner site is woken to be re-checked.
+    woken = asyncio.Event()
+    box.app.state.owner_device_watchers = {box.phones.devices[0].id: {woken}}
     assert box.client.post("/internal/owner-enroll/reject", headers=box.wall()).status_code == 204
+    assert woken.is_set()
     assert box.phones.devices[0].revoked_at is not None
     assert box.window.snapshot().state == "idle"
 

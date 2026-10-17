@@ -50,8 +50,9 @@ API_URL = os.environ.get("BRAIN_API_URL", "http://api:8000")
 # The wall's own bearer for the api's /internal/pet* routes. The api mints it into the shared
 # `internal_secrets` volume, mounted read-only here, and it opens nothing but the pet routes
 # (the wall faces the LAN). The owner-phone enrollment screen takes a separate token from the
-# `enroll_secrets` volume (docs/plans/OWNER_TUNNEL_PLAN.md §3.5), wired in wave A4b. Read on every call: the api may
-# mint it after this server starts, and a missing file only means the api refuses the call.
+# `enroll_secrets` volume (docs/plans/OWNER_TUNNEL_PLAN.md §3.5), wired in wave A4b. Read on
+# every call: the api may mint it after this server starts, and a missing file only means
+# the api refuses the call.
 WALL_TOKEN_FILE = Path(os.environ.get("BRAIN_WALL_TOKEN_FILE", "/run/jbrain-internal/wall.token"))
 
 # Each problem is printed once until it clears, so a 1 Hz pet poll can't flood the log.
