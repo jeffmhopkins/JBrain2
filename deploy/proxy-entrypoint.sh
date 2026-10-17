@@ -11,10 +11,12 @@ set -eu
 # The owner site's files are only checked for existence above. A key and certificate that
 # do not match (a crash between their two writes, a partial restore) would stop Caddy
 # loading at all and take the public and LAN sites down with it, so a config that does
-# not validate with the owner site in it runs without it.
+# not validate with the owner site in it runs without it. This checks the site certificate
+# and key; a bad enroll-ca.crt still validates but fails closed (every phone is refused).
 if [ -e /etc/caddy/owner/owner.caddy ] \
-	&& ! caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-	echo "proxy: owner site config does not validate; serving without it" >&2
+	&& ! out=$(caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1); then
+	echo "proxy: config does not validate with the owner site; trying without it:" >&2
+	printf '%s\n' "$out" | tail -n 1 >&2
 	rm -f /etc/caddy/owner/owner.caddy
 fi
 
