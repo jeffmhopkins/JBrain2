@@ -19,6 +19,7 @@ import shutil
 import socket
 import ssl
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -142,16 +143,33 @@ class _Echo(BaseHTTPRequestHandler):
         return None
 
 
+class _PortTaken(Exception):
+    """A port `_free_port` picked was bound by someone else (another xdist worker) first."""
+
+
 class _Stack:
     def __init__(self, root: Path, site_dir: Path, files: FsOwnerKeyFiles) -> None:
         self.files = files
-        self.ports = {name: _free_port() for name in ("public", "http", "lan", "owner")}
+        self._root = root
+        self._site_dir = site_dir
+        self._tries = 0
         echo = ThreadingHTTPServer(("127.0.0.1", 0), _Echo)
         self._echo = echo
         threading.Thread(target=echo.serve_forever, daemon=True).start()
+        self.caddy = _caddy()
+        self.proc: subprocess.Popen[bytes] | None = None
+        self._render()
+
+    def _render(self) -> None:
+        """Pick ports and write the whole config, into a fresh directory each try."""
+        self._tries += 1
+        root = self._root / f"try{self._tries}"
+        site_dir = self._site_dir
+        echo = self._echo
+        self.ports = {name: _free_port() for name in ("public", "http", "lan", "owner")}
         etc = root / "etc"
         www = root / "www"
-        www.mkdir()
+        www.mkdir(parents=True)
         (www / "index.html").write_text("app")
         env = {
             **os.environ,
@@ -183,8 +201,6 @@ class _Stack:
         self.config = root / "Caddyfile"
         self.config.write_text(caddyfile.replace("\n{\n", test_opts, 1))
         self.env = env
-        self.caddy = _caddy()
-        self.proc: subprocess.Popen[bytes] | None = None
 
     def validate(self) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -195,6 +211,17 @@ class _Stack:
         )
 
     def start(self) -> None:
+        # Free ports are only free when picked; on a busy runner one can be taken before
+        # Caddy binds it. That is the harness's race, not a Caddy failure, so re-pick.
+        for _ in range(3):
+            try:
+                self._start()
+                return
+            except _PortTaken:
+                self._render()
+        self._start()
+
+    def _start(self) -> None:
         self.proc = subprocess.Popen(
             [self.caddy, "run", "--config", str(self.config), "--adapter", "caddyfile"],
             env=self.env,
@@ -210,6 +237,8 @@ class _Stack:
                 except OSError:
                     if self.proc.poll() is not None or time.monotonic() > deadline:
                         err = self.proc.stderr.read().decode() if self.proc.stderr else ""
+                        if self.proc.poll() is not None and "address already in use" in err:
+                            raise _PortTaken from None
                         raise AssertionError(f"caddy did not start: {err[-2000:]}") from None
                     time.sleep(0.1)
 
@@ -413,3 +442,24 @@ def test_the_box_runs_the_caddy_the_tests_run() -> None:
     version = re.search(r"CADDY_VERSION: (\S+)", action)
     assert version is not None
     assert f"FROM caddy:{version[1]}\n" in image
+
+
+def test_a_taken_port_is_re_picked(
+    tmp_path: Path, key_dirs: tuple, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files, site = key_dirs
+    held = socket.socket()
+    held.bind(("0.0.0.0", 0))
+    held.listen()
+    taken = held.getsockname()[1]
+    picks = iter([taken])
+    real = _free_port
+    monkeypatch.setattr(sys.modules[__name__], "_free_port", lambda: next(picks, None) or real())
+    s = _Stack(tmp_path, site, files)
+    try:
+        assert taken in s.ports.values()
+        s.start()
+        assert taken not in s.ports.values()
+    finally:
+        s.stop()
+        held.close()
