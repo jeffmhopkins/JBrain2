@@ -156,7 +156,8 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   birthday to you" (three phrases, all three every time since 0.4.15, one key per birthday), a striped party hat drops onto his head, he bobs on every note
   and throws his arms up on "you", and confetti falls over the whole screen for 7 s
 · **the game** (0.4.14): `lets play a game`, or (0.4.17) the gamepad on the menu's games page
-  (hold the pet for the menu, swipe left; swipe right goes back) — he walks to the middle, shrinking to a fifth of his
+  (hold the pet for the menu, swipe left; swipe right goes back; since 0.4.18 every menu icon
+  acts when the finger lifts, so a swipe that starts on one picks nothing) — he walks to the middle, shrinking to a fifth of his
   size. Tilt the panel to run him, like a marble, toward whichever edge goes down: left/right as the
   lean, and tipping the top away or toward you for up/down (since 0.4.18; it was down/up, a
   bubble's way), measured from how it was held when the game began. Twelve kinds of thing fly in

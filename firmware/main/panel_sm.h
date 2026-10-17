@@ -336,8 +336,7 @@ typedef struct {
     struct {
         bool active; /* the finger is on the glass */
         bool on_pet, swiped, held;
-        bool in_grid;    /* the down edge landed on the menu */
-        uint8_t game_armed; /* SM_GAME_*: it landed on a game, which starts on the lift */
+        uint8_t cell_armed; /* sm_target_t: the menu cell it landed on, which acts on the lift */
         uint32_t at;
         int x, y;
         sm_target_t target;

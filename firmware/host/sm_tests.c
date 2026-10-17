@@ -1649,7 +1649,7 @@ static void test_the_game_on_the_menu_starts_on_the_lift(void)
     swipe(-1);
     press_at(FACE_W / 4, 60);
     CHECK(w.sm.mode == SM_GRID && !w.out.start_game, "the press is not yet the game");
-    CHECK(last_cue() == CUE_HEARD, "but it is answered");
+    CHECK(w.sm.down.cell_armed == SM_T_CELL_GAME, "it waits for the lift");
     lift();
     CHECK(w.out.start_game == SM_GAME_DODGE && w.sm.mode == SM_PET,
           "the lift starts it, on the pet's screen");
@@ -1680,7 +1680,7 @@ static void test_the_game_on_the_menu_starts_on_the_lift(void)
     swipe(-1);
     press_at(FACE_W * 3 / 4, 60);
     CHECK(w.sm.mode == SM_GRID && !w.out.start_game, "Jetpack's press is not yet the game");
-    CHECK(last_cue() == CUE_HEARD, "but it is answered");
+    CHECK(w.sm.down.cell_armed == SM_T_CELL_JET, "it waits for the lift");
     lift();
     CHECK(w.out.start_game == SM_GAME_JET && w.sm.mode == SM_PET, "the lift starts Jetpack");
     CHECK(w.opened == 0, "and no microphone opened");
@@ -1697,30 +1697,44 @@ static void test_the_game_on_the_menu_starts_on_the_lift(void)
 
 static void test_a_swipe_that_began_on_a_cell_unwinds_it(void)
 {
-    /* The down edge presses a cell, so a swipe left from the sister has already opened a
-       recording to her: it is dropped, and the page turns. */
+    /* EVERY MENU CELL ACTS ON THE LIFT (owner: "Swipe on menu has conflict with selecting a
+       menu item before release"): a swipe left from the sister opens nothing at all, and the
+       page turns. */
     world_reset();
     open_grid();
     press_at(FACE_W / 4, 60);
-    CHECK(w.sm.mode == SM_RECORD, "the down edge pressed the sister");
+    CHECK(w.sm.mode == SM_GRID && !w.sm.capture, "the sister's press opens nothing yet");
+    CHECK(w.sm.down.cell_armed == SM_T_CELL_SISTER, "it waits for the lift");
     w.swipe = -1;
     step();
-    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES,
-          "the swipe unwinds it and turns the page");
-    CHECK(!w.sm.capture, "the microphone is closed");
+    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES, "the swipe turns the page");
     lift();
     run_ms(400);
-    CHECK(w.sm.mode == SM_GRID, "and the menu stays up");
+    CHECK(w.sm.mode == SM_GRID && !w.sm.capture && w.opened == 0,
+          "the lift opens no microphone, and the menu stays up");
+
+    world_reset();
+    open_grid();
+    press_at(FACE_W / 4, 60);
+    lift();
+    CHECK(w.sm.mode == SM_RECORD && w.sm.capture, "a tap on the sister records to her, on the lift");
+    CHECK(last_cue() == CUE_LISTEN, "with the listening cue");
 
     world_reset();
     open_grid();
     press_at(60, FACE_H - 60);
-    CHECK(w.sm.mode == SM_PET, "the down edge pressed the cancel");
+    CHECK(w.sm.mode == SM_GRID, "the cancel's press closes nothing yet");
     w.swipe = -1;
     step();
     lift();
     CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES,
           "a swipe off the cancel turns the page rather than closing the menu");
+
+    world_reset();
+    open_grid();
+    press_at(60, FACE_H - 60);
+    lift();
+    CHECK(w.sm.mode == SM_PET, "a tap on the cancel closes the menu");
 }
 
 static void test_a_tick_pressed_into_silence_refuses_to_send(void)

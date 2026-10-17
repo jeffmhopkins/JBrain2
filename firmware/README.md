@@ -210,7 +210,10 @@ page (`SM_T_CELL_JET`), started on the lift like Dodge's; `face.c` draws each wo
 scenery and obstacles, clipped to the square when the panel is on its side.
 Dodge's forward/back is flipped to match (owner: *"tilt should be opposite of bubble. Like a
 marble (both games)"*): the top tipped away runs him up the glass, toward the edge that went
-down, and the bench's tilt pad rolls him the way it is dragged.
+down, and the bench's tilt pad rolls him the way it is dragged. And every menu cell now acts on
+the lift, not the press (owner: *"Swipe on menu has conflict with selecting a menu item before
+release"*): a swipe that began on a person's icon used to open a recording under the finger and
+unwind it; now the press is silent and only a lift that was not a swipe opens anything.
 
 **0.4.17: as few things on screen as before, and a games page.** Owner: *"Objects are slower,
 but ... the spawn rate actually didn't decrease, so it ended up having a lot more on screen"*,
