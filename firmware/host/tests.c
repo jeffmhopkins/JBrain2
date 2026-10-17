@@ -1877,7 +1877,8 @@ static void test_jetpack_edges_are_safe(void)
     for (int k = 0; k < 100; k++) ev |= jet_step(&j, &rng, 0.04f, 0, -1.0f, 368.0f, 448.0f, &score);
     CHECK(!(ev & JET_EV_HIT) && j.jy > 40.0f && j.jy < 60.0f, "and the roof");
     for (int k = 0; k < 100; k++) jet_step(&j, &rng, 0.04f, 1.0f, 0, 368.0f, 448.0f, &score);
-    CHECK(j.jx <= 200.0f && j.jx > 150.0f, "the side tilt drifts him forward, a little");
+    CHECK(j.jx <= 368.0f - 30.0f && j.jx > 300.0f,
+          "the side tilt drifts him forward, nearly to the right edge: no wall halfway");
     CHECK(!(ev & JET_EV_HIT) && j.jy > 400.0f, "let go, he sinks and lands on the floor, safe");
 }
 

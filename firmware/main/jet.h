@@ -10,7 +10,7 @@
  * him down and the tilt is a BURN against it: the top tipped away climbs, a little tip holds
  * him, let go he sinks, toward you dives. Not Dodge's push (`game.h`), which the owner found
  * felt the same. The field's top and bottom edges are safe: the floor is a landing. The
- * side tilt lets him drift forward and back a little, which is how a crusher or a laser is
+ * side tilt lets him drift forward and back across the field, which is how a crusher or a laser is
  * waited out. Ten worlds of JET_GATES obstacles each, every world bringing its own kind: its
  * first three are that kind alone, then earlier worlds' kinds mix in. Past the tenth every kind
  * mixes, faster and tighter each time. One bump ends the round; a tap retries the world he had

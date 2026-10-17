@@ -200,7 +200,7 @@ runs inside `game.c`'s phases (`game_start_as(GAME_JET)`), so the walk in, the r
 of the field and gets a jetpack. Gravity pulls him down and tipping the top away burns against
 it (a little tip holds him, let go he sinks, toward you dives; the floor is a safe landing),
 after the owner found the mock's push-and-hover *"work same"* as Dodge, *"like a bubble on a
-level"*. The side tilt drifts him a little, which is how crushers
+level"*. The side tilt drifts him forward and back, almost across the field (no wall halfway, after the owner hit one), which is how crushers
 and lasers are waited out. Ten worlds of eight obstacles, each with its own kind: pipes whose
 gap jumps high and low, towers from the ground or sky, rocks that drop as he nears, sliding
 candy canes, a winding tunnel, birds and rising balloons, crushers, mine fields, spinning bars,

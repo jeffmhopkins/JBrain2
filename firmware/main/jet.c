@@ -14,12 +14,13 @@
 #define DRIFT_ACCEL 500.0f
 #define FLY_FRICTION 2.0f
 #define DRIFT_FRICTION 4.0f
-/* Where his origin may go: room for his head above and his feet below, and a band either side
-   of his home column. */
+/* Where his origin may go: room for his head above and his feet below, and almost the width of
+   the field. It was a band round his home column, which the owner met as an invisible wall
+   halfway across. */
 #define EDGE_TOP 48.0f
 #define EDGE_BOTTOM 34.0f
 #define DRIFT_MIN 50.0f
-#define DRIFT_MAX 200.0f
+#define DRIFT_EDGE 40.0f /* the least room he keeps from the right edge */
 #define MIX_KINDS_P 0.3f /* after a world's first three, the chance one is from an earlier world */
 #define NEW_ALONE 3      /* a world's first this many are its own kind, so it is met alone */
 #define PIPE_JUMP 110.0f /* the least a pipe's gap moves from the last one's */
@@ -424,8 +425,8 @@ unsigned jet_step(jet_t *j, uint32_t *rng, float dt, float tx, float ty, float f
         j->jy = clampf(j->jy, EDGE_TOP, fh - EDGE_BOTTOM);
         j->vy = 0.0f;
     }
-    if (j->jx < DRIFT_MIN || j->jx > DRIFT_MAX) {
-        j->jx = clampf(j->jx, DRIFT_MIN, DRIFT_MAX);
+    if (j->jx < DRIFT_MIN || j->jx > fw - DRIFT_EDGE) {
+        j->jx = clampf(j->jx, DRIFT_MIN, fw - DRIFT_EDGE);
         j->vx = 0.0f;
     }
 

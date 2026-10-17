@@ -170,8 +170,8 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   the left, shrinks and straps on a jetpack, and obstacles scroll in from the right. Gravity
   pulls him down and tipping the top away burns the jetpack against it (a little tip holds him,
   let go and he sinks, toward you dives), so he flies in arcs rather than sliding like the game
-  above; the top and bottom edges are safe. The left/right lean drifts him forward and back a
-  little. Ten worlds of eight
+  above; the top and bottom edges are safe. The left/right lean drifts him forward and back,
+  almost the width of the field. Ten worlds of eight
   obstacles, each world with its own kind (Meadow pipes, Hills towers, Cave falling rocks, Candy
   sliding gaps, Jungle tunnel, Sky birds and balloons, Factory crushers, Ocean mines, Space
   spinners, Station lasers), then they all mix. A point per obstacle and per star; a bump ends
