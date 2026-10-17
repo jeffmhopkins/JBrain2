@@ -49,7 +49,7 @@ from jbrain.models.analysis import (
     TemporalToken,
 )
 from jbrain.models.archivist import ArchivistMemory
-from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
+from jbrain.models.core import Base, DeviceSession, Domain, OwnerDevice, Principal, Subject
 from jbrain.models.images import GeneratedImage
 from jbrain.models.intake import IntakeLink, IntakeSession, IntakeSubmission
 from jbrain.models.jcode import JcodeSession
@@ -95,6 +95,7 @@ __all__ = [
     "LlmUsage",
     "LocationFix",
     "NoteAnalysis",
+    "OwnerDevice",
     "PetMemory",
     "PetState",
     "Pipeline",

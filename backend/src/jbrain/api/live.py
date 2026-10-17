@@ -23,6 +23,7 @@ from typing import Any, Protocol, cast
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from jbrain.api.client_ip import device_key
 from jbrain.api.same_site import origin_matches_host
 from jbrain.api.session_cookie import session_token
 from jbrain.api.ws_reauth import SocketAuth, run_until_revoked
@@ -69,7 +70,9 @@ async def authenticated_viewer(websocket: WebSocket) -> PrincipalInfo | None:
     member (device-key) — or None for an absent/invalid cookie or any other kind."""
     repo = cast(AuthRepo, websocket.app.state.auth_repo)
     settings = cast(Settings, websocket.app.state.settings)
-    principal = await service.authenticate(repo, session_token(websocket, settings))
+    principal = await service.authenticate(
+        repo, session_token(websocket, settings), device=device_key(websocket)
+    )
     if principal is None or principal.kind not in ("owner", "device_key"):
         return None
     return principal

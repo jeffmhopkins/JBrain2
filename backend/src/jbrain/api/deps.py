@@ -4,6 +4,7 @@ from typing import Annotated, cast
 
 from fastapi import Depends, HTTPException, Request
 
+from jbrain.api.client_ip import device_key
 from jbrain.api.session_cookie import mark_for_migration, session_token
 from jbrain.auth import service
 from jbrain.auth.service import AuthRepo, PrincipalInfo
@@ -26,7 +27,7 @@ async def current_principal(
     request: Request, repo: AuthRepoDep, settings: SettingsDep
 ) -> PrincipalInfo:
     token = session_token(request, settings)
-    principal = await service.authenticate(repo, token)
+    principal = await service.authenticate(repo, token, device=device_key(request))
     if principal is None:
         raise HTTPException(status_code=401, detail="not authenticated")
     mark_for_migration(request, settings, token, principal)
@@ -150,7 +151,9 @@ async def current_panel_principal(
     with a `device_role`: a family phone's key is the same kind, and it is not a panel.
     """
     token = session_token(request, settings)
-    principal = await service.authenticate(repo, token) if token else None
+    principal = (
+        await service.authenticate(repo, token, device=device_key(request)) if token else None
+    )
     if principal is not None and principal.kind == "owner":
         mark_for_migration(request, settings, token, principal)
         return principal

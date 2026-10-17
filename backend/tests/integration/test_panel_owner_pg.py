@@ -73,7 +73,7 @@ async def _pwa_owner(maker: Maker) -> str:
     await service.rotate_owner_key(repo)
     key = await service.rotate_owner_key(repo)
     token = await service.login(repo, key, "pwa")
-    who = await service.authenticate(repo, token)
+    who = await service.authenticate(repo, token, device=None)
     assert who is not None and who.kind == "owner"
     return who.id
 

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
+from jbrain.api.client_ip import device_key
 from jbrain.api.session_cookie import session_token
 from jbrain.auth import service
 
@@ -71,6 +72,9 @@ class SocketAuth:
         settings = cast("Settings", websocket.app.state.settings)
         # The token is read once: a WS handshake's cookies never change afterwards.
         self._token = session_token(websocket, settings)
+        # So is the owner-tunnel phone it came from: a bound session keeps re-checking
+        # against the same device, and stops once that device is revoked.
+        self._device = device_key(websocket)
         self.principal = principal
         self.interval = float(getattr(websocket.app.state, _INTERVAL_ATTR, REAUTH_INTERVAL_S))
         self._woken = asyncio.Event()
@@ -83,7 +87,7 @@ class SocketAuth:
 
     async def still_valid(self) -> bool:
         repo = cast("AuthRepo", self._app.state.auth_repo)
-        current = await service.authenticate(repo, self._token, touch=False)
+        current = await service.authenticate(repo, self._token, device=self._device, touch=False)
         return current is not None and current.id == self.principal.id
 
     async def revoked(self, on_tick: Callable[[], None] | None = None) -> int:

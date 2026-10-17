@@ -309,12 +309,14 @@ class _FlakyRepo(FakeAuthRepo):
     fail_rechecks = 0
 
     async def find_principal_by_session_token_hash(
-        self, token_hash: str, *, touch: bool = True
+        self, token_hash: str, *, device_key: str | None = None, touch: bool = True
     ) -> Any:
         if not touch and self.fail_rechecks > 0:
             self.fail_rechecks -= 1
             raise ConnectionError("pool timeout")
-        return await super().find_principal_by_session_token_hash(token_hash, touch=touch)
+        return await super().find_principal_by_session_token_hash(
+            token_hash, device_key=device_key, touch=touch
+        )
 
 
 def _flaky_owner_terminal(app: FastAPI, client: TestClient, fails: int) -> _FlakyRepo:

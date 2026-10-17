@@ -12,6 +12,7 @@ from typing import Any, cast
 from sqlalchemy import (
     ColumnElement,
     CursorResult,
+    and_,
     column,
     exists,
     func,
@@ -24,6 +25,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.auth.service import (
+    BOUND_SESSION_IDLE,
     SESSION_KINDS,
     CapabilityToken,
     DeviceClass,
@@ -31,7 +33,7 @@ from jbrain.auth.service import (
     PrincipalInfo,
 )
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models import DeviceSession, Principal
+from jbrain.models import DeviceSession, OwnerDevice, Principal
 
 _LOGIN = SessionContext(auth_context="login")
 _BOOTSTRAP = SessionContext(auth_context="bootstrap")
@@ -45,6 +47,23 @@ def _has_role(condition: ColumnElement[bool]) -> ColumnElement[bool]:
     """The principal's subject exists AND meets `condition`. Fails closed: a subject the
     `login` context could not see matches neither the phone nor the panel test."""
     return exists().where(_SUBJECTS.c.id == Principal.subject_id, condition)
+
+
+def _bound_to(device_key: str | None) -> ColumnElement[bool]:
+    """Which sessions a request may use, by the owner-tunnel phone it came from
+    (docs/plans/OWNER_TUNNEL_PLAN.md §3.4). A request from a phone (`device_key`, the hash
+    Caddy verified) authenticates only a session bound to that phone, while it is not revoked
+    and for `BOUND_SESSION_IDLE` after the session's last use, so a cookie from the public
+    site is worthless through the tunnel. Every other request authenticates only unbound
+    sessions, so a bound cookie is worthless anywhere else, and a call site that forgets the
+    device fails closed."""
+    if device_key is None:
+        return DeviceSession.device_id.is_(None)
+    return and_(
+        OwnerDevice.key_hash == device_key,
+        OwnerDevice.revoked_at.is_(None),
+        DeviceSession.last_seen_at > func.now() - BOUND_SESSION_IDLE,
+    )
 
 
 def _is_phone() -> ColumnElement[bool]:
@@ -75,6 +94,34 @@ class SqlAuthRepo:
             if row is None:
                 return None
             return _principal_info(row)
+
+    async def find_active_owner(self) -> PrincipalInfo | None:
+        """The owner principal, for minting a session bound to an enrolled phone: the phone's
+        verified key is the credential there, so no owner key is presented. Picked as
+        `auth.owner.OWNER_PRINCIPAL_SQL` picks it, so a box with two live owner rows binds
+        the phone to the one the PWA's logins use."""
+        last_seen = (
+            select(func.max(DeviceSession.last_seen_at))
+            .where(
+                DeviceSession.principal_id == Principal.id,
+                DeviceSession.revoked_at.is_(None),
+            )
+            .scalar_subquery()
+        )
+        async with scoped_session(self._maker, _LOGIN) as session:
+            row = (
+                await session.execute(
+                    select(Principal)
+                    .where(Principal.kind == "owner", Principal.revoked_at.is_(None))
+                    .order_by(
+                        last_seen.desc().nulls_last(),
+                        Principal.created_at.desc(),
+                        Principal.id,
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            return None if row is None else _principal_info(row)
 
     async def find_active_device_principal_by_key_hash(
         self, key_hash: str, device_class: DeviceClass | None = None
@@ -123,23 +170,43 @@ class SqlAuthRepo:
                 return None
             return _principal_info(row)
 
-    async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
+    async def create_session(
+        self, principal_id: str, token_hash: str, label: str, *, device_id: str | None = None
+    ) -> None:
         async with scoped_session(self._maker, _LOGIN) as session:
+            if device_id:
+                # One live session per phone: a re-mint replaces the last, so a phone cannot
+                # pile up sessions, and revoking it never has more than one to end.
+                await session.execute(
+                    update(DeviceSession)
+                    .where(
+                        DeviceSession.device_id == uuid.UUID(device_id),
+                        DeviceSession.revoked_at.is_(None),
+                    )
+                    .values(revoked_at=func.now())
+                )
             session.add(
-                DeviceSession(principal_id=principal_id, token_hash=token_hash, label=label)
+                DeviceSession(
+                    principal_id=principal_id,
+                    token_hash=token_hash,
+                    label=label,
+                    device_id=uuid.UUID(device_id) if device_id else None,
+                )
             )
 
     async def find_principal_by_session_token_hash(
-        self, token_hash: str, *, touch: bool = True
+        self, token_hash: str, *, device_key: str | None = None, touch: bool = True
     ) -> PrincipalInfo | None:
         async with scoped_session(self._maker, _LOGIN) as session:
             row = (
                 await session.execute(
                     select(Principal)
                     .join(DeviceSession, DeviceSession.principal_id == Principal.id)
+                    .outerjoin(OwnerDevice, OwnerDevice.id == DeviceSession.device_id)
                     .where(
                         DeviceSession.token_hash == token_hash,
                         DeviceSession.revoked_at.is_(None),
+                        _bound_to(device_key),
                         # Only these kinds are ever minted a cookie (login, mint, redeem).
                         # A capability or external-LLM session can only have come from the
                         # old unfiltered login, and must not stay live.
