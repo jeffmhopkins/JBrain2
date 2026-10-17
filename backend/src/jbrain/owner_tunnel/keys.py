@@ -40,17 +40,19 @@ class _Ca:
     cert: x509.Certificate
 
 
-def spki_sha256(public_key: ec.EllipticCurvePublicKey) -> str:
-    """Hex SHA-256 of the DER SubjectPublicKeyInfo: a device's identity. It is what Caddy's
-    `tls.client.public_key_sha256` placeholder yields, and it survives cert re-issue."""
-    der = public_key.public_bytes(
-        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+def public_key_sha256(public_key: ec.EllipticCurvePublicKey) -> str:
+    """A device's identity: hex SHA-256 of the uncompressed EC point. That is exactly what
+    Caddy's `tls.client.public_key_sha256` placeholder yields for an EC client key (it hashes
+    the raw point, not the DER SubjectPublicKeyInfo), so the owner site's `X-JBrain-Device`
+    header matches this. It survives certificate re-issue."""
+    point = public_key.public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
     )
-    return hashlib.sha256(der).hexdigest()
+    return hashlib.sha256(point).hexdigest()
 
 
 def _same_key(a: ec.EllipticCurvePublicKey, b: object) -> bool:
-    return isinstance(b, ec.EllipticCurvePublicKey) and spki_sha256(a) == spki_sha256(b)
+    return isinstance(b, ec.EllipticCurvePublicKey) and public_key_sha256(a) == public_key_sha256(b)
 
 
 def _new_key() -> ec.EllipticCurvePrivateKey:

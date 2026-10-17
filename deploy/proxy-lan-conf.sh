@@ -20,6 +20,6 @@ rm -f "$dir"/*.caddy
 cat > "$dir/lan.caddy" <<EOF
 ${JBRAIN_LAN_ADDR} {
 	tls internal
-	import app
+	import app lan ""
 }
 EOF

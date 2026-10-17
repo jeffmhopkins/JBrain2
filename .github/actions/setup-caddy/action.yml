@@ -1,0 +1,33 @@
+name: Set up Caddy
+description: >
+  Put a pinned, checksum-verified caddy binary on PATH for the backend tests that run the
+  repo's real Caddyfile (tests/unit/test_owner_site.py).
+
+# The same version deploy/Dockerfile.proxy pins, so the tests run the Caddyfile on the binary
+# the box runs. Bump it there, and CADDY_VERSION and CADDY_SHA256 here (sha256 of the
+# linux_amd64 release tarball; it is in the cache key so a bump never reuses an old binary).
+
+runs:
+  using: composite
+  steps:
+    - id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/caddy-bin
+        key: caddy-2.10.2-linux-amd64-5c218bc34c9197369263da7e9317a83acdbd80ef45d94dca5eff76e727c67cdd
+
+    - if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CADDY_VERSION: 2.10.2
+        CADDY_SHA256: 5c218bc34c9197369263da7e9317a83acdbd80ef45d94dca5eff76e727c67cdd
+      run: |
+        set -euo pipefail
+        mkdir -p ~/caddy-bin
+        url="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz"
+        curl -fsSL --retry 3 -o /tmp/caddy.tgz "$url"
+        echo "${CADDY_SHA256}  /tmp/caddy.tgz" | sha256sum -c -
+        tar -xzf /tmp/caddy.tgz -C ~/caddy-bin caddy
+
+    - shell: bash
+      run: echo "$HOME/caddy-bin" >> "$GITHUB_PATH"

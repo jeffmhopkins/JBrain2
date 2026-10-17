@@ -1,6 +1,6 @@
 # JBrain2 — Multi-wave execution process
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-17
 
 The **binding process** for building a phased plan (e.g. `docs/archive/WORKFLOW_ENGINE_PLAN.md`)
 once its waves are defined. It governs *how* the work is sequenced, reviewed, and
@@ -60,38 +60,40 @@ A wave is a set of tasks that can run mostly in parallel. For each wave:
 - A new **runtime dependency** is avoided by default (zero-new-dep goal); if one
   becomes unavoidable it is flagged in the wave status, not treated as a stop.
 
-## Post-merge review issues
+## Review: the session reviews its own PRs
 
-The owner runs a **separate reviewer agent** (owner, 2026-10-12). It reviews **open**
-PRs and leaves its findings as a **comment on the PR**; anything still open when the PR
-merges (or found after) it files as a **GitHub issue**. Its
-issues say which PR introduced the bug ("Introduced in #N" or "Found while reviewing
-merged PR #N"), with the files and lines, a repro and a suggested fix.
+**The PR's own session reviews it, with review agents it spawns** (owner, 2026-10-17:
+*"Update to not use remote reviewer, but to spawn off from your session"*). The remote
+reviewer agent (owner, 2026-10-12) is no longer the gate: no session waits for it, and
+merging no longer waits 10 minutes for its comment. Instead:
 
-So every working session owns the findings on **its own** PRs:
-- **Before merging, read the PR's comments and reviews, not just CI.** A finding there is
-  fixed in that PR, and the thread is answered, before it merges.
-- **Give the reviewer time before merging** (owner, 2026-10-12): merge only once its
-  comment on the PR's current head is in, or **10 minutes** after that head was pushed
-  with no comment. Its reviews take a few minutes (2 to 4 on 2026-10-12), and twice a PR
-  merged seconds before its comment landed, so the findings became issues instead of
-  fixes in the PR. A push that fixes findings is a new head: wait again for its review.
-- **Merge the latest main into the branch right before merging**, then let CI run on that
-  head. Two PRs can each pass alone and still break main together: on 2026-10-12 two
-  migrations both numbered `0236` merged minutes apart, main had two alembic heads, and
-  every deploy failed until a renumber landed.
-- **Check the open issues periodically, not once:** at the start of a session, about
-  **10 and 40 minutes after every merge of your own PR**, and before you report a stretch
-  of work as done. Measured 2026-10-12 over eight issues, the reviewer filed 40 s to
-  35 min after the merge it reviewed: most within 7 min, the slow ones when several PRs
-  merged close together. So 10 min catches most and 40 min catches the rest. Schedule
-  both (e.g. `send_later`) right after merging.
+- **Before merging, spawn a reviewer on the PR's current head** (the Agent tool, a fresh
+  agent with no stake in the change). Give it the diff (`git diff origin/main...HEAD`),
+  the PR description, and the plan or doc the change implements, and have it look for
+  correctness bugs, security holes (this repo's non-negotiables: RLS, the storage and LLM
+  abstractions, the domain firewalls), missing tests and docs drift. A security-relevant
+  change also gets a second agent focused only on the security path.
+- **Fix what it finds in the same PR, or say why not.** A real finding is fixed and
+  pushed; a finding you judge wrong is answered in the PR (one line on the path you
+  traced). A push that changes code is a new head: review the new diff before merging.
+- **Merge only when CI is green and the review is clean.** Merge the latest main into the
+  branch right before merging, then let CI run on that head. Two PRs can each pass alone
+  and still break main together: on 2026-10-12 two migrations both numbered `0236` merged
+  minutes apart, main had two alembic heads, and every deploy failed until a renumber
+  landed.
+- **Read the PR's comments and reviews anyway.** If anyone (a person, a bot, the old
+  reviewer if it still runs) leaves a finding on your PR, it is yours to fix there.
+
+### Issues that name your PR
+
+If a GitHub issue names a PR you opened ("Introduced in #N"), it is yours. Check the open
+issues at the start of a session and before you report a stretch of work as done.
 - **Keep the issue current while you work on it** (owner, 2026-10-12): a comment when
   you start ("fixing in this session"), one when the fix PR is open (link it), and the
   closing comment once it's merged, deployed and verified. Whoever reads the issue sees
   where it stands without asking.
-- **The checks never block.** Creating, merging and deploying a PR doesn't wait for them;
-  they run alongside, and anything they find is fixed as a new PR. List the open issues and match each one's
+- **Issue checks never block.** Creating, merging and deploying a PR doesn't wait for
+  them; anything they find is fixed as a new PR. List the open issues and match each one's
   "Introduced in" / "while reviewing" PR against the PRs this session (or the work you
   continued) opened.
 - **One that names your PR is yours:** fix it the usual way — a failing test first, the

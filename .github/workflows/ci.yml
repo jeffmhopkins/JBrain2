@@ -111,6 +111,11 @@ jobs:
               # change to either alone still runs the test that pins its network lock.
               - 'deploy/htmlrender/**'
               - 'deploy/Caddyfile'
+              # The proxy's site renderers and image, run under sh and in a real Caddy by
+              # test_lan_proxy.py, test_preview_site.py and test_owner_site.py.
+              - 'deploy/proxy-*.sh'
+              - 'deploy/Dockerfile.proxy'
+              - '.github/actions/setup-caddy/**'
               - '.github/workflows/ci.yml'
             supervisor:
               - 'supervisor/**'
@@ -251,6 +256,7 @@ jobs:
       # keeping the same line coverage. Requires the 3.13 pinned below (sysmon is 3.12+);
       # on an older interpreter coverage silently falls back to the C tracer.
       COVERAGE_CORE: sysmon
+      JBRAIN_REQUIRE_CADDY: "1"
     steps:
       - uses: actions/checkout@v5
       # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media),
@@ -258,6 +264,10 @@ jobs:
       # plain `apt-get install`, and why it is one shared copy rather than two.
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: ./.github/actions/setup-ffmpeg
+      # test_owner_site.py runs the real Caddyfile in a real Caddy; JBRAIN_REQUIRE_CADDY
+      # (job env above) turns its skip-without-a-binary into a failure here.
+      - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
+        uses: ./.github/actions/setup-caddy
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: astral-sh/setup-uv@v7
         with:

@@ -93,7 +93,10 @@ and remote are one code path, and owner access keeps working when the internet i
 ### 3.2 The owner site (Caddy)
 
 A new site on `:8443` with `tls` from the owner-site files and `client_auth`
-`require_and_verify` against the enrollment CA; auto-HTTPS redirects off for it.
+`require_and_verify` against the enrollment CA. The `:8443` listener sets `strict_sni_host on`
+(so a cert-less handshake under another name cannot ask for the owner host) and HTTP/1.1 and 2
+only; the proxy entrypoint drops the site if its files do not load, and an update that makes
+new owner keys restarts the proxy so Caddy reads them.
 
 - **mTLS is the gate, not the network.** `:8443` is not published to the host, but cloudflared,
   the api and the proxy share the `edge` network, and a stolen tunnel token's remote config
@@ -106,8 +109,10 @@ A new site on `:8443` with `tls` from the owner-site files and `client_auth`
   forget to strip. The generated LAN site and the jcode preview site's own `reverse_proxy`
   (`deploy/proxy-preview-conf.sh`) get the same treatment.
 - **Device identity** = `X-JBrain-Device {http.request.tls.client.public_key_sha256}`, the
-  client key's SPKI hash, which survives cert re-issue (the cert fingerprint does not). Set to
-  empty on every other site.
+  hash of the client's public key, which survives cert re-issue (the cert fingerprint does
+  not). For an EC key Caddy hashes the raw uncompressed point, not the DER SPKI;
+  `keys.public_key_sha256` matches it, which the real-Caddy test pins. Set to empty on every
+  other site.
 - The api trusts both headers only when the TCP peer is the `proxy` container (the rule
   `api/client_ip.py` applies to `X-Real-IP`).
 - **Real client address:** every tunnelled request reaches Caddy from the api's gateway, so
@@ -301,8 +306,10 @@ cookie).
   Settings → Devices; the public-base-URL setting and the link builders that use it. Security
   paths at 100% coverage. Built in five PRs: **A1 keys ✅** (`jbrain/owner_tunnel/keys.py`,
   the `owner_keys` and `owner_site` volumes, the `owner-keys ensure` one-shot in update and
-  install; the owner CA carries a name constraint to the owner host), A2 the owner site in
-  Caddy, A3 devices and bound sessions, A4 enrollment, A5 Settings → Devices and the
+  install; the owner CA carries a name constraint to the owner host), **A2 owner site ✅** (`deploy/proxy-owner-conf.sh`;
+  `X-JBrain-Ingress`/`X-JBrain-Device` on every site, read by `client_ip.ingress` and
+  `device_key`; `test_owner_site.py` runs the real Caddyfile in a pinned Caddy, in CI too;
+  PROXY protocol waits for the gateway in B), A3 devices and bound sessions, A4 enrollment, A5 Settings → Devices and the
   public-base-URL links. Still owed from §3.1: the two key volumes in the box backup and
   restore.
 - **B — box: the tunnel gateway. ◻️** §3.3 with nonce auth, drain and keepalive, the kick

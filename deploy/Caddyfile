@@ -7,8 +7,23 @@
 # Cloudflare's edge; the tunnel reaches us here at http://proxy:80). It
 # defaults to JBRAIN_DOMAIN in compose, so pre-tunnel installs are unchanged.
 
-# Shared app handlers, imported by every site below (the public site and the
-# optional LAN site) so they serve the identical app from one definition.
+# The owner site's listener (deploy/proxy-owner-conf.sh). Its client-certificate gate holds
+# only while a handshake for any other name cannot reach it: strict_sni_host refuses a
+# request whose Host differs from its SNI, so a cert-less handshake under a foreign name
+# cannot then ask for owner.jbrain.home.arpa. Caddy turns this on by itself when client
+# auth is configured; it is stated here so no default change or second site on :8443 can
+# turn it off. HTTP/3 is off because the tunnel only carries TCP.
+{
+	servers :8443 {
+		strict_sni_host on
+		protocols h1 h2
+	}
+}
+
+# Shared app handlers, imported by every site below (the public site, the optional LAN
+# site and the owner site) so they serve the identical app from one definition. Two
+# arguments: the site's ingress name, and the device identity (empty on every site but the
+# owner site, where it is the verified client certificate's key hash). See header_up below.
 (app) {
 	encode zstd gzip
 
@@ -51,6 +66,12 @@
 			# this container (backend api/client_ip.py). Set, not appended: whatever the
 			# client sent is overwritten with the peer Caddy actually saw.
 			header_up X-Real-IP {remote_host}
+			# Which site the request came in on, and on the owner site which enrolled phone
+			# sent it (docs/plans/OWNER_TUNNEL_PLAN.md §3.2). Set on every site, so whatever a
+			# client sent is always overwritten and no site can forget to strip it; the api
+			# trusts both only from this container.
+			header_up X-JBrain-Ingress {args[0]}
+			header_up X-JBrain-Device "{args[1]}"
 		}
 	}
 
@@ -101,7 +122,7 @@
 	handle /debug-console* {
 		respond 404
 	}
-	import app
+	import app public ""
 }
 
 # Optional LAN site: when JBRAIN_LAN_ADDR is set (e.g. https://jbrain.local) the
@@ -117,3 +138,8 @@ import /etc/caddy/lan/*.caddy
 # /__jcode_preview/<slug> (docs/archive/JCODE_PREVIEW_HOST_PLAN.md). Unset -> the glob matches
 # nothing, so a stock deploy is unaffected.
 import /etc/caddy/preview/*.caddy
+
+# The owner site (docs/plans/OWNER_TUNNEL_PLAN.md §3.2): the owner app's private origin,
+# rendered by the entrypoint only once the owner-keys one-shot has written its files, so a
+# box without them serves exactly what it did before.
+import /etc/caddy/owner/*.caddy

@@ -142,7 +142,7 @@ def test_ca_cert_without_its_key_is_replaced(files: FsOwnerKeyFiles) -> None:
     assert keys.ensure(files, NOW) == ["enrollment CA"]
     enroll = _cert(files, "enroll-ca.crt")
     key = serialization.load_pem_private_key(files.read("enroll-ca.key") or b"", None)
-    assert keys.spki_sha256(enroll.public_key()) == keys.spki_sha256(key.public_key())  # type: ignore[arg-type]
+    assert keys.public_key_sha256(enroll.public_key()) == keys.public_key_sha256(key.public_key())  # type: ignore[arg-type]
 
 
 def test_expired_ca_is_replaced(files: FsOwnerKeyFiles) -> None:
@@ -248,4 +248,16 @@ def test_keys_are_made_after_migrations_and_before_the_stack_starts(script: str)
     # Never fatal: a failure must not abort an update or an install.
     line = text[text.rindex("\n", 0, ensure) : text.index("\n", ensure)]
     nxt = text[text.index("\n", ensure) :][:120]
-    assert line.lstrip().startswith("if !") or nxt.lstrip().startswith("||")
+    assert line.lstrip().startswith("if ") or nxt.lstrip().startswith("||")
+
+
+def test_an_update_that_makes_keys_restarts_the_proxy() -> None:
+    # Caddy reads certificate files only at start, and `up -d` leaves an unchanged proxy
+    # running, so a renewed leaf would otherwise sit unused until the old one expired.
+    text = (_DEPLOY / "update-inner.sh").read_text()
+    ensure = text.index("python -m jbrain.cli owner-keys ensure")
+    assert '*"made:"*) OWNER_KEYS_MADE=1' in text[ensure:]
+    up = text.index(" up -d", ensure)
+    restart = text.index("docker compose restart proxy", ensure)
+    assert up < restart
+    assert 'if [ -n "$OWNER_KEYS_MADE" ]' in text[up:restart]
