@@ -93,7 +93,11 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
 .legend span { font-family: var(--font-mono); font-size: 11px; padding: 2px 6px; border-radius: 4px; color: #fff; }
 .err { color: var(--red); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
-  .tiltpad { margin-top: 8px; height: 96px; border: 1px dashed currentColor; border-radius: 12px; display: grid; place-items: center; opacity: .75; touch-action: none; user-select: none; cursor: grab; font-size: 13px; }
+/* The tilt pad sits under the glass, so a thumb steers the game with the panel in view; it
+   moves the knobs only, never the case, so the glass does not turn under the other hand. */
+.tiltpad { position: relative; width: 368px; max-width: calc(100vw - 32px); height: 132px; border: 1px dashed var(--line); border-radius: 16px; background: var(--surface); color: var(--muted); display: grid; place-items: center; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; font-size: 12px; }
+.tiltpad > span:first-child { position: absolute; top: 8px; }
+.tiltpad .knob { position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; margin: -17px 0 0 -17px; border-radius: 50%; background: var(--teal); opacity: .85; pointer-events: none; }
 </style>
 
 <div class="wrap">
@@ -115,6 +119,7 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
         <button id="boot-short" title="Short press: home, back, wake">Press</button>
         <button id="boot-hold" title="Long press: standby">Hold</button>
       </div>
+      <div class="tiltpad" id="tiltpad" role="application" aria-label="Tilt pad: drag to roll him that way, let go to level"><span>drag to tilt: he rolls the way you drag</span><span class="knob" id="knob"></span></div>
       <p class="hint" id="status">Loading the firmware…</p>
     </div>
 
@@ -184,7 +189,6 @@ dd { margin: 0; font-family: var(--font-mono); font-size: 12px; font-variant-num
         </div>
         <label>Tilt the panel <input type="range" id="tilt" min="-40" max="40" step="1" value="0"> <output id="tilt-out">0°</output></label>
         <label>Tip the top away <input type="range" id="fwd" min="-40" max="40" step="1" value="0"> <output id="fwd-out">0°</output></label>
-        <div class="tiltpad" id="tiltpad" role="application" aria-label="Tilt pad: drag to tilt both ways at once, let go to level">drag to tilt</div>
         <div class="legend" id="legend" hidden></div>
         <p class="note">Tilt turns the panel right side down: he slides downhill and his head rights itself toward true up. Upright only; on its side the square also slides into the glass's side bands, which the bench does not show.</p>
         <p class="note">10× skips the waits: the notice shrinks to a badge after 15 s, and the again/reply pair stands after 10 s.</p>
@@ -366,9 +370,13 @@ $('v-game').onclick = () => panel.set(KNOB.PET_ACT, 8);
 // (left/right and toward/away), the arrow keys too, and letting go levels the panel. A drag is
 // the edge pushed down, so he rolls the way the drag goes, like a marble: up tips the top away.
 const setTilt = (x, y) => {
-  const t = $('tilt'), f = $('fwd');
-  t.value = String(Math.round(x)); t.dispatchEvent(new Event('input'));
-  f.value = String(Math.round(y)); f.dispatchEvent(new Event('input'));
+  x = Math.round(x); y = Math.round(y);
+  if (tiltDeg !== 0) { tiltDeg = 0; tiltScale = 1; document.querySelector('.case').style.transform = ''; }
+  $('tilt').value = String(x); $('tilt-out').textContent = `${x}°`;
+  $('fwd').value = String(y); $('fwd-out').textContent = `${y}°`;
+  panel.set(KNOB.TILT_DEG, x);
+  panel.set(KNOB.FWD_DEG, y);
+  $('knob').style.transform = `translate(${x * 1.6}px, ${-y * 1.6}px)`;
 };
 $('fwd').oninput = (e) => {
   $('fwd-out').textContent = `${e.target.value}°`;
