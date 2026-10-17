@@ -954,6 +954,18 @@ static int s_grav_down;
 static game_t s_game;
 static float s_game_tx0;
 static float s_game_pitch0;
+
+/* LET'S PLAY A GAME (`game.h`): he walks to the middle and shrinks. The tilt he is held at now
+   is level, for the whole game. Said, or picked on the menu's games page. */
+static void game_begin(uint32_t now)
+{
+    float hx, hy;
+    face_game_home(s_lean, &hx, &hy);
+    game_start(&s_game, now, esp_random(), hx, hy);
+    s_game_tx0 = s_tilt_g;
+    s_game_pitch0 = game_pitch(s_az, s_grav_down);
+    ESP_LOGI(TAG, "game: start (tilt %.2f, az %d, down %d)", (double)s_tilt_g, s_az, s_grav_down);
+}
 /* THE HEAD RIGHTING (`face_state_t.upright`), in degrees — `orient_upright`. */
 static float s_upright;
 /* Consecutive failed frame pushes, so the log can rate-limit and still say it recovered. */
@@ -2034,17 +2046,9 @@ static void face_task(void *arg)
                     voice = SM_VOICE_WAKE;
                     break;
                 case VOCAB_GAME:
-                    /* LET'S PLAY A GAME (`game.h`): he walks to the middle and shrinks. The
-                       tilt he is held at now is level, for the whole game. */
                     if (s_out.view.mode == SM_PET) { /* last frame's screen: the pet's */
-                        float hx, hy;
-                        face_game_home(s_lean, &hx, &hy);
                         action = ACT_NONE;
-                        game_start(&s_game, now, esp_random(), hx, hy);
-                        s_game_tx0 = s_tilt_g;
-                        s_game_pitch0 = game_pitch(s_az, s_grav_down);
-                        ESP_LOGI(TAG, "game: start (tilt %.2f, az %d, down %d)", (double)s_tilt_g,
-                                 s_az, s_grav_down);
+                        game_begin(now);
                         heard_cue = CUE_HEARD;
                     }
                     break;
@@ -2187,6 +2191,10 @@ static void face_task(void *arg)
         s_in.sound = sound;
         sm_step(&s_sm, &s_in, &s_out);
         const sm_view_t *const view = &s_out.view;
+        if (s_out.start_game && !game_on(&s_game)) { /* the press already sounded */
+            action = ACT_NONE;
+            game_begin(now);
+        }
         if (execute(st, sound, now)) {
             action = ACT_NOD;
             action_mag = 1.0f;

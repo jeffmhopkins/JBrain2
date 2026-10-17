@@ -388,10 +388,17 @@ static void face_pet(uint16_t *fb, int w, int h, int cx, int cy, int fr)
     }
 }
 
+static void grid_cancel(uint16_t *fb, int w, int h, int cy)
+{
+    const int a = CONFIRM_R / 2;
+    disc(fb, w, h, CONFIRM_CX_CANCEL, cy, CONFIRM_R, CONFIRM_RED);
+    stroke(fb, w, h, CONFIRM_CX_CANCEL - a, cy - a, CONFIRM_CX_CANCEL + a, cy + a, CONFIRM_GLYPH);
+    stroke(fb, w, h, CONFIRM_CX_CANCEL + a, cy - a, CONFIRM_CX_CANCEL - a, cy + a, CONFIRM_GLYPH);
+}
+
 void sendto_draw(uint16_t *fb, int w, int h, int over_h)
 {
     const int top = sendto_cy_top(over_h), bottom = sendto_cy_bottom(over_h);
-    const int a = CONFIRM_R / 2;
 
     /* SISTER, top left. The face is deliberately smaller than the man's: she is a little girl,
        and the two faces sit on discs of the same size so what differs is the person. */
@@ -406,11 +413,29 @@ void sendto_draw(uint16_t *fb, int w, int h, int over_h)
 
     /* CANCEL, bottom left — the cross a child has already learned, in the colour and at the
        size they learned it, so leaving a menu is the gesture they already know. */
-    disc(fb, w, h, CONFIRM_CX_CANCEL, bottom, CONFIRM_R, CONFIRM_RED);
-    stroke(fb, w, h, CONFIRM_CX_CANCEL - a, bottom - a, CONFIRM_CX_CANCEL + a, bottom + a,
-           CONFIRM_GLYPH);
-    stroke(fb, w, h, CONFIRM_CX_CANCEL + a, bottom - a, CONFIRM_CX_CANCEL - a, bottom + a,
-           CONFIRM_GLYPH);
+    grid_cancel(fb, w, h, bottom);
+}
+
+/* A GAMEPAD, because a child who has seen one knows what it is for. Not a picture of the game
+   itself: that is motion, and frozen into an icon it is just the pet with things near him. */
+static void pad(uint16_t *fb, int w, int h, int cx, int cy, int fr)
+{
+    rrect(fb, w, h, cx, cy, fr, fr * 18 / 32, fr * 14 / 32, CONFIRM_GLYPH);
+    /* The cross on the left, the two buttons on the right, as every pad has them. */
+    const int dx = cx - fr * 15 / 32, arm = fr * 9 / 32, t = fr * 4 / 32;
+    rrect(fb, w, h, dx, cy, arm, t, 1, SENDTO_HAIR);
+    rrect(fb, w, h, dx, cy, t, arm, 1, SENDTO_HAIR);
+    const int bx = cx + fr * 15 / 32, br = fr * 5 / 32;
+    disc(fb, w, h, bx - fr * 6 / 32, cy + fr * 5 / 32, br, CONFIRM_RED);
+    disc(fb, w, h, bx + fr * 6 / 32, cy - fr * 5 / 32, br, CONFIRM_GREEN);
+}
+
+void sendto_draw_games(uint16_t *fb, int w, int h, int over_h)
+{
+    const int top = sendto_cy_top(over_h), bottom = sendto_cy_bottom(over_h);
+    disc(fb, w, h, CONFIRM_CX_CANCEL, top, CONFIRM_R, SENDTO_GAME_COLOUR);
+    pad(fb, w, h, CONFIRM_CX_CANCEL, top, CONFIRM_R * 3 / 4);
+    grid_cancel(fb, w, h, bottom);
 }
 
 

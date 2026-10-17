@@ -139,8 +139,13 @@ typedef enum {
     SM_T_CELL_DAD,
     SM_T_CELL_CANCEL,
     SM_T_CELL_PET,
+    SM_T_CELL_GAME, /* the games page: starts the game, on the lift */
     SM_T_SWALLOW,
 } sm_target_t;
+
+/* The menu's two pages: a swipe left turns to the games, a swipe right back (0.4.17). */
+#define SM_GRID_PEOPLE 0
+#define SM_GRID_GAMES 1
 
 typedef struct {
     uint32_t now;
@@ -219,6 +224,7 @@ typedef struct {
     bool reply;
     bool sending;
     bool grid;
+    int grid_page;        /* SM_GRID_PEOPLE or SM_GRID_GAMES, while `grid` */
     bool confirm;         /* the tick and the cross */
     bool listen_dot;      /* the dot: the microphone is open */
     jp_to_t rec_to;
@@ -231,6 +237,7 @@ typedef struct {
     sm_view_t view;
     /* for display.c's pass-through and its sleep stages */
     bool pet_press;        /* a press reached the pet: display's poke (a flinch while it speaks) */
+    bool start_game;       /* the games page's game was picked: display starts it, as the phrase does */
     bool arrived;          /* an unseen message id: the sleep `arrived` wake */
     const char *say;       /* a caption line, NULL when there is nothing to say */
     /* telemetry */
@@ -311,6 +318,7 @@ typedef struct {
         bool big;
     } notice;
     uint32_t grid_until;
+    int grid_page;
     struct {
         char id[JP_ID_MAX];
         int index;
@@ -322,6 +330,8 @@ typedef struct {
     struct {
         bool active; /* the finger is on the glass */
         bool on_pet, swiped, held;
+        bool in_grid;    /* the down edge landed on the menu */
+        bool game_armed; /* it landed on the game, which starts on the lift */
         uint32_t at;
         int x, y;
         sm_target_t target;

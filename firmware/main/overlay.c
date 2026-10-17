@@ -391,7 +391,11 @@ void overlay_draw(uint16_t *fb, const sm_view_t *view, const overlay_ctx_t *c)
         draw_indicator(fb, c->over_y0, c->now, c->result_colour, c->result_word);
     }
     /* THE GRID LAST OF ALL: the one overlay a child asked for by pressing. */
-    if (view->grid) sendto_draw(fb, FACE_W, FACE_H, c->over_h);
+    if (view->grid && view->grid_page == SM_GRID_GAMES) {
+        sendto_draw_games(fb, FACE_W, FACE_H, c->over_h);
+    } else if (view->grid) {
+        sendto_draw(fb, FACE_W, FACE_H, c->over_h);
+    }
 }
 
 void overlay_result(cue_t c, bool nobody, const char **word, uint16_t *colour)

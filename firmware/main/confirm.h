@@ -200,6 +200,13 @@ sendto_hit_t sendto_hit(int fx, int fy, int over_h);
  * recipient that looked like a verb would undo the only colour vocabulary these children have. */
 void sendto_draw(uint16_t *fb, int w, int h, int over_h);
 
+/* THE SECOND PAGE: THE GAMES (0.4.17). A swipe left on the grid turns to it and a swipe right
+ * turns back, the owner's ask: *"swipe left should go to a new 2x2 menu. Put an icon for the game
+ * there. Will add more games later."* The same four quadrants, so the aim a child has learned
+ * holds: the game top left, the cancel where it is on the first page, the right column spare
+ * until there are more games to put in it. */
+void sendto_draw_games(uint16_t *fb, int w, int h, int over_h);
+
 /* ONE OF THOSE FACES, ANYWHERE, AT ANY SIZE — so the picture of a person means the same thing
  * wherever it appears. The owner asked for the faces to follow the person around: on the
  * indicator while a child is recording (*"a 1/4 size face of who they're talking to"*), and on
@@ -234,3 +241,5 @@ void sendto_draw_face(uint16_t *fb, int w, int h, int cx, int cy, int r, sendto_
    a bird does not. Silver head, lit eyes. */
 #define SENDTO_ROBOT CONFIRM_SWAP(0xC618)
 #define SENDTO_ROBOT_EYE CONFIRM_SWAP(0x07FF)
+/* The games' disc: violet, the one colour this glass had not spent. */
+#define SENDTO_GAME_COLOUR CONFIRM_SWAP(0x801F)

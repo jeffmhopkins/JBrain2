@@ -178,6 +178,35 @@ p.voice(VOICE.STOP);
 check(until(() => events.slice(said).some((e) => e.includes('back to his own size')), 4000),
   '"stop" ends the game, and he walks back');
 
+// The menu's games page (owner, 0.4.17): a swipe left turns to it, a swipe right back, and the
+// pad top left starts the game. The swipes land on cells; their presses are unwound.
+const swipeOn = (dx) => {
+  p.touch(0, W / 2, H * 0.45);
+  p.advance(40);
+  p.touch(1, W / 2 + dx, H * 0.45);
+  p.advance(80);
+  p.touch(2, W / 2 + dx, H * 0.45);
+  p.advance(80);
+};
+p.advance(4000);
+p.touch(0, W / 2, H / 2);
+check(until(() => p.state().grid, 2000), 'a hold opens the menu');
+p.touch(2, W / 2, H / 2);
+p.advance(400);
+swipeOn(-100);
+check(p.state().grid && p.state().page === 1 && p.state().mode === 'GRID', 'a swipe left: the games');
+swipeOn(100);
+check(p.state().grid && p.state().page === 0, 'a swipe right: the people again');
+swipeOn(-100);
+const menuAt = events.length;
+tap(W / 4, H / 4);
+check(p.state().mode === 'PET' && events.slice(menuAt).some((e) => e.includes('the game, from the menu')),
+  'the pad starts the game');
+check(until(() => events.slice(menuAt).some((e) => e.includes('cue GAME_GO')), 4000), 'and it goes');
+p.voice(VOICE.STOP);
+check(until(() => events.slice(menuAt).some((e) => e.includes('back to his own size')), 4000),
+  'and "stop" ends it');
+
 // The wake phrase while idle opens a turn with the pet.
 p.voice(VOICE.WAKE);
 p.advance(200);
