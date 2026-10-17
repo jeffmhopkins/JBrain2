@@ -1,9 +1,9 @@
 # Owner tunnel — the Android app reaches the box end to end, Cloudflare carries only ciphertext (proposed)
 
-> **Status:** Scheduled · **Last verified:** 2026-10-17 · **Waves:** S0◻️ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
+> **Status:** In progress · **Last verified:** 2026-10-17 · **Waves:** S0✅ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
 
-**Scheduled 2026-10-17 (owner: "Go").** Revised after a four-lens review (§9). The S0 spike
-app is built (`android/spike/`); its on-phone report decides the rest. The owner's ask, 2026-10-17:
+**Scheduled 2026-10-17 (owner: "Go").** Revised after a four-lens review (§9). S0 passed on the
+owner's phone (§5): the `network_security_config` trust anchor is the trust mechanism. The owner's ask, 2026-10-17:
 
 > *"I basically want to avoid cloudfare man in the middle risks and have a way of sending the
 > pwa update from my server that can be verified not man in the middle."*
@@ -211,11 +211,11 @@ are not wiped by the signing switch below. Built on `OwnerActivity`, `OwnerWebVi
   through: service workers register, the HTTP cache works, and no system or MDM CA can stand in
   for the box. The owner CA's public certificate is baked into the owner build from a repository
   file the box's CA is copied into once after Wave A (public data; an agent can do it through
-  the debug API). The QR's CA hash is checked against the baked one. *Fallback if S0 shows
-  WebView ignores the config:* pin the leaf SPKI in `onReceivedSslError` (`getX509Certificate`
-  on API 29+, `SslCertificate.saveState` below), call `clearSslPreferences()` on revoke, and
-  have the SPA skip service-worker registration in the app, since Chromium refuses a worker on a
-  cert-error origin.
+  the debug API). The QR's CA hash is checked against the baked one. S0 confirmed WebView honours
+  both the anchor and the `pin-set`. A pin failure surfaces in `onReceivedSslError`, so that
+  callback always cancels for the owner host: proceeding there would bypass the pin. (The
+  `onReceivedSslError` SPKI-pin fallback is dropped: S0 showed Chromium refuses the service
+  worker on that origin, as expected.)
 - **Client cert:** `onReceivedClientCertRequest` answers with the Keystore key (EC P-256,
   StrongBox where present); `clearClientCertPreferences()` on revoke.
 - **Tunnel service.** A foreground-capable `Service`, not the activity, runs the loopback
@@ -268,7 +268,7 @@ cookie).
 
 ## 5. Waves
 
-- **S0 — spike, go/no-go. ◻️** The spike is a separate test APK (`android/spike/`,
+- **S0 — spike, go/no-go. ✅** The spike is a separate test APK (`android/spike/`,
   `com.jbrain.tunnelspike`, published beside the main APK as `jbrain-tunnel-spike.apk`) that
   carries its own stand-in box: a loopback TLS server that demands a client cert, behind an
   in-app CONNECT proxy, with a test CA as the owner host's only anchor. It runs the checks below
@@ -282,6 +282,17 @@ cookie).
   change; a WebSocket byte pump through the Cloudflare tunnel stays up for real use and real
   upload sizes; the phone validates `jbrain.local` by the LAN-root hash. On the box, through the
   debug API: whether Caddy sees real LAN client addresses (§3.5 says what happens if not).
+
+  **Result, 2026-10-17 (Pixel 10 Pro, Android SDK 37, WebView 155): go.** On the design stage
+  every check passed: secure context, service worker registered and controlling the page with
+  fetches through it, fetch, SSE and a WebSocket echo (also when racing the main frame on cold
+  start), the server saw the Keystore key's SPKI, the wrong-pin host was blocked, and internet
+  traffic bypassed the proxy (reverse bypass). The key is **StrongBox**; a signature averages
+  37 ms and the client-cert callback proceeds in 67 ms. The proxy's 407 challenge was answered
+  once through `onReceivedHttpAuthRequest`. The fallback stage confirmed the service worker
+  fails on a cert-error origin, so it is dropped. Not covered by the APK, and moved into B: the
+  Cloudflare WebSocket pump, HTTP/2 over CONNECT, reconnect on network change, `jbrain.local`
+  validation by the LAN-root hash, and whether Caddy sees real LAN addresses.
 - **A — box: keys, owner site, devices, enrollment. ◻️** §3.1 one-shot key generation and the
   two volumes; §3.2 snippet argument on every site, the `:8443` site rendered only when its
   files exist, PROXY protocol, `caddy validate` in CI and the real-Caddy header test;
@@ -336,10 +347,11 @@ storage abstraction (#2); tests in the same PRs with security paths at 100% (#5)
 every operator step PWA-, app- or box-screen-operable, including key generation and renewal, the
 home subnet and the retirement toggle (#10).
 
-## 8. Open questions S0 can close
+## 8. Open questions
 
-- Does WebView honour `pin-set` as well as the trust anchor for the domain?
-- StrongBox handshake latency on the owner's phone, and whether TEE-only is acceptable.
+- ~~Does WebView honour `pin-set` as well as the trust anchor for the domain?~~ Yes (S0).
+- ~~StrongBox handshake latency on the owner's phone.~~ StrongBox present; 67 ms per client-cert
+  handshake (S0). TEE stays the fallback for phones without it.
 - Is the single uvicorn worker enough for the doubled hop, or does the pump get its own
   container?
 
