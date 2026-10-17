@@ -90,6 +90,7 @@ COOKIE_EXEMPT: dict[tuple[str, str], str] = {
     ("POST", "/api/intake/redeem"): "intake secret in the body mints the intake cookie",
     ("POST", "/api/jcode/share/redeem"): "share secret in the body mints the share cookie",
     ("POST", "/api/owner-devices/session"): "the guard-verified phone key is the credential",
+    ("POST", "/api/owner-devices/enroll"): "the box-screen QR code's MAC is the credential",
     ("GET", "/api/install/grok.ps1"): "public setup script; carries no secret",
     ("GET", "/api/feed/appointments.ics"): "?token= feed secret, constant-time compared",
     ("GET", "/api/research-share/{token}"): "token in path",

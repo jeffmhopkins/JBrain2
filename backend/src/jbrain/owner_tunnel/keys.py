@@ -12,9 +12,11 @@ the leaf renews itself with no terminal step. It keeps whatever is valid and rep
 is missing, mismatched or due.
 """
 
+import base64
 import datetime as dt
 import hashlib
 from dataclasses import dataclass
+from typing import cast
 
 from cryptography import x509
 from cryptography.exceptions import InvalidSignature
@@ -30,6 +32,9 @@ CA_LIFETIME = dt.timedelta(days=20 * 365)
 LEAF_LIFETIME = dt.timedelta(days=365)
 # Updates are not daily, so a leaf is renewed well before it lapses.
 LEAF_RENEW_BEFORE = dt.timedelta(days=60)
+# A phone's certificate outlives the phone. Revocation is the api's job (§3.4), not expiry's,
+# and a phone must never be locked out because nobody renewed it.
+DEVICE_LIFETIME = dt.timedelta(days=10 * 365)
 # A certificate's notBefore is backdated so a phone whose clock runs a little slow accepts it.
 _CLOCK_SKEW = dt.timedelta(hours=1)
 
@@ -49,6 +54,16 @@ def public_key_sha256(public_key: ec.EllipticCurvePublicKey) -> str:
         serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint
     )
     return hashlib.sha256(point).hexdigest()
+
+
+def spki_pin(cert: x509.Certificate) -> str:
+    """The certificate's key as an Android `<pin digest="SHA-256">` value: base64 of the
+    SHA-256 of its DER SubjectPublicKeyInfo. The enrollment QR carries the owner CA's and the
+    LAN root's, so the app trusts exactly those keys from its first request."""
+    spki = cert.public_key().public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    return base64.b64encode(hashlib.sha256(spki).digest()).decode()
 
 
 def _same_key(a: ec.EllipticCurvePublicKey, b: object) -> bool:
@@ -215,3 +230,89 @@ def ensure(files: OwnerKeyFiles, now: dt.datetime | None = None) -> list[str]:
         files.write("site.crt", chain)
         made.append("owner site certificate")
     return made
+
+
+class KeysNotReady(Exception):
+    """The CAs have not been made yet (the update's `owner-keys ensure` has not run)."""
+
+
+@dataclass(frozen=True)
+class IssuedDevice:
+    key_hash: str
+    public_key_der: bytes
+    cert_pem: bytes
+    owner_ca_pem: bytes
+    enroll_ca_pem: bytes
+
+
+def parse_device_csr(csr_pem: bytes) -> x509.CertificateSigningRequest:
+    """A phone's certificate request, or ValueError. Its self-signature proves the phone holds
+    the key, and the key must be P-256: that is what the phone's secure hardware makes, and
+    `public_key_sha256` is defined on it."""
+    csr = x509.load_pem_x509_csr(csr_pem)
+    if not csr.is_signature_valid:
+        raise ValueError("the request's signature does not verify")
+    key = csr.public_key()
+    if not isinstance(key, ec.EllipticCurvePublicKey) or not isinstance(key.curve, ec.SECP256R1):
+        raise ValueError("the request's key is not P-256")
+    return csr
+
+
+def owner_ca_cert(files: OwnerKeyFiles, now: dt.datetime | None = None) -> x509.Certificate:
+    ca = _load_ca(files, "owner-ca", now or dt.datetime.now(dt.UTC))
+    if ca is None:
+        raise KeysNotReady("owner CA")
+    return ca.cert
+
+
+def issue_device(
+    files: OwnerKeyFiles, csr: x509.CertificateSigningRequest, now: dt.datetime | None = None
+) -> IssuedDevice:
+    """Sign a phone's client certificate with the enrollment CA. Only the key is taken from the
+    request: the subject and extensions are the box's own, so nothing the phone asks for ends
+    up in what Caddy trusts."""
+    now = now or dt.datetime.now(dt.UTC)
+    enroll_ca = _load_ca(files, "enroll-ca", now)
+    owner_ca = _load_ca(files, "owner-ca", now)
+    if enroll_ca is None or owner_ca is None:
+        raise KeysNotReady("enrollment CA" if enroll_ca is None else "owner CA")
+    key = cast(ec.EllipticCurvePublicKey, csr.public_key())
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "JBrain owner phone")]))
+        .issuer_name(enroll_ca.cert.subject)
+        .public_key(key)
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - _CLOCK_SKEW)
+        .not_valid_after(min(now + DEVICE_LIFETIME, enroll_ca.cert.not_valid_after_utc))
+        .add_extension(x509.BasicConstraints(ca=False, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                key_cert_sign=False,
+                crl_sign=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.CLIENT_AUTH]), critical=False)
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(enroll_ca.key.public_key()),
+            critical=False,
+        )
+        .sign(enroll_ca.key, hashes.SHA256())
+    )
+    return IssuedDevice(
+        key_hash=public_key_sha256(key),
+        public_key_der=key.public_bytes(
+            serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+        ),
+        cert_pem=_cert_pem(cert),
+        owner_ca_pem=_cert_pem(owner_ca.cert),
+        enroll_ca_pem=_cert_pem(enroll_ca.cert),
+    )

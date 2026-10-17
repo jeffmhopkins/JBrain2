@@ -70,6 +70,9 @@ dependencies = [
     # X.509 for the owner tunnel: the box's owner and enrollment CAs, the owner site's TLS
     # leaf, and signing device CSRs (docs/plans/OWNER_TUNNEL_PLAN.md §3.1).
     "cryptography>=50.0.2",
+    # The enrollment QR on the box's own screen (docs/plans/OWNER_TUNNEL_PLAN.md §3.5), drawn
+    # as SVG the wall shows; pure Python, no imaging dependency.
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]

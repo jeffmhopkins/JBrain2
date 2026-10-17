@@ -120,6 +120,15 @@ def client_ip(conn: HTTPConnection) -> str | None:
     return real
 
 
+def via_tunnel(conn: HTTPConnection) -> bool:
+    """Whether the request reached Caddy from cloudflared, whatever site it named. The
+    enrollment route refuses those: a stolen tunnel token could point the tunnel at the LAN
+    site, and `client_ip` would then report the address Cloudflare claims."""
+    if conn.client is None or _norm(conn.client.host) not in _addrs(PROXY_SERVICE):
+        return False
+    return _norm(conn.headers.get("x-real-ip", "")) in _addrs(TUNNEL_SERVICE)
+
+
 #: The ingress names Caddy stamps on every request it forwards (`X-JBrain-Ingress`,
 #: docs/plans/OWNER_TUNNEL_PLAN.md §3.2). Each site sets its own, overwriting the client's.
 INGRESSES = frozenset({"public", "lan", "owner-tunnel", "preview"})

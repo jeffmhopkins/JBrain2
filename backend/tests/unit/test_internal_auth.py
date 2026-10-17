@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 from jbrain.config import Settings
 from jbrain.main import create_app
 from jbrain.storage import FsInternalSecrets
-from tests.internal_callers import mqtt_headers, token, wall_headers
+from tests.internal_callers import enroll_headers, mqtt_headers, token, wall_headers
 from tests.unit.fakes import FakeAuthRepo
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
@@ -37,6 +37,13 @@ WALL_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
 MQTT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("POST", "/internal/mqtt-auth", {"username": "x", "password": "nope"}, 403),
     ("POST", "/internal/mqtt-acl", {"username": "x", "topic": "owntracks/x/p", "acc": 2}, 403),
+]
+# The box's enrollment screen (OWNER_TUNNEL_PLAN.md §3.5): its own token, in its own volume.
+ENROLL_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
+    ("GET", "/internal/owner-enroll", None, 200),
+    ("POST", "/internal/owner-enroll/arm", None, 200),
+    ("POST", "/internal/owner-enroll/close", None, 204),
+    ("POST", "/internal/owner-enroll/reject", None, 404),
 ]
 # Keeps its own HMAC bearer (api/llm_internal.py, tested in test_llm_internal.py).
 _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
@@ -66,7 +73,8 @@ def test_every_internal_route_refuses_a_request_without_a_token(
         if isinstance(r, APIRoute) and r.path.startswith("/internal/")
         for m in r.methods
     ]
-    gated = {p for _, p, _, _ in WALL_ROUTES + MQTT_ROUTES} | {"/internal/pet"} | _OWN_BEARER
+    routes = WALL_ROUTES + MQTT_ROUTES + ENROLL_ROUTES
+    gated = {p for _, p, _, _ in routes} | {"/internal/pet"} | _OWN_BEARER
     # A new /internal route fails here until it is given a caller.
     assert {p for _, p in internal} == gated
     for method, path in internal:
@@ -117,6 +125,22 @@ def test_mqtt_routes_open_to_the_mqtt_token_only(
     # The whole User-Agent is the token: a prefix or suffix around it is not.
     assert _call(c, method, path, body, {"User-Agent": f"go-auth {token(app, 'mqtt')}"}) == 401
     assert _call(c, method, path, body, mqtt_headers(app)) == ok
+
+
+@pytest.mark.parametrize(("method", "path", "body", "ok"), ENROLL_ROUTES)
+def test_enrollment_screen_routes_open_to_the_enroll_token_only(
+    app_client: tuple[FastAPI, TestClient],
+    method: str,
+    path: str,
+    body: object,
+    ok: int,
+) -> None:
+    app, c = app_client
+    assert _call(c, method, path, body, {}) == 401
+    # The pet token sits where the cast sidecar and mosquitto can read it: it opens nothing.
+    assert _call(c, method, path, body, wall_headers(app)) == 401
+    assert _call(c, method, path, body, mqtt_headers(app)) == 401
+    assert _call(c, method, path, body, enroll_headers(app)) == ok
 
 
 def test_a_non_ascii_header_is_refused_not_a_crash(

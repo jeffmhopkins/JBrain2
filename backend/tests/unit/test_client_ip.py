@@ -249,3 +249,11 @@ class TestIngressAndDevice:
         with cip.pinned(proxy=(PROXY,)):
             conn = _conn(PROXY, x_jbrain_ingress="owner-tunnel", x_jbrain_device=value)
             assert cip.device_key(conn) is None
+
+    def test_via_tunnel_only_when_caddy_says_cloudflared_sent_it(self) -> None:
+        with cip.pinned(proxy=(PROXY,), tunnel=(TUNNEL,)):
+            assert cip.via_tunnel(_conn(PROXY, x_real_ip=TUNNEL, x_jbrain_ingress="lan"))
+            assert not cip.via_tunnel(_conn(PROXY, x_real_ip="192.168.1.50"))
+            # Only Caddy's X-Real-IP counts: a sandbox naming the connector is not the tunnel.
+            assert not cip.via_tunnel(_conn("172.20.0.5", x_real_ip=TUNNEL))
+            assert not cip.via_tunnel(_conn(None, x_real_ip=TUNNEL))

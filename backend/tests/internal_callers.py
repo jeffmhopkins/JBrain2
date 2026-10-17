@@ -21,5 +21,11 @@ def wall_headers(app: FastAPI) -> dict[str, str]:
     return {"Authorization": f"Bearer {token(app, 'wall')}"}
 
 
+def enroll_headers(app: FastAPI) -> dict[str, str]:
+    value = cast(InternalSecrets, app.state.enroll_secrets).read("wall-enroll")
+    assert value, "the app minted no wall-enroll token"
+    return {"Authorization": f"Bearer {value.decode()}"}
+
+
 def mqtt_headers(app: FastAPI) -> dict[str, str]:
     return {"User-Agent": token(app, "mqtt")}

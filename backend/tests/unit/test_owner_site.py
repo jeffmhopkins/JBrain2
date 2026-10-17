@@ -241,6 +241,23 @@ class _Stack:
                             raise _PortTaken from None
                         raise AssertionError(f"caddy did not start: {err[-2000:]}") from None
                     time.sleep(0.1)
+        self._await_lan_cert(deadline)
+
+    def _await_lan_cert(self, deadline: float) -> None:
+        # The LAN site's `tls internal` certificate is issued after the port is already
+        # bound, and a handshake before then is refused with an internal-error alert.
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        tls.check_hostname = False
+        tls.verify_mode = ssl.CERT_NONE
+        while True:
+            try:
+                raw = socket.create_connection(("127.0.0.1", self.ports["lan"]), timeout=1)
+                with tls.wrap_socket(raw, server_hostname="jbrain.local"):
+                    return
+            except (ssl.SSLError, OSError):
+                if time.monotonic() > deadline:
+                    raise AssertionError("the LAN site never served its certificate") from None
+                time.sleep(0.1)
 
     def stop(self) -> None:
         if self.proc is not None:

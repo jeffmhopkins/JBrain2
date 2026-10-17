@@ -15,6 +15,9 @@ os.environ.setdefault("JBRAIN_VITALS_SAMPLER_ENABLED", "false")
 os.environ.setdefault(
     "JBRAIN_INTERNAL_SECRETS_DIR", tempfile.mkdtemp(prefix="jbrain-internal-secrets-")
 )
+os.environ.setdefault(
+    "JBRAIN_ENROLL_SECRETS_DIR", tempfile.mkdtemp(prefix="jbrain-enroll-secrets-")
+)
 
 
 if TYPE_CHECKING:

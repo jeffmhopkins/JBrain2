@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Protocol
 
 from sqlalchemy import func, or_, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -30,6 +31,11 @@ class OwnerDeviceInfo:
     last_seen_at: datetime | None
     last_ingress: str | None
     revoked_at: datetime | None
+
+
+class AlreadyEnrolled(Exception):
+    """A phone with this key is already on record, revoked or not: a revoked phone re-enrolls
+    with a new key, so a revoke can never be undone by enrolling again."""
 
 
 class OwnerDeviceRepo(Protocol):
@@ -100,12 +106,17 @@ class SqlOwnerDeviceRepo:
             return info
 
     async def create(self, label: str, key_hash: str, public_key: bytes) -> OwnerDeviceInfo:
-        async with scoped_session(self._maker, _LOGIN) as session:
-            row = OwnerDevice(label=label, key_hash=key_hash, public_key=public_key)
-            session.add(row)
-            await session.flush()
-            await session.refresh(row)
-            return _info(row)
+        try:
+            async with scoped_session(self._maker, _LOGIN) as session:
+                row = OwnerDevice(label=label, key_hash=key_hash, public_key=public_key)
+                session.add(row)
+                await session.flush()
+                await session.refresh(row)
+                return _info(row)
+        except IntegrityError as exc:
+            if "owner_devices_key_hash_key" in str(exc.orig):
+                raise AlreadyEnrolled(key_hash) from exc
+            raise
 
     async def list_all(self, ctx: SessionContext) -> list[OwnerDeviceInfo]:
         async with scoped_session(self._maker, ctx) as session:

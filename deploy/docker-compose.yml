@@ -258,6 +258,10 @@ services:
       # `.env` key and no host step. The image pre-owns the mount point, so a fresh volume
       # is writable by the non-root app.
       - internal_secrets:/run/jbrain-internal
+      # The wall's enrollment-screen token alone (`wall-enroll.token`), mounted by the api
+      # and the wall and nothing else: that screen hands out the code that enrolls an owner
+      # phone (docs/plans/OWNER_TUNNEL_PLAN.md §3.5).
+      - enroll_secrets:/run/jbrain-enroll
       # The owner tunnel's keys (docs/plans/OWNER_TUNNEL_PLAN.md §3.1), written by the
       # `owner-keys ensure` one-shot each update. `owner_keys` holds the CA private keys and
       # is mounted nowhere else; `owner_site` is what the proxy will read.
@@ -430,6 +434,7 @@ services:
       # Read-only: the wall reads `wall.token` (its key to the api's /internal/pet* and
       # nothing else) per request, so it works whichever of the two starts first.
       - internal_secrets:/run/jbrain-internal:ro
+      - enroll_secrets:/run/jbrain-enroll:ro
     ports:
       - "${BRAIN_HOST_BIND:-0.0.0.0}:8800:8800"
     networks: [internal]
@@ -1357,6 +1362,7 @@ volumes:
   # The /internal callers' tokens (see the api service). Not backed up: the api mints
   # fresh ones into an empty volume on its next start.
   internal_secrets:
+  enroll_secrets:
   # The owner tunnel's CA keys (api only) and the owner site's TLS files (api writes, the
   # proxy reads). See the api service.
   owner_keys:

@@ -142,7 +142,8 @@ ensure_uv() {
 # per-call timeout, for web_fetch's search across a GitHub repo snapshot,
 # docs/archive/GITHUB_FETCH_PLAN.md), guarded by tests/unit/test_web_github.py; and `cryptography`
 # (the owner tunnel's CAs, TLS leaf and device-CSR signing, docs/plans/OWNER_TUNNEL_PLAN.md
-# §3.1), guarded by tests/unit/test_owner_keys.py. All are pure pip deps
+# §3.1), guarded by tests/unit/test_owner_keys.py; and `segno` (the enrollment QR the box's own
+# screen shows, §3.5), guarded by tests/unit/test_owner_enrollment.py. All are pure pip deps
 # synced here (yt-dlp reuses the ffmpeg installed above); the smoke tests enforce CLAUDE.md
 # rule #8.
 #

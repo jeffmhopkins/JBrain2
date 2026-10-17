@@ -23,7 +23,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.auth import service as auth_service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.owner_tunnel.devices import SqlOwnerDeviceRepo
+from jbrain.owner_tunnel.devices import AlreadyEnrolled, SqlOwnerDeviceRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
@@ -128,6 +128,13 @@ async def test_no_one_deletes_a_phone(maker: async_sessionmaker, phone: str) -> 
         async with scoped_session(maker, OWNER) as s:
             await s.execute(text("DELETE FROM app.owner_devices WHERE key_hash = :k"), {"k": phone})
             await s.commit()
+
+
+async def test_a_key_enrolls_once(maker: async_sessionmaker, phone: str) -> None:
+    phones = SqlOwnerDeviceRepo(maker)
+    await phones.create("Pixel", phone, b"pk")
+    with pytest.raises(AlreadyEnrolled):
+        await phones.create("Pixel again", phone, b"pk")
 
 
 async def test_key_hash_must_be_lowercase_hex(maker: async_sessionmaker) -> None:

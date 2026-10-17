@@ -26,6 +26,11 @@ from jbrain.llm.engine_effort import EngineEfforts, RowKey
 from jbrain.llm.engine_effort import invalidate_cached as invalidate_engine_effort_cache
 from jbrain.sdr.roles import GAIN_CHOICES, GENERAL, UPCONVERTER_MAX_HZ, Radio
 
+# The owner's home subnet as a CIDR (docs/plans/OWNER_TUNNEL_PLAN.md §3.5): phone enrollment
+# is refused from any client address outside it. Absent = no address rule, only the LAN site
+# and the QR. Changed only from the LAN site.
+OWNER_ENROLL_SUBNET_KEY = "owner_enroll_subnet"
+
 ImageAnalysisMode = Literal["full", "ocr"]
 IMAGE_ANALYSIS_MODES: tuple[ImageAnalysisMode, ...] = ("full", "ocr")
 IMAGE_ANALYSIS_DEFAULT: ImageAnalysisMode = "full"
