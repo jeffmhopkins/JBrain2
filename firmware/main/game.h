@@ -7,7 +7,9 @@
  * of slow and go faster, giving a score for each one dodged."* Agreed against a playable mock
  * (artifact HoUATxevCfmDDiJdHZKM5A) before any of this was written.
  *
- * Tilt is ACCELERATION, not position: he runs downhill and skids a little, so a held tilt is a
+ * Tilt is ACCELERATION, not position: he runs downhill like a marble (toward the edge that goes
+ * down, so the top tipped away runs him up; 0.4.18, the owner: *"Like a marble (both games)"*)
+ * and skids a little, so a held tilt is a
  * run and a quick one is a hop. Things fly in from all four edges, spinning, most aimed at where
  * he is and some just crossing, so standing still is neither safe nor certain death. Each one
  * that leaves the field without touching him scores; one touching him ends the round, and a tap
@@ -102,7 +104,7 @@ void game_start(game_t *g, uint32_t now, uint32_t seed, float home_x, float home
 void game_start_as(game_t *g, game_kind_t kind, uint32_t now, uint32_t seed, float home_x,
                    float home_y);
 
-/* One frame. `tx`, `ty` the tilt, -1..1 (right, toward the viewer's bottom); `hw`, `hh` the
+/* One frame. `tx`, `ty` the tilt, -1..1 (the right side down, the top tipped away); `hw`, `hh` the
    field's half extents. Returns GAME_EV_* bits. */
 unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, float hw,
                    float hh);

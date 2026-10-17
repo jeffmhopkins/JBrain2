@@ -323,8 +323,7 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
     }
 
     if (g->kind == GAME_JET) {
-        /* UP IS THE TOP TIPPED AWAY, the agreed mock's "lean the top of the panel away to fly up":
-           a climb is a pull back, where Dodge's same tip runs him down the glass. */
+        /* UP IS THE TOP TIPPED AWAY, as in Dodge below: a marble's way. */
         const unsigned je = jet_step(&g->jet, &g->rng, dt, tx, -ty, hw * 2.0f, hh * 2.0f, &g->score);
         g->x = g->jet.jx - hw;
         g->y = g->jet.jy - hh;
@@ -346,8 +345,11 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
     const float ready = (float)GAME_READY_MS / 1000.0f;
     if (was_t < ready && t >= ready) ev |= GAME_EV_GO;
 
+    /* LIKE A MARBLE, NOT A BUBBLE (owner: *"tilt should be opposite of bubble. Like a marble
+       (both games)"*): he runs toward whichever edge goes down. The side tilt already did; the
+       top tipped away lowers the top edge, so it runs him up the glass, where it ran him down. */
     g->vx += tx * RUN_ACCEL * dt;
-    g->vy += ty * RUN_ACCEL * dt;
+    g->vy -= ty * RUN_ACCEL * dt;
     const float drag = expf(-RUN_FRICTION * dt);
     g->vx *= drag;
     g->vy *= drag;

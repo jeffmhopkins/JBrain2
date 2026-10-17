@@ -197,10 +197,9 @@ types"*, then, against the first mock, *"Need more levels, and make sure obstacl
 Agreed against a playable mock (artifact 1iQJmXLfdpUsjvC7kaXFTN). `jet.c` (pure, host-tested)
 runs inside `game.c`'s phases (`game_start_as(GAME_JET)`), so the walk in, the round over, the
 8 s timeout, the idle minute, "stop" and the walk out are Dodge's own. He shrinks at the left
-of the field and gets a jetpack. Gravity pulls him down and tipping the top away burns against
-it (a little tip holds him, let go he sinks, toward you dives; the floor is a safe landing),
-after the owner found the mock's push-and-hover *"work same"* as Dodge, *"like a bubble on a
-level"*. The side tilt drifts him forward and back, almost across the field (no wall halfway, after the owner hit one), which is how crushers
+of the field and gets a jetpack. Tipping the top away pushes him up and toward you down,
+with no gravity, so a child who stops tilting hovers: a
+sink-and-burn with gravity was tried on the bench and the owner asked for it off. The side tilt drifts him forward and back, almost across the field (no wall halfway, after the owner hit one), which is how crushers
 and lasers are waited out. Ten worlds of eight obstacles, each with its own kind: pipes whose
 gap jumps high and low, towers from the ground or sky, rocks that drop as he nears, sliding
 candy canes, a winding tunnel, birds and rising balloons, crushers, mine fields, spinning bars,
@@ -209,6 +208,9 @@ the tenth every kind mixes, faster and tighter. One bump ends the round, and a t
 world he reached at the score it began with. Its icon is an orange disc top right of the games
 page (`SM_T_CELL_JET`), started on the lift like Dodge's; `face.c` draws each world's sky,
 scenery and obstacles, clipped to the square when the panel is on its side.
+Dodge's forward/back is flipped to match (owner: *"tilt should be opposite of bubble. Like a
+marble (both games)"*): the top tipped away runs him up the glass, toward the edge that went
+down, and the bench's tilt pad rolls him the way it is dragged.
 
 **0.4.17: as few things on screen as before, and a games page.** Owner: *"Objects are slower,
 but ... the spawn rate actually didn't decrease, so it ended up having a lot more on screen"*,

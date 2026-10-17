@@ -1538,11 +1538,13 @@ static void test_the_dodging_game(void)
     for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 1.0f, 0, hw, hh);
     CHECK(g.x > x0 + 20.0f, "tilt right: he runs right");
     for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, 1.0f, hw, hh);
-    CHECK(g.y > y0 + 20.0f, "tilt the bottom down: he runs down");
+    CHECK(g.y < y0 - 20.0f, "the top tipped away: like a marble, he runs up toward it");
+    for (int k = 0; k < 20; k++, t += 40) game_step(&g, t, 40, 0, -1.0f, hw, hh);
+    CHECK(g.y > y0 + 20.0f, "tipped toward you: he runs down");
     const float xs = g.x;
     for (int k = 0; k < 25; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
     CHECK(g.x > xs && g.x - xs < 60.0f && fabsf(g.vx) < 15.0f, "level again, he skids to a stop");
-    for (int k = 0; k < 200; k++, t += 40) game_step(&g, t, 40, -1.0f, -1.0f, hw, hh);
+    for (int k = 0; k < 200; k++, t += 40) game_step(&g, t, 40, -1.0f, 1.0f, hw, hh);
     CHECK(g.x > -hw && g.y > -hh, "the edge of the field holds him");
 
     /* SLOW, THEN FASTER: what comes later comes quicker and closer together. Measured over
@@ -1849,21 +1851,17 @@ static void test_jetpack_walks_in_and_flies_on_the_tilt(void)
     CHECK(!early, "nothing comes during the world's banner");
     CHECK(ev & GAME_EV_GO, "then go");
 
-    /* NOT DODGE'S BUBBLE IN A LEVEL: held, he burns and climbs; let go, he sinks. */
-    float y0 = g.jet.jy;
+    /* A PUSH, NOT A POSITION: held, he climbs; let go, he hovers (no gravity: the owner tried
+       it and asked for it off). */
+    const float y0 = g.jet.jy;
     for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, 1.0f, hw, hh);
-    CHECK(g.jet.jy < y0 - 20.0f, "the top tipped away, he climbs: Dodge's tip the other way up");
-    CHECK(g.jet.burn == 1.0f, "on a full burn");
-    y0 = g.jet.jy;
-    for (int k = 0; k < 30; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
-    CHECK(g.jet.jy > y0 + 20.0f && g.jet.vy > 100.0f, "let go, he arcs over and gravity has him");
-    CHECK(g.jet.burn == 0.0f && g.jet.vy < 300.0f, "the burn out, and a fall a child can catch");
-    for (int k = 0; k < 50; k++, t += 40) game_step(&g, t, 40, 0, 0.5f, hw, hh);
-    CHECK(g.jet.vy < 0.0f || g.jet.jy < 448.0f - 30.0f - 1.0f, "half a tip outdoes gravity");
+    CHECK(g.jet.jy < y0 - 20.0f, "the top tipped away, he climbs, as in Dodge");
+    CHECK(g.jet.burn == 1.0f, "the flame at its tallest");
+    for (int k = 0; k < 50; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+    CHECK(fabsf(g.jet.vy) < 1.0f && g.jet.burn == 0.0f, "let go, he hovers: nothing pulls him down");
 }
 
-/* THE FIELD'S EDGES ARE SAFE: held into the floor or the roof he bumps along it, and the floor
-   is where gravity sets him down. */
+/* THE FIELD'S EDGES ARE SAFE: held into the floor or the roof he bumps along it. */
 static void test_jetpack_edges_are_safe(void)
 {
     jet_t j;
@@ -1879,7 +1877,6 @@ static void test_jetpack_edges_are_safe(void)
     for (int k = 0; k < 100; k++) jet_step(&j, &rng, 0.04f, 1.0f, 0, 368.0f, 448.0f, &score);
     CHECK(j.jx <= 368.0f - 30.0f && j.jx > 300.0f,
           "the side tilt drifts him forward, nearly to the right edge: no wall halfway");
-    CHECK(!(ev & JET_EV_HIT) && j.jy > 400.0f, "let go, he sinks and lands on the floor, safe");
 }
 
 /* An autopilot that teleports him into the opening of the next thing to come: pipes, towers,

@@ -3,16 +3,12 @@
 #include <math.h>
 #include <string.h>
 
-/* GRAVITY AND A BURN, so it flies unlike Dodge's bubble in a level (the owner: *"sugar and
-   flappy super work same.... Like a bubble on a level"*). Let go and he sinks; tipping the top
-   away burns the jetpack against it, a little tip holds him, and toward you dives. The low
-   vertical friction leaves him the momentum of arcs, with a fall gentle enough for a child.
-   Forward and back is only for waiting, so it keeps Dodge's push and skid. */
-#define GRAVITY 520.0f
-#define BURN_ACCEL 1500.0f
-#define DIVE_ACCEL 500.0f
+/* Full tilt is this much push, px/s^2; friction bleeds it off, so he coasts to a hover. No
+   gravity: the owner tried a sink-and-burn and asked for it off. Up and down is the steering and
+   wants the snap; forward and back is only for waiting, so it is softer. */
+#define FLY_ACCEL 1000.0f
 #define DRIFT_ACCEL 500.0f
-#define FLY_FRICTION 2.0f
+#define FLY_FRICTION 4.5f
 #define DRIFT_FRICTION 4.0f
 /* Where his origin may go: room for his head above and his feet below, and almost the width of
    the field. It was a band round his home column, which the owner met as an invisible wall
@@ -410,12 +406,9 @@ unsigned jet_step(jet_t *j, uint32_t *rng, float dt, float tx, float ty, float f
     j->t += dt;
     if (was < JET_READY_S && j->t >= JET_READY_S) ev |= JET_EV_GO;
 
-    /* Not until a world's banner is over, so he waits mid-field for it. */
     const float tilt = clampf(ty, -1.0f, 1.0f);
-    j->burn = j->t >= JET_READY_S ? fmaxf(0.0f, -tilt) : 0.0f;
-    if (j->t >= JET_READY_S) {
-        j->vy += (GRAVITY - j->burn * BURN_ACCEL + fmaxf(0.0f, tilt) * DIVE_ACCEL) * dt;
-    }
+    j->burn = fmaxf(0.0f, -tilt);
+    j->vy += tilt * FLY_ACCEL * dt;
     j->vx += clampf(tx, -1.0f, 1.0f) * DRIFT_ACCEL * dt;
     j->vy *= expf(-FLY_FRICTION * dt);
     j->vx *= expf(-DRIFT_FRICTION * dt);
