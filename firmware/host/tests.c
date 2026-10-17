@@ -1538,11 +1538,13 @@ static void test_the_dodging_game(void)
     for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 1.0f, 0, hw, hh);
     CHECK(g.x > x0 + 20.0f, "tilt right: he runs right");
     for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, 1.0f, hw, hh);
-    CHECK(g.y > y0 + 20.0f, "tilt the bottom down: he runs down");
+    CHECK(g.y < y0 - 20.0f, "the top tipped away: like a marble, he runs up toward it");
+    for (int k = 0; k < 20; k++, t += 40) game_step(&g, t, 40, 0, -1.0f, hw, hh);
+    CHECK(g.y > y0 + 20.0f, "tipped toward you: he runs down");
     const float xs = g.x;
     for (int k = 0; k < 25; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
     CHECK(g.x > xs && g.x - xs < 60.0f && fabsf(g.vx) < 15.0f, "level again, he skids to a stop");
-    for (int k = 0; k < 200; k++, t += 40) game_step(&g, t, 40, -1.0f, -1.0f, hw, hh);
+    for (int k = 0; k < 200; k++, t += 40) game_step(&g, t, 40, -1.0f, 1.0f, hw, hh);
     CHECK(g.x > -hw && g.y > -hh, "the edge of the field holds him");
 
     /* SLOW, THEN FASTER: what comes later comes quicker and closer together. Measured over
@@ -1820,6 +1822,333 @@ static void test_the_dodging_game(void)
         CHECK(lit > 250, "each thing is drawn, big enough to see");
         for (int j = 0; j < k; j++) CHECK(sums[j] != h, "and each looks like itself");
     }
+}
+
+/* JETPACK (0.4.18): the games page's second game. He walks to the left and shrinks, as in Dodge,
+ * then hovers there while obstacles scroll in from the right. */
+static void test_jetpack_walks_in_and_flies_on_the_tilt(void)
+{
+    const float hw = 184.0f, hh = 224.0f;
+    game_t g;
+    game_reset(&g);
+    game_start_as(&g, GAME_JET, 1000, 5, 40.0f, 20.0f);
+    CHECK(g.kind == GAME_JET && game_on(&g) && game_deaf(&g), "walking in: on, and deaf");
+    uint32_t t = 1000;
+    for (; t < 1000 + GAME_WALK_MS + 40; t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+    float x, y, s;
+    game_figure(&g, t, &x, &y, &s);
+    CHECK(g.phase == GAME_PLAY && s == JET_SCALE, "playing, at his small size");
+    CHECK(fabsf(x - (JET_HOME_X - hw)) < 1.0f && fabsf(y) < 1.0f, "at his column, mid-field");
+    CHECK(game_level(&g, t) == 1 && g.jet.world == 0, "world one");
+
+    /* The world's name stands, then they come. */
+    unsigned ev = 0;
+    bool early = false;
+    for (int k = 0; k < 35; k++, t += 40) {
+        ev |= game_step(&g, t, 40, 0, 0, hw, hh);
+        for (int i = 0; i < JET_MAX_OBJ; i++) early |= g.jet.obj[i].live && g.jet.t < JET_READY_S;
+    }
+    CHECK(!early, "nothing comes during the world's banner");
+    CHECK(ev & GAME_EV_GO, "then go");
+
+    /* A PUSH, NOT A POSITION: held, he climbs; let go, he hovers (no gravity: the owner tried
+       it and asked for it off). */
+    const float y0 = g.jet.jy;
+    for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, 1.0f, hw, hh);
+    CHECK(g.jet.jy < y0 - 20.0f, "the top tipped away, he climbs, as in Dodge");
+    CHECK(g.jet.burn == 1.0f, "the flame at its tallest");
+    for (int k = 0; k < 50; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+    CHECK(fabsf(g.jet.vy) < 1.0f && g.jet.burn == 0.0f, "let go, he hovers: nothing pulls him down");
+}
+
+/* THE FIELD'S EDGES ARE SAFE: held into the floor or the roof he bumps along it. */
+static void test_jetpack_edges_are_safe(void)
+{
+    jet_t j;
+    jet_begin(&j, 368.0f, 448.0f);
+    j.spawned = JET_GATES; /* nothing comes */
+    uint32_t rng = 3;
+    int score = 0;
+    unsigned ev = 0;
+    for (int k = 0; k < 100; k++) ev |= jet_step(&j, &rng, 0.04f, 0, 1.0f, 368.0f, 448.0f, &score);
+    CHECK(!(ev & JET_EV_HIT) && j.jy < 448.0f - 20.0f && j.jy > 400.0f, "the floor stops him");
+    for (int k = 0; k < 100; k++) ev |= jet_step(&j, &rng, 0.04f, 0, -1.0f, 368.0f, 448.0f, &score);
+    CHECK(!(ev & JET_EV_HIT) && j.jy > 40.0f && j.jy < 60.0f, "and the roof");
+    for (int k = 0; k < 100; k++) jet_step(&j, &rng, 0.04f, 1.0f, 0, 368.0f, 448.0f, &score);
+    CHECK(j.jx <= 368.0f - 30.0f && j.jx > 300.0f,
+          "the side tilt drifts him forward, nearly to the right edge: no wall halfway");
+}
+
+/* An autopilot that teleports him into the opening of the next thing to come: pipes, towers,
+   slides and tunnels all have one, so a world of them can be flown to its end. */
+static void jet_autopilot(jet_t *j)
+{
+    const jet_obj_t *next = NULL;
+    for (int i = 0; i < JET_MAX_OBJ; i++) {
+        const jet_obj_t *o = &j->obj[i];
+        if (o->live && !o->passed && (next == NULL || o->x < next->x)) next = o;
+    }
+    if (next == NULL) return;
+    float x, y;
+    if (next->kind == JET_TUNNEL) y = jet_tunnel_y(next, j->jx);
+    else if (!jet_star_at(next, j->t, j->fh, &x, &y)) return;
+    j->jy = y + JET_HIT_DY;
+    j->vy = 0.0f;
+}
+
+/* THE OWNER: "make sure obstacles change (these were all basically the same gap)". Pipe after
+ * pipe, the gap is somewhere else; a world of eight ends in the next one, at the score it made. */
+static void test_jetpack_pipes_jump_and_a_world_leads_to_the_next(void)
+{
+    jet_t j;
+    jet_begin(&j, 368.0f, 448.0f);
+    uint32_t rng = 11;
+    int score = 0;
+    unsigned ev = 0;
+    float gaps[JET_GATES];
+    int n = 0;
+    for (int k = 0; k < 20000 && !(ev & JET_EV_WORLD); k++) {
+        jet_autopilot(&j);
+        ev |= jet_step(&j, &rng, 0.04f, 0, 0, 368.0f, 448.0f, &score);
+        CHECK(!(ev & JET_EV_HIT), "flown through the openings, nothing hits him");
+        if (ev & JET_EV_HIT) return;
+        for (int i = 0; i < JET_MAX_OBJ; i++) {
+            const jet_obj_t *o = &j.obj[i];
+            if (o->live && o->x > 368.0f && n < JET_GATES && i == j.last && (n == 0 || gaps[n - 1] != o->y0)) {
+                CHECK(o->kind == JET_PIPE, "the Meadow is pipes");
+                gaps[n++] = o->y0;
+            }
+        }
+    }
+    CHECK(ev & JET_EV_WORLD, "eight gone by: the next world");
+    CHECK(n == JET_GATES, "eight pipes");
+    for (int i = 1; i < n; i++) {
+        CHECK(fabsf(gaps[i] - gaps[i - 1]) >= 70.0f, "each gap well away from the last");
+    }
+    CHECK(j.world == 1 && j.gates == 0 && j.spawned == 0, "world two, from its start");
+    CHECK(score >= JET_GATES && j.score_at_world == score, "a point a gate, kept for a retry");
+    CHECK(strcmp(jet_world_name(1), "HILLS") == 0 && strcmp(jet_world_name(12), "MIX") == 0,
+          "the worlds have names, and past the tenth they mix");
+}
+
+/* EVERY WORLD BRINGS ITS OWN: its first three are its new kind alone, and later ones may be an
+ * earlier world's. Bumps are ignored here: only what comes is being counted. */
+static void test_jetpack_each_world_brings_its_own_kind(void)
+{
+    static const uint8_t OWN[JET_WORLDS][2] = {
+        {JET_PIPE, JET_PIPE},       {JET_PILLAR, JET_PILLAR}, {JET_ROCK, JET_ROCK},
+        {JET_SLIDE, JET_SLIDE},     {JET_TUNNEL, JET_TUNNEL}, {JET_BIRDS, JET_RISERS},
+        {JET_CRUSHER, JET_CRUSHER}, {JET_MINES, JET_MINES},   {JET_SPINNER, JET_SPINNER2},
+        {JET_LASER, JET_LASER},
+    };
+    bool kinds_seen[JET_KINDS] = {0};
+    int borrowed = 0;
+    for (int w = 0; w < JET_WORLDS; w++) {
+        for (uint32_t seed = 1; seed <= 12; seed++) {
+            jet_t j;
+            jet_begin(&j, 368.0f, 448.0f);
+            j.world = w;
+            uint32_t rng = seed * 7919u;
+            int score = 0, seen = 0;
+            for (int k = 0; k < 40000 && seen < JET_GATES; k++) {
+                jet_step(&j, &rng, 0.04f, 0, 0, 368.0f, 448.0f, &score);
+                if (j.spawned > seen) {
+                    const uint8_t kind = j.obj[j.last].kind;
+                    const bool own = kind == OWN[w][0] || kind == OWN[w][1];
+                    if (seen < 3) CHECK(own, "a world's first three are its own kind");
+                    bool earlier = false;
+                    for (int e = 0; e < w; e++) earlier |= kind == OWN[e][0] || kind == OWN[e][1];
+                    CHECK(own || earlier, "and the rest its own or an earlier world's");
+                    borrowed += !own;
+                    kinds_seen[kind] = true;
+                    seen = j.spawned;
+                }
+                /* Ignore bumps: clear what hits him, so the world goes on. */
+                for (int i = 0; i < JET_MAX_OBJ; i++) {
+                    if (j.obj[i].live && jet_hit(&j.obj[i], j.t, j.fh, j.jx, j.jy - JET_HIT_DY, JET_HIT_R)) {
+                        j.obj[i].live = false;
+                    }
+                }
+            }
+            CHECK(seen == JET_GATES, "a world sends eight");
+        }
+    }
+    for (int k = 0; k < JET_KINDS; k++) CHECK(kinds_seen[k], "every kind turns up in its world");
+    CHECK(borrowed > 0, "earlier worlds' kinds mix in");
+}
+
+/* EACH KIND HAS SOMETHING SOLID AND SOMEWHERE SAFE. */
+static void test_jetpack_every_obstacle_can_hit_and_be_passed(void)
+{
+    const float fh = 448.0f, r = JET_HIT_R;
+    jet_obj_t o;
+    float x, y, a, px, py;
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_PIPE, o.x = 100, o.w = 60, o.y0 = 224, o.gap = 190;
+    CHECK(jet_hit(&o, 0, fh, 130, 60, r) && !jet_hit(&o, 0, fh, 130, 224, r), "a pipe: its gap");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_PILLAR, o.x = 100, o.w = 52, o.y0 = 250, o.from_top = true;
+    CHECK(jet_hit(&o, 0, fh, 126, 100, r) && !jet_hit(&o, 0, fh, 126, 380, r), "a tower from the sky: under it");
+    o.from_top = false;
+    CHECK(jet_hit(&o, 0, fh, 126, 380, r) && !jet_hit(&o, 0, fh, 126, 100, r), "from the ground: over it");
+    CHECK(jet_star_at(&o, 0, fh, &x, &y) && y < fh - o.y0 && !jet_hit(&o, 0, fh, x, y, r),
+          "its star is in the open half");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_ROCK, o.x = 100, o.w = 50, o.y0 = 100, o.fy = 200;
+    CHECK(jet_hit(&o, 0, fh, 125, 200, r), "a falling rock");
+    CHECK(jet_hit(&o, 0, fh, 125, 430, r), "the spike under it");
+    CHECK(!jet_hit(&o, 0, fh, 125, 290, r), "between them, clear");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_SLIDE, o.x = 100, o.w = 60, o.y0 = 224, o.amp = 80, o.rate = 1, o.gap = 184;
+    const float q = 1.5707963f;
+    CHECK(!jet_hit(&o, q, fh, 130, 304, r) && jet_hit(&o, q, fh, 130, 184, r), "a slide's gap moves");
+    CHECK(!jet_hit(&o, 3 * q, fh, 130, 144, r) && jet_hit(&o, 3 * q, fh, 130, 304, r), "and back");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_TUNNEL, o.x = 0, o.w = 440, o.y0 = 224, o.amp = 72, o.rate = 1, o.gap = 140;
+    CHECK(fabsf(jet_tunnel_y(&o, 110) - 296) < 0.5f, "the tunnel winds");
+    CHECK(!jet_hit(&o, 0, fh, 110, 296, r) && jet_hit(&o, 0, fh, 110, 224, r), "its walls follow the path");
+    CHECK(!jet_hit(&o, 0, fh, 600, 224, r), "past its end, clear");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_BIRDS, o.x = 100, o.w = 70, o.y0 = 224;
+    jet_bird(&o, 0, 1, &x, &y);
+    CHECK(jet_hit(&o, 0, fh, x, y, r) && !jet_hit(&o, 0, fh, x, y + 100, r), "a flock");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_RISERS, o.x = 100, o.w = 44, o.rate = 50;
+    y = jet_riser_y(&o, 1.0f, 1, fh);
+    CHECK(jet_hit(&o, 1.0f, fh, 122, y, r), "a balloon");
+    CHECK(fabsf(jet_riser_y(&o, 2.0f, 1, fh) - (y - 50)) < 0.5f || jet_riser_y(&o, 2.0f, 1, fh) > y,
+          "floating up");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_CRUSHER, o.x = 100, o.w = 66, o.y0 = 224;
+    CHECK(jet_crush_open(&o, 0) == 1.0f && !jet_hit(&o, 0, fh, 133, 224, r), "a crusher, open");
+    CHECK(jet_crush_open(&o, 2.24f) == 0.0f && jet_hit(&o, 2.24f, fh, 133, 224, r), "and shut");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_MINES, o.x = 100, o.w = 110, o.y0 = 100, o.y1 = 320;
+    CHECK(jet_mine(&o, 0, fh, 0, 7, &x, &y) == 1 && jet_hit(&o, 0, fh, x, y, r), "a mine");
+    CHECK(!jet_hit(&o, 0, fh, 115, 100, r) && !jet_hit(&o, 0, fh, 195, 320, r),
+          "each column's window, at its own height");
+    CHECK(jet_hit(&o, 0, fh, 195, 100, r), "the first window is mined in the second column");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_SPINNER, o.x = 100, o.w = 20, o.y0 = 224, o.len = 100, o.va = 1;
+    CHECK(jet_spin(&o, 0, fh, 0, &px, &py, &a) == 1 && jet_hit(&o, 0, fh, px + 60, py, r) &&
+              !jet_hit(&o, 0, fh, px + 60, py - 60, r),
+          "a spinner, flat");
+    CHECK(jet_hit(&o, q, fh, px, py - 60, r) && !jet_hit(&o, q, fh, px + 60, py, r), "and turned upright");
+    o.kind = JET_SPINNER2, o.len = 64;
+    CHECK(jet_spin(&o, 0, fh, 1, &px, &py, &a) == 2 && jet_hit(&o, 0, fh, px, py, r), "two spinners");
+
+    memset(&o, 0, sizeof(o));
+    o.kind = JET_LASER, o.x = 100, o.w = 14, o.span = JET_SPAN_FULL;
+    CHECK(jet_laser_state(&o, 0) == JET_LASER_OFF && !jet_hit(&o, 0, fh, 107, 224, r), "a laser, off");
+    CHECK(jet_laser_state(&o, 1.5f) == JET_LASER_WARN && !jet_hit(&o, 1.5f, fh, 107, 224, r),
+          "flickering: a warning, not yet harm");
+    CHECK(jet_laser_state(&o, 2.0f) == JET_LASER_ON && jet_hit(&o, 2.0f, fh, 107, 224, r), "on");
+    o.span = JET_SPAN_TOP;
+    CHECK(!jet_hit(&o, 2.0f, fh, 107, 400, r), "a top beam leaves the bottom open");
+}
+
+/* THE ROCK LETS GO AS HE COMES, and hanging back holds it. */
+static void test_jetpack_rocks_drop_as_he_nears(void)
+{
+    jet_t j;
+    jet_begin(&j, 368.0f, 448.0f);
+    j.spawned = JET_GATES;
+    j.t = JET_READY_S;
+    jet_obj_t *o = &j.obj[0];
+    memset(o, 0, sizeof(*o));
+    o->live = true, o->kind = JET_ROCK, o->x = 360, o->w = 50, o->y0 = 60, o->fy = 22, o->trig = 220;
+    uint32_t rng = 1;
+    int score = 0;
+    while (o->x > 240.0f) jet_step(&j, &rng, 0.04f, 0, 0, 368.0f, 448.0f, &score);
+    CHECK(o->fy == 22.0f, "far off, it hangs");
+    while (o->x > 180.0f) jet_step(&j, &rng, 0.04f, 0, 0, 368.0f, 448.0f, &score);
+    CHECK(o->fy > 40.0f, "near, it falls");
+}
+
+/* JETPACK'S PICTURE: every world draws its own sky behind him, and on its side the scrolling world
+ * stays inside the square, leaving the bands above and below it dark. */
+static void test_jetpack_draws_each_world_inside_its_field(void)
+{
+    for (int side = 0; side < 2; side++) {
+        if (side) face_set_fit((float)ORIENT_SQ / (float)FACE_H, ORIENT_SQ_Y0 + (int)(ORIENT_SQ * 0.545f));
+        float hw, hh;
+        face_game_field(&hw, &hh);
+        uint16_t first_sky = 0;
+        bool skies_differ = false;
+        for (int w = 0; w <= JET_WORLDS; w++) {
+            game_t g;
+            game_reset(&g);
+            game_start_as(&g, GAME_JET, 0, 21u + (uint32_t)w, 0.0f, 20.0f);
+            uint32_t t = 0;
+            for (; t <= GAME_WALK_MS + 40; t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+            g.jet.world = w;
+            /* Bumps are ignored: only the picture is under test. */
+            for (int k = 0; k < 400; k++, t += 40) {
+                game_step(&g, t, 40, 0, 0, hw, hh);
+                g.phase = GAME_PLAY;
+            }
+            face_state_t st;
+            face_rest(&st);
+            st.game = &g;
+            st.game_ms = t;
+            memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+            face_draw(fb, 0, &st);
+            const int top = side ? ORIENT_SQ_Y0 : 0;
+            const uint16_t sky = fb[(top + 100) * FACE_W + 2];
+            CHECK(sky != 0, "a sky behind him");
+            if (w == 0) first_sky = sky;
+            skies_differ |= sky != first_sky;
+            if (side) {
+                int outside = 0;
+                for (int y = 0; y < FACE_H; y++) {
+                    if (y >= ORIENT_SQ_Y0 && y < ORIENT_SQ_Y0 + ORIENT_SQ) continue;
+                    for (int x = 0; x < FACE_W; x++) outside += fb[y * FACE_W + x] != 0;
+                }
+                CHECK(outside == 0, "on its side, nothing outside the square");
+            }
+        }
+        CHECK(skies_differ, "each world its own sky");
+    }
+    face_set_fit(1.0f, -1);
+}
+
+/* ONE BUMP ENDS THE ROUND; A TAP RETRIES THE WORLD HE REACHED, at the score it began with. */
+static void test_jetpack_a_bump_and_a_retry(void)
+{
+    const float hw = 184.0f, hh = 224.0f;
+    game_t g;
+    game_reset(&g);
+    game_start_as(&g, GAME_JET, 0, 9, 0.0f, 20.0f);
+    uint32_t t = 0;
+    for (; t <= GAME_WALK_MS + 40; t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
+    g.jet.world = 3;
+    g.jet.score_at_world = 20;
+    g.score = 25;
+    jet_obj_t *o = &g.jet.obj[0];
+    memset(o, 0, sizeof(*o));
+    o->live = true, o->kind = JET_PIPE, o->x = g.jet.jx - 20, o->w = 60, o->y0 = 60, o->gap = 80;
+    const unsigned ev = game_step(&g, t, 40, 0, 0, hw, hh);
+    CHECK((ev & GAME_EV_HIT) && g.phase == GAME_OVER && g.best == 25, "a bump: the round is over");
+    game_tap(&g, t + GAME_REPLAY_MS + 40);
+    CHECK(g.phase == GAME_PLAY && g.jet.world == 3 && g.score == 20, "a tap: the same world, its score");
+    bool live = false;
+    for (int i = 0; i < JET_MAX_OBJ; i++) live |= g.jet.obj[i].live;
+    CHECK(!live && g.jet.t == 0.0f, "from its start");
+    game_stop(&g, t + 2000);
+    CHECK(g.phase == GAME_WALK_OUT, "stopped, he flies home");
+    float x, y, s;
+    game_figure(&g, t + 2000 + GAME_WALK_MS, &x, &y, &s);
+    CHECK(s == 1.0f, "and grows back");
 }
 
 static void test_a_meal_is_three_bites_of_a_cookie(void)
@@ -4627,25 +4956,31 @@ static void test_a_face_is_the_same_drawing_wherever_it_is_used(void)
 }
 
 /* THE GAMES PAGE (0.4.17): a pad on violet top left, the same cancel bottom left as the first
- * page, and the right column empty until there are more games. */
+ * page; Jetpack's card on orange top right (0.4.18); the bottom right empty until a third. */
 static void test_the_games_page_draws_the_game_and_the_cancel_only(void)
 {
     const int over_h = FACE_H, r = CONFIRM_R;
     const int top = sendto_cy_top(over_h), bottom = sendto_cy_bottom(over_h);
     memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
     sendto_draw_games(fb, FACE_W, FACE_H, over_h);
-    int violet = 0, white = 0, right = 0;
+    int violet = 0, white = 0, orange = 0, card = 0, pipe = 0, spare = 0;
     for (int y = top - r; y <= top + r; y++) {
         for (int x = CONFIRM_CX_CANCEL - r; x <= CONFIRM_CX_CANCEL + r; x++) {
             violet += fb[y * FACE_W + x] == SENDTO_GAME_COLOUR;
             white += fb[y * FACE_W + x] == CONFIRM_GLYPH;
         }
+        for (int x = CONFIRM_CX_SEND - r; x <= CONFIRM_CX_SEND + r; x++) {
+            orange += fb[y * FACE_W + x] == SENDTO_JET_COLOUR;
+            card += fb[y * FACE_W + x] == CONFIRM_GLYPH;
+            pipe += fb[y * FACE_W + x] == SENDTO_PIPE;
+        }
     }
-    for (int y = 0; y < over_h; y++) {
-        for (int x = FACE_W / 2; x < FACE_W; x++) right += fb[y * FACE_W + x] != 0;
+    for (int y = top + r + 1; y < over_h; y++) {
+        for (int x = FACE_W / 2; x < FACE_W; x++) spare += fb[y * FACE_W + x] != 0;
     }
-    CHECK(violet > 0 && white > 0, "the game is a pad on its own disc");
-    CHECK(right == 0, "the right column is spare");
+    CHECK(violet > 0 && white > 0, "Dodge is a pad on its own disc");
+    CHECK(orange > 0 && card > 0 && pipe > 0, "Jetpack is a card with pipes on its own disc");
+    CHECK(spare == 0, "the bottom right is spare");
     CHECK(fb[bottom * FACE_W + CONFIRM_CX_CANCEL - r + 4] == CONFIRM_RED,
           "the cancel is where it is on the first page");
 }
@@ -5854,6 +6189,14 @@ int main(void)
     test_cue_voices_match_their_fourier_series();
     test_happy_birthday_sings_with_a_hat_and_confetti();
     test_the_dodging_game();
+    test_jetpack_walks_in_and_flies_on_the_tilt();
+    test_jetpack_edges_are_safe();
+    test_jetpack_pipes_jump_and_a_world_leads_to_the_next();
+    test_jetpack_each_world_brings_its_own_kind();
+    test_jetpack_every_obstacle_can_hit_and_be_passed();
+    test_jetpack_rocks_drop_as_he_nears();
+    test_jetpack_a_bump_and_a_retry();
+    test_jetpack_draws_each_world_inside_its_field();
     test_three_meals_in_a_minute_and_he_has_to_go();
     test_the_head_rights_itself_against_the_tilt();
     test_the_righted_head_turns_its_eyes_and_beak_too();

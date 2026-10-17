@@ -88,9 +88,13 @@ static int disc_hw(int r, int j)
     return i;
 }
 
+/* The rows a span may write: the whole frame, except while Jetpack's world is drawn into the
+   square on its side (`draw_jet_back`). */
+static int s_clip0 = 0, s_clip1 = FACE_H;
+
 static void hspan(uint16_t *fb, int y, int x0, int x1, uint16_t c)
 {
-    if (y < 0 || y >= FACE_H) return;
+    if (y < s_clip0 || y >= s_clip1) return;
     if (x0 < 0) x0 = 0;
     if (x1 >= FACE_W) x1 = FACE_W - 1;
     uint16_t *row = &fb[y * FACE_W];
@@ -1545,10 +1549,457 @@ static void draw_text_c(uint16_t *fb, int cx, int y, int scale, const char *s, u
     font_draw(fb, FACE_W, FACE_H, cx - font_text_w(s, scale) / 2, y, scale, s, c);
 }
 
+/* JETPACK'S PICTURE (`jet.h`), the mock's drawing (artifact 1iQJmXLfdpUsjvC7kaXFTN) in the
+ * panel's own primitives. Everything is in field pixels from its top-left, which is the frame's
+ * left edge and `jy0` down; on its side the field is the square, and `s_clip0`..`s_clip1` keep
+ * the scrolling world inside it. */
+static int jy0;
+
+static int jwrap(float v, int m)
+{
+    const int i = (int)lrintf(v) % m;
+    return i < 0 ? i + m : i;
+}
+
+static void j_rect(uint16_t *fb, float x, float y, float w, float h, uint16_t c)
+{
+    const int x0 = (int)lrintf(x), x1 = (int)lrintf(x + w) - 1;
+    const int ya = (int)lrintf(y) + jy0, yb = (int)lrintf(y + h) + jy0;
+    for (int r = ya; r < yb; r++) hspan(fb, r, x0, x1, c);
+}
+
+static void j_circ(uint16_t *fb, float x, float y, float r, uint16_t c)
+{
+    fill_circle(fb, (int)lrintf(x), (int)lrintf(y) + jy0, (int)lrintf(r), c);
+}
+
+static void j_ell(uint16_t *fb, float x, float y, float a, float b, uint16_t c)
+{
+    const int bb = (int)lrintf(b);
+    for (int dy = -bb; dy <= bb; dy++) {
+        const float k = 1.0f - ((float)dy / b) * ((float)dy / b);
+        if (k < 0.0f) continue;
+        const float half = a * sqrtf(k);
+        hspan(fb, (int)lrintf(y) + jy0 + dy, (int)lrintf(x - half), (int)lrintf(x + half), c);
+    }
+}
+
+static void j_tri(uint16_t *fb, float x0, float y0, float x1, float y1, float x2, float y2,
+                  uint16_t c)
+{
+    const float o = (float)jy0;
+    fill_tri(fb, x0, y0 + o, x1, y1 + o, x2, y2 + o, c);
+}
+
+/* A bar turned by `a` about (x, y): the spinners. */
+static void j_bar(uint16_t *fb, float x, float y, float a, float u0, float u1, float hw, uint16_t c)
+{
+    const xf_t t = xf(x, y + (float)jy0, a, 1.0f);
+    t_quad(fb, &t, u0, -hw, u1 - u0, hw * 2.0f, c);
+}
+
+static void j_star(uint16_t *fb, float x, float y, float r, float a, uint16_t c)
+{
+    for (int i = 0; i < 10; i++) {
+        const float k0 = a + (float)i * 0.6283185f - 1.5707963f, k1 = k0 + 0.6283185f;
+        const float r0 = i % 2 ? r * 0.45f : r, r1 = i % 2 ? r : r * 0.45f;
+        j_tri(fb, x, y, x + cosf(k0) * r0, y + sinf(k0) * r0, x + cosf(k1) * r1, y + sinf(k1) * r1, c);
+    }
+}
+
+/* Half as bright, for the banner's band: a 565 channel halved is the value shifted, masked. */
+static void j_dim(uint16_t *fb, int y0, int y1)
+{
+    if (y0 < s_clip0) y0 = s_clip0;
+    if (y1 > s_clip1) y1 = s_clip1;
+    for (int y = y0; y < y1; y++) {
+        uint16_t *row = &fb[y * FACE_W];
+        for (int x = 0; x < FACE_W; x++) {
+            const uint16_t v = (uint16_t)(row[x] >> 8 | row[x] << 8);
+            const uint16_t h = (uint16_t)((v >> 1) & 0x7BEF);
+            row[x] = (uint16_t)(h >> 8 | h << 8);
+        }
+    }
+}
+
+typedef struct {
+    uint8_t r0, g0, b0, r1, g1, b1;
+} sky_t;
+
+/* Each world's sky, top to bottom; the last is the mixes'. */
+static const sky_t SKIES[JET_WORLDS + 1] = {
+    {0x3B, 0x8F, 0xD9, 0x9F, 0xD6, 0xFF}, {0x6F, 0xB7, 0xE8, 0xD6, 0xF0, 0xFF},
+    {0x1B, 0x16, 0x26, 0x3A, 0x2F, 0x4A}, {0xFF, 0x9C, 0xCF, 0xFF, 0xD9, 0xEC},
+    {0x0F, 0x3A, 0x24, 0x2F, 0x6B, 0x3A}, {0xFF, 0x8A, 0x5C, 0xFF, 0xD2, 0x7A},
+    {0x2B, 0x2F, 0x36, 0x4A, 0x50, 0x5A}, {0x0B, 0x3D, 0x6B, 0x1C, 0x7C, 0xB0},
+    {0x05, 0x06, 0x0F, 0x14, 0x1A, 0x3A}, {0x0A, 0x0D, 0x18, 0x1D, 0x24, 0x40},
+    {0x2A, 0x1B, 0x4A, 0x5A, 0x3B, 0x8A},
+};
+
+/* THE SKY, faded in by `k` on the walk in and out, so the world arrives as he shrinks. */
+static void jet_sky(uint16_t *fb, int bd, float fh, float k)
+{
+    const sky_t *s = &SKIES[bd];
+    const int n = (int)fh;
+    for (int y = 0; y < n; y++) {
+        const float u = (float)y / fh;
+        hspan(fb, y + jy0, 0, FACE_W - 1,
+              rgb((uint8_t)((s->r0 + (s->r1 - s->r0) * u) * k), (uint8_t)((s->g0 + (s->g1 - s->g0) * u) * k),
+                  (uint8_t)((s->b0 + (s->b1 - s->b0) * u) * k)));
+    }
+}
+
+/* WHICH WORLD THIS IS, at a glance: a far layer that scrolls slower than the obstacles. */
+static void jet_scenery(uint16_t *fb, int bd, float scroll, float t, float fw, float fh)
+{
+    const float p = scroll * 0.3f;
+    const uint16_t cloud = rgb(0xF0, 0xF6, 0xFF);
+    switch (bd) {
+    case 0:
+        for (int i = 0; i < 4; i++) {
+            const float x = (float)jwrap((float)i * 130.0f - p * 0.5f, 520) - 60.0f;
+            j_ell(fb, x, 60.0f + (float)i * 25.0f, 34, 12, cloud);
+            j_ell(fb, x + 22.0f, 52.0f + (float)i * 25.0f, 22, 12, cloud);
+        }
+        for (int i = 0; i < 5; i++) j_ell(fb, (float)jwrap((float)i * 120.0f - p, 600) - 80.0f, fh + 20.0f, 110, 70, rgb(0x5C, 0xB8, 0x5C));
+        break;
+    case 1:
+        for (int i = 0; i < 4; i++) {
+            const float x = (float)jwrap((float)i * 160.0f - p * 0.4f, 640) - 100.0f;
+            j_tri(fb, x, fh, x + 200.0f, fh, x + 100.0f, fh - 220.0f, rgb(0x9D, 0xB8, 0xCC));
+        }
+        for (int i = 0; i < 5; i++) j_ell(fb, (float)jwrap((float)i * 140.0f - p, 700) - 80.0f, fh + 30.0f, 130, 90, rgb(0x78, 0xB8, 0x6A));
+        break;
+    case 2:
+        for (float x = -(float)jwrap(p, 40) - 40.0f; x < fw + 40.0f; x += 40.0f) {
+            j_tri(fb, x, 0, x + 40.0f, 0, x + 20.0f, 26, rgb(0x2A, 0x22, 0x38));
+            j_tri(fb, x, fh, x + 40.0f, fh, x + 20.0f, fh - 22.0f, rgb(0x2A, 0x22, 0x38));
+        }
+        break;
+    case 3:
+        for (int i = 0; i < 4; i++) {
+            const float x = (float)jwrap((float)i * 140.0f - p * 0.6f, 560) - 70.0f;
+            j_ell(fb, x, 80.0f + (float)(i % 2) * 220.0f, 40, 16, cloud);
+            j_ell(fb, x + 26.0f, 72.0f + (float)(i % 2) * 220.0f, 26, 14, cloud);
+        }
+        for (int i = 0; i < 6; i++) {
+            static const uint32_t C[3] = {0xFF6FB5, 0xFFE14D, 0x7CF08B};
+            j_circ(fb, (float)jwrap((float)i * 90.0f - p, 540) - 60.0f, fh - 10.0f, 26, shade(C[i % 3], 1.0f));
+        }
+        break;
+    case 4:
+        for (int i = 0; i < 8; i++) {
+            const float x = (float)jwrap((float)i * 60.0f - p * 0.6f, 480) - 50.0f;
+            const int n = 4 + i % 3;
+            for (int k = 0; k < n; k++) j_ell(fb, x + sinf((float)k * 0.9f) * 6.0f, (float)k * 26.0f, 5, 9, rgb(0x1D, 0x5A, 0x2E));
+        }
+        break;
+    case 5:
+        j_circ(fb, fw - 70.0f, 90, 36, rgb(0xFF, 0xF3, 0xB0));
+        for (int i = 0; i < 5; i++) j_ell(fb, (float)jwrap((float)i * 110.0f - p * 0.7f, 550) - 60.0f, 140.0f + (float)(i % 3) * 90.0f, 46, 14, cloud);
+        break;
+    case 6:
+        for (int i = 0; i < 4; i++) j_rect(fb, (float)jwrap((float)i * 130.0f - p, 520) - 40.0f, 0, 10, fh, rgb(0x2B, 0x2F, 0x36));
+        for (int i = 0; i < 3; i++) {
+            const float x = (float)jwrap((float)i * 160.0f - p * 0.5f, 480) - 60.0f, y = 120.0f + (float)(i % 2) * 200.0f;
+            const float a = t * 0.4f * (i % 2 ? 1.0f : -1.0f);
+            for (int k = 0; k < 4; k++) j_bar(fb, x, y, a + (float)k * 0.785f, -40, 40, 6, rgb(0x3A, 0x3F, 0x48));
+            j_circ(fb, x, y, 30, rgb(0x3A, 0x3F, 0x48));
+        }
+        break;
+    case 7:
+        for (int i = 0; i < 18; i++) {
+            j_circ(fb, (float)jwrap((float)i * 47.0f - p * 0.4f, (int)fw + 20) - 10.0f,
+                   (float)jwrap((float)i * 83.0f - t * 30.0f, (int)fh + 20) - 10.0f, (float)(3 + (i % 3) * 2), rgb(0x3D, 0x8A, 0xC4));
+        }
+        for (int i = 0; i < 6; i++) j_ell(fb, (float)jwrap((float)i * 110.0f - p, 660) - 80.0f, fh + 6.0f, 90, 22, rgb(0xD9, 0xC3, 0x8A));
+        break;
+    default:
+        for (int i = 0; i < 60; i++) {
+            const float x = (float)jwrap((float)i * 97.0f - p * (0.3f + (float)(i % 3) * 0.2f), (int)fw + 20) - 10.0f;
+            j_rect(fb, x, (float)((i * 53) % (int)fh), i % 5 ? 2 : 3, i % 5 ? 2 : 3, i % 5 ? rgb(0x88, 0x88, 0x99) : rgb(0xEE, 0xEE, 0xFF));
+        }
+        if (bd == 8) {
+            j_circ(fb, fw - 50.0f, 70, 26, rgb(0xC9, 0x6A, 0x3A));
+            j_circ(fb, fw - 58.0f, 63, 8, rgb(0xE8, 0x94, 0x5A));
+        }
+        if (bd == 9) {
+            for (float x = -(float)jwrap(p, 46); x < fw; x += 46.0f) j_rect(fb, x, 0, 2, fh, rgb(0x2B, 0x35, 0x56));
+        }
+        break;
+    }
+}
+
+static void jet_balloon(uint16_t *fb, float x, float y, uint16_t c)
+{
+    j_rect(fb, x - 1.0f, y + 20.0f, 2, 14, rgb(0xDD, 0xDD, 0xDD));
+    j_ell(fb, x, y, 17, 20, c);
+    j_ell(fb, x - 6.0f, y - 7.0f, 4, 6, rgb(0xFF, 0xFF, 0xFF));
+}
+
+static void jet_hazard(uint16_t *fb, float x, float y, float w, float h)
+{
+    j_rect(fb, x, y, w, h, rgb(0xFF, 0xD2, 0x3F));
+    for (float i = 0; i < w; i += 16.0f) {
+        j_tri(fb, x + i, y, x + fminf(w, i + 8.0f), y, x + fmaxf(0, i - 4.0f), y + h, rgb(0x1A, 0x1A, 0x1A));
+    }
+}
+
+/* ONE OBSTACLE, AT WORLD TIME `t`. */
+static void jet_obj(uint16_t *fb, const jet_obj_t *o, float t, float fh)
+{
+    const uint16_t green = rgb(0x3F, 0xAE, 0x49), light = rgb(0x7A, 0xD6, 0x6B), dark = rgb(0x2E, 0x8A, 0x37);
+    const uint16_t red = rgb(0xE8, 0x47, 0x3C), white = rgb(0xFF, 0xFF, 0xFF);
+    switch (o->kind) {
+    case JET_PIPE: {
+        const float top = o->y0 - o->gap / 2.0f, bot = o->y0 + o->gap / 2.0f;
+        j_rect(fb, o->x + 4, 0, o->w - 8, top, green);
+        j_rect(fb, o->x + 4, bot, o->w - 8, fh - bot, green);
+        j_rect(fb, o->x + 10, 0, 8, top, light);
+        j_rect(fb, o->x + 10, bot, 8, fh - bot, light);
+        j_rect(fb, o->x - 2, top - 24, o->w + 4, 24, dark);
+        j_rect(fb, o->x - 2, bot, o->w + 4, 24, dark);
+        break;
+    }
+    case JET_PILLAR: {
+        const float y = o->from_top ? 0.0f : fh - o->y0;
+        j_rect(fb, o->x, y, o->w, o->y0, rgb(0x8A, 0x7F, 0x6A));
+        for (float k = y + 14.0f; k < y + o->y0 - 10.0f; k += 30.0f) {
+            j_rect(fb, o->x + 6, k, 18, 10, rgb(0xA3, 0x97, 0x7F));
+            j_rect(fb, o->x + 28, k + 15.0f, 18, 10, rgb(0xA3, 0x97, 0x7F));
+        }
+        if (o->from_top) {
+            for (int i = 0; i < 4; i++) j_rect(fb, o->x + 4.0f + (float)i * 12.0f, o->y0 - 8.0f, 8, 18.0f + (float)(i % 2) * 14.0f, rgb(0x5C, 0xB8, 0x5C));
+        } else {
+            j_ell(fb, o->x + o->w / 2.0f, fh - o->y0, o->w / 2.0f + 10.0f, 14, rgb(0x5C, 0xB8, 0x5C));
+            j_circ(fb, o->x + 14.0f, fh - o->y0 - 6.0f, 4, red);
+            j_circ(fb, o->x + 38.0f, fh - o->y0 - 2.0f, 4, red);
+        }
+        break;
+    }
+    case JET_ROCK: {
+        j_tri(fb, o->x, fh, o->x + 50.0f, fh, o->x + 25.0f, fh - o->y0, rgb(0x6A, 0x5A, 0x7E));
+        j_tri(fb, o->x + 6.0f, fh, o->x + 18.0f, fh, o->x + 25.0f, fh - o->y0 + 6.0f, rgb(0x8C, 0x7A, 0xA3));
+        j_tri(fb, o->x + 8.0f, 0, o->x + 42.0f, 0, o->x + 25.0f, 18, rgb(0x4A, 0x3F, 0x5A));
+        /* About to go, it trembles. */
+        const float shake = o->fy <= 22.0f && o->x < o->trig + 60.0f ? sinf(t * 30.0f) * 2.0f : 0.0f;
+        const xf_t r = xf(o->x + 25.0f + shake, o->fy + (float)jy0, 0, 20.0f);
+        for (int i = 0; i < 9; i++) {
+            const float a0 = (float)i / 9.0f * 6.2831853f, a1 = (float)(i + 1) / 9.0f * 6.2831853f;
+            const float q0 = 0.85f + (float)((i * 7) % 3) * 0.08f, q1 = 0.85f + (float)(((i + 1) * 7) % 3) * 0.08f;
+            t_tri(fb, &r, 0, 0, cosf(a0) * q0, sinf(a0) * q0, cosf(a1) * q1, sinf(a1) * q1, rgb(0x7B, 0x6E, 0x66));
+        }
+        j_circ(fb, o->x + 19.0f + shake, o->fy - 4.0f, 5, rgb(0x5A, 0x50, 0x4A));
+        break;
+    }
+    case JET_SLIDE: {
+        const float y = jet_slide_y(o, t), top = y - o->gap / 2.0f, bot = y + o->gap / 2.0f;
+        j_rect(fb, o->x + 6, 0, o->w - 12, top, white);
+        j_rect(fb, o->x + 6, bot, o->w - 12, fh - bot, white);
+        /* The stripes, as bands down the cane that crawl. */
+        const float off = fmodf(t * 30.0f, 36.0f);
+        for (float k = -36.0f + off; k < fh; k += 36.0f) {
+            const float a = fmaxf(k, 0.0f), b = k + 16.0f;
+            if (b > 0.0f && a < top) j_rect(fb, o->x + 6, a, o->w - 12, fminf(b, top) - a, red);
+            if (b > bot && a < fh) j_rect(fb, o->x + 6, fmaxf(a, bot), o->w - 12, b - fmaxf(a, bot), red);
+        }
+        j_circ(fb, o->x + o->w / 2.0f, top, (o->w - 12.0f) / 2.0f, white);
+        j_circ(fb, o->x + o->w / 2.0f, bot, (o->w - 12.0f) / 2.0f, white);
+        break;
+    }
+    case JET_TUNNEL: {
+        const float x0 = fmaxf(o->x, -10.0f), x1 = fminf(o->x + o->w, (float)FACE_W + 10.0f);
+        for (float x = x0; x < x1; x += 3.0f) {
+            const float y = jet_tunnel_y(o, x);
+            j_rect(fb, x, 0, 3, y - o->gap / 2.0f, rgb(0x5A, 0x3D, 0x1E));
+            j_rect(fb, x, y + o->gap / 2.0f, 3, fh - y - o->gap / 2.0f, rgb(0x5A, 0x3D, 0x1E));
+        }
+        for (float x = ceilf(x0 / 22.0f) * 22.0f; x <= x1; x += 22.0f) {
+            const float y = jet_tunnel_y(o, x);
+            j_ell(fb, x, y - o->gap / 2.0f - 4.0f, 9, 6, rgb(0x5F, 0xBF, 0x4A));
+            j_ell(fb, x, y + o->gap / 2.0f + 4.0f, 9, 6, rgb(0x5F, 0xBF, 0x4A));
+        }
+        break;
+    }
+    case JET_BIRDS:
+        for (int i = 0; i < 3; i++) {
+            float x, y;
+            jet_bird(o, t, i, &x, &y);
+            const float flap = sinf(t * 14.0f + x);
+            j_ell(fb, x, y, 15, 9, rgb(0x2D, 0x3A, 0x5A));
+            j_tri(fb, x - 13.0f, y - 2.0f, x - 24.0f, y + 2.0f, x - 13.0f, y + 5.0f, rgb(0xFF, 0x9F, 0x1C));
+            j_circ(fb, x - 7.0f, y - 3.0f, 3, white);
+            j_tri(fb, x - 2.0f, y - 2.0f, x + 10.0f, y - 2.0f, x + 4.0f, y - 4.0f - flap * 15.0f, rgb(0x3E, 0x4F, 0x78));
+            j_tri(fb, x + 11.0f, y, x + 22.0f, y - 6.0f, x + 20.0f, y + 4.0f, rgb(0x3E, 0x4F, 0x78));
+        }
+        break;
+    case JET_RISERS: {
+        static const uint32_t C[5] = {0xE8473C, 0xFFE14D, 0x4DD2FF, 0x7CF08B, 0xB98CFF};
+        for (int k = 0; k < 4; k++) jet_balloon(fb, o->x + 22.0f, jet_riser_y(o, t, k, fh), shade(C[k], 1.0f));
+        break;
+    }
+    case JET_CRUSHER: {
+        const float open = jet_crush_open(o, t), h = open * JET_CRUSH_HALF;
+        const uint16_t steel = rgb(0x7D, 0x85, 0x90);
+        j_rect(fb, o->x + 22, 0, 22, fh, rgb(0x5F, 0x66, 0x70));
+        j_rect(fb, o->x, 0, o->w, o->y0 - h, steel);
+        j_rect(fb, o->x, o->y0 + h, o->w, fh - o->y0 - h, steel);
+        jet_hazard(fb, o->x, o->y0 - h - 12.0f, o->w, 12);
+        jet_hazard(fb, o->x, o->y0 + h, o->w, 12);
+        /* The light flashes before it slams. */
+        const float p = fmodf(t + o->t0, 3.2f) / 3.2f;
+        const bool warn = p > 0.42f && p < 0.55f && sinf(t * 30.0f) > 0.0f;
+        j_circ(fb, o->x + o->w / 2.0f, o->y0 - h - 30.0f, 7, warn ? rgb(0xFF, 0x3B, 0x30) : rgb(0x66, 0x18, 0x14));
+        break;
+    }
+    case JET_MINES:
+        for (int col = 0; col < 2; col++) {
+            for (int k = 0;; k++) {
+                float x, y;
+                const int m = jet_mine(o, t, fh, col, k, &x, &y);
+                if (m < 0) break;
+                if (m == 0) continue;
+                for (int i = 0; i < 8; i++) {
+                    const float a = (float)i * 0.785f + t * 0.3f;
+                    j_circ(fb, x + cosf(a) * 15.0f, y + sinf(a) * 15.0f, 3.5f, rgb(0x2B, 0x2F, 0x36));
+                }
+                j_circ(fb, x, y, 13, rgb(0x2B, 0x2F, 0x36));
+                j_circ(fb, x, y, 4, sinf(t * 5.0f + y) > 0.0f ? rgb(0xFF, 0x3B, 0x30) : rgb(0x7A, 0x1C, 0x18));
+            }
+        }
+        break;
+    case JET_SPINNER:
+    case JET_SPINNER2:
+        for (int i = 0;; i++) {
+            float px, py, a;
+            const int n = jet_spin(o, t, fh, i, &px, &py, &a);
+            j_bar(fb, px, py, a, -o->len, o->len, 7, rgb(0xC7, 0xCF, 0xDD));
+            j_bar(fb, px, py, a, o->len - 30.0f, o->len, 12, rgb(0x4D, 0xD2, 0xFF));
+            j_bar(fb, px, py, a, -o->len, -o->len + 30.0f, 12, rgb(0x4D, 0xD2, 0xFF));
+            j_circ(fb, px, py, 12, red);
+            j_circ(fb, px, py, 5, rgb(0xFF, 0xE1, 0x4D));
+            if (i + 1 >= n) break;
+        }
+        break;
+    case JET_LASER: {
+        float a, b;
+        jet_laser_span(o, fh, &a, &b);
+        const int st = jet_laser_state(o, t);
+        const float x = o->x + 7.0f;
+        if (st == JET_LASER_ON) {
+            j_rect(fb, x - 7, a, 14, b - a, rgb(0x8A, 0x20, 0x1C));
+            j_rect(fb, x - 4, a, 8, b - a, rgb(0xFF, 0x5A, 0x4F));
+            j_rect(fb, x - 1, a, 2, b - a, white);
+        } else if (st == JET_LASER_WARN && sinf(t * 40.0f) > 0.0f) {
+            for (float y = a; y < b; y += 14.0f) j_rect(fb, x - 1, y, 2, 7, rgb(0xFF, 0x5A, 0x4F));
+        }
+        const uint16_t box = rgb(0x8E, 0x97, 0xA8);
+        j_rect(fb, x - 14, a <= 0.0f ? -6.0f : a - 12.0f, 28, 22, box);
+        j_rect(fb, x - 14, b >= fh ? fh - 16.0f : b - 10.0f, 28, 22, box);
+        break;
+    }
+    default:
+        break;
+    }
+    float sx, sy;
+    if (o->star && !o->got && jet_star_at(o, t, fh, &sx, &sy)) j_star(fb, sx, sy, 13, t * 1.5f, rgb(0xFF, 0xE1, 0x4D));
+}
+
+/* BEHIND HIM: the sky, the far layer, the obstacles, and the jetpack's tanks and flame, drawn
+   before the figure so he is in front of all of it. */
+static void draw_jet_back(uint16_t *fb, const game_t *g, uint32_t now, int ox, int oy, float s)
+{
+    float cy, hw, hh;
+    field(&cy, &hw, &hh);
+    jy0 = (int)lrintf(cy - hh);
+    s_clip0 = jy0;
+    s_clip1 = jy0 + (int)lrintf(hh * 2.0f);
+    const jet_t *j = &g->jet;
+    const int bd = jet_backdrop(j->world);
+    const float fw = hw * 2.0f, fh = hh * 2.0f;
+    const bool walking = g->phase == GAME_WALK_IN || g->phase == GAME_WALK_OUT;
+    float k = 1.0f;
+    if (walking) {
+        float e = (float)(now - g->since) / (float)GAME_WALK_MS;
+        e = e < 0.0f ? 0.0f : e > 1.0f ? 1.0f : e;
+        e = e * e * (3.0f - 2.0f * e);
+        k = g->phase == GAME_WALK_IN ? e : 1.0f - e;
+    }
+    jet_sky(fb, bd, fh, k);
+    if (!walking) {
+        jet_scenery(fb, bd, j->scroll, j->t, fw, fh);
+        for (int i = 0; i < JET_MAX_OBJ; i++) {
+            if (j->obj[i].live) jet_obj(fb, &j->obj[i], j->t, fh);
+        }
+    }
+    /* THE JETPACK: two tanks either side of the torso (the robot's and the bird's are the same
+       width there), the flame growing with the climb. Strapped on halfway through the walk in. */
+    if (k > 0.5f || !walking) {
+        const float thrust = g->phase == GAME_PLAY ? j->burn : 0.0f;
+        const float flick = sinf((float)now * 0.04f) * 10.0f;
+        for (int side = -1; side <= 1; side += 2) {
+            const float x = (float)ox + (float)side * 84.0f * s;
+            const float f = (40.0f + thrust * 100.0f + flick) * s;
+            const float base = (float)oy + 60.0f * s;
+            fill_tri(fb, x - 16.0f * s, base, x + 16.0f * s, base, x, base + f, rgb(0xFF, 0x9F, 0x1C));
+            fill_tri(fb, x - 8.0f * s, base, x + 8.0f * s, base, x, base + f * 0.6f, rgb(0xFF, 0xE1, 0x4D));
+            fill_round_rect(fb, (int)lrintf(x - 22.0f * s), (int)lrintf((float)oy - 40.0f * s), (int)lrintf(44.0f * s),
+                            (int)lrintf(104.0f * s), (int)lrintf(20.0f * s), rgb(0x9A, 0xA3, 0xB2));
+            fill_round_rect(fb, (int)lrintf(x - 22.0f * s), (int)lrintf((float)oy - 40.0f * s), (int)lrintf(44.0f * s),
+                            (int)lrintf(20.0f * s), (int)lrintf(10.0f * s), rgb(0xE8, 0x47, 0x3C));
+        }
+    }
+    s_clip0 = 0;
+    s_clip1 = FACE_H;
+}
+
+/* IN FRONT: the score, the world, the gates gone by, and the banners. */
+static void draw_jet_front(uint16_t *fb, const game_t *g)
+{
+    if (g->phase != GAME_PLAY && g->phase != GAME_OVER) return;
+    float cy, hw, hh;
+    field(&cy, &hw, &hh);
+    const jet_t *j = &g->jet;
+    const uint16_t gold = rgb(0xFF, 0xE1, 0x4D), white = rgb(0xF4, 0xF6, 0xF8);
+    const int top = (int)lrintf(cy - hh) + 10;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%d", g->score);
+    font_draw(fb, FACE_W, FACE_H, 14, top, 4, buf, gold);
+    snprintf(buf, sizeof(buf), "%d %s", j->world + 1, jet_world_name(j->world));
+    font_draw(fb, FACE_W, FACE_H, FACE_W - 14 - font_text_w(buf, 2), top, 2, buf, white);
+    snprintf(buf, sizeof(buf), "BEST %d", g->best);
+    font_draw(fb, FACE_W, FACE_H, FACE_W - 14 - font_text_w(buf, 2), top + 20, 2, buf, white);
+    for (int i = 0; i < JET_GATES; i++) {
+        fill_circle(fb, 18 + i * 13, top + 42, 4, i < j->gates ? gold : rgb(0x80, 0x88, 0x90));
+    }
+    /* The banner goes in the half he is not in, so it never hides him. */
+    const int by = (int)lrintf(j->jy < hh ? cy + hh * 0.45f : cy - hh * 0.5f);
+    if (g->phase == GAME_PLAY && j->t < JET_READY_S + 0.6f) {
+        j_dim(fb, by - 50, by + 50);
+        if (j->t < JET_READY_S) {
+            draw_text_c(fb, OX, by - 30, 5, jet_world_name(j->world), gold);
+            snprintf(buf, sizeof(buf), "WORLD %d", j->world + 1);
+            draw_text_c(fb, OX, by + 18, 2, buf, white);
+        } else {
+            draw_text_c(fb, OX, by - 18, 5, "GO!", gold);
+        }
+    } else if (g->phase == GAME_OVER) {
+        j_dim(fb, by - 50, by + 50);
+        snprintf(buf, sizeof(buf), "SCORE %d", g->score);
+        draw_text_c(fb, OX, by - 30, 4, buf, gold);
+        draw_text_c(fb, OX, by + 14, 2,
+                    g->score > 0 && g->score >= g->best ? "NEW BEST! TAP TO PLAY" : "TAP TO TRY AGAIN", white);
+    }
+}
+
 /* The things in flight, the score and level, and the banner: over the figure, so a hit is
    seen to be a hit. */
 static void draw_game(uint16_t *fb, const game_t *g, uint32_t now)
 {
+    if (g->kind == GAME_JET) {
+        draw_jet_front(fb, g);
+        return;
+    }
     float cy, hw, hh;
     field(&cy, &hw, &hh);
     for (int i = 0; i < GAME_MAX_OBJ; i++) {
@@ -1628,6 +2079,7 @@ void face_draw(uint16_t *fb, int colour, const face_state_t *st)
                   st->poop_size, st->poop_t);
     }
 
+    if (playing && st->game->kind == GAME_JET) draw_jet_back(fb, st->game, st->game_ms, ox, oy, s);
     if (st->form == FORM_ROBOT) {
         draw_robot(fb, hex, st, ox, oy, sx, sy, s, tilt);
     } else {

@@ -1625,8 +1625,9 @@ static void test_a_swipe_left_on_the_menu_turns_to_the_games_and_right_back(void
     CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES, "a swipe left: the games");
     CHECK(saw_cue(CUE_HEARD), "and the page turning is heard");
     run_ms(EXIT_GRACE_MS);
-    CHECK(targets_mask() == (T(SM_T_CELL_GAME) | T(SM_T_CELL_CANCEL) | T(SM_T_SWALLOW)),
-          "the game, the cancel, and two spare corners that swallow");
+    CHECK(targets_mask() ==
+              (T(SM_T_CELL_GAME) | T(SM_T_CELL_JET) | T(SM_T_CELL_CANCEL) | T(SM_T_SWALLOW)),
+          "Dodge, Jetpack, the cancel, and a spare corner that swallows");
     swipe(-1);
     CHECK(w.out.view.grid_page == SM_GRID_GAMES, "a second swipe left stays on the games");
     swipe(+1);
@@ -1648,9 +1649,10 @@ static void test_the_game_on_the_menu_starts_on_the_lift(void)
     swipe(-1);
     press_at(FACE_W / 4, 60);
     CHECK(w.sm.mode == SM_GRID && !w.out.start_game, "the press is not yet the game");
-    CHECK(last_cue() == CUE_HEARD, "but it is answered");
+    CHECK(w.sm.down.cell_armed == SM_T_CELL_GAME, "it waits for the lift");
     lift();
-    CHECK(w.out.start_game && w.sm.mode == SM_PET, "the lift starts it, on the pet's screen");
+    CHECK(w.out.start_game == SM_GAME_DODGE && w.sm.mode == SM_PET,
+          "the lift starts it, on the pet's screen");
     CHECK(w.opened == 0, "and no microphone opened");
     step();
     CHECK(!w.out.start_game, "once");
@@ -1671,34 +1673,68 @@ static void test_the_game_on_the_menu_starts_on_the_lift(void)
     swipe(-1);
     tap_at(60, FACE_H - 60);
     CHECK(w.sm.mode == SM_PET && !w.out.start_game, "the games page's cancel closes the menu");
+
+    /* JETPACK, TOP RIGHT (0.4.18), on the lift the same way. */
+    world_reset();
+    open_grid();
+    swipe(-1);
+    press_at(FACE_W * 3 / 4, 60);
+    CHECK(w.sm.mode == SM_GRID && !w.out.start_game, "Jetpack's press is not yet the game");
+    CHECK(w.sm.down.cell_armed == SM_T_CELL_JET, "it waits for the lift");
+    lift();
+    CHECK(w.out.start_game == SM_GAME_JET && w.sm.mode == SM_PET, "the lift starts Jetpack");
+    CHECK(w.opened == 0, "and no microphone opened");
+
+    world_reset();
+    open_grid();
+    swipe(-1);
+    press_at(FACE_W * 3 / 4, 60);
+    w.swipe = -1;
+    step();
+    lift();
+    CHECK(!w.out.start_game && w.sm.mode == SM_GRID, "a swipe off Jetpack starts nothing");
 }
 
 static void test_a_swipe_that_began_on_a_cell_unwinds_it(void)
 {
-    /* The down edge presses a cell, so a swipe left from the sister has already opened a
-       recording to her: it is dropped, and the page turns. */
+    /* EVERY MENU CELL ACTS ON THE LIFT (owner: "Swipe on menu has conflict with selecting a
+       menu item before release"): a swipe left from the sister opens nothing at all, and the
+       page turns. */
     world_reset();
     open_grid();
     press_at(FACE_W / 4, 60);
-    CHECK(w.sm.mode == SM_RECORD, "the down edge pressed the sister");
+    CHECK(w.sm.mode == SM_GRID && !w.sm.capture, "the sister's press opens nothing yet");
+    CHECK(w.sm.down.cell_armed == SM_T_CELL_SISTER, "it waits for the lift");
     w.swipe = -1;
     step();
-    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES,
-          "the swipe unwinds it and turns the page");
-    CHECK(!w.sm.capture, "the microphone is closed");
+    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES, "the swipe turns the page");
     lift();
     run_ms(400);
-    CHECK(w.sm.mode == SM_GRID, "and the menu stays up");
+    CHECK(w.sm.mode == SM_GRID && !w.sm.capture && w.opened == 0,
+          "the lift opens no microphone, and the menu stays up");
+
+    world_reset();
+    open_grid();
+    press_at(FACE_W / 4, 60);
+    lift();
+    CHECK(w.sm.mode == SM_RECORD && w.sm.capture, "a tap on the sister records to her, on the lift");
+    CHECK(last_cue() == CUE_LISTEN, "with the listening cue");
 
     world_reset();
     open_grid();
     press_at(60, FACE_H - 60);
-    CHECK(w.sm.mode == SM_PET, "the down edge pressed the cancel");
+    CHECK(w.sm.mode == SM_GRID, "the cancel's press closes nothing yet");
     w.swipe = -1;
     step();
     lift();
     CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES,
           "a swipe off the cancel turns the page rather than closing the menu");
+
+    world_reset();
+    open_grid();
+    press_at(60, FACE_H - 60);
+    lift();
+    CHECK(w.sm.mode == SM_PET, "a tap on the cancel closes the menu");
 }
 
 static void test_a_tick_pressed_into_silence_refuses_to_send(void)

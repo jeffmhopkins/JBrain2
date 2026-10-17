@@ -190,6 +190,31 @@ laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
 
+**0.4.18: Jetpack, the games page's second game.** Owner: *"Can we make a flappy birds game
+next? Same thing as the tilt game, the robot goes small, and instead of flapping, use the tilt to
+control, but side scroll through obstacles. There should be different levels and obstacle
+types"*, then, against the first mock, *"Need more levels, and make sure obstacles change"*.
+Agreed against a playable mock (artifact 1iQJmXLfdpUsjvC7kaXFTN). `jet.c` (pure, host-tested)
+runs inside `game.c`'s phases (`game_start_as(GAME_JET)`), so the walk in, the round over, the
+8 s timeout, the idle minute, "stop" and the walk out are Dodge's own. He shrinks at the left
+of the field and gets a jetpack. Tipping the top away pushes him up and toward you down,
+with no gravity, so a child who stops tilting hovers: a
+sink-and-burn with gravity was tried on the bench and the owner asked for it off. The side tilt drifts him forward and back, almost across the field (no wall halfway, after the owner hit one), which is how crushers
+and lasers are waited out. Ten worlds of eight obstacles, each with its own kind: pipes whose
+gap jumps high and low, towers from the ground or sky, rocks that drop as he nears, sliding
+candy canes, a winding tunnel, birds and rising balloons, crushers, mine fields, spinning bars,
+and blinking lasers. A world's first three are its own kind, then earlier kinds mix in; past
+the tenth every kind mixes, faster and tighter. One bump ends the round, and a tap retries the
+world he reached at the score it began with. Its icon is an orange disc top right of the games
+page (`SM_T_CELL_JET`), started on the lift like Dodge's; `face.c` draws each world's sky,
+scenery and obstacles, clipped to the square when the panel is on its side.
+Dodge's forward/back is flipped to match (owner: *"tilt should be opposite of bubble. Like a
+marble (both games)"*): the top tipped away runs him up the glass, toward the edge that went
+down, and the bench's tilt pad rolls him the way it is dragged. And every menu cell now acts on
+the lift, not the press (owner: *"Swipe on menu has conflict with selecting a menu item before
+release"*): a swipe that began on a person's icon used to open a recording under the finger and
+unwind it; now the press is silent and only a lift that was not a swipe opens anything.
+
 **0.4.17: as few things on screen as before, and a games page.** Owner: *"Objects are slower,
 but ... the spawn rate actually didn't decrease, so it ended up having a lot more on screen"*,
 and *"swipe left should go to a new 2x2 menu. Put an icon for the game there. Will add more games

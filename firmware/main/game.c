@@ -42,6 +42,12 @@ static float ease(float k)
     return k * k * (3.0f - 2.0f * k);
 }
 
+/* How small he is while playing: each game's own. */
+static float play_scale(const game_t *g)
+{
+    return g->kind == GAME_JET ? JET_SCALE : GAME_SCALE;
+}
+
 void game_reset(game_t *g)
 {
     memset(g, 0, sizeof(*g));
@@ -62,12 +68,23 @@ static void new_round(game_t *g, uint32_t now)
     g->score = 0;
     g->vx = g->vy = 0.0f;
     g->spawn_in = (float)GAME_READY_MS / 1000.0f;
+    if (g->kind == GAME_JET) {
+        /* The world he had reached, from its start, at the score it started with. */
+        jet_retry(&g->jet);
+        g->score = g->jet.score_at_world;
+    }
 }
 
 void game_start(game_t *g, uint32_t now, uint32_t seed, float home_x, float home_y)
 {
+    game_start_as(g, GAME_DODGE, now, seed, home_x, home_y);
+}
+
+void game_start_as(game_t *g, game_kind_t kind, uint32_t now, uint32_t seed, float home_x,
+                   float home_y)
+{
     g->rng = seed ? seed : 1u;
-    if (g->phase == GAME_PLAY || g->phase == GAME_OVER) {
+    if ((g->phase == GAME_PLAY || g->phase == GAME_OVER) && g->kind == kind) {
         new_round(g, now);
         return;
     }
@@ -76,8 +93,12 @@ void game_start(game_t *g, uint32_t now, uint32_t seed, float home_x, float home
     float fx = home_x, fy = home_y, fs = 1.0f;
     if (g->phase == GAME_WALK_IN || g->phase == GAME_WALK_OUT) game_figure(g, now, &fx, &fy, &fs);
     memset(g->obj, 0, sizeof(g->obj));
+    g->kind = kind;
     g->phase = GAME_WALK_IN;
     g->since = now;
+    /* Dodge's middle; Jetpack's column is set by the first step, which knows the field. */
+    g->to_x = 0.0f;
+    g->to_y = 20.0f;
     g->last_active = now;
     g->home_x = home_x;
     g->home_y = home_y;
@@ -100,7 +121,7 @@ void game_tap(game_t *g, uint32_t now)
 void game_stop(game_t *g, uint32_t now)
 {
     if (g->phase == GAME_OFF || g->phase == GAME_WALK_OUT) return;
-    g->out_s = GAME_SCALE;
+    g->out_s = play_scale(g);
     if (g->phase == GAME_WALK_IN) {
         /* Turned back halfway: walk out from where the walk in had got to, at the size it had
            reached (review), not snapped down to a fifth. */
@@ -125,9 +146,9 @@ void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale
     const float k = ease((float)(now - g->since) / (float)GAME_WALK_MS);
     switch (g->phase) {
     case GAME_WALK_IN:
-        *x = g->from_x + (0.0f - g->from_x) * k;
-        *y = g->from_y + (20.0f - g->from_y) * k;
-        *scale = g->from_s + (GAME_SCALE - g->from_s) * k;
+        *x = g->from_x + (g->to_x - g->from_x) * k;
+        *y = g->from_y + (g->to_y - g->from_y) * k;
+        *scale = g->from_s + (play_scale(g) - g->from_s) * k;
         return;
     case GAME_WALK_OUT:
         *x = g->x + (g->home_x - g->x) * k;
@@ -138,7 +159,7 @@ void game_figure(const game_t *g, uint32_t now, float *x, float *y, float *scale
     case GAME_OVER:
         *x = g->x;
         *y = g->y;
-        *scale = GAME_SCALE;
+        *scale = play_scale(g);
         return;
     case GAME_OFF:
     default:
@@ -172,6 +193,7 @@ float game_play_s(const game_t *g, uint32_t now)
 
 int game_level(const game_t *g, uint32_t now)
 {
+    if (g->kind == GAME_JET) return 1 + g->jet.world;
     return 1 + (int)(game_play_s(g, now) / 12.0f);
 }
 
@@ -269,10 +291,15 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
     if (fabsf(tx) > GAME_ACTIVE_TILT || fabsf(ty) > GAME_ACTIVE_TILT) g->last_active = now;
 
     if (g->phase == GAME_WALK_IN) {
+        if (g->kind == GAME_JET) {
+            g->to_x = JET_HOME_X - hw;
+            g->to_y = 0.0f;
+        }
         if (now - g->since >= GAME_WALK_MS) {
+            if (g->kind == GAME_JET) jet_begin(&g->jet, hw * 2.0f, hh * 2.0f);
             new_round(g, now);
-            g->x = 0.0f;
-            g->y = 20.0f;
+            g->x = g->to_x;
+            g->y = g->to_y;
         }
         return 0;
     }
@@ -295,14 +322,34 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
         return 0;
     }
 
+    if (g->kind == GAME_JET) {
+        /* UP IS THE TOP TIPPED AWAY, as in Dodge below: a marble's way. */
+        const unsigned je = jet_step(&g->jet, &g->rng, dt, tx, -ty, hw * 2.0f, hh * 2.0f, &g->score);
+        g->x = g->jet.jx - hw;
+        g->y = g->jet.jy - hh;
+        if (je & JET_EV_GO) ev |= GAME_EV_GO;
+        if (je & (JET_EV_GATE | JET_EV_STAR)) ev |= GAME_EV_DODGE;
+        if (je & JET_EV_WORLD) ev |= GAME_EV_WORLD;
+        if (je & JET_EV_HIT) {
+            g->phase = GAME_OVER;
+            g->since = now;
+            if (g->score > g->best) g->best = g->score;
+            ev |= GAME_EV_HIT;
+        }
+        return ev;
+    }
+
     /* PLAY. */
     const float t = (float)(now - g->since) / 1000.0f;
     const float was_t = t - dt;
     const float ready = (float)GAME_READY_MS / 1000.0f;
     if (was_t < ready && t >= ready) ev |= GAME_EV_GO;
 
+    /* LIKE A MARBLE, NOT A BUBBLE (owner: *"tilt should be opposite of bubble. Like a marble
+       (both games)"*): he runs toward whichever edge goes down. The side tilt already did; the
+       top tipped away lowers the top edge, so it runs him up the glass, where it ran him down. */
     g->vx += tx * RUN_ACCEL * dt;
-    g->vy += ty * RUN_ACCEL * dt;
+    g->vy -= ty * RUN_ACCEL * dt;
     const float drag = expf(-RUN_FRICTION * dt);
     g->vx *= drag;
     g->vy *= drag;

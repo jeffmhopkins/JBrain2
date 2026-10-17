@@ -45,7 +45,7 @@ trap 'rm -rf "$gen"' EXIT
 
 src="$fw/main/jpanel_core.c $fw/main/stream.c $fw/main/panel_sm.c $fw/main/cue.c $fw/main/ring.c
      $fw/main/reach.c $fw/main/confirm.c $fw/main/face.c $fw/main/font.c $fw/main/emotion.c
-     $fw/main/rig.c $fw/main/gesture.c $fw/main/overlay.c $fw/main/caption.c $fw/main/screen.c $fw/main/poop.c $fw/main/tickle.c $fw/main/game.c
+     $fw/main/rig.c $fw/main/gesture.c $fw/main/overlay.c $fw/main/caption.c $fw/main/screen.c $fw/main/poop.c $fw/main/tickle.c $fw/main/game.c $fw/main/jet.c
      $fw/main/orient.c"
 # shellcheck disable=SC2086
 "${CLANG:-clang}" --target=wasm32-wasi --sysroot="$cache/wasi-sysroot-24.0" -std=gnu11 -O2 \

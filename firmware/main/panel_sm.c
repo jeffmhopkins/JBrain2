@@ -367,8 +367,10 @@ sm_target_t sm_target(const sm_t *sm, const sm_in_t *in, int x, int y)
         sm_target_t t = SM_T_SWALLOW; /* modal: a miss costs a press, never a poke */
         const sendto_hit_t h = sendto_hit(x, y, in->over_h);
         if (sm->grid_page == SM_GRID_GAMES) {
-            /* The spare corners swallow until there are more games to put in them. */
+            /* Dodge top left, Jetpack top right; the spare corner swallows until there is a
+               third. */
             if (h == SENDTO_SISTER) t = SM_T_CELL_GAME;
+            if (h == SENDTO_DAD) t = SM_T_CELL_JET;
             if (h == SENDTO_CANCEL) t = SM_T_CELL_CANCEL;
         } else {
             switch (h) {
@@ -712,6 +714,26 @@ static void press(sm_t *sm, const sm_in_t *in, sm_out_t *out, sm_target_t t)
     case SM_T_CELL_SISTER:
     case SM_T_CELL_DAD:
     case SM_T_CELL_PET:
+    case SM_T_CELL_CANCEL:
+    case SM_T_CELL_GAME:
+    case SM_T_CELL_JET:
+        /* EVERY MENU CELL ACTS ON THE LIFT, NOT THE DOWN EDGE: a swipe that turns the page
+           starts with a press, and a cell that acted on it opened the microphone (or a game)
+           under the finger before the swipe was known (owner: *"Swipe on menu has conflict with
+           selecting a menu item before release"*). The press is silent: its lift answers it
+           (`cell_lift`), and a cue now would hold the microphone shut through a quick tap. */
+        sm->down.cell_armed = (uint8_t)t;
+        break;
+    }
+}
+
+/* A menu cell's work, on the lift of the press that landed on it and was not a swipe. */
+static void cell_lift(sm_t *sm, const sm_in_t *in, sm_out_t *out, sm_target_t t)
+{
+    switch (t) {
+    case SM_T_CELL_SISTER:
+    case SM_T_CELL_DAD:
+    case SM_T_CELL_PET:
         sm->grid_until = 0;
         if (!mic_gate(sm, in, false)) {
             refuse(out);
@@ -732,11 +754,12 @@ static void press(sm_t *sm, const sm_in_t *in, sm_out_t *out, sm_target_t t)
         enter(sm, SM_PET, in->now, true);
         break;
     case SM_T_CELL_GAME:
-        /* ON THE LIFT, NOT THE DOWN EDGE, unlike every other cell: a swipe starts with a press,
-           and a game once started cannot be unwound the way a microphone can be closed. The
-           press is answered now, so the finger knows it landed. */
-        sm->down.game_armed = true;
-        cue(out, CUE_HEARD, STREAM_SLOT_PRESS);
+    case SM_T_CELL_JET:
+        sm->grid_until = 0;
+        enter(sm, SM_PET, in->now, true);
+        out->start_game = t == SM_T_CELL_JET ? SM_GAME_JET : SM_GAME_DODGE;
+        break;
+    default:
         break;
     }
 }
@@ -748,11 +771,11 @@ static void on_swipe(sm_t *sm, const sm_in_t *in, sm_out_t *out, int dir)
        down edge and a swipe is recognised only after 60 px of travel, so a smear that began on
        the notice (or a cell) has already pressed it. Unwind it, then apply the swipe. */
     const bool opening = sm->mode_press_at != 0 && sm->down.active && sm->down.at == sm->since;
-    /* A SWIPE ON THE MENU TURNS ITS PAGE: left to the games, right back (owner, 0.4.17). The
-       cell its down edge pressed is unwound first, as above, so the swipe is only the swipe. */
-    if (sm->mode == SM_GRID || (sm->down.in_grid && sm->down.active && sm->down.at == sm->since)) {
-        if (sm->mode == SM_LISTEN || sm->mode == SM_RECORD) close_capture(sm, out, true);
-        sm->down.game_armed = false;
+    /* A SWIPE ON THE MENU TURNS ITS PAGE: left to the games, right back (owner, 0.4.17). A cell
+       its down edge landed on is disarmed, so the swipe is only the swipe: since 0.4.18 a cell
+       acts on its lift, so there is nothing of it to unwind. */
+    if (sm->mode == SM_GRID) {
+        sm->down.cell_armed = SM_T_NONE;
         const int page = dir < 0 ? SM_GRID_GAMES : SM_GRID_PEOPLE;
         const bool turned = page != sm->grid_page || sm->mode != SM_GRID;
         sm->grid_page = page;
@@ -1350,7 +1373,7 @@ uint32_t sm_check(const sm_t *sm, const sm_in_t *in)
     const bool games = view.grid_page == SM_GRID_GAMES;
     if (view.grid &&
         !(probe(sm, in, FACE_W / 4, q, games ? SM_T_CELL_GAME : SM_T_CELL_SISTER) &&
-          probe(sm, in, FACE_W * 3 / 4, q, games ? SM_T_SWALLOW : SM_T_CELL_DAD) &&
+          probe(sm, in, FACE_W * 3 / 4, q, games ? SM_T_CELL_JET : SM_T_CELL_DAD) &&
           probe(sm, in, FACE_W / 4, over_h - q, SM_T_CELL_CANCEL) &&
           probe(sm, in, FACE_W * 3 / 4, over_h - q, games ? SM_T_SWALLOW : SM_T_CELL_PET))) {
         v |= SM_I3;
@@ -1455,7 +1478,10 @@ static void calibrate(sm_t *sm, const sm_in_t *in, sm_out_t *out)
 
 static bool answered(const sm_out_t *out, int from, sm_mode_t was, const sm_t *sm)
 {
-    if (out->tap_missed || out->pet_press || sm->mode != was) return true;
+    /* A menu cell answers on its lift (`cell_lift`), or the swipe it began answers instead. */
+    if (out->tap_missed || out->pet_press || sm->mode != was || sm->down.cell_armed != SM_T_NONE) {
+        return true;
+    }
     for (int i = from; i < out->n; i++) {
         if (out->fx[i].kind == SM_FX_CUE || out->fx[i].kind == SM_FX_FLINCH) return true;
     }
@@ -1484,8 +1510,7 @@ void sm_step(sm_t *sm, const sm_in_t *in, sm_out_t *out)
             sm->down.on_pet = in->on_pet;
             sm->down.swiped = false;
             sm->down.held = false;
-            sm->down.in_grid = sm->mode == SM_GRID;
-            sm->down.game_armed = false;
+            sm->down.cell_armed = SM_T_NONE;
             sm->down.target = SM_T_NONE;
             if (!dark) {
                 const sm_target_t t = sm_target(sm, in, in->x, in->y);
@@ -1507,13 +1532,10 @@ void sm_step(sm_t *sm, const sm_in_t *in, sm_out_t *out)
 
         /* 2. the hold */
         hold_timer(sm, in, out);
-        if (in->up && sm->down.game_armed) {
-            sm->down.game_armed = false;
-            if (sm->mode == SM_GRID && !dark) {
-                sm->grid_until = 0;
-                enter(sm, SM_PET, in->now, true);
-                out->start_game = true;
-            }
+        if (in->up && sm->down.cell_armed != SM_T_NONE) {
+            const sm_target_t cell = (sm_target_t)sm->down.cell_armed;
+            sm->down.cell_armed = SM_T_NONE;
+            if (sm->mode == SM_GRID && !dark) cell_lift(sm, in, out, cell);
         }
         if (in->up) sm->down.active = false;
 

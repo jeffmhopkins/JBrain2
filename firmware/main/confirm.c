@@ -430,11 +430,35 @@ static void pad(uint16_t *fb, int w, int h, int cx, int cy, int fr)
     disc(fb, w, h, bx + fr * 6 / 32, cy - fr * 5 / 32, br, CONFIRM_GREEN);
 }
 
+/* JETPACK'S ICON: the pad's white card, with a pair of pipes on the right and a little robot
+   head flying at their gap along a dotted trail. It has to say "fly through the gap" to a
+   child who cannot read, the way the pad says "a game". */
+static void jet_card(uint16_t *fb, int w, int h, int cx, int cy, int fr)
+{
+    const int hh = fr * 18 / 32;
+    rrect(fb, w, h, cx, cy, fr, hh, fr * 14 / 32, CONFIRM_GLYPH);
+    const int px = cx + fr * 15 / 32, pw = fr * 7 / 32, lip = fr * 10 / 32, gap = fr * 9 / 32;
+    rect(fb, w, h, px - pw, cy - hh + 1, px + pw, cy - gap, SENDTO_PIPE);
+    rect(fb, w, h, px - pw, cy + gap, px + pw, cy + hh - 1, SENDTO_PIPE);
+    rect(fb, w, h, px - lip, cy - gap - fr * 6 / 32, px + lip, cy - gap, SENDTO_PIPE_LIP);
+    rect(fb, w, h, px - lip, cy + gap, px + lip, cy + gap + fr * 6 / 32, SENDTO_PIPE_LIP);
+    for (int i = 0; i < 4; i++) {
+        disc(fb, w, h, cx - fr * 30 / 32 + i * fr * 7 / 32, cy + fr * 11 / 32 - i * fr * 3 / 32,
+             fr * 3 / 32 > 1 ? fr * 3 / 32 : 1, SENDTO_JET_COLOUR);
+    }
+    const int hx = cx - fr * 2 / 32, hy = cy - fr * 1 / 32;
+    rrect(fb, w, h, hx, hy, fr * 7 / 32, fr * 6 / 32, fr * 3 / 32, SENDTO_ROBOT);
+    disc(fb, w, h, hx - fr * 3 / 32, hy - fr * 1 / 32, fr * 2 / 32 > 1 ? fr * 2 / 32 : 1, SENDTO_HAIR);
+    disc(fb, w, h, hx + fr * 3 / 32, hy - fr * 1 / 32, fr * 2 / 32 > 1 ? fr * 2 / 32 : 1, SENDTO_HAIR);
+}
+
 void sendto_draw_games(uint16_t *fb, int w, int h, int over_h)
 {
     const int top = sendto_cy_top(over_h), bottom = sendto_cy_bottom(over_h);
     disc(fb, w, h, CONFIRM_CX_CANCEL, top, CONFIRM_R, SENDTO_GAME_COLOUR);
     pad(fb, w, h, CONFIRM_CX_CANCEL, top, CONFIRM_R * 3 / 4);
+    disc(fb, w, h, CONFIRM_CX_SEND, top, CONFIRM_R, SENDTO_JET_COLOUR);
+    jet_card(fb, w, h, CONFIRM_CX_SEND, top, CONFIRM_R * 3 / 4);
     grid_cancel(fb, w, h, bottom);
 }
 

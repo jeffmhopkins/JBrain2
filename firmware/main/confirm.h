@@ -203,8 +203,8 @@ void sendto_draw(uint16_t *fb, int w, int h, int over_h);
 /* THE SECOND PAGE: THE GAMES (0.4.17). A swipe left on the grid turns to it and a swipe right
  * turns back, the owner's ask: *"swipe left should go to a new 2x2 menu. Put an icon for the game
  * there. Will add more games later."* The same four quadrants, so the aim a child has learned
- * holds: the game top left, the cancel where it is on the first page, the right column spare
- * until there are more games to put in it. */
+ * holds: Dodge top left, Jetpack top right (0.4.18), the cancel where it is on the first page,
+ * and the bottom right spare until there is a third game. */
 void sendto_draw_games(uint16_t *fb, int w, int h, int over_h);
 
 /* ONE OF THOSE FACES, ANYWHERE, AT ANY SIZE — so the picture of a person means the same thing
@@ -243,3 +243,8 @@ void sendto_draw_face(uint16_t *fb, int w, int h, int cx, int cy, int r, sendto_
 #define SENDTO_ROBOT_EYE CONFIRM_SWAP(0x07FF)
 /* The games' disc: violet, the one colour this glass had not spent. */
 #define SENDTO_GAME_COLOUR CONFIRM_SWAP(0x801F)
+/* Jetpack's disc, beside it (0.4.18): orange, the colour of the flame, on a page whose only
+   other colours are Dodge's violet and the cancel's red. */
+#define SENDTO_JET_COLOUR CONFIRM_SWAP(0xFC43)
+#define SENDTO_PIPE CONFIRM_SWAP(0x3D69)      /* the icon's pipes, and their darker lips */
+#define SENDTO_PIPE_LIP CONFIRM_SWAP(0x2C46)

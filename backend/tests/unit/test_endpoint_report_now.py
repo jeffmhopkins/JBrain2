@@ -503,9 +503,11 @@ class TestTheButtonGridIsWiredToRealActions:
 
     def test_every_icon_reaches_the_same_path_the_voice_does(self) -> None:
         """One helper each, behind one mic gate, so a refusal is identical however it was asked
-        for. The machine's since 0.4.0 (`panel_sm.c`)."""
+        for. The machine's since 0.4.0 (`panel_sm.c`); since 0.4.18 a cell acts on its lift,
+        in `cell_lift`."""
         src = self._fw("panel_sm.c")
-        cells = src[src.index("case SM_T_CELL_SISTER:") : src.index("case SM_T_CELL_CANCEL:")]
+        lift = src[src.index("static void cell_lift(") :]
+        cells = lift[lift.index("case SM_T_CELL_SISTER:") : lift.index("case SM_T_CELL_CANCEL:")]
         assert "mic_gate(sm, in, false)" in cells, "the icons skip the mic gate"
         assert "open_record(sm, in, out, &w, true)" in cells, "the people icons do not record"
         assert "open_listen(sm, in, out, false, true)" in cells, (
