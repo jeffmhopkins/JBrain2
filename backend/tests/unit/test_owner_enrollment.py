@@ -2,6 +2,7 @@
 wave A4): the window and its single-use code, the labelled MACs, device CSR signing, the
 enroll route's home-network rule, and the wall's view of it all."""
 
+import asyncio
 import base64
 import datetime as dt
 import hashlib
@@ -25,7 +26,7 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.main import create_app
 from jbrain.owner_tunnel import enrollment, keys
-from jbrain.owner_tunnel.enrollment import Enrolled, EnrollmentWindow
+from jbrain.owner_tunnel.enrollment import Claim, Enrolled, EnrollmentWindow
 from jbrain.owner_tunnel.words import WORDS
 from jbrain.settings_store import OWNER_ENROLL_SUBNET_KEY
 from jbrain.storage import FsOwnerKeyFiles
@@ -79,27 +80,61 @@ def test_a_code_is_claimed_once_and_a_wrong_one_leaves_it_open() -> None:
     code = window.snapshot().code
     assert window.claim(lambda _c: False) is None
     assert window.snapshot().code == code
-    assert window.claim(lambda c: c == code) == code
+    claim = window.claim(lambda c: c == code)
+    assert claim is not None and claim.code == code
     assert window.claim(lambda c: c == code) is None
     # A claimed window no longer shows its code: it can never be scanned twice.
     snap = window.snapshot()
     assert (snap.state, snap.code) == ("armed", None)
 
 
-def test_the_enrolled_phone_is_shown_for_the_rest_of_the_window() -> None:
+def _claimed(window: EnrollmentWindow) -> Claim:
+    window.arm()
+    claim = window.claim(lambda _c: True)
+    assert claim is not None
+    return claim
+
+
+def test_the_enrolled_phone_is_shown_for_a_full_window() -> None:
     clock = _Clock()
     window = EnrollmentWindow(clock)
-    window.record(Enrolled("dev-0", ("a",)))
-    assert window.snapshot().state == "idle"
-    window.arm()
-    window.record(Enrolled("dev-0", ("acorn",)))
+    claim = _claimed(window)
+    clock.now += enrollment.WINDOW - dt.timedelta(seconds=5)
+    window.record(claim, Enrolled("dev-0", ("acorn",)))
     snap = window.snapshot()
     assert (snap.state, snap.enrolled, snap.code) == (
         "enrolled",
         Enrolled("dev-0", ("acorn",)),
         None,
     )
+    # Enrolled with five seconds left, the owner still has the whole window to compare.
+    assert snap.expires_at == clock.now + enrollment.WINDOW
     window.close()
+    assert window.snapshot().state == "idle"
+
+
+def test_a_late_record_never_lands_on_another_window() -> None:
+    clock = _Clock()
+    window = EnrollmentWindow(clock)
+    first = _claimed(window)
+    second = _claimed(window)
+    window.record(first, Enrolled("dev-0", ("first",)))
+    assert window.snapshot().enrolled is None
+    window.record(second, Enrolled("dev-1", ("second",)))
+    assert window.snapshot().enrolled == Enrolled("dev-1", ("second",))
+    # Nor on a window that has lapsed.
+    clock.now += 2 * enrollment.WINDOW
+    window.record(second, Enrolled("dev-1", ("second",)))
+    assert window.snapshot().state == "idle"
+
+
+def test_a_failed_enrollment_closes_only_its_own_window() -> None:
+    window = EnrollmentWindow(_Clock())
+    stale = _claimed(window)
+    window.arm()
+    window.abandon(stale)
+    assert window.snapshot().code is not None
+    window.abandon(_claimed(window))
     assert window.snapshot().state == "idle"
 
 
@@ -256,8 +291,11 @@ class _Store:
 
 
 class _Secrets:
+    def __init__(self, name: str, token: bytes) -> None:
+        self.name, self.token = name, token
+
     def read(self, name: str) -> bytes | None:
-        return WALL_TOKEN if name == "wall" else None
+        return self.token if name == self.name else None
 
 
 class _Box:
@@ -276,8 +314,6 @@ class _Box:
         return self.app.state.owner_enrollment
 
     def owner(self) -> dict[str, str]:
-        import asyncio
-
         async def go() -> str:
             key = await auth_service.rotate_owner_key(self.repo)
             return await auth_service.login(self.repo, key, "t")
@@ -296,9 +332,6 @@ class _Box:
             json={"csr": pem.decode(), "label": label, "mac": mac},
             headers=_LAN if headers is None else headers,
         )
-
-
-LAN_ROOT = None
 
 
 @pytest.fixture
@@ -338,7 +371,9 @@ def box(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_Box]:
         app.state.auth_repo = repo
         app.state.owner_device_repo = phones
         app.state.settings_store = store
-        app.state.internal_secrets = _Secrets()
+        # The pet routes' token is a different one, and opens nothing here.
+        app.state.internal_secrets = _Secrets("wall", b"pet-token")
+        app.state.enroll_secrets = _Secrets("wall-enroll", WALL_TOKEN)
         yield _Box(c, repo, phones, store, app)
 
 
@@ -358,7 +393,12 @@ def test_a_phone_enrolls_with_the_qr_code_and_can_check_the_reply(box: _Box) -> 
     # What the app does before it pins anything: the box's MAC over exactly what came back.
     app_tag = enrollment.app_mac(code, pem)
     expected = enrollment.box_mac(
-        code, app_tag, body["cert"].encode(), body["owner_ca"].encode(), body["enroll_ca"].encode()
+        code,
+        app_tag,
+        body["device_id"].encode(),
+        body["cert"].encode(),
+        body["owner_ca"].encode(),
+        body["enroll_ca"].encode(),
     )
     assert hmac.compare_digest(enrollment.b64url_decode(body["mac"]), expected)
     key_hash = keys.public_key_sha256(key.public_key())
@@ -450,20 +490,39 @@ def test_a_bad_request_never_spends_the_code(box: _Box) -> None:
 def test_a_phone_key_already_on_record_is_a_conflict(box: _Box) -> None:
     pem, _ = _csr()
     assert box.enroll(pem, _armed(box)).status_code == 200
+    box.window.close()
     assert box.enroll(pem, _armed(box)).status_code == 409
+    # The spent window closes, so the screen asks for a new one instead of a blank QR.
+    assert box.window.snapshot().state == "idle"
 
 
 def test_without_keys_the_box_says_so(box: _Box, tmp_path: Path) -> None:
     box.app.state.settings.owner_keys_dir = str(tmp_path / "none")
     code = _armed(box)
     assert box.enroll(_csr()[0], code).status_code == 503
-    screen = box.client.get("/internal/owner-enroll", headers=box.wall()).json()
-    assert screen["problem"] is None  # the code was spent; the screen just shows "armed"
+    assert box.window.snapshot().state == "idle"
 
 
 def test_arming_is_owner_only(box: _Box) -> None:
     assert box.client.post("/api/owner-devices/enroll/arm").status_code == 401
     assert box.window.snapshot().state == "idle"
+
+
+def test_only_the_box_can_arm_over_words_waiting_to_be_compared(box: _Box) -> None:
+    assert box.enroll(_csr()[0], _armed(box)).status_code == 200
+    resp = box.client.post("/api/owner-devices/enroll/arm", headers=box.owner())
+    assert resp.status_code == 409
+    assert box.window.snapshot().state == "enrolled"
+    assert box.client.post("/internal/owner-enroll/arm", headers=box.wall()).status_code == 200
+    assert box.window.snapshot().code is not None
+
+
+def test_enrollment_is_rate_limited_per_address(box: _Box) -> None:
+    for _ in range(10):
+        assert box.enroll(b"x", b"k" * 32).status_code == 422
+    assert box.enroll(b"x", b"k" * 32).status_code == 429
+    other = {**_LAN, "x-real-ip": "192.168.1.51"}
+    assert box.enroll(b"x", b"k" * 32, other).status_code == 422
 
 
 # --- the box's screen ------------------------------------------------------------------------
@@ -483,6 +542,22 @@ def test_the_screen_needs_a_lan_site(box: _Box, monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(endpoint_api, "_lan_ca", lambda: "")
     screen = box.client.get("/internal/owner-enroll", headers=box.wall()).json()
     assert (screen["qr_svg"], screen["problem"]) == (None, "this box has no LAN site")
+
+
+def test_an_unreadable_lan_root_is_a_problem_not_a_crash(
+    box: _Box, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _armed(box)
+    monkeypatch.setattr(
+        endpoint_api,
+        "_lan_ca",
+        lambda: "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+    )
+    screen = box.client.get("/internal/owner-enroll", headers=box.wall()).json()
+    assert (screen["qr_svg"], screen["problem"]) == (
+        None,
+        "the LAN site's certificate cannot be read",
+    )
 
 
 def test_the_screen_needs_the_keys(box: _Box, tmp_path: Path) -> None:
@@ -532,6 +607,9 @@ def test_the_screen_routes_need_the_wall_token(box: _Box, method: str, path: str
     assert box.client.request(method, path).status_code == 401
     bad = {"authorization": "Bearer nope"}
     assert box.client.request(method, path, headers=bad).status_code == 401
+    # Not the pet routes' token, which the cast sidecar and mosquitto can also read.
+    pet = {"authorization": "Bearer pet-token"}
+    assert box.client.request(method, path, headers=pet).status_code == 401
 
 
 def test_the_box_keyboard_arms_and_closes(box: _Box) -> None:
@@ -579,7 +657,7 @@ def test_the_subnet_is_set_from_the_lan_only(box: _Box) -> None:
     assert cleared.json() == {"subnet": ""}
 
 
-def test_a_revoke_kicks_the_rows_own_spelling_of_the_id() -> None:
+def test_a_revoke_kicks_by_the_rows_own_spelling_of_the_id() -> None:
     from jbrain.api.owner_devices import _canonical
 
     row = "0b9c7b1e-6f0e-4c39-9a35-2f3b9f1f4d10"

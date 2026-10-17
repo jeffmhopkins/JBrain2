@@ -30,10 +30,14 @@ MQTT = "mqtt"
 # with the others so the secret arrives with the update, never as a host step.
 CAST = "cast"
 CALLERS = (WALL, MQTT, CAST)
+# The wall's key to the enrollment screen, minted into `enroll_secrets` instead: that
+# screen hands out the code that enrolls an owner phone, and every container mounting
+# `internal_secrets` could otherwise read its way to one (OWNER_TUNNEL_PLAN.md §3.5).
+WALL_ENROLL = "wall-enroll"
 
 
-def _expected(request: Request, caller: str) -> bytes | None:
-    return cast(InternalSecrets, request.app.state.internal_secrets).read(caller)
+def _expected(request: Request, caller: str, store: str = "internal_secrets") -> bytes | None:
+    return cast(InternalSecrets, getattr(request.app.state, store)).read(caller)
 
 
 def _check(presented: str, expected: bytes | None) -> None:
@@ -49,6 +53,13 @@ async def require_wall(request: Request) -> None:
     """The wall display (deploy/wall/serve.py) sends `Authorization: Bearer <wall.token>`."""
     scheme, _, presented = request.headers.get("authorization", "").partition(" ")
     _check(presented.strip() if scheme.lower() == "bearer" else "", _expected(request, WALL))
+
+
+async def require_wall_enroll(request: Request) -> None:
+    """The wall's enrollment screen: `Authorization: Bearer <wall-enroll.token>`."""
+    scheme, _, presented = request.headers.get("authorization", "").partition(" ")
+    expected = _expected(request, WALL_ENROLL, "enroll_secrets")
+    _check(presented.strip() if scheme.lower() == "bearer" else "", expected)
 
 
 async def require_mqtt(request: Request) -> None:

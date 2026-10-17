@@ -143,8 +143,8 @@ class EnrollmentWindow:
             return Snapshot("armed", window.expires_at)
         return Snapshot("armed", window.expires_at, code=window.code)
 
-    def claim(self, matches: Callable[[bytes], bool]) -> bytes | None:
-        """Use the code once: the code if the window is open, unused and `matches` it.
+    def claim(self, matches: Callable[[bytes], bool]) -> "Claim | None":
+        """Use the code once: the claim if the window is open, unused and `matches` it.
 
         No await between the check and the mark, so two requests on the event loop cannot
         both claim it. A failed match leaves the window open: the code is 256 bits, so a
@@ -153,10 +153,29 @@ class EnrollmentWindow:
         if window is None or window.claimed or not matches(window.code):
             return None
         window.claimed = True
-        return window.code
+        return Claim(window)
 
-    def record(self, enrolled: Enrolled) -> None:
-        """Show the new phone's fingerprint for the rest of the window."""
-        window = self._live()
-        if window is not None:
-            window.enrolled = enrolled
+    def record(self, claim: "Claim", enrolled: Enrolled) -> None:
+        """Show the new phone's fingerprint for the rest of the window it was claimed from.
+        Never another one: the window may have been re-armed and claimed by a second phone
+        while this one's insert was in flight, and the owner must see that phone's words."""
+        if self._live() is claim.window:
+            claim.window.enrolled = enrolled
+            # A phone that enrolled in the window's last seconds still gets a full window
+            # for the owner to compare the words and reject a mismatch.
+            claim.window.expires_at = max(claim.window.expires_at, self._now() + WINDOW)
+
+    def abandon(self, claim: "Claim") -> None:
+        """The claimed enrollment failed: close its window so the screen asks for a new one
+        rather than sitting on "armed" with no code."""
+        if self._live() is claim.window:
+            self._window = None
+
+
+@dataclass(frozen=True)
+class Claim:
+    window: _Window
+
+    @property
+    def code(self) -> bytes:
+        return self.window.code

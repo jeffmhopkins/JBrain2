@@ -381,6 +381,14 @@ def _mint_internal_secrets(store: InternalSecrets) -> None:
             )
 
 
+def _mint_enroll_secret(store: InternalSecrets) -> None:
+    """Best-effort, like the others: without it the enrollment screen refuses the wall."""
+    try:
+        store.ensure(internal_auth.WALL_ENROLL)
+    except OSError as exc:
+        structlog.get_logger().error("enroll_secrets.mint_failed", error=repr(exc))
+
+
 async def _warn_unroled_panels(maker: async_sessionmaker[AsyncSession]) -> None:
     """Log the live device keys with no `device_role` that have reported as panels.
 
@@ -412,6 +420,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Mint the /internal callers' tokens before anything can call in; the wall and
         # mosquitto read them from the shared volume (api/internal_auth.py).
         _mint_internal_secrets(app.state.internal_secrets)
+        _mint_enroll_secret(app.state.enroll_secrets)
         # The box's narration of its own GPU work (model loads, evictions, renders), which
         # the vitals surface reads back so a pinned trace with an empty roster explains
         # itself. Wired per PROCESS, not per request: the writers sit inside the gateway
@@ -1884,8 +1893,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="JBrain", lifespan=lifespan)
     app.state.settings = settings
     app.state.internal_secrets = FsInternalSecrets(settings.internal_secrets_dir)
+    app.state.enroll_secrets = FsInternalSecrets(settings.enroll_secrets_dir)
     # In memory only: the enrollment code is never written anywhere (owner_tunnel/enrollment.py).
     app.state.owner_enrollment = EnrollmentWindow()
+    # The enroll route is unauthenticated until the MAC checks: ~10 tries a burst per source.
+    app.state.owner_enroll_rate_limiter = TokenBucket(capacity=10, refill_per_sec=0.1)
     # A live, process-local feed of debug-console activity so the web console can
     # show every /api/debug/* call as it lands — including ones run from outside
     # that browser tab. Only the verb/route/outcome are kept (no bodies).

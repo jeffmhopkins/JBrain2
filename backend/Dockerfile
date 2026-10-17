@@ -47,6 +47,10 @@ RUN mkdir -p /data/blobs /data/tiles && chown appuser /data/blobs /data/tiles
 # mosquitto's entrypoint) and the app itself ever read it.
 RUN mkdir -p /run/jbrain-internal && chown appuser /run/jbrain-internal \
  && chmod 0700 /run/jbrain-internal
+# The `enroll_secrets` volume: the wall's enrollment-screen token alone, so only the wall
+# (as root) and the app read it.
+RUN mkdir -p /run/jbrain-enroll && chown appuser /run/jbrain-enroll \
+ && chmod 0700 /run/jbrain-enroll
 # The owner tunnel's two key volumes (jbrain/owner_tunnel/keys.py). The CA keys stay 0700;
 # the site volume is read by the proxy, as root.
 RUN mkdir -p /run/jbrain-owner-keys /run/jbrain-owner-site \

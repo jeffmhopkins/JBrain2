@@ -16,13 +16,14 @@ from pydantic import BaseModel, Field
 from jbrain.api import client_ip
 from jbrain.api import endpoint as endpoint_api
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
-from jbrain.api.internal_auth import require_wall
+from jbrain.api.internal_auth import require_wall_enroll
 from jbrain.api.session_cookie import set_session_cookie
 from jbrain.api.ws_reauth import kick
 from jbrain.auth import service
 from jbrain.auth.service import BOUND_SESSION_IDLE, PrincipalInfo
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
+from jbrain.locations.ratelimit import TokenBucket
 from jbrain.owner_tunnel import enrollment, keys
 from jbrain.owner_tunnel.devices import AlreadyEnrolled, OwnerDeviceInfo, OwnerDeviceRepo
 from jbrain.owner_tunnel.enrollment import EnrollmentWindow
@@ -32,7 +33,7 @@ from jbrain.storage import FsOwnerKeyFiles
 
 router = APIRouter(prefix="/owner-devices")
 # The wall's view of the enrollment window, for the QR on the box's own screen.
-internal_router = APIRouter(prefix="/owner-enroll", dependencies=[Depends(require_wall)])
+internal_router = APIRouter(prefix="/owner-enroll", dependencies=[Depends(require_wall_enroll)])
 
 LABEL_MAX_BYTES = 80
 # The enrollment route runs before any principal exists; reading the owner's subnet setting
@@ -166,7 +167,12 @@ class ArmOut(BaseModel):
 @router.post("/enroll/arm")
 async def arm_enrollment(_owner: OwnerDep, window: EnrollmentWindowDep) -> ArmOut:
     """Open the window for the box's screen to show a QR. Reveals nothing, so it answers on
-    any site."""
+    any site. Except over a phone just added: only someone at the box may clear its words
+    (a key there), or a stolen session could wipe them before the owner compares."""
+    if window.snapshot().state == "enrolled":
+        raise HTTPException(
+            status_code=409, detail="a phone was just added; compare its words at the box first"
+        )
     return ArmOut(expires_at=window.arm())
 
 
@@ -194,7 +200,7 @@ async def _from_home_network(request: Request) -> bool:
 class EnrollIn(BaseModel):
     csr: str = Field(max_length=8192)
     label: str = Field(min_length=1, max_length=LABEL_MAX_BYTES)
-    # base64url of HMAC-SHA256(code, "app->box" label + csr)
+    # base64url of enrollment.app_mac(code, csr): HMAC-SHA256 under the direction label
     mac: str = Field(max_length=64)
 
 
@@ -218,6 +224,10 @@ async def enroll(
     """A phone that scanned the box's QR sends its certificate request, bound to the QR's code
     by a MAC; the box signs it and answers with a MAC of its own over everything it returns.
     The code is spent by the first request that proves it, whatever happens after."""
+    # Before the settings read and the CSR's signature check, which every caller costs.
+    limiter = cast(TokenBucket, request.app.state.owner_enroll_rate_limiter)
+    if not limiter.allow(client_ip.client_ip(request) or "unknown"):
+        raise HTTPException(status_code=429, detail="rate limited")
     if not await _from_home_network(request):
         raise HTTPException(status_code=403, detail="enrollment is open only on the home network")
     label = _label(body.label)
@@ -227,20 +237,29 @@ async def enroll(
         tag = enrollment.b64url_decode(body.mac)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="malformed request") from exc
-    code = window.claim(lambda c: hmac.compare_digest(enrollment.app_mac(c, csr_pem), tag))
-    if code is None:
+    claim = window.claim(lambda c: hmac.compare_digest(enrollment.app_mac(c, csr_pem), tag))
+    if claim is None:
         raise HTTPException(status_code=403, detail="no open enrollment matches")
     try:
         issued = keys.issue_device(_key_files(settings), csr)
-    except keys.KeysNotReady as exc:
-        raise HTTPException(status_code=503, detail="the box's keys are not made yet") from exc
-    try:
         device = await devices.create(label, issued.key_hash, issued.public_key_der)
+    except keys.KeysNotReady as exc:
+        window.abandon(claim)
+        raise HTTPException(status_code=503, detail="the box's keys are not made yet") from exc
     except AlreadyEnrolled as exc:
+        window.abandon(claim)
         raise HTTPException(status_code=409, detail="this phone's key is already enrolled") from exc
     words = enrollment.fingerprint(issued.key_hash)
-    window.record(enrollment.Enrolled(device.id, words))
-    mac = enrollment.box_mac(code, tag, issued.cert_pem, issued.owner_ca_pem, issued.enroll_ca_pem)
+    window.record(claim, enrollment.Enrolled(device.id, words))
+    # The words are not covered: the app reads them off its own key, never this reply.
+    mac = enrollment.box_mac(
+        claim.code,
+        tag,
+        device.id.encode(),
+        issued.cert_pem,
+        issued.owner_ca_pem,
+        issued.enroll_ca_pem,
+    )
     return EnrollOut(
         device_id=device.id,
         cert=issued.cert_pem.decode(),
@@ -313,7 +332,14 @@ async def screen(request: Request, window: EnrollmentWindowDep, settings: Settin
         return ScreenOut(
             state=snap.state, expires_at=snap.expires_at, problem="the box's keys are not made yet"
         )
-    lan_pin = keys.spki_pin(x509.load_pem_x509_certificate(lan_root.encode()))
+    try:
+        lan_pin = keys.spki_pin(x509.load_pem_x509_certificate(lan_root.encode()))
+    except ValueError:
+        return ScreenOut(
+            state=snap.state,
+            expires_at=snap.expires_at,
+            problem="the LAN site's certificate cannot be read",
+        )
     payload = enrollment.qr_payload(
         snap.code,
         owner_ca_pin=owner_pin,
@@ -326,7 +352,7 @@ async def screen(request: Request, window: EnrollmentWindowDep, settings: Settin
 
 @internal_router.post("/arm")
 async def arm_from_the_box(window: EnrollmentWindowDep) -> ArmOut:
-    """A key on the box's own keyboard."""
+    """A key on the box's own keyboard: whoever presses it is looking at the words."""
     return ArmOut(expires_at=window.arm())
 
 
@@ -345,4 +371,7 @@ async def reject_from_the_box(
         raise HTTPException(status_code=404, detail="no phone was just enrolled")
     await devices.revoke(_SYSTEM_OWNER, snap.enrolled.device_id)
     window.close()
+    # kick_device alone is enough, unlike the owner's revoke: a phone-bound session
+    # authenticates only with that phone's key, which only the owner site carries, so every
+    # request and socket it holds is under the device guard this wakes.
     kick_device(request.app, snap.enrolled.device_id)

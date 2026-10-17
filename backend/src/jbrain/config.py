@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # The owner tunnel's key material (docs/plans/OWNER_TUNNEL_PLAN.md §3.1): CA private
     # keys in an api-only volume, the owner site's key and the certificates in a volume the
     # proxy mounts read-only.
+    # The wall's enrollment-screen token, alone in a volume only the api and the wall
+    # mount: the screen hands out the enrollment code, so its key must not sit beside the
+    # tokens the cast sidecar and mosquitto can read (OWNER_TUNNEL_PLAN.md §3.5).
+    enroll_secrets_dir: str = "/run/jbrain-enroll"
     owner_keys_dir: str = "/run/jbrain-owner-keys"
     owner_site_dir: str = "/run/jbrain-owner-site"
     embed_url: str = "http://embed:80"

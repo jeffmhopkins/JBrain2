@@ -237,6 +237,20 @@ def test_only_the_api_can_write_the_internal_secrets() -> None:
     assert users["cast"] == ["internal_secrets:/run/jbrain-internal:ro"]
 
 
+def test_only_the_api_and_the_wall_hold_the_enrollment_screen_token() -> None:
+    # The screen hands out the code that enrolls an owner phone, so the cast sidecar and
+    # mosquitto, which mount `internal_secrets`, must not reach its token.
+    compose = _compose()
+    assert "enroll_secrets" in compose["volumes"]
+    users = {
+        name: [m for m in spec.get("volumes") or [] if str(m).startswith("enroll_secrets:")]
+        for name, spec in compose["services"].items()
+    }
+    assert {name for name, mounts in users.items() if mounts} == {"api", "wall"}
+    assert users["api"] == ["enroll_secrets:/run/jbrain-enroll"]
+    assert users["wall"] == ["enroll_secrets:/run/jbrain-enroll:ro"]
+
+
 def test_mosquitto_runs_the_entrypoint_from_the_checkout() -> None:
     mqtt = _compose()["services"]["mqtt"]
     assert mqtt["entrypoint"] == [
