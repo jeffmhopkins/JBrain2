@@ -314,13 +314,12 @@ cookie).
   Update keeps the last known-good proxy config so a bad Caddy render rolls back. Precondition:
   two enrolled devices. On-box sign-off.
 
-## 6. Decisions for the owner before Wave F
+## 6. Owner decisions
 
-- **Break-glass when away from home.** If every enrolled device is lost or the app breaks while
-  away, there is no remote owner path after F, by design. Default: a one-time **recovery code**
-  shown once on the box's screen at enrollment and kept on paper, which reopens public owner-key
-  login for a few hours. Its cost: during that window Cloudflare is back in the trust path.
-  Without it, recovery waits until you are home.
+- **Break-glass when away from home: none (owner decision, 2026-10-17: *"No remote recovery
+  needed"*).** If every enrolled device is lost or the app breaks while away, owner access waits
+  until the owner is home: re-enroll at the box's screen, or sign in at `jbrain.local`. No
+  recovery code reopens public owner login, so Cloudflare never re-enters the trust path.
 - **Laptop after retirement.** Default: browser at `jbrain.local` on the home network only.
 - **iPhone.** Out of scope; the design is Android-specific (proxy override, Keystore).
 
@@ -359,5 +358,6 @@ draft. What changed because of them:
 - **Links built from `window.location.origin`**, the release-signing uninstall, and the Wave D
   parity list: §3.6 and Wave D.
 - **No remote way back after retirement**, the toggle reachable by a debug principal, and debug
-  access still public at retirement: Waves E and F swapped, break-glass in §6.
+  access still public at retirement: Waves E and F swapped; the owner chose no remote
+  break-glass (§6), and a second enrolled device is a precondition of F.
 - **Debug private key shipped inside the payload**: the agent makes its own key and CSR (Wave E).
