@@ -105,6 +105,7 @@ ARG PATCH_RESTORE_CHECKPOINT=0
 # the smoke test catches the mismatch — so set this (via LOCAL_LLM_LLAMA_COMMIT in
 # .env) only to deliberately force a commit, e.g. for an exotic base variant.
 ARG LLAMA_CPP_COMMIT=
+COPY deploy/ensure-build-tools.sh /ensure-build-tools.sh
 COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
 RUN set -eux; \
     mkdir -p /out; \
@@ -112,29 +113,11 @@ RUN set -eux; \
         echo "PATCH_RESTORE_CHECKPOINT!=1 — skipping patched build (stock binary kept)"; \
         exit 0; \
     fi; \
-    # The base ships a compiler but not the whole link/build chain (the rolling
-    # image dropped `ld`: "collect2: fatal error: cannot find 'ld'", 2026-08-24),
-    # and it is Fedora — apt-get does not exist there. Check every tool the build
-    # actually invokes and install via whichever package manager is present. Plain
-    # install is NOT enough when the image's RPM DB already claims the package
-    # while its files are gone (binutils reports installed with /usr/bin/ld
-    # missing — "Nothing to do"), so tools still missing after install get a
-    # reinstall pass, and a final check hard-fails rather than dying mid-compile.
-    tools_missing() { m=""; for t in git cmake c++ ld make; do command -v "$t" >/dev/null 2>&1 || m="$m $t"; done; printf '%s' "$m"; }; \
-    if [ -n "$(tools_missing)" ]; then \
-        echo "installing build tools (missing:$(tools_missing))"; \
-        if command -v dnf >/dev/null 2>&1; then \
-            dnf -y --setopt=install_weak_deps=False install git cmake gcc-c++ binutils make; \
-            [ -z "$(tools_missing)" ] || dnf -y reinstall git cmake gcc-c++ binutils make || true; \
-        elif command -v microdnf >/dev/null 2>&1; then \
-            microdnf -y --setopt=install_weak_deps=0 install git cmake gcc-c++ binutils make; \
-            [ -z "$(tools_missing)" ] || microdnf -y reinstall git cmake gcc-c++ binutils make || true; \
-        elif command -v apt-get >/dev/null 2>&1; then \
-            apt-get update && apt-get install -y --no-install-recommends git cmake build-essential; \
-            [ -z "$(tools_missing)" ] || apt-get install -y --reinstall --no-install-recommends git cmake build-essential binutils || true; \
-        else echo "FATAL: missing tools ($(tools_missing)) and no known package manager (dnf/microdnf/apt-get)"; exit 1; fi; \
-        if [ -n "$(tools_missing)" ]; then echo "FATAL: build tools still missing after install/reinstall:$(tools_missing)"; exit 1; fi; \
-    fi; \
+    # The base ships a compiler but not the whole link/build chain (the rolling image
+    # dropped `ld`: "collect2: fatal error: cannot find 'ld'", 2026-08-24), and it is
+    # Fedora, not Debian. The script installs and repairs what the build invokes, and
+    # hard-fails rather than dying mid-compile.
+    sh /ensure-build-tools.sh; \
     base_ver="$(llama-server --version 2>&1 || true)"; \
     # Two observed formats: "version: 10068 (571d0d540)" and, since upstream's
     # versioning rework, "version: 0.2.0-dev (build 10612, commit 758443071)".

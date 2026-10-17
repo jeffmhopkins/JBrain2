@@ -2648,3 +2648,114 @@ def test_engine_services_take_the_quiesced_path_before_any_plain_up(
     if script == "refresh-inner.sh":
         reset = next(i for i, ln in enumerate(lines) if "reset --hard" in ln)
         assert reset < branch, "the pulled local-engine.sh is the one sourced"
+
+
+# deploy/ensure-build-tools.sh runs in the llama.cpp builder stages on kyuz0's Fedora
+# base. These fake a Fedora toolbox on a sealed PATH: a `dnf` that logs its calls and,
+# on a reinstall, refuses the WHOLE transaction when it names a package whose installed
+# build has aged out of the repos — the 2026-10-17 Flash-Next failure.
+
+
+def _build_tools_env(
+    tmp_path: Path, *, stale: str = "git", has_bfd: bool = False
+) -> tuple[dict[str, str], Path, Path]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for real in ("mkdir", "ln", "chmod"):
+        found = shutil.which(real)
+        assert found, real
+        (bin_dir / real).symlink_to(found)
+    for tool in ("git", "cmake", "c++", "make"):
+        stub = bin_dir / tool
+        stub.write_text("#!/bin/sh\nexit 0\n")
+        stub.chmod(0o755)
+    if has_bfd:
+        bfd = bin_dir / "ld.bfd"
+        bfd.write_text("#!/bin/sh\nexit 0\n")
+        bfd.chmod(0o755)
+    log = tmp_path / "dnf.log"
+    dnf = bin_dir / "dnf"
+    dnf.write_text(
+        f"""#!/bin/sh
+echo "$*" >> "{log}"
+case "$2" in
+  install) echo "Nothing to do."; exit 0 ;;
+  reinstall)
+    shift 2
+    for p in "$@"; do [ "$p" = "{stale}" ] && exit 1; done
+    for p in "$@"; do
+      [ "$p" = binutils ] && printf '#!/bin/sh\\nexit 0\\n' > "{bin_dir}/ld" \\
+        && chmod +x "{bin_dir}/ld"
+    done
+    exit 0 ;;
+  distro-sync) exit 0 ;;
+esac
+exit 0
+"""
+    )
+    dnf.chmod(0o755)
+    link_dir = tmp_path / "link"
+    env = {"PATH": f"{link_dir}:{bin_dir}", "BUILD_TOOLS_LINK_DIR": str(link_dir)}
+    return env, log, link_dir
+
+
+def _run_build_tools(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/bin/sh", str(DEPLOY / "ensure-build-tools.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_build_tools_repair_one_package_so_a_stale_neighbour_cannot_block_ld(
+    tmp_path: Path,
+) -> None:
+    env, log, _ = _build_tools_env(tmp_path, stale="git")
+    proc = _run_build_tools(env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = log.read_text().splitlines()
+    assert "-y reinstall binutils" in calls
+    assert not any(c.startswith("-y reinstall git") for c in calls)
+
+
+def test_build_tools_distro_sync_when_the_missing_package_itself_aged_out(
+    tmp_path: Path,
+) -> None:
+    env, log, _ = _build_tools_env(tmp_path, stale="binutils")
+    proc = _run_build_tools(env)
+    calls = log.read_text().splitlines()
+    assert "-y distro-sync binutils" in calls
+    # The fake distro-sync restores nothing, so this is the hard fail before compiling.
+    assert proc.returncode == 1
+    assert "still missing after install/repair: ld" in proc.stderr
+
+
+def test_build_tools_link_ld_bfd_when_only_the_alternatives_link_is_gone(
+    tmp_path: Path,
+) -> None:
+    env, _, link_dir = _build_tools_env(tmp_path, stale="binutils", has_bfd=True)
+    proc = _run_build_tools(env)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (link_dir / "ld").resolve().name == "ld.bfd"
+
+
+def test_build_tools_touch_no_package_manager_when_all_present(tmp_path: Path) -> None:
+    env, log, _ = _build_tools_env(tmp_path)
+    (tmp_path / "bin" / "ld").write_text("#!/bin/sh\nexit 0\n")
+    (tmp_path / "bin" / "ld").chmod(0o755)
+    proc = _run_build_tools(env)
+    assert proc.returncode == 0
+    assert not log.exists()
+
+
+@pytest.mark.parametrize(
+    "dockerfile", ["Dockerfile.flash-next", "Dockerfile.local-llm"]
+)
+def test_llama_builders_use_the_shared_build_tools_script(dockerfile: str) -> None:
+    text = (DEPLOY / dockerfile).read_text()
+    assert "COPY deploy/ensure-build-tools.sh /ensure-build-tools.sh" in text
+    assert "sh /ensure-build-tools.sh" in text
+    # The old inline block reinstalled every package in one transaction.
+    assert "reinstall git cmake gcc-c++ binutils make" not in text
