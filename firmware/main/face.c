@@ -1933,13 +1933,13 @@ static void draw_jet_back(uint16_t *fb, const game_t *g, uint32_t now, int ox, i
         }
     }
     /* THE JETPACK: two tanks either side of the torso (the robot's and the bird's are the same
-       width there), the flame growing with the climb. Strapped on halfway through the walk in. */
+       width there), the flame growing with the burn. Strapped on halfway through the walk in. */
     if (k > 0.5f || !walking) {
-        const float thrust = g->phase == GAME_PLAY ? fmaxf(0.0f, -j->vy / 160.0f) : 0.0f;
+        const float thrust = g->phase == GAME_PLAY ? j->burn : 0.0f;
         const float flick = sinf((float)now * 0.04f) * 10.0f;
         for (int side = -1; side <= 1; side += 2) {
             const float x = (float)ox + (float)side * 84.0f * s;
-            const float f = (40.0f + fminf(thrust, 1.5f) * 70.0f + flick) * s;
+            const float f = (40.0f + thrust * 100.0f + flick) * s;
             const float base = (float)oy + 60.0f * s;
             fill_tri(fb, x - 16.0f * s, base, x + 16.0f * s, base, x, base + f, rgb(0xFF, 0x9F, 0x1C));
             fill_tri(fb, x - 8.0f * s, base, x + 8.0f * s, base, x, base + f * 0.6f, rgb(0xFF, 0xE1, 0x4D));

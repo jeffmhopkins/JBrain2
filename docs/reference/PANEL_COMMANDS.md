@@ -167,9 +167,11 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   too, and he walks back, growing. Nothing else said ends a game (0.4.15): the name and every
   other phrase are ignored until it is over
 · **Jetpack** (0.4.18): the orange icon top right of the games page, no phrase — he walks to
-  the left, shrinks and straps on a jetpack, and obstacles scroll in from the right. Tipping the
-  top away flies him up and toward you flies him down, the other way from the game above (let go and he hovers; the top and bottom edges are
-  safe), and the left/right lean drifts him forward and back a little. Ten worlds of eight
+  the left, shrinks and straps on a jetpack, and obstacles scroll in from the right. Gravity
+  pulls him down and tipping the top away burns the jetpack against it (a little tip holds him,
+  let go and he sinks, toward you dives), so he flies in arcs rather than sliding like the game
+  above; the top and bottom edges are safe. The left/right lean drifts him forward and back a
+  little. Ten worlds of eight
   obstacles, each world with its own kind (Meadow pipes, Hills towers, Cave falling rocks, Candy
   sliding gaps, Jungle tunnel, Sky birds and balloons, Factory crushers, Ocean mines, Space
   spinners, Station lasers), then they all mix. A point per obstacle and per star; a bump ends

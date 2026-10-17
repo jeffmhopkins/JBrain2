@@ -6,9 +6,10 @@
  * mock, *"make sure obstacles change (these were all basically the same gap)"*. Agreed against
  * a playable mock (artifact 1iQJmXLfdpUsjvC7kaXFTN) before any of this was written.
  *
- * He flies at the left of the field while the obstacles scroll in from the right. The tilt is a
- * PUSH, as in Dodge (`game.h`): held forward or back he dives or climbs, let go he hovers, so a
- * child who stops tilting is not punished, and the field's top and bottom edges are safe. The
+ * He flies at the left of the field while the obstacles scroll in from the right. Gravity pulls
+ * him down and the tilt is a BURN against it: the top tipped away climbs, a little tip holds
+ * him, let go he sinks, toward you dives. Not Dodge's push (`game.h`), which the owner found
+ * felt the same. The field's top and bottom edges are safe: the floor is a landing. The
  * side tilt lets him drift forward and back a little, which is how a crusher or a laser is
  * waited out. Ten worlds of JET_GATES obstacles each, every world bringing its own kind: its
  * first three are that kind alone, then earlier worlds' kinds mix in. Past the tenth every kind
@@ -81,6 +82,7 @@ typedef struct {
     float t;            /* seconds into this world: its banner, its speed-up, every phase */
     float jx, jy;       /* his origin */
     float vx, vy;
+    float burn;         /* how hard the jetpack burns, 0..1: the flame */
     float fw, fh;       /* the field, as the last step had it */
     float scroll;       /* px scrolled, for the backdrop's parallax */
     float last_gap;     /* the last pipe's gap centre, so the next one is somewhere else */
