@@ -365,12 +365,19 @@ sm_target_t sm_target(const sm_t *sm, const sm_in_t *in, int x, int y)
     switch (sm->mode) {
     case SM_GRID: {
         sm_target_t t = SM_T_SWALLOW; /* modal: a miss costs a press, never a poke */
-        switch (sendto_hit(x, y, in->over_h)) {
-        case SENDTO_SISTER: t = SM_T_CELL_SISTER; break;
-        case SENDTO_DAD: t = SM_T_CELL_DAD; break;
-        case SENDTO_CANCEL: t = SM_T_CELL_CANCEL; break;
-        case SENDTO_PET: t = SM_T_CELL_PET; break;
-        case SENDTO_NONE: break;
+        const sendto_hit_t h = sendto_hit(x, y, in->over_h);
+        if (sm->grid_page == SM_GRID_GAMES) {
+            /* The spare corners swallow until there are more games to put in them. */
+            if (h == SENDTO_SISTER) t = SM_T_CELL_GAME;
+            if (h == SENDTO_CANCEL) t = SM_T_CELL_CANCEL;
+        } else {
+            switch (h) {
+            case SENDTO_SISTER: t = SM_T_CELL_SISTER; break;
+            case SENDTO_DAD: t = SM_T_CELL_DAD; break;
+            case SENDTO_CANCEL: t = SM_T_CELL_CANCEL; break;
+            case SENDTO_PET: t = SM_T_CELL_PET; break;
+            case SENDTO_NONE: break;
+            }
         }
         if (t != SM_T_SWALLOW && g) {
             const int dx = x - sm->hold_x, dy = y - sm->hold_y;
@@ -724,6 +731,13 @@ static void press(sm_t *sm, const sm_in_t *in, sm_out_t *out, sm_target_t t)
         cue(out, CUE_STOP, STREAM_SLOT_PRESS);
         enter(sm, SM_PET, in->now, true);
         break;
+    case SM_T_CELL_GAME:
+        /* ON THE LIFT, NOT THE DOWN EDGE, unlike every other cell: a swipe starts with a press,
+           and a game once started cannot be unwound the way a microphone can be closed. The
+           press is answered now, so the finger knows it landed. */
+        sm->down.game_armed = true;
+        cue(out, CUE_HEARD, STREAM_SLOT_PRESS);
+        break;
     }
 }
 
@@ -734,6 +748,19 @@ static void on_swipe(sm_t *sm, const sm_in_t *in, sm_out_t *out, int dir)
        down edge and a swipe is recognised only after 60 px of travel, so a smear that began on
        the notice (or a cell) has already pressed it. Unwind it, then apply the swipe. */
     const bool opening = sm->mode_press_at != 0 && sm->down.active && sm->down.at == sm->since;
+    /* A SWIPE ON THE MENU TURNS ITS PAGE: left to the games, right back (owner, 0.4.17). The
+       cell its down edge pressed is unwound first, as above, so the swipe is only the swipe. */
+    if (sm->mode == SM_GRID || (sm->down.in_grid && sm->down.active && sm->down.at == sm->since)) {
+        if (sm->mode == SM_LISTEN || sm->mode == SM_RECORD) close_capture(sm, out, true);
+        sm->down.game_armed = false;
+        const int page = dir < 0 ? SM_GRID_GAMES : SM_GRID_PEOPLE;
+        const bool turned = page != sm->grid_page || sm->mode != SM_GRID;
+        sm->grid_page = page;
+        if (sm->mode != SM_GRID) enter(sm, SM_GRID, in->now, false);
+        sm->grid_until = in->now + SENDTO_MS;
+        if (turned) cue(out, CUE_HEARD, STREAM_SLOT_PRESS);
+        return;
+    }
     switch (sm->mode) {
     case SM_PLAY:
         if (opening) {
@@ -864,6 +891,7 @@ static void hold_timer(sm_t *sm, const sm_in_t *in, sm_out_t *out)
     if (offer_visible(sm, &in->snap) && !offer_standing(sm, in->now)) return;
     sm->down.held = true;
     sm->grid_until = in->now + SENDTO_MS;
+    sm->grid_page = SM_GRID_PEOPLE;
     sm->hold_x = in->x;
     sm->hold_y = in->y;
     enter(sm, SM_GRID, in->now, true);
@@ -1284,6 +1312,7 @@ static void make_view(const sm_t *sm, const sm_in_t *in, sm_view_t *v)
     }
     v->sending = sm->send.seq != JP_SEQ_NONE;
     v->grid = sm->mode == SM_GRID;
+    v->grid_page = v->grid ? sm->grid_page : SM_GRID_PEOPLE;
     v->confirm = sm->mode == SM_LISTEN || sm->mode == SM_RECORD;
     v->listen_dot = sm->capture;
     v->rec_to = sm->rec.to;
@@ -1318,10 +1347,12 @@ uint32_t sm_check(const sm_t *sm, const sm_in_t *in)
         view.confirm != capture_mode || (view.notice && view.offer)) {
         v |= SM_I3;
     }
-    if (view.grid && !(probe(sm, in, FACE_W / 4, q, SM_T_CELL_SISTER) &&
-                       probe(sm, in, FACE_W * 3 / 4, q, SM_T_CELL_DAD) &&
-                       probe(sm, in, FACE_W / 4, over_h - q, SM_T_CELL_CANCEL) &&
-                       probe(sm, in, FACE_W * 3 / 4, over_h - q, SM_T_CELL_PET))) {
+    const bool games = view.grid_page == SM_GRID_GAMES;
+    if (view.grid &&
+        !(probe(sm, in, FACE_W / 4, q, games ? SM_T_CELL_GAME : SM_T_CELL_SISTER) &&
+          probe(sm, in, FACE_W * 3 / 4, q, games ? SM_T_SWALLOW : SM_T_CELL_DAD) &&
+          probe(sm, in, FACE_W / 4, over_h - q, SM_T_CELL_CANCEL) &&
+          probe(sm, in, FACE_W * 3 / 4, over_h - q, games ? SM_T_SWALLOW : SM_T_CELL_PET))) {
         v |= SM_I3;
     }
     if (view.notice) {
@@ -1453,6 +1484,8 @@ void sm_step(sm_t *sm, const sm_in_t *in, sm_out_t *out)
             sm->down.on_pet = in->on_pet;
             sm->down.swiped = false;
             sm->down.held = false;
+            sm->down.in_grid = sm->mode == SM_GRID;
+            sm->down.game_armed = false;
             sm->down.target = SM_T_NONE;
             if (!dark) {
                 const sm_target_t t = sm_target(sm, in, in->x, in->y);
@@ -1474,6 +1507,14 @@ void sm_step(sm_t *sm, const sm_in_t *in, sm_out_t *out)
 
         /* 2. the hold */
         hold_timer(sm, in, out);
+        if (in->up && sm->down.game_armed) {
+            sm->down.game_armed = false;
+            if (sm->mode == SM_GRID && !dark) {
+                sm->grid_until = 0;
+                enter(sm, SM_PET, in->now, true);
+                out->start_game = true;
+            }
+        }
         if (in->up) sm->down.active = false;
 
         /* 3. outcomes: play, then send (post_failed with each), then a refused capture */

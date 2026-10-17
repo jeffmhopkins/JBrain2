@@ -32,7 +32,8 @@
 #define GAME_OVER_WAIT_MS 8000u
 /* How fast the first ones come, px/s, before the climb: a third of 0.4.14's 70 (owner, 0.4.16:
    "object speed in the game need to start out at 1/3 current speed"). */
-#define GAME_START_SPEED (70.0f / 3.0f)
+#define GAME_OLD_START_SPEED 70.0f
+#define GAME_START_SPEED (GAME_OLD_START_SPEED / 3.0f)
 #define GAME_HIT_R 24.0f       /* his hit circle, px: a little forgiving, as a child wants */
 #define GAME_ACTIVE_TILT 0.15f /* tilt past this is somebody playing */
 

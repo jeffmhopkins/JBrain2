@@ -178,16 +178,30 @@ int game_level(const game_t *g, uint32_t now)
 /* SLOW, THEN NOT. Speed and the rate they come both climb with the time survived: gentle for
    a four-year-old's first ten seconds, a real test by the end of a minute. The climb is 0.4.14's
    own, from a slower start: today's first speed comes about eight seconds in. */
-static float spawn_speed(float t)
+#define SPEED_CLIMB 5.5f /* px/s gained per second survived */
+#define SPEED_MAX 300.0f
+
+static float speed_from(float start, float t)
 {
-    const float v = GAME_START_SPEED + t * 5.5f;
-    return v < 300.0f ? v : 300.0f;
+    const float v = start + t * SPEED_CLIMB;
+    return v < SPEED_MAX ? v : SPEED_MAX;
 }
 
+static float spawn_speed(float t)
+{
+    return speed_from(GAME_START_SPEED, t);
+}
+
+/* AS MANY ON THE SCREEN AS 0.4.15 HAD. How many are in flight is how often they come times how
+   long each takes to cross, so slowing them to a third and leaving the gap alone tripled the
+   crowd (owner, 0.4.17: "the spawn rate actually didn't decrease, so it ended up having a lot
+   more on screen"). The gap is 0.4.15's, stretched by how much slower they are now than then:
+   three times as long at the start, the two meeting as the speeds converge at the cap. */
 static float spawn_gap(float t)
 {
-    const float s = 1.5f - t * 0.03f;
-    return s > 0.32f ? s : 0.32f;
+    float s = 1.5f - t * 0.03f;
+    if (s < 0.32f) s = 0.32f;
+    return s * speed_from(GAME_OLD_START_SPEED, t) / spawn_speed(t);
 }
 
 static void spawn(game_t *g, float t, float hw, float hh)

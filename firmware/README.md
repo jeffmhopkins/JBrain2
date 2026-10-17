@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-16
+> **Status:** Living · **Last verified:** 2026-10-17
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -189,6 +189,19 @@ reaches him is a tickle rather than the zone's pool, the first four a giggle and
 laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during the fit
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
+
+**0.4.17: as few things on screen as before, and a games page.** Owner: *"Objects are slower,
+but ... the spawn rate actually didn't decrease, so it ended up having a lot more on screen"*,
+and *"swipe left should go to a new 2x2 menu. Put an icon for the game there. Will add more games
+later. When in that menu, swipe the other way should return to the first page"*. How many are in
+flight is the arrival rate times the time each takes to cross, so slowing them threefold tripled
+the crowd; the gap between arrivals now stretches by how much slower they are than 0.4.15's
+(three times at the start, back to 0.4.15's own gap once both reach the 300 px/s cap). The
+"who?" menu has a second page (`SM_GRID_GAMES`, `sendto_draw_games`): a swipe left turns to it,
+a swipe right back, with a gamepad on violet top left, the same cancel bottom left, and the
+right column spare for later games. The game cell starts the game on the lift, not the press,
+because a swipe begins with a press and a game cannot be unwound; a swipe that begins on any
+other cell unwinds what that press did (a recording dropped, a cancel undone) and turns the page.
 
 **0.4.16: a gentler game, and the song on one beat.** Owner: *"object speed in the game need to
 start out at 1/3 current speed"*, and *"happy birthday was a little slow and jumpy"*. The things

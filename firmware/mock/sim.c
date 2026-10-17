@@ -131,6 +131,7 @@ static int r_fwd_deg;
 static float r_game_tx0, r_game_ty0;
 static unsigned r_song;
 static bool r_game_ask;
+static bool r_game_menu; /* picked on the menu's games page: the press already sounded */
 static uint32_t r_poop_last;
 static float r_recue_p;
 static float r_flinch;
@@ -462,6 +463,7 @@ static void frame(void)
     s_in.sound = true;
     sm_step(&s_sm, &s_in, &s_out);
     if (s_out.violations != 0) say("bug", "invariant broken: 0x%x", (unsigned)s_out.violations);
+    if (s_out.start_game && !game_on(&r_game)) r_game_menu = true;
     if (s_out.tap_missed) say("touch", "press ignored (a grace, or not a target)");
     if (s_out.rim_hold) say("touch", "hold on the rim, not the pet");
     if (s_out.backstop) say("bug", "a UI backstop fired");
@@ -522,8 +524,9 @@ static void frame(void)
     }
     /* As the panel does: "lets play a game" walks him to the middle, shrinking; the tilt he is
        held at now is level. */
-    if (r_game_ask) {
-        r_game_ask = false;
+    if (r_game_ask || r_game_menu) {
+        const bool said = r_game_ask;
+        r_game_ask = r_game_menu = false;
         if (s_sm.mode == SM_PET) {
             float hx, hy;
             face_game_home(r_lean, &hx, &hy);
@@ -531,8 +534,12 @@ static void frame(void)
             game_start(&r_game, now, r_now_rnd() | 1u, hx, hy);
             r_game_tx0 = sinf((float)r_tilt_deg * (float)M_PI / 180.0f) * 8192.0f / 2400.0f;
             r_game_ty0 = (float)r_fwd_deg * (float)M_PI / 180.0f; /* the pitch it started at */
-            (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, CUE_HEARD);
-            say("pet", "heard \"lets play a game\"");
+            if (said) {
+                (void)stream_cue_play(&g_st, STREAM_SLOT_PRESS, CUE_HEARD);
+                say("pet", "heard \"lets play a game\"");
+            } else {
+                say("pet", "the game, from the menu");
+            }
         }
     }
     /* As the panel does: playing, a tap is the game's. */
@@ -879,12 +886,12 @@ EXPORT(sim_state) const char *sim_state(void)
                      "{\"now\":%u,\"mode\":\"%s\",\"think\":%d,\"dash\":%d,\"notice\":%d,"
                      "\"notice_big\":%d,\"offer\":%d,\"standing\":%d,\"pair\":%d,\"exit\":%d,"
                      "\"sel\":\"%d/%d\",\"run_bar\":%d,\"transport\":%d,\"paused\":%d,"
-                     "\"sending\":%d,\"grid\":%d,\"confirm\":%d,\"dot\":%d,\"standby\":%d,"
+                     "\"sending\":%d,\"grid\":%d,\"page\":%d,\"confirm\":%d,\"dot\":%d,\"standby\":%d,"
                      "\"screen\":%d,\"capture\":%d,\"leased\":%d,\"net\":%d,\"speaker\":%d,"
                      "\"out_ms\":%u,\"phase\":%d,\"waiting\":%d,\"queue\":[",
                      (unsigned)g_now, MODE_NAMES[s_sm.mode], v->think, v->dash, v->notice,
                      v->notice_big, v->offer, v->offer_standing, v->pair, v->exit_corner, v->sel_n,
-                     v->sel_m, v->run_bar, v->transport, v->paused, v->sending, v->grid, v->confirm,
+                     v->sel_m, v->run_bar, v->transport, v->paused, v->sending, v->grid, v->grid_page, v->confirm,
                      v->listen_dot, s_sm.standby, (int)r_sleep, r_capture, stream_leased(&g_st),
                      (int)r_net, s_in.audio.speaker_busy, (unsigned)s_in.audio.out_ms,
                      (int)s_snap.phase, s_snap.waiting.count);
@@ -905,7 +912,7 @@ static const char *const TARGET_NAMES[] = {
     [SM_T_EXIT] = "exit", [SM_T_AGAIN] = "again", [SM_T_REPLY] = "reply", [SM_T_FACE] = "face",
     [SM_T_PAUSE] = "pause", [SM_T_TICK] = "tick", [SM_T_CROSS] = "cross",
     [SM_T_CELL_SISTER] = "sister", [SM_T_CELL_DAD] = "dad", [SM_T_CELL_CANCEL] = "cancel",
-    [SM_T_CELL_PET] = "talk", [SM_T_SWALLOW] = "swallowed",
+    [SM_T_CELL_PET] = "talk", [SM_T_CELL_GAME] = "game", [SM_T_SWALLOW] = "swallowed",
 };
 EXPORT(sim_target) int sim_target(int x, int y) { return (int)sm_target(&s_sm, &s_in, x, y); }
 EXPORT(sim_target_name) const char *sim_target_name(int t)

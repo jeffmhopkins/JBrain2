@@ -1602,10 +1602,46 @@ static void test_the_dodging_game(void)
               "the first ones come at a third of the old speed");
     }
 
+    /* AND A THIRD AS OFTEN (owner, 0.4.17): slower and as frequent was three times the crowd.
+       In flight is arrivals times crossing time, so each gap is 0.4.15's stretched by how much
+       slower they are at that moment: the first comes 2.4 s in, where the speeds are 36.5 against
+       83.2 px/s, so the gap after it is 2.3 times 0.4.15's 1.43 s, about 3.3 s. */
+    {
+        float gaps = 0.0f;
+        int n = 0;
+        for (uint32_t seed = 1; seed < 60; seed++) {
+            game_t q;
+            game_reset(&q);
+            game_start(&q, 0, seed, 0.0f, 20.0f);
+            uint32_t u, first = 0;
+            for (u = 0; u <= GAME_WALK_MS; u += 40) game_step(&q, u, 40, 0, 0, hw, hh);
+            const uint32_t r0 = q.since;
+            for (u = r0; u < r0 + 20000 && q.phase == GAME_PLAY; u += 40) {
+                game_step(&q, u, 40, 0, 0, hw, hh);
+                bool came = false;
+                for (int i = 0; i < GAME_MAX_OBJ; i++) {
+                    came = came || q.obj[i].live;
+                    q.obj[i].live = false; /* counted, and gone before it can reach him */
+                }
+                if (!came) continue;
+                if (first == 0) {
+                    first = u;
+                } else {
+                    gaps += (float)(u - first) / 1000.0f;
+                    n++;
+                    break;
+                }
+            }
+        }
+        const float mean = n > 0 ? gaps / (float)n : 0.0f;
+        CHECK(n > 50 && mean > 2.8f && mean < 3.8f, "the gap stretched by how much slower they are");
+    }
+
     /* FROM ALL FOUR SIDES, AND ALL TWELVE KINDS, SPINNING. */
     int sides = 0, kinds = 0;
     bool spun = false;
-    for (uint32_t seed = 1; seed < 30; seed++) {
+    /* A round's first seconds bring only one or two now (0.4.17), so more rounds to see all. */
+    for (uint32_t seed = 1; seed < 120; seed++) {
         game_reset(&g);
         game_start(&g, 0, seed, 0.0f, 20.0f);
         for (t = 0; t <= GAME_WALK_MS + GAME_READY_MS + 3000; t += 40) {
@@ -4590,6 +4626,30 @@ static void test_a_face_is_the_same_drawing_wherever_it_is_used(void)
     free(alone);
 }
 
+/* THE GAMES PAGE (0.4.17): a pad on violet top left, the same cancel bottom left as the first
+ * page, and the right column empty until there are more games. */
+static void test_the_games_page_draws_the_game_and_the_cancel_only(void)
+{
+    const int over_h = FACE_H, r = CONFIRM_R;
+    const int top = sendto_cy_top(over_h), bottom = sendto_cy_bottom(over_h);
+    memset(fb, 0, (size_t)FACE_W * FACE_H * sizeof(uint16_t));
+    sendto_draw_games(fb, FACE_W, FACE_H, over_h);
+    int violet = 0, white = 0, right = 0;
+    for (int y = top - r; y <= top + r; y++) {
+        for (int x = CONFIRM_CX_CANCEL - r; x <= CONFIRM_CX_CANCEL + r; x++) {
+            violet += fb[y * FACE_W + x] == SENDTO_GAME_COLOUR;
+            white += fb[y * FACE_W + x] == CONFIRM_GLYPH;
+        }
+    }
+    for (int y = 0; y < over_h; y++) {
+        for (int x = FACE_W / 2; x < FACE_W; x++) right += fb[y * FACE_W + x] != 0;
+    }
+    CHECK(violet > 0 && white > 0, "the game is a pad on its own disc");
+    CHECK(right == 0, "the right column is spare");
+    CHECK(fb[bottom * FACE_W + CONFIRM_CX_CANCEL - r + 4] == CONFIRM_RED,
+          "the cancel is where it is on the first page");
+}
+
 /* AND IT SCALES, because the four places that draw it want four sizes: a quarter of the glass
  * on the indicator, 50 px on the pop-up, smaller again on the badge. A face that only worked at
  * one radius would have to be re-drawn per surface, which is the drift this avoids. */
@@ -5888,6 +5948,7 @@ int main(void)
     test_phonemes_too_long_to_hold_are_refused_rather_than_truncated();
     test_the_tick_and_the_cross_split_the_bottom_half();
     test_a_face_is_the_same_drawing_wherever_it_is_used();
+    test_the_games_page_draws_the_game_and_the_cancel_only();
     test_a_face_survives_being_resized();
     test_a_face_of_nobody_draws_nothing();
     test_the_transport_discs_do_not_move_between_play_and_pause();

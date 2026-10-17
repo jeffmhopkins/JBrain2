@@ -1614,6 +1614,93 @@ static void test_the_grid_closes_itself_but_a_stray_finger_does_not(void)
     CHECK(w.sm.mode == SM_PET, "but its own clock closes it");
 }
 
+/* The owner, 0.4.17: "swipe left should go to a new 2x2 menu. Put an icon for the game there.
+   ... When in that menu, swipe the other way should return to the first page of the menu". */
+static void test_a_swipe_left_on_the_menu_turns_to_the_games_and_right_back(void)
+{
+    world_reset();
+    open_grid();
+    CHECK(w.out.view.grid_page == SM_GRID_PEOPLE, "the menu opens on the people");
+    swipe(-1);
+    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES, "a swipe left: the games");
+    CHECK(saw_cue(CUE_HEARD), "and the page turning is heard");
+    run_ms(EXIT_GRACE_MS);
+    CHECK(targets_mask() == (T(SM_T_CELL_GAME) | T(SM_T_CELL_CANCEL) | T(SM_T_SWALLOW)),
+          "the game, the cancel, and two spare corners that swallow");
+    swipe(-1);
+    CHECK(w.out.view.grid_page == SM_GRID_GAMES, "a second swipe left stays on the games");
+    swipe(+1);
+    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_PEOPLE, "a swipe right: back");
+    CHECK(targets_mask() == (T(SM_T_CELL_SISTER) | T(SM_T_CELL_DAD) | T(SM_T_CELL_CANCEL) |
+                             T(SM_T_CELL_PET)),
+          "and the four people again");
+    swipe(-1);
+    run_ms(SENDTO_MS + 400);
+    CHECK(w.sm.mode == SM_PET, "the games page closes on the menu's own clock");
+    open_grid();
+    CHECK(w.out.view.grid_page == SM_GRID_PEOPLE, "and the menu opens on the people again");
+}
+
+static void test_the_game_on_the_menu_starts_on_the_lift(void)
+{
+    world_reset();
+    open_grid();
+    swipe(-1);
+    press_at(FACE_W / 4, 60);
+    CHECK(w.sm.mode == SM_GRID && !w.out.start_game, "the press is not yet the game");
+    CHECK(last_cue() == CUE_HEARD, "but it is answered");
+    lift();
+    CHECK(w.out.start_game && w.sm.mode == SM_PET, "the lift starts it, on the pet's screen");
+    CHECK(w.opened == 0, "and no microphone opened");
+    step();
+    CHECK(!w.out.start_game, "once");
+
+    /* A swipe that began on the game turns the page, and starts nothing. */
+    world_reset();
+    open_grid();
+    swipe(-1);
+    press_at(FACE_W / 4, 60);
+    w.swipe = +1;
+    step();
+    lift();
+    CHECK(!w.out.start_game && w.sm.mode == SM_GRID, "a swipe off the game starts nothing");
+    CHECK(w.out.view.grid_page == SM_GRID_PEOPLE, "it turned the page instead");
+
+    world_reset();
+    open_grid();
+    swipe(-1);
+    tap_at(60, FACE_H - 60);
+    CHECK(w.sm.mode == SM_PET && !w.out.start_game, "the games page's cancel closes the menu");
+}
+
+static void test_a_swipe_that_began_on_a_cell_unwinds_it(void)
+{
+    /* The down edge presses a cell, so a swipe left from the sister has already opened a
+       recording to her: it is dropped, and the page turns. */
+    world_reset();
+    open_grid();
+    press_at(FACE_W / 4, 60);
+    CHECK(w.sm.mode == SM_RECORD, "the down edge pressed the sister");
+    w.swipe = -1;
+    step();
+    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES,
+          "the swipe unwinds it and turns the page");
+    CHECK(!w.sm.capture, "the microphone is closed");
+    lift();
+    run_ms(400);
+    CHECK(w.sm.mode == SM_GRID, "and the menu stays up");
+
+    world_reset();
+    open_grid();
+    press_at(60, FACE_H - 60);
+    CHECK(w.sm.mode == SM_PET, "the down edge pressed the cancel");
+    w.swipe = -1;
+    step();
+    lift();
+    CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES,
+          "a swipe off the cancel turns the page rather than closing the menu");
+}
+
 static void test_a_tick_pressed_into_silence_refuses_to_send(void)
 {
     world_reset();
@@ -3757,6 +3844,9 @@ int main(void)
     test_a_maintenance_hold_never_opens_the_grid_as_it_fires();
     test_the_grid_reaches_all_four_people();
     test_the_grid_closes_itself_but_a_stray_finger_does_not();
+    test_a_swipe_left_on_the_menu_turns_to_the_games_and_right_back();
+    test_the_game_on_the_menu_starts_on_the_lift();
+    test_a_swipe_that_began_on_a_cell_unwinds_it();
     test_a_tick_pressed_into_silence_refuses_to_send();
     test_the_cross_discards_and_the_pet_is_not_poked();
     test_a_named_turn_with_nobody_speaking_costs_nothing();
