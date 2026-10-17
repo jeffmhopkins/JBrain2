@@ -1,5 +1,6 @@
 /build
 /app/build
+/spike/build
 .gradle
 local.properties
 *.iml

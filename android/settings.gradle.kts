@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "jbrain360"
 include(":app")
+include(":spike")

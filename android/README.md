@@ -56,3 +56,21 @@ then pair: paste the owner's pairing code (which carries the server) into the ap
 The APK is **debug-signed** (fine for personal sideloading, not the Play Store) and
 uses standard system-CA TLS, so the server needs a **real cert** (e.g. Let's
 Encrypt), not self-signed.
+
+## The owner-tunnel spike (`spike/`)
+
+A separate test app (`com.jbrain.tunnelspike`, launcher name **Tunnel spike**) for Wave S0 of
+`docs/plans/OWNER_TUNNEL_PLAN.md`. It installs beside JBrain360 and touches nothing of it. It
+carries its own stand-in box (a loopback TLS server that demands a client certificate, reached
+through an in-app CONNECT proxy) and a test CA that its network security config makes the only
+trust anchor for `owner.jbrain.home.arpa`, then runs the plan's WebView checks in two stages and
+shows a report. CI publishes it on the same rolling release:
+
+```
+https://github.com/jeffmhopkins/JBrain2/releases/download/android-latest/jbrain-tunnel-spike.apk
+```
+
+Open it, wait for "done", tap **Copy report**, and paste the report into the project thread. The
+two rerun buttons repeat the run without the proxy credential or with a non-StrongBox key, for
+when the first run fails at one of those. The `res/raw` keys are throwaway test material for
+names that exist nowhere.

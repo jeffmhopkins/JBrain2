@@ -1,9 +1,9 @@
 # Owner tunnel — the Android app reaches the box end to end, Cloudflare carries only ciphertext (proposed)
 
-> **Status:** Proposed · **Last verified:** 2026-10-17 · **Waves:** S0◻️ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
+> **Status:** Scheduled · **Last verified:** 2026-10-17 · **Waves:** S0◻️ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
 
-**Status: proposed. Not on the roadmap, nothing built.** Revised after a four-lens review
-(§9). The owner's ask, 2026-10-17:
+**Scheduled 2026-10-17 (owner: "Go").** Revised after a four-lens review (§9). The S0 spike
+app is built (`android/spike/`); its on-phone report decides the rest. The owner's ask, 2026-10-17:
 
 > *"I basically want to avoid cloudfare man in the middle risks and have a way of sending the
 > pwa update from my server that can be verified not man in the middle."*
@@ -268,7 +268,12 @@ cookie).
 
 ## 5. Waves
 
-- **S0 — spike, go/no-go. ◻️** On a real phone: WebView honours the owner flavor's
+- **S0 — spike, go/no-go. ◻️** The spike is a separate test APK (`android/spike/`,
+  `com.jbrain.tunnelspike`, published beside the main APK as `jbrain-tunnel-spike.apk`) that
+  carries its own stand-in box: a loopback TLS server that demands a client cert, behind an
+  in-app CONNECT proxy, with a test CA as the owner host's only anchor. It runs the checks below
+  in two stages (the design, then the fallback) and produces a report to paste back. The
+  Cloudflare and on-box checks are not in the APK; they fold into B. On a real phone: WebView honours the owner flavor's
   `network_security_config` trust anchor and `pin-set` for the owner origin (else the §3.6
   fallback, and confirm Chromium refuses the service worker there); reverse-bypass
   `ProxyController` carries HTTPS, WebSockets, SSE and service-worker fetches, including a cold
