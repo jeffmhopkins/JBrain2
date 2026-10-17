@@ -54,6 +54,8 @@ http://*.${host} {
 		reverse_proxy api:8000 {
 			flush_interval -1
 			header_up X-Real-IP {remote_host}
+			header_up X-JBrain-Ingress preview
+			header_up X-JBrain-Device ""
 		}
 	}
 	handle {

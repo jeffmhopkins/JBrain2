@@ -7,8 +7,10 @@
 # Cloudflare's edge; the tunnel reaches us here at http://proxy:80). It
 # defaults to JBRAIN_DOMAIN in compose, so pre-tunnel installs are unchanged.
 
-# Shared app handlers, imported by every site below (the public site and the
-# optional LAN site) so they serve the identical app from one definition.
+# Shared app handlers, imported by every site below (the public site, the optional LAN
+# site and the owner site) so they serve the identical app from one definition. Two
+# arguments: the site's ingress name, and the device identity (empty on every site but the
+# owner site, where it is the verified client certificate's key hash). See header_up below.
 (app) {
 	encode zstd gzip
 
@@ -51,6 +53,12 @@
 			# this container (backend api/client_ip.py). Set, not appended: whatever the
 			# client sent is overwritten with the peer Caddy actually saw.
 			header_up X-Real-IP {remote_host}
+			# Which site the request came in on, and on the owner site which enrolled phone
+			# sent it (docs/plans/OWNER_TUNNEL_PLAN.md §3.2). Set on every site, so whatever a
+			# client sent is always overwritten and no site can forget to strip it; the api
+			# trusts both only from this container.
+			header_up X-JBrain-Ingress {args[0]}
+			header_up X-JBrain-Device "{args[1]}"
 		}
 	}
 
@@ -101,7 +109,7 @@
 	handle /debug-console* {
 		respond 404
 	}
-	import app
+	import app public ""
 }
 
 # Optional LAN site: when JBRAIN_LAN_ADDR is set (e.g. https://jbrain.local) the
@@ -117,3 +125,8 @@ import /etc/caddy/lan/*.caddy
 # /__jcode_preview/<slug> (docs/archive/JCODE_PREVIEW_HOST_PLAN.md). Unset -> the glob matches
 # nothing, so a stock deploy is unaffected.
 import /etc/caddy/preview/*.caddy
+
+# The owner site (docs/plans/OWNER_TUNNEL_PLAN.md §3.2): the owner app's private origin,
+# rendered by the entrypoint only once the owner-keys one-shot has written its files, so a
+# box without them serves exactly what it did before.
+import /etc/caddy/owner/*.caddy

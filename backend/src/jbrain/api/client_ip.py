@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import re
 import socket
 from collections.abc import Iterator
 
@@ -117,3 +118,28 @@ def client_ip(conn: HTTPConnection) -> str | None:
     if real in _addrs(TUNNEL_SERVICE):
         return _norm(conn.headers.get("cf-connecting-ip", "")) or real
     return real
+
+
+#: The ingress names Caddy stamps on every request it forwards (`X-JBrain-Ingress`,
+#: docs/plans/OWNER_TUNNEL_PLAN.md §3.2). Each site sets its own, overwriting the client's.
+INGRESSES = frozenset({"public", "lan", "owner-tunnel", "preview"})
+_DEVICE_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def ingress(conn: HTTPConnection) -> str | None:
+    """Which Caddy site a request came in on, or None when it did not come through Caddy
+    (a container on the api's own networks) or names no known site. None grants nothing."""
+    if conn.client is None or _norm(conn.client.host) not in _addrs(PROXY_SERVICE):
+        return None
+    value = conn.headers.get("x-jbrain-ingress", "")
+    return value if value in INGRESSES else None
+
+
+def device_key(conn: HTTPConnection) -> str | None:
+    """The enrolled phone a request came from: the hash of the client key Caddy verified on
+    the owner site (`keys.public_key_sha256`). On any other site there is no such key, and
+    whatever the header says is not believed."""
+    if ingress(conn) != "owner-tunnel":
+        return None
+    value = conn.headers.get("x-jbrain-device", "")
+    return value if _DEVICE_RE.fullmatch(value) else None

@@ -60,6 +60,10 @@ services:
     volumes:
       - caddy_data:/data
       - caddy_config:/config
+      # The owner site's TLS files, written by the api's owner-keys one-shot. Read-only:
+      # the CA private keys are in `owner_keys`, which this container never mounts.
+      # The site listens on :8443, published nowhere; mTLS is its gate.
+      - owner_site:/etc/caddy/owner-tls:ro
     networks: [edge]
     depends_on: [api]
 

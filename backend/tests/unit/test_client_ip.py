@@ -212,3 +212,40 @@ def test_no_api_module_keys_on_the_raw_socket_address() -> None:
             ):
                 offenders.append(f"{path.name}:{node.lineno}")
     assert not offenders, offenders
+
+
+class TestIngressAndDevice:
+    """`X-JBrain-Ingress` and `X-JBrain-Device` (OWNER_TUNNEL_PLAN §3.2): believed only from
+    Caddy, and the device only on the owner site."""
+
+    KEY = "ab" * 32
+
+    def test_each_site_is_read_from_caddy(self) -> None:
+        with cip.pinned(proxy=(PROXY,)):
+            for name in ("public", "lan", "owner-tunnel", "preview"):
+                assert cip.ingress(_conn(PROXY, x_jbrain_ingress=name)) == name
+
+    def test_not_from_caddy_is_no_ingress(self) -> None:
+        with cip.pinned(proxy=(PROXY,)):
+            conn = _conn("172.20.0.5", x_jbrain_ingress="owner-tunnel", x_jbrain_device=self.KEY)
+            assert cip.ingress(conn) is None
+            assert cip.device_key(conn) is None
+            assert cip.ingress(_conn(None, x_jbrain_ingress="lan")) is None
+
+    def test_unknown_or_missing_ingress_is_none(self) -> None:
+        with cip.pinned(proxy=(PROXY,)):
+            assert cip.ingress(_conn(PROXY, x_jbrain_ingress="admin")) is None
+            assert cip.ingress(_conn(PROXY)) is None
+
+    def test_device_only_on_the_owner_site(self) -> None:
+        with cip.pinned(proxy=(PROXY,)):
+            owner = _conn(PROXY, x_jbrain_ingress="owner-tunnel", x_jbrain_device=self.KEY)
+            assert cip.device_key(owner) == self.KEY
+            lan = _conn(PROXY, x_jbrain_ingress="lan", x_jbrain_device=self.KEY)
+            assert cip.device_key(lan) is None
+
+    @pytest.mark.parametrize("value", ["", "AB" * 32, "ab" * 31, "zz" * 32, "ab" * 33])
+    def test_a_malformed_device_is_none(self, value: str) -> None:
+        with cip.pinned(proxy=(PROXY,)):
+            conn = _conn(PROXY, x_jbrain_ingress="owner-tunnel", x_jbrain_device=value)
+            assert cip.device_key(conn) is None

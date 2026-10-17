@@ -142,7 +142,7 @@ def test_ca_cert_without_its_key_is_replaced(files: FsOwnerKeyFiles) -> None:
     assert keys.ensure(files, NOW) == ["enrollment CA"]
     enroll = _cert(files, "enroll-ca.crt")
     key = serialization.load_pem_private_key(files.read("enroll-ca.key") or b"", None)
-    assert keys.spki_sha256(enroll.public_key()) == keys.spki_sha256(key.public_key())  # type: ignore[arg-type]
+    assert keys.public_key_sha256(enroll.public_key()) == keys.public_key_sha256(key.public_key())  # type: ignore[arg-type]
 
 
 def test_expired_ca_is_replaced(files: FsOwnerKeyFiles) -> None:

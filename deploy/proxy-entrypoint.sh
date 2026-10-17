@@ -6,6 +6,7 @@ set -eu
 
 /usr/local/bin/proxy-lan-conf.sh /etc/caddy/lan
 /usr/local/bin/proxy-preview-conf.sh /etc/caddy/preview
+/usr/local/bin/proxy-owner-conf.sh /etc/caddy/owner /etc/caddy/owner-tls
 
 # Publish the internal-CA root where the api (uid 1000) can read it. Backgrounded and
 # looping because Caddy mints that CA lazily, when it first serves the `tls internal`

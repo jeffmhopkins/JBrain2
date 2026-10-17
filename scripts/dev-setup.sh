@@ -44,6 +44,26 @@ if ! command -v ffmpeg >/dev/null 2>&1; then
   fi
 fi
 
+# --- caddy (the owner site's real-Caddy tests) ---
+# backend/tests/unit/test_owner_site.py runs the repo's Caddyfile in a real Caddy and skips
+# without one. The same pinned, checksum-verified release CI installs
+# (.github/actions/setup-caddy): bump both together. Never fatal.
+if ! command -v caddy >/dev/null 2>&1; then
+  caddy_version=2.10.2
+  caddy_sha=5c218bc34c9197369263da7e9317a83acdbd80ef45d94dca5eff76e727c67cdd
+  caddy_tgz="$(mktemp)"
+  mkdir -p "$HOME/.local/bin"
+  if curl -fsSL --retry 3 -o "$caddy_tgz" \
+      "https://github.com/caddyserver/caddy/releases/download/v${caddy_version}/caddy_${caddy_version}_linux_amd64.tar.gz" \
+    && echo "${caddy_sha}  ${caddy_tgz}" | sha256sum -c - >/dev/null 2>&1 \
+    && tar -xzf "$caddy_tgz" -C "$HOME/.local/bin" caddy; then
+    log "installed caddy ${caddy_version} to ~/.local/bin"
+  else
+    log "WARNING: could not install caddy — the owner-site tests will skip"
+  fi
+  rm -f "$caddy_tgz"
+fi
+
 # --- direwolf (the APRS soft-TNC the sdr sidecar decodes with) ---
 # Only needed to REGENERATE the captured KISS fixture
 # (supervisor/tests/fixtures/aprs_kiss_frames.hex): the tests themselves parse that
