@@ -1537,14 +1537,15 @@ static void test_the_dodging_game(void)
     const float x0 = g.x, y0 = g.y;
     for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 1.0f, 0, hw, hh);
     CHECK(g.x > x0 + 20.0f, "tilt right: he runs right");
+    /* OWNER, on the panel (0.4.19): "forward and back are backwards" in 0.4.18. */
     for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, 1.0f, hw, hh);
-    CHECK(g.y < y0 - 20.0f, "the top tipped away: like a marble, he runs up toward it");
+    CHECK(g.y > y0 + 20.0f, "the top tipped away: he runs down the glass");
     for (int k = 0; k < 20; k++, t += 40) game_step(&g, t, 40, 0, -1.0f, hw, hh);
-    CHECK(g.y > y0 + 20.0f, "tipped toward you: he runs down");
+    CHECK(g.y < y0 - 20.0f, "tipped toward you: he runs up");
     const float xs = g.x;
     for (int k = 0; k < 25; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
     CHECK(g.x > xs && g.x - xs < 60.0f && fabsf(g.vx) < 15.0f, "level again, he skids to a stop");
-    for (int k = 0; k < 200; k++, t += 40) game_step(&g, t, 40, -1.0f, 1.0f, hw, hh);
+    for (int k = 0; k < 200; k++, t += 40) game_step(&g, t, 40, -1.0f, -1.0f, hw, hh);
     CHECK(g.x > -hw && g.y > -hh, "the edge of the field holds him");
 
     /* SLOW, THEN FASTER: what comes later comes quicker and closer together. Measured over
@@ -1854,8 +1855,8 @@ static void test_jetpack_walks_in_and_flies_on_the_tilt(void)
     /* A PUSH, NOT A POSITION: held, he climbs; let go, he hovers (no gravity: the owner tried
        it and asked for it off). */
     const float y0 = g.jet.jy;
-    for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, 1.0f, hw, hh);
-    CHECK(g.jet.jy < y0 - 20.0f, "the top tipped away, he climbs, as in Dodge");
+    for (int k = 0; k < 10; k++, t += 40) game_step(&g, t, 40, 0, -1.0f, hw, hh);
+    CHECK(g.jet.jy < y0 - 20.0f, "tipped toward you, he climbs, as Dodge runs up");
     CHECK(g.jet.burn == 1.0f, "the flame at its tallest");
     for (int k = 0; k < 50; k++, t += 40) game_step(&g, t, 40, 0, 0, hw, hh);
     CHECK(fabsf(g.jet.vy) < 1.0f && g.jet.burn == 0.0f, "let go, he hovers: nothing pulls him down");

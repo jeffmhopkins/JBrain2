@@ -368,7 +368,7 @@ $('v-bday').onclick = () => panel.set(KNOB.PET_ACT, 7);
 $('v-game').onclick = () => panel.set(KNOB.PET_ACT, 8);
 // The game is played by tilting both ways at once: the pad is a joystick for the two sliders
 // (left/right and toward/away), the arrow keys too, and letting go levels the panel. A drag is
-// the edge pushed down, so he rolls the way the drag goes, like a marble: up tips the top away.
+// the way he rolls, like a marble: down tips the top away, which runs him down the glass.
 const setTilt = (x, y) => {
   x = Math.round(x); y = Math.round(y);
   if (tiltDeg !== 0) { tiltDeg = 0; tiltScale = 1; document.querySelector('.case').style.transform = ''; }
@@ -376,7 +376,7 @@ const setTilt = (x, y) => {
   $('fwd').value = String(y); $('fwd-out').textContent = `${y}°`;
   panel.set(KNOB.TILT_DEG, x);
   panel.set(KNOB.FWD_DEG, y);
-  $('knob').style.transform = `translate(${x * 1.6}px, ${-y * 1.6}px)`;
+  $('knob').style.transform = `translate(${x * 1.6}px, ${y * 1.6}px)`;
 };
 $('fwd').oninput = (e) => {
   $('fwd-out').textContent = `${e.target.value}°`;
@@ -389,14 +389,14 @@ $('fwd').oninput = (e) => {
   pad.addEventListener('pointermove', (e) => {
     if (!from) return;
     const k = (d) => Math.max(-30, Math.min(30, d / 2));
-    setTilt(k(e.clientX - from.x), -k(e.clientY - from.y));
+    setTilt(k(e.clientX - from.x), k(e.clientY - from.y));
   });
   const end = () => { from = null; setTilt(0, 0); };
   pad.addEventListener('pointerup', end);
   pad.addEventListener('pointercancel', end);
   const held = new Set();
   const fromKeys = () => setTilt((held.has('ArrowRight') - held.has('ArrowLeft')) * 25,
-    (held.has('ArrowUp') - held.has('ArrowDown')) * 25);
+    (held.has('ArrowDown') - held.has('ArrowUp')) * 25);
   addEventListener('keydown', (e) => {
     if (!e.key.startsWith('Arrow') || e.target.closest('input, select, textarea')) return;
     e.preventDefault(); held.add(e.key); fromKeys();

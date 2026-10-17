@@ -158,9 +158,9 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
 · **the game** (0.4.14): `lets play a game`, or (0.4.17) the gamepad on the menu's games page
   (hold the pet for the menu, swipe left; swipe right goes back; since 0.4.18 every menu icon
   acts when the finger lifts, so a swipe that starts on one picks nothing) — he walks to the middle, shrinking to a fifth of his
-  size. Tilt the panel to run him, like a marble, toward whichever edge goes down: left/right as the
-  lean, and tipping the top away or toward you for up/down (since 0.4.18; it was down/up, a
-  bubble's way), measured from how it was held when the game began. Twelve kinds of thing fly in
+  size. Tilt the panel to run him, like a marble: left/right as the lean, and tipping the top away or
+  toward you for down/up (0.4.18 flipped that to up/down and the owner found it backwards on the
+  panel; 0.4.19 put it back), measured from how it was held when the game began. Twelve kinds of thing fly in
   spinning from every side, slow at first (a third of 0.4.15's speed, since 0.4.16, and
   since 0.4.17 coming as much less often, so no more are on screen than before) and faster
   every few seconds; each one that goes by
@@ -170,7 +170,7 @@ longer: `do a dance` `come and boogie` `wiggle your body` `say hello` `bounce ar
   other phrase are ignored until it is over
 · **Jetpack** (0.4.18): the orange icon top right of the games page, no phrase — he walks to
   the left, shrinks and straps on a jetpack, and obstacles scroll in from the right. Tipping
-  the top away flies him up and toward you flies him down, as in the game above
+  the top away flies him down and toward you flies him up, as in the game above
   (no gravity: let go and he hovers; the top and bottom edges are safe). The left/right lean drifts him forward and back,
   almost the width of the field. Ten worlds of eight
   obstacles, each world with its own kind (Meadow pipes, Hills towers, Cave falling rocks, Candy
