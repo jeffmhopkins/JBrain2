@@ -104,34 +104,53 @@ reachable through cloudflared (which only ever dials `proxy:80`):
 
 - New table `owner_devices` (id, label, client-cert fingerprint, public key, enrolled_at,
   last_seen_at, revoked_at), owner-only RLS with its isolation test (non-negotiable #3).
-- The owner still signs in as today, but **inside the app**, and the session is minted
-  **bound to the device**: a `device_sessions` row carries the `owner_devices` id, and a
-  bound session authenticates only when `X-JBrain-Device` (trusted per §3.2) matches. A copied
-  cookie is worthless anywhere else.
+- The enrolled device certificate **is** the owner's credential in the app: no owner key is
+  typed there. On the first tunnelled request the api mints an owner session **bound to the
+  device**: a `device_sessions` row carries the `owner_devices` id, and a bound session
+  authenticates only when `X-JBrain-Device` (trusted per §3.2) matches. A copied cookie is
+  worthless anywhere else.
 - Settings → Devices lists enrolled phones (label, last seen, ingress) with rename and revoke.
   Revoking kills the device's tunnel, its sessions and its cert in one step (Caddy accepts any
   CA-signed cert; the api refuses a revoked fingerprint on every request).
 
-### 3.5 LAN-only enrollment
+### 3.5 LAN-only enrollment, by QR code
 
-`POST /api/owner-devices/enroll`, accepted only when **all** hold:
+The owner's refinement (2026-10-17): *"a lan only accessed web page that shows a scannable
+[code] the Android app scans? Then I never even have to transfer the stuff."*
 
-1. the request came through the LAN site, by an `X-JBrain-Ingress lan` marker set in the LAN
-   site block and stripped everywhere else (trusted only from the `proxy` peer);
+1. On a second screen (normally a laptop) the owner signs in at `https://jbrain.local` with
+   the owner key and opens Settings → Devices → **Add a phone**. That page, and the api route
+   that mints its QR, are **LAN-only** (rules below).
+2. The page shows a QR code holding: the box's owner-site SPKI pin, a **single-use enrollment
+   code** (256-bit, valid ~5 minutes, stored hashed), the LAN and public gateway addresses,
+   and a format version.
+3. The app scans it, makes its non-exportable Keystore key, and posts its CSR to
+   `POST /api/owner-devices/enroll` together with an HMAC over the CSR keyed by the
+   enrollment code. The enroll route is LAN-only too. The box consumes the code (one
+   conditional UPDATE, like `consume_jcode_share`), signs the CSR with the enrollment CA and
+   returns the client cert.
+4. Both the page (live, as it polls) and the app show the new device's fingerprint as a short
+   word or digit string; the owner checks they match. A mismatch revokes the device on the
+   spot.
+
+The camera is the trust channel: the pin reaches the phone without crossing the network,
+and the owner key is never typed into the app. The QR is only as trustworthy as the screen
+showing it. On a laptop that clicked through the `jbrain.local` certificate warning, a LAN
+attacker in the middle could in principle swap the QR; step 4 catches that, and installing
+the box's root certificate on the laptop removes it. A wall panel can show the QR later, since
+the box already reaches the panels over a channel they verify (`../plans/ROOM_ENDPOINT_PLAN.md`
+§10.4j).
+
+**LAN-only** means a request is accepted only when **all** hold:
+
+1. it came through the LAN site, by an `X-JBrain-Ingress lan` marker set in the LAN site
+   block and stripped everywhere else (trusted only from the `proxy` peer);
 2. `X-Real-IP` is not the `cloudflared` container and not the docker gateway;
 3. `X-Real-IP` is inside the owner's home subnet (a Settings value, auto-suggested).
 
 Never "a private address": the docker networks are RFC 1918 too, and jcode and pysandbox
 containers run arbitrary code. `Cf-Connecting-IP`, `X-Forwarded-For` and `Host` are never
 consulted.
-
-The LAN's TLS is Caddy's untrusted internal CA, so a LAN attacker could sit in the middle of
-enrollment. The owner key closes that: the app never sends it; both sides key an HMAC with
-`hash_key(owner_key)` (the value `auth/keys.py` already stores) over the box's challenge, the
-device's CSR and the box's owner-site SPKI. The box only signs a CSR whose MAC verifies, and
-the app only pins a SPKI whose MAC verifies. The trade-off is recorded: someone holding a
-database dump *and* standing on the LAN could enroll; with a database dump all data is already
-exposed.
 
 LAN is a second requirement next to the owner key, never a replacement: guest Wi-Fi, IoT
 devices and the panels are on the LAN too.
@@ -140,9 +159,9 @@ devices and the panels are on the LAN too.
 
 Built on the existing owner host (`OwnerActivity`, `OwnerWebViewClient`, `NavigationPolicy`):
 
-- **Enrollment screen** (LAN): owner key typed in, a non-exportable key made in the Android
-  Keystore (StrongBox where present), CSR, the §3.5 exchange; the cert and the SPKI pin are
-  stored.
+- **Enrollment screen** (LAN): scan the §3.5 QR code, make a non-exportable key in the
+  Android Keystore (StrongBox where present), send the CSR, show the fingerprint to compare;
+  the cert and the SPKI pin are stored.
 - **In-app CONNECT proxy** on loopback, applied only to this WebView (androidx.webkit
   `ProxyController`). `CONNECT owner.jbrain.home.arpa:443` opens the gateway WebSocket
   (LAN first, `hopkinsbrain.com` otherwise) and pumps bytes; anything else is refused, so the
@@ -189,13 +208,13 @@ host as today; share links carry no owner privilege.
   is built.
 - **A — box: owner origin, devices, enrollment. ◻️** §3.1 key generation, the §3.2 Caddy
   site and the ingress markers on every site, `owner_devices` + RLS isolation test, the §3.5
-  enroll endpoint with its home-subnet setting, device-bound sessions, Settings → Devices.
+  QR page, enroll endpoint and home-subnet setting, device-bound sessions, Settings → Devices.
   Security paths at 100% coverage.
 - **B — box: the tunnel gateway. ◻️** §3.3 with challenge auth, limits, debug-API counters.
   Tests with a fake device key against real Caddy in compose.
 - **C — Android: enrollment, proxy, pinning, release signing. ◻️** §3.6, the stable signing
   key and a separately named release asset, JVM tests for the proxy's host gate, the pin
-  check and the enrollment MAC. Sideloadable from the GitHub release page.
+  check, the QR payload and the enrollment MAC. Sideloadable from the GitHub release page.
 - **D — side by side. ◻️** The owner uses the app daily while the public PWA stays as it is.
   Ops shows tunnel health per device. Ends with the owner's sign-off that the app covers
   everything the owner uses the PWA for, back gesture, notifications and share target included.
