@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- owner: the design under test. The spike CA is the ONLY anchor, plus a pin on its key.
+     pinfail: same anchor, a deliberately wrong pin. If the WebView loads it, WebView ignores
+     pin-set and the trust anchor alone is the gate.
+     fallback.jbrain.home.arpa has no entry on purpose: its self-signed cert is untrusted, so
+     it exercises the onReceivedSslError path the plan keeps as the fallback. -->
+<network-security-config>
+    <domain-config>
+        <domain includeSubdomains="false">owner.jbrain.home.arpa</domain>
+        <trust-anchors>
+            <certificates src="@raw/spike_ca" />
+        </trust-anchors>
+        <pin-set>
+            <pin digest="SHA-256">i/aIVEd8pMnPtIcB3028SldWSQ4HuExC2XfmJgwpAFc=</pin>
+        </pin-set>
+    </domain-config>
+    <domain-config>
+        <domain includeSubdomains="false">pinfail.jbrain.home.arpa</domain>
+        <trust-anchors>
+            <certificates src="@raw/spike_ca" />
+        </trust-anchors>
+        <pin-set>
+            <pin digest="SHA-256">AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</pin>
+        </pin-set>
+    </domain-config>
+</network-security-config>

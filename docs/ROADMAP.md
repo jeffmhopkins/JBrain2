@@ -628,6 +628,14 @@ retract, a key field, no terminal), H4 fixes the night's failure paths and the s
 tamper/verify chain, H5 honesty of the owner surfaces, H6 a live-night sign-off. The durable
 notification store the plan depends on moved out as box-wide work of its own.
 
+**Scheduled:** Owner tunnel (build plan: `docs/plans/OWNER_TUNNEL_PLAN.md`, waves S0, A–F) —
+take Cloudflare out of the owner's trust path. Cloudflare terminates TLS and serves the PWA's
+JavaScript, so today it could read or alter the owner app and its updates. The Android owner app
+enrolls by scanning a one-time QR on the box's own screen, then reaches Caddy over its own TLS
+tunnelled inside the Cloudflare tunnel; Cloudflare carries only ciphertext. Sideloaded beside the
+public PWA first; debug access moves into the tunnel (E) before public owner access is retired (F).
+S0 is a spike APK (`android/spike/`) whose on-phone report decides the trust mechanism.
+
 **Shipped:** Kokoro TTS consolidation (build record: `docs/archive/KOKORO_TTS_CONSOLIDATION_PLAN.md`,
 PR #1068) — standardized read-aloud on **Kokoro only** (removed Piper across box/backend/frontend/wall/
 docs; `piper_server.py`→`tts_server.py`; browser-native the sole fallback), made `speakable.js` the

@@ -69,6 +69,9 @@ jobs:
       - working-directory: android
         run: ./gradlew assembleDebug --no-daemon
       - run: cp android/app/build/outputs/apk/debug/app-debug.apk jbrain360-debug.apk
+      # The owner-tunnel S0 spike (docs/plans/OWNER_TUNNEL_PLAN.md): its own app id, so it
+      # installs beside the real app. `assembleDebug` above already built it.
+      - run: cp android/spike/build/outputs/apk/debug/spike-debug.apk jbrain-tunnel-spike.apk
       # Create-or-update the `android-latest` pre-release and replace its asset, so
       # the download URL is always
       # …/releases/download/android-latest/jbrain360-debug.apk.
@@ -79,6 +82,9 @@ jobs:
           body: >
             Auto-built from the latest main. Debug-signed; the dashboard URL is baked
             from the DASHBOARD_BASE repo variable. Android 8.0+ — enable "install
-            unknown apps" to sideload.
+            unknown apps" to sideload. jbrain-tunnel-spike.apk is the owner-tunnel S0
+            test app (docs/plans/OWNER_TUNNEL_PLAN.md); it installs beside JBrain360.
           prerelease: true
-          files: jbrain360-debug.apk
+          files: |
+            jbrain360-debug.apk
+            jbrain-tunnel-spike.apk
