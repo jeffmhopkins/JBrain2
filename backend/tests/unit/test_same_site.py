@@ -449,7 +449,7 @@ def test_logout_deletes_both_names(secure_client: TestClient, repo: FakeAuthRepo
     host_delete = next(c for c in cookies if c.startswith(f"{_HOST}=")).lower()
     assert "secure" in host_delete and "path=/" in host_delete and "domain" not in host_delete
     # The session itself is revoked, whichever name carried it.
-    assert asyncio.run(auth_service.authenticate(repo, token)) is None
+    assert asyncio.run(auth_service.authenticate(repo, token, device=None)) is None
 
 
 def test_legacy_logout_revokes_without_a_competing_reissue(
@@ -457,7 +457,7 @@ def test_legacy_logout_revokes_without_a_competing_reissue(
 ) -> None:
     token = _owner_token(repo)
     resp = secure_client.delete("/api/auth/session", headers=_cookie(token))
-    assert asyncio.run(auth_service.authenticate(repo, token)) is None
+    assert asyncio.run(auth_service.authenticate(repo, token, device=None)) is None
     assert all("max-age=0" in c.lower() for c in _set_cookies(resp))
 
 

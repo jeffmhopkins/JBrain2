@@ -49,6 +49,8 @@ class FakeSession:
     token_hash: str
     label: str
     revoked: bool = False
+    # The owner-tunnel phone a session is bound to (FakeAuthRepo.device_keys maps it).
+    device_id: str | None = None
 
 
 @dataclass
@@ -57,6 +59,14 @@ class FakeAuthRepo:
     sessions: list[FakeSession] = field(default_factory=list)
     # Lookups that stamped a session's last_seen_at (a write in the real repo).
     touches: int = 0
+    # Owner-tunnel phones by id -> key hash, for bound sessions; a revoked phone is removed.
+    device_keys: dict[str, str] = field(default_factory=dict)
+
+    async def find_active_owner(self) -> PrincipalInfo | None:
+        for p in self.principals:
+            if p.kind == "owner" and not p.revoked:
+                return _info(p)
+        return None
 
     async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
         for p in self.principals:
@@ -82,17 +92,27 @@ class FakeAuthRepo:
                 return _info(p)
         return None
 
-    async def create_session(self, principal_id: str, token_hash: str, label: str) -> None:
-        self.sessions.append(FakeSession(principal_id, token_hash, label))
+    async def create_session(
+        self, principal_id: str, token_hash: str, label: str, *, device_id: str | None = None
+    ) -> None:
+        if device_id is not None:
+            for s in self.sessions:
+                if s.device_id == device_id:
+                    s.revoked = True
+        self.sessions.append(FakeSession(principal_id, token_hash, label, device_id=device_id))
 
     async def find_principal_by_session_token_hash(
-        self, token_hash: str, *, touch: bool = True
+        self, token_hash: str, *, device_key: str | None = None, touch: bool = True
     ) -> PrincipalInfo | None:
         now = datetime.now(UTC)
         if touch:
             self.touches += 1
         for s in self.sessions:
-            if s.token_hash == token_hash and not s.revoked:
+            bound = None if s.device_id is None else self.device_keys.get(s.device_id)
+            bound_ok = (s.device_id is None and device_key is None) or (
+                bound is not None and bound == device_key
+            )
+            if s.token_hash == token_hash and not s.revoked and bound_ok:
                 for p in self.principals:
                     live = p.expires_at is None or p.expires_at > now
                     holder = p.kind in SESSION_KINDS

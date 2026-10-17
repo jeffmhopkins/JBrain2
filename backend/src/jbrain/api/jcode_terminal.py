@@ -21,6 +21,7 @@ import structlog
 import websockets
 from fastapi import APIRouter, WebSocket
 
+from jbrain.api.client_ip import device_key
 from jbrain.api.live import origin_allowed
 from jbrain.api.session_cookie import session_token
 from jbrain.api.ws_reauth import SocketAuth, run_until_revoked
@@ -56,7 +57,9 @@ async def _cookie_principal(websocket: WebSocket) -> PrincipalInfo | None:
     ALL kinds — the per-session scope check (`_may_access`) decides, not a kind allow-list."""
     repo = cast("AuthRepo", websocket.app.state.auth_repo)
     settings = cast(Settings, websocket.app.state.settings)
-    return await service.authenticate(repo, session_token(websocket, settings))
+    return await service.authenticate(
+        repo, session_token(websocket, settings), device=device_key(websocket)
+    )
 
 
 def _may_access(principal: PrincipalInfo, sid: str) -> bool:

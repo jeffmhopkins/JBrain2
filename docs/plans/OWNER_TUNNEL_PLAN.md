@@ -309,9 +309,18 @@ cookie).
   install; the owner CA carries a name constraint to the owner host), **A2 owner site ✅** (`deploy/proxy-owner-conf.sh`;
   `X-JBrain-Ingress`/`X-JBrain-Device` on every site, read by `client_ip.ingress` and
   `device_key`; `test_owner_site.py` runs the real Caddyfile in a pinned Caddy, in CI too;
-  PROXY protocol waits for the gateway in B), A3 devices and bound sessions, A4 enrollment, A5 Settings → Devices and the
+  PROXY protocol waits for the gateway in B), **A3 devices and bound sessions ✅**
+  (`app.owner_devices`, `device_sessions.device_id`; `OwnerDeviceGuard` refuses any
+  owner-site `/api` request or socket not from an enrolled, unrevoked phone, and holds that
+  check for the request's life, so a revoke ends the phone's open streams and sockets at once;
+  `POST /api/owner-devices/session` mints an owner session bound to that phone (one live per
+  phone), which authenticates only with its key and idles out after 30 days, while an unbound
+  session never works over the owner site; list, rename and revoke, with revoke ending the
+  phone's sessions), A4 enrollment, A5 Settings → Devices and the
   public-base-URL links. Still owed from §3.1: the two key volumes in the box backup and
-  restore.
+  restore. Owed to A5: the cookie-minting logins (`/api/auth/session` and the redeem routes)
+  still answer over the owner site with an unbound cookie, which the tunnel then refuses; the
+  app must mint through `/api/owner-devices/session`, or those routes refuse the owner site.
 - **B — box: the tunnel gateway. ◻️** §3.3 with nonce auth, drain and keepalive, the kick
   registry, limits, debug-API counters, a throughput check. Tests with a fake device key
   against real Caddy.

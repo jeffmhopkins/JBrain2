@@ -21,6 +21,7 @@ import structlog
 import websockets
 from fastapi import APIRouter, WebSocket
 
+from jbrain.api.client_ip import device_key
 from jbrain.api.live import origin_allowed
 from jbrain.api.session_cookie import session_token
 from jbrain.api.ws_reauth import SocketAuth, run_until_revoked
@@ -44,7 +45,9 @@ _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 async def _cookie_principal(websocket: WebSocket) -> PrincipalInfo | None:
     repo = cast("AuthRepo", websocket.app.state.auth_repo)
     settings = cast(Settings, websocket.app.state.settings)
-    return await service.authenticate(repo, session_token(websocket, settings))
+    return await service.authenticate(
+        repo, session_token(websocket, settings), device=device_key(websocket)
+    )
 
 
 def ws_url(base_url: str, jid: str) -> str:

@@ -192,7 +192,7 @@ async def test_redeem_mints_cookie_capped_to_link_expiry(maker: async_sessionmak
     result = await service.redeem_intake_link(intake_repo, auth_repo, secret)
     assert result is not None
     # The cookie authenticates as the non-owner intake principal.
-    who = await auth_service.authenticate(auth_repo, result.cookie_token)
+    who = await auth_service.authenticate(auth_repo, result.cookie_token, device=None)
     assert who is not None and who.kind == "intake_link"
     # The per-session principal carries the link's expiry, so the cookie dies at TTL.
     async with scoped_session(maker, ctx) as session:
@@ -212,11 +212,11 @@ async def test_revoke_cascades_to_session_cookies(maker: async_sessionmaker) -> 
     secret, record = await service.mint_intake_link(intake_repo, ctx, _config(sid))
     result = await service.redeem_intake_link(intake_repo, auth_repo, secret)
     assert result is not None
-    assert await auth_service.authenticate(auth_repo, result.cookie_token) is not None
+    assert await auth_service.authenticate(auth_repo, result.cookie_token, device=None) is not None
 
     # Revoking the link kills the in-flight cookie AND blocks new redeems.
     assert await service.revoke_intake_link(intake_repo, ctx, record.id) is True
-    assert await auth_service.authenticate(auth_repo, result.cookie_token) is None
+    assert await auth_service.authenticate(auth_repo, result.cookie_token, device=None) is None
     assert await service.redeem_intake_link(intake_repo, auth_repo, secret) is None
     # A second revoke is a no-op.
     assert await service.revoke_intake_link(intake_repo, ctx, record.id) is False

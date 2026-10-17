@@ -9,7 +9,7 @@ async def test_rotate_then_login_then_authenticate() -> None:
     key = await service.rotate_owner_key(repo)
 
     token = await service.login(repo, key, "pixel")
-    principal = await service.authenticate(repo, token)
+    principal = await service.authenticate(repo, token, device=None)
 
     assert principal is not None
     assert principal.kind == "owner"
@@ -32,14 +32,17 @@ async def test_rotation_revokes_previous_key_and_its_sessions() -> None:
 
     with pytest.raises(service.InvalidCredentials):
         await service.login(repo, old_key, "stolen")
-    assert await service.authenticate(repo, old_token) is None
-    assert await service.authenticate(repo, await service.login(repo, new_key, "new")) is not None
+    assert await service.authenticate(repo, old_token, device=None) is None
+    assert (
+        await service.authenticate(repo, await service.login(repo, new_key, "new"), device=None)
+        is not None
+    )
 
 
 async def test_authenticate_empty_or_unknown_token() -> None:
     repo = FakeAuthRepo()
-    assert await service.authenticate(repo, "") is None
-    assert await service.authenticate(repo, "bogus") is None
+    assert await service.authenticate(repo, "", device=None) is None
+    assert await service.authenticate(repo, "bogus", device=None) is None
 
 
 async def test_logout_revokes_session() -> None:
@@ -49,7 +52,7 @@ async def test_logout_revokes_session() -> None:
 
     await service.logout(repo, token)
 
-    assert await service.authenticate(repo, token) is None
+    assert await service.authenticate(repo, token, device=None) is None
 
 
 async def test_logout_with_empty_token_is_noop() -> None:
@@ -74,7 +77,7 @@ async def test_a_session_for_a_kind_that_never_holds_one_is_refused(kind: str) -
     repo = FakeAuthRepo()
     await repo.create_principal(kind, "kh", "leftover")
     await repo.create_session(repo.principals[0].id, keys.hash_token("tok"), "old")
-    assert await service.authenticate(repo, "tok") is None
+    assert await service.authenticate(repo, "tok", device=None) is None
 
 
 @pytest.mark.parametrize("kind", ["owner", "device_key", "jcode_share_link", "intake_link"])
@@ -82,7 +85,7 @@ async def test_the_session_holding_kinds_still_authenticate(kind: str) -> None:
     repo = FakeAuthRepo()
     await repo.create_principal(kind, "kh", "holder")
     await repo.create_session(repo.principals[0].id, keys.hash_token("tok"), "s")
-    principal = await service.authenticate(repo, "tok")
+    principal = await service.authenticate(repo, "tok", device=None)
     assert principal is not None and principal.kind == kind
 
 
@@ -93,4 +96,4 @@ async def test_a_member_cookie_held_by_a_panel_key_stops_authenticating() -> Non
     await repo.create_principal("device_key", keys.hash_key("panel-key"), "panel", "sub-p")
     repo.principals[-1].device_role = "jpet"
     await repo.create_session(repo.principals[-1].id, keys.hash_token("tok"), "panel")
-    assert await service.authenticate(repo, "tok") is None
+    assert await service.authenticate(repo, "tok", device=None) is None

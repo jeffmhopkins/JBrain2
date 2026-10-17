@@ -25,6 +25,7 @@ from jbrain.agent.contracts import TextDelta, UsageEvent
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.api.client_ip import device_key
 from jbrain.api.deps import AuthRepoDep, OwnerDep, PrincipalDep, SettingsDep
 from jbrain.api.session_cookie import session_token, set_session_cookie
 from jbrain.auth import service as auth_service
@@ -399,7 +400,9 @@ async def redeem(
     spent: the intake cookie would replace the owner's session (the page redeems on load,
     so merely opening a link would sign the owner out), and the intake routes need that
     cookie, so a no-cookie success would leave a page that can't talk."""
-    existing = await auth_service.authenticate(auth_repo, session_token(request, settings))
+    existing = await auth_service.authenticate(
+        auth_repo, session_token(request, settings), device=device_key(request)
+    )
     if existing is not None and existing.kind == "owner":
         raise HTTPException(
             status_code=409,

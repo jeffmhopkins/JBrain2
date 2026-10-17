@@ -48,7 +48,7 @@ async def test_redeem_live_secret_mints_a_scoped_session_cookie() -> None:
     cookie_token, session_id = redeemed
     assert session_id == "sess-a"
     # The minted cookie authenticates to the share principal, carrying its session scope.
-    principal = await auth_service.authenticate(repo, cookie_token)
+    principal = await auth_service.authenticate(repo, cookie_token, device=None)
     assert principal is not None
     assert principal.kind == "jcode_share_link"
     assert principal.jcode_session_id == "sess-a"
@@ -66,7 +66,7 @@ async def test_redeem_is_single_use_first_browser_wins() -> None:
     # The first browser's minted cookie keeps working — consuming the link doesn't
     # revoke the principal, only blocks further redemptions.
     cookie_token, _ = first
-    assert await auth_service.authenticate(repo, cookie_token) is not None
+    assert await auth_service.authenticate(repo, cookie_token, device=None) is not None
     # The owner's list shows the link as claimed (redeemed_at set).
     assert repo.principals[0].redeemed_at is not None
 
@@ -98,10 +98,10 @@ async def test_a_lapsed_shares_cookie_stops_authenticating() -> None:
     redeemed = await auth_service.redeem_jcode_share(repo, key)
     assert redeemed is not None
     cookie_token, _ = redeemed
-    assert await auth_service.authenticate(repo, cookie_token) is not None
+    assert await auth_service.authenticate(repo, cookie_token, device=None) is not None
 
     repo.principals[0].expires_at = datetime.now(UTC) - timedelta(seconds=1)
-    assert await auth_service.authenticate(repo, cookie_token) is None
+    assert await auth_service.authenticate(repo, cookie_token, device=None) is None
 
 
 @pytest.mark.asyncio
@@ -111,10 +111,10 @@ async def test_revoking_a_share_kills_its_live_cookie() -> None:
     redeemed = await auth_service.redeem_jcode_share(repo, key)
     assert redeemed is not None
     cookie_token, _ = redeemed
-    assert await auth_service.authenticate(repo, cookie_token) is not None
+    assert await auth_service.authenticate(repo, cookie_token, device=None) is not None
     assert await repo.revoke_jcode_share(record.id, "s") is True
     # Revocation fails the existing cookie closed on its next use.
-    assert await auth_service.authenticate(repo, cookie_token) is None
+    assert await auth_service.authenticate(repo, cookie_token, device=None) is None
 
 
 @pytest.mark.asyncio

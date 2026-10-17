@@ -77,9 +77,16 @@ DeviceClass = Literal["phone", "panel"]
 # lookup admits no other kind, whatever is in device_sessions.
 SESSION_KINDS = ("owner", "device_key", "jcode_share_link", "intake_link")
 
+#: How long an owner session bound to an owner-tunnel phone lives without use. Sliding: each
+#: authenticated request stamps `last_seen_at`. The app's key also needs the phone unlocked,
+#: so a stolen unlocked phone does not hold the owner for a year.
+BOUND_SESSION_IDLE = timedelta(days=30)
+
 
 class AuthRepo(Protocol):
     async def find_active_owner_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+
+    async def find_active_owner(self) -> PrincipalInfo | None: ...
 
     async def find_active_device_principal_by_key_hash(
         self, key_hash: str, device_class: DeviceClass | None = None
@@ -89,10 +96,12 @@ class AuthRepo(Protocol):
         self, principal_id: str
     ) -> PrincipalInfo | None: ...
 
-    async def create_session(self, principal_id: str, token_hash: str, label: str) -> None: ...
+    async def create_session(
+        self, principal_id: str, token_hash: str, label: str, *, device_id: str | None = None
+    ) -> None: ...
 
     async def find_principal_by_session_token_hash(
-        self, token_hash: str, *, touch: bool = True
+        self, token_hash: str, *, device_key: str | None = None, touch: bool = True
     ) -> PrincipalInfo | None: ...
 
     async def revoke_session(self, token_hash: str) -> None: ...
@@ -159,12 +168,33 @@ async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:
     return token
 
 
-async def authenticate(repo: AuthRepo, token: str, *, touch: bool = True) -> PrincipalInfo | None:
-    """The principal a session token names, or None. `touch=False` skips stamping the
+async def mint_device_owner_session(repo: AuthRepo, device_id: str, label: str) -> str | None:
+    """An owner session bound to one enrolled owner-tunnel phone (OWNER_TUNNEL_PLAN §3.4).
+
+    The caller has already established that the request came through the owner site from
+    that phone, not revoked: its client key, verified by Caddy against the enrollment CA, is
+    the owner's credential in the app. The session then authenticates only from that phone.
+    None if there is no owner to bind it to."""
+    owner = await repo.find_active_owner()
+    if owner is None:
+        return None
+    token = keys.generate_session_token()
+    await repo.create_session(owner.id, keys.hash_token(token), label, device_id=device_id)
+    return token
+
+
+async def authenticate(
+    repo: AuthRepo, token: str, *, device: str | None, touch: bool = True
+) -> PrincipalInfo | None:
+    """The principal a session token names, or None. `device` is the request's owner-tunnel
+    phone (`client_ip.device_key`), required so no call site can forget it: a session bound
+    to a phone authenticates only with that phone's key. `touch=False` skips stamping the
     session's `last_seen_at` — for re-checks that are not the user's own activity."""
     if not token:
         return None
-    return await repo.find_principal_by_session_token_hash(keys.hash_token(token), touch=touch)
+    return await repo.find_principal_by_session_token_hash(
+        keys.hash_token(token), device_key=device, touch=touch
+    )
 
 
 async def authenticate_device(

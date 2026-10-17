@@ -240,14 +240,14 @@ async def test_full_auth_flow_through_real_rls(app_engine: AsyncEngine) -> None:
     key = await service.rotate_owner_key(repo)
 
     token = await service.login(repo, key, "integration")
-    principal = await service.authenticate(repo, token)
+    principal = await service.authenticate(repo, token, device=None)
     assert principal is not None and principal.kind == "owner"
 
     with pytest.raises(service.InvalidCredentials):
         await service.login(repo, "jb1-WRONG", "integration")
 
     await service.logout(repo, token)
-    assert await service.authenticate(repo, token) is None
+    assert await service.authenticate(repo, token, device=None) is None
 
 
 async def test_unscoped_session_cannot_read_credentials(app_engine: AsyncEngine) -> None:

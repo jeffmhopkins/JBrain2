@@ -23,6 +23,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from jbrain.api.client_ip import device_key
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.api.session_cookie import session_token, set_session_cookie
 from jbrain.api.ws_reauth import kick
@@ -171,7 +172,9 @@ async def redeem_share(
     share = await service.validate_jcode_share(repo, body.token)
     if share is None:
         raise HTTPException(status_code=401, detail="invalid or expired share link")
-    existing = await service.authenticate(repo, session_token(request, settings))
+    existing = await service.authenticate(
+        repo, session_token(request, settings), device=device_key(request)
+    )
     bound_here = (
         existing is not None
         and existing.kind == "jcode_share_link"

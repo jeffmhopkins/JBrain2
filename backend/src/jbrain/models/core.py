@@ -9,7 +9,16 @@ subject restriction.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, SmallInteger, Text, func, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    LargeBinary,
+    SmallInteger,
+    Text,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -90,4 +99,27 @@ class DeviceSession(Base):
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set for an owner session minted through the owner tunnel: it then authenticates only on
+    # a request from that phone (docs/plans/OWNER_TUNNEL_PLAN.md §3.4).
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.owner_devices.id"), nullable=True
+    )
+
+
+class OwnerDevice(Base):
+    """A phone enrolled for the owner tunnel (migration 0251)."""
+
+    __tablename__ = "owner_devices"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    label: Mapped[str] = mapped_column(Text)
+    key_hash: Mapped[str] = mapped_column(Text, unique=True)
+    public_key: Mapped[bytes] = mapped_column(LargeBinary)
+    enrolled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_ingress: Mapped[str | None] = mapped_column(Text, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -293,7 +293,7 @@ async def _client_principal(client: AsyncClient, maker: async_sessionmaker) -> s
     from jbrain.auth import service as auth_service
 
     info = await auth_service.authenticate(
-        SqlAuthRepo(maker), client.cookies.get("jbrain_session") or ""
+        SqlAuthRepo(maker), client.cookies.get("jbrain_session") or "", device=None
     )
     assert info is not None
     return info.id

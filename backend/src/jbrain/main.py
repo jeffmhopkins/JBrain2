@@ -122,6 +122,7 @@ from jbrain.api import (
     notes,
     notifications,
     ops,
+    owner_devices,
     owntracks,
     pairing,
     panel_agent,
@@ -234,6 +235,8 @@ from jbrain.models.images import GeneratedImageRepo
 from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notify import Notification, NotifyBus, notify_owner
+from jbrain.owner_tunnel.devices import SqlOwnerDeviceRepo
+from jbrain.owner_tunnel.guard import OwnerDeviceGuard
 from jbrain.push import SqlFcmTokenRepo
 from jbrain.pysandbox import PySandboxClient
 from jbrain.queue import SYSTEM_CTX, PgJobQueue
@@ -448,6 +451,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # fired while the owner is present runs SUPERVISED — the lifted per-turn budget.
         app.state.plan_presence = {}
         app.state.auth_repo = SqlAuthRepo(maker)
+        app.state.owner_device_repo = SqlOwnerDeviceRepo(maker)
         app.state.intake_repo = SqlIntakeRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
@@ -1914,6 +1918,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             return response
 
+    # Every owner-site /api request and socket must come from an enrolled, unrevoked phone
+    # (owner_tunnel/guard.py). Inside the same-site guard, outside every route.
+    app.add_middleware(OwnerDeviceGuard)
     # Added last so it is outermost: a forged request is refused before any route,
     # middleware or WebSocket handler runs (api/same_site.py).
     app.add_middleware(SameSiteGuard)
@@ -1940,6 +1947,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(panel_agent.debug_router, prefix="/api")
         app.include_router(panel_notice.debug_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
+    app.include_router(owner_devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
     # The desk panel's reach into the real agents: the owner's switch and the siblings list.
     app.include_router(panel_agent.router, prefix="/api")

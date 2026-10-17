@@ -45,7 +45,7 @@ async def test_login_still_admits_the_owner(maker: async_sessionmaker) -> None:
     repo = SqlAuthRepo(maker)
     key = await auth_service.rotate_owner_key(repo)
     token = await auth_service.login(repo, key, "pixel")
-    principal = await auth_service.authenticate(repo, token)
+    principal = await auth_service.authenticate(repo, token, device=None)
     assert principal is not None and principal.kind == "owner"
 
 
@@ -63,7 +63,7 @@ async def test_a_leftover_session_of_a_non_holding_kind_is_dead(
     # As the old unfiltered login would have minted it.
     token = keys.generate_session_token()
     await repo.create_session(principal_id, keys.hash_token(token), "old")
-    assert await auth_service.authenticate(repo, token) is None
+    assert await auth_service.authenticate(repo, token, device=None) is None
 
 
 async def test_a_member_device_session_still_authenticates(maker: async_sessionmaker) -> None:
@@ -72,5 +72,5 @@ async def test_a_member_device_session_still_authenticates(maker: async_sessionm
     await repo.create_principal("device_key", keys.hash_key(device_key), "phone")
     token = await auth_service.mint_dashboard_session(repo, device_key)
     assert token is not None
-    principal = await auth_service.authenticate(repo, token)
+    principal = await auth_service.authenticate(repo, token, device=None)
     assert principal is not None and principal.kind == "device_key"

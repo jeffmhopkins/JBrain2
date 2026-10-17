@@ -152,7 +152,7 @@ async def test_redeemed_intake_cookie_is_non_owner_and_403s_owner_routes(
         assert (await client.post("/api/intake/links", json=_mint_body(sid))).status_code == 403
         # It does authenticate as the intake principal (401 would mean no cookie at all).
         who = await auth_service.authenticate(
-            SqlAuthRepo(maker), client.cookies.get("jbrain_session") or ""
+            SqlAuthRepo(maker), client.cookies.get("jbrain_session") or "", device=None
         )
         assert who is not None and who.kind == "intake_link"
 
@@ -202,7 +202,7 @@ async def test_redeem_keeps_a_signed_in_owner_and_spends_no_open(
     auth_repo = SqlAuthRepo(maker)
     owner_key = await auth_service.rotate_owner_key(auth_repo)
     owner_token = await auth_service.login(auth_repo, owner_key, "test")
-    owner = await auth_service.authenticate(auth_repo, owner_token)
+    owner = await auth_service.authenticate(auth_repo, owner_token, device=None)
     assert owner is not None
     ctx = SessionContext(principal_id=owner.id, principal_kind="owner")
     repo = SqlIntakeRepo(maker)
@@ -225,6 +225,6 @@ async def test_redeem_keeps_a_signed_in_owner_and_spends_no_open(
         assert redeemed.status_code == 200
         assert "Max-Age=" in redeemed.headers["set-cookie"]
         who = await auth_service.authenticate(
-            auth_repo, stranger.cookies.get("jbrain_session") or ""
+            auth_repo, stranger.cookies.get("jbrain_session") or "", device=None
         )
         assert who is not None and who.kind == "intake_link"
