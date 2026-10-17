@@ -137,6 +137,21 @@ def test_a_claim_at_the_last_moment_still_shows_its_words() -> None:
     assert window.snapshot().enrolled == Enrolled("dev-0", ("late",))
 
 
+def test_a_closed_window_takes_no_late_record() -> None:
+    clock = _Clock()
+    window = EnrollmentWindow(clock)
+    claim = _claimed(window)
+    window.close()
+    window.record(claim, Enrolled("dev-0", ("late",)))
+    assert window.snapshot().state == "idle"
+    # Nor one that lapsed and was purged by the screen's poll before the insert returned.
+    claim = _claimed(window)
+    clock.now += 2 * enrollment.WINDOW
+    assert window.snapshot().state == "idle"
+    window.record(claim, Enrolled("dev-1", ("late",)))
+    assert window.snapshot().state == "idle"
+
+
 def test_a_failed_enrollment_closes_only_its_own_window() -> None:
     window = EnrollmentWindow(_Clock())
     stale = _claimed(window)

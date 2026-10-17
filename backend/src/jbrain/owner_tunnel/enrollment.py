@@ -168,8 +168,10 @@ class EnrollmentWindow:
         """Show the new phone's fingerprint for the rest of the window it was claimed from.
         Never another one: the window may have been re-armed and claimed by a second phone
         while this one's insert was in flight, and the owner must see that phone's words."""
-        # Identity, not `_live()`: a claim is recorded once, so this can extend a window at
-        # most once, and a slow insert past expiry still shows its words.
+        # Identity: a close or re-arm since the claim drops this record. The claim already
+        # extended the window by a full WINDOW, so only an insert slower than that, with the
+        # screen purging the lapsed window meanwhile, loses its words; the phone then shows
+        # in Settings -> Devices, where it can be revoked.
         if self._window is claim.window:
             claim.window.enrolled = enrolled
             # A phone that enrolled in the window's last seconds still gets a full window
