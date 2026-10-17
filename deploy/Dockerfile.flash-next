@@ -62,28 +62,14 @@ RUN GOBIN=/out go install "github.com/mostlygeek/llama-swap@${LLAMA_SWAP_VERSION
 FROM ${FLASH_NEXT_BASE} AS llama-build
 ARG LLAMA_CPP_COMMIT=869034b4bb93a425ea989d30fc3d000f5a461d58
 ARG PATCH_RESTORE_CHECKPOINT=1
+COPY deploy/ensure-build-tools.sh /ensure-build-tools.sh
 COPY deploy/apply-llama-patches.sh /apply-llama-patches.sh
 RUN set -eux; \
     printf '%s' "${LLAMA_CPP_COMMIT}" | grep -Eq '^[0-9a-f]{40}$' \
         || { echo "FATAL: LLAMA_CPP_COMMIT must be a full 40-char commit SHA, got '${LLAMA_CPP_COMMIT}'"; exit 1; }; \
-    # Same tool bootstrap as Dockerfile.local-llm's patched build: the base is Fedora and has
-    # shipped with `ld` missing while its RPM DB still claimed binutils, so check what the
-    # build invokes, install, reinstall what is still missing, and hard-fail before compiling.
-    tools_missing() { m=""; for t in git cmake c++ ld make; do command -v "$t" >/dev/null 2>&1 || m="$m $t"; done; printf '%s' "$m"; }; \
-    if [ -n "$(tools_missing)" ]; then \
-        echo "installing build tools (missing:$(tools_missing))"; \
-        if command -v dnf >/dev/null 2>&1; then \
-            dnf -y --setopt=install_weak_deps=False install git cmake gcc-c++ binutils make; \
-            [ -z "$(tools_missing)" ] || dnf -y reinstall git cmake gcc-c++ binutils make || true; \
-        elif command -v microdnf >/dev/null 2>&1; then \
-            microdnf -y --setopt=install_weak_deps=0 install git cmake gcc-c++ binutils make; \
-            [ -z "$(tools_missing)" ] || microdnf -y reinstall git cmake gcc-c++ binutils make || true; \
-        elif command -v apt-get >/dev/null 2>&1; then \
-            apt-get update && apt-get install -y --no-install-recommends git cmake build-essential; \
-            [ -z "$(tools_missing)" ] || apt-get install -y --reinstall --no-install-recommends git cmake build-essential binutils || true; \
-        else echo "FATAL: missing tools ($(tools_missing)) and no known package manager (dnf/microdnf/apt-get)"; exit 1; fi; \
-        if [ -n "$(tools_missing)" ]; then echo "FATAL: build tools still missing after install/reinstall:$(tools_missing)"; exit 1; fi; \
-    fi; \
+    # The base is a rolling Fedora image that has shipped with `ld` missing; the script
+    # repairs it and hard-fails before compiling (its header has the 2026-10-17 failure).
+    sh /ensure-build-tools.sh; \
     git clone --filter=blob:none https://github.com/ggml-org/llama.cpp /llama; \
     git -C /llama checkout "${LLAMA_CPP_COMMIT}"; \
     if [ "${PATCH_RESTORE_CHECKPOINT}" = "1" ]; then \
