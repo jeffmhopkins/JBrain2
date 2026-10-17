@@ -7,7 +7,8 @@
 #
 # The files come from the api's `owner-keys ensure` one-shot. Until all three exist no
 # site is written, so Caddy's `import /etc/caddy/owner/*.caddy` matches nothing and the
-# public and LAN sites run exactly as before: a missing key can never take them down.
+# public and LAN sites run exactly as before: a missing key can never take them down (and
+# the entrypoint drops a site whose files are present but do not load).
 #
 # Split out from the entrypoint so it can be exercised against a throwaway output dir.
 set -eu

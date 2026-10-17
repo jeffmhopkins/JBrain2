@@ -265,7 +265,7 @@ jobs:
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: ./.github/actions/setup-ffmpeg
       # test_owner_site.py runs the real Caddyfile in a real Caddy; JBRAIN_REQUIRE_CADDY
-      # below turns its skip-without-a-binary into a failure here.
+      # (job env above) turns its skip-without-a-binary into a failure here.
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'
         uses: ./.github/actions/setup-caddy
       - if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.full == 'true'

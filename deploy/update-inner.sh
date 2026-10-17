@@ -1064,12 +1064,24 @@ docker compose run --rm migrate
 # or renewed before the recreate so the proxy finds them on start. Never fatal: until
 # they exist the owner site is simply not served, and the public site does not depend on
 # them.
-if ! docker compose run --rm --no-deps -T api python -m jbrain.cli owner-keys ensure; then
+# Caddy reads its certificate files only when it starts, and the proxy is neither quiesced
+# nor recreated by `up -d` unless its image changed, so anything made here (a renewed leaf,
+# above all) is picked up by the proxy restart after `up -d`.
+OWNER_KEYS_MADE=""
+if OWNER_KEYS_OUT=$(docker compose run --rm --no-deps -T api python -m jbrain.cli owner-keys ensure); then
+  echo "$OWNER_KEYS_OUT"
+  case "$OWNER_KEYS_OUT" in *"made:"*) OWNER_KEYS_MADE=1 ;; esac
+else
+  echo "$OWNER_KEYS_OUT"
   echo "[update] WARNING: owner-keys ensure failed; the owner site stays as it was"
 fi
 
 echo "[update] restarting stack"
 docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE up -d
+if [ -n "$OWNER_KEYS_MADE" ]; then
+  echo "[update] restarting the proxy for the new owner-site certificate"
+  docker compose restart proxy || echo "[update] WARNING: proxy restart failed"
+fi
 
 # End of the quiesced window. `up -d` covers the base stack; this puts back the
 # profile-gated services it does not name (comfyui, the mqtt pair) so an update never

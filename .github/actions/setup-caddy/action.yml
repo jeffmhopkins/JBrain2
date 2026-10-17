@@ -3,9 +3,9 @@ description: >
   Put a pinned, checksum-verified caddy binary on PATH for the backend tests that run the
   repo's real Caddyfile (tests/unit/test_owner_site.py).
 
-# The proxy image is caddy:2, so this pins the version the tests saw rather than the one the
-# box runs. That is the point of pinning: a test that passed on one binary keeps meaning the
-# same thing. Bump CADDY_VERSION and CADDY_SHA256 together (sha256 of the release tarball).
+# The same version deploy/Dockerfile.proxy pins, so the tests run the Caddyfile on the binary
+# the box runs. Bump it there, and CADDY_VERSION and CADDY_SHA256 here (sha256 of the
+# linux_amd64 release tarball; it is in the cache key so a bump never reuses an old binary).
 
 runs:
   using: composite
@@ -14,7 +14,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/caddy-bin
-        key: caddy-2.10.2-${{ runner.os }}-${{ runner.arch }}
+        key: caddy-2.10.2-linux-amd64-5c218bc34c9197369263da7e9317a83acdbd80ef45d94dca5eff76e727c67cdd
 
     - if: steps.cache.outputs.cache-hit != 'true'
       shell: bash

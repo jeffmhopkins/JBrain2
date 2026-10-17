@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import socket
 import ssl
@@ -127,7 +128,10 @@ def _free_port() -> int:
 
 
 class _Echo(BaseHTTPRequestHandler):
+    hits = 0
+
     def do_GET(self) -> None:
+        _Echo.hits += 1
         body = json.dumps({k.lower(): v for k, v in self.headers.items()}).encode()
         self.send_response(200)
         self.send_header("Content-Length", str(len(body)))
@@ -169,12 +173,15 @@ class _Stack:
         for sub in ("lan", "preview"):
             conf = next((etc / sub).glob("*.caddy"))
             conf.write_text(conf.read_text().replace("api:8000", upstream))
-        global_opts = (
-            "{\n\tadmin off\n\tskip_install_trust\n\tauto_https disable_redirects\n"
-            f"\thttp_port {self.ports['http']}\n\thttps_port {_free_port()}\n}}\n"
+        caddyfile = caddyfile.replace(":8443", f":{self.ports['owner']}")
+        # Into the Caddyfile's own global block, which keeps the owner listener's options.
+        test_opts = (
+            "\n{\n\tadmin off\n\tskip_install_trust\n\tauto_https disable_redirects\n"
+            f"\thttp_port {self.ports['http']}\n\thttps_port {_free_port()}\n"
         )
+        assert "\n{\n" in caddyfile
         self.config = root / "Caddyfile"
-        self.config.write_text(global_opts + caddyfile)
+        self.config.write_text(caddyfile.replace("\n{\n", test_opts, 1))
         self.env = env
         self.caddy = _caddy()
         self.proc: subprocess.Popen[bytes] | None = None
@@ -213,10 +220,24 @@ class _Stack:
         self._echo.shutdown()
 
     def get(self, port: str, host: str, *, tls: ssl.SSLContext | None = None) -> dict[str, str]:
+        head, body = self.request(port, host, tls=tls)
+        assert head.startswith(b"HTTP/1.1 200"), head
+        return json.loads(body)
+
+    def request(
+        self,
+        port: str,
+        host: str,
+        *,
+        tls: ssl.SSLContext | None = None,
+        sni: str | None = "",
+    ) -> tuple[bytes, bytes]:
+        """One request; `sni` defaults to the Host's name, None sends no SNI at all."""
         raw = socket.create_connection(("127.0.0.1", self.ports[port]), timeout=5)
         conn: socket.socket = raw
         if tls is not None:
-            conn = tls.wrap_socket(raw, server_hostname=host.split(":")[0])
+            name = host.split(":")[0] if sni == "" else sni
+            conn = tls.wrap_socket(raw, server_hostname=name)
         forged = "".join(f"{k}: {v}\r\n" for k, v in _FORGED.items())
         request = f"GET /api/echo HTTP/1.1\r\nHost: {host}\r\n{forged}Connection: close\r\n\r\n"
         with conn:
@@ -224,9 +245,10 @@ class _Stack:
             data = b""
             while chunk := conn.recv(65536):
                 data += chunk
+        if not data:
+            raise ConnectionError("closed without a response")
         head, _, body = data.partition(b"\r\n\r\n")
-        assert head.startswith(b"HTTP/1.1 200"), head
-        return json.loads(body)
+        return head, body
 
 
 @pytest.fixture
@@ -309,14 +331,14 @@ def test_owner_site_refuses_a_client_without_an_enrolled_cert(
     stack: _Stack, tmp_path: Path
 ) -> None:
     stack.start()
-    with pytest.raises((ssl.SSLError, ConnectionError, AssertionError)):
-        stack.get("owner", keys.OWNER_HOST, tls=_owner_client(stack, tmp_path, None))
+    with pytest.raises((ssl.SSLError, ConnectionError)):
+        stack.request("owner", keys.OWNER_HOST, tls=_owner_client(stack, tmp_path, None))
     # A certificate from any other CA (here the owner CA, which signs servers) is refused too.
     stranger = _client_cert(
         stack.files.read("owner-ca.key") or b"", stack.files.read("owner-ca.crt") or b""
     )
-    with pytest.raises((ssl.SSLError, ConnectionError, AssertionError)):
-        stack.get(
+    with pytest.raises((ssl.SSLError, ConnectionError)):
+        stack.request(
             "owner",
             keys.OWNER_HOST,
             tls=_owner_client(stack, tmp_path, (stranger[0], stranger[1])),
@@ -336,3 +358,58 @@ def test_owner_site_speaks_tls13_with_the_owner_leaf(stack: _Stack, tmp_path: Pa
         assert der is not None
     leaf = x509.load_der_x509_certificate(der)
     assert leaf == x509.load_pem_x509_certificates(stack.files.read("site.crt") or b"")[0]
+
+
+@pytest.mark.parametrize("sni", ["jbrain.local", None], ids=["foreign-sni", "no-sni"])
+def test_owner_host_under_another_name_never_reaches_the_api(
+    stack: _Stack, tmp_path: Path, sni: str | None
+) -> None:
+    # The :8443 listener also has a catch-all TLS policy without client auth, so a cert-less
+    # handshake under another name (or none) succeeds. What must stop it is strict SNI: the
+    # request for the owner host on that connection is refused before it is proxied.
+    stack.start()
+    ctx = _owner_client(stack, tmp_path, None)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    before = _Echo.hits
+    try:
+        head, _ = stack.request("owner", keys.OWNER_HOST, tls=ctx, sni=sni)
+    except (ssl.SSLError, ConnectionError):
+        head = b""
+    assert not head.startswith(b"HTTP/1.1 2"), head
+    assert _Echo.hits == before
+
+
+def test_owner_site_refuses_tls12(stack: _Stack, tmp_path: Path) -> None:
+    stack.start()
+    signed = _client_cert(
+        stack.files.read("enroll-ca.key") or b"", stack.files.read("enroll-ca.crt") or b""
+    )
+    ctx = _owner_client(stack, tmp_path, (signed[0], signed[1]))
+    ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+    with pytest.raises((ssl.SSLError, ConnectionError)):
+        stack.request("owner", keys.OWNER_HOST, tls=ctx)
+
+
+def test_a_mismatched_owner_pair_fails_validation(stack: _Stack) -> None:
+    # What the entrypoint's validate-and-drop guards against: a site key that is not the
+    # certificate's would stop Caddy loading every site, not just the owner one.
+    other = ec.generate_private_key(ec.SECP256R1()).private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    stack.files.write("site.key", other)
+    assert stack.validate().returncode != 0
+    entry = (_DEPLOY / "proxy-entrypoint.sh").read_text()
+    check = entry.index("caddy validate --config /etc/caddy/Caddyfile")
+    assert entry.index("rm -f /etc/caddy/owner/owner.caddy", check) < entry.index("exec caddy run")
+
+
+def test_the_box_runs_the_caddy_the_tests_run() -> None:
+    root = _DEPLOY.parent
+    image = (_DEPLOY / "Dockerfile.proxy").read_text()
+    action = (root / ".github" / "actions" / "setup-caddy" / "action.yml").read_text()
+    version = re.search(r"CADDY_VERSION: (\S+)", action)
+    assert version is not None
+    assert f"FROM caddy:{version[1]}\n" in image

@@ -93,7 +93,10 @@ and remote are one code path, and owner access keeps working when the internet i
 ### 3.2 The owner site (Caddy)
 
 A new site on `:8443` with `tls` from the owner-site files and `client_auth`
-`require_and_verify` against the enrollment CA; auto-HTTPS redirects off for it.
+`require_and_verify` against the enrollment CA. The `:8443` listener sets `strict_sni_host on`
+(so a cert-less handshake under another name cannot ask for the owner host) and HTTP/1.1 and 2
+only; the proxy entrypoint drops the site if its files do not load, and an update that makes
+new owner keys restarts the proxy so Caddy reads them.
 
 - **mTLS is the gate, not the network.** `:8443` is not published to the host, but cloudflared,
   the api and the proxy share the `edge` network, and a stolen tunnel token's remote config

@@ -248,4 +248,16 @@ def test_keys_are_made_after_migrations_and_before_the_stack_starts(script: str)
     # Never fatal: a failure must not abort an update or an install.
     line = text[text.rindex("\n", 0, ensure) : text.index("\n", ensure)]
     nxt = text[text.index("\n", ensure) :][:120]
-    assert line.lstrip().startswith("if !") or nxt.lstrip().startswith("||")
+    assert line.lstrip().startswith("if ") or nxt.lstrip().startswith("||")
+
+
+def test_an_update_that_makes_keys_restarts_the_proxy() -> None:
+    # Caddy reads certificate files only at start, and `up -d` leaves an unchanged proxy
+    # running, so a renewed leaf would otherwise sit unused until the old one expired.
+    text = (_DEPLOY / "update-inner.sh").read_text()
+    ensure = text.index("python -m jbrain.cli owner-keys ensure")
+    assert '*"made:"*) OWNER_KEYS_MADE=1' in text[ensure:]
+    up = text.index(" up -d", ensure)
+    restart = text.index("docker compose restart proxy", ensure)
+    assert up < restart
+    assert 'if [ -n "$OWNER_KEYS_MADE" ]' in text[up:restart]

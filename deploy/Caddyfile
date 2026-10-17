@@ -7,6 +7,19 @@
 # Cloudflare's edge; the tunnel reaches us here at http://proxy:80). It
 # defaults to JBRAIN_DOMAIN in compose, so pre-tunnel installs are unchanged.
 
+# The owner site's listener (deploy/proxy-owner-conf.sh). Its client-certificate gate holds
+# only while a handshake for any other name cannot reach it: strict_sni_host refuses a
+# request whose Host differs from its SNI, so a cert-less handshake under a foreign name
+# cannot then ask for owner.jbrain.home.arpa. Caddy turns this on by itself when client
+# auth is configured; it is stated here so no default change or second site on :8443 can
+# turn it off. HTTP/3 is off because the tunnel only carries TCP.
+{
+	servers :8443 {
+		strict_sni_host on
+		protocols h1 h2
+	}
+}
+
 # Shared app handlers, imported by every site below (the public site, the optional LAN
 # site and the owner site) so they serve the identical app from one definition. Two
 # arguments: the site's ingress name, and the device identity (empty on every site but the
