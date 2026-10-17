@@ -20,7 +20,7 @@ from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.main import create_app
-from jbrain.owner_tunnel.devices import OwnerDeviceInfo
+from jbrain.owner_tunnel.devices import AlreadyEnrolled, OwnerDeviceInfo
 from jbrain.owner_tunnel.guard import OwnerDeviceGuard, kick_device
 from tests.unit.fakes import FakeAuthRepo
 
@@ -69,7 +69,10 @@ class FakeOwnerDeviceRepo:
         return None
 
     async def create(self, label: str, key_hash: str, public_key: bytes) -> OwnerDeviceInfo:
-        raise NotImplementedError
+        if any(d.key_hash == key_hash for d in self.devices):
+            raise AlreadyEnrolled
+        device_id = self.add(key_hash, label)
+        return next(d for d in self.devices if d.id == device_id)
 
     async def list_all(self, ctx: SessionContext) -> list[OwnerDeviceInfo]:
         self.ctxs.append(ctx)

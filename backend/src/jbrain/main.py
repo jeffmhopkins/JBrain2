@@ -236,6 +236,7 @@ from jbrain.models.telemetry import DeployHistoryRepo
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.notify import Notification, NotifyBus, notify_owner
 from jbrain.owner_tunnel.devices import SqlOwnerDeviceRepo
+from jbrain.owner_tunnel.enrollment import EnrollmentWindow
 from jbrain.owner_tunnel.guard import OwnerDeviceGuard
 from jbrain.push import SqlFcmTokenRepo
 from jbrain.pysandbox import PySandboxClient
@@ -1883,6 +1884,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="JBrain", lifespan=lifespan)
     app.state.settings = settings
     app.state.internal_secrets = FsInternalSecrets(settings.internal_secrets_dir)
+    # In memory only: the enrollment code is never written anywhere (owner_tunnel/enrollment.py).
+    app.state.owner_enrollment = EnrollmentWindow()
     # A live, process-local feed of debug-console activity so the web console can
     # show every /api/debug/* call as it lands — including ones run from outside
     # that browser tab. Only the verb/route/outcome are kept (no bodies).
@@ -2022,6 +2025,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The on-box wall display drives the pet here (internal network only, wall-token-gated;
     # safe 'general' domain) — never off-box via Caddy.
     app.include_router(pet_api.internal_router, prefix="/internal")
+    app.include_router(owner_devices.internal_router, prefix="/internal")
     # The worker's pre-load gateway-config re-stamp (internal network only, bearer-gated;
     # jbrain.llm.gateway_regen says why the worker cannot write the config itself).
     app.include_router(llm_internal.router, prefix="/internal")

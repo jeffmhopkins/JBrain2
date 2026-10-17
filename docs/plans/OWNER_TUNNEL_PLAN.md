@@ -174,7 +174,7 @@ the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
    own keyboard). That only *arms* enrollment for ~2 minutes and reveals nothing, so it can be
    pressed from anywhere.
 2. The wall kiosk shows a full-screen QR holding: the owner CA's SPKI hash, a **single-use
-   enrollment code** (256-bit, stored hashed, dies when the window closes), the LAN and public
+   enrollment code** (256-bit, held only in the api's memory, never on disk or in the database, and gone when the window closes or the api restarts), the LAN and public
    gateway addresses, the LAN site's root (`/data/lan-root.crt`) hash so the app can validate
    `jbrain.local` without a warning, and a format version. The wall fetches it from the api's
    internal-only routes with its own `internal_secrets` token, as `/pet/state` already does,
@@ -182,8 +182,8 @@ the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
    on the wall's existing `:8800`, which is published to the whole LAN over plain HTTP.
 3. The app scans it, makes its Keystore key, and posts its CSR to `POST
    /api/owner-devices/enroll` over the LAN site, which it validates against the QR's LAN-root
-   hash. The request carries `HMAC(code, "app→box" ‖ CSR)`. The box consumes the code (one
-   conditional UPDATE, like `consume_jcode_share`), signs the CSR, and answers with the cert
+   hash. The request carries `HMAC(code, "app→box" ‖ CSR)`. The box consumes the code (a
+   synchronous check-and-mark in the api's one process, so two requests cannot both spend it), signs the CSR, and answers with the cert
    and `HMAC(code, "box→app" ‖ app's MAC ‖ issued cert ‖ CA certs)`; the app pins nothing until
    that verifies. Direction labels stop a reflected MAC.
 4. The monitor and the app both show the new device's fingerprint as a short word string; the
@@ -195,7 +195,8 @@ owner key is never typed into the app.
 
 **The enroll route is also LAN-only**, as defence in depth: the `lan` ingress marker, and
 `X-Real-IP` neither the `cloudflared` container nor the docker gateway, and inside the owner's
-home subnet (a Settings value, LAN-only to change). Never "a private address": the docker
+home subnet (a Settings value, LAN-only to change; until it is set there is no address rule
+beyond the first two). Never "a private address": the docker
 networks are RFC 1918 too, and jcode and pysandbox containers run arbitrary code.
 `Cf-Connecting-IP`, `X-Forwarded-For` and `Host` are never consulted. Two limits, recorded:
 in direct mode (no tunnel) the LAN site is reachable from the internet by SNI, so the subnet
@@ -316,7 +317,10 @@ cookie).
   `POST /api/owner-devices/session` mints an owner session bound to that phone (one live per
   phone), which authenticates only with its key and idles out after 30 days, while an unbound
   session never works over the owner site; list, rename and revoke, with revoke ending the
-  phone's sessions), A4 enrollment, A5 Settings → Devices and the
+  phone's sessions), **A4 enrollment, box side ✅** (`jbrain/owner_tunnel/enrollment.py`:
+  the arm routes, the wall-token screen routes `/internal/owner-enroll` that render the QR as
+  SVG, `POST /api/owner-devices/enroll` with both MACs and the LAN and subnet rules, and a
+  reject that revokes a mismatched phone), A4b the wall's loopback QR view and keys, A5 Settings → Devices and the
   public-base-URL links. Still owed from §3.1: the two key volumes in the box backup and
   restore. Owed to A5: the cookie-minting logins (`/api/auth/session` and the redeem routes)
   still answer over the owner site with an unbound cookie, which the tunnel then refuses; the

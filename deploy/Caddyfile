@@ -55,7 +55,7 @@
 		# Scoped to exactly these paths, never /api/*, so uploads and imports keep their size.
 		@unauthed_post {
 			method POST
-			path /api/auth/session /api/session/mint /api/intake/redeem /api/jcode/share/redeem /api/pairing/redeem /api/owner-devices/session
+			path /api/auth/session /api/session/mint /api/intake/redeem /api/jcode/share/redeem /api/pairing/redeem /api/owner-devices/session /api/owner-devices/enroll
 		}
 		request_body @unauthed_post {
 			max_size 64KB
