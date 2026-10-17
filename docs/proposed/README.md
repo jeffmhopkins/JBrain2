@@ -33,7 +33,8 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 - `OWNER_TUNNEL_PLAN.md` — take Cloudflare out of the owner's trust path: the Android owner
   app enrolls on the LAN (Keystore key, box-issued client cert, pinned box key) and then
   reaches the box over its own TLS tunnelled inside the Cloudflare tunnel, so Cloudflare
-  carries only ciphertext and every PWA update arrives verified. Sideloaded and run beside the
+  carries only ciphertext and every PWA update arrives verified; debug grants move into the same
+  tunnel. Sideloaded and run beside the
   public PWA first; owner access on the public host is retired only after the owner signs off.
 
 - `PET_LIFECYCLE_PLAN.md` — the pet arrives as an **egg**, hatches after enough interaction

@@ -1,6 +1,6 @@
 # Owner tunnel — the Android app reaches the box end to end, Cloudflare carries only ciphertext (proposed)
 
-> **Status:** Proposed · **Last verified:** 2026-10-17 · **Waves:** S0◻️ A◻️ B◻️ C◻️ D◻️ E◻️
+> **Status:** Proposed · **Last verified:** 2026-10-17 · **Waves:** S0◻️ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
 
 **Status: proposed. Not on the roadmap, nothing built.** The owner's ask, 2026-10-17:
 
@@ -169,6 +169,7 @@ The member dashboard and location engine in the same APK are untouched.
 | Stolen `CLOUDFLARE_TUNNEL_TOKEN` (rogue connector gets a share of traffic) | Owner phishing and traffic | Ciphertext, and the outer challenge fails |
 | Leaked owner key used from outside | Full access | Nothing: login and enrollment need the app or the LAN |
 | Stolen owner session cookie | Full access for up to a year | Useless off the enrolled device |
+| Debug token seen in transit | Owner-grade access until expiry | After Wave F, a debug grant is a client cert used only inside the tunnel; nothing replayable crosses Cloudflare |
 | Cloudflare blocks or drops the connection | Outage | Still an outage (LAN path keeps working) |
 | GitHub compromise (box code, APK signing secret) | Trusted | Still trusted |
 | Lost or compromised phone | n/a | Revoke in Settings → Devices from the LAN browser or another device |
@@ -204,13 +205,24 @@ host as today; share links carry no owner privilege.
   switch is a Settings toggle, operable from the app, so it can be turned back off without a
   terminal. Share links, devices and panels are unaffected. On-box sign-off.
 
+- **F — debug access through the tunnel. ◻️** Remote agents (cloud sessions) cannot run the
+  app, so a debug grant becomes a short-lived **client certificate and key** issued by the
+  enrollment CA, plus the owner-site SPKI pin, packed into the debug payload in place of
+  today's bearer (`../runbooks/DEBUG_ACCESS.md`). The agent runs a small client that opens the
+  §3.3 gateway WebSocket and the pinned inner TLS, so debug traffic is ciphertext to
+  Cloudflare as well. Grants are minted only from the app or the LAN, keep today's TTL,
+  suspend and revoke controls (revoke refuses the cert's fingerprint), and map to the
+  existing `capability_token` principal, so the debug routes' scope does not change. First
+  step: confirm the cloud environment's egress proxy carries a long-lived WebSocket to the
+  public host. Once it works, the bearer form of the debug token is turned off.
+
 ## 6. Decisions for the owner before Wave E
 
 - **Laptop after retirement.** Default: owner access from a laptop only on the LAN (browser at
   `jbrain.local`). A desktop client using the same gateway is possible later.
-- **Debug API on the public host.** It is owner-grade and travels through Cloudflare.
-  Default: keep it public with time-boxed tokens as today, because remote agent help depends
-  on it; the alternative is LAN-or-tunnel only.
+- **Debug API on the public host until Wave F.** Today's debug token is an owner-grade
+  bearer that travels through Cloudflare. Default: keep it working, with short TTLs, until
+  Wave F moves debug access into the tunnel; then the bearer form is turned off.
 - **iPhone.** Out of scope; the design is Android-specific (proxy override, Keystore).
 
 ## 7. Non-negotiables touched
