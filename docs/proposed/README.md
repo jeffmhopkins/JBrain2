@@ -30,6 +30,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   measured number that decides the whole design: **whisper takes ~9.8 s per call**, flat,
   because whisper.cpp pads every clip to 30 s.
 
+- `OWNER_TUNNEL_PLAN.md` — take Cloudflare out of the owner's trust path: the Android owner
+  app enrolls on the LAN (Keystore key, box-issued client cert, pinned box key) and then
+  reaches the box over its own TLS tunnelled inside the Cloudflare tunnel, so Cloudflare
+  carries only ciphertext and every PWA update arrives verified. Sideloaded and run beside the
+  public PWA first; owner access on the public host is retired only after the owner signs off.
+
 - `PET_LIFECYCLE_PLAN.md` — the pet arrives as an **egg**, hatches after enough interaction
   over enough minutes, and grows up over ~2 days. The owner's idea, recorded with the question
   it came with — do we need a baby form per creature? Answer: mostly no (a single `growth`
