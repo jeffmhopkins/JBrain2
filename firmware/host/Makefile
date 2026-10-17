@@ -17,7 +17,7 @@ LDLIBS = -lm
 # `panel_sm.c` is in this list for the reason the header comment gives: it is the panel's state
 # machine, it is supposed to be free of ESP-IDF, and the link is what checks that. It is built
 # into BOTH binaries so the claim is tested even by the suite that does not use it.
-SRC = ../main/cue.c ../main/orient.c ../main/screen.c ../main/poop.c ../main/tickle.c ../main/game.c ../main/cadence.c ../main/reach.c ../main/confirm.c ../main/ring.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/overlay.c ../main/vocab.c ../main/wsproto.c ../main/panel_sm.c ../main/stream.c
+SRC = ../main/cue.c ../main/orient.c ../main/screen.c ../main/poop.c ../main/tickle.c ../main/game.c ../main/jet.c ../main/cadence.c ../main/reach.c ../main/confirm.c ../main/ring.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/variants.c ../main/gesture.c ../main/calib.c ../main/caption.c ../main/overlay.c ../main/vocab.c ../main/wsproto.c ../main/panel_sm.c ../main/stream.c
 # HEADERS ARE PREREQUISITES TOO. They were not, and the cost was a green run against a stale
 # binary: a constant moved into `face.h`, `make` saw no newer .c file and re-ran the previous
 # build. A suite that can report OK without having compiled the change is worse than no suite.
@@ -76,7 +76,7 @@ run_jpanel_tests: jpanel_tests.c $(JPANEL_SRC) fake_stream.h $(HDR)
 # `display.c` wires them, against `jpanel_tests.c`'s scripted box (included whole, minus its
 # `main`). Its own source list for the reason `run_jpanel_tests` has one: this links the real
 # `stream.c` where that one links the fake.
-E2E_SRC = ../main/jpanel_core.c ../main/stream.c ../main/panel_sm.c ../main/cue.c ../main/ring.c ../main/reach.c ../main/confirm.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/gesture.c ../main/poop.c ../main/game.c
+E2E_SRC = ../main/jpanel_core.c ../main/stream.c ../main/panel_sm.c ../main/cue.c ../main/ring.c ../main/reach.c ../main/confirm.c ../main/face.c ../main/font.c ../main/emotion.c ../main/rig.c ../main/gesture.c ../main/poop.c ../main/game.c ../main/jet.c
 run_e2e_tests: e2e_tests.c jpanel_tests.c $(E2E_SRC) fake_stream.h $(HDR)
 	$(CC) $(CFLAGS) -pthread -o $@ e2e_tests.c $(E2E_SRC) $(LDLIBS)
 

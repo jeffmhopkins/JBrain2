@@ -1625,8 +1625,9 @@ static void test_a_swipe_left_on_the_menu_turns_to_the_games_and_right_back(void
     CHECK(w.sm.mode == SM_GRID && w.out.view.grid_page == SM_GRID_GAMES, "a swipe left: the games");
     CHECK(saw_cue(CUE_HEARD), "and the page turning is heard");
     run_ms(EXIT_GRACE_MS);
-    CHECK(targets_mask() == (T(SM_T_CELL_GAME) | T(SM_T_CELL_CANCEL) | T(SM_T_SWALLOW)),
-          "the game, the cancel, and two spare corners that swallow");
+    CHECK(targets_mask() ==
+              (T(SM_T_CELL_GAME) | T(SM_T_CELL_JET) | T(SM_T_CELL_CANCEL) | T(SM_T_SWALLOW)),
+          "Dodge, Jetpack, the cancel, and a spare corner that swallows");
     swipe(-1);
     CHECK(w.out.view.grid_page == SM_GRID_GAMES, "a second swipe left stays on the games");
     swipe(+1);
@@ -1650,7 +1651,8 @@ static void test_the_game_on_the_menu_starts_on_the_lift(void)
     CHECK(w.sm.mode == SM_GRID && !w.out.start_game, "the press is not yet the game");
     CHECK(last_cue() == CUE_HEARD, "but it is answered");
     lift();
-    CHECK(w.out.start_game && w.sm.mode == SM_PET, "the lift starts it, on the pet's screen");
+    CHECK(w.out.start_game == SM_GAME_DODGE && w.sm.mode == SM_PET,
+          "the lift starts it, on the pet's screen");
     CHECK(w.opened == 0, "and no microphone opened");
     step();
     CHECK(!w.out.start_game, "once");
@@ -1671,6 +1673,26 @@ static void test_the_game_on_the_menu_starts_on_the_lift(void)
     swipe(-1);
     tap_at(60, FACE_H - 60);
     CHECK(w.sm.mode == SM_PET && !w.out.start_game, "the games page's cancel closes the menu");
+
+    /* JETPACK, TOP RIGHT (0.4.18), on the lift the same way. */
+    world_reset();
+    open_grid();
+    swipe(-1);
+    press_at(FACE_W * 3 / 4, 60);
+    CHECK(w.sm.mode == SM_GRID && !w.out.start_game, "Jetpack's press is not yet the game");
+    CHECK(last_cue() == CUE_HEARD, "but it is answered");
+    lift();
+    CHECK(w.out.start_game == SM_GAME_JET && w.sm.mode == SM_PET, "the lift starts Jetpack");
+    CHECK(w.opened == 0, "and no microphone opened");
+
+    world_reset();
+    open_grid();
+    swipe(-1);
+    press_at(FACE_W * 3 / 4, 60);
+    w.swipe = -1;
+    step();
+    lift();
+    CHECK(!w.out.start_game && w.sm.mode == SM_GRID, "a swipe off Jetpack starts nothing");
 }
 
 static void test_a_swipe_that_began_on_a_cell_unwinds_it(void)

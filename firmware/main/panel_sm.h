@@ -139,13 +139,19 @@ typedef enum {
     SM_T_CELL_DAD,
     SM_T_CELL_CANCEL,
     SM_T_CELL_PET,
-    SM_T_CELL_GAME, /* the games page: starts the game, on the lift */
+    SM_T_CELL_GAME, /* the games page: starts Dodge, on the lift */
+    SM_T_CELL_JET,  /* the games page: starts Jetpack, on the lift (0.4.18) */
     SM_T_SWALLOW,
 } sm_target_t;
 
 /* The menu's two pages: a swipe left turns to the games, a swipe right back (0.4.17). */
 #define SM_GRID_PEOPLE 0
 #define SM_GRID_GAMES 1
+
+/* Which game the games page started (`sm_out_t.start_game`): none, Dodge, Jetpack. */
+#define SM_GAME_NONE 0
+#define SM_GAME_DODGE 1
+#define SM_GAME_JET 2
 
 typedef struct {
     uint32_t now;
@@ -237,7 +243,7 @@ typedef struct {
     sm_view_t view;
     /* for display.c's pass-through and its sleep stages */
     bool pet_press;        /* a press reached the pet: display's poke (a flinch while it speaks) */
-    bool start_game;       /* the games page's game was picked: display starts it, as the phrase does */
+    uint8_t start_game;    /* SM_GAME_*: a games page game picked; display starts it, as said */
     bool arrived;          /* an unseen message id: the sleep `arrived` wake */
     const char *say;       /* a caption line, NULL when there is nothing to say */
     /* telemetry */
@@ -331,7 +337,7 @@ typedef struct {
         bool active; /* the finger is on the glass */
         bool on_pet, swiped, held;
         bool in_grid;    /* the down edge landed on the menu */
-        bool game_armed; /* it landed on the game, which starts on the lift */
+        uint8_t game_armed; /* SM_GAME_*: it landed on a game, which starts on the lift */
         uint32_t at;
         int x, y;
         sm_target_t target;

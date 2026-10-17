@@ -20,6 +20,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "jet.h"
+
 #define GAME_KINDS 12          /* twelve things to dodge (`face.c` draws them) */
 #define GAME_MAX_OBJ 14
 #define GAME_SCALE 0.21f       /* about a fifth of his size */
@@ -37,6 +39,13 @@
 #define GAME_HIT_R 24.0f       /* his hit circle, px: a little forgiving, as a child wants */
 #define GAME_ACTIVE_TILT 0.15f /* tilt past this is somebody playing */
 
+/* WHICH GAME: Dodge is this file's own; Jetpack (0.4.18) is `jet.h`'s, run through the same walk
+   in, round over, idle and walk out as this one so the panel has one game to start and stop. */
+typedef enum {
+    GAME_DODGE = 0,
+    GAME_JET,
+} game_kind_t;
+
 typedef enum {
     GAME_OFF = 0,
     GAME_WALK_IN,  /* walking to the middle, shrinking */
@@ -51,6 +60,7 @@ enum {
     GAME_EV_DODGE = 2, /* one went by: a point */
     GAME_EV_HIT = 4,   /* one got him */
     GAME_EV_DONE = 8,  /* back to full size: the game is over */
+    GAME_EV_WORLD = 16, /* Jetpack: a world cleared, the next begins */
 };
 
 typedef struct {
@@ -64,6 +74,7 @@ typedef struct {
 } game_obj_t;
 
 typedef struct {
+    game_kind_t kind;
     game_phase_t phase;
     uint32_t since;       /* when this phase began */
     uint32_t last_active; /* the last tilt or tap */
@@ -72,26 +83,31 @@ typedef struct {
     float x, y;           /* his position: the figure's origin */
     float vx, vy;
     float home_x, home_y; /* where he stood, to walk back to */
+    float to_x, to_y;     /* where the walk in ends: the middle, or Jetpack's column */
     float from_x, from_y; /* where the walk in started */
     float from_s;         /* and at what size: 1, or less when asked again on the way out */
     float out_s;          /* the size the walk out starts at: a fifth, or more if stopped early */
     int score, best;
     float spawn_in;       /* seconds to the next one */
     game_obj_t obj[GAME_MAX_OBJ];
+    jet_t jet;            /* Jetpack's own state, while `kind` is GAME_JET */
 } game_t;
 
 void game_reset(game_t *g);
 bool game_on(const game_t *g);
 
-/* Start from where he stands (`home`, field px). From OFF it walks in; mid-game it restarts. */
+/* Start from where he stands (`home`, field px). From OFF it walks in; mid-game it restarts.
+   `game_start` is Dodge; `game_start_as` names the game. */
 void game_start(game_t *g, uint32_t now, uint32_t seed, float home_x, float home_y);
+void game_start_as(game_t *g, game_kind_t kind, uint32_t now, uint32_t seed, float home_x,
+                   float home_y);
 
 /* One frame. `tx`, `ty` the tilt, -1..1 (right, toward the viewer's bottom); `hw`, `hh` the
    field's half extents. Returns GAME_EV_* bits. */
 unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, float hw,
                    float hh);
 
-/* A tap on the panel: the next round once one is over. */
+/* A tap on the panel: the next round once one is over (Jetpack's: the world he reached). */
 void game_tap(game_t *g, uint32_t now);
 
 /* Walk back and grow ("stop", a minute idle, leaving the pet screen). */
@@ -115,6 +131,6 @@ float game_pitch(int az, int down);
 #define GAME_PITCH_FULL 0.30f /* radians, about 17 degrees: the lean's own full tilt */
 float game_tilt_y(float pitch, float pitch0);
 
-/* Seconds into the round, and the level it has reached (1 + one per 12 s). */
+/* Seconds into the round, and the level it has reached (1 + one per 12 s; Jetpack's world). */
 float game_play_s(const game_t *g, uint32_t now);
 int game_level(const game_t *g, uint32_t now);

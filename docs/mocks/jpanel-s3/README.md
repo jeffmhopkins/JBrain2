@@ -1,6 +1,6 @@
 # The twins' panels (ESP32-S3-Touch-AMOLED-1.8): the bench
 
-Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.17's own UI code** · Last verified: 2026-10-17
+Kind: Living (mock set) · Status: **interactive; runs firmware 0.4.18's own UI code** · Last verified: 2026-10-17
 
 An interactive mock of the twins' panel, with one difference from Jeff's C6 set
 (`../jpanel-c6/`): nothing here is a drawing of the panel. `sim.wasm` is the firmware's own UI
@@ -49,7 +49,9 @@ node firmware/mock/smoke.mjs                 # the headless run CI does
   minute and he poops; tilt the panel to slide it); "Fart (the long one)" forces the
   one-in-ten seven-second fart. "Happy birthday" sings with the hat and confetti, and "Let's play
   a game" starts the dodging game: drag the tilt pad (or the arrow keys) to run him, tap the
-  glass to play again. The bench does not run the shake detector itself.
+  glass to play again. Jetpack is on the menu's games page (hold the pet, swipe left, the orange
+  icon): tip the tilt pad up and down to fly him through each world. The bench does not run the
+  shake detector itself.
 - **F4.** The SENDING / SENT / NOBODY / NOT SENT / DROPPED visuals are 0.4.x placeholders until
   the owner approves the final ones (`docs/plans/JPANEL_MESSAGING_FIXES_PLAN.md` §15 row F).
   This page is where they get reviewed. Each new version is in `overlay.c`, so the mock and

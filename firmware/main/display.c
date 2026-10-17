@@ -956,15 +956,17 @@ static float s_game_tx0;
 static float s_game_pitch0;
 
 /* LET'S PLAY A GAME (`game.h`): he walks to the middle and shrinks. The tilt he is held at now
-   is level, for the whole game. Said, or picked on the menu's games page. */
-static void game_begin(uint32_t now)
+   is level, for the whole game. Said, or picked on the menu's games page, which also has
+   Jetpack (`jet.h`), where he walks to the left instead. */
+static void game_begin(uint32_t now, game_kind_t kind)
 {
     float hx, hy;
     face_game_home(s_lean, &hx, &hy);
-    game_start(&s_game, now, esp_random(), hx, hy);
+    game_start_as(&s_game, kind, now, esp_random(), hx, hy);
     s_game_tx0 = s_tilt_g;
     s_game_pitch0 = game_pitch(s_az, s_grav_down);
-    ESP_LOGI(TAG, "game: start (tilt %.2f, az %d, down %d)", (double)s_tilt_g, s_az, s_grav_down);
+    ESP_LOGI(TAG, "game: start %s (tilt %.2f, az %d, down %d)", kind == GAME_JET ? "jetpack" : "dodge",
+             (double)s_tilt_g, s_az, s_grav_down);
 }
 /* THE HEAD RIGHTING (`face_state_t.upright`), in degrees — `orient_upright`. */
 static float s_upright;
@@ -2048,7 +2050,7 @@ static void face_task(void *arg)
                 case VOCAB_GAME:
                     if (s_out.view.mode == SM_PET) { /* last frame's screen: the pet's */
                         action = ACT_NONE;
-                        game_begin(now);
+                        game_begin(now, GAME_DODGE);
                         heard_cue = CUE_HEARD;
                     }
                     break;
@@ -2191,9 +2193,9 @@ static void face_task(void *arg)
         s_in.sound = sound;
         sm_step(&s_sm, &s_in, &s_out);
         const sm_view_t *const view = &s_out.view;
-        if (s_out.start_game && !game_on(&s_game)) { /* the press already sounded */
+        if (s_out.start_game != SM_GAME_NONE && !game_on(&s_game)) { /* the press already sounded */
             action = ACT_NONE;
-            game_begin(now);
+            game_begin(now, s_out.start_game == SM_GAME_JET ? GAME_JET : GAME_DODGE);
         }
         if (execute(st, sound, now)) {
             action = ACT_NOD;
@@ -2520,12 +2522,15 @@ static void face_task(void *arg)
             const uint32_t gdt = game_last != 0 && now - game_last < 200u ? now - game_last : 40u;
             game_last = now;
             const unsigned ev = game_step(&s_game, now, gdt, tx, ty, hw, hh);
+            /* Jetpack's go comes at every world's start, after its name: the same "here they
+               come". */
             if (sound && (ev & GAME_EV_GO)) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_GAME_GO);
             if (sound && (ev & GAME_EV_DODGE)) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_DODGE);
             if (sound && (ev & GAME_EV_HIT)) stream_cue_play(st, STREAM_SLOT_PRESS, CUE_GAME_HIT);
             if (ev & GAME_EV_HIT) {
                 ESP_LOGI(TAG, "game: hit, score %d (best %d)", s_game.score, s_game.best);
             }
+            if (ev & GAME_EV_WORLD) ESP_LOGI(TAG, "game: world %d", s_game.jet.world + 1);
             if (ev & GAME_EV_DONE) ESP_LOGI(TAG, "game: over");
             dirty = true;
         }
