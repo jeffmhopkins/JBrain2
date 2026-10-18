@@ -176,6 +176,7 @@ async def arm_enrollment(_owner: OwnerDep, window: EnrollmentWindowDep) -> ArmOu
         raise HTTPException(
             status_code=409, detail="a phone was just added; compare its words at the box first"
         )
+    # (The box's close cannot clear those words either; they stay until the window lapses.)
     return ArmOut(expires_at=window.arm())
 
 
@@ -364,6 +365,11 @@ async def screen(request: Request, window: EnrollmentWindowDep, settings: Settin
 
 @internal_router.post("/close", status_code=204)
 async def close_from_the_box(window: EnrollmentWindowDep) -> None:
+    """Never over a phone just added: whatever reaches the box's screen (the host-network
+    containers share its loopback) could otherwise enroll with a stolen code and wipe its own
+    words before the owner sees them. Those stay until the window lapses or R rejects."""
+    if window.snapshot().state == "enrolled":
+        raise HTTPException(status_code=409, detail="compare the words; R removes the phone")
     window.close()
 
 

@@ -746,16 +746,24 @@ class EnrollHandler(BaseHTTPRequestHandler):
 
     def _send(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
+        if code != 204:
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
-        self.wfile.write(body)
+        if code != 204:
+            self.wfile.write(body)
 
     def _allowed(self) -> bool:
-        host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]").lower()
+        raw = (self.headers.get("Host") or "").strip().lower()
+        if raw.startswith("["):
+            inner, closed, _ = raw[1:].partition("]")
+            host = inner if closed else ""
+        else:
+            host = raw.partition(":")[0]
         if self.client_address[0] not in self.peers or host not in ("127.0.0.1", "localhost", "::1"):
             self._send(403, b"forbidden", "text/plain")
             return False
@@ -806,7 +814,10 @@ def main() -> None:
     server = ThreadingHTTPServer((host, port), Handler)
     try:
         serve_enroll_screen()
-        print(f"enrollment screen on http://127.0.0.1:{ENROLL_PORT}/ (the box's own browser only)")
+        print(
+            f"enrollment screen on http://127.0.0.1:{ENROLL_PORT}/ (the box's own browser only)",
+            flush=True,
+        )
     except OSError as exc:
         # The wall itself must keep running; only the phone-enrollment screen is lost.
         print(f"wall: enrollment screen not started: {exc}", flush=True)

@@ -234,6 +234,41 @@ def test_a_page_in_the_box_browser_cannot_drive_the_screen(screen: Any) -> None:
     assert calls == []
 
 
+def test_loopback_names_with_and_without_a_port_are_the_box(screen: Any) -> None:
+    _, calls, server = screen
+    for host in ("localhost", "LOCALHOST:8802", "[::1]", "[::1]:8802", "127.0.0.1"):
+        assert _hit(server, "GET", "/state", {"Host": host})[0] == 200, host
+    for host in ("", "localhost.", "[::1", "evil:127.0.0.1"):
+        assert _hit(server, "GET", "/state", {"Host": host})[0] == 403, host
+
+
+def test_a_closed_window_answers_with_no_body(screen: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    wall, _, server = screen
+    monkeypatch.setattr(wall, "enroll_api", lambda m, p: (204, b"", "application/json"))
+    status, headers = _hit(server, "POST", "/close", {"X-Wall-Enroll": "1"})
+    assert status == 204 and "Content-Length" not in headers
+
+
+def test_the_wall_keeps_running_without_its_screen(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def taken() -> Any:
+        raise OSError("address already in use")
+
+    class _Server:
+        def __init__(self, *_: object) -> None:
+            pass
+
+        def serve_forever(self) -> None:
+            print("serving")
+
+    monkeypatch.setattr(wall, "serve_enroll_screen", taken)
+    monkeypatch.setattr(wall, "ThreadingHTTPServer", _Server)
+    wall.main()
+    out = capsys.readouterr().out
+    assert "enrollment screen not started" in out and "serving" in out
+
+
 def test_another_container_cannot_reach_the_screen(screen: Any) -> None:
     wall, calls, server = screen
     server.RequestHandlerClass.peers = frozenset({"172.18.0.1"})
@@ -247,6 +282,10 @@ def test_the_screen_page_shows_the_qr_as_an_image_only() -> None:
     assert "data:image/svg+xml" in page
     assert "default-src 'none'" in page
     assert "/arm" not in page
+    # Framed cross-origin, the wall still needs its microphone and audio.
+    assert 'allow="autoplay; microphone; fullscreen"' in page
+    # And a kiosk already on the wall's loopback address moves here by itself.
+    assert "8802" in (_DEPLOY / "wall" / "index.html").read_text()
 
 
 # --- mosquitto's entrypoint ----------------------------------------------------------

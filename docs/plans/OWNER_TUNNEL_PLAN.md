@@ -197,6 +197,14 @@ the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
    phone enrolls, and an owner session cannot re-arm over them, so a stolen one cannot wipe
    them before they are compared; a key at the box closes them.
 
+**A new phone works only once the owner confirms it** (owed to A5, before arming has any UI):
+the device row starts pending, the device guard and the session mint refuse it, and Settings →
+Devices shows its words beside a Confirm button. The box's screen is reachable by everything
+in the host network namespace (cast, minecraft, any host process), which can read a QR while a
+window is open and win the race to it, so the screen alone is not proof of presence; an owner
+confirmation from their own session is. Until A5 the box refuses to close over a phone just
+added, so its words cannot be hidden.
+
 The `wall-enroll` token lives alone in the `enroll_secrets` volume, which only the api and the
 wall mount: the `internal_secrets` tokens are also readable by the cast sidecar and mosquitto,
 and the screen hands out the code.
@@ -355,7 +363,9 @@ cookie).
   shows tunnel health per device. A second device is enrolled. Checklist to sign off:
   notifications, share target, uploads and camera, downloads, the jcode and jlaunch terminals,
   link sharing, Gmail connect (its OAuth callback lands on the public host, so the app needs a
-  hand-off), back gesture, and the update path from a GitHub release.
+  hand-off), back gesture, and the update path from a GitHub release. Also, from the first real
+  enrollment: the client address the enroll route saw (the debug API reads it), which settles
+  whether the docker gateway can be refused (§3.5).
 - **E — debug access through the tunnel. ◻️** Remote agents cannot run the app. The agent
   generates its own key and sends a CSR; the owner approves it in the app, which shows the
   fingerprint, and the box issues a short-lived client cert (Caddy enforces `notAfter`, and so

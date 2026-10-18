@@ -557,14 +557,14 @@ def test_an_unexpected_failure_closes_the_window(
     assert box.window.snapshot().state == "idle"
 
 
-def test_words_waiting_to_be_compared_are_cleared_only_at_the_box(box: _Box) -> None:
+def test_words_waiting_to_be_compared_cannot_be_cleared(box: _Box) -> None:
     assert box.enroll(_csr()[0], _armed(box)).status_code == 200
     resp = box.client.post("/api/owner-devices/enroll/arm", headers=box.owner())
     assert resp.status_code == 409
     assert box.window.snapshot().state == "enrolled"
-    assert box.client.post("/internal/owner-enroll/close", headers=box.wall()).status_code == 204
-    assert box.client.post("/api/owner-devices/enroll/arm", headers=box.owner()).status_code == 200
-    assert box.window.snapshot().code is not None
+    # Nor at the box: whatever shares its loopback could otherwise hide a phone it enrolled.
+    assert box.client.post("/internal/owner-enroll/close", headers=box.wall()).status_code == 409
+    assert box.window.snapshot().state == "enrolled"
 
 
 def test_enrollment_is_rate_limited_per_address(box: _Box) -> None:

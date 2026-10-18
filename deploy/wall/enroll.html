@@ -10,8 +10,8 @@
   The box's own kiosk page (docs/plans/OWNER_TUNNEL_PLAN.md §3.5): the neural wall full screen,
   with the owner-phone enrollment screen over it while a window is open. Served by serve.py on
   a port published only to the box's loopback, so only the box's own browser shows the QR.
-  Arming happens in Settings; here Esc closes the window and R rejects a phone whose words do
-  not match.
+  Arming happens in Settings; here Esc closes an unused window and R rejects a phone whose words
+  do not match.
 -->
 <style>
   :root {
@@ -49,7 +49,8 @@
 </style>
 </head>
 <body>
-<iframe id="wall" title="Neural wall"></iframe>
+<iframe id="wall" title="Neural wall" sandbox="allow-scripts allow-same-origin"
+  allow="autoplay; microphone; fullscreen"></iframe>
 <section id="enroll" aria-live="polite">
   <h1 id="title"></h1>
   <img id="qr" alt="Enrollment QR code" />
@@ -92,7 +93,8 @@
     $("problem").textContent = snapshot.problem || "";
     if (state === "enrolled") {
       $("title").textContent = "Check these words match your phone";
-      $("hint").innerHTML = "If they match, you're done. If not, press <kbd>R</kbd> to remove that phone.";
+      $("hint").innerHTML =
+        "If they match, you're done and this clears by itself. If not, press <kbd>R</kbd> to remove that phone.";
     } else if (qr) {
       $("title").textContent = "Scan with the JBrain owner app";
       $("hint").innerHTML = `This code works once, for ${left}s. <kbd>Esc</kbd> closes it.`;
@@ -120,7 +122,9 @@
 
   window.addEventListener("keydown", (event) => {
     if (state === "idle") return;
-    if (event.key === "Escape") send("/close");
+    // The words of a phone just added stay up until R or the window lapses (the box refuses
+    // a close then), so a phone enrolled behind your back cannot be hidden.
+    if (event.key === "Escape" && state !== "enrolled") send("/close");
     else if ((event.key === "r" || event.key === "R") && state === "enrolled") send("/reject");
   });
 
