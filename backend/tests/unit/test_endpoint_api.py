@@ -1179,6 +1179,9 @@ class TestAPanelCanReportItsOwnState:
             "restart_why": "blit-heal",
             "tap": [999, 999, 9],
             "screen": "awake",
+            "pwr_on": "ff",
+            "pwr_off": "ff",
+            "pwr_irq": "ff ff ff",
             "pmu_history": ["0123456789abcdef0123456789a"] * 8,
             "vocab_refused": ["make a rude noise"] * 6,
             "heard": [["make a rude noise", 100, 1]] * 3,
@@ -1252,6 +1255,61 @@ class TestAPanelCanReportItsOwnState:
             headers={"Authorization": f"Bearer {key}"},
         )
         assert resp.status_code == 204, resp.text
+
+    def test_the_pmu_power_cause_is_logged_with_its_names(
+        self, client: tuple[TestClient, Path, list[Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A power loss is `power(1)` with an empty ring to the ESP32; only the AXP2101's own
+        cause bytes can tell the charger dropping from a sag, so the log names the bits."""
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+
+        resp = c.post(
+            "/api/endpoint/telemetry",
+            json={
+                "version": "0.4.20",
+                "uptime_ms": 900,
+                "reset_reason": "power(1)",
+                "pwr_on": "04",
+                "pwr_off": "08",
+                "pwr_irq": "00 08 00",
+            },
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert resp.status_code == 204, resp.text
+        out = capsys.readouterr().out
+        assert '"pwr_on_why": ["vbus_in"]' in out
+        assert '"pwr_off_why": ["vsys_under_voltage"]' in out
+        assert '"pwr_irq": "00 08 00"' in out
+
+    def test_older_firmware_logs_no_power_cause(
+        self, client: tuple[TestClient, Path, list[Any]], capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        c, _fw, _sent = client
+        key = _provision_panel(c)
+        c.cookies.clear()
+        c.post(
+            "/api/endpoint/telemetry",
+            json={"version": "0.4.19", "uptime_ms": 900},
+            headers={"Authorization": f"Bearer {key}"},
+        )
+        assert "pwr_" not in capsys.readouterr().out
+
+    def test_the_power_cause_decodes_every_bit(self) -> None:
+        on, off = endpoint_api._PWR_ON_BITS, endpoint_api._PWR_OFF_BITS
+        assert endpoint_api.power_cause(off, "00") == ["none"]
+        assert endpoint_api.power_cause(off, "81") == ["power_key_held", "over_temperature"]
+        assert endpoint_api.power_cause(on, "05") == ["power_key", "vbus_in"]
+        assert endpoint_api.power_cause(on, "c0") == ["bits_0xc0"]
+        assert endpoint_api.power_cause(on, "zz") == ["zz"]
+        assert endpoint_api.power_cause(on, "") == []
+
+    def test_the_panel_sends_the_power_cause(self) -> None:
+        main_c = (Path(__file__).resolve().parents[3] / "firmware" / "main" / "main.c").read_text()
+        assert '\\"pwr_on\\":' in main_c and '\\"pwr_off\\":' in main_c
+        assert '\\"pwr_irq\\":' in main_c
+        assert "pmu_power_cause(pwr_on, pwr_off, pwr_irq)" in main_c
 
     def test_a_cold_boot_reports_an_empty_history_rather_than_failing(
         self, client: tuple[TestClient, Path, list[Any]]

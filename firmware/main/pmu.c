@@ -46,6 +46,17 @@ static int s_snap_n;
 static i2c_master_dev_handle_t s_pmu;
 static i2c_master_dev_handle_t s_exp;
 
+/* The AXP2101's own record of why it last powered the board on (0x20) and off (0x21), read
+   once at boot. */
+static uint8_t s_pwr_on;
+static uint8_t s_pwr_off;
+static bool s_pwr_ok;
+/* And its three IRQ status registers (0x48-0x4a): latched events such as the charger being
+   pulled or the power key pressed. Never cleared here, so they hold everything since the PMU
+   itself last powered up, which survives an ESP32 reset the PMU did not cause. */
+static uint8_t s_pwr_irq[3];
+static bool s_pwr_irq_ok;
+
 static i2c_master_dev_handle_t add_dev(i2c_master_bus_handle_t bus, uint8_t addr)
 {
     const i2c_device_config_t cfg = {
@@ -57,6 +68,8 @@ static i2c_master_dev_handle_t add_dev(i2c_master_bus_handle_t bus, uint8_t addr
     if (i2c_master_bus_add_device(bus, &cfg, &dev) != ESP_OK) return NULL;
     return dev;
 }
+
+static void read_power_cause(void);
 
 bool pmu_start(void)
 {
@@ -71,6 +84,7 @@ bool pmu_start(void)
         ESP_LOGE(TAG, "no device at 0x%02x", PMU_ADDR);
         return false;
     }
+    read_power_cause();
     return true;
 }
 
@@ -96,6 +110,45 @@ static bool write_reg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t val)
 static bool read_reg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t *val)
 {
     return dev != NULL && i2c_master_transmit_receive(dev, &reg, 1, val, 1, 50) == ESP_OK;
+}
+
+/* WHY THE CHIP LAST CUT AND RESTORED THE BOARD'S POWER, which `esp_reset_reason()` cannot say:
+   to the ESP32 every one of these is the same `power(1)`, and RTC memory is gone with it, so
+   the PMU ring above is empty exactly when this is the question (0.4.19, both panels cycling
+   sixteen times in a quarter of an hour). The AXP2101 keeps its own answer. Bits, after
+   XPowersLib's per-bit helpers (the library's enum getters cast the byte and decode it wrong):
+     0x20  b0 power key   b1 IRQ pin    b2 VBUS in    b3 battery >3.3 V   b4 battery in
+           b5 EN held high
+     0x21  b0 power key held   b1 software off   b2 EN held low   b3 VSYS under-voltage
+           b4 VBUS over-voltage  b5 DCDC under-voltage  b6 DCDC over-voltage  b7 over-temp
+   Read only; nothing here writes either register. If the PMU itself lost power (no battery
+   and the charger dropped), it starts fresh and 0x21 reads 0 — which is its own answer. And
+   `power(1)` is also what the ESP32 reports when its EN pin is pulled low with the PMU still
+   up, so these bytes staying put across a run of resets says the PMU never cycled at all. */
+static void read_power_cause(void)
+{
+    uint8_t on = 0, off = 0;
+    if (read_reg(s_pmu, 0x20, &on) && read_reg(s_pmu, 0x21, &off)) {
+        s_pwr_on = on;
+        s_pwr_off = off;
+        s_pwr_ok = true;
+        ESP_LOGW(TAG, "power cause: on=0x%02x off=0x%02x", on, off);
+    } else {
+        ESP_LOGW(TAG, "power cause: the PMU would not say");
+    }
+    s_pwr_irq_ok = read_reg(s_pmu, 0x48, &s_pwr_irq[0]) && read_reg(s_pmu, 0x49, &s_pwr_irq[1]) &&
+                   read_reg(s_pmu, 0x4a, &s_pwr_irq[2]);
+}
+
+void pmu_power_cause(char on[3], char off[3], char irq[9])
+{
+    on[0] = off[0] = irq[0] = '\0';
+    if (s_pwr_irq_ok) {
+        snprintf(irq, 9, "%02x %02x %02x", s_pwr_irq[0], s_pwr_irq[1], s_pwr_irq[2]);
+    }
+    if (!s_pwr_ok) return;
+    snprintf(on, 3, "%02x", s_pwr_on);
+    snprintf(off, 3, "%02x", s_pwr_off);
 }
 
 /* THE HARDWARE RESET THIS FIRMWARE HAS NEVER ISSUED, AND THE BLACK SCREEN IT EXPLAINS.

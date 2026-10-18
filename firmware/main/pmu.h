@@ -20,6 +20,11 @@
    boot log says so, which is a different fact from "the expander said 0xff". */
 bool pmu_start(void);
 
+/* The AXP2101's power-on (0x20) and power-off (0x21) cause, and its IRQ status (0x48-0x4a, as
+   "aa bb cc"), read once by `pmu_start()` as hex. Empty when the PMU did not answer, so
+   "unknown" never arrives as a reading. See `pmu.c` for what each bit means. */
+void pmu_power_cause(char on[3], char off[3], char irq[9]);
+
 /* Take one sample into the RTC ring. Cheap: nine one-byte register reads. */
 void pmu_sample(void);
 

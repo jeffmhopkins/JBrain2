@@ -450,6 +450,11 @@ static bool report(const cfg_t *cfg)
 
     char hist[8][PMU_SAMPLE_CHARS];
     const int n = pmu_history_hex(hist, 8);
+    /* WHY THE POWER WENT, from the PMU. `reset_reason: "power(1)"` with an empty ring is all a
+       power loss could say before 0.4.20 — the charger, the power key and a brownout read
+       identically — and the AXP2101 had the answer the whole time. */
+    char pwr_on[3], pwr_off[3], pwr_irq[9];
+    pmu_power_cause(pwr_on, pwr_off, pwr_irq);
 
     /* TWO ANSWERS THAT ONLY EXISTED ON A CABLE. Both of these are ESP_LOG lines as well, and
        an ESP_LOG only reaches a serial console — which this panel no longer has, because the
@@ -605,6 +610,7 @@ static bool report(const cfg_t *cfg)
                      "\"ws_connects\":%u,\"ws_drops\":%u,"
                      "\"tap\":[%d,%d,%d],\"swipes\":%u,\"swipe_dx\":%d,\"msg_sel\":%d,"
                      "\"panel_reset\":%s,\"screen\":\"%s\",\"speech_ok\":%s,"
+                     "\"pwr_on\":\"%s\",\"pwr_off\":\"%s\",\"pwr_irq\":\"%s\","
                      "\"pmu_history\":[",
                      ota_running_version(),
                      (unsigned long long)(esp_timer_get_time() / 1000), reason,
@@ -634,7 +640,7 @@ static bool report(const cfg_t *cfg)
                      link_mode(), ws_err, ws_connects, ws_drops,
                      tap_x, tap_y, tap_zone, swipes, swipe_dx, msg_sel,
                      display_panel_reset() ? "true" : "false", display_screen(),
-                     speech_live() ? "true" : "false");
+                     speech_live() ? "true" : "false", pwr_on, pwr_off, pwr_irq);
     for (int i = 0; i < n && w > 0 && w < (int)sizeof(body) - 32; i++) {
         w += snprintf(body + w, sizeof(body) - (size_t)w, "%s\"%s\"", i ? "," : "", hist[i]);
     }
