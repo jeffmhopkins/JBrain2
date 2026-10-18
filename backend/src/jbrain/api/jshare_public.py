@@ -26,6 +26,7 @@ from urllib.parse import quote
 import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 
 from jbrain.api.client_ip import client_ip
 from jbrain.jshare import store
@@ -42,11 +43,12 @@ log = structlog.get_logger()
 router = APIRouter()
 
 #: Scripts, forms, popups and downloads work; `allow-same-origin` is the one thing a shared
-#: page never gets, and it is what would hand it the app's origin.
+#: page never gets, and it is what would hand it the app's origin. No `allow-modals` either: a
+#: `prompt()` on the app's own host, in the installed PWA's chromeless window, is a convincing
+#: place to ask for a passphrase.
 SANDBOX = (
     "sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-    " allow-modals allow-downloads allow-pointer-lock allow-presentation"
-    " allow-orientation-lock"
+    " allow-downloads allow-pointer-lock allow-presentation allow-orientation-lock"
 )
 
 _HEADERS = {
@@ -64,9 +66,13 @@ _HEADERS = {
     "Cache-Control": "private, no-cache",
 }
 
-# Zip members up to this size are answered whole, with an ETag; bigger ones are streamed.
-_BUFFER_LIMIT = 16 * 1024**2
+# Zip members up to this size are answered whole; bigger ones are streamed.
+_BUFFER_LIMIT = 1024**2
 _CHUNK = 1 << 20
+# Every zip read opens the archive and parses its directory on the shared thread pool. The
+# per-client limit cannot bound that across many clients; this does, so a crowd on one share
+# queues here instead of starving the api's other blocking work.
+_SITE_READS = 16
 
 
 def _maker(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -87,7 +93,7 @@ def _rate_limit(request: Request) -> None:
         raise HTTPException(status_code=429, detail="rate limited", headers=_HEADERS)
 
 
-@router.get("/s/{slug}")
+@router.api_route("/s/{slug}", methods=["GET", "HEAD"])
 async def share_folder(slug: str) -> RedirectResponse:
     """Into the item's folder, so a site's relative links resolve under it."""
     if not SLUG_RE.fullmatch(slug):
@@ -95,7 +101,8 @@ async def share_folder(slug: str) -> RedirectResponse:
     return RedirectResponse(f"/s/{slug}/", status_code=308, headers=_HEADERS)
 
 
-@router.get("/s/{slug}/{path:path}")
+# HEAD too: link unfurlers, download managers and some media players ask it first.
+@router.api_route("/s/{slug}/{path:path}", methods=["GET", "HEAD"])
 async def share_file(slug: str, path: str, request: Request) -> Response:
     _rate_limit(request)
     if not SLUG_RE.fullmatch(slug):
@@ -108,7 +115,13 @@ async def share_file(slug: str, path: str, request: Request) -> Response:
     if not blob.is_file():
         log.warning("jshare_blob_missing", item_id=item.id)
         raise _not_found()
-    if path == "":
+    # A page view, not each thumbnail or file the page pulls in: the owner's own list loads a
+    # picture's link as an <img>.
+    if (
+        path == ""
+        and request.method == "GET"
+        and request.headers.get("sec-fetch-dest", "document") == "document"
+    ):
         try:
             await store.count_view(maker, item.id)
         except Exception as exc:  # noqa: BLE001 - a counter must never take the page down
@@ -128,6 +141,18 @@ async def share_file(slug: str, path: str, request: Request) -> Response:
 
 
 async def _site_file(request: Request, item: store.ShareItem, blob: Path, path: str) -> Response:
+    # Made on first use, inside the app's own loop: a semaphore binds to the loop it first
+    # waits in.
+    state = request.app.state
+    if getattr(state, "jshare_site_reads", None) is None:
+        state.jshare_site_reads = asyncio.Semaphore(_SITE_READS)
+    async with state.jshare_site_reads:
+        return await _site_file_locked(request, item, blob, path)
+
+
+async def _site_file_locked(
+    request: Request, item: store.ShareItem, blob: Path, path: str
+) -> Response:
     zf = await asyncio.to_thread(zipfile.ZipFile, blob)
     try:
         found = await asyncio.to_thread(lookup, zf, item.site_root, path)
@@ -136,7 +161,10 @@ async def _site_file(request: Request, item: store.ShareItem, blob: Path, path: 
         raise
     if found.redirect_to_folder:
         zf.close()
-        return RedirectResponse(f"/s/{item.slug}/{quote(path)}/", status_code=308, headers=_HEADERS)
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(
+            f"/s/{item.slug}/{quote(path)}/{query}", status_code=308, headers=_HEADERS
+        )
     info = found.info
     if info is None:
         zf.close()
@@ -163,4 +191,8 @@ async def _site_file(request: Request, item: store.ShareItem, blob: Path, path: 
         finally:
             zf.close()
 
-    return StreamingResponse(stream(), media_type=media, headers=headers)
+    # The generator's `finally` never runs if the client leaves before the body starts; the
+    # background close covers that (closing twice is harmless).
+    return StreamingResponse(
+        stream(), media_type=media, headers=headers, background=BackgroundTask(zf.close)
+    )

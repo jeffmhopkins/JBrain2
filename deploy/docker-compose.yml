@@ -215,6 +215,9 @@ services:
       # console ignores it (it calls same-origin). Set it to your full https URL;
       # empty falls back to the PWA origin the token was minted from.
       JBRAIN_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # The installer's domain, which JShare links name when PUBLIC_BASE_URL is unset
+      # (docs/runbooks/JSHARE.md).
+      JBRAIN_PUBLIC_DOMAIN: ${JBRAIN_DOMAIN:-}
     volumes:
       - blobs:/data/blobs
       # Server-side basemap tile cache (location map proxy) — public map data, so

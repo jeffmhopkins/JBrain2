@@ -22,7 +22,8 @@ rename it, delete it. There is no host step.
 A zipped site's `index.html` may sit at the zip's root or in a single top folder (zipping a
 `dist/` folder is fine). Its links must be **relative** (`app.css`, `img/a.png`): a link that
 starts with `/` points at the box's app, not the site. A request for a folder serves its
-`index.html`. Limits: 4 GB per upload, and a zip may hold at most 20,000 files and 4 GB
+`index.html`. Files inside a zipped site are served whole, without range requests, so a video
+in a site plays but can't seek, and iPhones may refuse it; share a video on its own instead. Limits: 4 GB per upload, and a zip may hold at most 20,000 files and 4 GB
 unpacked. Uploading over the Cloudflare tunnel is also capped by Cloudflare itself (100 MB
 per request on the free plan); upload bigger files from the LAN site.
 
@@ -32,7 +33,9 @@ attachment with identical content, another item) still holds them (`blob_refs.py
 
 ## Who can do what
 
-- **Upload, list, rename, delete** (`/api/jshare/items`): the owner only (`OwnerDep`).
+- **Upload, list, rename, delete** (`/api/jshare/items`): the owner only (`OwnerDep`). An
+  upload is the raw file as the request body (name and title in the query), streamed straight
+  into the blob store, so the size and free-space checks hold before the bytes land.
 - **Read** (`/s/<slug>/…`): anyone with the link. The slug is 128 random bits, so links can't
   be guessed or enumerated. It is stored as itself rather than hashed, so the owner can copy a
   link again later; it grants nothing but that one item. Reads are rate-limited per client
@@ -40,9 +43,10 @@ attachment with identical content, another item) still holds them (`blob_refs.py
 - In Postgres, a visitor runs under `jshare_context(slug)`, a non-owner context whose only
   grant is the one `app.jshare_items` row with that slug (migration `0252_jshare_items.py`).
 
-The link names `PUBLIC_BASE_URL` when the box has one, otherwise the host the owner's PWA is
-using. Copy links from the public site (or set the public URL) so they don't point at a LAN or
-owner-only name.
+A link names the box's public host whichever site the owner is using: `PUBLIC_BASE_URL` when
+it is set, else `https://` + the installer's domain (`JBRAIN_DOMAIN`, passed to the api as
+`JBRAIN_PUBLIC_DOMAIN`), else the PWA's own origin. Only the public site serves `/s/`, so a
+link naming a LAN or owner-only name would not open for anyone.
 
 ## Why shared code can't touch the app
 
@@ -61,8 +65,15 @@ Four layers keep that script away from the owner's session:
 4. **Public site only.** `/s/*` is routed on the public site alone; the LAN and owner sites
    never serve it.
 
+What the sandbox does not change is the address bar: a shared page still runs on the app's
+own host, and in the installed PWA a link opens without one. So the sandbox leaves out
+`allow-modals` (no `prompt()` asking for a passphrase on the app's host), and publishing a
+third-party site you don't trust is still publishing it under your domain's name. A separate
+share domain would remove both; the slug is already a single DNS label so it could name one.
+
 The cost of the sandbox is that a shared site can't use `localStorage`, cookies or a
 service worker of its own (they throw in an opaque origin). Its own fetches of its own files
 work: responses carry `Access-Control-Allow-Origin: *`. The installed PWA skips its SPA
 fallback for `/s/` (`navigateFallbackDenylist` in `frontend/vite.config.ts`), so the owner's
-own phone opens links like everyone else's.
+own phone opens links like everyone else's. The app's `frame-ancestors 'self'` policy rides on
+these responses too, so other sites can't embed a share in a frame; link to it instead.

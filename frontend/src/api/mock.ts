@@ -5998,25 +5998,27 @@ export const mockFetch: typeof fetch = async (input, init) => {
     });
   }
   // JShare: list / upload / rename / unpublish. `?jshare=empty` starts with nothing shared;
-  // an upload named `refuse*.zip` answers the 422 a zip with no index.html gets.
+  // an upload named `refuse*.zip` answers the 422 a broken zip gets.
   if (path === "/api/jshare/items" && method === "GET") {
     const empty = new URLSearchParams(globalThis.location?.search ?? "").get("jshare") === "empty";
     return json(empty ? [] : jshareItems);
   }
   if (path === "/api/jshare/items" && method === "POST") {
-    const form = init?.body instanceof FormData ? init.body : null;
-    const file = form?.get("file");
-    if (!(file instanceof File)) return json({ detail: "no file" }, 422);
-    if (/^refuse/i.test(file.name)) {
-      return json({ detail: "the zip has no index.html at its top level" }, 422);
-    }
-    const slug = Math.random().toString(36).slice(2, 10);
+    const file = init?.body instanceof Blob ? init.body : null;
+    const name = url.searchParams.get("filename") ?? "file";
+    if (!file) return json({ detail: "no file" }, 422);
+    if (/^refuse.*\.zip$/i.test(name))
+      return json({ detail: "That .zip could not be opened." }, 422);
+    const slug = Array.from(
+      { length: 26 },
+      () => "abcdefghijklmnopqrstuvwxyz234567"[Math.floor(Math.random() * 32)],
+    ).join("");
     const item: ShareItem = {
       id: `js-${jshareSeq++}`,
       slug,
-      title: String(form?.get("title") ?? "").trim() || file.name,
-      kind: jshareKind(file.type, file.name),
-      filename: file.name,
+      title: (url.searchParams.get("title") ?? "").trim() || name,
+      kind: jshareKind(file.type, name),
+      filename: name,
       media_type: file.type || "application/octet-stream",
       size_bytes: file.size,
       url: `${JSHARE_HOST}/s/${slug}/`,

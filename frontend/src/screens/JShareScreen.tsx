@@ -4,7 +4,7 @@
 // confirm says the link stops working rather than only that a file goes.
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, type ShareItem, type ShareKind, api } from "../api/client";
+import { ApiError, type ShareItem, type ShareKind, api, shareLink } from "../api/client";
 import { Dialog } from "../components/Dialog";
 import { Sheet } from "../components/Sheet";
 import {
@@ -148,7 +148,7 @@ export function JShareScreen({ deps = LIVE }: Props) {
 
   const copy = useCallback(async (item: ShareItem) => {
     try {
-      await navigator.clipboard.writeText(item.url);
+      await navigator.clipboard.writeText(shareLink(item));
       setCopiedId(item.id);
       if (copiedTimer.current) clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopiedId(null), COPIED_MS);
@@ -159,7 +159,7 @@ export function JShareScreen({ deps = LIVE }: Props) {
 
   async function send(item: ShareItem): Promise<void> {
     try {
-      await navigator.share({ title: item.title, url: item.url });
+      await navigator.share({ title: item.title, url: shareLink(item) });
     } catch {
       // Dismissing the share sheet is not an error worth saying.
     }
@@ -318,7 +318,12 @@ export function JShareScreen({ deps = LIVE }: Props) {
                     Send…
                   </button>
                 )}
-                <a className="js-btn" href={item.url} target="_blank" rel="noopener noreferrer">
+                <a
+                  className="js-btn"
+                  href={shareLink(item)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   <ExternalLinkIcon size={16} />
                   Open
                 </a>
@@ -369,7 +374,7 @@ function Thumb({ item }: { item: ShareItem }) {
     return (
       <img
         className="js-thumb"
-        src={item.url}
+        src={shareLink(item)}
         alt=""
         loading="lazy"
         onError={() => setBroken(true)}
@@ -442,7 +447,7 @@ function DetailSheet({
           {item.filename} · {item.media_type}
         </dd>
         <dt>Link</dt>
-        <dd className="js-url">{item.url}</dd>
+        <dd className="js-url">{shareLink(item)}</dd>
         <dt>Last opened</dt>
         <dd>{item.last_viewed_at ? fmtDate(item.last_viewed_at) : "never"}</dd>
       </dl>

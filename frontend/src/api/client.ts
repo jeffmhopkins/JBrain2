@@ -2483,10 +2483,17 @@ export interface ShareItem {
   filename: string;
   media_type: string;
   size_bytes: number;
+  /** The box's public link, or "" when the box has no public URL configured. */
   url: string;
   created_at: string;
   last_viewed_at: string | null;
   view_count: number;
+}
+
+/** A share's link for other people. Without a configured public URL the box cannot know its own
+    scheme behind the tunnel (it sees plain HTTP), so the page's own origin names it. */
+export function shareLink(item: Pick<ShareItem, "url" | "slug">): string {
+  return item.url || `${window.location.origin}/s/${item.slug}/`;
 }
 
 export interface ListOut {
@@ -5922,11 +5929,12 @@ export const api = {
     onProgress: (sent: number, total: number) => void,
     signal?: AbortSignal,
   ): Promise<ShareItem> {
-    const path = "/api/jshare/items";
-    const form = new FormData();
-    form.append("file", file);
-    if (title.trim()) form.append("title", title.trim());
-    if (MOCK_MODE) return mockUpload<ShareItem>(path, file, onProgress, signal, form);
+    // The raw file is the body, so the box streams it straight to storage rather than parsing
+    // a multipart form onto its own disk first.
+    const query = new URLSearchParams({ filename: file.name || "file" });
+    if (title.trim()) query.set("title", title.trim());
+    const path = `/api/jshare/items?${query}`;
+    if (MOCK_MODE) return mockUpload<ShareItem>(path, file, onProgress, signal);
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       let settled = false;
@@ -5978,8 +5986,8 @@ export const api = {
         fail(new DOMException("The upload was cancelled.", "AbortError"));
         return;
       }
-      signal?.addEventListener("abort", () => xhr.abort());
-      xhr.send(form);
+      signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+      xhr.send(file);
     });
   },
 

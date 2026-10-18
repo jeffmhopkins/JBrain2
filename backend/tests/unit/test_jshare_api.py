@@ -101,8 +101,12 @@ def _app(
     return app
 
 
+def _post(client: TestClient, name: str, data: bytes, title: str = ""):  # noqa: ANN202
+    return client.post("/api/jshare/items", params={"filename": name, "title": title}, content=data)
+
+
 def _upload(client: TestClient, name: str, data: bytes, title: str = "") -> dict:
-    resp = client.post("/api/jshare/items", files={"file": (name, data)}, data={"title": title})
+    resp = _post(client, name, data, title)
     assert resp.status_code == 201, resp.text
     return resp.json()
 
@@ -121,7 +125,7 @@ def _site(files: dict[str, bytes]) -> bytes:
 def test_every_owner_route_refuses_a_non_owner(blobs: FsBlobStore, table: _Table) -> None:
     client = TestClient(_app(blobs, NON_OWNER))
     assert client.get("/api/jshare/items").status_code == 403
-    assert client.post("/api/jshare/items", files={"file": ("a.png", b"x")}).status_code == 403
+    assert _post(client, "a.png", b"x").status_code == 403
     assert client.patch("/api/jshare/items/x", json={"title": "t"}).status_code == 403
     assert client.delete("/api/jshare/items/x").status_code == 403
     assert table.rows == {}
@@ -143,18 +147,16 @@ def test_upload_stores_the_bytes_and_returns_a_public_link(
     assert [i["id"] for i in client.get("/api/jshare/items").json()] == [item["id"]]
 
 
-def test_without_a_public_base_the_link_names_the_host_reached(
-    blobs: FsBlobStore, table: _Table
-) -> None:
+def test_without_a_public_base_the_pwa_names_the_host(blobs: FsBlobStore, table: _Table) -> None:
     client = TestClient(_app(blobs))
     item = _upload(client, "a.png", b"x")
-    assert item["url"] == f"http://testserver/s/{item['slug']}/"
+    assert item["url"] == ""
     assert item["title"] == "a.png"
 
 
 def test_a_broken_zip_is_refused_and_nothing_is_stored(blobs: FsBlobStore, table: _Table) -> None:
     client = TestClient(_app(blobs))
-    resp = client.post("/api/jshare/items", files={"file": ("site.zip", b"not a zip")})
+    resp = _post(client, "site.zip", b"not a zip")
     assert resp.status_code == 422
     assert "could not be opened" in resp.json()["detail"]
     assert table.rows == {}
@@ -166,7 +168,7 @@ def test_an_oversized_upload_is_refused(
 ) -> None:
     monkeypatch.setattr(jshare, "MAX_UPLOAD_BYTES", 4)
     client = TestClient(_app(blobs))
-    resp = client.post("/api/jshare/items", files={"file": ("a.mp4", b"12345")})
+    resp = _post(client, "a.mp4", b"12345")
     assert resp.status_code == 413
     assert table.rows == {}
 
@@ -176,7 +178,7 @@ def test_a_full_disk_refuses_before_storing(
 ) -> None:
     monkeypatch.setattr(FsBlobStore, "free_bytes", lambda _self: 10)
     client = TestClient(_app(blobs))
-    assert client.post("/api/jshare/items", files={"file": ("a.mp4", b"x")}).status_code == 507
+    assert _post(client, "a.mp4", b"x").status_code == 507
     assert table.rows == {}
 
 
@@ -218,6 +220,7 @@ def _assert_sandboxed(resp) -> None:  # noqa: ANN001
     csp = resp.headers["content-security-policy"]
     assert csp.startswith("sandbox ")
     assert "allow-same-origin" not in csp
+    assert "allow-modals" not in csp
     assert resp.headers["x-content-type-options"] == "nosniff"
     assert resp.headers["referrer-policy"] == "no-referrer"
     assert "noindex" in resp.headers["x-robots-tag"]
@@ -338,3 +341,71 @@ def test_public_reads_are_rate_limited(blobs: FsBlobStore, table: _Table) -> Non
     slug = "a" * 26
     assert client.get(f"/s/{slug}/").status_code == 404
     assert client.get(f"/s/{slug}/").status_code == 429
+
+
+def test_a_thumbnail_is_not_a_view(blobs: FsBlobStore, table: _Table) -> None:
+    client = TestClient(_app(blobs))
+    item = _upload(client, "a.png", b"x")
+    client.get(f"/s/{item['slug']}/", headers={"Sec-Fetch-Dest": "image"})
+    assert table.views == []
+    client.get(f"/s/{item['slug']}/", headers={"Sec-Fetch-Dest": "document"})
+    assert table.views == [item["id"]]
+
+
+def test_bytes_past_the_cap_abort_the_stream_and_leave_nothing(
+    blobs: FsBlobStore, table: _Table, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A client that understates its Content-Length is cut off by the bytes that arrive.
+    monkeypatch.setattr(jshare, "MAX_UPLOAD_BYTES", 8)
+
+    def body():  # noqa: ANN202
+        yield b"1234"
+        yield b"5678"
+        yield b"9"
+
+    client = TestClient(_app(blobs))
+    resp = client.post(
+        "/api/jshare/items",
+        params={"filename": "a.mp4"},
+        content=body(),
+        headers={"Content-Length": "4"},
+    )
+    assert resp.status_code == 413
+    assert table.rows == {}
+    assert list((tmp_path / "blobs").glob("**/*")) == [] or blobs.usage() == (0, 0)
+    assert not list((tmp_path / "blobs").glob(".incoming-*"))
+
+
+def test_an_upload_needs_a_length(blobs: FsBlobStore, table: _Table) -> None:
+    client = TestClient(_app(blobs))
+    resp = client.post("/api/jshare/items", params={"filename": "a.png"}, content=b"")
+    assert resp.status_code == 411
+
+
+def test_head_answers_without_counting(blobs: FsBlobStore, table: _Table) -> None:
+    client = TestClient(_app(blobs))
+    item = _upload(client, "clip.mp4", b"0123456789")
+    resp = client.head(f"/s/{item['slug']}/")
+    assert resp.status_code == 200
+    assert resp.headers["content-length"] == "10"
+    _assert_sandboxed(resp)
+    assert client.head(f"/s/{item['slug']}", follow_redirects=False).status_code == 308
+    assert table.views == []
+
+
+def test_a_folder_redirect_keeps_its_query(blobs: FsBlobStore, table: _Table) -> None:
+    client = TestClient(_app(blobs))
+    item = _upload(client, "s.zip", _site({"index.html": b"", "docs/index.html": b""}))
+    resp = client.get(f"/s/{item['slug']}/docs?tab=2", follow_redirects=False)
+    assert resp.headers["location"] == f"/s/{item['slug']}/docs/?tab=2"
+
+
+def test_the_public_domain_names_links_when_no_base_url_is_set(
+    blobs: FsBlobStore, table: _Table
+) -> None:
+    app = _app(blobs)
+    app.state.settings = Settings(
+        database_url="postgresql+asyncpg://x@localhost/none", public_domain="brain.example.com"
+    )
+    item = _upload(TestClient(app), "a.png", b"x")
+    assert item["url"] == f"https://brain.example.com/s/{item['slug']}/"

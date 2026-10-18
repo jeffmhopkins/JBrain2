@@ -125,7 +125,7 @@ def classify(filename: str, data: IO[bytes]) -> Classified:
     if ext == "zip":
         root = site_root(data)
         if root is not None:
-            return Classified("site", "text/html", root)
+            return Classified("site", "application/zip", root)
         return Classified("file", "application/zip")
     kind, media = _KINDS.get(ext, ("file", _OCTET))
     return Classified(kind, media)
