@@ -323,8 +323,8 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
     }
 
     if (g->kind == GAME_JET) {
-        /* UP IS THE TOP TIPPED AWAY, as in Dodge below: a marble's way. */
-        const unsigned je = jet_step(&g->jet, &g->rng, dt, tx, -ty, hw * 2.0f, hh * 2.0f, &g->score);
+        /* DOWN IS THE TOP TIPPED AWAY, as in Dodge below. */
+        const unsigned je = jet_step(&g->jet, &g->rng, dt, tx, ty, hw * 2.0f, hh * 2.0f, &g->score);
         g->x = g->jet.jx - hw;
         g->y = g->jet.jy - hh;
         if (je & JET_EV_GO) ev |= GAME_EV_GO;
@@ -345,11 +345,11 @@ unsigned game_step(game_t *g, uint32_t now, uint32_t dt_ms, float tx, float ty, 
     const float ready = (float)GAME_READY_MS / 1000.0f;
     if (was_t < ready && t >= ready) ev |= GAME_EV_GO;
 
-    /* LIKE A MARBLE, NOT A BUBBLE (owner: *"tilt should be opposite of bubble. Like a marble
-       (both games)"*): he runs toward whichever edge goes down. The side tilt already did; the
-       top tipped away lowers the top edge, so it runs him up the glass, where it ran him down. */
+    /* LIKE A MARBLE, measured on the panel itself (owner, 0.4.19: *"Left and right are good, but
+       forward and back are backwards"*): the top tipped away runs him down the glass. 0.4.18
+       reasoned the other way from the sensor code alone and had it backwards. */
     g->vx += tx * RUN_ACCEL * dt;
-    g->vy -= ty * RUN_ACCEL * dt;
+    g->vy += ty * RUN_ACCEL * dt;
     const float drag = expf(-RUN_FRICTION * dt);
     g->vx *= drag;
     g->vy *= drag;

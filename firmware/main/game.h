@@ -7,9 +7,9 @@
  * of slow and go faster, giving a score for each one dodged."* Agreed against a playable mock
  * (artifact HoUATxevCfmDDiJdHZKM5A) before any of this was written.
  *
- * Tilt is ACCELERATION, not position: he runs downhill like a marble (toward the edge that goes
- * down, so the top tipped away runs him up; 0.4.18, the owner: *"Like a marble (both games)"*)
- * and skids a little, so a held tilt is a
+ * Tilt is ACCELERATION, not position: he runs downhill like a marble (owner: *"Like a marble
+ * (both games)"*) and skids a little. The top tipped away runs him DOWN the glass: 0.4.18 had it
+ * run him up, and on the panel the owner found *"forward and back are backwards"* (0.4.19), so a held tilt is a
  * run and a quick one is a hop. Things fly in from all four edges, spinning, most aimed at where
  * he is and some just crossing, so standing still is neither safe nor certain death. Each one
  * that leaves the field without touching him scores; one touching him ends the round, and a tap

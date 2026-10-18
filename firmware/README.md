@@ -190,6 +190,13 @@ laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
 
+**0.4.19: forward and back the right way round.** Owner, on the panel: *"Direction of games
+should be like marble. Left and right are good, but forward and back are backwards"*. 0.4.18
+had flipped Dodge's forward/back to run him up when the top tips away, reasoned from the sensor
+code alone, and Jetpack shared it; both now run him down the glass when the top tips away and
+up when it tips toward you. Left/right is unchanged. The bench's tilt pad and arrow keys follow:
+dragging down tips the top away, so he still rolls the way the pad is dragged.
+
 **0.4.18: Jetpack, the games page's second game.** Owner: *"Can we make a flappy birds game
 next? Same thing as the tilt game, the robot goes small, and instead of flapping, use the tilt to
 control, but side scroll through obstacles. There should be different levels and obstacle
