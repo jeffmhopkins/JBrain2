@@ -33,6 +33,7 @@ import {
   GlobeIcon,
   GraphIcon,
   ImageIcon,
+  LinkIcon,
   ListIcon,
   MessageIcon,
   PinIcon,
@@ -72,7 +73,8 @@ export type LauncherTarget =
   | "jcode"
   | "jlaunch"
   | "jmolt"
-  | "minecraft";
+  | "minecraft"
+  | "jshare";
 
 interface Tile {
   title: string;
@@ -96,6 +98,8 @@ const TILES: Tile[] = [
   { title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" },
   { title: "Intake", icon: <GlobeIcon size={24} />, target: "intake" },
   { title: "Image", icon: <ImageIcon size={24} />, target: "image" },
+  // Files sent out as public links: a picture, a video, a zipped site for someone else to open.
+  { title: "JShare", icon: <LinkIcon size={24} />, target: "jshare" },
   { title: "Code", icon: <CodeIcon size={24} />, target: "jcode" },
   { title: "Math", icon: <SigmaIcon size={24} />, target: "jlaunch" },
   { title: "Radio", icon: <RadioIcon size={24} />, target: "radio" },

@@ -235,6 +235,21 @@ def mc_share_context(link_id: str = "") -> SessionContext:
     )
 
 
+def jshare_context(slug: str = "") -> SessionContext:
+    """The session a JShare visitor (an unauthenticated stranger) runs under.
+
+    The same non-owner, scope-less shape as the other share contexts, so every owner-only
+    table denies it. Its one grant is `jshare_items_public_read` (migration 0252), which
+    admits the single item whose slug is the pin. There is no resolve step: the slug in the
+    URL is the pin itself, and an empty or unknown one simply matches no row. Read-only.
+    """
+    return SessionContext(
+        principal_id=slug,
+        principal_kind="jshare",
+        auth_context="jshare",
+    )
+
+
 @asynccontextmanager
 async def scoped_session(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext

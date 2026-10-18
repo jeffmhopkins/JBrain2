@@ -113,6 +113,8 @@ from jbrain.api import (
     jlaunch,
     jlaunch_share,
     jlaunch_terminal,
+    jshare,
+    jshare_public,
     live,
     llm_internal,
     locations,
@@ -1898,6 +1900,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.owner_enrollment = EnrollmentWindow()
     # The enroll route is unauthenticated until the MAC checks: ~10 tries a burst per source.
     app.state.owner_enroll_rate_limiter = TokenBucket(capacity=10, refill_per_sec=0.1)
+    # Per-IP bound on the public JShare reads (api/jshare_public.py): one zipped site's page
+    # load asks for every script, style and picture it has at once.
+    app.state.jshare_rate_limiter = TokenBucket(capacity=400, refill_per_sec=40.0)
     # A live, process-local feed of debug-console activity so the web console can
     # show every /api/debug/* call as it lands — including ones run from outside
     # that browser tab. Only the verb/route/outcome are kept (no bodies).
@@ -2022,6 +2027,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jlaunch.router, prefix="/api")
     app.include_router(jlaunch_terminal.router, prefix="/api")
     app.include_router(jlaunch_share.router, prefix="/api")
+    # JShare: the owner publishes files (owner-only) and anyone with a link reads one at
+    # /s/<slug>/ — at the root, not under /api, so a zipped site's relative links stay in its
+    # folder. Public reads are slug-in-path, RLS-pinned, rate-limited and sandboxed.
+    app.include_router(jshare.router, prefix="/api")
+    app.include_router(jshare_public.router)
     # The public map-share reads (token-in-path, rate-limited, noindex, read-only).
     app.include_router(minecraft_share.router, prefix="/api")
     app.include_router(external_llm.router, prefix="/api")
