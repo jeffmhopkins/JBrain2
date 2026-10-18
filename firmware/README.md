@@ -204,8 +204,9 @@ overheated or the power key was held. The AXP2101 keeps its own answer, so `pmu.
 at boot and telemetry carries it: `pwr_on` (register 0x20, why it powered on), `pwr_off` (0x21,
 why it last cut power) and `pwr_irq` (0x48-0x4a, latched events). The box logs the bits by name
 as `pwr_on_why` / `pwr_off_why`. Read only: nothing writes a PMU register. `pwr_off` of `00`
-means the PMU itself started from nothing; the same bytes on every boot of a reset run mean it
-never cycled and the ESP32 was reset from its EN line instead.
+means the PMU itself started from nothing. The bytes record the LAST cause, so the same bytes on
+every boot of a reset run may be the same cause repeating; they cannot by themselves rule out
+the ESP32 being reset from its EN line with the PMU still up.
 
 **0.4.18: Jetpack, the games page's second game.** Owner: *"Can we make a flappy birds game
 next? Same thing as the tilt game, the robot goes small, and instead of flapping, use the tilt to

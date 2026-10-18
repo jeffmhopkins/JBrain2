@@ -52,8 +52,9 @@ static uint8_t s_pwr_on;
 static uint8_t s_pwr_off;
 static bool s_pwr_ok;
 /* And its three IRQ status registers (0x48-0x4a): latched events such as the charger being
-   pulled or the power key pressed. Never cleared here, so they hold everything since the PMU
-   itself last powered up, which survives an ESP32 reset the PMU did not cause. */
+   pulled or the power key pressed. Never cleared here, so they accumulate until whatever the
+   chip itself clears them on (a full loss of its own power at least; whether its own shutdowns
+   do is not established), and they survive an ESP32 reset the PMU did not cause. */
 static uint8_t s_pwr_irq[3];
 static bool s_pwr_irq_ok;
 
@@ -124,7 +125,8 @@ static bool read_reg(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t *val)
    Read only; nothing here writes either register. If the PMU itself lost power (no battery
    and the charger dropped), it starts fresh and 0x21 reads 0 — which is its own answer. And
    `power(1)` is also what the ESP32 reports when its EN pin is pulled low with the PMU still
-   up, so these bytes staying put across a run of resets says the PMU never cycled at all. */
+   up, so these bytes alone cannot say whether the PMU cycled: the same cause repeating reads
+   the same. Read them beside the IRQ bytes and how long each boot lasted. */
 static void read_power_cause(void)
 {
     uint8_t on = 0, off = 0;

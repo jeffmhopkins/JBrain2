@@ -1303,6 +1303,7 @@ class TestAPanelCanReportItsOwnState:
         assert endpoint_api.power_cause(on, "05") == ["power_key", "vbus_in"]
         assert endpoint_api.power_cause(on, "c0") == ["bits_0xc0"]
         assert endpoint_api.power_cause(on, "zz") == ["zz"]
+        assert endpoint_api.power_cause(on, "-8") == ["-8"]
         assert endpoint_api.power_cause(on, "") == []
 
     def test_the_panel_sends_the_power_cause(self) -> None:
