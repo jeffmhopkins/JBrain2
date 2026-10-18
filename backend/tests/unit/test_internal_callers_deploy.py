@@ -285,7 +285,11 @@ def test_the_screen_page_shows_the_qr_as_an_image_only() -> None:
     # Framed cross-origin, the wall still needs its microphone and audio.
     assert 'allow="autoplay; microphone; fullscreen"' in page
     # And a kiosk already on the wall's loopback address moves here by itself.
-    assert "8802" in (_DEPLOY / "wall" / "index.html").read_text()
+    page = (_DEPLOY / "wall" / "index.html").read_text()
+    assert "8802" in page
+    # The wall runs on when its screen fails to bind, so the kiosk moves only once it answers.
+    probe, move = page.index('fetch(screen + "state"'), page.index("location.replace(screen)")
+    assert probe < move
 
 
 # --- mosquitto's entrypoint ----------------------------------------------------------

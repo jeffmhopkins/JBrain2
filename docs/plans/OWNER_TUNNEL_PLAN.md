@@ -195,7 +195,8 @@ the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
    owner checks they match. A mismatch revokes the device on the spot. The app derives its
    words from its own key, never from the reply. The words stay up for a full window after the
    phone enrolls, and an owner session cannot re-arm over them, so a stolen one cannot wipe
-   them before they are compared; a key at the box closes them.
+   them before they are compared, and the box refuses to close them either (only R, which
+   rejects the phone, or the window lapsing clears them).
 
 **A new phone works only once the owner confirms it** (owed to A5, before arming has any UI):
 the device row starts pending, the device guard and the session mint refuse it, and Settings →
