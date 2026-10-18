@@ -15,9 +15,10 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from jbrain.api import jcode_share
 from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.db.session import SessionContext
-from jbrain.jshare import store
+from jbrain.jshare import links, store
 from jbrain.jshare.content import (
     MAX_UPLOAD_BYTES,
     Classified,
@@ -32,7 +33,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from jbrain.auth.service import AuthRepo
     from jbrain.config import Settings
+    from jbrain.intake.service import IntakeRepo
     from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
@@ -198,3 +201,66 @@ async def delete_item(item_id: str, owner: OwnerDep, request: Request) -> None:
     # The same bytes may be a note attachment or another item; only free a file nobody holds.
     if not await store.blob_in_use(maker, ctx, item.blob_sha256):
         await _blobs(request).delete(item.blob_sha256)
+
+
+class SharedLinkOut(BaseModel):
+    kind: str
+    id: str
+    title: str
+    created_at: datetime
+    expires_at: datetime | None
+    last_viewed_at: datetime | None
+    view_count: int | None
+    detail: str
+
+
+class SharedLinksOut(BaseModel):
+    links: list[SharedLinkOut]
+    #: Kinds whose links could not be read just now, so the screen can say a list is
+    #: incomplete rather than show it as empty.
+    unavailable: list[str]
+
+
+def _sources(request: Request) -> links.Sources:
+    state = request.app.state
+
+    async def revoke_jcode(sid: str, share_id: str) -> bool:
+        return await jcode_share.revoke_link(
+            request.app, cast("AuthRepo", state.auth_repo), sid, share_id
+        )
+
+    return links.Sources(
+        maker=_maker(request),
+        auth_repo=cast("AuthRepo", state.auth_repo),
+        intake_repo=cast("IntakeRepo", state.intake_repo),
+        revoke_jcode=revoke_jcode,
+    )
+
+
+@router.get("/jshare/links")
+async def list_links(owner: OwnerDep, request: Request) -> SharedLinksOut:
+    """Every other live share link on the box (chats, research, maps, results, jcode,
+    intake), so the owner can see and revoke all of them in one place."""
+    found, failed = await links.list_links(_sources(request), _ctx(owner.id))
+    return SharedLinksOut(
+        links=[
+            SharedLinkOut(
+                kind=link.kind,
+                id=link.id,
+                title=link.title,
+                created_at=link.created_at,
+                expires_at=link.expires_at,
+                last_viewed_at=link.last_viewed_at,
+                view_count=link.view_count,
+                detail=link.detail,
+            )
+            for link in found
+        ],
+        unavailable=failed,
+    )
+
+
+@router.delete("/jshare/links/{kind}/{link_id}", status_code=204)
+async def revoke_link(kind: str, link_id: str, owner: OwnerDep, request: Request) -> None:
+    if not await links.revoke(_sources(request), _ctx(owner.id), kind, link_id):
+        raise HTTPException(status_code=404, detail="no such link")

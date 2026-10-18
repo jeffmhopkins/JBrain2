@@ -128,6 +128,8 @@ def test_every_owner_route_refuses_a_non_owner(blobs: FsBlobStore, table: _Table
     assert _post(client, "a.png", b"x").status_code == 403
     assert client.patch("/api/jshare/items/x", json={"title": "t"}).status_code == 403
     assert client.delete("/api/jshare/items/x").status_code == 403
+    assert client.get("/api/jshare/links").status_code == 403
+    assert client.delete("/api/jshare/links/chat/x").status_code == 403
     assert table.rows == {}
 
 
@@ -432,3 +434,61 @@ def test_the_public_domain_names_links_when_no_base_url_is_set(
     )
     item = _upload(TestClient(app), "a.png", b"x")
     assert item["url"] == f"https://brain.example.com/s/{item['slug']}/"
+
+
+class TestTheAllLinksList:
+    """`/api/jshare/links` reads every feature's links through `links.py`; these pin the route
+    and the one-kind-failing rule. The readers themselves run against Postgres in
+    `tests/integration/test_jshare_links_pg.py`."""
+
+    def _client(self, blobs: FsBlobStore) -> TestClient:
+        app = _app(blobs)
+        app.state.auth_repo = object()
+        app.state.intake_repo = object()
+        return TestClient(app)
+
+    def test_lists_every_kind_and_names_the_ones_that_failed(
+        self, blobs: FsBlobStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from jbrain.jshare import links
+
+        when = datetime(2026, 10, 18, tzinfo=UTC)
+
+        async def chats(_src, _ctx):  # noqa: ANN001, ANN202
+            return [links.SharedLink("chat", "c1", "Trip plans", when, None, None, 3)]
+
+        async def broken(_src, _ctx):  # noqa: ANN001, ANN202
+            raise RuntimeError("table missing")
+
+        async def empty(_src, _ctx):  # noqa: ANN001, ANN202
+            return []
+
+        readers = dict.fromkeys(links.KINDS, empty)
+        readers["chat"] = chats
+        readers["minecraft"] = broken
+        monkeypatch.setattr(links, "_READERS", readers)
+
+        resp = self._client(blobs).get("/api/jshare/links")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert [(x["kind"], x["title"], x["view_count"]) for x in body["links"]] == [
+            ("chat", "Trip plans", 3)
+        ]
+        assert body["unavailable"] == ["minecraft"]
+
+    def test_revoke_is_a_204_and_an_unknown_link_a_404(
+        self, blobs: FsBlobStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from jbrain.jshare import links
+
+        seen: list[tuple[str, str]] = []
+
+        async def revoke(_src, _ctx, kind: str, link_id: str) -> bool:  # noqa: ANN001
+            seen.append((kind, link_id))
+            return link_id == "live"
+
+        monkeypatch.setattr(links, "revoke", revoke)
+        client = self._client(blobs)
+        assert client.delete("/api/jshare/links/research/live").status_code == 204
+        assert client.delete("/api/jshare/links/research/gone").status_code == 404
+        assert seen == [("research", "live"), ("research", "gone")]

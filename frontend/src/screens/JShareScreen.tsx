@@ -2,12 +2,29 @@
 // video, an HTML page, a zip holding a self-contained site) and the box mints it its own
 // public link. The list is what is live right now: deleting an item unpublishes it, so the
 // confirm says the link stops working rather than only that a file goes.
+//
+// Below the files, every other link the box has handed out (chats, research, maps, job
+// results, code sessions, intake forms), one collapsible section per kind, each revocable
+// here. Those links are minted in their own screens and only their hash is kept, so they can
+// be revoked here but never shown again.
 
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, type ShareItem, type ShareKind, api, shareLink } from "../api/client";
+import {
+  ApiError,
+  type ShareItem,
+  type ShareKind,
+  type SharedLink,
+  type SharedLinkKind,
+  type SharedLinks,
+  api,
+  shareLink,
+} from "../api/client";
 import { Dialog } from "../components/Dialog";
 import { Sheet } from "../components/Sheet";
 import {
+  BanIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
   CodeIcon,
   CopyIcon,
   ExternalLinkIcon,
@@ -36,6 +53,8 @@ export interface JShareDeps {
   ) => Promise<ShareItem>;
   rename: (id: string, title: string) => Promise<ShareItem>;
   remove: (id: string) => Promise<void>;
+  links: () => Promise<SharedLinks>;
+  revokeLink: (kind: SharedLinkKind, id: string) => Promise<void>;
 }
 
 interface Props {
@@ -48,7 +67,20 @@ const LIVE: JShareDeps = {
   upload: api.jshareUpload,
   rename: api.jshareRename,
   remove: api.jshareDelete,
+  links: api.jshareLinks,
+  revokeLink: api.jshareRevokeLink,
 };
+
+/** Each kind's section heading, and where a new link of it is made. */
+const LINK_KIND: Record<SharedLinkKind, { title: string; where: string }> = {
+  chat: { title: "Chats", where: "the chat's share sheet" },
+  research: { title: "Research", where: "the Research library" },
+  minecraft: { title: "Minecraft maps", where: "the map's share sheet" },
+  jlaunch: { title: "Job results", where: "the jlaunch job" },
+  jcode: { title: "Code sessions", where: "the jcode session" },
+  intake: { title: "Intake forms", where: "the intake links screen" },
+};
+const LINK_KINDS = Object.keys(LINK_KIND) as SharedLinkKind[];
 
 const KIND: Record<ShareKind, { label: string; icon: ReactNode }> = {
   image: { label: "Picture", icon: <ImageIcon size={20} /> },
@@ -83,6 +115,14 @@ function fmtViews(n: number): string {
   return `${n} view${n === 1 ? "" : "s"}`;
 }
 
+function linkMeta(link: SharedLink): string {
+  const parts = [fmtDate(link.created_at)];
+  if (link.view_count !== null) parts.push(fmtViews(link.view_count));
+  if (link.detail) parts.push(link.detail);
+  if (link.expires_at) parts.push(`ends ${fmtDate(link.expires_at)}`);
+  return parts.join(" · ");
+}
+
 type Upload = { name: string; sent: number; total: number; ctl: AbortController };
 
 export function JShareScreen({ deps = LIVE }: Props) {
@@ -95,6 +135,12 @@ export function JShareScreen({ deps = LIVE }: Props) {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [links, setLinks] = useState<SharedLinks | null>(null);
+  const [linksFailed, setLinksFailed] = useState(false);
+  const [revoking, setRevoking] = useState<SharedLink | null>(null);
+  // Files open, the rest folded: the files are what this screen is for day to day, and the
+  // other sections are an audit the owner opens when they want it.
+  const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(["files"]));
   const fileRef = useRef<HTMLInputElement>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -108,10 +154,43 @@ export function JShareScreen({ deps = LIVE }: Props) {
       .catch(() => {
         if (!stale) setLoadFailed(true);
       });
+    deps
+      .links()
+      .then((found) => {
+        if (!stale) setLinks(found);
+      })
+      .catch(() => {
+        if (!stale) setLinksFailed(true);
+      });
     return () => {
       stale = true;
     };
   }, [deps]);
+
+  function toggle(section: string): void {
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(section)) next.add(section);
+      return next;
+    });
+  }
+
+  async function revoke(link: SharedLink): Promise<void> {
+    setRevoking(null);
+    try {
+      await deps.revokeLink(link.kind, link.id);
+      setLinks((found) =>
+        found
+          ? {
+              ...found,
+              links: found.links.filter((x) => !(x.kind === link.kind && x.id === link.id)),
+            }
+          : found,
+      );
+    } catch (err) {
+      setProblem(err instanceof ApiError ? err.message : "Couldn't revoke it — try again.");
+    }
+  }
 
   // An upload in flight is abandoned with the screen; the box discards a partial body.
   const uploadRef = useRef<Upload | null>(null);
@@ -275,62 +354,112 @@ export function JShareScreen({ deps = LIVE }: Props) {
         </div>
       )}
 
-      {loadFailed && <p className="analysis-quiet">couldn't load your shares — reopen to retry.</p>}
-      {items === null && !loadFailed && <p className="analysis-quiet">loading your shares…</p>}
-      {items !== null && items.length === 0 && (
-        <p className="analysis-quiet">nothing shared yet — add a file to get its link.</p>
-      )}
+      <Section
+        id="files"
+        title="Files"
+        count={items?.length ?? null}
+        open={open.has("files")}
+        onToggle={() => toggle("files")}
+      >
+        {loadFailed && (
+          <p className="analysis-quiet">couldn't load your shares — reopen to retry.</p>
+        )}
+        {items === null && !loadFailed && <p className="analysis-quiet">loading your shares…</p>}
+        {items !== null && items.length === 0 && (
+          <p className="analysis-quiet">nothing shared yet — add a file to get its link.</p>
+        )}
 
-      {items !== null && items.length > 0 && (
-        <ul className="js-list" aria-label="Shared files">
-          {items.map((item) => (
-            <li key={item.id} className="js-item">
-              <div className="js-row">
-                <Thumb item={item} />
-                <div className="js-text">
-                  <span className="js-title">{item.title}</span>
-                  <span className="js-meta">
-                    {KIND[item.kind]?.label ?? "File"} · {fmtSize(item.size_bytes)} ·{" "}
-                    {fmtDate(item.created_at)} · {fmtViews(item.view_count)}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  className="js-icon"
-                  aria-label={`More for ${item.title}`}
-                  onClick={() => setDetailId(item.id)}
-                >
-                  <MoreIcon size={20} />
-                </button>
-              </div>
-              <div className="js-actions">
-                <button
-                  type="button"
-                  className="js-btn js-btn-primary"
-                  onClick={() => void copy(item)}
-                >
-                  <CopyIcon size={16} />
-                  {copiedId === item.id ? "Copied" : "Copy link"}
-                </button>
-                {canSend && (
-                  <button type="button" className="js-btn" onClick={() => void send(item)}>
-                    <LinkIcon size={16} />
-                    Send…
+        {items !== null && items.length > 0 && (
+          <ul className="js-list" aria-label="Shared files">
+            {items.map((item) => (
+              <li key={item.id} className="js-item">
+                <div className="js-row">
+                  <Thumb item={item} />
+                  <div className="js-text">
+                    <span className="js-title">{item.title}</span>
+                    <span className="js-meta">
+                      {KIND[item.kind]?.label ?? "File"} · {fmtSize(item.size_bytes)} ·{" "}
+                      {fmtDate(item.created_at)} · {fmtViews(item.view_count)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="js-icon"
+                    aria-label={`More for ${item.title}`}
+                    onClick={() => setDetailId(item.id)}
+                  >
+                    <MoreIcon size={20} />
                   </button>
-                )}
-                <a
-                  className="js-btn"
-                  href={shareLink(item)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLinkIcon size={16} />
-                  Open
-                </a>
-              </div>
-            </li>
-          ))}
-        </ul>
+                </div>
+                <div className="js-actions">
+                  <button
+                    type="button"
+                    className="js-btn js-btn-primary"
+                    onClick={() => void copy(item)}
+                  >
+                    <CopyIcon size={16} />
+                    {copiedId === item.id ? "Copied" : "Copy link"}
+                  </button>
+                  {canSend && (
+                    <button type="button" className="js-btn" onClick={() => void send(item)}>
+                      <LinkIcon size={16} />
+                      Send…
+                    </button>
+                  )}
+                  <a
+                    className="js-btn"
+                    href={shareLink(item)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    <ExternalLinkIcon size={16} />
+                    Open
+                  </a>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      {LINK_KINDS.map((kind) => {
+        const ofKind = links?.links.filter((x) => x.kind === kind) ?? [];
+        if (ofKind.length === 0) return null;
+        return (
+          <Section
+            key={kind}
+            id={kind}
+            title={LINK_KIND[kind].title}
+            count={ofKind.length}
+            open={open.has(kind)}
+            onToggle={() => toggle(kind)}
+          >
+            <ul className="js-list" aria-label={`${LINK_KIND[kind].title} links`}>
+              {ofKind.map((link) => (
+                <li key={link.id} className="js-item js-link">
+                  <div className="js-text">
+                    <span className="js-title">{link.title}</span>
+                    <span className="js-meta">{linkMeta(link)}</span>
+                  </div>
+                  <button type="button" className="js-btn" onClick={() => setRevoking(link)}>
+                    <BanIcon size={16} />
+                    Revoke
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </Section>
+        );
+      })}
+      {linksFailed && (
+        <p className="analysis-quiet">couldn't load your other share links — reopen to retry.</p>
+      )}
+      {links && links.unavailable.length > 0 && (
+        <p className="analysis-quiet">
+          couldn't read{" "}
+          {links.unavailable.map((k) => LINK_KIND[k]?.title.toLowerCase() ?? k).join(", ")} links
+          just now, so they're missing here — reopen to retry.
+        </p>
       )}
 
       {picked && (
@@ -353,6 +482,18 @@ export function JShareScreen({ deps = LIVE }: Props) {
         />
       )}
 
+      {revoking && (
+        <Dialog
+          title="Revoke this link?"
+          confirmLabel="Revoke link"
+          onCancel={() => setRevoking(null)}
+          onConfirm={() => void revoke(revoking)}
+        >
+          Anyone with the link to “{revoking.title}” loses access at once. To share it again, make a
+          new link from {LINK_KIND[revoking.kind].where}.
+        </Dialog>
+      )}
+
       {confirming && (
         <Dialog
           title="Delete this share?"
@@ -365,6 +506,43 @@ export function JShareScreen({ deps = LIVE }: Props) {
         </Dialog>
       )}
     </main>
+  );
+}
+
+function Section({
+  id,
+  title,
+  count,
+  open,
+  onToggle,
+  children,
+}: {
+  id: string;
+  title: string;
+  count: number | null;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="js-sec">
+      <button
+        type="button"
+        className="js-sec-h"
+        aria-expanded={open}
+        aria-controls={`js-sec-${id}`}
+        onClick={onToggle}
+      >
+        <span className="js-sec-t">{title}</span>
+        {count !== null && <span className="js-sec-n">{count}</span>}
+        {open ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+      </button>
+      {open && (
+        <div id={`js-sec-${id}`} className="js-sec-body">
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 
