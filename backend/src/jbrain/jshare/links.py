@@ -89,9 +89,9 @@ async def _research(src: Sources, ctx: SessionContext) -> list[SharedLink]:
     rows = await _rows(
         src.maker,
         ctx,
-        "SELECT l.id, l.target_kind,"
-        " coalesce(nullif(l.label, ''), r.title, r.question, g.name, 'Research') AS title,"
-        " l.created_at, l.last_viewed_at, l.view_count FROM app.research_share_links l"
+        "SELECT l.id, l.target_kind, coalesce(nullif(l.label, ''), nullif(r.title, ''),"
+        " r.question, g.name, 'Research') AS title, l.created_at, l.last_viewed_at,"
+        " l.view_count FROM app.research_share_links l"
         " LEFT JOIN app.research_reports r ON r.id = l.report_id"
         " LEFT JOIN app.report_groups g ON g.id = l.group_id"
         " WHERE l.revoked_at IS NULL",

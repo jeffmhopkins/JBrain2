@@ -83,13 +83,15 @@ async def _mint_one_of_each(maker: async_sessionmaker, owner: SessionContext) ->
         maker, owner, slot="slot2", world="castle", xuid="x1", gamertag="BlockyFox"
     )
 
+    run = f"run-{uuid.uuid4().hex[:8]}"
     await _exec(
         maker,
         owner,
         "INSERT INTO app.jlaunch_runs (id, spec_name, title, state, verify_ok)"
-        " VALUES ('run0001', 'spec', 'census', 'succeeded', true)",
+        " VALUES (:r, 'spec', 'census', 'succeeded', true)",
+        r=run,
     )
-    _, jl = await jlaunch_shares.mint_share(maker, owner, run_id="run0001", label=None)
+    _, jl = await jlaunch_shares.mint_share(maker, owner, run_id=run, label=None)
 
     _, jcode = await auth_service.mint_jcode_share(
         SqlAuthRepo(maker), "sess-a", "for Sam", ttl_hours=24
@@ -180,3 +182,23 @@ async def test_unknown_kinds_and_ids_revoke_nothing(maker: async_sessionmaker) -
     for kind in links.KINDS:
         assert not await links.revoke(src, owner, kind, "not-a-uuid"), kind
         assert not await links.revoke(src, owner, kind, str(uuid.uuid4())), kind
+
+
+async def test_the_jcode_kind_revokes_only_jcode_links(maker: async_sessionmaker) -> None:
+    """Every link here is a principal row; the jcode kind must not reach another kind's."""
+    owner = await _owner_ctx(maker)
+    ids = await _mint_one_of_each(maker, owner)
+    auth = SqlAuthRepo(maker)
+
+    async def never(_sid: str, _share_id: str) -> bool:
+        raise AssertionError("only a jcode link should reach the revoker")
+
+    src = links.Sources(
+        maker=maker, auth_repo=auth, intake_repo=SqlIntakeRepo(maker), revoke_jcode=never
+    )
+    for kind in ("intake", "chat"):
+        assert not await links.revoke(src, owner, "jcode", ids[kind]), kind
+    assert not await links.revoke(src, owner, "jcode", str(owner.principal_id))
+    # The module shares one database, so check this test's own links, not the whole list.
+    found, _ = await links.list_links(src, owner)
+    assert set(ids.values()) <= {link.id for link in found}

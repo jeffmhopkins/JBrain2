@@ -301,6 +301,26 @@ describe("JShareScreen other share links", () => {
         deps={deps({
           links: vi.fn(async () => ({ links: [link()], unavailable: [] })),
           revokeLink: vi.fn(async () => {
+            throw new ApiError(500, "the box is busy");
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Chats/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke link" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("the box is busy");
+    expect(screen.getByText("Weekend trip plans")).toBeInTheDocument();
+  });
+
+  it("a link already revoked elsewhere just drops", async () => {
+    render(
+      <JShareScreen
+        deps={deps({
+          links: vi.fn(async () => ({ links: [link()], unavailable: [] })),
+          revokeLink: vi.fn(async () => {
             throw new ApiError(404, "no such link");
           }),
         })}
@@ -311,8 +331,8 @@ describe("JShareScreen other share links", () => {
     fireEvent.click(
       within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke link" }),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent("no such link");
-    expect(screen.getByText("Weekend trip plans")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Weekend trip plans")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

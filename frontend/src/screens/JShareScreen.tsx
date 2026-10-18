@@ -177,8 +177,7 @@ export function JShareScreen({ deps = LIVE }: Props) {
 
   async function revoke(link: SharedLink): Promise<void> {
     setRevoking(null);
-    try {
-      await deps.revokeLink(link.kind, link.id);
+    const drop = (): void =>
       setLinks((found) =>
         found
           ? {
@@ -187,8 +186,13 @@ export function JShareScreen({ deps = LIVE }: Props) {
             }
           : found,
       );
+    try {
+      await deps.revokeLink(link.kind, link.id);
+      drop();
     } catch (err) {
-      setProblem(err instanceof ApiError ? err.message : "Couldn't revoke it — try again.");
+      // Already revoked from its own screen: it is gone either way.
+      if (err instanceof ApiError && err.status === 404) drop();
+      else setProblem(err instanceof ApiError ? err.message : "Couldn't revoke it — try again.");
     }
   }
 
