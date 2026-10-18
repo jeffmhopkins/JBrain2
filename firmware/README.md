@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-17
+> **Status:** Living · **Last verified:** 2026-10-18
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -196,6 +196,17 @@ had flipped Dodge's forward/back to run him up when the top tips away, reasoned 
 code alone, and Jetpack shared it; both now run him down the glass when the top tips away and
 up when it tips toward you. Left/right is unchanged. The bench's tilt pad and arrow keys follow:
 dragging down tips the top away, so he still rolls the way the pad is dragged.
+
+**0.4.20: the PMU says why the power went.** Both panels began power-cycling every minute or
+so on 0.4.19, each reboot reporting `reset_reason: "power(1)"` with an empty PMU ring — which
+is all a power loss can say to the ESP32, whether the charger dropped, a rail sagged, the chip
+overheated or the power key was held. The AXP2101 keeps its own answer, so `pmu.c` reads it once
+at boot and telemetry carries it: `pwr_on` (register 0x20, why it powered on), `pwr_off` (0x21,
+why it last cut power) and `pwr_irq` (0x48-0x4a, latched events). The box logs the bits by name
+as `pwr_on_why` / `pwr_off_why`. Read only: nothing writes a PMU register. `pwr_off` of `00`
+means the PMU itself started from nothing. The bytes record the LAST cause, so the same bytes on
+every boot of a reset run may be the same cause repeating; they cannot by themselves rule out
+the ESP32 being reset from its EN line with the PMU still up.
 
 **0.4.18: Jetpack, the games page's second game.** Owner: *"Can we make a flappy birds game
 next? Same thing as the tilt game, the robot goes small, and instead of flapping, use the tilt to

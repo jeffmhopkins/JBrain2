@@ -841,6 +841,17 @@ class TelemetryIn(BaseModel):
     # Hex, one sample per entry, oldest first. Empty on a cold boot, which is itself the
     # answer to "did anything survive the restart".
     pmu_history: list[str] = []
+    # The AXP2101's own record of why it last powered the board on (register 0x20) and off
+    # (0x21), as the hex byte the panel read at boot (firmware 0.4.20). To the ESP32 every power
+    # loss is `reset_reason: "power(1)"` and wipes the ring above, so this is the only reading
+    # that can tell the charger dropping from a sag or the power key. Empty means the PMU did
+    # not answer or the firmware is older. Decoded for the log by `power_cause`.
+    pwr_on: str = Field(default="", max_length=8)
+    pwr_off: str = Field(default="", max_length=8)
+    # Its IRQ status registers 0x48-0x4a as "aa bb cc": latched events (charger pulled, power
+    # key pressed), never cleared by the panel; what clears them on the chip is not
+    # established. Raw.
+    pwr_irq: str = Field(default="", max_length=32)
     # WHETHER THE RECOGNISER STARTED. A panel whose free internal RAM was under the floor when
     # speech came up boots DEAF rather than crash-looping (0.3.39's PHY abort, firmware 0.4.0's
     # `SPEECH_MIN_INTERNAL`) — and a deaf panel cannot send, because a recording only learns she
@@ -856,6 +867,38 @@ class TelemetryIn(BaseModel):
     # contract the firmware is pinned to (`test_jp_keys_from_main_c_validate_against_telemetry_in`).
     jp: dict[str, int] | None = None
     note: str = ""
+
+
+# AXP2101 power-on (0x20) and power-off (0x21) source bits, after XPowersLib's per-bit helpers;
+# the firmware's `pmu.c` carries the same table.
+_PWR_ON_BITS = ("power_key", "irq_pin", "vbus_in", "battery_charged", "battery_in", "en_high")
+_PWR_OFF_BITS = (
+    "power_key_held",
+    "software",
+    "en_low",
+    "vsys_under_voltage",
+    "vbus_over_voltage",
+    "dcdc_under_voltage",
+    "dcdc_over_voltage",
+    "over_temperature",
+)
+
+
+_HEX_BYTE = re.compile(r"[0-9a-fA-F]{2}")
+
+
+def power_cause(bits: tuple[str, ...], raw: str) -> list[str]:
+    """The names of the bits set in one of the panel's PMU cause bytes. A byte that is not hex
+    comes back as itself, so a malformed report is still visible rather than silently empty;
+    zero is `none`, which for 0x21 means the PMU itself lost power and started fresh."""
+    if not _HEX_BYTE.fullmatch(raw):
+        return [raw] if raw else []
+    value = int(raw, 16)
+    if value == 0:
+        return ["none"]
+    named = [name for i, name in enumerate(bits) if value >> i & 1]
+    unnamed = value >> len(bits)
+    return named + ([f"bits_{unnamed << len(bits):#04x}"] if unnamed else [])
 
 
 @router.post("/telemetry", status_code=204)
@@ -1016,6 +1059,18 @@ async def telemetry(principal: PanelDep, request: Request, body: TelemetryIn) ->
         # reads, and the counts already say when to look.
         **({"vocab_refused": body.vocab_refused} if body.vocab_refused else {}),
         pmu_history=body.pmu_history,
+        # Only from firmware that reads it; the names beside the byte so the log says it.
+        **(
+            {
+                "pwr_on": body.pwr_on,
+                "pwr_off": body.pwr_off,
+                "pwr_on_why": power_cause(_PWR_ON_BITS, body.pwr_on),
+                "pwr_off_why": power_cause(_PWR_OFF_BITS, body.pwr_off),
+                "pwr_irq": body.pwr_irq,
+            }
+            if body.pwr_on or body.pwr_off or body.pwr_irq
+            else {}
+        ),
         note=body.note,
     )
     # `model_dump`, not the raw request: what is stored is what this route's model accepted,
