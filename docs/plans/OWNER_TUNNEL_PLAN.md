@@ -1,6 +1,6 @@
 # Owner tunnel — the Android app reaches the box end to end, Cloudflare carries only ciphertext (proposed)
 
-> **Status:** In progress · **Last verified:** 2026-10-17 · **Waves:** S0✅ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
+> **Status:** In progress · **Last verified:** 2026-10-18 · **Waves:** S0✅ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
 
 **Scheduled 2026-10-17 (owner: "Go").** Revised after a four-lens review (§9). S0 passed on the
 owner's phone (§5): the `network_security_config` trust anchor is the trust mechanism. The owner's ask, 2026-10-17:
@@ -170,9 +170,11 @@ ending TLS in the api would mean in-process TLS, re-dispatch and static serving 
 There is no laptop or browser path (owner decision): the box's own monitor, already driven by
 the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
 
-1. The owner taps **Add a phone** (Settings → Devices in the PWA or app, or a key on the box's
-   own keyboard). That only *arms* enrollment for ~2 minutes and reveals nothing, so it can be
-   pressed from anywhere.
+1. The owner taps **Add a phone** (Settings → Devices in the PWA or app). That only *arms*
+   enrollment for ~2 minutes and reveals nothing, so it can be pressed from anywhere. Nothing
+   at the box arms it (owner decision, 2026-10-18): the box's loopback screen is also reachable
+   from the host-network containers (cast, minecraft), so arming stays behind the owner's
+   session, and the box's keys only close the window or reject a phone.
 2. The wall kiosk shows a full-screen QR holding: the owner CA's SPKI hash, a **single-use
    enrollment code** (256-bit, held only in the api's memory, never on disk or in the
    database, and gone when the window closes or the api restarts), the LAN and public gateway
@@ -192,8 +194,8 @@ the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
 4. The monitor and the app both show the new device's fingerprint as a short word string; the
    owner checks they match. A mismatch revokes the device on the spot. The app derives its
    words from its own key, never from the reply. The words stay up for a full window after the
-   phone enrolls, and only a key at the box can re-arm over them, so a stolen owner session
-   cannot wipe them before they are compared.
+   phone enrolls, and an owner session cannot re-arm over them, so a stolen one cannot wipe
+   them before they are compared; a key at the box closes them.
 
 The `wall-enroll` token lives alone in the `enroll_secrets` volume, which only the api and the
 wall mount: the `internal_secrets` tokens are also readable by the cast sidecar and mosquitto,
@@ -211,7 +213,8 @@ containers run arbitrary code. `Cf-Connecting-IP`, `X-Forwarded-For` and `Host` 
 consulted. Limits, recorded: in direct mode (no tunnel) the LAN site is reachable from the
 internet by SNI, so the subnet rule is the whole network check there. The docker gateway is
 not refused yet: if Caddy sees LAN clients as the gateway (docker's userland proxy), refusing
-it would refuse the owner's own phone, so A4b checks what the live box's Caddy sees first. If
+it would refuse the owner's own phone. What the live box's Caddy sees is owed to the first
+real enrollment (wave D), which the debug API can read back; until then the gateway passes. If
 it is the gateway, the network rule stays as it is (fixing it needs host networking, a shell
 step) and enrollment rests on the QR alone, which is still the real proof.
 
@@ -332,7 +335,10 @@ cookie).
   (`jbrain/owner_tunnel/enrollment.py`: the arm routes, the screen routes
   `/internal/owner-enroll*` behind their own `wall-enroll` token that render the QR as SVG,
   `POST /api/owner-devices/enroll` with both MACs, the LAN and subnet rules and a rate limit,
-  and a reject that revokes a mismatched phone), A4b the wall's loopback QR view and keys,
+  and a reject that revokes a mismatched phone), **A4b the wall's QR screen ✅**
+  (`deploy/wall/enroll.html` on `:8802`, published to the box's loopback only; the box's
+  browser opens `http://localhost:8802/`, which frames the wall and covers it with the QR
+  while a window is open; Esc closes, R rejects; arming is Settings only),
   A5 Settings → Devices and the
   public-base-URL links. Still owed from §3.1: the two key volumes in the box backup and
   restore. Owed to A5: the cookie-minting logins (`/api/auth/session` and the redeem routes)

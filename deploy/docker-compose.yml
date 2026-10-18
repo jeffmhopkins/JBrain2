@@ -437,6 +437,9 @@ services:
       - enroll_secrets:/run/jbrain-enroll:ro
     ports:
       - "${BRAIN_HOST_BIND:-0.0.0.0}:8800:8800"
+      # The owner-phone enrollment screen (wall/enroll.html), on the box's loopback ONLY:
+      # it shows the one-time QR, so it must never be published to the LAN.
+      - "127.0.0.1:8802:8802"
     networks: [internal]
 
   # OPT-IN local model gateway: llama-swap fronting llama.cpp (Vulkan) so several

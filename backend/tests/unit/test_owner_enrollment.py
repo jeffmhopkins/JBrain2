@@ -557,12 +557,13 @@ def test_an_unexpected_failure_closes_the_window(
     assert box.window.snapshot().state == "idle"
 
 
-def test_only_the_box_can_arm_over_words_waiting_to_be_compared(box: _Box) -> None:
+def test_words_waiting_to_be_compared_are_cleared_only_at_the_box(box: _Box) -> None:
     assert box.enroll(_csr()[0], _armed(box)).status_code == 200
     resp = box.client.post("/api/owner-devices/enroll/arm", headers=box.owner())
     assert resp.status_code == 409
     assert box.window.snapshot().state == "enrolled"
-    assert box.client.post("/internal/owner-enroll/arm", headers=box.wall()).status_code == 200
+    assert box.client.post("/internal/owner-enroll/close", headers=box.wall()).status_code == 204
+    assert box.client.post("/api/owner-devices/enroll/arm", headers=box.owner()).status_code == 200
     assert box.window.snapshot().code is not None
 
 
@@ -582,7 +583,7 @@ def test_the_screen_shows_a_qr_only_while_the_code_is_unused(box: _Box) -> None:
     _armed(box)
     screen = box.client.get("/internal/owner-enroll", headers=box.wall()).json()
     assert screen["state"] == "armed"
-    assert screen["qr_svg"].startswith("<svg")
+    assert screen["qr_svg"].startswith('<svg xmlns="http://www.w3.org/2000/svg"')
     assert screen["problem"] is None
 
 
@@ -647,7 +648,6 @@ def test_the_qr_holds_the_pins_the_app_trusts(box: _Box, monkeypatch: pytest.Mon
     ("method", "path"),
     [
         ("GET", "/internal/owner-enroll"),
-        ("POST", "/internal/owner-enroll/arm"),
         ("POST", "/internal/owner-enroll/close"),
         ("POST", "/internal/owner-enroll/reject"),
     ],
@@ -661,9 +661,9 @@ def test_the_screen_routes_need_the_wall_token(box: _Box, method: str, path: str
     assert box.client.request(method, path, headers=pet).status_code == 401
 
 
-def test_the_box_keyboard_arms_and_closes(box: _Box) -> None:
-    assert box.client.post("/internal/owner-enroll/arm", headers=box.wall()).status_code == 200
-    assert box.window.snapshot().state == "armed"
+def test_the_box_keyboard_closes_but_never_arms(box: _Box) -> None:
+    assert box.client.post("/internal/owner-enroll/arm", headers=box.wall()).status_code == 404
+    _armed(box)
     assert box.client.post("/internal/owner-enroll/close", headers=box.wall()).status_code == 204
     assert box.window.snapshot().state == "idle"
 

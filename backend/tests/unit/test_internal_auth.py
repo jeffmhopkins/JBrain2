@@ -41,7 +41,6 @@ MQTT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
 # The box's enrollment screen (OWNER_TUNNEL_PLAN.md §3.5): its own token, in its own volume.
 ENROLL_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("GET", "/internal/owner-enroll", None, 200),
-    ("POST", "/internal/owner-enroll/arm", None, 200),
     ("POST", "/internal/owner-enroll/close", None, 204),
     ("POST", "/internal/owner-enroll/reject", None, 404),
 ]

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta http-equiv="Content-Security-Policy"
+  content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'self'; frame-src http://127.0.0.1:8800 http://localhost:8800" />
+<title>JBrain2 · Wall</title>
+<!--
+  The box's own kiosk page (docs/plans/OWNER_TUNNEL_PLAN.md §3.5): the neural wall full screen,
+  with the owner-phone enrollment screen over it while a window is open. Served by serve.py on
+  a port published only to the box's loopback, so only the box's own browser shows the QR.
+  Arming happens in Settings; here Esc closes the window and R rejects a phone whose words do
+  not match.
+-->
+<style>
+  :root {
+    --bg: #0E0F11;
+    --surface: #17181B;
+    --green: #8FBC9A;
+    --rose: #CF8A8F;
+    --text: #E6E7E9;
+    --text-2: #9A9DA3;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; width: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  #wall { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; }
+  #enroll {
+    position: fixed; inset: 0; display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 28px;
+    background: rgba(14, 15, 17, 0.94); text-align: center; padding: 24px;
+  }
+  #enroll.open { display: flex; }
+  h1 { margin: 0; font-size: 34px; font-weight: 600; letter-spacing: 0.02em; }
+  .hint { margin: 0; color: var(--text-2); font-size: 18px; line-height: 1.6; }
+  #qr { width: min(60vh, 80vw); height: min(60vh, 80vw); background: #fff; padding: 12px;
+    border-radius: 10px; display: none; }
+  #qr.shown { display: block; }
+  #words { display: none; gap: 18px; flex-wrap: wrap; justify-content: center; }
+  #words.shown { display: flex; }
+  #words span { font-size: 48px; color: var(--green); padding: 10px 22px;
+    background: var(--surface); border-radius: 10px; }
+  #problem { color: var(--rose); font-size: 20px; margin: 0; }
+  kbd { border: 1px solid var(--text-2); border-radius: 4px; padding: 1px 7px; }
+</style>
+</head>
+<body>
+<iframe id="wall" title="Neural wall"></iframe>
+<section id="enroll" aria-live="polite">
+  <h1 id="title"></h1>
+  <img id="qr" alt="Enrollment QR code" />
+  <div id="words"></div>
+  <p id="problem"></p>
+  <p class="hint" id="hint"></p>
+</section>
+<script>
+  "use strict";
+  // The wall itself, on the same loopback, so nothing here needs the LAN address.
+  document.getElementById("wall").src = `http://${location.hostname}:8800/`;
+
+  const $ = (id) => document.getElementById(id);
+  let state = "idle";
+
+  function show(snapshot) {
+    const opening = state === "idle" && snapshot.state !== "idle";
+    state = snapshot.state;
+    $("enroll").classList.toggle("open", state !== "idle");
+    // Keys typed into the wall's frame never reach this page, so take focus back.
+    $("wall").style.pointerEvents = state === "idle" ? "" : "none";
+    if (opening) {
+      if (document.activeElement) document.activeElement.blur();
+      window.focus();
+    }
+    const left = snapshot.expires_at
+      ? Math.max(0, Math.round((Date.parse(snapshot.expires_at) - Date.now()) / 1000))
+      : 0;
+    const qr = snapshot.qr_svg;
+    $("qr").classList.toggle("shown", Boolean(qr));
+    // As an image, so nothing in the SVG can run here.
+    if (qr) $("qr").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(qr);
+    const words = snapshot.words || [];
+    $("words").classList.toggle("shown", words.length > 0);
+    $("words").replaceChildren(...words.map((w) => {
+      const span = document.createElement("span");
+      span.textContent = w;
+      return span;
+    }));
+    $("problem").textContent = snapshot.problem || "";
+    if (state === "enrolled") {
+      $("title").textContent = "Check these words match your phone";
+      $("hint").innerHTML = "If they match, you're done. If not, press <kbd>R</kbd> to remove that phone.";
+    } else if (qr) {
+      $("title").textContent = "Scan with the JBrain owner app";
+      $("hint").innerHTML = `This code works once, for ${left}s. <kbd>Esc</kbd> closes it.`;
+    } else {
+      $("title").textContent = snapshot.problem ? "Can't add a phone yet" : "Adding your phone…";
+      $("hint").innerHTML = "<kbd>Esc</kbd> closes this.";
+    }
+  }
+
+  async function poll() {
+    try {
+      const resp = await fetch("/state", { cache: "no-store" });
+      show(resp.ok ? await resp.json() : { state: "idle" });
+    } catch {
+      show({ state: "idle" });
+    }
+  }
+
+  async function send(path) {
+    try {
+      await fetch(path, { method: "POST", headers: { "X-Wall-Enroll": "1" } });
+    } catch {}
+    poll();
+  }
+
+  window.addEventListener("keydown", (event) => {
+    if (state === "idle") return;
+    if (event.key === "Escape") send("/close");
+    else if ((event.key === "r" || event.key === "R") && state === "enrolled") send("/reject");
+  });
+
+  poll();
+  setInterval(poll, 1000);
+</script>
+</body>
+</html>

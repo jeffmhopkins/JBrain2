@@ -115,6 +115,24 @@ Open the box's monitor (or any LAN browser) full-screen / kiosk at
 | `BRAIN_DISK_MAX_BPS` | `500000000` | Disk-read throughput ceiling (bytes/s, ~500 MB) for the disk-read rim aura. |
 | `BRAIN_EVENTS_FILE` | unset | Path to a JSONL file the agent appends web-tool events to (see below) → reach-out tendrils. |
 
+## Adding an owner phone (the enrollment screen)
+
+The box's own browser should open **`http://localhost:8802/`** rather than `:8800`. That page
+is the same neural wall (it frames `:8800` from the box's loopback), and when the owner taps
+**Add a phone** in Settings it covers the wall with a one-time QR for the JBrain owner app
+(docs/plans/OWNER_TUNNEL_PLAN.md §3.5). Once the phone enrolls, it shows five words to compare
+with the phone's: **R** removes the phone if they differ, **Esc** closes the screen. Nothing
+here starts enrollment; only the owner's own session can.
+
+`:8802` is published on the box's loopback only (`127.0.0.1:8802:8802`), never the LAN, and
+`serve.py` answers it only for loopback or the docker gateway that publish arrives from,
+with a loopback `Host` and, on POSTs, an `X-Wall-Enroll` header, so other containers on the
+wall's network and pages the box's browser opens cannot use it. It reaches the api with its
+own `wall-enroll` token from the `enroll_secrets` volume, which opens only the
+show/close/reject routes. The host-network containers (cast, minecraft) share the box's
+loopback and could read a QR while a window is open; the word check is what catches a phone
+that is not yours.
+
 ## Security
 
 **There is no authentication.** It exposes only non-sensitive host vitals (GPU
@@ -155,6 +173,9 @@ badge, so the display is never a dead black screen.
 | `BRAIN_PORT` | `8800` | Port |
 | `BRAIN_API_URL` | `http://api:8000` | On-box api base for the `/pet` view's read-only snapshot (`/internal/pet`) |
 | `BRAIN_WALL_TOKEN_FILE` | `/run/jbrain-internal/wall.token` | The wall's api token, minted by the api into the `internal_secrets` volume |
+| `BRAIN_ENROLL_TOKEN_FILE` | `/run/jbrain-enroll/wall-enroll.token` | The enrollment screen's api token, from the `enroll_secrets` volume |
+| `BRAIN_ENROLL_PORT` | `8802` | The enrollment screen's port (published to the box's loopback only) |
+| `BRAIN_ENROLL_HOST` | `0.0.0.0` | Its bind inside the container; set `127.0.0.1` when running `serve.py` on the host |
 | `BRAIN_POWER_MAX_W` | `90` | APU TDP ceiling, used to normalise power → heat |
 | `BRAIN_DEMO` | unset | `1` = synthetic values (no amdgpu needed) |
 
