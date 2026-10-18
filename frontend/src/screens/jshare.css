@@ -1,0 +1,208 @@
+/* JShare — the owner's public share links (JShareScreen.tsx). Steel, the info/link accent:
+   a share is a link going out, not a domain. */
+
+.js-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.js-add {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  text-align: left;
+  color: var(--steel-text);
+  background: var(--steel-tint);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 10px 16px;
+}
+.js-add-txt {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.js-add-h {
+  font-weight: 500;
+}
+.js-add-s {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.js-upload,
+.js-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 12px 16px;
+}
+.js-upload-h {
+  font-size: var(--fs-secondary);
+  overflow-wrap: anywhere;
+}
+.js-upload-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Determinate: the bytes sent are a real figure. */
+.js-bar {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+  margin: 8px 0;
+}
+.js-bar i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+}
+
+.js-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 4px 4px 16px;
+  font-size: var(--fs-secondary);
+  color: var(--danger-text);
+  background: var(--danger-tint);
+  border-radius: var(--r-input);
+}
+
+.js-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.js-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.js-thumb {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  background: var(--surface-2);
+}
+.js-thumb-ic {
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+}
+.js-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.js-title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.js-meta {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+/* A plain 44px target with no bleed: it sits beside other targets, so the hit area is the box. */
+.js-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  color: var(--text-2);
+  background: none;
+  border: none;
+}
+.js-alert .js-icon {
+  color: inherit;
+}
+
+.js-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.js-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+.js-btn-primary {
+  color: var(--steel-text);
+  background: var(--steel-tint);
+}
+
+.js-file {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.js-file b {
+  color: var(--text);
+  font-weight: 500;
+}
+.js-note {
+  margin: 12px 0 0;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+
+.js-kv {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 12px;
+  margin: 0;
+  font-size: var(--fs-secondary);
+}
+.js-kv dt {
+  color: var(--text-2);
+}
+.js-kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.js-url {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+}
+
+.js-delete {
+  width: 100%;
+  margin-top: 12px;
+}

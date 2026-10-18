@@ -52,6 +52,7 @@ import type {
   SearchHit,
   SearchMatch,
   SearchResult,
+  ShareItem,
   SweepTrigger,
   VideoDetail,
   WikiArticleOut,
@@ -3421,6 +3422,74 @@ const jcodeExternal: {
 }[] = [];
 let jcodeExternalN = 1;
 
+// JShare (dev:mock): the owner's uploads, newest first. The image's url is a data URI so its
+// thumbnail paints with no backend; the rest point at a host that only has to look real.
+const JSHARE_HOST = "https://jbrain.example.net";
+let jshareSeq = 5;
+const jshareItems: ShareItem[] = [
+  {
+    id: "js-4",
+    slug: "k7Qm2xVb",
+    title: "Lake house walkthrough",
+    kind: "video",
+    filename: "lake-house.mp4",
+    media_type: "video/mp4",
+    size_bytes: 1_342_177_280,
+    url: `${JSHARE_HOST}/s/k7Qm2xVb/`,
+    created_at: "2026-10-16T19:04:00Z",
+    last_viewed_at: "2026-10-17T08:12:00Z",
+    view_count: 6,
+  },
+  {
+    id: "js-3",
+    slug: "Pq9aZr3T",
+    title: "Birthday banner",
+    kind: "image",
+    filename: "banner.svg",
+    media_type: "image/svg+xml",
+    size_bytes: 48_211,
+    url: `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="#7FA7C9"/><circle cx="32" cy="32" r="14" fill="#C9A36A"/></svg>')}`,
+    created_at: "2026-10-12T15:30:00Z",
+    last_viewed_at: null,
+    view_count: 0,
+  },
+  {
+    id: "js-2",
+    slug: "Wm4cT8nE",
+    title: "Solar system explorer",
+    kind: "site",
+    filename: "solar-system.zip",
+    media_type: "application/zip",
+    size_bytes: 3_870_221,
+    url: `${JSHARE_HOST}/s/Wm4cT8nE/`,
+    created_at: "2026-10-03T21:45:00Z",
+    last_viewed_at: "2026-10-15T17:00:00Z",
+    view_count: 23,
+  },
+  {
+    id: "js-1",
+    slug: "Hb2kLs0d",
+    title: "Voice memo — grandma's recipe",
+    kind: "audio",
+    filename: "recipe.m4a",
+    media_type: "audio/mp4",
+    size_bytes: 2_104_330,
+    url: `${JSHARE_HOST}/s/Hb2kLs0d/`,
+    created_at: "2026-09-28T10:02:00Z",
+    last_viewed_at: "2026-09-29T12:40:00Z",
+    view_count: 2,
+  },
+];
+
+function jshareKind(media: string, name: string): ShareItem["kind"] {
+  if (media.startsWith("image/")) return "image";
+  if (media.startsWith("audio/")) return "audio";
+  if (media.startsWith("video/")) return "video";
+  if (media === "text/html" || /\.html?$/i.test(name)) return "html";
+  if (media === "application/zip" || /\.zip$/i.test(name)) return "site";
+  return "file";
+}
+
 // --- JPet (the wall pet): one in-memory authoritative state the mock mutates (v2) ---
 const MOCK_OBJECTS: Record<string, [number, number]> = {
   ball: [0, 0.35],
@@ -5927,6 +5996,53 @@ export const mockFetch: typeof fetch = async (input, init) => {
               mockUpdate.state === "exited" ? "[update] complete" : ""
             }`,
     });
+  }
+  // JShare: list / upload / rename / unpublish. `?jshare=empty` starts with nothing shared;
+  // an upload named `refuse*.zip` answers the 422 a broken zip gets.
+  if (path === "/api/jshare/items" && method === "GET") {
+    const empty = new URLSearchParams(globalThis.location?.search ?? "").get("jshare") === "empty";
+    return json(empty ? [] : jshareItems);
+  }
+  if (path === "/api/jshare/items" && method === "POST") {
+    const file = init?.body instanceof Blob ? init.body : null;
+    const name = url.searchParams.get("filename") ?? "file";
+    if (!file) return json({ detail: "no file" }, 422);
+    if (/^refuse.*\.zip$/i.test(name))
+      return json({ detail: "That .zip could not be opened." }, 422);
+    const slug = Array.from(
+      { length: 26 },
+      () => "abcdefghijklmnopqrstuvwxyz234567"[Math.floor(Math.random() * 32)],
+    ).join("");
+    const item: ShareItem = {
+      id: `js-${jshareSeq++}`,
+      slug,
+      title: (url.searchParams.get("title") ?? "").trim() || name,
+      kind: jshareKind(file.type, name),
+      filename: name,
+      media_type: file.type || "application/octet-stream",
+      size_bytes: file.size,
+      url: `${JSHARE_HOST}/s/${slug}/`,
+      created_at: new Date().toISOString(),
+      last_viewed_at: null,
+      view_count: 0,
+    };
+    jshareItems.unshift(item);
+    return json(item, 201);
+  }
+  const jshareOne = path.match(/^\/api\/jshare\/items\/([^/]+)$/);
+  if (jshareOne) {
+    const i = jshareItems.findIndex((x) => x.id === decodeURIComponent(jshareOne[1] ?? ""));
+    const found = jshareItems[i];
+    if (!found) return json({ detail: "unknown share" }, 404);
+    if (method === "PATCH") {
+      const body = JSON.parse(String(init?.body)) as { title?: string };
+      found.title = (body.title ?? "").trim() || found.title;
+      return json(found);
+    }
+    if (method === "DELETE") {
+      jshareItems.splice(i, 1);
+      return new Response(null, { status: 204 });
+    }
   }
   if (path === "/api/ops/export" && init?.method === "POST") {
     mockExport.state = "running";

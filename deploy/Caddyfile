@@ -122,6 +122,19 @@
 	handle /debug-console* {
 		respond 404
 	}
+
+	# JShare's public links (docs/runbooks/JSHARE.md), on this site only: they are for
+	# other people, so the LAN and owner sites never serve them. The api sandboxes every
+	# response so a shared page gets an opaque origin; dropping the Cookie header here means
+	# the owner's session never even reaches the handler that serves someone else's code.
+	handle /s/* {
+		reverse_proxy api:8000 {
+			header_up -Cookie
+			header_up X-Real-IP {remote_host}
+			header_up X-JBrain-Ingress public
+			header_up X-JBrain-Device ""
+		}
+	}
 	import app public ""
 }
 

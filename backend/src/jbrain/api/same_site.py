@@ -110,7 +110,12 @@ PREVIEW_PREFIX = "/__jcode_preview/"
 # there is nothing for the guard to protect. Kept in step with the route matrix's
 # COOKIE_EXEMPT by a test, so a cookie-reading route can't be waved through by accident.
 _COOKIE_FREE_GET_PATHS = frozenset({"/api/feed/appointments.ics"})
-_COOKIE_FREE_GET_PREFIXES = ("/api/research-share/", "/api/jlaunch-share/", "/api/mc-share/")
+_COOKIE_FREE_GET_PREFIXES = (
+    "/api/research-share/",
+    "/api/jlaunch-share/",
+    "/api/mc-share/",
+    "/s/",
+)
 
 
 # The WebSocket feeds a DASHBOARD_ALLOWED_ORIGINS origin may open.
