@@ -19,6 +19,7 @@ import threading
 import types
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,173 @@ def test_the_wall_logs_a_refusal_once_and_degrades(
     out = capsys.readouterr().out
     assert out.count("refused the wall's token") == 1
     assert _TOKEN not in out
+
+
+# --- the wall's enrollment screen (OWNER_TUNNEL_PLAN.md §3.5) ------------------------
+
+
+def test_the_screen_presents_its_own_token_never_the_pet_one(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    wall.WALL_TOKEN_FILE.write_text("pet")
+    monkeypatch.setattr(wall, "ENROLL_TOKEN_FILE", tmp_path / "wall-enroll.token")
+    wall.ENROLL_TOKEN_FILE.write_text(_TOKEN)
+    sent = _capture(monkeypatch, wall)
+    wall.enroll_api("GET", "/internal/owner-enroll")
+    wall.enroll_api("POST", "/internal/owner-enroll/reject")
+    assert [(r.get_method(), r.full_url) for r in sent] == [
+        ("GET", "http://api:8000/internal/owner-enroll"),
+        ("POST", "http://api:8000/internal/owner-enroll/reject"),
+    ]
+    assert {r.get_header("Authorization") for r in sent} == {f"Bearer {_TOKEN}"}
+
+
+def test_the_screen_reports_a_refusal_and_an_outage(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refused(req: urllib.request.Request, timeout: float = 0) -> Any:
+        raise urllib.error.HTTPError(req.full_url, 401, "Unauthorized", {}, None)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(wall.urllib.request, "urlopen", refused)
+    assert wall.enroll_api("GET", "/internal/owner-enroll")[0] == 401
+
+    def down(req: urllib.request.Request, timeout: float = 0) -> Any:
+        raise OSError("no route")
+
+    monkeypatch.setattr(wall.urllib.request, "urlopen", down)
+    assert wall.enroll_api("GET", "/internal/owner-enroll")[0] == 503
+
+
+def test_the_gateway_is_read_from_the_route_table(wall: types.ModuleType, tmp_path: Path) -> None:
+    table = tmp_path / "route"
+    table.write_text(
+        "Iface\tDestination\tGateway \tFlags\n"
+        "eth0\t0000A8C0\t00000000\t0001\n"
+        "eth0\t00000000\t0100A8C0\t0003\n"
+    )
+    assert wall.default_gateway(str(table)) == "192.168.0.1"
+    assert wall.default_gateway(str(tmp_path / "missing")) is None
+
+
+@pytest.fixture
+def screen(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[types.ModuleType, list[tuple[str, str]], Any]]:
+    calls: list[tuple[str, str]] = []
+
+    def api(method: str, path: str) -> tuple[int, bytes, str]:
+        calls.append((method, path))
+        return 200, b'{"state":"idle"}', "application/json"
+
+    monkeypatch.setattr(wall, "enroll_api", api)
+    handler = type("H", (wall.EnrollHandler,), {"peers": frozenset({"127.0.0.1"})})
+    server = wall.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield wall, calls, server
+    server.shutdown()
+
+
+def _hit(server: Any, method: str, path: str, headers: dict[str, str] | None = None) -> Any:
+    port = server.server_address[1]
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=b"" if method == "POST" else None,
+        method=method,
+        headers=headers or {},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+            return resp.status, dict(resp.headers)
+    except urllib.error.HTTPError as exc:
+        return exc.code, dict(exc.headers)
+
+
+def test_the_screen_serves_the_box_and_relays_its_keys(screen: Any) -> None:
+    _, calls, server = screen
+    status, headers = _hit(server, "GET", "/")
+    assert status == 200 and headers["X-Frame-Options"] == "DENY"
+    assert _hit(server, "GET", "/state")[0] == 200
+    assert _hit(server, "POST", "/reject", {"X-Wall-Enroll": "1"})[0] == 200
+    assert _hit(server, "POST", "/close", {"X-Wall-Enroll": "1"})[0] == 200
+    assert calls == [
+        ("GET", "/internal/owner-enroll"),
+        ("POST", "/internal/owner-enroll/reject"),
+        ("POST", "/internal/owner-enroll/close"),
+    ]
+
+
+def test_the_screen_never_arms(screen: Any) -> None:
+    _, calls, server = screen
+    assert _hit(server, "POST", "/arm", {"X-Wall-Enroll": "1"})[0] == 404
+    assert calls == []
+
+
+def test_a_page_in_the_box_browser_cannot_drive_the_screen(screen: Any) -> None:
+    # A cross-origin page can POST without a preflight only with no custom header, and a
+    # DNS-rebound name arrives with its own Host.
+    _, calls, server = screen
+    assert _hit(server, "POST", "/reject")[0] == 403
+    assert _hit(server, "GET", "/state", {"Host": "rebound.example:8802"})[0] == 403
+    assert calls == []
+
+
+def test_loopback_names_with_and_without_a_port_are_the_box(screen: Any) -> None:
+    _, calls, server = screen
+    for host in ("localhost", "LOCALHOST:8802", "[::1]", "[::1]:8802", "127.0.0.1"):
+        assert _hit(server, "GET", "/state", {"Host": host})[0] == 200, host
+    for host in ("", "localhost.", "[::1", "evil:127.0.0.1"):
+        assert _hit(server, "GET", "/state", {"Host": host})[0] == 403, host
+
+
+def test_a_closed_window_answers_with_no_body(screen: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    wall, _, server = screen
+    monkeypatch.setattr(wall, "enroll_api", lambda m, p: (204, b"", "application/json"))
+    status, headers = _hit(server, "POST", "/close", {"X-Wall-Enroll": "1"})
+    assert status == 204 and "Content-Length" not in headers
+
+
+def test_the_wall_keeps_running_without_its_screen(
+    wall: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def taken() -> Any:
+        raise OSError("address already in use")
+
+    class _Server:
+        def __init__(self, *_: object) -> None:
+            pass
+
+        def serve_forever(self) -> None:
+            print("serving")
+
+    monkeypatch.setattr(wall, "serve_enroll_screen", taken)
+    monkeypatch.setattr(wall, "ThreadingHTTPServer", _Server)
+    wall.main()
+    out = capsys.readouterr().out
+    assert "enrollment screen not started" in out and "serving" in out
+
+
+def test_another_container_cannot_reach_the_screen(screen: Any) -> None:
+    wall, calls, server = screen
+    server.RequestHandlerClass.peers = frozenset({"172.18.0.1"})
+    assert _hit(server, "GET", "/state")[0] == 403
+    assert calls == []
+
+
+def test_the_screen_page_shows_the_qr_as_an_image_only() -> None:
+    # The SVG comes from the api, but nothing in it may run on the box's kiosk page.
+    page = (_DEPLOY / "wall" / "enroll.html").read_text()
+    assert "data:image/svg+xml" in page
+    assert "default-src 'none'" in page
+    assert "/arm" not in page
+    # Framed cross-origin, the wall still needs its microphone and audio.
+    assert 'allow="autoplay; microphone; fullscreen"' in page
+    # And a kiosk already on the wall's loopback address moves here by itself.
+    page = (_DEPLOY / "wall" / "index.html").read_text()
+    assert "8802" in page
+    # The wall runs on when its screen fails to bind, so the kiosk moves only once it answers.
+    probe, move = page.index('fetch(screen + "state"'), page.index("location.replace(screen)")
+    assert probe < move
 
 
 # --- mosquitto's entrypoint ----------------------------------------------------------
@@ -249,6 +417,16 @@ def test_only_the_api_and_the_wall_hold_the_enrollment_screen_token() -> None:
     assert {name for name, mounts in users.items() if mounts} == {"api", "wall"}
     assert users["api"] == ["enroll_secrets:/run/jbrain-enroll"]
     assert users["wall"] == ["enroll_secrets:/run/jbrain-enroll:ro"]
+
+
+def test_the_enrollment_screen_is_published_to_the_box_alone() -> None:
+    published = [
+        (name, port)
+        for name, spec in _compose()["services"].items()
+        for port in spec.get("ports") or []
+        if str(port).endswith(":8802")
+    ]
+    assert published == [("wall", "127.0.0.1:8802:8802")]
 
 
 def test_mosquitto_runs_the_entrypoint_from_the_checkout() -> None:

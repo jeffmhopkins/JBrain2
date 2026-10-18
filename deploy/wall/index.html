@@ -273,6 +273,16 @@
 </style>
 </head>
 <body>
+<script>
+  // The box's own kiosk on loopback moves to the enrollment screen, which frames this page and
+  // covers it with the owner-phone QR (enroll.html), so it needs no change on the host. Only once
+  // that screen answers: the wall runs on without it, and a dead redirect would blank the kiosk.
+  if (["localhost", "127.0.0.1"].includes(location.hostname) && window.top === window) {
+    const screen = `http://${location.hostname}:8802/`;
+    fetch(screen + "state", { mode: "no-cors", cache: "no-store" })
+      .then(() => location.replace(screen), () => {});
+  }
+</script>
   <!-- JPet wall view: switch this display to the live family pet (served at /pet,
        which proxies the on-box api's read-only /internal/pet snapshot). -->
   <a href="/pet" id="petlink" style="position:fixed;top:14px;left:16px;z-index:3;

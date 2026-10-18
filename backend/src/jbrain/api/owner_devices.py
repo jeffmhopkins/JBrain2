@@ -3,6 +3,7 @@ session an enrolled phone mints, and the owner's list of phones with rename and 
 (docs/plans/OWNER_TUNNEL_PLAN.md §3.4)."""
 
 import hmac
+import io
 import ipaddress
 import uuid
 from datetime import datetime
@@ -167,12 +168,15 @@ class ArmOut(BaseModel):
 @router.post("/enroll/arm")
 async def arm_enrollment(_owner: OwnerDep, window: EnrollmentWindowDep) -> ArmOut:
     """Open the window for the box's screen to show a QR. Reveals nothing, so it answers on
-    any site. Except over a phone just added: only someone at the box may clear its words
-    (a key there), or a stolen session could wipe them before the owner compares."""
+    any site. This is the only way to arm (owner decision): the box's screen can close or
+    reject, never arm, since other host-network containers can reach it too. Never over a
+    phone just added: a stolen session could wipe its words before the owner compares, so
+    they stay until the window lapses or a key at the box closes it."""
     if window.in_use():
         raise HTTPException(
             status_code=409, detail="a phone was just added; compare its words at the box first"
         )
+    # (The box's close cannot clear those words either; they stay until the window lapses.)
     return ArmOut(expires_at=window.arm())
 
 
@@ -312,7 +316,13 @@ class ScreenOut(BaseModel):
 
 
 def _qr_svg(payload: str) -> str:
-    return segno.make(payload, error="m").svg_inline(scale=8, border=2, dark="#000", light="#fff")
+    # A standalone document with its namespace: the screen shows it as an image, so nothing in
+    # it runs there, and an image needs the namespace that inline SVG may omit.
+    out = io.BytesIO()
+    segno.make(payload, error="m").save(
+        out, kind="svg", xmldecl=False, svgns=True, scale=8, border=2, dark="#000", light="#fff"
+    )
+    return out.getvalue().decode()
 
 
 @internal_router.get("")
@@ -353,14 +363,13 @@ async def screen(request: Request, window: EnrollmentWindowDep, settings: Settin
     return ScreenOut(state=snap.state, expires_at=snap.expires_at, qr_svg=_qr_svg(payload))
 
 
-@internal_router.post("/arm")
-async def arm_from_the_box(window: EnrollmentWindowDep) -> ArmOut:
-    """A key on the box's own keyboard: whoever presses it is looking at the words."""
-    return ArmOut(expires_at=window.arm())
-
-
 @internal_router.post("/close", status_code=204)
 async def close_from_the_box(window: EnrollmentWindowDep) -> None:
+    """Never over a phone just added: whatever reaches the box's screen (the host-network
+    containers share its loopback) could otherwise enroll with a stolen code and wipe its own
+    words before the owner sees them. Those stay until the window lapses or R rejects."""
+    if window.snapshot().state == "enrolled":
+        raise HTTPException(status_code=409, detail="compare the words; R removes the phone")
     window.close()
 
 

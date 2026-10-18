@@ -55,6 +55,16 @@ API_URL = os.environ.get("BRAIN_API_URL", "http://api:8000")
 # the api refuses the call.
 WALL_TOKEN_FILE = Path(os.environ.get("BRAIN_WALL_TOKEN_FILE", "/run/jbrain-internal/wall.token"))
 
+# The owner-phone enrollment screen (docs/plans/OWNER_TUNNEL_PLAN.md §3.5): a second server,
+# published only on the box's own loopback, showing the api's one-time QR and the new phone's
+# words. Its token opens only /internal/owner-enroll*, which can show, close and reject but
+# never arm: arming takes the owner's session, so whatever reaches this port (the box itself,
+# and the host-network containers) can only see a window the owner opened.
+ENROLL_PAGE = HERE / "enroll.html"
+ENROLL_TOKEN_FILE = Path(
+    os.environ.get("BRAIN_ENROLL_TOKEN_FILE", "/run/jbrain-enroll/wall-enroll.token")
+)
+
 # Each problem is printed once until it clears, so a 1 Hz pet poll can't flood the log.
 _warned: set[str] = set()
 
@@ -65,16 +75,17 @@ def _warn_once(key: str, message: str) -> None:
         print(f"wall: {message}", flush=True)
 
 
-def api_headers() -> dict[str, str]:
+def api_headers(token_file: Path | None = None) -> dict[str, str]:
     """The Authorization header for an /internal call, or none while there is no token."""
+    token_file = token_file or WALL_TOKEN_FILE
     try:
-        token = WALL_TOKEN_FILE.read_text().strip()
+        token = token_file.read_text().strip()
     except OSError:
         token = ""
     if not token:
-        _warn_once("token", f"no api token at {WALL_TOKEN_FILE} yet; the api will refuse pet calls")
+        _warn_once(f"token:{token_file}", f"no api token at {token_file} yet; the api will refuse")
         return {}
-    _warned.discard("token")
+    _warned.discard(f"token:{token_file}")
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -676,10 +687,140 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+# ── The enrollment screen (loopback only) ──────────────────────────────────────
+ENROLL_PORT = int(os.environ.get("BRAIN_ENROLL_PORT", "8802"))
+
+
+def default_gateway(route_file: str = "/proc/net/route") -> str | None:
+    """The container's default gateway: where docker delivers a connection to a published
+    port from the host. None outside a container, or when it can't be read."""
+    try:
+        lines = Path(route_file).read_text().splitlines()[1:]
+    except OSError:
+        return None
+    for line in lines:
+        fields = line.split()
+        if len(fields) > 2 and fields[1] == "00000000":
+            raw = int(fields[2], 16)
+            return ".".join(str((raw >> shift) & 0xFF) for shift in (0, 8, 16, 24))
+    return None
+
+
+def enroll_peers() -> frozenset[str]:
+    """Who may use the screen: loopback when the wall runs on the host, and the gateway
+    that the compose file's 127.0.0.1-only publish arrives from. Never the other containers
+    on the wall's network, which reach the container port directly."""
+    peers = {"127.0.0.1", "::1"}
+    gateway = default_gateway()
+    if gateway:
+        peers.add(gateway)
+    return frozenset(peers)
+
+
+def enroll_api(method: str, path: str) -> tuple[int, bytes, str]:
+    """One call to the api's enrollment-screen routes with the screen's own token."""
+    try:
+        req = urllib.request.Request(  # noqa: S310
+            f"{API_URL}{path}",
+            data=b"" if method == "POST" else None,
+            method=method,
+            headers=api_headers(ENROLL_TOKEN_FILE),
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:  # noqa: S310
+            return resp.status, resp.read(), resp.headers.get("Content-Type", "application/json")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            _warn_once("enroll-401", "the api refused the wall's enrollment token (401)")
+        return exc.code, b'{"error":"refused"}', "application/json"
+    except Exception:  # noqa: BLE001 — the screen shows "unavailable" and polls again
+        return 503, b'{"error":"unavailable"}', "application/json"
+
+
+class EnrollHandler(BaseHTTPRequestHandler):
+    """The QR screen. Besides the peer rule: the Host must be the box's own loopback, so a
+    page the box's browser opens cannot reach it by DNS rebinding, and its POSTs need a
+    custom header, which a cross-origin page cannot send without a preflight this refuses."""
+
+    protocol_version = "HTTP/1.1"
+    peers: frozenset[str] = frozenset()
+
+    def _send(self, code: int, body: bytes, ctype: str) -> None:
+        self.send_response(code)
+        if code != 204:
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.end_headers()
+        if code != 204:
+            self.wfile.write(body)
+
+    def _allowed(self) -> bool:
+        raw = (self.headers.get("Host") or "").strip().lower()
+        if raw.startswith("["):
+            inner, closed, _ = raw[1:].partition("]")
+            host = inner if closed else ""
+        else:
+            host = raw.partition(":")[0]
+        if self.client_address[0] not in self.peers or host not in ("127.0.0.1", "localhost", "::1"):
+            self._send(403, b"forbidden", "text/plain")
+            return False
+        return True
+
+    def do_GET(self) -> None:  # noqa: N802
+        if not self._allowed():
+            return
+        path = self.path.split("?", 1)[0]
+        if path in ("/", "/index.html"):
+            try:
+                self._send(200, ENROLL_PAGE.read_bytes(), "text/html; charset=utf-8")
+            except OSError:
+                self._send(500, b"enroll.html not found next to serve.py", "text/plain")
+        elif path == "/state":
+            self._send(*enroll_api("GET", "/internal/owner-enroll"))
+        else:
+            self._send(404, b"not found", "text/plain")
+
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._allowed():
+            return
+        path = self.path.split("?", 1)[0]
+        if self.headers.get("X-Wall-Enroll") != "1":
+            self._send(403, b"forbidden", "text/plain")
+        elif path in ("/close", "/reject"):
+            self._send(*enroll_api("POST", f"/internal/owner-enroll{path}"))
+        else:
+            self._send(404, b"not found", "text/plain")
+
+    def log_message(self, *args) -> None:
+        pass
+
+
+def serve_enroll_screen() -> ThreadingHTTPServer:
+    """Bound on every interface inside the container (the publish is what keeps it to the
+    box's loopback), or set BRAIN_ENROLL_HOST=127.0.0.1 when running on the host itself."""
+    host = os.environ.get("BRAIN_ENROLL_HOST", "0.0.0.0")
+    handler = type("BoundEnrollHandler", (EnrollHandler,), {"peers": enroll_peers()})
+    server = ThreadingHTTPServer((host, ENROLL_PORT), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 def main() -> None:
     host = os.environ.get("BRAIN_HOST", "0.0.0.0")
     port = int(os.environ.get("BRAIN_PORT", "8800"))
     server = ThreadingHTTPServer((host, port), Handler)
+    try:
+        serve_enroll_screen()
+        print(
+            f"enrollment screen on http://127.0.0.1:{ENROLL_PORT}/ (the box's own browser only)",
+            flush=True,
+        )
+    except OSError as exc:
+        # The wall itself must keep running; only the phone-enrollment screen is lost.
+        print(f"wall: enrollment screen not started: {exc}", flush=True)
     mode = "DEMO (synthetic)" if DEMO else "live sysfs"
     print(f"wall display on http://{host}:{port}/  ({mode}; power ceiling {POWER_MAX_W:.0f} W)")
     print("  no auth — keep this on the LAN only, never port-forward it.")
