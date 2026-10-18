@@ -123,9 +123,10 @@ async def add_item(
     store: a multipart form would be spooled whole onto the container's own disk first, where
     no size or free-space check could stop it."""
     name = clean_filename(filename)
-    length = int(request.headers.get("content-length") or 0)
-    if length <= 0:
+    raw_length = request.headers.get("content-length", "")
+    if not raw_length.isdigit():
         raise HTTPException(status_code=411, detail="The upload needs a Content-Length.")
+    length = int(raw_length)
     if length > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=_TOO_BIG)
     blobs = _blobs(request)
@@ -145,24 +146,28 @@ async def add_item(
 
     sha = await blobs.put_stream(chunks())
     maker, ctx = _maker(request), _ctx(owner.id)
+    # The bytes are stored before they can be judged, so anything that stops them becoming a
+    # row frees them (unless something else on the box holds the same bytes).
     try:
         kind = await asyncio.to_thread(_classify_blob, name, blobs.path_for(sha))
-    except ShareRejected as exc:
+        item = await store.add(
+            maker,
+            ctx,
+            slug=new_slug(),
+            title=title.strip() or name,
+            kind=kind.kind,
+            filename=name,
+            media_type=kind.media_type,
+            size_bytes=size,
+            blob_sha256=sha,
+            site_root=kind.site_root,
+        )
+    except BaseException as exc:
         if not await store.blob_in_use(maker, ctx, sha):
             await blobs.delete(sha)
-        raise HTTPException(status_code=422, detail=str(exc)) from None
-    item = await store.add(
-        maker,
-        ctx,
-        slug=new_slug(),
-        title=title.strip() or name,
-        kind=kind.kind,
-        filename=name,
-        media_type=kind.media_type,
-        size_bytes=size,
-        blob_sha256=sha,
-        site_root=kind.site_root,
-    )
+        if isinstance(exc, ShareRejected):
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        raise
     return _out(item, _public_base(settings))
 
 

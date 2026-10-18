@@ -29,7 +29,9 @@ per request on the free plan); upload bigger files from the LAN site.
 
 Deleting an item takes its link down at once: responses carry `Cache-Control: private`, so
 Cloudflare's edge keeps no copy. The bytes are freed unless something else on the box (a note
-attachment with identical content, another item) still holds them (`blob_refs.py`).
+attachment with identical content, another item) still holds them (`blob_refs.py`). That check and the delete are not atomic, so deleting an item while uploading the
+identical bytes elsewhere at the same moment can still lose the file; the blob store has no
+refcount yet.
 
 ## Who can do what
 

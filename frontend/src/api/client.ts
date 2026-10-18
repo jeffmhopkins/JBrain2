@@ -5920,7 +5920,7 @@ export const api = {
     return (await response.json()) as ShareItem[];
   },
 
-  /** Multipart, over XHR for the same reason as a world import: only XHR reports upload
+  /** The raw file as the request body, over XHR for the same reason as a world import: only XHR reports upload
    *  progress, and a shared video can run to gigabytes. Settles on every ending, and a
    *  cancel through `signal` rejects with an AbortError. */
   jshareUpload(

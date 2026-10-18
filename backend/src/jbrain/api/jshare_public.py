@@ -94,11 +94,15 @@ def _rate_limit(request: Request) -> None:
 
 
 @router.api_route("/s/{slug}", methods=["GET", "HEAD"])
-async def share_folder(slug: str) -> RedirectResponse:
+async def share_folder(slug: str, request: Request) -> RedirectResponse:
     """Into the item's folder, so a site's relative links resolve under it."""
     if not SLUG_RE.fullmatch(slug):
         raise _not_found()
-    return RedirectResponse(f"/s/{slug}/", status_code=308, headers=_HEADERS)
+    return RedirectResponse(f"/s/{slug}/{_query(request)}", status_code=308, headers=_HEADERS)
+
+
+def _query(request: Request) -> str:
+    return f"?{request.url.query}" if request.url.query else ""
 
 
 # HEAD too: link unfurlers, download managers and some media players ask it first.
@@ -161,9 +165,8 @@ async def _site_file_locked(
         raise
     if found.redirect_to_folder:
         zf.close()
-        query = f"?{request.url.query}" if request.url.query else ""
         return RedirectResponse(
-            f"/s/{item.slug}/{quote(path)}/{query}", status_code=308, headers=_HEADERS
+            f"/s/{item.slug}/{quote(path)}/{_query(request)}", status_code=308, headers=_HEADERS
         )
     info = found.info
     if info is None:
@@ -175,6 +178,13 @@ async def _site_file_locked(
     if request.headers.get("if-none-match") == etag:
         zf.close()
         return Response(status_code=304, headers=headers)
+    if request.method == "HEAD":
+        zf.close()
+        return Response(
+            status_code=200,
+            media_type=media,
+            headers={**headers, "Content-Length": str(info.file_size)},
+        )
     if info.file_size <= _BUFFER_LIMIT:
         try:
             body = await asyncio.to_thread(zf.read, info)

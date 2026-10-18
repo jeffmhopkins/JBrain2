@@ -324,6 +324,8 @@ def test_big_site_files_stream(
     item = _upload(client, "s.zip", _site({"index.html": b"x", "v.webm": b"0123456789"}))
     resp = client.get(f"/s/{item['slug']}/v.webm")
     assert resp.content == b"0123456789"
+    head = client.head(f"/s/{item['slug']}/v.webm")
+    assert head.headers["content-length"] == "10"
     assert resp.headers["content-type"] == "video/webm"
 
 
@@ -376,10 +378,29 @@ def test_bytes_past_the_cap_abort_the_stream_and_leave_nothing(
     assert not list((tmp_path / "blobs").glob(".incoming-*"))
 
 
-def test_an_upload_needs_a_length(blobs: FsBlobStore, table: _Table) -> None:
+def test_an_empty_file_is_fine_but_a_missing_length_is_not(
+    blobs: FsBlobStore, table: _Table
+) -> None:
     client = TestClient(_app(blobs))
-    resp = client.post("/api/jshare/items", params={"filename": "a.png"}, content=b"")
+    assert _upload(client, "empty.txt", b"")["size_bytes"] == 0
+
+    def body():  # noqa: ANN202
+        yield b"x"
+
+    resp = client.post("/api/jshare/items", params={"filename": "a.png"}, content=body())
     assert resp.status_code == 411
+
+
+def test_a_failed_insert_frees_the_stored_bytes(
+    blobs: FsBlobStore, table: _Table, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def boom(*_a: object, **_k: object) -> store.ShareItem:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(store, "add", boom)
+    client = TestClient(_app(blobs), raise_server_exceptions=False)
+    assert _post(client, "a.png", b"x").status_code == 500
+    assert blobs.usage() == (0, 0)
 
 
 def test_head_answers_without_counting(blobs: FsBlobStore, table: _Table) -> None:
@@ -398,6 +419,8 @@ def test_a_folder_redirect_keeps_its_query(blobs: FsBlobStore, table: _Table) ->
     item = _upload(client, "s.zip", _site({"index.html": b"", "docs/index.html": b""}))
     resp = client.get(f"/s/{item['slug']}/docs?tab=2", follow_redirects=False)
     assert resp.headers["location"] == f"/s/{item['slug']}/docs/?tab=2"
+    resp = client.get(f"/s/{item['slug']}?tab=2", follow_redirects=False)
+    assert resp.headers["location"] == f"/s/{item['slug']}/?tab=2"
 
 
 def test_the_public_domain_names_links_when_no_base_url_is_set(
