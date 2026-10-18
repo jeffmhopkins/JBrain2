@@ -53,6 +53,7 @@ import type {
   SearchMatch,
   SearchResult,
   ShareItem,
+  SharedLink,
   SweepTrigger,
   VideoDetail,
   WikiArticleOut,
@@ -3481,6 +3482,49 @@ const jshareItems: ShareItem[] = [
   },
 ];
 
+const jshareLinks: SharedLink[] = [
+  {
+    kind: "chat",
+    id: "cl-1",
+    title: "Weekend trip plans",
+    created_at: "2026-10-12T15:00:00Z",
+    expires_at: null,
+    last_viewed_at: "2026-10-13T09:10:00Z",
+    view_count: 4,
+    detail: "",
+  },
+  {
+    kind: "research",
+    id: "rl-1",
+    title: "Why is the sky blue?",
+    created_at: "2026-10-10T12:00:00Z",
+    expires_at: null,
+    last_viewed_at: null,
+    view_count: 0,
+    detail: "report",
+  },
+  {
+    kind: "minecraft",
+    id: "ml-1",
+    title: "castle map",
+    created_at: "2026-10-08T18:30:00Z",
+    expires_at: null,
+    last_viewed_at: "2026-10-16T19:00:00Z",
+    view_count: 12,
+    detail: "BlockyFox",
+  },
+  {
+    kind: "jcode",
+    id: "jc-1",
+    title: "for Sam",
+    created_at: "2026-10-18T08:00:00Z",
+    expires_at: "2026-10-19T08:00:00Z",
+    last_viewed_at: null,
+    view_count: null,
+    detail: "not opened yet",
+  },
+];
+
 function jshareKind(media: string, name: string): ShareItem["kind"] {
   if (media.startsWith("image/")) return "image";
   if (media.startsWith("audio/")) return "audio";
@@ -6028,6 +6072,18 @@ export const mockFetch: typeof fetch = async (input, init) => {
     };
     jshareItems.unshift(item);
     return json(item, 201);
+  }
+  if (path === "/api/jshare/links" && method === "GET") {
+    return json({ links: jshareLinks, unavailable: [] });
+  }
+  const jshareLink = path.match(/^\/api\/jshare\/links\/([^/]+)\/([^/]+)$/);
+  if (jshareLink && method === "DELETE") {
+    const i = jshareLinks.findIndex(
+      (x) => x.kind === jshareLink[1] && x.id === decodeURIComponent(jshareLink[2] ?? ""),
+    );
+    if (i < 0) return json({ detail: "no such link" }, 404);
+    jshareLinks.splice(i, 1);
+    return new Response(null, { status: 204 });
   }
   const jshareOne = path.match(/^\/api\/jshare\/items\/([^/]+)$/);
   if (jshareOne) {

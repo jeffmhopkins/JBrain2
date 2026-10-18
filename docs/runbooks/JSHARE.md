@@ -33,6 +33,26 @@ attachment with identical content, another item) still holds them (`blob_refs.py
 identical bytes elsewhere at the same moment can still lose the file; the blob store has no
 refcount yet.
 
+## Every other share link, in one place
+
+Below the files, JShare lists every other link the box has handed out that still lets someone
+in, one collapsible section per kind: **Chats**, **Research** (reports and folders),
+**Minecraft maps**, **Job results** (jlaunch), **Code sessions** (jcode) and **Intake forms**.
+Each row says when it was made, how often it has been opened where that is counted, and when it
+ends if it does; **Revoke** takes it down at once (`DELETE /api/jshare/links/<kind>/<id>`).
+
+Those links are still made where they always were (the chat's share sheet, the Research
+library, the map, the jlaunch job, the jcode session, the intake links screen). JShare cannot
+show their URLs again: each of those features keeps only a hash of its token, so a link is
+shown once, when it is made. To share one again, make a new link there.
+
+A revoke here goes through the feature's own revoke (`jshare/links.py`), so it does exactly
+what one there does: a jcode revoke also closes the recipient's terminal and rotates the
+session's preview address, and an intake revoke ends any form a recipient is filling in. If one
+kind cannot be read, the screen says so rather than showing it as empty. The calendar feed and
+external coding-agent keys are not here: they are settings and keys, managed in Settings and in
+jcode.
+
 ## Who can do what
 
 - **Upload, list, rename, delete** (`/api/jshare/items`): the owner only (`OwnerDep`). An

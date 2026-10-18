@@ -2490,6 +2490,29 @@ export interface ShareItem {
   view_count: number;
 }
 
+/** Every other live share link on the box (`/api/jshare/links`): chats, research, maps, job
+ *  results, code sessions and intake forms. No URL: those features keep only a hash of each
+ *  token, so a link is shown once when it is made and can only be revoked from here. */
+export type SharedLinkKind = "chat" | "research" | "minecraft" | "jlaunch" | "jcode" | "intake";
+
+export interface SharedLink {
+  kind: SharedLinkKind;
+  id: string;
+  title: string;
+  created_at: string;
+  expires_at: string | null;
+  last_viewed_at: string | null;
+  /** null where the feature does not count opens. */
+  view_count: number | null;
+  detail: string;
+}
+
+export interface SharedLinks {
+  links: SharedLink[];
+  /** Kinds the box could not read just now. */
+  unavailable: SharedLinkKind[];
+}
+
 /** A share's link for other people. Without a configured public URL the box cannot know its own
     scheme behind the tunnel (it sees plain HTTP), so the page's own origin names it. */
 export function shareLink(item: Pick<ShareItem, "url" | "slug">): string {
@@ -6001,6 +6024,15 @@ export const api = {
 
   async jshareDelete(id: string): Promise<void> {
     await request(`/api/jshare/items/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  async jshareLinks(): Promise<SharedLinks> {
+    const response = await request("/api/jshare/links");
+    return (await response.json()) as SharedLinks;
+  },
+
+  async jshareRevokeLink(kind: SharedLinkKind, id: string): Promise<void> {
+    await request(`/api/jshare/links/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   async minecraftRules(slot: string): Promise<MinecraftRules> {

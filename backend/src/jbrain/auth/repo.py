@@ -474,6 +474,42 @@ class SqlAuthRepo:
             ).scalars()
             return [_capability_token(row) for row in rows]
 
+    async def list_all_jcode_shares(self) -> list[tuple[CapabilityToken, str]]:
+        """Every live share link across all sessions, each with its session id, newest
+        first (JShare's all-links list). Expired and revoked links grant nothing, so they
+        are left out."""
+        async with scoped_session(self._maker, _LOGIN) as session:
+            rows = (
+                await session.execute(
+                    select(Principal)
+                    .where(
+                        Principal.kind == "jcode_share_link",
+                        Principal.revoked_at.is_(None),
+                        or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
+                    )
+                    .order_by(Principal.created_at.desc())
+                )
+            ).scalars()
+            return [(_capability_token(row), row.jcode_session_id or "") for row in rows]
+
+    async def jcode_share_session(self, share_id: str) -> str | None:
+        """The session a live share link belongs to, or None."""
+        try:
+            pid = uuid.UUID(share_id)
+        except ValueError:
+            return None
+        async with scoped_session(self._maker, _LOGIN) as session:
+            row = (
+                await session.execute(
+                    select(Principal.jcode_session_id).where(
+                        Principal.id == pid,
+                        Principal.kind == "jcode_share_link",
+                        Principal.revoked_at.is_(None),
+                    )
+                )
+            ).scalar_one_or_none()
+            return row
+
     async def revoke_jcode_share(self, share_id: str, session_id: str) -> bool:
         """Revoke a share link — scoped to its session, so the owner can't revoke a
         share of a session they didn't name (defence in depth). No-op (False) on an

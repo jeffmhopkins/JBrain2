@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, type ShareItem } from "../api/client";
+import { ApiError, type ShareItem, type SharedLink } from "../api/client";
 import { type JShareDeps, JShareScreen, fmtSize } from "./JShareScreen";
 
 function item(over: Partial<ShareItem> = {}): ShareItem {
@@ -28,6 +28,8 @@ function deps(over: Partial<JShareDeps> = {}): JShareDeps {
     ),
     rename: vi.fn(async (id: string, title: string) => item({ id, title })),
     remove: vi.fn(async () => {}),
+    links: vi.fn(async () => ({ links: [], unavailable: [] })),
+    revokeLink: vi.fn(async () => {}),
     ...over,
   };
 }
@@ -216,6 +218,121 @@ describe("JShareScreen", () => {
     fireEvent.click(within(again).getByRole("button", { name: "Delete & unpublish" }));
     await waitFor(() => expect(d.remove).toHaveBeenCalledWith("s1"));
     await waitFor(() => expect(screen.queryByText("Lake house walkthrough")).toBeNull());
+  });
+});
+
+function link(over: Partial<SharedLink> = {}): SharedLink {
+  return {
+    kind: "chat",
+    id: "c1",
+    title: "Weekend trip plans",
+    created_at: "2026-10-12T15:00:00Z",
+    expires_at: null,
+    last_viewed_at: null,
+    view_count: 4,
+    detail: "",
+    ...over,
+  };
+}
+
+describe("JShareScreen other share links", () => {
+  it("groups every kind in its own folded section, files open", async () => {
+    render(
+      <JShareScreen
+        deps={deps({
+          links: vi.fn(async () => ({
+            links: [
+              link(),
+              link({ kind: "research", id: "r1", title: "Why is the sky blue?" }),
+              link({ kind: "chat", id: "c2", title: "Recipes" }),
+            ],
+            unavailable: [],
+          })),
+        })}
+      />,
+    );
+    expect(await screen.findByText("Lake house walkthrough")).toBeInTheDocument();
+    const chats = await screen.findByRole("button", { name: /Chats/ });
+    expect(chats).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: /Files/ })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByText("Weekend trip plans")).toBeNull();
+    // An empty kind has no section at all.
+    expect(screen.queryByRole("button", { name: /Minecraft maps/ })).toBeNull();
+
+    fireEvent.click(chats);
+    const list = screen.getByRole("list", { name: "Chats links" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(list).getByText("Weekend trip plans")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Files/ }));
+    expect(screen.queryByText("Lake house walkthrough")).toBeNull();
+  });
+
+  it("revokes a link only after a confirm, then drops it", async () => {
+    const d = deps({
+      links: vi.fn(async () => ({ links: [link()], unavailable: [] })),
+    });
+    render(<JShareScreen deps={d} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Chats/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    const dialog = await screen.findByRole("dialog", { name: "Revoke this link?" });
+    expect(dialog).toHaveTextContent(/loses access at once/);
+    expect(dialog).toHaveTextContent(/the chat's share sheet/);
+    expect(d.revokeLink).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke link" }));
+    await waitFor(() => expect(d.revokeLink).toHaveBeenCalledWith("chat", "c1"));
+    await waitFor(() => expect(screen.queryByText("Weekend trip plans")).toBeNull());
+  });
+
+  it("says which kinds could not be read rather than showing them as empty", async () => {
+    render(
+      <JShareScreen
+        deps={deps({
+          links: vi.fn(async () => ({ links: [], unavailable: ["minecraft" as const] })),
+        })}
+      />,
+    );
+    expect(await screen.findByText(/couldn't read minecraft maps links/)).toBeInTheDocument();
+  });
+
+  it("a revoke that fails says so and keeps the link", async () => {
+    render(
+      <JShareScreen
+        deps={deps({
+          links: vi.fn(async () => ({ links: [link()], unavailable: [] })),
+          revokeLink: vi.fn(async () => {
+            throw new ApiError(500, "the box is busy");
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Chats/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke link" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("the box is busy");
+    expect(screen.getByText("Weekend trip plans")).toBeInTheDocument();
+  });
+
+  it("a link already revoked elsewhere just drops", async () => {
+    render(
+      <JShareScreen
+        deps={deps({
+          links: vi.fn(async () => ({ links: [link()], unavailable: [] })),
+          revokeLink: vi.fn(async () => {
+            throw new ApiError(404, "no such link");
+          }),
+        })}
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Chats/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    fireEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Revoke link" }),
+    );
+    await waitFor(() => expect(screen.queryByText("Weekend trip plans")).toBeNull());
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 
