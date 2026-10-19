@@ -251,6 +251,22 @@ class FakeAuthRepo:
             if p.kind == "jcode_share_link" and p.jcode_session_id == session_id and not p.revoked
         ]
 
+    async def list_all_jcode_shares(self) -> list[tuple[CapabilityToken, str]]:
+        now = datetime.now(UTC)
+        return [
+            (_capability(p), p.jcode_session_id or "")
+            for p in self.principals
+            if p.kind == "jcode_share_link"
+            and not p.revoked
+            and (p.expires_at is None or p.expires_at > now)
+        ]
+
+    async def jcode_share_session(self, share_id: str) -> str | None:
+        for p in self.principals:
+            if p.id == share_id and p.kind == "jcode_share_link" and not p.revoked:
+                return p.jcode_session_id
+        return None
+
     async def revoke_jcode_share(self, share_id: str, session_id: str) -> bool:
         for p in self.principals:
             if (

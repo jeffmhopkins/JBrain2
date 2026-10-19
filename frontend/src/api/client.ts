@@ -2471,6 +2471,54 @@ export interface ListItemOut {
   checked: boolean;
 }
 
+/** One JShare upload (`/api/jshare/items`). `url` is the full public link the box minted —
+ *  copied and opened as given, never rebuilt here, since only the box knows its public host. */
+export type ShareKind = "image" | "audio" | "video" | "html" | "site" | "file";
+
+export interface ShareItem {
+  id: string;
+  slug: string;
+  title: string;
+  kind: ShareKind;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+  /** The box's public link, or "" when the box has no public URL configured. */
+  url: string;
+  created_at: string;
+  last_viewed_at: string | null;
+  view_count: number;
+}
+
+/** Every other live share link on the box (`/api/jshare/links`): chats, research, maps, job
+ *  results, code sessions and intake forms. No URL: those features keep only a hash of each
+ *  token, so a link is shown once when it is made and can only be revoked from here. */
+export type SharedLinkKind = "chat" | "research" | "minecraft" | "jlaunch" | "jcode" | "intake";
+
+export interface SharedLink {
+  kind: SharedLinkKind;
+  id: string;
+  title: string;
+  created_at: string;
+  expires_at: string | null;
+  last_viewed_at: string | null;
+  /** null where the feature does not count opens. */
+  view_count: number | null;
+  detail: string;
+}
+
+export interface SharedLinks {
+  links: SharedLink[];
+  /** Kinds the box could not read just now. */
+  unavailable: SharedLinkKind[];
+}
+
+/** A share's link for other people. Without a configured public URL the box cannot know its own
+    scheme behind the tunnel (it sees plain HTTP), so the page's own origin names it. */
+export function shareLink(item: Pick<ShareItem, "url" | "slug">): string {
+  return item.url || `${window.location.origin}/s/${item.slug}/`;
+}
+
 export interface ListOut {
   id: string;
   title: string;
@@ -3584,19 +3632,20 @@ export function minecraftBackupFileUrl(name: string): string {
 
 /** dev:mock has no XHR backend, so the upload's progress is paced here and the answer
  *  comes from the mock transport like any other request. */
-async function mockUpload(
+async function mockUpload<T>(
   path: string,
   file: Blob,
   onProgress: (sent: number, total: number) => void,
   signal?: AbortSignal,
-): Promise<MinecraftSlot | MinecraftAccepted> {
+  body: BodyInit = file,
+): Promise<T> {
   for (let i = 1; i <= 10; i++) {
     await new Promise((r) => setTimeout(r, 250));
     if (signal?.aborted) throw new DOMException("The upload was cancelled.", "AbortError");
     onProgress(Math.round((file.size * i) / 10), file.size);
   }
-  const response = await request(path, { method: "POST", body: file });
-  return (await response.json()) as MinecraftSlot | MinecraftAccepted;
+  const response = await request(path, { method: "POST", body });
+  return (await response.json()) as T;
 }
 
 export function attachmentUrl(id: string): string {
@@ -5831,7 +5880,8 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<MinecraftSlot | MinecraftAccepted> {
     const path = `/api/minecraft/worlds/${slot}/import?name=${encodeURIComponent(name)}`;
-    if (MOCK_MODE) return mockUpload(path, file, onProgress, signal);
+    if (MOCK_MODE)
+      return mockUpload<MinecraftSlot | MinecraftAccepted>(path, file, onProgress, signal);
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       let settled = false;
@@ -5886,6 +5936,103 @@ export const api = {
       signal?.addEventListener("abort", () => xhr.abort());
       xhr.send(file);
     });
+  },
+
+  async jshareItems(): Promise<ShareItem[]> {
+    const response = await request("/api/jshare/items");
+    return (await response.json()) as ShareItem[];
+  },
+
+  /** The raw file as the request body, over XHR for the same reason as a world import: only XHR reports upload
+   *  progress, and a shared video can run to gigabytes. Settles on every ending, and a
+   *  cancel through `signal` rejects with an AbortError. */
+  jshareUpload(
+    file: File,
+    title: string,
+    onProgress: (sent: number, total: number) => void,
+    signal?: AbortSignal,
+  ): Promise<ShareItem> {
+    // The raw file is the body, so the box streams it straight to storage rather than parsing
+    // a multipart form onto its own disk first.
+    const query = new URLSearchParams({ filename: file.name || "file" });
+    if (title.trim()) query.set("title", title.trim());
+    const path = `/api/jshare/items?${query}`;
+    if (MOCK_MODE) return mockUpload<ShareItem>(path, file, onProgress, signal);
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let settled = false;
+      const fail = (err: Error) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      };
+      xhr.open("POST", path);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = (event) => {
+        onProgress(event.loaded, event.lengthComputable ? event.total : file.size);
+      };
+      xhr.onload = () => {
+        let body: unknown = null;
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          // not JSON — the status line speaks for it below
+        }
+        const detail = (body as { detail?: unknown } | null)?.detail;
+        const said = typeof detail === "string" && detail.trim() ? detail : null;
+        if (xhr.status === 401) {
+          unauthorizedHandler?.();
+          fail(new ApiError(401, "Not authenticated"));
+        } else if (xhr.status === 413) {
+          // Two different ceilings answer 413: the box's own 4 GB cap, and Cloudflare's tunnel,
+          // which turns down bodies over 100 MB with an HTML page before the box sees them.
+          fail(
+            new ApiError(
+              413,
+              said ?? "Too big to send from here — over 100 MB only uploads at home on the Wi-Fi.",
+            ),
+          );
+        } else if (xhr.status === 507) {
+          fail(new ApiError(507, "The box is out of room — free some space and try again."));
+        } else if (xhr.status < 200 || xhr.status >= 300) {
+          fail(new ApiError(xhr.status, said ?? `Request failed: ${xhr.status}`));
+        } else if (!settled) {
+          settled = true;
+          resolve(body as ShareItem);
+        }
+      };
+      xhr.onerror = () => fail(new ApiError(0, "the connection dropped during the upload"));
+      xhr.ontimeout = () => fail(new ApiError(0, "the upload timed out"));
+      xhr.onabort = () => fail(new DOMException("The upload was cancelled.", "AbortError"));
+      xhr.onloadend = () => fail(new ApiError(0, "the upload ended without an answer"));
+      if (signal?.aborted) {
+        fail(new DOMException("The upload was cancelled.", "AbortError"));
+        return;
+      }
+      signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+      xhr.send(file);
+    });
+  },
+
+  async jshareRename(id: string, title: string): Promise<ShareItem> {
+    const response = await request(
+      `/api/jshare/items/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { title }),
+    );
+    return (await response.json()) as ShareItem;
+  },
+
+  async jshareDelete(id: string): Promise<void> {
+    await request(`/api/jshare/items/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  async jshareLinks(): Promise<SharedLinks> {
+    const response = await request("/api/jshare/links");
+    return (await response.json()) as SharedLinks;
+  },
+
+  async jshareRevokeLink(kind: SharedLinkKind, id: string): Promise<void> {
+    await request(`/api/jshare/links/${kind}/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   async minecraftRules(slot: string): Promise<MinecraftRules> {

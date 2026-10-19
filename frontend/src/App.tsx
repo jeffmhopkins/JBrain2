@@ -23,6 +23,7 @@ import { GraphScreen } from "./screens/GraphScreen";
 import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
 import { ImageScreen } from "./screens/ImageScreen";
 import { IntakeLinksScreen } from "./screens/IntakeLinksScreen";
+import { JShareScreen } from "./screens/JShareScreen";
 import { JcodeScreen } from "./screens/JcodeScreen";
 import { JlaunchScreen } from "./screens/JlaunchScreen";
 import { JmoltScreen } from "./screens/JmoltScreen";
@@ -86,6 +87,7 @@ type Card =
   | "jlaunch"
   | "jmolt"
   | "minecraft"
+  | "jshare"
   | "vitals";
 
 // Automations, Tasks, Image, Radio and jcode bring their own full-screen overlay (own
@@ -124,6 +126,7 @@ const SCREEN_TITLES: Record<
   jmolt: "jmolt",
   minecraft: "Minecraft",
   cast: "Cast",
+  jshare: "JShare",
 };
 
 const CARD_EXIT_MS = 150;
@@ -748,6 +751,8 @@ export function App() {
             {card === "location" && <LocationScreen />}
             {/* jmolt's own screen: account, review queue, nightly schedule. */}
             {card === "jmolt" && <JmoltScreen />}
+            {/* Public share links for uploaded files. */}
+            {card === "jshare" && <JShareScreen />}
           </div>
         )}
 

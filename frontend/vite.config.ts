@@ -43,7 +43,12 @@ export default defineConfig({
       registerType: "autoUpdate",
       // The share target's POST handler (public/panel-share-sw.js): Workbox routes only GETs,
       // and a shared photo arrives as a multipart POST the service worker must answer itself.
-      workbox: { importScripts: ["/panel-share-sw.js"] },
+      workbox: {
+        importScripts: ["/panel-share-sw.js"],
+        // A JShare link (/s/<slug>/…) is someone's shared file or site, served by the box. The
+        // SPA fallback would answer it with this app on the owner's own installed PWA.
+        navigateFallbackDenylist: [/^\/s\//],
+      },
       manifest: {
         name: "JBrain",
         short_name: "JBrain",

@@ -20,7 +20,7 @@ from datetime import datetime  # noqa: TC003 - Pydantic needs the runtime symbol
 from typing import cast
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from jbrain.api.client_ip import device_key
@@ -28,6 +28,7 @@ from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.api.session_cookie import session_token, set_session_cookie
 from jbrain.api.ws_reauth import kick
 from jbrain.auth import service
+from jbrain.auth.service import AuthRepo
 from jbrain.jcode.client import JcodeApi, JcodeError
 
 router = APIRouter()
@@ -136,18 +137,27 @@ async def revoke_share(
         share_id = str(uuid.UUID(share_id))
     except ValueError:
         raise HTTPException(status_code=404, detail="unknown share link") from None
-    if not await repo.revoke_jcode_share(share_id, sid):
+    if not await revoke_link(request.app, repo, sid, share_id):
         raise HTTPException(status_code=404, detail="unknown share link")
-    kick(request.app, share_id)
-    client = cast("JcodeApi | None", getattr(request.app.state, "jcode_client", None))
+
+
+async def revoke_link(app: FastAPI, repo: AuthRepo, sid: str, share_id: str) -> bool:
+    """Revoke one share link and everything it opened: the row, the recipient's sockets, and
+    the session's preview slug. Shared with JShare's all-links list, so a revoke there does
+    exactly what one here does. False when no live link of `sid` has that id."""
+    if not await repo.revoke_jcode_share(share_id, sid):
+        return False
+    kick(app, share_id)
+    client = cast("JcodeApi | None", getattr(app.state, "jcode_client", None))
     if client is None:
-        return
+        return True
     try:
         await client.preview_rotate(sid)
     except JcodeError as exc:
         # The revoke itself stands; the failure is logged for the debug console. (A session
         # the control server already dropped has no slug left to rotate.)
         log.warning("jcode.share_revoke_rotate_failed", sid=sid, error=str(exc))
+    return True
 
 
 @router.post("/jcode/share/redeem")

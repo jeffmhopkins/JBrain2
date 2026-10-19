@@ -131,6 +131,7 @@ BLOB_REFERENCES: tuple[BlobRef, ...] = (
     ),
     BlobRef("app.cast_notice", "frame_sha256 = :sha", "a notice's frame, as the TVs were cast it"),
     BlobRef("app.wiki_articles", "image_sha = :sha", "a wiki article's portrait"),
+    BlobRef("app.jshare_items", "blob_sha256 = :sha", "a JShare item"),
 )
 
 

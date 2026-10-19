@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # API same-origin); only off-box clients use it. Empty = fall back to the
     # request origin (dev / single-host installs).
     public_base_url: str = ""
+    # The box's public domain (JBRAIN_DOMAIN, the name the installer asked for). A fallback
+    # for links meant for other people when `public_base_url` is unset: in tunnel mode the
+    # api sees plain HTTP on that name and could not tell the visitor's scheme from a request.
+    public_domain: str = ""
     # The Origins allowed to open the live WebSocket (CSWSH defense, plan B8): a
     # comma-separated allow-list. A browser always sends `Origin` on the WS
     # handshake, so a cross-site page on a victim's machine is rejected. Empty = a

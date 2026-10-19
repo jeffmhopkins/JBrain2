@@ -1,6 +1,6 @@
 # Runbooks — how to operate the box
 
-> **Status:** Living · **Last verified:** 2026-10-10
+> **Status:** Living · **Last verified:** 2026-10-18
 
 Operational runbooks: setup, access, and recovery procedures for a running
 JBrain2 box. `Living` docs (per `../DOC_LIFECYCLE.md`) — kept true as the ops
@@ -18,3 +18,4 @@ surface changes.
 | `DEBUG_ACCESS_SESSION_GUIDE.md` | Assistant-facing runbook for the debug console: requesting a token and driving the box via `scripts/debug-connect.sh`. |
 | `MINECRAFT_HOME_TEST.md` | The at-home Minecraft checks in one sitting: the test kit (custom items, recipe, a resource pack the server pushes on join), the eight checks on Windows and Xbox, and how the assistant reads each answer off the server log. |
 | `EXTERNAL_VIDEO_WATCH.md` | Auto-ingesting a YouTube channel's new videos into the search corpus via a recurring Jerv Task (`check_channel` → `analyze_stream` → `search_external_video`). |
+| `JSHARE.md` | Publishing pictures, audio, video, HTML and zipped sites at their own public links from the PWA, and why shared code can't reach the app. |
