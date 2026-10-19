@@ -355,3 +355,38 @@ async def test_a_pending_phones_session_does_not_authenticate(
     assert await auth_service.authenticate(auth, token, device=phone) is None
     assert await SqlOwnerDeviceRepo(maker).confirm(OWNER, device.id)
     assert await auth_service.authenticate(auth, token, device=phone) is not None
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["label = 'mine'", "key_hash = repeat('c', 64)", "public_key = '\\x01'", "revoked_at = now()"],
+)
+async def test_the_login_context_writes_only_when_a_phone_was_seen(
+    maker: async_sessionmaker, phone: str, change: str
+) -> None:
+    device = await SqlOwnerDeviceRepo(maker).create("Pixel", phone, b"pk")
+    assert await SqlOwnerDeviceRepo(maker).confirm(OWNER, device.id)
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        async with scoped_session(maker, LOGIN) as s:
+            await s.execute(
+                text(f"UPDATE app.owner_devices SET {change} WHERE key_hash = :k"), {"k": phone}
+            )
+            await s.commit()
+
+
+@pytest.mark.parametrize("ctx", [LOGIN, OWNER], ids=["login", "owner"])
+async def test_no_one_unrevokes_a_phone(
+    maker: async_sessionmaker, ctx: SessionContext, phone: str
+) -> None:
+    phones = SqlOwnerDeviceRepo(maker)
+    device = await phones.create("Pixel", phone, b"pk")
+    assert await phones.confirm(OWNER, device.id)
+    assert await phones.revoke(OWNER, device.id)
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        async with scoped_session(maker, ctx) as s:
+            await s.execute(
+                text("UPDATE app.owner_devices SET revoked_at = NULL WHERE key_hash = :k"),
+                {"k": phone},
+            )
+            await s.commit()
+    assert await phones.touch_active(phone, "owner-tunnel") is None

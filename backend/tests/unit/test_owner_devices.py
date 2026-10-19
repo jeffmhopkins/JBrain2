@@ -669,3 +669,19 @@ def test_only_the_phone_mint_sets_a_session_over_the_owner_site(
         assert sent.bodies() == 1
 
     asyncio.run(go())
+
+
+def test_a_socket_cannot_set_a_session_over_the_owner_site() -> None:
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "websocket.accept", "headers": [(b"set-cookie", b"jbrain_session=t")]})
+
+    async def go() -> None:
+        phones = FakeOwnerDeviceRepo()
+        phones.add(PHONE)
+        guard, scope, sent = _held(phones, interval=3600, inner=inner, kind="websocket")
+        scope["app"].state.settings = Settings(secure_cookies=False, database_url=_DB)
+        with client_ip.pinned(proxy=(PROXY,)):
+            await asyncio.wait_for(_run(guard, scope, sent), 2)
+        assert [m["type"] for m in sent.messages] == ["websocket.close"]
+
+    asyncio.run(go())

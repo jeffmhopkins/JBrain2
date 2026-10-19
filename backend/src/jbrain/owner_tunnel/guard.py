@@ -134,7 +134,7 @@ class OwnerDeviceGuard:
             if swallowed:
                 return
             if (
-                message["type"] == "http.response.start"
+                message["type"] in ("http.response.start", "websocket.accept")
                 and not mints
                 and _sets_session(message, app)
             ):
