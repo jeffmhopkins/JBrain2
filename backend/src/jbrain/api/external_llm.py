@@ -28,8 +28,10 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
+from jbrain import public_base
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.auth import service
+from jbrain.config import Settings
 from jbrain.llm import local_catalog
 from jbrain.llm.kv_pool_guard import KvPoolBusyError
 from jbrain.llm.openai_slot_fit import (
@@ -90,11 +92,11 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt is not None else None
 
 
-def _public_base(request: Request, settings: object) -> str:
+async def _public_base(request: Request, settings: Settings) -> str:
     """The internet-reachable base the remote client points at: the configured public
     base URL, else the origin this request arrived on (LAN/dev)."""
-    configured = getattr(settings, "public_base_url", "") or ""
-    return configured.rstrip("/") or str(request.base_url).rstrip("/")
+    configured = await public_base.for_request(request, settings)
+    return configured or str(request.base_url).rstrip("/")
 
 
 @router.post("/jcode/external", status_code=201)
@@ -108,7 +110,7 @@ async def mint_external(
         label=record.label,
         expires_at=_iso(record.expires_at),
         token=key,
-        url=f"{_public_base(request, settings)}/api/ext/llm/{record.id}",
+        url=f"{await _public_base(request, settings)}/api/ext/llm/{record.id}",
     )
 
 

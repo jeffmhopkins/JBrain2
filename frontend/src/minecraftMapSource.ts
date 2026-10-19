@@ -21,6 +21,7 @@ import {
   minecraftTileUrl,
 } from "./api/client";
 import type { BaseLayer } from "./minecraftMap";
+import { publicOrigin } from "./publicOrigin";
 
 export interface MapSource {
   info(slot: string, dim: MinecraftDim): Promise<MinecraftMapInfo>;
@@ -89,7 +90,7 @@ const SHARE_PATH = /^\/mc\/s\/([A-Za-z0-9_-]{1,128})\/?$/;
 
 /** The public link for a map share token. */
 export function mcShareUrl(token: string): string {
-  return `${window.location.origin}/mc/s/${encodeURIComponent(token)}`;
+  return `${publicOrigin()}/mc/s/${encodeURIComponent(token)}`;
 }
 
 /** The share token if `pathname` is a map-share path (/mc/s/{token}), else null. */

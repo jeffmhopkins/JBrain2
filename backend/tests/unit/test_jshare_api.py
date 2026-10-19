@@ -25,6 +25,7 @@ from jbrain.jshare import store
 from jbrain.jshare.content import SLUG_RE
 from jbrain.locations.ratelimit import TokenBucket
 from jbrain.storage import FsBlobStore
+from tests.unit.fakes import FakeSettingsStore
 
 OWNER = PrincipalInfo(id="00000000-0000-0000-0000-000000000001", kind="owner", label="owner")
 NON_OWNER = PrincipalInfo(id="cap1", kind="capability_token", label="token")
@@ -492,3 +493,13 @@ class TestTheAllLinksList:
         assert client.delete("/api/jshare/links/research/live").status_code == 204
         assert client.delete("/api/jshare/links/research/gone").status_code == 404
         assert seen == [("research", "live"), ("research", "gone")]
+
+
+def test_the_owners_public_url_names_the_link(blobs: FsBlobStore, table: _Table) -> None:
+    # Set in Settings → Devices (OWNER_TUNNEL_PLAN wave A5c), it wins over the env's.
+    app = _app(blobs, public_base_url="https://old.example.com")
+    app.state.settings_store = FakeSettingsStore(
+        values={"public_base_url": "https://brain.example.net"}
+    )
+    item = _upload(TestClient(app), "a.png", b"png")
+    assert item["url"] == f"https://brain.example.net/s/{item['slug']}/"

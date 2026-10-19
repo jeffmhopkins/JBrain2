@@ -848,3 +848,11 @@ export const BanIcon = (p: IconProps) => (
     <path d="m4.9 4.9 14.2 14.2" />
   </Icon>
 );
+
+// A handset for the Devices settings tile: the owner's phones are the devices it lists.
+export const SmartphoneIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="6" y="2" width="12" height="20" rx="2" />
+    <path d="M11 18h2" />
+  </Icon>
+);

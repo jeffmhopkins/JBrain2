@@ -23,6 +23,7 @@ import type {
   NewSessionInput,
 } from "../jcode/types";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
+import { publicOrigin } from "../publicOrigin";
 import { ExternalSessionScreen } from "./ExternalSessionScreen";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
 
@@ -96,7 +97,8 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
   }
 
   function endpointUrl(id: string): string {
-    return `${window.location.origin}/api/ext/llm/${id}`;
+    // Handed to a client outside the app, so never the phone's private origin.
+    return `${publicOrigin()}/api/ext/llm/${id}`;
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load the index once on mount; refresh is also invoked on session-close.

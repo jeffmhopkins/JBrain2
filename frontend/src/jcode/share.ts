@@ -2,11 +2,13 @@
 // location; tests pass strings). The secret rides the URL FRAGMENT (#t=…), which the
 // browser never sends to the server — only the same-origin redeem POST carries it.
 
+import { publicOrigin } from "../publicOrigin";
+
 const SHARE_PATH = /^\/jcode\/s\/([A-Za-z0-9_-]{1,64})\/?$/;
 
 /** The copy-link for a session + its share secret. */
 export function shareUrl(sid: string, token: string): string {
-  return `${window.location.origin}/jcode/s/${encodeURIComponent(sid)}#t=${encodeURIComponent(token)}`;
+  return `${publicOrigin()}/jcode/s/${encodeURIComponent(sid)}#t=${encodeURIComponent(token)}`;
 }
 
 /** The session id if `pathname` is a share-link path (/jcode/s/{sid}), else null —

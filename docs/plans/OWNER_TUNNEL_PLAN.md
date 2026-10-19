@@ -356,10 +356,13 @@ cookie).
   **A5a the owner's confirm ✅** (a new phone stays pending until the owner confirms it, §3.5;
   and the owner site signs in only through `/api/owner-devices/session`: the guard refuses any
   other response there that sets a session cookie, the owner-key login and the redeem routes
-  included), **A5b Settings → Devices** (the page in
-  `docs/mocks/owner-devices/b-devices-page.html`, chosen 2026-10-19 over an Access card and a
-  guided sheet; arm, confirm, rename, revoke, the home subnet) and **A5c the public base URL**
-  (a setting the owner changes from home, the link builders that use it). Still owed from
+  included), **A5b Settings → Devices ✅** (`frontend/src/screens/DevicesSettings.tsx`, the
+  page in `docs/mocks/owner-devices/b-devices-page.html`, chosen 2026-10-19 over an Access card
+  and a guided sheet; arm, confirm, rename, revoke, the home subnet) and **A5c the public base
+  URL ✅** (`jbrain/public_base.py`: the owner's setting at `/api/owner-devices/public-url`,
+  changed from home only and checked to be an https origin, with `JBRAIN_PUBLIC_BASE_URL` the
+  fallback; the Gmail redirect, debug-token payload, external-LLM URL, JShare links and the
+  QR use it, and the PWA's share builders use `publicOrigin()`). Still owed from
   §3.1: the two key volumes in the box backup and restore.
 - **B — box: the tunnel gateway. ◻️** §3.3 with nonce auth, drain and keepalive, the kick
   registry, limits, debug-API counters, a throughput check. Tests with a fake device key

@@ -15,6 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from jbrain import public_base
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
 from jbrain.auth import service
 from jbrain.config import Settings
@@ -39,14 +40,15 @@ def build_debug_payload(server_base: str, key: str) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def _public_base(request: Request, settings: Settings) -> str:
+async def _public_base(request: Request, settings: Settings) -> str:
     """The base URL to embed in the payload, for the EXTERNAL clients that use it
     (an assistant over the internet) — the LAN-only console ignores it and calls
     same-origin. Prefer the explicit public host so a token minted from the LAN PWA
     still points off-box clients at the public tunnel; then dashboard_url; else fall
     back to the origin the owner's browser actually hit."""
-    if settings.public_base_url:
-        return settings.public_base_url.rstrip("/")
+    configured = await public_base.for_request(request, settings)
+    if configured:
+        return configured
     if settings.dashboard_url:
         return settings.dashboard_url.rstrip("/")
     origin = request.headers.get("origin")
@@ -92,7 +94,7 @@ async def mint_token(
     if not settings.debug_access_enabled:
         raise HTTPException(status_code=409, detail="debug access is not enabled")
     key, record = await service.mint_capability(repo, body.label, body.ttl_hours)
-    payload = build_debug_payload(_public_base(request, settings), key)
+    payload = build_debug_payload(await _public_base(request, settings), key)
     return MintOut(id=record.id, label=record.label, expires_at=record.expires_at, payload=payload)
 
 

@@ -3,11 +3,13 @@
 // fragment, no redeem. The shell-less ChatShareApp mounts on this path and reads the chat
 // straight from the public /api/chat-share endpoint.
 
+import { publicOrigin } from "../publicOrigin";
+
 const SHARE_PATH = /^\/chat\/s\/([A-Za-z0-9_-]{1,128})\/?$/;
 
 /** The public copy-link for a chat share token. */
 export function chatShareUrl(token: string): string {
-  return `${window.location.origin}/chat/s/${encodeURIComponent(token)}`;
+  return `${publicOrigin()}/chat/s/${encodeURIComponent(token)}`;
 }
 
 /** The share token if `pathname` is a chat-share path (/chat/s/{token}), else null. */

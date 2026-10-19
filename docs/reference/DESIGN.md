@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-15
+> **Status:** Living · **Last verified:** 2026-10-19
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1710,7 +1710,7 @@ arrange the grid themselves):
   source of truth — the native side only routes the button.
 - Tiles for phases not yet built render disabled with their phase label.
 - **Settings is a launcher of its own.** The Settings card opens on the same 3-column
-  tile grid (Appearance, Voice, Capture, Radio, Web, Connections, Access) instead of one
+  tile grid (Appearance, Voice, Capture, Radio, Web, Connections, Access, Devices) instead of one
   long scroll; a tile pushes that category's cards as a stacked layer with its own back
   bar. Back, the down-swipe at scroll-top and the platform back gesture each climb one
   level to the grid (the page registers in the shared back-layer stack, like a sheet).
@@ -1718,6 +1718,26 @@ arrange the grid themselves):
   drops to two columns only if titles stop fitting. **Ops** is built the same way, under
   its always-open vitals, Update and graphs (see "Ops screen"); both push their pages with
   `components/PageLayer.tsx`.
+
+### Settings → Devices — the owner's phones (owner, 2026-10-19 — binding mock: `docs/mocks/owner-devices/b-devices-page.html`, variant B; rivals A "access card" and C "guided sheet" retained in `docs/mocks/owner-devices/README.md`; plan `docs/plans/OWNER_TUNNEL_PLAN.md` §3.5, wave A5)
+
+The one exception to "a new setting joins its category": the owner's phones get their own
+**Devices** tile, because a phone waiting for the owner is a security step and a banner at the
+top of its own page is the hardest place to miss it (`screens/DevicesSettings.tsx`).
+
+- **A waiting phone is an amber banner** above everything else: "*label* wants in", the
+  phone's key as word chips (`--font-mono`, `--ok-text`), **Confirm** (green tint) and
+  **Not mine** (`btn-destructive`, revokes it). It can't reach the box until confirmed.
+- **Add a phone** arms the box's screen for two minutes; the card swaps to a countdown ring
+  with Cancel (local only: the owner side has no close). A refusal shows the box's own words
+  inline. The list polls every 2 s while armed or while a phone waits, never otherwise, so a
+  phone that just scanned appears as its banner and the card returns to idle.
+- **Your phones · N** lists confirmed phones with a *connected* pill and "last seen … · via
+  …", inline **Rename** and a two-tap **Revoke** (the debug tokens' *Tap to confirm*);
+  revoked ones are one meta line, not rows.
+- **Links you share** and **Home network** are a card each, an input and Save. Both change
+  only from the home network; a 403 says so in those words, a 422 shows the box's detail.
+  The saved address is what every link that leaves the app starts with (`publicOrigin.ts`).
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
 

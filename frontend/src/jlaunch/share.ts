@@ -3,11 +3,13 @@
 // plain token-in-URL) — no fragment, no redeem. The shell-less JlaunchShareApp mounts on
 // this path and fetches the run from the public /api/jlaunch-share endpoint.
 
+import { publicOrigin } from "../publicOrigin";
+
 const SHARE_PATH = /^\/results\/([A-Za-z0-9_-]{1,128})\/?$/;
 
 /** The public copy-link for a results-share token. */
 export function jlaunchShareUrl(token: string): string {
-  return `${window.location.origin}/results/${encodeURIComponent(token)}`;
+  return `${publicOrigin()}/results/${encodeURIComponent(token)}`;
 }
 
 /** The public download URL for a shared run's artifact. */

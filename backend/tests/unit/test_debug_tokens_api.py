@@ -13,7 +13,7 @@ from jbrain.api.debug_tokens import build_debug_payload
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.main import create_app
-from tests.unit.fakes import FakeAuthRepo
+from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
 
@@ -128,3 +128,38 @@ def test_suspend_resume_require_owner() -> None:
         app.state.auth_repo = FakeAuthRepo()
         assert anon.post("/api/settings/debug-tokens/x/suspend").status_code == 401
         assert anon.post("/api/settings/debug-tokens/x/resume").status_code == 401
+
+
+def test_the_owners_public_url_is_in_the_payload() -> None:
+    # Set in Settings → Devices (OWNER_TUNNEL_PLAN wave A5c), it wins over the env's.
+    app = create_app(
+        _settings(debug_access_enabled=True, public_base_url="https://old.example.com")
+    )
+    repo = FakeAuthRepo()
+    with TestClient(app) as client:
+        app.state.auth_repo = repo
+        app.state.settings_store = FakeSettingsStore(
+            values={"public_base_url": "https://brain.example.net"}
+        )
+        key = asyncio.run(auth_service.rotate_owner_key(repo))
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        minted = client.post("/api/settings/debug-tokens", json={"label": "x"})
+        assert _decode(minted.json()["payload"])["u"] == "https://brain.example.net"
+
+
+def test_a_failed_read_of_the_setting_falls_back_to_the_env() -> None:
+    class _Down(FakeSettingsStore):
+        async def get(self, ctx: object, key: str, default: object = None) -> object:
+            raise RuntimeError("db down")
+
+    app = create_app(
+        _settings(debug_access_enabled=True, public_base_url="https://old.example.com/")
+    )
+    repo = FakeAuthRepo()
+    with TestClient(app) as client:
+        app.state.auth_repo = repo
+        app.state.settings_store = _Down()
+        key = asyncio.run(auth_service.rotate_owner_key(repo))
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        minted = client.post("/api/settings/debug-tokens", json={"label": "x"})
+        assert _decode(minted.json()["payload"])["u"] == "https://old.example.com"

@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
+from jbrain import public_base
 from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
@@ -70,21 +71,22 @@ def _request_scheme(request: Request) -> str:
     return request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
 
 
-def _public_base(request: Request, settings: Settings) -> str:
+async def _public_base(request: Request, settings: Settings) -> str:
     """The box's public origin: the explicit `public_base_url` when set (preferred, so
     the redirect_uri is guaranteed to match the Google client), else derived from the
     request the owner's browser actually hit — so a tunneled box works after a plain
     redeploy with no env editing. Mirrors api/debug_tokens._public_base and pairing."""
-    if settings.public_base_url:
-        return settings.public_base_url.rstrip("/")
+    configured = await public_base.for_request(request, settings)
+    if configured:
+        return configured
     host = request.headers.get("host", request.url.netloc)
     return f"{_request_scheme(request)}://{host}".rstrip("/")
 
 
-def _redirect_uri(request: Request, settings: Settings) -> str:
+async def _redirect_uri(request: Request, settings: Settings) -> str:
     """The callback URL Google redirects to — must match the Web client's registered
     Authorized redirect URI exactly (so connect from the public hostname)."""
-    return f"{_public_base(request, settings)}/api/settings/gmail/callback"
+    return f"{await _public_base(request, settings)}/api/settings/gmail/callback"
 
 
 class GmailStatusOut(BaseModel):
@@ -123,7 +125,7 @@ async def _status(request: Request, settings: Settings) -> GmailStatusOut:
         refresh_token_set=bool(rt),
         connected=bool(rt),
         client_id=cid,
-        redirect_uri=_redirect_uri(request, settings),
+        redirect_uri=await _redirect_uri(request, settings),
     )
 
 
@@ -193,7 +195,7 @@ async def gmail_connect(
     params = urlencode(
         {
             "client_id": client_id,
-            "redirect_uri": _redirect_uri(request, settings),
+            "redirect_uri": await _redirect_uri(request, settings),
             "response_type": "code",
             "scope": _SCOPE,
             "access_type": "offline",  # ask for a refresh token
@@ -219,12 +221,12 @@ async def gmail_callback(
     ctx = ctx_for(principal)
     expected = await store.get(ctx, _STATE_KEY, "")
     await store.upsert(ctx, _STATE_KEY, "")  # single-use, cleared regardless of outcome
-    settings_url = f"{_public_base(request, settings)}/settings"
+    settings_url = f"{await _public_base(request, settings)}/settings"
     if error or not code or not state or not expected or not secrets_equal(state, expected):
         return RedirectResponse(f"{settings_url}?gmail=error")
     try:
         refresh_token = await get_gmail_provider(request).exchange_code(
-            code, _redirect_uri(request, settings)
+            code, await _redirect_uri(request, settings)
         )
     except GmailError:
         return RedirectResponse(f"{settings_url}?gmail=error")

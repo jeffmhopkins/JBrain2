@@ -25,11 +25,14 @@ import {
   MicIcon,
   RadioIcon,
   SlidersIcon,
+  SmartphoneIcon,
 } from "../components/icons";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
+import { publicOrigin } from "../publicOrigin";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
+import { DevicesSettings } from "./DevicesSettings";
 import { ReadTextScreen } from "./ReadTextScreen";
 
 // The settings grew past one scroll, so the screen opens on a launcher-style tile grid
@@ -41,7 +44,8 @@ type SettingsCategory =
   | "radio"
   | "web"
   | "connections"
-  | "access";
+  | "access"
+  | "devices";
 
 const SETTINGS_CATEGORIES: { id: SettingsCategory; title: string; icon: ReactNode }[] = [
   { id: "appearance", title: "Appearance", icon: <SlidersIcon size={24} /> },
@@ -51,6 +55,7 @@ const SETTINGS_CATEGORIES: { id: SettingsCategory; title: string; icon: ReactNod
   { id: "web", title: "Web", icon: <GlobeIcon size={24} /> },
   { id: "connections", title: "Connections", icon: <LinkIcon size={24} /> },
   { id: "access", title: "Access", icon: <LockIcon size={24} /> },
+  { id: "devices", title: "Devices", icon: <SmartphoneIcon size={24} /> },
 ];
 
 const CATEGORY_TITLE = Object.fromEntries(
@@ -475,9 +480,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   }, []);
 
   const feedUrl =
-    feed?.token != null
-      ? `${window.location.origin}/api/feed/appointments.ics?token=${feed.token}`
-      : "";
+    feed?.token != null ? `${publicOrigin()}/api/feed/appointments.ics?token=${feed.token}` : "";
 
   function generateFeed() {
     setCopied(false);
@@ -1881,6 +1884,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               </section>
             </>
           )}
+          {category === "devices" && <DevicesSettings />}
         </PageLayer>
       )}
 

@@ -717,3 +717,56 @@ def test_a_revoke_kicks_by_the_rows_own_spelling_of_the_id() -> None:
     assert _canonical(row.upper()) == row
     assert _canonical("{" + row + "}") == row
     assert _canonical("dev-0") == "dev-0"
+
+
+# --- the public base URL (A5c) -------------------------------------------------------------
+
+
+def test_the_public_url_is_set_from_the_lan_only(box: _Box) -> None:
+    owner = box.owner()
+    assert box.client.get("/api/owner-devices/public-url", headers=owner).json() == {
+        "url": "",
+        "env_url": "https://jbrain.example",
+    }
+    put = box.client.put(
+        "/api/owner-devices/public-url",
+        json={"url": " https://brain.example.net/ "},
+        headers={**owner, **_LAN},
+    )
+    assert put.json() == {"url": "https://brain.example.net", "env_url": "https://jbrain.example"}
+    public = {**owner, "x-jbrain-ingress": "public"}
+    resp = box.client.put("/api/owner-devices/public-url", json={"url": ""}, headers=public)
+    assert resp.status_code == 403
+    tunnel = {**owner, "x-jbrain-ingress": "lan", "x-real-ip": TUNNEL}
+    resp = box.client.put("/api/owner-devices/public-url", json={"url": ""}, headers=tunnel)
+    assert resp.status_code == 403
+    bad = box.client.put(
+        "/api/owner-devices/public-url",
+        json={"url": "http://evil.example"},
+        headers={**owner, **_LAN},
+    )
+    assert bad.status_code == 422
+    assert box.client.get("/api/owner-devices/public-url", headers=owner).json()["url"] == (
+        "https://brain.example.net"
+    )
+    assert box.client.get("/api/owner-devices/public-url").status_code == 401
+
+
+def test_the_qr_uses_the_owners_public_url(box: _Box, monkeypatch: pytest.MonkeyPatch) -> None:
+    owner = box.owner()
+    box.client.put(
+        "/api/owner-devices/public-url",
+        json={"url": "https://brain.example.net"},
+        headers={**owner, **_LAN},
+    )
+    seen: list[str] = []
+    real = enrollment.qr_payload
+
+    def spy(code: bytes, **kw: str) -> str:
+        seen.append(kw["public_url"])
+        return real(code, **kw)
+
+    monkeypatch.setattr(enrollment, "qr_payload", spy)
+    _armed(box)
+    box.client.get("/internal/owner-enroll", headers=box.wall())
+    assert seen == ["https://brain.example.net"]

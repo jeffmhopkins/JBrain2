@@ -276,6 +276,7 @@ describe("SettingsScreen category grid", () => {
       "Web",
       "Connections",
       "Access",
+      "Devices",
     ]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }

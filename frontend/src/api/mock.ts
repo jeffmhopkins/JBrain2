@@ -32,6 +32,7 @@ import type {
   MinecraftTimelinePart,
   NoteAnalysis,
   NoteOut,
+  OwnerDevice,
   PanelAlarm,
   PanelAlarmIn,
   PanelNoticeIn,
@@ -3209,6 +3210,35 @@ interface MockDevice {
   velocity_mps: number | null;
   fix_count: number;
 }
+
+// Owner phones (Settings → Devices): one confirmed, one revoked. Arming adds a waiting phone
+// a few seconds later, as if it had scanned the box's QR, so the confirm flow is clickable.
+const MOCK_OWNER_DEVICES: OwnerDevice[] = [
+  {
+    id: "od-pixel9",
+    label: "Pixel 9",
+    enrolled_at: new Date(Date.now() - 20 * 86_400_000).toISOString(),
+    last_seen_at: new Date(Date.now() - 120_000).toISOString(),
+    last_ingress: "tunnel",
+    revoked: false,
+    confirmed: true,
+    words: ["amber", "harbor", "willow", "orbit", "cinder"],
+  },
+  {
+    id: "od-pixel6",
+    label: "Old Pixel 6",
+    enrolled_at: new Date(Date.now() - 400 * 86_400_000).toISOString(),
+    last_seen_at: new Date(Date.now() - 19 * 86_400_000).toISOString(),
+    last_ingress: "lan",
+    revoked: true,
+    confirmed: true,
+    words: ["tundra", "pepper", "socket", "meadow", "glint"],
+  },
+];
+let mockOwnerArmedUntil = 0;
+let mockOwnerSubnet = "192.168.1.0/24";
+let mockPublicUrl = "";
+const MOCK_ENV_PUBLIC_URL = "https://brain.example.net";
 
 const MOCK_DEVICES: MockDevice[] = [
   {
@@ -6816,6 +6846,66 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (del && method === "DELETE") {
     const idx = MOCK_DEVICES.findIndex((d) => d.id === decodeURIComponent(del[1] ?? ""));
     if (idx >= 0) MOCK_DEVICES.splice(idx, 1);
+    return new Response(null, { status: 204 });
+  }
+
+  // --- Owner phones (Settings → Devices) ---
+  if (path === "/api/owner-devices" && method === "GET") return json(MOCK_OWNER_DEVICES);
+  if (path === "/api/owner-devices/enroll/arm" && method === "POST") {
+    const waiting = MOCK_OWNER_DEVICES.some((d) => !d.confirmed && !d.revoked);
+    if (waiting) {
+      return json({ detail: "a phone was just added; compare its words at the box first" }, 409);
+    }
+    mockOwnerArmedUntil = Date.now() + 120_000;
+    setTimeout(() => {
+      if (Date.now() > mockOwnerArmedUntil) return;
+      mockOwnerArmedUntil = 0;
+      MOCK_OWNER_DEVICES.unshift({
+        id: `od-new-${Date.now()}`,
+        label: "Pixel 9 Pro",
+        enrolled_at: new Date().toISOString(),
+        last_seen_at: new Date().toISOString(),
+        last_ingress: "lan",
+        revoked: false,
+        confirmed: false,
+        words: ["ember", "falcon", "river", "lantern", "quartz"],
+      });
+    }, 5_000);
+    return json({ expires_at: new Date(mockOwnerArmedUntil).toISOString() });
+  }
+  if (path === "/api/owner-devices/enroll/subnet") {
+    if (method === "PUT") {
+      const { subnet } = JSON.parse(String(init?.body ?? "{}")) as { subnet: string };
+      const value = subnet.trim();
+      if (value && !/^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(value)) {
+        return json({ detail: "not a subnet" }, 422);
+      }
+      mockOwnerSubnet = value;
+    }
+    return json({ subnet: mockOwnerSubnet });
+  }
+  if (path === "/api/owner-devices/public-url") {
+    if (method === "PUT") {
+      const { url: next } = JSON.parse(String(init?.body ?? "{}")) as { url: string };
+      const value = next.trim().replace(/\/+$/, "");
+      if (value && !value.startsWith("https://")) {
+        return json({ detail: "use an https address, like https://brain.example.com" }, 422);
+      }
+      mockPublicUrl = value;
+    }
+    return json({ url: mockPublicUrl, env_url: MOCK_ENV_PUBLIC_URL });
+  }
+  const ownerDevice = path.match(/^\/api\/owner-devices\/([^/]+)(\/confirm|\/revoke)?$/);
+  if (ownerDevice) {
+    const target = MOCK_OWNER_DEVICES.find(
+      (d) => d.id === decodeURIComponent(ownerDevice[1] ?? ""),
+    );
+    if (!target) return json({ detail: "no such device" }, 404);
+    if (ownerDevice[2] === "/confirm" && method === "POST") target.confirmed = true;
+    else if (ownerDevice[2] === "/revoke" && method === "POST") target.revoked = true;
+    else if (!ownerDevice[2] && method === "PATCH") {
+      target.label = (JSON.parse(String(init?.body ?? "{}")) as { label: string }).label.trim();
+    } else return json({ detail: `mock: no route for ${method} ${path}` }, 405);
     return new Response(null, { status: 204 });
   }
 
