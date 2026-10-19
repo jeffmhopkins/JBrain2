@@ -14,6 +14,7 @@ from cryptography import x509
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from jbrain import public_base
 from jbrain.api import client_ip
 from jbrain.api import endpoint as endpoint_api
 from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
@@ -186,7 +187,7 @@ async def arm_enrollment(_owner: OwnerDep, window: EnrollmentWindowDep) -> ArmOu
     any site. This is the only way to arm (owner decision): the box's screen can close or
     reject, never arm, since other host-network containers can reach it too. Never over a
     phone just added: a stolen session could wipe its words before the owner compares, so
-    they stay until the window lapses or a key at the box closes it."""
+    they stay until the window lapses or R at the box rejects the phone."""
     if window.in_use():
         raise HTTPException(
             status_code=409, detail="a phone was just added; compare its words at the box first"
@@ -317,6 +318,37 @@ async def set_enroll_subnet(request: Request, body: SubnetIO, owner: OwnerDep) -
     return SubnetIO(subnet=value)
 
 
+class PublicUrlIO(BaseModel):
+    # The owner's own setting; "" falls back to `env_url`.
+    url: str = Field(max_length=512)
+    env_url: str = ""
+
+
+@router.get("/public-url")
+async def get_public_url(request: Request, _owner: OwnerDep, settings: SettingsDep) -> PublicUrlIO:
+    return PublicUrlIO(
+        url=await public_base.stored(_store(request)), env_url=public_base.env_value(settings)
+    )
+
+
+@router.put("/public-url")
+async def set_public_url(
+    request: Request, body: PublicUrlIO, owner: OwnerDep, settings: SettingsDep
+) -> PublicUrlIO:
+    """LAN only, like the subnet: a stolen session that could repoint it would aim handed-off
+    debug tokens and share links at a host of its choosing."""
+    if client_ip.ingress(request) != "lan" or client_ip.via_tunnel(request):
+        raise HTTPException(status_code=403, detail="change this from the home network")
+    try:
+        value = public_base.normalize(body.url)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="use an https address, like https://brain.example.com"
+        ) from exc
+    await _store(request).upsert(_ctx(owner), public_base.PUBLIC_BASE_URL_KEY, value)
+    return PublicUrlIO(url=value, env_url=public_base.env_value(settings))
+
+
 # --- the box's screen ----------------------------------------------------------------------
 
 
@@ -373,7 +405,7 @@ async def screen(request: Request, window: EnrollmentWindowDep, settings: Settin
         owner_ca_pin=owner_pin,
         lan_url=lan_url,
         lan_root_pin=lan_pin,
-        public_url=settings.public_base_url.strip().rstrip("/"),
+        public_url=await public_base.resolve(_store(request), settings),
     )
     return ScreenOut(state=snap.state, expires_at=snap.expires_at, qr_svg=_qr_svg(payload))
 

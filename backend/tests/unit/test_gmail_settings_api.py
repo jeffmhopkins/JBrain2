@@ -279,3 +279,20 @@ def test_put_normalizes_a_url_ified_client_id(
         json={"client_id": "http://460754514015-abc.apps.googleusercontent.com/"},
     )
     assert store.values["gmail_client_id"] == "460754514015-abc.apps.googleusercontent.com"
+
+
+def test_the_owners_public_url_wins_over_the_env(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    # Set in Settings → Devices (OWNER_TUNNEL_PLAN wave A5c), it replaces the host step.
+    test_client, _, store = client
+    store.values["public_base_url"] = "https://brain.example.net"
+    redirect = test_client.get("/api/settings/gmail").json()["redirect_uri"]
+    assert redirect == "https://brain.example.net/api/settings/gmail/callback"
+    _save_creds(test_client)
+    test_client.get("/api/settings/gmail/connect", follow_redirects=False)
+    state = store.values["gmail_oauth_state"]
+    resp = test_client.get(
+        f"/api/settings/gmail/callback?code=auth-code&state={state}", follow_redirects=False
+    )
+    assert resp.headers["location"] == "https://brain.example.net/settings?gmail=connected"

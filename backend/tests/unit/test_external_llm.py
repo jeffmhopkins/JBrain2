@@ -20,7 +20,7 @@ from jbrain.config import Settings
 from jbrain.llm.kv_pool_guard import KvPoolGuard
 from jbrain.llm.slot_roles import FLASH_NEXT_POOL, SlotRole
 from jbrain.main import create_app
-from tests.unit.fakes import FakeAuthRepo
+from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
 _COOKIE = "jbrain_session"
@@ -366,3 +366,13 @@ def test_openai_models_lists_pinned_coder_and_is_gated(
     auth = {"Authorization": f"Bearer {minted['token']}"}
     body = caller.get(f"/api/ext/llm/{minted['id']}/v1/models", headers=auth).json()
     assert [m["id"] for m in body["data"]] == ["qwen3-coder-next"]
+
+
+def test_the_owners_public_url_names_the_endpoint(app_repo: tuple[FastAPI, FakeAuthRepo]) -> None:
+    # Set in Settings → Devices (OWNER_TUNNEL_PLAN wave A5c), it wins over the env's.
+    app, repo = app_repo
+    app.state.settings_store = FakeSettingsStore(
+        values={"public_base_url": "https://brain.example.net"}
+    )
+    minted = _owner(app, repo).post("/api/jcode/external", json={"label": "Remote"}).json()
+    assert minted["url"] == f"https://brain.example.net/api/ext/llm/{minted['id']}"

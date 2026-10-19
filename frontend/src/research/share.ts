@@ -3,11 +3,13 @@
 // a plain token-in-URL) — no #t= fragment, no redeem. The shell-less ResearchShareApp mounts on
 // this path and fetches the report(s) straight from the public /api/research-share endpoint.
 
+import { publicOrigin } from "../publicOrigin";
+
 const SHARE_PATH = /^\/share\/([A-Za-z0-9_-]{1,128})\/?$/;
 
 /** The public copy-link for a share token. */
 export function researchShareUrl(token: string): string {
-  return `${window.location.origin}/share/${encodeURIComponent(token)}`;
+  return `${publicOrigin()}/share/${encodeURIComponent(token)}`;
 }
 
 /** The share token if `pathname` is a report-share path (/share/{token}), else null. */

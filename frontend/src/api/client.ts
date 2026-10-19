@@ -56,6 +56,7 @@ import type {
   PublicJlaunchRun,
 } from "../jlaunch/types";
 import type { PanelReport } from "../panelStatus";
+import { publicOrigin } from "../publicOrigin";
 import type { SdrBands, SpectrumRange } from "../sdrBands";
 import type { SdrRadios } from "../sdrRadios";
 import type { SdrListening, SdrRecordingState, SdrState } from "../sdrSession";
@@ -1760,6 +1761,27 @@ export interface DebugTokenMint {
   payload: string;
 }
 
+// ----- Owner phones (Settings → Devices) -----
+
+/** One owner phone. A new one is pending (`confirmed: false`) until the owner checks `words`
+ *  against the phone and confirms it; until then it cannot reach the box. */
+export interface OwnerDevice {
+  id: string;
+  label: string;
+  enrolled_at: string;
+  last_seen_at: string | null;
+  last_ingress: string | null;
+  revoked: boolean;
+  confirmed: boolean;
+  words: string[];
+}
+
+/** The address share links start with; `env_url` is the box's setup default under it. */
+export interface PublicUrlSetting {
+  url: string;
+  env_url: string;
+}
+
 // ----- The on-box engine switch (GET/POST /api/settings/llm/engine) -----
 
 /** The two on-box LLM engines — exactly one runs at a time. */
@@ -2516,7 +2538,7 @@ export interface SharedLinks {
 /** A share's link for other people. Without a configured public URL the box cannot know its own
     scheme behind the tunnel (it sees plain HTTP), so the page's own origin names it. */
 export function shareLink(item: Pick<ShareItem, "url" | "slug">): string {
-  return item.url || `${window.location.origin}/s/${item.slug}/`;
+  return item.url || `${publicOrigin()}/s/${item.slug}/`;
 }
 
 export interface ListOut {
@@ -5157,6 +5179,49 @@ export const api = {
     await request(`/api/settings/debug-tokens/${encodeURIComponent(id)}/resume`, {
       method: "POST",
     });
+  },
+
+  // ----- Owner phones (owner-only; the home-network routes 403 from outside it) -----
+  async ownerDevices(): Promise<OwnerDevice[]> {
+    const response = await request("/api/owner-devices");
+    return (await response.json()) as OwnerDevice[];
+  },
+
+  async confirmOwnerDevice(id: string): Promise<void> {
+    await request(`/api/owner-devices/${encodeURIComponent(id)}/confirm`, { method: "POST" });
+  },
+
+  async revokeOwnerDevice(id: string): Promise<void> {
+    await request(`/api/owner-devices/${encodeURIComponent(id)}/revoke`, { method: "POST" });
+  },
+
+  async renameOwnerDevice(id: string, label: string): Promise<void> {
+    await request(`/api/owner-devices/${encodeURIComponent(id)}`, jsonInit("PATCH", { label }));
+  },
+
+  async armOwnerEnroll(): Promise<{ expires_at: string }> {
+    const response = await request("/api/owner-devices/enroll/arm", { method: "POST" });
+    return (await response.json()) as { expires_at: string };
+  },
+
+  async ownerEnrollSubnet(): Promise<{ subnet: string }> {
+    const response = await request("/api/owner-devices/enroll/subnet");
+    return (await response.json()) as { subnet: string };
+  },
+
+  async setOwnerEnrollSubnet(subnet: string): Promise<{ subnet: string }> {
+    const response = await request("/api/owner-devices/enroll/subnet", jsonInit("PUT", { subnet }));
+    return (await response.json()) as { subnet: string };
+  },
+
+  async publicUrl(): Promise<PublicUrlSetting> {
+    const response = await request("/api/owner-devices/public-url");
+    return (await response.json()) as PublicUrlSetting;
+  },
+
+  async setPublicUrl(url: string): Promise<PublicUrlSetting> {
+    const response = await request("/api/owner-devices/public-url", jsonInit("PUT", { url }));
+    return (await response.json()) as PublicUrlSetting;
   },
 
   // The owner's read-only calendar (Day/Week/Month/Tasks read this projection).

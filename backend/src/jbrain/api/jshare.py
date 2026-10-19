@@ -15,6 +15,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from jbrain import public_base
 from jbrain.api import jcode_share
 from jbrain.api.deps import OwnerDep, SettingsDep
 from jbrain.db.session import SessionContext
@@ -78,12 +79,13 @@ def _ctx(principal_id: str) -> SessionContext:
     return SessionContext(principal_id=principal_id, principal_kind="owner")
 
 
-def _public_base(settings: Settings) -> str:
+async def _public_base(request: Request, settings: Settings) -> str:
     # The link is for other people, so it names the box's public host whichever site the
     # owner happens to be using (a LAN or owner-site name means nothing to a recipient, and
     # those sites don't serve /s/ at all). Without either setting the PWA names its own origin.
-    if settings.public_base_url:
-        return settings.public_base_url.rstrip("/")
+    configured = await public_base.for_request(request, settings)
+    if configured:
+        return configured
     if settings.public_domain:
         return f"https://{settings.public_domain}"
     return ""
@@ -110,7 +112,7 @@ async def list_items(
     owner: OwnerDep, request: Request, settings: SettingsDep
 ) -> list[ShareItemOut]:
     items = await store.list_items(_maker(request), _ctx(owner.id))
-    base = _public_base(settings)
+    base = await _public_base(request, settings)
     return [_out(i, base) for i in items]
 
 
@@ -171,7 +173,7 @@ async def add_item(
         if isinstance(exc, ShareRejected):
             raise HTTPException(status_code=422, detail=str(exc)) from None
         raise
-    return _out(item, _public_base(settings))
+    return _out(item, await _public_base(request, settings))
 
 
 def _classify_blob(name: str, path: Path) -> Classified:
@@ -189,7 +191,7 @@ async def rename_item(
     item = await store.rename(_maker(request), _ctx(owner.id), item_id, title)
     if item is None:
         raise HTTPException(status_code=404, detail="no such item")
-    return _out(item, _public_base(settings))
+    return _out(item, await _public_base(request, settings))
 
 
 @router.delete("/jshare/items/{item_id}", status_code=204)

@@ -12,6 +12,7 @@ import { type MapIntent, setMapOpener } from "./minecraftMapNav";
 import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { SEND_PATH } from "./panelNotice";
+import { loadPublicOrigin } from "./publicOrigin";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
 import { CastScreen } from "./screens/CastScreen";
@@ -226,6 +227,12 @@ export function App() {
       .then((principal) => setSession({ status: "in", principal }))
       .catch(() => setSession({ status: "anonymous" }));
   }, []);
+
+  // The public address share links start with; owner-only, so a member session skips it.
+  const isOwner = session.status === "in" && session.principal.kind === "owner";
+  useEffect(() => {
+    if (isOwner) void loadPublicOrigin(api.publicUrl);
+  }, [isOwner]);
 
   // Keep the owner's display timezone in sync with this device's zone, so the
   // agent's server-rendered time prose matches the client-localized cards. Only
