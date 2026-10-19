@@ -203,7 +203,7 @@ the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
 phone", the session mint refuses it, and a session bound to it does not authenticate. The
 owner confirms with `POST /api/owner-devices/{id}/confirm` after the list's `words` match the
 phone. The `login` context enrollment runs under may write the table, so a trigger (migration
-0252) holds it to the seen-stamp columns, lets only an owner session set `confirmed_at`, once
+0253) holds it to the seen-stamp columns, lets only an owner session set `confirmed_at`, once
 and never at insert, and lets no one un-revoke a phone.
 Settings → Devices (A5b) shows the words beside a Confirm button. The box's screen is reachable by everything
 in the host network namespace (cast, minecraft, any host process), which can read a QR while a

@@ -1,4 +1,4 @@
-"""Migrations 0251 and 0252 against real Postgres: `app.owner_devices`, the owner's confirm of
+"""Migrations 0251 and 0253 against real Postgres: `app.owner_devices`, the owner's confirm of
 a new phone, and phone-bound owner sessions (docs/plans/OWNER_TUNNEL_PLAN.md §3.4, waves A3
 and A5).
 
@@ -269,7 +269,7 @@ async def test_the_phone_binds_to_the_owner_the_pwa_uses(
     assert bound is not None and bound.id == used_owner.id
 
 
-# --- the owner confirms a new phone (migration 0252) --------------------------------------
+# --- the owner confirms a new phone (migration 0253) --------------------------------------
 
 
 async def _set_confirmed(maker: async_sessionmaker, ctx: SessionContext, key: str) -> None:

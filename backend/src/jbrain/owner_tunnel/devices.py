@@ -3,7 +3,7 @@
 A phone is known by `key_hash`, the hash of its client key that Caddy verified and sends as
 `X-JBrain-Device` (`keys.public_key_sha256`). Revoking one also revokes every owner session
 bound to it, so nothing it held keeps working. A phone starts pending and works only once the
-owner confirms it (§3.5); migration 0252 lets nothing but an owner session do that.
+owner confirms it (§3.5); migration 0253 lets nothing but an owner session do that.
 """
 
 import uuid

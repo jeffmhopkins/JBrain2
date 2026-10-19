@@ -108,7 +108,7 @@ class DeviceSession(Base):
 
 
 class OwnerDevice(Base):
-    """A phone enrolled for the owner tunnel (migrations 0251, 0252)."""
+    """A phone enrolled for the owner tunnel (migrations 0251, 0253)."""
 
     __tablename__ = "owner_devices"
     __table_args__ = {"schema": "app"}

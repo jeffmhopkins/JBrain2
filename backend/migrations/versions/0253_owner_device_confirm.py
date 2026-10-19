@@ -12,15 +12,15 @@ the two columns its code writes (`last_seen_at`, `last_ingress`), lets only an o
 set `confirmed_at`, once, never at insert, and lets no one un-revoke a phone. No backfill: a
 phone enrolled before this wave shows as waiting and is confirmed like any other.
 
-Revision ID: 0252
-Revises: 0251
+Revision ID: 0253
+Revises: 0252
 Create Date: 2026-10-19
 """
 
 from alembic import op
 
-revision = "0252"
-down_revision = "0251"
+revision = "0253"
+down_revision = "0252"
 branch_labels = None
 depends_on = None
 
