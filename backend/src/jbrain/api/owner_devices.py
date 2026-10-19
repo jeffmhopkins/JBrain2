@@ -1,6 +1,6 @@
-"""The owner tunnel's phones: enrolling one by QR on the box's screen (§3.5), the bound
-session an enrolled phone mints, and the owner's list of phones with rename and revoke
-(docs/plans/OWNER_TUNNEL_PLAN.md §3.4)."""
+"""The owner tunnel's phones: enrolling one by QR on the box's screen (§3.5), the owner
+confirming it by its words, the bound session a confirmed phone mints, and the owner's list
+of phones with rename and revoke (docs/plans/OWNER_TUNNEL_PLAN.md §3.4)."""
 
 import hmac
 import io
@@ -85,6 +85,9 @@ class DeviceOut(BaseModel):
     last_seen_at: datetime | None
     last_ingress: str | None
     revoked: bool
+    confirmed: bool
+    # The key as words, to compare with the phone's own before confirming it.
+    words: list[str]
 
     @classmethod
     def of(cls, d: OwnerDeviceInfo) -> "DeviceOut":
@@ -95,6 +98,8 @@ class DeviceOut(BaseModel):
             last_seen_at=d.last_seen_at,
             last_ingress=d.last_ingress,
             revoked=d.revoked_at is not None,
+            confirmed=d.confirmed,
+            words=list(enrollment.fingerprint(d.key_hash)),
         )
 
 
@@ -110,7 +115,8 @@ async def mint_session(
     Only reachable through the owner site, where the guard has already matched the phone's
     verified key to an enrolled, unrevoked device."""
     device = cast(OwnerDeviceInfo | None, request.scope.get("state", {}).get(STATE_KEY))
-    if device is None:
+    # The guard refuses a pending phone first; this holds if that ever moves.
+    if device is None or not device.confirmed:
         raise HTTPException(status_code=403, detail="only from an enrolled phone")
     token = await service.mint_device_owner_session(repo, device.id, f"phone: {device.label}")
     if token is None:
@@ -156,6 +162,15 @@ async def revoke_device(
     # requests and streams (kick_device), and sockets holding its sessions (kick).
     kick_device(request.app, _canonical(device_id))
     kick(request.app, owner.id)
+
+
+@router.post("/{device_id}/confirm", status_code=204)
+async def confirm_device(device_id: str, owner: OwnerDep, devices: OwnerDeviceRepoDep) -> None:
+    """The owner's word that a new phone is theirs, after its words matched. Only from the
+    owner's own session: the box's screen is readable from its host network, so a phone
+    that scanned the QR has not yet shown the owner was there."""
+    if not await devices.confirm(_ctx(owner), device_id):
+        raise HTTPException(status_code=404, detail="no phone waiting")
 
 
 # --- enrollment (§3.5) -------------------------------------------------------------------

@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Owner phones — B · Devices page</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);position:relative;overflow:hidden}
+  .nav{display:flex;align-items:center;gap:10px;padding:14px 16px 6px}
+  .nav .glyph{color:var(--text-2);font-size:20px;cursor:pointer}
+  .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .body{padding:10px 16px 56px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:14px 16px;margin-bottom:14px}
+  .label{margin:0 0 8px;font-size:var(--fs-micro);font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-2)}
+  .meta{margin:4px 0 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.5}
+  .row{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--border)}
+  .row:first-of-type{border-top:0}
+  .row .name{font-size:var(--fs-body)}
+  .row .grow{flex:1;min-width:0}
+  .pill{font-size:11px;font-weight:600;padding:3px 8px;border-radius:var(--r-pill)}
+  .pill.ok{background:var(--green-tint);color:var(--green)}
+  .pill.wait{background:var(--amber-tint);color:var(--amber)}
+  .pill.off{background:var(--surface-2);color:var(--text-3)}
+  .btn{font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;border-radius:var(--r-input);
+    padding:10px 14px;border:1px solid transparent;background:var(--steel-tint);color:var(--steel)}
+  .btn.wide{width:100%;padding:13px;font-size:var(--fs-body)}
+  .btn.go{background:var(--green-tint);color:var(--green)}
+  .btn.danger{background:var(--rose-tint);color:var(--rose)}
+  .btn.sec{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .words{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+  .words span{font-family:var(--mono);font-size:var(--fs-body);color:var(--green);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:8px;padding:5px 9px}
+  .actions{display:flex;gap:8px;margin-top:6px}
+  .actions .btn{flex:1}
+  input{font:inherit;font-size:var(--fs-secondary);width:100%;background:var(--surface-2);color:var(--text);
+    border:1px solid var(--border);border-radius:var(--r-input);padding:10px 12px}
+  .legend{margin:22px 2px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}
+  .controls{max-width:430px;margin:0 auto;padding:10px 16px;background:#111;font-size:12px;color:var(--text-3);display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .controls button{font:inherit;font-size:12px;background:#222;color:#bbb;border:1px solid #333;border-radius:6px;padding:4px 8px;cursor:pointer}
+
+  .banner{display:flex;gap:12px;align-items:flex-start;background:var(--amber-tint);border:1px solid rgba(201,163,106,.35);
+    border-radius:var(--r-card);padding:14px 16px;margin-bottom:14px}
+  .banner .ic{font-size:22px;color:var(--amber)}
+  .hero{text-align:center;padding:18px 8px}
+  .ring{width:88px;height:88px;border-radius:50%;margin:0 auto 10px;display:grid;place-items:center;
+    font-family:var(--mono);font-size:22px;color:var(--steel);border:3px solid var(--steel-tint)}
+
+</style>
+</head>
+<body>
+<div class="controls">Mock controls: <button onclick="scan()">Phone scans the box's QR</button>
+<button onclick="phones=phones.filter(p=>p.state!=='pending');render()">Clear pending</button>
+<span id="toast" style="opacity:0;transition:.3s;color:var(--amber)"></span></div>
+<div class="phone">
+<div class="nav"><span class="glyph">‹</span><span class="title">Devices</span></div>
+<div class="body" id="page"></div>
+</div>
+<script>
+
+const WORDS = ["ember","falcon","river","lantern","quartz"];
+let phones = [
+  {id:"p1", label:"Pixel 9", state:"active", seen:"2 min ago", via:"tunnel"},
+  {id:"p2", label:"Old Pixel 6", state:"revoked", seen:"Sep 30", via:"lan"},
+];
+let armedUntil = 0, timer = null;
+const $ = (id) => document.getElementById(id);
+function left(){ return Math.max(0, Math.round((armedUntil - Date.now())/1000)); }
+function arm(){ armedUntil = Date.now() + 120000; clearInterval(timer);
+  timer = setInterval(() => { if (!left()) { armedUntil = 0; clearInterval(timer); } render(); }, 1000); render(); }
+function cancelArm(){ armedUntil = 0; clearInterval(timer); render(); }
+function scan(){ if (!armedUntil) { alertish("Arm first: tap Add a phone."); return; }
+  armedUntil = 0; clearInterval(timer);
+  phones.unshift({id:"p"+Date.now(), label:"Pixel 9 Pro", state:"pending", seen:"just now", via:"lan", words:WORDS}); render(); }
+function confirmP(id){ phones.find(p=>p.id===id).state="active"; render(); }
+function rejectP(id){ phones.find(p=>p.id===id).state="revoked"; render(); }
+function revokeP(id){ phones.find(p=>p.id===id).state="revoked"; render(); }
+function alertish(t){ const n=$("toast"); n.textContent=t; n.style.opacity=1; setTimeout(()=>n.style.opacity=0,1800); }
+function wordsHtml(w){ return `<div class="words">${w.map(x=>`<span>${x}</span>`).join("")}</div>`; }
+
+function render(){
+  const pend = phones.filter(p=>p.state==="pending");
+  const active = phones.filter(p=>p.state==="active");
+  const gone = phones.filter(p=>p.state==="revoked");
+  $("page").innerHTML = `
+  ${pend.map(p=>`<div class="banner"><span class="ic">!</span><div class="grow" style="flex:1">
+     <b>${p.label} wants in</b><p class="meta" style="color:var(--text-2)">It can't reach your box until you confirm. Check these match the phone:</p>
+     ${wordsHtml(p.words)}<div class="actions"><button class="btn go" onclick="confirmP('${p.id}')">Confirm</button>
+     <button class="btn danger" onclick="rejectP('${p.id}')">Not mine</button></div></div></div>`).join("")}
+  <section class="card">${armedUntil
+     ? `<div class="hero"><div class="ring">${left()}</div><b>Scan the QR on the box's screen</b>
+        <p class="meta">With the JBrain owner app, from the home network.</p>
+        <button class="btn sec" style="margin-top:10px" onclick="cancelArm()">Cancel</button></div>`
+     : `<h2 class="label">Add a phone</h2><p class="meta" style="margin:0 0 10px">The box's screen shows a code for two minutes.
+        Stand in front of it with the phone, on the home network.</p>
+        <button class="btn wide" onclick="arm()">Show the code on the box</button>`}</section>
+  <section class="card"><h2 class="label">Your phones · ${active.length}</h2>
+  ${active.map(p=>`<div class="row"><div class="grow"><div class="name">${p.label} <span class="pill ok">connected</span></div>
+     <p class="meta">last seen ${p.seen} · via ${p.via}</p></div>
+     <button class="btn sec" onclick="revokeP('${p.id}')">Revoke</button></div>`).join("") || `<p class="meta">None yet.</p>`}
+  ${gone.length?`<p class="meta" style="margin-top:10px">Revoked: ${gone.map(p=>p.label).join(", ")}</p>`:""}</section>
+  <section class="card"><h2 class="label">Links you share</h2><input value="https://brain.example.net" />
+   <p class="meta">Share links, chat shares and map shares start with this address, never the phone's private one.</p></section>
+  <section class="card"><h2 class="label">Home network</h2><input value="192.168.1.0/24" />
+   <p class="meta">Phones can be added only from this network. You can change it only from home.</p></section>
+  <p class="legend">B · Devices page. A new Settings tile, Devices, opens its own page. A phone waiting
+  for you is a banner at the top. Adding a phone is its own card with a big countdown. Your phones,
+  the link address and the home network each get a card.</p>`;
+}
+render();
+// #waiting opens the mock on a phone waiting for you, for screenshots.
+if (location.hash === "#waiting") { arm(); scan(); render(); }
+</script>
+</body>
+</html>

@@ -108,7 +108,7 @@ class DeviceSession(Base):
 
 
 class OwnerDevice(Base):
-    """A phone enrolled for the owner tunnel (migration 0251)."""
+    """A phone enrolled for the owner tunnel (migrations 0251, 0253)."""
 
     __tablename__ = "owner_devices"
     __table_args__ = {"schema": "app"}
@@ -123,3 +123,4 @@ class OwnerDevice(Base):
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_ingress: Mapped[str | None] = mapped_column(Text, nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

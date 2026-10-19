@@ -1,6 +1,6 @@
 # Owner tunnel — the Android app reaches the box end to end, Cloudflare carries only ciphertext (proposed)
 
-> **Status:** In progress · **Last verified:** 2026-10-18 · **Waves:** S0✅ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
+> **Status:** In progress · **Last verified:** 2026-10-19 · **Waves:** S0✅ A◻️ B◻️ C◻️ D◻️ E◻️ F◻️
 
 **Scheduled 2026-10-17 (owner: "Go").** Revised after a four-lens review (§9). S0 passed on the
 owner's phone (§5): the `network_security_config` trust anchor is the trust mechanism. The owner's ask, 2026-10-17:
@@ -198,12 +198,17 @@ the wall kiosk (`deploy/wall/`), is the only place a QR is ever shown.
    them before they are compared, and the box refuses to close them either (only R, which
    rejects the phone, or the window lapsing clears them).
 
-**A new phone works only once the owner confirms it** (owed to A5, before arming has any UI):
-the device row starts pending, the device guard and the session mint refuse it, and Settings →
-Devices shows its words beside a Confirm button. The box's screen is reachable by everything
+**A new phone works only once the owner confirms it** (A5a): the device row starts pending
+(`confirmed_at` null), the device guard refuses it with "waiting for the owner to confirm this
+phone", the session mint refuses it, and a session bound to it does not authenticate. The
+owner confirms with `POST /api/owner-devices/{id}/confirm` after the list's `words` match the
+phone. The `login` context enrollment runs under may write the table, so a trigger (migration
+0253) holds it to the seen-stamp columns, lets only an owner session set `confirmed_at`, once
+and never at insert, and lets no one un-revoke a phone.
+Settings → Devices (A5b) shows the words beside a Confirm button. The box's screen is reachable by everything
 in the host network namespace (cast, minecraft, any host process), which can read a QR while a
 window is open and win the race to it, so the screen alone is not proof of presence; an owner
-confirmation from their own session is. Until A5 the box refuses to close over a phone just
+confirmation from their own session is. The box also refuses to close over a phone just
 added, so its words cannot be hidden.
 
 The `wall-enroll` token lives alone in the `enroll_secrets` volume, which only the api and the
@@ -348,11 +353,14 @@ cookie).
   (`deploy/wall/enroll.html` on `:8802`, published to the box's loopback only; the box's
   browser opens `http://localhost:8802/`, which frames the wall and covers it with the QR
   while a window is open; Esc closes, R rejects; arming is Settings only),
-  A5 Settings → Devices and the
-  public-base-URL links. Still owed from §3.1: the two key volumes in the box backup and
-  restore. Owed to A5: the cookie-minting logins (`/api/auth/session` and the redeem routes)
-  still answer over the owner site with an unbound cookie, which the tunnel then refuses; the
-  app must mint through `/api/owner-devices/session`, or those routes refuse the owner site.
+  **A5a the owner's confirm ✅** (a new phone stays pending until the owner confirms it, §3.5;
+  and the owner site signs in only through `/api/owner-devices/session`: the guard refuses any
+  other response there that sets a session cookie, the owner-key login and the redeem routes
+  included), **A5b Settings → Devices** (the page in
+  `docs/mocks/owner-devices/b-devices-page.html`, chosen 2026-10-19 over an Access card and a
+  guided sheet; arm, confirm, rename, revoke, the home subnet) and **A5c the public base URL**
+  (a setting the owner changes from home, the link builders that use it). Still owed from
+  §3.1: the two key volumes in the box backup and restore.
 - **B — box: the tunnel gateway. ◻️** §3.3 with nonce auth, drain and keepalive, the kick
   registry, limits, debug-API counters, a throughput check. Tests with a fake device key
   against real Caddy.

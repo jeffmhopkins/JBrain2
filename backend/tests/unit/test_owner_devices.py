@@ -1,7 +1,7 @@
-"""The owner tunnel's phones (docs/plans/OWNER_TUNNEL_PLAN.md §3.4, wave A3): the guard
-that refuses any owner-site request not from an enrolled, unrevoked phone, the session a
-phone mints, which then works only from that phone, and the owner's list, rename and
-revoke."""
+"""The owner tunnel's phones (docs/plans/OWNER_TUNNEL_PLAN.md §3.4, waves A3 and A5): the
+guard that refuses any owner-site request not from an enrolled, confirmed, unrevoked phone,
+the session a phone mints, which then works only from that phone, the owner's confirm, list,
+rename and revoke, and the refusal of every other sign-in over the owner site."""
 
 import asyncio
 import contextlib
@@ -12,14 +12,17 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import HTTPException, Response
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from jbrain.api import client_ip
+from jbrain.api import owner_devices as owner_devices_api
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.main import create_app
+from jbrain.owner_tunnel import enrollment
 from jbrain.owner_tunnel.devices import AlreadyEnrolled, OwnerDeviceInfo
 from jbrain.owner_tunnel.guard import OwnerDeviceGuard, kick_device
 from tests.unit.fakes import FakeAuthRepo
@@ -44,7 +47,9 @@ class FakeOwnerDeviceRepo:
     # Mirrors the real revoke's cascade onto the bound sessions.
     auth: FakeAuthRepo | None = None
 
-    def add(self, key_hash: str, label: str = "Pixel", *, revoked: bool = False) -> str:
+    def add(
+        self, key_hash: str, label: str = "Pixel", *, revoked: bool = False, confirmed: bool = True
+    ) -> str:
         device_id = f"dev-{len(self.devices)}"
         self.devices.append(
             OwnerDeviceInfo(
@@ -55,9 +60,11 @@ class FakeOwnerDeviceRepo:
                 last_seen_at=None,
                 last_ingress=None,
                 revoked_at=datetime.now(UTC) if revoked else None,
+                confirmed_at=datetime.now(UTC) if confirmed else None,
             )
         )
-        if self.auth is not None and not revoked:
+        # Mirrors the real lookup: a session binds to a phone only once it is confirmed.
+        if self.auth is not None and not revoked and confirmed:
             self.auth.device_keys[device_id] = key_hash
         return device_id
 
@@ -71,7 +78,7 @@ class FakeOwnerDeviceRepo:
     async def create(self, label: str, key_hash: str, public_key: bytes) -> OwnerDeviceInfo:
         if any(d.key_hash == key_hash for d in self.devices):
             raise AlreadyEnrolled
-        device_id = self.add(key_hash, label)
+        device_id = self.add(key_hash, label, confirmed=False)
         return next(d for d in self.devices if d.id == device_id)
 
     async def list_all(self, ctx: SessionContext) -> list[OwnerDeviceInfo]:
@@ -93,6 +100,16 @@ class FakeOwnerDeviceRepo:
                 self.devices[i] = dataclasses.replace(d, revoked_at=datetime.now(UTC))
                 if self.auth is not None:
                     self.auth.device_keys.pop(device_id, None)
+                return True
+        return False
+
+    async def confirm(self, ctx: SessionContext, device_id: str) -> bool:
+        self.ctxs.append(ctx)
+        for i, d in enumerate(self.devices):
+            if d.id == device_id and d.revoked_at is None and d.confirmed_at is None:
+                self.devices[i] = dataclasses.replace(d, confirmed_at=datetime.now(UTC))
+                if self.auth is not None:
+                    self.auth.device_keys[device_id] = d.key_hash
                 return True
         return False
 
@@ -519,5 +536,152 @@ def test_an_inner_error_still_propagates() -> None:
         guard, scope, sent = _held(phones, interval=3600, inner=broken)
         with client_ip.pinned(proxy=(PROXY,)), pytest.raises(RuntimeError):
             await guard(scope, _receive, sent)
+
+    asyncio.run(go())
+
+
+# --- a new phone waits for the owner (§3.5, wave A5) -------------------------------------
+
+
+def test_a_pending_phone_is_refused_and_told_why(
+    client: TestClient, phones: FakeOwnerDeviceRepo
+) -> None:
+    phones.add(PHONE, confirmed=False)
+    resp = client.get("/api/healthz", headers=_site(PHONE))
+    assert resp.status_code == 403
+    assert resp.json() == {"detail": "waiting for the owner to confirm this phone"}
+    assert client.post("/api/owner-devices/session", headers=_site(PHONE)).status_code == 403
+    with (
+        pytest.raises(WebSocketDisconnect) as closed,
+        client.websocket_connect("/api/locations/live", headers=_site(PHONE)),
+    ):
+        pass
+    assert closed.value.code == 4403
+
+
+def test_the_owner_confirms_a_phone_and_it_gets_in(
+    client: TestClient, repo: FakeAuthRepo, phones: FakeOwnerDeviceRepo
+) -> None:
+    did = phones.add(PHONE, confirmed=False)
+    _as_owner(client, repo)
+    (listed,) = client.get("/api/owner-devices").json()
+    assert listed["confirmed"] is False
+    assert listed["words"] == list(enrollment.fingerprint(PHONE))
+    assert client.post(f"/api/owner-devices/{did}/confirm").status_code == 204
+    assert phones.ctxs[-1].principal_kind == "owner"
+    # Once only, and never a revoked or unknown phone.
+    assert client.post(f"/api/owner-devices/{did}/confirm").status_code == 404
+    assert client.post("/api/owner-devices/nope/confirm").status_code == 404
+    client.cookies.clear()
+    token = _phone_session(client, PHONE)
+    assert _me(client, token, _site(PHONE)) == 200
+
+
+def test_a_revoked_phone_cannot_be_confirmed(
+    client: TestClient, repo: FakeAuthRepo, phones: FakeOwnerDeviceRepo
+) -> None:
+    did = phones.add(PHONE, revoked=True, confirmed=False)
+    _as_owner(client, repo)
+    assert client.post(f"/api/owner-devices/{did}/confirm").status_code == 404
+
+
+def test_confirming_is_owner_only(client: TestClient, phones: FakeOwnerDeviceRepo) -> None:
+    did = phones.add(PHONE, confirmed=False)
+    assert client.post(f"/api/owner-devices/{did}/confirm").status_code == 401
+    assert phones.devices[0].confirmed_at is None
+
+
+def test_the_mint_refuses_a_pending_phone_even_past_the_guard() -> None:
+    pending = OwnerDeviceInfo(
+        id="dev-0",
+        label="Pixel",
+        key_hash=PHONE,
+        enrolled_at=datetime.now(UTC),
+        last_seen_at=None,
+        last_ingress=None,
+        revoked_at=None,
+    )
+    request = SimpleNamespace(scope={"state": {"owner_device": pending}})
+    with pytest.raises(HTTPException) as refused:
+        asyncio.run(
+            owner_devices_api.mint_session(
+                request,  # type: ignore[arg-type]
+                Response(),
+                FakeAuthRepo(),
+                Settings(secure_cookies=False, database_url=_DB),
+            )
+        )
+    assert refused.value.status_code == 403
+
+
+def test_the_owner_key_login_is_refused_over_the_owner_site(
+    client: TestClient, repo: FakeAuthRepo, phones: FakeOwnerDeviceRepo
+) -> None:
+    phones.add(PHONE)
+    key = asyncio.run(auth_service.rotate_owner_key(repo))
+    resp = client.post("/api/auth/session", json={"owner_key": key}, headers=_site(PHONE))
+    assert resp.status_code == 403
+    assert resp.json() == {"detail": "sign in with the phone, not here"}
+    assert "set-cookie" not in resp.headers
+    # The same login still works everywhere else.
+    assert client.post("/api/auth/session", json={"owner_key": key}).status_code == 204
+
+
+def _cookie_app(value: bytes) -> Any:
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"set-cookie", value), (b"content-length", b"2")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    return app
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "status"),
+    [
+        ("/api/session/mint", b"jbrain_session=tok; Path=/", 403),
+        ("/api/jcode/share/redeem", b"__Host-jbrain_session=tok; Secure", 403),
+        ("/api/owner-devices/session", b"jbrain_session=tok; Path=/", 200),
+        # Signing out clears the cookie, which is never a session.
+        ("/api/auth/logout", b'jbrain_session=""; Max-Age=0', 200),
+        ("/api/anything", b"other=tok", 200),
+    ],
+)
+def test_only_the_phone_mint_sets_a_session_over_the_owner_site(
+    path: str, value: bytes, status: int
+) -> None:
+    async def go() -> None:
+        phones = FakeOwnerDeviceRepo()
+        phones.add(PHONE)
+        guard, scope, sent = _held(phones, interval=3600, inner=_cookie_app(value))
+        scope["path"] = path
+        scope["app"].state.settings = Settings(secure_cookies=False, database_url=_DB)
+        with client_ip.pinned(proxy=(PROXY,)):
+            await asyncio.wait_for(_run(guard, scope, sent), 2)
+        assert sent.messages[0]["status"] == status
+        # A refused response sends only the refusal: none of the route's own body.
+        assert sum(m["type"] == "http.response.start" for m in sent.messages) == 1
+        assert sent.bodies() == 1
+
+    asyncio.run(go())
+
+
+def test_a_socket_cannot_set_a_session_over_the_owner_site() -> None:
+    async def inner(scope: Any, receive: Any, send: Any) -> None:
+        await send({"type": "websocket.accept", "headers": [(b"set-cookie", b"jbrain_session=t")]})
+
+    async def go() -> None:
+        phones = FakeOwnerDeviceRepo()
+        phones.add(PHONE)
+        guard, scope, sent = _held(phones, interval=3600, inner=inner, kind="websocket")
+        scope["app"].state.settings = Settings(secure_cookies=False, database_url=_DB)
+        with client_ip.pinned(proxy=(PROXY,)):
+            await asyncio.wait_for(_run(guard, scope, sent), 2)
+        assert [m["type"] for m in sent.messages] == ["websocket.close"]
 
     asyncio.run(go())

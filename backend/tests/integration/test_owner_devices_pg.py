@@ -1,5 +1,6 @@
-"""Migration 0251 against real Postgres: `app.owner_devices` and phone-bound owner sessions
-(docs/plans/OWNER_TUNNEL_PLAN.md §3.4, wave A3).
+"""Migrations 0251 and 0253 against real Postgres: `app.owner_devices`, the owner's confirm of
+a new phone, and phone-bound owner sessions (docs/plans/OWNER_TUNNEL_PLAN.md §3.4, waves A3
+and A5).
 
 The table holds which phones may use the owner site at all, so it is the owner's alone
 plus the `login` context the per-request device check and enrollment run under; anyone
@@ -149,7 +150,9 @@ async def _bound(
     await auth_service.rotate_owner_key(auth)
     phones = SqlOwnerDeviceRepo(maker)
     device = await phones.create("Pixel", phone, b"pk")
-    await phones.create("Tablet", other, b"pk2")
+    tablet = await phones.create("Tablet", other, b"pk2")
+    assert await phones.confirm(OWNER, device.id)
+    assert await phones.confirm(OWNER, tablet.id)
     token = await auth_service.mint_device_owner_session(auth, device.id, "phone: Pixel")
     assert token is not None
     return auth, phones, device.id, token
@@ -257,8 +260,133 @@ async def test_the_phone_binds_to_the_owner_the_pwa_uses(
             {"k": _key()},
         )
         await s.commit()
-    device = await SqlOwnerDeviceRepo(maker).create("Pixel", phone, b"pk")
+    phones = SqlOwnerDeviceRepo(maker)
+    device = await phones.create("Pixel", phone, b"pk")
+    assert await phones.confirm(OWNER, device.id)
     token = await auth_service.mint_device_owner_session(auth, device.id, "phone: Pixel")
     assert token is not None
     bound = await auth_service.authenticate(auth, token, device=phone)
     assert bound is not None and bound.id == used_owner.id
+
+
+# --- the owner confirms a new phone (migration 0253) --------------------------------------
+
+
+async def _set_confirmed(maker: async_sessionmaker, ctx: SessionContext, key: str) -> None:
+    async with scoped_session(maker, ctx) as s:
+        await s.execute(
+            text("UPDATE app.owner_devices SET confirmed_at = now() WHERE key_hash = :k"),
+            {"k": key},
+        )
+        await s.commit()
+
+
+async def test_a_phone_starts_pending_and_the_owner_confirms_it_once(
+    maker: async_sessionmaker, phone: str
+) -> None:
+    phones = SqlOwnerDeviceRepo(maker)
+    device = await phones.create("Pixel", phone, b"pk")
+    assert not device.confirmed
+    pending = await phones.touch_active(phone, "owner-tunnel")
+    assert pending is not None and not pending.confirmed
+    assert await phones.confirm(OWNER, device.id)
+    assert not await phones.confirm(OWNER, device.id)
+    assert not await phones.confirm(OWNER, "not-a-uuid")
+    confirmed = await phones.touch_active(phone, "owner-tunnel")
+    assert confirmed is not None and confirmed.confirmed
+
+
+async def test_the_login_context_cannot_confirm_a_phone(
+    maker: async_sessionmaker, phone: str
+) -> None:
+    # Enrollment runs as `login`, which may write this table, so only the trigger stops a
+    # phone that scanned the QR from letting itself in.
+    phones = SqlOwnerDeviceRepo(maker)
+    device = await phones.create("Pixel", phone, b"pk")
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        await _set_confirmed(maker, LOGIN, phone)
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        await phones.confirm(LOGIN, device.id)
+    (listed,) = [d for d in await phones.list_all(OWNER) if d.key_hash == phone]
+    assert not listed.confirmed
+
+
+async def test_a_phone_is_never_enrolled_already_confirmed(maker: async_sessionmaker) -> None:
+    for ctx in (LOGIN, OWNER):
+        with pytest.raises((DBAPIError, ProgrammingError)):
+            async with scoped_session(maker, ctx) as s:
+                await s.execute(
+                    text(
+                        "INSERT INTO app.owner_devices (label, key_hash, public_key, confirmed_at)"
+                        " VALUES ('x', :k, '\\x00', now())"
+                    ),
+                    {"k": _key()},
+                )
+                await s.commit()
+
+
+async def test_a_confirm_cannot_be_moved_or_undone(maker: async_sessionmaker, phone: str) -> None:
+    phones = SqlOwnerDeviceRepo(maker)
+    device = await phones.create("Pixel", phone, b"pk")
+    assert await phones.confirm(OWNER, device.id)
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        await _set_confirmed(maker, OWNER, phone)
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        async with scoped_session(maker, OWNER) as s:
+            await s.execute(
+                text("UPDATE app.owner_devices SET confirmed_at = NULL WHERE key_hash = :k"),
+                {"k": phone},
+            )
+            await s.commit()
+    # Every other write still works on a confirmed phone.
+    assert await phones.rename(OWNER, device.id, "Mine")
+    assert await phones.touch_active(phone, "lan") is not None
+    assert await phones.revoke(OWNER, device.id)
+
+
+async def test_a_pending_phones_session_does_not_authenticate(
+    maker: async_sessionmaker, phone: str
+) -> None:
+    auth = SqlAuthRepo(maker)
+    await auth_service.rotate_owner_key(auth)
+    device = await SqlOwnerDeviceRepo(maker).create("Pixel", phone, b"pk")
+    token = await auth_service.mint_device_owner_session(auth, device.id, "phone: Pixel")
+    assert token is not None
+    assert await auth_service.authenticate(auth, token, device=phone) is None
+    assert await SqlOwnerDeviceRepo(maker).confirm(OWNER, device.id)
+    assert await auth_service.authenticate(auth, token, device=phone) is not None
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["label = 'mine'", "key_hash = repeat('c', 64)", "public_key = '\\x01'", "revoked_at = now()"],
+)
+async def test_the_login_context_writes_only_when_a_phone_was_seen(
+    maker: async_sessionmaker, phone: str, change: str
+) -> None:
+    device = await SqlOwnerDeviceRepo(maker).create("Pixel", phone, b"pk")
+    assert await SqlOwnerDeviceRepo(maker).confirm(OWNER, device.id)
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        async with scoped_session(maker, LOGIN) as s:
+            await s.execute(
+                text(f"UPDATE app.owner_devices SET {change} WHERE key_hash = :k"), {"k": phone}
+            )
+            await s.commit()
+
+
+@pytest.mark.parametrize("ctx", [LOGIN, OWNER], ids=["login", "owner"])
+async def test_no_one_unrevokes_a_phone(
+    maker: async_sessionmaker, ctx: SessionContext, phone: str
+) -> None:
+    phones = SqlOwnerDeviceRepo(maker)
+    device = await phones.create("Pixel", phone, b"pk")
+    assert await phones.confirm(OWNER, device.id)
+    assert await phones.revoke(OWNER, device.id)
+    with pytest.raises((DBAPIError, ProgrammingError)):
+        async with scoped_session(maker, ctx) as s:
+            await s.execute(
+                text("UPDATE app.owner_devices SET revoked_at = NULL WHERE key_hash = :k"),
+                {"k": phone},
+            )
+            await s.commit()
+    assert await phones.touch_active(phone, "owner-tunnel") is None
