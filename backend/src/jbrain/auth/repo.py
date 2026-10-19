@@ -52,16 +52,17 @@ def _has_role(condition: ColumnElement[bool]) -> ColumnElement[bool]:
 def _bound_to(device_key: str | None) -> ColumnElement[bool]:
     """Which sessions a request may use, by the owner-tunnel phone it came from
     (docs/plans/OWNER_TUNNEL_PLAN.md §3.4). A request from a phone (`device_key`, the hash
-    Caddy verified) authenticates only a session bound to that phone, while it is not revoked
-    and for `BOUND_SESSION_IDLE` after the session's last use, so a cookie from the public
-    site is worthless through the tunnel. Every other request authenticates only unbound
-    sessions, so a bound cookie is worthless anywhere else, and a call site that forgets the
-    device fails closed."""
+    Caddy verified) authenticates only a session bound to that phone, once the owner has
+    confirmed it, while it is not revoked and for `BOUND_SESSION_IDLE` after the session's
+    last use, so a cookie from the public site is worthless through the tunnel. Every other
+    request authenticates only unbound sessions, so a bound cookie is worthless anywhere
+    else, and a call site that forgets the device fails closed."""
     if device_key is None:
         return DeviceSession.device_id.is_(None)
     return and_(
         OwnerDevice.key_hash == device_key,
         OwnerDevice.revoked_at.is_(None),
+        OwnerDevice.confirmed_at.is_not(None),
         DeviceSession.last_seen_at > func.now() - BOUND_SESSION_IDLE,
     )
 

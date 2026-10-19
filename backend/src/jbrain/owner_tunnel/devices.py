@@ -2,7 +2,8 @@
 
 A phone is known by `key_hash`, the hash of its client key that Caddy verified and sends as
 `X-JBrain-Device` (`keys.public_key_sha256`). Revoking one also revokes every owner session
-bound to it, so nothing it held keeps working.
+bound to it, so nothing it held keeps working. A phone starts pending and works only once the
+owner confirms it (§3.5); migration 0252 lets nothing but an owner session do that.
 """
 
 import uuid
@@ -31,6 +32,11 @@ class OwnerDeviceInfo:
     last_seen_at: datetime | None
     last_ingress: str | None
     revoked_at: datetime | None
+    confirmed_at: datetime | None = None
+
+    @property
+    def confirmed(self) -> bool:
+        return self.confirmed_at is not None
 
 
 class AlreadyEnrolled(Exception):
@@ -40,7 +46,8 @@ class AlreadyEnrolled(Exception):
 
 class OwnerDeviceRepo(Protocol):
     async def touch_active(self, key_hash: str, ingress: str) -> OwnerDeviceInfo | None:
-        """The phone with this key if it is not revoked, stamping when it was last seen."""
+        """The phone with this key if it is not revoked, stamping when it was last seen. A
+        pending phone is returned too, so the caller can say why it is refused."""
         ...
 
     async def create(self, label: str, key_hash: str, public_key: bytes) -> OwnerDeviceInfo: ...
@@ -53,6 +60,10 @@ class OwnerDeviceRepo(Protocol):
         """Revoke a phone and every session bound to it. False if there was none to revoke."""
         ...
 
+    async def confirm(self, ctx: SessionContext, device_id: str) -> bool:
+        """Let a pending phone in. False if there was no unrevoked, pending phone to confirm."""
+        ...
+
 
 def _info(row: OwnerDevice) -> OwnerDeviceInfo:
     return OwnerDeviceInfo(
@@ -63,6 +74,7 @@ def _info(row: OwnerDevice) -> OwnerDeviceInfo:
         last_seen_at=row.last_seen_at,
         last_ingress=row.last_ingress,
         revoked_at=row.revoked_at,
+        confirmed_at=row.confirmed_at,
     )
 
 
@@ -153,3 +165,19 @@ class SqlOwnerDeviceRepo:
                 .values(revoked_at=text("now()"))
             )
             return True
+
+    async def confirm(self, ctx: SessionContext, device_id: str) -> bool:
+        did = _uuid(device_id)
+        if did is None:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            result = await session.execute(
+                update(OwnerDevice)
+                .where(
+                    OwnerDevice.id == did,
+                    OwnerDevice.revoked_at.is_(None),
+                    OwnerDevice.confirmed_at.is_(None),
+                )
+                .values(confirmed_at=text("now()"))
+            )
+            return bool(getattr(result, "rowcount", 0))
