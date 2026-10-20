@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-19
+> **Status:** Living · **Last verified:** 2026-10-20
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -2817,6 +2817,9 @@ folds the player away. A **story** is a `#`/`##` section of the report (the dail
 briefing's beats), split by `reportSections.ts`; a heading-less report is one story. Playback
 is `useReadAloud.playSections` — the stories queue back-to-back from the chosen index, so a
 skip is just playing again from another one, and progress is measured by rendered clips.
+Pause then play **resumes where it paused**, never from the top of the story: on the box's
+voice the clip is held paused and carries on mid-sentence; on the device voice (or if the
+held clip was lost) it restarts at the sentence it paused in.
 Button sizes are absolute (sized for a glance from the driver's seat); its text follows the
 Text size setting like the rest of the card.
 
