@@ -71,8 +71,10 @@ export interface ReadAloud {
   stop: () => void;
   /** Play a report story by story (the drive-mode player): `sections` are Markdown
    * stories spoken back-to-back from index `start`, so skipping is just playing again
-   * from another index. Pause it with `toggle(key, …)` like any other key. */
-  playSections: (key: string, sections: string[], start: number) => void;
+   * from another index. Pause it with `toggle(key, …)` like any other key; pass
+   * `resume` to pick a paused run back up where it stopped (mid-clip on piper, from the
+   * unfinished sentence on native) instead of from the top of story `start`. */
+  playSections: (key: string, sections: string[], start: number, resume?: boolean) => void;
   /** The last `playSections` run's place, or null before any has started. */
   progress: ReadAloudProgress | null;
 }
@@ -141,6 +143,15 @@ export function useReadAloud(): ReadAloud {
   // The active story-by-story run: which story each enqueued chunk belongs to, and how
   // many chunks have finished — settle() turns that into `progress`. Null for a plain turn.
   const playlistRef = useRef<{ key: string; unitSection: number[]; done: number } | null>(null);
+  // A story run paused in place on piper: its clip is held paused and the pump waits on
+  // `wait` before starting another, so resuming carries on mid-sentence. Tied to the gen
+  // it paused, so any teardown invalidates it.
+  const pausedRef = useRef<{
+    key: string;
+    gen: number;
+    wait: Promise<void>;
+    release: () => void;
+  } | null>(null);
 
   // --- piper engine state ---------------------------------------------------------
   // A generation token bumped by every stop()/beginQueue so an in-flight piper fetch or
@@ -285,11 +296,25 @@ export function useReadAloud(): ReadAloud {
     [setPlay],
   );
 
+  // A native utterance's end, counted only for the gen that queued it: Chrome fires the
+  // end/error of cancelled utterances after cancel() returns, by which time a restart of the
+  // same key may own a fresh queue that those stale events would otherwise advance.
+  const settleGen = useCallback(
+    (gen: number, key: string) => {
+      if (genRef.current === gen) settle(key);
+    },
+    [settle],
+  );
+
   // Play one rendered piper clip, resolving when it ends / errors / is stopped.
   const playAudio = useCallback((blob: Blob): Promise<void> => {
     return new Promise<void>((resolve) => {
       let url = "";
+      let audio: HTMLAudioElement | null = null;
       const finish = () => {
+        // A finished clip mustn't stay current: a pause between clips would otherwise hold
+        // it, and resuming would replay it.
+        if (audio && audioRef.current === audio) audioRef.current = null;
         if (url) {
           try {
             URL.revokeObjectURL(url);
@@ -312,12 +337,16 @@ export function useReadAloud(): ReadAloud {
       };
       try {
         url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
+        audio = new Audio(url);
         audioRef.current = audio;
         piperResolveRef.current = wrapped;
         audio.onended = finish;
         audio.onerror = finish;
-        void audio.play().catch(finish);
+        const el = audio;
+        // Pausing before play() settles rejects it; that clip is held, not finished.
+        void el.play().catch(() => {
+          if (!(pausedRef.current && audioRef.current === el)) finish();
+        });
       } catch {
         finish();
       }
@@ -342,14 +371,15 @@ export function useReadAloud(): ReadAloud {
     if (canSpeakNative()) {
       for (const it of items) {
         const utt = newUtterance(it.text);
-        utt.onend = () => settle(it.key);
-        utt.onerror = () => settle(it.key);
+        const g = genRef.current;
+        utt.onend = () => settleGen(g, it.key);
+        utt.onerror = () => settleGen(g, it.key);
         window.speechSynthesis.speak(utt);
       }
     } else {
       for (const it of items) settle(it.key);
     }
-  }, [settle, newUtterance]);
+  }, [settle, settleGen, newUtterance]);
 
   // Drain the piper FIFO one clip at a time (fetch → play → next), tied to the gen that
   // started it so a stop()/switch abandons it. Only one pump runs per gen.
@@ -390,9 +420,18 @@ export function useReadAloud(): ReadAloud {
         try {
           blob = await fetchClip(item); // usually already resolving — prefetched last round
         } catch {
-          if (genRef.current === myGen) piperFallback();
+          const held = pausedRef.current;
+          if (held?.gen === myGen) {
+            // The box failed while paused: don't start talking natively behind a paused
+            // player. Drop the run so Play resumes it from this unit instead.
+            pausedRef.current = null;
+            held.release();
+            piperFifoRef.current = [];
+            queueRef.current = { key: "", pending: 0, finalized: false };
+          } else if (genRef.current === myGen) piperFallback();
           break;
         }
+        while (pausedRef.current?.gen === myGen) await pausedRef.current.wait;
         if (genRef.current !== myGen) break;
         // Start playback, then — WHILE it plays — kick off renders for the next PREFETCH-1
         // clips (now enqueued), so the next clip is ready the instant this one ends (gapless).
@@ -421,19 +460,22 @@ export function useReadAloud(): ReadAloud {
         pumpPiper();
       } else if (canSpeakNative()) {
         const utt = newUtterance(text);
-        utt.onend = () => settle(key);
-        utt.onerror = () => settle(key);
+        const g = genRef.current;
+        utt.onend = () => settleGen(g, key);
+        utt.onerror = () => settleGen(g, key);
         window.speechSynthesis.speak(utt);
       } else {
         settle(key); // nothing can voice — keep the accounting balanced
       }
     },
-    [pumpPiper, settle, usePiper, newUtterance],
+    [pumpPiper, settle, settleGen, usePiper, newUtterance],
   );
 
   // Tear down whatever's playing (both engines) and reset the piper state.
   const teardown = useCallback(() => {
     genRef.current += 1; // supersede any in-flight piper fetch/clip
+    pausedRef.current?.release();
+    pausedRef.current = null;
     piperResolveRef.current?.(); // unstick the current clip's await
     const audio = audioRef.current;
     audioRef.current = null;
@@ -458,10 +500,12 @@ export function useReadAloud(): ReadAloud {
   }, []);
 
   const stop = useCallback(() => {
+    // Detach the queue first: an engine that fires end/error synchronously inside cancel()
+    // mustn't count the cancelled units as spoken (a resume skips by that count).
+    queueRef.current = { key: "", pending: 0, finalized: false };
     teardown();
     feedKeyRef.current = null;
     spokenLenRef.current = 0;
-    queueRef.current = { key: "", pending: 0, finalized: false };
     setPlay(null);
   }, [teardown, setPlay]);
 
@@ -469,6 +513,7 @@ export function useReadAloud(): ReadAloud {
   // auto), reset the cursor, and mark the turn playing.
   const beginQueue = useCallback(
     (key: string) => {
+      queueRef.current = { key: "", pending: 0, finalized: false };
       teardown();
       queueRef.current = { key, pending: 0, finalized: false };
       playlistRef.current = null;
@@ -486,6 +531,19 @@ export function useReadAloud(): ReadAloud {
       // won't pick it back up if it's still streaming.
       if (playingRef.current === key) {
         suppressedRef.current.add(key);
+        // A story run still on piper pauses in place so it can resume mid-clip; anything
+        // else stops, and a story run resumes from its last unfinished unit.
+        const pl = playlistRef.current;
+        if (pl?.key === key && piperFifoRef.current.length) {
+          let release = () => {};
+          const wait = new Promise<void>((r) => {
+            release = r;
+          });
+          pausedRef.current = { key, gen: genRef.current, wait, release };
+          audioRef.current?.pause();
+          setPlay(null);
+          return;
+        }
         stop();
         return;
       }
@@ -511,43 +569,55 @@ export function useReadAloud(): ReadAloud {
         stop();
       }
     },
-    [beginQueue, speakChunk, stop, usePiper, canVoice],
+    [beginQueue, speakChunk, stop, usePiper, canVoice, setPlay],
   );
 
   const playSections = useCallback(
-    (key: string, sections: string[], start: number) => {
+    (key: string, sections: string[], start: number, resume = false) => {
       if (!canVoice()) return;
+      const prev = playlistRef.current?.key === key ? playlistRef.current : null;
+      const atStart = prev !== null && playlistProgress(prev).section === start;
+      const paused = pausedRef.current;
+      if (resume && atStart && paused?.key === key && paused.gen === genRef.current) {
+        pausedRef.current = null;
+        paused.release();
+        suppressedRef.current.delete(key);
+        setPlay(key);
+        const audio = audioRef.current;
+        if (audio) void audio.play().catch(() => piperResolveRef.current?.());
+        return;
+      }
+      // Both engines speak sentence-sized units, so a resume from the unit level (native, or
+      // a piper run whose held clip was torn down) loses at most the sentence it paused in.
       const speakEngine = engineForVoice(answerVoiceRef.current);
-      const piper = usePiper();
-      // Piper renders sentence-sized clips; native speaks each story as one utterance, so a
-      // story is still the unit native progress (and skipping) moves by.
       const units: { section: number; text: string }[] = [];
       for (let i = Math.max(0, start); i < sections.length; i++) {
-        const md = sections[i] ?? "";
-        if (piper) {
-          for (const c of chunkStream(md, true, speakEngine).chunks)
-            units.push({ section: i, text: c });
-        } else {
-          const text = speakable(md, speakEngine);
-          if (text.trim()) units.push({ section: i, text });
-        }
+        for (const c of chunkStream(sections[i] ?? "", true, speakEngine).chunks)
+          units.push({ section: i, text: c });
       }
       if (!units.length) return;
+      const skip =
+        resume && atStart && prev
+          ? Math.min(
+              units.length - 1,
+              prev.unitSection.slice(0, prev.done).filter((s) => s === start).length,
+            )
+          : 0;
       paceRef.current = paceFor(sections.join("\n\n"));
       suppressedRef.current.delete(key);
       try {
         beginQueue(key);
         manualRef.current = true;
         queueRef.current.finalized = true;
-        const pl = { key, unitSection: units.map((u) => u.section), done: 0 };
+        const pl = { key, unitSection: units.map((u) => u.section), done: skip };
         playlistRef.current = pl;
         setProgress(playlistProgress(pl));
-        for (const u of units) speakChunk(key, u.text);
+        for (const u of units.slice(skip)) speakChunk(key, u.text);
       } catch {
         stop();
       }
     },
-    [beginQueue, speakChunk, stop, usePiper, canVoice],
+    [beginQueue, speakChunk, stop, canVoice, setPlay],
   );
 
   const feed = useCallback(

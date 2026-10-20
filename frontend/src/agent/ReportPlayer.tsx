@@ -14,7 +14,7 @@ import type { ReadAloudProgress } from "./useReadAloud";
 export interface ReportReadAloud {
   playing: string | null;
   onToggle: (key: string, markdown: string) => void;
-  playSections: (key: string, sections: string[], start: number) => void;
+  playSections: (key: string, sections: string[], start: number, resume?: boolean) => void;
   progress: ReadAloudProgress | null;
 }
 
@@ -46,21 +46,24 @@ export function ReportPlayer({
   const [stopped, setStopped] = useState(!isPlaying);
   const open = isPlaying || (pos !== null && !finished && !stopped);
 
-  // When the current story began speaking — re-stamped on every story change, so `cur` is
-  // the trigger even though the body doesn't read it.
+  // When the current story began speaking — re-stamped on every story change (so `cur` is
+  // the trigger even though the body doesn't read it) and on a fresh play, but not on a
+  // resume, so "Prev story" after resuming mid-story still restarts it.
   const storyStart = useRef(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: cur is the re-stamp trigger
   useEffect(() => {
-    if (isPlaying) storyStart.current = Date.now();
-  }, [isPlaying, cur]);
+    storyStart.current = Date.now();
+  }, [cur]);
 
   if (!sections.length) return null;
 
   const total = sections.reduce((a, s) => a + s.seconds, 0);
   const play = (from: number): void => {
     setStopped(false);
+    storyStart.current = Date.now();
     readAloud.playSections(playKey, mds, Math.max(0, Math.min(last, from)));
   };
+  const resume = (): void => readAloud.playSections(playKey, mds, cur, true);
   const pause = (): void => readAloud.onToggle(playKey, "");
 
   if (!open) {
@@ -119,7 +122,7 @@ export function ReportPlayer({
         <button
           type="button"
           className="rp-pp"
-          onClick={() => (isPlaying ? pause() : play(cur))}
+          onClick={() => (isPlaying ? pause() : resume())}
           aria-label={isPlaying ? "Pause" : "Play"}
         >
           {isPlaying ? <PauseIcon /> : <PlayIcon />}

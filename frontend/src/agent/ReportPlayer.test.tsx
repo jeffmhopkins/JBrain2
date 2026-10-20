@@ -50,7 +50,7 @@ describe("ReportPlayer", () => {
     }
   });
 
-  it("pauses through the keyed toggle and resumes the same story", () => {
+  it("pauses through the keyed toggle and resumes where it paused", () => {
     const readAloud = ra({ playing: "k", progress: { key: "k", section: 1, fraction: 0.5 } });
     const { rerender } = render(<ReportPlayer playKey="k" reportMd={MD} readAloud={readAloud} />);
     fireEvent.click(screen.getByRole("button", { name: "Pause" }));
@@ -60,7 +60,7 @@ describe("ReportPlayer", () => {
     rerender(<ReportPlayer playKey="k" reportMd={MD} readAloud={paused} />);
     expect(screen.getByText("Story 2 of 3 · paused")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Play" }));
-    expect(readAloud.playSections).toHaveBeenLastCalledWith("k", MDS, 1);
+    expect(readAloud.playSections).toHaveBeenLastCalledWith("k", MDS, 1, true);
   });
 
   it("disables Next on the last story and folds back once the brief has finished", () => {

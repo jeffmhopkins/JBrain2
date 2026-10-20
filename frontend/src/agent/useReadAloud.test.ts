@@ -432,6 +432,150 @@ describe("useReadAloud story-by-story (report player)", () => {
     expect(result.current.progress).toEqual({ key: "r", section: 1, fraction: 0 });
   });
 
+  it("resumes a paused native story from the unfinished sentence, not its top", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One. Two. Three.", "Four."], 0));
+    act(() => synth.speak.mock.calls[0]?.[0].onend());
+    act(() => result.current.toggle("r", ""));
+    expect(result.current.playing).toBeNull();
+    synth.speak.mockClear();
+
+    act(() => result.current.playSections("r", ["One. Two. Three.", "Four."], 0, true));
+    expect(result.current.playing).toBe("r");
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual(["Two.", "Three.", "Four."]);
+    expect(result.current.progress).toEqual({ key: "r", section: 0, fraction: 1 / 3 });
+  });
+
+  it("doesn't overshoot the resume point when cancel() fires end synchronously", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0));
+    act(() => synth.speak.mock.calls[0]?.[0].onend());
+    // Some engines end every queued utterance inside cancel().
+    synth.cancel.mockImplementationOnce(() => {
+      for (const c of synth.speak.mock.calls.slice(1)) c[0].onend?.();
+    });
+    act(() => result.current.toggle("r", ""));
+    synth.speak.mockClear();
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0, true));
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual(["Two.", "Three."]);
+  });
+
+  it("ignores a cancelled utterance's late end once the run has resumed", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0));
+    const stale = synth.speak.mock.calls.map((c) => c[0]);
+    act(() => result.current.toggle("r", ""));
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0, true));
+    // Chrome delivers the cancelled utterances' errors after cancel() returns.
+    act(() => {
+      for (const u of stale) u.onerror?.();
+    });
+    expect(result.current.playing).toBe("r");
+    expect(result.current.progress).toEqual({ key: "r", section: 0, fraction: 0 });
+  });
+
+  it("restarts the story when replayed without resume", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One. Two.", "Three."], 0));
+    act(() => synth.speak.mock.calls[0]?.[0].onend());
+    act(() => result.current.toggle("r", ""));
+    synth.speak.mockClear();
+    act(() => result.current.playSections("r", ["One. Two.", "Three."], 0));
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual(["One.", "Two.", "Three."]);
+  });
+
+  it("pauses a piper story in place and resumes the same clip mid-sentence", async () => {
+    Reflect.deleteProperty(window, "speechSynthesis");
+    getSettings.mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "kokoro-am_michael",
+      brain_read_aloud_engine: "piper",
+    });
+    brainVoices.mockResolvedValue(["kokoro-am_michael"]);
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.playSections("r", ["One. Two.", "Three."], 0));
+    await waitFor(() => expect(audios).toHaveLength(1));
+    const clip = audios[0] as FakeAudio;
+    const pause = vi.spyOn(clip, "pause");
+    const play = vi.spyOn(clip, "play");
+
+    act(() => result.current.toggle("r", ""));
+    expect(result.current.playing).toBeNull();
+    expect(pause).toHaveBeenCalled();
+    const renders = brainTts.mock.calls.length;
+
+    await act(async () => result.current.playSections("r", ["One. Two.", "Three."], 0, true));
+    expect(result.current.playing).toBe("r");
+    expect(play).toHaveBeenCalled();
+    expect(audios).toHaveLength(1); // the held clip carries on — nothing re-rendered
+    expect(brainTts.mock.calls.length).toBe(renders);
+
+    await act(async () => clip.onended?.());
+    await waitFor(() => expect(audios).toHaveLength(2));
+    expect(result.current.progress).toEqual({ key: "r", section: 0, fraction: 0.5 });
+  });
+
+  it("holds the next piper clip while paused between clips", async () => {
+    Reflect.deleteProperty(window, "speechSynthesis");
+    getSettings.mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "kokoro-am_michael",
+      brain_read_aloud_engine: "piper",
+    });
+    brainVoices.mockResolvedValue(["kokoro-am_michael"]);
+    let release: (b: Blob) => void = () => {};
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    // The second clip's render is still in flight when the owner pauses.
+    brainTts.mockResolvedValueOnce(new Blob(["wav"])).mockImplementationOnce(
+      () =>
+        new Promise<Blob>((r) => {
+          release = r;
+        }),
+    );
+    await act(async () => result.current.playSections("r", ["One. Two."], 0));
+    await waitFor(() => expect(audios).toHaveLength(1));
+    await act(async () => (audios[0] as FakeAudio).onended?.());
+    act(() => result.current.toggle("r", ""));
+    await act(async () => release(new Blob(["wav"])));
+    expect(audios).toHaveLength(1);
+
+    await act(async () => result.current.playSections("r", ["One. Two."], 0, true));
+    await waitFor(() => expect(audios).toHaveLength(2));
+    expect(result.current.playing).toBe("r");
+  });
+
+  it("stays silent when the box fails while paused, and resumes from that clip", async () => {
+    Reflect.deleteProperty(window, "speechSynthesis");
+    getSettings.mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "kokoro-am_michael",
+      brain_read_aloud_engine: "piper",
+    });
+    brainVoices.mockResolvedValue(["kokoro-am_michael"]);
+    let fail: (e: Error) => void = () => {};
+    brainTts.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((_, rej) => {
+          fail = rej;
+        }),
+    );
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.playSections("r", ["One. Two."], 0));
+    act(() => result.current.toggle("r", ""));
+    stubNative();
+    await act(async () => fail(new Error("box down")));
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.playing).toBeNull();
+
+    await act(async () => result.current.playSections("r", ["One. Two."], 0, true));
+    expect(result.current.playing).toBe("r");
+    await waitFor(() => expect(audios).toHaveLength(1));
+    expect(brainTts.mock.calls.at(-2)?.[1]).toBe("One.");
+  });
+
   it("plays nothing when every story from the start index is empty", () => {
     const { result } = renderHook(() => useReadAloud());
     act(() => result.current.playSections("r", ["One.", "  "], 1));
