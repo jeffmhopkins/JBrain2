@@ -460,6 +460,20 @@ describe("useReadAloud story-by-story (report player)", () => {
     expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual(["Two.", "Three."]);
   });
 
+  it("ignores a cancelled utterance's late end once the run has resumed", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0));
+    const stale = synth.speak.mock.calls.map((c) => c[0]);
+    act(() => result.current.toggle("r", ""));
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0, true));
+    // Chrome delivers the cancelled utterances' errors after cancel() returns.
+    act(() => {
+      for (const u of stale) u.onerror?.();
+    });
+    expect(result.current.playing).toBe("r");
+    expect(result.current.progress).toEqual({ key: "r", section: 0, fraction: 0 });
+  });
+
   it("restarts the story when replayed without resume", () => {
     const { result } = renderHook(() => useReadAloud());
     act(() => result.current.playSections("r", ["One. Two.", "Three."], 0));

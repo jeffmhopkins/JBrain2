@@ -296,6 +296,16 @@ export function useReadAloud(): ReadAloud {
     [setPlay],
   );
 
+  // A native utterance's end, counted only for the gen that queued it: Chrome fires the
+  // end/error of cancelled utterances after cancel() returns, by which time a restart of the
+  // same key may own a fresh queue that those stale events would otherwise advance.
+  const settleGen = useCallback(
+    (gen: number, key: string) => {
+      if (genRef.current === gen) settle(key);
+    },
+    [settle],
+  );
+
   // Play one rendered piper clip, resolving when it ends / errors / is stopped.
   const playAudio = useCallback((blob: Blob): Promise<void> => {
     return new Promise<void>((resolve) => {
@@ -361,14 +371,15 @@ export function useReadAloud(): ReadAloud {
     if (canSpeakNative()) {
       for (const it of items) {
         const utt = newUtterance(it.text);
-        utt.onend = () => settle(it.key);
-        utt.onerror = () => settle(it.key);
+        const g = genRef.current;
+        utt.onend = () => settleGen(g, it.key);
+        utt.onerror = () => settleGen(g, it.key);
         window.speechSynthesis.speak(utt);
       }
     } else {
       for (const it of items) settle(it.key);
     }
-  }, [settle, newUtterance]);
+  }, [settle, settleGen, newUtterance]);
 
   // Drain the piper FIFO one clip at a time (fetch → play → next), tied to the gen that
   // started it so a stop()/switch abandons it. Only one pump runs per gen.
@@ -449,14 +460,15 @@ export function useReadAloud(): ReadAloud {
         pumpPiper();
       } else if (canSpeakNative()) {
         const utt = newUtterance(text);
-        utt.onend = () => settle(key);
-        utt.onerror = () => settle(key);
+        const g = genRef.current;
+        utt.onend = () => settleGen(g, key);
+        utt.onerror = () => settleGen(g, key);
         window.speechSynthesis.speak(utt);
       } else {
         settle(key); // nothing can voice — keep the accounting balanced
       }
     },
-    [pumpPiper, settle, usePiper, newUtterance],
+    [pumpPiper, settle, settleGen, usePiper, newUtterance],
   );
 
   // Tear down whatever's playing (both engines) and reset the piper state.
