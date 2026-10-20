@@ -332,7 +332,11 @@ export function useReadAloud(): ReadAloud {
         piperResolveRef.current = wrapped;
         audio.onended = finish;
         audio.onerror = finish;
-        void audio.play().catch(finish);
+        const el = audio;
+        // Pausing before play() settles rejects it; that clip is held, not finished.
+        void el.play().catch(() => {
+          if (!(pausedRef.current && audioRef.current === el)) finish();
+        });
       } catch {
         finish();
       }
@@ -405,7 +409,15 @@ export function useReadAloud(): ReadAloud {
         try {
           blob = await fetchClip(item); // usually already resolving — prefetched last round
         } catch {
-          if (genRef.current === myGen) piperFallback();
+          const held = pausedRef.current;
+          if (held?.gen === myGen) {
+            // The box failed while paused: don't start talking natively behind a paused
+            // player. Drop the run so Play resumes it from this unit instead.
+            pausedRef.current = null;
+            held.release();
+            piperFifoRef.current = [];
+            queueRef.current = { key: "", pending: 0, finalized: false };
+          } else if (genRef.current === myGen) piperFallback();
           break;
         }
         while (pausedRef.current?.gen === myGen) await pausedRef.current.wait;
@@ -476,10 +488,12 @@ export function useReadAloud(): ReadAloud {
   }, []);
 
   const stop = useCallback(() => {
+    // Detach the queue first: an engine that fires end/error synchronously inside cancel()
+    // mustn't count the cancelled units as spoken (a resume skips by that count).
+    queueRef.current = { key: "", pending: 0, finalized: false };
     teardown();
     feedKeyRef.current = null;
     spokenLenRef.current = 0;
-    queueRef.current = { key: "", pending: 0, finalized: false };
     setPlay(null);
   }, [teardown, setPlay]);
 
@@ -487,6 +501,7 @@ export function useReadAloud(): ReadAloud {
   // auto), reset the cursor, and mark the turn playing.
   const beginQueue = useCallback(
     (key: string) => {
+      queueRef.current = { key: "", pending: 0, finalized: false };
       teardown();
       queueRef.current = { key, pending: 0, finalized: false };
       playlistRef.current = null;

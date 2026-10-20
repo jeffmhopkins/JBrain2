@@ -446,6 +446,20 @@ describe("useReadAloud story-by-story (report player)", () => {
     expect(result.current.progress).toEqual({ key: "r", section: 0, fraction: 1 / 3 });
   });
 
+  it("doesn't overshoot the resume point when cancel() fires end synchronously", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0));
+    act(() => synth.speak.mock.calls[0]?.[0].onend());
+    // Some engines end every queued utterance inside cancel().
+    synth.cancel.mockImplementationOnce(() => {
+      for (const c of synth.speak.mock.calls.slice(1)) c[0].onend?.();
+    });
+    act(() => result.current.toggle("r", ""));
+    synth.speak.mockClear();
+    act(() => result.current.playSections("r", ["One. Two. Three."], 0, true));
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual(["Two.", "Three."]);
+  });
+
   it("restarts the story when replayed without resume", () => {
     const { result } = renderHook(() => useReadAloud());
     act(() => result.current.playSections("r", ["One. Two.", "Three."], 0));
@@ -516,6 +530,36 @@ describe("useReadAloud story-by-story (report player)", () => {
     await act(async () => result.current.playSections("r", ["One. Two."], 0, true));
     await waitFor(() => expect(audios).toHaveLength(2));
     expect(result.current.playing).toBe("r");
+  });
+
+  it("stays silent when the box fails while paused, and resumes from that clip", async () => {
+    Reflect.deleteProperty(window, "speechSynthesis");
+    getSettings.mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "kokoro-am_michael",
+      brain_read_aloud_engine: "piper",
+    });
+    brainVoices.mockResolvedValue(["kokoro-am_michael"]);
+    let fail: (e: Error) => void = () => {};
+    brainTts.mockImplementationOnce(
+      () =>
+        new Promise<Blob>((_, rej) => {
+          fail = rej;
+        }),
+    );
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.playSections("r", ["One. Two."], 0));
+    act(() => result.current.toggle("r", ""));
+    stubNative();
+    await act(async () => fail(new Error("box down")));
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.playing).toBeNull();
+
+    await act(async () => result.current.playSections("r", ["One. Two."], 0, true));
+    expect(result.current.playing).toBe("r");
+    await waitFor(() => expect(audios).toHaveLength(1));
+    expect(brainTts.mock.calls.at(-2)?.[1]).toBe("One.");
   });
 
   it("plays nothing when every story from the start index is empty", () => {
