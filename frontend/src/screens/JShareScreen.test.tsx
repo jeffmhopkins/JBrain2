@@ -197,6 +197,24 @@ describe("JShareScreen", () => {
     expect(await screen.findByText("Lake house")).toBeInTheDocument();
   });
 
+  it("names a download link for a file the tab opens", async () => {
+    const pdf = item({ kind: "file", filename: "notes.pdf", media_type: "application/pdf" });
+    render(<JShareScreen deps={deps({ list: vi.fn(async () => [pdf]) })} />);
+    await screen.findByText("Lake house walkthrough");
+    fireEvent.click(screen.getByRole("button", { name: "More for Lake house walkthrough" }));
+    expect(screen.getByText("https://box.example/s/abc123/?download=1")).toBeInTheDocument();
+  });
+
+  it.each([
+    ["a zipped site", { kind: "site" as const, filename: "site.zip" }],
+    ["a file that downloads already", { kind: "file" as const, filename: "notes.docx" }],
+  ])("offers no download link for %s", async (_, over) => {
+    render(<JShareScreen deps={deps({ list: vi.fn(async () => [item(over)]) })} />);
+    await screen.findByText("Lake house walkthrough");
+    fireEvent.click(screen.getByRole("button", { name: "More for Lake house walkthrough" }));
+    expect(screen.queryByText(/\?download=1/)).not.toBeInTheDocument();
+  });
+
   it("deletes only after a confirm that says the link stops working", async () => {
     const d = deps();
     render(<JShareScreen deps={d} />);

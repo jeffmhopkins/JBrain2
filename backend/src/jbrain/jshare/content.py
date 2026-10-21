@@ -26,6 +26,8 @@ MAX_UPLOAD_BYTES = 4 * 1024**3
 MAX_SITE_MEMBERS = 20_000
 MAX_SITE_UNPACKED_BYTES = 4 * 1024**3
 
+PDF_MEDIA_TYPE = "application/pdf"
+
 _KINDS: dict[str, tuple[str, str]] = {
     "png": ("image", "image/png"),
     "jpg": ("image", "image/jpeg"),
@@ -53,6 +55,8 @@ _KINDS: dict[str, tuple[str, str]] = {
     "ogv": ("video", "video/ogg"),
     "html": ("html", "text/html"),
     "htm": ("html", "text/html"),
+    # Still a "file" (no kind of its own in the table's CHECK), but one the tab shows.
+    "pdf": ("file", PDF_MEDIA_TYPE),
 }
 
 #: What the files inside a zipped site are served as. Anything not listed goes out as
@@ -74,7 +78,6 @@ _SITE_TYPES: dict[str, str] = {
     "woff2": "font/woff2",
     "ttf": "font/ttf",
     "otf": "font/otf",
-    "pdf": "application/pdf",
     "glb": "model/gltf-binary",
     "gltf": "model/gltf+json",
 }
@@ -109,6 +112,10 @@ def clean_filename(name: str | None) -> str:
 
 def _ext(name: str) -> str:
     return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def is_pdf(name: str) -> bool:
+    return _ext(name) == "pdf"
 
 
 def site_media_type(name: str) -> str:

@@ -41,7 +41,7 @@ def test_slugs_are_unguessable_dns_labels() -> None:
         ("song.mp3", "audio", "audio/mpeg"),
         ("clip.mov", "video", "video/quicktime"),
         ("page.html", "html", "text/html"),
-        ("notes.pdf", "file", "application/octet-stream"),
+        ("notes.pdf", "file", "application/pdf"),
         ("README", "file", "application/octet-stream"),
     ],
 )
