@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-10-18
+> **Status:** Living · **Last verified:** 2026-10-21
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Around
@@ -169,8 +169,8 @@ current scope can — until the owner confirms (`chat_shares.share_sensitivity`)
 JShare (`/s/<slug>/`, migration 0252, `docs/runbooks/JSHARE.md`) is the same shape with
 no resolve step: the slug in the path is the pin, and `jshare_items_public_read` admits the
 one item it names. It is the one public surface outside `/api` and the one that serves code
-the box did not write, so every response is CSP-sandboxed to an opaque origin and Caddy
-strips the cookie on the way in.
+the box did not write, so every response (but a PDF's, which viewers refuse sandboxed)
+is CSP-sandboxed to an opaque origin and Caddy strips the cookie on the way in.
 
 ## Knowledge pipeline
 

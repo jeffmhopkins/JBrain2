@@ -1,6 +1,6 @@
 # JShare — publishing files at their own public links
 
-> **Status:** Living · **Last verified:** 2026-10-18
+> **Status:** Living · **Last verified:** 2026-10-21
 
 JShare is where the owner publishes a file for other people: a picture, a sound, a video,
 an HTML page, a zip holding a self-contained website, or any other file. Each upload gets
@@ -17,7 +17,11 @@ rename it, delete it. There is no host step.
 | `.mp4 .mov .webm …` | video | The browser's own player, with seeking (range requests). |
 | `.html .htm` | html | The page. |
 | `.zip` with an `index.html` | site | The site: `index.html` at the link, every other file at its path under it. |
+| `.pdf` | file | The browser's own PDF viewer, in the tab. |
 | anything else (a `.zip` without `index.html` too) | file | A download. |
+
+Adding `?download=1` to any link but a site's (`/s/<slug>/?download=1`) asks for the file as a
+download instead; the owner's detail sheet shows that link.
 
 A zipped site's `index.html` may sit at the zip's root or in a single top folder (zipping a
 `dist/` folder is fine). Its links must be **relative** (`app.css`, `img/a.png`): a link that
@@ -78,7 +82,11 @@ Four layers keep that script away from the owner's session:
 1. **Sandbox.** Every `/s/` response carries `Content-Security-Policy: sandbox …` without
    `allow-same-origin`, so the browser gives the page an opaque origin: no access to the
    app's cookies, storage or service worker. `api/jshare_public.py` sets it; the real-Caddy
-   test checks it survives the proxy.
+   test checks it survives the proxy. The one exception is a shared `.pdf`: browsers refuse
+   to render a PDF in a sandboxed document, so it goes out without the sandbox. It is fixed
+   to `application/pdf` by its name (an HTML file renamed `.pdf` still can't render as a
+   page; `nosniff` holds the type), and a PDF's own script runs inside the browser's viewer,
+   never on the app's origin.
 2. **No cookie.** Caddy strips the `Cookie` header from `/s/*` before the api, and the route
    reads none.
 3. **Cross-site to the api.** From an opaque origin the app's `/api` is cross-site: the `Lax`

@@ -197,6 +197,20 @@ describe("JShareScreen", () => {
     expect(await screen.findByText("Lake house")).toBeInTheDocument();
   });
 
+  it("names a download link for a file", async () => {
+    render(<JShareScreen deps={deps()} />);
+    await screen.findByText("Lake house walkthrough");
+    fireEvent.click(screen.getByRole("button", { name: "More for Lake house walkthrough" }));
+    expect(screen.getByText("https://box.example/s/abc123/?download=1")).toBeInTheDocument();
+  });
+
+  it("offers no download link for a zipped site", async () => {
+    render(<JShareScreen deps={deps({ list: vi.fn(async () => [item({ kind: "site" })]) })} />);
+    await screen.findByText("Lake house walkthrough");
+    fireEvent.click(screen.getByRole("button", { name: "More for Lake house walkthrough" }));
+    expect(screen.queryByText(/\?download=1/)).not.toBeInTheDocument();
+  });
+
   it("deletes only after a confirm that says the link stops working", async () => {
     const d = deps();
     render(<JShareScreen deps={d} />);

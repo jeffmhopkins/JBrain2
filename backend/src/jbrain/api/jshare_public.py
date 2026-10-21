@@ -30,7 +30,7 @@ from starlette.background import BackgroundTask
 
 from jbrain.api.client_ip import client_ip
 from jbrain.jshare import store
-from jbrain.jshare.content import SLUG_RE, lookup, site_media_type
+from jbrain.jshare.content import PDF_MEDIA_TYPE, SLUG_RE, is_pdf, lookup, site_media_type
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -65,6 +65,12 @@ _HEADERS = {
     # take the item down at once, not when an edge copy expires.
     "Cache-Control": "private, no-cache",
 }
+
+# Browsers refuse to render a PDF in a sandboxed document (their viewers count as plugins),
+# so a PDF goes out without the sandbox. That is safe where an HTML page would not be: the
+# type is fixed to application/pdf by the name and nosniff holds it there, and a PDF's own
+# script runs inside the viewer, never on the app's origin.
+_PDF_HEADERS = {k: v for k, v in _HEADERS.items() if k != "Content-Security-Policy"}
 
 # Zip members up to this size are answered whole; bigger ones are streamed.
 _BUFFER_LIMIT = 1024**2
@@ -134,13 +140,18 @@ async def share_file(slug: str, path: str, request: Request) -> Response:
         return await _site_file(request, item, blob, path)
     if path not in ("", item.filename):
         raise _not_found()
+    # By the name, not the stored type: PDFs shared before they opened inline are stored as
+    # octet-stream.
+    pdf = item.kind == "file" and is_pdf(item.filename)
+    # A file of no kind the browser shows is a download; the rest open in the tab, unless
+    # the link asks for the download.
+    inline = (item.kind != "file" or pdf) and "download" not in request.query_params
     return FileResponse(
         blob,
-        media_type=item.media_type,
+        media_type=PDF_MEDIA_TYPE if pdf else item.media_type,
         filename=item.filename,
-        # A file of no kind the browser shows is a download; the rest open in the tab.
-        content_disposition_type="attachment" if item.kind == "file" else "inline",
-        headers=_HEADERS,
+        content_disposition_type="inline" if inline else "attachment",
+        headers=_PDF_HEADERS if pdf else _HEADERS,
     )
 
 

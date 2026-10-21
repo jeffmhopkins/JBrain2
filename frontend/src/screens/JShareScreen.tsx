@@ -630,6 +630,12 @@ function DetailSheet({
         </dd>
         <dt>Link</dt>
         <dd className="js-url">{shareLink(item)}</dd>
+        {item.kind !== "site" && (
+          <>
+            <dt>Download</dt>
+            <dd className="js-url">{`${shareLink(item)}?download=1`}</dd>
+          </>
+        )}
         <dt>Last opened</dt>
         <dd>{item.last_viewed_at ? fmtDate(item.last_viewed_at) : "never"}</dd>
       </dl>

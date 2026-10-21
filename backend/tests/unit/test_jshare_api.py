@@ -272,12 +272,54 @@ def test_a_plain_file_downloads_and_only_its_own_name_resolves(
     blobs: FsBlobStore, table: _Table
 ) -> None:
     client = TestClient(_app(blobs))
-    item = _upload(client, "notes.pdf", b"%PDF")
-    resp = client.get(f"/s/{item['slug']}/notes.pdf")
+    item = _upload(client, "notes.docx", b"PK")
+    resp = client.get(f"/s/{item['slug']}/notes.docx")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "application/octet-stream"
     assert resp.headers["content-disposition"].startswith("attachment")
-    assert client.get(f"/s/{item['slug']}/other.pdf").status_code == 404
+    _assert_sandboxed(resp)
+    assert client.get(f"/s/{item['slug']}/other.docx").status_code == 404
+
+
+def _assert_pdf_inline(resp) -> None:  # noqa: ANN001
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.headers["content-disposition"].startswith("inline")
+    # The viewers refuse a sandboxed PDF; everything else the public side promises holds.
+    assert "content-security-policy" not in resp.headers
+    assert resp.headers["x-content-type-options"] == "nosniff"
+    assert resp.headers["referrer-policy"] == "no-referrer"
+    assert resp.headers["cache-control"] == "private, no-cache"
+
+
+def test_a_pdf_opens_in_the_tab(blobs: FsBlobStore, table: _Table) -> None:
+    client = TestClient(_app(blobs))
+    item = _upload(client, "notes.pdf", b"%PDF")
+    assert item["kind"] == "file"
+    assert item["media_type"] == "application/pdf"
+    _assert_pdf_inline(client.get(f"/s/{item['slug']}/"))
+    _assert_pdf_inline(client.get(f"/s/{item['slug']}/notes.pdf"))
+
+
+def test_a_pdf_shared_as_octet_stream_still_opens_in_the_tab(
+    blobs: FsBlobStore, table: _Table
+) -> None:
+    client = TestClient(_app(blobs))
+    item = _upload(client, "OLD.PDF", b"%PDF")
+    table.rows[item["id"]] = replace(table.rows[item["id"]], media_type="application/octet-stream")
+    _assert_pdf_inline(client.get(f"/s/{item['slug']}/"))
+
+
+def test_download_asks_for_the_file(blobs: FsBlobStore, table: _Table) -> None:
+    client = TestClient(_app(blobs))
+    pdf = _upload(client, "notes.pdf", b"%PDF")
+    resp = client.get(f"/s/{pdf['slug']}/", params={"download": "1"})
+    assert resp.headers["content-type"] == "application/pdf"
+    assert resp.headers["content-disposition"].startswith("attachment")
+    page = _upload(client, "proto.html", b"<p>hi</p>")
+    resp = client.get(f"/s/{page['slug']}/", params={"download": "1"})
+    assert resp.headers["content-disposition"].startswith("attachment")
+    _assert_sandboxed(resp)
 
 
 def test_a_zipped_site_serves_its_files(blobs: FsBlobStore, table: _Table) -> None:
