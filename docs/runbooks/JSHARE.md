@@ -91,7 +91,9 @@ Four layers keep that script away from the owner's session:
    reads none.
 3. **Cross-site to the api.** From an opaque origin the app's `/api` is cross-site: the `Lax`
    session cookie isn't sent on its requests, and `SameSiteGuard` refuses an `Origin: null`
-   request that carries one anyway.
+   request that carries one anyway. Not for a PDF, which has the app's origin: its isolation
+   is the browser's viewer (PDF script runs in the viewer, no viewer submits a PDF form), and
+   a link in it is like any other link on the app's host.
 4. **Public site only.** `/s/*` is routed on the public site alone; the LAN and owner sites
    never serve it.
 

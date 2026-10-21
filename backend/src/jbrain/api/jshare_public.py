@@ -145,7 +145,7 @@ async def share_file(slug: str, path: str, request: Request) -> Response:
     pdf = item.kind == "file" and is_pdf(item.filename)
     # A file of no kind the browser shows is a download; the rest open in the tab, unless
     # the link asks for the download.
-    inline = (item.kind != "file" or pdf) and "download" not in request.query_params
+    inline = (item.kind != "file" or pdf) and request.query_params.get("download") != "1"
     return FileResponse(
         blob,
         media_type=PDF_MEDIA_TYPE if pdf else item.media_type,

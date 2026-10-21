@@ -299,6 +299,8 @@ def test_a_pdf_opens_in_the_tab(blobs: FsBlobStore, table: _Table) -> None:
     assert item["media_type"] == "application/pdf"
     _assert_pdf_inline(client.get(f"/s/{item['slug']}/"))
     _assert_pdf_inline(client.get(f"/s/{item['slug']}/notes.pdf"))
+    _assert_pdf_inline(client.head(f"/s/{item['slug']}/"))
+    _assert_pdf_inline(client.get(f"/s/{item['slug']}/", params={"download": "0"}))
 
 
 def test_a_pdf_shared_as_octet_stream_still_opens_in_the_tab(

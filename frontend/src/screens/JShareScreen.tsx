@@ -630,7 +630,8 @@ function DetailSheet({
         </dd>
         <dt>Link</dt>
         <dd className="js-url">{shareLink(item)}</dd>
-        {item.kind !== "site" && (
+        {/* A plain file downloads already, and a site's link is a folder. */}
+        {(item.kind === "file" ? /\.pdf$/i.test(item.filename) : item.kind !== "site") && (
           <>
             <dt>Download</dt>
             <dd className="js-url">{`${shareLink(item)}?download=1`}</dd>
