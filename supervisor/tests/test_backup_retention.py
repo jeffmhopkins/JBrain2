@@ -255,7 +255,9 @@ def test_unchanged_blobs_skip_the_tarball_and_the_sidecar_names_the_reused_one(
 ) -> None:
     backups = tmp_path / "backups"
     backups.mkdir()
-    old = "20261004-010000"
+    # Relative to the real clock: backup.sh prunes against `date`, so a fixed stamp
+    # ages out of KEEP_DAYS and gets pruned before the skip check sees it.
+    old = _stamp(datetime.now(UTC) - timedelta(days=3))
     (backups / f"blobs-{old}.tar.gz").write_text("tar")
     (backups / f"blobs-{old}.sha").write_text("fp1\n")
 
@@ -273,7 +275,7 @@ def test_a_changed_volume_or_a_failed_fingerprint_archives_again(
 ) -> None:
     backups = tmp_path / "backups"
     backups.mkdir()
-    old = "20261004-010000"
+    old = _stamp(datetime.now(UTC) - timedelta(days=3))
     (backups / f"blobs-{old}.tar.gz").write_text("tar")
     empty_sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     (backups / f"blobs-{old}.sha").write_text(f"{empty_sha}\n")
