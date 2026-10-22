@@ -64,8 +64,8 @@ UNLOAD_TIMEOUT_S=300
 # The floating gateway rebuild pulls a multi-GB base image on a rolling tag. Generous, but
 # not unbounded: it runs with the stack quiesced, so a stall here is a stall of the box.
 PULL_TIMEOUT_S=1800
-# The base-image refresh rebuilds EVERY image from fresh bases (no layer cache survives a
-# new base), so it gets more room than one gateway pull. A hit falls back to cached bases.
+# The base-image refresh rebuilds our images from fresh bases (no layer cache survives a
+# new base), so it gets more room than one gateway pull.
 BASE_REFRESH_TIMEOUT_S=5400
 
 # Run a one-off compose container under a hard ceiling, and clean up after a kill.
@@ -919,11 +919,14 @@ if base_refresh_due; then
     # (a base that now breaks a Dockerfile must not cost every update a failed rebuild).
     echo "$((_now - (BASE_REFRESH_DAYS - 1) * 86400))" > "$BASE_REFRESH_STATE" 2>/dev/null \
       || true
-    echo "[update] rebuild on fresh bases failed — keeping the cached bases, retrying in a day"
+    echo "[update] rebuild on fresh bases failed — retrying the refresh in a day"
   fi
 fi
 # Always: builds tts-stt, and is the fallback after a failed refresh (cached, so cheap
-# after a successful one).
+# after a successful one). After a registry outage it builds on the cached bases. If
+# instead a freshly pulled base breaks a Dockerfile, the image store may already hold it
+# and this fails too: the update stops before the recreate, so the running containers keep
+# serving the old images and the log names the broken build — a repo fix, not a box one.
 docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
 
 # DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
