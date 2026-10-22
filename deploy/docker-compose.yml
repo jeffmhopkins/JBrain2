@@ -79,7 +79,10 @@ services:
   cloudflared:
     logging: *logbound
     profiles: [tunnel]
-    image: cloudflare/cloudflared:latest
+    # Pinned, not `latest`: the update never re-pulls a floating tag, so `latest` meant
+    # whatever release the box first pulled, forever. Bump it here, deliberately — this
+    # holds the tunnel token and is how the owner reaches the box.
+    image: cloudflare/cloudflared:2026.10.0
     restart: unless-stopped
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN:-}"]
     networks: [edge]

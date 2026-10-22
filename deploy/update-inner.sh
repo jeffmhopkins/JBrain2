@@ -875,21 +875,23 @@ fi
 #
 # A plain `build` reuses whatever `python:3.12-slim`, `node:22-slim`, `caddy:…` the box
 # pulled the first time, so OS-level security fixes in those bases (OpenSSL, glibc, …)
-# never reached the images, and the third-party services on floating tags
-# (`cloudflared:latest`, the embedder's `cpu-latest`) never moved at all. Nothing short
-# of a host shell could change that, which the owner does not have (CLAUDE.md #10), so the
-# update itself does it — once every BASE_IMAGE_REFRESH_DAYS (default 7; 0 turns it off),
-# not every run, because a full re-pull is slow and a registry outage should cost one
-# skipped refresh, not a failed deploy.
+# never reached the images, and nothing short of a host shell could change that — which
+# the owner does not have (CLAUDE.md #10). So the update itself rebuilds on fresh bases
+# once every BASE_IMAGE_REFRESH_DAYS (default 7; 0 turns it off), not every run: a full
+# re-pull is slow, and a registry outage should cost one skipped refresh, not a deploy.
 #
-# `db` is left out on purpose: its floating `pg17` tag moving the TimescaleDB extension
-# under a live database is a migration, not a patch. `comfyui` is a multi-GB image with
-# its own install path. The gateways (`local-llm`, `flash-next`) are not in these
-# profiles and keep their own pinned/floating logic below.
+# Only OUR images are rebuilt; image-only services (db, cloudflared, the embedder, …) are
+# not pulled here — a floating tag moving under them has no smoke test and no rollback, so
+# they move when the repo pins a new version. `tts-stt` is left out too: its base is
+# llama-swap's floating `:vulkan` tag, i.e. a new whisper/llama.cpp stack with nothing to
+# vet it. The gateways (`local-llm`, `flash-next`) are not in these profiles and keep
+# their own pinned/floating logic below.
 BASE_REFRESH_STATE=".jbrain-base-refresh"
 BASE_REFRESH_DAYS="$(sed -n 's/^BASE_IMAGE_REFRESH_DAYS=//p' .env | tail -n 1)"
 case "$BASE_REFRESH_DAYS" in
-  '' | *[!0-9]*) BASE_REFRESH_DAYS=7 ;;
+  # A leading zero is octal to $(( )) — `08` aborts the update under set -e.
+  0) ;;
+  '' | 0* | *[!0-9]*) BASE_REFRESH_DAYS=7 ;;
 esac
 
 base_refresh_due() {
@@ -903,31 +905,26 @@ base_refresh_due() {
 
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
 if base_refresh_due; then
-  echo "[update] base-image refresh due (every ${BASE_REFRESH_DAYS}d) — pulling fresh images"
-  _pull_svcs="$(docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE config --services \
-    2>/dev/null | grep -v -x -e db -e comfyui || true)"
-  # --ignore-buildable: our own images come from the `build --pull` below, not a registry.
-  # Pinned-digest images pull as a no-op. Best-effort: the up -d below recreates whatever
-  # did move, and a failed pull leaves the current image serving.
-  if [ -n "$_pull_svcs" ] \
-    && run_bounded "$PULL_TIMEOUT_S" docker compose $JCODE_PROFILE $TUNNEL_PROFILE \
-      $SDR_PROFILE pull --quiet --ignore-buildable --ignore-pull-failures $_pull_svcs; then
-    echo "[update] third-party images refreshed"
-  else
-    echo "[update] third-party image pull failed — keeping the current images"
-  fi
-  if run_bounded "$BASE_REFRESH_TIMEOUT_S" docker compose $JCODE_PROFILE $TUNNEL_PROFILE \
-    $SDR_PROFILE build --pull; then
-    date +%s > "$BASE_REFRESH_STATE"
+  echo "[update] base-image refresh due (every ${BASE_REFRESH_DAYS}d) — rebuilding on fresh bases"
+  _now="$(date +%s)"
+  _refresh_svcs="$(docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE config \
+    --services 2>/dev/null | grep -v -x -e tts-stt || true)"
+  if [ -n "$_refresh_svcs" ] \
+    && run_bounded "$BASE_REFRESH_TIMEOUT_S" docker compose $JCODE_PROFILE $TUNNEL_PROFILE \
+      $SDR_PROFILE build --pull $_refresh_svcs; then
+    echo "$_now" > "$BASE_REFRESH_STATE" 2>/dev/null || true
     echo "[update] images rebuilt on fresh bases"
   else
-    # Stamp NOT written, so the next update tries again rather than waiting a week.
-    echo "[update] build on fresh bases failed — building on the cached bases instead"
-    docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
+    # Back off a day rather than a week (a blip retries soon) and rather than not at all
+    # (a base that now breaks a Dockerfile must not cost every update a failed rebuild).
+    echo "$((_now - (BASE_REFRESH_DAYS - 1) * 86400))" > "$BASE_REFRESH_STATE" 2>/dev/null \
+      || true
+    echo "[update] rebuild on fresh bases failed — keeping the cached bases, retrying in a day"
   fi
-else
-  docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
 fi
+# Always: builds tts-stt, and is the fallback after a failed refresh (cached, so cheap
+# after a successful one).
+docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
 
 # DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
 # architecture is supported WITHOUT any manual step — the owner drives this box from the

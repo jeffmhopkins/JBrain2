@@ -2804,22 +2804,74 @@ def test_base_refresh_honours_the_interval_and_the_off_switch(tmp_path: Path) ->
     now = int(datetime.now(UTC).timestamp())
     assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=1\n", str(now - 2 * 86400))
     assert not _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=0\n", None)
-    # A typo falls back to the default rather than disabling it or dying under set -u.
+    # A typo falls back to the default rather than disabling it or dying under set -u;
+    # `08` is octal to $(( )) and used to abort the whole update.
     assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=weekly\n", None)
+    assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=08\n", None)
 
 
-def test_base_refresh_is_bounded_falls_back_and_spares_the_db() -> None:
-    """A registry outage must cost a skipped refresh, not a failed deploy; and the
-    floating pg17 tag must never move the TimescaleDB extension under a live DB."""
+def _run_refresh(tmp_path: Path, build_pull_rc: int) -> tuple[list[str], int]:
+    """Run the real refresh-and-build block with a fake `docker` that logs its argv."""
     text = (DEPLOY / "update-inner.sh").read_text()
-    block = text[text.index("if base_refresh_due; then") :]
-    block = block[: block.index("\nfi\n") + 1]
+    start = text.index('BASE_REFRESH_STATE="')
+    end = text.index("\n", text.index("$SDR_PROFILE build\n", text.index("# Always:")))
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    fake = bin_dir / "docker"
+    fake.write_text(
+        "#!/bin/sh\n"
+        'echo "$*" >> "$DOCKER_LOG"\n'
+        'case "$*" in\n'
+        '  *"config --services"*) printf "api\\nworker\\ndb\\ntts-stt\\nproxy\\n" ;;\n'
+        '  *"build --pull"*) exit "$BUILD_PULL_RC" ;;\n'
+        "esac\n"
+    )
+    fake.chmod(0o755)
+    (tmp_path / ".env").write_text("")
+    log = tmp_path / "docker.log"
+    log.unlink(missing_ok=True)
+    (tmp_path / ".jbrain-base-refresh").unlink(missing_ok=True)
+    script = (
+        "set -eu\nJCODE_PROFILE= TUNNEL_PROFILE= SDR_PROFILE= JBRAIN_GIT_DESCRIBE=t\n"
+        'BASE_REFRESH_TIMEOUT_S=1\nrun_bounded() { shift; "$@"; }\n'
+        f"{text[start:end]}\n"
+    )
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "DOCKER_LOG": str(log),
+        "BUILD_PULL_RC": str(build_pull_rc),
+    }
+    run = subprocess.run(
+        ["sh", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    stamp = int((tmp_path / ".jbrain-base-refresh").read_text())
+    return log.read_text().splitlines(), stamp
 
-    assert 'run_bounded "$BASE_REFRESH_TIMEOUT_S"' in block and "build --pull" in block
-    assert 'run_bounded "$PULL_TIMEOUT_S"' in block and "--ignore-buildable" in block
-    assert "grep -v -x -e db" in block
-    # The stamp is written only on success, so a failed refresh retries next update.
-    ok = block.index("build --pull; then")
-    assert block.index('date +%s > "$BASE_REFRESH_STATE"') > ok
-    assert block.index('date +%s > "$BASE_REFRESH_STATE"') < block.index("else", ok)
-    assert block.count("$SDR_PROFILE build\n") == 2, "both fallbacks still build"
+
+def test_base_refresh_rebuilds_our_images_only_and_always_builds(
+    tmp_path: Path,
+) -> None:
+    """Image-only services (db, cloudflared, the embedder) must not move on a floating
+    tag with no smoke test and no rollback, and tts-stt's base is a floating llama-swap
+    stack; a plain build must still follow, for tts-stt and as the fallback."""
+    calls, stamp = _run_refresh(tmp_path, 0)
+
+    (pull,) = [c for c in calls if "build --pull" in c]
+    # `build` on an image-only service is a no-op; tts-stt is what must be absent.
+    assert pull.split()[3:] == ["api", "worker", "db", "proxy"]
+    assert not any(c.startswith("compose pull") or " pull " in f" {c} " for c in calls)
+    assert calls[-1].split() == ["compose", "build"]
+    assert stamp >= int(datetime.now(UTC).timestamp()) - 60
+
+
+def test_a_failed_refresh_still_deploys_and_backs_off_a_day(tmp_path: Path) -> None:
+    """A registry outage must cost a skipped refresh, not a failed deploy — and a base
+    that now breaks a Dockerfile must not cost every update a failed rebuild."""
+    calls, stamp = _run_refresh(tmp_path, 1)
+
+    assert calls[-1].split() == ["compose", "build"]
+    now = int(datetime.now(UTC).timestamp())
+    # Due again in about a day (BASE_IMAGE_REFRESH_DAYS=7 → stamped six days back).
+    assert abs((now - stamp) - 6 * 86400) < 60
