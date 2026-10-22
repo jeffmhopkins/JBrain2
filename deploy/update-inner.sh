@@ -64,6 +64,9 @@ UNLOAD_TIMEOUT_S=300
 # The floating gateway rebuild pulls a multi-GB base image on a rolling tag. Generous, but
 # not unbounded: it runs with the stack quiesced, so a stall here is a stall of the box.
 PULL_TIMEOUT_S=1800
+# The base-image refresh rebuilds our images from fresh bases (no layer cache survives a
+# new base), so it gets more room than one gateway pull.
+BASE_REFRESH_TIMEOUT_S=5400
 
 # Run a one-off compose container under a hard ceiling, and clean up after a kill.
 #
@@ -868,7 +871,62 @@ if sdr_dvb_claimed; then
   fi
 fi
 
+# ---- Base-image refresh ----------------------------------------------------------
+#
+# A plain `build` reuses whatever `python:3.12-slim`, `node:22-slim`, `caddy:…` the box
+# pulled the first time, so OS-level security fixes in those bases (OpenSSL, glibc, …)
+# never reached the images, and nothing short of a host shell could change that — which
+# the owner does not have (CLAUDE.md #10). So the update itself rebuilds on fresh bases
+# once every BASE_IMAGE_REFRESH_DAYS (default 7; 0 turns it off), not every run: a full
+# re-pull is slow, and a registry outage should cost one skipped refresh, not a deploy.
+#
+# Only OUR images are rebuilt; image-only services (db, cloudflared, the embedder, …) are
+# not pulled here — a floating tag moving under them has no smoke test and no rollback, so
+# they move when the repo pins a new version. `tts-stt` is left out too: its base is
+# llama-swap's floating `:vulkan` tag, i.e. a new whisper/llama.cpp stack with nothing to
+# vet it. The gateways (`local-llm`, `flash-next`) are not in these profiles and keep
+# their own pinned/floating logic below.
+BASE_REFRESH_STATE=".jbrain-base-refresh"
+BASE_REFRESH_DAYS="$(sed -n 's/^BASE_IMAGE_REFRESH_DAYS=//p' .env | tail -n 1)"
+case "$BASE_REFRESH_DAYS" in
+  # A leading zero is octal to $(( )) — `08` aborts the update under set -e.
+  0) ;;
+  '' | 0* | *[!0-9]*) BASE_REFRESH_DAYS=7 ;;
+esac
+
+base_refresh_due() {
+  [ "$BASE_REFRESH_DAYS" -gt 0 ] || return 1
+  _last="$(cat "$BASE_REFRESH_STATE" 2>/dev/null || true)"
+  case "$_last" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  [ $(($(date +%s) - _last)) -ge $((BASE_REFRESH_DAYS * 86400)) ]
+}
+
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
+if base_refresh_due; then
+  echo "[update] base-image refresh due (every ${BASE_REFRESH_DAYS}d) — rebuilding on fresh bases"
+  _now="$(date +%s)"
+  _refresh_svcs="$(docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE config \
+    --services 2>/dev/null | grep -v -x -e tts-stt || true)"
+  if [ -n "$_refresh_svcs" ] \
+    && run_bounded "$BASE_REFRESH_TIMEOUT_S" docker compose $JCODE_PROFILE $TUNNEL_PROFILE \
+      $SDR_PROFILE build --pull $_refresh_svcs; then
+    echo "$_now" > "$BASE_REFRESH_STATE" 2>/dev/null || true
+    echo "[update] images rebuilt on fresh bases"
+  else
+    # Back off a day rather than a week (a blip retries soon) and rather than not at all
+    # (a base that now breaks a Dockerfile must not cost every update a failed rebuild).
+    echo "$((_now - (BASE_REFRESH_DAYS - 1) * 86400))" > "$BASE_REFRESH_STATE" 2>/dev/null \
+      || true
+    echo "[update] rebuild on fresh bases failed — retrying the refresh in a day"
+  fi
+fi
+# Always: builds tts-stt, and is the fallback after a failed refresh (cached, so cheap
+# after a successful one). After a registry outage it builds on the cached bases. If
+# instead a freshly pulled base breaks a Dockerfile, the image store may already hold it
+# and this fails too: the update stops before the recreate, so the running containers keep
+# serving the old images and the log names the broken build — a repo fix, not a box one.
 docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
 
 # DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
