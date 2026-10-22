@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import subprocess
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -2759,3 +2760,66 @@ def test_llama_builders_use_the_shared_build_tools_script(dockerfile: str) -> No
     assert "sh /ensure-build-tools.sh" in text
     # The old inline block reinstalled every package in one transaction.
     assert "reinstall git cmake gcc-c++ binutils make" not in text
+
+
+# --- the periodic base-image refresh -----------------------------------------
+
+
+def _refresh_due(tmp_path: Path, env: str, stamp: str | None) -> bool:
+    """Run the script's own refresh-due block under sh, against a fake deploy dir."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+    block = text[
+        text.index('BASE_REFRESH_STATE="') : text.index(
+            'echo "[update] building images'
+        )
+    ]
+    (tmp_path / ".env").write_text(env)
+    state = tmp_path / ".jbrain-base-refresh"
+    state.unlink(missing_ok=True)
+    if stamp is not None:
+        state.write_text(stamp)
+    run = subprocess.run(
+        ["sh", "-c", f"set -eu\n{block}\nbase_refresh_due"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode in (0, 1), run.stderr
+    return run.returncode == 0
+
+
+def test_base_refresh_runs_weekly_by_default(tmp_path: Path) -> None:
+    """Without it, OS security fixes in the Docker bases never reach the box: a plain
+    build reuses the first-pulled base forever, and the owner has no shell to pull."""
+    now = int(datetime.now(UTC).timestamp())
+    assert _refresh_due(tmp_path, "", None), "a box that never refreshed is due"
+    assert not _refresh_due(tmp_path, "", str(now - 86400))
+    assert _refresh_due(tmp_path, "", str(now - 8 * 86400))
+    assert _refresh_due(tmp_path, "", "garbage"), (
+        "an unreadable stamp must not block it"
+    )
+
+
+def test_base_refresh_honours_the_interval_and_the_off_switch(tmp_path: Path) -> None:
+    now = int(datetime.now(UTC).timestamp())
+    assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=1\n", str(now - 2 * 86400))
+    assert not _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=0\n", None)
+    # A typo falls back to the default rather than disabling it or dying under set -u.
+    assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=weekly\n", None)
+
+
+def test_base_refresh_is_bounded_falls_back_and_spares_the_db() -> None:
+    """A registry outage must cost a skipped refresh, not a failed deploy; and the
+    floating pg17 tag must never move the TimescaleDB extension under a live DB."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+    block = text[text.index("if base_refresh_due; then") :]
+    block = block[: block.index("\nfi\n") + 1]
+
+    assert 'run_bounded "$BASE_REFRESH_TIMEOUT_S"' in block and "build --pull" in block
+    assert 'run_bounded "$PULL_TIMEOUT_S"' in block and "--ignore-buildable" in block
+    assert "grep -v -x -e db" in block
+    # The stamp is written only on success, so a failed refresh retries next update.
+    ok = block.index("build --pull; then")
+    assert block.index('date +%s > "$BASE_REFRESH_STATE"') > ok
+    assert block.index('date +%s > "$BASE_REFRESH_STATE"') < block.index("else", ok)
+    assert block.count("$SDR_PROFILE build\n") == 2, "both fallbacks still build"

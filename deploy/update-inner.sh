@@ -64,6 +64,9 @@ UNLOAD_TIMEOUT_S=300
 # The floating gateway rebuild pulls a multi-GB base image on a rolling tag. Generous, but
 # not unbounded: it runs with the stack quiesced, so a stall here is a stall of the box.
 PULL_TIMEOUT_S=1800
+# The base-image refresh rebuilds EVERY image from fresh bases (no layer cache survives a
+# new base), so it gets more room than one gateway pull. A hit falls back to cached bases.
+BASE_REFRESH_TIMEOUT_S=5400
 
 # Run a one-off compose container under a hard ceiling, and clean up after a kill.
 #
@@ -868,8 +871,63 @@ if sdr_dvb_claimed; then
   fi
 fi
 
+# ---- Base-image refresh ----------------------------------------------------------
+#
+# A plain `build` reuses whatever `python:3.12-slim`, `node:22-slim`, `caddy:…` the box
+# pulled the first time, so OS-level security fixes in those bases (OpenSSL, glibc, …)
+# never reached the images, and the third-party services on floating tags
+# (`cloudflared:latest`, the embedder's `cpu-latest`) never moved at all. Nothing short
+# of a host shell could change that, which the owner does not have (CLAUDE.md #10), so the
+# update itself does it — once every BASE_IMAGE_REFRESH_DAYS (default 7; 0 turns it off),
+# not every run, because a full re-pull is slow and a registry outage should cost one
+# skipped refresh, not a failed deploy.
+#
+# `db` is left out on purpose: its floating `pg17` tag moving the TimescaleDB extension
+# under a live database is a migration, not a patch. `comfyui` is a multi-GB image with
+# its own install path. The gateways (`local-llm`, `flash-next`) are not in these
+# profiles and keep their own pinned/floating logic below.
+BASE_REFRESH_STATE=".jbrain-base-refresh"
+BASE_REFRESH_DAYS="$(sed -n 's/^BASE_IMAGE_REFRESH_DAYS=//p' .env | tail -n 1)"
+case "$BASE_REFRESH_DAYS" in
+  '' | *[!0-9]*) BASE_REFRESH_DAYS=7 ;;
+esac
+
+base_refresh_due() {
+  [ "$BASE_REFRESH_DAYS" -gt 0 ] || return 1
+  _last="$(cat "$BASE_REFRESH_STATE" 2>/dev/null || true)"
+  case "$_last" in
+    '' | *[!0-9]*) return 0 ;;
+  esac
+  [ $(($(date +%s) - _last)) -ge $((BASE_REFRESH_DAYS * 86400)) ]
+}
+
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
-docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
+if base_refresh_due; then
+  echo "[update] base-image refresh due (every ${BASE_REFRESH_DAYS}d) — pulling fresh images"
+  _pull_svcs="$(docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE config --services \
+    2>/dev/null | grep -v -x -e db -e comfyui || true)"
+  # --ignore-buildable: our own images come from the `build --pull` below, not a registry.
+  # Pinned-digest images pull as a no-op. Best-effort: the up -d below recreates whatever
+  # did move, and a failed pull leaves the current image serving.
+  if [ -n "$_pull_svcs" ] \
+    && run_bounded "$PULL_TIMEOUT_S" docker compose $JCODE_PROFILE $TUNNEL_PROFILE \
+      $SDR_PROFILE pull --quiet --ignore-buildable --ignore-pull-failures $_pull_svcs; then
+    echo "[update] third-party images refreshed"
+  else
+    echo "[update] third-party image pull failed — keeping the current images"
+  fi
+  if run_bounded "$BASE_REFRESH_TIMEOUT_S" docker compose $JCODE_PROFILE $TUNNEL_PROFILE \
+    $SDR_PROFILE build --pull; then
+    date +%s > "$BASE_REFRESH_STATE"
+    echo "[update] images rebuilt on fresh bases"
+  else
+    # Stamp NOT written, so the next update tries again rather than waiting a week.
+    echo "[update] build on fresh bases failed — building on the cached bases instead"
+    docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
+  fi
+else
+  docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE build
+fi
 
 # DEFAULT-ON: track the newest llama.cpp on the gateway so a freshly-released model's
 # architecture is supported WITHOUT any manual step — the owner drives this box from the
