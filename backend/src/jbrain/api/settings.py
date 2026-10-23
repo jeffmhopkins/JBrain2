@@ -16,6 +16,8 @@ from jbrain.api.notes import ctx_for
 from jbrain.llm import local_catalog
 from jbrain.minecraft.sessions import check_gamertag
 from jbrain.settings_store import (
+    BASE_IMAGE_REFRESH_DEFAULT,
+    BASE_IMAGE_REFRESH_KEY,
     BRAIN_ANSWER_CHORUS_DEFAULT,
     BRAIN_ANSWER_CHORUS_KEY,
     BRAIN_ANSWER_PITCH_DEFAULT,
@@ -95,6 +97,8 @@ class SettingsOut(BaseModel):
     # it by loading a model. ON by default; surfaced here because it lived only in `.env`,
     # which the owner has no terminal to reach.
     local_llm_auto_update: bool = LOCAL_LLM_AUTO_UPDATE_DEFAULT
+    # Whether an update rebuilds our images on fresh base images about once a week.
+    base_image_refresh: bool = BASE_IMAGE_REFRESH_DEFAULT
     # Whether an update rebuilds the gateway with the patched llama-server (fast qwen
     # MTP-hybrid loads). OFF by default; surfaced here because it lived only in `.env`,
     # which the owner has no terminal to reach.
@@ -160,6 +164,7 @@ class SettingsPatch(BaseModel):
     brain_answer_chorus: bool | None = None
     brain_answer_robot: bool | None = None
     local_llm_auto_update: bool | None = None
+    base_image_refresh: bool | None = None
     local_llm_patch_restore_checkpoint: bool | None = None
     llm_kv_prefix_budget_gb: (
         Annotated[int, Field(ge=LLM_KV_PREFIX_BUDGET_GB_MIN, le=LLM_KV_PREFIX_BUDGET_GB_MAX)] | None
@@ -206,6 +211,7 @@ async def _read(ctx, store: SqlSettingsStore, kv_prefix: object = None) -> Setti
         brain_answer_chorus=await store.brain_answer_chorus(ctx),
         brain_answer_robot=await store.brain_answer_robot(ctx),
         local_llm_auto_update=await store.local_llm_auto_update(ctx),
+        base_image_refresh=await store.base_image_refresh(ctx),
         local_llm_patch_restore_checkpoint=await store.local_llm_patch_restore_checkpoint(ctx),
         llm_kv_prefix_budget_gb=await store.llm_kv_prefix_budget_gb(ctx),
         llm_kv_conversation_cache=await store.llm_kv_conversation_cache(ctx),
@@ -289,6 +295,8 @@ async def update_settings(
             value_emit("answer_robot", body.brain_answer_robot)
     if body.local_llm_auto_update is not None:
         await store.upsert(ctx, LOCAL_LLM_AUTO_UPDATE_KEY, body.local_llm_auto_update)
+    if body.base_image_refresh is not None:
+        await store.upsert(ctx, BASE_IMAGE_REFRESH_KEY, body.base_image_refresh)
     if body.local_llm_patch_restore_checkpoint is not None:
         await store.upsert(
             ctx,

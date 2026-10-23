@@ -95,6 +95,33 @@ def test_patch_restore_checkpoint_exit_code_follows_the_setting(
     assert cli.main(["local-llm-patch-restore-checkpoint"]) == 1
 
 
+def test_base_image_refresh_exit_code_follows_the_setting(
+    patched_store: FakeSettingsStore,
+) -> None:
+    # Never set reads as ON (exit 0): this is how OS security fixes reach the box.
+    assert cli.main(["base-image-refresh"]) == 0
+    patched_store.values["base_image_refresh"] = False
+    assert cli.main(["base-image-refresh"]) == 1
+    patched_store.values["base_image_refresh"] = True
+    assert cli.main(["base-image-refresh"]) == 0
+
+
+def test_base_image_refresh_reads_on_when_the_db_is_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Settings:
+        database_url = "postgresql+asyncpg://x/y"
+
+    def _boom(maker: object) -> object:
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr(cli, "get_settings", lambda: _Settings())
+    monkeypatch.setattr(cli, "create_async_engine", lambda url: _FakeEngine())
+    monkeypatch.setattr(cli, "async_sessionmaker", lambda engine, **kw: object())
+    monkeypatch.setattr(cli, "SqlSettingsStore", _boom)
+    assert cli.main(["base-image-refresh"]) == 0
+
+
 def test_set_patch_restore_checkpoint_persists_on_and_off(
     patched_store: FakeSettingsStore,
 ) -> None:

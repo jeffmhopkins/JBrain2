@@ -64,6 +64,7 @@ def test_get_settings_defaults_to_full_analysis(
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "base_image_refresh": True,
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
@@ -91,6 +92,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "base_image_refresh": True,
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
@@ -113,6 +115,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "base_image_refresh": True,
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
@@ -135,6 +138,7 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "base_image_refresh": True,
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
@@ -164,6 +168,7 @@ def test_put_settings_round_trips_the_timezone(
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "base_image_refresh": True,
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
@@ -385,6 +390,7 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "brain_answer_chorus": False,
         "brain_answer_robot": False,
         "local_llm_auto_update": True,
+        "base_image_refresh": True,
         "local_llm_patch_restore_checkpoint": False,
         "llm_kv_prefix_budget_gb": 40,
         "llm_kv_conversation_cache": True,
@@ -410,6 +416,22 @@ def test_gateway_auto_update_defaults_on_and_can_be_turned_off(
     assert patched.status_code == 200
     assert patched.json()["local_llm_auto_update"] is False
     assert c.get("/api/settings").json()["local_llm_auto_update"] is False
+
+
+def test_base_image_refresh_defaults_on_and_can_be_turned_off(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    """The weekly rebuild on fresh base images is how OS security fixes reach the box, so
+    it defaults ON; the owner's off switch is this setting, never `.env` (CLAUDE.md #10)."""
+    c, _store = client
+
+    assert c.get("/api/settings").json()["base_image_refresh"] is True
+
+    patched = c.put("/api/settings", json={"base_image_refresh": False})
+
+    assert patched.status_code == 200
+    assert patched.json()["base_image_refresh"] is False
+    assert c.get("/api/settings").json()["base_image_refresh"] is False
 
 
 def test_gateway_patch_restore_defaults_off_and_can_be_turned_on(

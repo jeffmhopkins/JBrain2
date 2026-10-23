@@ -1421,6 +1421,9 @@ export interface AppSettings {
    *  (patched llama-server → fast qwen MTP-hybrid disk restores). OFF by default. Surfaced
    *  because it lived only in the box's `.env`, which the owner has no terminal to reach. */
   local_llm_patch_restore_checkpoint: boolean;
+  /** Whether an update, about once a week, rebuilds the box's images on freshly pulled base
+   *  images so OS security fixes reach it. ON by default. */
+  base_image_refresh: boolean;
   /** The prompt cache's disk allowance in GiB (2..500, default 40): saved role prefixes and
    *  Flash-Next conversation files share it, conversation files evicted first. Live. */
   llm_kv_prefix_budget_gb: number;
