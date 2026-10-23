@@ -877,8 +877,9 @@ fi
 # pulled the first time, so OS-level security fixes in those bases (OpenSSL, glibc, …)
 # never reached the images, and nothing short of a host shell could change that — which
 # the owner does not have (CLAUDE.md #10). So the update itself rebuilds on fresh bases
-# once every BASE_IMAGE_REFRESH_DAYS (default 7; 0 turns it off), not every run: a full
-# re-pull is slow, and a registry outage should cost one skipped refresh, not a deploy.
+# once a week, not every run: a full re-pull is slow, and a registry outage should cost
+# one skipped refresh, not a deploy. The off switch is the owner's PWA setting (Settings →
+# Updates), read through the api image like the gateway auto-update toggle below.
 #
 # Only OUR images are rebuilt; image-only services (db, cloudflared, the embedder, …) are
 # not pulled here — a floating tag moving under them has no smoke test and no rollback, so
@@ -887,15 +888,9 @@ fi
 # vet it. The gateways (`local-llm`, `flash-next`) are not in these profiles and keep
 # their own pinned/floating logic below.
 BASE_REFRESH_STATE=".jbrain-base-refresh"
-BASE_REFRESH_DAYS="$(sed -n 's/^BASE_IMAGE_REFRESH_DAYS=//p' .env | tail -n 1)"
-case "$BASE_REFRESH_DAYS" in
-  # A leading zero is octal to $(( )) — `08` aborts the update under set -e.
-  0) ;;
-  '' | 0* | *[!0-9]*) BASE_REFRESH_DAYS=7 ;;
-esac
+BASE_REFRESH_DAYS=7
 
 base_refresh_due() {
-  [ "$BASE_REFRESH_DAYS" -gt 0 ] || return 1
   _last="$(cat "$BASE_REFRESH_STATE" 2>/dev/null || true)"
   case "$_last" in
     '' | *[!0-9]*) return 0 ;;
@@ -903,8 +898,26 @@ base_refresh_due() {
   [ $(($(date +%s) - _last)) -ge $((BASE_REFRESH_DAYS * 86400)) ]
 }
 
+# Exit 3 is the owner's "off" (not 1, which a crash or a compose error also returns).
+# Anything else reads as on: a timeout, a DB hiccup, an api image built before this command
+# existed (argparse exits 2) — failing closed would silently freeze the bases again, which
+# is the problem this exists to fix.
+base_refresh_enabled() {
+  if run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
+    python -m jbrain.cli base-image-refresh; then
+    return 0
+  else
+    _rc=$?
+  fi
+  [ "$_rc" -ne 3 ]
+}
+
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"
-if base_refresh_due; then
+if ! base_refresh_due; then
+  :
+elif ! base_refresh_enabled; then
+  echo "[update] base-image refresh is OFF (Settings → Updates) — building on the cached bases"
+else
   echo "[update] base-image refresh due (every ${BASE_REFRESH_DAYS}d) — rebuilding on fresh bases"
   _now="$(date +%s)"
   _refresh_svcs="$(docker compose $JCODE_PROFILE $TUNNEL_PROFILE $SDR_PROFILE config \

@@ -2765,15 +2765,12 @@ def test_llama_builders_use_the_shared_build_tools_script(dockerfile: str) -> No
 # --- the periodic base-image refresh -----------------------------------------
 
 
-def _refresh_due(tmp_path: Path, env: str, stamp: str | None) -> bool:
+def _refresh_due(tmp_path: Path, stamp: str | None) -> bool:
     """Run the script's own refresh-due block under sh, against a fake deploy dir."""
     text = (DEPLOY / "update-inner.sh").read_text()
     block = text[
-        text.index('BASE_REFRESH_STATE="') : text.index(
-            'echo "[update] building images'
-        )
+        text.index('BASE_REFRESH_STATE="') : text.index("base_refresh_enabled() {")
     ]
-    (tmp_path / ".env").write_text(env)
     state = tmp_path / ".jbrain-base-refresh"
     state.unlink(missing_ok=True)
     if stamp is not None:
@@ -2788,29 +2785,27 @@ def _refresh_due(tmp_path: Path, env: str, stamp: str | None) -> bool:
     return run.returncode == 0
 
 
-def test_base_refresh_runs_weekly_by_default(tmp_path: Path) -> None:
+def test_base_refresh_runs_weekly(tmp_path: Path) -> None:
     """Without it, OS security fixes in the Docker bases never reach the box: a plain
     build reuses the first-pulled base forever, and the owner has no shell to pull."""
     now = int(datetime.now(UTC).timestamp())
-    assert _refresh_due(tmp_path, "", None), "a box that never refreshed is due"
-    assert not _refresh_due(tmp_path, "", str(now - 86400))
-    assert _refresh_due(tmp_path, "", str(now - 8 * 86400))
-    assert _refresh_due(tmp_path, "", "garbage"), (
-        "an unreadable stamp must not block it"
-    )
+    assert _refresh_due(tmp_path, None), "a box that never refreshed is due"
+    assert not _refresh_due(tmp_path, str(now - 86400))
+    assert _refresh_due(tmp_path, str(now - 8 * 86400))
+    assert _refresh_due(tmp_path, "garbage"), "an unreadable stamp must not block it"
 
 
-def test_base_refresh_honours_the_interval_and_the_off_switch(tmp_path: Path) -> None:
-    now = int(datetime.now(UTC).timestamp())
-    assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=1\n", str(now - 2 * 86400))
-    assert not _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=0\n", None)
-    # A typo falls back to the default rather than disabling it or dying under set -u;
-    # `08` is octal to $(( )) and used to abort the whole update.
-    assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=weekly\n", None)
-    assert _refresh_due(tmp_path, "BASE_IMAGE_REFRESH_DAYS=08\n", None)
+def test_base_refresh_has_no_env_switch() -> None:
+    """The owner runs the box with no terminal (CLAUDE.md #10): the off switch is the
+    PWA setting, read through the api image, never a `.env` key."""
+    text = (DEPLOY / "update-inner.sh").read_text()
+    assert "BASE_IMAGE_REFRESH" not in text
+    assert "python -m jbrain.cli base-image-refresh" in text
 
 
-def _run_refresh(tmp_path: Path, build_pull_rc: int) -> tuple[list[str], int]:
+def _run_refresh(
+    tmp_path: Path, build_pull_rc: int = 0, toggle_rc: int = 0
+) -> tuple[list[str], int | None]:
     """Run the real refresh-and-build block with a fake `docker` that logs its argv."""
     text = (DEPLOY / "update-inner.sh").read_text()
     start = text.index('BASE_REFRESH_STATE="')
@@ -2822,18 +2817,20 @@ def _run_refresh(tmp_path: Path, build_pull_rc: int) -> tuple[list[str], int]:
         "#!/bin/sh\n"
         'echo "$*" >> "$DOCKER_LOG"\n'
         'case "$*" in\n'
+        '  *"base-image-refresh"*) exit "$TOGGLE_RC" ;;\n'
         '  *"config --services"*) printf "api\\nworker\\ndb\\ntts-stt\\nproxy\\n" ;;\n'
         '  *"build --pull"*) exit "$BUILD_PULL_RC" ;;\n'
         "esac\n"
     )
     fake.chmod(0o755)
-    (tmp_path / ".env").write_text("")
     log = tmp_path / "docker.log"
     log.unlink(missing_ok=True)
-    (tmp_path / ".jbrain-base-refresh").unlink(missing_ok=True)
+    state = tmp_path / ".jbrain-base-refresh"
+    state.unlink(missing_ok=True)
     script = (
         "set -eu\nJCODE_PROFILE= TUNNEL_PROFILE= SDR_PROFILE= JBRAIN_GIT_DESCRIBE=t\n"
-        'BASE_REFRESH_TIMEOUT_S=1\nrun_bounded() { shift; "$@"; }\n'
+        "BASE_REFRESH_TIMEOUT_S=1 TOGGLE_TIMEOUT_S=1\n"
+        'run_bounded() { shift; "$@"; }\n'
         f"{text[start:end]}\n"
     )
     env = {
@@ -2841,12 +2838,13 @@ def _run_refresh(tmp_path: Path, build_pull_rc: int) -> tuple[list[str], int]:
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "DOCKER_LOG": str(log),
         "BUILD_PULL_RC": str(build_pull_rc),
+        "TOGGLE_RC": str(toggle_rc),
     }
     run = subprocess.run(
         ["sh", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True
     )
     assert run.returncode == 0, run.stdout + run.stderr
-    stamp = int((tmp_path / ".jbrain-base-refresh").read_text())
+    stamp = int(state.read_text()) if state.exists() else None
     return log.read_text().splitlines(), stamp
 
 
@@ -2856,22 +2854,42 @@ def test_base_refresh_rebuilds_our_images_only_and_always_builds(
     """Image-only services (db, cloudflared, the embedder) must not move on a floating
     tag with no smoke test and no rollback, and tts-stt's base is a floating llama-swap
     stack; a plain build must still follow, for tts-stt and as the fallback."""
-    calls, stamp = _run_refresh(tmp_path, 0)
+    calls, stamp = _run_refresh(tmp_path)
 
     (pull,) = [c for c in calls if "build --pull" in c]
     # `build` on an image-only service is a no-op; tts-stt is what must be absent.
     assert pull.split()[3:] == ["api", "worker", "db", "proxy"]
     assert not any(c.startswith("compose pull") or " pull " in f" {c} " for c in calls)
     assert calls[-1].split() == ["compose", "build"]
-    assert stamp >= int(datetime.now(UTC).timestamp()) - 60
+    assert stamp is not None and stamp >= int(datetime.now(UTC).timestamp()) - 60
 
 
 def test_a_failed_refresh_still_deploys_and_backs_off_a_day(tmp_path: Path) -> None:
     """A registry outage must cost a skipped refresh, not a failed deploy — and a base
     that now breaks a Dockerfile must not cost every update a failed rebuild."""
-    calls, stamp = _run_refresh(tmp_path, 1)
+    calls, stamp = _run_refresh(tmp_path, build_pull_rc=1)
 
     assert calls[-1].split() == ["compose", "build"]
     now = int(datetime.now(UTC).timestamp())
-    # Due again in about a day (BASE_IMAGE_REFRESH_DAYS=7 → stamped six days back).
-    assert abs((now - stamp) - 6 * 86400) < 60
+    # Due again in about a day (weekly interval → stamped six days back).
+    assert stamp is not None and abs((now - stamp) - 6 * 86400) < 60
+
+
+def test_the_owner_turns_the_refresh_off_in_settings(tmp_path: Path) -> None:
+    """Exit 3 from the api's setting read is the owner's "off": no fresh-base rebuild,
+    no stamp (so turning it back on refreshes at the next update), still a build."""
+    calls, stamp = _run_refresh(tmp_path, toggle_rc=3)
+
+    assert not any("build --pull" in c for c in calls)
+    assert calls[-1].split() == ["compose", "build"]
+    assert stamp is None
+
+
+@pytest.mark.parametrize("rc", [1, 2, 124, 143])
+def test_an_unreadable_setting_reads_as_on(tmp_path: Path, rc: int) -> None:
+    """A crash or compose error (1), an api image older than the command (argparse's 2)
+    or a timed-out read (124, busybox's 143) must not freeze the bases again — that is
+    the problem the refresh exists to fix."""
+    calls, _stamp = _run_refresh(tmp_path, toggle_rc=rc)
+
+    assert any("build --pull" in c for c in calls)

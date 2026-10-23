@@ -422,6 +422,13 @@ LOCAL_LLM_AUTO_UPDATE_DEFAULT = True
 LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_KEY = "local_llm_patch_restore_checkpoint"
 LOCAL_LLM_PATCH_RESTORE_CHECKPOINT_DEFAULT = False
 
+# Whether an update, about once a week, rebuilds our images on freshly pulled base images
+# (`build --pull`), so OS security fixes in python:3.12-slim and the other bases reach the
+# box at all — a plain build reuses the first-pulled base forever. ON by default; the owner
+# turns it off here, never in `.env` (CLAUDE.md #10).
+BASE_IMAGE_REFRESH_KEY = "base_image_refresh"
+BASE_IMAGE_REFRESH_DEFAULT = True
+
 
 # The prompt cache's disk allowance, in GiB (jbrain.llm.kv_prefix) — role prefixes and,
 # on Flash-Next, conversation files share it. It was a module constant whose own comment
@@ -1204,6 +1211,12 @@ class SqlSettingsStore:
         """Whether an update tracks the newest llama.cpp and smoke-tests it. Defaults ON;
         only an explicit `false` disables it (any non-false value reads as on)."""
         stored = await self.get(ctx, LOCAL_LLM_AUTO_UPDATE_KEY, LOCAL_LLM_AUTO_UPDATE_DEFAULT)
+        return stored is not False
+
+    async def base_image_refresh(self, ctx: SessionContext) -> bool:
+        """Whether an update periodically rebuilds on fresh base images. Defaults ON; only
+        an explicit `false` disables it (any non-false value reads as on)."""
+        stored = await self.get(ctx, BASE_IMAGE_REFRESH_KEY, BASE_IMAGE_REFRESH_DEFAULT)
         return stored is not False
 
     async def local_llm_patch_restore_checkpoint(self, ctx: SessionContext) -> bool:

@@ -24,6 +24,7 @@ import {
   LockIcon,
   MicIcon,
   RadioIcon,
+  RefreshIcon,
   SlidersIcon,
   SmartphoneIcon,
 } from "../components/icons";
@@ -45,7 +46,8 @@ type SettingsCategory =
   | "web"
   | "connections"
   | "access"
-  | "devices";
+  | "devices"
+  | "updates";
 
 const SETTINGS_CATEGORIES: { id: SettingsCategory; title: string; icon: ReactNode }[] = [
   { id: "appearance", title: "Appearance", icon: <SlidersIcon size={24} /> },
@@ -56,11 +58,45 @@ const SETTINGS_CATEGORIES: { id: SettingsCategory; title: string; icon: ReactNod
   { id: "connections", title: "Connections", icon: <LinkIcon size={24} /> },
   { id: "access", title: "Access", icon: <LockIcon size={24} /> },
   { id: "devices", title: "Devices", icon: <SmartphoneIcon size={24} /> },
+  { id: "updates", title: "Updates", icon: <RefreshIcon size={24} /> },
 ];
 
 const CATEGORY_TITLE = Object.fromEntries(
   SETTINGS_CATEGORIES.map((c) => [c.id, c.title]),
 ) as Record<SettingsCategory, string>;
+
+type UpdateFlags = Pick<
+  AppSettings,
+  "base_image_refresh" | "local_llm_auto_update" | "local_llm_patch_restore_checkpoint"
+>;
+
+const UPDATE_OPTIONS: { key: keyof UpdateFlags; title: string; meta: string }[] = [
+  {
+    key: "base_image_refresh",
+    title: "Weekly security refresh",
+    meta:
+      "about once a week, rebuild the box's images on freshly downloaded base images, so " +
+      "operating-system security fixes actually reach it. that update takes longer; if the " +
+      "download fails it keeps the current images and tries again a day later. on by default.",
+  },
+  {
+    key: "local_llm_auto_update",
+    title: "Track newest llama.cpp",
+    meta:
+      "rebuild the local model engine on the newest llama.cpp, so a just-released model loads, " +
+      "then test it by loading a model — and roll back to the known-good build if that fails. " +
+      "an update that changed the engine pays for that test load. on by default.",
+  },
+  {
+    key: "local_llm_patch_restore_checkpoint",
+    title: "Fast Qwen loads",
+    meta:
+      "rebuild the local engine with the patched llama-server, which restores saved Qwen " +
+      "conversations in seconds instead of minutes. compiles llama.cpp, so the next update " +
+      "can take up to half an hour longer — and if that build or its test fails, the update " +
+      "turns this back off and keeps the stock engine. off by default.",
+  },
+];
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -178,6 +214,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // intermediate state; normalised and validated on save.
   const [callsign, setCallsign] = useState<string>("");
   const [callsignSaved, setCallsignSaved] = useState<string>("");
+  // What Ops → Update does beyond deploying main. These lived in the box's `.env`, which the
+  // owner has no terminal to reach (CLAUDE.md #10). null until the server answers.
+  const [updateFlags, setUpdateFlags] = useState<UpdateFlags | null>(null);
+  const [updatesError, setUpdatesError] = useState<string | null>(null);
   const [callsignError, setCallsignError] = useState<string | null>(null);
   const [callsignSaving, setCallsignSaving] = useState(false);
 
@@ -211,6 +251,12 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (s.owner_timezone) setTimezone(s.owner_timezone);
         setCallsign(s.owner_callsign ?? "");
         setCallsignSaved(s.owner_callsign ?? "");
+        // The backend's defaults, so an older server that omits a field shows the truth.
+        setUpdateFlags({
+          base_image_refresh: s.base_image_refresh !== false,
+          local_llm_auto_update: s.local_llm_auto_update !== false,
+          local_llm_patch_restore_checkpoint: s.local_llm_patch_restore_checkpoint === true,
+        });
       })
       .catch(() => {
         // Unreachable backend: show defaults so the controls are still interactive (leaving the
@@ -227,6 +273,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           setBrainChorus(false);
           setBrainRobot(false);
           setLexicon({});
+          setUpdateFlags({
+            base_image_refresh: true,
+            local_llm_auto_update: true,
+            local_llm_patch_restore_checkpoint: false,
+          });
         }
       });
     // The read-aloud engine's health drives the voice-engine chip. Its own defensive parse
@@ -590,6 +641,17 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   function pickBrowseLoop(loop: "fast" | "b1") {
     setBrowseLoop(loop); // optimistic
     void api.updateSettings({ browse_loop: loop }).catch(() => {});
+  }
+
+  function pickUpdateFlag(key: keyof UpdateFlags, on: boolean) {
+    if (updateFlags === null) return;
+    setUpdateFlags({ ...updateFlags, [key]: on }); // optimistic
+    setUpdatesError(null);
+    void api.updateSettings({ [key]: on }).catch(() => {
+      // Only this switch: another one flipped meanwhile may well have saved.
+      setUpdateFlags((flags) => (flags === null ? flags : { ...flags, [key]: !on }));
+      setUpdatesError("Couldn't save that — check the connection to the box, then try again.");
+    });
   }
 
   function pickBrainStream(on: boolean) {
@@ -1885,6 +1947,39 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             </>
           )}
           {category === "devices" && <DevicesSettings />}
+          {category === "updates" && (
+            <>
+              <p className="settings-meta">
+                what Ops → Update does besides deploying the latest code. the next update applies a
+                change.
+              </p>
+              {UPDATE_OPTIONS.map((opt) => (
+                <section key={opt.key} className="settings-card">
+                  <h2 className="settings-label">{opt.title}</h2>
+                  <p className="settings-meta">{opt.meta}</p>
+                  <div className="theme-picker" aria-label={opt.title}>
+                    {[true, false].map((on) => (
+                      <button
+                        key={on ? "on" : "off"}
+                        type="button"
+                        aria-pressed={updateFlags?.[opt.key] === on}
+                        className={`seg${updateFlags?.[opt.key] === on ? " seg-on" : ""}`}
+                        disabled={updateFlags === null}
+                        onClick={() => pickUpdateFlag(opt.key, on)}
+                      >
+                        {on ? "On" : "Off"}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              ))}
+              {updatesError && (
+                <p className="settings-meta" role="alert">
+                  {updatesError}
+                </p>
+              )}
+            </>
+          )}
         </PageLayer>
       )}
 

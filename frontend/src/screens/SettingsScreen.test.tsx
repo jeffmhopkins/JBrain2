@@ -1082,3 +1082,76 @@ describe("SettingsScreen amateur callsign", () => {
     expect(screen.getByRole("button", { name: "Save callsign" })).toBeDisabled();
   });
 });
+
+describe("Updates settings", () => {
+  // The update toggles lived in the box's `.env`, which the owner has no terminal to
+  // reach (CLAUDE.md #10); they belong in the PWA.
+  function stubUpdates(opts: { failPut?: boolean } = {}) {
+    const state: Record<string, boolean> = {
+      base_image_refresh: true,
+      local_llm_auto_update: true,
+      local_llm_patch_restore_checkpoint: false,
+    };
+    const puts: unknown[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        if (String(input) === "/api/settings" && init?.method === "PUT") {
+          const body = JSON.parse(String(init.body)) as Record<string, boolean>;
+          puts.push(body);
+          if (opts.failPut) return new Response("boom", { status: 500 });
+          Object.assign(state, body);
+        }
+        return new Response(JSON.stringify(String(input) === "/api/settings" ? state : {}), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+    return { puts };
+  }
+
+  it("shows the server's state and turns the weekly security refresh off", async () => {
+    const { puts } = stubUpdates();
+    setup("Updates");
+    const refresh = within(await screen.findByLabelText("Weekly security refresh"));
+    await waitFor(() =>
+      expect(refresh.getByRole("button", { name: "On" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(
+      within(screen.getByLabelText("Fast Qwen loads")).getByRole("button", { name: "Off" }),
+    ).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(refresh.getByRole("button", { name: "Off" }));
+
+    await waitFor(() => expect(puts).toContainEqual({ base_image_refresh: false }));
+    expect(refresh.getByRole("button", { name: "Off" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the defaults, still switchable, when the box can't be read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response("down", { status: 503 })),
+    );
+    setup("Updates");
+    const refresh = within(await screen.findByLabelText("Weekly security refresh"));
+    await waitFor(() =>
+      expect(refresh.getByRole("button", { name: "On" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(refresh.getByRole("button", { name: "Off" })).toBeEnabled();
+  });
+
+  it("puts a switch back and says so when the save fails", async () => {
+    stubUpdates({ failPut: true });
+    setup("Updates");
+    const gateway = within(await screen.findByLabelText("Track newest llama.cpp"));
+    await waitFor(() =>
+      expect(gateway.getByRole("button", { name: "On" })).toHaveAttribute("aria-pressed", "true"),
+    );
+
+    fireEvent.click(gateway.getByRole("button", { name: "Off" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't save that");
+    expect(gateway.getByRole("button", { name: "On" })).toHaveAttribute("aria-pressed", "true");
+  });
+});

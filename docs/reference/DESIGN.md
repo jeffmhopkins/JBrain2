@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-20
+> **Status:** Living · **Last verified:** 2026-10-23
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1710,11 +1710,15 @@ arrange the grid themselves):
   source of truth — the native side only routes the button.
 - Tiles for phases not yet built render disabled with their phase label.
 - **Settings is a launcher of its own.** The Settings card opens on the same 3-column
-  tile grid (Appearance, Voice, Capture, Radio, Web, Connections, Access, Devices) instead of one
+  tile grid (Appearance, Voice, Capture, Radio, Web, Connections, Access, Devices, Updates)
+  instead of one
   long scroll; a tile pushes that category's cards as a stacked layer with its own back
   bar. Back, the down-swipe at scroll-top and the platform back gesture each climb one
   level to the grid (the page registers in the shared back-layer stack, like a sheet).
-  A new setting joins the category it belongs to rather than adding a tile; the grid
+  A new setting joins the category it belongs to rather than adding a tile; **Updates** is a
+  tile because none fits: its switches change what Ops → Update does on the box (the
+  weekly base-image refresh, the gateway's llama.cpp tracking and Fast Qwen loads), and
+  until it existed they lived only in `.env`, which the owner cannot reach; the grid
   drops to two columns only if titles stop fitting. **Ops** is built the same way, under
   its always-open vitals, Update and graphs (see "Ops screen"); both push their pages with
   `components/PageLayer.tsx`.

@@ -793,6 +793,10 @@ class FakeSettingsStore:
         # Default ON; only an explicit false turns it off (mirrors the SQL store).
         return self.values.get("local_llm_auto_update", True) is not False
 
+    async def base_image_refresh(self, ctx: object) -> bool:
+        # Default ON; only an explicit false turns it off (mirrors the SQL store).
+        return self.values.get("base_image_refresh", True) is not False
+
     async def local_llm_patch_restore_checkpoint(self, ctx: object) -> bool:
         # Default OFF; only an explicit true turns it on (mirrors the SQL store).
         return self.values.get("local_llm_patch_restore_checkpoint", False) is True

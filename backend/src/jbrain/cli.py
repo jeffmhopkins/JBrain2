@@ -103,6 +103,29 @@ async def _print_auto_update() -> int:
         await engine.dispose()
 
 
+# Not 1: a crash, an import error and most `docker compose` failures also exit 1, and
+# none of those is the owner saying "off".
+BASE_IMAGE_REFRESH_OFF_EXIT = 3
+
+
+async def _print_base_image_refresh() -> int:
+    """Exit 0 when the owner has the weekly base-image refresh on, 3 when it is off in
+    the PWA. Like `_print_auto_update`, an unreachable DB reads as ON: this is how OS
+    security fixes reach the box, and the refresh has its own fallback build."""
+    try:
+        engine = create_async_engine(get_settings().database_url)
+    except Exception:  # noqa: BLE001
+        return 0
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        on = await store.base_image_refresh(SYSTEM_CTX)
+        return 0 if on else BASE_IMAGE_REFRESH_OFF_EXIT
+    except Exception:  # noqa: BLE001
+        return 0
+    finally:
+        await engine.dispose()
+
+
 async def _print_patch_restore_checkpoint() -> int:
     """Exit 0 when the Fast-Qwen-loads patch (patched llama-server) is ON, 1 when off. An
     exit code, not stdout, so the update script reads it with a plain `if` (mirrors
@@ -367,6 +390,10 @@ def main(argv: list[str] | None = None) -> int:
         "local-llm-auto-update",
         help="exit 0 if the owner has the gateway auto-update + smoke test on, else 1",
     )
+    sub.add_parser(
+        "base-image-refresh",
+        help="exit 0 if the owner has the weekly base-image refresh on, 3 if off",
+    )
     p_smoke = sub.add_parser(
         "local-llm-smoketest",
         help="load a model (+ gpt-oss tool probe) to verify the gateway's llama.cpp build",
@@ -421,6 +448,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(_local_llm_unload())
     if args.command == "local-llm-auto-update":
         return asyncio.run(_print_auto_update())
+    if args.command == "base-image-refresh":
+        return asyncio.run(_print_base_image_refresh())
     if args.command == "local-llm-smoketest":
         return asyncio.run(_local_llm_smoketest(args.engine))
     if args.command == "local-llm-patch-restore-checkpoint":
