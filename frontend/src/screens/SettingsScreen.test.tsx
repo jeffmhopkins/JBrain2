@@ -1128,6 +1128,19 @@ describe("Updates settings", () => {
     expect(refresh.getByRole("button", { name: "Off" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("shows the defaults, still switchable, when the box can't be read", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response("down", { status: 503 })),
+    );
+    setup("Updates");
+    const refresh = within(await screen.findByLabelText("Weekly security refresh"));
+    await waitFor(() =>
+      expect(refresh.getByRole("button", { name: "On" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(refresh.getByRole("button", { name: "Off" })).toBeEnabled();
+  });
+
   it("puts a switch back and says so when the save fails", async () => {
     stubUpdates({ failPut: true });
     setup("Updates");

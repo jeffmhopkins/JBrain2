@@ -2876,19 +2876,20 @@ def test_a_failed_refresh_still_deploys_and_backs_off_a_day(tmp_path: Path) -> N
 
 
 def test_the_owner_turns_the_refresh_off_in_settings(tmp_path: Path) -> None:
-    """Exit 1 from the api's setting read is the owner's "off": no fresh-base rebuild,
+    """Exit 3 from the api's setting read is the owner's "off": no fresh-base rebuild,
     no stamp (so turning it back on refreshes at the next update), still a build."""
-    calls, stamp = _run_refresh(tmp_path, toggle_rc=1)
+    calls, stamp = _run_refresh(tmp_path, toggle_rc=3)
 
     assert not any("build --pull" in c for c in calls)
     assert calls[-1].split() == ["compose", "build"]
     assert stamp is None
 
 
-@pytest.mark.parametrize("rc", [2, 124])
+@pytest.mark.parametrize("rc", [1, 2, 124, 143])
 def test_an_unreadable_setting_reads_as_on(tmp_path: Path, rc: int) -> None:
-    """An api image older than the command (argparse exits 2) or a timed-out read must
-    not freeze the bases again — that is the problem the refresh exists to fix."""
+    """A crash or compose error (1), an api image older than the command (argparse's 2)
+    or a timed-out read (124, busybox's 143) must not freeze the bases again — that is
+    the problem the refresh exists to fix."""
     calls, _stamp = _run_refresh(tmp_path, toggle_rc=rc)
 
     assert any("build --pull" in c for c in calls)

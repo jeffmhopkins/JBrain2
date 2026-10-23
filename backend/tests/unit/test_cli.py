@@ -101,7 +101,7 @@ def test_base_image_refresh_exit_code_follows_the_setting(
     # Never set reads as ON (exit 0): this is how OS security fixes reach the box.
     assert cli.main(["base-image-refresh"]) == 0
     patched_store.values["base_image_refresh"] = False
-    assert cli.main(["base-image-refresh"]) == 1
+    assert cli.main(["base-image-refresh"]) == 3
     patched_store.values["base_image_refresh"] = True
     assert cli.main(["base-image-refresh"]) == 0
 

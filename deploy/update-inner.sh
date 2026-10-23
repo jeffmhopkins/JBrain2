@@ -898,9 +898,10 @@ base_refresh_due() {
   [ $(($(date +%s) - _last)) -ge $((BASE_REFRESH_DAYS * 86400)) ]
 }
 
-# Exit 1 is the owner's "off". Anything else reads as on: a timeout, a DB hiccup, or an
-# api image built before this command existed (argparse exits 2) — failing closed would
-# silently freeze the bases again, which is the problem this exists to fix.
+# Exit 3 is the owner's "off" (not 1, which a crash or a compose error also returns).
+# Anything else reads as on: a timeout, a DB hiccup, an api image built before this command
+# existed (argparse exits 2) — failing closed would silently freeze the bases again, which
+# is the problem this exists to fix.
 base_refresh_enabled() {
   if run_bounded "$TOGGLE_TIMEOUT_S" docker compose run --rm --no-deps -T api \
     python -m jbrain.cli base-image-refresh; then
@@ -908,7 +909,7 @@ base_refresh_enabled() {
   else
     _rc=$?
   fi
-  [ "$_rc" -ne 1 ]
+  [ "$_rc" -ne 3 ]
 }
 
 echo "[update] building images (rev $JBRAIN_GIT_DESCRIBE)"

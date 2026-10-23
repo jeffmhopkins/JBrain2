@@ -103,15 +103,23 @@ async def _print_auto_update() -> int:
         await engine.dispose()
 
 
+# Not 1: a crash, an import error and most `docker compose` failures also exit 1, and
+# none of those is the owner saying "off".
+BASE_IMAGE_REFRESH_OFF_EXIT = 3
+
+
 async def _print_base_image_refresh() -> int:
-    """Exit 0 when the owner has the weekly base-image refresh on, 1 when it is off in
-    the PWA. Mirrors `_print_auto_update`, and like it an unreachable DB reads as ON: this
-    is how OS security fixes reach the box, and the refresh has its own fallback build."""
-    settings = get_settings()
-    engine = create_async_engine(settings.database_url)
+    """Exit 0 when the owner has the weekly base-image refresh on, 3 when it is off in
+    the PWA. Like `_print_auto_update`, an unreachable DB reads as ON: this is how OS
+    security fixes reach the box, and the refresh has its own fallback build."""
+    try:
+        engine = create_async_engine(get_settings().database_url)
+    except Exception:  # noqa: BLE001
+        return 0
     try:
         store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
-        return 0 if await store.base_image_refresh(SYSTEM_CTX) else 1
+        on = await store.base_image_refresh(SYSTEM_CTX)
+        return 0 if on else BASE_IMAGE_REFRESH_OFF_EXIT
     except Exception:  # noqa: BLE001
         return 0
     finally:
@@ -384,7 +392,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     sub.add_parser(
         "base-image-refresh",
-        help="exit 0 if the owner has the weekly base-image refresh on, else 1",
+        help="exit 0 if the owner has the weekly base-image refresh on, 3 if off",
     )
     p_smoke = sub.add_parser(
         "local-llm-smoketest",

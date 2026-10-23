@@ -85,7 +85,7 @@ const UPDATE_OPTIONS: { key: keyof UpdateFlags; title: string; meta: string }[] 
     meta:
       "rebuild the local model engine on the newest llama.cpp, so a just-released model loads, " +
       "then test it by loading a model — and roll back to the known-good build if that fails. " +
-      "costs the update a model load. on by default.",
+      "an update that changed the engine pays for that test load. on by default.",
   },
   {
     key: "local_llm_patch_restore_checkpoint",
@@ -93,7 +93,8 @@ const UPDATE_OPTIONS: { key: keyof UpdateFlags; title: string; meta: string }[] 
     meta:
       "rebuild the local engine with the patched llama-server, which restores saved Qwen " +
       "conversations in seconds instead of minutes. compiles llama.cpp, so the next update " +
-      "takes 20–30 minutes longer. off by default.",
+      "can take up to half an hour longer — and if that build or its test fails, the update " +
+      "turns this back off and keeps the stock engine. off by default.",
   },
 ];
 
@@ -272,6 +273,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           setBrainChorus(false);
           setBrainRobot(false);
           setLexicon({});
+          setUpdateFlags({
+            base_image_refresh: true,
+            local_llm_auto_update: true,
+            local_llm_patch_restore_checkpoint: false,
+          });
         }
       });
     // The read-aloud engine's health drives the voice-engine chip. Its own defensive parse
@@ -639,11 +645,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
 
   function pickUpdateFlag(key: keyof UpdateFlags, on: boolean) {
     if (updateFlags === null) return;
-    const previous = updateFlags;
     setUpdateFlags({ ...updateFlags, [key]: on }); // optimistic
     setUpdatesError(null);
     void api.updateSettings({ [key]: on }).catch(() => {
-      setUpdateFlags(previous);
+      // Only this switch: another one flipped meanwhile may well have saved.
+      setUpdateFlags((flags) => (flags === null ? flags : { ...flags, [key]: !on }));
       setUpdatesError("Couldn't save that — check the connection to the box, then try again.");
     });
   }
@@ -1944,8 +1950,8 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           {category === "updates" && (
             <>
               <p className="settings-meta">
-                what Ops → Update does besides deploying the latest code. each takes effect on the
-                next update.
+                what Ops → Update does besides deploying the latest code. the next update applies a
+                change.
               </p>
               {UPDATE_OPTIONS.map((opt) => (
                 <section key={opt.key} className="settings-card">
