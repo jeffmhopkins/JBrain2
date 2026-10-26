@@ -2893,3 +2893,14 @@ def test_an_unreadable_setting_reads_as_on(tmp_path: Path, rc: int) -> None:
     calls, _stamp = _run_refresh(tmp_path, toggle_rc=rc)
 
     assert any("build --pull" in c for c in calls)
+
+
+def test_cloudflared_is_pinned_at_or_above_the_emsign_fix() -> None:
+    """cloudflared before 2026.10.2 trusts eight eMudhra intermediates whose keys are
+    compromised (Cloudflare, 2026-10-20). The tunnel carries every remote request the
+    owner makes, so the pin must never drop back below the fix."""
+    compose = yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
+    image = compose["services"]["cloudflared"]["image"]
+    tag = image.rsplit(":", 1)[1]
+    assert re.fullmatch(r"\d{4}\.\d+\.\d+", tag), f"pin a release, not {tag!r}"
+    assert tuple(int(p) for p in tag.split(".")) >= (2026, 10, 2)

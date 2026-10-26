@@ -1,6 +1,6 @@
 # Home-network access via Cloudflare Tunnel
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-10-26
 
 This is the recommended way to reach JBrain from outside your house when the box
 sits on a home network with a **dynamic IP** and possibly **CGNAT** (carrier-grade
@@ -27,6 +27,12 @@ browser ──HTTPS──> Cloudflare edge ──encrypted tunnel──> cloudfl
 
 The connector is opt-in: it lives behind the `tunnel` compose profile and only
 runs when `.env` has `TUNNEL_ENABLED=true`. A stock deploy never starts it.
+
+The connector's version is pinned in `deploy/docker-compose.yml`, never `latest` (an
+update does not re-pull a floating tag), and **Ops → Update** moves the box to whatever the
+repo pins. The floor is **2026.10.2**: older releases still trust eight eMudhra (emSign)
+intermediates with compromised keys (Cloudflare's notice of 2026-10-20), and a supervisor
+test fails if the pin drops below it.
 
 Every tunnelled request reaches Caddy from the `cloudflared` container, so the api reads the
 visitor's address from Cloudflare's `Cf-Connecting-IP` — but only when Caddy's `X-Real-IP` is
