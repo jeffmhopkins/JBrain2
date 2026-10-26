@@ -81,8 +81,9 @@ services:
     profiles: [tunnel]
     # Pinned, not `latest`: the update never re-pulls a floating tag, so `latest` meant
     # whatever release the box first pulled, forever. Bump it here, deliberately — this
-    # holds the tunnel token and is how the owner reaches the box.
-    image: cloudflare/cloudflared:2026.10.0
+    # holds the tunnel token and is how the owner reaches the box. 2026.10.2 is the floor:
+    # older releases still trust the eight compromised eMudhra (emSign) intermediates.
+    image: cloudflare/cloudflared:2026.10.3
     restart: unless-stopped
     command: ["tunnel", "--no-autoupdate", "run", "--token", "${CLOUDFLARE_TUNNEL_TOKEN:-}"]
     networks: [edge]
