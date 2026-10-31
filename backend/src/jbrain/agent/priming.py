@@ -31,15 +31,34 @@ from jbrain.llm.types import LlmTool
 # owner sends a cold first message to right after a restart).
 JERV = "jerv"
 
+# Chat personas whose prefix the keeper also primes ONCE and saves to disk, so a new chat with
+# one restores it into the chat slot (~2 s) instead of re-reading it there: the warm slot holds
+# jerv's prefix, which another persona's prompt leaves at its first token. Each must be sent
+# exactly as `prime_inputs` builds it — a profile prompt and tool set fixed at turn assembly,
+# no read scope — and the files hold only that prompt and those schemas, no owner data. Not
+# the note persona or Minecraft_Dave (their system prompt carries per-chat text), and not the
+# curator (its tools follow the session's scopes).
+DISK_PRIMED_PERSONAS: tuple[str, ...] = ("archivist",)
+
 
 async def jerv_prime_inputs(
     registry: ToolRegistry,
     served_model: str | None = None,
 ) -> tuple[str, list[LlmTool], frozenset[str]]:
     """The (system prompt, tool objects, hidden set) a warm-up primes jerv's turn-one prefix
-    with. Mirrors `api.agent`'s turn assembly: an empty read scope (jerv reads no knowledge
-    base) and jerv's tool allowlist + its extra grant."""
-    profile = AGENTS[JERV]
+    with."""
+    return await prime_inputs(registry, served_model, JERV)
+
+
+async def prime_inputs(
+    registry: ToolRegistry,
+    served_model: str | None = None,
+    agent: str = JERV,
+) -> tuple[str, list[LlmTool], frozenset[str]]:
+    """`agent`'s prime prefix: (system prompt, tool objects, hidden set). Mirrors
+    `api.agent`'s turn assembly for a persona that reads no knowledge base: an empty read
+    scope and the persona's tool allowlist + its extra grant."""
+    profile = AGENTS[agent]
     # The canvas pair is model-gated (readtools.canvas_hidden_for_model), and this prefix
     # must match the turn's tool block exactly or the KV prefix it primed is useless from
     # the tools block onward. The warm path knows WHICH model it is loading, so the gate

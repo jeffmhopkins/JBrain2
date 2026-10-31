@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-10-08
+> **Status:** Living · **Last verified:** 2026-10-31
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -127,7 +127,22 @@ oldest first), and the store would not restore over the occupied slot. Now:
   slot no restore can serve (no file, the gate not passed) is primed by the keeper instead,
   after 45 s of quiet, never while a chat slot is busy; the prime claims its slot, and the
   router drops it at dispatch if a chat took the slot meanwhile.
-- **Never erased:** the latest chat, the warm prefix, a slot whose own chat is the incoming one,
+- **Another persona's new chat (the archivist, 2026-10-31).** The warm slot holds jerv's prefix,
+  and the archivist's prompt differs from it at the first token, so every new archivist chat
+  used to re-read its whole persona and Gmail tool set (roughly 8k tokens by character count; at
+  the hybrid's measured prefill rate, most of a minute) — the "session start is never cached"
+  the owner saw. Now the keeper primes each
+  persona in `agent/priming.DISK_PRIMED_PERSONAS` once into the warm slot, saves it as a role
+  prefix file (prompt and schemas only, no owner data — the same as jerv's), and hands the slot
+  straight back for jerv's re-warm; it waits for ten minutes of chat quiet (the prime holds the
+  warm slot for its whole prefill) and an idle pair, and tries each identity once per api start. A new archivist chat routed to the warm
+  slot then restores its own prefix there before its request (`restored_on_switch`, ~2 s): the
+  request would overwrite that slot anyway, and jerv's prefix comes back to the slot the
+  previous chat leaves. Only a chat request does this — a background re-warm never replaces a
+  warm prefix — and only when the store knows which prefix the warm slot holds. Personas whose
+  system prompt carries per-chat text (the note persona, Minecraft_Dave) or whose tools follow
+  the session's scopes (the curator) are not on the list.
+- **Never erased:** the latest chat, the warm prefix (save the case above), a slot whose own chat is the incoming one,
   or — after an api restart — any slot while this process does not know where the latest chat
   is (it would otherwise guess, and might wipe the owner's live conversation).
 - The pool guard frees the warm slot before the latest chat's, whichever id holds which: the
