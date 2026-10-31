@@ -1412,3 +1412,107 @@ async def test_every_agent_turn_reports_how_much_of_its_prompt_was_reused(root: 
     assert follow_up["reprocessed"] == 512 and follow_up["role"] == str(B)
     # The chat is named by a hash, as the conversation files are — never the session id.
     assert follow_up["chat"] and follow_up["chat"] != "chat-1"
+
+
+# ---- another persona's prefix over the warm slot (the archivist) -----------------------------
+
+MAIL_TOOLS = [LlmTool(name="gmail_search", description="search mail", input_schema={})]
+
+
+async def _with_archivist_file(store: KvPrefixStore, gw: FakeGateway) -> str:
+    """The keeper's persona prime: the archivist's prefix primed into B, saved, and B handed
+    back (`release_warm`), so A alone holds jerv's warm prefix."""
+    gw.slot_state[9]["n_prompt_tokens"] = PRIME
+    assert await store.save_after_prime(FLASH, "archivist", MAIL_TOOLS, PRIME, role=B)
+    fp = store.identity_of(FLASH, "archivist", MAIL_TOOLS, None)
+    assert fp is not None
+    store.release_warm(FLASH, B, fp)
+    gw.slot_state[9]["n_prompt_tokens"] = 0
+    return fp
+
+
+async def test_a_new_chat_of_another_persona_restores_its_prefix_over_the_warm_slot(
+    root: Path,
+) -> None:
+    """The archivist's prompt leaves jerv's warm prefix at its first token, so its request
+    would overwrite the slot anyway: its own prefix is restored there first (~2 s) instead
+    of the whole persona and tool set being re-read."""
+    store, gw = await _paired(root)
+    archivist = await _with_archivist_file(store, gw)
+    assert store.pair_holdings(FLASH)[A] == "warm_prefix"
+    assert store.pick_chat_role(FLASH, "mail-1") is A
+    gw.restored.clear()
+    assert await store.restore_if_lost(FLASH, "archivist", MAIL_TOOLS, role=A, chat_key="mail-1")
+    assert gw.erased == [0] and gw.restored == [(0, f"{archivist}.kvslot")]
+    assert store._counters.get("restored_on_switch") == 1
+    assert store._warm[(FLASH, A)] == archivist
+
+
+async def test_jervs_next_chat_takes_the_warm_slot_back_over_an_unused_foreign_restore(
+    root: Path,
+) -> None:
+    """The archivist's restore was never used (its request failed): the next jerv chat finds
+    the slot warm with the wrong prefix and an unused-restore memo naming it, and restores
+    jerv's own prefix rather than trusting either."""
+    store, gw = await _paired(root)
+    await _with_archivist_file(store, gw)
+    assert await store.restore_if_lost(FLASH, "archivist", MAIL_TOOLS, role=A, chat_key="mail-1")
+    store.release_chat_role(FLASH, A)
+    jerv = store.identity_of(FLASH, "persona", TOOLS, None)
+    gw.restored.clear()
+    assert await store.restore_if_lost(FLASH, "persona", TOOLS, role=A, chat_key="chat-1")
+    assert gw.restored == [(0, f"{jerv}.kvslot")]
+    assert store._warm[(FLASH, A)] == jerv
+    assert store._counters.get("restored_on_switch") == 2
+
+
+async def test_releasing_a_persona_prime_spares_a_slot_a_chat_took_meanwhile(root: Path) -> None:
+    """The keeper's save streams for seconds; a chat routed to the slot in that window owns
+    it, and the keeper's hand-back must not forget it (or where the latest chat is)."""
+    store, gw = await _paired(root)
+    gw.slot_state[9]["n_prompt_tokens"] = PRIME
+    assert await store.save_after_prime(FLASH, "archivist", MAIL_TOOLS, PRIME, role=B)
+    archivist = store.identity_of(FLASH, "archivist", MAIL_TOOLS, None)
+    _chat(store, gw, B, "chat-1", 47_000)
+    store.release_warm(FLASH, B, archivist)
+    assert store.pair_holdings(FLASH)[B] == "recent_conversation"
+    assert store.recent_slot(FLASH) == 9
+
+
+async def test_the_same_personas_warm_prefix_is_never_replaced(root: Path) -> None:
+    store, gw = await _paired(root)
+    gw.restored.clear()
+    assert not await store.restore_if_lost(FLASH, "persona", TOOLS, role=A, chat_key="chat-1")
+    assert gw.erased == [] and gw.restored == []
+
+
+async def test_a_background_rewarm_never_replaces_another_personas_warm_prefix(
+    root: Path,
+) -> None:
+    store, gw = await _paired(root)
+    await _with_archivist_file(store, gw)
+    gw.restored.clear()
+    assert not await store.restore_if_lost(
+        FLASH, "archivist", MAIL_TOOLS, role=A, chat_key="mail-1", background=True
+    )
+    assert gw.erased == [] and gw.restored == []
+
+
+async def test_a_warm_slot_of_unknown_content_is_never_replaced(root: Path) -> None:
+    store, gw = await _paired(root)
+    await _with_archivist_file(store, gw)
+    store._warm[(FLASH, A)] = None
+    assert not await store.restore_if_lost(
+        FLASH, "archivist", MAIL_TOOLS, role=A, chat_key="mail-1"
+    )
+    assert gw.erased == []
+
+
+async def test_a_saved_prefix_is_found_whatever_the_restore_gate_says(root: Path) -> None:
+    store, gw = _store(root, gate="failed")
+    assert not await store.has_prefix_file(FLASH, "archivist", MAIL_TOOLS, None)
+    gw.slot_state[9]["n_prompt_tokens"] = PRIME
+    assert await store.save_after_prime(FLASH, "archivist", MAIL_TOOLS, PRIME, role=B)
+    assert await store.has_prefix_file(FLASH, "archivist", MAIL_TOOLS, None)
+    assert not await store.has_prefix_file(FLASH, "persona", TOOLS, None)
+    assert not await store.has_prefix_file("gpt-oss-120b", "archivist", MAIL_TOOLS, None)

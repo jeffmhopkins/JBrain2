@@ -53,7 +53,7 @@ from collections.abc import Awaitable, Callable, Collection
 
 import structlog
 
-from jbrain.agent.priming import jerv_prime_inputs
+from jbrain.agent.priming import DISK_PRIMED_PERSONAS, jerv_prime_inputs, prime_inputs
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.llm import engine as engines
 from jbrain.llm import kv_prefix as kv_prefix_mod
@@ -79,6 +79,12 @@ AGENT_TURN_TASK = "agent.turn"
 # the fan's plan differ); jcode, workshop and small prompts own or vary their prompts. Their
 # turns still restore into their own slot on demand if a file of their identity ever exists.
 DISK_RESTORED_ROLES: tuple[SlotRole, ...] = (SlotRole.SCHEDULED,)
+
+# How long the chat must be quiet before the keeper primes another persona's prefix into the warm
+# slot. Far past a pair prime's `PRIME_QUIET_S`: that prime fills a slot nothing is waiting on,
+# while this one occupies jerv's warm slot for the whole prefill, and a new chat routed there
+# meanwhile waits behind it. Ten idle minutes says the owner has stepped away.
+PERSONA_PRIME_QUIET_S = 600.0
 
 
 class WarmKeeper:
@@ -149,6 +155,10 @@ class WarmKeeper:
         # longer overwritten by that prime's completion — a 60-200 s window in which the model
         # could be evicted and bare-reloaded, leaving it resident, cold, and marked primed.
         self._generation = 0
+        # (served model, fingerprint) of each other persona's prefix this process has primed
+        # for its disk file (`_tend_personas`), whatever came of it: one background prefill
+        # per identity per api life, never a retry loop against a save that keeps failing.
+        self._persona_tried: set[tuple[str, str]] = set()
         if kv_prefix is not None:
             # A chat moving to the other pair slot leaves a slot to re-warm: tick now.
             kv_prefix.add_pair_listener(self._on_pair_move)
@@ -236,6 +246,7 @@ class WarmKeeper:
                 if self._has_pair(served):
                     if not await self._tend_pair(served, system, tools, effort):
                         return False
+                    await self._tend_personas(served, effort)
                 else:
                     try:
                         await self._kv_prefix.restore_if_lost(
@@ -445,6 +456,59 @@ class WarmKeeper:
             log.warning("warm_keeper.kv_save_failed", model=served, exc_info=True)
         log.info("warm_keeper.pair_primed", model=served, role=str(role))
         return True
+
+    async def _tend_personas(self, served: str, effort: str | None) -> None:
+        """Prime one other chat persona's prefix (`DISK_PRIMED_PERSONAS`) that has no file yet
+        into the warm pair slot, save it, and hand the slot back for jerv's re-warm — so that
+        persona's next new chat restores its prefix instead of re-reading it (~a minute for the
+        archivist's persona and Gmail tools). Same courtesy as a pair prime: only once the
+        chat pair is settled (jerv's prefix warm, the latest chat located), the chat quiet
+        `PERSONA_PRIME_QUIET_S` and no chat slot busy. At most one per tick, once per identity."""
+        store = self._kv_prefix
+        if store is None or store.recent_slot(served) is None:
+            return
+        if store.chat_quiet_s(served) < PERSONA_PRIME_QUIET_S:
+            return
+        for agent in DISK_PRIMED_PERSONAS:
+            try:
+                system, tools, _hidden = await prime_inputs(self._registry, served, agent)
+                fingerprint = store.identity_of(served, system, tools, effort)
+                if fingerprint is None or (served, fingerprint) in self._persona_tried:
+                    continue
+                if await store.has_prefix_file(served, system, tools, effort):
+                    self._persona_tried.add((served, fingerprint))
+                    continue
+            except Exception:  # noqa: BLE001 — the disk layer must never wedge the keeper
+                log.warning("warm_keeper.persona_inputs_failed", model=served, agent=agent)
+                continue
+            role = store.warm_target(served)
+            if role is None or store.pair_holdings(served).get(role) != "warm_prefix":
+                return  # jerv's warm prefix comes first; `_tend_pair` is still restoring it
+            if await self._chat_busy(served):
+                return
+            generation = self._generation
+            try:
+                turn = await self._prime(served, system, tools, role)
+            except ChatSlotTakenError:
+                return  # a chat got there first; the next quiet tick tries again
+            self._persona_tried.add((served, fingerprint))
+            if turn is not None and generation == self._generation:
+                try:
+                    await store.save_after_prime(
+                        served,
+                        system,
+                        tools,
+                        turn.usage.input_tokens,
+                        reasoning_effort=effort,
+                        role=role,
+                    )
+                except Exception:  # noqa: BLE001 — a failed save costs a future restore
+                    log.warning("warm_keeper.kv_save_failed", model=served, agent=agent)
+                log.info("warm_keeper.persona_primed", model=served, agent=agent, role=str(role))
+            # Whatever the prime left there is not jerv's prefix: re-warm it, now.
+            store.release_warm(served, role, fingerprint)
+            self._wake.set()
+            return
 
     async def _chat_busy(self, served: str) -> bool:
         """Whether either chat pair slot is processing — or `/slots` cannot say."""

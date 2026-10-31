@@ -12,8 +12,9 @@ from typing import Any, cast
 
 import pytest
 
+from jbrain.agent.agents import AGENTS
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.llm import kv_prefix
+from jbrain.llm import kv_prefix, warm_keeper
 from jbrain.llm.kv_prefix import ChatSlotTakenError
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.llm.router import LlmRouter
@@ -433,6 +434,26 @@ class _FakeKvStore:
         self.claim_ok = True
         self.claims: list[SlotRole] = []
         self.released: list[SlotRole] = []
+        # Other personas' prefixes (`_tend_personas`): off unless a test names identities, so
+        # the jerv-only tests above see the keeper they always did.
+        self.identities = False
+        self.saved_files: set[str] = set()
+        self.holdings: dict[SlotRole, str] = {}
+        self.released_warm: list[SlotRole] = []
+        self.released_fps: list[str | None] = []
+
+    def identity_of(self, served: str, system: str, tools, effort: str | None) -> str | None:
+        return f"fp:{system[:24]}" if self.identities else None
+
+    async def has_prefix_file(self, served: str, system: str, tools, effort: str | None) -> bool:
+        return f"fp:{system[:24]}" in self.saved_files
+
+    def pair_holdings(self, served: str) -> dict[SlotRole, str]:
+        return self.holdings or {self.target: "warm_prefix"}
+
+    def release_warm(self, served: str, role: SlotRole, fingerprint: str | None) -> None:
+        self.released_warm.append(role)
+        self.released_fps.append(fingerprint)
 
     def recent_slot(self, served: str) -> int | None:
         return self.recent
@@ -868,3 +889,75 @@ async def test_a_model_without_a_pair_never_rewarms() -> None:
     assert await keeper.reconcile_once() is True
     assert await keeper.reconcile_once() is True
     assert store.rewarms == 0
+
+
+# ---- other personas' prefixes (the archivist) -----------------------------------------------
+
+
+async def _settled_pair() -> tuple[WarmKeeper, _FakeRouter, _FakeKvStore]:
+    """A pair keeper past its first (jerv) prime, about to tend other personas."""
+    keeper, _gateway, router, store = _pair_keeper()
+    assert await keeper.reconcile_once() is True
+    router.converses.clear()
+    router.pinned.clear()
+    store.roles.clear()
+    store.identities = True
+    return keeper, router, store
+
+
+async def test_a_settled_pair_primes_the_archivists_prefix_once_and_hands_the_slot_back() -> None:
+    keeper, router, store = await _settled_pair()
+    store.target = SlotRole.INTERACTIVE_ALT
+    assert await keeper.reconcile_once() is True
+    assert [c["system"] for c in router.converses] == [AGENTS["archivist"].prompt]
+    assert router.pinned == [(SlotRole.INTERACTIVE_ALT, True)], "pinned to the warm slot"
+    assert ("save", SlotRole.INTERACTIVE_ALT) in store.roles
+    assert store.released_warm == [SlotRole.INTERACTIVE_ALT], "jerv's re-warm takes it back"
+    assert store.released_fps == [f"fp:{AGENTS['archivist'].prompt[:24]}"]
+    assert keeper._wake.is_set()
+    # Once per identity per api life, whatever the save made of it.
+    assert await keeper.reconcile_once() is True
+    assert len(router.converses) == 1
+
+
+async def test_a_persona_whose_prefix_is_on_disk_is_not_primed() -> None:
+    keeper, router, store = await _settled_pair()
+    store.saved_files.add(f"fp:{AGENTS['archivist'].prompt[:24]}")
+    assert await keeper.reconcile_once() is True
+    assert router.converses == [] and store.released_warm == []
+
+
+async def test_a_persona_prime_waits_for_a_quiet_chat_an_idle_pair_and_jervs_warm_slot() -> None:
+    keeper, router, store = await _settled_pair()
+    store.quiet = warm_keeper.PERSONA_PRIME_QUIET_S - 1  # quiet enough for a pair prime only
+    assert await keeper.reconcile_once() is True
+    store.quiet = float("inf")
+    store.holdings = {SlotRole.INTERACTIVE: "unknown"}  # jerv's re-warm has not landed yet
+    assert await keeper.reconcile_once() is True
+    store.holdings = {}
+    store.recent = None  # after a restart: the latest chat's slot is unknown
+    assert await keeper.reconcile_once() is True
+    assert router.converses == []
+    store.recent = 0
+    assert await keeper.reconcile_once() is True
+    assert len(router.converses) == 1
+
+
+async def test_a_persona_prime_never_runs_under_a_busy_chat_slot() -> None:
+    busy = [{"id": i, "is_processing": i == 9} for i in range(10)]
+    keeper, _gateway, router, store = _pair_keeper(slots=busy)
+    assert await keeper.reconcile_once() is True
+    router.converses.clear()
+    store.identities = True
+    assert await keeper.reconcile_once() is True
+    assert router.converses == []
+
+
+async def test_a_persona_prime_a_chat_took_is_tried_again_later() -> None:
+    keeper, router, store = await _settled_pair()
+    store.claim_ok = False
+    assert await keeper.reconcile_once() is True
+    assert router.converses == [] and store.released_warm == []
+    store.claim_ok = True
+    assert await keeper.reconcile_once() is True
+    assert len(router.converses) == 1

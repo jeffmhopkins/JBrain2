@@ -514,7 +514,7 @@ async def test_restore_puts_the_prefix_back_when_nothing_prefix_sized_is_cached(
     # restored into the emptier slot, never the busier one
     assert [r[1] for r in gw.restored] == [0]
     assert events and events[0][0] == box_events.KV_PREFIX_RESTORED
-    assert f"{PRIME}-token jerv prefix restored from disk" in (events[0][2] or "")
+    assert f"{PRIME}-token prompt prefix restored from disk" in (events[0][2] or "")
 
 
 async def test_anything_prefix_sized_blocks_the_restore_whatever_it_is(root: Path) -> None:

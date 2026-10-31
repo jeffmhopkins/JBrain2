@@ -89,9 +89,12 @@ model calls evicts the one at the persona boundary (oldest-first), so a new chat
 ~42k tokens in finds no checkpoint below it and re-prefills the whole ~47k-token prompt (~2 min;
 measured 2026-10-06, with conversation files off, on every new chat). A slot this process cannot
 account for (a restart, before any chat) is never erased while the most recent conversation's
-whereabouts are unknown. The pair slots also carry CONVERSATION files (`kv_conversation`): a
-conversation leaving a pair slot is saved before the slot is reused, and one that speaks again
-is restored into the warm slot before its request when its saved messages still open the new
+whereabouts are unknown. The warm slot itself is replaced only by a new chat of ANOTHER persona (the
+archivist), whose prompt leaves jerv's prefix at its first token and would overwrite the slot
+anyway: its own prefix file, primed once by the keeper, is restored there first. The pair slots also
+carry CONVERSATION files (`kv_conversation`): a conversation leaving a pair slot is saved before the
+slot is reused, and one that speaks again is restored into the warm slot before its request when its
+saved messages still open the new
 prompt. Both kinds share the byte budget, and every conversation file is evicted before any role
 prefix. A hybrid's restore is only worth anything with the checkpoint-sidecar patch, so such a
 model is admitted only while each save proves the patch by writing its sidecar. A model with no
@@ -524,9 +527,11 @@ class KvPrefixStore:
         # there. Kept whether or not conversation files are on. Dropped whenever the slot stops
         # holding that chat — a turn with no chat, an erase, a restore, a reload.
         self._slot_holder: dict[tuple[str, SlotRole], str] = {}
-        # Pair slots known to hold ONLY the role prefix: primed or restored, and not since used
-        # by a chat. A new chat goes here.
-        self._warm: set[tuple[str, SlotRole]] = set()
+        # Pair slots known to hold ONLY a role prefix: primed or restored, and not since used
+        # by a chat. A new chat goes here. The value is that prefix's fingerprint (None when
+        # unknown): a new chat of ANOTHER persona (the archivist) may replace it with its own
+        # prefix, since its request overwrites the slot anyway (`_pair_replaceable`).
+        self._warm: dict[tuple[str, SlotRole], str | None] = {}
         # Per served model: the pair role whose slot holds the most recent conversation. It is
         # never erased by a re-warm and is the pool guard's last eviction choice.
         self._recent: dict[str, SlotRole] = {}
@@ -1017,9 +1022,6 @@ class KvPrefixStore:
             role = pool.chat_pair[0]
         return (served_model, role)
 
-    def _memo_active(self, key: tuple[str, SlotRole]) -> bool:
-        return key in self._restored_unused
-
     def note_slot_erased(self, served_model: str, slot: int) -> None:
         """The pool guard erased `slot`: whatever was restored there is gone. Drops that role's
         memo, and for a chat slot its conversation claim and what the pair knows of it."""
@@ -1049,17 +1051,28 @@ class KvPrefixStore:
         """The pair slot no longer holds what this process believed (erased, reloaded)."""
         key = (served_model, role)
         self._slot_holder.pop(key, None)
-        self._warm.discard(key)
+        self._warm.pop(key, None)
         if self._recent.get(served_model) is role:
             del self._recent[served_model]
 
-    def _mark_warm(self, served_model: str, role: SlotRole | None) -> None:
-        """The pair slot now holds only the role prefix (primed or restored)."""
+    def _mark_warm(
+        self, served_model: str, role: SlotRole | None, fingerprint: str | None = None
+    ) -> None:
+        """The pair slot now holds only the role prefix `fingerprint` (primed or restored)."""
         pair = self._pair_of(served_model)
         if pair is None or role is None or role not in pair:
             return
         self._forget_pair_slot(served_model, role)
-        self._warm.add((served_model, role))
+        self._warm[(served_model, role)] = fingerprint
+
+    def release_warm(self, served_model: str, role: SlotRole, fingerprint: str | None) -> None:
+        """The keeper primed another persona's prefix (`fingerprint`) into a pair slot only to
+        save it: that slot is not jerv's warm prefix, so it is due a re-warm like any slot a
+        chat left. Only while it still holds that prime — a chat routed there during the save
+        owns the slot now, and forgetting it would lose where the latest chat is."""
+        key = (served_model, role)
+        if key in self._warm and self._warm[key] == fingerprint:
+            self._forget_pair_slot(served_model, role)
 
     def _note_holder(self, served_model: str, role: SlotRole | None, chat_key: str | None) -> None:
         """A request ran in `role`'s slot for `chat_key` (None: no chat, so the slot's content is
@@ -1069,7 +1082,7 @@ class KvPrefixStore:
         if pair is None or role is None or role not in pair:
             return
         key = (served_model, role)
-        self._warm.discard(key)
+        self._warm.pop(key, None)
         # Whatever was restored there has been used, whatever identity used it: left set, the
         # memo would refuse this slot's re-warm for good.
         self._restored_unused.pop(key, None)
@@ -1223,17 +1236,36 @@ class KvPrefixStore:
             and not self._claimed(served_model, r)
         ]
 
-    def _pair_replaceable(self, served_model: str, role: SlotRole, chat_key: str | None) -> bool:
-        """Whether an OCCUPIED pair slot may be erased for the role prefix: it holds neither the
-        most recent conversation, nor the warm prefix, nor `chat_key`'s own conversation — and
-        this process knows where the most recent conversation lives, so a slot it cannot
-        account for (after a restart) is never the one wiped."""
+    def _pair_replaceable(
+        self,
+        served_model: str,
+        role: SlotRole,
+        chat_key: str | None,
+        fingerprint: str | None = None,
+        background: bool = False,
+    ) -> bool:
+        """Whether an OCCUPIED pair slot may be erased for the role prefix `fingerprint`: it
+        holds neither the most recent conversation, nor the warm prefix, nor `chat_key`'s own
+        conversation — and this process knows where the most recent conversation lives, so a
+        slot it cannot account for (after a restart) is never the one wiped.
+
+        The one warm slot that IS replaced: a chat request (never a background re-warm) of a
+        different persona, whose prompt diverges from the warm prefix at its first token and
+        would overwrite the slot anyway. Restoring its own prefix first turns that full
+        prefill (~a minute for the archivist) into a ~2 s restore; jerv's prefix comes back to
+        the slot the previous chat leaves, as it does after every switch."""
         pair = self._pair_of(served_model)
         if pair is None or role not in pair:
             return False
         key = (served_model, role)
         if key in self._warm:
-            return False
+            held = self._warm[key]
+            return (
+                not background
+                and fingerprint is not None
+                and held is not None
+                and held != fingerprint
+            )
         if chat_key is not None and self._slot_holder.get(key) == chat_key:
             return False
         recent = self._recent.get(served_model)
@@ -1442,6 +1474,9 @@ class KvPrefixStore:
         if resolved is None:
             return False
         fingerprint, save_dir, identity = resolved
+        if role is not None and (served_model, role) in self._warm:
+            # Marked warm above, before the identity was known: name what it holds.
+            self._warm[(served_model, role)] = fingerprint
         self._prime_tokens[fingerprint] = prime_tokens
         self._last_identity[self._identity_key(served_model, role)] = identity
         path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
@@ -1800,7 +1835,11 @@ class KvPrefixStore:
         pool = local_catalog.pool_of(served_model)
         if pool is not None:
             role = role or SlotRole.INTERACTIVE
-        if self._memo_active(self._memo_key(served_model, role)):
+        memo = self._restored_unused.get(self._memo_key(served_model, role))
+        # A chat request on a pair slot may bring ANOTHER persona's prefix over an unused
+        # restore of jerv's, so for it the memo only answers once the identity is known.
+        switching = not background and pool is not None and role is not None and pool.in_pair(role)
+        if memo is not None and not switching:
             return False  # already restored; the slot reports nothing until a turn uses it
         await self._refresh_engine()
         resolved = await asyncio.to_thread(
@@ -1809,6 +1848,8 @@ class KvPrefixStore:
         if resolved is None:
             return False
         fingerprint, save_dir, identity, line = resolved
+        if memo is not None and memo[0] == fingerprint:
+            return False  # this very prefix is restored there, waiting for its turn
         path = os.path.join(save_dir, f"{fingerprint}{_SLOT_FILE_SUFFIX}")
         identity_key = self._identity_key(served_model, role)
         if not await asyncio.to_thread(os.path.exists, path):
@@ -1827,7 +1868,10 @@ class KvPrefixStore:
                     was=last,
                 )
             return False
-        self._last_identity[identity_key] = identity
+        if not switching:
+            # A chat's switch restore may be another persona's identity; the drift record is
+            # jerv's, kept by the keeper's own (background) restores and primes.
+            self._last_identity[identity_key] = identity
         if pool is not None and role is not None:
             return await self._restore_into_role_slot(
                 served_model, pool, role, fingerprint, path, line, chat_key, background
@@ -1959,7 +2003,9 @@ class KvPrefixStore:
         if target is None:
             return False
         replacing = _slot_int(target, "n_prompt_tokens") > 0
-        if replacing and not self._pair_replaceable(served_model, role, chat_key):
+        if replacing and not self._pair_replaceable(
+            served_model, role, chat_key, fingerprint, background
+        ):
             # Occupied: the role's own cache, never overwritten. A healthy primed slot lands
             # here every keeper tick, so this is also where its file's LRU clock is kept.
             await asyncio.to_thread(self._touch, path)
@@ -1988,7 +2034,10 @@ class KvPrefixStore:
                     await self._note("rewarm_erase_failed", served_model, role=role, slot=slot_id)
                     return False
             outcome = "restored"
-            if replacing:
+            # A warm slot holding ANOTHER prefix's unused restore reports no size, so it is
+            # not `replacing` — but a chat bringing its own prefix there is still a switch.
+            switch = replacing or (served_model, role) in self._warm
+            if switch:
                 outcome = "rewarmed" if background else "restored_on_switch"
             return await self._restore_file(
                 served_model, slot_id, fingerprint, path, role=role, outcome=outcome
@@ -2055,12 +2104,27 @@ class KvPrefixStore:
             )
         return []
 
+    async def has_prefix_file(
+        self,
+        served_model: str,
+        system: str,
+        tools: Sequence[LlmTool],
+        reasoning_effort: str | None,
+    ) -> bool:
+        """Whether this identity's prefix is saved — a file and its sidecar — whatever the
+        restore gate says. False for a model outside the disk layer, where no save can land."""
+        return await self._restorable(
+            served_model, system, tools, reasoning_effort, require_gate=False
+        )
+
     async def _restorable(
         self,
         served_model: str,
         system: str,
         tools: Sequence[LlmTool],
         reasoning_effort: str | None,
+        *,
+        require_gate: bool = True,
     ) -> bool:
         """Whether a restore of this identity could happen at all: in the disk layer, a file
         and its sidecar on disk, the restore gate open."""
@@ -2078,6 +2142,8 @@ class KvPrefixStore:
             return False
         if not await asyncio.to_thread(os.path.exists, path):
             return False
+        if not require_gate:
+            return True
         state = await self.restore_gate(served_model)
         return state is None or state == "passed"
 
@@ -2174,11 +2240,11 @@ class KvPrefixStore:
         )
         if self._pool_guard is not None and role is not None:
             self._pool_guard.note_restored(served_model, slot_id, n_restored)
-        self._mark_warm(served_model, role)
+        self._mark_warm(served_model, role, fingerprint)
         await box_events.record(
             box_events.KV_PREFIX_RESTORED,
             served_model,
-            detail=f"{n_restored}-token jerv prefix restored from disk in {elapsed_ms} ms",
+            detail=f"{n_restored}-token prompt prefix restored from disk in {elapsed_ms} ms",
         )
         await self._note(
             outcome,
