@@ -18,6 +18,14 @@ DEPLOY = ROOT / "deploy"
 PIN = DEPLOY / "adguard" / "pin.awk"
 SEED = DEPLOY / "adguard" / "AdGuardHome.yaml"
 
+PRIVATE = [
+    "127.0.0.0/8",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "fc00::/7",
+    "fe80::/10",
+]
 HASH = "$2y$10$abcdefghijklmnopqrstuuW2b0d0hL1P2N3Q4R5S6T7U8V9W0X1Y2"
 
 
@@ -107,6 +115,7 @@ def test_the_seed_pins_to_the_lan_ui_and_one_user(tmp_path: Path) -> None:
     assert pinned["dns"]["local_ptr_upstreams"] == ["192.168.1.1"]
     # The house is one /24: AdGuard's default per-/24 limit would throttle all of it.
     assert pinned["dns"]["ratelimit"] == 0
+    assert pinned["dns"]["allowed_clients"] == PRIVATE
     # Everything else is left as found.
     seed = yaml.safe_load(SEED.read_text())
     assert pinned["filters"] == seed["filters"]
@@ -134,6 +143,7 @@ dns:
   port: 53
   upstream_dns:
   - https://dns.quad9.net/dns-query
+  allowed_clients: []
   local_ptr_upstreams:
   - 127.0.0.53
 user_rules:
@@ -152,6 +162,24 @@ def test_pins_a_config_adguard_rewrote(tmp_path: Path) -> None:
     assert pinned["users"] == [{"name": "jbrain", "password": HASH}]
     assert pinned["user_rules"] == ["||samsungads.com^"]
     assert pinned["dns"]["local_ptr_upstreams"] == ["192.168.1.1"]
+    assert pinned["dns"]["allowed_clients"] == PRIVATE
+
+
+def test_an_allow_list_opened_through_the_api_is_closed_again(tmp_path: Path) -> None:
+    """Anyone, or the DMZ, would make the box an open resolver with no rate limit."""
+    text = ADGUARD_WRITTEN.replace(
+        "  allowed_clients: []\n", "  allowed_clients:\n  - 0.0.0.0/0\n"
+    )
+    pinned = yaml.safe_load(_pin(text, tmp_path))
+    assert pinned["dns"]["allowed_clients"] == PRIVATE
+
+
+def test_a_dns_block_without_an_allow_list_gets_one(tmp_path: Path) -> None:
+    for tail in ("", "schema_version: 34\n"):
+        text = f"dns:\n  bind_hosts:\n  - 0.0.0.0\n  port: 53\n{tail}"
+        pinned = yaml.safe_load(_pin(text, tmp_path))
+        assert pinned["dns"]["allowed_clients"] == PRIVATE
+        assert pinned["dns"]["port"] == 53
 
 
 def test_no_gateway_leaves_the_ptr_resolvers_alone(tmp_path: Path) -> None:

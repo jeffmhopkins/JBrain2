@@ -52,8 +52,9 @@ while [ -z "$dns_addr" ]; do
   waited=$((waited + 2))
 done
 
-# A public address would make this an open resolver for the internet (a box on a
-# direct uplink, or in the router's DMZ). Refuse rather than serve it.
+# A public address means a box on a direct uplink: refuse rather than serve the
+# internet. (A box in the router's DMZ keeps a private address and passes this; the
+# private-only allowed_clients pin.awk sets is what keeps that case closed.)
 case "$dns_addr" in
   10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*) ;;
   *) say "$dns_addr is not a private address; refusing to serve DNS on it" >&2; exit 1 ;;
@@ -70,7 +71,8 @@ if [ -z "$ui_addr" ]; then
 fi
 [ -n "$ui_addr" ] || { say "no docker0 address for the UI" >&2; exit 1; }
 
-hash="$(htpasswd -nbBC 10 jbrain "$token" | head -n 1 | cut -d: -f2-)"
+# On stdin (-i), so the token is never on a command line.
+hash="$(printf '%s' "$token" | htpasswd -niBC 10 jbrain | head -n 1 | cut -d: -f2-)"
 case "$hash" in
   '$2'*) ;;
   *) say "could not hash the UI password" >&2; exit 1 ;;

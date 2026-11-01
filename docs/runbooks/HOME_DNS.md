@@ -78,8 +78,11 @@ Two limits no DNS blocker gets past:
 
 ## How it is wired, and why
 
-- **No rate limit, and device names from the router.** AdGuard's default limit (20/s per
-  /24) is the whole house's budget, so it is off. Reverse lookups go to the router (the
+- **Private sources only, no rate limit.** `allowed_clients` is re-pinned to the private
+  ranges every start, so a box in the router's DMZ or behind a forwarded :53 never answers
+  the internet. With that in place AdGuard's default limit (20/s per /24, the whole
+  house's budget) is turned off.
+- **Device names from the router.** Reverse lookups go to the router (the
   default gateway, re-pinned each start) because the host's resolver forwards to the box.
 - **Host network, port 53 on the LAN address only.** Ubuntu's systemd-resolved holds
   `127.0.0.53:53`, so a wildcard bind (and any published `53:53`) fails. Freeing it is a

@@ -1,20 +1,24 @@
-# Pin the three values jbrain owns in AdGuard Home's config, leaving the rest as found.
+# Pin the values jbrain owns in AdGuard Home's config, leaving the rest as found.
 #
 # AdGuard Home rewrites its own YAML whenever a setting changes, so the file on the
 # volume is AdGuard's, not ours: blocklists and rules added through its API must
 # survive a restart. Only these are re-asserted on every start, because each can drift
-# under it without anyone touching AdGuard:
+# under it, or be changed through its API, without anyone meaning to:
 #
 #   dns.bind_hosts  the box's LAN address, which moves if the router hands out a new
 #                   lease. Never 0.0.0.0: systemd-resolved's stub already holds
 #                   127.0.0.53:53 on Ubuntu, so a wildcard bind fails, and turning the
 #                   stub off is a host step the owner cannot run (CLAUDE.md #10).
+#   dns.allowed_clients  private ranges only. The bind is a private address, but a box
+#                   in the router's DMZ, or behind a forwarded :53, still receives the
+#                   internet's queries on it with their real sources; without this it
+#                   would be an open resolver (and the seed turns the rate limit off).
+#   dns.local_ptr_upstreams  the router (the default gateway), for naming devices. Left
+#                   to its default it asks systemd-resolved, which forwards to the DNS
+#                   the router hands out: this box, so every reverse lookup loops.
+#                   Skipped when no gateway was found (ptr empty).
 #   http.address    the docker bridge gateway, so the web UI and its API are reachable
-#                   by the api (host.docker.internal) and never from the LAN.
-#   local_ptr_upstreams  the router (the default gateway), for naming devices. Left to
-#                   its default it asks systemd-resolved, which forwards to the DNS the
-#                   router hands out: this box, so every reverse lookup loops. Skipped
-#                   when no gateway was found (ptr empty).
+#                   by the api (host.docker.internal) and no LAN device is told of it.
 #   users           one user, `jbrain`, whose bcrypt hash is of `adguard.token`. The api
 #                   re-mints that token into an empty secrets volume, so the hash is
 #                   recomputed every start rather than trusted from the file.
@@ -27,43 +31,65 @@
 
 function toplevel(line) { return line ~ /^[A-Za-z_]/ }
 
+function list(key, items,    n, parts, i) {
+	print "  " key ":"
+	n = split(items, parts, " ")
+	for (i = 1; i <= n; i++) print "    - " parts[i]
+}
+
+function users() {
+	print "users:"
+	print "  - name: jbrain"
+	print "    password: " hash
+	seen_users = 1
+}
+
+# A dns block AdGuard wrote without the key still gets the private-only list.
+function close_dns() {
+	if (section == "dns" && !seen_allowed) {
+		list("allowed_clients", PRIVATE)
+		seen_allowed = 1
+	}
+}
+
+BEGIN {
+	PRIVATE = "127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7 fe80::/10"
+}
+
 {
 	if (toplevel($0)) {
+		close_dns()
 		in_users = 0
-		in_binds = 0
-		in_ptr = 0
+		in_list = 0
 		section = $0
 		sub(/:.*/, "", section)
 		if (section == "users") {
-			print "users:"
-			print "  - name: jbrain"
-			print "    password: " hash
+			users()
 			in_users = 1
-			seen_users = 1
 			next
 		}
 		print
 		next
 	}
 	if (in_users) next
-	if (in_binds) {
+	if (in_list) {
 		if ($0 ~ /^ *(- |#)/) next
-		in_binds = 0
-	}
-	if (in_ptr) {
-		if ($0 ~ /^ *(- |#)/) next
-		in_ptr = 0
-	}
-	if (section == "dns" && ptr != "" && $0 ~ /^  local_ptr_upstreams:/) {
-		print "  local_ptr_upstreams:"
-		print "    - " ptr
-		in_ptr = 1
-		next
+		in_list = 0
 	}
 	if (section == "dns" && $0 ~ /^  bind_hosts:/) {
-		print "  bind_hosts:"
-		print "    - " dns
-		in_binds = 1
+		list("bind_hosts", dns)
+		in_list = 1
+		next
+	}
+	if (section == "dns" && $0 ~ /^  allowed_clients:/) {
+		list("allowed_clients", PRIVATE)
+		seen_allowed = 1
+		in_list = 1
+		next
+	}
+	if (section == "dns" && ptr != "" && $0 ~ /^  local_ptr_upstreams:/) {
+		list("local_ptr_upstreams", ptr)
+		in_list = 1
 		next
 	}
 	if (section == "http" && $0 ~ /^  address:/) {
@@ -73,12 +99,9 @@ function toplevel(line) { return line ~ /^[A-Za-z_]/ }
 	print
 }
 
-# A config with no users block would serve the UI and its API to anyone who can reach
+# A config with no users block would serve the UI and its API to anything that can reach
 # the bridge, so a missing block is added rather than tolerated.
 END {
-	if (!seen_users) {
-		print "users:"
-		print "  - name: jbrain"
-		print "    password: " hash
-	}
+	close_dns()
+	if (!seen_users) users()
 }

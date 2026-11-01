@@ -13,6 +13,8 @@ dns:
   bind_hosts:
     - 127.0.0.1
   port: 53
+  # Placeholder; pin.awk re-asserts the private ranges every start.
+  allowed_clients: []
   # Encrypted upstreams, so the ISP sees neither the lookups nor which ones were blocked.
   # Two operators, asked in parallel: one being down never takes the house offline.
   upstream_dns:
@@ -27,7 +29,8 @@ dns:
   cache_enabled: true
   # AdGuard's default is 20 queries/s per /24, which is the whole house (or, when the
   # router forwards, its one address): a TV booting beside a few browsers would trip it
-  # and drop everyone's lookups. The listener is LAN-only, so there is nothing to limit.
+  # and drop everyone's lookups. Only private sources are answered (allowed_clients), so
+  # there is no internet traffic to limit.
   ratelimit: 0
   # Names devices in the log by asking the router who each LAN address is. pin.awk
   # sets the router as the resolver: the default, the host's resolv.conf, is
