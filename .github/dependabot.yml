@@ -1,0 +1,40 @@
+# Dependabot runs SECURITY updates only. Version updates are switched off
+# (`open-pull-requests-limit: 0`): a PR here should mean an advisory hit something we ship,
+# not a routine bump. Security updates still use these entries for their directories and
+# grouping. They need, in the repo's Settings → Code security: the dependency graph,
+# "Automatic dependency submission" (Gradle has no other way into the graph), "Dependabot
+# alerts" and "Dependabot security updates".
+#
+# NOT covered: container base images (Dependabot has no security updates for docker or
+# docker-compose; the pinned bases move by hand and the weekly base-image refresh rebuilds
+# on them), and the Chrome for Testing pin in deploy/chrome/, which
+# .github/workflows/chrome-pin.yml checks weekly instead.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directories: ["/backend", "/supervisor", "/jcode", "/jlaunch"]
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 0
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 0
+    groups:
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: gradle
+    directory: /android
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 0
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 0

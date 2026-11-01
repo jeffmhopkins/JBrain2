@@ -1,6 +1,6 @@
 # JBrain2 — Development Standards
 
-> **Status:** Living · **Last verified:** 2026-10-04
+> **Status:** Living · **Last verified:** 2026-11-01
 
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
@@ -112,6 +112,23 @@ and a Living doc is corrected in the PR that changes what it asserts. The `docs`
 CI gate (`scripts/docs-freshness.sh`, run it locally first) enforces the
 mechanical failure modes; the definition-of-done bullet above and the PR template
 carry the rest.
+
+## Dependency security updates
+
+Dependabot runs **security updates only** for the uv, npm, Gradle and GitHub Actions
+dependencies (`.github/dependabot.yml`: each entry has `open-pull-requests-limit: 0`, which
+switches routine version bumps off). Its PRs mean an advisory hit a package we ship; they are
+reviewed and merged like any other PR, and a lockfile bump still runs the package's whole
+gate set. It needs, in the repo's Settings → Code security: the dependency graph, "Automatic
+dependency submission" (the only way Gradle reaches the graph), "Dependabot alerts" and
+"Dependabot security updates".
+
+Container base images are outside it: Dependabot has no security updates for Docker. The
+pinned bases are bumped by hand, and the weekly base-image refresh rebuilds on them.
+
+Dependabot cannot read the Chrome for Testing pin (`deploy/chrome/`), so
+`.github/workflows/chrome-pin.yml` compares it with Chrome Stable every Monday and opens one
+issue when Stable has moved past it. The bump procedure is `SERVICES.md` *Pinned Chrome*.
 
 ## Releases
 
