@@ -398,11 +398,13 @@ def test_only_the_api_can_write_the_internal_secrets() -> None:
         name: [m for m in spec.get("volumes") or [] if str(m).startswith("internal_secrets:")]
         for name, spec in compose["services"].items()
     }
-    assert {name for name, mounts in users.items() if mounts} == {"api", "wall", "mqtt", "cast"}
+    readers = {"api", "wall", "mqtt", "cast", "adguard"}
+    assert {name for name, mounts in users.items() if mounts} == readers
     assert users["api"] == ["internal_secrets:/run/jbrain-internal"]
     assert users["wall"] == ["internal_secrets:/run/jbrain-internal:ro"]
     assert users["mqtt"] == ["internal_secrets:/run/jbrain-internal:ro"]
     assert users["cast"] == ["internal_secrets:/run/jbrain-internal:ro"]
+    assert users["adguard"] == ["internal_secrets:/run/jbrain-internal:ro"]
 
 
 def test_only_the_api_and_the_wall_hold_the_enrollment_screen_token() -> None:
