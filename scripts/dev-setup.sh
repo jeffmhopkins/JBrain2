@@ -207,7 +207,7 @@ BYPARR_IMAGE="${BYPARR_IMAGE:-ghcr.io/thephaseless/byparr@sha256:874f719518f617d
 # Base image for the locally-built `htmlrender` sidecar (HTML -> PNG). Pre-pulled because
 # it carries Chromium plus its ~80 runtime apt packages, so a cold build on first
 # `jbrain up` is a long, surprising wait.
-HTMLRENDER_BASE_IMAGE="${HTMLRENDER_BASE_IMAGE:-mcr.microsoft.com/playwright/python:v1.49.1-noble}"
+HTMLRENDER_BASE_IMAGE="${HTMLRENDER_BASE_IMAGE:-mcr.microsoft.com/playwright/python:v1.64.1-noble}"
 # Base for the locally-built `sdr` sidecar (docs/plans/SDR_RADIO_PLAN.md). Deliberately
 # a plain slim Python: the service is stdlib plus the `rtl-sdr` apt package, so nothing
 # else needs pre-pulling. Listed here so a new dependency in that image is a visible edit

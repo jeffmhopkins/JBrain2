@@ -76,8 +76,9 @@ def test_nothing_that_holds_data_or_models_shares_a_network_with_the_browser() -
 
 
 def test_the_image_is_pinned_by_tag_and_digest() -> None:
-    image = _compose()["services"]["browser"]["image"]
-    default = image.split(":-", 1)[1].rstrip("}")
+    # Built locally on the upstream image (to swap in the pinned Chrome); the upstream is the pin.
+    base = _compose()["services"]["browser"]["build"]["args"]["BROWSER_BASE"]
+    default = base.split(":-", 1)[1].rstrip("}")
     assert default.startswith("mcr.microsoft.com/playwright/mcp:v")
     assert re.search(r"@sha256:[0-9a-f]{64}$", default)
     assert ":latest" not in default

@@ -141,6 +141,8 @@ async def _get_browser() -> Browser:
         if _browser is None:
             _playwright = await async_playwright().start()
             _browser = await _playwright.chromium.launch(
+                # The image's pinned stable Chrome; None (tests, dev) means Playwright's own.
+                executable_path=os.environ.get("HTMLRENDER_CHROME") or None,
                 args=[
                     "--no-sandbox",  # the container is the sandbox; Chromium's needs CAP_SYS_ADMIN
                     "--disable-dev-shm-usage",
