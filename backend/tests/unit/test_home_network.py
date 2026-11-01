@@ -72,7 +72,7 @@ LOG = {
 
 
 FILTERING = {
-    "filters": [{"id": 2, "name": "HaGeZi Native Tracker"}],
+    "filters": [{"id": 2, "name": "HaGeZi Pro"}],
     "user_rules": ["||samsungads.com^", "@@||lgtvsdp.com^", "! a note the owner wrote"],
 }
 
@@ -335,7 +335,7 @@ async def test_device_detail_names_the_list_that_caught_each_name(dns) -> None:
     assert out["queries"] == 900
     assert (out["recent"], out["recent_blocked"]) == (2, 1)
     assert out["top_blocked"] == [
-        {"domain": "samsungads.com", "count": 1, "list": "HaGeZi Native Tracker"}
+        {"domain": "samsungads.com", "count": 1, "list": "HaGeZi Pro"}
     ]
 
 

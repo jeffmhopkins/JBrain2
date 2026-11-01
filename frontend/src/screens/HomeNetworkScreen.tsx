@@ -307,7 +307,7 @@ function Overview({
       )}
       {state === "setup" && (
         <Banner tone="steel" title="Nothing is using it yet">
-          {`In the My Spectrum app, set Primary DNS to ${box} and Secondary to 94.140.14.14. Devices switch over as they reconnect.`}
+          {`Spectrum's router keeps DNS for itself, so set it by hand on the devices you want to see: in a TV's network settings, set DNS to ${box}. Each one appears here once it looks something up.`}
         </Banner>
       )}
       <section className="hn-card hn-status">

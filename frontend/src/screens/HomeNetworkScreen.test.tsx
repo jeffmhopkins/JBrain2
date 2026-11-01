@@ -164,7 +164,7 @@ describe("HomeNetworkScreen", () => {
     vi.mocked(api.homeNetwork).mockResolvedValue(summary({ devices: [] }));
     render(<HomeNetworkScreen />);
     await flush();
-    expect(screen.getByText(/Primary DNS to 192\.168\.1\.10/)).toBeTruthy();
+    expect(screen.getByText(/set DNS to 192\.168\.1\.10/)).toBeTruthy();
   });
 
   it("says the DNS is down rather than showing an empty screen", async () => {

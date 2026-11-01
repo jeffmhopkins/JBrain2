@@ -4233,8 +4233,8 @@ so **devices lead**, ranked by how much of their recent traffic was refused.
 - **States are banners above the status card**, never an empty screen: DNS down (rose, with
   the box's reason; the card reads *Not answering* with its switch disabled, and the list
   says *No log while the DNS is down.*), one address only (amber: the router forwards, devices can't be told
-  apart; rows are not tappable), and nothing using it yet (steel: the Spectrum Primary and
-  Secondary DNS to set, with the box's own address).
+  apart; rows are not tappable), and nothing using it yet (steel: Spectrum's router keeps
+  DNS for itself, so it says to set DNS by hand on a TV, with the box's own address).
 
 ## Implementation rules
 

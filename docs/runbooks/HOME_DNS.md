@@ -32,24 +32,31 @@ leaves the house.
 
 ## What Spectrum's DNS setting actually does
 
-Spectrum's app does not say whether its DNS field is handed to each device or used only
-by the router itself, which then forwards everything to the box. Blocking works either
-way, but per-device visibility differs:
+Answered on the live box, 2026-11-01: **the SAX2V1R keeps DNS for itself, and never
+reaches a server on the LAN.** Devices are handed the router (`192.168.1.1`, plus its IPv6
+address) as DNS. With the box as Primary, the box logged not one lookup, not even from
+the router, and the router fell through to the Secondary. So with Spectrum's router:
 
-- **Handed to devices:** `GET /api/debug/home-network` lists each device's own IP under
-  `devices`. Everything works.
-- **Forwarded by the router:** `devices` is a single IP, the router's. Every device's
-  lookups are still filtered, but the log cannot tell the TV from a laptop. The fix is
-  hardware: your own router behind Spectrum's modem, handing out the box as DNS (see the
-  plan, §4).
+- **Blocking works for every device anyway**, through the Secondary (`94.140.14.14`,
+  AdGuard's public filtering DNS). That is why the Secondary must be a filtering one.
+- **The box sees only devices whose DNS is set by hand.** On a TV: network settings →
+  manual / advanced → DNS = the box's address (some TVs also want a fixed IP for that).
+  Each such device then appears on the Home network screen by itself. A phone's Private
+  DNS skips this too.
+- **Every device at once** needs your own router behind Spectrum's modem, handing out the
+  box as DNS (a GL.iNet Flint 2 or a Firewalla; see the plan, §4).
+
+The Primary can stay pointed at the box: it costs nothing, and a router firmware that
+starts honouring it will route the house through the box with no further change.
 
 ## What it blocks
 
 The first start seeds `deploy/adguard/AdGuardHome.yaml`:
 
 - **AdGuard DNS filter**: general ads and trackers.
-- **HaGeZi Native Tracker**: device and OS telemetry by vendor (Samsung, LG, Roku, Amazon,
-  Apple, Xiaomi, ...).
+- **HaGeZi Pro**: ads, trackers and device telemetry (TVs and phones among them), from
+  AdGuard's own list registry. A box first seeded with the old HaGeZi Native Tracker URL
+  (jsDelivr `@latest`, which answers 403) is moved to it at its next start.
 - **Perflyst Smart TV**: smart-TV ad and telemetry hosts.
 
 Upstream lookups go out encrypted (DNS-over-HTTPS to Quad9 and Cloudflare, in parallel),

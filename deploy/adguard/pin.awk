@@ -22,6 +22,10 @@
 #   users           one user, `jbrain`, whose bcrypt hash is of `adguard.token`. The api
 #                   re-mints that token into an empty secrets volume, so the hash is
 #                   recomputed every start rather than trusted from the file.
+#   a dead seed list  the first seed's HaGeZi list pointed at a jsDelivr `@latest` URL
+#                   that answers 403, so a box seeded with it blocked from two lists.
+#                   That one URL, and its name on the next line, become HaGeZi Pro from
+#                   AdGuard's own registry; nothing else in `filters` is touched.
 #
 # AdGuard writes block sequences either at the parent's indent or two deeper, so a
 # sequence item is any `- ` line, at whatever indent, until the next key.
@@ -54,6 +58,9 @@ function close_dns() {
 
 BEGIN {
 	PRIVATE = "127.0.0.0/8 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7 fe80::/10"
+	DEAD_URL = "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/native.txt"
+	LIVE_URL = "https://adguardteam.github.io/HostlistsRegistry/assets/filter_48.txt"
+	LIVE_NAME = "HaGeZi Pro"
 }
 
 {
@@ -90,6 +97,18 @@ BEGIN {
 	if (section == "dns" && ptr != "" && $0 ~ /^  local_ptr_upstreams:/) {
 		list("local_ptr_upstreams", ptr)
 		in_list = 1
+		next
+	}
+	if (section == "filters" && index($0, "url: " DEAD_URL)) {
+		sub(/url: .*/, "url: " LIVE_URL)
+		print
+		rename = 1
+		next
+	}
+	if (rename && $0 ~ /^ *name: /) {
+		sub(/name: .*/, "name: " LIVE_NAME)
+		print
+		rename = 0
 		next
 	}
 	if (section == "http" && $0 ~ /^  address:/) {
