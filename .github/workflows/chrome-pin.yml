@@ -10,6 +10,12 @@ on:
     - cron: "17 14 * * 1"
   workflow_dispatch:
 
+# Every workflow carries one (backend/tests/unit/test_ci_budgets.py). This one never runs
+# on a pull request, so it only keeps two manual dispatches from racing on the issue.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   issues: write
