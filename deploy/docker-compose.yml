@@ -899,11 +899,18 @@ services:
   # `/internal` routes or metadata. The proxy env and the api's per-request `X-Proxy-Url`
   # point it at squid; whether this image's Chromium honours them is verified on the box
   # (the plan's on-box gate). The network is the guarantee either way.
-  # Pinned by digest (the repo publishes only `latest`, and the update never re-pulls a
-  # floating tag — the SearXNG lesson). Resolved 2026-10-04; re-resolve to upgrade.
+  # Upstream pinned by digest (the repo publishes only `latest`, and the update never re-pulls
+  # a floating tag — the SearXNG lesson). Resolved 2026-10-04; re-resolve to upgrade. BUILT on
+  # top of it: that image's Chrome dates from 2024, so deploy/Dockerfile.reader swaps in the
+  # pinned stable Chrome (deploy/chrome/), the browser every page it renders runs in.
   reader:
     logging: *logbound
-    image: ${READER_IMAGE:-ghcr.io/intergalacticalvariable/reader@sha256:1860898a857a2655b3d4c9334f64bc9acb736d854fac488a1fcc81bb284a5b5f}
+    image: jbrain2-reader:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.reader
+      args:
+        READER_BASE: ${READER_IMAGE:-ghcr.io/intergalacticalvariable/reader@sha256:1860898a857a2655b3d4c9334f64bc9acb736d854fac488a1fcc81bb284a5b5f}
     restart: unless-stopped
     mem_limit: 1g
     shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
@@ -983,11 +990,18 @@ services:
   #
   # PINNED by tag AND digest (v0.0.82, resolved 2026-10-05 from mcr.microsoft.com): the update
   # never re-pulls a floating tag, and playwright-mcp has removed and restored flags between
-  # releases, so a moved tag is a behaviour change. Re-resolve to upgrade. Stock stack (no
-  # profile): a plain `up -d` — what a PWA update runs — brings it up with no CLI step.
+  # releases, so a moved tag is a behaviour change. Re-resolve to upgrade. BUILT on top of it
+  # (deploy/Dockerfile.browser) to swap the bundled dev-build Chromium for the pinned stable
+  # Chrome (deploy/chrome/). Stock stack (no profile): a plain `up -d` — what a PWA update
+  # runs — builds and brings it up with no CLI step.
   browser:
     logging: *logbound
-    image: ${BROWSER_IMAGE:-mcr.microsoft.com/playwright/mcp:v0.0.82@sha256:77dccc5ce9e94cb8ae7ebea87ddbb6cd54b05760c4d63c54e16accf2726b8734}
+    image: jbrain2-browser:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.browser
+      args:
+        BROWSER_BASE: ${BROWSER_IMAGE:-mcr.microsoft.com/playwright/mcp:v0.0.82@sha256:77dccc5ce9e94cb8ae7ebea87ddbb6cd54b05760c4d63c54e16accf2726b8734}
     restart: unless-stopped
     init: true
     # Appended to the image's entrypoint (`node /app/cli.js --headless --browser chromium
@@ -1006,6 +1020,8 @@ services:
       - --config=/etc/playwright-mcp/config.json
       - --timeout-navigation=30000
       - --idle-timeout=300000
+      # The image's pinned stable Chrome, not the dev build playwright-mcp bundles.
+      - --executable-path=/opt/chrome/chrome
     # The directory, never the file alone: a single-file bind of a missing path makes Docker
     # create a DIRECTORY there (the searxng note), and the server then fails to start.
     volumes:

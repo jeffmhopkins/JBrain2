@@ -1,6 +1,6 @@
 # Agent Canvas — Draw, Annotate, Crop — Design Spec
 
-> **Status:** In progress · **Last verified:** 2026-10-04 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ W7✅ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
+> **Status:** In progress · **Last verified:** 2026-11-01 · **Waves:** W0✅(measured) W1✅ W1b✅ W2✅ W3✅ W4✅ W5✅ W6◻️ W7✅ · **§10 decisions 1–6 ratified by the owner 2026-08-16**
 
 > **W0's measurement is DONE (2026-08-17).** Probed on the live box against
 > `qwen3.8-27b-q4`: the base is **`norm_1000`**, now pinned in `agent/grounding.py` for
@@ -804,8 +804,9 @@ was a *symptom three layers downstream of the cause*. The base image is the reas
 purely to download the browsers into `/ms-playwright`, then **deletes the venv**
 (verified against upstream's `Dockerfile.noble` and by running `python -c "import
 playwright"` in the pulled image). It ships browsers, not a driver. The Dockerfile now
-installs `playwright==1.49.1` itself, pinned to the image tag so the driver asks for the
-browser revision that is actually baked in.
+installs `playwright` itself, pinned to the image tag. (Since 2026-11-01 the browser it
+launches is the pinned stable Chrome from `deploy/chrome/`, not the image's bundled one;
+see `../reference/SERVICES.md` *Pinned Chrome*.)
 
 The lesson worth more than the fix: **a sidecar that cannot start is indistinguishable
 from a sidecar that is not addressable**, and the graceful degradation designed in §3b

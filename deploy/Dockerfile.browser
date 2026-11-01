@@ -1,0 +1,18 @@
+# The `browser` sidecar: Microsoft's playwright-mcp image, with its Chromium swapped for the
+# pinned stable Chrome for Testing (deploy/chrome/). Each playwright-mcp release bundles an
+# early dev-channel Chromium (v0.0.82 shipped 154.0.8037.0), which misses every Chrome
+# security release after it, and this is the browser that drives untrusted pages with
+# `--no-sandbox`. Everything else about the image (entrypoint, user, MCP server) is upstream's.
+# The upstream image is pinned (tag + digest) in docker-compose.yml, which passes it here.
+ARG BROWSER_BASE
+
+FROM python:3.12-slim AS chrome
+COPY deploy/chrome/ /chrome/
+RUN python -I /chrome/fetch.py chrome /opt/chrome
+
+FROM ${BROWSER_BASE}
+USER root
+# Delete the bundled Chromium so nothing can fall back to it; ffmpeg stays.
+RUN rm -rf /ms-playwright/chromium* && test -z "$(ls -d /ms-playwright/chromium* 2>/dev/null)"
+COPY --from=chrome /opt/chrome /opt/chrome
+USER node

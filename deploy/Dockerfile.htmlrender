@@ -12,19 +12,30 @@
 # runtime library set (~80 apt packages) is exactly what that image exists to pin;
 # assembling it by hand is how a browser sidecar silently rots. It ships the BROWSERS,
 # not the Python driver — see the pip install below.
-FROM mcr.microsoft.com/playwright/python:v1.49.1-noble
+#
+# The base's BROWSERS are not used, only their runtime libraries: Playwright bundles a
+# pre-stable Chromium branch build that misses every Chrome security release after it, so the
+# browser is the pinned stable Chrome for Testing headless shell (deploy/chrome/).
+FROM python:3.12-slim AS chrome
+COPY deploy/chrome/ /chrome/
+RUN python -I /chrome/fetch.py chrome-headless-shell /opt/chrome
 
-# Only Chromium is needed; the base image ships all three engines, so drop the other
-# two to claw back ~500 MB on a box that is already holding 30 GB of model weights.
-RUN rm -rf /ms-playwright/firefox-* /ms-playwright/webkit-* || true
+FROM mcr.microsoft.com/playwright/python:v1.64.1-noble
+
+# Drop every bundled engine (~1 GB on a box already holding 30 GB of model weights) so an
+# old Chromium cannot be launched by accident; the pinned one replaces it.
+RUN rm -rf /ms-playwright/chromium* /ms-playwright/firefox-* /ms-playwright/webkit-* \
+    && test -z "$(ls -d /ms-playwright/chromium* 2>/dev/null)"
+COPY --from=chrome /opt/chrome /opt/chrome
+ENV HTMLRENDER_CHROME=/opt/chrome/chrome-headless-shell
 
 # `playwright` is NOT importable in the base image: upstream installs the package into a
 # throwaway virtualenv purely to download the browsers into /ms-playwright, then deletes
 # the venv (see playwright-python utils/docker/Dockerfile.noble). The image ships browsers
 # + their ~80 apt deps; the driver is ours to install, PINNED to the image tag so the
-# driver asks for the browser revision that is actually baked in.
+# driver and the runtime libraries come from the same release.
 RUN pip install --no-cache-dir \
-      "playwright==1.49.1" \
+      "playwright==1.64.1" \
       "fastapi==0.136.3" \
       "starlette==1.3.1" \
       "uvicorn==0.49.0"
@@ -36,7 +47,7 @@ COPY deploy/htmlrender/server.py ./server.py
 # module, and the only symptom on the box was the api failing to DNS-resolve a
 # crash-looping container — three layers away from the cause.
 RUN python -c "import server" && python -c "from playwright.sync_api import sync_playwright; \
-    p = sync_playwright().start(); b = p.chromium.launch(); b.close(); p.stop()"
+    p = sync_playwright().start(); b = p.chromium.launch(executable_path='/opt/chrome/chrome-headless-shell'); b.close(); p.stop()"
 
 EXPOSE 8000
 
