@@ -46,6 +46,8 @@ def main(product: str, dest: Path) -> None:
                 rel = Path(*Path(info.filename).parts[1:])
                 if not rel.parts or info.is_dir():
                     continue
+                if rel.is_absolute() or ".." in rel.parts:
+                    sys.exit(f"{name}: refusing archive entry {info.filename!r}")
                 target = dest / rel
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with zf.open(info) as src, target.open("wb") as out:

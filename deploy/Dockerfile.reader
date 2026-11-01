@@ -14,15 +14,18 @@ FROM ${READER_BASE}
 # Remove the stale browsers (the image carries both Google Chrome and Debian's chromium) so
 # nothing can fall back to them. The packages go, their shared libraries stay: the pinned
 # Chrome needs the same set.
-RUN dpkg --purge google-chrome-stable chromium chromium-common chromium-sandbox 2>/dev/null; \
-    rm -f /usr/bin/google-chrome-stable /usr/bin/google-chrome /usr/bin/chromium; \
-    test ! -e /opt/google/chrome/chrome
+RUN dpkg --purge google-chrome-stable chromium chromium-common chromium-sandbox \
+    && rm -f /usr/bin/google-chrome-stable /usr/bin/google-chrome /usr/bin/chromium \
+    && test ! -e /opt/google/chrome/chrome && test ! -e /usr/lib/chromium/chromium
 # Upstream launches with `--single-process`, which current Chrome no longer survives: the
 # first page kills the browser ("Target.createTarget: Target closed"). Dropping it puts each
 # page back in its own renderer process, which is also the isolation a hostile page should
-# get. The grep fails the build if upstream's launch code ever stops matching.
-RUN grep -q "'--single-process'" /app/build/services/puppeteer.js \
-    && sed -i "/'--single-process'/d" /app/build/services/puppeteer.js
+# get. The greps fail the build if upstream's launch code ever stops matching.
+# Only the one token goes, and the launch args must still carry `--no-sandbox` afterwards.
+RUN f=/app/build/services/puppeteer.js \
+    && grep -q "'--single-process'" "$f" \
+    && sed -i "s/'--single-process',\\?//" "$f" \
+    && ! grep -q "single-process" "$f" && grep -q "'--no-sandbox'" "$f" && node --check "$f"
 COPY --from=chrome /opt/chrome /opt/chrome
 ENV PUPPETEER_EXECUTABLE_PATH=/opt/chrome/chrome
 RUN /opt/chrome/chrome --version

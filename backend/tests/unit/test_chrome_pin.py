@@ -31,6 +31,12 @@ _SIDECARS = {
     "browser": ("Dockerfile.browser", "chrome"),
     "reader": ("Dockerfile.reader", "chrome"),
 }
+# How each base image's own browser is deleted, so nothing can fall back to it.
+_REMOVALS = {
+    "htmlrender": "rm -rf /ms-playwright/chromium*",
+    "browser": "rm -rf /ms-playwright/chromium*",
+    "reader": "dpkg --purge google-chrome-stable chromium",
+}
 
 
 def _compose() -> dict[str, Any]:
@@ -63,8 +69,7 @@ def test_each_sidecar_installs_the_pinned_chrome_and_drops_its_own(service: str)
     text = (_DEPLOY / dockerfile).read_text()
     assert f"fetch.py {product} /opt/chrome" in text
     assert "COPY --from=chrome /opt/chrome /opt/chrome" in text
-    # The base image's browser is deleted, so nothing can silently fall back to it.
-    assert re.search(r"rm -rf /ms-playwright/chromium\*|dpkg --purge google-chrome-stable", text)
+    assert _REMOVALS[service] in text
     spec = _compose()["services"][service]
     assert spec["build"]["dockerfile"] == f"deploy/{dockerfile}"
     assert spec["image"] == f"jbrain2-{service}:local"
@@ -122,9 +127,11 @@ async def test_htmlrender_launches_the_binary_its_image_names(
 # --- fetch.py ---------------------------------------------------------------------------
 
 
-def _archive() -> bytes:
+def _archive(extra: str | None = None) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
+        if extra:
+            zf.writestr(extra, b"x")
         exe = zipfile.ZipInfo("chrome-linux64/chrome")
         exe.external_attr = 0o100755 << 16
         zf.writestr(exe, b"\x7fELF")
@@ -169,3 +176,14 @@ def test_fetch_refuses_a_download_that_does_not_match_the_pin(
     with pytest.raises(SystemExit, match="sha256"):
         module.main("chrome", dest)
     assert not dest.exists()
+
+
+def test_fetch_refuses_an_entry_that_climbs_out_of_dest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    evil = _archive("chrome-linux64/../../escaped")
+    module, _ = _fetcher(monkeypatch, tmp_path, hashlib.sha256(evil).hexdigest())
+    monkeypatch.setattr(module.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(evil))
+    with pytest.raises(SystemExit, match="refusing"):
+        module.main("chrome", tmp_path / "opt")
+    assert not (tmp_path / "escaped").exists()

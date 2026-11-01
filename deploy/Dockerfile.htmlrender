@@ -24,7 +24,8 @@ FROM mcr.microsoft.com/playwright/python:v1.64.1-noble
 
 # Drop every bundled engine (~1 GB on a box already holding 30 GB of model weights) so an
 # old Chromium cannot be launched by accident; the pinned one replaces it.
-RUN rm -rf /ms-playwright/chromium* /ms-playwright/firefox-* /ms-playwright/webkit-* || true
+RUN rm -rf /ms-playwright/chromium* /ms-playwright/firefox-* /ms-playwright/webkit-* \
+    && test -z "$(ls -d /ms-playwright/chromium* 2>/dev/null)"
 COPY --from=chrome /opt/chrome /opt/chrome
 ENV HTMLRENDER_CHROME=/opt/chrome/chrome-headless-shell
 

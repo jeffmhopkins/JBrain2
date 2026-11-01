@@ -13,6 +13,6 @@ RUN python -I /chrome/fetch.py chrome /opt/chrome
 FROM ${BROWSER_BASE}
 USER root
 # Delete the bundled Chromium so nothing can fall back to it; ffmpeg stays.
-RUN rm -rf /ms-playwright/chromium*
+RUN rm -rf /ms-playwright/chromium* && test -z "$(ls -d /ms-playwright/chromium* 2>/dev/null)"
 COPY --from=chrome /opt/chrome /opt/chrome
 USER node
