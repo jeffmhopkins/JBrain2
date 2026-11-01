@@ -21,6 +21,7 @@ import { DataScreen } from "./screens/DataScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
+import { HomeNetworkScreen } from "./screens/HomeNetworkScreen";
 import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
 import { ImageScreen } from "./screens/ImageScreen";
 import { IntakeLinksScreen } from "./screens/IntakeLinksScreen";
@@ -83,6 +84,7 @@ type Card =
   | "petcontrol"
   | "jpanel"
   | "cast"
+  | "homenet"
   | "endpoints"
   | "jcode"
   | "jlaunch"
@@ -127,6 +129,7 @@ const SCREEN_TITLES: Record<
   jmolt: "jmolt",
   minecraft: "Minecraft",
   cast: "Cast",
+  homenet: "Home network",
   jshare: "JShare",
 };
 
@@ -694,6 +697,7 @@ export function App() {
             {card === "llm-settings" && <LLMSettingsScreen />}
             {card === "data" && <DataScreen />}
             {card === "cast" && <CastScreen />}
+            {card === "homenet" && <HomeNetworkScreen />}
             {card === "minecraft" && (
               <MinecraftScreen
                 openMap={minecraftMap}

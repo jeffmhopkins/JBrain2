@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-10-23
+> **Status:** Living · **Last verified:** 2026-11-01
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -4201,6 +4201,34 @@ Binding mock `docs/mocks/jpanel-cast/index.html` ("1 · PWA"), approved by the o
   It replaces whatever Send held, unasked: iterating on a past cast is the point of the pencil.
 - The TV preview's sheet is drawn in the TV frame's own near-black in both themes, like the
   panel composer's glass: it is a picture of a dark screen, not a themed surface.
+
+## Home network — the house's DNS (settled in a three-way GUI review — binding mock: `docs/mocks/home-network/a-devices.html`)
+
+Chosen by the owner 2026-11-01 over "who's being told" (by company) and a live log; plan
+`docs/archive/HOME_DNS_PLAN.md` wave B. The owner's worry is what the TVs send businesses,
+so **devices lead**, ranked by how much of their recent traffic was refused.
+
+- **Its own launcher tile**, "Home network" (the shield), beside Cast.
+- **Status card first**: a dot and a word (*Blocking ads and trackers* / *Blocking paused*),
+  the blocking switch, and the week's lookups, blocked and share. Turning the switch off
+  opens a Sheet: *For 10 minutes*, *For 1 hour*, *Until I turn it back on* (rose). A timed
+  pause says *Back on by itself in N min*. Turning it on needs no sheet.
+- **Devices · most tracking first**: kind tile (a TV is amber, so the TVs stand out), name, a
+  rose meter of the blocked share, *N of M recent blocked · ip*, the share in rose, a
+  chevron. The share is a sample of each device's latest lookups (AdGuard counts no blocks
+  per device), so the copy says **recent**, never "this week".
+- **A device** (back chevron + its name): a header card with ip, the week's lookups, the
+  meter and a rename pencil; **Who it tried to reach** (each refused name, *Caught by
+  {list}*, count); **Recent lookups** with a Blocked / All segment, blocked rows struck
+  through in rose with a *blocked* badge.
+- **A name** opens a Sheet: *Blocked* / *Allowed* pill, *you allowed it* / *you blocked it*
+  when the owner's rule decides, then **Allow for every device** (green) or **Block for
+  every device** (rose), and *Go back to what the lists say* when a rule of the owner's is
+  set. The footnote says why allowing exists: a TV menu that broke behind a list.
+- **States are banners above the status card**, never an empty screen: DNS down (rose, with
+  the box's reason), one address only (amber: the router forwards, devices can't be told
+  apart; rows are not tappable), and nothing using it yet (steel: the Spectrum Primary and
+  Secondary DNS to set, with the box's own address).
 
 ## Implementation rules
 

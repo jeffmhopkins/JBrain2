@@ -1250,7 +1250,7 @@ services:
     volumes:
       - internal_secrets:/run/jbrain-internal:ro
 
-  # The house's DNS (docs/runbooks/HOME_DNS.md, docs/plans/HOME_DNS_PLAN.md): AdGuard Home
+  # The house's DNS (docs/runbooks/HOME_DNS.md, docs/archive/HOME_DNS_PLAN.md): AdGuard Home
   # blocking ads and smart-TV telemetry for every device whose router hands out the box as
   # DNS, and logging which device asked for what. STOCK STACK, for the CLAUDE.md #10 reason
   # `cast` gives; it answers nothing until the router points at it.

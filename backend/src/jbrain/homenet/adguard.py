@@ -60,6 +60,10 @@ class AdGuard:
                 status_code=503,
                 detail=f"house DNS unreachable ({type(exc).__name__}) — is it running?",
             ) from exc
+        if resp.status_code == 400:
+            # AdGuard refusing the request itself (a client name already taken): the
+            # owner's to read, not a fault in the box.
+            raise HTTPException(status_code=400, detail=resp.text[:300])
         if resp.status_code in (401, 403):
             # The token was re-minted and AdGuard has not restarted onto its new hash.
             raise HTTPException(status_code=502, detail="house DNS refused the api's password")
@@ -88,7 +92,7 @@ def _pairs(rows: Any) -> list[tuple[str, int]]:
     return out
 
 
-def _names(clients: Any) -> dict[str, str]:
+def names_for(clients: Any) -> dict[str, str]:
     """IP -> the best name AdGuard knows (a named client, else what rDNS/ARP found)."""
     names: dict[str, str] = {}
     body = cast(dict[str, Any], clients or {})
@@ -109,10 +113,12 @@ def summary(status: Any, stats: Any, clients: Any) -> dict[str, Any]:
     stats window, which devices ask the most, and which names were blocked most."""
     st = cast(dict[str, Any], status or {})
     sx = cast(dict[str, Any], stats or {})
-    names = _names(clients)
+    names = names_for(clients)
     return {
         "running": bool(st.get("running")),
         "protection_enabled": bool(st.get("protection_enabled")),
+        # A timed pause counts down in AdGuard; the screen says when blocking comes back.
+        "resumes_in_s": int(st.get("protection_disabled_duration") or 0) // 1000,
         "dns_addresses": list(st.get("dns_addresses") or []),
         "version": str(st.get("version") or ""),
         "queries": int(sx.get("num_dns_queries") or 0),
@@ -155,6 +161,68 @@ def query_rows(log: Any) -> dict[str, Any]:
                 "blocked": _blocked(reason),
                 "reason": reason,
                 "rule": str(rules[0].get("text") or "") if rules else "",
+                "list_id": int(rules[0].get("filter_list_id") or 0) if rules else 0,
             }
         )
     return {"rows": rows, "oldest": str(body.get("oldest") or "")}
+
+
+def list_names(filtering: Any) -> dict[int, str]:
+    """Blocklist id -> its name, so a blocked lookup can say which list caught it. The
+    owner's own rules are list 0 in AdGuard's log."""
+    body = cast(dict[str, Any], filtering or {})
+    names = {0: "Your rules"}
+    for f in body.get("filters") or []:
+        names[int(f.get("id") or 0)] = str(f.get("name") or "")
+    return names
+
+
+def sample(rows: list[dict[str, Any]]) -> dict[str, int]:
+    return {"recent": len(rows), "recent_blocked": sum(1 for r in rows if r["blocked"])}
+
+
+def top_blocked(rows: list[dict[str, Any]], lists: dict[int, str]) -> list[dict[str, Any]]:
+    """The names a device was refused, most-asked first, each with the list that caught it."""
+    counts: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if not r["blocked"]:
+            continue
+        hit = counts.setdefault(
+            r["domain"], {"domain": r["domain"], "count": 0, "list": lists.get(r["list_id"], "")}
+        )
+        hit["count"] += 1
+    return sorted(counts.values(), key=lambda h: (-h["count"], h["domain"]))
+
+
+# The owner's one-tap rules, in AdGuard's syntax: `||name^` blocks the name and every
+# subdomain, `@@||name^` lets it through whatever a list says.
+def block_rule(domain: str) -> str:
+    return f"||{domain}^"
+
+
+def allow_rule(domain: str) -> str:
+    return f"@@||{domain}^"
+
+
+def rules_view(user_rules: list[str]) -> dict[str, list[str]]:
+    blocked: list[str] = []
+    allowed: list[str] = []
+    for rule in user_rules:
+        if rule.startswith("@@||") and rule.endswith("^"):
+            allowed.append(rule[4:-1])
+        elif rule.startswith("||") and rule.endswith("^"):
+            blocked.append(rule[2:-1])
+    return {"blocked": blocked, "allowed": allowed}
+
+
+def with_rule(user_rules: list[str], domain: str, action: str) -> list[str]:
+    """`user_rules` with this screen's rule for `domain` set to `action` (block, allow or
+    clear). Only the two exact rules this screen writes are touched; anything else the
+    owner wrote by hand stays as it was."""
+    mine = {block_rule(domain), allow_rule(domain)}
+    kept = [r for r in user_rules if r not in mine]
+    if action == "block":
+        kept.append(block_rule(domain))
+    elif action == "allow":
+        kept.append(allow_rule(domain))
+    return kept

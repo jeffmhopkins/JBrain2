@@ -5,7 +5,7 @@
 The box runs AdGuard Home as the `adguard` service. Once the router hands the box out as
 DNS, every device in the house gets ads and smart-TV telemetry blocked, and the box keeps
 a week's log of which device looked up what. That log is how you see what the TVs send.
-The build plan is `../plans/HOME_DNS_PLAN.md`.
+The build plan is `../archive/HOME_DNS_PLAN.md`.
 
 It is part of the stock stack, so **Ops → Update** installs it and nothing goes in `.env`.
 Until the router points at it, it answers nothing.
@@ -68,13 +68,23 @@ Two limits no DNS blocker gets past:
 
 ## Reading it
 
-- **The PWA:** the Home network screen is wave B of the plan. It is not built yet.
+- **The PWA:** the **Home network** launcher tile. Blocking on or off (with a pause for 10
+  minutes, an hour, or until turned back on), every device ranked by how much of its recent
+  traffic was blocked, and one device's names it tried to reach and its recent lookups. Tap
+  a name to allow it or block it for every device (a TV menu that broke behind a list is
+  fixed by allowing its name), and the pencil names a device. The blocked share is read
+  from each device's last 200 lookups, because AdGuard counts lookups per device but not
+  blocks; the week's totals in the status card are AdGuard's own.
 - **The debug API** (`DEBUG_ACCESS.md`): `GET /api/debug/home-network` for the summary
   and `GET /api/debug/home-network/queries?client=<ip>&blocked=true` for one device's
   blocked lookups.
 - **The owner API:** the same reads at `/api/home-network`, plus `POST
   /api/home-network/protection {"enabled": false, "minutes": 10}` to pause blocking for a
-  site that breaks behind a list. It comes back on by itself.
+  site that breaks behind a list. It comes back on by itself. `GET
+  /api/home-network/devices/<ip>` is one device; `GET`/`POST /api/home-network/rules`
+  (`{"domain": …, "action": "block"|"allow"|"clear"}`) are the one-name rules, written as
+  `||name^` / `@@||name^` beside anything else in AdGuard's custom rules, which they never
+  touch; `POST /api/home-network/devices/<ip>/name {"name": …}` names a device.
 
 ## How it is wired, and why
 
