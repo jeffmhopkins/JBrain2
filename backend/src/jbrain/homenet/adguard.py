@@ -136,10 +136,14 @@ def summary(status: Any, stats: Any, clients: Any) -> dict[str, Any]:
     }
 
 
+# The reasons AdGuard's own `response_status=blocked` filter returns: a list or the
+# owner's rule, and blocked services. Counting more (safe browsing, parental) would put
+# a name under "blocked" that the screen's Blocked log then leaves out.
+_BLOCK_REASONS = frozenset({"FilteredBlackList", "FilteredBlockedService"})
+
+
 def _blocked(reason: str) -> bool:
-    # AdGuard's reasons for an answer it did not pass through unchanged. Rewrites and
-    # allow-listed names are not blocks.
-    return reason.startswith("Filtered") and reason != "FilteredSafeSearch"
+    return reason in _BLOCK_REASONS
 
 
 def query_rows(log: Any) -> dict[str, Any]:
@@ -161,7 +165,8 @@ def query_rows(log: Any) -> dict[str, Any]:
                 "blocked": _blocked(reason),
                 "reason": reason,
                 "rule": str(rules[0].get("text") or "") if rules else "",
-                "list_id": int(rules[0].get("filter_list_id") or 0) if rules else 0,
+                # -1 when AdGuard names no rule, so it is never read as the owner's (0).
+                "list_id": int(rules[0].get("filter_list_id") or 0) if rules else -1,
             }
         )
     return {"rows": rows, "oldest": str(body.get("oldest") or "")}
@@ -177,7 +182,7 @@ def list_names(filtering: Any) -> dict[int, str]:
     return names
 
 
-def sample(rows: list[dict[str, Any]]) -> dict[str, int]:
+def blocked_share(rows: list[dict[str, Any]]) -> dict[str, int]:
     return {"recent": len(rows), "recent_blocked": sum(1 for r in rows if r["blocked"])}
 
 

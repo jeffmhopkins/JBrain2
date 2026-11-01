@@ -2985,6 +2985,16 @@ const MOCK_HN_LISTS = ["Perflyst Smart TV", "HaGeZi Native Tracker", "AdGuard DN
 const MOCK_HN_NAMES = new Map<string, string>();
 const MOCK_HN_RULES: HomeNetRules = { blocked: [], allowed: [] };
 let mockHnProtection = true;
+/** When a timed pause ends, ms since epoch; 0 when on or paused until turned back on. */
+let mockHnResumesAt = 0;
+
+function mockHnOn(): boolean {
+  if (!mockHnProtection && mockHnResumesAt && Date.now() >= mockHnResumesAt) {
+    mockHnProtection = true;
+    mockHnResumesAt = 0;
+  }
+  return mockHnProtection;
+}
 
 /** A device's latest lookups, newest first: a TV spends most of its asking on its maker. */
 function mockHnLog(ip: string): HomeNetQuery[] {
@@ -2997,20 +3007,21 @@ function mockHnLog(ip: string): HomeNetQuery[] {
     const domain = trackerTurn
       ? (d.tracker[i % d.tracker.length] as string)
       : (MOCK_HN_PASSED[i % MOCK_HN_PASSED.length] as string);
-    const blocked = MOCK_HN_RULES.allowed.includes(domain)
-      ? false
-      : trackerTurn || MOCK_HN_RULES.blocked.includes(domain);
-    const list = i % MOCK_HN_LISTS.length;
+    const mine = MOCK_HN_RULES.blocked.includes(domain);
+    // Paused, nothing is refused, so the row reads as the box would log it.
+    const blocked = mockHnOn() && !MOCK_HN_RULES.allowed.includes(domain) && (trackerTurn || mine);
+    // The owner's own rule is list 0 in AdGuard's log, "Your rules".
+    const list = mine ? 0 : (i % MOCK_HN_LISTS.length) + 1;
     rows.push({
       time: new Date(Date.now() - i * 4 * 60_000).toISOString(),
       client: ip,
       client_name: MOCK_HN_NAMES.get(ip) ?? d.name,
       domain,
       type: "A",
-      blocked: blocked && mockHnProtection,
+      blocked,
       reason: blocked ? "FilteredBlackList" : "NotFilteredNotFound",
       rule: blocked ? `||${domain}^` : "",
-      list_id: blocked ? list + 1 : 0,
+      list_id: blocked ? list : -1,
     });
   }
   return rows;
@@ -3025,13 +3036,16 @@ function mockHnSummary(): HomeNetSummary {
       queries: d.queries,
       recent: log.length,
       recent_blocked: log.filter((r) => r.blocked).length,
+      sampled: true,
     };
   });
   const queries = devices.reduce((n, d) => n + d.queries, 0);
   return {
     running: true,
-    protection_enabled: mockHnProtection,
-    resumes_in_s: 0,
+    protection_enabled: mockHnOn(),
+    resumes_in_s: mockHnResumesAt
+      ? Math.max(0, Math.round((mockHnResumesAt - Date.now()) / 1000))
+      : 0,
     dns_addresses: ["192.168.1.10"],
     version: "v0.107.79",
     queries,
@@ -6619,9 +6633,10 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json(MOCK_HN_RULES);
   }
   if (path === "/api/home-network/protection" && method === "POST") {
-    const body = JSON.parse(String(init?.body ?? "{}")) as { enabled: boolean };
+    const body = JSON.parse(String(init?.body ?? "{}")) as { enabled: boolean; minutes?: number };
     mockHnProtection = body.enabled;
-    return json({ protection_enabled: mockHnProtection });
+    mockHnResumesAt = !body.enabled && body.minutes ? Date.now() + body.minutes * 60_000 : 0;
+    return json({ protection_enabled: mockHnOn() });
   }
   if (path === "/api/home-network/queries" && method === "GET") {
     const client = url.searchParams.get("client") ?? "";
@@ -6639,15 +6654,21 @@ export const mockFetch: typeof fetch = async (input, init) => {
   const hnDevice = path.match(/^\/api\/home-network\/devices\/([^/]+)$/);
   if (hnDevice && method === "GET") {
     const ip = decodeURIComponent(hnDevice[1] as string);
-    const device = mockHnSummary().devices.find((d) => d.ip === ip);
-    if (!device) return json({ detail: "not an IP address" }, 422);
+    // An address the box has not seen answers zeros, as the real route does.
+    const device = mockHnSummary().devices.find((d) => d.ip === ip) ?? {
+      ip,
+      name: "",
+      queries: 0,
+      recent: 0,
+      recent_blocked: 0,
+    };
     const counts = new Map<string, { domain: string; count: number; list: string }>();
     for (const r of mockHnLog(ip)) {
       if (!r.blocked) continue;
       const hit = counts.get(r.domain) ?? {
         domain: r.domain,
         count: 0,
-        list: MOCK_HN_LISTS[r.list_id - 1] ?? "",
+        list: r.list_id === 0 ? "Your rules" : (MOCK_HN_LISTS[r.list_id - 1] ?? ""),
       };
       hit.count += 1;
       counts.set(r.domain, hit);

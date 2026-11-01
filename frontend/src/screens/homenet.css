@@ -317,10 +317,19 @@
   color: var(--danger-text);
   font-size: var(--fs-secondary);
 }
+/* A toast above the bottom edge, so a result or failure is seen wherever the list is scrolled. */
 .hn-notice {
-  display: block;
-  margin: 0;
-  color: var(--text-2);
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: calc(100% - 32px);
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
   font-size: var(--fs-secondary);
   text-align: center;
 }

@@ -111,7 +111,7 @@ def dns(monkeypatch: pytest.MonkeyPatch):
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         search = request.url.params.get("search")
-        if request.url.path == "/control/querylog" and search and "querylog" not in replies:
+        if request.url.path == "/control/querylog" and search:
             ip = search.strip('"')
             return httpx.Response(
                 200, json={**LOG, "data": [e for e in LOG["data"] if e["client"] == ip]}
@@ -132,6 +132,42 @@ async def test_summary_authenticates_as_jbrain_with_the_minted_token(dns) -> Non
     assert out["resumes_in_s"] == 0
 
 
+async def test_a_device_read_that_fails_leaves_it_unsampled_not_the_screen_down(
+    dns, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = adguard.AdGuard.call
+
+    async def flaky(self, method, path, **kw):
+        if (
+            path == "/control/querylog"
+            and (kw.get("params") or {}).get("search") == '"192.168.1.31"'
+        ):
+            raise HTTPException(status_code=503, detail="house DNS unreachable (ReadTimeout)")
+        return await real(self, method, path, **kw)
+
+    monkeypatch.setattr(adguard.AdGuard, "call", flaky)
+    out = await home_network.home_network(_request(), SETTINGS, OWNER)
+    by_ip = {d["ip"]: d for d in out["devices"]}
+    assert by_ip["192.168.1.30"]["sampled"] is True
+    unsampled = by_ip["192.168.1.31"]
+    assert (unsampled["recent"], unsampled["sampled"]) == (0, False)
+
+
+def test_only_list_and_service_blocks_count_as_blocked() -> None:
+    log = {
+        "data": [
+            {"reason": "FilteredBlackList", "question": {"name": "a.com"}},
+            {"reason": "FilteredBlockedService", "question": {"name": "b.com"}},
+            {"reason": "FilteredSafeBrowsing", "question": {"name": "c.com"}},
+            {"reason": "FilteredSafeSearch", "question": {"name": "d.com"}},
+        ]
+    }
+    rows = adguard.query_rows(log)["rows"]
+    assert [r["blocked"] for r in rows] == [True, True, False, False]
+    # No rule named: never credited to the owner's own rules (list 0).
+    assert {r["list_id"] for r in rows} == {-1}
+
+
 def test_summary_says_when_a_timed_pause_ends() -> None:
     paused = {**STATUS, "protection_enabled": False, "protection_disabled_duration": 599_400}
     assert adguard.summary(paused, STATS, CLIENTS)["resumes_in_s"] == 599
@@ -146,6 +182,7 @@ async def test_summary_names_devices_preferring_the_owners_name(dns) -> None:
             "queries": 900,
             "recent": 2,
             "recent_blocked": 1,
+            "sampled": True,
         },
         {
             "ip": "192.168.1.31",
@@ -153,6 +190,7 @@ async def test_summary_names_devices_preferring_the_owners_name(dns) -> None:
             "queries": 300,
             "recent": 1,
             "recent_blocked": 0,
+            "sampled": True,
         },
     ]
     assert out["top_blocked"][0] == {"domain": "samsungads.com", "count": 120}
@@ -301,9 +339,11 @@ async def test_device_detail_names_the_list_that_caught_each_name(dns) -> None:
     ]
 
 
-async def test_device_detail_refuses_a_non_ip(dns) -> None:
+@pytest.mark.parametrize("ip", ["tv; rm", 'fe80::1%" x', "fe80::1%eth0"])
+async def test_device_detail_refuses_a_non_ip(dns, ip) -> None:
+    # A zone id takes any text, which would break out of the query log's quoted search.
     with pytest.raises(HTTPException) as err:
-        await home_network.home_network_device(_request(), SETTINGS, OWNER, "tv; rm")
+        await home_network.home_network_device(_request(), SETTINGS, OWNER, ip)
     assert err.value.status_code == 422
 
 

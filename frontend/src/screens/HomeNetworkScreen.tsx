@@ -97,6 +97,16 @@ interface NameTarget {
   list: string;
 }
 
+/** Whether a name is refused now: the owner's own rule wins over what a log row saw,
+ *  since the row may predate the rule. */
+export function blockedNow(domain: string, seen: boolean, rules: HomeNetRules): boolean {
+  if (rules.allowed.includes(domain)) return false;
+  if (rules.blocked.includes(domain)) return true;
+  return seen;
+}
+
+const NOTICE_MS = 3000;
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -111,6 +121,8 @@ export function HomeNetworkScreen() {
   const [notice, setNotice] = useState("");
   // Bumped after a rename so an open device re-reads its name.
   const [epoch, setEpoch] = useState(0);
+  // Kept here so a rename's remount of the device keeps the owner's Blocked / All choice.
+  const [blockedOnly, setBlockedOnly] = useState(true);
 
   const load = useCallback(async () => {
     try {
@@ -127,6 +139,22 @@ export function HomeNetworkScreen() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // A notice is a toast: it says what just happened, then gets out of the way.
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(""), NOTICE_MS);
+    return () => window.clearTimeout(t);
+  }, [notice]);
+
+  // A timed pause counts down on the box; re-read each minute so the countdown moves and
+  // the card turns back on when AdGuard does.
+  const resumes = summary?.resumes_in_s ?? 0;
+  useEffect(() => {
+    if (resumes <= 0) return;
+    const t = window.setTimeout(() => void load(), (Math.min(resumes, 60) + 1) * 1000);
+    return () => window.clearTimeout(t);
+  }, [resumes, load]);
 
   async function setProtection(enabled: boolean, minutes = 0) {
     setPausing(false);
@@ -167,7 +195,13 @@ export function HomeNetworkScreen() {
         <DeviceView
           key={`${open.ip}-${epoch}`}
           device={open}
-          onBack={() => setOpenIp(null)}
+          rules={rules}
+          blockedOnly={blockedOnly}
+          onBlockedOnly={setBlockedOnly}
+          onBack={() => {
+            setOpenIp(null);
+            setBlockedOnly(true);
+          }}
           onName={setName}
           onRenamed={async (label) => {
             setNotice(`Renamed to ${label}`);
@@ -179,7 +213,10 @@ export function HomeNetworkScreen() {
         <Overview
           summary={summary}
           down={down}
-          onOpen={setOpenIp}
+          onOpen={(ip) => {
+            setNotice("");
+            setOpenIp(ip);
+          }}
           onToggle={() =>
             summary?.protection_enabled ? setPausing(true) : void setProtection(true)
           }
@@ -245,22 +282,23 @@ function Overview({
   onOpen: (ip: string) => void;
   onToggle: () => void;
 }) {
-  if (down) {
-    return (
-      <Banner tone="bad" title="The house's DNS is not answering">
-        {`Devices fall back to the router's second DNS, so they're still filtered, but nothing is logged here. ${down}`}
-      </Banner>
-    );
-  }
-  if (!summary) return <p className="hn-empty">Loading…</p>;
-  const state = networkState(summary);
-  const on = summary.protection_enabled;
-  const box = summary.dns_addresses.find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) ?? "this box";
-  const devices = [...summary.devices].sort(
-    (a, b) => share(b.recent_blocked, b.recent) - share(a.recent_blocked, a.recent),
-  );
+  if (!summary && !down) return <p className="hn-empty">Loading…</p>;
+  const state = summary ? networkState(summary) : "down";
+  const on = !!summary?.protection_enabled;
+  const queries = summary?.queries ?? 0;
+  const blocked = summary?.blocked ?? 0;
+  const box = summary?.dns_addresses.find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) ?? "this box";
+  // An unsampled device has no share to rank by, so it goes after every sampled one.
+  const rank = (d: HomeNetDevice) => (d.sampled ? share(d.recent_blocked, d.recent) : -1);
+  const devices = [...(summary?.devices ?? [])].sort((a, b) => rank(b) - rank(a));
+  const resumesIn = summary?.resumes_in_s ?? 0;
   return (
     <>
+      {down && (
+        <Banner tone="bad" title="The house's DNS is not answering">
+          {`Devices fall back to the router's second DNS, so they're still filtered, but nothing is logged here. ${down}`}
+        </Banner>
+      )}
       {state === "router" && (
         <Banner tone="warn" title="Every lookup comes from one address">
           Blocking works for the whole house, but the router is passing lookups on instead of
@@ -274,16 +312,16 @@ function Overview({
       )}
       <section className="hn-card hn-status">
         <div className="hn-status-top">
-          <span className={`hn-dot ${on ? "ok" : "warn"}`} />
+          <span className={`hn-dot ${down ? "bad" : on ? "ok" : "warn"}`} />
           <div className="hn-grow">
             <div className="hn-status-t">
-              {on ? "Blocking ads and trackers" : "Blocking paused"}
+              {down ? "Not answering" : on ? "Blocking ads and trackers" : "Blocking paused"}
             </div>
             <div className="hn-faint">
-              {on
+              {down || on
                 ? "AdGuard Home on this box"
-                : summary.resumes_in_s > 0
-                  ? `Back on by itself in ${Math.ceil(summary.resumes_in_s / 60)} min`
+                : resumesIn > 0
+                  ? `Back on by itself in ${Math.ceil(resumesIn / 60)} min`
                   : "Until you turn it back on"}
             </div>
           </div>
@@ -293,6 +331,7 @@ function Overview({
             aria-checked={on}
             aria-label="Blocking"
             className="hn-switch"
+            disabled={!!down}
             onClick={onToggle}
           >
             <i />
@@ -300,15 +339,15 @@ function Overview({
         </div>
         <div className="hn-stats">
           <div>
-            <b>{fmt(summary.queries)}</b>
+            <b>{fmt(queries)}</b>
             <span>lookups this week</span>
           </div>
           <div>
-            <b className="hn-rose">{fmt(summary.blocked)}</b>
+            <b className="hn-rose">{fmt(blocked)}</b>
             <span>blocked</span>
           </div>
           <div>
-            <b>{share(summary.blocked, summary.queries)}%</b>
+            <b>{share(blocked, queries)}%</b>
             <span>of all lookups</span>
           </div>
         </div>
@@ -325,7 +364,11 @@ function Overview({
             />
           ))
         ) : (
-          <p className="hn-empty">Devices appear here once the router points at the box.</p>
+          <p className="hn-empty">
+            {down
+              ? "No log while the DNS is down."
+              : "Devices appear here once the router points at the box."}
+          </p>
         )}
       </section>
     </>
@@ -347,14 +390,15 @@ function DeviceRow({
       <KindIcon name={d.name} />
       <span className="hn-main">
         <span className="hn-t">{deviceLabel(d)}</span>
-        <Meter pct={pct} />
+        {d.sampled && <Meter pct={pct} />}
         <span className="hn-s">
-          {d.recent
+          {d.sampled
             ? `${fmt(d.recent_blocked)} of ${fmt(d.recent)} recent blocked · ${d.ip}`
             : `${fmt(d.queries)} lookups this week · ${d.ip}`}
         </span>
       </span>
-      <span className="hn-r hn-rose">{pct}%</span>
+      {/* Not sampled is not "0% blocked": the share is unknown until the device is opened. */}
+      <span className={`hn-r${d.sampled ? " hn-rose" : ""}`}>{d.sampled ? `${pct}%` : "—"}</span>
       {!disabled && <ChevronRightIcon size={18} />}
     </button>
   );
@@ -362,11 +406,17 @@ function DeviceRow({
 
 function DeviceView({
   device,
+  rules,
+  blockedOnly,
+  onBlockedOnly,
   onBack,
   onName,
   onRenamed,
 }: {
   device: HomeNetDevice;
+  rules: HomeNetRules;
+  blockedOnly: boolean;
+  onBlockedOnly: (v: boolean) => void;
   onBack: () => void;
   onName: (t: NameTarget) => void;
   onRenamed: (label: string) => Promise<void>;
@@ -374,24 +424,48 @@ function DeviceView({
   useBackLayer(onBack);
   const [detail, setDetail] = useState<HomeNetDeviceDetail | null>(null);
   const [rows, setRows] = useState<HomeNetQuery[] | null>(null);
-  const [blockedOnly, setBlockedOnly] = useState(true);
   const [renaming, setRenaming] = useState(false);
-  const [error, setError] = useState("");
+  const [detailError, setDetailError] = useState("");
+  const [logError, setLogError] = useState("");
 
+  // Each read drops its answer once a newer one is asked, so tapping Blocked, All,
+  // Blocked quickly never leaves an older answer's rows on screen.
   useEffect(() => {
+    let live = true;
     api
       .homeNetworkDevice(device.ip)
-      .then(setDetail)
-      .catch((e: unknown) => setError(errorText(e)));
+      .then((d) => {
+        if (!live) return;
+        setDetail(d);
+        setDetailError("");
+      })
+      .catch((e: unknown) => live && setDetailError(errorText(e)));
+    return () => {
+      live = false;
+    };
   }, [device.ip]);
 
   useEffect(() => {
+    let live = true;
     setRows(null);
     api
       .homeNetworkQueries({ client: device.ip, blocked: blockedOnly, limit: 50 })
-      .then((q) => setRows(q.rows))
-      .catch((e: unknown) => setError(errorText(e)));
+      .then((q) => {
+        if (!live) return;
+        setRows(q.rows);
+        setLogError("");
+      })
+      .catch((e: unknown) => live && setLogError(errorText(e)));
+    return () => {
+      live = false;
+    };
   }, [device.ip, blockedOnly]);
+
+  const error = detailError || logError;
+  // The owner's rules apply to rows read before them, and Blocked hides what is now allowed.
+  const shown = (rows ?? [])
+    .map((r) => ({ ...r, blocked: blockedNow(r.domain, r.blocked, rules) }))
+    .filter((r) => !blockedOnly || r.blocked);
 
   const label = deviceLabel(detail ?? device);
   const recent = detail?.recent ?? device.recent;
@@ -458,10 +532,10 @@ function DeviceView({
       <div className="hn-log-head">
         <h2 className="hn-h">Recent lookups</h2>
         <div className="hn-seg">
-          <button type="button" aria-pressed={blockedOnly} onClick={() => setBlockedOnly(true)}>
+          <button type="button" aria-pressed={blockedOnly} onClick={() => onBlockedOnly(true)}>
             Blocked
           </button>
-          <button type="button" aria-pressed={!blockedOnly} onClick={() => setBlockedOnly(false)}>
+          <button type="button" aria-pressed={!blockedOnly} onClick={() => onBlockedOnly(false)}>
             All
           </button>
         </div>
@@ -469,8 +543,8 @@ function DeviceView({
       <section className="hn-card">
         {rows === null ? (
           <p className="hn-empty">Loading…</p>
-        ) : rows.length ? (
-          rows.map((r, i) => (
+        ) : shown.length ? (
+          shown.map((r, i) => (
             <button
               key={`${r.time}-${r.domain}-${i}`}
               type="button"

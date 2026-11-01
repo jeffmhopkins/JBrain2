@@ -1,7 +1,14 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type HomeNetSummary, api } from "../api/client";
-import { HomeNetworkScreen, ago, deviceKind, networkState, share } from "./HomeNetworkScreen";
+import {
+  HomeNetworkScreen,
+  ago,
+  blockedNow,
+  deviceKind,
+  networkState,
+  share,
+} from "./HomeNetworkScreen";
 
 const LAPTOP = {
   ip: "192.168.1.30",
@@ -9,6 +16,7 @@ const LAPTOP = {
   queries: 600,
   recent: 200,
   recent_blocked: 10,
+  sampled: true,
 };
 
 function summary(over: Partial<HomeNetSummary> = {}): HomeNetSummary {
@@ -22,7 +30,14 @@ function summary(over: Partial<HomeNetSummary> = {}): HomeNetSummary {
     blocked: 250,
     devices: [
       LAPTOP,
-      { ip: "192.168.1.41", name: "Bedroom TV", queries: 400, recent: 200, recent_blocked: 150 },
+      {
+        ip: "192.168.1.41",
+        name: "Bedroom TV",
+        queries: 400,
+        recent: 200,
+        recent_blocked: 150,
+        sampled: true,
+      },
     ],
     top_blocked: [],
     top_queried: [],
@@ -87,6 +102,13 @@ describe("helpers", () => {
     expect(networkState(summary({ devices: [] }))).toBe("setup");
   });
 
+  it("lets the owner's rule overrule what a log row saw", () => {
+    const rules = { blocked: ["b.com"], allowed: ["a.com"] };
+    expect(blockedNow("a.com", true, rules)).toBe(false);
+    expect(blockedNow("b.com", false, rules)).toBe(true);
+    expect(blockedNow("c.com", true, rules)).toBe(true);
+  });
+
   it("says how long ago", () => {
     const now = Date.parse("2026-11-01T12:00:00Z");
     expect(ago("2026-11-01T11:55:00Z", now)).toBe("5 min ago");
@@ -104,6 +126,31 @@ describe("HomeNetworkScreen", () => {
     expect(rows.map((r) => r.textContent?.includes("Bedroom TV"))).toEqual([true, false]);
     expect(within(rows[0] as HTMLElement).getByText("75%")).toBeTruthy();
     expect(within(rows[0] as HTMLElement).getByText(/150 of 200 recent blocked/)).toBeTruthy();
+  });
+
+  it("shows a device the box did not sample as unknown, last, not as 0% blocked", async () => {
+    vi.mocked(api.homeNetwork).mockResolvedValue(
+      summary({
+        devices: [
+          {
+            ip: "192.168.1.60",
+            name: "Printer",
+            queries: 900,
+            recent: 0,
+            recent_blocked: 0,
+            sampled: false,
+          },
+          LAPTOP,
+        ],
+      }),
+    );
+    render(<HomeNetworkScreen />);
+    await flush();
+    const rows = screen.getAllByRole("button").filter((b) => b.className === "hn-row");
+    const last = rows[rows.length - 1] as HTMLElement;
+    expect(within(last).getByText("Printer")).toBeTruthy();
+    expect(within(last).getByText("—")).toBeTruthy();
+    expect(within(last).queryByText("0%")).toBeNull();
   });
 
   it("explains a router that forwards every lookup", async () => {
@@ -126,6 +173,10 @@ describe("HomeNetworkScreen", () => {
     await flush();
     expect(screen.getByText("The house's DNS is not answering")).toBeTruthy();
     expect(screen.getByText(/house DNS unreachable/)).toBeTruthy();
+    // The status card and the device list stay, saying why they are empty.
+    expect(screen.getByText("Not answering")).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "Blocking" })).toHaveProperty("disabled", true);
+    expect(screen.getByText("No log while the DNS is down.")).toBeTruthy();
   });
 
   it("pauses blocking for a while from the switch", async () => {
@@ -137,6 +188,25 @@ describe("HomeNetworkScreen", () => {
     await flush();
     expect(set).toHaveBeenCalledWith(false, 10);
     expect(screen.getByText("Blocking paused for 10 minutes")).toBeTruthy();
+  });
+
+  it("lets a notice go after a few seconds", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.spyOn(api, "setHomeNetworkProtection").mockResolvedValue(false);
+      render(<HomeNetworkScreen />);
+      await flush();
+      fireEvent.click(screen.getByRole("switch", { name: "Blocking" }));
+      fireEvent.click(screen.getByText("For 1 hour"));
+      await flush();
+      expect(screen.getByText("Blocking paused for 1 hour")).toBeTruthy();
+      await act(async () => {
+        vi.advanceTimersByTime(3500);
+      });
+      expect(screen.queryByText("Blocking paused for 1 hour")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("turns a paused switch straight back on", async () => {
@@ -212,6 +282,10 @@ describe("HomeNetworkScreen", () => {
     fireEvent.click(screen.getByText("Block for every device"));
     await flush();
     expect(set).toHaveBeenCalledWith("netflix.com", "block");
+    // The row it was read as now shows the owner's rule, without a reload.
+    const row = screen.getByText("netflix.com").closest("button") as HTMLElement;
+    expect(row.className).toContain("blocked");
+    expect(within(row).getByText("blocked")).toBeTruthy();
   });
 
   it("renames a device and shows the new name", async () => {
@@ -225,7 +299,14 @@ describe("HomeNetworkScreen", () => {
     vi.mocked(api.homeNetwork).mockResolvedValue(
       summary({
         devices: [
-          { ip: "192.168.1.41", name: "LG TV", queries: 400, recent: 200, recent_blocked: 150 },
+          {
+            ip: "192.168.1.41",
+            name: "LG TV",
+            queries: 400,
+            recent: 200,
+            recent_blocked: 150,
+            sampled: true,
+          },
           LAPTOP,
         ],
       }),

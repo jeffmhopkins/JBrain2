@@ -4046,6 +4046,8 @@ export interface HomeNetDevice {
   queries: number;
   recent: number;
   recent_blocked: number;
+  /** False when the box read no sample for it (past the busiest 24, or the read failed). */
+  sampled: boolean;
 }
 
 export interface HomeNetCount {

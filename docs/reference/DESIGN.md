@@ -4216,7 +4216,12 @@ so **devices lead**, ranked by how much of their recent traffic was refused.
 - **Devices · most tracking first**: kind tile (a TV is amber, so the TVs stand out), name, a
   rose meter of the blocked share, *N of M recent blocked · ip*, the share in rose, a
   chevron. The share is a sample of each device's latest lookups (AdGuard counts no blocks
-  per device), so the copy says **recent**, never "this week".
+  per device), so the copy says **recent**, never "this week". A device the box did not
+  sample (past the busiest 24, or its read failed) shows *—* and no meter, ranked last:
+  unknown is not "0% blocked".
+- **Results are a toast** at the bottom edge that clears itself after 3 s, so a failure is
+  seen however far the list is scrolled. The owner's own rule repaints the log at once: an
+  allowed name loses its strike-through and leaves the Blocked view without a reload.
 - **A device** (back chevron + its name): a header card with ip, the week's lookups, the
   meter and a rename pencil; **Who it tried to reach** (each refused name, *Caught by
   {list}*, count); **Recent lookups** with a Blocked / All segment, blocked rows struck
@@ -4226,7 +4231,8 @@ so **devices lead**, ranked by how much of their recent traffic was refused.
   every device** (rose), and *Go back to what the lists say* when a rule of the owner's is
   set. The footnote says why allowing exists: a TV menu that broke behind a list.
 - **States are banners above the status card**, never an empty screen: DNS down (rose, with
-  the box's reason), one address only (amber: the router forwards, devices can't be told
+  the box's reason; the card reads *Not answering* with its switch disabled, and the list
+  says *No log while the DNS is down.*), one address only (amber: the router forwards, devices can't be told
   apart; rows are not tappable), and nothing using it yet (steel: the Spectrum Primary and
   Secondary DNS to set, with the box's own address).
 

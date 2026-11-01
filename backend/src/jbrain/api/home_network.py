@@ -48,9 +48,14 @@ SAMPLED_DEVICES = 24
 
 def _ip(value: str) -> str:
     try:
-        return str(ipaddress.ip_address(value))
+        addr = ipaddress.ip_address(value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="not an IP address") from exc
+    # An IPv6 zone (`fe80::1%eth0`) takes any text after `%`, which would reach the
+    # query log's quoted search and AdGuard's client ids unchecked.
+    if isinstance(addr, ipaddress.IPv6Address) and addr.scope_id:
+        raise HTTPException(status_code=422, detail="not an IP address")
+    return str(addr)
 
 
 async def _device_rows(dns: adguard.AdGuard, ip: str, limit: int) -> list[dict[str, Any]]:
@@ -65,11 +70,18 @@ async def _summary(request: Request, settings: Any) -> dict[str, Any]:
     clients = await dns.call("GET", "/control/clients")
     out = adguard.summary(status, stats, clients)
     sampled = out["devices"][:SAMPLED_DEVICES]
-    samples = await asyncio.gather(*(_device_rows(dns, d["ip"], SAMPLE) for d in sampled))
+    # One slow or failed device read leaves that device unsampled; it must not turn the
+    # whole screen into "the DNS is down" when AdGuard answered everything else.
+    samples = await asyncio.gather(
+        *(_device_rows(dns, d["ip"], SAMPLE) for d in sampled), return_exceptions=True
+    )
     for device, rows in zip(sampled, samples, strict=True):
-        device.update(adguard.sample(rows))
+        if isinstance(rows, BaseException):
+            device.update({"recent": 0, "recent_blocked": 0, "sampled": False})
+        else:
+            device.update({**adguard.blocked_share(rows), "sampled": True})
     for device in out["devices"][SAMPLED_DEVICES:]:
-        device.update({"recent": 0, "recent_blocked": 0})
+        device.update({"recent": 0, "recent_blocked": 0, "sampled": False})
     return out
 
 
@@ -157,7 +169,7 @@ async def home_network_device(
         "ip": ip,
         "name": named.get(ip, ""),
         "queries": device["queries"] if device else 0,
-        **adguard.sample(rows),
+        **adguard.blocked_share(rows),
         "top_blocked": adguard.top_blocked(rows, adguard.list_names(filtering)),
     }
 
@@ -219,7 +231,10 @@ async def home_network_name_device(
     ip = _ip(ip)
     dns = adguard.for_request(request, settings)
     clients = await dns.call("GET", "/control/clients")
-    existing = next((c for c in clients.get("clients") or [] if ip in (c.get("ids") or [])), None)
+    existing = next(
+        (c for c in clients.get("clients") or [] if ip in (c.get("ids") or []) and c.get("name")),
+        None,
+    )
     if existing is not None:
         await dns.call(
             "POST",
