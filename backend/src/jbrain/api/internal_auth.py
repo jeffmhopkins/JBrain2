@@ -29,7 +29,10 @@ MQTT = "mqtt"
 # host-networked cast sidecar (deploy/cast), whose control port is on the LAN. Minted here
 # with the others so the secret arrives with the update, never as a host step.
 CAST = "cast"
-CALLERS = (WALL, MQTT, CAST)
+# Also the reverse direction: the password the api presents to AdGuard Home (deploy/adguard),
+# whose entrypoint bcrypts this same token into AdGuard's one user at each start.
+ADGUARD = "adguard"
+CALLERS = (WALL, MQTT, CAST, ADGUARD)
 # The wall's key to the enrollment screen, minted into `enroll_secrets` instead: that
 # screen hands out the code that enrolls an owner phone, and every container mounting
 # `internal_secrets` could otherwise read its way to one (OWNER_TUNNEL_PLAN.md §3.5).

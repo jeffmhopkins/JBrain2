@@ -389,8 +389,9 @@ ALL_PROFILES="$(docker compose config --profiles 2>/dev/null \
 # update — no progress log, no way to tell a slow build from a wedged one, on the exact
 # operation that has repeatedly frozen this box. That visibility is worth far more than
 # ~1 GB set against the ~91 GB of models and the tens of GB of page cache this phase is
-# actually fighting.
-QUIESCE_KEEP="db api supervisor proxy cloudflared"
+# actually fighting. `adguard` is the house's DNS: stopping it would take every device's
+# name lookups down for the length of the build, for ~50 MB.
+QUIESCE_KEEP="db api supervisor proxy cloudflared adguard"
 
 QUIESCED=""
 

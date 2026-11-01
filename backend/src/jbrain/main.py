@@ -100,6 +100,7 @@ from jbrain.api import (
     family,
     feed,
     health,
+    home_network,
     images,
     images_render,
     install,
@@ -1962,6 +1963,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(debug.router, prefix="/api")
         app.include_router(debug_minecraft.router, prefix="/api")
         app.include_router(debug_cast.router, prefix="/api")
+        app.include_router(home_network.debug_router, prefix="/api")
         app.include_router(cast_notices.debug_router, prefix="/api")
         app.include_router(debug_panel.router, prefix="/api")
         app.include_router(panel_agent.debug_router, prefix="/api")
@@ -1989,6 +1991,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(panel_notice.panel_router, prefix="/api")
     # Notices on the house's Chromecast TVs (JPANEL_CAST_PLAN K1): the owner's TVs, send, Sent.
     app.include_router(cast_notices.router, prefix="/api")
+    # The house's DNS (HOME_DNS_PLAN): what AdGuard blocked, and which device asked.
+    app.include_router(home_network.router, prefix="/api")
     # The owner's Minecraft screen (MINECRAFT_BEDROCK_PLAN §M1). Owner-gated; a box
     # whose sidecar is stopped or unconfigured answers with that state, not a 500.
     app.include_router(minecraft_api.router, prefix="/api")

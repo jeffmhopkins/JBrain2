@@ -406,4 +406,10 @@ fi
 # by path and its pyright typechecks them (CLAUDE.md #11). No compose runs here, so there is
 # nothing else to set up. Mentioned per rule #8; see deploy/cast/README.md.
 
+# --- The house's DNS / `adguard` (stock stack, NOT bootstrapped here) ---
+# deploy/adguard/ runs AdGuard Home from a digest-pinned image (deploy/Dockerfile.adguard)
+# with apache2-utils for bcrypt; nothing here installs it. Its config pinning (pin.awk) is
+# tested by supervisor's pytest with the system `awk`. Mentioned per rule #8; see
+# docs/runbooks/HOME_DNS.md.
+
 log "done"

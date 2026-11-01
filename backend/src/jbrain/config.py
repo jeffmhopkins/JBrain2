@@ -332,6 +332,11 @@ class Settings(BaseSettings):
     # Host-networked like Minecraft, for mDNS; its bearer is `cast.token` from the
     # internal secrets, so there is no setting for it. Empty disables the debug routes.
     cast_url: str = "http://host.docker.internal:19190"
+    # The house's DNS (deploy/adguard). Host-networked for port 53 on the LAN; its UI and
+    # API listen only on the docker bridge gateway, which is what host.docker.internal
+    # names. Its password is `adguard.token`, so there is no setting for it. Empty
+    # disables the home-network routes, which then say so.
+    adguard_url: str = "http://host.docker.internal:3053"
     # Read-only mount of this repo's `firmware/` directory, off the checkout the box
     # already keeps current (deploy/update-inner.sh). The panel firmware IS that checkout:
     # `version.txt` plus the built images in `dist/`, so a flash needs no network and no

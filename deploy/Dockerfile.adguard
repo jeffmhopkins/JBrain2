@@ -1,0 +1,29 @@
+# The house's DNS: AdGuard Home blocking ads and smart-TV telemetry for every device
+# whose router points at the box (docs/runbooks/HOME_DNS.md).
+#
+# Pinned by digest, deliberately bumped: this answers every lookup in the house. The
+# image is Alpine, so `htpasswd` (apache2-utils) is one apk away; it bcrypts the UI
+# password from `adguard.token` at each start (deploy/adguard/entrypoint.sh).
+FROM adguard/adguardhome:v0.107.79@sha256:aba9e3bf0613be3ba3755e1fc311b126e2c24bec25e18b6483894a88283074f0
+
+# uid 1000, the api's uid, so the 0600 `adguard.token` the api mints is readable without
+# running as root. The binary already carries cap_net_bind_service for port 53. Fresh
+# named volumes copy the ownership of the directories they mount over.
+RUN apk add --no-cache apache2-utils \
+    && adduser -D -H -u 1000 -s /sbin/nologin jbrain \
+    && chown -R 1000:1000 /opt/adguardhome/conf /opt/adguardhome/work
+
+COPY deploy/adguard/entrypoint.sh deploy/adguard/pin.awk deploy/adguard/AdGuardHome.yaml \
+    /etc/jbrain-adguard/
+
+# Fail the BUILD, not the first start: the box builds this during Ops -> Update with no
+# terminal to read the error (CLAUDE.md #10).
+RUN printf probe | htpasswd -niBC 10 jbrain | grep -q '^jbrain:\$2' \
+    && ip -4 -o addr show dev lo | awk '{ split($4, a, "/"); print a[1] }' \
+        | grep -qx 127.0.0.1 \
+    && echo 'x: y' | awk -v dns=1 -v ui=2 -v hash=3 -f /etc/jbrain-adguard/pin.awk \
+        | grep -q 'password: 3'
+
+USER jbrain
+ENTRYPOINT ["/bin/sh", "/etc/jbrain-adguard/entrypoint.sh"]
+CMD []
