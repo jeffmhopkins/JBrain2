@@ -1,0 +1,58 @@
+# Weekly: is the Chrome every page-rendering sidecar runs (deploy/chrome/) still the current
+# Stable? Dependabot cannot see that pin, and Chrome ships security fixes most weeks, so a
+# stale pin is otherwise invisible until someone goes looking. When Stable has moved past it,
+# this opens one issue (and comments on it once per new Stable); the fix is the bump in docs/reference/SERVICES.md
+# "Pinned Chrome". It never edits the pin itself: a new browser goes in through a reviewed PR.
+name: chrome-pin
+
+on:
+  schedule:
+    - cron: "17 14 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Compare the pin with Chrome Stable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pinned="$(jq -r .version deploy/chrome/chrome-for-testing.json)"
+          stable="$(curl -fsS https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json \
+            | jq -r .channels.Stable.version)"
+          echo "pinned=$pinned stable=$stable"
+          # A failed lookup or a changed schema must fail the job, not read as "current".
+          for v in "$pinned" "$stable"; do
+            [[ "$v" =~ ^[0-9]+(\.[0-9]+){3}$ ]] || { echo "not a Chrome version: '$v'"; exit 1; }
+          done
+          # Version order, not string inequality: a pin ahead of Stable (a respin) is fine.
+          newest="$(printf '%s\n%s\n' "$pinned" "$stable" | sort -V | tail -1)"
+          if [ "$newest" = "$pinned" ]; then
+            echo "pin is current"
+            exit 0
+          fi
+          title="Chrome pin is behind Stable"
+          body="deploy/chrome/ pins Chrome for Testing $pinned; Stable is now $stable. Bump it per docs/reference/SERVICES.md \"Pinned Chrome\" so htmlrender, browser and reader pick up the security fixes on the next Ops → Update."
+          existing="$(gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[0].number')"
+          if [ -n "$existing" ]; then
+            # Say so once per Stable release, not every Monday.
+            seen="$(gh issue view "$existing" --json body,comments --jq '[.body, .comments[].body] | join("\n")')"
+            if grep -qF "Stable is now $stable;" <<<"$seen"; then
+              echo "issue #$existing already names $stable"
+            else
+              gh issue comment "$existing" --body "$body"
+            fi
+          else
+            gh issue create --title "$title" --body "$body"
+          fi
