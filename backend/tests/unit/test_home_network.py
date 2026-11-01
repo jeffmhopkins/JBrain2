@@ -334,9 +334,7 @@ async def test_device_detail_names_the_list_that_caught_each_name(dns) -> None:
     assert out["name"] == "Living room TV"
     assert out["queries"] == 900
     assert (out["recent"], out["recent_blocked"]) == (2, 1)
-    assert out["top_blocked"] == [
-        {"domain": "samsungads.com", "count": 1, "list": "HaGeZi Pro"}
-    ]
+    assert out["top_blocked"] == [{"domain": "samsungads.com", "count": 1, "list": "HaGeZi Pro"}]
 
 
 @pytest.mark.parametrize("ip", ["tv; rm", 'fe80::1%" x', "fe80::1%eth0"])
