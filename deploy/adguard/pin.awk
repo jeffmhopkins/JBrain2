@@ -66,6 +66,7 @@ BEGIN {
 {
 	if (toplevel($0)) {
 		close_dns()
+		rename = 0
 		in_users = 0
 		in_list = 0
 		section = $0
@@ -105,6 +106,9 @@ BEGIN {
 		rename = 1
 		next
 	}
+	# The flag lives only inside the dead entry: a new item or key ends it, so an entry
+	# without a name can never rename something further down.
+	if (rename && $0 ~ /^ *- /) rename = 0
 	if (rename && $0 ~ /^ *name: /) {
 		sub(/name: .*/, "name: " LIVE_NAME)
 		print
