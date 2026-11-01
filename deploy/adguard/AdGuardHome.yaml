@@ -45,11 +45,11 @@ filters:
     url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt
     name: AdGuard DNS filter
     id: 1
-  # Device telemetry by vendor (Samsung, LG, Roku, Amazon, Apple, Xiaomi, ...): the
-  # list aimed squarely at what smart TVs phone home with.
+  # Ads, trackers and vendor telemetry (TVs and phones among them), from AdGuard's own
+  # registry so the URL stays up; pin.awk moves a box seeded with the old dead URL here.
   - enabled: true
-    url: https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/native.txt
-    name: HaGeZi Native Tracker
+    url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_48.txt
+    name: HaGeZi Pro
     id: 2
   - enabled: true
     url: https://raw.githubusercontent.com/Perflyst/PiHoleBlocklist/master/SmartTV-AGH.txt

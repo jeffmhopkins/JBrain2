@@ -2,13 +2,15 @@
 
 > **Status:** Living · **Last verified:** 2026-11-01
 
-The box runs AdGuard Home as the `adguard` service. Once the router hands the box out as
-DNS, every device in the house gets ads and smart-TV telemetry blocked, and the box keeps
-a week's log of which device looked up what. That log is how you see what the TVs send.
+The box runs AdGuard Home as the `adguard` service. Every device whose lookups reach it
+gets ads and smart-TV telemetry blocked, and the box keeps a week's log of which device
+looked up what. That log is how you see what the TVs send. Behind Spectrum's router a
+device reaches it only when its DNS is set by hand (see "What Spectrum's DNS setting
+actually does" below).
 The build plan is `../archive/HOME_DNS_PLAN.md`.
 
 It is part of the stock stack, so **Ops → Update** installs it and nothing goes in `.env`.
-Until the router points at it, it answers nothing.
+Until a device is pointed at it, it logs nothing.
 
 ## Turning it on (the router, from the phone)
 
@@ -20,11 +22,12 @@ the **My Spectrum** app:
    /api/debug/home-network` → `dns_addresses`.
 2. **Services → Router → DNS Server → Manage DNS Servers.** Set
    - **Primary:** the box's LAN address.
-   - **Secondary:** `94.140.14.14` (AdGuard's public filtering DNS). Devices fall back to
-     the secondary when the box does not answer, for example while it reboots, so this
-     choice keeps them filtered instead of falling back to Google.
-3. Devices pick the change up when they renew their lease. Toggling Wi-Fi off and on
-   forces it.
+   - **Secondary:** `94.140.14.14` (AdGuard's public filtering DNS). Spectrum's router
+     falls through to it when the Primary does not answer, which on this router is
+     always (below), so this choice is what filters the whole house.
+3. **Point the devices you want to see at the box** by hand: in a TV's network settings
+   (manual or advanced), set DNS to the box's address. Each one then appears on the
+   Home network screen.
 
 Phones with **Private DNS** set (Android → Network → Private DNS) skip the router's DNS
 entirely, at home and away. That is fine: keep `dns.adguard-dns.com` on a phone that
@@ -32,24 +35,31 @@ leaves the house.
 
 ## What Spectrum's DNS setting actually does
 
-Spectrum's app does not say whether its DNS field is handed to each device or used only
-by the router itself, which then forwards everything to the box. Blocking works either
-way, but per-device visibility differs:
+Answered on the live box, 2026-11-01: **the SAX2V1R keeps DNS for itself, and never
+reaches a server on the LAN.** Devices are handed the router (`192.168.1.1`, plus its IPv6
+address) as DNS. With the box as Primary, the box logged not one lookup, not even from
+the router, and the router fell through to the Secondary. So with Spectrum's router:
 
-- **Handed to devices:** `GET /api/debug/home-network` lists each device's own IP under
-  `devices`. Everything works.
-- **Forwarded by the router:** `devices` is a single IP, the router's. Every device's
-  lookups are still filtered, but the log cannot tell the TV from a laptop. The fix is
-  hardware: your own router behind Spectrum's modem, handing out the box as DNS (see the
-  plan, §4).
+- **Blocking works for every device anyway**, through the Secondary (`94.140.14.14`,
+  AdGuard's public filtering DNS). That is why the Secondary must be a filtering one.
+- **The box sees only devices whose DNS is set by hand.** On a TV: network settings →
+  manual / advanced → DNS = the box's address (some TVs also want a fixed IP for that).
+  Each such device then appears on the Home network screen by itself. A phone's Private
+  DNS skips this too.
+- **Every device at once** needs your own router behind Spectrum's modem, handing out the
+  box as DNS (a GL.iNet Flint 2 or a Firewalla; see the plan, §4).
+
+The Primary can stay pointed at the box: it costs nothing, and a router firmware that
+starts honouring it will route the house through the box with no further change.
 
 ## What it blocks
 
 The first start seeds `deploy/adguard/AdGuardHome.yaml`:
 
 - **AdGuard DNS filter**: general ads and trackers.
-- **HaGeZi Native Tracker**: device and OS telemetry by vendor (Samsung, LG, Roku, Amazon,
-  Apple, Xiaomi, ...).
+- **HaGeZi Pro**: ads, trackers and device telemetry (TVs and phones among them), from
+  AdGuard's own list registry. A box first seeded with the old HaGeZi Native Tracker URL
+  (jsDelivr `@latest`, which answers 403) is moved to it at its next start.
 - **Perflyst Smart TV**: smart-TV ad and telemetry hosts.
 
 Upstream lookups go out encrypted (DNS-over-HTTPS to Quad9 and Cloudflare, in parallel),
@@ -113,9 +123,10 @@ Two limits no DNS blocker gets past:
 
 ## When it goes wrong
 
-- **The house cannot resolve names.** Devices should fall back to the secondary on their
-  own. If they do not, set the router's Primary back to the secondary's address from the
-  Spectrum app; that is the whole rollback.
+- **A device set to the box cannot resolve names.** The box is down: set that device's DNS
+  back to automatic. The rest of the house goes through the router, which falls through
+  to the Secondary on its own; if it does not, set the router's Primary to the
+  Secondary's address in the Spectrum app.
 - **`/api/home-network` says 503 "unreachable".** The container is down or restarting.
   Restart `adguard` from **Ops**. Its log (`/api/debug/logs/adguard`) starts with the addresses it
   bound, or with why it could not (`no adguard.token`, `no default route`).

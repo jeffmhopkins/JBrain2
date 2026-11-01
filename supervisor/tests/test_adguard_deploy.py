@@ -187,6 +187,36 @@ def test_no_gateway_leaves_the_ptr_resolvers_alone(tmp_path: Path) -> None:
     assert pinned["dns"]["local_ptr_upstreams"] == ["127.0.0.53"]
 
 
+def test_a_box_seeded_with_the_dead_hagezi_url_moves_to_hagezi_pro(
+    tmp_path: Path,
+) -> None:
+    """The first seed's jsDelivr @latest URL answers 403; only that entry changes."""
+    text = (
+        "filters:\n"
+        "- enabled: true\n"
+        "  url: https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt\n"
+        "  name: AdGuard DNS filter\n"
+        "  id: 1\n"
+        "- enabled: true\n"
+        "  url: https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/adblock/native.txt\n"
+        "  name: HaGeZi Native Tracker\n"
+        "  id: 2\n"
+        "user_rules: []\n"
+    )
+    once = _pin(text, tmp_path)
+    filters = yaml.safe_load(once)["filters"]
+    assert [(f["id"], f["name"]) for f in filters] == [
+        (1, "AdGuard DNS filter"),
+        (2, "HaGeZi Pro"),
+    ]
+    assert filters[1]["url"].endswith("/HostlistsRegistry/assets/filter_48.txt")
+    assert _pin(once, tmp_path) == once
+
+
+def test_the_seed_names_no_dead_list() -> None:
+    assert "jsdelivr" not in (ROOT / "deploy/adguard/AdGuardHome.yaml").read_text()
+
+
 def test_pinning_twice_changes_nothing(tmp_path: Path) -> None:
     once = _pin(ADGUARD_WRITTEN, tmp_path)
     assert _pin(once, tmp_path) == once

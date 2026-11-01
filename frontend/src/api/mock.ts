@@ -2981,7 +2981,7 @@ const MOCK_HN_DEVICES: { ip: string; name: string; queries: number; tracker: str
   { ip: "192.168.1.30", name: "", queries: 3_120, tracker: ["googleads.g.doubleclick.net"] },
 ];
 const MOCK_HN_PASSED = ["netflix.com", "youtube.com", "api.spotify.com", "time.google.com"];
-const MOCK_HN_LISTS = ["Perflyst Smart TV", "HaGeZi Native Tracker", "AdGuard DNS filter"];
+const MOCK_HN_LISTS = ["Perflyst Smart TV", "HaGeZi Pro", "AdGuard DNS filter"];
 const MOCK_HN_NAMES = new Map<string, string>();
 const MOCK_HN_RULES: HomeNetRules = { blocked: [], allowed: [] };
 let mockHnProtection = true;
