@@ -181,6 +181,8 @@ services:
       JBRAIN_MINECRAFT_URL: ${MINECRAFT_URL:-http://host.docker.internal:19180}
       # The host-networked `cast` sidecar (the jpanel Cast spike), reached the same way.
       JBRAIN_CAST_URL: ${CAST_URL:-http://host.docker.internal:19190}
+      # The house's DNS (`adguard`), whose UI/API listen on the bridge gateway only.
+      JBRAIN_ADGUARD_URL: ${ADGUARD_URL:-http://host.docker.internal:3053}
       JBRAIN_MINECRAFT_TOKEN: ${MINECRAFT_TOKEN:-}
       # The radio sidecar (docs/plans/SDR_RADIO_PLAN.md). Deliberately defaults EMPTY
       # rather than to http://sdr:8000: the service is profile-gated and absent on a box
@@ -1248,6 +1250,33 @@ services:
     volumes:
       - internal_secrets:/run/jbrain-internal:ro
 
+  # The house's DNS (docs/runbooks/HOME_DNS.md, docs/plans/HOME_DNS_PLAN.md): AdGuard Home
+  # blocking ads and smart-TV telemetry for every device whose router hands out the box as
+  # DNS, and logging which device asked for what. STOCK STACK, for the CLAUDE.md #10 reason
+  # `cast` gives; it answers nothing until the router points at it.
+  #
+  # HOST NETWORK, because port 53 must be on the box's LAN address, and a published port
+  # cannot be: Docker binds 0.0.0.0, which collides with systemd-resolved's stub on
+  # 127.0.0.53:53, and freeing that is a host step. The entrypoint binds the LAN address
+  # alone, and the UI/API on the docker bridge gateway alone (the api reaches it as
+  # host.docker.internal), behind the `jbrain` user whose password is `adguard.token`.
+  # Kept up through an update's quiesce (update-inner.sh), since it is the house's DNS.
+  adguard:
+    logging: *logbound
+    image: jbrain2-adguard:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.adguard
+    restart: unless-stopped
+    mem_limit: ${ADGUARD_MEM_LIMIT:-256m}
+    network_mode: host
+    environment:
+      ADGUARD_UI_PORT: ${ADGUARD_UI_PORT:-3053}
+    volumes:
+      - adguard_conf:/opt/adguardhome/conf
+      - adguard_work:/opt/adguardhome/work
+      - internal_secrets:/run/jbrain-internal:ro
+
   # The panel flasher (docs/plans/ROOM_ENDPOINT_PLAN.md §10.2). PART OF THE STOCK STACK,
   # like `pysandbox` and `htmlrender` and unlike `sdr` — and the difference is the reason
   # `sdr` is opt-in in the first place: most boxes have no RTL-SDR dongle, so running a
@@ -1389,6 +1418,10 @@ volumes:
   # fresh ones into an empty volume on its next start.
   internal_secrets:
   enroll_secrets:
+  # The house's DNS: AdGuard's config (blocklists and rules the owner added) and its week
+  # of query log and stats.
+  adguard_conf:
+  adguard_work:
   # The owner tunnel's CA keys (api only) and the owner site's TLS files (api writes, the
   # proxy reads). See the api service.
   owner_keys:
