@@ -19,7 +19,8 @@ COPY deploy/adguard/entrypoint.sh deploy/adguard/pin.awk deploy/adguard/AdGuardH
 # Fail the BUILD, not the first start: the box builds this during Ops -> Update with no
 # terminal to read the error (CLAUDE.md #10).
 RUN htpasswd -nbBC 10 jbrain probe | grep -q '^jbrain:\$2' \
-    && ip -4 route show >/dev/null \
+    && ip -4 -o addr show dev lo | awk '{ split($4, a, "/"); print a[1] }' \
+        | grep -qx 127.0.0.1 \
     && echo 'x: y' | awk -v dns=1 -v ui=2 -v hash=3 -f /etc/jbrain-adguard/pin.awk \
         | grep -q 'password: 3'
 

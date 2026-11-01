@@ -5,7 +5,8 @@
 # whole delivery and nothing goes in `.env` (CLAUDE.md #10):
 #   - the DNS listener is the box's LAN address, found from its default route;
 #   - the web UI and its API listen on the docker bridge gateway, the address the api
-#     reaches as host.docker.internal, so nothing on the LAN can open them;
+#     reaches as host.docker.internal and no LAN device is told about (a host that adds
+#     a route to it could still knock, which is what the password is for);
 #   - the one UI user's password is `adguard.token`, which the api mints into the
 #     shared secrets volume, so only the api holds it.
 set -eu
@@ -51,6 +52,17 @@ while [ -z "$dns_addr" ]; do
   waited=$((waited + 2))
 done
 
+# A public address would make this an open resolver for the internet (a box on a
+# direct uplink, or in the router's DMZ). Refuse rather than serve it.
+case "$dns_addr" in
+  10.* | 192.168.* | 172.1[6-9].* | 172.2[0-9].* | 172.3[01].*) ;;
+  *) say "$dns_addr is not a private address; refusing to serve DNS on it" >&2; exit 1 ;;
+esac
+
+# The router, for naming devices by reverse lookup (pin.awk says why not resolved).
+gateway="$(ip -4 route get 1.1.1.1 2>/dev/null \
+  | awk '{ for (i = 1; i < NF; i++) if ($i == "via") { print $(i + 1); exit } }')"
+
 ui_addr="${ADGUARD_UI_ADDR:-}"
 if [ -z "$ui_addr" ]; then
   ui_addr="$(ip -4 -o addr show dev docker0 2>/dev/null \
@@ -65,8 +77,8 @@ case "$hash" in
 esac
 
 [ -f "$CONF" ] || { say "first start: seeding the config"; cp "$SEED" "$CONF"; }
-awk -v dns="$dns_addr" -v ui="$ui_addr:$UI_PORT" -v hash="$hash" -f "$PIN" "$CONF" \
-  > "$CONF.pinned"
+awk -v dns="$dns_addr" -v ptr="$gateway" -v ui="$ui_addr:$UI_PORT" -v hash="$hash" \
+  -f "$PIN" "$CONF" > "$CONF.pinned"
 mv "$CONF.pinned" "$CONF"
 chmod 600 "$CONF"
 

@@ -25,8 +25,15 @@ dns:
   fallback_dns:
     - 9.9.9.9
   cache_enabled: true
-  # Names devices in the log by asking the router who each LAN address is.
+  # AdGuard's default is 20 queries/s per /24, which is the whole house (or, when the
+  # router forwards, its one address): a TV booting beside a few browsers would trip it
+  # and drop everyone's lookups. The listener is LAN-only, so there is nothing to limit.
+  ratelimit: 0
+  # Names devices in the log by asking the router who each LAN address is. pin.awk
+  # sets the router as the resolver: the default, the host's resolv.conf, is
+  # systemd-resolved, which forwards to whatever the router hands out, which is this box.
   use_private_ptr_resolvers: true
+  local_ptr_upstreams: []
 filtering:
   protection_enabled: true
   filtering_enabled: true

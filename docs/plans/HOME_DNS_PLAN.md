@@ -36,8 +36,10 @@ Rejected:
 - **No terminal, no `.env` edit.** It is stock stack, and Ops → Update is the whole
   install.
 - **The UI must not be on the LAN.** AdGuard's UI and API can change the house's DNS. They
-  listen on the docker bridge gateway, which the api reaches and the LAN does not, behind a
-  password only the api holds.
+  listen on the docker bridge gateway, which the api reaches and no LAN device is told
+  about, behind a password only the api holds (the real barrier, since a host that adds a
+  route could still knock). A public LAN address is refused, so the box is never an open
+  resolver.
 
 ## 3. Waves
 

@@ -78,18 +78,22 @@ Two limits no DNS blocker gets past:
 
 ## How it is wired, and why
 
+- **No rate limit, and device names from the router.** AdGuard's default limit (20/s per
+  /24) is the whole house's budget, so it is off. Reverse lookups go to the router (the
+  default gateway, re-pinned each start) because the host's resolver forwards to the box.
 - **Host network, port 53 on the LAN address only.** Ubuntu's systemd-resolved holds
   `127.0.0.53:53`, so a wildcard bind (and any published `53:53`) fails. Freeing it is a
   host step, which the owner cannot run (CLAUDE.md #10). The entrypoint finds the LAN
   address from the default route at each start, so a new lease is picked up by a restart.
 - **The UI and REST API are on the docker bridge gateway only** (`:3053`), the address the
-  api reaches as `host.docker.internal`. Nothing on the LAN can open them. The one user is
+  api reaches as `host.docker.internal`. No LAN device is told that address, though a host that
+  adds a route to it could still knock, so the password is the real barrier. The one user is
   `jbrain`, and its password is `adguard.token`, which the api mints into
   `internal_secrets`. The entrypoint bcrypts it into the config at every start, so a
   re-minted token is picked up by a restart of `adguard`.
 - **Kept up through an update.** `update-inner.sh` keeps `adguard` running through the
-  quiesce. The recreate at the end of an update restarts it, which takes a few seconds;
-  devices use the secondary DNS meanwhile.
+  quiesce, and the update's recreate restarts it only when its image or config changed (a
+  few seconds, with devices on the secondary meanwhile).
 - **The config is AdGuard's.** It rewrites the file whenever a setting changes, so the box
   never regenerates it. `deploy/adguard/pin.awk` re-pins three values (the DNS address,
   the UI address, the user) and leaves the rest as found.
@@ -103,4 +107,7 @@ Two limits no DNS blocker gets past:
   Restart `adguard` from **Ops**. Its log (`/api/debug/logs/adguard`) starts with the addresses it
   bound, or with why it could not (`no adguard.token`, `no default route`).
 - **502 "refused the api's password".** The secrets volume was re-minted while `adguard`
-  ran. Restart `adguard`.
+  ran, and an update does not necessarily restart it. Restart `adguard` from **Ops**.
+- **`adguard` keeps restarting** with "not a private address" in its log: the box's
+  default route gives it a public address, and serving DNS there would be an open
+  resolver for the internet. It refuses on purpose.

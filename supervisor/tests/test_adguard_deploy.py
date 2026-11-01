@@ -25,7 +25,7 @@ def _compose() -> dict:
     return yaml.safe_load((DEPLOY / "docker-compose.yml").read_text())
 
 
-def _pin(text: str, tmp_path: Path) -> str:
+def _pin(text: str, tmp_path: Path, ptr: str = "192.168.1.1") -> str:
     src = tmp_path / "AdGuardHome.yaml"
     src.write_text(text)
     out = subprocess.run(
@@ -37,6 +37,8 @@ def _pin(text: str, tmp_path: Path) -> str:
             "ui=172.17.0.1:3053",
             "-v",
             f"hash={HASH}",
+            "-v",
+            f"ptr={ptr}",
             "-f",
             str(PIN),
             str(src),
@@ -76,6 +78,13 @@ def test_the_image_is_pinned_by_digest() -> None:
     assert "@sha256:" in text
 
 
+def test_entrypoint_refuses_a_public_dns_address() -> None:
+    """A box with a public default-route address would be an open resolver."""
+    text = (DEPLOY / "adguard" / "entrypoint.sh").read_text()
+    assert "not a private address" in text
+    assert 'case "$dns_addr" in' in text
+
+
 def test_entrypoint_parses_under_posix_sh() -> None:
     sh = shutil.which("sh")
     assert sh
@@ -95,6 +104,9 @@ def test_the_seed_pins_to_the_lan_ui_and_one_user(tmp_path: Path) -> None:
     assert pinned["dns"]["bind_hosts"] == ["192.168.1.50"]
     assert pinned["http"]["address"] == "172.17.0.1:3053"
     assert pinned["users"] == [{"name": "jbrain", "password": HASH}]
+    assert pinned["dns"]["local_ptr_upstreams"] == ["192.168.1.1"]
+    # The house is one /24: AdGuard's default per-/24 limit would throttle all of it.
+    assert pinned["dns"]["ratelimit"] == 0
     # Everything else is left as found.
     seed = yaml.safe_load(SEED.read_text())
     assert pinned["filters"] == seed["filters"]
@@ -122,6 +134,8 @@ dns:
   port: 53
   upstream_dns:
   - https://dns.quad9.net/dns-query
+  local_ptr_upstreams:
+  - 127.0.0.53
 user_rules:
 - '||samsungads.com^'
 schema_version: 34
@@ -137,6 +151,12 @@ def test_pins_a_config_adguard_rewrote(tmp_path: Path) -> None:
     assert pinned["http"]["pprof"] == {"port": 6060, "enabled": False}
     assert pinned["users"] == [{"name": "jbrain", "password": HASH}]
     assert pinned["user_rules"] == ["||samsungads.com^"]
+    assert pinned["dns"]["local_ptr_upstreams"] == ["192.168.1.1"]
+
+
+def test_no_gateway_leaves_the_ptr_resolvers_alone(tmp_path: Path) -> None:
+    pinned = yaml.safe_load(_pin(ADGUARD_WRITTEN, tmp_path, ptr=""))
+    assert pinned["dns"]["local_ptr_upstreams"] == ["127.0.0.53"]
 
 
 def test_pinning_twice_changes_nothing(tmp_path: Path) -> None:
