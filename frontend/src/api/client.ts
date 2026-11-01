@@ -4034,6 +4034,75 @@ export interface CastTv {
   reading: { app_id: string | null; display_name: string | null; connected: boolean };
 }
 
+// --- Home network: the house's DNS (docs/archive/HOME_DNS_PLAN.md wave B; binding mock
+// docs/mocks/home-network/a-devices.html). AdGuard counts lookups per device but not
+// blocks, so `recent`/`recent_blocked` are a sample of each device's latest lookups.
+
+export interface HomeNetDevice {
+  ip: string;
+  /** The owner's name for it, else what the router calls it, else "". */
+  name: string;
+  /** Lookups over the stats week. */
+  queries: number;
+  recent: number;
+  recent_blocked: number;
+  /** False when the box read no sample for it (past the busiest 24, or the read failed). */
+  sampled: boolean;
+}
+
+export interface HomeNetCount {
+  domain: string;
+  count: number;
+}
+
+export interface HomeNetSummary {
+  running: boolean;
+  protection_enabled: boolean;
+  /** Seconds until a timed pause ends by itself; 0 when on or paused until turned back on. */
+  resumes_in_s: number;
+  dns_addresses: string[];
+  version: string;
+  queries: number;
+  blocked: number;
+  devices: HomeNetDevice[];
+  top_blocked: HomeNetCount[];
+  top_queried: HomeNetCount[];
+}
+
+export interface HomeNetDeviceDetail {
+  ip: string;
+  name: string;
+  queries: number;
+  recent: number;
+  recent_blocked: number;
+  /** The names it was refused among its latest lookups, with the list that caught each. */
+  top_blocked: (HomeNetCount & { list: string })[];
+}
+
+export interface HomeNetQuery {
+  time: string;
+  client: string;
+  client_name: string;
+  domain: string;
+  type: string;
+  blocked: boolean;
+  reason: string;
+  rule: string;
+  list_id: number;
+}
+
+export interface HomeNetQueries {
+  rows: HomeNetQuery[];
+  oldest: string;
+}
+
+export interface HomeNetRules {
+  blocked: string[];
+  allowed: string[];
+}
+
+export type HomeNetRuleAction = "block" | "allow" | "clear";
+
 export interface CastTvs {
   tvs: CastTv[];
 }
@@ -7466,6 +7535,52 @@ export const api = {
 
   async panelNoticeImage(id: string, w: number): Promise<Blob> {
     return (await request(panelNoticeImageUrl(id, w))).blob();
+  },
+
+  async homeNetwork(): Promise<HomeNetSummary> {
+    return (await (await request("/api/home-network")).json()) as HomeNetSummary;
+  },
+
+  async homeNetworkDevice(ip: string): Promise<HomeNetDeviceDetail> {
+    const response = await request(`/api/home-network/devices/${encodeURIComponent(ip)}`);
+    return (await response.json()) as HomeNetDeviceDetail;
+  },
+
+  async homeNetworkQueries(opts: {
+    client?: string;
+    blocked?: boolean;
+    limit?: number;
+  }): Promise<HomeNetQueries> {
+    const q = new URLSearchParams();
+    if (opts.client) q.set("client", opts.client);
+    if (opts.blocked) q.set("blocked", "true");
+    q.set("limit", String(opts.limit ?? 50));
+    return (await (await request(`/api/home-network/queries?${q}`)).json()) as HomeNetQueries;
+  },
+
+  /** `minutes` pauses blocking for that long; 0 is until it is turned back on. */
+  async setHomeNetworkProtection(enabled: boolean, minutes = 0): Promise<boolean> {
+    const response = await request(
+      "/api/home-network/protection",
+      jsonInit("POST", { enabled, minutes }),
+    );
+    return ((await response.json()) as { protection_enabled: boolean }).protection_enabled;
+  },
+
+  async homeNetworkRules(): Promise<HomeNetRules> {
+    return (await (await request("/api/home-network/rules")).json()) as HomeNetRules;
+  },
+
+  async setHomeNetworkRule(domain: string, action: HomeNetRuleAction): Promise<HomeNetRules> {
+    const response = await request("/api/home-network/rules", jsonInit("POST", { domain, action }));
+    return (await response.json()) as HomeNetRules;
+  },
+
+  async nameHomeNetworkDevice(ip: string, name: string): Promise<void> {
+    await request(
+      `/api/home-network/devices/${encodeURIComponent(ip)}/name`,
+      jsonInit("POST", { name }),
+    );
   },
 
   async castTvs(): Promise<CastTvs> {

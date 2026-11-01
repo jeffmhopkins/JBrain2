@@ -41,6 +41,7 @@ import {
   RadioIcon,
   SearchIcon,
   SettingsIcon,
+  ShieldCheckIcon,
   SigmaIcon,
   UsersIcon,
   XIcon,
@@ -69,6 +70,7 @@ export type LauncherTarget =
   | "petcontrol"
   | "jpanel"
   | "cast"
+  | "homenet"
   | "endpoints"
   | "jcode"
   | "jlaunch"
@@ -112,6 +114,9 @@ const TILES: Tile[] = [
   // Notices on the house's TVs, beside jpanel: the same family of thing, a different door,
   // because what you reach for is "put this on the TV" (docs/mocks/jpanel-cast).
   { title: "Cast", icon: <CastIcon size={24} />, target: "cast" },
+  // What the house's devices look up and what the box's DNS refused them, TVs above all
+  // (docs/archive/HOME_DNS_PLAN.md).
+  { title: "Home network", icon: <ShieldCheckIcon size={24} />, target: "homenet" },
   // Flashing a physical panel over the box's USB port — the same surface, opened on
   // its own tab. It keeps a tile because it is a rare-but-urgent errand done with a
   // board in your hand and a cable in the box, and hunting for a tab behind a

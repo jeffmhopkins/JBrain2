@@ -1,0 +1,419 @@
+/* Home network — the house's DNS (HomeNetworkScreen.tsx; mock docs/mocks/home-network/a-devices.html).
+   Rose is what was refused, green what got through; TVs carry amber because they are why the
+   screen exists. A state is always a word with its dot, never the dot alone. */
+
+.hn-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+.hn-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.hn-status,
+.hn-head {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+.hn-status-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hn-grow {
+  flex: 1;
+  min-width: 0;
+}
+.hn-status-t {
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+.hn-muted {
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+}
+.hn-faint {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+}
+.hn-mono {
+  font-family: var(--font-mono);
+}
+.hn-rose {
+  color: var(--danger-text);
+  font-weight: 500;
+}
+.hn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.hn-dot.ok {
+  background: var(--green);
+}
+.hn-dot.warn {
+  background: var(--amber);
+}
+.hn-switch {
+  appearance: none;
+  width: 52px;
+  height: 32px;
+  border-radius: 16px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  position: relative;
+  flex: none;
+  cursor: pointer;
+}
+/* 44px tap target around a 32px track. */
+.hn-switch::before {
+  content: "";
+  position: absolute;
+  inset: -6px -2px;
+}
+.hn-switch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: left 0.15s;
+}
+.hn-switch[aria-checked="true"] {
+  background: var(--green-tint);
+  border-color: transparent;
+}
+.hn-switch[aria-checked="true"] i {
+  left: 23px;
+  background: var(--green);
+}
+.hn-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.hn-stats div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hn-stats b {
+  font-size: var(--fs-title);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.hn-stats span {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.hn-h {
+  margin: 4px 0 0;
+  font-size: var(--fs-head);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.hn-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 8px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hn-row:first-child {
+  border-top: 0;
+}
+.hn-row:disabled {
+  cursor: default;
+}
+.hn-row > svg {
+  color: var(--text-3);
+  flex: none;
+}
+.hn-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hn-t {
+  font-size: var(--fs-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hn-t.hn-mono {
+  font-size: var(--fs-secondary);
+}
+.hn-s {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+.hn-r {
+  flex: none;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.hn-meter {
+  display: block;
+  height: 6px;
+  margin: 4px 0 2px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.hn-meter i {
+  display: block;
+  height: 100%;
+  background: var(--rose);
+}
+.hn-kind {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.hn-kind.tv {
+  background: var(--amber-tint);
+  color: var(--warn-text);
+}
+.hn-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: -10px;
+}
+.hn-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hn-iconbtn {
+  appearance: none;
+  min-width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.hn-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hn-seg {
+  display: flex;
+  width: 180px;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--r-seg);
+  background: var(--surface-2);
+}
+.hn-seg button {
+  flex: 1;
+  appearance: none;
+  min-height: 38px;
+  border: 0;
+  border-radius: 11px;
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  cursor: pointer;
+}
+.hn-seg button[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+  box-shadow: 0 0 0 1px var(--border);
+}
+.hn-logrow.blocked .hn-t {
+  color: var(--danger-text);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--rose) 50%, transparent);
+}
+.hn-badge {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: var(--rose-tint);
+  color: var(--danger-text);
+  font-size: var(--fs-micro);
+}
+.hn-banner {
+  padding: 12px 14px;
+  border-radius: var(--r-card);
+  font-size: var(--fs-secondary);
+}
+.hn-banner p {
+  margin: 0;
+  color: var(--text);
+}
+.hn-banner-t {
+  margin-bottom: 2px;
+  font-weight: 500;
+}
+.hn-banner.warn {
+  background: var(--amber-tint);
+  color: var(--warn-text);
+}
+.hn-banner.bad {
+  background: var(--rose-tint);
+  color: var(--danger-text);
+}
+.hn-banner.steel {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+.hn-empty {
+  margin: 0;
+  padding: 28px 14px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: var(--fs-secondary);
+}
+.hn-error {
+  margin: 0;
+  color: var(--danger-text);
+  font-size: var(--fs-secondary);
+}
+/* A toast above the bottom edge, so a result or failure is seen wherever the list is scrolled. */
+.hn-notice {
+  position: fixed;
+  left: 50%;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 30;
+  max-width: calc(100% - 32px);
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+  text-align: center;
+}
+.hn-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hn-sheet p {
+  margin: 0;
+}
+.hn-acts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hn-btn {
+  appearance: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  cursor: pointer;
+}
+.hn-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.hn-btn.primary {
+  background: var(--steel-tint);
+  border-color: transparent;
+  color: var(--steel-text);
+}
+.hn-btn.danger {
+  background: var(--rose-tint);
+  border-color: transparent;
+  color: var(--danger-text);
+}
+.hn-btn.ok {
+  background: var(--green-tint);
+  border-color: transparent;
+  color: var(--ok-text);
+}
+.hn-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hn-pill {
+  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.hn-pill.ok {
+  background: var(--green-tint);
+  color: var(--ok-text);
+}
+.hn-pill.bad {
+  background: var(--rose-tint);
+  color: var(--danger-text);
+}
+.hn-pill.steel {
+  background: var(--steel-tint);
+  color: var(--steel-text);
+}
+.hn-input {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-body);
+}
+@media (prefers-reduced-motion: reduce) {
+  .hn-switch i {
+    transition: none;
+  }
+}

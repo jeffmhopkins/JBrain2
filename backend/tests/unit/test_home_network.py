@@ -1,4 +1,4 @@
-"""The house's DNS, as the api reads it from AdGuard Home (docs/plans/HOME_DNS_PLAN.md).
+"""The house's DNS, as the api reads it from AdGuard Home (docs/archive/HOME_DNS_PLAN.md).
 
 AdGuard is faked at the transport. What is pinned is what the screen and a terminal-less
 session rely on: the api authenticates as `jbrain` with the minted token (and never with
@@ -71,6 +71,12 @@ LOG = {
 }
 
 
+FILTERING = {
+    "filters": [{"id": 2, "name": "HaGeZi Native Tracker"}],
+    "user_rules": ["||samsungads.com^", "@@||lgtvsdp.com^", "! a note the owner wrote"],
+}
+
+
 class Secrets:
     def __init__(self, token: bytes | None) -> None:
         self.token = token
@@ -95,11 +101,21 @@ def dns(monkeypatch: pytest.MonkeyPatch):
         "/control/stats": httpx.Response(200, json=STATS),
         "/control/clients": httpx.Response(200, json=CLIENTS),
         "/control/querylog": httpx.Response(200, json=LOG),
+        "/control/filtering/status": httpx.Response(200, json=FILTERING),
+        "/control/filtering/set_rules": httpx.Response(200),
+        "/control/clients/add": httpx.Response(200),
+        "/control/clients/update": httpx.Response(200),
         "/control/protection": httpx.Response(200),
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
+        search = request.url.params.get("search")
+        if request.url.path == "/control/querylog" and search:
+            ip = search.strip('"')
+            return httpx.Response(
+                200, json={**LOG, "data": [e for e in LOG["data"] if e["client"] == ip]}
+            )
         return replies[request.url.path]
 
     monkeypatch.setattr(adguard, "_transport", httpx.MockTransport(handler))
@@ -113,13 +129,69 @@ async def test_summary_authenticates_as_jbrain_with_the_minted_token(dns) -> Non
     assert {r.headers["authorization"] for r in seen} == {expected}
     assert out["protection_enabled"] is True
     assert (out["queries"], out["blocked"]) == (1200, 300)
+    assert out["resumes_in_s"] == 0
+
+
+async def test_a_device_read_that_fails_leaves_it_unsampled_not_the_screen_down(
+    dns, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = adguard.AdGuard.call
+
+    async def flaky(self, method, path, **kw):
+        if (
+            path == "/control/querylog"
+            and (kw.get("params") or {}).get("search") == '"192.168.1.31"'
+        ):
+            raise HTTPException(status_code=503, detail="house DNS unreachable (ReadTimeout)")
+        return await real(self, method, path, **kw)
+
+    monkeypatch.setattr(adguard.AdGuard, "call", flaky)
+    out = await home_network.home_network(_request(), SETTINGS, OWNER)
+    by_ip = {d["ip"]: d for d in out["devices"]}
+    assert by_ip["192.168.1.30"]["sampled"] is True
+    unsampled = by_ip["192.168.1.31"]
+    assert (unsampled["recent"], unsampled["sampled"]) == (0, False)
+
+
+def test_only_list_and_service_blocks_count_as_blocked() -> None:
+    log = {
+        "data": [
+            {"reason": "FilteredBlackList", "question": {"name": "a.com"}},
+            {"reason": "FilteredBlockedService", "question": {"name": "b.com"}},
+            {"reason": "FilteredSafeBrowsing", "question": {"name": "c.com"}},
+            {"reason": "FilteredSafeSearch", "question": {"name": "d.com"}},
+        ]
+    }
+    rows = adguard.query_rows(log)["rows"]
+    assert [r["blocked"] for r in rows] == [True, True, False, False]
+    # No rule named: never credited to the owner's own rules (list 0).
+    assert {r["list_id"] for r in rows} == {-1}
+
+
+def test_summary_says_when_a_timed_pause_ends() -> None:
+    paused = {**STATUS, "protection_enabled": False, "protection_disabled_duration": 599_400}
+    assert adguard.summary(paused, STATS, CLIENTS)["resumes_in_s"] == 599
 
 
 async def test_summary_names_devices_preferring_the_owners_name(dns) -> None:
     out = await home_network.home_network(_request(), SETTINGS, OWNER)
     assert out["devices"] == [
-        {"ip": "192.168.1.30", "name": "Living room TV", "queries": 900},
-        {"ip": "192.168.1.31", "name": "roku.lan", "queries": 300},
+        {
+            "ip": "192.168.1.30",
+            "name": "Living room TV",
+            "queries": 900,
+            "recent": 2,
+            "recent_blocked": 1,
+            "sampled": True,
+        },
+        {
+            "ip": "192.168.1.31",
+            "name": "roku.lan",
+            "queries": 300,
+            "recent": 1,
+            "recent_blocked": 0,
+            "sampled": True,
+        },
     ]
     assert out["top_blocked"][0] == {"domain": "samsungads.com", "count": 120}
     assert out["top_queried"] == [{"domain": "netflix.com", "count": 200}]
@@ -152,6 +224,7 @@ async def test_query_rows_are_flat_and_say_what_was_blocked(dns) -> None:
         "blocked": True,
         "reason": "FilteredBlackList",
         "rule": "||samsungads.com^",
+        "list_id": 2,
     }
     assert second["blocked"] is False and second["client_name"] == ""
     assert third["blocked"] is False, "a SafeSearch rewrite is not a block"
@@ -184,7 +257,7 @@ async def test_debug_routes_read_the_same(dns) -> None:
     rows = await home_network.debug_home_network_queries(
         req, SETTINGS, OWNER, client="192.168.1.31"
     )
-    assert len(rows["rows"]) == 3
+    assert [r["domain"] for r in rows["rows"]] == ["www.google.com"]
     assert req.state.debug_detail == "home network queries 192.168.1.31"
 
 
@@ -247,3 +320,105 @@ def test_a_quote_in_the_device_filter_is_refused() -> None:
     app.dependency_overrides[get_settings] = lambda: SETTINGS
     resp = TestClient(app).get("/api/home-network/queries", params={"client": 'a"b'})
     assert resp.status_code == 422
+
+
+async def test_summary_samples_each_device_exactly(dns) -> None:
+    seen, _ = dns
+    await home_network.home_network(_request(), SETTINGS, OWNER)
+    searches = sorted(r.url.params["search"] for r in seen if r.url.path == "/control/querylog")
+    assert searches == ['"192.168.1.30"', '"192.168.1.31"']
+
+
+async def test_device_detail_names_the_list_that_caught_each_name(dns) -> None:
+    out = await home_network.home_network_device(_request(), SETTINGS, OWNER, "192.168.1.30")
+    assert out["name"] == "Living room TV"
+    assert out["queries"] == 900
+    assert (out["recent"], out["recent_blocked"]) == (2, 1)
+    assert out["top_blocked"] == [
+        {"domain": "samsungads.com", "count": 1, "list": "HaGeZi Native Tracker"}
+    ]
+
+
+@pytest.mark.parametrize("ip", ["tv; rm", 'fe80::1%" x', "fe80::1%eth0"])
+async def test_device_detail_refuses_a_non_ip(dns, ip) -> None:
+    # A zone id takes any text, which would break out of the query log's quoted search.
+    with pytest.raises(HTTPException) as err:
+        await home_network.home_network_device(_request(), SETTINGS, OWNER, ip)
+    assert err.value.status_code == 422
+
+
+async def test_rules_read_only_this_screens_shapes(dns) -> None:
+    out = await home_network.home_network_rules(_request(), SETTINGS, OWNER)
+    assert out == {"blocked": ["samsungads.com"], "allowed": ["lgtvsdp.com"]}
+
+
+@pytest.mark.parametrize(
+    ("domain", "action", "expected"),
+    [
+        (
+            "Ads.Roku.com.",
+            "block",
+            [
+                "||samsungads.com^",
+                "@@||lgtvsdp.com^",
+                "! a note the owner wrote",
+                "||ads.roku.com^",
+            ],
+        ),
+        (
+            "samsungads.com",
+            "allow",
+            ["@@||lgtvsdp.com^", "! a note the owner wrote", "@@||samsungads.com^"],
+        ),
+        ("lgtvsdp.com", "clear", ["||samsungads.com^", "! a note the owner wrote"]),
+    ],
+)
+async def test_a_rule_changes_one_name_and_keeps_the_rest(
+    dns, domain: str, action: str, expected: list[str]
+) -> None:
+    seen, _ = dns
+    body = home_network.RuleIn(domain=domain, action=action)  # type: ignore[arg-type]
+    await home_network.home_network_set_rule(_request(), SETTINGS, OWNER, body)
+    sent = next(r for r in seen if r.url.path == "/control/filtering/set_rules")
+    assert json.loads(sent.content) == {"rules": expected}
+
+
+@pytest.mark.parametrize("domain", ["*", "a b.com", "||x.com^", "com", "x" * 260 + ".com"])
+def test_a_rule_takes_only_a_plain_name(domain: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        home_network.RuleIn(domain=domain, action="block")
+
+
+async def test_naming_a_new_device_adds_a_client(dns) -> None:
+    seen, _ = dns
+    out = await home_network.home_network_name_device(
+        _request(), SETTINGS, OWNER, "192.168.1.31", home_network.NameIn(name="  Roku  ")
+    )
+    assert out == {"ip": "192.168.1.31", "name": "Roku"}
+    sent = next(r for r in seen if r.url.path == "/control/clients/add")
+    body = json.loads(sent.content)
+    assert body["ids"] == ["192.168.1.31"] and body["use_global_settings"] is True
+
+
+async def test_naming_a_known_device_renames_it_whole(dns) -> None:
+    seen, _ = dns
+    await home_network.home_network_name_device(
+        _request(), SETTINGS, OWNER, "192.168.1.30", home_network.NameIn(name="Big TV")
+    )
+    sent = next(r for r in seen if r.url.path == "/control/clients/update")
+    body = json.loads(sent.content)
+    assert body["name"] == "Living room TV"
+    assert body["data"]["name"] == "Big TV"
+    assert body["data"]["ids"] == ["192.168.1.30"]
+
+
+async def test_an_adguard_refusal_reaches_the_owner_as_a_400(dns) -> None:
+    _, replies = dns
+    replies["/control/clients/add"] = httpx.Response(400, text="client already exists")
+    with pytest.raises(HTTPException) as err:
+        await home_network.home_network_name_device(
+            _request(), SETTINGS, OWNER, "192.168.1.31", home_network.NameIn(name="Roku")
+        )
+    assert err.value.status_code == 400

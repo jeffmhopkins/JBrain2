@@ -21,6 +21,10 @@ import type {
   FactOut,
   GeneratedImageOut,
   GraphEdge,
+  HomeNetQuery,
+  HomeNetRuleAction,
+  HomeNetRules,
+  HomeNetSummary,
   ImageSettings,
   JpanelMessage,
   JpanelThread,
@@ -2945,6 +2949,112 @@ const MOCK_CAST_FRAMES = new Map<string, string>();
 
 const MOCK_FRAME_SVG =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080"><rect width="1920" height="1080" fill="#0c0d10"/><text x="120" y="560" font-size="132" fill="#f0f0f2" font-family="sans-serif">jbrain</text></svg>';
+
+// --- Home network: a made-up week for the house (the binding mock's fixture,
+// docs/mocks/home-network/a-devices.html). Kid devices use placeholder names.
+const MOCK_HN_DEVICES: { ip: string; name: string; queries: number; tracker: string[] }[] = [
+  {
+    ip: "192.168.1.41",
+    name: "Bedroom TV",
+    queries: 18_420,
+    tracker: ["lgtvsdp.com", "lgad.cjpowercast.com", "ngfts.lge.com", "us.info.lgsmartad.com"],
+  },
+  {
+    ip: "192.168.1.40",
+    name: "Living room TV",
+    queries: 22_910,
+    tracker: ["samsungads.com", "samsungacr.com", "log-config.samsungacr.com"],
+  },
+  {
+    ip: "192.168.1.44",
+    name: "Roku",
+    queries: 9_870,
+    tracker: ["logs.roku.com", "cloudservices.roku.com", "ads.roku.com"],
+  },
+  {
+    ip: "192.168.1.52",
+    name: "Quorra's tablet",
+    queries: 6_210,
+    tracker: ["app-measurement.com", "graph.facebook.com"],
+  },
+  { ip: "192.168.1.53", name: "Tamsin's tablet", queries: 5_480, tracker: ["app-measurement.com"] },
+  { ip: "192.168.1.30", name: "", queries: 3_120, tracker: ["googleads.g.doubleclick.net"] },
+];
+const MOCK_HN_PASSED = ["netflix.com", "youtube.com", "api.spotify.com", "time.google.com"];
+const MOCK_HN_LISTS = ["Perflyst Smart TV", "HaGeZi Native Tracker", "AdGuard DNS filter"];
+const MOCK_HN_NAMES = new Map<string, string>();
+const MOCK_HN_RULES: HomeNetRules = { blocked: [], allowed: [] };
+let mockHnProtection = true;
+/** When a timed pause ends, ms since epoch; 0 when on or paused until turned back on. */
+let mockHnResumesAt = 0;
+
+function mockHnOn(): boolean {
+  if (!mockHnProtection && mockHnResumesAt && Date.now() >= mockHnResumesAt) {
+    mockHnProtection = true;
+    mockHnResumesAt = 0;
+  }
+  return mockHnProtection;
+}
+
+/** A device's latest lookups, newest first: a TV spends most of its asking on its maker. */
+function mockHnLog(ip: string): HomeNetQuery[] {
+  const d = MOCK_HN_DEVICES.find((x) => x.ip === ip);
+  if (!d) return [];
+  const tv = d.name.endsWith("TV") || d.name === "Roku";
+  const rows: HomeNetQuery[] = [];
+  for (let i = 0; i < 120; i++) {
+    const trackerTurn = tv ? i % 3 !== 2 : i % 4 === 0;
+    const domain = trackerTurn
+      ? (d.tracker[i % d.tracker.length] as string)
+      : (MOCK_HN_PASSED[i % MOCK_HN_PASSED.length] as string);
+    const mine = MOCK_HN_RULES.blocked.includes(domain);
+    // Paused, nothing is refused, so the row reads as the box would log it.
+    const blocked = mockHnOn() && !MOCK_HN_RULES.allowed.includes(domain) && (trackerTurn || mine);
+    // The owner's own rule is list 0 in AdGuard's log, "Your rules".
+    const list = mine ? 0 : (i % MOCK_HN_LISTS.length) + 1;
+    rows.push({
+      time: new Date(Date.now() - i * 4 * 60_000).toISOString(),
+      client: ip,
+      client_name: MOCK_HN_NAMES.get(ip) ?? d.name,
+      domain,
+      type: "A",
+      blocked,
+      reason: blocked ? "FilteredBlackList" : "NotFilteredNotFound",
+      rule: blocked ? `||${domain}^` : "",
+      list_id: blocked ? list : -1,
+    });
+  }
+  return rows;
+}
+
+function mockHnSummary(): HomeNetSummary {
+  const devices = MOCK_HN_DEVICES.map((d) => {
+    const log = mockHnLog(d.ip);
+    return {
+      ip: d.ip,
+      name: MOCK_HN_NAMES.get(d.ip) ?? d.name,
+      queries: d.queries,
+      recent: log.length,
+      recent_blocked: log.filter((r) => r.blocked).length,
+      sampled: true,
+    };
+  });
+  const queries = devices.reduce((n, d) => n + d.queries, 0);
+  return {
+    running: true,
+    protection_enabled: mockHnOn(),
+    resumes_in_s: mockHnResumesAt
+      ? Math.max(0, Math.round((mockHnResumesAt - Date.now()) / 1000))
+      : 0,
+    dns_addresses: ["192.168.1.10"],
+    version: "v0.107.79",
+    queries,
+    blocked: Math.round(queries * 0.31),
+    devices,
+    top_blocked: [{ domain: "samsungacr.com", count: 4210 }],
+    top_queried: [{ domain: "netflix.com", count: 3120 }],
+  };
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -6506,6 +6616,66 @@ export const mockFetch: typeof fetch = async (input, init) => {
           report: { version: "0.0.13", uptime_ms: 3_600_000, screen: "awake" },
         },
       ],
+    });
+  }
+  // --- Home network (the fixture above): writes change it, so the screen's round trips show.
+  if (path === "/api/home-network" && method === "GET") return json(mockHnSummary());
+  if (path === "/api/home-network/rules" && method === "GET") return json(MOCK_HN_RULES);
+  if (path === "/api/home-network/rules" && method === "POST") {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      domain: string;
+      action: HomeNetRuleAction;
+    };
+    MOCK_HN_RULES.blocked = MOCK_HN_RULES.blocked.filter((d) => d !== body.domain);
+    MOCK_HN_RULES.allowed = MOCK_HN_RULES.allowed.filter((d) => d !== body.domain);
+    if (body.action === "block") MOCK_HN_RULES.blocked.push(body.domain);
+    if (body.action === "allow") MOCK_HN_RULES.allowed.push(body.domain);
+    return json(MOCK_HN_RULES);
+  }
+  if (path === "/api/home-network/protection" && method === "POST") {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { enabled: boolean; minutes?: number };
+    mockHnProtection = body.enabled;
+    mockHnResumesAt = !body.enabled && body.minutes ? Date.now() + body.minutes * 60_000 : 0;
+    return json({ protection_enabled: mockHnOn() });
+  }
+  if (path === "/api/home-network/queries" && method === "GET") {
+    const client = url.searchParams.get("client") ?? "";
+    const blocked = url.searchParams.get("blocked") === "true";
+    const limit = Number(url.searchParams.get("limit") ?? 50);
+    const rows = mockHnLog(client).filter((r) => !blocked || r.blocked);
+    return json({ rows: rows.slice(0, limit), oldest: "" });
+  }
+  const hnName = path.match(/^\/api\/home-network\/devices\/([^/]+)\/name$/);
+  if (hnName && method === "POST") {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { name: string };
+    MOCK_HN_NAMES.set(decodeURIComponent(hnName[1] as string), body.name.trim());
+    return json({ ip: decodeURIComponent(hnName[1] as string), name: body.name.trim() });
+  }
+  const hnDevice = path.match(/^\/api\/home-network\/devices\/([^/]+)$/);
+  if (hnDevice && method === "GET") {
+    const ip = decodeURIComponent(hnDevice[1] as string);
+    // An address the box has not seen answers zeros, as the real route does.
+    const device = mockHnSummary().devices.find((d) => d.ip === ip) ?? {
+      ip,
+      name: "",
+      queries: 0,
+      recent: 0,
+      recent_blocked: 0,
+    };
+    const counts = new Map<string, { domain: string; count: number; list: string }>();
+    for (const r of mockHnLog(ip)) {
+      if (!r.blocked) continue;
+      const hit = counts.get(r.domain) ?? {
+        domain: r.domain,
+        count: 0,
+        list: r.list_id === 0 ? "Your rules" : (MOCK_HN_LISTS[r.list_id - 1] ?? ""),
+      };
+      hit.count += 1;
+      counts.set(r.domain, hit);
+    }
+    return json({
+      ...device,
+      top_blocked: [...counts.values()].sort((a, b) => b.count - a.count),
     });
   }
   // --- Cast: four TVs in the states the gate knows, so every row and outcome is on screen.

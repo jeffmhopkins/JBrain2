@@ -1,0 +1,29 @@
+<title>Home Network Screen Mocks</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: a short chooser, one column of three variant cards linking to the clickable mocks. */
+:root{
+  --bg:#F7F7F5; --surface:#FFFFFF; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --accent:#3F6F96; --accent-tint:rgba(127,167,201,.16);
+  --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --bg:#0E0F11; --surface:#17181B; --border:#26282C; --text:#E6E7E9; --text-2:#9A9DA3; --accent:#7FA7C9; --accent-tint:rgba(127,167,201,.13); color-scheme:dark; } }
+:root[data-theme="dark"]{ --bg:#0E0F11; --surface:#17181B; --border:#26282C; --text:#E6E7E9; --text-2:#9A9DA3; --accent:#7FA7C9; --accent-tint:rgba(127,167,201,.13); color-scheme:dark; }
+body{background:var(--bg);color:var(--text);font-family:var(--font);}
+main{max-width:620px;margin:0 auto;padding-block:28px 40px;padding-left:max(16px, env(safe-area-inset-left, 0px));padding-right:max(16px, env(safe-area-inset-right, 0px));display:flex;flex-direction:column;gap:14px;}
+h1{font-size:1.5rem;font-weight:600;text-wrap:balance;}
+p{color:var(--text-2);line-height:1.55;font-size:.95rem;}
+a.card{display:flex;gap:14px;align-items:flex-start;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--surface);color:inherit;text-decoration:none;}
+a.card:hover,a.card:focus-visible{border-color:var(--accent);outline:none;}
+.l{flex:none;width:40px;height:40px;border-radius:12px;background:var(--accent-tint);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:600;}
+.card b{display:block;font-size:1.05rem;margin-bottom:4px;}
+.card span{color:var(--text-2);font-size:.92rem;line-height:1.5;}
+.note{font-size:.85rem;}
+</style>
+<main>
+  <h1>Pick the Home network screen</h1>
+  <p>Three clickable designs for the PWA screen that shows what the box's ad blocker is blocking. Open each on your phone and tap around: devices open, names open a sheet where you can allow or block them, and the dashed strip at the top switches between working, router-forwards, not-set-up and DNS-down states.</p>
+  <a class="card" href="a-devices.html"><div class="l">A</div><div><b>Devices first</b><span>Each device ranked by how much of its traffic gets blocked. Tap the Bedroom TV to see the LG servers it tried to reach and its recent lookups.</span></div></a>
+  <a class="card" href="b-companies.html"><div class="l">B</div><div><b>Who's being told</b><span>Leads with how many reports the box stopped this week, grouped by the company receiving them: Samsung, LG, Roku, Google, Meta, Amazon.</span></div></a>
+  <a class="card" href="c-live-log.html"><div class="l">C</div><div><b>Live log</b><span>A running feed of lookups, blocked-only by default, with a chip per device so you can follow one TV as it phones home.</span></div></a>
+  <p class="note">Example data: a made-up week for this house's devices. Kid devices use placeholder names.</p>
+</main>

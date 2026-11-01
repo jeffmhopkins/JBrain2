@@ -1,6 +1,6 @@
 # The house's DNS: block ads and TV telemetry, and see who sends what
 
-> **Status:** In progress · **Last verified:** 2026-11-01 · **Waves:** A✅ B◻️
+> **Status:** Shipped · **Last verified:** 2026-11-01 · **Waves:** A✅ B✅
 
 Owner, 2026-11-01: *"do research on what container we can make that will monitor my local
 network for those two of things. I really don't like what tvs sending businesses too much
@@ -58,15 +58,20 @@ Rejected:
   `/api/debug/home-network`.
 - Owner step after merge: the router settings in `../runbooks/HOME_DNS.md`.
 
-### B — the Home network screen (GUI gate)
+### B — the Home network screen (GUI gate) ✅
 
-The PWA screen: blocking on/off with a pause, each device with how much it asked and how
-much was blocked, a device's log (blocked-only by default), naming a device, and blocking
-or allowing a name in one tap. Needs owner-side routes the api does not have yet:
-`POST /api/home-network/devices` (name a device; AdGuard persistent clients) and `POST
-/api/home-network/rules` (add or remove one `||name^` / `@@||name^` rule). Per
-`../reference/PROCESS.md`, three interactive mocks go to the owner before any of it is
-built.
+Three mocks went to the owner (`../mocks/home-network/`); he chose **A, "Devices first"**
+(2026-11-01), which is the binding spec. `HomeNetworkScreen.tsx` behind a **Home network**
+launcher tile: blocking on/off with a timed pause, devices ranked by their blocked share, a
+device's blocked names (with the list that caught each) and its log (blocked-only by
+default), naming a device, and blocking or allowing a name for every device in one tap.
+
+New owner routes: `GET /api/home-network/devices/{ip}`, `GET`/`POST
+/api/home-network/rules` (one `||name^` / `@@||name^` rule at a time, leaving any other
+custom rule alone) and `POST /api/home-network/devices/{ip}/name` (an AdGuard persistent
+client). AdGuard has no per-device block count, so the summary samples each of the
+busiest 24 devices' last 200 lookups, and the screen says "recent" rather than "this
+week" for that share.
 
 ## 4. Open: what Spectrum's DNS field does
 
