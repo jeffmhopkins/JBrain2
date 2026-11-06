@@ -820,13 +820,13 @@ def test_the_declared_host_column_IS_the_resident_footprint(
     commented, and asserted over the WHOLE catalog rather than a sample, because a new entry
     with an unusual shape (speculative, vision, hybrid) is exactly where a derivation drifts.
 
-    The one stated exception is a pooled model, whose context checkpoints are allocated lazily
-    and left out of the load charge (`local_catalog._lazy_checkpoints`): its host column is the
-    footprint less exactly those, and nothing else."""
+    The one stated exception is a pooled model, whose context checkpoints and in-RAM prompt
+    cache fill lazily and are left out of the load charge (`local_catalog._lazy_checkpoints`):
+    its host column is the footprint less exactly those, and nothing else."""
     window = model.context_window
     host, _device = local_catalog.declared_gb(model, window)
     lazy = (
-        local_catalog._checkpoints_gb(model, model.default_slots)
+        local_catalog._checkpoints_gb(model, model.default_slots) + model.cache_ram_gb
         if model.kv_pool is not None
         else 0.0
     )
@@ -846,18 +846,16 @@ def test_the_device_column_is_the_host_column_minus_what_never_reaches_the_gpu(
     safe; charging them to neither is how the host runs out while GTT looks comfortable."""
     window = model.context_window
     host, device = local_catalog.declared_gb(model, window)
-    # `CACHE_RAM_GB` is 0.0 today, so that term proves nothing on its own — it is here so this
-    # assertion follows the serving flag if that changes, not as evidence that two buffers are
-    # being carried. The checkpoints are the term actually doing the work.
-    # A pooled model's checkpoints are lazy and not charged at load (see the test above).
-    checkpoints = (
+    # A pooled model's host caches (checkpoints, prompt cache) are lazy and not charged at load
+    # (see the test above); every other entry serves `-cram 0`, so its gap is the checkpoints.
+    host_only = (
         0.0
         if model.kv_pool is not None
         else model.checkpoint_gb
         * local_catalog.ctx_checkpoints(model.checkpoint_gb, model.served_ctx_checkpoints)
         * model.effective_slots(model.default_slots)
+        + model.cache_ram_gb
     )
-    host_only = checkpoints + local_catalog.CACHE_RAM_GB
     assert device <= host
     assert host - device == pytest.approx(host_only, abs=0.011)
 

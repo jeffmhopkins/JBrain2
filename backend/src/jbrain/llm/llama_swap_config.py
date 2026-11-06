@@ -261,6 +261,13 @@ def _drop_speculative(args: Sequence[str]) -> list[str]:
     return out
 
 
+def _cache_ram_mib(m: Mapping[str, object]) -> int:
+    """The entry's `-cram` value in MiB, from its catalog `cache_ram_gb` (GiB). A manifest
+    without the field (one written before it existed) serves the cache off, as it always did."""
+    gb = cast("float | None", m.get("cache_ram_gb")) or 0.0
+    return round(gb * 1024)
+
+
 def _is_speculative(extra_server_args: Sequence[str]) -> bool:
     """Whether a model's serving flags turn on speculative decoding (`--spec-type <mode>`),
     which constrains it to a single sequence. Read off the flags rather than a catalog boolean
@@ -429,8 +436,11 @@ def render(
             # `local_catalog.CACHE_RAM_GB` MOVES WITH THIS. Serving `-cram 0` while budgeting
             # 8 GiB over-reserves every model and evicts pairs that fit; the inverse
             # under-reserves on the box's freeze path.
+            #
+            # Rendered from the entry's own `cache_ram_gb` (0 everywhere but Flash-Next, which is
+            # never co-resident), the same field the budget charges, so the two stay one number.
             "-cram",
-            "0",
+            str(_cache_ram_mib(m)),
             # Prompt-prefix KV reuse (docs/reference/PROMPT_CACHE.md): keep the KV of a
             # matching
             # leading prefix and salvage it via KV-shifting even after a later divergence. 256 is

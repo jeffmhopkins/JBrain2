@@ -1096,7 +1096,13 @@ def test_flash_next_serves_its_plan_command_line(tmp_path: Path) -> None:
     assert tokens.count("--kv-unified") == 1
     assert _value(tokens, "-ctk") == "q8_0" and _value(tokens, "-ctv") == "q8_0"
     assert _value(tokens, "-fa") == "1"
-    assert _value(tokens, "-cram") == "0"
+    # The prompt cache is ON for this engine alone, rendered from the same field the budget
+    # charges (4 GiB -> 4096 MiB), and the bigger ubatch REPLACES the shared 1024.
+    assert entry["cache_ram_gb"] == 4.0
+    assert _value(tokens, "-cram") == "4096"
+    assert tokens.count("-cram") == 1
+    assert _value(tokens, "-ub") == "2048"
+    assert tokens.count("-ub") == 1
     assert _value(tokens, "--ctx-checkpoints") == "8"
     assert _value(tokens, "--checkpoint-min-step") == "1024"
     assert "--jinja" in tokens
