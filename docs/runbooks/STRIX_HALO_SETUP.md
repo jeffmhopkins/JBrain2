@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-11-06
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -1416,9 +1416,10 @@ conversation and a warm one for the next chat — ingest, scheduled tasks, resea
 wiki/notes, the pet, small prompts, the browser agent) so their cached prompts stop evicting
 each other. Its slot control does not apply — a change is refused with the reason —
 and each kind of work has its own limit inside the pool. Budgeted at the F2 measurement (plan
-§3a): ~74 GiB on the GPU, plus up to ~9 GiB of host-side prompt checkpoints that appear only as
-slots fill (~83 GiB in all). A switch admits the load on the GPU figure, so it needs ~80 GiB
-free (74 + the 6 GiB floor).
+§3a) plus the larger prefill batch (`-ub 2048`, ~10 GiB, estimated until measured): ~84 GiB on
+the GPU, plus up to ~13 GiB of host-side prompt checkpoints and in-RAM prompt cache that appear
+only as slots fill (~97 GiB in all). A switch admits the load on the GPU figure, so it needs
+~90 GiB free (84 + the 6 GiB floor).
 
 The pool size is selectable without a release: 524,288 (default) or 1,048,576, set through the
 model's context-window route (debug console: `PUT

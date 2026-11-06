@@ -539,9 +539,10 @@ def render(
         # So a second slot buys ONE dissimilar request of headroom, not immunity: it makes the
         # prefix outlive a single interloper, and over a stream of heterogeneous background
         # traffic it is still taken. The durable protection is the disk store, which puts the
-        # prefix back in ~100 ms (jbrain.llm.kv_prefix), and `-cram 0` below means there is no
-        # in-RAM prompt cache to fall back on when a slot IS taken. Sized and described in
-        # docs/plans/PROMPT_CACHE_HARDENING_PLAN.md P2; the owner-facing text says the same.
+        # prefix back in ~100 ms (jbrain.llm.kv_prefix), and `-cram 0` above (standard entries)
+        # means there is no in-RAM prompt cache to fall back on when a slot IS taken. Sized and
+        # described in docs/plans/PROMPT_CACHE_HARDENING_PLAN.md P2; the owner-facing text says
+        # the same.
         cmd += ["-np", str(n_slots)]
         if pool is not None:
             # One shared pool: each slot grows into whatever cells are free (up to n_ctx_train)

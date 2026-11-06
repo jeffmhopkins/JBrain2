@@ -625,9 +625,10 @@ with per-slot caps and a pool guard (§4a).
   anyway), and the scheduled-task prime is a ~60 s jerv prefill nobody waits on that competed with
   the owner right after a load. Only the interactive (slot 0) prime remains, now pinned; F4's disk
   layer is where per-role prefixes would come back if a measured one earns it.
-- Load admission: booked at the F2 fit (~74 GiB on the GPU at 512k); context checkpoints (host-only,
-  lazily filled, up to ~7 GiB) stay in the footprint but out of the load charge, so a switch
-  needs ~80 GiB free (it was ~94 at 1M).
+- Load admission: booked at the F2 fit (~74 GiB on the GPU at 512k), plus ~10 GiB derived for
+  `-ub 2048` since 2026-11-06 (~84); context checkpoints and the prompt cache (host-only,
+  lazily filled) stay in the footprint but out of the load charge, so a switch needs ~90 GiB
+  free (~114 at 1M, where the ubatch term doubles with the cells).
 - PWA: a read-only pool view replacing the window/slot pickers for a pool model — **three
   mocks** before code (`PROCESS.md`).
 - Re-measure on the box with every slot filled to its cap (the worst case, ~74 GiB predicted).
@@ -861,7 +862,8 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
   (Soot/Silicon), against gpt-oss's ~31 today. Slots are caches, not concurrency, so this
   is the number that matters; F5 is the answer if it bites.
 - **Full-offload crash (#29028)** — closed upstream but unconfirmed in our pin; F2 check 1.
-- **Memory margin** — ~83 GiB derived against a 90 GiB gate, with a history of
+- **Memory margin** — ~83 GiB derived against a 90 GiB gate (~97 GiB footprint since the
+  2026-11-06 `-ub 2048` and prompt cache; admission is on the ~84 GiB device figure), with a history of
   derivations running light. F2 measures before anything depends on it.
 - **Quality vs gpt-oss-120b is unknown** — no shared public benchmark. F2's checks are not
   an eval; run the existing ingest/analysis eval fixtures before retiring anything.

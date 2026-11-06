@@ -107,8 +107,9 @@ def test_device_footprint_lands_on_the_f2_fit_for_the_pool() -> None:
     m = _flash()
     fit = 60.2 + 7.0 * 524_288 / 262_144
     _host, device = local_catalog.declared_gb(m, 262144)
-    assert m.runtime_overhead_gb == 10.0
-    assert device == pytest.approx(fit + 10.0, abs=0.1)
+    assert m.runtime_overhead_gb == 0.0
+    assert device == pytest.approx(fit + m.pool_compute_gb_per_128k * 4, abs=0.1)
+    assert device == pytest.approx(84.2, abs=0.1)
     fixed = (m.size_gb - m.file_backed_gb) + local_catalog.vision_attn_buffer_gb()
     assert fixed == pytest.approx(60.2, abs=0.1)
     # Eviction and the meter add the host-only caches on top: the checkpoints (8 per pool slot)
@@ -119,12 +120,17 @@ def test_device_footprint_lands_on_the_f2_fit_for_the_pool() -> None:
 
 
 def test_the_bigger_ubatch_and_its_compute_booking_move_together() -> None:
-    """`-ub 2048` is what the 10 GiB runtime term pays for; one without the other either serves
-    an unbooked compute reserve or books memory nothing allocates."""
+    """`-ub 2048` is what the pool-scaled compute term pays for; one without the other either
+    serves an unbooked compute reserve or books memory nothing allocates. The reserve scales with
+    the pool's cells, so the 1M choice books twice the 512k's 10 GiB, not the same flat figure."""
     m = _flash()
     args = list(m.extra_server_args)
     assert args[args.index("-ub") + 1] == "2048"
-    assert m.runtime_overhead_gb == 10.0
+    assert m.pool_compute_gb_per_128k == 2.5
+    _h512, d512 = local_catalog.declared_gb(m, 524_288)
+    _h1m, d1m = local_catalog.declared_gb(m, 1_048_576)
+    kv_step = m.kv_gb_per_128k * 4
+    assert d1m - d512 == pytest.approx(kv_step + 10.0, abs=0.02)
 
 
 def test_file_backed_weights_are_subtracted_from_the_measured_disk_size() -> None:

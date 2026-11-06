@@ -181,18 +181,21 @@ CTX_CHECKPOINTS_UNMEASURED = 2
 # MOVES WITH THE SERVING FLAG: `-ctk`/`-ctv q8_0` on the entry and this number are one decision.
 _FLASH_NEXT_KV_GB_PER_128K = 3.5
 
-# Everything a Flash-Next load pins beyond weights, KV and the vision buffer. The fit's fixed
-# term (60.2 GiB) already holds compute buffers, recurrent state and the projector AT `-ub 1024`,
-# and the slot count moved GTT by noise, so at 1024 this was 0.0.
-#
-# The served ubatch is now 2048 (owner 2026-11-06, for prefill: bigger matmuls per pass), and
-# the compute reserve grows with it. On this engine the reserve's large buffers scale with the
-# unified pool's cells TIMES the ubatch (the KQ mask, the QSA indexer scores and top-k mask over
-# every cell), and the unified 512k reserve measured ~9-10 GiB above the non-unified one at 1024
-# (§3a). Doubling the ubatch is booked as that much again: 10.0 GiB, DERIVED, not measured. Read
-# GTT after the first load at 2048 and replace this with the measured delta over the 74.2 fit.
-# A debug `-ub 1024` reverts the flag without a release; this booking then over-reserves only.
-_FLASH_NEXT_RUNTIME_OVERHEAD_GB = 10.0
+# Everything a Flash-Next load pins beyond weights, KV and the vision buffer: nothing. The fit's
+# fixed term (60.2 GiB) already holds compute buffers, recurrent state and the projector at
+# `-ub 1024`, and the slot count moved GTT by noise, so the derived 1.5 GiB compute + 0.11 per
+# slot would book memory no reading showed.
+_FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
+
+# The compute reserve `-ub 2048` adds over the fit's 1024 (owner 2026-11-06, for prefill), per
+# 128k pool cells. On this engine the reserve's large buffers scale with the unified pool's cells
+# TIMES the ubatch (the KQ mask, the QSA indexer scores and top-k mask over every cell), and the
+# unified 512k reserve read ~9-10 GiB above the non-unified one at 1024 (§3a). Doubling the ubatch
+# is booked as that much again, 10 GiB at 512k, scaling with the pool so the 1M choice books 20.
+# DERIVED, not measured: read GTT after the first load at 2048 and replace this with the measured
+# delta over the fit. A debug `-ub 1024` reverts the flag without a release; this then
+# over-reserves only.
+_FLASH_NEXT_UBATCH_COMPUTE_GB_PER_128K = 2.5
 
 # What of the GGUF on disk the GPU never holds, MEASURED rather than taken from the header. The
 # engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB — is served
@@ -205,7 +208,7 @@ _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 10.0
 #
 #   88.1 on disk - 28.4 = 59.7 weights + 0.47 vision = 60.2 fixed (the fit's)
 #   + 14.0 KV for the 512k pool (3.5 x 4)             = 74.2 device (the fit's 74.2, -ub 1024)
-#   + 10.0 compute for -ub 2048 (derived)             = 84.2 device
+#   + 10.0 compute for -ub 2048 (derived, 2.5 x 4)    = 84.2 device
 #   + 8.8 host-only checkpoints (8 per slot x 10 x 0.11)
 #   + 4.0 host-only prompt cache                      = 97.0 footprint (eviction and meter)
 #
@@ -457,6 +460,9 @@ class LocalModel:
     # llama.cpp's in-RAM prompt cache limit, GiB. The gateway renders it as `-cram` (MiB) and the
     # budget charges it as host-only memory, so one field moves both — see CACHE_RAM_GB.
     cache_ram_gb: float = CACHE_RAM_GB
+    # Device compute reserve that scales with a `kv_pool`'s cells (GiB per 128k cells), beyond
+    # what the measured fixed term holds. Charged with the pool in `_kv_gb`; unused unpooled.
+    pool_compute_gb_per_128k: float = 0.0
     # Measured override for the flat RUNTIME_OVERHEAD_GB, for a model whose resident
     # non-weight cost the constant misrepresents. The tiny Qwen3.5 hybrids are why this
     # exists: their compute/state buffers dwarf their weights, so the flat 0.55 declared a
@@ -1303,6 +1309,7 @@ CATALOG: tuple[LocalModel, ...] = (
         checkpoint_gb=0.11,
         served_ctx_checkpoints=8,
         cache_ram_gb=_FLASH_NEXT_CACHE_RAM_GB,
+        pool_compute_gb_per_128k=_FLASH_NEXT_UBATCH_COMPUTE_GB_PER_128K,
         # The image builds the sidecar patch in (F4); the store still proves it per save.
         kv_restore_needs_patch=True,
         engine=engines.FLASH_NEXT,
@@ -1346,7 +1353,7 @@ CATALOG: tuple[LocalModel, ...] = (
             # llama.cpp #27237's garbage output at 512 set). Prefill on a 512-expert MoE is
             # batched matmul over the experts a ubatch routes to, so a larger ubatch gives each
             # expert more rows per pass. Its compute-reserve cost is
-            # `_FLASH_NEXT_RUNTIME_OVERHEAD_GB` — the two move together.
+            # `_FLASH_NEXT_UBATCH_COMPUTE_GB_PER_128K` — the two move together.
             "-ub",
             "2048",
             # Server-wide video sampling rate. Two frames merge into one image's tokens, so
@@ -1567,8 +1574,13 @@ def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
     so the load reservation, the eviction budget and the settings meter cannot drift apart."""
     if model.kv_pool is not None:
         # One `--kv-unified` pool: the cells are allocated once at load, however many slots
-        # share them. A pooled model's "window" is its saved pool size (`effective_pool`).
-        kv = model.kv_gb_per_128k * model.kv_pool.resized(window).n_ctx / _KV_REFERENCE_TOKENS
+        # share them. A pooled model's "window" is its saved pool size (`effective_pool`). The
+        # pool-scaled compute reserve rides here because it scales with the same cells, and is
+        # never doubled by `--swa-full`.
+        cells = model.kv_pool.resized(window).n_ctx / _KV_REFERENCE_TOKENS
+        kv = model.kv_gb_per_128k * cells
+        compute = model.pool_compute_gb_per_128k * cells
+        return (kv * 2 if model.kv_full_history else kv) + compute
     else:
         kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
     return kv * 2 if model.kv_full_history else kv

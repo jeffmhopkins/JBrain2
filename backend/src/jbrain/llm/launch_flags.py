@@ -80,8 +80,9 @@ from collections.abc import Sequence
 #   --checkpoint-min-step   minimum token spacing between context checkpoints
 # These are what the NEXT prefill investigation needs, and neither was reachable.
 #
-# `--cache-ram` USED to be here and deliberately is not any more. The gateway now serves
-# `-cram 0` and `local_catalog.CACHE_RAM_GB` is 0.0 to match, so an operator turning the cache
+# `--cache-ram` USED to be here and deliberately is not any more. The gateway renders `-cram`
+# from each entry's `cache_ram_gb` (0 on the standard engine), the field the budget charges, so an
+# operator turning the cache
 # back on from the PWA would serve up to 32 GiB of host RAM that the residency budget believes
 # does not exist — under-reserving on the one path this box has hard-locked on. The flag and
 # the budget term are one decision; the allowlist cannot be a second, unbudgeted way to move it.
