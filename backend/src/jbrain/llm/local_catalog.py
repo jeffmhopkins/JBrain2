@@ -119,7 +119,25 @@ MTP_OVERHEAD_GB = 1.0
 # in two places: budgeting 8 GiB while serving 0 over-reserves 16 GiB across a co-resident pair
 # and evicts models that fit; budgeting 0 while serving the default under-reserves on the path
 # this box has hard-locked on.
+#
+# It is the DEFAULT for `LocalModel.cache_ram_gb`, which is what the gateway actually renders as
+# `-cram` and what the budget charges, per model. A model that turns the cache on (Flash-Next)
+# does it there, so the flag and its budget term still cannot come apart.
 CACHE_RAM_GB = 0.0
+
+# Flash-Next's in-RAM prompt cache (FLASH_NEXT_ENGINE_PLAN §9 Q1, owner 2026-11-06). Co-residency
+# was the reason for `-cram 0`, and Flash-Next is never co-resident with anything, so the
+# argument does not carry over. What the cache buys here is narrower than on an unpinned server:
+# llama-server consults it only when a request's pinned slot holds a prompt sharing >10% of the
+# new one but keeping <50% of it (`get_available_slot` at the pin) — in practice a chat slot
+# switching conversations under the same persona. It saves the outgoing state (KV, recurrent
+# state AND its checkpoints) and restores the best cached match in RAM, a tier in front of the
+# disk conversation store (jbrain.llm.kv_conversation) for the switches that store skips.
+#
+# 4 GiB: a 29k-token prefix file is ~0.55 GiB (§4b) and a state carries up to 8 checkpoints of
+# ~0.11 GiB, so it holds 3-6 recent conversations. Host RAM, filled lazily; the box reads ~25.8
+# GB free with Flash-Next steady (§3a), so 4 of it leaves the load guard's 6 GB floor far away.
+_FLASH_NEXT_CACHE_RAM_GB = 4.0
 
 _KV_REFERENCE_TOKENS = 131072
 
@@ -164,10 +182,20 @@ CTX_CHECKPOINTS_UNMEASURED = 2
 _FLASH_NEXT_KV_GB_PER_128K = 3.5
 
 # Everything a Flash-Next load pins beyond weights, KV and the vision buffer: nothing. The fit's
-# fixed term (60.2 GiB) already holds compute buffers, recurrent state and the projector, and
-# the slot count moved GTT by noise, so the derived 1.5 GiB compute + 0.11 per slot would book
-# memory no reading showed.
+# fixed term (60.2 GiB) already holds compute buffers, recurrent state and the projector at
+# `-ub 1024`, and the slot count moved GTT by noise, so the derived 1.5 GiB compute + 0.11 per
+# slot would book memory no reading showed.
 _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
+
+# The compute reserve `-ub 2048` adds over the fit's 1024 (owner 2026-11-06, for prefill), per
+# 128k pool cells. On this engine the reserve's large buffers scale with the unified pool's cells
+# TIMES the ubatch (the KQ mask, the QSA indexer scores and top-k mask over every cell), and the
+# unified 512k reserve read ~9-10 GiB above the non-unified one at 1024 (§3a). Doubling the ubatch
+# is booked as that much again, 10 GiB at 512k, scaling with the pool so the 1M choice books 20.
+# DERIVED, not measured: read GTT after the first load at 2048 and replace this with the measured
+# delta over the fit. A debug `-ub 1024` reverts the flag without a release; this then
+# over-reserves only.
+_FLASH_NEXT_UBATCH_COMPUTE_GB_PER_128K = 2.5
 
 # What of the GGUF on disk the GPU never holds, MEASURED rather than taken from the header. The
 # engram (PLE) table — the IQ4_NL `per_layer_token_embd` tensor, 26.82 GiB — is served
@@ -179,11 +207,13 @@ _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
 # fit instead of 1.6 GiB above it, without dropping the vision term the other entries carry:
 #
 #   88.1 on disk - 28.4 = 59.7 weights + 0.47 vision = 60.2 fixed (the fit's)
-#   + 14.0 KV for the 512k pool (3.5 x 4)             = 74.2 device (the fit's 74.2)
-#   + 8.8 host-only checkpoints (8 per slot x 10 x 0.11) = 83.0 footprint (eviction and meter)
+#   + 14.0 KV for the 512k pool (3.5 x 4)             = 74.2 device (the fit's 74.2, -ub 1024)
+#   + 10.0 compute for -ub 2048 (derived, 2.5 x 4)    = 84.2 device
+#   + 8.8 host-only checkpoints (8 per slot x 10 x 0.11)
+#   + 4.0 host-only prompt cache                      = 97.0 footprint (eviction and meter)
 #
 # A load is admitted on the device figure alone — see `_lazy_checkpoints` — so with the 6 GiB
-# floor it needs ~80 GiB free.
+# floor it needs ~90 GiB free.
 _FLASH_NEXT_FILE_BACKED_GB = 28.4
 
 
@@ -427,6 +457,12 @@ class LocalModel:
     # 0.28 above was obtained (275-284 MiB observed, against a catalog 0.15 taken from upstream
     # #27211's figure for a different quant).
     checkpoint_gb: float = 0.0
+    # llama.cpp's in-RAM prompt cache limit, GiB. The gateway renders it as `-cram` (MiB) and the
+    # budget charges it as host-only memory, so one field moves both — see CACHE_RAM_GB.
+    cache_ram_gb: float = CACHE_RAM_GB
+    # Device compute reserve that scales with a `kv_pool`'s cells (GiB per 128k cells), beyond
+    # what the measured fixed term holds. Charged with the pool in `_kv_gb`; unused unpooled.
+    pool_compute_gb_per_128k: float = 0.0
     # Measured override for the flat RUNTIME_OVERHEAD_GB, for a model whose resident
     # non-weight cost the constant misrepresents. The tiny Qwen3.5 hybrids are why this
     # exists: their compute/state buffers dwarf their weights, so the flat 0.55 declared a
@@ -1246,9 +1282,10 @@ CATALOG: tuple[LocalModel, ...] = (
         "reasoner meant to replace the gpt-oss-120b + Qwen3.8-27B pair on its own engine "
         "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container as one shared "
         "512k-token pool across ten role-pinned slots (two of them jerv's chat pair); never "
-        "co-resident with the standard gateway. ~88 GiB on disk; booked at the measured ~74 GiB "
-        "on the GPU plus up to ~9 GiB of host-side prompt checkpoints (~83 GiB in all), and a "
-        "load needs ~80 GiB free.",
+        "co-resident with the standard gateway. ~88 GiB on disk; booked at ~84 GiB on the GPU "
+        "(the measured ~74 plus ~10 for the larger prefill batch) plus up to ~13 GiB of "
+        "host-side prompt checkpoints and prompt cache (~97 GiB in all), and a load needs "
+        "~90 GiB free.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
@@ -1271,6 +1308,8 @@ CATALOG: tuple[LocalModel, ...] = (
         # this guess 16 per slot.
         checkpoint_gb=0.11,
         served_ctx_checkpoints=8,
+        cache_ram_gb=_FLASH_NEXT_CACHE_RAM_GB,
+        pool_compute_gb_per_128k=_FLASH_NEXT_UBATCH_COMPUTE_GB_PER_128K,
         # The image builds the sidecar patch in (F4); the store still proves it per save.
         kv_restore_needs_patch=True,
         engine=engines.FLASH_NEXT,
@@ -1310,6 +1349,13 @@ CATALOG: tuple[LocalModel, ...] = (
             "q8_0",
             "-ctv",
             "q8_0",
+            # Physical batch 2048, superseding the shared command's 1024 (the floor that
+            # llama.cpp #27237's garbage output at 512 set). Prefill on a 512-expert MoE is
+            # batched matmul over the experts a ubatch routes to, so a larger ubatch gives each
+            # expert more rows per pass. Its compute-reserve cost is
+            # `_FLASH_NEXT_UBATCH_COMPUTE_GB_PER_128K` — the two move together.
+            "-ub",
+            "2048",
             # Server-wide video sampling rate. Two frames merge into one image's tokens, so
             # the engine's default 4 fps costs >= 4k tokens per second of clip and a minute
             # fits no slot; at 1 fps a 60 s clip is ~30 pairs. Rendered from the same
@@ -1528,8 +1574,13 @@ def _kv_gb(model: LocalModel, window: int, slots: int) -> float:
     so the load reservation, the eviction budget and the settings meter cannot drift apart."""
     if model.kv_pool is not None:
         # One `--kv-unified` pool: the cells are allocated once at load, however many slots
-        # share them. A pooled model's "window" is its saved pool size (`effective_pool`).
-        kv = model.kv_gb_per_128k * model.kv_pool.resized(window).n_ctx / _KV_REFERENCE_TOKENS
+        # share them. A pooled model's "window" is its saved pool size (`effective_pool`). The
+        # pool-scaled compute reserve rides here because it scales with the same cells, and is
+        # never doubled by `--swa-full`.
+        cells = model.kv_pool.resized(window).n_ctx / _KV_REFERENCE_TOKENS
+        kv = model.kv_gb_per_128k * cells
+        compute = model.pool_compute_gb_per_128k * cells
+        return (kv * 2 if model.kv_full_history else kv) + compute
     else:
         kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS * model.effective_slots(slots)
     return kv * 2 if model.kv_full_history else kv
@@ -1576,7 +1627,7 @@ def footprint_gb(
         weights
         + kv
         + checkpoints
-        + CACHE_RAM_GB
+        + model.cache_ram_gb
         + _runtime_overhead_gb(model)
         + _vision_resident_gb(model),
         2,
@@ -1658,13 +1709,11 @@ def declared_gb(
     RAM, so every device byte is also a host byte — device is a SUBSET of host, never a second
     pool to add on. What distinguishes them is what is host-ONLY: today that is the context
     checkpoints (`common_prompt_checkpoint` holds `std::vector<uint8_t>`, CONFIRMED on the box —
-    raising the count from 2 to 16 left GTT unchanged to the centibyte), plus `--cache-ram`,
-    which is carried in the sum but currently contributes NOTHING because `CACHE_RAM_GB` is 0.0
-    — it is here so that flipping the serving flag moves this number with it, not because it is
-    doing work today. Those cost host RAM and add nothing to the GTT cap pressure that is this
-    box's documented hang mode, so charging them to the device column would refuse loads that
-    are safe, and charging them to neither is how the host ran out while GTT looked
-    comfortable.
+    raising the count from 2 to 16 left GTT unchanged to the centibyte), plus `--cache-ram`
+    (`cache_ram_gb`), zero on every entry that serves `-cram 0`. Those cost host RAM and add
+    nothing to the GTT cap pressure that is this box's documented hang mode, so charging them
+    to the device column would refuse loads that are safe, and charging them to neither is how
+    the host ran out while GTT looked comfortable.
 
     The vision attention buffer is counted at its RESIDENT size, not the load-time warmup size
     `load_footprint_gb` uses. That difference is deliberate and points the other way from the
@@ -1680,13 +1729,15 @@ def declared_gb(
         + _runtime_overhead_gb(model)
         + _vision_resident_gb(model)
     )
-    checkpoints = 0.0 if _lazy_checkpoints(model) else _checkpoints_gb(model, slots)
-    host_only = checkpoints + CACHE_RAM_GB
+    host_only = 0.0
+    if not _lazy_checkpoints(model):
+        host_only = _checkpoints_gb(model, slots) + model.cache_ram_gb
     return round(device + host_only, 2), round(device, 2)
 
 
 def _lazy_checkpoints(model: LocalModel) -> bool:
-    """Whether a load's admission charge leaves the context checkpoints out.
+    """Whether a load's admission charge leaves the host-only caches out: the context
+    checkpoints and the in-RAM prompt cache, both filled lazily after the load.
 
     Only for a pooled model. Checkpoints are host RAM allocated lazily — a slot makes one only
     after it has seen `CHECKPOINT_MIN_STEP`-spaced prompt growth, and most of Flash-Next's eight
@@ -1694,7 +1745,8 @@ def _lazy_checkpoints(model: LocalModel) -> bool:
     that fits the model with room to spare. They stay in `footprint_gb` (eviction and the meter
     count them once they can exist), and once allocated they show in the measured free memory
     that every later admission takes the minimum against (`admission._available_gb`). The
-    gap is a load's own growth after admission, bounded at the 7 GiB this leaves out. Every
+    prompt cache is the same shape: a limit that fills only as conversations switch. The gap
+    is a load's own growth after admission, bounded at the ~11 GiB this leaves out. Every
     standard entry keeps the old charge, byte for byte."""
     return model.kv_pool is not None
 

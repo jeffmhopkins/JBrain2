@@ -101,17 +101,36 @@ def test_checkpoints_are_pinned_at_eight_per_slot() -> None:
 
 
 def test_device_footprint_lands_on_the_f2_fit_for_the_pool() -> None:
-    """§3a fit: GTT ≈ 60.2 + 7.0 per 262,144 cells = 74.2 GiB for the 512k pool. The fixed 60.2
-    already holds the projector and vision workspace, so the booking must not add them twice."""
+    """§3a fit at `-ub 1024`: GTT ≈ 60.2 + 7.0 per 262,144 cells = 74.2 GiB for the 512k pool.
+    The fixed 60.2 already holds the projector and vision workspace, so the booking must not add
+    them twice. The served `-ub 2048` adds its derived compute reserve on top, and only that."""
     m = _flash()
     fit = 60.2 + 7.0 * 524_288 / 262_144
     _host, device = local_catalog.declared_gb(m, 262144)
-    assert device == pytest.approx(fit, abs=0.1)
+    assert m.runtime_overhead_gb == 0.0
+    assert device == pytest.approx(fit + m.pool_compute_gb_per_128k * 4, abs=0.1)
+    assert device == pytest.approx(84.2, abs=0.1)
     fixed = (m.size_gb - m.file_backed_gb) + local_catalog.vision_attn_buffer_gb()
     assert fixed == pytest.approx(60.2, abs=0.1)
-    # Eviction and the meter add the 72 host-only checkpoints (8 per pool slot) on top.
+    # Eviction and the meter add the host-only caches on top: the checkpoints (8 per pool slot)
+    # and the in-RAM prompt cache.
     footprint = local_catalog.footprint_gb(m, 262144)
-    assert footprint == pytest.approx(device + 0.11 * 8 * 10, abs=0.02)
+    assert m.cache_ram_gb == 4.0
+    assert footprint == pytest.approx(device + 0.11 * 8 * 10 + m.cache_ram_gb, abs=0.02)
+
+
+def test_the_bigger_ubatch_and_its_compute_booking_move_together() -> None:
+    """`-ub 2048` is what the pool-scaled compute term pays for; one without the other either
+    serves an unbooked compute reserve or books memory nothing allocates. The reserve scales with
+    the pool's cells, so the 1M choice books twice the 512k's 10 GiB, not the same flat figure."""
+    m = _flash()
+    args = list(m.extra_server_args)
+    assert args[args.index("-ub") + 1] == "2048"
+    assert m.pool_compute_gb_per_128k == 2.5
+    _h512, d512 = local_catalog.declared_gb(m, 524_288)
+    _h1m, d1m = local_catalog.declared_gb(m, 1_048_576)
+    kv_step = m.kv_gb_per_128k * 4
+    assert d1m - d512 == pytest.approx(kv_step + 10.0, abs=0.02)
 
 
 def test_file_backed_weights_are_subtracted_from_the_measured_disk_size() -> None:
@@ -131,22 +150,21 @@ def test_file_backed_weights_are_subtracted_from_the_measured_disk_size() -> Non
     assert local_catalog.load_footprint_gb(m) < m.size_gb + m.kv_gb_per_128k * 8
 
 
-def test_admission_leaves_the_lazy_checkpoints_out_for_the_pool_only() -> None:
-    """Checkpoints are host RAM made lazily, slot by slot, so a load's charge is the device
-    figure; the footprint (eviction, meter) still counts them. Standard entries are unchanged:
-    their host column still carries their checkpoints."""
+def test_admission_leaves_the_lazy_host_caches_out_for_the_pool_only() -> None:
+    """Checkpoints and the in-RAM prompt cache are host RAM filled lazily, so a load's charge is
+    the device figure; the footprint (eviction, meter) still counts them. Standard entries are
+    unchanged: their host column still carries their checkpoints, and they serve no cache."""
     m = _flash()
     host, device = local_catalog.declared_gb(m, 262144, disk_gb=90.0)
     assert host == device
     assert local_catalog.footprint_gb(m, 262144, disk_gb=90.0) == pytest.approx(
-        host + 0.11 * 8 * 10, abs=0.02
+        host + 0.11 * 8 * 10 + m.cache_ram_gb, abs=0.02
     )
     qwen = local_catalog.get("qwen3.8-27b")
     assert qwen is not None and qwen.checkpoint_gb > 0
+    assert qwen.cache_ram_gb == local_catalog.CACHE_RAM_GB == 0.0
     q_host, q_device = local_catalog.declared_gb(qwen, qwen.context_window)
-    assert q_host - q_device == pytest.approx(
-        local_catalog._checkpoints_gb(qwen, 1) + local_catalog.CACHE_RAM_GB, abs=0.02
-    )
+    assert q_host - q_device == pytest.approx(local_catalog._checkpoints_gb(qwen, 1), abs=0.02)
 
 
 def test_a_flash_next_load_is_admitted_on_a_lightly_used_128gb_box() -> None:

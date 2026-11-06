@@ -61,15 +61,20 @@ def test_effective_pool_reads_the_saved_size() -> None:
     assert gpt is not None and local_catalog.effective_pool(gpt, {"gpt-oss-120b": 1}) is None
 
 
+# 512k -> 1M: 4 x 128k more cells, each 3.5 GiB of KV and 2.5 GiB of `-ub 2048` compute reserve.
+_POOL_STEP_GB = 4 * (3.5 + 2.5)
+
+
 def test_the_footprint_charges_the_saved_pool_size() -> None:
-    """3.5 GiB per 128k: the 1M pool books 14 GiB more KV than 512k, on every reader."""
+    """3.5 GiB per 128k of KV plus 2.5 of `-ub 2048` compute reserve: the 1M pool books 24 GiB
+    more than 512k (14 KV + 10 compute), on every reader."""
     m = _flash()
     small = local_catalog.footprint_gb(m, m.context_window)
     big = local_catalog.footprint_gb(m, ONE_M)
-    assert big - small == pytest.approx(14.0, abs=0.02)
+    assert big - small == pytest.approx(_POOL_STEP_GB, abs=0.02)
     assert local_catalog.declared_gb(m, ONE_M)[1] - local_catalog.declared_gb(m, HALF_M)[
         1
-    ] == pytest.approx(14.0, abs=0.02)
+    ] == pytest.approx(_POOL_STEP_GB, abs=0.02)
     assert local_catalog.load_footprint_gb(m, ONE_M) > local_catalog.load_footprint_gb(m)
 
 
@@ -136,7 +141,7 @@ def test_the_owner_route_sets_1m_and_reverts_to_512k() -> None:
     assert store.values["llm_local_context_windows"] == {FLASH_ID: ONE_M}
     row = _row(resp.json())
     assert row["kv_pool"]["n_ctx"] == ONE_M and len(row["kv_pool"]["slots"]) == 10
-    assert row["kv_gb"] == pytest.approx(before["kv_gb"] + 14.0, abs=0.05)
+    assert row["kv_gb"] == pytest.approx(before["kv_gb"] + _POOL_STEP_GB, abs=0.05)
     # The served pool is allocated at load, so a resident model is unloaded to re-stamp it.
     assert gw.unloaded == [FLASH_ID]
 
@@ -360,6 +365,6 @@ def test_the_smoketest_gates_a_pooled_model_at_its_served_pool() -> None:
     m = _flash()
     default = smoketest._resident_cost_gb(m)
     assert smoketest._resident_cost_gb(m, {FLASH_ID: ONE_M}) == pytest.approx(
-        default + 14.0, abs=0.05
+        default + _POOL_STEP_GB, abs=0.05
     )
     assert smoketest._resident_cost_gb(m, {"other": ONE_M}) == default

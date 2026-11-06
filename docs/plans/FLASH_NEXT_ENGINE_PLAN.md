@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
+> **Status:** In progress · **Last verified:** 2026-11-06 — Prefill: `-ub 2048` (10 GiB derived compute booking, measure on the next load) and a 4 GiB in-RAM prompt cache (§9 Q1 answered). Prior: 2026-10-10 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -192,7 +192,7 @@ every other range is dropped; §3a).
   still maps the lazy engram tensor), `-ot per_layer_token_embd=CPU` (the 26.8 GiB tensor exceeds Vulkan's
   4 GiB binding limit; GPU placement aborted for Soot/Silicon), `--lazy-mode on`,
   `-np 10 --kv-unified -c 524288 --slot-save-path …` (one shared pool; no single sequence may exceed
-  `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-cram 0`,
+  `n_ctx_train` = 262,144, which the agent's reservation equals), `-ctk q8_0 -ctv q8_0`, `-fa 1`, `-ub 2048` and `-cram 4096` (both 2026-11-06, §9 Q1),
   `--ctx-checkpoints 8 --checkpoint-min-step 1024`, `--jinja`, the F16 mmproj with the
   existing `--image-min-tokens` floor.
 - **MTP: not adopted in v1, pending measurement.** Upstream now has a qwen4exp MTP draft
@@ -625,9 +625,10 @@ with per-slot caps and a pool guard (§4a).
   anyway), and the scheduled-task prime is a ~60 s jerv prefill nobody waits on that competed with
   the owner right after a load. Only the interactive (slot 0) prime remains, now pinned; F4's disk
   layer is where per-role prefixes would come back if a measured one earns it.
-- Load admission: booked at the F2 fit (~74 GiB on the GPU at 512k); context checkpoints (host-only,
-  lazily filled, up to ~7 GiB) stay in the footprint but out of the load charge, so a switch
-  needs ~80 GiB free (it was ~94 at 1M).
+- Load admission: booked at the F2 fit (~74 GiB on the GPU at 512k), plus ~10 GiB derived for
+  `-ub 2048` since 2026-11-06 (~84); context checkpoints and the prompt cache (host-only,
+  lazily filled) stay in the footprint but out of the load charge, so a switch needs ~90 GiB
+  free (~114 at 1M, where the ubatch term doubles with the cells).
 - PWA: a read-only pool view replacing the window/slot pickers for a pool model — **three
   mocks** before code (`PROCESS.md`).
 - Re-measure on the box with every slot filled to its cap (the worst case, ~74 GiB predicted).
@@ -861,7 +862,8 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
   (Soot/Silicon), against gpt-oss's ~31 today. Slots are caches, not concurrency, so this
   is the number that matters; F5 is the answer if it bites.
 - **Full-offload crash (#29028)** — closed upstream but unconfirmed in our pin; F2 check 1.
-- **Memory margin** — ~83 GiB derived against a 90 GiB gate, with a history of
+- **Memory margin** — ~83 GiB derived against a 90 GiB gate (~97 GiB footprint since the
+  2026-11-06 `-ub 2048` and prompt cache; admission is on the ~84 GiB device figure), with a history of
   derivations running light. F2 measures before anything depends on it.
 - **Quality vs gpt-oss-120b is unknown** — no shared public benchmark. F2's checks are not
   an eval; run the existing ingest/analysis eval fixtures before retiring anything.
@@ -888,10 +890,14 @@ engine is a `cmd` swap in its llama-swap config plus an image change.
 
 ## 9. Open questions
 
-1. Turn llama.cpp's in-RAM prompt cache back on for this engine? We serve `-cram 0`
-   because it cost 8 GiB per model; with ~0.55 GiB prefixes, 3–4 GiB holds ~6 recent ones
-   (Soot/Silicon measured 27 s → 0.73 s on a hit on qwen4exp), and `--cache-idle-slots`
-   needs it. It is host memory the budget must count. Decide after F2.
+1. ~~Turn llama.cpp's in-RAM prompt cache back on for this engine?~~ **Answered 2026-11-06
+   (owner): yes, 4 GiB** (`cache_ram_gb`, rendered as `-cram 4096` and charged as lazy host
+   memory). With role-pinned slots llama-server consults it only when a pinned slot switches to
+   a prompt sharing >10% but keeping <50% of the old one, so in practice it is a RAM tier in
+   front of the disk conversation store for chat switches that store skipped. Shipped beside
+   `-ub 2048` for prefill throughput; that flag's compute reserve is booked at a DERIVED 10 GiB
+   (`_FLASH_NEXT_RUNTIME_OVERHEAD_GB`) — read GTT after the first load and replace it with the
+   measured delta over the 74.2 GiB fit. A debug `-ub 1024` reverts the flag without a release.
 2. Should the switch be schedulable (e.g. Flash-Next overnight for batch ingest)? Out of
    scope for v1; the endpoint shape should not preclude it.
 3. MTP with multiple slots — measure after F3b, or leave to F5's engines?
