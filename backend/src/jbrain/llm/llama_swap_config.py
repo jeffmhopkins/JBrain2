@@ -261,13 +261,6 @@ def _drop_speculative(args: Sequence[str]) -> list[str]:
     return out
 
 
-def _cache_ram_mib(m: Mapping[str, object]) -> int:
-    """The entry's `-cram` value in MiB, from its catalog `cache_ram_gb` (GiB). A manifest
-    without the field (one written before it existed) serves the cache off, as it always did."""
-    gb = cast("float | None", m.get("cache_ram_gb")) or 0.0
-    return round(gb * 1024)
-
-
 def _is_speculative(extra_server_args: Sequence[str]) -> bool:
     """Whether a model's serving flags turn on speculative decoding (`--spec-type <mode>`),
     which constrains it to a single sequence. Read off the flags rather than a catalog boolean
@@ -436,11 +429,8 @@ def render(
             # `local_catalog.CACHE_RAM_GB` MOVES WITH THIS. Serving `-cram 0` while budgeting
             # 8 GiB over-reserves every model and evicts pairs that fit; the inverse
             # under-reserves on the box's freeze path.
-            #
-            # Rendered from the entry's own `cache_ram_gb` (0 everywhere but Flash-Next, which is
-            # never co-resident), the same field the budget charges, so the two stay one number.
             "-cram",
-            str(_cache_ram_mib(m)),
+            "0",
             # Prompt-prefix KV reuse (docs/reference/PROMPT_CACHE.md): keep the KV of a
             # matching
             # leading prefix and salvage it via KV-shifting even after a later divergence. 256 is
@@ -539,10 +529,9 @@ def render(
         # So a second slot buys ONE dissimilar request of headroom, not immunity: it makes the
         # prefix outlive a single interloper, and over a stream of heterogeneous background
         # traffic it is still taken. The durable protection is the disk store, which puts the
-        # prefix back in ~100 ms (jbrain.llm.kv_prefix), and `-cram 0` above (standard entries)
-        # means there is no in-RAM prompt cache to fall back on when a slot IS taken. Sized and
-        # described in docs/plans/PROMPT_CACHE_HARDENING_PLAN.md P2; the owner-facing text says
-        # the same.
+        # prefix back in ~100 ms (jbrain.llm.kv_prefix), and `-cram 0` below means there is no
+        # in-RAM prompt cache to fall back on when a slot IS taken. Sized and described in
+        # docs/plans/PROMPT_CACHE_HARDENING_PLAN.md P2; the owner-facing text says the same.
         cmd += ["-np", str(n_slots)]
         if pool is not None:
             # One shared pool: each slot grows into whatever cells are free (up to n_ctx_train)
