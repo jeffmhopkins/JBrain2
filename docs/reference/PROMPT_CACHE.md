@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-11-06
+> **Status:** Living · **Last verified:** 2026-10-31
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -24,11 +24,9 @@ schemas). Processing it from cold is the single longest silence the box produces
 | `WarmKeeper` | the same slot, re-primed | a gateway restart, not an api restart | one prime |
 | `KvPrefixStore` | a file under `/models/.kvslots/` | restarts, evictions, updates | one prefill, once |
 
-`--cache-ram` is deliberately **0** on the standard engine (`llama_swap_config.py`): upstream's
-in-RAM prompt cache would make an evicted slot cheap to recover, but it costs 16 GB of the pool
-this box has frozen on three times. The disk store is the replacement, paid in disk instead of
-memory. Flash-Next, never co-resident with anything, serves a budgeted 4 GiB (`-cram 4096`,
-`LocalModel.cache_ram_gb`) as a RAM tier in front of the disk store.
+`--cache-ram` is deliberately **0** (`llama_swap_config.py`): upstream's in-RAM prompt cache
+would make an evicted slot cheap to recover, but it costs 16 GB of the pool this box has
+frozen on three times. The disk store is the replacement, paid in disk instead of memory.
 
 ## Identity — the thing that makes a file reusable
 
