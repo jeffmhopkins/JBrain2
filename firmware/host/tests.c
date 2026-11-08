@@ -2364,7 +2364,7 @@ static void test_the_square_slides_into_the_bands_with_one_mapping(void)
     static unsigned char seen[FACE_W * FACE_H];
     for (int q = 1; q <= 3; q += 2) {
         for (int lean = -FACE_LEAN_MAX_SIDE; lean <= FACE_LEAN_MAX_SIDE; lean += 5) {
-            const int win = orient_window(q, lean, FACE_LEAN_MAX_SIDE);
+            const int win = orient_window(q, lean, FACE_LEAN_MAX_SIDE, false);
             CHECK(win % 2 == 0, "the window starts on an even row, as the controller takes it");
             CHECK(win >= -ORIENT_WIN_MAX && win <= ORIENT_WIN_MAX, "and never leaves the glass");
             const int wy = ORIENT_SQ_Y0 + win;
@@ -2386,8 +2386,8 @@ static void test_the_square_slides_into_the_bands_with_one_mapping(void)
             CHECK(fails == 0, "each glass pixel of the window is one frame pixel of the square");
         }
         /* At full lean the square's edge is the glass's: 0 or 448 - 368 = 80 rows down. */
-        const int right = orient_window(q, FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE);
-        const int left = orient_window(q, -FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE);
+        const int right = orient_window(q, FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE, false);
+        const int left = orient_window(q, -FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE, false);
         CHECK(right == -left && (right == ORIENT_WIN_MAX || right == -ORIENT_WIN_MAX),
               "full lean takes the square all the way into the band");
         /* Toward the lean: the figure's right edge lands further to the viewer's right, which
@@ -2400,11 +2400,18 @@ static void test_the_square_slides_into_the_bands_with_one_mapping(void)
         CHECK(q == 1 ? edge_leaned < edge_at_rest : edge_leaned > edge_at_rest,
               "and a lean right moves it to the viewer's right");
     }
-    CHECK(orient_window(0, FACE_LEAN_MAX, FACE_LEAN_MAX) == 0 &&
-              orient_window(2, -FACE_LEAN_MAX, FACE_LEAN_MAX) == 0,
+    CHECK(orient_window(0, FACE_LEAN_MAX, FACE_LEAN_MAX, false) == 0 &&
+              orient_window(2, -FACE_LEAN_MAX, FACE_LEAN_MAX, false) == 0,
           "upright and upside down there is no band to slide into");
-    CHECK(orient_window(1, 1000, FACE_LEAN_MAX_SIDE) == -ORIENT_WIN_MAX,
+    CHECK(orient_window(1, 1000, FACE_LEAN_MAX_SIDE, false) == -ORIENT_WIN_MAX,
           "a lean past the limit is clamped, not extrapolated off the glass");
+    /* The owner, on Jetpack: "the whole game view shifts left and right and the robot doesn't
+       actually change". In a game the side tilt steers him, so the field holds still. */
+    for (int q = 1; q <= 3; q += 2) {
+        CHECK(orient_window(q, FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE, true) == 0 &&
+                  orient_window(q, -FACE_LEAN_MAX_SIDE, FACE_LEAN_MAX_SIDE, true) == 0,
+              "in a game the square stays centred whatever the tilt");
+    }
     int fx, fy;
     orient_panel_to_frame(0, 40, 17, 29, &fx, &fy);
     CHECK(fx == 17 && fy == 29, "portrait ignores the window");

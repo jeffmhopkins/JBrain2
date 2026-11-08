@@ -64,9 +64,9 @@ void orient_axes(int quarter, int ax, int ay, int *tilt, int *down)
     }
 }
 
-int orient_window(int quarter, int lean, int lean_max)
+int orient_window(int quarter, int lean, int lean_max, bool game)
 {
-    if ((quarter != 1 && quarter != 3) || lean_max <= 0) return 0;
+    if (game || (quarter != 1 && quarter != 3) || lean_max <= 0) return 0;
     if (lean > lean_max) lean = lean_max;
     if (lean < -lean_max) lean = -lean_max;
     const int v = lean * ORIENT_WIN_MAX / lean_max;
