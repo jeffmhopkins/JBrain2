@@ -1387,8 +1387,8 @@ static void update_orientation(void)
     if (target < -lean_max) target = -lean_max;
     s_lean += (target - s_lean) / LEAN_SMOOTH;
 
-    /* The square follows the lean into the bands (`orient_window`). */
-    s_win = orient_window(s_quarter, s_lean, lean_max);
+    /* The square follows the lean into the bands (`orient_window`), except in a game. */
+    s_win = orient_window(s_quarter, s_lean, lean_max, game_on(&s_game));
 
     /* AND THE HEAD RIGHTS ITSELF while the body slides (`orient_upright`). */
     const float up = orient_upright(tilt, down, ORIENT_UPRIGHT_SHARE, ORIENT_UPRIGHT_MAX_DEG);

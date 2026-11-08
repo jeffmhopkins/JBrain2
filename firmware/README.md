@@ -1,6 +1,6 @@
 # Room endpoint firmware — ESP32-S3-Touch-AMOLED-1.8
 
-> **Status:** Living · **Last verified:** 2026-10-18
+> **Status:** Living · **Last verified:** 2026-11-08
 
 The firmware for the two Waveshare panels, one per twin. Plan:
 `../docs/plans/ROOM_ENDPOINT_PLAN.md` (§10 is the bring-up design this implements).
@@ -189,6 +189,13 @@ reaches him is a tickle rather than the zone's pool, the first four a giggle and
 laughing fit (`ACT_TICKLE`), after which pokes are pokes again — except during the fit
 itself, which a poke only flinches (`rig_holds_pokes`): the child doing the tickling keeps
 poking, and the sixth poke used to cut the fit off after its first laugh.
+
+**0.4.21: on its side, the game's field holds still.** Owner, on Jetpack with the panel on its
+side: *"The whole game view shifts left and right and the robot doesn't actually change."* The
+square slides into the glass's bands with the pet's lean (0.4.6, `orient_window`), and a game is
+steered by that same side tilt, so the whole field slid sideways while he drifted inside it and
+the slide was what the eye saw. While a game is on the window stays centred; the lean is the
+pet's, and in a game the tilt belongs to him. Both games, and portrait never had a band to slide.
 
 **0.4.19: forward and back the right way round.** Owner, on the panel: *"Direction of games
 should be like marble. Left and right are good, but forward and back are backwards"*. 0.4.18

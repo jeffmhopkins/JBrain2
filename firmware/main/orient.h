@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdbool.h>
+
 /* WHICH WAY UP, WITH A BAND YOU HAVE TO MEAN TO CROSS.
  *
  * The owner: *"the tilt going to 90 and causing an orientation change shouldn't happen right
@@ -51,8 +53,13 @@ void orient_axes(int quarter, int ax, int ay, int *tilt, int *down);
 
 /* Where the square sits for a figure leaned `lean` of `lean_max`: signed panel rows, EVEN (the
    controller takes windows on even rows), zero unless on its side. Viewer-right is panel -Y
-   clockwise and +Y anticlockwise. */
-int orient_window(int quarter, int lean, int lean_max);
+   clockwise and +Y anticlockwise.
+
+   AND IT STAYS PUT WHILE A GAME IS ON (`game`): the game is steered by that same side tilt, so a
+   sliding window carried the whole world sideways while he barely moved inside it. The owner,
+   on Jetpack: *"the whole game view shifts left and right and the robot doesn't actually
+   change."* The lean is the pet's; in a game the tilt belongs to him. */
+int orient_window(int quarter, int lean, int lean_max, bool game);
 
 /* Panel (px, py) to the portrait frame, for the square at `win`. The ONE mapping: the rotated
    blit reads its source through it, and a touch is mapped back through it, so the two cannot
