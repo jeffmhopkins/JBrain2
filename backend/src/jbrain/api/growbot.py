@@ -60,8 +60,8 @@ def _owner_ctx(owner: OwnerDep) -> SessionContext:
 
 
 class TicketIn(BaseModel):
-    # The robot the phone should drive; the link opens the creature on it. Not bound to the
-    # ticket: a redeemed session may drive any of the owner's robots, all of which are theirs.
+    # The robot the phone should drive. Bound to the ticket: redeem answers with it and the
+    # sidecar lets that phone join this robot alone (pairing is JBrain's, owner 2026-11-10).
     code: str | None = Field(default=None, pattern=_CODE)
 
 
