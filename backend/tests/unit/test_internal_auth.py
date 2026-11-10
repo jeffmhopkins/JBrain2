@@ -59,7 +59,7 @@ _PHONE = "phone-0123456789abcdef"
 
 
 class _YesPersonaRepo:
-    async def pull(self, ctx: object, pid: str, phone: str) -> Pulled | None:
+    async def pull(self, ctx: object, pid: str, phone: str, with_soul: bool = True) -> Pulled:
         return Pulled(1, {"soul_format": 3}, None)
 
     async def push(self, ctx: object, pid: str, phone: str, base: int, soul: object) -> int:
@@ -76,6 +76,7 @@ GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("GET", "/internal/growbot/llm/v1/models", None, 200),
     ("POST", "/internal/growbot/llm/v1/chat/completions", {"model": "x", "messages": []}, 400),
     ("POST", "/internal/growbot/soul/pull", {"persona": _PID, "phone": _PHONE}, 200),
+    ("POST", "/internal/growbot/soul/state", {"persona": _PID, "phone": _PHONE}, 200),
     (
         "POST",
         "/internal/growbot/soul/push",

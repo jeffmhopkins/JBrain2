@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Any, Literal, Protocol
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -104,7 +105,8 @@ class PersonaRepo(Protocol):
         *,
         name: str | None = None,
         before: tuple[str, str] | None = None,
-    ) -> tuple[Persona, Checkpoint | None] | None: ...
+        expect: int | None = None,
+    ) -> tuple[Persona, Checkpoint | None] | Literal["stale"] | None: ...
     async def delete(self, ctx: SessionContext, pid: str) -> bool: ...
     async def list_checkpoints(self, ctx: SessionContext, pid: str) -> list[Checkpoint]: ...
     async def get_checkpoint(self, ctx: SessionContext, cid: str) -> Checkpoint | None: ...
@@ -117,7 +119,9 @@ class PersonaRepo(Protocol):
     async def open_on_phone(
         self, ctx: SessionContext, pid: str, phone_id: str, label: str, code: str
     ) -> bool: ...
-    async def pull(self, ctx: SessionContext, pid: str, phone_id: str) -> Pulled | None: ...
+    async def pull(
+        self, ctx: SessionContext, pid: str, phone_id: str, with_soul: bool = True
+    ) -> Pulled | Literal["moved", "gone"]: ...
     async def push(
         self, ctx: SessionContext, pid: str, phone_id: str, base: int, soul: dict[str, Any]
     ) -> PushResult: ...
@@ -243,21 +247,26 @@ class SqlPersonaRepo:
         *,
         name: str | None = None,
         before: tuple[str, str] | None = None,
-    ) -> tuple[Persona, Checkpoint | None] | None:
+        expect: int | None = None,
+    ) -> tuple[Persona, Checkpoint | None] | Literal["stale"] | None:
         """The owner's write: an automatic checkpoint of the soul as it is (`before` = its name
-        and why) and then the new soul, in one transaction, bumping the version."""
+        and why) and then the new soul, in one transaction, bumping the version. With `expect`,
+        "stale" when the soul is no longer that version (the phone wrote in between), so an
+        edit made from an older read never drops what the creature just wrote."""
         if (key := _uuid(pid)) is None:
             return None
         async with scoped_session(self._maker, ctx) as session:
             # Locks the row, so two writes in flight cannot both checkpoint the same soul.
             found = (
                 await session.execute(
-                    text("SELECT 1 FROM app.growbot_personas WHERE id = :p FOR UPDATE"),
+                    text("SELECT version FROM app.growbot_personas WHERE id = :p FOR UPDATE"),
                     {"p": key},
                 )
             ).first()
             if found is None:
                 return None
+            if expect is not None and found.version != expect:
+                return "stale"
             cp = None
             if before is not None:
                 cp = await self._checkpoint_now(session, key, before[0], True, before[1])
@@ -343,10 +352,19 @@ class SqlPersonaRepo:
         key = None
         if pid is not None and (key := _uuid(pid)) is None:
             return False
-        async with scoped_session(self._maker, ctx) as session:
-            return await self._ride(session, code, key)
+        try:
+            async with scoped_session(self._maker, ctx) as session:
+                return await self._ride(session, code, key)
+        except IntegrityError:
+            # Another pick put this persona in another robot at the same moment.
+            return False
 
     async def _ride(self, session: AsyncSession, code: str, pid: str | None) -> bool:
+        # Rider changes are rare and touch several robots' rows, so they take one lock and run
+        # one at a time instead of deadlocking.
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended('growbot-body', 0))")
+        )
         robot = (
             await session.execute(
                 text("SELECT 1 FROM app.growbot_robots WHERE code = :c"), {"c": code}
@@ -386,78 +404,108 @@ class SqlPersonaRepo:
     ) -> bool:
         """A ticket for persona `pid` was spent on `phone_id`: the phone now holds it (and only
         it), and with `code` it wears that robot. Opened alone, it leaves a body it wore on
-        another phone, which stands still until a persona connects."""
+        another phone, which stands still until a persona connects. False, with nothing
+        changed, when the persona or the robot is gone or another open raced this one."""
         if (key := _uuid(pid)) is None:
             return False
-        async with scoped_session(self._maker, ctx) as session:
-            held = (
+        try:
+            async with scoped_session(self._maker, ctx) as session:
+                return await self._open(session, key, phone_id, label, code)
+        except IntegrityError:
+            # Two tickets spent on one phone at once: the one-persona-per-phone index let one
+            # through, and this one opens nothing.
+            return False
+
+    async def _open(
+        self, session: AsyncSession, pid: str, phone_id: str, label: str, code: str
+    ) -> bool:
+        # One open per phone at a time: two tickets spent on one phone would otherwise lock
+        # two personas in opposite orders and deadlock.
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended('growbot-phone:' || :ph, 0))"),
+            {"ph": phone_id},
+        )
+        held = (
+            await session.execute(
+                text("SELECT phone_id FROM app.growbot_personas WHERE id = :p FOR UPDATE"),
+                {"p": pid},
+            )
+        ).first()
+        if held is None:
+            return False
+        if code:
+            robot = (
                 await session.execute(
-                    text("SELECT phone_id FROM app.growbot_personas WHERE id = :p FOR UPDATE"),
-                    {"p": key},
+                    text("SELECT 1 FROM app.growbot_robots WHERE code = :c"), {"c": code}
                 )
             ).first()
-            if held is None:
+            if robot is None:
                 return False
+        await session.execute(
+            text(
+                "INSERT INTO app.growbot_phones (id, label) VALUES (:id, :l)"
+                " ON CONFLICT (id) DO UPDATE SET last_seen_at = now(),"
+                " label = CASE WHEN app.growbot_phones.label = '' THEN EXCLUDED.label"
+                " ELSE app.growbot_phones.label END"
+            ),
+            {"id": phone_id, "l": label[:PHONE_LABEL_MAX]},
+        )
+        moved = held.phone_id is not None and held.phone_id != phone_id
+        # The persona this phone held closes here; it is kept on the box.
+        await session.execute(
+            text(
+                "UPDATE app.growbot_personas SET phone_id = NULL WHERE phone_id = :ph AND id <> :p"
+            ),
+            {"ph": phone_id, "p": pid},
+        )
+        await session.execute(
+            text(
+                "UPDATE app.growbot_personas SET phone_id = :ph, last_phone_id = :ph,"
+                " opened_at = now() WHERE id = :p"
+            ),
+            {"ph": phone_id, "p": pid},
+        )
+        if code:
+            return await self._ride(session, code, pid)
+        if moved:
             await session.execute(
                 text(
-                    "INSERT INTO app.growbot_phones (id, label) VALUES (:id, :l)"
-                    " ON CONFLICT (id) DO UPDATE SET last_seen_at = now(),"
-                    " label = CASE WHEN app.growbot_phones.label = '' THEN EXCLUDED.label"
-                    " ELSE app.growbot_phones.label END"
+                    "UPDATE app.growbot_body SET persona_id = NULL, since = now()"
+                    " WHERE persona_id = :p"
                 ),
-                {"id": phone_id, "l": label[:PHONE_LABEL_MAX]},
+                {"p": pid},
             )
-            moved = held.phone_id is not None and held.phone_id != phone_id
-            # The persona this phone held closes here; it is kept on the box.
-            await session.execute(
-                text(
-                    "UPDATE app.growbot_personas SET phone_id = NULL"
-                    " WHERE phone_id = :ph AND id <> :p"
-                ),
-                {"ph": phone_id, "p": key},
-            )
-            await session.execute(
-                text(
-                    "UPDATE app.growbot_personas SET phone_id = :ph, last_phone_id = :ph,"
-                    " opened_at = now() WHERE id = :p"
-                ),
-                {"ph": phone_id, "p": key},
-            )
-            if code:
-                return await self._ride(session, code, key)
-            if moved:
-                await session.execute(
-                    text(
-                        "UPDATE app.growbot_body SET persona_id = NULL, since = now()"
-                        " WHERE persona_id = :p"
-                    ),
-                    {"p": key},
-                )
-            return True
+        return True
 
-    async def pull(self, ctx: SessionContext, pid: str, phone_id: str) -> Pulled | None:
-        """The soul for the phone that holds `pid`; None when it doesn't (any more)."""
+    async def pull(
+        self, ctx: SessionContext, pid: str, phone_id: str, with_soul: bool = True
+    ) -> Pulled | Literal["moved", "gone"]:
+        """The soul for the phone that holds `pid`: "moved" when another phone holds it now,
+        "gone" when it was deleted. Without the soul it is the phone's cheap poll: has the
+        owner changed it, has the body moved."""
         if (key := _uuid(pid)) is None:
-            return None
+            return "gone"
         async with scoped_session(self._maker, ctx) as session:
             row = (
                 await session.execute(
                     text(
-                        "SELECT p.version, p.soul,"
+                        f"SELECT p.version, {'p.soul' if with_soul else 'NULL'} AS soul,"
                         " (SELECT b.code FROM app.growbot_body b WHERE b.persona_id = p.id"
                         "  LIMIT 1) AS wearing"
-                        " FROM app.growbot_personas p WHERE p.id = :p AND p.phone_id = :ph"
+                        ", p.phone_id FROM app.growbot_personas p WHERE p.id = :p"
                     ),
-                    {"p": key, "ph": phone_id},
+                    {"p": key},
                 )
             ).first()
             if row is None:
-                return None
+                return "gone"
+            if row.phone_id != phone_id:
+                return "moved"
             await session.execute(
                 text("UPDATE app.growbot_phones SET last_seen_at = now() WHERE id = :ph"),
                 {"ph": phone_id},
             )
-            return Pulled(row.version, dict(row.soul), row.wearing)
+            return Pulled(row.version, dict(row.soul or {}), row.wearing)
 
     async def push(
         self, ctx: SessionContext, pid: str, phone_id: str, base: int, soul: dict[str, Any]

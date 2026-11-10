@@ -12,8 +12,9 @@ screen").
   persona a phone was opened as, and read a robot's rider, all keyed by the phone id the
   sidecar signed into that phone's session, so a phone reaches only its own persona.
 
-Every owner write to a soul makes an automatic checkpoint first, so each one can be undone, and
-bumps the persona's version, so the phone holding it reloads instead of overwriting it.
+Every edit, restore, reset and import makes an automatic checkpoint first, so each one can be
+undone (a rename changes only the name, so it makes none). Every write bumps the persona's
+version, so the phone holding it reloads instead of overwriting it.
 """
 
 from __future__ import annotations
@@ -192,10 +193,16 @@ async def _written(
     soul: dict[str, Any],
     before: tuple[str, str] | None,
     name: str | None = None,
+    expect: int | None = None,
 ) -> WrittenOut:
-    done = await _repo(request).write_soul(ctx, pid, soul, name=name, before=before)
+    done = await _repo(request).write_soul(ctx, pid, soul, name=name, before=before, expect=expect)
     if done is None:
         raise HTTPException(status_code=404, detail="no such persona")
+    if done == "stale":
+        raise HTTPException(
+            status_code=409,
+            detail="It changed on its phone while you were editing. Nothing was saved — try again.",
+        )
     persona, cp = done
     return WrittenOut(
         persona=await _detail(request, ctx, persona),
@@ -287,7 +294,9 @@ async def rename_persona(request: Request, owner: OwnerDep, pid: Pid, body: Rena
     ctx = _owner_ctx(owner)
     p = await _get(request, ctx, pid)
     name = _name(body.name)
-    return await _written(request, ctx, pid, souls.renamed(p.soul or {}, name), None, name)
+    return await _written(
+        request, ctx, pid, souls.renamed(p.soul or {}, name), None, name, p.version
+    )
 
 
 @router.put("/personas/{pid}/regions/{region}")
@@ -305,7 +314,7 @@ async def edit_region(
     if region == "meta":
         name = _name(str(soul["meta"]["name"]))
     before = (f"Before editing {_REGION_LABEL[region]}", "made before an edit")
-    return await _written(request, ctx, pid, soul, before, name)
+    return await _written(request, ctx, pid, soul, before, name, p.version)
 
 
 @router.post("/personas/{pid}/duplicate")
@@ -340,7 +349,9 @@ async def export_persona(request: Request, owner: OwnerDep, pid: Pid) -> Respons
     """The soul file, in upstream's snapshot shape. Visual memories stay on the box."""
     p = await _get(request, _owner_ctx(owner), pid)
     doc = souls.for_export(p.soul or {}, p.name)
-    slug = "".join(c if c.isalnum() else "-" for c in p.name.lower()).strip("-") or "persona"
+    # ASCII only: the header is Latin-1, and a name in another script must still download.
+    slug = "".join(c if c.isascii() and c.isalnum() else "-" for c in p.name.lower())
+    slug = "-".join(part for part in slug.split("-") if part) or "persona"
     return Response(
         content=json.dumps(doc, ensure_ascii=False, indent=1).encode(),
         media_type="application/json",
@@ -455,32 +466,56 @@ class BodyOut(BaseModel):
     phone: str | None
 
 
+def _away(why: str) -> HTTPException:
+    """409 `moved` (another phone holds it: the creature shows that it has moved) or 404
+    `gone` (deleted: the creature shows that)."""
+    return HTTPException(status_code=404 if why == "gone" else 409, detail=why)
+
+
 def _phone_ok(body: PhoneIn) -> bool:
     return bool(PHONE_RE.fullmatch(body.phone)) and len(body.persona) <= 64
 
 
 @internal_router.post("/soul/pull")
 async def pull_soul(request: Request, body: PhoneIn) -> PulledOut:
-    """The soul of the persona this phone holds. 409 when another phone has it now (the
-    creature shows that it has moved); 401 for a body that names no phone."""
+    """The soul of the persona this phone holds. 409 `moved` when another phone has it now,
+    404 `gone` when it was deleted, 401 for a body that names no phone."""
     if not _phone_ok(body):
         raise HTTPException(status_code=401, detail="unauthorized")
     got = await _repo(request).pull(_SYSTEM_OWNER, body.persona, body.phone)
-    if got is None:
-        raise HTTPException(status_code=409, detail="moved")
+    if isinstance(got, str):
+        raise _away(got)
     return PulledOut(version=got.version, soul=got.soul, wearing=got.wearing)
+
+
+class StateOut(BaseModel):
+    version: int
+    wearing: str | None
+
+
+@internal_router.post("/soul/state")
+async def soul_state(request: Request, body: PhoneIn) -> StateOut:
+    """The phone's poll, without the soul: its version (a newer one means the owner changed it;
+    pull and reload) and the robot it wears. 409 `moved` and 404 `gone` as the pull."""
+    if not _phone_ok(body):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    got = await _repo(request).pull(_SYSTEM_OWNER, body.persona, body.phone, with_soul=False)
+    if isinstance(got, str):
+        raise _away(got)
+    return StateOut(version=got.version, wearing=got.wearing)
 
 
 @internal_router.post("/soul/push")
 async def push_soul(request: Request, body: PushIn) -> PushedOut:
     """The creature's own write. 409 `moved` (another phone holds it), 409 `newer` (the owner
-    changed it; pull and reload), 404 `gone` (deleted), 413 over the soul cap."""
+    changed it; pull and reload), 404 `gone` (deleted), 413 over the soul cap, 400 for a body
+    that is not a soul."""
     if not _phone_ok(body):
         raise HTTPException(status_code=401, detail="unauthorized")
     try:
         soul = souls.from_phone(body.soul)
     except souls.SoulError as exc:
-        status = 413 if isinstance(exc, souls.SoulTooBig) else 422
+        status = 413 if isinstance(exc, souls.SoulTooBig) else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     result = await _repo(request).push(_SYSTEM_OWNER, body.persona, body.phone, body.base, soul)
     if result == "gone":

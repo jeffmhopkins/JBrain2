@@ -28,7 +28,7 @@ from jbrain.api.internal_auth import require_growbot
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, device_context, jshare_context, scoped_session
 from jbrain.growbot import souls
-from jbrain.growbot.personas import AUTO_KEEP, SqlPersonaRepo
+from jbrain.growbot.personas import AUTO_KEEP, Pulled, SqlPersonaRepo
 from jbrain.growbot.repo import Redeemed, SqlGrowbotRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
@@ -97,7 +97,7 @@ async def test_a_non_owner_can_neither_read_nor_change_a_persona(
     repo, sprout, bolt = await _world(maker)
     assert await repo.list_personas(ctx) == []
     assert await repo.get_persona(ctx, sprout) is None
-    assert await repo.pull(ctx, sprout, PHONE_A) is None
+    assert await repo.pull(ctx, sprout, PHONE_A) == "gone"
     assert await repo.push(ctx, sprout, PHONE_A, 1, {"soul_format": 3}) == "gone"
     assert await repo.write_soul(ctx, sprout, {"soul_format": 3, "x": 1}) is None
     assert not await repo.delete(ctx, sprout)
@@ -183,6 +183,43 @@ async def test_open_refuses_a_missing_persona_or_robot(maker: async_sessionmaker
     )
     assert not await repo.open_on_phone(SYSTEM_OWNER, "x", PHONE_B, "", "")
     assert not await repo.open_on_phone(SYSTEM_OWNER, sprout, PHONE_B, "", "gb-gone")
+    # A refused open changes nothing: Sprout stays on phone A, wearing Fish, and phone B was
+    # never recorded.
+    got = await repo.get_persona(OWNER, sprout)
+    assert got is not None and got.phone_id == PHONE_A and got.wearing == "gb-fish"
+    assert [f.id for f in await repo.list_phones(OWNER)] == [PHONE_A]
+
+
+async def test_racing_picks_put_a_persona_in_one_body(maker: async_sessionmaker) -> None:
+    repo, sprout, _ = await _world(maker)
+    await SqlGrowbotRepo(maker).put_robot(OWNER, "gb-dog", "Dog")
+    await repo.set_rider(OWNER, "gb-fish", None)
+    picks = await asyncio.gather(
+        *(repo.set_rider(OWNER, code, sprout) for code in ("gb-fish", "gb-dog") * 3)
+    )
+    assert any(picks)
+    worn = [r.code for r in await repo.riders(OWNER) if r.persona_id == sprout]
+    assert len(worn) == 1
+
+
+async def test_racing_opens_on_one_phone_hold_one_persona(maker: async_sessionmaker) -> None:
+    repo, sprout, bolt = await _world(maker)
+    opens = await asyncio.gather(
+        *(repo.open_on_phone(SYSTEM_OWNER, p, PHONE_B, "", "") for p in (sprout, bolt) * 3)
+    )
+    assert any(opens)
+    on_b = [p.id for p in await repo.list_personas(OWNER) if p.phone_id == PHONE_B]
+    assert len(on_b) == 1
+
+
+async def test_an_edit_from_an_older_read_is_refused(maker: async_sessionmaker) -> None:
+    repo, sprout, _ = await _world(maker)
+    assert await repo.push(SYSTEM_OWNER, sprout, PHONE_A, 1, {"soul_format": 3, "n": 1}) == 2
+    assert await repo.write_soul(OWNER, sprout, {"soul_format": 3}, expect=1) == "stale"
+    got = await repo.get_persona(OWNER, sprout)
+    assert got is not None and got.soul == {"soul_format": 3, "n": 1}
+    done = await repo.write_soul(OWNER, sprout, {"soul_format": 3}, expect=2)
+    assert done is not None and done != "stale" and done[0].version == 3
 
 
 # -- sync -----------------------------------------------------------------------------------
@@ -193,8 +230,8 @@ async def test_a_phone_pushes_only_what_it_holds_against_what_it_pulled(
 ) -> None:
     repo, sprout, _ = await _world(maker)
     pulled = await repo.pull(SYSTEM_OWNER, sprout, PHONE_A)
-    assert pulled is not None and pulled.version == 1 and pulled.wearing == "gb-fish"
-    assert await repo.pull(SYSTEM_OWNER, sprout, PHONE_B) is None
+    assert isinstance(pulled, Pulled) and pulled.version == 1 and pulled.wearing == "gb-fish"
+    assert await repo.pull(SYSTEM_OWNER, sprout, PHONE_B) == "moved"
     grown = {"soul_format": 3, "identity": "I am Sprout and I walked six steps today."}
     assert await repo.push(SYSTEM_OWNER, sprout, PHONE_A, 1, grown) == 2
     # A stale base is refused: the phone must pull first.
@@ -203,7 +240,7 @@ async def test_a_phone_pushes_only_what_it_holds_against_what_it_pulled(
     await repo.write_soul(OWNER, sprout, {"soul_format": 3, "edited": True}, before=("b", "w"))
     assert await repo.push(SYSTEM_OWNER, sprout, PHONE_A, 2, grown) == "newer"
     again = await repo.pull(SYSTEM_OWNER, sprout, PHONE_A)
-    assert again is not None and again.version == 3 and again.soul["edited"] is True
+    assert isinstance(again, Pulled) and again.version == 3 and again.soul["edited"] is True
     # Another phone that never held it is refused as moved, whatever version it names.
     assert await repo.push(SYSTEM_OWNER, sprout, PHONE_B, 3, grown) == "moved"
     assert (
@@ -211,7 +248,7 @@ async def test_a_phone_pushes_only_what_it_holds_against_what_it_pulled(
         == "gone"
     )
     assert await repo.push(SYSTEM_OWNER, "nope", PHONE_A, 1, {}) == "gone"
-    assert await repo.pull(SYSTEM_OWNER, "nope", PHONE_A) is None
+    assert await repo.pull(SYSTEM_OWNER, "nope", PHONE_A) == "gone"
 
 
 async def test_racing_pushes_on_one_version_write_once(maker: async_sessionmaker) -> None:
@@ -230,7 +267,7 @@ async def test_a_write_checkpoints_the_soul_as_it_was(maker: async_sessionmaker)
     done = await repo.write_soul(
         OWNER, sprout, {"soul_format": 3, "v": 2}, name="Sprout II", before=("Before x", "why")
     )
-    assert done is not None
+    assert done is not None and done != "stale"
     persona, cp = done
     assert (
         persona.version == 2
@@ -295,8 +332,10 @@ async def test_the_schema_bounds_names_and_shapes(maker: async_sessionmaker) -> 
         await repo.create(OWNER, "x" * 41, {"soul_format": 3}, "")
     with pytest.raises(DBAPIError):
         await repo.create(OWNER, "", {"soul_format": 3}, "")
-    with pytest.raises(DBAPIError):
-        await repo.open_on_phone(SYSTEM_OWNER, sprout, "short", "", "")
+    # A phone id the schema refuses opens nothing, and changes nothing.
+    assert not await repo.open_on_phone(SYSTEM_OWNER, sprout, "short", "", "")
+    got = await repo.get_persona(OWNER, sprout)
+    assert got is not None and got.phone_id == PHONE_A
     with pytest.raises(DBAPIError):
         async with scoped_session(maker, OWNER) as session:
             await session.execute(text("UPDATE app.growbot_personas SET soul = '[1]'::jsonb"))
@@ -410,6 +449,9 @@ async def test_routes_export_and_import(maker: async_sessionmaker) -> None:
     doc = r.json()
     assert doc["meta"]["kind"] == "snapshot" and doc["soul_format"] == 3
 
+    other = _make(c, "火の鳥 Pip")["id"]
+    named_header = c.get(f"/api/growbot/personas/{other}/export").headers
+    assert named_header["content-disposition"] == 'attachment; filename="pip-soul.json"'
     made = c.post("/api/growbot/personas/import", json={"soul": doc}).json()
     assert (
         made["persona"]["name"] == "Captain Bolt" and made["persona"]["made_from"] == "a soul file"
@@ -491,6 +533,11 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
         json={"persona": sprout, "phone": PHONE_A, "base": 1, "soul": {"soul_format": 3}},
     )
     assert stale.status_code == 409 and stale.json()["detail"] == "newer"
+    state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_A})
+    assert state.json() == {"version": 2, "wearing": None}
+    moved_state = c.post("/internal/growbot/soul/state", json={"persona": sprout, "phone": PHONE_B})
+    assert moved_state.status_code == 409
+    assert c.post("/internal/growbot/soul/state", json={}).status_code == 401
     elsewhere = c.post("/internal/growbot/soul/pull", json={"persona": sprout, "phone": PHONE_B})
     assert elsewhere.status_code == 409 and elsewhere.json()["detail"] == "moved"
     for body in (
@@ -504,7 +551,7 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
         "/internal/growbot/soul/push",
         json={"persona": sprout, "phone": PHONE_A, "base": 2, "soul": {"soul_format": 2}},
     )
-    assert not_soul.status_code == 422
+    assert not_soul.status_code == 400
     huge = {"soul_format": 3, "log": ["x" * 1000] * 1100}
     too_big = c.post(
         "/internal/growbot/soul/push",
@@ -526,6 +573,10 @@ async def test_routes_open_hand_over_and_who_wears_fish(maker: async_sessionmake
     ticket = c.post("/api/growbot/ticket", json={"persona": bolt}).json()["ticket"]
     c.delete(f"/api/growbot/personas/{bolt}")
     assert c.post(redeem, json={"ticket": ticket, "phone": PHONE_B}).status_code == 401
+    gone_pull = c.post(
+        "/internal/growbot/soul/pull", json={"persona": bolt, "phone": fresh["phone"]}
+    )
+    assert gone_pull.status_code == 404 and gone_pull.json()["detail"] == "gone"
     unknown = c.post(
         "/api/growbot/ticket", json={"persona": "00000000-0000-4000-8000-000000000000"}
     )

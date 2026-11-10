@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from typing import Any
 
@@ -26,6 +27,8 @@ REGIONS = ("persona", "expression", "meta", "dream", "harness", "body")
 # Free-text regions, with the field that holds the text and its cap in sanitizeSoulCfg.
 TEXT_REGIONS = {"persona": ("constitution", 6000), "dream": ("system_prompt", 8000)}
 JSON_REGIONS = ("expression", "harness", "body")
+# soul.js IDENTITY_CORE_CAP: the bond line's length.
+IDENTITY_CORE_CAP = 240
 # A JSON region's own cap, far past any real one (body.json is ~2 KB).
 MAX_REGION_BYTES = 64_000
 
@@ -56,11 +59,13 @@ def _size(doc: Any) -> int:
 
 
 def _dream_limits(raw: dict[str, Any]) -> dict[str, float | int]:
-    """soul.js `cleanDreamLimits`: only the known numbers, each clamped; upstream reads no
-    other key and no stored number may move a cap."""
+    """soul.js `cleanDreamLimits`: only the known numbers, each positive and finite, clamped;
+    anything else is left out so the creature's default applies."""
     out: dict[str, float | int] = {}
     bounds = {
-        "longing_step": (0.0, 1.0, False),
+        "identity_cap_chars": (800, 1600, True),
+        "identity_min_after_drop": (20, 1600, False),
+        "longing_step": (0, 1, False),
         "wants_max": (1, 4, True),
         "add_words_max": (1, 160, True),
     }
@@ -68,8 +73,10 @@ def _dream_limits(raw: dict[str, Any]) -> dict[str, float | int]:
         v = raw.get(key)
         if isinstance(v, bool) or not isinstance(v, int | float):
             continue
-        clamped = max(lo, min(hi, v))
-        out[key] = int(clamped) if whole else float(clamped)
+        if not math.isfinite(v) or v <= 0:
+            continue
+        clamped = min(hi, max(lo, v))
+        out[key] = math.floor(clamped) if whole else clamped
     return out
 
 
@@ -191,10 +198,50 @@ def from_file(raw: Any) -> dict[str, Any]:
         raise SoulError("That isn't a soul file — it has no soul format in it. Nothing changed.")
     soul = {k: copy.deepcopy(v) for k, v in raw.items() if k not in REGIONS}
     soul.update(sanitize_cfg(raw))
+    meta = obj(raw.get("meta"))
+    if meta.get("kind") == "snapshot":
+        # A grown creature comes back with its own bond line, cleaned and capped.
+        if isinstance(soul.get("identityCore"), str):
+            soul["identityCore"] = clean(soul["identityCore"], IDENTITY_CORE_CAP)
+        else:
+            soul.pop("identityCore", None)
+    else:
+        _as_template(soul)
     # The box keeps its own revision; a file's would only confuse the phone's merge.
     for key in ("rev", "savedAt", "writeId", "readOnly", "merged"):
         soul.pop(key, None)
     return soul
+
+
+def _as_template(soul: dict[str, Any]) -> None:
+    """soul.js `soulFromFile`'s template branch: a character to be born fresh. Its bond has not
+    happened yet (keeping the uploader's would shut the append-once door from birth), it has no
+    diary, and the person's own choices (its name, their name, languages) belong to the
+    creature whose person made them."""
+    soul["identityCore"] = ""
+    soul["log"] = []
+    soul["bornAt"] = 0
+    scratch = obj(soul.get("scratch"))
+    soul["scratch"] = {
+        "state": "awake and curious",
+        "mood": scratch.get("mood") or {"v": 0.3, "e": 0.5},
+        "rules": scratch["rules"] if isinstance(scratch.get("rules"), list) else [],
+        "reflexes": scratch["reflexes"] if isinstance(scratch.get("reflexes"), list) else [],
+        "traces": [],
+        "pendingProposal": "",
+    }
+    goals = obj(soul.get("goals"))
+    longing = goals.get("longing")
+    soul["goals"] = {
+        "wants": goals["wants"][:4] if isinstance(goals.get("wants"), list) else [],
+        "longing": longing
+        if isinstance(longing, int | float) and not isinstance(longing, bool)
+        else 0.2,
+        "call": goals["call"] if isinstance(goals.get("call"), list) else [],
+        "nextTry": "",
+        "funLog": [],
+        "ladder": {"for": "", "rungs": []},
+    }
 
 
 def edit_region(soul: dict[str, Any], region: str, value: Any) -> dict[str, Any]:

@@ -94,6 +94,11 @@ def upgrade() -> None:
         )
         """
     )
+    # One body per persona: two Who-wears-Fish picks racing cannot put it in two robots.
+    op.execute(
+        "CREATE UNIQUE INDEX growbot_body_one_per_persona"
+        " ON app.growbot_body (persona_id) WHERE persona_id IS NOT NULL"
+    )
     op.execute(
         """
         ALTER TABLE app.growbot_tickets

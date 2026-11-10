@@ -51,7 +51,14 @@ def test_sanitize_keeps_only_known_fields_each_capped() -> None:
         },
         "dream": {
             "system_prompt": "d " * 5000,
-            "limits": {"wants_max": 99, "longing_step": -3, "add_words_max": 2.7, "x": 1},
+            "limits": {
+                "wants_max": 99,
+                "longing_step": -3,
+                "add_words_max": 2.7,
+                "identity_cap_chars": 5000,
+                "identity_min_after_drop": 5,
+                "x": 1,
+            },
             "scene_vocab": ["Kitchen!", "", 3, "Desk"] + ["w"] * 50,
         },
         "harness": {"models": {"fast": "m" * 100, "dream": 7}, "max_tokens": 5000, "timing": {}},
@@ -68,7 +75,14 @@ def test_sanitize_keeps_only_known_fields_each_capped() -> None:
         "output_contract": {"k": 1},
     }
     assert len(cfg["dream"]["system_prompt"]) <= 8000
-    assert cfg["dream"]["limits"] == {"wants_max": 4, "longing_step": 0.0, "add_words_max": 2}
+    # cleanDreamLimits: positive finite numbers only, clamped; a negative is dropped, so the
+    # creature's default applies.
+    assert cfg["dream"]["limits"] == {
+        "identity_cap_chars": 1600,
+        "identity_min_after_drop": 20,
+        "wants_max": 4,
+        "add_words_max": 2,
+    }
     assert cfg["dream"]["scene_vocab"][:3] == ["kitchen", "desk", "w"]
     assert len(cfg["dream"]["scene_vocab"]) == 40
     assert cfg["harness"] == {"models": {"fast": "m" * 80}, "max_tokens": 1024, "timing": {}}
@@ -77,6 +91,8 @@ def test_sanitize_keeps_only_known_fields_each_capped() -> None:
     # A bool is not a number to clamp, and the floor holds.
     assert souls.sanitize_cfg({"harness": {"max_tokens": True}})["harness"] == {}
     assert souls.sanitize_cfg({"harness": {"max_tokens": 1}})["harness"]["max_tokens"] == 48
+    zero = souls.sanitize_cfg({"dream": {"limits": {"longing_step": 0, "wants_max": float("inf")}}})
+    assert zero["dream"]["limits"] == {}
     assert souls.sanitize_cfg({"dream": {"limits": {"wants_max": True}}})["dream"]["limits"] == {}
     assert souls.sanitize_cfg({"dream": {"limits": []}})["dream"] == {}
 
@@ -107,6 +123,7 @@ def test_the_phone_must_send_a_format_3_soul() -> None:
 
 def test_an_import_is_cleaned_and_loses_the_files_revision() -> None:
     raw = _grown() | {"persona": {"constitution": "  loud   voice  ", "hack": 1}}
+    raw["meta"] = {"name": "Sprout", "kind": "snapshot"}
     soul = souls.from_file(raw)
     assert soul["persona"] == {"constitution": "loud voice"}
     assert "rev" not in soul and "writeId" not in soul
@@ -184,3 +201,30 @@ def test_export_is_a_snapshot_without_the_tabs_bookkeeping() -> None:
     assert out["meta"]["kind"] == "snapshot" and out["meta"]["name"] == "Sprout"
     assert "writeId" not in out and out["soul_format"] == 3
     assert souls.for_export({}, "Pip")["meta"]["name"] == "Pip"
+
+
+def test_a_snapshots_bond_line_is_capped() -> None:
+    raw = _grown() | {"identityCore": "b " * 400, "meta": {"kind": "snapshot"}}
+    assert len(souls.from_file(raw)["identityCore"]) == 240
+    raw = _grown() | {"identityCore": {"forged": 1}, "meta": {"kind": "snapshot"}}
+    assert "identityCore" not in souls.from_file(raw)
+
+
+def test_a_template_is_born_fresh() -> None:
+    """soul.js soulFromFile's template branch: no bond, no diary, none of its person's choices,
+    so a gallery soul never arrives with its uploader's bond line."""
+    raw = _grown() | {
+        "meta": {"name": "Gallery Bolt", "kind": "template"},
+        "goals": {"wants": list("abcdef"), "selfName": "Bolt", "owner": "Q", "longing": 0.5},
+        "scratch": {"rules": ["be brave"], "mood": {"v": 1, "e": 1}, "glows": [1]},
+    }
+    soul = souls.from_file(raw)
+    assert soul["identityCore"] == "" and soul["log"] == [] and soul["bornAt"] == 0
+    assert soul["goals"]["wants"] == list("abcd") and soul["goals"]["longing"] == 0.5
+    assert "selfName" not in soul["goals"] and "owner" not in soul["goals"]
+    assert soul["scratch"]["rules"] == ["be brave"] and soul["scratch"]["mood"] == {"v": 1, "e": 1}
+    assert "glows" not in soul["scratch"]
+    # The personality and its identity text still come with it.
+    assert soul["identity"] == raw["identity"]
+    bare = souls.from_file({"soul_format": 3, "goals": {"longing": True}})
+    assert bare["goals"]["longing"] == 0.2 and bare["scratch"]["rules"] == []
