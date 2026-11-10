@@ -351,7 +351,8 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   `growbot_settings` table, its RLS and isolation test, the owner routes, the app's pickup and
   report route, and the apply hook with idle reload (§2b).
 - **G4 — the creature on the box, and profiles.** GUI gate first (the persona list on the
-  GrowBot screen, with *Connect to body* on it). The profile tables and blob storage, RLS
+  GrowBot screen, with *Connect to body* on it; three mocks awaiting the owner's pick in
+  `docs/mocks/growbot-personas/`). The profile tables and blob storage, RLS
   and isolation tests, the pull/push/hand-over routes and the body-rider route with their auth
   tests, the loader's sync patch (and hiding the creature's own pairing box), checkpoints (save, list, restore) and seeds, the soul and
   memory viewer, and PWA add (from a seed), per-persona Open, *Connect to body*,
