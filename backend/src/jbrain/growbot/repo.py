@@ -53,13 +53,24 @@ class MintedTicket:
     expires_at: datetime
 
 
+@dataclass(frozen=True)
+class Redeemed:
+    # The robot the phone may drive ('' for none) and the persona it opens as (None: G2's
+    # tickets, which open the creature with whatever soul the phone has).
+    code: str
+    persona_id: str | None = None
+
+
 class GrowbotRepo(Protocol):
-    async def mint_ticket(self, ctx: SessionContext, code: str = "") -> MintedTicket:
-        """A ticket that opens the creature on robot `code` ('' for none)."""
+    async def mint_ticket(
+        self, ctx: SessionContext, code: str = "", persona_id: str | None = None
+    ) -> MintedTicket:
+        """A ticket that opens the creature on robot `code` ('' for none), as persona
+        `persona_id` (None for the phone's own soul)."""
         ...
 
-    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> str | None:
-        """Spend `ticket` if it is unused and unexpired: its robot code ('' for none), exactly
+    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> Redeemed | None:
+        """Spend `ticket` if it is unused and unexpired: its robot code and persona, exactly
         once per ticket; None otherwise."""
         ...
 
@@ -92,7 +103,9 @@ class SqlGrowbotRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
 
-    async def mint_ticket(self, ctx: SessionContext, code: str = "") -> MintedTicket:
+    async def mint_ticket(
+        self, ctx: SessionContext, code: str = "", persona_id: str | None = None
+    ) -> MintedTicket:
         if code and not CODE_RE.fullmatch(code):
             raise ValueError("not a pairing code")
         ticket = generate_session_token()
@@ -107,16 +120,22 @@ class SqlGrowbotRepo:
             expires_at = (
                 await session.execute(
                     text(
-                        "INSERT INTO app.growbot_tickets (ticket_hash, expires_at, robot_code)"
-                        " VALUES (:h, now() + make_interval(secs => :ttl), :code)"
-                        " RETURNING expires_at"
+                        "INSERT INTO app.growbot_tickets"
+                        " (ticket_hash, expires_at, robot_code, persona_id)"
+                        " VALUES (:h, now() + make_interval(secs => :ttl), :code,"
+                        " CAST(:p AS uuid)) RETURNING expires_at"
                     ),
-                    {"h": hash_token(ticket), "ttl": TICKET_TTL.total_seconds(), "code": code},
+                    {
+                        "h": hash_token(ticket),
+                        "ttl": TICKET_TTL.total_seconds(),
+                        "code": code,
+                        "p": persona_id,
+                    },
                 )
             ).scalar_one()
         return MintedTicket(ticket=ticket, expires_at=expires_at)
 
-    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> str | None:
+    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> Redeemed | None:
         if not ticket:
             return None
         # One statement: two redeems racing on the same ticket cannot both see it unused.
@@ -125,12 +144,12 @@ class SqlGrowbotRepo:
                 text(
                     "UPDATE app.growbot_tickets SET used_at = now()"
                     " WHERE ticket_hash = :h AND used_at IS NULL AND expires_at > now()"
-                    " RETURNING robot_code"
+                    " RETURNING robot_code, persona_id::text AS persona_id"
                 ),
                 {"h": hash_token(ticket)},
             )
             row = spent.first()
-            return None if row is None else str(row.robot_code)
+            return None if row is None else Redeemed(str(row.robot_code), row.persona_id)
 
     async def put_robot(self, ctx: SessionContext, code: str, name: str | None = None) -> str:
         key = generate_capability_key()
