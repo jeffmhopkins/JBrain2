@@ -155,7 +155,9 @@ change made on one phone is invisible everywhere else.
 - **The pattern is `panel_settings.py`'s** (the desk panel's settings from the PWA: asked for
   here, taken by the device, reported back): a `growbot_settings` table, one row for the house's
   robot (there is one body; personas carry only the soul, §2c, so voice, model and walk settings
-  stay with the robot and apply to every persona), holding what the phone app last reported and the queue of what the owner asked for, under RLS
+  stay with the robot and apply to every persona; only the phone riding the body reports into
+  it or takes its queue, so a persona open on a phone alone can never overwrite the leg
+  calibration), holding what the phone app last reported and the queue of what the owner asked for, under RLS
   with its isolation test (rule 3).
 - **The PWA** gets a GrowBot card (Settings, beside the panels) showing the settings as the app
   last reported them. A change made there is queued and reads "Waiting for GrowBot" until the
@@ -209,8 +211,9 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   abstraction (rule 2) under their own namespace. It is not a new firewall domain (the domain
   set in `agent/contracts.py` stays as it is); instead the profile tables are owner-principal-only
   under RLS, a phone reads and writes only the persona it was opened as (the `gb_session` from
-  that persona's ticket names it, under its own RLS context), the robot's `growbot.token` route
-  reads only which persona it wears, and profiles are never readable by share or member sessions, agent tools, RAG
+  that persona's ticket names it, under its own RLS context), the `growbot` sidecar's
+  `growbot.token` routes read only which persona and phone ride the body (the robot itself holds
+  only its device key, §3, and learns nothing of personas), and profiles are never readable by share or member sessions, agent tools, RAG
   or wiki ingest. Each of those has an isolation test.
 - **Imports are untrusted.** An imported soul passes upstream's `sanitizeSoulCfg` and a size cap;
   visual-memory blobs are type- and size-checked.
