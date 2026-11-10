@@ -257,16 +257,17 @@
   }
   // The box will never take this write (not its persona's, too big, not a soul): let it go.
   function refused(status, json) {
-    return status === 413 || status === 400 || (status === 409 && json && json.error === "newer");
+    return status === 413 || status === 400 ||
+      (status === 409 && json && (json.error === "newer" || json.error === "other"));
   }
 
   var state = sync("GET", PATH + "/state");
   if (state.status === 204) {
-    // A G2 session: the phone's own creature comes back if a persona had the key.
-    var m0 = meta();
-    if (m0.persona) {
-      var own = null;
-      try { own = store.getItem(OWN); } catch (e) {}
+    // A G2 session: the phone's own creature comes back if a persona had the key (or one
+    // was set aside and the key since dropped).
+    var own = null;
+    try { own = store.getItem(OWN); } catch (e) {}
+    if (own || meta().persona) {
       try { if (own) realSet.call(store, KEY, own); else store.removeItem(KEY); store.removeItem(OWN); } catch (e) {}
       setMeta({});
     }
@@ -298,10 +299,11 @@
     if (isAway(pulled.status, pulled.json)) { away(pulled.status); return; }
     if (pulled.status === 200 && pulled.json && pulled.json.soul) {
       if (!meta().persona) {
-        // The phone's own creature (a G2 session's, or none) is set aside, not lost.
-        var mine = null;
-        try { mine = store.getItem(KEY); } catch (e) {}
-        if (mine) put(OWN, mine);
+        // The phone's own creature (a G2 session's, or none) is set aside, not lost, and
+        // never replaced by whatever ran while the box was out of reach.
+        var mine = null, kept = null;
+        try { mine = store.getItem(KEY); kept = store.getItem(OWN); } catch (e) {}
+        if (mine && !kept) put(OWN, mine);
       }
       if (!put(KEY, JSON.stringify(pulled.json.soul))) return;
       setMeta({ persona: pulled.json.persona, version: pulled.json.version, dirty: false });
@@ -318,7 +320,10 @@
     if (!onRobot(wearing)) { moveTo(wearing); return; }
   }
 
-  // 4. Every write of the soul goes to the box, a moment after the last one.
+  // 4. Every write of the soul goes to the box, a moment after the last one, as the persona
+  //    this tab loaded: a tab still open on a persona the phone has since swapped never
+  //    pushes into the new one, whatever the shared meta now says.
+  var loaded = meta().persona;
   var gen = 0, timer = 0, inflight = false, lastInput = Date.now(), held = false;
   Storage.prototype.setItem = function (key) {
     var out = realSet.apply(this, arguments);
@@ -342,13 +347,14 @@
     if (held) return;
     if (inflight) { timer = setTimeout(push, PUSH_AFTER_MS); return; }
     var soul = localSoul(), at = meta();
-    if (!soul || !at.persona) return;
+    if (!soul || !loaded) return;
+    if (at.persona !== loaded) { held = true; location.reload(); return; }
     var mine = gen;
     inflight = true;
     fetch(PATH, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ persona: at.persona, base: at.version, soul: soul }),
+      body: JSON.stringify({ persona: loaded, base: at.version, soul: soul }),
     }).then(function (r) {
       return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
     }).then(function (r) {

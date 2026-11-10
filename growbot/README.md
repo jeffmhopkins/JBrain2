@@ -215,7 +215,9 @@ and opens the creature with its soul on the phone, as before). The phone id is t
 the same phone across tickets, with a kind-of-phone label from its User-Agent (never the string).
 A cross-site `/open` (the PWA reached by its public name) arrives without the Strict cookie, so it
 spends nothing and only bounces: its page refreshes to the same link plus `hop=1`, which comes
-back same-site with the cookie and counts its tries in the cross-site bucket.
+back same-site with the cookie and counts its tries in the cross-site bucket. So a link from
+another site that carries a live ticket opens with the phone's own session; only the owner
+mints tickets, and each opens once.
 
 | Route | Answer |
 | --- | --- |

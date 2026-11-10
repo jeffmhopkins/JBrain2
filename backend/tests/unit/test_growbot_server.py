@@ -2323,3 +2323,12 @@ def test_a_session_trying_robots_it_does_not_ride_is_slowed(
     for _ in range(gb.BACKOFF_LIMIT):
         assert _Ws(run, "/d/gb-abc123", cookie=cookie).status == 403
     assert _Ws(run, "/d/gb-abc123", cookie=cookie).status == 429
+
+
+def test_one_sessions_refusals_never_lock_out_another(run: _Running, gb: types.ModuleType) -> None:
+    """A G2 phone retrying a robot a persona rides, behind the same address as the rider."""
+    _Fake.riders = {"gb-abc123": (_PERSONA, _PHONE)}
+    for _ in range(gb.BACKOFF_LIMIT):
+        assert _Ws(run, "/d/gb-abc123", cookie=True).status == 403
+    assert _Ws(run, "/d/gb-abc123", cookie=True).status == 429
+    assert _Ws(run, "/d/gb-abc123", cookie=_persona_cookie(run)).status == 101

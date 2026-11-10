@@ -1303,7 +1303,8 @@ class GrowBot:
         # A page, not a 302: the PWA's link may be a cross-site navigation (when the PWA is reached by its public name), and a browser withholds
         # a SameSite=Strict cookie for the rest of a cross-site redirect chain, so a 302 landed
         # on the creature signed out. This page's own refresh starts on this site, and the
-        # cookie stays Strict, so another site's link still opens nothing signed in.
+        # cookie stays Strict, so another site's link opens nothing signed in unless it carries
+        # a live ticket, which only the owner mints (the cross-site bounce above accepts that).
         return Response(
             200,
             _landing(_creature(code)),
@@ -1661,7 +1662,10 @@ class GrowBot:
                 # The body has one rider (plan §2c): only the phone of the persona that wears it
                 # may drive it, and a G2 phone only while no persona does. Refusals are counted,
                 # so a session trying codes cannot keep the api busy answering.
-                if self.rider_backoff.blocked(client):
+                # Per session, not per address: a refused G2 phone retrying must not lock out
+                # the rider's phone behind the same NAT.
+                tries = f"{client}:{cookie_value(req.headers, SESSION_COOKIE)}"
+                if self.rider_backoff.blocked(tries):
                     return Response(
                         429, b"too many tries", headers=[("Retry-After", "300")]
                     )
@@ -1669,7 +1673,7 @@ class GrowBot:
                 if may is None:
                     return Response(503, b"busy")
                 if not may:
-                    self.rider_backoff.fail(client)
+                    self.rider_backoff.fail(tries)
                     return Response(403, b"not wearing this robot")
             head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
             head += "Connection: Upgrade\r\n"
