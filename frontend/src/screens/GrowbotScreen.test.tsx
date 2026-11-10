@@ -147,6 +147,15 @@ describe("GrowbotScreen", () => {
     expect(screen.getByText(/Quorra's key is revoked/)).toBeInTheDocument();
   });
 
+  it("keeps the certificate download on the screen after the first-time sheet", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    serve({ service: "up", connected: 1, robots: [robot()] });
+    render(<GrowbotScreen />);
+    const link = await screen.findByRole("link", { name: "Download the box's certificate" });
+    expect(link).toHaveAttribute("href", "/api/lan/root.crt");
+    expect(link).toHaveAttribute("download", "jbrain-box-root.crt");
+  });
+
   it("explains the certificate the first time, then opens the tab inside the tap", async () => {
     const tab = { closed: false, opener: {} as unknown, location: { href: "" }, close: vi.fn() };
     const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);

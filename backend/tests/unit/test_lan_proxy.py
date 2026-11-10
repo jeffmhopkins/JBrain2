@@ -6,6 +6,7 @@ handlers live in one Caddy snippet both sites import; the LAN site is rendered
 from the env at container start by deploy/proxy-lan-conf.sh."""
 
 import importlib.util
+import re
 import subprocess
 from pathlib import Path
 
@@ -146,3 +147,11 @@ def test_proxy_publishes_the_growbot_port_and_never_the_owner_site() -> None:
     proxy = yaml.safe_load(_COMPOSE.read_text())["services"]["proxy"]
     assert "8444:8444" in proxy["ports"]
     assert all("8443" not in str(p) for p in proxy["ports"])
+
+
+def test_the_growbot_port_offers_no_http3_it_cannot_answer() -> None:
+    # 8444 is published over TCP alone; Caddy's default Alt-Svc h3 would point Chrome at UDP.
+    ports = yaml.safe_load(_COMPOSE.read_text())["services"]["proxy"]["ports"]
+    assert "8444:8444/udp" not in ports
+    block = re.search(r"servers :8444 \{(.*?)\}", _CADDYFILE.read_text(), re.S)
+    assert block is not None and "protocols h1 h2" in block.group(1)

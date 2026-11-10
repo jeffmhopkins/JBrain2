@@ -1742,6 +1742,8 @@ top of its own page is the hardest place to miss it (`screens/DevicesSettings.ts
 - **Links you share** and **Home network** are a card each, an input and Save. Both change
   only from the home network; a 403 says so in those words, a 422 shows the box's detail.
   The saved address is what every link that leaves the app starts with (`publicOrigin.ts`).
+- **Box certificate** is a card under them: how to install it on Android and iPhone, then
+  *Download the box's certificate* (a same-origin link, since the api refuses one opened from another site).
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
 
@@ -3278,6 +3280,8 @@ flashes one once. The tile's second line says who is connected (or that `growbot
   then two codes on white cards, *1. Scan with the phone's camera app* (the box's setup page:
   certificate and scanner) and *2. Scan from the setup page's Scan the code* (a one-time ticket,
   re-minted every 100 s). Pairing stays on this screen (owner, 2026-11-10).
+  *Download the box's certificate* (secondary) stays on the screen after that, since the note
+  shows once per phone and a phone that skipped the install still needs the file.
   Last on the screen, *Sign out every phone* (danger, armed: *Tap again to sign every phone out*)
   ends every phone's GrowBot session, since a phone otherwise stays signed in for 30 days so the
   robot's installed app keeps running; the toast says to open GrowBot again from here.

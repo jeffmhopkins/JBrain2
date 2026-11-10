@@ -18,6 +18,11 @@
 		strict_sni_host on
 		protocols h1 h2
 	}
+	# The GrowBot site (proxy-lan-conf.sh). Compose publishes 8444 over TCP only, so an
+	# advertised HTTP/3 would send Chrome to a UDP port nothing answers on.
+	servers :8444 {
+		protocols h1 h2
+	}
 }
 
 # Shared app handlers, imported by every site below (the public site, the optional LAN
