@@ -386,6 +386,30 @@ def test_behind_the_proxy_each_client_backs_off_alone(
     assert other.status == 302
 
 
+def test_a_failed_proxy_lookup_keeps_the_last_good_address(
+    gb: types.ModuleType, site: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = gb.Config(
+        site=site,
+        api_url="http://127.0.0.1:9",
+        tts_url="http://127.0.0.1:9",
+        stt_url="http://127.0.0.1:9",
+        token_file=tmp_path / "none",
+        trusted_proxy="127.0.0.1",
+    )
+    app = gb.GrowBot(config)
+    req = gb.Request("GET", "/", "/", {}, "HTTP/1.1", [("x-real-ip", "10.0.0.7")], peer="127.0.0.1")
+    assert asyncio.run(app.client_ip(req)) == "10.0.0.7"
+
+    def broken(*_: object) -> None:
+        raise OSError("dns down")
+
+    monkeypatch.setattr(gb.socket, "getaddrinfo", broken)
+    app._proxy_at = -float("inf")
+    assert asyncio.run(app.client_ip(req)) == "10.0.0.7"
+    assert app._proxy_addrs == {"127.0.0.1"}
+
+
 def test_backoff_window(gb: types.ModuleType) -> None:
     backoff = gb.Backoff()
     for t in range(gb.BACKOFF_LIMIT):
@@ -615,6 +639,12 @@ def test_llm_passes_only_inline_images(run: _Running) -> None:
         {"type": "image_url", "image_url": {"url": "data:text/html;base64,PGI+"}},
         {"type": "image_url", "image_url": {"url": frame + "\nhttp://x"}},
         {"type": "image_url"},
+        {"type": "video_url", "video_url": {"url": "http://x/v.mp4"}},
+        {"type": "audio_url", "audio_url": {"url": "http://x/a.wav"}},
+        {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}},
+        {"type": "file", "file": {"file_id": "x"}},
+        {"type": "text", "text": {"url": "http://x"}},
+        "a bare string part",
     ]
     body = json.dumps(
         {"model": "qwen3-vl-30b", "messages": [{"role": "user", "content": content}, "odd"]}
@@ -627,6 +657,28 @@ def test_llm_passes_only_inline_images(run: _Running) -> None:
         {"type": "image_url", "image_url": {"url": frame}},
     ]
     assert sent[1] == "odd"
+
+
+def test_the_doors_are_not_queued_behind_brain_calls(run: _Running, gb: types.ModuleType) -> None:
+    # Every streaming worker held, as by eight slow brain calls: redeem and verify still answer.
+    release = threading.Event()
+    held = [run.app._streams.submit(release.wait, 10) for _ in range(gb.STREAM_WORKERS)]
+    try:
+        start = time.monotonic()
+        resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+        assert resp.status == 302
+        resp.read()
+        phone = _phone(run)
+        phone.message()
+        chip = _chip(run)
+        assert phone.message() == {"t": "status", "awake": 1}
+        assert time.monotonic() - start < 5
+        chip.shut()
+        phone.shut()
+    finally:
+        release.set()
+        for future in held:
+            future.result(5)
 
 
 def test_llm_refuses_a_body_that_is_not_a_chat(run: _Running) -> None:
@@ -1124,6 +1176,32 @@ def test_cookieless_sockets_have_their_own_small_budget(
     for p in pending:
         p.shut()
     phone.shut()
+
+
+def test_a_burst_cannot_overshoot_the_socket_budget(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "MAX_UNAUTH_SOCKETS", 2)
+    real = run.app.client_ip
+
+    async def slow(req: Any) -> str:
+        await asyncio.sleep(0.3)  # every upgrade in the burst is past the check by now
+        return await real(req)
+
+    monkeypatch.setattr(run.app, "client_ip", slow)
+    results: list[int] = []
+    threads = [
+        threading.Thread(
+            target=lambda: results.append(_Ws(run, "/d/gb-abc123", cookie=False).status)
+        )
+        for _ in range(5)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(5)
+    assert sorted(results) == [101, 101, 503, 503, 503]
+    assert run.app.unauth_sockets <= 2
 
 
 def test_failed_hellos_back_off(

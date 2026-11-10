@@ -61,8 +61,9 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
   `frame-ancestors 'self'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`,
   plus `nosniff`, `no-referrer` and a Permissions-Policy granting camera, microphone and the
   motion sensors to this origin. The server calls only the three URLs above, with environment
-  proxies and redirects disabled. A chat body keeps only inline `data:image/…;base64,` images,
-  so no message can have the model's engine fetch a URL.
+  proxies and redirects disabled. A chat message keeps only `text` parts and inline
+  `data:image/…;base64,` images (no image by URL, video, audio or any other part type), so no
+  message can have the model's engine fetch anything.
 - **The robot.** The relay's chip side has no browser and no cookie: its first frame must be a
   `hello` whose `key` the api verifies for that pairing code, or the socket is closed (1008). The
   key is stripped from the hello before phones see it and is never logged.
@@ -71,9 +72,11 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
   WebSocket message, 256 sockets, 8 phones (or agents) per code. Cookieless sockets (robots
   until their hello is verified) have their own budget of 16, and a verified robot leaves it.
   Failed `/open` tickets and failed robot hellos are counted per client (Caddy's `X-Real-IP`,
-  believed only from the proxy): 8 in 5 minutes and that client gets 429 until the window
-  passes. The api, Kokoro and whisper calls run on their own pool of 8 threads, so a slow model
-  never stalls static serving. A pairing code's channel exists only while an admitted socket
+  believed only from the proxy, whose last good address is kept if a lookup fails): 8 in 5
+  minutes and that client gets 429 until the window passes. Socket slots are taken at the
+  admission check, so a burst cannot overshoot them. Outbound calls run on pools apart from
+  static serving: 8 threads for brain, Kokoro and whisper calls, 2 for the model list, and 2
+  for ticket redeem and robot verify, so slow brain calls never queue the doors. A pairing code's channel exists only while an admitted socket
   is on it. Static paths are percent-decoded once; dot segments, dotfiles, backslashes, NULs
   and anything resolving outside the root are 404, and there is no directory listing.
 
