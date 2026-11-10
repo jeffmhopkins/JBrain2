@@ -1,0 +1,103 @@
+# growbot — the desk robot's brain on the box
+
+> **Status:** Living · **Last verified:** 2026-11-10
+
+The GrowBot (growbot.dev) is a Raspberry Pi Pico 2 W robot whose "creature" is a web app on a
+phone. Stock, it thinks, hears, speaks and relays its leg commands through upstream's cloud.
+Here all of it runs on the box: this directory holds the app, the server that serves it, and
+(later waves) the firmware we flash. The plan, and why each piece is shaped as it is, is
+[`docs/plans/GROWBOT_PLAN.md`](../docs/plans/GROWBOT_PLAN.md).
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `server/serve.py` | The sidecar: static app, `/api` shim, robot relay, ticket exchange. Stdlib only. |
+| `site/` | The web root it serves (built from upstream + patches; committed, so the box needs no build). |
+| `site/csp.json` | Hashes of the inline scripts the patched app still carries, read once at start for the CSP. |
+
+## How it runs
+
+The compose service `growbot` (`deploy/docker-compose.yml`, `deploy/Dockerfile.growbot`) is a
+bare `python:3.12-slim` running `python3 /app/server/serve.py`, with this directory bind-mounted
+read-only at `/app`, so **Ops → Update** ships a page or server change with no rebuild. It is
+default-on (no compose profile), publishes no port, and sits on `edge` (Caddy reaches it) and
+`internal` (it reaches `api` and `tts-stt`).
+
+Caddy's LAN site `https://jbrain.local:8444` (rendered by `deploy/proxy-lan-conf.sh` from
+`JBRAIN_LAN_ADDR`, same `tls internal` CA as the LAN app) is the only way in. It is its own
+origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide with the PWA's.
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `GROWBOT_PORT` | `8810` | Listen port (plain HTTP, behind Caddy). |
+| `GROWBOT_SITE` | `/app/site` | Web root. |
+| `GROWBOT_API_URL` | `http://api:8000` | The api: ticket redeem, robot verify, the model lane. |
+| `GROWBOT_TTS_URL` | `http://tts-stt:8801` | Kokoro `/tts`. |
+| `GROWBOT_STT_URL` | `http://tts-stt:8080/v1` | whisper `/audio/transcriptions`. |
+| `GROWBOT_TOKEN_FILE` | `/run/jbrain-growbot/growbot.token` | Bearer for the api's `/internal/growbot/*`; re-read per call. |
+| `GROWBOT_DEFAULT_MODEL` | `qwen3-vl-30b` | Lineup fallback while the api lists no models. |
+
+## Security
+
+- **Opening it.** The owner opens GrowBot from the PWA, which mints a one-time ticket through
+  the api. `GET /open?ticket=…&id=<code>` redeems it and sets `gb_session` (HttpOnly, Secure,
+  SameSite=Strict, 12 h), then redirects to the creature. The cookie is an HMAC under a key made
+  at process start: nothing is stored, and a restart signs every phone out. Every other route
+  answers 401 without it. Requests that act (`POST`, the phone side of the relay) must also come
+  from this origin, since the PWA on `:443` is the same *site* and SameSite alone would let its
+  requests carry the cookie.
+- **The owner's session never arrives.** Browsers send cookies regardless of port, so the PWA's
+  `__Host-jbrain_session` would reach `:8444`. Caddy rebuilds the `Cookie` header to hold
+  `gb_session` alone, or drops it, and never routes `/internal*`.
+- **No egress.** Every response carries a CSP of `'self'` for every fetch directive (`blob:` and
+  `data:` where the app needs them, `'wasm-unsafe-eval'` for ONNX Runtime and MediaPipe, and
+  the inline-script hashes from `site/csp.json`, never `'unsafe-inline'` for scripts), plus
+  `nosniff`, `no-referrer` and a Permissions-Policy granting camera and microphone to this
+  origin. The server calls only the three URLs above, with environment proxies and redirects
+  disabled.
+- **The robot.** The relay's chip side has no browser and no cookie: its first frame must be a
+  `hello` whose `key` the api verifies for that pairing code, or the socket is closed (1008). The
+  key is stripped from the hello before phones see it and is never logged.
+- **Limits.** 16 KiB of request head, 16 MiB of body, 256 KiB per WebSocket message, 256
+  sockets, 8 phones (or agents) per code. Static paths are percent-decoded once; dot segments,
+  dotfiles, backslashes, NULs and anything resolving outside the root are 404, and there is no
+  directory listing.
+
+## The `/api` shim
+
+What the upstream app calls, and what answers on the box:
+
+| Route | Answer |
+| --- | --- |
+| `/api/config` | `{fast, active, dream, fallback}`: one installed model, vision-capable first. |
+| `/api/models` | `{simple, all}`: the box's installed models from the api, all free to run. |
+| `/api/llm?target=openrouter`, `/api/llm-stream?target=openrouter` | The api's `/internal/growbot/llm/v1/chat/completions`, body reduced to the engine fields; an unknown model becomes the default. The stream is passed through as SSE as it arrives. |
+| `/api/llm?target=groq-audio\|deepinfra-audio` | whisper, rebuilt as `model=whisper`, `response_format=verbose_json`, and normalised so `text` and every segment's `no_speech_prob` and `avg_logprob` exist (a missing probability reads as speech). 503 when whisper is down, never 429. |
+| `/api/fish-tts` | Kokoro `GET /tts` with the text, a `kokoro-*` voice (else Kokoro's default), speed and pitch; WAV back. 503 when down, never 401/402, which upstream latches as a dead voice. |
+| `/api/device` | One owned device, nothing metered. |
+| `/api/redeem`, `/api/transfer` | 410: no credits on the box. |
+| `/api/journal`, `episodes`, `gallery`, `ev`, `hit`, `feedback` | 204, stored nowhere. |
+
+## The relay
+
+`wss://jbrain.local:8444/d/<code>` reimplements upstream's relay (`relay_chip.py` and
+`relay-transport.js` define the envelopes). A socket with a valid session is a phone; one
+without must be the chip (above). Phone frames go to the chip, chip frames go to that code's
+phones. The relay sends phones `{"t":"status","awake":0|1}` when they attach and when the chip
+comes or goes, and `{"t":"alive","quiet_ms":N}` every 30 s while a heartbeating chip is attached
+(`quiet_ms` is the time since its last frame). It answers the chip's `{"t":"hb"}` with
+`{"t":"hb_ack"}`, pings every socket every 20 s, and drops any socket silent for 45 s (a robot
+that loses power never closes its socket). A second chip on a code replaces the first.
+
+`/d/<code>-agent` is upstream's side channel for an external agent: the creature page joins with
+`hello` and agents with `attach`, both behind the session cookie, and frames are bridged both
+ways. It never meets the robot's channel.
+
+## Tests
+
+The backend suite loads `server/serve.py` by path (`backend/tests/unit/test_growbot_server.py`:
+static, CSP, cookie gate, `/open`, each shim route against fake api/tts/stt servers, the relay
+and WebSocket framing) and runs the Caddy site in a real Caddy
+(`backend/tests/unit/test_growbot_caddy.py`, `test_lan_proxy.py`). CI's backend path filter
+includes `growbot/**`.

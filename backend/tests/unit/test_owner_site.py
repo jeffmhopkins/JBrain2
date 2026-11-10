@@ -166,7 +166,8 @@ class _Stack:
         root = self._root / f"try{self._tries}"
         site_dir = self._site_dir
         echo = self._echo
-        self.ports = {name: _free_port() for name in ("public", "http", "lan", "owner")}
+        names = ("public", "http", "lan", "owner", "growbot")
+        self.ports = {name: _free_port() for name in names}
         etc = root / "etc"
         www = root / "www"
         www.mkdir(parents=True)
@@ -189,8 +190,10 @@ class _Stack:
         caddyfile = caddyfile.replace("/etc/caddy/", f"{etc}/").replace("api:8000", upstream)
         caddyfile = caddyfile.replace("/srv/www", str(www))
         for sub in ("lan", "preview"):
-            conf = next((etc / sub).glob("*.caddy"))
-            conf.write_text(conf.read_text().replace("api:8000", upstream))
+            for conf in (etc / sub).glob("*.caddy"):
+                text = conf.read_text().replace("api:8000", upstream)
+                text = text.replace("growbot:8810", upstream)
+                conf.write_text(text.replace(":8444 {", f":{self.ports['growbot']} {{"))
         caddyfile = caddyfile.replace(":8443", f":{self.ports['owner']}")
         # Into the Caddyfile's own global block, which keeps the owner listener's options.
         test_opts = (
@@ -249,15 +252,16 @@ class _Stack:
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         tls.check_hostname = False
         tls.verify_mode = ssl.CERT_NONE
-        while True:
-            try:
-                raw = socket.create_connection(("127.0.0.1", self.ports["lan"]), timeout=1)
-                with tls.wrap_socket(raw, server_hostname="jbrain.local"):
-                    return
-            except (ssl.SSLError, OSError):
-                if time.monotonic() > deadline:
-                    raise AssertionError("the LAN site never served its certificate") from None
-                time.sleep(0.1)
+        for site in ("lan", "growbot"):
+            while True:
+                try:
+                    raw = socket.create_connection(("127.0.0.1", self.ports[site]), timeout=1)
+                    with tls.wrap_socket(raw, server_hostname="jbrain.local"):
+                        break
+                except (ssl.SSLError, OSError):
+                    if time.monotonic() > deadline:
+                        raise AssertionError(f"the {site} site never served its cert") from None
+                    time.sleep(0.1)
 
     def stop(self) -> None:
         if self.proc is not None:
