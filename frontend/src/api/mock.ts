@@ -25,6 +25,7 @@ import type {
   GrowbotFailCode,
   GrowbotFlashJob,
   GrowbotFlashRequest,
+  GrowbotMemory,
   GrowbotPersona,
   GrowbotPhase,
   GrowbotPhone,
@@ -356,7 +357,28 @@ function mockGbAdvance(): void {
 const GB_MIN = 60_000;
 interface MockGbPersona extends GrowbotPersona {
   soul: GrowbotSoul;
-  cps: (GrowbotCheckpoint & { soul: GrowbotSoul })[];
+  vms: GrowbotMemory[];
+  cps: (GrowbotCheckpoint & { soul: GrowbotSoul; vms: GrowbotMemory[] })[];
+}
+let mockGbVmSeq = 0;
+/** A visual memory as the box keeps it; its pictures are drawn by `growbotMemoryViewUrl`. */
+function mockGbVm(
+  kind: GrowbotMemory["kind"],
+  name: string,
+  ago: number,
+  desc: string,
+  views = 1,
+): GrowbotMemory {
+  mockGbVmSeq += 1;
+  return {
+    id: `r${(0x1a2b3c00 + mockGbVmSeq).toString(16)}`,
+    kind,
+    name,
+    desc,
+    saved_at: new Date(Date.now() - ago).toISOString(),
+    views,
+    confirmed: name ? "human" : "agent",
+  };
 }
 let mockGbSeq = 0;
 function mockGbId(): string {
@@ -402,14 +424,22 @@ function mockGbSoul(o: {
     log: o.log ?? [],
   };
 }
-function mockGbCp(name: string, ago: number, soul: GrowbotSoul, why = "") {
+function mockGbCp(
+  name: string,
+  ago: number,
+  soul: GrowbotSoul,
+  why = "",
+  vms: GrowbotMemory[] = [],
+) {
   return {
     id: mockGbId(),
     name,
     auto: !!why,
     why,
     created_at: new Date(Date.now() - ago).toISOString(),
+    memories: vms.length,
     soul: structuredClone(soul),
+    vms: vms.slice(),
   };
 }
 function mockGbPersona(
@@ -417,6 +447,7 @@ function mockGbPersona(
   over: Partial<GrowbotPersona>,
   soul: GrowbotSoul,
   cps: [string, number, string?][],
+  vms: GrowbotMemory[] = [],
 ): MockGbPersona {
   const now = new Date().toISOString();
   return {
@@ -430,10 +461,21 @@ function mockGbPersona(
     created_at: now,
     updated_at: now,
     checkpoints: cps.length,
+    memories: vms.length,
     wearing: null,
     ...over,
     soul,
-    cps: cps.map(([n, ago, why]) => mockGbCp(n, ago, soul, why)),
+    vms,
+    // Each older checkpoint keeps the memories saved before it.
+    cps: cps.map(([n, ago, why]) =>
+      mockGbCp(
+        n,
+        ago,
+        soul,
+        why,
+        vms.filter((v) => v.saved_at && Date.now() - Date.parse(v.saved_at) > ago),
+      ),
+    ),
   };
 }
 const MOCK_GB_P6A = "mockphone-pixel6a-0001";
@@ -469,6 +511,19 @@ const mockGbP: { personas: MockGbPersona[]; phones: GrowbotPhone[] } = {
         ["Before the beach trip", 12 * GB_DAY],
         ["First week", 27 * GB_DAY],
       ],
+      [
+        mockGbVm(
+          "handwriting",
+          "a boat drawing",
+          GB_DAY,
+          "A drawing of a boat with a red sail.",
+          2,
+        ),
+        mockGbVm("object", "the cat", 6 * GB_DAY, "A grey cat asleep on the windowsill.", 3),
+        mockGbVm("object", "blue mug", 20 * GB_DAY, "The blue mug by the kettle. Often warm."),
+        mockGbVm("scene", "", 25 * GB_DAY, "The desk by the window in the morning."),
+        mockGbVm("person", "my person", 30 * GB_DAY, "The one who picks it up when it falls.", 3),
+      ],
     ),
     mockGbPersona(
       "Captain Bolt",
@@ -492,6 +547,7 @@ const mockGbP: { personas: MockGbPersona[]; phones: GrowbotPhone[] } = {
         ],
       }),
       [["Day one", 9 * GB_DAY]],
+      [mockGbVm("object", "an atlas", 2 * GB_DAY, "A big blue atlas on the bottom shelf.", 2)],
     ),
     mockGbPersona(
       "Quorra's buddy",
@@ -526,14 +582,14 @@ const mockGbP: { personas: MockGbPersona[]; phones: GrowbotPhone[] } = {
 };
 
 function mockGbOut(p: MockGbPersona): GrowbotPersona {
-  const { soul: _s, cps: _c, ...rest } = p;
-  return { ...rest, checkpoints: p.cps.length };
+  const { soul: _s, cps: _c, vms: _v, ...rest } = p;
+  return { ...rest, checkpoints: p.cps.length, memories: p.vms.length };
 }
 function mockGbDetail(p: MockGbPersona) {
   return {
     ...mockGbOut(p),
     soul: p.soul,
-    checkpoint_list: p.cps.map(({ soul: _s, ...c }) => c),
+    checkpoint_list: p.cps.map(({ soul: _s, vms: _v, ...c }) => c),
   };
 }
 function mockGbOverview() {
@@ -547,16 +603,23 @@ function mockGbOverview() {
     })),
   };
 }
-/** A write as the box makes it: the soul as it was is checkpointed first, then replaced. */
-function mockGbWrite(p: MockGbPersona, soul: GrowbotSoul, before: [string, string] | null) {
+/** A write as the box makes it: the soul and visual memories as they were are checkpointed
+ *  first, then replaced. `vms` is what it has after (unchanged when left out). */
+function mockGbWrite(
+  p: MockGbPersona,
+  soul: GrowbotSoul,
+  before: [string, string] | null,
+  vms: GrowbotMemory[] = p.vms,
+) {
   let cp: GrowbotCheckpoint | null = null;
   if (before) {
-    const made = mockGbCp(before[0], 0, p.soul, before[1]);
+    const made = mockGbCp(before[0], 0, p.soul, before[1], p.vms);
     p.cps.unshift(made);
-    const { soul: _s, ...rest } = made;
+    const { soul: _s, vms: _v, ...rest } = made;
     cp = rest;
   }
   p.soul = soul;
+  p.vms = vms.slice();
   p.version += 1;
   p.updated_at = new Date().toISOString();
   return json({ persona: mockGbDetail(p), checkpoint: cp });
@@ -602,7 +665,7 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
     }
     const target = find(over);
     if (over && !target) return json({ detail: "no such persona" }, 404);
-    if (target) return mockGbWrite(target, soul, ["Before import", "made before an import"]);
+    if (target) return mockGbWrite(target, soul, ["Before import", "made before an import"], []);
     const label = name?.trim() || soul.meta?.name || "Imported";
     const p = mockGbPersona(label, { made_from: "a soul file" }, soul, []);
     mockGbP.personas.push(p);
@@ -667,15 +730,18 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
       { made_from: `copy of ${p.name}` },
       { ...structuredClone(p.soul), meta: { ...p.soul.meta, name } },
       [],
+      p.vms.map((v) => ({ ...v })),
     );
     mockGbP.personas.splice(mockGbP.personas.indexOf(p) + 1, 0, copy);
     return json(mockGbDetail(copy));
   }
   if (rest === "reset" && method === "POST") {
-    return mockGbWrite(p, mockGbSoul({ name: p.name, desc: "" }), [
-      "Before reset",
-      "made before a reset",
-    ]);
+    return mockGbWrite(
+      p,
+      mockGbSoul({ name: p.name, desc: "" }),
+      ["Before reset", "made before a reset"],
+      [],
+    );
   }
   if (rest === "export" && method === "GET") {
     const slug =
@@ -693,19 +759,31 @@ function mockGbPersonas(path: string, method: string, init?: RequestInit): Respo
   if (rest === "checkpoints" && method === "POST") {
     const name = String(body().name ?? "").trim();
     if (!name) return json({ detail: "Name the checkpoint." }, 422);
-    const made = mockGbCp(name, 0, p.soul);
+    const made = mockGbCp(name, 0, p.soul, "", p.vms);
     p.cps.unshift(made);
-    const { soul: _s, ...cp } = made;
+    const { soul: _s, vms: _v, ...cp } = made;
     return json(cp);
   }
   const restore = /^checkpoints\/([^/]+)\/restore$/.exec(rest)?.[1];
   if (restore && method === "POST") {
     const cp = p.cps.find((c) => c.id === restore);
     if (!cp) return json({ detail: "no such checkpoint" }, 404);
-    return mockGbWrite(p, structuredClone(cp.soul), [
-      `Before restoring “${cp.name}”`,
-      "made before a restore",
-    ]);
+    return mockGbWrite(
+      p,
+      structuredClone(cp.soul),
+      [`Before restoring “${cp.name}”`, "made before a restore"],
+      cp.vms,
+    );
+  }
+  if (rest === "memories" && method === "GET") {
+    const newest = [...p.vms].sort((a, b) => (b.saved_at ?? "").localeCompare(a.saved_at ?? ""));
+    return json({ memories: newest });
+  }
+  const vm = /^memories\/([^/]+)$/.exec(rest)?.[1];
+  if (vm && method === "DELETE") {
+    if (!p.vms.some((v) => v.id === vm)) return json({ detail: "no such memory" }, 404);
+    p.vms = p.vms.filter((v) => v.id !== vm);
+    return new Response(null, { status: 204 });
   }
   return null;
 }

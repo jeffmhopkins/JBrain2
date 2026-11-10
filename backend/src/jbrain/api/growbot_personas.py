@@ -9,8 +9,12 @@ screen").
 - `debug_router` — a debug token (`DebugDep`): read everything, save a checkpoint and restore
   one, so a persona can be recovered with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`): pull and push the soul of the
-  persona a phone was opened as, and read a robot's rider, all keyed by the phone id the
-  sidecar signed into that phone's session, so a phone reaches only its own persona.
+  persona a phone was opened as and sync its visual memories, and read a robot's rider, all
+  keyed by the phone id the sidecar signed into that phone's session, so a phone reaches only
+  its own persona.
+
+Visual memories (wave G4d) name people the camera saw, so they never leave the box: the owner
+sees and deletes them here, a checkpoint keeps them, and an export leaves them out.
 
 Every edit, restore, reset and import makes an automatic checkpoint first, so each one can be
 undone (a rename changes only the name, so it makes none). Every write bumps the persona's
@@ -20,7 +24,7 @@ version, so the phone holding it reloads instead of overwriting it.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
@@ -30,8 +34,15 @@ from jbrain.api.deps import DebugDep, OwnerDep
 from jbrain.api.growbot import PHONE_RE
 from jbrain.api.internal_auth import require_growbot
 from jbrain.db.session import SessionContext
-from jbrain.growbot import souls
-from jbrain.growbot.personas import NAME_MAX, Checkpoint, Persona, PersonaRepo
+from jbrain.growbot import memories, souls
+from jbrain.growbot.personas import (
+    NAME_MAX,
+    Checkpoint,
+    MemoriesDo,
+    Memory,
+    Persona,
+    PersonaRepo,
+)
 from jbrain.growbot.souls import obj
 
 router = APIRouter(prefix="/growbot", tags=["growbot"])
@@ -45,6 +56,8 @@ _CODE = r"^gb-[A-Za-z0-9]{1,32}$"
 
 Pid = Annotated[str, Path(pattern=_UUID)]
 Cid = Annotated[str, Path(pattern=_UUID)]
+Mid = Annotated[str, Path(pattern="^r[0-9a-f]{1,32}$")]
+View = Annotated[int, Path(ge=0, lt=memories.MAX_VIEWS)]
 Code = Annotated[str, Path(pattern=_CODE)]
 Region = Annotated[str, Path(pattern="^(" + "|".join(souls.REGIONS) + ")$")]
 
@@ -91,6 +104,23 @@ class PersonaOut(BaseModel):
     checkpoints: int
     # The robot it wears, or None.
     wearing: str | None
+    # How many visual memories it has.
+    memories: int
+
+
+class MemoryOut(BaseModel):
+    id: str
+    kind: str
+    name: str
+    desc: str
+    saved_at: datetime | None
+    views: int
+    # "human": the owner told it what this is; "agent": it decided itself.
+    confirmed: str
+
+
+class MemoriesOut(BaseModel):
+    memories: list[MemoryOut]
 
 
 class CheckpointOut(BaseModel):
@@ -99,6 +129,8 @@ class CheckpointOut(BaseModel):
     auto: bool
     why: str
     created_at: datetime
+    # How many visual memories it keeps.
+    memories: int
 
 
 class PersonaDetailOut(PersonaOut):
@@ -144,11 +176,52 @@ def _persona_out(p: Persona) -> PersonaOut:
         updated_at=p.updated_at,
         checkpoints=p.checkpoints,
         wearing=p.wearing,
+        memories=p.memories,
     )
 
 
 def _cp_out(c: Checkpoint) -> CheckpointOut:
-    return CheckpointOut(id=c.id, name=c.name, auto=c.auto, why=c.why, created_at=c.created_at)
+    return CheckpointOut(
+        id=c.id, name=c.name, auto=c.auto, why=c.why, created_at=c.created_at, memories=c.memories
+    )
+
+
+def _saved_at(t: object) -> datetime | None:
+    # The creature's own clock, in milliseconds; 0 (or nonsense) is "not known".
+    if not isinstance(t, int | float) or isinstance(t, bool) or not 0 < t < 4e12:
+        return None
+    return datetime.fromtimestamp(t / 1000, UTC)
+
+
+def _memory_out(m: Memory) -> MemoryOut:
+    kind = str(m.meta.get("kind") or "object")
+    return MemoryOut(
+        id=m.id,
+        kind="object" if kind == "thing" else kind,
+        name=str(m.meta.get("name") or ""),
+        desc=str(m.meta.get("desc") or ""),
+        saved_at=_saved_at(m.meta.get("t")),
+        views=len(m.views),
+        confirmed="human" if m.meta.get("confirmed") == "human" else "agent",
+    )
+
+
+async def _memories(request: Request, ctx: SessionContext, pid: str) -> MemoriesOut:
+    got = await _repo(request).memories(ctx, pid)
+    if got is None:
+        raise HTTPException(status_code=404, detail="no such persona")
+    return MemoriesOut(memories=[_memory_out(m) for m in got])
+
+
+def _jpeg(data: bytes | None) -> Response:
+    if data is None:
+        raise HTTPException(status_code=404, detail="no such view")
+    # A face: kept out of every shared cache, and never sniffed as anything but a picture.
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
 
 
 async def _detail(request: Request, ctx: SessionContext, p: Persona) -> PersonaDetailOut:
@@ -194,8 +267,11 @@ async def _written(
     before: tuple[str, str] | None,
     name: str | None = None,
     expect: int | None = None,
+    mems: MemoriesDo = "keep",
 ) -> WrittenOut:
-    done = await _repo(request).write_soul(ctx, pid, soul, name=name, before=before, expect=expect)
+    done = await _repo(request).write_soul(
+        ctx, pid, soul, name=name, before=before, expect=expect, memories=mems
+    )
     if done is None:
         raise HTTPException(status_code=404, detail="no such persona")
     if done == "stale":
@@ -215,7 +291,7 @@ async def _restore(request: Request, ctx: SessionContext, pid: str, cid: str) ->
     if cp is None or cp.persona_id != pid.lower() or cp.soul is None:
         raise HTTPException(status_code=404, detail="no such checkpoint")
     before = (f"Before restoring “{cp.name}”"[:80], "made before a restore")
-    return await _written(request, ctx, pid, cp.soul, before)
+    return await _written(request, ctx, pid, cp.soul, before, mems=("from", cp.id))
 
 
 async def _save_cp(request: Request, ctx: SessionContext, pid: str, name: str) -> CheckpointOut:
@@ -319,20 +395,29 @@ async def edit_region(
 
 @router.post("/personas/{pid}/duplicate")
 async def duplicate_persona(request: Request, owner: OwnerDep, pid: Pid) -> PersonaDetailOut:
-    """A copy of the whole creature, memories and all, without its checkpoints."""
+    """A copy of the whole creature, memories and visual memories, without its checkpoints."""
     ctx, repo = _owner_ctx(owner), _repo(request)
     p = await _get(request, ctx, pid)
     name = f"{p.name} copy"[:NAME_MAX]
-    made = await repo.create(ctx, name, souls.renamed(p.soul or {}, name), f"copy of {p.name}")
+    made = await repo.create(
+        ctx, name, souls.renamed(p.soul or {}, name), f"copy of {p.name}", memories_from=p.id
+    )
     return await _detail(request, ctx, made)
 
 
 @router.post("/personas/{pid}/reset")
 async def reset_persona(request: Request, owner: OwnerDep, pid: Pid) -> WrittenOut:
+    """A fresh creature, which has met nobody: its visual memories go too (upstream forgets
+    them when its soul is replaced), kept by the checkpoint saved first."""
     ctx = _owner_ctx(owner)
     p = await _get(request, ctx, pid)
     return await _written(
-        request, ctx, pid, souls.fresh(p.name), ("Before reset", "made before a reset")
+        request,
+        ctx,
+        pid,
+        souls.fresh(p.name),
+        ("Before reset", "made before a reset"),
+        mems="clear",
     )
 
 
@@ -372,8 +457,14 @@ async def import_persona(request: Request, owner: OwnerDep, body: ImportIn) -> W
         raise _soul_error(exc) from exc
     if body.over is not None:
         await _get(request, ctx, body.over)
+        # Another creature's soul has not met the people this one saved.
         return await _written(
-            request, ctx, body.over, soul, ("Before import", "made before an import")
+            request,
+            ctx,
+            body.over,
+            soul,
+            ("Before import", "made before an import"),
+            mems="clear",
         )
     meta = obj(soul.get("meta"))
     name = _name(body.name or str(meta.get("name") or "") or "Imported")
@@ -392,6 +483,26 @@ async def save_checkpoint(
 async def restore_checkpoint(request: Request, owner: OwnerDep, pid: Pid, cid: Cid) -> WrittenOut:
     """The checkpoint becomes the persona; the soul as it was is checkpointed first."""
     return await _restore(request, _owner_ctx(owner), pid, cid)
+
+
+@router.get("/personas/{pid}/memories")
+async def list_memories(request: Request, owner: OwnerDep, pid: Pid) -> MemoriesOut:
+    """Its visual memories, newest first (the persona page's Memories tab)."""
+    return await _memories(request, _owner_ctx(owner), pid)
+
+
+@router.get("/personas/{pid}/memories/{mid}/views/{i}")
+async def memory_view(request: Request, owner: OwnerDep, pid: Pid, mid: Mid, i: View) -> Response:
+    return _jpeg(await _repo(request).memory_view(_owner_ctx(owner), pid, mid, i))
+
+
+@router.delete("/personas/{pid}/memories/{mid}", status_code=204)
+async def forget_memory(request: Request, owner: OwnerDep, pid: Pid, mid: Mid) -> Response:
+    """It forgets that face or thing; the phone holding it forgets it at its next sync. A
+    checkpoint made before still has it."""
+    if not await _repo(request).forget_memory(_owner_ctx(owner), pid, mid):
+        raise HTTPException(status_code=404, detail="no such memory")
+    return Response(status_code=204)
 
 
 @router.put("/body/{code}")
@@ -418,6 +529,13 @@ async def debug_overview(request: Request, _p: DebugDep) -> OverviewOut:
 async def debug_persona(request: Request, _p: DebugDep, pid: Pid) -> PersonaDetailOut:
     request.state.debug_detail = f"growbot persona {pid}"
     return await _detail(request, _DEBUG_OWNER, await _get(request, _DEBUG_OWNER, pid))
+
+
+@debug_router.get("/personas/{pid}/memories")
+async def debug_memories(request: Request, _p: DebugDep, pid: Pid) -> MemoriesOut:
+    # What it has saved, never the pictures: the console is for recovery, not for looking.
+    request.state.debug_detail = f"growbot memories {pid}"
+    return await _memories(request, _DEBUG_OWNER, pid)
 
 
 @debug_router.post("/personas/{pid}/checkpoints")
@@ -491,6 +609,8 @@ async def pull_soul(request: Request, body: PhoneIn) -> PulledOut:
 class StateOut(BaseModel):
     version: int
     wearing: str | None
+    # Bumped by every change to its visual memories: the phone syncs when it moves.
+    memories: int
 
 
 @internal_router.post("/soul/state")
@@ -502,7 +622,7 @@ async def soul_state(request: Request, body: PhoneIn) -> StateOut:
     got = await _repo(request).pull(_SYSTEM_OWNER, body.persona, body.phone, with_soul=False)
     if isinstance(got, str):
         raise _away(got)
-    return StateOut(version=got.version, wearing=got.wearing)
+    return StateOut(version=got.version, wearing=got.wearing, memories=got.memories)
 
 
 @internal_router.post("/soul/push")
@@ -536,3 +656,112 @@ async def body_rider(request: Request, code: Code) -> BodyOut:
             p = await repo.get_persona(_SYSTEM_OWNER, rider.persona_id)
             return BodyOut(persona=rider.persona_id, phone=p.phone_id if p else None)
     return BodyOut(persona=None, phone=None)
+
+
+class MemoryViewIn(PhoneIn):
+    id: str = ""
+    i: int = 0
+
+
+class KeepIn(PhoneIn):
+    memory: Any = None
+
+
+class ForgetIn(PhoneIn):
+    ids: Any = None
+
+
+class PhoneMemoryOut(BaseModel):
+    # The creature's own record without its pictures, field for field as it wrote it.
+    id: str
+    kind: Any
+    name: Any
+    desc: Any
+    t: Any
+    confirmed: Any
+    namedAt: Any  # noqa: N815 — the creature's own field name
+    # [{"t": when}], one per view; each picture is fetched on its own.
+    views: list[dict[str, Any]]
+
+
+class PhoneMemoriesOut(BaseModel):
+    version: int
+    memories: list[PhoneMemoryOut]
+
+
+class MemoriesVersionOut(BaseModel):
+    version: int
+
+
+def _for_phone(m: Memory) -> PhoneMemoryOut:
+    return PhoneMemoryOut(
+        id=m.id,
+        kind=m.meta.get("kind"),
+        name=m.meta.get("name"),
+        desc=m.meta.get("desc"),
+        t=m.meta.get("t"),
+        confirmed=m.meta.get("confirmed"),
+        namedAt=m.meta.get("namedAt"),
+        views=[{"t": v.get("t")} for v in m.views],
+    )
+
+
+@internal_router.post("/memories/list")
+async def phone_memories(request: Request, body: PhoneIn) -> PhoneMemoriesOut:
+    """The visual memories the box holds for the persona this phone holds, to compare with
+    what the phone holds. 409 `moved` and 404 `gone` as the soul's pull."""
+    if not _phone_ok(body):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    got = await _repo(request).phone_memories(_SYSTEM_OWNER, body.persona, body.phone)
+    if isinstance(got, str):
+        raise _away(got)
+    return PhoneMemoriesOut(version=got[0], memories=[_for_phone(m) for m in got[1]])
+
+
+@internal_router.post("/memories/view")
+async def phone_memory_view(request: Request, body: MemoryViewIn) -> Response:
+    """One saved view's JPEG, for a phone that lacks it. 404 `gone` when the persona was
+    deleted, 404 when the view is not there."""
+    if not _phone_ok(body) or not memories.ID_RE.fullmatch(body.id):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    got = await _repo(request).phone_view(_SYSTEM_OWNER, body.persona, body.phone, body.id, body.i)
+    if isinstance(got, str):
+        raise _away(got)
+    return _jpeg(got)
+
+
+@internal_router.post("/memories/keep")
+async def phone_keep(request: Request, body: KeepIn) -> MemoriesVersionOut:
+    """A record the creature saved, renamed or gave another view, kept whole. 400 for one the
+    box will not keep (the phone stops sending it), 413 when the persona already has
+    `MAX_MEMORIES`; 409 `moved` and 404 `gone` as the soul's push."""
+    if not _phone_ok(body):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    try:
+        saved = memories.from_phone(body.memory)
+    except memories.MemoryRefused as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    got = await _repo(request).phone_keep(_SYSTEM_OWNER, body.persona, body.phone, saved)
+    if got == "full":
+        raise HTTPException(status_code=413, detail="full")
+    if isinstance(got, str):
+        raise _away(got)
+    return MemoriesVersionOut(version=got)
+
+
+@internal_router.post("/memories/forget")
+async def phone_forget(request: Request, body: ForgetIn) -> MemoriesVersionOut:
+    """Records the creature forgot (one, or all of them), gone from the box too."""
+    if not _phone_ok(body):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    ids = body.ids
+    if (
+        not isinstance(ids, list)
+        or len(ids) > memories.MAX_MEMORIES * 2
+        or not all(isinstance(i, str) and memories.ID_RE.fullmatch(i) for i in ids)
+    ):
+        raise HTTPException(status_code=400, detail="not visual memory ids")
+    got = await _repo(request).phone_forget(_SYSTEM_OWNER, body.persona, body.phone, ids)
+    if isinstance(got, str):
+        raise _away(got)
+    return MemoriesVersionOut(version=got)

@@ -6,6 +6,8 @@
 import type {
   GrowbotFailCode,
   GrowbotFlashJob,
+  GrowbotMemory,
+  GrowbotMemoryKind,
   GrowbotOverview,
   GrowbotPersona,
   GrowbotPhone,
@@ -503,4 +505,28 @@ export function words(v: unknown): string {
 export function when(iso: string): string {
   const d = new Date(iso);
   return `${day(iso)}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+}
+
+// A visual memory with no name still reads as what it is.
+const KIND: Record<GrowbotMemoryKind, { label: string; that: string }> = {
+  person: { label: "A person", that: "that person" },
+  object: { label: "A thing", that: "that thing" },
+  handwriting: { label: "Handwriting", that: "that handwriting" },
+  scene: { label: "A scene", that: "that scene" },
+  place: { label: "A place", that: "that place" },
+};
+
+/** A visual memory's label: its name, or what it is. */
+export function memoryLabel(m: GrowbotMemory): string {
+  return m.name.trim() || (KIND[m.kind] ?? KIND.object).label;
+}
+
+/** Its name in quotes, or "that person": the end of "<self name> forgot …". */
+export function memoryForgot(m: GrowbotMemory): string {
+  return m.name.trim() ? `“${m.name.trim()}”` : (KIND[m.kind] ?? KIND.object).that;
+}
+
+/** "3 visual memories" — a checkpoint's, or nothing when it keeps none. */
+export function memoriesCount(n: number): string {
+  return n > 0 ? `${n} visual memor${n === 1 ? "y" : "ies"}` : "";
 }

@@ -420,7 +420,7 @@ export function GrowbotImportSheet({ over, say, onMade, onOver, onClose }: Impor
         const out = await api.importGrowbotPersona(picked.soul, { over: over.id });
         const cp = out.checkpoint;
         say(
-          `${over.name} is now the imported soul.${cp ? ` “${cp.name}” keeps what it was.` : ""}`,
+          `${over.name} is now the imported soul, and its visual memories are cleared.${cp ? ` “${cp.name}” keeps what it was, visual memories too.` : ""}`,
           cp
             ? {
                 undo: () => {
@@ -519,7 +519,10 @@ export function GrowbotImportSheet({ over, say, onMade, onOver, onClose }: Impor
                 />
                 <span className="gb-tx">
                   Over {over.name}
-                  <em>A checkpoint of {over.name} is saved first.</em>
+                  <em>
+                    Its visual memories are cleared. A checkpoint of {over.name} is saved first and
+                    keeps them.
+                  </em>
                 </span>
               </label>
             )}

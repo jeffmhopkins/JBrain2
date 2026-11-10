@@ -482,7 +482,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.owner_device_repo = SqlOwnerDeviceRepo(maker)
         app.state.growbot_repo = SqlGrowbotRepo(maker)
-        app.state.growbot_personas = SqlPersonaRepo(maker)
+        app.state.growbot_personas = SqlPersonaRepo(
+            maker, FsBlobStore(settings.blob_dir).namespace("growbot-memories")
+        )
         app.state.intake_repo = SqlIntakeRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)

@@ -263,6 +263,7 @@
 
   var state = sync("GET", PATH + "/state");
   if (state.status === 204) {
+    window.__gbBoxSoul = { g2: true };
     // A G2 session: the phone's own creature comes back if a persona had the key (or one
     // was set aside and the key since dropped).
     var own = null;
@@ -324,6 +325,8 @@
   //    this tab loaded: a tab still open on a persona the phone has since swapped never
   //    pushes into the new one, whatever the shared meta now says.
   var loaded = meta().persona;
+  // The visual memories below follow the persona this tab runs as.
+  window.__gbBoxSoul = { persona: loaded };
   var gen = 0, timer = 0, inflight = false, lastInput = Date.now(), held = false;
   Storage.prototype.setItem = function (key) {
     var out = realSet.apply(this, arguments);
@@ -400,6 +403,7 @@
     }).then(function (r) {
       if (isAway(r.status, r.json)) { held = true; location.reload(); return; }
       if (r.status !== 200 || !r.json) return;
+      try { window.dispatchEvent(new CustomEvent("gb-box-state", { detail: r.json })); } catch (e) {}
       if (!onRobot(r.json.wearing || "")) { held = true; location.reload(); return; }
       var now = meta();
       if (r.json.version > (now.version || 0) && !now.dirty && !inflight) { held = true; reloadWhenIdle(); }
@@ -409,6 +413,282 @@
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden) poll();
     else if (meta().dirty && !inflight) push();
+  });
+  ["pointerdown", "keydown", "touchstart"].forEach(function (type) {
+    window.addEventListener(type, function () { lastInput = Date.now(); }, { capture: true, passive: true });
+  });
+})();
+
+/* A persona's visual memories live on the box too (plan §2c, wave G4d). Upstream keeps them in
+   IndexedDB (v3/visual-memory.js), under vmNs(); apply.py makes vmNs() read gb_box_vm_ns first,
+   pinned here to the persona, so each persona's saved views are its own on a shared phone.
+   - At load, before the creature opens the store (apply.py makes vmOpen wait on
+     gbBoxMemReady), the box's records are merged in: the phone and the box are compared record
+     by record against `known`, what both agreed on last, so each side's own changes win and an
+     owner's delete or restore lands. Other personas' records leave the phone; the box has them.
+   - While it runs, every write the creature makes to the store (apply.py calls
+     gbBoxMemChanged) is sent a moment later: a new or changed record whole, and the ids it
+     forgot. A record the box's changed since, or the poll's newer `memories`, means the owner
+     changed them, and the page reloads when idle to take the box's.
+   - `dirty` marks writes not yet on the box. Only then is a record the phone lacks one it
+     forgot; otherwise the phone's store lost it, and the box's copy comes back.
+   gb_box_vm/<persona> is {known: {id: fingerprint}, version, dirty}. */
+(function () {
+  "use strict";
+  if (location.pathname !== "/v3/next.html") return;
+  var NS_KEY = "gb_box_vm_ns", PREFIX = "gb_box_vm/", PATH = "/api/box/memories";
+  var READY_MS = 8000, SEND_AFTER_MS = 2000, RETRY_MS = 15000, IDLE_MS = 20000;
+  var store;
+  try { store = window.localStorage; store.getItem(NS_KEY); } catch (e) { return; }
+  var soul = window.__gbBoxSoul || {};
+  if (soul.g2) { try { store.removeItem(NS_KEY); } catch (e) {} return; }
+  var persona = soul.persona;
+  if (!persona || !window.indexedDB || !window.Promise) return;
+  var NS = "gb-" + persona, KEY = PREFIX + persona;
+  try { store.setItem(NS_KEY, NS); } catch (e) { return; }
+
+  function mine() {
+    try {
+      var m = JSON.parse(store.getItem(KEY) || "null");
+      if (m && typeof m === "object" && m.known && typeof m.known === "object") return m;
+    } catch (e) {}
+    return { known: {}, version: -1, dirty: false };
+  }
+  function save(m) { try { store.setItem(KEY, JSON.stringify(m)); } catch (e) {} }
+  // What the phone and the box compare: the creature's fields and its views' times. The
+  // pictures in a view never change once taken, so a view's time names it.
+  function fp(r) {
+    return JSON.stringify([r.kind, r.name, r.desc, r.t, r.confirmed, r.namedAt,
+      (r.views || []).map(function (v) { return v && v.t; })]);
+  }
+  function call(method, path, body) {
+    return fetch(path, {
+      method: method,
+      headers: body ? { "content-type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
+    });
+  }
+  function done(q) {
+    return new Promise(function (res, rej) {
+      q.onsuccess = function () { res(q.result); };
+      q.onerror = function () { rej(q.error || new Error("storage")); };
+    });
+  }
+  function finished(tx) {
+    return new Promise(function (res, rej) {
+      tx.oncomplete = function () { res(); };
+      tx.onerror = tx.onabort = function () { rej(tx.error || new Error("storage")); };
+    });
+  }
+
+  var db = null;
+  // The creature's own database, made the way visual-memory.js makes it when it is new. One
+  // from before its meta store is left for the creature to upgrade, and synced next load.
+  function open() {
+    if (db) return Promise.resolve(db);
+    return new Promise(function (res) {
+      var q;
+      try { q = indexedDB.open("gb_vismem", 2); } catch (e) { res(null); return; }
+      q.onupgradeneeded = function (ev) {
+        var d = q.result;
+        if (ev.oldVersion !== 0) { q.transaction.abort(); return; }
+        ["refs", "runs", "meta"].forEach(function (name) {
+          d.createObjectStore(name, { keyPath: "key" }).createIndex("ns", "ns", { unique: false });
+        });
+      };
+      q.onsuccess = function () {
+        db = q.result;
+        db.onversionchange = function () { try { db.close(); } catch (e) {} db = null; };
+        res(db);
+      };
+      q.onerror = q.onblocked = function () { res(null); };
+    });
+  }
+  function local(d) {
+    return done(d.transaction("meta", "readonly").objectStore("meta").index("ns").getAll(NS)).then(function (rows) {
+      var out = {};
+      (rows || []).forEach(function (r) { if (r && r.ns === NS && r.key === NS + "/" + r.id) out[r.id] = r; });
+      return out;
+    });
+  }
+  function boxList() {
+    return call("GET", PATH).then(function (r) {
+      if (r.status !== 200 || !r.json || !Array.isArray(r.json.memories)) throw r;
+      var out = {};
+      r.json.memories.forEach(function (m) { if (m && typeof m.id === "string") out[m.id] = m; });
+      return { version: r.json.version, rows: out };
+    });
+  }
+  function picture(id, i) {
+    return call("GET", PATH + "/view?id=" + encodeURIComponent(id) + "&i=" + i).then(function (r) {
+      if (r.status !== 200 || !r.json || typeof r.json.j !== "string") throw r;
+      return r.json.j;
+    });
+  }
+  function rows(b, views) {
+    var meta = { key: NS + "/" + b.id, ns: NS, id: b.id, v: 1, kind: b.kind, name: b.name, desc: b.desc,
+      t: b.t, confirmed: b.confirmed, namedAt: b.namedAt, views: views.map(function (v) { return { t: v.t }; }) };
+    var ref = {};
+    for (var k in meta) ref[k] = meta[k];
+    ref.views = views;
+    return { meta: meta, ref: ref };
+  }
+
+  // 1. The merge, before the creature reads its store.
+  var late = false;
+  function merge() {
+    return Promise.all([open(), boxList()]).then(function (got) {
+      var d = got[0], box = got[1];
+      if (!d) return;
+      return local(d).then(function (here) {
+        var m = mine(), known = m.known, take = [], drop = [];
+        Object.keys(box.rows).forEach(function (id) {
+          var b = box.rows[id], l = here[id];
+          if (l) {
+            if (fp(l) !== fp(b) && fp(b) !== known[id]) take.push(b);
+          } else if (known[id] === undefined || !m.dirty) {
+            take.push(b);
+          }
+        });
+        Object.keys(here).forEach(function (id) {
+          if (!box.rows[id] && known[id] !== undefined) drop.push(id);
+        });
+        // Pictures first: a transaction would not survive waiting on the network.
+        var fetched = [];
+        return take.reduce(function (p, b) {
+          return p.then(function () {
+            var views = Array.isArray(b.views) ? b.views : [];
+            return Promise.all(views.map(function (v, i) {
+              return picture(b.id, i).then(function (j) { return { j: j, t: v.t }; });
+            })).then(function (vs) { if (vs.length) fetched.push(rows(b, vs)); }, function () {});
+          });
+        }, Promise.resolve()).then(function () {
+          if (late) return;
+          var tx = d.transaction(["refs", "meta", "runs"], "readwrite");
+          fetched.forEach(function (r) { tx.objectStore("refs").put(r.ref); tx.objectStore("meta").put(r.meta); });
+          drop.forEach(function (id) { tx.objectStore("refs").delete(NS + "/" + id); tx.objectStore("meta").delete(NS + "/" + id); });
+          // Another persona's faces are on the box, not this phone's to keep.
+          ["refs", "meta", "runs"].forEach(function (name) {
+            var q = tx.objectStore(name).index("ns").openKeyCursor();
+            q.onsuccess = function () {
+              var c = q.result;
+              if (!c) return;
+              if (typeof c.key === "string" && c.key.indexOf("gb-") === 0 && c.key !== NS) tx.objectStore(name).delete(c.primaryKey);
+              c.continue();
+            };
+          });
+          return finished(tx).then(function () {
+            var now = mine();
+            fetched.forEach(function (r) { now.known[r.meta.id] = fp(r.meta); });
+            drop.forEach(function (id) { delete now.known[id]; });
+            Object.keys(box.rows).forEach(function (id) {
+              if (here[id] && fp(here[id]) === fp(box.rows[id])) now.known[id] = fp(box.rows[id]);
+            });
+            now.version = box.version;
+            save(now);
+            Object.keys(store).forEach(function (k) {
+              if (k.indexOf(PREFIX) === 0 && k !== KEY) { try { store.removeItem(k); } catch (e) {} }
+            });
+          });
+        });
+      });
+    }).catch(function () {});
+  }
+  var merged = merge();
+  window.gbBoxMemReady = Promise.race([
+    merged,
+    new Promise(function (res) { setTimeout(function () { late = true; res(); }, READY_MS); }),
+  ]);
+
+  // 2. The creature's own writes, sent a moment after the last one.
+  var timer = 0, gen = 0, busy = false, again = false, refused = {}, stopped = false, lastInput = Date.now();
+  function reloadWhenIdle() {
+    stopped = true;
+    if (document.hidden || Date.now() - lastInput > IDLE_MS) location.reload();
+    else setTimeout(reloadWhenIdle, 5000);
+  }
+  function away(r) {
+    // Moved, deleted, or a persona this tab no longer runs as: the soul's loader reloads.
+    if (r.status === 404 || r.status === 409) { stopped = true; return true; }
+    return false;
+  }
+  function send() {
+    if (stopped) return;
+    if (busy) { again = true; return; }
+    busy = true; again = false;
+    var failed = false, at = gen;
+    Promise.all([open(), boxList()]).then(function (got) {
+      var d = got[0], box = got[1];
+      if (!d) return;
+      return local(d).then(function (here) {
+        var m = mine(), known = m.known, puts = [], forgets = [], theirs = false;
+        Object.keys(here).forEach(function (id) {
+          var l = here[id], b = box.rows[id];
+          if (refused[id] === fp(l)) return;
+          if (!b) { if (known[id] !== undefined) theirs = true; else puts.push(id); }
+          else if (fp(l) !== fp(b)) { if (fp(b) !== known[id]) theirs = true; else puts.push(id); }
+          else known[id] = fp(b);
+        });
+        Object.keys(box.rows).forEach(function (id) {
+          if (here[id]) return;
+          if (known[id] !== undefined && m.dirty) forgets.push(id);
+          else theirs = true;
+        });
+        save(m);
+        return puts.reduce(function (p, id) {
+          return p.then(function () {
+            if (stopped) return;
+            return done(d.transaction("refs", "readonly").objectStore("refs").get(NS + "/" + id)).then(function (row) {
+              if (!row || !Array.isArray(row.views)) return;
+              var record = { id: row.id, kind: row.kind, name: row.name, desc: row.desc, t: row.t,
+                confirmed: row.confirmed, namedAt: row.namedAt,
+                views: row.views.map(function (v) { return { j: v.j, t: v.t }; }) };
+              return call("POST", PATH, { persona: persona, memory: record }).then(function (r) {
+                if (r.status === 200) {
+                  var now = mine(); now.known[id] = fp(record); now.version = r.json && r.json.version; save(now);
+                } else if (r.status === 400 || r.status === 413) {
+                  refused[id] = fp(record);   // the box will never keep it: not sent again
+                } else if (!away(r)) failed = true;
+              });
+            });
+          });
+        }, Promise.resolve()).then(function () {
+          if (stopped || !forgets.length) return;
+          return call("POST", PATH + "/forget", { persona: persona, ids: forgets }).then(function (r) {
+            if (r.status === 200) {
+              var now = mine();
+              forgets.forEach(function (id) { delete now.known[id]; });
+              now.version = r.json && r.json.version; save(now);
+            } else if (!away(r)) failed = true;
+          });
+        }).then(function () {
+          if (theirs) reloadWhenIdle();
+        });
+      });
+    }).catch(function () { failed = true; }).then(function () {
+      busy = false;
+      // A write made while this ran is not on the box yet.
+      if (!failed && !again && at === gen) { var now = mine(); now.dirty = false; save(now); }
+      if (again) send();
+      else if (failed && !stopped) { clearTimeout(timer); timer = setTimeout(send, RETRY_MS); }
+    });
+  }
+  window.gbBoxMemChanged = function () {
+    gen++;
+    var m = mine();
+    if (!m.dirty) { m.dirty = true; save(m); }
+    clearTimeout(timer);
+    timer = setTimeout(send, SEND_AFTER_MS);
+  };
+  merged.then(function () { if (!late) send(); });
+  window.addEventListener("gb-box-state", function (ev) {
+    var got = ev.detail && ev.detail.memories;
+    if (typeof got === "number" && got !== mine().version && !busy) send();
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden && mine().dirty && !busy) send();
   });
   ["pointerdown", "keydown", "touchstart"].forEach(function (type) {
     window.addEventListener(type, function () { lastInput = Date.now(); }, { capture: true, passive: true });

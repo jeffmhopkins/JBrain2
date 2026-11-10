@@ -3259,8 +3259,7 @@ flashes a robot once. The tile's second line says who is wearing the body (or th
 down). There is one body and several personas (owner, 2026-11-10): a persona is a creature's
 soul, and it can live on a phone alone or wear the body.
 Built in wave G4c: the three tabs, the launch sheet, *Who wears*, the hand-over banners, *On
-another phone* and a persona's page with *Soul*, *Checkpoints* and *Manage*. *Memories* arrives
-with G4d.
+another phone* and a persona's page with *Soul*, *Memories*, *Checkpoints* and *Manage*.
 
 - **Three tabs, one per job** (a segmented control under the top bar): **Personas** (with its
   count), **Body**, **Phones**. Each tab keeps its own scroll.
@@ -3330,8 +3329,15 @@ with G4d.
     persona open on a phone reloads with the edit the next time it is idle, and the editor says
     so. Then *What it remembers — read-only*: Who it is, Bond line, Right now, Wants, Diary,
     with *<self name> writes these itself … To take one back, restore a checkpoint.*
-  - *Memories*: a grid of saved views with their label and date, each with *Delete* (armed).
-    They name people, so they never leave the box.
+  - *Memories* (its count on the tab, read when the tab opens): a grid of saved views, each its
+    first picture (the kind's glyph while it loads or if it can't), its name or what it is (*A
+    person*, *A thing*, *Handwriting*, *A scene*, *A place*), its date and *Delete* (armed: *Tap
+    again*; toast *Sprout forgot “blue mug”.*). Tapping a picture opens a sheet with all its views
+    (up to 3), its kind and description, and the same *Delete*. Under the grid: *Saved views of
+    people and things it has met — they name people, so they stay on the box. Deleting one makes
+    it forget that face or thing; a checkpoint made before still has it.* A checkpoint row says
+    how many visual memories it keeps; a restore brings them back, and *Reset* and *Import over
+    it* clear them (the checkpoint made first keeps them).
   - *Checkpoints*: *Name it* plus *Save*, then the list, newest first (name, date, *automatic*
     and why for the ones made before an edit, restore, reset or import), each with *Restore* (a
     centre confirm that names the date and says the current state is saved first; its toast has

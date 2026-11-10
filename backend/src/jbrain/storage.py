@@ -81,6 +81,17 @@ class FsBlobStore:
     def __init__(self, root: str | Path):
         self._root = Path(root)
 
+    def namespace(self, name: str) -> "FsBlobStore":
+        """A store of its own under this one's root, for blobs no other feature may share
+        (GrowBot's visual memories: faces). Its digests address nothing in this store, so no
+        attachment can name one, and its deletes need consult only its own feature's rows,
+        not `blob_refs`. It lives on the same volume, so it is backed up and exported with
+        everything else. `ns-` cannot collide with a shard directory, which is two hex digits.
+        """
+        if not re.fullmatch(r"[a-z][a-z0-9-]{0,40}", name):
+            raise ValueError(f"not a namespace name: {name!r}")
+        return FsBlobStore(self._root / f"ns-{name}")
+
     def path_for(self, sha256: str) -> Path:
         return self._root / sha256[:2] / sha256[2:4] / sha256
 

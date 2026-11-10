@@ -2,11 +2,12 @@
  *  name with where it is, its own tabs, and Open <name>… in the foot. Every write the box
  *  checkpoints first answers with that checkpoint, and the toast's Undo restores it.
  *
- *  The Memories tab (its visual memories) is wave G4d's, so the tabs here are Soul ·
- *  Checkpoints · Manage until it lands. */
+ *  The Memories tab reads its visual memories when it opens rather than with the persona: they
+ *  are pictures, and most visits never look at them. */
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   type GrowbotCheckpoint,
+  type GrowbotMemory,
   type GrowbotPersona,
   type GrowbotPersonaDetail,
   type GrowbotSoul,
@@ -23,6 +24,8 @@ import {
   ago,
   clip,
   day,
+  memoriesCount,
+  memoryForgot,
   onPhone,
   phoneName,
   regionText,
@@ -33,11 +36,12 @@ import {
   words,
 } from "../growbot";
 import { Dialog } from "./Dialog";
+import { GrowbotMemoryGrid } from "./GrowbotMemories";
 import { GrowbotTabs, type Say } from "./GrowbotPersonaSheets";
 import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
 
-type PTab = "soul" | "cps" | "manage";
+type PTab = "soul" | "vm" | "cps" | "manage";
 
 interface Props {
   persona: GrowbotPersona;
@@ -89,6 +93,11 @@ export function GrowbotPersonaPage({
   const [renaming, setRenaming] = useState(false);
   const [restoring, setRestoring] = useState<GrowbotCheckpoint | null>(null);
   const [cpName, setCpName] = useState("");
+  const [mems, setMems] = useState<GrowbotMemory[] | null>(null);
+  const [memError, setMemError] = useState("");
+  // Bumped by every write that can change them (a restore brings a checkpoint's back; a reset
+  // or an import clears them), so an open Memories tab reads them again.
+  const [memAsk, setMemAsk] = useState(0);
   const { isArmed, arm } = useArm();
   useBackLayer(onBack);
   // The page replaces the list, so focus moves to its name rather than staying on a row
@@ -113,6 +122,27 @@ export function GrowbotPersonaPage({
     void load();
   }, [load, persona.version]);
 
+  // Numbered as asked, and only the newest answer is taken: a read that set out before a
+  // delete would otherwise put the forgotten memory back on screen.
+  const memAsked = useRef(0);
+  const loadMems = useCallback(async () => {
+    const at = ++memAsked.current;
+    try {
+      const got = await api.growbotMemories(persona.id);
+      if (at !== memAsked.current) return;
+      setMems(got);
+      setMemError("");
+      setDetail((d) => (d ? { ...d, memories: got.length } : d));
+    } catch (e) {
+      if (at === memAsked.current) setMemError(message(e));
+    }
+  }, [persona.id]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the version and memAsk are triggers.
+  useEffect(() => {
+    if (ptab === "vm") void loadMems();
+  }, [ptab, loadMems, persona.version, memAsk]);
+
   const p = persona;
   const live = p.phone
     ? ` ${p.name} picks it up the next time it's idle ${onPhone(p.phone, pl)}.`
@@ -120,6 +150,7 @@ export function GrowbotPersonaPage({
 
   function took(out: GrowbotWritten) {
     setDetail(out.persona);
+    setMemAsk((n) => n + 1);
     onChanged();
   }
 
@@ -203,7 +234,7 @@ export function GrowbotPersonaPage({
       took(out);
       const cp = out.checkpoint;
       say(
-        `${p.name} is a fresh creature again.${cp ? ` “${cp.name}” keeps everything it was.` : ""}${live}`,
+        `${p.name} is a fresh creature again, and its visual memories are cleared.${cp ? ` “${cp.name}” keeps everything it was, visual memories too.` : ""}${live}`,
         cp ? { undo: undoTo(cp) } : undefined,
       );
     } catch (e) {
@@ -226,10 +257,27 @@ export function GrowbotPersonaPage({
     }
   }
 
+  async function forget(m: GrowbotMemory) {
+    if (!arm(`vm:${m.id}`)) return;
+    try {
+      await api.growbotForgetMemory(p.id, m.id);
+    } catch (e) {
+      say(`${me} didn't forget ${memoryForgot(m)} — ${message(e)}`);
+      return;
+    }
+    setMems((list) => list?.filter((x) => x.id !== m.id) ?? list);
+    setDetail((d) => (d ? { ...d, memories: Math.max(0, d.memories - 1) } : d));
+    say(
+      `${me} forgot ${memoryForgot(m)}.${p.phone ? ` It forgets ${onPhone(p.phone, pl)} the next time it's idle.` : ""}`,
+    );
+    void loadMems();
+  }
+
   const soul: GrowbotSoul = detail?.soul ?? {};
   const cps = detail?.checkpoint_list ?? [];
   const n = detail?.checkpoints ?? p.checkpoints;
   const me = selfName(soul, p.name);
+  const vmCount = detail?.memories ?? mems?.length ?? p.memories;
   const robot = p.wearing ?? pl.robots.find((r) => !r.revoked_at)?.code ?? null;
 
   function soulTab() {
@@ -338,6 +386,42 @@ export function GrowbotPersonaPage({
     );
   }
 
+  function vmTab() {
+    const failed = memError ? (
+      <p className="gb-msg bad" role="alert">
+        {memError}
+      </p>
+    ) : null;
+    if (!mems) return failed ?? <p className="gb-hint dim">Loading {me}'s visual memories…</p>;
+    if (!mems.length) {
+      return (
+        <section className="gb-card">
+          {failed}
+          <p className="gb-hint dim">
+            No saved views yet. It saves one when it meets a person or a thing it wants to remember.
+          </p>
+        </section>
+      );
+    }
+    return (
+      <>
+        {failed}
+        <section className="gb-card">
+          <GrowbotMemoryGrid
+            pid={p.id}
+            memories={mems}
+            isArmed={(m) => isArmed(`vm:${m.id}`)}
+            onDelete={(m) => void forget(m)}
+          />
+          <p className="gb-hint dim gb-gap">
+            Saved views of people and things it has met — they name people, so they stay on the box.
+            Deleting one makes it forget that face or thing; a checkpoint made before still has it.
+          </p>
+        </section>
+      </>
+    );
+  }
+
   function cpsTab() {
     return (
       <section className="gb-card">
@@ -375,6 +459,7 @@ export function GrowbotPersonaPage({
                 <div className="gb-t2">
                   {when(c.created_at)}
                   {c.why ? ` · ${c.why}` : ""}
+                  {c.memories > 0 ? ` · ${memoriesCount(c.memories)}` : ""}
                 </div>
                 <div className="gb-acts">
                   <button type="button" className="gb-btn" onClick={() => setRestoring(c)}>
@@ -422,7 +507,7 @@ export function GrowbotPersonaPage({
             onClick={() => void reset()}
           >
             {isArmed("reset")
-              ? "Tap again — a checkpoint is saved first"
+              ? "Tap again — its visual memories go too; a checkpoint is saved first"
               : "Reset to a fresh creature"}
           </button>
           <button
@@ -463,6 +548,7 @@ export function GrowbotPersonaPage({
         onPick={setPtab}
         tabs={[
           { id: "soul", label: "Soul" },
+          { id: "vm", label: "Memories", count: vmCount },
           { id: "cps", label: "Checkpoints" },
           { id: "manage", label: "Manage" },
         ]}
@@ -480,6 +566,7 @@ export function GrowbotPersonaPage({
         )}
         {!detail && !error && <p className="gb-hint dim">Loading {p.name}…</p>}
         {detail && ptab === "soul" && soulTab()}
+        {ptab === "vm" && vmTab()}
         {ptab === "cps" && cpsTab()}
         {ptab === "manage" && manageTab()}
       </main>
@@ -530,7 +617,7 @@ export function GrowbotPersonaPage({
           onCancel={() => setRestoring(null)}
           onConfirm={() => void restore(restoring)}
         >
-          {`${p.name} goes back to how it was on ${when(restoring.created_at)}. Its soul as it is now is saved as a checkpoint first, so this can be undone.${
+          {`${p.name} goes back to how it was on ${when(restoring.created_at)}, and gets back the visual memories it had then. Its soul and visual memories as they are now are saved as a checkpoint first, so this can be undone.${
             p.phone ? ` It reloads ${onPhone(p.phone, pl)}.` : ""
           }`}
         </Dialog>

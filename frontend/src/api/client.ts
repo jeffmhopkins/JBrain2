@@ -3983,6 +3983,8 @@ export interface GrowbotPersona {
   created_at: string;
   updated_at: string;
   checkpoints: number;
+  /** How many visual memories it has (saved views of people and things it has met). */
+  memories: number;
   wearing: string | null;
 }
 
@@ -3992,6 +3994,22 @@ export interface GrowbotCheckpoint {
   auto: boolean;
   why: string;
   created_at: string;
+  /** How many visual memories the checkpoint keeps; a restore brings them back. */
+  memories: number;
+}
+
+export type GrowbotMemoryKind = "person" | "object" | "handwriting" | "scene" | "place";
+
+/** One visual memory: 1–3 saved views of a person or thing, kept only on the box because
+ *  they name people. `name` may be empty. */
+export interface GrowbotMemory {
+  id: string;
+  kind: GrowbotMemoryKind;
+  name: string;
+  desc: string;
+  saved_at: string | null;
+  views: number;
+  confirmed: "human" | "agent";
 }
 
 /** An upstream soul_format 3 document. Only what the screen reads is typed; the rest is the
@@ -4049,6 +4067,25 @@ export type GrowbotRegion = "persona" | "expression" | "meta" | "dream" | "harne
 export interface GrowbotTicketFor {
   code?: string;
   persona?: string;
+}
+
+/** One saved view of a visual memory (`i` from 0), as a plain `<img src>`: same-origin cookie
+ *  auth, so it never goes through `request()`. dev:mock has no image route, so it draws an
+ *  abstract picture instead — never a face. */
+export function growbotMemoryViewUrl(id: string, mid: string, i: number): string {
+  if (MOCK_MODE) return mockMemoryView(mid, i);
+  return `/api/growbot/personas/${encodeURIComponent(id)}/memories/${encodeURIComponent(mid)}/views/${i}`;
+}
+
+function mockMemoryView(mid: string, i: number): string {
+  let h = i * 47;
+  for (const c of mid) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return svgDataUri(
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'>
+      <rect width='240' height='240' fill='hsl(${h} 35% 52%)'/>
+      <circle cx='${80 + ((h * 7) % 80)}' cy='${90 + i * 20}' r='${46 - i * 8}' fill='hsl(${(h + 40) % 360} 55% 72%)'/>
+      <rect x='30' y='168' width='180' height='44' rx='14' fill='rgba(0,0,0,.16)'/></svg>`,
+  );
 }
 
 export interface EndpointFirmware {
@@ -8208,6 +8245,24 @@ export const api = {
       { method: "POST" },
     );
     return (await response.json()) as GrowbotWritten;
+  },
+
+  /** Its visual memories, newest first. */
+  async growbotMemories(id: string): Promise<GrowbotMemory[]> {
+    const response = await request(`/api/growbot/personas/${encodeURIComponent(id)}/memories`);
+    return ((await response.json()) as { memories: GrowbotMemory[] }).memories;
+  },
+
+  /** Forgets one visual memory. A 404 means it is already gone, which is what was asked. */
+  async growbotForgetMemory(id: string, mid: string): Promise<void> {
+    try {
+      await request(
+        `/api/growbot/personas/${encodeURIComponent(id)}/memories/${encodeURIComponent(mid)}`,
+        { method: "DELETE" },
+      );
+    } catch (e) {
+      if (!(e instanceof ApiError && e.status === 404)) throw e;
+    }
   },
 
   /** Who wears robot `code` (null: nobody); answers with the whole overview. */
