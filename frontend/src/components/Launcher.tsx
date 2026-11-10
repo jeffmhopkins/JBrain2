@@ -12,8 +12,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { type MinecraftStatus, type MinecraftVersion, api } from "../api/client";
+import {
+  type GrowbotStatus,
+  type MinecraftStatus,
+  type MinecraftVersion,
+  api,
+} from "../api/client";
 import { readyCount } from "../cast";
+import { tileLine } from "../growbot";
 import { tileOf } from "../minecraft";
 import { countUnviewed, loadViewed } from "../tasks/viewed";
 import { useForeground } from "../visibility";
@@ -43,6 +49,7 @@ import {
   SettingsIcon,
   ShieldCheckIcon,
   SigmaIcon,
+  SproutIcon,
   UsersIcon,
   XIcon,
   ZapIcon,
@@ -69,6 +76,7 @@ export type LauncherTarget =
   | "tasks"
   | "petcontrol"
   | "jpanel"
+  | "growbot"
   | "cast"
   | "homenet"
   | "endpoints"
@@ -111,6 +119,9 @@ const TILES: Tile[] = [
   // was a hardware validation surface, and what the owner reaches for at work is a
   // message from a four-year-old. Distinct from "Pet" (the phone remote for the wall).
   { title: "jpanel", icon: <ChatIcon size={24} />, target: "jpanel" },
+  // The desk robot, beside the panels: opened every day, flashed once, so it is its own door
+  // and its second line says who is connected (docs/mocks/growbot-flash/b-growbot-screen.html).
+  { title: "GrowBot", icon: <SproutIcon size={24} />, target: "growbot" },
   // Notices on the house's TVs, beside jpanel: the same family of thing, a different door,
   // because what you reach for is "put this on the TV" (docs/mocks/jpanel-cast).
   { title: "Cast", icon: <CastIcon size={24} />, target: "cast" },
@@ -295,6 +306,8 @@ export function Launcher({
     status: MinecraftStatus | null;
     version: MinecraftVersion | null;
   }>({ status: null, version: null });
+  // The GrowBot tile's second line. Unknown (no line) until read, and on any failure.
+  const [growbot, setGrowbot] = useState<GrowbotStatus | null>(null);
   // Config gate for the Image tile. Hydrated synchronously from the last-known
   // device-local value so the tile set is stable from the first paint (no N→N+1
   // count jump on open); null only on a device that has never resolved it, where
@@ -437,11 +450,22 @@ export function Launcher({
         .catch(() => {
           if (!stale) setMc({ status: null, version: null });
         });
+    const refreshGrowbot = () =>
+      api
+        .growbotStatus()
+        .then((out) => {
+          if (!stale) setGrowbot(out);
+        })
+        .catch(() => {
+          if (!stale) setGrowbot(null);
+        });
     refresh();
     void refreshMc();
+    void refreshGrowbot();
     const interval = setInterval(() => {
       refresh();
       void refreshMc();
+      void refreshGrowbot();
     }, REVIEW_POLL_MS);
     return () => {
       stale = true;
@@ -485,6 +509,7 @@ export function Launcher({
   if (!open && !closing) return null;
 
   const mcTile = tileOf(mc.status, mc.version);
+  const gbTile = growbot ? tileLine(growbot) : null;
 
   // Configuration gates (not owner choices): Image and Math only exist where enabled.
   const gated = (target: LauncherTarget) =>
@@ -643,6 +668,14 @@ export function Launcher({
             <>
               <span className={`mc-tile-dot ${mcTile.level}`} aria-hidden="true" />
               <span className="mc-tile-sub">{mcTile.word}</span>
+            </>
+          )}
+          {target === "growbot" && gbTile && (
+            <>
+              {gbTile.level && (
+                <span className={`mc-tile-dot ${gbTile.level}`} aria-hidden="true" />
+              )}
+              <span className="mc-tile-sub">{gbTile.word}</span>
             </>
           )}
         </button>

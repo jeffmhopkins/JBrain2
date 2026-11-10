@@ -2,6 +2,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   ApiError,
   type ContainerStatus,
+  type GrowbotStatus,
   type HostSettings,
   type MetricRange,
   type MetricsHistory,
@@ -29,6 +30,7 @@ import {
 } from "../components/icons";
 import { serverMetricSeries } from "../components/serverMetricSeries";
 import { clearEngineFocus, useEngineSnapshot } from "../engineState";
+import { robotState } from "../growbot";
 import {
   type ConfirmSpec,
   MC_SERVICE,
@@ -42,6 +44,7 @@ import { agoLabel, panelConcerns, panelFacts, panelHealth } from "../panelStatus
 import { useForeground, useForegroundRef } from "../visibility";
 import { PanelLook } from "./PanelLook";
 import { RunsScreen } from "./RunsScreen";
+import "./growbot.css";
 
 function fmtBytes(n: number): string {
   if (n >= 2 ** 30) return `${(n / 2 ** 30).toFixed(1)} GB`;
@@ -184,7 +187,10 @@ const SERVICE_GROUPS: { label: string; services: string[] }[] = [
     ],
   },
   // Hardware and screens around the house, and the phones' location feed.
-  { label: "Devices", services: ["wall", "endpoint", "cast", "sdr", "mqtt", "mqtt-ingest"] },
+  {
+    label: "Devices",
+    services: ["wall", "endpoint", "growbot", "cast", "sdr", "mqtt", "mqtt-ingest"],
+  },
   { label: "Apps", services: ["minecraft", "jlaunch"] },
   // Run-once maintenance containers — present only while one runs.
   { label: "One-shot jobs", services: ["migrate", "wipe"] },
@@ -214,7 +220,8 @@ const SERVICE_WHAT: Record<string, string> = {
   pysandbox: "runs Python",
   jcode: "code mode",
   wall: "wall display",
-  endpoint: "panel flasher",
+  endpoint: "panel and robot flasher",
+  growbot: "desk robots",
   cast: "TVs in the house",
   sdr: "radio",
   mqtt: "location broker",
@@ -624,18 +631,26 @@ const LEVEL_WORD: Record<Level, string> = {
   bad: "down",
 };
 
+/** What the growbot row says beyond its container: who is connected, and a way to the screen. */
+interface GrowbotRowView {
+  status: GrowbotStatus | null;
+  onOpen?: (() => void) | undefined;
+}
+
 function ServiceGroup({
   group,
   chosenEngine,
   memByService,
   onRestart,
   onLifecycle,
+  growbot,
 }: {
   group: { label: string; items: ContainerStatus[] };
   chosenEngine: string | null;
   memByService: Map<string, number>;
   onRestart: (service: string) => void;
   onLifecycle: (service: string, action: "start" | "stop") => void;
+  growbot?: GrowbotRowView;
 }) {
   const level = groupLevel(group.items, chosenEngine);
   const off = group.items.filter((c) => svcLevel(c, chosenEngine) === "off").length;
@@ -669,6 +684,7 @@ function ServiceGroup({
           memBytes={memByService.get(c.service) ?? null}
           onRestart={onRestart}
           onLifecycle={onLifecycle}
+          growbot={c.service === "growbot" ? growbot : undefined}
         />
       ))}
     </OpsCard>
@@ -681,15 +697,28 @@ function ServiceRow({
   memBytes,
   onRestart,
   onLifecycle,
+  growbot,
 }: {
   c: ContainerStatus;
   level: Level;
   memBytes: number | null;
   onRestart: (service: string) => void;
   onLifecycle: (service: string, action: "start" | "stop") => void;
+  growbot?: GrowbotRowView | undefined;
 }) {
   const [open, setOpen] = useState(false);
   const what = SERVICE_WHAT[c.service];
+  // A down growbot is said as its consequence, because what the owner needs to know is that
+  // the robots are cut off, not that a container exited.
+  const robots = growbot?.status?.robots ?? [];
+  const connected = robots.filter((r) => r.connected && !r.revoked_at).length;
+  const gbLine = !growbot
+    ? null
+    : level === "bad"
+      ? "Down — no robot can connect until it is back."
+      : growbot.status
+        ? `${connected} of ${robots.length} robot${robots.length === 1 ? "" : "s"} connected now`
+        : null;
   return (
     <div className="ops-srow">
       <button
@@ -717,10 +746,38 @@ function ServiceRow({
               c.started_at &&
               ` · since ${new Date(c.started_at).toLocaleString()}`}
           </span>
+          {gbLine && (
+            <span className={`ops-smeta ops-smeta-two${level === "bad" ? " bad" : ""}`}>
+              {gbLine}
+            </span>
+          )}
         </span>
         {memBytes !== null && <span className="ops-smem">{fmtBytes(memBytes)}</span>}
         <span className="ops-scaret">›</span>
       </button>
+      {open && growbot && (
+        <div className="gb-ops">
+          {robots.length > 0 && (
+            <ul className="gb-rlist" aria-label="Robots">
+              {robots.map((r) => {
+                const st = robotState(r, level !== "bad");
+                return (
+                  <li key={r.code}>
+                    <span className={`gb-dot ${st.level}`} aria-hidden="true" />
+                    <span className="gb-nm">{r.name || r.code}</span>
+                    <span className="gb-when">{st.text}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {growbot.onOpen && (
+            <button type="button" className="gb-btn primary" onClick={growbot.onOpen}>
+              Open the GrowBot screen
+            </button>
+          )}
+        </div>
+      )}
       {open && (
         <ServiceBody c={c} memBytes={memBytes} onRestart={onRestart} onLifecycle={onLifecycle} />
       )}
@@ -1400,7 +1457,10 @@ interface McSnapshot {
   error: string | null;
 }
 
-export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } = {}) {
+export function OpsScreen({
+  onOpenMinecraft,
+  onOpenGrowbot,
+}: { onOpenMinecraft?: () => void; onOpenGrowbot?: () => void } = {}) {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1422,6 +1482,8 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
   const [panels, setPanels] = useState<PanelStatusOut[] | null>(null);
   const [panelsError, setPanelsError] = useState<string | null>(null);
   const [host, setHost] = useState<HostSettings | null>(null);
+  // The growbot row's robots. Null on a box without GrowBot, where the row is absent anyway.
+  const [growbot, setGrowbot] = useState<GrowbotStatus | null>(null);
   const [hostError, setHostError] = useState<string | null>(null);
 
   // Minecraft has its own screen, but its container is also stoppable from here — the
@@ -1500,6 +1562,14 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
       })
       .catch((err) => {
         if (!cancelled) setHostError(errorMessage(err));
+      });
+    api
+      .growbotStatus()
+      .then((r) => {
+        if (!cancelled) setGrowbot(r);
+      })
+      .catch(() => {
+        if (!cancelled) setGrowbot(null);
       });
     return () => {
       cancelled = true;
@@ -1770,6 +1840,7 @@ export function OpsScreen({ onOpenMinecraft }: { onOpenMinecraft?: () => void } 
                     memByService={memByService}
                     onRestart={restart}
                     onLifecycle={lifecycle}
+                    growbot={{ status: growbot, onOpen: onOpenGrowbot }}
                   />
                 ))}
                 <section className="ops-card ops-restart-all">

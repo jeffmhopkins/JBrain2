@@ -61,6 +61,8 @@ interface JpanelScreenProps {
   /** Which tab opens. The launcher's Endpoints tile lands straight on Flash: someone
    *  holding a board with a cable in it should not have to find a tab first. */
   initialTab?: JpanelTab;
+  /** The Flash tab found a Pico: GrowBot's Add a robot is the one door for robots. */
+  onOpenGrowbot?: () => void;
 }
 
 /** Slow enough to be free on a phone, fast enough that "did they send me anything?"
@@ -1442,7 +1444,12 @@ function PanelRow({
   );
 }
 
-export function JpanelScreen({ onClose, initialTab = "messages", send }: JpanelScreenProps) {
+export function JpanelScreen({
+  onClose,
+  initialTab = "messages",
+  send,
+  onOpenGrowbot,
+}: JpanelScreenProps) {
   const [tab, setTab] = useState<JpanelTab>(send ? "panels" : initialTab);
 
   return (
@@ -1489,7 +1496,7 @@ export function JpanelScreen({ onClose, initialTab = "messages", send }: JpanelS
           stream open, and Messages polls — neither should run behind a tab nobody is on. */}
       {tab === "messages" && <ConversationTab />}
       {tab === "panels" && <PanelsTab send={send} />}
-      {tab === "flash" && <EndpointsScreen />}
+      {tab === "flash" && <EndpointsScreen onOpenGrowbot={onOpenGrowbot} />}
     </div>
   );
 }

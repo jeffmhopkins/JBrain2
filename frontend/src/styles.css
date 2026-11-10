@@ -5398,6 +5398,16 @@ button.small {
   white-space: nowrap;
 }
 
+/* A service's own second line (growbot's robots connected now): read, not skimmed. */
+.ops-smeta-two {
+  color: var(--text-2);
+  white-space: normal;
+}
+
+.ops-smeta-two.bad {
+  color: var(--danger-text);
+}
+
 .ops-smem {
   flex: none;
   font-size: var(--fs-micro);

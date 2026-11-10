@@ -667,3 +667,69 @@ describe("Launcher arranging", () => {
     expect(tile("Pet")).toHaveClass("tile-editing");
   });
 });
+
+// GrowBot is opened every day, so its tile says who is connected without being opened.
+describe("Launcher GrowBot tile", () => {
+  beforeEach(() => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function serveGrowbot(body: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input) === "/api/growbot/status"
+          ? new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
+          : new Response(null, { status: 404 }),
+      ),
+    );
+  }
+  const robot = (name: string, connected: boolean) => ({
+    code: `gb-${name.toLowerCase()}`,
+    name,
+    created_at: "2026-11-01T00:00:00Z",
+    rotated_at: null,
+    revoked_at: null,
+    last_seen_at: null,
+    connected,
+  });
+
+  it("names the robots connected now, and routes to the GrowBot screen", async () => {
+    serveGrowbot({
+      service: "up",
+      connected: 1,
+      robots: [robot("Quorra", true), robot("Tamsin", false)],
+    });
+    const onNavigate = vi.fn();
+    render(<Launcher open onClose={() => {}} onNavigate={onNavigate} />);
+    const tile = screen.getByRole("button", { name: /GrowBot/ });
+    await waitFor(() => expect(tile).toHaveTextContent("Quorra connected"));
+    fireEvent.click(tile);
+    expect(onNavigate).toHaveBeenCalledWith("growbot");
+  });
+
+  it("says when no robot is connected", async () => {
+    serveGrowbot({ service: "up", connected: 0, robots: [robot("Tamsin", false)] });
+    render(<Launcher open onClose={() => {}} onNavigate={vi.fn()} />);
+    const tile = screen.getByRole("button", { name: /GrowBot/ });
+    await waitFor(() => expect(tile).toHaveTextContent("no robot connected"));
+  });
+
+  it("says growbot is down rather than that nobody is connected", async () => {
+    serveGrowbot({ service: "down", connected: 0, robots: [robot("Quorra", false)] });
+    render(<Launcher open onClose={() => {}} onNavigate={vi.fn()} />);
+    const tile = screen.getByRole("button", { name: /GrowBot/ });
+    await waitFor(() => expect(tile).toHaveTextContent("growbot is down"));
+  });
+
+  it("shows no line at all on a box without GrowBot", async () => {
+    serveGrowbot({ detail: "Not Found" });
+    render(<Launcher open onClose={() => {}} onNavigate={vi.fn()} />);
+    const tile = screen.getByRole("button", { name: /GrowBot/ });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(tile).toHaveTextContent(/^GrowBot$/);
+  });
+});

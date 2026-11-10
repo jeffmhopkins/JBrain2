@@ -21,6 +21,11 @@ import type {
   FactOut,
   GeneratedImageOut,
   GraphEdge,
+  GrowbotFailCode,
+  GrowbotFlashJob,
+  GrowbotFlashRequest,
+  GrowbotPhase,
+  GrowbotRobot,
   HomeNetQuery,
   HomeNetRuleAction,
   HomeNetRules,
@@ -151,7 +156,325 @@ const CONTAINERS: ContainerStatus[] = [
     started_at: new Date(Date.now() - 36e5 * 6).toISOString(),
     image: "cloudflare/cloudflared:latest",
   },
+  {
+    service: "growbot",
+    state: "running",
+    health: "healthy",
+    started_at: new Date(Date.now() - 36e5 * 5).toISOString(),
+    image: "jbrain/growbot:edge",
+  },
 ];
+
+// ===== GrowBot (dev:mock) =====
+// Two robots, one connected and one not, so the screen shows both states. The flash is a
+// scripted job that advances one step per GET /api/growbot/flash (the screen polls every
+// second), and successive flashes cycle ok → load_failed → wifi_failed so every outcome the
+// sheet words can be reached by clicking. `?growbot=down` takes the service down.
+const GB_DAY = 864e5;
+interface MockGbStep {
+  log: string[];
+  phase?: [keyof GrowbotFlashJob["phases"], GrowbotPhase];
+  end?: "ok" | GrowbotFailCode;
+}
+const mockGb = {
+  robots: [
+    {
+      code: "gb-3fa91c",
+      name: "Quorra",
+      created_at: new Date(Date.now() - 7 * GB_DAY).toISOString(),
+      rotated_at: null,
+      revoked_at: null,
+      last_seen_at: new Date(Date.now() - 20_000).toISOString(),
+      connected: true,
+    },
+    {
+      code: "gb-91d0e4",
+      name: "Tamsin",
+      created_at: new Date(Date.now() - 2 * GB_DAY).toISOString(),
+      rotated_at: null,
+      revoked_at: null,
+      last_seen_at: new Date(Date.now() - 3 * 36e5).toISOString(),
+      connected: false,
+    },
+  ] as GrowbotRobot[],
+  usb: "boot" as "boot" | "micropython",
+  outcomes: ["ok", "load_failed", "wifi_failed"] as ("ok" | GrowbotFailCode)[],
+  flashes: 0,
+  codes: ["gb-7c20be", "gb-e41d09", "gb-5ab3f2", "gb-0d9c61"],
+  job: null as GrowbotFlashJob | null,
+  steps: [] as MockGbStep[],
+  networks: ["Home-2G", "Workshop"],
+};
+
+function mockGbServiceUp(): boolean {
+  return new URLSearchParams(globalThis.location?.search ?? "").get("growbot") !== "down";
+}
+
+function mockGbScript(
+  mode: "flash" | "rekey",
+  name: string,
+  code: string,
+  nets: string[],
+  outcome: "ok" | GrowbotFailCode,
+  load: boolean,
+): MockGbStep[] {
+  const out: MockGbStep[] = [];
+  if (mode === "rekey") {
+    out.push({ log: [`New device key for ${name}, written over USB on /dev/ttyACM0`] });
+    out.push({ log: ["mpremote: writing the new key"], phase: ["copy", "run"] });
+    out.push({ log: ["Restarting the robot"], phase: ["copy", "done"] });
+  } else {
+    out.push({
+      log: [
+        `GrowBot (Raspberry Pi Pico 2 W) on ${load ? "the RP2350 bootloader" : "/dev/ttyACM0"}`,
+      ],
+    });
+    if (load) {
+      out.push({
+        log: ["picotool: loading MicroPython 1.28.0 (RPI_PICO2_W-20260406-v1.28.0.uf2)"],
+        phase: ["load", "run"],
+      });
+      if (outcome === "load_failed") {
+        out.push({
+          log: [
+            "ERROR: No accessible RP2350 devices in BOOTSEL mode were found.",
+            "FAILED: load_failed: MicroPython did not load.",
+          ],
+          phase: ["load", "fail"],
+          end: "load_failed",
+        });
+        return out;
+      }
+      out.push({ log: ["Loading into Flash: [==========                    ] 33%"] });
+      out.push({ log: ["Loading into Flash: [==============================] 100%"] });
+      out.push({
+        log: ["The device was rebooted to start the application.", "OK port=/dev/ttyACM0"],
+        phase: ["load", "done"],
+      });
+    } else {
+      out.push({
+        log: ["MicroPython 1.28.0 is already on it — skipping picotool"],
+        phase: ["load", "skip"],
+      });
+    }
+    out.push({
+      log: [`PAIRING CODE: ${code}`, "mpremote: copying the robot's firmware"],
+      phase: ["copy", "run"],
+    });
+    out.push({
+      log: [
+        "cp relay_chip.py :main.py",
+        "cp act_engine.py :act_engine.py",
+        "cp PicoRobotics.py :PicoRobotics.py",
+      ],
+    });
+    out.push({
+      log: [
+        "cp wifi_store.py :wifi_store.py",
+        "cp wifi_recovery.py :wifi_recovery.py",
+        `cp secrets.py :secrets.py   (${nets.length} network${nets.length === 1 ? "" : "s"}, box 192.168.1.20:8444, new device key)`,
+      ],
+    });
+    out.push({ log: ["Restarting the robot"], phase: ["copy", "done"] });
+  }
+  out.push({ log: ["Waiting for it to join Wi-Fi …"], phase: ["join", "run"] });
+  if (outcome === "wifi_failed") {
+    out.push({ log: nets.map((n) => `Tried "${n}" — no answer`) });
+    out.push({
+      log: ["WIFI_FAIL", "FAILED: wifi_failed: it could not join any of its networks."],
+      phase: ["join", "fail"],
+      end: "wifi_failed",
+    });
+    return out;
+  }
+  out.push({ log: [`WIFI_OK 192.168.1.57 (joined "${nets[0] ?? "Home-2G"}")`] });
+  out.push({
+    log: ["handshake: OK", "Reached the box at 192.168.1.20:8444 with its device key", "OK"],
+    phase: ["join", "done"],
+    end: "ok",
+  });
+  return out;
+}
+
+/** One poll's worth of the scripted flash: the next step's log, phase and, at the end, the
+ *  robot it made or the failure. */
+function mockGbAdvance(): void {
+  const job = mockGb.job;
+  if (!job || job.state !== "running") return;
+  const step = mockGb.steps.shift();
+  if (!step) return;
+  job.log.push(...step.log);
+  if (step.phase) job.phases[step.phase[0]] = step.phase[1];
+  if (!step.end) return;
+  job.finished_at = new Date().toISOString();
+  for (const id of ["load", "copy", "join"] as const) {
+    if (job.phases[id] === "wait") job.phases[id] = step.end === "ok" ? "skip" : "wait";
+  }
+  if (step.end !== "ok") {
+    job.state = "fail";
+    const words: Record<string, string> = {
+      load_failed: "MicroPython did not load.",
+      wifi_failed: "It could not join any of its networks.",
+    };
+    job.fail = { code: step.end, message: words[step.end] ?? step.end };
+    // Wi-Fi failing means MicroPython and the files are already on it.
+    if (step.end === "wifi_failed") mockGb.usb = "micropython";
+    return;
+  }
+  job.state = "ok";
+  const now = new Date().toISOString();
+  const code = job.code ?? "gb-000000";
+  const existing = mockGb.robots.find((r) => r.code === code);
+  if (existing) {
+    existing.rotated_at = now;
+    existing.revoked_at = null;
+    existing.connected = true;
+    existing.last_seen_at = now;
+  } else {
+    mockGb.robots.push({
+      code,
+      name: job.name,
+      created_at: now,
+      rotated_at: null,
+      revoked_at: null,
+      last_seen_at: now,
+      connected: true,
+    });
+  }
+  // The next Add a robot is pretended to be another new Pico, so the next run loads again.
+  if (job.mode === "flash") mockGb.usb = "boot";
+}
+
+async function mockGrowbot(
+  path: string,
+  method: string,
+  init?: RequestInit,
+): Promise<Response | null> {
+  if (!path.startsWith("/api/growbot/")) return null;
+  const up = mockGbServiceUp();
+  const robots = () =>
+    mockGb.robots.map((r) => ({ ...r, connected: up && r.connected && !r.revoked_at }));
+  if (path === "/api/growbot/status" && method === "GET") {
+    const list = robots();
+    return json({
+      service: up ? "up" : "down",
+      connected: list.filter((r) => r.connected).length,
+      robots: list,
+    });
+  }
+  if (path === "/api/growbot/robots" && method === "GET") return json(robots());
+  const revoke = /^\/api\/growbot\/robots\/([^/]+)\/revoke$/.exec(path);
+  if (revoke && method === "POST") {
+    const r = mockGb.robots.find((x) => x.code === decodeURIComponent(revoke[1] ?? ""));
+    if (!r) return json({ detail: "No robot has that pairing code." }, 404);
+    r.revoked_at = new Date().toISOString();
+    r.connected = false;
+    return json({ ...r });
+  }
+  if (path === "/api/growbot/ticket" && method === "POST") {
+    const { code } = JSON.parse(String(init?.body ?? "{}")) as { code?: string };
+    return json({
+      ticket: "mock-ticket",
+      url: `https://jbrain.local:8444/open?ticket=mock-ticket&id=${encodeURIComponent(code ?? "")}`,
+      expires_at: new Date(Date.now() + 120_000).toISOString(),
+    });
+  }
+  if (path === "/api/growbot/flash/setup" && method === "GET") {
+    return json({
+      flasher: true,
+      usb:
+        mockGb.usb === "boot"
+          ? [{ kind: "boot", port: null, label: "RP2350 bootloader" }]
+          : [{ kind: "micropython", port: "/dev/ttyACM0", label: "MicroPython on a Pico 2 W" }],
+      networks: mockGb.networks.map((ssid) => ({ ssid, remembered: true })),
+      box_host: "192.168.1.20",
+      lan: true,
+      ca: true,
+      micropython: { version: "1.28.0", ready: true },
+      firmware_ready: true,
+    });
+  }
+  if (path === "/api/growbot/flash" && method === "GET") {
+    mockGbAdvance();
+    return json({ job: mockGb.job ? structuredClone(mockGb.job) : null });
+  }
+  if (path === "/api/growbot/flash" && method === "POST") {
+    const body = JSON.parse(String(init?.body ?? "{}")) as GrowbotFlashRequest;
+    if (mockGb.job?.state === "running") {
+      return json({ detail: "A flash is already running — wait for it to finish." }, 409);
+    }
+    const existing = mockGb.robots.find((r) => r.code === body.target);
+    if (body.target !== "new" && !existing) {
+      return json({ detail: "No robot has that pairing code — pick it again." }, 404);
+    }
+    if (body.mode === "rekey" && !existing) {
+      return json({ detail: "A new key needs a robot to write it into." }, 422);
+    }
+    const nets = (body.networks ?? []).map((n) => n.ssid);
+    if (body.mode === "flash") {
+      if (body.target === "new" && !body.name?.trim()) {
+        return json({ detail: "Give the robot a name." }, 422);
+      }
+      if (nets.length === 0) {
+        return json({ detail: "Pick at least one network for it to join." }, 422);
+      }
+      const unknown = (body.networks ?? []).find(
+        (n) => n.password === undefined && !mockGb.networks.includes(n.ssid),
+      );
+      if (unknown) {
+        return json(
+          { detail: `The box doesn't remember "${unknown.ssid}" — type its password.` },
+          422,
+        );
+      }
+      for (const n of body.networks ?? []) {
+        if (n.password !== undefined && n.remember && !mockGb.networks.includes(n.ssid)) {
+          mockGb.networks.push(n.ssid);
+        }
+      }
+    }
+    let outcome: "ok" | GrowbotFailCode = "ok";
+    if (body.mode === "flash") {
+      outcome = mockGb.outcomes[mockGb.flashes % mockGb.outcomes.length] ?? "ok";
+      mockGb.flashes++;
+    }
+    const load = body.mode === "flash" && (mockGb.usb === "boot" || body.reinstall === true);
+    // A load failure needs something to load; on a Pico already running MicroPython the cycle
+    // moves on to the next outcome instead.
+    if (outcome === "load_failed" && !load) outcome = "ok";
+    const code = existing
+      ? existing.code
+      : (mockGb.codes[mockGb.robots.length % mockGb.codes.length] ?? "gb-0d9c61");
+    const name = existing ? existing.name : (body.name ?? "").trim();
+    mockGb.steps = mockGbScript(
+      body.mode,
+      name,
+      code,
+      nets.length ? nets : ["Home-2G"],
+      outcome,
+      load,
+    );
+    mockGb.job = {
+      id: `job-${Date.now()}`,
+      mode: body.mode,
+      state: "running",
+      name,
+      code,
+      port: mockGb.usb === "boot" ? null : "/dev/ttyACM0",
+      box_host: body.box_host ?? "192.168.1.20",
+      phases: { load: body.mode === "rekey" ? "skip" : "wait", copy: "wait", join: "wait" },
+      log:
+        existing && body.mode === "flash"
+          ? [`Reflashing ${name} (${code}): same pairing code, new key.`]
+          : [],
+      fail: null,
+      started_at: new Date().toISOString(),
+      finished_at: null,
+    };
+    return json({ job: structuredClone(mockGb.job) }, 202);
+  }
+  return null;
+}
 
 // The Ops "Runs" surface (Direction C) fixtures: a running integration run, a
 // running pipeline sweep, a failed run with a step error, and finished runs.
@@ -6555,6 +6878,24 @@ export const mockFetch: typeof fetch = async (input, init) => {
         place_name: "Gym",
       },
     ]);
+  }
+  const growbot = await mockGrowbot(path, method, init);
+  if (growbot) return growbot;
+  // The Flash tab's port scan: the blank Pico the GrowBot mock is flashing sits in its USB
+  // loader, which is raw USB and no serial port, so jpanel hands it over to GrowBot.
+  if (path === "/api/endpoint/ports" && method === "GET") {
+    const ports =
+      mockGb.usb === "micropython"
+        ? [
+            {
+              device: "/dev/ttyACM0",
+              label: "MicroPython on a Pico 2 W",
+              is_espressif: false,
+              is_pico: true,
+            },
+          ]
+        : [];
+    return json({ ports, flasher: true, pico_boot: mockGb.usb === "boot" });
   }
   // --- the fleet. Two panels, and deliberately NOT both healthy: a fixture where everything
   // is fine validates a card that only ever renders the boring half, and the half that
