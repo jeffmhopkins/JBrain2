@@ -11,7 +11,7 @@ Three routers over one repo (`jbrain.growbot.repo`):
 - `debug_router` — a debug token (`DebugDep`, mounted only with debug access on): the same
   five, because the owner runs the box with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`, mounted under `/internal`, which
-  Caddy never routes): redeem a ticket, verify a chip's key.
+  Caddy never routes): redeem a ticket, verify a chip's key, and read the LAN root certificate.
 
 The sidecar's checks run under the system owner context, the wall's `/internal/pet` shape:
 the token has been checked, and the tables are owner-only.
@@ -28,6 +28,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from pydantic import BaseModel, Field
 
+from jbrain.api import endpoint
 from jbrain.api.deps import DebugDep, OwnerDep, SettingsDep
 from jbrain.api.internal_auth import require_growbot
 from jbrain.config import Settings
@@ -317,6 +318,17 @@ async def redeem_ticket(request: Request, body: RedeemIn) -> RedeemedOut:
     if code is None:
         raise _refused()
     return RedeemedOut(ok=True, code=code)
+
+
+@internal_router.get("/lan-root")
+async def lan_root(request: Request) -> Response:
+    """The box's LAN root certificate (the public half of Caddy's internal CA), for the sidecar
+    to hand a phone that is signed in to nothing: the robot's, scanning a QR from the GrowBot
+    screen. The sidecar serves it on the LAN-only `:8444`, never on the internet."""
+    pem = endpoint._lan_ca()
+    if not pem:
+        raise HTTPException(status_code=404, detail="no LAN certificate")
+    return Response(content=pem.encode(), media_type="application/x-pem-file")
 
 
 @internal_router.post("/robot/verify")

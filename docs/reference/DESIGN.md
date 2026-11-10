@@ -3273,6 +3273,11 @@ flashes one once. The tile's second line says who is connected (or that `growbot
   Below the robots, *Open GrowBot without a robot* (secondary) opens the creature with no legs:
   it opens unpaired on the phone and offers to pair, so it can be tried before any board is flashed
   (owner, 2026-11-10).
+  *Set up another phone* (secondary, under *Open GrowBot without a robot*) opens a sheet for the
+  robot's phone, which is signed in to nothing: *It opens as* (each live robot, or *No robot*),
+  then two codes on white cards, *1. Scan with the phone's camera app* (the box's setup page:
+  certificate and scanner) and *2. Scan from the setup page's Scan the code* (a one-time ticket,
+  re-minted every 100 s). Pairing stays on this screen (owner, 2026-11-10).
   Last on the screen, *Sign out every phone* (danger, armed: *Tap again to sign every phone out*)
   ends every phone's GrowBot session, since a phone otherwise stays signed in for 30 days so the
   robot's installed app keeps running; the toast says to open GrowBot again from here.

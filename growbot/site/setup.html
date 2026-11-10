@@ -1,0 +1,40 @@
+<!doctype html><html lang="en"><head><script src="/growbot-box.js"></script><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0b1a">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>Set up GrowBot</title>
+<style>
+  body { margin: 0; background: #0b0b1a; color: #e6edf3; font: 17px/1.5 system-ui, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 24px 16px 40px; display: grid; gap: 16px; }
+  h1 { font-size: 1.5rem; margin: 0; }
+  h2 { font-size: 1.05rem; margin: 0 0 4px; }
+  p { margin: 0; color: #b8c4cf; }
+  section { background: #151a2b; border: 1px solid #262d45; border-radius: 12px; padding: 16px; display: grid; gap: 10px; }
+  .btn { display: block; text-align: center; padding: 12px 16px; border-radius: 10px; border: 1px solid #7fd89a;
+         background: transparent; color: #7fd89a; font: 600 1rem system-ui, sans-serif; text-decoration: none; }
+  .btn.primary { background: #7fd89a; color: #0b0b1a; }
+  video { width: 100%; border-radius: 10px; background: #000; }
+  .msg { color: #f0b37e; }
+  [hidden] { display: none !important; }
+</style>
+</head><body>
+<main>
+  <h1>Set up GrowBot on this phone</h1>
+  <section>
+    <h2>1. Trust the box (once per phone)</h2>
+    <p>Download the box's certificate, then install it: Settings → Security → Install a
+      certificate → CA certificate. Without it the phone shows a warning and can't install
+      GrowBot as an app.</p>
+    <a class="btn" href="/box-root.crt" download="jbrain-box-root.crt">Download the box's certificate</a>
+  </section>
+  <section>
+    <h2>2. Scan the code from JBrain</h2>
+    <p>On your main phone, open JBrain → GrowBot → <em>Set up another phone</em>, and point this
+      camera at the second code. It opens the creature here.</p>
+    <button type="button" class="btn primary" id="scan">Scan the code</button>
+    <video id="view" playsinline muted hidden></video>
+    <p class="msg" id="msg" role="status" hidden></p>
+  </section>
+</main>
+<script src="/setup.js"></script>
+</body></html>

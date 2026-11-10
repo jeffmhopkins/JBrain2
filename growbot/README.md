@@ -93,11 +93,22 @@ Chrome on Android offers *Install app* for the creature: `v3/next.html` links
 page when the phone is off the Wi-Fi. These four files are the only ones served without a
 session, because Chrome fetches the manifest and icons with no cookie. `/start` sends a
 signed-in phone back into the creature on its session's robot, and a phone whose session
-has lapsed to a page pointing at JBrain, whose GrowBot screen mints the next ticket. Chrome
+has lapsed to `/setup.html`. Chrome
 installs only from a site it trusts, so the phone needs the box's root certificate installed
 (the GrowBot screen's *Download the box's certificate*), not a warning clicked through. On an
 iPhone a home-screen app keeps its own storage apart from Safari's, so it starts a fresh creature
 until G4 moves the creature onto the box.
+
+## Setting up the robot's phone
+
+That phone is signed in to nothing, so JBrain's GrowBot screen shows two codes under *Set up
+another phone*. The first, scanned with the camera app, opens `/setup.html` on this site: a
+*Download the box's certificate* button (`/box-root.crt`, the public half of Caddy's internal
+CA, read from the api's `/internal/growbot/lan-root` and served only here on the LAN) and a
+scanner (`setup.js`, Chrome's built-in `BarcodeDetector`). The second is a one-time ticket for
+the robot chosen there (or none); the scanner follows only this origin's `/open?ticket=` link,
+so a code from anywhere else opens nothing. A lapsed installed app's `/start` lands on the same
+page, so getting it back is one scan.
 
 ## Security
 

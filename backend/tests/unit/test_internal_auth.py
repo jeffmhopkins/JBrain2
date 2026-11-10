@@ -55,6 +55,7 @@ ENROLL_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
 GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("POST", "/internal/growbot/ticket/redeem", {"ticket": "t"}, 200),
     ("POST", "/internal/growbot/robot/verify", {"code": "gb-x", "key": "k"}, 200),
+    ("GET", "/internal/growbot/lan-root", None, 404),
     ("GET", "/internal/growbot/llm/v1/models", None, 200),
     ("POST", "/internal/growbot/llm/v1/chat/completions", {"model": "x", "messages": []}, 400),
 ]

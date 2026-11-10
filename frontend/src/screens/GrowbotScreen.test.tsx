@@ -331,3 +331,29 @@ describe("GrowbotScreen signing every phone out", () => {
     expect(calls.filter((c) => c.path === "/api/growbot/sessions/reset")).toHaveLength(1);
   });
 });
+
+describe("GrowbotScreen setting up another phone", () => {
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("shows the setup page and a ticket for the chosen robot as two codes", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    const calls = serve({ service: "up", connected: 1, robots: [robot()] }, (path, init) => {
+      if (path !== "/api/growbot/ticket") return null;
+      const body = JSON.parse(String(init?.body ?? "{}")) as { code?: string };
+      const id = body.code ? `&id=${body.code}` : "";
+      return json({ ticket: "t", url: `https://jbrain.local:8444/open?ticket=t${id}` });
+    });
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Set up another phone" }));
+    const one = await screen.findByRole("region", { name: "Code 1" });
+    expect(within(one).getByText(/camera app/)).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Code 2" })).toBeTruthy();
+    const tickets = () => calls.filter((c) => c.path === "/api/growbot/ticket");
+    expect(tickets()[0]?.body).toEqual({ code: "gb-3fa91c" });
+    fireEvent.click(screen.getByRole("radio", { name: /No robot/ }));
+    await waitFor(() => expect(tickets().at(-1)?.body).toEqual({}));
+  });
+});

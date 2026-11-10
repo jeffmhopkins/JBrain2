@@ -215,3 +215,14 @@ def test_the_service_worker_is_registered_and_caches_nothing() -> None:
     worker = (_SITE / "sw.js").read_text(encoding="utf-8")
     assert 'event.request.mode !== "navigate"' in worker
     assert "caches." not in worker and "cache.put" not in worker
+
+
+def test_the_setup_page_follows_only_this_boxs_ticket_link() -> None:
+    """The second QR is the only thing the setup page opens, so a code from anywhere else
+    (another site, another box) goes nowhere."""
+    page = (_SITE / "setup.html").read_text(encoding="utf-8")
+    assert 'href="/box-root.crt"' in page and '<script src="/setup.js">' in page
+    scanner = (_SITE / "setup.js").read_text(encoding="utf-8")
+    assert "url.origin !== location.origin" in scanner
+    assert 'url.pathname !== "/open"' in scanner
+    assert "location.replace(link)" in scanner
