@@ -511,6 +511,13 @@
 .gb-seg.inner button {
   font-size: var(--fs-secondary);
 }
+.gb-page-name:focus {
+  outline: none;
+}
+.gb-page-name:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: 2px;
+}
 .gb-n {
   margin-left: 4px;
   font-size: var(--fs-micro);
@@ -821,6 +828,7 @@ details.gb-help[open] summary::after {
   flex-direction: column;
 }
 .gb-page-name {
+  margin: 0;
   font-size: var(--fs-title);
   font-weight: 500;
   overflow: hidden;

@@ -4,7 +4,7 @@
  *
  *  The Memories tab (its visual memories) is wave G4d's, so the tabs here are Soul ·
  *  Checkpoints · Manage until it lands. */
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   type GrowbotCheckpoint,
   type GrowbotPersona,
@@ -33,7 +33,7 @@ import {
   words,
 } from "../growbot";
 import { Dialog } from "./Dialog";
-import type { Say } from "./GrowbotPersonaSheets";
+import { GrowbotTabs, type Say } from "./GrowbotPersonaSheets";
 import { Sheet } from "./Sheet";
 import { useArm } from "./growbotArm";
 
@@ -55,6 +55,10 @@ interface Props {
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+function asText(v: unknown): string {
+  return typeof v === "string" ? v : "";
 }
 
 function Floor() {
@@ -87,6 +91,12 @@ export function GrowbotPersonaPage({
   const [cpName, setCpName] = useState("");
   const { isArmed, arm } = useArm();
   useBackLayer(onBack);
+  // The page replaces the list, so focus moves to its name rather than staying on a row
+  // that is gone.
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true });
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -439,31 +449,30 @@ export function GrowbotPersonaPage({
           Back
         </button>
         <span className="gb-page-ttl">
-          <span className="gb-page-name">{p.name}</span>
+          <h2 className="gb-page-name" tabIndex={-1} ref={heading}>
+            {p.name}
+          </h2>
           <span className="gb-page-sub">{where(p, pl).text}</span>
         </span>
       </div>
-      <div className="gb-seg inner" role="tablist" aria-label={p.name}>
-        {(
-          [
-            ["soul", "Soul"],
-            ["cps", "Checkpoints"],
-            ["manage", "Manage"],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={ptab === id}
-            className={ptab === id ? "on" : ""}
-            onClick={() => setPtab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <main className="screen-body gb-screen">
+      <GrowbotTabs
+        base="gb-p"
+        label={p.name}
+        inner
+        value={ptab}
+        onPick={setPtab}
+        tabs={[
+          { id: "soul", label: "Soul" },
+          { id: "cps", label: "Checkpoints" },
+          { id: "manage", label: "Manage" },
+        ]}
+      />
+      <main
+        className="screen-body gb-screen"
+        id="gb-p-panel"
+        role="tabpanel"
+        aria-labelledby={`gb-p-tab-${ptab}`}
+      >
         {error && (
           <p className="gb-msg bad" role="alert">
             {error}
@@ -544,8 +553,9 @@ interface EditorProps {
  *  refusal (422) and a change made on its phone meanwhile (409) are already worded so. */
 function GrowbotRegionEditor({ p, soul, region, robot, openOn, onClose, onSaved }: EditorProps) {
   const [text, setText] = useState(() => (region.kind === "meta" ? "" : regionText(soul, region)));
-  const [name, setName] = useState(soul.meta?.name ?? p.name);
-  const [desc, setDesc] = useState(soul.meta?.description ?? "");
+  // A soul file's meta is whatever its author wrote; only a string is a name.
+  const [name, setName] = useState(asText(soul.meta?.name) || p.name);
+  const [desc, setDesc] = useState(asText(soul.meta?.description));
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 

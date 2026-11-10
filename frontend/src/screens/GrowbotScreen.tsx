@@ -23,6 +23,7 @@ import {
   GrowbotImportSheet,
   GrowbotLaunchSheet,
   GrowbotNewPersonaSheet,
+  GrowbotTabs,
   GrowbotWhere,
   NEARBY,
   type Say,
@@ -37,6 +38,7 @@ import {
   bodyState,
   certNoted,
   day,
+  forgetLaunchHere,
   handover,
   keyMadeAt,
   learnThisPhone,
@@ -74,6 +76,7 @@ interface Toast {
   href?: string;
   undo?: () => void;
   label?: string;
+  onTap?: () => void;
   k: number;
 }
 
@@ -129,16 +132,25 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     setToast(null);
   }, []);
 
+  // Overviews are numbered as they are asked for, and only one newer than the last taken is
+  // taken: a poll that set out before a rider change and lands after it would otherwise
+  // undo the change on screen and say so in a banner.
+  const asked = useRef(0);
+  const taken = useRef(0);
+
   /** Take a new overview, learning this phone first so the banner can say "this phone", then
-   *  saying what moved since the last one — whether this screen moved it or another phone. */
+   *  saying what moved since the last one — whether this screen moved it or another phone.
+   *  `quiet`: this screen made the move and has already said what it did. */
   const take = useCallback(
-    (next: GrowbotOverview): string | null => {
+    (next: GrowbotOverview, at: number, quiet = false): string | null => {
+      if (at < taken.current) return null;
+      taken.current = at;
       const here = learnThisPhone(next);
       setThisPhone(here);
       const last = prev.current;
       prev.current = next;
       setOverview(next);
-      if (!last) return null;
+      if (!last || quiet) return null;
       const said = handover(last, next, {
         thisPhone: here,
         phones: next.phones,
@@ -150,24 +162,28 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     [tell],
   );
 
-  const loadStatus = useCallback(async () => {
-    try {
-      const [s, ov] = await Promise.all([
-        api.growbotStatus(),
-        // A box before G4 has no personas; the robots still show.
-        api
-          .growbotPersonas()
-          .catch(() => null),
-      ]);
-      if (!mounted.current) return;
-      robotsRef.current = s.robots;
-      setStatus(s);
-      if (ov) take(ov);
-      setError("");
-    } catch (e) {
-      if (mounted.current) setError(message(e));
-    }
-  }, [take]);
+  const loadStatus = useCallback(
+    async (quiet = false) => {
+      const at = ++asked.current;
+      try {
+        const [s, ov] = await Promise.all([
+          api.growbotStatus(),
+          // A box before G4 has no personas; the robots still show.
+          api
+            .growbotPersonas()
+            .catch(() => null),
+        ]);
+        if (!mounted.current) return;
+        robotsRef.current = s.robots;
+        setStatus(s);
+        if (ov) take(ov, at, quiet);
+        setError("");
+      } catch (e) {
+        if (mounted.current) setError(message(e));
+      }
+    },
+    [take],
+  );
 
   const loadJob = useCallback(async () => {
     try {
@@ -242,7 +258,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
 
   /** Mint a one-time link and open it in a new tab. The tab is opened FIRST, inside the tap,
    *  because a window opened after an await is a popup the phone blocks. */
-  function openTicket(what: GrowbotTicketFor, done: string) {
+  function openTicket(what: GrowbotTicketFor & { persona: string }, done: string) {
     let tab: Window | null = null;
     try {
       tab = window.open("", "_blank");
@@ -259,13 +275,19 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           tab.location.href = url;
           say(done);
         } else {
-          say("The phone blocked the new tab — tap here to open GrowBot.", { href: url });
+          // Not opened here (yet): only a tap on the link makes it this phone's launch.
+          forgetLaunchHere(what.persona);
+          say("The phone blocked the new tab — tap here to open GrowBot.", {
+            href: url,
+            onTap: () => noteLaunchHere(what.persona),
+          });
         }
         setTimeout(() => {
           if (mounted.current) void loadStatus();
         }, AFTER_LAUNCH_MS);
       })
       .catch((e) => {
+        forgetLaunchHere(what.persona);
         tab?.close();
         say(`GrowBot didn't open — ${message(e)}`);
       });
@@ -317,8 +339,9 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
       launchHere(p.id, code);
       return;
     }
+    const at = ++asked.current;
     try {
-      const said = take(await api.setGrowbotRider(code, pid));
+      const said = take(await api.setGrowbotRider(code, pid), at);
       if (!said) say(`Nothing moved — ${robotName(code, pl)} was already that way.`);
     } catch (e) {
       say(`${robotName(code, pl)} didn't change hands — ${message(e)}`);
@@ -377,9 +400,43 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
   /** A persona made, duplicated or imported opens on its own page. */
   function opened(id: string) {
     setSheet(null);
-    setPage(id);
-    void loadStatus();
+    openPage(id);
+    void loadStatus(true);
   }
+
+  // Focus follows the page: its heading on the way in (the page focuses it), and the row it
+  // was opened from on the way out, so a keyboard or screen reader never lands on <body>.
+  const backTo = useRef<string | null>(null);
+  function openPage(id: string) {
+    backTo.current = id;
+    setPage(id);
+  }
+  function leavePage() {
+    setPage(null);
+  }
+  useEffect(() => {
+    if (page !== null || !backTo.current) return;
+    const id = backTo.current;
+    backTo.current = null;
+    const row = document.querySelector<HTMLElement>(`[data-persona-row="${id}"]`);
+    (row ?? document.querySelector<HTMLElement>(`#gb-tab-${tab}`))?.focus();
+  }, [page, tab]);
+
+  // A persona deleted elsewhere (another screen, the debug console) closes its page and says
+  // so; this screen's own delete has already cleared the page and said what it did.
+  // Only one this screen has seen counts: a persona just made isn't in the overview yet.
+  const seen = useRef<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!page || !overview) return;
+    const p = overview.personas.find((x) => x.id === page);
+    if (p) {
+      seen.current = { id: p.id, name: p.name };
+      return;
+    }
+    if (seen.current?.id !== page) return;
+    setPage(null);
+    say(`${seen.current.name} was deleted, so its page closed.`);
+  }, [page, overview, say]);
 
   const sheetRobot =
     sheet?.kind === "rekey" ? robots.find((r) => r.code === sheet.code) : undefined;
@@ -431,8 +488,9 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
                 <button
                   type="button"
                   className="gb-prow-main"
+                  data-persona-row={p.id}
                   aria-label={`${p.name} — soul, memories and checkpoints`}
-                  onClick={() => setPage(p.id)}
+                  onClick={() => openPage(p.id)}
                 >
                   <GrowbotAvatar p={p} pl={pl} />
                   <span className="gb-tx">
@@ -703,12 +761,13 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           persona={pagePersona}
           pl={pl}
           say={say}
-          onBack={() => setPage(null)}
+          onBack={leavePage}
           onOpen={() => setSheet({ kind: "launch", pid: pagePersona.id })}
-          onChanged={() => void loadStatus()}
+          onChanged={() => void loadStatus(true)}
           onGone={() => {
+            backTo.current = null;
             setPage(null);
-            void loadStatus();
+            void loadStatus(true);
           }}
           onDuplicated={opened}
           onSeed={(cid) => setSheet({ kind: "new", seed: cid })}
@@ -716,28 +775,28 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
         />
       ) : (
         <>
-          <div className="gb-seg" role="tablist" aria-label="GrowBot">
-            {(
-              [
-                ["personas", "Personas"],
-                ["body", "Body"],
-                ["phones", "Phones"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={tab === id}
-                className={tab === id ? "on" : ""}
-                onClick={() => pickTab(id)}
-              >
-                {label}
-                {id === "personas" && overview && <span className="gb-n">{personas.length}</span>}
-              </button>
-            ))}
-          </div>
-          <main className="screen-body gb-screen" ref={bodyRef}>
+          <GrowbotTabs
+            base="gb"
+            label="GrowBot"
+            value={tab}
+            onPick={pickTab}
+            tabs={[
+              {
+                id: "personas",
+                label: "Personas",
+                ...(overview ? { count: personas.length } : {}),
+              },
+              { id: "body", label: "Body" },
+              { id: "phones", label: "Phones" },
+            ]}
+          />
+          <main
+            className="screen-body gb-screen"
+            ref={bodyRef}
+            id="gb-panel"
+            role="tabpanel"
+            aria-labelledby={`gb-tab-${tab}`}
+          >
             {error && (
               <p className="gb-msg bad" role="alert">
                 {error}
@@ -811,7 +870,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           onMade={opened}
           onOver={() => {
             setSheet(null);
-            void loadStatus();
+            void loadStatus(true);
           }}
           onClose={() => setSheet(null)}
         />
@@ -826,6 +885,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           onOpen={(code) => {
             // A paired robot is worn from the Body tab, where every persona says where it is.
             setSheet(null);
+            backTo.current = null;
             setPage(null);
             pickTab("body");
             void loadStatus();
@@ -922,7 +982,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
         // Over an open sheet the toast moves to the top, so it never covers the sheet's buttons.
         <output key={toast.k} className={`gb-toast${sheet ? " top" : ""}`}>
           {toast.href ? (
-            <a href={toast.href} target="_blank" rel="noreferrer">
+            <a href={toast.href} target="_blank" rel="noreferrer" onClick={toast.onTap}>
               {toast.text}
             </a>
           ) : (

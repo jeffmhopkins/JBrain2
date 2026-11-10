@@ -1,7 +1,7 @@
 /** The GrowBot screen's persona parts that more than one place shows: the avatar and where-line,
  *  the launch sheet (Open <name>), New persona and Import a soul file (DESIGN.md "GrowBot — the
  *  desk robot's screen"; wording from docs/mocks/growbot-personas/shared.js). */
-import { useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useRef, useState } from "react";
 import { type GrowbotCheckpoint, type GrowbotPersona, type GrowbotSoul, api } from "../api/client";
 import {
   type Places,
@@ -17,8 +17,84 @@ import { Sheet } from "./Sheet";
 
 export type Say = (
   text: string,
-  opts?: { href?: string; undo?: () => void; label?: string },
+  opts?: { href?: string; undo?: () => void; label?: string; onTap?: () => void },
 ) => void;
+
+export interface TabDef<T extends string> {
+  id: T;
+  label: string;
+  /** Read after the label ("Personas, 3"), never glued into it. */
+  count?: number;
+}
+
+/** A segmented tab strip with the ARIA tabs pattern: one tab in the Tab order (roving
+ *  tabindex), arrows and Home/End move between them, and each controls its panel `${base}-panel`. */
+export function GrowbotTabs<T extends string>({
+  base,
+  label,
+  tabs,
+  value,
+  onPick,
+  inner = false,
+}: {
+  base: string;
+  label: string;
+  tabs: TabDef<T>[];
+  value: T;
+  onPick: (t: T) => void;
+  inner?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  function key(e: KeyboardEvent<HTMLDivElement>) {
+    const at = tabs.findIndex((t) => t.id === value);
+    const to =
+      e.key === "ArrowRight"
+        ? (at + 1) % tabs.length
+        : e.key === "ArrowLeft"
+          ? (at - 1 + tabs.length) % tabs.length
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? tabs.length - 1
+              : -1;
+    const next = tabs[to];
+    if (!next) return;
+    e.preventDefault();
+    onPick(next.id);
+    ref.current?.querySelector<HTMLElement>(`#${base}-tab-${next.id}`)?.focus();
+  }
+  return (
+    <div
+      ref={ref}
+      className={`gb-seg${inner ? " inner" : ""}`}
+      role="tablist"
+      aria-label={label}
+      onKeyDown={key}
+    >
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          id={`${base}-tab-${t.id}`}
+          type="button"
+          role="tab"
+          aria-selected={value === t.id}
+          aria-controls={`${base}-panel`}
+          aria-label={t.count != null ? `${t.label}, ${t.count}` : undefined}
+          tabIndex={value === t.id ? 0 : -1}
+          className={value === t.id ? "on" : ""}
+          onClick={() => onPick(t.id)}
+        >
+          {t.label}
+          {t.count != null && (
+            <span className="gb-n" aria-hidden="true">
+              {t.count}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 export const NEARBY =
   "On Android, first allow Chrome to reach the home network: Settings → Apps → Chrome → Permissions → Nearby devices (or Local network) → Allow. Without it Chrome says ERR_TOO_MANY_RETRIES.";
@@ -271,7 +347,7 @@ export function GrowbotNewPersonaSheet({
 
 type Picked =
   | { ok: true; soul: GrowbotSoul; file: string; size: number }
-  | { ok: false; why: "big" | "bad"; size: number };
+  | { ok: false; why: "big" | "bad" | "old"; size: number };
 
 function readText(file: File): Promise<string> {
   return new Promise((done, fail) => {
@@ -288,8 +364,14 @@ export async function checkSoulFile(file: File): Promise<Picked> {
   if (file.size > MAX_SOUL_BYTES) return { ok: false, why: "big", size: file.size };
   try {
     const soul = JSON.parse(await readText(file)) as GrowbotSoul;
-    if (!soul || typeof soul !== "object" || soul.soul_format !== 3) {
+    if (!soul || typeof soul !== "object" || Array.isArray(soul)) {
       return { ok: false, why: "bad", size: file.size };
+    }
+    if (soul.soul_format !== 3) {
+      // The box's own test (growbot/souls.py from_file): a numbered format or an identity is
+      // an older soul, which the creature can re-export; anything else isn't a soul at all.
+      const old = typeof soul.soul_format === "number" || "identity" in soul;
+      return { ok: false, why: old ? "old" : "bad", size: file.size };
     }
     return { ok: true, soul, file: file.name, size: file.size };
   } catch {
@@ -325,7 +407,8 @@ export function GrowbotImportSheet({ over, say, onMade, onOver, onClose }: Impor
     setError("");
     const got = await checkSoulFile(file);
     setPicked(got);
-    if (got.ok) setName(got.soul.meta?.name || "");
+    // A file's meta is whatever its author wrote; only a string is a name.
+    if (got.ok) setName(typeof got.soul.meta?.name === "string" ? got.soul.meta.name : "");
   }
 
   async function bring() {
@@ -393,6 +476,11 @@ export function GrowbotImportSheet({ over, say, onMade, onOver, onClose }: Impor
               <strong>That file is too big</strong> — {size(picked.size)}, and a soul is at most 1
               MB. Nothing changed. Export it again from the creature, or pick another.
             </>
+          ) : picked.why === "old" ? (
+            <>
+              <strong>That soul file is an older format.</strong> Open it in the creature's MIND tab
+              and export it again. Nothing changed.
+            </>
           ) : (
             <>
               <strong>That isn't a soul file</strong> — it has no soul format in it. Nothing
@@ -450,7 +538,7 @@ export function GrowbotImportSheet({ over, say, onMade, onOver, onClose }: Impor
         </p>
       )}
       <div className="gb-sheet-foot">
-        {picked?.ok ? (
+        {picked?.ok && (
           <button
             type="button"
             className="gb-btn primary block"
@@ -459,15 +547,15 @@ export function GrowbotImportSheet({ over, say, onMade, onOver, onClose }: Impor
           >
             {as === "over" && over ? `Import over ${over.name}` : "Import"}
           </button>
-        ) : (
-          <button
-            type="button"
-            className="gb-btn primary block"
-            onClick={() => input.current?.click()}
-          >
-            {picked ? "Choose another file" : "Choose a file"}
-          </button>
         )}
+        <button
+          type="button"
+          className={`gb-btn block${picked?.ok ? "" : " primary"}`}
+          disabled={busy}
+          onClick={() => input.current?.click()}
+        >
+          {picked ? "Choose another file" : "Choose a file"}
+        </button>
       </div>
     </Sheet>
   );

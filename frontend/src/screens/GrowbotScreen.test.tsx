@@ -1098,3 +1098,228 @@ describe("GrowbotScreen the body's key and flash", () => {
     expect(s.calls.filter((c) => c.path === "/api/growbot/sessions/reset")).toHaveLength(1);
   });
 });
+
+describe("GrowbotScreen after review", () => {
+  const sproutPage: Route = (path, init) =>
+    path === `/api/growbot/personas/${SPROUT}` && (init?.method ?? "GET") === "GET"
+      ? json(detail())
+      : null;
+  const without = (id: string): GrowbotOverview => {
+    const ov = overview();
+    return {
+      ...ov,
+      personas: ov.personas.filter((p) => p.id !== id),
+      body: ov.body.map((b) => (b.persona === id ? { ...b, persona: null } : b)),
+    };
+  };
+  const launched = () => localStorage.getItem(LAUNCHED_KEY);
+
+  it("forgets a launch here whose ticket couldn't be made", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    fakeTab();
+    serve(UP, (path) =>
+      path === "/api/growbot/ticket" ? json({ detail: "no LAN site" }, 409) : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    expect(launched()).toContain(SPROUT);
+    await screen.findByText(/GrowBot didn't open/);
+    expect(launched()).toBeNull();
+  });
+
+  it("forgets a blocked launch until its link is tapped here", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    vi.spyOn(window, "open").mockReturnValue(null);
+    serve(UP, ticketRoute);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On this phone, alone/ }));
+    const link = await screen.findByRole("link", { name: /tap here to open GrowBot/ });
+    expect(launched()).toBeNull();
+    link.addEventListener("click", (e) => e.preventDefault());
+    fireEvent.click(link);
+    expect(launched()).toContain(SPROUT);
+  });
+
+  it("forgets a launch here once that persona's code goes to another phone", async () => {
+    localStorage.setItem(LAUNCHED_KEY, JSON.stringify({ persona: SPROUT, at: Date.now() }));
+    const s = serve(UP, ticketRoute);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On another phone…/ }));
+    await waitFor(() => expect(tickets(s)).toHaveLength(1));
+    expect(launched()).toBeNull();
+  });
+
+  it("keeps a delete's own toast rather than a banner about the body it left", async () => {
+    const s = serve(UP, (path, init) => {
+      if (init?.method === "DELETE") {
+        s.ov.current = without(SPROUT);
+        return new Response(null, { status: 204 });
+      }
+      return sproutPage(path, init);
+    });
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Sprout — soul/ }));
+    fireEvent.click(await screen.findByRole("tab", { name: "Manage" }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Tap again — erases/ }));
+    expect(await screen.findByText(/^Sprout is deleted, with its memories\./)).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("on Pixel 6a · wearing Fish")).toBeNull());
+    expect(screen.getByText(/^Sprout is deleted/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "OK" })).toBeNull();
+    expect(screen.queryByText(/was deleted, so its page closed/)).toBeNull();
+  });
+
+  it("drops a poll that set out before a rider change and landed after it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    localStorage.setItem(THIS_PHONE_KEY, ME);
+    const moved = overview();
+    moved.personas = moved.personas.map((p) =>
+      p.id === BOLT
+        ? { ...p, wearing: "gb-e3b6d8" }
+        : p.id === SPROUT
+          ? { ...p, wearing: null }
+          : p,
+    );
+    moved.body = [{ code: "gb-e3b6d8", persona: BOLT, since: iso(0) }];
+    let reads = 0;
+    let release: (r: Response) => void = () => {};
+    serve(UP, (path, init) => {
+      if (path === "/api/growbot/body/gb-e3b6d8" && init?.method === "PUT") return json(moved);
+      if (path === "/api/growbot/personas" && (init?.method ?? "GET") === "GET") {
+        reads += 1;
+        if (reads === 2) {
+          return new Promise<Response>((done) => {
+            release = done;
+          });
+        }
+        return json(reads > 2 ? moved : overview());
+      }
+      return null;
+    });
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Body" }));
+    await act(async () => {
+      vi.advanceTimersByTime(15_100);
+    });
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.click(screen.getByRole("radio", { name: /Captain Bolt/ }));
+    expect(await screen.findByText(/^Captain Bolt is wearing Fish on this phone\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "OK" }));
+    await act(async () => {
+      release(json(overview()));
+      await Promise.resolve();
+    });
+    expect(screen.getByRole("radio", { name: /Captain Bolt/ })).toBeChecked();
+    expect(screen.queryByText(/^Sprout is wearing Fish/)).toBeNull();
+  });
+
+  it("says a persona deleted elsewhere was deleted, and leaves its page", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const s = serve(UP, sproutPage);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Sprout — soul/ }));
+    await screen.findByText("Personality and settings");
+    s.ov.current = without(SPROUT);
+    await act(async () => {
+      vi.advanceTimersByTime(15_100);
+    });
+    expect(await screen.findByText("Sprout was deleted, so its page closed.")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Personas, 2" })).toBeInTheDocument();
+  });
+
+  it("names an older soul file as one, in the box's words", async () => {
+    serve(UP);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+    const sheet = screen.getByRole("dialog", { name: "Import a soul file" });
+    const file = new File(['{"soul_format": 2, "identity": "I am"}'], "old.json");
+    fireEvent.change(within(sheet).getByLabelText("Soul file"), { target: { files: [file] } });
+    await waitFor(() =>
+      expect(sheet).toHaveTextContent(
+        "That soul file is an older format. Open it in the creature's MIND tab and export it again. Nothing changed.",
+      ),
+    );
+  });
+
+  it("can choose another file after a good one, and takes no name that isn't text", async () => {
+    serve(UP);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Import" }));
+    const sheet = screen.getByRole("dialog", { name: "Import a soul file" });
+    const file = new File([JSON.stringify({ soul_format: 3, meta: { name: 5 } })], "x.json");
+    fireEvent.change(within(sheet).getByLabelText("Soul file"), { target: { files: [file] } });
+    expect(await within(sheet).findByRole("button", { name: "Import" })).toBeEnabled();
+    expect(within(sheet).getByRole("textbox", { name: "Its name" })).toHaveValue("");
+    expect(within(sheet).getByRole("button", { name: "Choose another file" })).toBeEnabled();
+  });
+
+  it("opens a name and description editor on a soul whose meta isn't text", async () => {
+    serve(UP, (path, init) =>
+      path === `/api/growbot/personas/${SPROUT}` && (init?.method ?? "GET") === "GET"
+        ? json(detail({ soul: { soul_format: 3, meta: { name: 7 as unknown as string } } }))
+        : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Sprout — soul/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Name and description/ }));
+    const editor = screen.getByRole("dialog", { name: "Name and description — Sprout" });
+    expect(within(editor).getByRole("textbox", { name: "Name in the soul file" })).toHaveValue(
+      "Sprout",
+    );
+  });
+
+  it("follows the tabs pattern: a panel per strip, one tab in the Tab order, arrows move", async () => {
+    serve(UP, sproutPage);
+    render(<GrowbotScreen />);
+    const personas = await screen.findByRole("tab", { name: "Personas, 3" });
+    expect(personas).toHaveAttribute("aria-controls", "gb-panel");
+    expect(screen.getByRole("tabpanel")).toHaveAttribute("aria-labelledby", personas.id);
+    expect(personas).toHaveAttribute("tabindex", "0");
+    expect(screen.getByRole("tab", { name: "Body" })).toHaveAttribute("tabindex", "-1");
+    personas.focus();
+    fireEvent.keyDown(personas, { key: "ArrowRight" });
+    const body = screen.getByRole("tab", { name: "Body" });
+    expect(body).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(body);
+    fireEvent.keyDown(body, { key: "End" });
+    expect(document.activeElement).toBe(screen.getByRole("tab", { name: "Phones" }));
+    fireEvent.keyDown(document.activeElement as Element, { key: "Home" });
+    expect(screen.getByRole("tab", { name: "Personas, 3" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("moves focus to the page's name on the way in, and back to its row on the way out", async () => {
+    serve(UP, sproutPage);
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /^Sprout — soul/ }));
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Sprout — soul/ })),
+    );
+  });
+
+  it("stops minting codes for a persona the box no longer has, and says so", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const s = serve(UP, (path) =>
+      path === "/api/growbot/ticket" ? json({ detail: "no such persona" }, 404) : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open Sprout" }));
+    fireEvent.click(screen.getByRole("button", { name: /On another phone…/ }));
+    expect(
+      await screen.findByText(
+        "Sprout was deleted, so there's no code for it. Pick another persona above.",
+      ),
+    ).toBeTruthy();
+    await act(async () => {
+      vi.advanceTimersByTime(200_100);
+    });
+    expect(tickets(s)).toHaveLength(1);
+  });
+});

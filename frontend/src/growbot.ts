@@ -301,6 +301,8 @@ export function handover(prev: GrowbotOverview, next: GrowbotOverview, pl: Place
     const from = riderBefore(r.code);
     const to = riderOf(next, r.code);
     if (from === (to?.id ?? null)) continue;
+    // A rider that is gone was deleted, and the delete said what it did to the body.
+    if (from && !to && !next.personas.some((x) => x.id === from)) continue;
     const name = robotName(r.code, pl);
     const ev: string[] = [];
     if (to && !told.has(to.id)) {
@@ -325,10 +327,10 @@ export function handover(prev: GrowbotOverview, next: GrowbotOverview, pl: Place
 // persona opened at or after the launch names the phone it opened on as this one.
 export const THIS_PHONE_KEY = "growbot.thisPhone";
 export const LAUNCHED_KEY = "growbot.launchedHere";
-// The box's clock and this phone's can disagree by a little; a launch older than this is
-// forgotten, since its tab never redeemed the ticket.
+// The box's clock and this phone's can disagree by a little. A ticket lives 120 s, so a
+// launch older than that (and the skew) never landed and is forgotten.
 const SKEW_MS = 30_000;
-const LAUNCH_TTL_MS = 10 * 60_000;
+const LAUNCH_TTL_MS = 120_000 + 2 * SKEW_MS;
 
 function readStore(key: string): string | null {
   try {
@@ -353,6 +355,21 @@ export function storedThisPhone(): string | null {
 
 export function noteLaunchHere(persona: string, now = Date.now()): void {
   writeStore(LAUNCHED_KEY, JSON.stringify({ persona, at: now }));
+}
+
+/** Forget a launch here that won't land here: its mint failed, its tab was blocked, or a
+ *  code for that persona went to another phone (which would be learned as this one). */
+export function forgetLaunchHere(persona?: string): void {
+  const raw = readStore(LAUNCHED_KEY);
+  if (!raw) return;
+  if (persona) {
+    try {
+      if ((JSON.parse(raw) as { persona?: unknown }).persona !== persona) return;
+    } catch {
+      // Unreadable: dropped.
+    }
+  }
+  writeStore(LAUNCHED_KEY, null);
 }
 
 /** This phone's id, learned from `ov` when a launch here has since landed. */

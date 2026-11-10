@@ -4,9 +4,9 @@
  *  it opens as and, optionally, the robot it wears. "Copy code 2 as a link" is the same ticket
  *  as text: launching a persona from a link is one-time by design, never a standing link. */
 import { QRCodeSVG } from "qrcode.react";
-import { useEffect, useState } from "react";
-import { type GrowbotPersona, api } from "../api/client";
-import { type Places, onPhone, riderOfPersonas } from "../growbot";
+import { useEffect, useRef, useState } from "react";
+import { ApiError, type GrowbotPersona, api } from "../api/client";
+import { type Places, forgetLaunchHere, onPhone, riderOfPersonas } from "../growbot";
 import { NEARBY, type Say } from "./GrowbotPersonaSheets";
 import { Sheet } from "./Sheet";
 
@@ -36,17 +36,32 @@ export function GrowbotPhoneSheet({ personas, pl, initialPersona, say, onClose }
   const [ticket, setTicket] = useState("");
   const [setup, setSetup] = useState("");
   const [error, setError] = useState("");
+  // The persona the codes were for was deleted (seen in the list, or the box's 404): minting
+  // stops, since every new code would be refused too.
+  const [gone, setGone] = useState("");
   const p = personas.find((x) => x.id === pid) ?? null;
+  const listed = !!p;
+  const name = useRef("");
+  if (p) name.current = p.name;
   const live = pl.robots.filter((r) => !r.revoked_at);
   const cradle = live[0] ? `${live[0].name || live[0].code}'s cradle` : "a robot's cradle";
 
   useEffect(() => {
     if (!pid) return;
+    if (!listed) {
+      setTicket("");
+      setGone(pid);
+      return;
+    }
+    setGone("");
     // A reply for the choice made before this one must not land after its own: code 2 would
     // then open the phone as a persona, or on a robot, the sheet no longer names.
     let current = true;
     const mint = async () => {
       setError("");
+      // That persona now opens on another phone, so a launch here for it can't be learned
+      // from: the phone that redeems this code would be taken for this one.
+      forgetLaunchHere(pid);
       try {
         const url = (await api.growbotTicket(code ? { persona: pid, code } : { persona: pid })).url;
         if (!current) return;
@@ -56,17 +71,22 @@ export function GrowbotPhoneSheet({ personas, pl, initialPersona, say, onClose }
       } catch (e) {
         if (!current) return;
         setTicket("");
+        if (e instanceof ApiError && e.status === 404) {
+          clearInterval(id);
+          setGone(pid);
+          return;
+        }
         setError(e instanceof Error ? e.message : String(e));
       }
     };
     setTicket("");
-    void mint();
     const id = setInterval(() => void mint(), REFRESH_MS);
+    void mint();
     return () => {
       current = false;
       clearInterval(id);
     };
-  }, [pid, code]);
+  }, [pid, code, listed]);
 
   async function copy() {
     try {
@@ -161,6 +181,12 @@ export function GrowbotPhoneSheet({ personas, pl, initialPersona, say, onClose }
         <p className="gb-msg warn">
           {p.name} is open {onPhone(p.phone, pl)}. Opening it on the new phone hands it over — it
           closes there and carries on here with everything it remembers.
+        </p>
+      )}
+      {gone === pid && (
+        <p className="gb-msg bad" role="alert">
+          {name.current || "That persona"} was deleted, so there's no code for it.
+          {personas.length ? " Pick another persona above." : " Make a persona first."}
         </p>
       )}
       {error && (
