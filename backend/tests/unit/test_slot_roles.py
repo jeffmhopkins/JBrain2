@@ -24,7 +24,7 @@ from jbrain.llm.types import (
 
 def test_flash_next_pool_shape() -> None:
     assert FLASH_NEXT_POOL.n_ctx == 524_288
-    assert FLASH_NEXT_POOL.n_slots == 10
+    assert FLASH_NEXT_POOL.n_slots == 11
     assert {r.role for r in FLASH_NEXT_POOL.reservations} == set(SlotRole)
     assert FLASH_NEXT_POOL.chat_pair == (SlotRole.INTERACTIVE, SlotRole.INTERACTIVE_ALT)
 
@@ -49,7 +49,7 @@ def test_the_slot_holding_the_latest_chat_is_freed_last_whatever_its_rank() -> N
 
 def test_the_chat_pair_second_slot_is_appended_and_shares_the_interactive_cap() -> None:
     alt = FLASH_NEXT_POOL.reservation(SlotRole.INTERACTIVE_ALT)
-    assert alt.slot == FLASH_NEXT_POOL.n_slots - 1 == 9
+    assert alt.slot == 9
     assert alt.cap_tokens == FLASH_NEXT_POOL.cap(SlotRole.INTERACTIVE)
     assert alt.overflow is None
     assert FLASH_NEXT_POOL.in_pair(SlotRole.INTERACTIVE)
@@ -108,7 +108,8 @@ def test_browse_has_its_own_slot_added_last_and_freed_early() -> None:
         SlotRole.PET,
         SlotRole.SMALL,
     ]
-    assert FLASH_NEXT_POOL.eviction_order()[:2] == [7, 8]
+    # Small first, then GrowBot's cheap prefix, then browse.
+    assert FLASH_NEXT_POOL.eviction_order()[:3] == [7, 10, 8]
     assert role_for("browse.step") is SlotRole.BROWSE
 
 
@@ -205,7 +206,7 @@ def test_catalog_carries_the_pool_and_it_survives_the_manifest() -> None:
     assert entry.kv_pool is FLASH_NEXT_POOL
     assert entry.default_slots == FLASH_NEXT_POOL.n_slots
     assert local_catalog.pool_of(entry.served_model) is FLASH_NEXT_POOL
-    assert pool_shape(asdict(entry)) == (524_288, 10)
+    assert pool_shape(asdict(entry)) == (524_288, 11)
 
 
 def test_standard_entries_have_no_pool() -> None:
@@ -221,10 +222,21 @@ def test_slot_pin_names_a_role_or_nothing_at_all() -> None:
     assert slot_roles.slot_pin(None) == {}
 
 
+def test_growbot_has_its_own_slot_appended_last() -> None:
+    """The eleventh slot was appended, so the first ten keep their ids; the creature's turns
+    land there and spill to the small slot, never into jerv's or the kid pet's."""
+    growbot = FLASH_NEXT_POOL.reservation(SlotRole.GROWBOT)
+    assert growbot.slot == FLASH_NEXT_POOL.n_slots - 1 == 10
+    assert growbot.overflow is SlotRole.SMALL
+    assert growbot.cap_tokens == 2 * FLASH_NEXT_POOL.cap(SlotRole.PET)
+    assert slot_roles.GROWBOT_ROLE is SlotRole.GROWBOT
+    assert SlotRole.GROWBOT not in slot_roles.TASK_ROLES.values()
+
+
 def test_layout_matches_only_the_pools_own_slot_count() -> None:
-    assert slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 10)
-    # A server still on the nine-slot layout (before its config is re-stamped) is no match.
-    assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 9)
+    assert slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 11)
+    # A server still on the ten-slot layout (before its config is re-stamped) is no match.
+    assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 10)
     assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [{}] * 4)
     assert not slot_roles.layout_matches(FLASH_NEXT_POOL, [])
 

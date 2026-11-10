@@ -99,6 +99,8 @@ from jbrain.api import (
     external_llm,
     family,
     feed,
+    growbot,
+    growbot_llm,
     health,
     home_network,
     images,
@@ -195,6 +197,7 @@ from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
 from jbrain.gmail import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
+from jbrain.growbot.repo import SqlGrowbotRepo
 from jbrain.htmlrender import HtmlRenderClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
@@ -392,6 +395,14 @@ def _mint_enroll_secret(store: InternalSecrets) -> None:
         structlog.get_logger().error("enroll_secrets.mint_failed", error=repr(exc))
 
 
+def _mint_growbot_secret(store: InternalSecrets) -> None:
+    """Best-effort, like the others: without it the GrowBot sidecar is refused."""
+    try:
+        store.ensure(internal_auth.GROWBOT)
+    except OSError as exc:
+        structlog.get_logger().error("growbot_secrets.mint_failed", error=repr(exc))
+
+
 async def _warn_unroled_panels(maker: async_sessionmaker[AsyncSession]) -> None:
     """Log the live device keys with no `device_role` that have reported as panels.
 
@@ -424,6 +435,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # mosquitto read them from the shared volume (api/internal_auth.py).
         _mint_internal_secrets(app.state.internal_secrets)
         _mint_enroll_secret(app.state.enroll_secrets)
+        _mint_growbot_secret(app.state.growbot_secrets)
         # The box's narration of its own GPU work (model loads, evictions, renders), which
         # the vitals surface reads back so a pinned trace with an empty roster explains
         # itself. Wired per PROCESS, not per request: the writers sit inside the gateway
@@ -465,6 +477,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.plan_presence = {}
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.owner_device_repo = SqlOwnerDeviceRepo(maker)
+        app.state.growbot_repo = SqlGrowbotRepo(maker)
         app.state.intake_repo = SqlIntakeRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
@@ -687,6 +700,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)
         # cold-swaps instead of stacking two large models. Bound to this app's event loop.
         app.state.jcode_llm_swap_lock = asyncio.Lock()
+        # The same for the GrowBot creature's turns (api.growbot_llm), its own lock so a
+        # robot's one-line reply never queues behind a long coding turn.
+        app.state.growbot_llm_lock = asyncio.Lock()
         # The owner's per-engine reasoning levels, TTL-cached and shared by the router and the
         # jcode proxy; the settings routes' writes invalidate it (jbrain.llm.engine_effort).
         app.state.engine_efforts = EngineEffortCache(
@@ -1897,6 +1913,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
     app.state.internal_secrets = FsInternalSecrets(settings.internal_secrets_dir)
     app.state.enroll_secrets = FsInternalSecrets(settings.enroll_secrets_dir)
+    app.state.growbot_secrets = FsInternalSecrets(settings.growbot_secrets_dir)
     # In memory only: the enrollment code is never written anywhere (owner_tunnel/enrollment.py).
     app.state.owner_enrollment = EnrollmentWindow()
     # The enroll route is unauthenticated until the MAC checks: ~10 tries a burst per source.
@@ -1968,6 +1985,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(debug_panel.router, prefix="/api")
         app.include_router(panel_agent.debug_router, prefix="/api")
         app.include_router(panel_notice.debug_router, prefix="/api")
+        app.include_router(growbot.debug_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(owner_devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
@@ -2001,6 +2019,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(panel_ws_api.router, prefix="/api")
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
+    app.include_router(growbot.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
     # The gallery list reads existing rows, so it is always available. The direct
     # generate/edit render endpoints mount only when image hosting is configured —
@@ -2052,6 +2071,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # safe 'general' domain) — never off-box via Caddy.
     app.include_router(pet_api.internal_router, prefix="/internal")
     app.include_router(owner_devices.internal_router, prefix="/internal")
+    # The GrowBot sidecar's ticket and key checks and its model lane, on its own token.
+    app.include_router(growbot.internal_router, prefix="/internal")
+    app.include_router(growbot_llm.router, prefix="/internal")
     # The worker's pre-load gateway-config re-stamp (internal network only, bearer-gated;
     # jbrain.llm.gateway_regen says why the worker cannot write the config itself).
     app.include_router(llm_internal.router, prefix="/internal")

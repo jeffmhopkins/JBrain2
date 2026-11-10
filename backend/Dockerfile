@@ -51,6 +51,9 @@ RUN mkdir -p /run/jbrain-internal && chown appuser /run/jbrain-internal \
 # (as root) and the app read it.
 RUN mkdir -p /run/jbrain-enroll && chown appuser /run/jbrain-enroll \
  && chmod 0700 /run/jbrain-enroll
+# The `growbot_secrets` volume: the GrowBot sidecar's token alone (docs/plans/GROWBOT_PLAN.md §2).
+RUN mkdir -p /run/jbrain-growbot && chown appuser /run/jbrain-growbot \
+ && chmod 0700 /run/jbrain-growbot
 # The owner tunnel's two key volumes (jbrain/owner_tunnel/keys.py). The CA keys stay 0700;
 # the site volume is read by the proxy, as root.
 RUN mkdir -p /run/jbrain-owner-keys /run/jbrain-owner-site \

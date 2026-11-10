@@ -1,6 +1,6 @@
 # Model-access inventory
 
-> **Status:** Living · **Last verified:** 2026-08-23 (rows re-verified) · **Known stale since
+> **Status:** Living · **Last verified:** 2026-11-10 (A20, I11 and the GrowBot rows added with the proxy; the other rows last re-verified 2026-08-23) · **Known stale since
 >
 > **Citation form:** the KV prompt-cache rows (§A.1d W11-W13, §B.5) cite a SYMBOL, not a
 > `file:line`. All nine of their line numbers had rotted by 2026-09-18, silently, because a
@@ -514,6 +514,7 @@ The unload chokepoint itself:
 | A17 | `backend/src/jbrain/llm/local_gateway.py:391-402` | `    async def _require_resident(self, served_model: str, what: str) -> None:` … `        if served_model not in await self.running():` / `            raise LocalGatewayError(` | the client itself; guards `props`/`slots`/`metrics` | api + worker |
 | A18 | `backend/src/jbrain/llm/ledger.py:165` | `    async def charge(self, served_model: str, *, host_gb: float, device_gb: float) -> Charge:` — decide and, if admitted, INSERT the reservation row in one transaction under the box lock; the verdict is `admission.admit` (`admission.py:185`). **AUTHORITATIVE since 2026-08-23** (`docs/plans/LOCAL_MODEL_LEDGER_PLAN.md` L2b): `shadow=False` in BOTH processes, pinned by an AST test. A box-lock timeout or DB hiccup on the charge refuses transiently as `GpuBudgetError` (`ledger.py:191-208`), never a 500 | one `ReservationLedger` per process — `main.py:422-424` (`source="api"`), `worker.py:590-592` (`source="worker"`) — charged through by `LocalGatewayClient` (`main.py:428`, `worker.py:599`) | api + worker |
 | A19 | `backend/src/jbrain/llm/residency.py:586` | `    async def _plan_ledger(self, served_model: str, *, narrate_skip: bool) -> EvictionPlan \| None:` — the eviction plan simulates evictions until `admission.admit` says yes, over the ledger's own pools/rows: the SAME arithmetic A18's charge applies, so plan and charge cannot disagree. The measured planner survives only as `_plan_measured`, the fallback for a build with no ledger or a failed ledger read (`residency.py:577-584`) | coordinator; `ledger=` wired `main.py:483` / `worker.py:668` | api + worker |
+| A20 | `backend/src/jbrain/api/growbot_llm.py` `chat_completions` (cited by symbol) | `                        admitted = await residency.ensure_room(served)` / `                    except (ResidencyError, gpu_guard.GpuBudgetError) as exc:` — a refusal ends the turn with an OpenAI error before the POST, never falls through to it | `getattr(state, "residency", None)` | api |
 
 **A9–A14 are the PRE-LEDGER layer.** They still run, but since the ledger flipped
 authoritative (2026-08-23) the admitting arithmetic on the load path is A18/A19: A9/A10
@@ -585,6 +586,7 @@ chokepoint, A13 never was a gate (its row says so), and A14 is the CLI's own
 | I8 | TTL idle-unload (a stop, not a load) | Gateway A: `render` emits no `ttl:` / `globalTTL:`. Gateway B: `scripts/whisper-setup.sh:110` `    ttl: 300` | default `internal/config/load.go:47` `		GlobalTTL:          0,`; the TTL goroutine only starts at `internal/process/process_command.go:306` `					if p.config.UnloadAfter > 0 {` |
 | I9 | Group auto-eviction (does NOT happen for Gateway A's group) | `backend/src/jbrain/llm/llama_swap_config.py:436-439` `        lines.append("groups:")` / `        lines.append("  resident:")` / `        lines.append("    swap: false")` / `        lines.append("    exclusive: false")` | `internal/router/group.go:84-97` `		switch {` / `		case og == tg && tgCfg.Swap:` / … / `		case og != tg && tgCfg.Exclusive:` — with `Swap:false` and `Exclusive:false` neither arm is taken |
 | I10 | Container restart / removal (deploy) | `deploy/update-inner.sh:507` `  docker compose --profile local-llm rm -sf local-llm || true`; `deploy/update-inner.sh:788` `  docker compose --profile local-llm up -d local-llm || true`; `deploy/local-models-sync.sh:258` `  docker compose --profile local-llm up -d`; compose `deploy/docker-compose.yml:389` `    restart: unless-stopped` | — |
+| I11 | GrowBot proxy forwards the creature's completion | `backend/src/jbrain/api/growbot_llm.py` `chat_completions`: `                    client.stream("POST", "/chat/completions", json=payload) as upstream,` | same as I1; gated by A20 first, under `growbot_llm_lock` |
 
 Our-side handling of I5 (present in the load path):
 - `backend/src/jbrain/llm/local_gateway.py:737-749`
@@ -732,6 +734,11 @@ Route bodies quoted where load/unload happens are in §1a/§1b (L4, U4, U6, U7).
 ### 2.5 HTTP — external coder proxy (`backend/src/jbrain/api/external_llm.py`)
 
 - `external_llm.py:201` `async def _proxy(request: Request, sid: str, upstream_path: str, *, meter: bool) -> Response:` → A16 then I3
+
+### 2.5b HTTP — GrowBot creature proxy (`backend/src/jbrain/api/growbot_llm.py`)
+
+- `@router.get("/models")` under `/internal/growbot/llm/v1` — the active engine's installed models (`local_catalog.growbot_models`) with `supports_vision`
+- `@router.post("/chat/completions")` → A20 then I11, both under `app.state.growbot_llm_lock`; the body is held to the `GROWBOT` slot's cap and pinned there on a pooled engine (`fit_openai_request` / `pinned_request`, `slot_roles.GROWBOT_ROLE`), and an `image_url` part that is not an inline `data:image/...;base64,` URL is refused before anything else runs
 
 ### 2.6 HTTP — chat turn (`backend/src/jbrain/api/agent.py`)
 
@@ -2786,6 +2793,7 @@ Because `ResidencyError` is not an `LlmError`, every `except LlmError` site belo
 | `emr_parse` pathology (D25) | **(d)** | `jbrain/worker.py:677` `        "emr_parse": EmrImportPipeline(maker, blobs, analyzer).parse,` |
 | jcode `/jcode/llm/v1/chat/completions` | **(a)** from the sandbox's operator, or **(c)** from an agent in the sandbox | `jbrain/api/jcode_llm.py:131` `@router.post("/jcode/llm/v1/chat/completions")`; `jbrain/api/jcode_llm.py:19-21` `Internal-only: reachable from the jcode sandbox over the `jcode` docker network, Bearer-` |
 | external LLM proxy | **(a)** remote client; refuses rather than loading | `jbrain/api/external_llm.py:222` `        raise HTTPException(status_code=503, detail="the coder model is not loaded")` |
+| GrowBot `/internal/growbot/llm/v1/chat/completions` | **(a)** the owner's robot, opened from the PWA; loads the model it names (like jcode), never one outside the installed set | `jbrain/api/growbot_llm.py` `chat_completions`; authenticated by `growbot.token` (`api/internal_auth.py` `require_growbot`) |
 | `residency.schedule_restore()` after a `/chat` turn | **(c)** | `jbrain/api/agent.py:1117` `                    residency.schedule_restore()` |
 
 ---

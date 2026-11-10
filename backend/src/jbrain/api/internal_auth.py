@@ -37,6 +37,10 @@ CALLERS = (WALL, MQTT, CAST, ADGUARD)
 # screen hands out the code that enrolls an owner phone, and every container mounting
 # `internal_secrets` could otherwise read its way to one (OWNER_TUNNEL_PLAN.md §3.5).
 WALL_ENROLL = "wall-enroll"
+# The GrowBot sidecar (growbot/server/serve.py), minted into its own `growbot_secrets` volume
+# for the same reason: it serves vendored upstream code on a LAN-facing port, so it must not
+# mount the volume holding every other caller's token (docs/plans/GROWBOT_PLAN.md §2).
+GROWBOT = "growbot"
 
 
 def _expected(request: Request, caller: str, store: str = "internal_secrets") -> bytes | None:
@@ -62,6 +66,14 @@ async def require_wall_enroll(request: Request) -> None:
     """The wall's enrollment screen: `Authorization: Bearer <wall-enroll.token>`."""
     scheme, _, presented = request.headers.get("authorization", "").partition(" ")
     expected = _expected(request, WALL_ENROLL, "enroll_secrets")
+    _check(presented.strip() if scheme.lower() == "bearer" else "", expected)
+
+
+async def require_growbot(request: Request) -> None:
+    """The GrowBot sidecar: `Authorization: Bearer <growbot.token>`, opening only
+    `/internal/growbot/*`."""
+    scheme, _, presented = request.headers.get("authorization", "").partition(" ")
+    expected = _expected(request, GROWBOT, "growbot_secrets")
     _check(presented.strip() if scheme.lower() == "bearer" else "", expected)
 
 

@@ -421,6 +421,25 @@ def test_only_the_api_and_the_wall_hold_the_enrollment_screen_token() -> None:
     assert users["wall"] == ["enroll_secrets:/run/jbrain-enroll:ro"]
 
 
+def test_the_growbot_token_has_its_own_volume_only_the_api_writes() -> None:
+    # The sidecar serves vendored upstream code on a LAN port: it must never mount the volume
+    # holding every caller's token, and nothing but the api may write its own.
+    compose = _compose()
+    assert "growbot_secrets" in compose["volumes"]
+    users = {
+        name: [m for m in spec.get("volumes") or [] if str(m).startswith("growbot_secrets:")]
+        for name, spec in compose["services"].items()
+    }
+    assert users["api"] == ["growbot_secrets:/run/jbrain-growbot"]
+    assert {name for name, mounts in users.items() if mounts} <= {"api", "growbot"}
+    for name, mounts in users.items():
+        if name != "api":
+            assert all(m.endswith(":ro") for m in mounts), name
+    growbot = compose["services"].get("growbot", {})
+    assert not any(str(m).startswith("internal_secrets:") for m in growbot.get("volumes") or [])
+    assert not any(str(m).startswith("enroll_secrets:") for m in growbot.get("volumes") or [])
+
+
 def test_the_enrollment_screen_is_published_to_the_box_alone() -> None:
     published = [
         (name, port)
@@ -449,3 +468,5 @@ def test_the_image_pre_owns_the_secrets_mount_for_the_app_user() -> None:
     dockerfile = (_DEPLOY.parent / "backend" / "Dockerfile").read_text()
     assert "mkdir -p /run/jbrain-internal && chown appuser /run/jbrain-internal" in dockerfile
     assert dockerfile.index("/run/jbrain-internal") < dockerfile.index("USER appuser")
+    assert "mkdir -p /run/jbrain-growbot && chown appuser /run/jbrain-growbot" in dockerfile
+    assert dockerfile.index("/run/jbrain-growbot") < dockerfile.index("USER appuser")

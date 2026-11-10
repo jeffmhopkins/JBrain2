@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # mount: the screen hands out the enrollment code, so its key must not sit beside the
     # tokens the cast sidecar and mosquitto can read (OWNER_TUNNEL_PLAN.md §3.5).
     enroll_secrets_dir: str = "/run/jbrain-enroll"
+    # The GrowBot sidecar's token alone, in a volume only the api and that sidecar mount
+    # (docs/plans/GROWBOT_PLAN.md §2).
+    growbot_secrets_dir: str = "/run/jbrain-growbot"
     owner_keys_dir: str = "/run/jbrain-owner-keys"
     owner_site_dir: str = "/run/jbrain-owner-site"
     embed_url: str = "http://embed:80"

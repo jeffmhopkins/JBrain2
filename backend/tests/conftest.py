@@ -18,6 +18,9 @@ os.environ.setdefault(
 os.environ.setdefault(
     "JBRAIN_ENROLL_SECRETS_DIR", tempfile.mkdtemp(prefix="jbrain-enroll-secrets-")
 )
+os.environ.setdefault(
+    "JBRAIN_GROWBOT_SECRETS_DIR", tempfile.mkdtemp(prefix="jbrain-growbot-secrets-")
+)
 
 
 if TYPE_CHECKING:

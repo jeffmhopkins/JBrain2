@@ -217,7 +217,10 @@ async def test_the_loop_streams_a_child_turn_with_its_role() -> None:
 
 
 def _gateway(
-    bodies: list[dict[str, Any]], *, live_slots: int = 10, slot_reads: list[int] | None = None
+    bodies: list[dict[str, Any]],
+    *,
+    live_slots: int = FLASH_NEXT_POOL.n_slots,
+    slot_reads: list[int] | None = None,
 ) -> LocalGatewayClient:
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/running":

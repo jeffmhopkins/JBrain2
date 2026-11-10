@@ -22,7 +22,13 @@ from fastapi.testclient import TestClient
 from jbrain.config import Settings
 from jbrain.main import create_app
 from jbrain.storage import FsInternalSecrets
-from tests.internal_callers import enroll_headers, mqtt_headers, token, wall_headers
+from tests.internal_callers import (
+    enroll_headers,
+    growbot_headers,
+    mqtt_headers,
+    token,
+    wall_headers,
+)
 from tests.unit.fakes import FakeAuthRepo
 
 _DB = "postgresql+asyncpg://nobody@localhost:1/none"
@@ -44,8 +50,24 @@ ENROLL_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("POST", "/internal/owner-enroll/close", None, 204),
     ("POST", "/internal/owner-enroll/reject", None, 404),
 ]
+# The GrowBot sidecar (GROWBOT_PLAN.md §2): its own token, in its own volume. Past the gate
+# the repo is a stand-in that says yes, and with hosting off every model name is unknown.
+GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
+    ("POST", "/internal/growbot/ticket/redeem", {"ticket": "t"}, 200),
+    ("POST", "/internal/growbot/robot/verify", {"code": "gb-x", "key": "k"}, 200),
+    ("GET", "/internal/growbot/llm/v1/models", None, 200),
+    ("POST", "/internal/growbot/llm/v1/chat/completions", {"model": "x", "messages": []}, 400),
+]
 # Keeps its own HMAC bearer (api/llm_internal.py, tested in test_llm_internal.py).
 _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
+
+
+class _YesGrowbotRepo:
+    async def redeem_ticket(self, ctx: object, ticket: str) -> bool:
+        return True
+
+    async def verify_robot(self, ctx: object, code: str, key: str) -> bool:
+        return True
 
 
 @pytest.fixture
@@ -55,6 +77,7 @@ def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
     )
     with TestClient(app) as c:
         app.state.auth_repo = FakeAuthRepo()
+        app.state.growbot_repo = _YesGrowbotRepo()
         yield app, c
 
 
@@ -72,7 +95,7 @@ def test_every_internal_route_refuses_a_request_without_a_token(
         if isinstance(r, APIRoute) and r.path.startswith("/internal/")
         for m in r.methods
     ]
-    routes = WALL_ROUTES + MQTT_ROUTES + ENROLL_ROUTES
+    routes = WALL_ROUTES + MQTT_ROUTES + ENROLL_ROUTES + GROWBOT_ROUTES
     gated = {p for _, p, _, _ in routes} | {"/internal/pet"} | _OWN_BEARER
     # A new /internal route fails here until it is given a caller.
     assert {p for _, p in internal} == gated
@@ -140,6 +163,33 @@ def test_enrollment_screen_routes_open_to_the_enroll_token_only(
     assert _call(c, method, path, body, wall_headers(app)) == 401
     assert _call(c, method, path, body, mqtt_headers(app)) == 401
     assert _call(c, method, path, body, enroll_headers(app)) == ok
+
+
+@pytest.mark.parametrize(("method", "path", "body", "ok"), GROWBOT_ROUTES)
+def test_growbot_routes_open_to_the_growbot_token_only(
+    app_client: tuple[FastAPI, TestClient],
+    method: str,
+    path: str,
+    body: object,
+    ok: int,
+) -> None:
+    app, c = app_client
+    assert _call(c, method, path, body, {}) == 401
+    # No other caller's token opens the robot's routes, nor does its own as a non-bearer.
+    for other in (wall_headers(app), mqtt_headers(app), enroll_headers(app)):
+        assert _call(c, method, path, body, other) == 401
+    own = growbot_headers(app)["Authorization"].removeprefix("Bearer ")
+    assert _call(c, method, path, body, {"Authorization": f"Basic {own}"}) == 401
+    assert _call(c, method, path, body, {"Authorization": f"Bearer {own}x"}) == 401
+    assert _call(c, method, path, body, growbot_headers(app)) == ok
+
+
+def test_the_growbot_token_opens_no_other_callers_routes(
+    app_client: tuple[FastAPI, TestClient],
+) -> None:
+    app, c = app_client
+    for method, path, body, _ok in WALL_ROUTES + MQTT_ROUTES + ENROLL_ROUTES:
+        assert _call(c, method, path, body, growbot_headers(app)) == 401, path
 
 
 def test_a_non_ascii_header_is_refused_not_a_crash(
