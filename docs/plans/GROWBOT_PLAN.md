@@ -112,7 +112,7 @@ needs no new mDNS alias, which would otherwise only be installed by a host updat
 
 | upstream call | on the box |
 |---|---|
-| `/api/config`, `/api/models` | the box's settings (§2a): model per lane (`fast`/`active`/`dream`), vision, voice |
+| `/api/config`, `/api/models` | the box's settings (§2b): model per lane (`fast`/`active`/`dream`), vision, voice |
 | `/api/llm[-stream]?target=openrouter` | a new api router (`api/growbot_llm.py`), residency-aware with its own slot role, authenticated by `growbot.token` — the `jcode_llm.py` shape, not its routes or token. Never the llama-swap gateway directly (compose's "freeze the host" rule) |
 | `/api/llm?target=*-audio` | `tts-stt` whisper `/v1/audio/transcriptions`, its `verbose_json` normalised to the Groq shape upstream reads (`segments[].no_speech_prob`, `avg_logprob`), since whisper.cpp builds differ |
 | `/api/fish-tts` | `tts-stt` Kokoro `/tts` (WAV). This is the creature's only voice (§2a) |
@@ -130,11 +130,14 @@ The owner's ask (2026-11-10): *"make sure we're using our tts stt containers for
 - **TTS** upstream has three engines (`vtEngine`): `robot` (meSpeak, in the page), `device`
   (`speechSynthesis`, the OS or browser voice, which on Chrome can be a Google network voice),
   and `fish` (`/api/fish-tts`). `patches/` makes `fish`, answered by Kokoro, the default and
-  only engine, and removes `device` and `robot` from the picker, so no word is spoken by
-  anything but `tts-stt`. If Kokoro is down, the creature shows the words instead of speaking
+  only engine, removes `device` and `robot` from the picker, and maps upstream's fish voice
+  settings (`vtFish` `{key, voice, model}`) to a Kokoro voice id, so no word is spoken by
+  anything but `tts-stt`. `speechSynthesis.speak` also appears in `agent-gateway.js` and
+  `tester/custom.html`; the patch covers every served file, and `tester/` pages that only
+  exist for upstream's cloud setup are not served. If Kokoro is down, the creature shows the words instead of speaking
   them, with no silent fallback to another voice.
-- A test asserts the patched app has no reachable `speechSynthesis.speak` or meSpeak call, and
-  that every speak goes to `/api/fish-tts`.
+- A test scans every served file and asserts there is no reachable `speechSynthesis.speak` or
+  meSpeak call, and that every speak goes to `/api/fish-tts`.
 
 ### 2b. Settings live on the box, and the PWA owns them
 
@@ -143,21 +146,32 @@ through the … growbot phone app."* Upstream keeps every setting in the phone's
 (`pb2_voice`, `gb_brain`, `gb_effort`, `gb_low_power`, `gb_walk_cal`, `pb_llm_*`, …), so a
 change made on one phone is invisible everywhere else.
 
-- **Source of truth is the api**, following `panel_settings.py` (the desk panel's settings
-  from the PWA): a `growbot_settings` table, one row per robot, under RLS with its isolation
-  test (rule 3), with a monotonic version.
-- **The PWA** gets a GrowBot card (Settings, beside the panels) that reads and changes them:
-  the model per lane, vision on/off, the Kokoro voice, speed and pitch, effort, low-power, the
-  motion duty budget and the leg calibration.
-- **The phone app** reads them through the shim at load (`/api/config` plus a small patched-in
-  loader that writes them over the matching localStorage keys before the creature starts) and
-  re-polls while open, so a PWA change lands on the robot without a reload. A change made in the
-  phone app's own panels is posted back through the shim, which records it with a new version.
-  The higher version wins, and the PWA shows which side made the last change.
+- **The pattern is `panel_settings.py`'s** (the desk panel's settings from the PWA: asked for
+  here, taken by the device, reported back): a `growbot_settings` table, one row per robot,
+  holding what the phone app last reported and the queue of what the owner asked for, under RLS
+  with its isolation test (rule 3).
+- **The PWA** gets a GrowBot card (Settings, beside the panels) showing the settings as the app
+  last reported them. A change made there is queued and reads "Waiting for GrowBot" until the
+  app reports the new value, then "On GrowBot". The card covers the model per lane, vision
+  on/off, the Kokoro voice, speed and pitch (`tts_server.py` takes per-request `speed` and
+  `pitch`), effort, low-power, the motion duty budget and the leg calibration.
+- **The phone app is the reporter.** Through the shim, on a `growbot.token`-authed api route on
+  an RLS-scoped session (with its auth test, security paths at 100%), it picks up the queue at
+  load and every few seconds while open, applies it, and reports its full settings back. A
+  change made in the app's own panels is simply its next report, so the PWA shows it. A queued
+  owner ask is re-applied on the next pickup until a report matches it, so the PWA's change
+  wins over an older one made on the phone.
+- **Applying.** Upstream reads most settings into variables once at start-up (`vtEngine` from
+  `pb2_voice`, for instance), so writing localStorage under a running page changes nothing.
+  `patches/` adds a small apply hook that sets both the localStorage key and the live variable
+  for each setting it can change in place (voice, speed, pitch, effort, low-power, duty budget).
+  For the rest (the model lineup, leg calibration) the app reloads itself the next time the
+  creature is idle, which is safe because its memory is in localStorage. The card says which
+  kind each setting is.
 - The model list the PWA offers is the box's catalog filtered to installed models, with
   vision-capable ones marked.
 
-**Data.** G1–G3 store nothing on the box but the settings row (§2b). Camera frames and transcripts pass
+**Data.** G1–G3 store nothing on the box but the settings row (§2b) and the robot's device key (§3). Camera frames and transcripts pass
 through to the model and STT and are not kept. If the diary comes onto the box (G4) it goes
 through the api into Postgres under RLS with an isolation test (rule 3), and is treated as
 sensitive: it names people the camera saw.
@@ -210,8 +224,8 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   Endpoints board, pairing code, the open-GrowBot entry and the Ops listing. Then Pico 2 W as an
   endpoint board: `picotool` + `mpremote`, the generated `secrets.py`, device key mint/revoke.
 - **G3 — settings from the PWA.** GUI gate first (the PWA GrowBot card). The
-  `growbot_settings` table, its RLS and isolation test, the owner routes, the shim's
-  read/write-back, and the patched-in loader (§2b).
+  `growbot_settings` table, its RLS and isolation test, the owner routes, the app's pickup and
+  report route, and the apply hook with idle reload (§2b).
 - **G4 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
 
