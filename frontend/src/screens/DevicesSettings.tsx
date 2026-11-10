@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, type OwnerDevice, type PublicUrlSetting, api } from "../api/client";
+import { CERT_URL } from "../growbot";
 import { setPublicOrigin } from "../publicOrigin";
 
 /** Often enough that a phone that just scanned shows up while the owner is still at the box. */
@@ -363,6 +364,21 @@ export function DevicesSettings() {
         <p className="settings-meta devices-msg">
           Phones can be added only from this network. You can change it only from home.
         </p>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Box certificate</h2>
+        <p className="settings-meta">
+          Install it once on a phone and the box's own address (jbrain.local and GrowBot) opens with
+          no warning. On Android, Settings → search "CA certificate" → Install a certificate → CA
+          certificate. On iPhone, Settings → Profile Downloaded, then General → About → Certificate
+          Trust Settings.
+        </p>
+        {/* A link, not a fetch: the api refuses a typed or pasted URL as cross-site, so the
+            owner's only way to the file is a same-origin tap from here. */}
+        <a className="devices-primary devices-msg" href={CERT_URL} download="jbrain-box-root.crt">
+          Download the box's certificate
+        </a>
       </section>
     </>
   );

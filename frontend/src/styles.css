@@ -2223,6 +2223,17 @@ fieldset.settings-field > legend {
   color: var(--steel-text);
   font-weight: 600;
 }
+/* The certificate download is a link (a file, saved with `download`) dressed as the card's
+   primary button. */
+a.devices-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: var(--r-input);
+  padding: 10px 16px;
+  text-decoration: none;
+}
 .devices-msg {
   margin-top: 10px;
 }

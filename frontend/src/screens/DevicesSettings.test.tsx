@@ -99,6 +99,14 @@ afterEach(() => {
 });
 
 describe("DevicesSettings", () => {
+  it("offers the box's certificate as a same-origin download", async () => {
+    fakeBox({ devices: [phone({})] });
+    render(<DevicesSettings />);
+    const link = await screen.findByRole("link", { name: "Download the box's certificate" });
+    expect(link).toHaveAttribute("href", "/api/lan/root.crt");
+    expect(link).toHaveAttribute("download", "jbrain-box-root.crt");
+  });
+
   it("shows a waiting phone as a banner with its words, and Confirm confirms it", async () => {
     const { calls } = fakeBox({ devices: [phone({}), { ...PENDING }] });
     render(<DevicesSettings />);

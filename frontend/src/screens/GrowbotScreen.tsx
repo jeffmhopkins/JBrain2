@@ -376,6 +376,13 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           </p>
         )}
         {status !== null && (
+          // The first-time sheet shows once per phone; a phone that skipped the install, or a
+          // second phone, still needs the file, and this is the only way off the box to get it.
+          <a className="gb-btn block" href={CERT_URL} download="jbrain-box-root.crt">
+            Download the box's certificate
+          </a>
+        )}
+        {status !== null && (
           // A phone stays signed in for 30 days so the robot's installed app keeps running;
           // this is how a lost one is cut off. Armed, since every phone has to reopen after.
           <button
