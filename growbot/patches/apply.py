@@ -47,6 +47,8 @@ FLASHED_FILES = (
     "wifi_recovery.py",
 )
 
+PWA_FILES = ("manifest.webmanifest", "sw.js", "growbot-192.png", "growbot-512.png")
+
 FIRMWARE_FILES = (
     "relay_chip.py",
     "act_engine.py",
@@ -193,7 +195,8 @@ PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/next.html",
         '<!doctype html><html lang="en"><head>',
-        '<!doctype html><html lang="en"><head><script src="/growbot-box.js"></script>',
+        '<!doctype html><html lang="en"><head><script src="/growbot-box.js"></script>'
+        '<link rel="manifest" href="/manifest.webmanifest">',
         1,
     ),
     *[
@@ -436,6 +439,12 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
         shutil.copyfile(src, dest)
     _patch(site, PATCHES)
     shutil.copyfile(HERE / "growbot-box.js", site / "growbot-box.js")
+    # The installed app (Android): served without a session, since Chrome fetches the
+    # manifest and its icons with no cookie.
+    (site / "icons").mkdir(exist_ok=True)
+    for name in PWA_FILES:
+        dest = site / ("icons/" + name if name.endswith(".png") else name)
+        shutil.copyfile(HERE / "pwa" / name, dest)
     for entry in pin["vendor"]:
         dest = site / entry["path"]
         dest.parent.mkdir(parents=True, exist_ok=True)

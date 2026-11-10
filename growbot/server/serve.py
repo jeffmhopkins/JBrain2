@@ -8,8 +8,13 @@ routes), and relays WebSocket frames between the phone and the robot at `/d/<cod
 
 Security, in order of the request:
 - `/open?ticket=…` is the only door without a session: the api redeems the one-time ticket the
-  PWA minted, and the answer is a `gb_session` cookie signed with a key made at process start
-  (a restart signs every phone out; nothing is stored).
+  PWA minted, and the answer is a `gb_session` cookie signed with a key derived from
+  `growbot.token`, so a restart keeps phones signed in and a re-minted token signs them all out
+  (nothing is stored). It lasts 30 days and is renewed as the creature loads, so the installed
+  app on the robot's phone stays open; `/start` (the manifest's start page) sends a phone whose
+  session has lapsed back to JBrain for a fresh ticket.
+- The installed app's manifest, its icons and its service worker are the only files served
+  without a session: Chrome fetches the manifest and icons with no cookie.
 - Every other route needs that cookie, except the robot's side of the relay, which has no
   browser: it proves itself with the device key in its `hello`, checked against the api.
 - `/internal/robots` (which robots are on the relay) and `/internal/robots/drop` (close a
@@ -59,7 +64,17 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 
 SESSION_COOKIE = "gb_session"
-SESSION_TTL_S = 43200
+SESSION_TTL_S = 30 * 86400
+# Renewed at most once a day, so a page that reloads often is not a cookie per load.
+SESSION_RENEW_S = 86400
+# The robot the phone last opened, so the installed app reopens on it.
+ROBOT_COOKIE = "gb_robot"
+PUBLIC_PATHS = frozenset(
+    ("/manifest.webmanifest", "/sw.js", "/icons/growbot-192.png", "/icons/growbot-512.png")
+)
+SESSIONLESS = PUBLIC_PATHS | {"/open", "/start"}
+# A host header is the client's own word; only a plain name goes into the link back to JBrain.
+HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
 
 MAX_HEAD = 16 * 1024
 MAX_HEADERS = 100
@@ -265,13 +280,35 @@ def _b64url(data: bytes) -> str:
 
 
 class Sessions:
-    """`gb_session` = `<expiry>.<nonce>.<hmac>`, keyed per process: nothing to store or leak."""
+    """`gb_session` = `<expiry>.<nonce>.<hmac>`: nothing to store or leak.
 
-    def __init__(self, key: bytes | None = None) -> None:
-        self._key = key or secrets.token_bytes(32)
+    The key is derived from `growbot.token` when there is one, so sessions outlive a restart
+    and die with a re-minted token; without it, a key made at start (a restart signs out)."""
+
+    def __init__(self, key: bytes | None = None, key_file: Path | None = None) -> None:
+        self._fixed = key
+        self._key_file = key_file
+        self._random = secrets.token_bytes(32)
+        self._derived: tuple[str, bytes] = ("", b"")
+
+    def _key(self) -> bytes:
+        if self._fixed:
+            return self._fixed
+        if self._key_file is not None:
+            try:
+                token = self._key_file.read_text().strip()
+            except OSError:
+                token = ""
+            if token:
+                if self._derived[0] != token:
+                    # Domain-separated, so the cookie key is never the api's bearer itself.
+                    key = hmac.new(token.encode(), b"gb_session v1", hashlib.sha256).digest()
+                    self._derived = (token, key)
+                return self._derived[1]
+        return self._random
 
     def _sign(self, body: str) -> str:
-        return _b64url(hmac.new(self._key, body.encode(), hashlib.sha256).digest())
+        return _b64url(hmac.new(self._key(), body.encode(), hashlib.sha256).digest())
 
     def mint(self, now: float | None = None) -> str:
         expiry = int(time.time() if now is None else now) + SESSION_TTL_S
@@ -285,6 +322,12 @@ class Sessions:
         if not hmac.compare_digest(self._sign(f"{parts[0]}.{parts[1]}"), parts[2]):
             return False
         return int(parts[0]) > (time.time() if now is None else now)
+
+    def due(self, value: str, now: float | None = None) -> bool:
+        """A valid session more than a day old, which the next page load renews."""
+        t = time.time() if now is None else now
+        renew_before = t + SESSION_TTL_S - SESSION_RENEW_S
+        return self.valid(value, t) and int(value.split(".")[0]) < renew_before
 
 
 def cookie_value(headers: list[tuple[str, str]], name: str) -> str:
@@ -754,7 +797,7 @@ class Backoff:
 class GrowBot:
     def __init__(self, config: Config, sessions: Sessions | None = None) -> None:
         self.config = config
-        self.sessions = sessions or Sessions()
+        self.sessions = sessions or Sessions(key_file=config.token_file)
         self.csp = build_csp(config.site)
         self.channels: dict[str, Channel] = {}
         self.sockets = 0
@@ -939,11 +982,54 @@ class GrowBot:
         origin = req.header("origin")
         return not origin or origin == f"https://{req.header('host')}"
 
+    def _session_cookie(self) -> str:
+        return (
+            f"{SESSION_COOKIE}={self.sessions.mint()}; HttpOnly; Secure; SameSite=Strict; "
+            f"Path=/; Max-Age={SESSION_TTL_S}"
+        )
+
+    def _back_to_jbrain(self, req: Request) -> Response:
+        """A lapsed installed app: JBrain's GrowBot screen mints the next ticket."""
+        host = req.header("host").rsplit(":", 1)[0]
+        link = b""
+        if HOST_RE.fullmatch(host):
+            link = f"<p><a href='https://{host}/'>Open JBrain</a>, then GrowBot.</p>".encode()
+        return Response(
+            401,
+            UNAUTHORISED_PAGE + link,
+            "text/html; charset=utf-8",
+            headers=[("Cache-Control", "no-store")],
+        )
+
+    def start_page(self, req: Request) -> Response:
+        """The installed app's start page: back into the creature, on the robot it last had."""
+        if req.method not in ("GET", "HEAD"):
+            return Response(405, b"method not allowed", headers=[("Allow", "GET, HEAD")])
+        if not self._authed(req):
+            return self._back_to_jbrain(req)
+        code = cookie_value(req.headers, ROBOT_COOKIE)
+        where = "/v3/next.html?mode=legs"
+        if code and CODE_RE.fullmatch(code):
+            where = f"/v3/next.html?id={urllib.parse.quote(code)}&mode=legs"
+        return Response(
+            302,
+            b"",
+            headers=[
+                ("Set-Cookie", self._session_cookie()),
+                ("Location", where),
+                ("Cache-Control", "no-store"),
+            ],
+        )
+
     async def handle(self, req: Request) -> Response:
         if req.path == "/open":
             return await self.open(req)
+        if req.path == "/start":
+            return self.start_page(req)
         if req.path.startswith("/internal/"):
             return self.internal(req)
+        if req.path in PUBLIC_PATHS and req.method in ("GET", "HEAD"):
+            return await self.static(req)
         if not self._authed(req):
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         if req.path.startswith("/api/"):
@@ -954,7 +1040,12 @@ class GrowBot:
             return Response(
                 405, b"method not allowed", headers=[("Allow", "GET, HEAD")]
             )
-        return await self.static(req)
+        resp = await self.static(req)
+        if req.path == "/v3/next.html" and self.sessions.due(
+            cookie_value(req.headers, SESSION_COOKIE)
+        ):
+            resp.headers.append(("Set-Cookie", self._session_cookie()))
+        return resp
 
     async def open(self, req: Request) -> Response:
         ticket, code = req.arg("ticket"), req.arg("id")
@@ -985,15 +1076,25 @@ class GrowBot:
         if not self._ok(up):
             self.ticket_backoff.fail(client)
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
-        cookie = (
-            f"{SESSION_COOKIE}={self.sessions.mint()}; HttpOnly; Secure; SameSite=Strict; "
-            f"Path=/; Max-Age={SESSION_TTL_S}"
-        )
-        # Without a robot the creature opens unpaired, and the page asks for a code.
+        # Without a robot the creature opens unpaired, and the page asks for a code; the robot
+        # cookie follows, so the installed app's /start reopens the same way.
         where = "/v3/next.html?mode=legs"
+        robot = f"{ROBOT_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"
         if code:
             where = f"/v3/next.html?id={urllib.parse.quote(code)}&mode=legs"
-        return Response(302, b"", headers=[("Set-Cookie", cookie), ("Location", where)])
+            robot = (
+                f"{ROBOT_COOKIE}={code}; HttpOnly; Secure; SameSite=Strict; Path=/; "
+                f"Max-Age={SESSION_TTL_S}"
+            )
+        return Response(
+            302,
+            b"",
+            headers=[
+                ("Set-Cookie", self._session_cookie()),
+                ("Set-Cookie", robot),
+                ("Location", where),
+            ],
+        )
 
     # -- static -----------------------------------------------------------------
 
@@ -1530,9 +1631,9 @@ class GrowBot:
                         if refused is not None:
                             await self.write(writer, req, refused, False)
                         return
-                    # Without a session only /open, which has no body, and the api's
-                    # bearer-checked /internal routes are answered; nothing else costs this
-                    # process an upload.
+                    # Without a session only /open, /start and the installed app's files,
+                    # none with a body, and the api's bearer-checked /internal routes are
+                    # answered; nothing else costs this process an upload.
                     internal = req.path.startswith("/internal/")
                     if internal and not self._internal_ok(req):
                         refused = json_response(401, {"error": "unauthorized"})
@@ -1541,7 +1642,7 @@ class GrowBot:
                     if (
                         not internal
                         and not self._authed(req)
-                        and (req.path != "/open" or body_framing(req) != 0)
+                        and (req.path not in SESSIONLESS or body_framing(req) != 0)
                     ):
                         page = Response(
                             401, UNAUTHORISED_PAGE, "text/html; charset=utf-8"

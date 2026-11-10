@@ -298,6 +298,11 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   to the box. ✅ Built: until G3's per-lane settings the box picks one creature model (the
   serving engine's first installed vision model, else its first) and ignores the name the page
   sends, so no lane can cold-swap the box; a turn that may swap takes jcode's swap lock.
+- **Installing the creature (owner, 2026-11-10): *"can you verify that the app will be able to
+  be installed as a pwa on a Android device?"*** Done between G2 and G3: a manifest, icons and a
+  service worker that caches nothing, a `/start` that reopens the creature on its last robot,
+  and a 30-day session keyed from `growbot.token` so the installed app outlasts a night and a
+  restart (`growbot/README.md` "Installing it on a phone").
 - **G2 — the PWA flashes the robot.** GUI gate first (three mocks, `PROCESS.md`), covering the
   Endpoints board, pairing code, the open-GrowBot entry and the Ops listing. Then Pico 2 W as an
   endpoint board: `picotool` + `mpremote`, the generated `secrets.py`, device key mint/revoke.

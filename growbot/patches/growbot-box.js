@@ -156,3 +156,14 @@
   } catch (e) {}
   window.__growbotBoxVoice = true;
 })();
+
+/* The installed app (Android's Install app): the manifest names /start, and this worker only
+   answers when the box is out of reach. Registered here, not in the page, so no inline script
+   (and no new CSP hash) is needed. */
+(function () {
+  "use strict";
+  if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+  window.addEventListener("load", function () {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
+  });
+})();

@@ -189,6 +189,10 @@ def site(tmp_path: Path) -> Path:
     (root / "ml" / "vad.onnx").write_bytes(b"onnx")
     (root / ".hidden").write_text("dotfile")
     (root / "csp.json").write_text(json.dumps({"script_hashes": [_HASH], "unsafe_hashes": True}))
+    (root / "icons").mkdir()
+    for name in ("manifest.webmanifest", "sw.js", "icons/growbot-192.png", "icons/growbot-512.png"):
+        (root / name).write_bytes(b"app file")
+    (root / "icons" / "other.png").write_bytes(b"not public")
     (tmp_path / "secret.txt").write_text("outside the root")
     return root
 
@@ -299,15 +303,114 @@ def test_open_exchanges_a_ticket_for_a_session(run: _Running, gb: types.ModuleTy
     resp.read()
     assert resp.status == 302
     assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
-    cookie = resp.getheader("Set-Cookie") or ""
-    name_value, *attrs = [a.strip() for a in cookie.split(";")]
-    assert set(attrs) == {"HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=43200"}
+    session, robot = resp.headers.get_all("Set-Cookie") or []
+    name_value, *attrs = [a.strip() for a in session.split(";")]
+    assert set(attrs) == {"HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=2592000"}
     assert name_value.startswith("gb_session=")
+    assert robot.startswith("gb_robot=gb-abc123;") and "HttpOnly" in robot
     redeem = [s for s in _Fake.seen if s["path"] == "/internal/growbot/ticket/redeem"]
     assert redeem[-1]["auth"] == f"Bearer {_TOKEN}"
     page = run.request("GET", "/v3/next.html", headers={"Cookie": name_value}, cookie=False)
     assert page.status == 200
     assert page.read() == b"<p>creature</p>"
+
+
+def test_sessions_keyed_by_the_token_outlive_a_restart_and_die_with_its_remint(
+    gb: types.ModuleType, tmp_path: Path
+) -> None:
+    token = tmp_path / "growbot.token"
+    token.write_text("first-token\n")
+    value = gb.Sessions(key_file=token).mint()
+    assert gb.Sessions(key_file=token).valid(value)
+    token.write_text("second-token\n")
+    assert not gb.Sessions(key_file=token).valid(value)
+    token.unlink()
+    alone = gb.Sessions(key_file=token)
+    assert alone.valid(alone.mint())
+    assert not gb.Sessions(key_file=token).valid(alone.mint())
+
+
+def test_a_session_is_due_for_renewal_after_a_day(gb: types.ModuleType) -> None:
+    sessions = gb.Sessions(b"k" * 32)
+    value = sessions.mint(now=1000)
+    assert not sessions.due(value, now=1000 + gb.SESSION_RENEW_S - 1)
+    assert sessions.due(value, now=1000 + gb.SESSION_RENEW_S + 1)
+    assert not sessions.due(value, now=1000 + gb.SESSION_TTL_S)
+    assert not sessions.due("1.2.3", now=1000)
+
+
+def test_the_creature_page_renews_an_old_session_only(run: _Running, gb: types.ModuleType) -> None:
+    fresh = run.request("GET", "/v3/next.html")
+    fresh.read()
+    assert fresh.getheader("Set-Cookie") is None
+    old = run.app.sessions.mint(now=time.time() - gb.SESSION_RENEW_S - 5)
+    page = run.request("GET", "/v3/next.html", headers={"Cookie": f"gb_session={old}"})
+    page.read()
+    renewed = page.getheader("Set-Cookie") or ""
+    assert renewed.startswith("gb_session=") and "Max-Age=2592000" in renewed
+    other = run.request("GET", "/v3/mod.mjs", headers={"Cookie": f"gb_session={old}"})
+    other.read()
+    assert other.getheader("Set-Cookie") is None
+
+
+def test_open_without_a_robot_forgets_the_last_one(run: _Running) -> None:
+    resp = run.request("GET", "/open?ticket=good-ticket", cookie=False)
+    resp.read()
+    robot = [c for c in resp.headers.get_all("Set-Cookie") or [] if c.startswith("gb_robot=")]
+    assert robot == ["gb_robot=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"]
+
+
+def test_start_reopens_the_creature_on_the_last_robot(run: _Running) -> None:
+    resp = run.request("GET", "/start", headers={"Cookie": f"{run.cookie}; gb_robot=gb-abc123"})
+    resp.read()
+    assert resp.status == 302
+    assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
+    assert (resp.getheader("Set-Cookie") or "").startswith("gb_session=")
+    for robot in ("", "; gb_robot=../x", "; gb_robot=gb-"):
+        bare = run.request("GET", "/start", headers={"Cookie": run.cookie + robot})
+        bare.read()
+        assert bare.getheader("Location") == "/v3/next.html?mode=legs"
+
+
+@pytest.mark.parametrize("host", [None, "jbrain.local:8444", "evil'><script>:8444"])
+def test_start_without_a_session_points_back_to_jbrain(run: _Running, host: str | None) -> None:
+    headers = {"Host": host} if host else {}
+    resp = run.request("GET", "/start", headers=headers, cookie=False)
+    body = resp.read()
+    assert resp.status == 401
+    assert resp.getheader("Set-Cookie") is None
+    assert b"Open GrowBot from JBrain" in body
+    if host == "jbrain.local:8444":
+        assert b"<a href='https://jbrain.local/'>" in body
+    if host and "<" in host:
+        assert b"<script>" not in body and b"<a " not in body
+
+
+def test_start_takes_no_other_method(run: _Running) -> None:
+    resp = run.request("POST", "/start", b"")
+    resp.read()
+    assert resp.status == 405
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/manifest.webmanifest", "/sw.js", "/icons/growbot-192.png", "/icons/growbot-512.png"],
+)
+def test_the_installed_apps_files_need_no_session(run: _Running, path: str) -> None:
+    resp = run.request("GET", path, cookie=False)
+    resp.read()
+    assert resp.status == 200
+    assert resp.getheader("Content-Security-Policy") == run.app.csp
+    refused = run.request("POST", path, b"x", cookie=False)
+    refused.read()
+    assert refused.status == 401
+
+
+@pytest.mark.parametrize("path", ["/icons/other.png", "/sw.js.map", "/manifest.json", "/start/x"])
+def test_only_the_named_app_files_are_public(run: _Running, path: str) -> None:
+    resp = run.request("GET", path, cookie=False)
+    resp.read()
+    assert resp.status == 401
 
 
 @pytest.mark.parametrize(
@@ -507,6 +610,8 @@ def test_config_hands_out_an_installed_vision_lineup(run: _Running) -> None:
 
 def test_config_falls_back_when_the_api_lists_nothing(run: _Running, gb: types.ModuleType) -> None:
     run.app.config.token_file.unlink()
+    # The session key follows the token; this test is about the api call.
+    run.cookie = f"gb_session={run.app.sessions.mint()}"
     cfg = json.loads(run.request("GET", "/api/config").read())
     assert cfg["fast"] == "qwen3-vl-30b"
     app = run.app
@@ -617,6 +722,8 @@ def test_llm_errors_pass_through_and_a_refused_token_is_not_a_401(run: _Running)
     resp = run.request("POST", "/api/llm-stream?target=openrouter", _chat("qwen3-vl-30b"))
     assert resp.status == 500 and b"engine down" in resp.read()
     run.app.config.token_file.write_text("wrong")
+    # The session key follows the token; this test is about the api call.
+    run.cookie = f"gb_session={run.app.sessions.mint()}"
     _Fake.llm_status = 200
     resp = run.request("POST", "/api/llm?target=openrouter", _chat("qwen3-vl-30b"))
     assert resp.status == 502

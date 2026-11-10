@@ -1,0 +1,15 @@
+{
+ "name": "GrowBot",
+ "short_name": "GrowBot",
+ "id": "/start",
+ "start_url": "/start",
+ "scope": "/",
+ "display": "fullscreen",
+ "background_color": "#0b0b1a",
+ "theme_color": "#0b0b1a",
+ "icons": [
+  {"src": "/icons/growbot-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+  {"src": "/icons/growbot-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+  {"src": "/icons/growbot-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"}
+ ]
+}
