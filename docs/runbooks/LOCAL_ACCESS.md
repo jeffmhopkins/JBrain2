@@ -88,7 +88,7 @@ the connection is still HTTPS, so login works immediately. To remove the warning
 install Caddy's root certificate on your devices once.
 
 **From the PWA (no terminal).** Signed in as the owner, open
-`https://<your box>/api/lan/root.crt` (Settings → Devices → *Box certificate*, and the GrowBot screen, link to it; a typed URL is refused as cross-site, so tap it from the app): it downloads
+`https://<your box>/api/lan/root.crt` (Settings → Devices → *Box certificate*, and the GrowBot screen, link to it; a link to it opened from another site, such as mail or chat, is refused as cross-site, so tap it in the app or type the URL): it downloads
 `jbrain-box-root.crt`, the public root only. On iOS open the downloaded profile, install it
 in Settings → General → VPN & Device Management, then turn on full trust in Settings →
 General → About → Certificate Trust Settings. On Android install it under Settings →

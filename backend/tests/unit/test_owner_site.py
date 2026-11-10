@@ -195,6 +195,7 @@ class _Stack:
                 text = text.replace("growbot:8810", upstream)
                 conf.write_text(text.replace(":8444 {", f":{self.ports['growbot']} {{"))
         caddyfile = caddyfile.replace(":8443", f":{self.ports['owner']}")
+        caddyfile = caddyfile.replace("servers :8444", f"servers :{self.ports['growbot']}")
         # Into the Caddyfile's own global block, which keeps the owner listener's options.
         test_opts = (
             "\n{\n\tadmin off\n\tskip_install_trust\n\tauto_https disable_redirects\n"
@@ -484,3 +485,17 @@ def test_a_taken_port_is_re_picked(
     finally:
         s.stop()
         held.close()
+
+
+def test_the_growbot_port_advertises_no_http3(stack: _Stack) -> None:
+    # Compose publishes 8444 over TCP alone; an Alt-Svc h3 there points Chrome at a UDP port
+    # nothing answers on, while the LAN site's 443 is published for UDP too and keeps it.
+    stack.start()
+    tls = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    tls.check_hostname = False
+    tls.verify_mode = ssl.CERT_NONE
+    growbot, _ = stack.request("growbot", f"jbrain.local:{stack.ports['growbot']}", tls=tls)
+    assert growbot.startswith(b"HTTP/1.1 ")
+    assert b"alt-svc" not in growbot.lower()
+    lan, _ = stack.request("lan", f"jbrain.local:{stack.ports['lan']}", tls=tls)
+    assert b"alt-svc" in lan.lower()

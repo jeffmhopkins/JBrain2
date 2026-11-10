@@ -47,7 +47,9 @@ export default defineConfig({
         importScripts: ["/panel-share-sw.js"],
         // A JShare link (/s/<slug>/…) is someone's shared file or site, served by the box. The
         // SPA fallback would answer it with this app on the owner's own installed PWA.
-        navigateFallbackDenylist: [/^\/s\//],
+        // An /api download (the box certificate) must reach the box, never be answered with
+        // index.html saved under the file's name.
+        navigateFallbackDenylist: [/^\/s\//, /^\/api\//],
       },
       manifest: {
         name: "JBrain",

@@ -1743,7 +1743,7 @@ top of its own page is the hardest place to miss it (`screens/DevicesSettings.ts
   only from the home network; a 403 says so in those words, a 422 shows the box's detail.
   The saved address is what every link that leaves the app starts with (`publicOrigin.ts`).
 - **Box certificate** is a card under them: how to install it on Android and iPhone, then
-  *Download the box's certificate* (a same-origin link, since the api refuses a typed URL).
+  *Download the box's certificate* (a same-origin link, since the api refuses one opened from another site).
 
 ### Full Brain lateral shortcuts (Sessions ← chat → Proposals)
 

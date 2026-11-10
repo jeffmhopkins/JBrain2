@@ -371,11 +371,11 @@ export function DevicesSettings() {
         <p className="settings-meta">
           Install it once on a phone and the box's own address (jbrain.local and GrowBot) opens with
           no warning. On Android, Settings → search "CA certificate" → Install a certificate → CA
-          certificate. On iPhone, Settings → Profile Downloaded, then General → About → Certificate
-          Trust Settings.
+          certificate. On iPhone, Settings → Profile Downloaded → Install, then General → About →
+          Certificate Trust Settings.
         </p>
-        {/* A link, not a fetch: the api refuses a typed or pasted URL as cross-site, so the
-            owner's only way to the file is a same-origin tap from here. */}
+        {/* A same-origin link: the api refuses it opened from another site (mail, chat) as
+            cross-site, so this is the dependable way to the file. */}
         <a className="devices-primary devices-msg" href={CERT_URL} download="jbrain-box-root.crt">
           Download the box's certificate
         </a>
