@@ -101,8 +101,12 @@ class _Fake(BaseHTTPRequestHandler):
         self._record(body)
         authed = self.headers.get("Authorization") == f"Bearer {_TOKEN}"
         if self.path == "/internal/growbot/ticket/redeem":
-            ok = authed and json.loads(body) == {"ticket": "good-ticket"}
-            self._reply(200 if ok else 401, json.dumps({"ok": ok}).encode())
+            # The api answers with the robot the ticket was minted for.
+            minted = {"good-ticket": "gb-abc123", "bare-ticket": "", "odd-ticket": "../x"}
+            ticket = json.loads(body).get("ticket")
+            ok = authed and ticket in minted
+            reply = {"ok": ok, "code": minted.get(ticket, "")} if ok else {"ok": False}
+            self._reply(200 if ok else 401, json.dumps(reply).encode())
         elif self.path == "/internal/growbot/robot/verify":
             ok = authed and json.loads(body) == {"code": "gb-abc123", "key": "right-key"}
             self._reply(200 if ok else 401, json.dumps({"ok": ok}).encode())
@@ -145,7 +149,7 @@ class _Running:
         self.port = self.server.sockets[0].getsockname()[1]
         self.host = f"127.0.0.1:{self.port}"
         self.origin = f"https://{self.host}"
-        self.cookie = f"gb_session={app.sessions.mint()}"
+        self.cookie = f"gb_session={app.sessions.mint(robot='gb-abc123')}"
 
     def stop(self) -> None:
         async def shutdown() -> None:
@@ -189,6 +193,10 @@ def site(tmp_path: Path) -> Path:
     (root / "ml" / "vad.onnx").write_bytes(b"onnx")
     (root / ".hidden").write_text("dotfile")
     (root / "csp.json").write_text(json.dumps({"script_hashes": [_HASH], "unsafe_hashes": True}))
+    (root / "icons").mkdir()
+    for name in ("manifest.webmanifest", "sw.js", "icons/growbot-192.png", "icons/growbot-512.png"):
+        (root / name).write_bytes(b"app file")
+    (root / "icons" / "other.png").write_bytes(b"not public")
     (tmp_path / "secret.txt").write_text("outside the root")
     return root
 
@@ -232,10 +240,23 @@ def test_a_session_is_signed_expiring_and_per_process(gb: types.ModuleType) -> N
     assert sessions.valid(value, now=1000 + gb.SESSION_TTL_S - 1)
     assert not sessions.valid(value, now=1000 + gb.SESSION_TTL_S)
     assert not gb.Sessions(b"j" * 32).valid(value, now=1000)
-    expiry, nonce, sig = value.split(".")
-    assert not sessions.valid(f"{int(expiry) + 999}.{nonce}.{sig}", now=1000)
-    for bad in ("", "a.b", "x.y.z", "1.2.3.4", f"{expiry}.{nonce}.{sig}x"):
+    expiry, nonce, robot, sig = value.split(".")
+    assert robot == "" and sessions.robot(value, now=1000) == ""
+    assert not sessions.valid(f"{int(expiry) + 999}.{nonce}.{robot}.{sig}", now=1000)
+    for bad in ("", "a.b", "x.y.z", "1.2.3", "1.2.3.4.5", f"{expiry}.{nonce}.{robot}.{sig}x"):
         assert not sessions.valid(bad, now=1000)
+        assert sessions.robot(bad, now=1000) is None
+
+
+def test_a_session_carries_its_robot_under_the_mac(gb: types.ModuleType) -> None:
+    sessions = gb.Sessions(b"k" * 32)
+    value = sessions.mint(now=1000, robot="gb-abc123")
+    assert sessions.robot(value, now=1000) == "gb-abc123"
+    expiry, nonce, _robot, sig = value.split(".")
+    assert sessions.robot(f"{expiry}.{nonce}.gb-other1.{sig}", now=1000) is None
+    assert sessions.robot(f"{expiry}.{nonce}..{sig}", now=1000) is None
+    with pytest.raises(ValueError):
+        sessions.mint(robot="gb-x.y")
 
 
 def test_the_csp_takes_the_sites_hashes_and_never_unsafe_inline(
@@ -299,15 +320,161 @@ def test_open_exchanges_a_ticket_for_a_session(run: _Running, gb: types.ModuleTy
     resp.read()
     assert resp.status == 302
     assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
-    cookie = resp.getheader("Set-Cookie") or ""
-    name_value, *attrs = [a.strip() for a in cookie.split(";")]
-    assert set(attrs) == {"HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=43200"}
+    (session,) = resp.headers.get_all("Set-Cookie") or []
+    name_value, *attrs = [a.strip() for a in session.split(";")]
+    assert set(attrs) == {"HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=2592000"}
     assert name_value.startswith("gb_session=")
+    assert run.app.sessions.robot(name_value.partition("=")[2]) == "gb-abc123"
     redeem = [s for s in _Fake.seen if s["path"] == "/internal/growbot/ticket/redeem"]
     assert redeem[-1]["auth"] == f"Bearer {_TOKEN}"
     page = run.request("GET", "/v3/next.html", headers={"Cookie": name_value}, cookie=False)
     assert page.status == 200
     assert page.read() == b"<p>creature</p>"
+
+
+def test_sessions_keyed_by_the_token_outlive_a_restart_and_die_with_its_remint(
+    gb: types.ModuleType, tmp_path: Path
+) -> None:
+    token = tmp_path / "growbot.token"
+    token.write_text("first-token\n")
+    value = gb.Sessions(key_file=token).mint()
+    assert gb.Sessions(key_file=token).valid(value)
+    token.write_text("second-token\n")
+    assert not gb.Sessions(key_file=token).valid(value)
+    token.unlink()
+    alone = gb.Sessions(key_file=token)
+    assert alone.valid(alone.mint())
+    assert not gb.Sessions(key_file=token).valid(alone.mint())
+
+
+def test_a_session_is_due_for_renewal_after_a_day(gb: types.ModuleType) -> None:
+    sessions = gb.Sessions(b"k" * 32)
+    value = sessions.mint(now=1000)
+    assert not sessions.due(value, now=1000 + gb.SESSION_RENEW_S - 1)
+    assert sessions.due(value, now=1000 + gb.SESSION_RENEW_S + 1)
+    assert not sessions.due(value, now=1000 + gb.SESSION_TTL_S)
+    assert not sessions.due("1.2.3", now=1000)
+
+
+def test_an_old_session_is_renewed_by_any_page_or_call(run: _Running, gb: types.ModuleType) -> None:
+    fresh = run.request("GET", "/v3/next.html")
+    fresh.read()
+    assert fresh.getheader("Set-Cookie") is None
+    old = run.app.sessions.mint(now=time.time() - gb.SESSION_RENEW_S - 5, robot="gb-abc123")
+    for path in ("/v3/next.html", "/api/device"):
+        resp = run.request("GET", path, headers={"Cookie": f"gb_session={old}"})
+        resp.read()
+        renewed = resp.getheader("Set-Cookie") or ""
+        assert renewed.startswith("gb_session=") and "Max-Age=2592000" in renewed
+        value = renewed.split(";")[0].partition("=")[2]
+        assert run.app.sessions.robot(value) == "gb-abc123"
+
+
+def test_signing_every_phone_out_ends_every_session(gb: types.ModuleType, tmp_path: Path) -> None:
+    token, epoch = tmp_path / "growbot.token", tmp_path / "growbot-session.token"
+    token.write_text("the-token\n")
+    sessions = gb.Sessions(key_file=token, epoch_file=epoch)
+    before = sessions.mint()
+    epoch.write_text("first\n")
+    assert not sessions.valid(before)
+    during = sessions.mint()
+    assert gb.Sessions(key_file=token, epoch_file=epoch).valid(during)
+    epoch.write_text("second\n")
+    assert not sessions.valid(during)
+
+
+def test_a_failed_read_keeps_the_last_key(gb: types.ModuleType, tmp_path: Path) -> None:
+    token = tmp_path / "growbot.token"
+    token.write_text("the-token\n")
+    sessions = gb.Sessions(key_file=token)
+    value = sessions.mint()
+    token.unlink()
+    token.mkdir()  # reading a directory fails with an OSError that is not a missing file
+    assert sessions.valid(value)
+
+
+def test_the_ticket_not_the_link_names_the_robot(run: _Running) -> None:
+    for query in ("ticket=good-ticket&id=gb-other1", "ticket=good-ticket"):
+        resp = run.request("GET", "/open?" + query, cookie=False)
+        resp.read()
+        assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
+        cookie = (resp.getheader("Set-Cookie") or "").split(";")[0]
+        assert run.app.sessions.robot(cookie.partition("=")[2]) == "gb-abc123"
+    odd = run.request("GET", "/open?ticket=odd-ticket", cookie=False)
+    odd.read()
+    assert odd.status == 401 and odd.getheader("Set-Cookie") is None
+
+
+def test_a_robotless_session_can_join_no_robot(run: _Running) -> None:
+    resp = run.request("GET", "/open?ticket=bare-ticket&id=gb-abc123", cookie=False)
+    resp.read()
+    cookie = (resp.getheader("Set-Cookie") or "").split(";")[0]
+    assert run.app.sessions.robot(cookie.partition("=")[2]) == ""
+    for path in ("/d/gb-abc123", "/d/gb-abc123-agent"):
+        ws = _Ws(run, path, cookie=cookie)
+        assert ws.status == 403, ws.head
+
+
+def test_a_phone_joins_only_the_robot_its_ticket_named(run: _Running) -> None:
+    for path in ("/d/gb-other1", "/d/gb-other1-agent"):
+        ws = _Ws(run, path, cookie=True)
+        assert ws.status == 403, ws.head
+    ok = _phone(run, "/d/gb-abc123")
+    assert ok.status == 101
+
+
+def test_start_reopens_the_creature_on_its_robot(run: _Running) -> None:
+    resp = run.request("GET", "/start")
+    resp.read()
+    assert resp.status == 302
+    assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
+    renewed = (resp.getheader("Set-Cookie") or "").split(";")[0].partition("=")[2]
+    assert run.app.sessions.robot(renewed) == "gb-abc123"
+    bare_cookie = f"gb_session={run.app.sessions.mint()}"
+    bare = run.request("GET", "/start", headers={"Cookie": bare_cookie}, cookie=False)
+    bare.read()
+    assert bare.getheader("Location") == "/v3/next.html?mode=legs"
+
+
+@pytest.mark.parametrize("host", [None, "jbrain.local:8444", "evil'><script>:8444"])
+def test_start_without_a_session_points_back_to_jbrain(run: _Running, host: str | None) -> None:
+    headers = {"Host": host} if host else {}
+    resp = run.request("GET", "/start", headers=headers, cookie=False)
+    body = resp.read()
+    assert resp.status == 401
+    assert resp.getheader("Set-Cookie") is None
+    assert b"Open GrowBot from JBrain" in body
+    if host == "jbrain.local:8444":
+        assert b"<a href='https://jbrain.local/'>" in body
+    if host and "<" in host:
+        assert b"<script>" not in body and b"<a " not in body
+
+
+def test_start_takes_no_other_method(run: _Running) -> None:
+    resp = run.request("POST", "/start", b"")
+    resp.read()
+    assert resp.status == 405
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/manifest.webmanifest", "/sw.js", "/icons/growbot-192.png", "/icons/growbot-512.png"],
+)
+def test_the_installed_apps_files_need_no_session(run: _Running, path: str) -> None:
+    resp = run.request("GET", path, cookie=False)
+    resp.read()
+    assert resp.status == 200
+    assert resp.getheader("Content-Security-Policy") == run.app.csp
+    refused = run.request("POST", path, b"x", cookie=False)
+    refused.read()
+    assert refused.status == 401
+
+
+@pytest.mark.parametrize("path", ["/icons/other.png", "/sw.js.map", "/manifest.json", "/start/x"])
+def test_only_the_named_app_files_are_public(run: _Running, path: str) -> None:
+    resp = run.request("GET", path, cookie=False)
+    resp.read()
+    assert resp.status == 401
 
 
 @pytest.mark.parametrize(
@@ -507,6 +674,8 @@ def test_config_hands_out_an_installed_vision_lineup(run: _Running) -> None:
 
 def test_config_falls_back_when_the_api_lists_nothing(run: _Running, gb: types.ModuleType) -> None:
     run.app.config.token_file.unlink()
+    # The session key follows the token; this test is about the api call.
+    run.cookie = f"gb_session={run.app.sessions.mint()}"
     cfg = json.loads(run.request("GET", "/api/config").read())
     assert cfg["fast"] == "qwen3-vl-30b"
     app = run.app
@@ -617,6 +786,8 @@ def test_llm_errors_pass_through_and_a_refused_token_is_not_a_401(run: _Running)
     resp = run.request("POST", "/api/llm-stream?target=openrouter", _chat("qwen3-vl-30b"))
     assert resp.status == 500 and b"engine down" in resp.read()
     run.app.config.token_file.write_text("wrong")
+    # The session key follows the token; this test is about the api call.
+    run.cookie = f"gb_session={run.app.sessions.mint()}"
     _Fake.llm_status = 200
     resp = run.request("POST", "/api/llm?target=openrouter", _chat("qwen3-vl-30b"))
     assert resp.status == 502
@@ -943,7 +1114,7 @@ def test_keep_alive_serves_several_requests_on_one_connection(run: _Running) -> 
 
 
 class _Ws:
-    def __init__(self, run: _Running, path: str, *, cookie: bool, origin: str | None = None):
+    def __init__(self, run: _Running, path: str, *, cookie: bool | str, origin: str | None = None):
         self.sock = socket.create_connection(("127.0.0.1", run.port), timeout=5)
         key = base64.b64encode(os.urandom(16)).decode()
         headers = [
@@ -956,7 +1127,7 @@ class _Ws:
             "Sec-WebSocket-Extensions: permessage-deflate",
         ]
         if cookie:
-            headers.append(f"Cookie: {run.cookie}")
+            headers.append(f"Cookie: {cookie if isinstance(cookie, str) else run.cookie}")
             headers.append(f"Origin: {origin or run.origin}")
         elif origin:
             headers.append(f"Origin: {origin}")
@@ -1144,10 +1315,10 @@ def test_rejected_and_departed_sockets_leave_no_channel(
         assert chip.close_code() == 1008
     silent = _Ws(run, "/d/gb-random3", cookie=False)
     assert silent.close_code() == 1008
-    agent = _phone(run, "/d/gb-random4-agent")
+    agent = _phone(run, "/d/gb-abc123-agent")
     agent.send(0x2, b"x")
     assert agent.close_code() == 1008
-    phone = _phone(run, "/d/gb-random5")
+    phone = _phone(run, "/d/gb-abc123")
     phone.message()
     phone.send(0x8, b"\x03\xe8")
     assert phone.close_code() == 1000
@@ -1504,7 +1675,7 @@ def test_failed_hellos_do_not_lock_out_the_owners_link(
 
 
 def test_open_without_a_robot_opens_the_creature_unpaired(run: _Running) -> None:
-    resp = run.request("GET", "/open?ticket=good-ticket", cookie=False)
+    resp = run.request("GET", "/open?ticket=bare-ticket", cookie=False)
     assert resp.status == 302
     assert resp.getheader("Location") == "/v3/next.html?mode=legs"
     assert resp.getheader("Set-Cookie")

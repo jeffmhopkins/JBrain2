@@ -63,8 +63,8 @@ _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
 
 
 class _YesGrowbotRepo:
-    async def redeem_ticket(self, ctx: object, ticket: str) -> bool:
-        return True
+    async def redeem_ticket(self, ctx: object, ticket: str) -> str | None:
+        return ""
 
     async def verify_robot(self, ctx: object, code: str, key: str) -> bool:
         return True
@@ -345,3 +345,19 @@ def test_an_unwritable_volume_does_not_stop_the_api(tmp_path: Path) -> None:
     with TestClient(app) as c:
         assert c.get("/api/healthz").status_code == 200
         assert c.post("/internal/pet/effects/clear").status_code == 401
+
+
+def test_rotate_replaces_a_token_whole_and_refreshes_the_cache(tmp_path: Path) -> None:
+    secrets = FsInternalSecrets(tmp_path)
+    secrets.rotate("growbot-session")
+    first = secrets.read("growbot-session")
+    assert first is not None and len(first) == 64
+    mode = stat.S_IMODE(os.stat(tmp_path / "growbot-session.token").st_mode)
+    assert mode == 0o600
+    secrets.rotate("growbot-session")
+    second = secrets.read("growbot-session")
+    assert second != first
+    assert (tmp_path / "growbot-session.token").read_bytes() == second
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["growbot-session.token"]
+    with pytest.raises(ValueError):
+        secrets.rotate("../escape")

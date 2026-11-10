@@ -1,4 +1,4 @@
-"""The robots' device keys and the phone tickets, both owner-only (migrations 0254, 0255).
+"""The robots' device keys and the phone tickets, both owner-only (migrations 0254-0256).
 
 Secrets are stored as `hash_token` digests only. A ticket is a 256-bit random value and so
 is a device key, so a plain SHA-256 is the right hash (`jbrain.auth.keys`), and looking a
@@ -54,10 +54,13 @@ class MintedTicket:
 
 
 class GrowbotRepo(Protocol):
-    async def mint_ticket(self, ctx: SessionContext) -> MintedTicket: ...
+    async def mint_ticket(self, ctx: SessionContext, code: str = "") -> MintedTicket:
+        """A ticket that opens the creature on robot `code` ('' for none)."""
+        ...
 
-    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> bool:
-        """Spend `ticket` if it is unused and unexpired. True exactly once per ticket."""
+    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> str | None:
+        """Spend `ticket` if it is unused and unexpired: its robot code ('' for none), exactly
+        once per ticket; None otherwise."""
         ...
 
     async def put_robot(self, ctx: SessionContext, code: str, name: str | None = None) -> str:
@@ -89,7 +92,9 @@ class SqlGrowbotRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
 
-    async def mint_ticket(self, ctx: SessionContext) -> MintedTicket:
+    async def mint_ticket(self, ctx: SessionContext, code: str = "") -> MintedTicket:
+        if code and not CODE_RE.fullmatch(code):
+            raise ValueError("not a pairing code")
         ticket = generate_session_token()
         async with scoped_session(self._maker, ctx) as session:
             await session.execute(
@@ -102,29 +107,30 @@ class SqlGrowbotRepo:
             expires_at = (
                 await session.execute(
                     text(
-                        "INSERT INTO app.growbot_tickets (ticket_hash, expires_at)"
-                        " VALUES (:h, now() + make_interval(secs => :ttl))"
+                        "INSERT INTO app.growbot_tickets (ticket_hash, expires_at, robot_code)"
+                        " VALUES (:h, now() + make_interval(secs => :ttl), :code)"
                         " RETURNING expires_at"
                     ),
-                    {"h": hash_token(ticket), "ttl": TICKET_TTL.total_seconds()},
+                    {"h": hash_token(ticket), "ttl": TICKET_TTL.total_seconds(), "code": code},
                 )
             ).scalar_one()
         return MintedTicket(ticket=ticket, expires_at=expires_at)
 
-    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> bool:
+    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> str | None:
         if not ticket:
-            return False
+            return None
         # One statement: two redeems racing on the same ticket cannot both see it unused.
         async with scoped_session(self._maker, ctx) as session:
             spent = await session.execute(
                 text(
                     "UPDATE app.growbot_tickets SET used_at = now()"
                     " WHERE ticket_hash = :h AND used_at IS NULL AND expires_at > now()"
-                    " RETURNING ticket_hash"
+                    " RETURNING robot_code"
                 ),
                 {"h": hash_token(ticket)},
             )
-            return spent.first() is not None
+            row = spent.first()
+            return None if row is None else str(row.robot_code)
 
     async def put_robot(self, ctx: SessionContext, code: str, name: str | None = None) -> str:
         key = generate_capability_key()

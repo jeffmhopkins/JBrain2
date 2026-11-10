@@ -189,3 +189,29 @@ def test_a_failed_build_leaves_the_committed_tree_untouched(tmp_path: Path) -> N
         apply.build(upstream, out, None)
     assert (out / "site" / "kept.txt").read_text() == "committed\n"
     assert sorted(p.name for p in out.iterdir()) == ["site"]
+
+
+def test_the_creature_installs_as_an_app() -> None:
+    """Android's Install app needs a manifest with a start page and 192/512 icons; the
+    sidecar serves exactly these paths without a session (serve.py PUBLIC_PATHS)."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert '<link rel="manifest" href="/manifest.webmanifest">' in page
+    manifest = json.loads((_SITE / "manifest.webmanifest").read_text())
+    assert manifest["start_url"] == "/start" and manifest["scope"] == "/"
+    assert manifest["display"] in ("fullscreen", "standalone")
+    sizes = set()
+    for icon in manifest["icons"]:
+        data = (_SITE / icon["src"].lstrip("/")).read_bytes()
+        assert data[:8] == b"\x89PNG\r\n\x1a\n"
+        width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+        assert icon["sizes"] == f"{width}x{height}"
+        sizes.add(width)
+    assert {192, 512} <= sizes
+
+
+def test_the_service_worker_is_registered_and_caches_nothing() -> None:
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert 'navigator.serviceWorker.register("/sw.js"' in shim
+    worker = (_SITE / "sw.js").read_text(encoding="utf-8")
+    assert 'event.request.mode !== "navigate"' in worker
+    assert "caches." not in worker and "cache.put" not in worker

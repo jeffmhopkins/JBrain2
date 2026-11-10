@@ -371,6 +371,9 @@ async function mockGrowbot(
     r.connected = false;
     return json({ ...r });
   }
+  if (path === "/api/growbot/sessions/reset" && method === "POST") {
+    return new Response(null, { status: 204 });
+  }
   if (path === "/api/growbot/ticket" && method === "POST") {
     const { code } = JSON.parse(String(init?.body ?? "{}")) as { code?: string };
     return json({

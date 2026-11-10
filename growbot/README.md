@@ -85,14 +85,34 @@ which robot it is. A robot counts as paired once the relay verifies its hello, w
 its `last_seen_at`. A rekey swaps the one `GROWBOT_KEY` line in place; a revoke nulls the key
 and drops the robot off the relay.
 
+## Installing it on a phone
+
+Chrome on Android offers *Install app* for the creature: `v3/next.html` links
+`/manifest.webmanifest` (full screen, start page `/start`, icons under `/icons/`), and
+`growbot-box.js` registers `/sw.js`, which caches nothing and only shows a "can't reach the box"
+page when the phone is off the Wi-Fi. These four files are the only ones served without a
+session, because Chrome fetches the manifest and icons with no cookie. `/start` sends a
+signed-in phone back into the creature on its session's robot, and a phone whose session
+has lapsed to a page pointing at JBrain, whose GrowBot screen mints the next ticket. Chrome
+installs only from a site it trusts, so the phone needs the box's root certificate installed
+(the GrowBot screen's *Download the box's certificate*), not a warning clicked through. On an
+iPhone a home-screen app keeps its own storage apart from Safari's, so it starts a fresh creature
+until G4 moves the creature onto the box.
+
 ## Security
 
 - **Opening it.** The owner mints a one-time ticket through the api (`POST /api/growbot/ticket`;
   until G2 adds the PWA entry, through the owner debug API's copy). `GET /open?ticket=…[&id=<code>]` redeems it and sets `gb_session` (HttpOnly, Secure,
-  SameSite=Strict, 12 h), then redirects to the creature. The cookie is an HMAC under a key made
-  at process start: nothing is stored, and a restart signs every phone out. Every other route
-  answers 401 without it, decided from the request head: without a session nothing but a
-  body-less `/open` is read, and the 401 closes the connection, so an anonymous client never
+  SameSite=Strict, 30 days, renewed at most daily by any page load or call), then redirects to
+  the creature. The cookie carries, under its HMAC, the robot code the api says the ticket was minted for (the
+  PWA names it at mint, migration 0256; the link's `id` is never trusted), and the relay
+  lets that phone join that robot alone: pairing is JBrain's, and a code typed into the
+  creature's own pairing box is refused (`403 pair from JBrain`). The key is derived from
+  `growbot.token` and `growbot-session.token`: nothing is stored, a restart keeps phones signed
+  in, and *Sign out every phone* (the GrowBot screen, or the debug API's
+  `POST /growbot/sessions/reset`) re-mints the second file, which signs every phone out at once. Every other route answers 401 without it, decided from
+  the request head: without a session nothing but a body-less `/open`, `/start` or one of the
+  installed app's four files is read, and the 401 closes the connection, so an anonymous client never
   costs the process an upload. Requests that act must also come from this origin, since the PWA
   on `:443` is the same *site* and SameSite alone would let its requests carry the cookie: a
   non-GET `/api` call with a foreign `Origin` is 403 (one with no `Origin` is allowed, as a

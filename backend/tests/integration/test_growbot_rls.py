@@ -1,4 +1,4 @@
-"""Migrations 0254 and 0255 against real Postgres: GrowBot's robots and tickets are owner-only.
+"""Migrations 0254-0256 against real Postgres: GrowBot's robots and tickets are owner-only.
 
 The mandatory RLS isolation test for both new tables (CLAUDE.md rule 3), plus the repo's
 security rules where only the database can prove them: a ticket redeems exactly once, even
@@ -84,7 +84,7 @@ async def test_a_non_owner_cannot_write_either_table(
     with pytest.raises(DBAPIError):
         await repo.mint_ticket(ctx)
     # Nothing it can see, so nothing it can spend, verify, change or delete.
-    assert not await repo.redeem_ticket(ctx, ticket)
+    assert await repo.redeem_ticket(ctx, ticket) is None
     assert not await repo.delete_robot(ctx, "gb-a1")
     async with scoped_session(maker, ctx) as session:
         changed = await session.execute(
@@ -92,7 +92,7 @@ async def test_a_non_owner_cannot_write_either_table(
         )
         assert changed.rowcount == 0  # type: ignore[attr-defined]
     assert [r.code for r in await repo.list_robots(OWNER)] == ["gb-a1"]
-    assert await repo.redeem_ticket(SYSTEM_OWNER, ticket)
+    assert await repo.redeem_ticket(SYSTEM_OWNER, ticket) == ""
 
 
 async def test_a_ticket_redeems_once_and_is_stored_hashed(maker: async_sessionmaker) -> None:
@@ -103,17 +103,34 @@ async def test_a_ticket_redeems_once_and_is_stored_hashed(maker: async_sessionma
             await session.execute(text("SELECT ticket_hash FROM app.growbot_tickets"))
         ).scalar_one()
     assert stored == hash_token(minted.ticket) and minted.ticket not in stored
-    assert not await repo.redeem_ticket(SYSTEM_OWNER, "")
-    assert not await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket + "x")
-    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket)
-    assert not await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket)
+    assert await repo.redeem_ticket(SYSTEM_OWNER, "") is None
+    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket + "x") is None
+    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) == ""
+    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) is None
+
+
+async def test_a_ticket_carries_the_robot_it_was_minted_for(maker: async_sessionmaker) -> None:
+    repo = SqlGrowbotRepo(maker)
+    minted = await repo.mint_ticket(OWNER, "gb-a1b2c3")
+    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) == "gb-a1b2c3"
+    with pytest.raises(ValueError):
+        await repo.mint_ticket(OWNER, "../x")
+    async with scoped_session(maker, OWNER) as session:
+        with pytest.raises(DBAPIError):
+            await session.execute(
+                text(
+                    "INSERT INTO app.growbot_tickets (ticket_hash, expires_at, robot_code)"
+                    " VALUES (:h, now(), 'nope')"
+                ),
+                {"h": "1" * 64},
+            )
 
 
 async def test_racing_redeems_spend_a_ticket_once(maker: async_sessionmaker) -> None:
     repo = SqlGrowbotRepo(maker)
     ticket = (await repo.mint_ticket(OWNER)).ticket
     results = await asyncio.gather(*(repo.redeem_ticket(SYSTEM_OWNER, ticket) for _ in range(8)))
-    assert sorted(results) == [False] * 7 + [True]
+    assert sorted(r is not None for r in results) == [False] * 7 + [True]
 
 
 async def test_an_expired_ticket_is_refused_and_pruned(maker: async_sessionmaker) -> None:
@@ -135,7 +152,7 @@ async def test_an_expired_ticket_is_refused_and_pruned(maker: async_sessionmaker
             ),
             {"h": hash_token(stale)},
         )
-    assert not await repo.redeem_ticket(SYSTEM_OWNER, old)
+    assert await repo.redeem_ticket(SYSTEM_OWNER, old) is None
     await repo.mint_ticket(OWNER)
     # The next mint drops tickets a day past their expiry, keeping the recent trail.
     assert await _count(maker, OWNER, "growbot_tickets") == 2

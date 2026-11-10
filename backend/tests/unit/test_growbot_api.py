@@ -34,24 +34,24 @@ DEBUG = PrincipalInfo(id="cap1", kind="capability_token", label="token")
 @dataclass
 class FakeRepo:
     now: datetime = field(default_factory=lambda: datetime(2026, 11, 10, tzinfo=UTC))
-    tickets: dict[str, tuple[datetime, bool]] = field(default_factory=dict)
+    tickets: dict[str, tuple[datetime, bool, str]] = field(default_factory=dict)
     robots: dict[str, tuple[str, datetime, datetime | None]] = field(default_factory=dict)
     contexts: list[SessionContext] = field(default_factory=list)
 
-    async def mint_ticket(self, ctx: SessionContext) -> MintedTicket:
+    async def mint_ticket(self, ctx: SessionContext, code: str = "") -> MintedTicket:
         self.contexts.append(ctx)
         ticket = f"t{len(self.tickets)}-secret"
-        self.tickets[hash_token(ticket)] = (self.now + TICKET_TTL, False)
+        self.tickets[hash_token(ticket)] = (self.now + TICKET_TTL, False, code)
         return MintedTicket(ticket=ticket, expires_at=self.now + TICKET_TTL)
 
-    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> bool:
+    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> str | None:
         self.contexts.append(ctx)
         h = hash_token(ticket)
         entry = self.tickets.get(h)
         if entry is None or entry[1] or entry[0] <= self.now:
-            return False
-        self.tickets[h] = (entry[0], True)
-        return True
+            return None
+        self.tickets[h] = (entry[0], True, entry[2])
+        return entry[2]
 
     async def put_robot(self, ctx: SessionContext, code: str) -> str:
         self.contexts.append(ctx)
@@ -234,9 +234,19 @@ def test_a_ticket_opens_once(tmp_path: Path, repo: FakeRepo) -> None:
     ticket = client.post("/api/growbot/ticket").json()["ticket"]
     redeem = "/internal/growbot/ticket/redeem"
     first = client.post(redeem, json={"ticket": ticket}, headers=headers)
-    assert first.status_code == 200 and first.json() == {"ok": True}
+    assert first.status_code == 200 and first.json() == {"ok": True, "code": ""}
     assert client.post(redeem, json={"ticket": ticket}, headers=headers).status_code == 401
     assert repo.contexts[-1] == SessionContext(principal_kind="owner")
+
+
+def test_a_ticket_names_its_robot_and_redeem_answers_with_it(
+    tmp_path: Path, repo: FakeRepo
+) -> None:
+    app, headers = _app(tmp_path, repo)
+    client = TestClient(app)
+    ticket = client.post("/api/growbot/ticket", json={"code": "gb-a1b2c3"}).json()["ticket"]
+    first = client.post("/internal/growbot/ticket/redeem", json={"ticket": ticket}, headers=headers)
+    assert first.json() == {"ok": True, "code": "gb-a1b2c3"}
 
 
 def test_an_expired_or_unknown_ticket_is_refused(tmp_path: Path, repo: FakeRepo) -> None:
@@ -288,3 +298,46 @@ def test_a_rotated_key_revokes_the_old_one(tmp_path: Path, repo: FakeRepo) -> No
     assert (
         client.post(verify, json={"code": "gb-a1", "key": new}, headers=headers).status_code == 401
     )
+
+
+def test_signing_the_phones_out_rotates_the_session_epoch(tmp_path: Path, repo: FakeRepo) -> None:
+    app, _ = _app(tmp_path, repo)
+    client = TestClient(app)
+    epoch = tmp_path / "growbot-session.token"
+    assert not epoch.exists()
+    assert client.post("/api/growbot/sessions/reset").status_code == 204
+    first = epoch.read_bytes()
+    assert len(first) == 64 and (epoch.stat().st_mode & 0o777) == 0o600
+    assert client.post("/api/debug/growbot/sessions/reset").status_code == 204
+    second = epoch.read_bytes()
+    assert second != first
+    # The sidecar's bearer is untouched: only the cookie key moves.
+    assert (tmp_path / "growbot.token").read_bytes() == app.state.growbot_secrets.read("growbot")
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_signing_out_needs_the_owner_or_a_debug_token(tmp_path: Path, repo: FakeRepo) -> None:
+    app, _ = _app(tmp_path, repo)
+
+    def refuse() -> PrincipalInfo:
+        raise HTTPException(status_code=403, detail="no")
+
+    app.dependency_overrides[owner_only] = refuse
+    app.dependency_overrides[current_debug_principal] = refuse
+    client = TestClient(app)
+    assert client.post("/api/growbot/sessions/reset").status_code == 403
+    assert client.post("/api/debug/growbot/sessions/reset").status_code == 403
+    assert not (tmp_path / "growbot-session.token").exists()
+
+
+def test_a_sign_out_that_cannot_write_says_so(
+    tmp_path: Path, repo: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, _ = _app(tmp_path, repo)
+
+    def broken(name: str) -> None:
+        raise OSError("read-only")
+
+    monkeypatch.setattr(app.state.growbot_secrets, "rotate", broken)
+    r = TestClient(app).post("/api/growbot/sessions/reset")
+    assert r.status_code == 503

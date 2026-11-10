@@ -202,8 +202,14 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   *Open* that runs it on the phone alone. The owner, next: *"assume that we'll only ever have one
   robot buddy but multiple personas that I can [load] up on a phone, and then when I hit connect to
   body it would actually connect to that body, or it can live alone on the phone app."* So there
-  is one body, and the open creature carries a *Connect to body* control: tapping it joins the
-  house's one robot, and whichever persona connected last is the one the body wears. Until then
+  is one body, and *Connect to body* joins the house's one robot; whichever persona connected
+  last is the one the body wears. Then: *"the primary jbrain pwa should be able to pair a robot
+  creature to a body. But the creature app on a given phone should not have the ability to pair
+  from that app to the body; that is reserved only for the primary jbrain application."* So
+  *Connect to body* is on the JBrain PWA's persona list, never in the creature. The box enforces
+  it: the PWA's ticket names the robot, the `gb_session` it buys carries that code under its
+  HMAC, and the sidecar refuses any relay socket for another code, so a code typed into the
+  creature's own pairing box opens nothing (built with the installable app, ahead of G4). Until then
   (or with no robot paired) the persona lives on the phone alone. The owner can keep several (a
   different persona, a fresh creature, a saved copy before an experiment).
 - **Storage.** Through the api into Postgres under RLS with its isolation test (rule 3).
@@ -215,6 +221,18 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   `growbot.token` routes read only which persona and phone ride the body (the robot itself holds
   only its device key, §3, and learns nothing of personas), and profiles are never readable by share or member sessions, agent tools, RAG
   or wiki ingest. Each of those has an isolation test.
+- **Checkpoints and seeds (owner, 2026-11-10): *"from the jbrain pwa review all the saved
+  files, the soul file etc. And memories. And then if I want I can create a set point and I can
+  use that as a restore point. And then we can make different personas that we can flash not
+  just the default."*** The PWA shows each persona's soul (its memory surfaces, goals and
+  config regions, read-only, since the creature writes them) and its visual memories. A
+  *checkpoint* is a named, dated copy of a persona's soul and visual memories, kept on the box;
+  *Restore* puts one back as the persona (after a confirm, and after saving the current state as
+  a checkpoint first, so a restore is itself undoable). A *seed* is a persona's starting
+  personality (upstream's persona and expression config regions, written in the PWA or taken from
+  a checkpoint); *New persona* starts from the default seed or any saved one. Seeds and
+  checkpoints pass the same `sanitizeSoulCfg` and size cap as an import, and sit under the same
+  owner-only RLS as profiles.
 - **Imports are untrusted.** An imported soul passes upstream's `sanitizeSoulCfg` and a size cap;
   visual-memory blobs are type- and size-checked.
 - **Sync.** The phone app is a cache of the persona it was opened as. The patched-in loader pulls
@@ -229,8 +247,8 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   by `vmNs()`: `pb2_sid`, else `gb_vm_ns`; the loader pins it to the profile id). What it does not: upstream's per-device keys kept
   outside the soul on purpose (`pb_device`, `pb_or_*`) stay with the phone, and on the box
   `/api/device` answers them for any phone.
-- **The PWA** lists the profiles on the GrowBot screen (the launcher tile), each with *Open* (on the phone alone; the
-  creature's *Connect to body* joins the robot). It can add one, duplicate, rename,
+- **The PWA** lists the profiles on the GrowBot screen (the launcher tile), each with *Open* (on the phone alone) and
+  *Connect to body*. It can add one, duplicate, rename,
   reset to a fresh creature (upstream's own seed), export and import a soul file, and delete
   (confirmed, since it erases memories). To change persona on a phone, open another one. The G4
   GUI gate rewrites DESIGN.md's GrowBot screen for this (a persona list with *Open* on each, in
@@ -298,6 +316,12 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   to the box. ✅ Built: until G3's per-lane settings the box picks one creature model (the
   serving engine's first installed vision model, else its first) and ignores the name the page
   sends, so no lane can cold-swap the box; a turn that may swap takes jcode's swap lock.
+- **Installing the creature (owner, 2026-11-10): *"can you verify that the app will be able to
+  be installed as a pwa on a Android device?"*** Done between G2 and G3: a manifest, icons and a
+  service worker that caches nothing, a `/start` that reopens the creature on its robot, and a
+  30-day session keyed from `growbot.token` so the installed app outlasts a night and a restart,
+  with *Sign out every phone* on the GrowBot screen to end them all (`growbot/README.md`
+  "Installing it on a phone").
 - **G2 — the PWA flashes the robot.** GUI gate first (three mocks, `PROCESS.md`), covering the
   Endpoints board, pairing code, the open-GrowBot entry and the Ops listing. Then Pico 2 W as an
   endpoint board: `picotool` + `mpremote`, the generated `secrets.py`, device key mint/revoke.
@@ -319,9 +343,10 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   `growbot_settings` table, its RLS and isolation test, the owner routes, the app's pickup and
   report route, and the apply hook with idle reload (§2b).
 - **G4 — the creature on the box, and profiles.** GUI gate first (the persona list on the
-  GrowBot screen, and *Connect to body* in the creature). The profile tables and blob storage, RLS
+  GrowBot screen, with *Connect to body* on it). The profile tables and blob storage, RLS
   and isolation tests, the pull/push/hand-over routes and the body-rider route with their auth
-  tests, the loader's sync patch and its *Connect to body* control, and PWA add, per-persona Open,
+  tests, the loader's sync patch (and hiding the creature's own pairing box), checkpoints (save, list, restore) and seeds, the soul and
+  memory viewer, and PWA add (from a seed), per-persona Open, *Connect to body*,
   duplicate, rename, reset, export/import and delete (§2c).
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.

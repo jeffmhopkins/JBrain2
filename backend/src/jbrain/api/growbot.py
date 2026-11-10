@@ -6,9 +6,10 @@ Three routers over one repo (`jbrain.growbot.repo`):
 - `router` — the owner (`OwnerDep`): `POST /growbot/ticket` mints a one-time, 120 s ticket and
   the `:8444` link that spends it; `POST`/`GET`/`DELETE /growbot/robots` mint or rotate a
   robot's device key (shown once), list the robots (with whether each is on the relay now),
-  and forget one. Flashing, revoking and the status card are `api/growbot_flash.py` (G2).
+  and forget one; `POST /growbot/sessions/reset` signs every phone out. Flashing, revoking and
+  the status card are `api/growbot_flash.py` (G2).
 - `debug_router` — a debug token (`DebugDep`, mounted only with debug access on): the same
-  four, because G1 has no GUI and the owner runs the box with no terminal (CLAUDE.md #10).
+  five, because the owner runs the box with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`, mounted under `/internal`, which
   Caddy never routes): redeem a ticket, verify a chip's key.
 
@@ -59,8 +60,8 @@ def _owner_ctx(owner: OwnerDep) -> SessionContext:
 
 
 class TicketIn(BaseModel):
-    # The robot the phone should drive; the link opens the creature on it. Not bound to the
-    # ticket: a redeemed session may drive any of the owner's robots, all of which are theirs.
+    # The robot the phone should drive. Bound to the ticket: redeem answers with it and the
+    # sidecar lets that phone join this robot alone (pairing is JBrain's, owner 2026-11-10).
     code: str | None = Field(default=None, pattern=_CODE)
 
 
@@ -168,10 +169,13 @@ async def _ticket(
     request: Request, settings: Settings, ctx: SessionContext, body: TicketIn | None
 ) -> TicketOut:
     host = _lan_host(settings)
-    minted = await _repo(request).mint_ticket(ctx)
+    code = body.code if body is not None and body.code else ""
+    # The ticket itself names the robot: the sidecar signs the code redeem answers into the
+    # phone's session, so editing `id` on the link reaches no other robot.
+    minted = await _repo(request).mint_ticket(ctx, code)
     url = f"https://{host}:{GROWBOT_PORT}/open?ticket={quote(minted.ticket, safe='')}"
-    if body is not None and body.code:
-        url += f"&id={quote(body.code, safe='')}"
+    if code:
+        url += f"&id={quote(code, safe='')}"
     return TicketOut(ticket=minted.ticket, url=url, expires_at=minted.expires_at)
 
 
@@ -219,6 +223,34 @@ async def delete_robot(request: Request, owner: OwnerDep, code: Code) -> Respons
     return await _delete_robot(request, _owner_ctx(owner), code)
 
 
+# The sidecar keys every `gb_session` from this file too (growbot/server/serve.py `Sessions`),
+# so re-minting it signs every phone out at once: the owner's way to end a lost phone's session
+# without a terminal (CLAUDE.md #10).
+SESSION_EPOCH = "growbot-session"
+
+
+def _sign_out_phones(request: Request) -> Response:
+    try:
+        cast(InternalSecrets, request.app.state.growbot_secrets).rotate(SESSION_EPOCH)
+    except OSError as exc:
+        log.error("growbot.sign_out_failed", error=repr(exc))
+        raise HTTPException(status_code=503, detail="could not sign the phones out") from exc
+    log.info("growbot.phones_signed_out")
+    return Response(status_code=204)
+
+
+@router.post("/sessions/reset", status_code=204)
+async def sign_out_phones(request: Request, owner: OwnerDep) -> Response:
+    """End every phone's GrowBot session; each opens again from the PWA with a new ticket."""
+    return _sign_out_phones(request)
+
+
+@debug_router.post("/sessions/reset", status_code=204)
+async def debug_sign_out_phones(request: Request, _p: DebugDep) -> Response:
+    request.state.debug_detail = "growbot sign out phones"
+    return _sign_out_phones(request)
+
+
 @debug_router.post("/ticket")
 async def debug_mint_ticket(
     request: Request, _p: DebugDep, settings: SettingsDep, body: TicketIn | None = None
@@ -261,6 +293,12 @@ class OkOut(BaseModel):
     ok: bool
 
 
+class RedeemedOut(BaseModel):
+    ok: bool
+    # The robot the ticket was minted for, '' for none: the only robot the phone may join.
+    code: str
+
+
 def _refused() -> HTTPException:
     return HTTPException(status_code=401, detail="unauthorized")
 
@@ -270,13 +308,15 @@ _MAX_SECRET = 256
 
 
 @internal_router.post("/ticket/redeem")
-async def redeem_ticket(request: Request, body: RedeemIn) -> OkOut:
-    """Spend a phone's ticket: 200 the first time within its 120 s, 401 ever after."""
+async def redeem_ticket(request: Request, body: RedeemIn) -> RedeemedOut:
+    """Spend a phone's ticket: 200 with its robot the first time within its 120 s, 401 ever
+    after."""
     if len(body.ticket) > _MAX_SECRET:
         raise _refused()
-    if not await _repo(request).redeem_ticket(_SYSTEM_OWNER, body.ticket):
+    code = await _repo(request).redeem_ticket(_SYSTEM_OWNER, body.ticket)
+    if code is None:
         raise _refused()
-    return OkOut(ok=True)
+    return RedeemedOut(ok=True, code=code)
 
 
 @internal_router.post("/robot/verify")

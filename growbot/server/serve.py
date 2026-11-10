@@ -8,8 +8,13 @@ routes), and relays WebSocket frames between the phone and the robot at `/d/<cod
 
 Security, in order of the request:
 - `/open?ticket=…` is the only door without a session: the api redeems the one-time ticket the
-  PWA minted, and the answer is a `gb_session` cookie signed with a key made at process start
-  (a restart signs every phone out; nothing is stored).
+  PWA minted, and the answer is a `gb_session` cookie signed with a key derived from
+  `growbot.token`, so a restart keeps phones signed in and a re-minted token signs them all out
+  (nothing is stored). It lasts 30 days and is renewed as the creature loads, so the installed
+  app on the robot's phone stays open; `/start` (the manifest's start page) sends a phone whose
+  session has lapsed back to JBrain for a fresh ticket.
+- The installed app's manifest, its icons and its service worker are the only files served
+  without a session: Chrome fetches the manifest and icons with no cookie.
 - Every other route needs that cookie, except the robot's side of the relay, which has no
   browser: it proves itself with the device key in its `hello`, checked against the api.
 - `/internal/robots` (which robots are on the relay) and `/internal/robots/drop` (close a
@@ -59,7 +64,15 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 
 SESSION_COOKIE = "gb_session"
-SESSION_TTL_S = 43200
+SESSION_TTL_S = 30 * 86400
+# Renewed at most once a day, so a page that reloads often is not a cookie per load.
+SESSION_RENEW_S = 86400
+PUBLIC_PATHS = frozenset(
+    ("/manifest.webmanifest", "/sw.js", "/icons/growbot-192.png", "/icons/growbot-512.png")
+)
+SESSIONLESS = PUBLIC_PATHS | {"/open", "/start"}
+# A host header is the client's own word; only a plain name goes into the link back to JBrain.
+HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
 
 MAX_HEAD = 16 * 1024
 MAX_HEADERS = 100
@@ -195,6 +208,7 @@ class Config:
     tts_url: str
     stt_url: str
     token_file: Path
+    session_file: Path | None = None
     default_model: str = "qwen3-vl-30b"
     # The one peer whose X-Real-IP is believed (Caddy sets it from the client it saw).
     trusted_proxy: str = "proxy"
@@ -209,6 +223,9 @@ class Config:
             stt_url=env("GROWBOT_STT_URL", "http://tts-stt:8080/v1").rstrip("/"),
             token_file=Path(
                 env("GROWBOT_TOKEN_FILE", "/run/jbrain-growbot/growbot.token")
+            ),
+            session_file=Path(
+                env("GROWBOT_SESSION_FILE", "/run/jbrain-growbot/growbot-session.token")
             ),
             default_model=env("GROWBOT_DEFAULT_MODEL", "qwen3-vl-30b"),
             trusted_proxy=env("GROWBOT_TRUSTED_PROXY", "proxy"),
@@ -265,26 +282,106 @@ def _b64url(data: bytes) -> str:
 
 
 class Sessions:
-    """`gb_session` = `<expiry>.<nonce>.<hmac>`, keyed per process: nothing to store or leak."""
+    """`gb_session` = `<expiry>.<nonce>.<robot>.<hmac>`: nothing to store or leak.
 
-    def __init__(self, key: bytes | None = None) -> None:
-        self._key = key or secrets.token_bytes(32)
+    `<robot>` is the robot code the api says the ticket was minted for, or empty. It is the only robot this
+    phone's relay sockets may join: pairing is JBrain's (owner, 2026-11-10), so a code typed
+    into the creature's own pairing box opens nothing.
+
+    The key is derived from `growbot.token` when there is one, so sessions outlive a restart
+    and die with a re-minted token; without it, a key made at start (a restart signs out)."""
+
+    def __init__(
+        self,
+        key: bytes | None = None,
+        key_file: Path | None = None,
+        epoch_file: Path | None = None,
+    ) -> None:
+        self._fixed = key
+        self._key_file = key_file
+        # `growbot-session.token`: the api re-mints it when the owner signs every phone out
+        # (PWA or debug API), which changes the key and so ends every session at once.
+        self._epoch_file = epoch_file
+        self._random = secrets.token_bytes(32)
+        self._derived: tuple[str, bytes] = ("", b"")
+
+    @staticmethod
+    def _read(path: Path | None) -> str | None:
+        if path is None:
+            return ""
+        try:
+            return path.read_text().strip()
+        except FileNotFoundError:
+            return ""
+        except OSError:
+            return None
+
+    def _key(self) -> bytes:
+        if self._fixed:
+            return self._fixed
+        if self._key_file is not None:
+            token, epoch = self._read(self._key_file), self._read(self._epoch_file)
+            if token is None or epoch is None:
+                # A read that failed (not a missing file) keeps the last key, so a passing
+                # I/O error does not sign every phone out.
+                return self._derived[1] or self._random
+            if token:
+                seed = f"{token}\n{epoch}"
+                if self._derived[0] != seed:
+                    # Domain-separated, so the cookie key is never the api's bearer itself.
+                    key = hmac.new(
+                        token.encode(), b"gb_session v1\n" + epoch.encode(), hashlib.sha256
+                    ).digest()
+                    self._derived = (seed, key)
+                return self._derived[1]
+        return self._random
 
     def _sign(self, body: str) -> str:
-        return _b64url(hmac.new(self._key, body.encode(), hashlib.sha256).digest())
+        return _b64url(hmac.new(self._key(), body.encode(), hashlib.sha256).digest())
 
-    def mint(self, now: float | None = None) -> str:
+    def mint(self, now: float | None = None, robot: str = "") -> str:
         expiry = int(time.time() if now is None else now) + SESSION_TTL_S
-        body = f"{expiry}.{secrets.token_urlsafe(12)}"
+        if robot and not CODE_RE.fullmatch(robot):
+            raise ValueError("robot code")
+        body = f"{expiry}.{secrets.token_urlsafe(12)}.{robot}"
         return f"{body}.{self._sign(body)}"
 
     def valid(self, value: str, now: float | None = None) -> bool:
         parts = value.split(".")
-        if len(parts) != 3 or not parts[0].isdigit() or len(parts[0]) > 12:
+        if len(parts) != 4 or not parts[0].isdigit() or len(parts[0]) > 12:
             return False
-        if not hmac.compare_digest(self._sign(f"{parts[0]}.{parts[1]}"), parts[2]):
+        if not hmac.compare_digest(self._sign(".".join(parts[:3])), parts[3]):
             return False
         return int(parts[0]) > (time.time() if now is None else now)
+
+    def robot(self, value: str, now: float | None = None) -> str | None:
+        """The robot a valid session was opened for ("" for none), or None if not valid."""
+        return value.split(".")[2] if self.valid(value, now) else None
+
+    def due(self, value: str, now: float | None = None) -> bool:
+        """A valid session more than a day old, which the next page load renews."""
+        t = time.time() if now is None else now
+        renew_before = t + SESSION_TTL_S - SESSION_RENEW_S
+        return self.valid(value, t) and int(value.split(".")[0]) < renew_before
+
+
+def _redeemed_robot(up: Upstream) -> str | None:
+    """The robot code a redeemed ticket was minted for ('' for none), or None if the api's
+    answer does not name one in the right shape."""
+    try:
+        code = json.loads(up.body).get("code")
+    except (ValueError, AttributeError):
+        return None
+    if code == "" or (isinstance(code, str) and CODE_RE.fullmatch(code)):
+        return code
+    return None
+
+
+def _creature(code: str) -> str:
+    """Without a robot the creature opens unpaired; with one, on it."""
+    if code:
+        return f"/v3/next.html?id={urllib.parse.quote(code)}&mode=legs"
+    return "/v3/next.html?mode=legs"
 
 
 def cookie_value(headers: list[tuple[str, str]], name: str) -> str:
@@ -754,7 +851,9 @@ class Backoff:
 class GrowBot:
     def __init__(self, config: Config, sessions: Sessions | None = None) -> None:
         self.config = config
-        self.sessions = sessions or Sessions()
+        self.sessions = sessions or Sessions(
+            key_file=config.token_file, epoch_file=config.session_file
+        )
         self.csp = build_csp(config.site)
         self.channels: dict[str, Channel] = {}
         self.sockets = 0
@@ -887,8 +986,11 @@ class GrowBot:
         ]
 
     def _authed(self, req: Request) -> bool:
+        return self._robot(req) is not None
+
+    def _robot(self, req: Request) -> str | None:
         value = cookie_value(req.headers, SESSION_COOKIE)
-        return bool(value) and self.sessions.valid(value)
+        return self.sessions.robot(value) if value else None
 
     def _internal_ok(self, req: Request) -> bool:
         """The api's bearer: `growbot.token`, compared in constant time, re-read per call so
@@ -939,22 +1041,67 @@ class GrowBot:
         origin = req.header("origin")
         return not origin or origin == f"https://{req.header('host')}"
 
+    def _session_cookie(self, robot: str) -> str:
+        return (
+            f"{SESSION_COOKIE}={self.sessions.mint(robot=robot)}; HttpOnly; Secure; "
+            f"SameSite=Strict; Path=/; Max-Age={SESSION_TTL_S}"
+        )
+
+    def _back_to_jbrain(self, req: Request) -> Response:
+        """A lapsed installed app: JBrain's GrowBot screen mints the next ticket."""
+        host = req.header("host").rsplit(":", 1)[0]
+        link = b""
+        if HOST_RE.fullmatch(host):
+            link = f"<p><a href='https://{host}/'>Open JBrain</a>, then GrowBot.</p>".encode()
+        return Response(
+            401,
+            UNAUTHORISED_PAGE + link,
+            "text/html; charset=utf-8",
+            headers=[("Cache-Control", "no-store")],
+        )
+
+    def start_page(self, req: Request) -> Response:
+        """The installed app's start page: back into the creature, on the robot it last had."""
+        if req.method not in ("GET", "HEAD"):
+            return Response(405, b"method not allowed", headers=[("Allow", "GET, HEAD")])
+        code = self._robot(req)
+        if code is None:
+            return self._back_to_jbrain(req)
+        return Response(
+            302,
+            b"",
+            headers=[
+                ("Set-Cookie", self._session_cookie(code)),
+                ("Location", _creature(code)),
+                ("Cache-Control", "no-store"),
+            ],
+        )
+
     async def handle(self, req: Request) -> Response:
         if req.path == "/open":
             return await self.open(req)
+        if req.path == "/start":
+            return self.start_page(req)
         if req.path.startswith("/internal/"):
             return self.internal(req)
+        if req.path in PUBLIC_PATHS and req.method in ("GET", "HEAD"):
+            return await self.static(req)
         if not self._authed(req):
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         if req.path.startswith("/api/"):
             if req.method not in ("GET", "HEAD") and not self._same_origin(req):
                 return json_response(403, {"error": "cross-origin"})
-            return await self.api(req)
-        if req.method not in ("GET", "HEAD"):
+            resp = await self.api(req)
+        elif req.method not in ("GET", "HEAD"):
             return Response(
                 405, b"method not allowed", headers=[("Allow", "GET, HEAD")]
             )
-        return await self.static(req)
+        else:
+            resp = await self.static(req)
+        # The robot's phone may keep one page open for weeks; its own calls renew it.
+        if self.sessions.due(cookie_value(req.headers, SESSION_COOKIE)):
+            resp.headers.append(("Set-Cookie", self._session_cookie(self._robot(req) or "")))
+        return resp
 
     async def open(self, req: Request) -> Response:
         ticket, code = req.arg("ticket"), req.arg("id")
@@ -982,18 +1129,20 @@ class GrowBot:
             {"ticket": ticket},
             pool=self._gate,
         )
-        if not self._ok(up):
+        robot = _redeemed_robot(up) if self._ok(up) else None
+        if robot is None:
             self.ticket_backoff.fail(client)
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
-        cookie = (
-            f"{SESSION_COOKIE}={self.sessions.mint()}; HttpOnly; Secure; SameSite=Strict; "
-            f"Path=/; Max-Age={SESSION_TTL_S}"
+        # The ticket names the robot, not the link: `id` is the phone's to edit, so it is
+        # only checked for shape above and never trusted.
+        code = robot
+        # The session carries the robot the ticket named, so the installed app's /start
+        # reopens the same way and the relay lets this phone join that robot alone.
+        return Response(
+            302,
+            b"",
+            headers=[("Set-Cookie", self._session_cookie(code)), ("Location", _creature(code))],
         )
-        # Without a robot the creature opens unpaired, and the page asks for a code.
-        where = "/v3/next.html?mode=legs"
-        if code:
-            where = f"/v3/next.html?id={urllib.parse.quote(code)}&mode=legs"
-        return Response(302, b"", headers=[("Set-Cookie", cookie), ("Location", where)])
 
     # -- static -----------------------------------------------------------------
 
@@ -1249,11 +1398,15 @@ class GrowBot:
         code = seg[: -len("-agent")] if agent else seg
         if not CODE_RE.fullmatch(code):
             return Response(404, b"not found")
-        authed = self._authed(req)
+        paired = self._robot(req)
+        authed = paired is not None
         if agent and not authed:
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         if authed and req.header("origin") != f"https://{req.header('host')}":
             return Response(403, b"cross-origin")
+        # Pairing is JBrain's: a phone joins only the robot its ticket named.
+        if authed and paired != code:
+            return Response(403, b"pair from JBrain")
         # The chip's MicroPython client sends no Origin and every browser does, so a cookieless
         # socket with one is a web page squatting the robots' budget or burning their tries.
         if not authed and req.header("origin"):
@@ -1530,9 +1683,9 @@ class GrowBot:
                         if refused is not None:
                             await self.write(writer, req, refused, False)
                         return
-                    # Without a session only /open, which has no body, and the api's
-                    # bearer-checked /internal routes are answered; nothing else costs this
-                    # process an upload.
+                    # Without a session only /open, /start and the installed app's files,
+                    # none with a body, and the api's bearer-checked /internal routes are
+                    # answered; nothing else costs this process an upload.
                     internal = req.path.startswith("/internal/")
                     if internal and not self._internal_ok(req):
                         refused = json_response(401, {"error": "unauthorized"})
@@ -1541,7 +1694,7 @@ class GrowBot:
                     if (
                         not internal
                         and not self._authed(req)
-                        and (req.path != "/open" or body_framing(req) != 0)
+                        and (req.path not in SESSIONLESS or body_framing(req) != 0)
                     ):
                         page = Response(
                             401, UNAUTHORISED_PAGE, "text/html; charset=utf-8"
