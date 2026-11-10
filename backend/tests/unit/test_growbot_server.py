@@ -1440,7 +1440,9 @@ def test_the_compose_service_runs_the_bind_mounted_server() -> None:
     assert compose["networks"]["growbot_lane"] == {"internal": True}
     joined = {n for n, s in compose["services"].items() if "growbot_lane" in s.get("networks", [])}
     assert joined == {"growbot", "api", "tts-stt"}
-    assert "ports" not in svc
+    # Only the robots' SNTP is published (UDP); the web side is reached through Caddy alone.
+    assert svc["ports"] == ["8123:8123/udp"]
+    assert svc["environment"]["GROWBOT_NTP_PORT"] == "8123"
     env = svc["environment"]
     assert env["GROWBOT_SITE"] == "/app/site"
     assert env["GROWBOT_TOKEN_FILE"] == "/run/jbrain-growbot/growbot.token"
@@ -1595,3 +1597,161 @@ def test_an_unknown_internal_route_is_404(run: _Running) -> None:
 def test_handle_checks_the_bearer_too(run: _Running, gb: types.ModuleType) -> None:
     req = gb.Request("GET", "/internal/robots", "/internal/robots", {}, "HTTP/1.1", [])
     assert run.app.internal(req).status == 401
+
+
+# --- SNTP for the robots ------------------------------------------------------------------
+
+
+def _client_request(first: int = 0x23, size: int = 48) -> bytes:
+    data = bytearray(size)
+    if size:
+        data[0] = first
+    if size > 2:
+        data[2] = 0xF6  # poll -10: a signed byte, echoed raw
+    if size >= 48:
+        data[40:48] = b"ORIGINAL"
+    return bytes(data)
+
+
+def test_sntp_answers_a_client_in_server_mode(gb: types.ModuleType) -> None:
+    import struct
+
+    now = 1_794_000_000.25
+    reply = gb.sntp_reply(_client_request(), now - 0.5, now)
+    assert reply is not None and len(reply) == 48
+    assert reply[0] == (4 << 3) | 4  # LI 0, the client's version 4, server mode
+    assert reply[1] == gb.NTP_STRATUM and reply[1] != 0  # never kiss-o'-death
+    assert reply[2] == 0xF6 and reply[12:16] == b"JBOX"
+    assert reply[24:32] == b"ORIGINAL"  # the client's transmit, echoed as originate
+    secs, frac = struct.unpack("!II", reply[40:48])
+    assert secs - gb.NTP_UNIX_DELTA == int(now) and abs(frac / 2**32 - 0.25) < 1e-6
+    assert struct.unpack("!I", reply[32:36])[0] - gb.NTP_UNIX_DELTA == int(now - 0.5)
+    v3 = gb.sntp_reply(_client_request(0x1B), now, now)
+    assert v3 is not None and v3[0] == (3 << 3) | 4
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"",
+        _client_request(size=47),
+        _client_request(size=49),
+        _client_request(size=1024),
+        _client_request(0x24),  # mode 4: a server's reply, never answered (no loops)
+        _client_request(0x26),  # mode 6: control, the classic amplifier
+        _client_request(0x27),  # mode 7: private (monlist)
+        _client_request(0x03),  # version 0
+        _client_request(0x2B),  # version 5
+    ],
+)
+def test_sntp_ignores_anything_but_a_well_formed_client_request(
+    gb: types.ModuleType, data: bytes
+) -> None:
+    assert gb.sntp_reply(data, 0.0, 0.0) is None
+
+
+def test_sntp_answers_over_udp_and_stays_silent_otherwise(gb: types.ModuleType) -> None:
+    loop = asyncio.new_event_loop()
+    try:
+        transport = loop.run_until_complete(gb.start_sntp("127.0.0.1", 0))
+        port = transport.get_extra_info("sockname")[1]
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.3)
+        thread = threading.Thread(target=loop.run_forever, daemon=True)
+        thread.start()
+        sock.sendto(_client_request(), ("127.0.0.1", port))
+        reply, _ = sock.recvfrom(1024)
+        assert len(reply) == 48 and reply[0] & 7 == 4
+        sock.sendto(b"x" * 500, ("127.0.0.1", port))
+        with pytest.raises(TimeoutError):
+            sock.recvfrom(1024)
+        sock.close()
+        loop.call_soon_threadsafe(transport.close)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(2)
+    finally:
+        loop.close()
+
+
+def test_the_firmware_sets_its_clock_before_a_verified_dial() -> None:
+    chip = (_SERVE.parents[1] / "firmware" / "relay_chip.py").read_text()
+    assert 'NTP_PORT = getattr(_box, "GROWBOT_NTP_PORT", 8123)' in chip
+    assert "def ws_open():\n    feed()\n    _need_clock()\n" in chip
+    # rp2's epoch is 1970, other ports' 2000; the RTC tuple is ntptime.settime's.
+    assert "time.gmtime(0)[0] == 1970" in chip
+    assert (
+        "machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3], tm[4], tm[5], 0))" in chip
+    )
+    assert 'print("handshake: FAIL clock")' in chip
+    assert "ntptime.host = wlan.ifconfig()[2]" in chip
+
+
+def test_the_firmware_clock_logic_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The patched functions, executed under CPython with fake MicroPython modules: a box
+    reply sets the RTC, and a clock that stays in the past refuses to dial."""
+    import struct
+
+    chip = (_SERVE.parents[1] / "firmware" / "relay_chip.py").read_text()
+    start = chip.index("NTP_PORT = getattr(")
+    end = chip.index("\nprint(", chip.index("def _need_clock"))
+    block = chip[start:end]
+    set_to: list[tuple[int, ...]] = []
+    year = [2021]
+
+    class FakeSocket:
+        def __init__(self, *a: object) -> None:
+            pass
+
+        def settimeout(self, t: float) -> None:
+            pass
+
+        def sendto(self, q: bytes, addr: object) -> None:
+            assert len(q) == 48 and q[0] == 0x23
+
+        def recv(self, n: int) -> bytes:
+            reply = bytearray(48)
+            reply[0], reply[1] = 0x24, 2
+            reply[40:44] = struct.pack("!I", 1_794_000_000 + 2208988800)
+            return bytes(reply)
+
+        def close(self) -> None:
+            pass
+
+    fake_socket = types.SimpleNamespace(
+        getaddrinfo=lambda h, p: [(0, 0, 0, "", (h, p))],
+        socket=FakeSocket,
+        AF_INET=2,
+        SOCK_DGRAM=2,
+    )
+
+    def gmtime(secs: float | None = None) -> tuple[int, ...]:
+        if secs is None:
+            return (year[0], 1, 1, 0, 0, 0, 0, 0)
+        return tuple(time.gmtime(secs))[:8]
+
+    class Rtc:
+        def datetime(self, t: tuple[int, ...]) -> None:
+            set_to.append(t)
+            year[0] = t[0]
+
+    env: dict[str, object] = {
+        "_box": types.SimpleNamespace(),
+        "time": types.SimpleNamespace(gmtime=gmtime),
+        "socket": fake_socket,
+        "machine": types.SimpleNamespace(RTC=Rtc),
+        "feed": lambda: None,
+        "HOST": "192.168.1.20",
+        "BOX_CA": b"der",
+        "wlan": types.SimpleNamespace(ifconfig=lambda: ("ip", "mask", "gw", "dns")),
+    }
+    exec(compile(block, "relay_chip.py", "exec"), env)  # noqa: S102 - the firmware under test
+    env["_need_clock"]()  # type: ignore[operator]
+    assert set_to and set_to[0][0] == 2026 and len(set_to[0]) == 8
+
+    year[0] = 2021
+    FakeSocket.recv = lambda self, n: b"short"  # type: ignore[method-assign]
+    monkeypatch.setitem(sys.modules, "ntptime", types.SimpleNamespace(settime=lambda: None))
+    with pytest.raises(OSError, match="clock"):
+        env["_need_clock"]()  # type: ignore[operator]
+    env["BOX_CA"] = None
+    env["_need_clock"]()  # type: ignore[operator] - unverified dials need no clock

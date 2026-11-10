@@ -937,19 +937,37 @@ class TestRememberingTheNetwork:
         async def fake_upsert(_s: Any, _c: Any, key: str, value: Any) -> None:
             stored[key] = value
 
+        async def fake_get(_s: Any, _c: Any, key: str) -> Any:
+            return stored.get(key)
+
         monkeypatch.setattr(endpoint_api.SqlSettingsStore, "upsert", fake_upsert)
+        monkeypatch.setattr(endpoint_api.SqlSettingsStore, "get", fake_get)
         _fake_sidecar(monkeypatch, sent)
-        resp = c.post(
-            "/api/endpoint/flash",
-            json={
-                "port": "/dev/ttyACM0",
-                "ssid": "bleepbloop",
-                "password": "hunter2",
-                "remember": True,
-            },
-        )
+        body = {"port": "/dev/ttyACM0", "ssid": "bleepbloop", "password": "hunter2"}
+        resp = c.post("/api/endpoint/flash", json={**body, "remember": True})
         assert resp.status_code == 200, resp.text
         assert stored[endpoint_api.WIFI_KEY] == {"ssid": "bleepbloop", "password": "hunter2"}
+
+        # The row is shared with the GrowBot flasher: its networks survive a panel flash,
+        # and the one this flash names takes the new password there too.
+        stored[endpoint_api.WIFI_KEY] = {
+            "ssid": "old",
+            "password": "old-password",
+            "networks": [
+                {"ssid": "bleepbloop", "password": "stale-pass"},
+                {"ssid": "hotspot", "password": "hotspot-pass"},
+            ],
+        }
+        resp = c.post("/api/endpoint/flash", json={**body, "remember": True})
+        assert resp.status_code == 200, resp.text
+        assert stored[endpoint_api.WIFI_KEY] == {
+            "ssid": "bleepbloop",
+            "password": "hunter2",
+            "networks": [
+                {"ssid": "bleepbloop", "password": "hunter2"},
+                {"ssid": "hotspot", "password": "hotspot-pass"},
+            ],
+        }
 
 
 class TestTheSharedFlashBuilder:

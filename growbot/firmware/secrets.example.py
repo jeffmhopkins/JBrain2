@@ -26,3 +26,4 @@ WIFI_PASSWORD = "your-wifi-password"
 # GROWBOT_SNI = "jbrain.local"
 # GROWBOT_KEY = "the key the box showed when it registered this robot"
 # GROWBOT_CA = "MIIB..."   # the box's root certificate: DER, base64, one line
+# GROWBOT_NTP_PORT = 8123   # the box's SNTP, to set the clock before checking its certificate

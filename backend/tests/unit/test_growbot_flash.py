@@ -9,11 +9,13 @@ TestClient's loop and is polled the way the PWA polls it.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import datetime as dt
 import hashlib
 import json
 import secrets as pysecrets
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
@@ -113,6 +115,10 @@ class FakeRepo:
         self.robots[code] = replace(self.robots[code], revoked_at=NOW)
         return self.robots[code]
 
+    async def delete_robot(self, ctx: SessionContext, code: str) -> bool:
+        self.keys.pop(code, None)
+        return self.robots.pop(code, None) is not None
+
     def seen(self, code: str) -> None:
         self.robots[code] = replace(self.robots[code], last_seen_at=dt.datetime.now(dt.UTC))
 
@@ -128,8 +134,16 @@ class FakeStore:
         self.rows[key] = value
 
 
+def _tag(line: str) -> str:
+    """The sidecar's own line tags: `@ ` for its marks, `| ` for any other text."""
+    if line.startswith(("@ ", "| ")):
+        return line
+    mark = line.startswith(("FAILED: ", "port=", "OK ")) or line in ("OK", "copied", "key written")
+    return ("@ " if mark else "| ") + line
+
+
 def _stream(*lines: str) -> httpx.Response:
-    return httpx.Response(200, content="".join(f"{line}\n" for line in lines).encode())
+    return httpx.Response(200, content="".join(f"{_tag(line)}\n" for line in lines).encode())
 
 
 @dataclass
@@ -971,3 +985,110 @@ def test_the_wifi_store_is_the_settings_row_the_panels_use() -> None:
 
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(session_maker=object())))
     assert isinstance(growbot_flash._wifi_store(request), SqlSettingsStore)  # type: ignore[arg-type]
+
+
+# -- review fixes: races, marks, drops, the CA, the clock -----------------------------------
+
+
+def test_two_starts_at_once_flash_one_robot(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The slot is taken before _plan's first await, so a start racing through the checks
+    behind another is refused rather than flashing the same board twice."""
+
+    async def slow_host(request: Any, settings: Any) -> str | None:
+        await asyncio.sleep(0.3)
+        return BOX
+
+    monkeypatch.setattr(growbot_flash, "_adguard_host", slow_host)
+    statuses: list[int] = []
+    with TestClient(rig.app) as client:
+
+        def start() -> None:
+            statuses.append(client.post("/api/growbot/flash", json=NEW).status_code)
+
+        threads = [threading.Thread(target=start) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        assert sorted(statuses) == [202, 409]
+        assert _wait(client)["state"] == "ok"
+    assert len(rig.sidecar.called("/pico/provision")) == 1
+
+
+def test_a_refused_start_releases_the_slot(rig: Rig) -> None:
+    with TestClient(rig.app) as client:
+        assert client.post("/api/growbot/flash", json={**NEW, "name": " "}).status_code == 422
+        assert client.post("/api/growbot/flash", json=NEW).status_code == 202
+        assert _wait(client)["state"] == "ok"
+    assert rig.app.state.growbot_flash.planning is None
+
+
+def test_an_unreadable_ca_is_refused_before_any_key_is_minted(rig: Rig) -> None:
+    rig.ca[0] = "-----BEGIN CERTIFICATE-----\nnot base64 !!\n-----END CERTIFICATE-----\n"
+    resp = _refused(rig, NEW)
+    assert resp.status_code == 409 and "certificate cannot be read" in resp.json()["detail"]
+    assert rig.repo.keys == {} and rig.sidecar.calls == []
+
+
+def test_console_text_that_looks_like_a_mark_is_only_logged(rig: Rig) -> None:
+    """The robot's console can print `OK` or `port=…`; only the sidecar's `@ ` lines act."""
+
+    def noisy(body: dict[str, Any]) -> httpx.Response:
+        rig.repo.seen(rig.sidecar.code)
+        return _stream(
+            "| OK", "| port=/dev/sda", "| FAILED: wifi_failed: fake", "copied", "WIFI_OK", "OK"
+        )
+
+    rig.sidecar.provision = noisy
+    job = _flash(rig)
+    assert job["state"] == "ok" and job["port"] == "/dev/ttyACM0"
+    assert "port=/dev/sda" in job["log"] and "OK" in job["log"]
+
+
+@pytest.mark.parametrize("code", ["clock_unset", "needs_reflash"])
+def test_the_new_failure_codes_carry_their_recovery(rig: Rig, code: str) -> None:
+    rig.sidecar.provision = lambda b: _stream("copied", f"FAILED: {code}: detail")
+    job = _flash(rig)
+    assert job["fail"] == {"code": code, "message": growbot_flash.RECOVERY[code]}
+
+
+def test_a_failed_reflash_after_the_mint_drops_the_old_socket(rig: Rig) -> None:
+    rig.repo.add("gb-abc123", "Tamsin")
+    rig.sidecar.provision = lambda b: _stream("copied", "FAILED: wifi_failed: no networks")
+    job = _flash(rig, {**NEW, "target": "gb-abc123", "name": None})
+    assert job["fail"]["code"] == "wifi_failed"
+    assert rig.relay.drops == ["gb-abc123"]
+
+
+def test_a_failure_before_the_mint_drops_nothing(rig: Rig) -> None:
+    rig.repo.add("gb-abc123", "Tamsin")
+    rig.sidecar.load = lambda b: _stream("FAILED: not_bootsel: no RP2350")
+    assert _flash(rig, {**NEW, "target": "gb-abc123"})["fail"]["code"] == "not_bootsel"
+    assert rig.relay.drops == []
+
+
+def test_a_drop_that_raises_is_only_logged() -> None:
+    async def broken(code: str) -> bool:
+        raise RuntimeError("relay gone")
+
+    plan = SimpleNamespace(minted="gb-abc123", drop=broken)
+    asyncio.run(growbot_flash._drop_minted(plan))  # type: ignore[arg-type]
+
+
+def test_minting_or_forgetting_outside_a_flash_drops_the_robot(rig: Rig) -> None:
+    with TestClient(rig.app) as client:
+        assert client.post("/api/growbot/robots", json={"code": "gb-a1b2c3"}).status_code == 200
+        assert client.delete("/api/growbot/robots/gb-a1b2c3").status_code == 204
+    assert rig.relay.drops == ["gb-a1b2c3", "gb-a1b2c3"]
+
+
+def test_remember_updates_the_panels_pair_for_the_same_network() -> None:
+    row = {"ssid": "home", "password": "old", "networks": [{"ssid": "home", "password": "old"}]}
+    out = growbot_flash._remember(row, [("home", "new-password")])
+    assert out == {
+        "ssid": "home",
+        "password": "new-password",
+        "networks": [{"ssid": "home", "password": "new-password"}],
+    }
+    other = growbot_flash._remember(row, [("hotspot", "hotspot-pass")])
+    assert other["ssid"] == "home" and other["password"] == "old"

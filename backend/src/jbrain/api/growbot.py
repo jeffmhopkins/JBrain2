@@ -176,7 +176,10 @@ async def _ticket(
 
 
 async def _put_robot(request: Request, ctx: SessionContext, body: RobotIn) -> RobotKeyOut:
-    return RobotKeyOut(code=body.code, key=await _repo(request).put_robot(ctx, body.code))
+    key = await _repo(request).put_robot(ctx, body.code)
+    # A robot on the relay under the old key would stay connected on a key nothing holds.
+    await drop_robot(request, body.code)
+    return RobotKeyOut(code=body.code, key=key)
 
 
 async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
@@ -188,6 +191,7 @@ async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
 async def _delete_robot(request: Request, ctx: SessionContext, code: str) -> Response:
     if not await _repo(request).delete_robot(ctx, code):
         raise HTTPException(status_code=404, detail="no such robot")
+    await drop_robot(request, code)
     return Response(status_code=204)
 
 

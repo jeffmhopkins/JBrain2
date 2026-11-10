@@ -87,6 +87,76 @@ def _wrap(raw):
     ctx.verify_mode = ssl.CERT_REQUIRED
     ctx.load_verify_locations(cadata=BOX_CA)
     return ctx.wrap_socket(raw, server_hostname=SNI)
+
+
+# The clock. mbedTLS checks a certificate's dates against the RTC, which starts in the past on
+# a fresh boot, and the box's leaf certificates live hours, so a verified dial needs the real
+# time first. The box answers SNTP on GROWBOT_NTP_PORT (growbot/server/serve.py); the Wi-Fi
+# gateway's NTP is the fallback. rp2's epoch is 1970 (other ports' 2000): gmtime(0) says which.
+NTP_PORT = getattr(_box, "GROWBOT_NTP_PORT", 8123)
+CLOCK_MIN_YEAR = 2026
+_NTP_DELTA = 2208988800 if time.gmtime(0)[0] == 1970 else 3155673600
+
+
+def _clock_ok():
+    return time.gmtime()[0] >= CLOCK_MIN_YEAR
+
+
+def _sntp(host, port):
+    import struct
+    query = bytearray(48)
+    query[0] = 0x23  # LI 0, version 4, mode 3 (client)
+    addr = socket.getaddrinfo(host, port)[0][-1]
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.settimeout(1)
+        s.sendto(query, addr)
+        msg = s.recv(48)
+    finally:
+        s.close()
+    if len(msg) < 48 or (msg[0] & 7) != 4 or not msg[1]:
+        raise OSError("bad sntp reply")
+    secs = struct.unpack("!I", msg[40:44])[0]
+    if secs < 3913056000:  # before 2024: the 32-bit NTP era rolled over (2036)
+        secs += 0x100000000
+    return secs - _NTP_DELTA
+
+
+def _set_clock(secs):
+    tm = time.gmtime(secs)
+    # RTC.datetime takes (year, month, day, weekday, hours, minutes, seconds, subseconds);
+    # the weekday is set as ntptime.settime sets it.
+    machine.RTC().datetime((tm[0], tm[1], tm[2], tm[6] + 1, tm[3], tm[4], tm[5], 0))
+
+
+def sync_clock():
+    if _clock_ok():
+        return True
+    for _ in range(3):
+        feed()
+        try:
+            _set_clock(_sntp(HOST, NTP_PORT))
+        except Exception as e:
+            print("clock: box sntp", e)
+        if _clock_ok():
+            print("clock: set from the box")
+            return True
+    try:
+        import ntptime
+        ntptime.host = wlan.ifconfig()[2]
+        ntptime.timeout = 1
+        feed()
+        ntptime.settime()
+    except Exception as e:
+        print("clock: gateway ntp", e)
+    return _clock_ok()
+
+
+def _need_clock():
+    # Without the CA there is nothing to check dates against, as upstream always dialled.
+    if BOX_CA and not sync_clock():
+        print("handshake: FAIL clock")
+        raise OSError("the clock is not set")
 """
 
 SECRETS_EXAMPLE_TAIL = """
@@ -96,6 +166,7 @@ SECRETS_EXAMPLE_TAIL = """
 # GROWBOT_SNI = "jbrain.local"
 # GROWBOT_KEY = "the key the box showed when it registered this robot"
 # GROWBOT_CA = "MIIB..."   # the box's root certificate: DER, base64, one line
+# GROWBOT_NTP_PORT = 8123   # the box's SNTP, to set the clock before checking its certificate
 """
 
 VOICE_PICKER_OLD = (
@@ -239,6 +310,8 @@ FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
         1,
     ),
     ("relay_chip.py", "socket.getaddrinfo(HOST, 443)", "socket.getaddrinfo(HOST, PORT)", 1),
+    # The clock comes before the dial, so a verified handshake never fails on dates.
+    ("relay_chip.py", "def ws_open():\n    feed()\n", "def ws_open():\n    feed()\n    _need_clock()\n", 1),
     (
         "relay_chip.py",
         "ssl.wrap_socket(raw, server_hostname=HOST)  # SNI required by Cloudflare",

@@ -15,6 +15,9 @@ Security, in order of the request:
 - `/internal/robots` (which robots are on the relay) and `/internal/robots/drop` (close a
   revoked robot's socket) are the api's, behind `growbot.token` as a bearer. Caddy's site 404s
   `/internal*`, so only a container that can reach this one and holds the token gets there.
+- UDP `GROWBOT_NTP_PORT` (8123) answers SNTP for the robots, which have no internet and must
+  set their clock before they can check the box's certificate dates. Stateless, one 48-byte
+  reply to one well-formed 48-byte client request and nothing else, so it amplifies nothing.
 - Every response carries a CSP that confines the page to this origin, so vendored code cannot
   reach another host even if a patch missed a URL. Outbound, this process talks to the api and
   tts-stt by compose name only, with proxies and redirects disabled.
@@ -40,6 +43,7 @@ import os
 import re
 import secrets
 import socket
+import struct
 import sys
 import threading
 import time
@@ -1839,12 +1843,73 @@ def normalise_transcript(raw: bytes) -> dict[str, Any]:
     return out
 
 
+# ── SNTP for the robots ────────────────────────────────────────────────────────
+
+NTP_PACKET = 48
+# Seconds from the NTP epoch (1900) to the Unix one (1970).
+NTP_UNIX_DELTA = 2208988800
+# Stratum 2 says "synchronised, not a reference clock"; the box's own clock is the host's.
+NTP_STRATUM = 2
+NTP_REFID = b"JBOX"
+
+
+def _ntp_stamp(t: float) -> bytes:
+    secs = int(t) + NTP_UNIX_DELTA
+    frac = int((t - int(t)) * (1 << 32)) & 0xFFFFFFFF
+    return struct.pack("!II", secs & 0xFFFFFFFF, frac)
+
+
+def sntp_reply(data: bytes, received: float, now: float) -> bytes | None:
+    """The server-mode answer (RFC 4330 §5) to one client request, or None for anything
+    else: wrong size, not mode 3, or a version outside 1–4. The reply is the request's own
+    size, so a spoofed source gets nothing larger than it sent."""
+    if len(data) != NTP_PACKET:
+        return None
+    version = (data[0] >> 3) & 0x7
+    if data[0] & 0x7 != 3 or not 1 <= version <= 4:
+        return None
+    head = struct.pack(
+        "!BBBbII4s",
+        (version << 3) | 4,  # LI 0, the client's version, mode 4 (server)
+        NTP_STRATUM,
+        data[2],  # the client's poll, echoed as the raw byte
+        -20,  # precision, about a microsecond
+        0,  # root delay
+        0x00000100,  # root dispersion, 1/256 s
+        NTP_REFID,
+    )
+    reply = head + _ntp_stamp(now) + data[40:48] + _ntp_stamp(received) + _ntp_stamp(now)
+    return reply
+
+
+class Sntp(asyncio.DatagramProtocol):
+    def __init__(self) -> None:
+        self.transport: asyncio.DatagramTransport | None = None
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self.transport = transport  # type: ignore[assignment]
+
+    def datagram_received(self, data: bytes, addr: tuple[str | Any, int]) -> None:
+        received = time.time()
+        reply = sntp_reply(data, received, time.time())
+        if reply is not None and self.transport is not None:
+            self.transport.sendto(reply, addr)
+
+
+async def start_sntp(host: str = "0.0.0.0", port: int = 8123) -> asyncio.DatagramTransport:
+    loop = asyncio.get_running_loop()
+    transport, _ = await loop.create_datagram_endpoint(Sntp, local_addr=(host, port))
+    return transport
+
+
 async def main() -> None:
     config = Config.from_env()
     app = GrowBot(config)
     port = int(os.environ.get("GROWBOT_PORT", "8810"))
     server = await app.start("0.0.0.0", port)
-    print(f"growbot: serving {config.site} on :{port}", flush=True)
+    ntp_port = int(os.environ.get("GROWBOT_NTP_PORT", "8123"))
+    await start_sntp("0.0.0.0", ntp_port)
+    print(f"growbot: serving {config.site} on :{port}, SNTP on udp/{ntp_port}", flush=True)
     async with server:
         await server.serve_forever()
 

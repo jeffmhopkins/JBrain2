@@ -6,9 +6,10 @@ parsed by `wifi_store.parse_config`, a restricted literal parser that accepts st
 lists but no `b"..."` bytes. So every value here is one of those, strings are quoted by the
 same rules as `wifi_store.replacement`'s `quoted()`, and the Wi-Fi list sits in the managed
 `# BEGIN GROWBOT WIFI V1` block that the robot's own Wi-Fi setup later edits in place. The
-names (`GROWBOT_HOST`, `GROWBOT_PORT`, `GROWBOT_SNI`, `GROWBOT_KEY`, `GROWBOT_CA`) are the
-ones `growbot/patches/apply.py` patches the firmware to read; the CA is DER as base64 because
-the firmware decodes it with `binascii.a2b_base64`.
+names (`GROWBOT_HOST`, `GROWBOT_PORT`, `GROWBOT_SNI`, `GROWBOT_KEY`, `GROWBOT_CA`,
+`GROWBOT_NTP_PORT`) are the ones `growbot/patches/apply.py` patches the firmware to read; the CA
+is DER as base64 because the firmware decodes it with `binascii.a2b_base64`, and the NTP port is
+the growbot service's SNTP, which sets the robot's clock before it checks the CA's dates.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ BEGIN = "# BEGIN GROWBOT WIFI V1"
 END = "# END GROWBOT WIFI V1"
 # wifi_store's limits: MAX_NETWORKS and MAX_CONFIG.
 MAX_NETWORKS = 8
+# The growbot service's SNTP (growbot/server/serve.py; compose publishes it on udp).
+NTP_PORT = 8123
 MAX_CONFIG = 16384
 
 KEY_RE = re.compile(r"^[A-Za-z0-9_-]{32,64}$")
@@ -122,6 +125,7 @@ def render_secrets(
         f"GROWBOT_SNI = {quoted(sni)}\n"
         f"GROWBOT_KEY = {quoted(key)}\n"
         f"GROWBOT_CA = {quoted(ca_base64(ca_pem))}\n"
+        f"GROWBOT_NTP_PORT = {NTP_PORT}\n"
         f"{BEGIN}\n"
         f"WIFI_NETWORKS = [{wifi}]\n"
         f"{END}\n"

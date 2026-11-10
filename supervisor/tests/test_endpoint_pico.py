@@ -118,7 +118,8 @@ class TestScripts:
     ) -> None:
         monkeypatch.chdir(tmp_path)
         original = (
-            'GROWBOT_HOST = "10.0.0.2"\nGROWBOT_KEY = "old"\nWIFI_NETWORKS = []\n'
+            'GROWBOT_HOST = "10.0.0.2"\nGROWBOT_KEY = "old"\n'
+            'GROWBOT_CA = "MIIBzz"\nWIFI_NETWORKS = []\n'
         )
         (tmp_path / "secrets.py").write_text(original)
         exec(pico.rekey_script(KEY), {})
@@ -127,15 +128,38 @@ class TestScripts:
         assert not (tmp_path / "secrets.py.tmp").exists()
 
     @pytest.mark.parametrize(
-        "body", ["X = 1\n", 'GROWBOT_KEY = "a"\nGROWBOT_KEY = "b"\n']
+        ("body", "said"),
+        [
+            ('GROWBOT_CA = "MIIBzz"\nX = 1\n', "GBREKEY NOKEY"),
+            (
+                'GROWBOT_CA = "MIIBzz"\nGROWBOT_KEY = "a"\nGROWBOT_KEY = "b"\n',
+                "GBREKEY NOKEY",
+            ),
+            # It would dial unverified with its new key: only a reflash fixes that.
+            ('GROWBOT_KEY = "a"\n', "GBREKEY NOCA"),
+            ('GROWBOT_KEY = "a"\nGROWBOT_CA = None\n', "GBREKEY NOCA"),
+            ('GROWBOT_KEY = "a"\nGROWBOT_CA = ""\n', "GBREKEY NOCA"),
+            ('GROWBOT_KEY = "a"\nGROWBOT_CA = b"MIIBzz"\n', "GBREKEY NOCA"),
+            ('GROWBOT_KEY = "a"\nGROWBOT_CA = "MI" + "IB"\n', "GBREKEY NOCA"),
+            (
+                'GROWBOT_KEY = "a"\nGROWBOT_CA = "MIIBzz"\nGROWBOT_CA = "MIIByy"\n',
+                "GBREKEY NOCA",
+            ),
+        ],
     )
-    def test_rekey_refuses_a_secrets_file_without_one_key_line(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str
+    def test_rekey_refuses_a_secrets_file_without_one_key_and_ca_line(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        body: str,
+        said: str,
     ) -> None:
         monkeypatch.chdir(tmp_path)
         (tmp_path / "secrets.py").write_text(body)
-        with pytest.raises(SystemExit, match="GBREKEY NOKEY"):
+        with pytest.raises(SystemExit):
             exec(pico.rekey_script(KEY), {})
+        assert capsys.readouterr().out.strip() == said
         assert (tmp_path / "secrets.py").read_text() == body
 
     @pytest.mark.parametrize(
@@ -154,7 +178,17 @@ class TestValidation:
     ) -> None:
         monkeypatch.setattr(pico.ports, "scan", lambda: [PICO, PANEL])
         assert pico.pico_port("/dev/ttyACM0") == "/dev/ttyACM0"
-        for bad in ("/dev/ttyACM1", "/dev/sda", "", None, "/dev/ttyACM0/../sda"):
+        # A Raspberry Pi tty that is not MicroPython (a debug probe) is not a robot.
+        probe = _port("/dev/ttyACM7", "2e8a", "000c")
+        monkeypatch.setattr(pico.ports, "scan", lambda: [PICO, PANEL, probe])
+        for bad in (
+            "/dev/ttyACM1",
+            "/dev/ttyACM7",
+            "/dev/sda",
+            "",
+            None,
+            "/dev/ttyACM0/../sda",
+        ):
             with pytest.raises(ValueError, match="not a Pico"):
                 pico.pico_port(bad)
 
@@ -442,6 +476,29 @@ class TestProvision:
         assert "copied" in lines and "WIFI_OK 10.0.0.9" in lines
         assert board.clean()
 
+    def test_a_clock_it_could_not_set_is_clock_unset(self, board: Board) -> None:
+        board.console = [
+            "WIFI_OK 10.0.0.9",
+            "clock: box sntp timeout",
+            "handshake: FAIL clock",
+        ]
+        lines, err = _drain(pico.provision("/dev/ttyACM0", FILES, SECRETS, 60))
+        assert err.code == "clock_unset" and lines[-1] == "handshake: FAIL clock"
+        assert board.clean()
+
+    def test_only_the_sidecars_own_lines_are_marks(self, board: Board) -> None:
+        board.console = [
+            "OK",
+            "port=/dev/sda",
+            "copied",
+            "WIFI_OK 10.0.0.9",
+            "handshake: OK",
+        ]
+        lines, err = _drain(pico.provision("/dev/ttyACM0", FILES, SECRETS, 60))
+        marks = [line for line in lines if isinstance(line, pico.Mark)]
+        assert err is None and marks == ["port=/dev/ttyACM0", "copied", "OK"]
+        assert board.calls[1][2] == "/dev/ttyACM0"
+
     def test_wifi_that_fails_is_wifi_failed(self, board: Board) -> None:
         board.console = ["PAIRING CODE:  gb-2a3f4e", "WIFI_FAIL"]
         lines, err = _drain(pico.provision("/dev/ttyACM0", FILES, SECRETS, 60))
@@ -532,6 +589,17 @@ class TestRekey:
         _, err = _drain(pico.rekey("/dev/ttyACM0", KEY))
         assert (
             err.code == "copy_failed"
+            and board.verbs() == ["reset", "run"]
+            and board.clean()
+        )
+
+    def test_a_robot_without_a_box_certificate_needs_a_reflash(
+        self, board: Board
+    ) -> None:
+        board.out["run"] = ["GBREKEY NOCA"]
+        _, err = _drain(pico.rekey("/dev/ttyACM0", KEY))
+        assert (
+            err.code == "needs_reflash"
             and board.verbs() == ["reset", "run"]
             and board.clean()
         )
@@ -641,16 +709,17 @@ def routes(
     def load(port: Any, uf2: bytes, sha: str) -> Iterator[str]:
         seen.append(("load", (port, uf2, sha)))
         yield "picotool"
-        yield "OK port=/dev/ttyACM0"
+        yield "OK port=/dev/ttyACM1"  # console text that only looks like a mark
+        yield pico.Mark("OK port=/dev/ttyACM0")
 
     def provision(port: str, files: Any, secrets: bytes, watch: int) -> Iterator[str]:
         seen.append(("provision", (port, files, secrets, watch)))
-        yield "copied"
+        yield pico.Mark("copied")
         raise pico.PicoError("wifi_failed", "it could not join any of its networks")
 
     def rekey(port: str, key: str) -> Iterator[str]:
         seen.append(("rekey", (port, key)))
-        yield "key written"
+        yield pico.Mark("key written")
         raise RuntimeError("boom")
 
     def identify(port: str) -> dict[str, str]:
@@ -692,7 +761,13 @@ class TestRoutes:
     def test_load_streams_to_ok(self, routes: tuple[int, Any]) -> None:
         body = {"port": None, "uf2_b64": base64.b64encode(UF2).decode(), "sha256": SHA}
         status, text = _post(routes[0], "/pico/load", body)
-        assert status == 200 and text.splitlines()[-1] == "OK port=/dev/ttyACM0"
+        assert status == 200
+        # Marks are `@ `, every other line `| `: console text never reads as one.
+        assert text.splitlines() == [
+            "| picotool",
+            "| OK port=/dev/ttyACM1",
+            "@ OK port=/dev/ttyACM0",
+        ]
         assert routes[1] == [("load", (None, UF2, SHA))]
         status, _ = _post(routes[0], "/pico/load", {**body, "port": "/dev/ttyACM0"})
         assert status == 200 and routes[1][-1][1][0] == "/dev/ttyACM0"
@@ -745,8 +820,8 @@ class TestRoutes:
         status, text = _post(routes[0], "/pico/provision", body)
         assert status == 200
         assert text.splitlines() == [
-            "copied",
-            "FAILED: wifi_failed: it could not join any of its networks",
+            "@ copied",
+            "@ FAILED: wifi_failed: it could not join any of its networks",
         ]
         assert routes[1][0][1][3] == 30
 
@@ -792,7 +867,7 @@ class TestRoutes:
         )
         assert (
             status == 200
-            and text.splitlines()[-1] == "FAILED: internal: RuntimeError: boom"
+            and text.splitlines()[-1] == "@ FAILED: internal: RuntimeError: boom"
         )
 
     def test_bad_bodies_and_unknown_routes(self, routes: tuple[int, Any]) -> None:

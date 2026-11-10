@@ -4,11 +4,15 @@ The same split as `flash.py`: what is run against a board (every argv, every on-
 script) is built by pure functions the tests can read, and the half that spawns processes is
 a set of generators that stream log lines and end with `OK …` or `FAILED: <code>: <message>`.
 
+MARKS. The streams carry the robot's own console, which can print anything, including `OK`
+or `port=…`. So the lines this file means as signals are `Mark`s, and server.py writes them
+as `@ <mark>` and every other line as `| <line>`: no console text can ever read as a mark.
+
 `mpremote` and `picotool` run as command-line subprocesses only, never imported: they are the
 tools upstream documents, and a library call would tie this file to their internals.
 
 WHAT REACHES A DEVICE. The api names a port; this process runs as root with `/dev` mounted,
-so a port is used only if the sysfs scan says it is a Raspberry Pi device (vid 2e8a), and
+so a port is used only if the sysfs scan says it is a MicroPython Pico (2e8a:0005), and
 picotool is only ever handed the bus and address of a sysfs-verified RP2350 bootloader
 (2e8a:000f), never a path or a vid/pid from the request. The on-device scripts are fixed text
 in this file; the one value that enters one (a rekey's key) is held to a regex first and goes
@@ -69,6 +73,7 @@ BAUD = 115200
 # Printed by the identify script on one line, so console noise around it cannot be misread.
 IDENTIFY_MARK = "GBID "
 REKEY_OK = "GBREKEY OK"
+REKEY_NOCA = "GBREKEY NOCA"
 
 IDENTIFY_SCRIPT = (
     "import binascii, json, machine, os, sys\n"
@@ -80,14 +85,22 @@ IDENTIFY_SCRIPT = (
 )
 
 # Swaps the one GROWBOT_KEY line of secrets.py and nothing else, through a temporary file
-# and a rename, so a power cut mid-write leaves the old secrets.py whole.
+# and a rename, so a power cut mid-write leaves the old secrets.py whole. A robot without
+# exactly one string GROWBOT_CA line would dial the box unverified with its new key, so it is
+# refused (GBREKEY NOCA): only a reflash writes the CA. Each refusal is printed before the
+# exit, since an uncaught SystemExit prints nothing.
 REKEY_SCRIPT = """import os
 KEY = "{key}"
 with open("secrets.py") as f:
     lines = f.read().split("\\n")
+cas = [l for l in lines if l.startswith('GROWBOT_CA = "') and l.endswith('"') and len(l) > 16]
+if len(cas) != 1 or '"' in cas[0][14:-1]:
+    print("GBREKEY NOCA")
+    raise SystemExit
 hits = [i for i, line in enumerate(lines) if line.startswith("GROWBOT_KEY = ")]
 if len(hits) != 1:
-    raise SystemExit("GBREKEY NOKEY")
+    print("GBREKEY NOKEY")
+    raise SystemExit
 lines[hits[0]] = 'GROWBOT_KEY = "' + KEY + '"'
 with open("secrets.py.tmp", "w") as f:
     f.write("\\n".join(lines))
@@ -96,6 +109,10 @@ print("GBREKEY OK")
 """
 
 _busy = threading.Lock()
+
+
+class Mark(str):
+    """A line this file means as a signal to the api (see MARKS above)."""
 
 
 class PicoError(RuntimeError):
@@ -164,11 +181,16 @@ def rekey_script(key: str) -> str:
 
 
 def pico_port(port: object) -> str:
-    """`port` if the sysfs scan lists it as a Raspberry Pi tty, else ValueError."""
+    """`port` if the sysfs scan lists it as a Pico running MicroPython, else ValueError.
+    Only that pid: another 2e8a tty (a debug probe, a CircuitPython board) is not a robot."""
     known = {p.device: p for p in ports.scan()}
     found = known.get(str(port or ""))
-    if found is None or not found.is_pico:
-        picos = sorted(d for d, p in known.items() if p.is_pico)
+
+    def is_robot(p: ports.Port) -> bool:
+        return p.is_pico and p.pid == ports.PICO_MICROPYTHON_PID
+
+    if found is None or not is_robot(found):
+        picos = sorted(d for d, p in known.items() if is_robot(p))
         raise ValueError(
             f"{port!r} is not a Pico on this box; Picos: {picos or 'none'}"
         )
@@ -383,7 +405,7 @@ def load(port: str | None, uf2: bytes, sha256: str) -> Iterator[str]:
         tty = find_tty(serial, TTY_WAIT_S)
         if not tty:
             raise PicoError("usb_gone", "MicroPython did not come up on USB")
-        yield f"OK port={tty}"
+        yield Mark(f"OK port={tty}")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
         _busy.release()
@@ -428,7 +450,7 @@ def _reset_and_find(port: str, workdir: str) -> Iterator[str]:
     tty = find_tty(serial, RESET_WAIT_S)
     if not tty:
         raise PicoError("usb_gone", "the robot did not come back on USB")
-    yield f"port={tty}"
+    yield Mark(f"port={tty}")
 
 
 def watch_join(port: str, seconds: float) -> Iterator[str]:
@@ -446,22 +468,28 @@ def watch_join(port: str, seconds: float) -> Iterator[str]:
             raise PicoError("wifi_failed", "it could not join any of its networks")
         if line.startswith("WIFI_OK"):
             joined_at = time.monotonic()
+        if line.startswith("handshake: FAIL clock"):
+            raise PicoError(
+                "clock_unset", "it could not set its clock from the box or the router"
+            )
         if joined_at is not None and line.startswith("handshake:"):
-            yield "OK"
+            yield Mark("OK")
             return
         if joined_at is not None and time.monotonic() - joined_at > HANDSHAKE_WAIT_S:
-            yield "OK"
+            yield Mark("OK")
             return
         if time.monotonic() > deadline:
             break
     if joined_at is not None:
-        yield "OK"
+        yield Mark("OK")
         return
     raise PicoError("timeout", "the robot said nothing about Wi-Fi in time")
 
 
 def _port_of(line: str) -> str | None:
-    return line[len("port=") :] if line.startswith("port=") else None
+    if isinstance(line, Mark) and line.startswith("port="):
+        return line[len("port=") :]
+    return None
 
 
 def provision(
@@ -488,7 +516,7 @@ def provision(
         except _ToolFailed as exc:
             raise PicoError("copy_failed", f"mpremote could not copy ({exc})") from None
         # A marker line the api moves the job's phase on.
-        yield "copied"
+        yield Mark("copied")
         # The secrets are on the board now; nothing on this side needs them any longer.
         shutil.rmtree(workdir, ignore_errors=True)
         os.makedirs(workdir, exist_ok=True)
@@ -515,18 +543,23 @@ def rekey(port: str, key: str, watch_s: int = MAX_WATCH_S) -> Iterator[str]:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(script)
         yield "writing the new key"
-        said = False
+        said = no_ca = False
         try:
             for line in _ok(run(run_argv(port, path), workdir)):
                 said = said or line.strip() == REKEY_OK
+                no_ca = no_ca or line.strip() == REKEY_NOCA
                 if "GBREKEY" not in line:
                     yield line
         except _ToolFailed:
             said = False
+        if no_ca:
+            raise PicoError(
+                "needs_reflash", "the robot's secrets.py has no box certificate"
+            )
         if not said:
             raise PicoError("copy_failed", "secrets.py has no single GROWBOT_KEY line")
         os.remove(path)
-        yield "key written"
+        yield Mark("key written")
         yield "restarting the robot"
         for line in run(reset_argv(port), workdir, timeout=30):
             if not line.startswith("exit "):

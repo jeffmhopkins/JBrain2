@@ -95,6 +95,7 @@ def test_it_imports_as_python_with_the_values_the_firmware_reads(ca_pem: str) ->
     assert values["GROWBOT_PORT"] == 8444
     assert values["GROWBOT_SNI"] == "jbrain.local"
     assert values["GROWBOT_KEY"] == KEY
+    assert values["GROWBOT_NTP_PORT"] == 8123
     assert values["WIFI_NETWORKS"] == [list(n) for n in NETWORKS]
     der = base64.b64decode(str(values["GROWBOT_CA"]))
     assert x509.load_der_x509_certificate(der).subject.rfc4514_string() == (
@@ -110,6 +111,7 @@ def test_it_is_exactly_the_contracts_lines(ca_pem: str) -> None:
         "GROWBOT_SNI",
         "GROWBOT_KEY",
         "GROWBOT_CA",
+        "GROWBOT_NTP_PORT",
         provision.BEGIN,
         "WIFI_NETWORKS",
         provision.END,
@@ -120,8 +122,15 @@ def test_the_names_are_the_ones_the_firmware_patch_reads() -> None:
     """One set of names everywhere: what relay_chip.py getattr()s off secrets.py, and the key
     line the sidecar's rekey script swaps."""
     chip = (FIRMWARE / "relay_chip.py").read_text()
-    read = set(re.findall(r'getattr\(_box, "(GROWBOT_[A-Z]+)"', chip))
-    assert read == {"GROWBOT_HOST", "GROWBOT_PORT", "GROWBOT_SNI", "GROWBOT_KEY", "GROWBOT_CA"}
+    read = set(re.findall(r'getattr\(_box, "(GROWBOT_[A-Z_]+)"', chip))
+    assert read == {
+        "GROWBOT_HOST",
+        "GROWBOT_PORT",
+        "GROWBOT_SNI",
+        "GROWBOT_KEY",
+        "GROWBOT_CA",
+        "GROWBOT_NTP_PORT",
+    }
     # The CA is a base64 string the firmware decodes, never a bytes literal.
     assert "binascii.a2b_base64(_ca)" in chip
     sidecar = (Path(__file__).resolve().parents[3] / "deploy/endpoint/pico.py").read_text()
