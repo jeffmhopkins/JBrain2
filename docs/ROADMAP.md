@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-10-15
+> **Status:** Living · **Last verified:** 2026-11-10
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -256,6 +256,8 @@ The location + family + intake slices shipped; build records are under
 - **Location assistant** ✅ (`archive/LOCATION_ASSISTANT_PLAN.md`) — owner-only
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
+
+- **GrowBot on the box** — Scheduled (`plans/GROWBOT_PLAN.md`) — the GrowBot desk robot's brain run entirely on the box under `growbot/`: the upstream creature app vendored with a patch set, a `/api` shim onto the local LLM, whisper and Kokoro, a keyed LAN relay in place of Cloudflare's, its own `jbrain.local:8444` origin with a no-egress CSP, and the Pico flashed from PWA → Endpoints.
 
 - **Pet endpoint (PWA first)** — In progress (`plans/PET_ENDPOINT_PWA_PLAN.md`; the face, the
   rig, the renderer and the anti-boredom engine landed as an owner-only troubleshooting screen) — a full-screen
