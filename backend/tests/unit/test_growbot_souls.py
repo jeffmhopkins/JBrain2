@@ -95,6 +95,9 @@ def test_sanitize_keeps_only_known_fields_each_capped() -> None:
     assert zero["dream"]["limits"] == {}
     assert souls.sanitize_cfg({"dream": {"limits": {"wants_max": True}}})["dream"]["limits"] == {}
     assert souls.sanitize_cfg({"dream": {"limits": []}})["dream"] == {}
+    # An integer past a double is JSON.parse's Infinity upstream, so it is dropped too.
+    huge = souls.sanitize_cfg({"dream": {"limits": {"wants_max": 10**400}}})
+    assert huge["dream"]["limits"] == {}
 
 
 def test_a_seed_takes_the_personality_and_leaves_the_memories() -> None:

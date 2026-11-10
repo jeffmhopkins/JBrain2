@@ -169,6 +169,22 @@ def _json(doc: dict[str, Any]) -> str:
     return json.dumps(doc, ensure_ascii=False, separators=(",", ":"))
 
 
+class _Refused(Exception):
+    """An open found something gone after it had begun writing."""
+
+
+async def _lock_bodies(session: AsyncSession) -> None:
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtextextended('growbot-body', 0))"))
+
+
+async def _robot_held(session: AsyncSession, code: str) -> bool:
+    # FOR KEY SHARE keeps the robot from being forgotten until this transaction ends.
+    row = await session.execute(
+        text("SELECT 1 FROM app.growbot_robots WHERE code = :c FOR KEY SHARE"), {"c": code}
+    )
+    return row.first() is not None
+
+
 class SqlPersonaRepo:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
@@ -362,15 +378,8 @@ class SqlPersonaRepo:
     async def _ride(self, session: AsyncSession, code: str, pid: str | None) -> bool:
         # Rider changes are rare and touch several robots' rows, so they take one lock and run
         # one at a time instead of deadlocking.
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended('growbot-body', 0))")
-        )
-        robot = (
-            await session.execute(
-                text("SELECT 1 FROM app.growbot_robots WHERE code = :c"), {"c": code}
-            )
-        ).first()
-        if robot is None:
+        await _lock_bodies(session)
+        if not await _robot_held(session, code):
             return False
         if pid is not None:
             found = (
@@ -410,21 +419,22 @@ class SqlPersonaRepo:
             return False
         try:
             async with scoped_session(self._maker, ctx) as session:
-                return await self._open(session, key, phone_id, label, code)
-        except IntegrityError:
-            # Two tickets spent on one phone at once: the one-persona-per-phone index let one
-            # through, and this one opens nothing.
+                if not await self._open(session, key, phone_id, label, code):
+                    # Raised, not returned, so the transaction rolls back whatever this open
+                    # already wrote.
+                    raise _Refused
+        except (_Refused, IntegrityError):
+            # IntegrityError: a bad phone id, or the persona went at the same moment.
             return False
+        return True
 
     async def _open(
         self, session: AsyncSession, pid: str, phone_id: str, label: str, code: str
     ) -> bool:
-        # One open per phone at a time: two tickets spent on one phone would otherwise lock
-        # two personas in opposite orders and deadlock.
-        await session.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended('growbot-phone:' || :ph, 0))"),
-            {"ph": phone_id},
-        )
+        # Opens and rider picks run one at a time under the body lock, taken before any row
+        # lock: an open touches two personas (and a body), and two phones swapping personas,
+        # or an open racing a Who-wears pick, would otherwise lock them in opposite orders.
+        await _lock_bodies(session)
         held = (
             await session.execute(
                 text("SELECT phone_id FROM app.growbot_personas WHERE id = :p FOR UPDATE"),
@@ -433,14 +443,8 @@ class SqlPersonaRepo:
         ).first()
         if held is None:
             return False
-        if code:
-            robot = (
-                await session.execute(
-                    text("SELECT 1 FROM app.growbot_robots WHERE code = :c"), {"c": code}
-                )
-            ).first()
-            if robot is None:
-                return False
+        if code and not await _robot_held(session, code):
+            return False
         await session.execute(
             text(
                 "INSERT INTO app.growbot_phones (id, label) VALUES (:id, :l)"

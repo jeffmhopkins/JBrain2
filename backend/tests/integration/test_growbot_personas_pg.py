@@ -212,6 +212,50 @@ async def test_racing_opens_on_one_phone_hold_one_persona(maker: async_sessionma
     assert len(on_b) == 1
 
 
+async def test_two_phones_swapping_personas_at_once_both_land(
+    maker: async_sessionmaker,
+) -> None:
+    repo, sprout, bolt = await _world(maker)
+    assert await repo.open_on_phone(SYSTEM_OWNER, bolt, PHONE_B, "", "")
+    for _ in range(5):
+        a, b = await asyncio.gather(
+            repo.open_on_phone(SYSTEM_OWNER, bolt, PHONE_A, "", ""),
+            repo.open_on_phone(SYSTEM_OWNER, sprout, PHONE_B, "", ""),
+        )
+        assert a and b
+        held = {p.id: p.phone_id for p in await repo.list_personas(OWNER)}
+        assert held == {bolt: PHONE_A, sprout: PHONE_B}
+        sprout, bolt = bolt, sprout
+
+
+async def test_an_open_racing_a_who_wears_pick_never_errors(maker: async_sessionmaker) -> None:
+    repo, sprout, bolt = await _world(maker)
+    for _ in range(5):
+        opened, picked = await asyncio.gather(
+            repo.open_on_phone(SYSTEM_OWNER, bolt, PHONE_B, "", "gb-fish"),
+            repo.set_rider(OWNER, "gb-fish", sprout),
+        )
+        assert opened and picked
+        (rider,) = await repo.riders(OWNER)
+        assert rider.persona_id in (sprout, bolt)
+
+
+async def test_an_open_refused_after_it_began_writing_rolls_back(
+    maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, sprout, bolt = await _world(maker)
+    real = repo._ride
+
+    async def robot_forgotten(*_: object) -> bool:
+        return False
+
+    monkeypatch.setattr(repo, "_ride", robot_forgotten)
+    assert not await repo.open_on_phone(SYSTEM_OWNER, bolt, PHONE_A, "", "gb-fish")
+    monkeypatch.setattr(repo, "_ride", real)
+    held = {p.id: p.phone_id for p in await repo.list_personas(OWNER)}
+    assert held == {sprout: PHONE_A, bolt: None}
+
+
 async def test_an_edit_from_an_older_read_is_refused(maker: async_sessionmaker) -> None:
     repo, sprout, _ = await _world(maker)
     assert await repo.push(SYSTEM_OWNER, sprout, PHONE_A, 1, {"soul_format": 3, "n": 1}) == 2

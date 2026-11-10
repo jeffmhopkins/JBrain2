@@ -73,7 +73,11 @@ def _dream_limits(raw: dict[str, Any]) -> dict[str, float | int]:
         v = raw.get(key)
         if isinstance(v, bool) or not isinstance(v, int | float):
             continue
-        if not math.isfinite(v) or v <= 0:
+        try:
+            if not math.isfinite(v) or v <= 0:
+                continue
+        except OverflowError:
+            # An integer past a double: JSON.parse makes it Infinity, which upstream drops.
             continue
         clamped = min(hi, max(lo, v))
         out[key] = math.floor(clamped) if whole else clamped
