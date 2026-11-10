@@ -21,7 +21,44 @@
   var face = pick();
   var broken = false;
 
-  var BODY = "#7FA7C9";
+  /* Its colour, as on the panels: steel by default, and the creature recolours itself when
+     asked ("turn gold") through the reply's `coat` verb, the way `sky` washes the sky. Kept in
+     localStorage gb_face_color so it is still that colour after a reload; ?color= sets it too. */
+  var STEEL = "#7FA7C9";
+  var NAMED = { white: "#eef3f8", silver: "#b8c4cf", grey: "#9aa4ae", gray: "#9aa4ae", black: "#46505c" };
+  function hsl2hex(h, sat, l) {
+    var a = sat * Math.min(l, 1 - l);
+    function f(n) {
+      var k = (n + h / 30) % 12, v = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+      return ("0" + Math.round(v * 255).toString(16)).slice(-2);
+    }
+    return "#" + f(0) + f(8) + f(4);
+  }
+  /* A word or hue to a body colour. `hue` is upstream's own _hueOf(v), so a colour the sky
+     understands, the body understands too; null means it named no colour, and nothing changes. */
+  function colourOf(v, hue) {
+    var w = String(v == null ? "" : v).toLowerCase().trim();
+    if (!w || w === "default" || w === "steel" || w === "normal") return STEEL;
+    if (/^#[0-9a-f]{6}$/.test(w)) return w;
+    for (var k in NAMED) if (w.indexOf(k) >= 0) return NAMED[k];
+    return hue == null ? null : hsl2hex(hue, 0.7, 0.62);
+  }
+  var BODY = STEEL, custom = false;
+  (function () {
+    var v = "";
+    try { v = new URLSearchParams(location.search).get("color") || ""; } catch (e) {}
+    if (!v) { try { v = localStorage.gb_face_color || ""; } catch (e) {} }
+    var c = /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : colourOf(v, null);
+    if (c && c !== STEEL) { BODY = c; custom = true; }
+  })();
+  function setColour(v, hue) {
+    var c = colourOf(v, hue);
+    if (!c) return false;
+    BODY = c;
+    custom = c !== STEEL;
+    try { if (custom) localStorage.gb_face_color = c; else localStorage.removeItem("gb_face_color"); } catch (e) {}
+    return true;
+  }
   /* GrowBot's seven emotions on the panels' Cozmo-style lid geometry (frontend/src/pet/face.ts
      SPECS): uy/ly are lid cover 0-1, ua the upper lid's tilt, lb the cheek-raise bend. */
   function e(uy, ua, ly, lb, sx, sy) { return { uy: uy, ua: ua, ly: ly, lb: lb, sx: sx, sy: sy }; }
@@ -397,7 +434,9 @@
       t: s.t, open: open, lids: cur, pupil: pupil, showPupil: s.think || s.looking || glance,
       gaze: { x: s.gx + Math.sin(s.t * 0.045) * s.shake * 0.6, y: s.gy }, think: s.think,
       dreaming: s.dreaming, talking: talking, talk: talk, smile: s.smile, mouth: sp.mouth,
-      tilt: cur.tilt, crest: cur.crest, startle: startle, blush: blush, glow: s.glow,
+      tilt: cur.tilt, crest: cur.crest, startle: startle, blush: blush,
+      /* The lantern has no body, so a chosen colour is its eyes' colour; unchosen, the mood's. */
+      glow: face === "lantern" && custom ? BODY : s.glow,
       energy: s.energy, bob: bob
     };
     /* The face proper is the 360x480 band from y=40 of the design, fitted into the top 62% of
@@ -414,6 +453,8 @@
 
   window.gbFace = {
     on: function () { return face !== "pixel" && !broken; },
+    setColour: setColour,
+    colour: function () { return BODY; },
     draw: function (c, W, H, s) {
       var m = c.getTransform();
       try { draw(c, W, H, s); } catch (err) {

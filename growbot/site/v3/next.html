@@ -8574,7 +8574,7 @@ function think(event,kind,extra){
     var _recoverySaid=typeof _recoverySpeechTurn!=="undefined"&&_recoverySpeechTurn,_recoveryOriginalSay=said;if(_recoverySaid)said="";
     var phoneDir=(MODE==="phone"&&o.walk&&typeof o.walk==="object"&&o.walk.dir)?String(o.walk.dir).toLowerCase():"";   // phone: a spoken movement instruction
     if(!paused){                                                                          // if paused mid-thought, don't talk/move/overwrite the caption — just keep the memory
-      if(typeof o.sky!=="undefined") setSky(o.sky);                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
+      if(typeof o.sky!=="undefined") setSky(o.sky); if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});                                        // sky verb: wash the starfield a chosen hue ("" hands the sky back to mood)
       if(typeof _expressionPendingCancel==="function")_expressionPendingCancel();
       if(typeof _expressionPair==="function")_expressionPair(o);
       if(typeof _expressionBench!=="undefined"&&_expressionBench&&o.sound&&typeof o.sound==="object"&&!(typeof _soundAction==="function"&&_soundAction(o.sound))){o.sound="none";try{logEv("expression_sound_refused",{why:"invalid_contour"});}catch(e){}}

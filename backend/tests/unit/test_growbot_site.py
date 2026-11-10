@@ -87,6 +87,15 @@ def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
     assert "broken = true;" in face
 
 
+def test_the_creature_can_recolour_itself_like_the_sky() -> None:
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert prompts.index('\'"coat":"OMIT usually') < prompts.index('\'"sky":"OMIT usually')
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "window.gbFace.setColour(o.coat,_hueOf(o.coat))" in creature
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert "localStorage.gb_face_color" in face
+
+
 def test_mespeak_is_not_shipped_and_kokoro_is_the_only_engine() -> None:
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "/v2/mespeak.js" not in creature

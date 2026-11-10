@@ -348,6 +348,26 @@ PATCHES: list[tuple[str, str, str, int]] = [
         "talking:Date.now()<speakingUntil,glow:col}); }",
         1,
     ),
+    # Recolouring, as on the panels: a `coat` verb beside `sky`, read with upstream's own
+    # colour words (_hueOf), and logged like the sky so the diary shows when it changed.
+    (
+        "v3/prompts.js",
+        "    '\"sky\":\"OMIT usually",
+        "    '\"coat\":\"OMIT usually — a color word or hue number 0-360 to recolor YOURSELF"
+        " (your head, crest and neck, the color people mean when they ask you to turn blue or"
+        " be gold); it stays until asked again, and the word default goes back to your own"
+        " steel blue\",' +\n"
+        "    '\"sky\":\"OMIT usually",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '      if(typeof o.sky!=="undefined") setSky(o.sky);',
+        '      if(typeof o.sky!=="undefined") setSky(o.sky);'
+        ' if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,'
+        '_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});',
+        1,
+    ),
 ]
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
