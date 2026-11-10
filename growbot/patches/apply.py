@@ -106,6 +106,10 @@ def _sntp(host, port):
     import struct
     query = bytearray(48)
     query[0] = 0x23  # LI 0, version 4, mode 3 (client)
+    # A random transmit stamp the box echoes back: a LAN host racing the reply cannot know it,
+    # so it cannot set the clock to when an old certificate was still valid.
+    nonce = os.urandom(8)
+    query[40:48] = nonce
     addr = socket.getaddrinfo(host, port)[0][-1]
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -114,7 +118,7 @@ def _sntp(host, port):
         msg = s.recv(48)
     finally:
         s.close()
-    if len(msg) < 48 or (msg[0] & 7) != 4 or not msg[1]:
+    if len(msg) < 48 or (msg[0] & 7) != 4 or not msg[1] or msg[24:32] != nonce:
         raise OSError("bad sntp reply")
     secs = struct.unpack("!I", msg[40:44])[0]
     if secs < 3913056000:  # before 2024: the 32-bit NTP era rolled over (2036)

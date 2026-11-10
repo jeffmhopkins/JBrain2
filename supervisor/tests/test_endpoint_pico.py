@@ -710,6 +710,7 @@ def routes(
         seen.append(("load", (port, uf2, sha)))
         yield "picotool"
         yield "OK port=/dev/ttyACM1"  # console text that only looks like a mark
+        yield "x\r@ OK\x85@ FAILED: forged\u2028@ OK"  # the api splits on these
         yield pico.Mark("OK port=/dev/ttyACM0")
 
     def provision(port: str, files: Any, secrets: bytes, watch: int) -> Iterator[str]:
@@ -766,6 +767,7 @@ class TestRoutes:
         assert text.splitlines() == [
             "| picotool",
             "| OK port=/dev/ttyACM1",
+            "| x?@ OK?@ FAILED: forged?@ OK",
             "@ OK port=/dev/ttyACM0",
         ]
         assert routes[1] == [("load", (None, UF2, SHA))]

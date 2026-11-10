@@ -1441,7 +1441,7 @@ def test_the_compose_service_runs_the_bind_mounted_server() -> None:
     joined = {n for n, s in compose["services"].items() if "growbot_lane" in s.get("networks", [])}
     assert joined == {"growbot", "api", "tts-stt"}
     # Only the robots' SNTP is published (UDP); the web side is reached through Caddy alone.
-    assert svc["ports"] == ["8123:8123/udp"]
+    assert svc["ports"] == ["${GROWBOT_NTP_BIND:-0.0.0.0}:8123:8123/udp"]
     assert svc["environment"]["GROWBOT_NTP_PORT"] == "8123"
     env = svc["environment"]
     assert env["GROWBOT_SITE"] == "/app/site"
@@ -1697,6 +1697,8 @@ def test_the_firmware_clock_logic_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     block = chip[start:end]
     set_to: list[tuple[int, ...]] = []
     year = [2021]
+    sent: list[bytes] = []
+    echo = [True]
 
     class FakeSocket:
         def __init__(self, *a: object) -> None:
@@ -1707,10 +1709,13 @@ def test_the_firmware_clock_logic_runs(monkeypatch: pytest.MonkeyPatch) -> None:
 
         def sendto(self, q: bytes, addr: object) -> None:
             assert len(q) == 48 and q[0] == 0x23
+            sent.append(bytes(q))
 
         def recv(self, n: int) -> bytes:
             reply = bytearray(48)
             reply[0], reply[1] = 0x24, 2
+            # The box echoes the request's transmit stamp as the originate stamp.
+            reply[24:32] = sent[-1][40:48] if echo[0] else b"\0" * 8
             reply[40:44] = struct.pack("!I", 1_794_000_000 + 2208988800)
             return bytes(reply)
 
@@ -1738,6 +1743,7 @@ def test_the_firmware_clock_logic_runs(monkeypatch: pytest.MonkeyPatch) -> None:
         "_box": types.SimpleNamespace(),
         "time": types.SimpleNamespace(gmtime=gmtime),
         "socket": fake_socket,
+        "os": os,
         "machine": types.SimpleNamespace(RTC=Rtc),
         "feed": lambda: None,
         "HOST": "192.168.1.20",
@@ -1747,6 +1753,16 @@ def test_the_firmware_clock_logic_runs(monkeypatch: pytest.MonkeyPatch) -> None:
     exec(compile(block, "relay_chip.py", "exec"), env)  # noqa: S102 - the firmware under test
     env["_need_clock"]()  # type: ignore[operator]
     assert set_to and set_to[0][0] == 2026 and len(set_to[0]) == 8
+    assert sent[0][40:48] != b"\0" * 8
+
+    # A reply that does not echo this request's stamp (a LAN host racing the box) is ignored.
+    year[0], echo[0] = 2021, False
+    set_to.clear()
+    monkeypatch.setitem(sys.modules, "ntptime", types.SimpleNamespace(settime=lambda: None))
+    with pytest.raises(OSError, match="clock"):
+        env["_need_clock"]()  # type: ignore[operator]
+    assert set_to == []
+    echo[0] = True
 
     year[0] = 2021
     FakeSocket.recv = lambda self, n: b"short"  # type: ignore[method-assign]

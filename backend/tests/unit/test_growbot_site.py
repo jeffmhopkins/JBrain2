@@ -123,6 +123,8 @@ def test_firmware_dials_the_box_with_its_key() -> None:
     assert '"key": ROBOT_KEY' in chip
     assert "% (PATH, SNI, key)" in chip
     compile(chip, "relay_chip.py", "exec")
+    # The clock is set only from a reply that echoes this request's random stamp.
+    assert "query[40:48] = nonce" in chip and "msg[24:32] != nonce" in chip
 
 
 def test_csp_hashes_cover_tags_handlers_and_innerhtml_handlers() -> None:

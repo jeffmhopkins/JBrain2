@@ -488,8 +488,9 @@ services:
     # SNTP for the robots (serve.py): a Pico has no internet and must set its clock before it
     # can check the box's certificate dates. Published like the proxy's 8444, for the LAN
     # only (forward it nowhere); one 48-byte reply per well-formed request, no amplification.
+    # GROWBOT_NTP_BIND pins it to the box's LAN address on a box with a public one.
     ports:
-      - "8123:8123/udp"
+      - "${GROWBOT_NTP_BIND:-0.0.0.0}:8123:8123/udp"
     volumes:
       - ./src/growbot:/app:ro
       # Its own volume, not `internal_secrets`: it holds growbot.token alone, read per request

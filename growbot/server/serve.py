@@ -1908,7 +1908,11 @@ async def main() -> None:
     port = int(os.environ.get("GROWBOT_PORT", "8810"))
     server = await app.start("0.0.0.0", port)
     ntp_port = int(os.environ.get("GROWBOT_NTP_PORT", "8123"))
-    await start_sntp("0.0.0.0", ntp_port)
+    try:
+        await start_sntp("0.0.0.0", ntp_port)
+    except OSError as exc:
+        # The robots' clock is not worth the app: phones still open GrowBot without it.
+        print(f"growbot: SNTP on udp/{ntp_port} failed to bind: {exc}", flush=True)
     print(f"growbot: serving {config.site} on :{port}, SNTP on udp/{ntp_port}", flush=True)
     async with server:
         await server.serve_forever()

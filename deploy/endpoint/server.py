@@ -143,8 +143,14 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             for line in lines:
-                tag = "@" if isinstance(line, pico.Mark) else "|"
-                self.wfile.write(f"{tag} {line}\n".encode())
+                if isinstance(line, pico.Mark):
+                    out = f"@ {line}"
+                else:
+                    # The api's line reader also splits on \r, \x85 and the Unicode breaks, so
+                    # a robot printing `x\r@ OK` would forge a mark: no control or break
+                    # character of console text survives.
+                    out = "| " + "".join(c if c.isprintable() else "?" for c in line)
+                self.wfile.write(f"{out}\n".encode())
                 self.wfile.flush()
         except pico.PicoError as exc:
             self.wfile.write(f"@ FAILED: {exc}\n".encode())
