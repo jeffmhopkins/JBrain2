@@ -38,19 +38,16 @@
      understands, the body understands too; null means it named no colour, and nothing changes. */
   function colourOf(v, hue) {
     var w = String(v == null ? "" : v).toLowerCase().trim();
-    if (!w || w === "default" || w === "steel" || w === "normal") return STEEL;
+    if (!w || /default|steel|normal/.test(w)) return STEEL;
     if (/^#[0-9a-f]{6}$/.test(w)) return w;
     for (var k in NAMED) if (w.indexOf(k) >= 0) return NAMED[k];
     return hue == null ? null : hsl2hex(hue, 0.7, 0.62);
   }
-  var BODY = STEEL, custom = false;
-  (function () {
-    var v = "";
-    try { v = new URLSearchParams(location.search).get("color") || ""; } catch (e) {}
-    if (!v) { try { v = localStorage.gb_face_color || ""; } catch (e) {} }
-    var c = /^#[0-9a-fA-F]{6}$/.test(v) ? v.toLowerCase() : colourOf(v, null);
-    if (c && c !== STEEL) { BODY = c; custom = true; }
-  })();
+  var BODY = STEEL, custom = false, pending = "";
+  /* Resolved at the first frame, not here: this file loads before upstream defines _hueOf, and
+     ?color=gold needs it as much as the brain's coat does. */
+  try { pending = new URLSearchParams(location.search).get("color") || ""; } catch (e) {}
+  if (!pending) { try { pending = localStorage.gb_face_color || ""; } catch (e) {} }
   function setColour(v, hue) {
     var c = colourOf(v, hue);
     if (!c) return false;
@@ -144,8 +141,6 @@
 
   function zees(c, d, x, y) {
     if (!d.dreaming) return;
-    c.fillStyle = "rgba(96,64,176,.30)";
-    c.fillRect(-LW, -LH, LW * 3, LH * 3);
     c.fillStyle = "#cfc3ff";
     for (var i = 0; i < 3; i++) {
       var k = ((d.t / 1400 + i / 3) % 1 + 1) % 1;
@@ -452,14 +447,29 @@
   }
 
   window.gbFace = {
-    on: function () { return face !== "pixel" && !broken; },
+    /* getTransform is the one API here older WebViews lack; without it the throw would come
+       before the catch below could mark the face broken, and the creature would have no eyes. */
+    on: function () {
+      return face !== "pixel" && !broken && typeof CanvasRenderingContext2D !== "undefined" &&
+        typeof CanvasRenderingContext2D.prototype.getTransform === "function";
+    },
     setColour: setColour,
     colour: function () { return BODY; },
     draw: function (c, W, H, s) {
       var m = c.getTransform();
-      try { draw(c, W, H, s); } catch (err) {
+      try {
+        if (pending) {
+          var v = pending;
+          pending = "";
+          setColour(v, typeof window._hueOf === "function" ? window._hueOf(v) : null);
+        }
+        draw(c, W, H, s);
+      } catch (err) {
         broken = true;
-        /* A throw can leave the context mid-save: put back what upstream's next frame assumes. */
+        /* A throw can leave states saved, a clip among them, which setTransform does not undo.
+           Upstream never saves across a frame, so popping to an empty stack is exact; restore()
+           on an empty stack does nothing, and no frame here nests near 64. */
+        for (var i = 0; i < 64; i++) c.restore();
         c.setTransform(m);
         c.globalAlpha = 1;
         c.globalCompositeOperation = "source-over";
