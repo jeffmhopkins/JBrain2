@@ -203,7 +203,7 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   version so a stale phone cannot overwrite a newer soul. One phone runs a given profile at a
   time: opening it on a second phone hands the creature over, and the first phone shows that it
   has moved. What a profile carries: `pb2_soul` and the visual memories (upstream namespaces those
-  by `gb_vm_ns`, which becomes the profile id). What it does not: upstream's per-device keys kept
+  by `vmNs()`: `pb2_sid`, else `gb_vm_ns`; the loader pins it to the profile id). What it does not: upstream's per-device keys kept
   outside the soul on purpose (`pb_device`, `pb_or_*`) stay with the phone, and on the box
   `/api/device` answers them for any phone.
 - **The PWA** lists the profiles on the GrowBot card: switch the active one, duplicate, rename,
