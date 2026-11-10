@@ -92,6 +92,16 @@
 .ep-ok {
   color: var(--ok, #98c379);
 }
+/* A pointer elsewhere, not a warning: steel, the info tint. */
+.ep-info {
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+  margin: 12px 0 10px;
+  padding: 10px 12px;
+  border-radius: var(--r-input);
+  background: var(--steel-tint);
+  color: var(--text);
+}
 .ep-empty {
   padding: 24px 16px;
   color: var(--text-3);

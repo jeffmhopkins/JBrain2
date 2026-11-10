@@ -100,6 +100,7 @@ from jbrain.api import (
     family,
     feed,
     growbot,
+    growbot_flash,
     growbot_llm,
     health,
     home_network,
@@ -118,6 +119,7 @@ from jbrain.api import (
     jlaunch_terminal,
     jshare,
     jshare_public,
+    lan_ca,
     live,
     llm_internal,
     locations,
@@ -1930,6 +1932,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # In-memory async-completion jobs (slow models behind a short proxy timeout):
     # job_id -> {status, result, error}, plus the live task refs so they aren't GC'd.
     app.state.debug_jobs = {}
+    # The one in-process GrowBot flash job (api/growbot_flash.py).
+    app.state.growbot_flash = growbot_flash.FlashState()
     app.state.debug_job_tasks = set()
 
     if settings.debug_access_enabled:
@@ -1986,6 +1990,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(panel_agent.debug_router, prefix="/api")
         app.include_router(panel_notice.debug_router, prefix="/api")
         app.include_router(growbot.debug_router, prefix="/api")
+        app.include_router(growbot_flash.debug_router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(owner_devices.router, prefix="/api")
     app.include_router(endpoint_api.router, prefix="/api")
@@ -2020,6 +2025,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(growbot.router, prefix="/api")
+    # Flashing a robot from the PWA, its status card and revoke (GROWBOT_PLAN §3, G2).
+    app.include_router(growbot_flash.router, prefix="/api")
+    # The box's LAN root as a download, so a phone can trust jbrain.local with no terminal.
+    app.include_router(lan_ca.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
     # The gallery list reads existing rows, so it is always available. The direct
     # generate/edit render endpoints mount only when image hosting is configured —

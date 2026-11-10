@@ -85,8 +85,18 @@ container is recreated; `restart` reuses the proxy's old environment.
 `tls internal` mints the cert from Caddy's own CA, which your devices don't trust
 yet, so the **first visit shows a certificate warning**. You can click through —
 the connection is still HTTPS, so login works immediately. To remove the warning,
-install Caddy's root certificate on your devices once. It lives on the persistent
-`caddy_data` volume:
+install Caddy's root certificate on your devices once.
+
+**From the PWA (no terminal).** Signed in as the owner, open
+`https://<your box>/api/lan/root.crt` (the GrowBot screen links to it): it downloads
+`jbrain-box-root.crt`, the public root only. On iOS open the downloaded profile, install it
+in Settings → General → VPN & Device Management, then turn on full trust in Settings →
+General → About → Certificate Trust Settings. On Android install it under Settings →
+Security → Encryption & credentials → Install a certificate → CA certificate. On a desktop
+import it into the OS or browser's trusted roots. A box with no LAN site (or a root the api
+cannot read) answers 404.
+
+**From a shell**, the same file lives on the persistent `caddy_data` volume:
 
 ```bash
 docker compose -f /opt/jbrain2/docker-compose.yml cp \
@@ -105,11 +115,9 @@ root certificate authorities").
 > copied. The key is stable across restarts, so this is a
 one-time step per device.
 
-> ⚠️ That `docker compose cp` is a **host-shell step** the owner cannot run
-> remotely (CLAUDE.md non-negotiable #10). Clicking through the warning needs no
-> terminal, so LAN access itself stays no-terminal — but removing the warning is
-> currently shell-primary, a gap to design out (e.g. the PWA offering the root
-> cert as a download).
+> The `docker compose cp` is a host-shell step and is no longer the way to do it
+> (CLAUDE.md non-negotiable #10): `GET /api/lan/root.crt` (`backend/src/jbrain/api/lan_ca.py`,
+> owner-only) closed that gap in GrowBot wave G2.
 
 ## Notes
 
@@ -120,7 +128,11 @@ one-time step per device.
   port because a different port is a different origin and the app's paths collide with the
   PWA's. The proxy publishes `8444` on the box for the LAN (forward it nowhere). Same internal
   CA, so the same certificate warning and the same one-time root install apply. Blanking
-  `JBRAIN_LAN_ADDR` drops it with the LAN site. `8443`, the owner site, is never published. mDNS
+  `JBRAIN_LAN_ADDR` drops it with the LAN site. `8443`, the owner site, is never published.
+- **The robots' clock on UDP `8123`.** The `growbot` service answers SNTP there: a robot has no
+  internet, and its TLS check of the box's certificate dates needs the real time first. One
+  48-byte reply per well-formed request, nothing larger, so it amplifies nothing; LAN only,
+  forward it nowhere. A robot that cannot set its clock fails its flash as `clock_unset`. mDNS
   (UDP 5353) is link-local — it does not leave your LAN.
 - **Works alongside any access mode.** Tunnel mode (HTTP public site on :80) and
   direct mode (Let's Encrypt on :443) both coexist with the LAN HTTPS site;

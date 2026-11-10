@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot flash — C — where you already look</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tile { min-height: 84px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: 12px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; text-align: left; }
+.tile .tn { font-size: var(--fs-body); font-weight: 500; color: var(--text-2); }
+/* The one live tile: three columns wide, one row per robot with its own Open. */
+.live { grid-column: 1 / -1; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 12px 12px 4px; }
+.live .lh { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.live .lh .tn { font-size: var(--fs-body); font-weight: 500; flex: 1; }
+.lrow { display: flex; align-items: center; gap: 10px; min-height: 52px; border-top: 1px solid var(--border); }
+.lrow .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-body); }
+/* Sub-rows inside the growbot service row: each robot, then Add a robot. */
+.sub { border: 1px solid var(--border); border-radius: var(--r-input); margin: 0 0 8px; }
+.sub > .subh { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 12px;
+  background: none; border: 0; text-align: left; cursor: pointer; }
+.sub > .subh .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-body); }
+.sub.open { border-color: var(--accent); }
+.subh[aria-expanded="true"] .scaret { transform: rotate(90deg); }
+.subb { padding: 0 12px 12px; }
+.ol { margin: 0 0 4px; font-size: var(--fs-micro); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); }
+.sbody { padding-left: 14px; }
+</style>
+</head>
+<body>
+<!-- C: no new screen. The launcher grows one live GrowBot tile with an Open per robot — the
+     everyday tap — and everything else (the key, the pairing code, adding a robot) expands in
+     place inside the growbot row on Ops → Services, next to the service it depends on. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const S0 = () => G.S;
+  const C = { open: null }; // which sub-row is open: a robot id, "add", or null
+
+  function launcher() {
+    const S = S0();
+    const rows = S.robots.map((r) => `<div class="lrow"><span class="nm">${G.esc(r.name)}${G.stateHTML(r)}</span>
+      <button class="btn${r.key === "revoked" ? "" : " primary"}" data-act="open" data-arg="${r.id}"${r.key === "revoked" ? " disabled" : ""}>Open</button></div>`).join("");
+    const t = (n) => `<div class="tile"><span class="tn">${n}</span></div>`;
+    return `<div class="topbar"><span class="ttl">JBrain<span class="steel-t">.</span></span><button class="back" aria-label="Close launcher">&times;</button></div>
+      <div class="body"><div class="grid">
+        ${t("Brain")}${t("Tasks")}${t("Lists")}
+        <section class="live" aria-label="GrowBot"><div class="lh"><span class="tn">GrowBot</span>
+          ${S.svc === "down" ? `<span class="state"><span class="dot bad"></span><span class="bad-t">down</span></span>` : ""}
+          <button class="linkbtn" data-act="manage" data-arg="">Manage</button></div>${rows || `<p class="hint">No robots yet.</p>`}</section>
+        ${t("jpanel")}${t("Ops")}${t("Settings")}
+      </div><p class="hint dim">Open goes straight to GrowBot on this phone. Manage opens its row on Ops.</p></div>`;
+  }
+
+  function robotSub(r) {
+    const S = S0(), open = C.open === r.id;
+    const fresh = S.flash.state === "ok" && S.flash.robotId === r.id && !S.flash.rotate;
+    const body = !open ? "" : `<div class="subb">
+        ${fresh ? `<p class="msg ok">Done — ${G.esc(r.name)} joined Wi-Fi and reached the box.</p>${G.pairHTML(r)}`
+          : `<p class="meta" style="margin:0 0 8px">Pairing code <span class="mono">${r.code}</span> <button class="linkbtn" data-act="copy" data-arg="${r.code}">Copy</button></p>`}
+        <p class="hint">${G.keyLine(r)}</p>
+        <div class="acts" style="margin-top:0">${r.key === "revoked"
+          ? `<button class="btn primary" data-act="reflash" data-arg="${r.id}">Reflash ${G.esc(r.name)}</button>`
+          : `<button class="btn primary" data-act="open" data-arg="${r.id}">Open GrowBot</button>${G.keyActs(r)}`}</div></div>`;
+    return `<div class="sub${open ? " open" : ""}"><button class="subh" data-act="sub" data-arg="${r.id}" aria-expanded="${open}">
+      <span class="nm">${G.esc(r.name)}${G.stateHTML(r)}</span>${fresh ? `<span class="tag">new</span>` : ""}<span class="scaret">&#8250;</span></button>${body}</div>`;
+  }
+
+  function addSub() {
+    const S = S0(), F = S.flash, open = C.open === "add";
+    const busy = F.state === "running" && !F.rotate;
+    const body = !open ? "" : `<div class="subb">
+        <p class="ol">1 · On the box's USB</p>${G.usbHTML(false)}
+        <p class="ol">2 · Which robot</p>${G.targetHTML()}
+        <p class="ol">3 · Wi-Fi</p>${G.networksHTML()}${G.reinstallHTML()}
+        <button class="btn primary block" data-act="flash"${G.flashReady() ? "" : " disabled"}>${busy ? "Flashing…" : F.state === "fail" ? "Flash again" : "Flash GrowBot"}</button>
+        ${G.whyNot() && !busy ? `<p class="hint dim" style="margin-top:8px">${G.whyNot()}</p>` : ""}
+        ${F.state !== "idle" && !F.rotate ? G.phasesHTML() + G.failHTML() + G.logHTML() : ""}</div>`;
+    return `<div class="sub${open ? " open" : ""}"><button class="subh" data-act="sub" data-arg="add" aria-expanded="${open}">
+      <span class="nm">Add a robot<span class="meta" style="margin:0">${busy ? "Flashing — keep it plugged in" : "Plug its Pico into the box's USB first"}</span></span><span class="scaret">&#8250;</span></button>${body}</div>`;
+  }
+
+  function growbotBody() {
+    const S = S0();
+    const note = !S.trusted && !S.certNoted
+      ? `<p class="hint">First time opening GrowBot on this phone? It runs at <span class="mono">jbrain.local:8444</span> on the box's own certificate. <button class="linkbtn" data-act="cert-download">Download the box's certificate</button></p>` : "";
+    return `${S.robots.map(robotSub).join("")}${addSub()}${note}
+      <div class="acts"><button class="btn" data-act="restart">Restart</button><button class="btn">Show log</button></div>`;
+  }
+
+  function endpoints() {
+    return `<div class="topbar"><button class="back" data-act="screen" data-arg="launch">Back</button><span class="ttl">jpanel</span></div>
+      <div class="seg"><button>Messages</button><button>Panels</button><button class="on">Flash</button></div>
+      <div class="body"><section class="card"><h2><span class="step-n">1</span>Plug a panel into the box</h2>${G.usbHTML(true)}
+        ${S0().usb !== "none" ? `<p class="msg info">That's a GrowBot. Robots are added in their own row on Ops → Services.</p><button class="btn primary block" data-act="manage" data-arg="add">Add it there</button>` : ""}
+      </section></div>`;
+  }
+
+  G.onFlashEnd = (F) => { if (!F.rotate && F.state === "ok") { C.open = F.robotId; G.render(); } };
+
+  G.mount({
+    screens: [["launch", "Launcher"], ["ops", "Ops"], ["ep", "jpanel → Flash"]],
+    render: () => {
+      const S = S0();
+      const scr = S.screen === "launch" ? launcher() : S.screen === "ops" ? G.opsHTML({ growbotBody }) : endpoints();
+      document.getElementById("phone").innerHTML = scr + G.sharedSheet() + G.toastHTML();
+    },
+    actions: {
+      sub: (k) => { C.open = C.open === k ? null : k; G.render(); },
+      manage: (k) => { const S = S0(); S.screen = "ops"; S.open["svc-growbot"] = true; if (k) C.open = k; G.render(); },
+      reflash: (id) => { const S = S0(); S.form.target = id; S.flash = { state: "idle", phases: {}, log: [], fail: null }; C.open = "add"; G.render(); },
+    },
+  });
+  G.render();
+})();
+</script>
+</body>
+</html>

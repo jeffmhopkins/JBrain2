@@ -31,7 +31,8 @@ EOF
 # different origin for script and storage. Browsers do not scope cookies by port, though, so
 # the owner's `__Host-` session would be sent here too: the Cookie header is rebuilt to hold
 # growbot's own cookie alone (or dropped), so the api session never reaches vendored
-# code. growbot has no /internal routes; the prefix is refused here so none is ever reachable.
+# code. growbot's /internal routes are the api's (bearer growbot.token); the prefix is
+# refused here so none is ever reachable from the LAN.
 host="${JBRAIN_LAN_ADDR#*://}"
 host="${host%%/*}"
 host="${host%%:*}"

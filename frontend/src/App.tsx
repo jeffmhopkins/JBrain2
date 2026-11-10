@@ -21,6 +21,7 @@ import { DataScreen } from "./screens/DataScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
+import { GrowbotScreen } from "./screens/GrowbotScreen";
 import { HomeNetworkScreen } from "./screens/HomeNetworkScreen";
 import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
 import { ImageScreen } from "./screens/ImageScreen";
@@ -83,6 +84,7 @@ type Card =
   | "intake"
   | "petcontrol"
   | "jpanel"
+  | "growbot"
   | "cast"
   | "homenet"
   | "endpoints"
@@ -128,6 +130,7 @@ const SCREEN_TITLES: Record<
   intake: "Intake Links",
   jmolt: "jmolt",
   minecraft: "Minecraft",
+  growbot: "GrowBot",
   cast: "Cast",
   homenet: "Home network",
   jshare: "JShare",
@@ -151,6 +154,9 @@ export function App() {
   // A chat's map card asked for the full map: Minecraft opens and pushes it on that spot.
   const [minecraftMap, setMinecraftMap] = useState<MapIntent | null>(null);
   const clearMinecraftMap = useCallback(() => setMinecraftMap(null), []);
+  // jpanel's Flash tab recognised a Pico and handed it over: GrowBot opens on Add a robot.
+  const [growbotAdd, setGrowbotAdd] = useState(false);
+  const clearGrowbotAdd = useCallback(() => setGrowbotAdd(false), []);
   const [cardClosing, setCardClosing] = useState(false);
   const [launcherOpen, setLauncherOpen] = useState(false);
   // The launcher's arrange mode is its own back layer, as on an Android home screen.
@@ -682,7 +688,10 @@ export function App() {
             />
             {card === "ops" && (
               <main className="screen-body">
-                <OpsScreen onOpenMinecraft={openMinecraftFromOps} />
+                <OpsScreen
+                  onOpenMinecraft={openMinecraftFromOps}
+                  onOpenGrowbot={() => setCard("growbot")}
+                />
               </main>
             )}
             {card === "vitals" && (
@@ -698,6 +707,9 @@ export function App() {
             {card === "data" && <DataScreen />}
             {card === "cast" && <CastScreen />}
             {card === "homenet" && <HomeNetworkScreen />}
+            {card === "growbot" && (
+              <GrowbotScreen openAdd={growbotAdd} onOpenAddConsumed={clearGrowbotAdd} />
+            )}
             {card === "minecraft" && (
               <MinecraftScreen
                 openMap={minecraftMap}
@@ -810,6 +822,10 @@ export function App() {
           initialTab={card === "endpoints" ? "flash" : "messages"}
           send={card === "jpanel" ? panelSend : undefined}
           onClose={() => setCard(null)}
+          onOpenGrowbot={() => {
+            setGrowbotAdd(true);
+            setCard("growbot");
+          }}
         />
       )}
 

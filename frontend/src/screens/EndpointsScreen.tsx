@@ -28,6 +28,8 @@ interface EndpointsScreenProps {
    *  the owner is standing in front of. Everything below the bar is untouched — this is
    *  the same surface, moved, not a rebuild. */
   onClose?: () => void;
+  /** A Pico on the cable is a GrowBot, and robots are added on the GrowBot screen. */
+  onOpenGrowbot?: (() => void) | undefined;
 }
 
 /** A numbered step, because this is a sequence and the owner is holding a board. */
@@ -43,8 +45,9 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   );
 }
 
-export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
+export function EndpointsScreen({ onClose, onOpenGrowbot }: EndpointsScreenProps = {}) {
   const [ports, setPorts] = useState<EndpointPort[] | null>(null);
+  const [picoBoot, setPicoBoot] = useState(false);
   const [firmware, setFirmware] = useState<EndpointFirmware | null>(null);
   const [boards, setBoards] = useState<EndpointBoard[]>([]);
   // Nothing chosen until the owner chooses. Both boards enumerate as the same Espressif
@@ -83,6 +86,7 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
     try {
       const p = await api.getEndpointPorts();
       setPorts(p.ports);
+      setPicoBoot(p.pico_boot === true);
       setAbsent(false);
       const panels = p.ports.filter((x) => x.is_espressif);
       // Preselect only when there is exactly one panel: picking for them when there are
@@ -225,10 +229,26 @@ export function EndpointsScreen({ onClose }: EndpointsScreenProps = {}) {
                         <em>{p.label}</em>
                       </span>
                       {p.is_espressif && <span className="ep-badge">panel</span>}
+                      {p.is_pico && <span className="ep-badge">Pico 2 W</span>}
                     </label>
                   </li>
                 ))}
               </ul>
+            )}
+            {/* ONE DOOR FOR ROBOTS. A Pico is a GrowBot, which has its own screen with its
+                own four-step flash; a second copy of that here would drift from it. */}
+            {(picoBoot || (ports ?? []).some((p) => p.is_pico)) && (
+              <>
+                <p className="ep-info">
+                  That's a GrowBot. Robots are added on the GrowBot screen, where they're opened and
+                  managed afterwards.
+                </p>
+                {onOpenGrowbot && (
+                  <button type="button" className="ep-primary" onClick={onOpenGrowbot}>
+                    Add it on GrowBot
+                  </button>
+                )}
+              </>
             )}
             {panels.length > 1 && (
               <p className="ep-hint">Two panels are connected — pick the one to flash.</p>

@@ -15,6 +15,7 @@ Here all of it runs on the box: this directory holds the app, the server that se
 | `server/serve.py` | The sidecar: static app, `/api` shim, robot relay, ticket exchange. Stdlib only. |
 | `site/` | The web root it serves (built from upstream + patches; committed, so the box needs no build). |
 | `site/csp.json` | Hashes of the inline scripts the patched app still carries, read once at start for the CSP. |
+| `firmware/` | What PWA flashing writes to a robot: the pinned MicroPython UF2, the patched robot firmware, and `SHA256SUMS` over both (built). |
 
 ## Upstream and patches
 
@@ -26,7 +27,17 @@ out (every phone browser the creature supports has SIMD), and so is meSpeak.
 `patches/apply.py` copies upstream's `app/` (minus the Custom-agent tab, the superseded face
 page and the feedback widget), applies exact replacements that each must match a stated number
 of times, adds `growbot-box.js`, writes the CSP hashes, and patches the firmware to dial the box
-with its key, pinning the box CA when `secrets.py` carries one. It builds in a staging
+with its key, pinning the box CA when `secrets.py` carries one (`GROWBOT_CA`, DER as a
+base64 string, since `wifi_store`'s restricted parser reads no bytes literal). A verified
+dial first sets the clock, because mbedTLS checks the certificate's dates against an RTC that
+boots in the past and the box's leaf certificates live hours: SNTP from `serve.py` on
+`GROWBOT_NTP_PORT` (UDP 8123, published on the LAN), three tries feeding the watchdog, then
+the Wi-Fi gateway's NTP; a clock still before 2026 refuses to dial and prints
+`handshake: FAIL clock`, which the flasher reports as `clock_unset`. rp2's `time` epoch is
+1970 (most ports' is 2000), so the patch reads it from `time.gmtime(0)`. It also
+vendors MicroPython (`upstream.json` `micropython`: `RPI_PICO2_W-20260406-v1.28.0.uf2`,
+MIT, pinned by SHA-256 like every asset) into `firmware/` and writes `firmware/SHA256SUMS`
+over the UF2 and the five files a flash copies. It builds in a staging
 directory, so a patch that stops matching fails with its name and leaves the committed tree
 alone.
 
@@ -59,6 +70,21 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
 | `GROWBOT_DEFAULT_MODEL` | `qwen3-vl-30b` | Lineup fallback while the api lists no models. |
 | `GROWBOT_TRUSTED_PROXY` | `proxy` | The one peer whose `X-Real-IP` is believed (Caddy's compose name, re-resolved every minute). |
 
+## Flashing a robot (wave G2)
+
+The owner plugs the robot's Pico 2 W into the box's USB and adds it from the PWA's GrowBot
+screen (`backend/src/jbrain/api/growbot_flash.py`). The endpoint sidecar
+(`deploy/endpoint/pico.py`) does the device work: `picotool` writes the UF2 to a board in
+its RP2350 bootloader (2e8a:000f, no button needed on a blank one; `mpremote bootloader`
+first if it is running), `mpremote` reads its pairing code, then copies `relay_chip.py` as
+`main.py` with `act_engine.py`, `PicoRobotics.py`, `wifi_store.py`, `wifi_recovery.py` and a
+generated `secrets.py` (`backend/src/jbrain/growbot/provision.py`: the box's LAN IPv4 from
+AdGuard, port 8444, the LAN name as SNI, the minted key, the box root, and the Wi-Fi list in
+the managed `# BEGIN GROWBOT WIFI V1` block). The key is minted only after the board says
+which robot it is. A robot counts as paired once the relay verifies its hello, which stamps
+its `last_seen_at`. A rekey swaps the one `GROWBOT_KEY` line in place; a revoke nulls the key
+and drops the robot off the relay.
+
 ## Security
 
 - **Opening it.** The owner mints a one-time ticket through the api (`POST /api/growbot/ticket`;
@@ -84,12 +110,17 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
   proxies and redirects disabled. A chat message keeps only `text` parts and inline
   `data:image/…;base64,` images (no image by URL, video, audio or any other part type), so no
   message can have the model's engine fetch anything.
+- **The api's routes.** `GET /internal/robots` (`{robots: [{code, since}]}`, the robots on
+  the relay now) and `POST /internal/robots/drop` (`{code}`: close a revoked robot's socket,
+  1008) take `Authorization: Bearer <growbot.token>`, compared in constant time; without it
+  the request is 401 before any body is read. Caddy's site 404s `/internal*`, so they are
+  reachable only from a container on `edge` or `growbot_lane` that holds the token.
 - **The robot.** The relay's chip side has no browser and no cookie: its first frame must be a
   `hello` whose `key` the api verifies for that pairing code, or the socket is closed (1008). The
   key is stripped from the hello before phones see it and is never logged. A robot flashed
   without `BOX_CA` in `secrets.py` dials TLS unverified, so anyone who can impersonate the box on
-  the LAN could take its key and pose as that robot (never anything more); G2's PWA flashing
-  always writes the CA.
+  the LAN could take its key and pose as that robot (never anything more); PWA flashing
+  always writes the CA, and refuses to flash at all when the box's root cannot be read.
 - **Limits.** 16 KiB of request head, 16 MiB of body (`Content-Length` up to 10 digits, chunk
   sizes up to 8 hex digits, checked before any `100 Continue`), 512 connections, 256 KiB per
   WebSocket message, 256 sockets, 8 phones (or agents) per code. Cookieless sockets (robots

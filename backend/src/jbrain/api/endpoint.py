@@ -250,6 +250,9 @@ class PortOut(BaseModel):
     device: str
     label: str
     is_espressif: bool
+    # A Raspberry Pi device: the GrowBot's Pico, which is flashed from the GrowBot screen
+    # rather than here (api/growbot_flash.py). Absent from an older sidecar, hence the default.
+    is_pico: bool = False
 
 
 class PortsOut(BaseModel):
@@ -257,6 +260,9 @@ class PortsOut(BaseModel):
     # Separate from an empty list because they mean different things to the owner: no
     # flasher is a configuration answer, no ports is a "did you plug it in" answer.
     flasher: bool = True
+    # A Pico sits in its USB bootloader (no tty, so not in `ports`): a GrowBot waiting for
+    # MicroPython, which the Endpoints board points at the GrowBot screen.
+    pico_boot: bool = False
 
 
 @router.get("/ports")
@@ -273,7 +279,11 @@ async def list_ports(_owner: OwnerDep, settings: SettingsDep) -> PortsOut:
             resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"flasher unreachable: {exc}") from exc
-    return PortsOut(ports=[PortOut(**p) for p in resp.json().get("ports", [])])
+    found = resp.json()
+    return PortsOut(
+        ports=[PortOut(**p) for p in found.get("ports", [])],
+        pico_boot=bool(found.get("pico_boot")),
+    )
 
 
 class FirmwareOut(BaseModel):
@@ -1915,7 +1925,20 @@ async def flash_panel(
         # Written BEFORE the flash, deliberately: a flash that fails half way still leaves
         # the owner able to retry from the debug console without their phone, which is the
         # situation this exists for.
-        await _store(request).upsert(ctx, WIFI_KEY, {"ssid": body.ssid, "password": body.password})
+        # Merged, not replaced: the row also holds the GrowBot flasher's `networks` list.
+        store = _store(request)
+        row = await store.get(ctx, WIFI_KEY)
+        merged: dict[str, Any] = dict(row) if isinstance(row, dict) else {}
+        merged["ssid"], merged["password"] = body.ssid, body.password
+        nets = merged.get("networks")
+        if isinstance(nets, list):
+            merged["networks"] = [
+                {**n, "password": body.password}
+                if isinstance(n, dict) and n.get("ssid") == body.ssid
+                else n
+                for n in nets
+            ]
+        await store.upsert(ctx, WIFI_KEY, merged)
 
     payload = await build_flash(
         request,

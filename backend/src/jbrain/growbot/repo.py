@@ -1,9 +1,12 @@
-"""The robots' device keys and the phone tickets, both owner-only (migration 0254).
+"""The robots' device keys and the phone tickets, both owner-only (migrations 0254, 0255).
 
 Secrets are stored as `hash_token` digests only. A ticket is a 256-bit random value and so
 is a device key, so a plain SHA-256 is the right hash (`jbrain.auth.keys`), and looking a
 ticket up BY its hash leaks nothing through timing: an attacker can steer the digest's bytes
 no better than by guessing the ticket.
+
+A revoked robot keeps its row (its name, its history) with a NULL key hash, which no key can
+match; a reflash mints a new key and clears the revoke.
 """
 
 from __future__ import annotations
@@ -12,7 +15,7 @@ import hmac
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,11 +33,18 @@ _NO_ROBOT = hash_token("")
 _KEEP_SPENT = timedelta(days=1)
 
 
+# What the owner may call a robot (the column's CHECK is the same 40).
+NAME_MAX = 40
+
+
 @dataclass(frozen=True)
 class RobotInfo:
     code: str
     created_at: datetime
     rotated_at: datetime | None
+    name: str = ""
+    revoked_at: datetime | None = None
+    last_seen_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -50,15 +60,29 @@ class GrowbotRepo(Protocol):
         """Spend `ticket` if it is unused and unexpired. True exactly once per ticket."""
         ...
 
-    async def put_robot(self, ctx: SessionContext, code: str) -> str:
-        """Mint `code`'s device key, replacing any earlier one. Returns the key, once."""
+    async def put_robot(self, ctx: SessionContext, code: str, name: str | None = None) -> str:
+        """Mint `code`'s device key, replacing any earlier one and clearing a revoke. Returns
+        the key, once. `name` None keeps the robot's name."""
         ...
 
     async def list_robots(self, ctx: SessionContext) -> list[RobotInfo]: ...
 
+    async def revoke_robot(self, ctx: SessionContext, code: str) -> RobotInfo | None:
+        """Null `code`'s key so no key matches it; None when there is no such robot."""
+        ...
+
     async def delete_robot(self, ctx: SessionContext, code: str) -> bool: ...
 
-    async def verify_robot(self, ctx: SessionContext, code: str, key: str) -> bool: ...
+    async def verify_robot(self, ctx: SessionContext, code: str, key: str) -> bool:
+        """Whether `key` is `code`'s live key; a match stamps the robot's last_seen_at."""
+        ...
+
+
+_COLUMNS = "code, created_at, rotated_at, name, revoked_at, last_seen_at"
+
+
+def _info(r: Any) -> RobotInfo:
+    return RobotInfo(r.code, r.created_at, r.rotated_at, r.name, r.revoked_at, r.last_seen_at)
 
 
 class SqlGrowbotRepo:
@@ -102,25 +126,41 @@ class SqlGrowbotRepo:
             )
             return spent.first() is not None
 
-    async def put_robot(self, ctx: SessionContext, code: str) -> str:
+    async def put_robot(self, ctx: SessionContext, code: str, name: str | None = None) -> str:
         key = generate_capability_key()
         async with scoped_session(self._maker, ctx) as session:
             await session.execute(
                 text(
-                    "INSERT INTO app.growbot_robots (code, key_hash) VALUES (:c, :h)"
+                    "INSERT INTO app.growbot_robots (code, key_hash, name)"
+                    " VALUES (:c, :h, coalesce(:n, ''))"
                     " ON CONFLICT (code) DO UPDATE"
-                    " SET key_hash = EXCLUDED.key_hash, rotated_at = now()"
+                    " SET key_hash = EXCLUDED.key_hash, rotated_at = now(), revoked_at = NULL,"
+                    " name = coalesce(:n, app.growbot_robots.name)"
                 ),
-                {"c": code, "h": hash_token(key)},
+                {"c": code, "h": hash_token(key), "n": name},
             )
         return key
 
     async def list_robots(self, ctx: SessionContext) -> list[RobotInfo]:
         async with scoped_session(self._maker, ctx) as session:
             rows = await session.execute(
-                text("SELECT code, created_at, rotated_at FROM app.growbot_robots ORDER BY code")
+                text(f"SELECT {_COLUMNS} FROM app.growbot_robots ORDER BY code")
             )
-            return [RobotInfo(r.code, r.created_at, r.rotated_at) for r in rows]
+            return [_info(r) for r in rows]
+
+    async def revoke_robot(self, ctx: SessionContext, code: str) -> RobotInfo | None:
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_robots"
+                        " SET key_hash = NULL, revoked_at = coalesce(revoked_at, now())"
+                        f" WHERE code = :c RETURNING {_COLUMNS}"
+                    ),
+                    {"c": code},
+                )
+            ).first()
+            return _info(row) if row is not None else None
 
     async def delete_robot(self, ctx: SessionContext, code: str) -> bool:
         async with scoped_session(self._maker, ctx) as session:
@@ -138,5 +178,18 @@ class SqlGrowbotRepo:
                     {"c": code},
                 )
             ).scalar_one_or_none()
-        matched = hmac.compare_digest(hash_token(key), stored or _NO_ROBOT)
-        return stored is not None and bool(key) and matched
+            # A revoked robot (NULL hash) costs the same compare as an unknown one and never
+            # matches.
+            matched = hmac.compare_digest(hash_token(key), stored or _NO_ROBOT)
+            ok = stored is not None and bool(key) and matched
+            if ok:
+                # Keyed on the hash it matched, so a rotate or revoke racing this hello is
+                # never stamped as the robot having reached the box.
+                await session.execute(
+                    text(
+                        "UPDATE app.growbot_robots SET last_seen_at = now()"
+                        " WHERE code = :c AND key_hash = :h"
+                    ),
+                    {"c": code, "h": stored},
+                )
+        return ok

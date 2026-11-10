@@ -3860,11 +3860,112 @@ export interface EndpointPort {
   device: string;
   label: string;
   is_espressif: boolean;
+  /** A Raspberry Pi USB device (`2e8a`): a GrowBot, which the GrowBot screen flashes. Absent
+   *  on a box that predates GrowBot flashing. */
+  is_pico?: boolean;
 }
 
 export interface EndpointPorts {
   ports: EndpointPort[];
   flasher: boolean;
+  /** A blank Pico in its USB loader is raw USB, not a serial port, so it is never in `ports`. */
+  pico_boot?: boolean;
+}
+
+// ===== GrowBot (docs/plans/GROWBOT_PLAN.md §3, wave G2) =====
+
+/** A paired robot. `revoked_at` set means its key is gone and it cannot reach the box until it
+ *  is reflashed; `connected` is the growbot service's live view, `last_seen_at` the api's. */
+export interface GrowbotRobot {
+  code: string;
+  name: string;
+  created_at: string;
+  rotated_at: string | null;
+  revoked_at: string | null;
+  last_seen_at: string | null;
+  connected: boolean;
+}
+
+export interface GrowbotStatus {
+  service: "up" | "down";
+  connected: number;
+  robots: GrowbotRobot[];
+}
+
+/** What is on the box's USB that the GrowBot flasher can use. A blank Pico in its loader has
+ *  no serial port, so `port` is null for `boot`. */
+export interface GrowbotUsb {
+  kind: "boot" | "micropython";
+  port: string | null;
+  label: string;
+}
+
+/** Everything the Add a robot sheet needs before it can offer Flash. Never carries a password:
+ *  a remembered network is named, and the box fills its password in. */
+export interface GrowbotFlashSetup {
+  flasher: boolean;
+  usb: GrowbotUsb[];
+  networks: { ssid: string; remembered: true }[];
+  box_host: string | null;
+  lan: boolean;
+  ca: boolean;
+  micropython: { version: string; ready: boolean };
+  firmware_ready: boolean;
+}
+
+/** One network for the robot, in the order it should try them. A remembered network is sent
+ *  by name alone; a new one carries its password and whether the box should keep it. */
+export interface GrowbotFlashNetwork {
+  ssid: string;
+  password?: string;
+  remember?: boolean;
+}
+
+export interface GrowbotFlashRequest {
+  mode: "flash" | "rekey";
+  /** "new", or the pairing code of the robot being reflashed or rekeyed. */
+  target: string;
+  name?: string;
+  reinstall?: boolean;
+  networks?: GrowbotFlashNetwork[];
+  box_host?: string;
+}
+
+export type GrowbotPhase = "wait" | "run" | "done" | "fail" | "skip";
+
+export type GrowbotFailCode =
+  | "load_failed"
+  | "not_bootsel"
+  | "usb_gone"
+  | "wrong_robot"
+  | "copy_failed"
+  | "wifi_failed"
+  | "box_unreached"
+  | "clock_unset"
+  | "needs_reflash"
+  | "timeout"
+  | "internal";
+
+export interface GrowbotFlashJob {
+  id: string;
+  mode: "flash" | "rekey";
+  state: "running" | "ok" | "fail";
+  name: string;
+  code: string | null;
+  port: string | null;
+  box_host: string;
+  phases: { load: GrowbotPhase; copy: GrowbotPhase; join: GrowbotPhase };
+  log: string[];
+  fail: null | { code: GrowbotFailCode; message: string };
+  started_at: string;
+  finished_at: string | null;
+}
+
+/** A one-time link that opens GrowBot on this phone, spent on first use. */
+export interface GrowbotTicket {
+  ticket: string;
+  url: string;
+  expires_at: string;
 }
 
 export interface EndpointFirmware {
@@ -7888,5 +7989,42 @@ export const api = {
     } finally {
       reader.releaseLock();
     }
+  },
+
+  // ===== GrowBot =====
+  // The flash runs as one job on the box rather than a stream to this phone: it takes a
+  // minute, and the owner may close the sheet or lock the phone partway through, which must
+  // not cost the robot a half-written flash. The screen polls the job instead.
+  async growbotStatus(): Promise<GrowbotStatus> {
+    const response = await request("/api/growbot/status");
+    return (await response.json()) as GrowbotStatus;
+  },
+
+  async growbotFlashSetup(): Promise<GrowbotFlashSetup> {
+    const response = await request("/api/growbot/flash/setup");
+    return (await response.json()) as GrowbotFlashSetup;
+  },
+
+  async startGrowbotFlash(body: GrowbotFlashRequest): Promise<{ job: GrowbotFlashJob | string }> {
+    const response = await request("/api/growbot/flash", jsonInit("POST", body));
+    return (await response.json()) as { job: GrowbotFlashJob | string };
+  },
+
+  /** The running job, or the last one until the next starts; null before any. */
+  async growbotFlashJob(): Promise<GrowbotFlashJob | null> {
+    const response = await request("/api/growbot/flash");
+    return ((await response.json()) as { job: GrowbotFlashJob | null }).job;
+  },
+
+  async revokeGrowbotRobot(code: string): Promise<GrowbotRobot> {
+    const response = await request(`/api/growbot/robots/${encodeURIComponent(code)}/revoke`, {
+      method: "POST",
+    });
+    return (await response.json()) as GrowbotRobot;
+  },
+
+  async growbotTicket(code: string): Promise<GrowbotTicket> {
+    const response = await request("/api/growbot/ticket", jsonInit("POST", { code }));
+    return (await response.json()) as GrowbotTicket;
   },
 };

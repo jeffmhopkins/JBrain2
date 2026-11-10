@@ -265,6 +265,10 @@ services:
       # `./src` whole: the api has no business reading the rest of the source tree. This
       # file is copied in by `update-inner.sh`, so the mount arrives with Ops -> Update.
       - ./src/firmware-c6:/firmware-c6:ro
+      # The GrowBot's flash set (growbot/firmware/: the pinned MicroPython UF2, the patched
+      # robot firmware and their SHA256SUMS), the same way: the endpoint sidecar never
+      # fetches, so the api hands it these bytes (docs/plans/GROWBOT_PLAN.md §3).
+      - ./src/growbot/firmware:/growbot-firmware:ro
       # The /internal callers' tokens (api/internal_auth.py). The api is the only writer:
       # it mints `wall.token` and `mqtt.token` here on start-up, and the wall and mosquitto
       # mount this read-only — so the secret ships with the code that checks it, with no
@@ -463,7 +467,7 @@ services:
   # app, its /api shim (the api's model lane, tts-stt's Kokoro and whisper) and the robot
   # relay. Default-on, since a profile would need a `.env` edit (CLAUDE.md #10). Like the wall,
   # stdlib-only and bind-mounted read-only, so Ops -> Update ships a new page with no rebuild.
-  # No published port: it is reached only through Caddy's LAN site on :8444, which strips
+  # No published TCP port: it is reached only through Caddy's LAN site on :8444, which strips
   # every cookie but its own (proxy-lan-conf.sh). `edge` for Caddy, `internal` for api and
   # tts-stt.
   growbot:
@@ -480,6 +484,13 @@ services:
       GROWBOT_TTS_URL: http://tts-stt:8801
       GROWBOT_STT_URL: http://tts-stt:8080/v1
       GROWBOT_TOKEN_FILE: /run/jbrain-growbot/growbot.token
+      GROWBOT_NTP_PORT: "8123"
+    # SNTP for the robots (serve.py): a Pico has no internet and must set its clock before it
+    # can check the box's certificate dates. Published like the proxy's 8444, for the LAN
+    # only (forward it nowhere); one 48-byte reply per well-formed request, no amplification.
+    # GROWBOT_NTP_BIND pins it to the box's LAN address on a box with a public one.
+    ports:
+      - "${GROWBOT_NTP_BIND:-0.0.0.0}:8123:8123/udp"
     volumes:
       - ./src/growbot:/app:ro
       # Its own volume, not `internal_secrets`: it holds growbot.token alone, read per request
@@ -1334,7 +1345,12 @@ services:
   # plugs a panel in, so a static `devices:` entry would fail at container start on a box
   # with nothing attached. A /dev mount plus cgroup rules for the tty character majors
   # admits a hotplugged tty without granting `privileged`: 166 is USB CDC-ACM (the
-  # panel's native USB) and 188 is USB serial (a CP210x/CH340 bridge board).
+  # panel's native USB, and MicroPython on the GrowBot's Pico) and 188 is USB serial (a
+  # CP210x/CH340 bridge board). 189 is raw USB (/dev/bus/usb), for picotool to write a
+  # Pico in its ROM bootloader, which has no tty. That rule opens EVERY USB device node to
+  # this container, which is why it stays on the `internal: true` panel network, runs no
+  # code it was not built with, and hands picotool only the bus/address of a device sysfs
+  # says is an RP2350 bootloader (deploy/endpoint/pico.py).
   endpoint:
     logging: *logbound
     image: jbrain2-endpoint:local
@@ -1350,6 +1366,7 @@ services:
     device_cgroup_rules:
       - "c 166:* rmw"
       - "c 188:* rmw"
+      - "c 189:* rmw"
     networks: [panel]
 
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth

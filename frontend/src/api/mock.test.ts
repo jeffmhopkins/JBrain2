@@ -6,7 +6,13 @@ import { describe, expect, it } from "vitest";
 import type {
   AppSettings,
   AttachmentExtract,
+  EndpointPorts,
   EntityOut,
+  GrowbotFlashJob,
+  GrowbotFlashRequest,
+  GrowbotFlashSetup,
+  GrowbotRobot,
+  GrowbotStatus,
   JpanelMessage,
   JpanelMessages,
   LlmUsage,
@@ -743,5 +749,104 @@ describe("mock API", () => {
     // Dad's own message is not something Dad has to play: the badge counts what the
     // panels sent HIM.
     expect(mabel?.unplayed).toBe(0);
+  });
+});
+
+// GrowBot's dev:mock: the screens' four steps must be clickable to every outcome they word.
+describe("mock GrowBot", () => {
+  async function flashTo(body: GrowbotFlashRequest): Promise<GrowbotFlashJob> {
+    const started = await call("/api/growbot/flash", jsonInit("POST", body));
+    expect(started.status).toBe(202);
+    for (let i = 0; i < 40; i++) {
+      const { job } = (await (await call("/api/growbot/flash")).json()) as {
+        job: GrowbotFlashJob;
+      };
+      if (job.state !== "running") return job;
+    }
+    throw new Error("the mock flash never finished");
+  }
+
+  it("serves the status, setup and robots shapes the screen reads", async () => {
+    const status = (await (await call("/api/growbot/status")).json()) as GrowbotStatus;
+    expect(status.service).toBe("up");
+    expect(status.robots.map((r) => r.name)).toEqual(["Quorra", "Tamsin"]);
+    expect(status.connected).toBe(1);
+    const setup = (await (await call("/api/growbot/flash/setup")).json()) as GrowbotFlashSetup;
+    expect(setup.usb[0]?.kind).toBe("boot");
+    expect(setup.networks.every((n) => n.remembered && !("password" in n))).toBe(true);
+    const ports = (await (await call("/api/endpoint/ports")).json()) as EndpointPorts;
+    expect(ports.pico_boot).toBe(true);
+  });
+
+  it("cycles a flash through ok, load_failed and wifi_failed, one step per poll", async () => {
+    const ok = await flashTo({
+      mode: "flash",
+      target: "new",
+      name: "Pip",
+      networks: [{ ssid: "Home-2G" }],
+    });
+    expect(ok.state).toBe("ok");
+    expect(ok.phases).toEqual({ load: "done", copy: "done", join: "done" });
+    expect(ok.code).toMatch(/^gb-[0-9a-f]{6}$/);
+    expect(ok.log).toContain(`PAIRING CODE: ${ok.code}`);
+
+    const load = await flashTo({
+      mode: "flash",
+      target: "new",
+      name: "Wren",
+      networks: [{ ssid: "Home-2G" }],
+    });
+    expect(load.fail?.code).toBe("load_failed");
+    expect(load.phases.load).toBe("fail");
+
+    const wifi = await flashTo({
+      mode: "flash",
+      target: "new",
+      name: "Wren",
+      networks: [{ ssid: "Home-2G" }, { ssid: "Workshop" }],
+    });
+    expect(wifi.fail?.code).toBe("wifi_failed");
+    expect(wifi.phases).toEqual({ load: "done", copy: "done", join: "fail" });
+
+    // MicroPython is on it now, so the retry skips loading.
+    const retry = await flashTo({
+      mode: "flash",
+      target: "new",
+      name: "Wren",
+      networks: [{ ssid: "Home-2G" }],
+    });
+    expect(retry.state).toBe("ok");
+    expect(retry.phases.load).toBe("skip");
+
+    const robots = (await (await call("/api/growbot/robots")).json()) as GrowbotRobot[];
+    expect(robots.map((r) => r.name)).toContain("Pip");
+  });
+
+  it("rekeys and revokes a robot", async () => {
+    const rekey = await flashTo({ mode: "rekey", target: "gb-91d0e4" });
+    expect(rekey.state).toBe("ok");
+    expect(rekey.phases.load).toBe("skip");
+    const res = await call("/api/growbot/robots/gb-91d0e4/revoke", { method: "POST" });
+    const robot = (await res.json()) as GrowbotRobot;
+    expect(robot.revoked_at).not.toBeNull();
+    expect(robot.connected).toBe(false);
+  });
+
+  it("refuses a flash it could not run, with a sentence", async () => {
+    const noName = await call(
+      "/api/growbot/flash",
+      jsonInit("POST", { mode: "flash", target: "new", networks: [{ ssid: "Home-2G" }] }),
+    );
+    expect(noName.status).toBe(422);
+    const unknown = await call(
+      "/api/growbot/flash",
+      jsonInit("POST", { mode: "rekey", target: "gb-ffffff" }),
+    );
+    expect(unknown.status).toBe(404);
+    expect(((await unknown.json()) as { detail: string }).detail).toMatch(/pairing code/);
+    const ticket = await call("/api/growbot/ticket", jsonInit("POST", { code: "gb-3fa91c" }));
+    expect(((await ticket.json()) as { url: string }).url).toMatch(
+      /^https:\/\/jbrain\.local:8444\//,
+    );
   });
 });
