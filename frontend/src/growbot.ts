@@ -95,6 +95,14 @@ export const FAIL_COPY: Record<GrowbotFailCode, { title: string; body: string }>
     title: "It joined Wi-Fi but never reached the box",
     body: "it is on the network, and its call to the box didn't arrive. Check that network can reach the box — a guest network usually can't — then flash again.",
   },
+  clock_unset: {
+    title: "It joined Wi-Fi but couldn't set its clock",
+    body: "it checks the box's certificate against the time, and the box didn't answer its time request. Run Ops → Update so the box answers it, then flash again.",
+  },
+  needs_reflash: {
+    title: "This robot needs a reflash, not a new key",
+    body: "it was set up without the box's certificate, so a new key alone would leave it trusting anyone. Tap Add a robot and pick this one to reflash it.",
+  },
   timeout: {
     title: "It stopped answering",
     body: "the robot went quiet before it finished. Unplug it, plug it back into the box, then flash again.",

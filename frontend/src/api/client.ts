@@ -3941,6 +3941,8 @@ export type GrowbotFailCode =
   | "copy_failed"
   | "wifi_failed"
   | "box_unreached"
+  | "clock_unset"
+  | "needs_reflash"
   | "timeout"
   | "internal";
 
