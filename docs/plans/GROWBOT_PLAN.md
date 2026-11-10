@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** Scheduled · **Last verified:** 2026-11-10 · **Waves:** G1◻️ G2◻️ G3◻️ G4◻️
+> **Status:** Scheduled · **Last verified:** 2026-11-10 · **Waves:** G1◻️ G2◻️ G3◻️ G4◻️ G5◻️
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -171,10 +171,50 @@ change made on one phone is invisible everywhere else.
 - The model list the PWA offers is the box's catalog filtered to installed models, with
   vision-capable ones marked.
 
-**Data.** G1–G3 store nothing on the box but the settings row (§2b) and the robot's device key (§3). Camera frames and transcripts pass
-through to the model and STT and are not kept. If the diary comes onto the box (G4) it goes
-through the api into Postgres under RLS with an isolation test (rule 3), and is treated as
-sensitive: it names people the camera saw.
+### 2c. The creature lives on the box, as profiles the owner can switch
+
+The owner's ask (2026-11-10): *"by living on the server, we can use other phones if we need
+to"*, then, on moving the creature's memory too: *"Yes. Along with bot profiles we can change."*
+
+Upstream keeps the whole creature on one phone: `v3/soul.js` (soul_format 3) holds it in **one
+localStorage key, `pb2_soul`**: the memory surfaces (identity, the append-once bond line,
+scratch, log), long-arc goals, and the swappable config regions (persona, dream, harness, body,
+meta, expression). Visual memory (saved views of people, objects, handwriting) is in
+**IndexedDB** (`v3/visual-memory.js`). Upstream already treats a soul as a portable document
+(the MIND tab downloads `growbot-soul-snapshot.json`, and its soul gallery serves souls;
+`/api/transfer` moves only device credits, not memories), and `prompts.js` appends its
+child-safety floor after any loaded persona, so swapping a soul never removes the rails.
+
+- **A profile is a soul.** The box stores profiles: each a `pb2_soul` document plus its visual
+  memories, a name, and which robot it is on. The owner can keep several (a different persona,
+  a fresh creature, a saved copy before an experiment) and switch which one a robot runs.
+- **Storage.** Through the api into Postgres under RLS with its isolation test (rule 3).
+  Visual memories are camera-derived images of people, so their blobs go through the storage
+  abstraction (rule 2) under their own namespace. It is not a new firewall domain (the domain
+  set in `agent/contracts.py` stays as it is); instead the profile tables are owner-principal-only
+  under RLS, the `growbot.token` route reads and writes only the robot's active profile under its
+  own RLS context, and profiles are never readable by share or member sessions, agent tools, RAG
+  or wiki ingest. Each of those has an isolation test.
+- **Imports are untrusted.** An imported soul passes upstream's `sanitizeSoulCfg` and a size cap;
+  visual-memory blobs are type- and size-checked.
+- **Sync.** The phone app is a cache of the active profile. The patched-in loader pulls it at
+  load (so any phone opened from the PWA becomes that creature) and pushes changes back as the
+  soul is written (the fast loop and dreams both write through `saveSoul`), debounced, with a
+  version so a stale phone cannot overwrite a newer soul. One phone runs a given profile at a
+  time: opening it on a second phone hands the creature over, and the first phone shows that it
+  has moved. What a profile carries: `pb2_soul` and the visual memories (upstream namespaces those
+  by `vmNs()`: `pb2_sid`, else `gb_vm_ns`; the loader pins it to the profile id). What it does not: upstream's per-device keys kept
+  outside the soul on purpose (`pb_device`, `pb_or_*`) stay with the phone, and on the box
+  `/api/device` answers them for any phone.
+- **The PWA** lists the profiles on the GrowBot card: switch the active one, duplicate, rename,
+  reset to a fresh creature (upstream's own seed), export and import a soul file, and delete
+  (confirmed, since it erases memories). A switch lands on the phone at the creature's next idle
+  moment, like the settings that need a reload (§2b).
+
+**Data.** Until G4, the box stores nothing but the settings row (§2b) and the robot's device key (§3). Camera frames and transcripts pass
+through to the model and STT and are not kept. The creature's memory (G4, §2c) and the diary (G5) go
+through the api into Postgres under RLS with an isolation test (rule 3), and are treated as
+sensitive: they name people the camera saw.
 
 **The relay** is the same process, at `wss://jbrain.local:8444/d/<code>` and
 `/d/<code>-agent`, reimplementing the envelopes above plus the key check.
@@ -226,7 +266,11 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
 - **G3 — settings from the PWA.** GUI gate first (the PWA GrowBot card). The
   `growbot_settings` table, its RLS and isolation test, the owner routes, the app's pickup and
   report route, and the apply hook with idle reload (§2b).
-- **G4 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
+- **G4 — the creature on the box, and profiles.** GUI gate first (the profile list on the
+  GrowBot card). The profile tables and blob storage, RLS and isolation tests, the
+  pull/push/hand-over routes and their auth tests, the loader's sync patch, and PWA switch,
+  duplicate, rename, reset, export/import and delete (§2c).
+- **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
 
 ## 5. What only the owner can do
