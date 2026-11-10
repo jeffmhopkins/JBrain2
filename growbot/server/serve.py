@@ -12,6 +12,9 @@ Security, in order of the request:
   (a restart signs every phone out; nothing is stored).
 - Every other route needs that cookie, except the robot's side of the relay, which has no
   browser: it proves itself with the device key in its `hello`, checked against the api.
+- `/internal/robots` (which robots are on the relay) and `/internal/robots/drop` (close a
+  revoked robot's socket) are the api's, behind `growbot.token` as a bearer. Caddy's site 404s
+  `/internal*`, so only a container that can reach this one and holds the token gets there.
 - Every response carries a CSP that confines the page to this origin, so vendored code cannot
   reach another host even if a patch missed a URL. Outbound, this process talks to the api and
   tts-stt by compose name only, with proxies and redirects disabled.
@@ -665,6 +668,8 @@ class Channel:
     body: WebSocket | None = None
     body_hb: bool = False
     peers: set[WebSocket] = field(default_factory=set)
+    # When the chip now on it was admitted (wall clock), for the api's robot list.
+    body_since: float = 0.0
 
     def status(self) -> dict[str, object]:
         return {"t": "status", "awake": 1 if self.body is not None else 0}
@@ -881,6 +886,49 @@ class GrowBot:
         value = cookie_value(req.headers, SESSION_COOKIE)
         return bool(value) and self.sessions.valid(value)
 
+    def _internal_ok(self, req: Request) -> bool:
+        """The api's bearer: `growbot.token`, compared in constant time, re-read per call so
+        a re-mint needs no restart. No token on disk means no caller is believed."""
+        try:
+            token = self.config.token_file.read_text().strip()
+        except OSError:
+            return False
+        scheme, _, given = req.header("authorization").partition(" ")
+        return (
+            bool(token)
+            and scheme.lower() == "bearer"
+            and hmac.compare_digest(given.strip().encode(), token.encode())
+        )
+
+    def internal(self, req: Request) -> Response:
+        """The api's two routes: which robots are on the relay, and dropping one."""
+        if not self._internal_ok(req):
+            return json_response(401, {"error": "unauthorized"})
+        if req.path == "/internal/robots" and req.method == "GET":
+            robots = [
+                {
+                    "code": chan.name,
+                    "since": time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime(chan.body_since)
+                    ),
+                }
+                for chan in sorted(self.channels.values(), key=lambda c: c.name)
+                if chan.body is not None and not chan.name.endswith("-agent")
+            ]
+            return json_response(200, {"robots": robots})
+        if req.path == "/internal/robots/drop" and req.method == "POST":
+            msg = _parse(req.body)
+            code = msg.get("code") if msg else None
+            if not isinstance(code, str) or not CODE_RE.fullmatch(code):
+                return json_response(400, {"error": "code"})
+            chan = self.channels.get(code)
+            dropped = chan is not None and chan.body is not None
+            if chan is not None and chan.body is not None:
+                # 1008 like a failed hello: the robot's key no longer opens the relay.
+                chan.body.close(1008, "revoked")
+            return json_response(200, {"dropped": dropped})
+        return json_response(404, {"error": "no such route"})
+
     def _same_origin(self, req: Request) -> bool:
         """A request a browser sent from another origin (the PWA on :443 is same-site, so
         SameSite=Strict alone lets its cookie through) is refused for anything that acts."""
@@ -890,6 +938,8 @@ class GrowBot:
     async def handle(self, req: Request) -> Response:
         if req.path == "/open":
             return await self.open(req)
+        if req.path.startswith("/internal/"):
+            return self.internal(req)
         if not self._authed(req):
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         if req.path.startswith("/api/"):
@@ -1338,6 +1388,7 @@ class GrowBot:
     ) -> None:
         old = chan.body
         chan.body, chan.body_hb = ws, hb
+        chan.body_since = time.time()
         if old is not None:
             old.close(1000, "replaced")
         chan.to_peers(json.dumps(chan.status(), separators=(",", ":")))
@@ -1475,10 +1526,18 @@ class GrowBot:
                         if refused is not None:
                             await self.write(writer, req, refused, False)
                         return
-                    # Without a session only /open, which has no body, is answered; nothing
-                    # else costs this process an upload.
-                    if not self._authed(req) and (
-                        req.path != "/open" or body_framing(req) != 0
+                    # Without a session only /open, which has no body, and the api's
+                    # bearer-checked /internal routes are answered; nothing else costs this
+                    # process an upload.
+                    internal = req.path.startswith("/internal/")
+                    if internal and not self._internal_ok(req):
+                        refused = json_response(401, {"error": "unauthorized"})
+                        await self.write(writer, req, refused, False)
+                        return
+                    if (
+                        not internal
+                        and not self._authed(req)
+                        and (req.path != "/open" or body_framing(req) != 0)
                     ):
                         page = Response(
                             401, UNAUTHORISED_PAGE, "text/html; charset=utf-8"

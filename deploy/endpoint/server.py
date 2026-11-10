@@ -31,12 +31,14 @@ import base64
 import json
 import os
 import traceback
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import flash
 import monitor
+import pico
 import ports
 
 PORT = int(os.environ.get("ENDPOINT_PORT", "8000"))
@@ -68,7 +70,9 @@ class Handler(BaseHTTPRequestHandler):
             # An empty list is an ANSWER, not a failure: "this container cannot see the
             # panel" is the single most useful thing this sidecar can tell an owner who
             # has no terminal, and it must arrive as data rather than as a 500.
-            self._json(200, {"ports": ports.as_json(ports.scan())})
+            self._json(
+                200, {"ports": ports.as_json(ports.scan()), "pico_boot": ports.scan_boot()}
+            )
             return
         if urlparse(self.path).path == "/monitor":
             self._monitor()
@@ -109,23 +113,51 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001 - the stream must carry the reason, not drop
             self.wfile.write(f"FAILED: {traceback.format_exc(limit=3)}\n".encode())
 
-    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
-        if self.path != "/flash":
-            self._json(404, {"error": "no such route"})
-            return
+    def _body(self) -> dict[str, Any] | None:
+        """The request's JSON object, or None once an error has been answered."""
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             self._json(400, {"error": "bad Content-Length"})
-            return
+            return None
         if length <= 0 or length > MAX_BODY:
             self._json(413, {"error": "body missing or too large"})
-            return
-
+            return None
         try:
             body = json.loads(self.rfile.read(length))
         except (ValueError, OSError):
             self._json(400, {"error": "body is not JSON"})
+            return None
+        if not isinstance(body, dict):
+            self._json(400, {"error": "body must be a JSON object"})
+            return None
+        return body
+
+    def _stream(self, lines: Iterator[str]) -> None:
+        """Chunked plain text, ending `FAILED: <code>: <message>` on any failure."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        try:
+            for line in lines:
+                self.wfile.write(f"{line}\n".encode())
+                self.wfile.flush()
+        except pico.PicoError as exc:
+            self.wfile.write(f"FAILED: {exc}\n".encode())
+        except Exception as exc:  # noqa: BLE001 - the stream must carry the reason, not drop
+            self.wfile.write(f"FAILED: internal: {type(exc).__name__}: {exc}\n".encode())
+
+    def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
+        if self.path.startswith("/pico/"):
+            self._pico(self.path[len("/pico/") :])
+            return
+        if self.path != "/flash":
+            self._json(404, {"error": "no such route"})
+            return
+        body = self._body()
+        if body is None:
             return
 
         try:
@@ -160,6 +192,50 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"FAILED: {exc}\n".encode())
         except Exception:  # noqa: BLE001 - the stream must carry the reason, not drop
             self.wfile.write(f"FAILED: {traceback.format_exc(limit=3)}\n".encode())
+
+
+    def _pico(self, op: str) -> None:
+        """The GrowBot's Pico routes. Every one names a port the sysfs scan lists as a
+        Raspberry Pi device (load may name none, for a board already in its bootloader)."""
+        if op not in ("load", "identify", "provision", "rekey"):
+            self._json(404, {"error": "no such route"})
+            return
+        body = self._body()
+        if body is None:
+            return
+        try:
+            if op == "load":
+                raw_port = body.get("port")
+                port = None if raw_port is None else pico.pico_port(raw_port)
+                sha = str(body.get("sha256") or "")
+                if not pico.SHA256_RE.fullmatch(sha):
+                    raise ValueError("sha256 must be 64 lowercase hex characters")
+                uf2 = pico.decode_b64(body.get("uf2_b64"), "uf2_b64")
+                if not uf2:
+                    raise ValueError("uf2_b64 is empty")
+                self._stream(pico.load(port, uf2, sha))
+                return
+            port = pico.pico_port(body.get("port"))
+            if op == "identify":
+                try:
+                    self._json(200, pico.identify(port))
+                except pico.PicoError as exc:
+                    self._json(502, {"error": str(exc), "code": exc.code})
+                return
+            if op == "provision":
+                files = pico.decode_files(body.get("files"))
+                secrets = pico.decode_secrets(body.get("secrets_b64"))
+                watch = body.get("watch_s", pico.MAX_WATCH_S)
+                if type(watch) is not int or not 1 <= watch <= pico.MAX_WATCH_S:
+                    raise ValueError(f"watch_s must be 1..{pico.MAX_WATCH_S}")
+                self._stream(pico.provision(port, files, secrets, watch))
+                return
+            key = str(body.get("key") or "")
+            if not pico.KEY_RE.fullmatch(key):
+                raise ValueError("key is not a device key")
+            self._stream(pico.rekey(port, key))
+        except ValueError as exc:
+            self._json(400, {"error": str(exc)})
 
 
 def _request(

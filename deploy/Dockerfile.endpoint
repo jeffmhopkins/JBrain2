@@ -19,7 +19,7 @@
 # matching GID would be two moving parts solving a problem this container does not
 # have. It is egress-free, holds no owner data between requests, and its whole job is
 # to open one serial port.
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 
 # Pinned, because this is the software that writes a bootloader to a device the owner
 # cannot recover without a cable. A silent minor bump here is not the place to find out
@@ -27,7 +27,18 @@ FROM python:3.12-slim
 RUN pip install --no-cache-dir \
         "esptool==5.4.0" \
         "esp-idf-nvs-partition-gen==0.3.0" \
-        "pyserial==3.5"
+        "pyserial==3.5" \
+        "mpremote==1.28.0"
+
+# The GrowBot's Pico 2 W (docs/plans/GROWBOT_PLAN.md §3). `mpremote` above is MicroPython's
+# own pure-Python tool, pinned to the release of the MicroPython the box loads (1.28.0).
+# `picotool` writes that MicroPython to a board in its USB bootloader; the RP2350 needs 2.x,
+# and Debian trixie ships 2.1.1 as a plain binary linked against libusb, so it is apt rather
+# than a source build. The base is pinned to trixie for that package; the version itself is
+# left to trixie's security updates, and the build check below refuses anything but v2.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends picotool \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 # Enumerating what the box can see: the half with no device in it, so it is testable in
@@ -37,6 +48,8 @@ COPY deploy/endpoint/ports.py ./ports.py
 COPY deploy/endpoint/flash.py ./flash.py
 # Reading the panel's own console back over the same USB it was flashed through.
 COPY deploy/endpoint/monitor.py ./monitor.py
+# Loading MicroPython and the GrowBot firmware onto a Pico.
+COPY deploy/endpoint/pico.py ./pico.py
 COPY deploy/endpoint/server.py ./server.py
 
 # Fail the BUILD, not the first flash. This is the one image the owner builds on their
@@ -44,9 +57,11 @@ COPY deploy/endpoint/server.py ./server.py
 # #10) — so a missing COPY line or a renamed entry point has to surface here. The NVS
 # generator is exercised rather than merely imported: it is invoked as `python -m`, and
 # "the module is importable" is a weaker claim than "that command line works".
-RUN python -c "import server, ports, flash, monitor" \
+RUN python -c "import server, ports, flash, monitor, pico" \
     && command -v esptool >/dev/null \
-    && python -m esp_idf_nvs_partition_gen --help >/dev/null
+    && python -m esp_idf_nvs_partition_gen --help >/dev/null \
+    && mpremote --help >/dev/null \
+    && picotool version | grep -q "^picotool v2\."
 
 EXPOSE 8000
 

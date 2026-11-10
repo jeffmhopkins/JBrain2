@@ -58,9 +58,11 @@ if not HOST:
 PORT = getattr(_box, "GROWBOT_PORT", 8444)
 SNI = getattr(_box, "GROWBOT_SNI", "jbrain.local")
 ROBOT_KEY = getattr(_box, "GROWBOT_KEY", "")
-# The box's root CA (DER bytes). With it the robot refuses an impostor before sending its key;
-# without it (a hand-edited secrets.py) it connects unverified, as upstream always did.
-BOX_CA = getattr(_box, "GROWBOT_CA", None)
+# The box's root CA, DER as a base64 string: wifi_store's restricted parser reads secrets.py
+# and accepts no b"..." literal. With it the robot refuses an impostor before sending its
+# key; without it (a hand-edited secrets.py) it connects unverified, as upstream always did.
+_ca = getattr(_box, "GROWBOT_CA", None)
+BOX_CA = binascii.a2b_base64(_ca) if _ca else None
 
 
 def _wrap(raw):
