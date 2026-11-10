@@ -120,3 +120,29 @@ def test_jbrain_helper_exposes_and_automates_lan_setup() -> None:
     assert "enable-lan)" in helper
     # ...and `update` re-provisions it from the freshly pulled source.
     assert "lan-setup.sh" in helper
+
+
+def test_lan_conf_renders_the_growbot_site_on_its_own_port(tmp_path: Path) -> None:
+    for addr in ("https://jbrain.local", "https://jbrain.local:9443/", "jbrain.local"):
+        subprocess.run(
+            ["sh", str(_LAN_CONF), str(tmp_path)],
+            check=True,
+            env={"JBRAIN_LAN_ADDR": addr, "PATH": "/usr/bin:/bin"},
+        )
+        rendered = (tmp_path / "growbot.caddy").read_text()
+        assert rendered.startswith("https://jbrain.local:8444 {\n"), (addr, rendered)
+    assert "tls internal" in rendered
+    assert "reverse_proxy growbot:8810" in rendered
+    # Rebuilt, not filtered: the owner's session can never ride along, present or not.
+    assert 'header_up Cookie "gb_session={http.request.cookie.gb_session}"' in rendered
+    assert "header_up -Cookie" in rendered
+    assert "handle /internal* {\n\t\trespond 404" in rendered
+    assert "import app" not in rendered  # never the PWA's handlers or its api
+    subprocess.run(["sh", str(_LAN_CONF), str(tmp_path)], check=True, env={"PATH": "/usr/bin:/bin"})
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_proxy_publishes_the_growbot_port_and_never_the_owner_site() -> None:
+    proxy = yaml.safe_load(_COMPOSE.read_text())["services"]["proxy"]
+    assert "8444:8444" in proxy["ports"]
+    assert all("8443" not in str(p) for p in proxy["ports"])
