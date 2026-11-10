@@ -1436,7 +1436,10 @@ def test_the_compose_service_runs_the_bind_mounted_server() -> None:
     assert "./src/growbot:/app:ro" in svc["volumes"]
     assert "growbot_secrets:/run/jbrain-growbot:ro" in svc["volumes"]
     assert "growbot_secrets" in compose["volumes"]
-    assert set(svc["networks"]) == {"edge", "internal"}
+    assert set(svc["networks"]) == {"edge", "growbot_lane"}
+    assert compose["networks"]["growbot_lane"] == {"internal": True}
+    joined = {n for n, s in compose["services"].items() if "growbot_lane" in s.get("networks", [])}
+    assert joined == {"growbot", "api", "tts-stt"}
     assert "ports" not in svc
     env = svc["environment"]
     assert env["GROWBOT_SITE"] == "/app/site"
@@ -1496,3 +1499,17 @@ def test_failed_hellos_do_not_lock_out_the_owners_link(
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
     assert resp.status == 302
     resp.read()
+
+
+def test_open_without_a_robot_opens_the_creature_unpaired(run: _Running) -> None:
+    resp = run.request("GET", "/open?ticket=good-ticket", cookie=False)
+    assert resp.status == 302
+    assert resp.getheader("Location") == "/v3/next.html?mode=legs"
+    assert resp.getheader("Set-Cookie")
+    resp.read()
+
+
+def test_codes_are_held_to_the_apis_shape(gb: types.ModuleType) -> None:
+    assert gb.CODE_RE.fullmatch("gb-abc123")
+    for code in ("bench-rig", "gb-", "gb-a_b", "x" * 40):
+        assert not gb.CODE_RE.fullmatch(code)

@@ -41,7 +41,8 @@ The compose service `growbot` (`deploy/docker-compose.yml`, `deploy/Dockerfile.g
 bare `python:3.12-slim` running `python3 /app/server/serve.py`, with this directory bind-mounted
 read-only at `/app`, so **Ops → Update** ships a page or server change with no rebuild. It is
 default-on (no compose profile), publishes no port, and sits on `edge` (Caddy reaches it) and
-`internal` (it reaches `api` and `tts-stt`).
+`growbot_lane`, an egress-free network only `api` and `tts-stt` share, so it has no route to the
+database, the supervisor or the model gateway.
 
 Caddy's LAN site `https://jbrain.local:8444` (rendered by `deploy/proxy-lan-conf.sh` from
 `JBRAIN_LAN_ADDR`, same `tls internal` CA as the LAN app) is the only way in. It is its own
@@ -60,8 +61,8 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
 
 ## Security
 
-- **Opening it.** The owner opens GrowBot from the PWA, which mints a one-time ticket through
-  the api. `GET /open?ticket=…&id=<code>` redeems it and sets `gb_session` (HttpOnly, Secure,
+- **Opening it.** The owner mints a one-time ticket through the api (`POST /api/growbot/ticket`;
+  until G2 adds the PWA entry, through the owner debug API's copy). `GET /open?ticket=…[&id=<code>]` redeems it and sets `gb_session` (HttpOnly, Secure,
   SameSite=Strict, 12 h), then redirects to the creature. The cookie is an HMAC under a key made
   at process start: nothing is stored, and a restart signs every phone out. Every other route
   answers 401 without it, decided from the request head: without a session nothing but a

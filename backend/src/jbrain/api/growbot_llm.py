@@ -231,11 +231,13 @@ async def chat_completions(request: Request) -> Response:
     pooled = local_catalog.pool_of(served) is not None
     lock = getattr(state, "growbot_llm_lock" if pooled else "jcode_llm_swap_lock", None)
     factory = getattr(state, "growbot_llm_client_factory", None) or httpx.AsyncClient
-    client = factory(base_url=gateway_url.rstrip("/"), timeout=_TIMEOUT)
     stream = bool(payload.get("stream"))
 
     async def relay() -> AsyncIterator[bytes]:
         nonlocal prompt_tokens
+        # Made here, not before the response: a turn cancelled before its body starts never
+        # runs this generator, and a client made outside it would never be closed.
+        client = factory(base_url=gateway_url.rstrip("/"), timeout=_TIMEOUT)
         guard = lock if lock is not None else contextlib.nullcontext()
         # The headers are out by now, so every refusal is written into the body as an OpenAI
         # error: the app shows a cut stream as a broken brain and retries blind.

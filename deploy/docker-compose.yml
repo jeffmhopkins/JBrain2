@@ -299,7 +299,7 @@ services:
     # fenced network the headless browser sits on (BROWSER_AGENT_PLAN.md §2): the api drives
     # it over MCP, and `test_browser_compose.py` asserts nothing else but the egress proxy
     # joins it.
-    networks: [edge, internal, jcode_fenced, jlaunch, render, radio, sandbox, panel, browser, fetchers]
+    networks: [edge, internal, jcode_fenced, jlaunch, render, radio, sandbox, panel, browser, fetchers, growbot_lane]
     # `host.docker.internal` -> the host, for the host-networked Minecraft sidecar.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -485,7 +485,9 @@ services:
       # Its own volume, not `internal_secrets`: it holds growbot.token alone, read per request
       # so it works whichever of api and growbot starts first.
       - growbot_secrets:/run/jbrain-growbot:ro
-    networks: [edge, internal]
+    # Not `internal`: it serves vendored upstream code on a LAN port, so it gets a route to
+    # the api and the voice and nothing else (no db, supervisor, or model gateway).
+    networks: [edge, growbot_lane]
 
   # OPT-IN local model gateway: llama-swap fronting llama.cpp (Vulkan) so several
   # GGUF models share one OpenAI-compatible endpoint, loaded/swapped on demand.
@@ -694,7 +696,7 @@ services:
     volumes:
       - ./whisper-models:/models:ro
       - ./src/deploy/tts-stt:/tts:ro
-    networks: [internal]
+    networks: [internal, growbot_lane]
 
   # OPT-IN code mode (docs/archive/JCODE_PLAN.md): a sandboxed coding-session
   # service running xAI's Grok Build (`grok`) against an ON-BOX coder model, fronted
@@ -1443,6 +1445,10 @@ networks:
   # it. The renderers run untrusted page JS and follow redirects, so with no gateway their
   # one way to anything is the egress proxy's deny list. New, not a flag flip on `internal`.
   fetchers:
+    internal: true
+  # EGRESS-FREE by declaration: only `growbot`, `api` and `tts-stt` join it, so the GrowBot
+  # sidecar reaches the two services it calls and has no route to anything else on the box.
+  growbot_lane:
     internal: true
   # The egress proxy's internet side. Only `egress` joins it, so nothing else gains a route
   # out through it and the proxy itself has no route to `internal`.

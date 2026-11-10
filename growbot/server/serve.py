@@ -87,8 +87,8 @@ BACKOFF_WINDOW_S = 300.0
 MAX_PEERS_PER_CHANNEL = 8
 MODELS_CACHE_S = 30.0
 
-# Pairing codes are upstream's `gb-` + 6 hex, but a bench rig may pin its own.
-CODE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
+# Upstream's pairing codes are `gb-` + 6 hex; the api holds robots to this same shape.
+CODE_RE = re.compile(r"gb-[A-Za-z0-9]{1,32}")
 HASH_RE = re.compile(r"sha(256|384|512)-[A-Za-z0-9+/]+={0,2}")
 KOKORO_VOICE_RE = re.compile(r"kokoro-[a-z0-9_]{1,40}")
 LANG_RE = re.compile(r"[a-z]{2,3}")
@@ -907,7 +907,7 @@ class GrowBot:
         if (
             req.method != "GET"
             or not (0 < len(ticket) <= 512)
-            or not CODE_RE.fullmatch(code)
+            or (code and not CODE_RE.fullmatch(code))
         ):
             return Response(400, b"bad link", headers=[("Cache-Control", "no-store")])
         # The PWA's link is a top-level navigation. Any other load (an <img>, a fetch) is some
@@ -935,7 +935,10 @@ class GrowBot:
             f"{SESSION_COOKIE}={self.sessions.mint()}; HttpOnly; Secure; SameSite=Strict; "
             f"Path=/; Max-Age={SESSION_TTL_S}"
         )
-        where = f"/v3/next.html?id={urllib.parse.quote(code)}&mode=legs"
+        # Without a robot the creature opens unpaired, and the page asks for a code.
+        where = "/v3/next.html?mode=legs"
+        if code:
+            where = f"/v3/next.html?id={urllib.parse.quote(code)}&mode=legs"
         return Response(302, b"", headers=[("Set-Cookie", cookie), ("Location", where)])
 
     # -- static -----------------------------------------------------------------

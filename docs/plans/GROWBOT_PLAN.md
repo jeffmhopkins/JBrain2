@@ -67,8 +67,8 @@ growbot/
 
 The pieces that by nature live elsewhere stay where the repo keeps them: the compose service
 in `deploy/docker-compose.yml`, its `Dockerfile.growbot`, a Caddy site in
-`proxy-lan-conf.sh`, a new api router for the model lane, a `CALLERS` entry in
-`internal_auth.py`, the board entry in the endpoint flasher, the Ops listing in
+`proxy-lan-conf.sh`, a new api router for the model lane, its own `growbot` caller in
+`internal_auth.py` (deliberately not in `CALLERS`: its token lives alone in `growbot_secrets`), the board entry in the endpoint flasher, the Ops listing in
 `OpsScreen.tsx`, the CI path filter, and this plan.
 
 **The `growbot` service** follows `wall`: a bare `python:3.12-slim` image with a stdlib-only
@@ -260,9 +260,9 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
 ## 4. Waves
 
 - **G1 — the box serves the creature.** No new GUI: the upstream app as it is. `growbot/` with
-  `upstream/` + `patches/` + `vendor/` + `sync.sh`; `serve.py` (static, CSP, shim, relay with
+  `site/` + `firmware/` (built) + `patches/` + `server/` + `sync.sh`; `serve.py` (static, CSP, shim, relay with
   key check, ticket exchange); the compose service, the `:8444` Caddy site (and a test that 8443 stays unpublished), `growbot_secrets`,
-  `api/growbot_llm.py`, the ticket mint, the `CALLERS` entry. Tests: shim and relay by path,
+  `api/growbot_llm.py`, the ticket mint, the `growbot` caller and its `growbot_lane` network. Tests: shim and relay by path,
   the api router and its auth (security paths at 100%), the Caddy site via the existing
   real-Caddy tests, the headless no-egress test. Proven with the stock body firmware hand-edited
   to the box. ✅ Built: until G3's per-lane settings the box picks one creature model (the
