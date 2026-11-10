@@ -114,8 +114,10 @@ page, so getting it back is one scan.
 
 - **Opening it.** The owner mints a one-time ticket through the api (`POST /api/growbot/ticket`;
   until G2 adds the PWA entry, through the owner debug API's copy). `GET /open?ticket=…[&id=<code>]` redeems it and sets `gb_session` (HttpOnly, Secure,
-  SameSite=Strict, 30 days, renewed at most daily by any page load or call), then redirects to
-  the creature. The cookie carries, under its HMAC, the robot code the api says the ticket was minted for (the
+  SameSite=Strict, 30 days, renewed at most daily by any page load or call), then answers a page that moves on to
+  the creature by itself. Not a 302: the PWA's link may be a cross-site navigation (the PWA reached by its public name), and Chrome
+  withholds a Strict cookie for the rest of a cross-site redirect chain, so a redirect landed
+  the phone on the creature signed out. The cookie carries, under its HMAC, the robot code the api says the ticket was minted for (the
   PWA names it at mint, migration 0256; the link's `id` is never trusted), and the relay
   lets that phone join that robot alone: pairing is JBrain's, and a code typed into the
   creature's own pairing box is refused (`403 pair from JBrain`). The key is derived from

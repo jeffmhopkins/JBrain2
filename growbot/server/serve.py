@@ -42,6 +42,7 @@ import contextlib
 import functools
 import hashlib
 import hmac
+import html
 import ipaddress
 import json
 import math
@@ -392,6 +393,17 @@ def _redeemed_robot(up: Upstream) -> str | None:
     if code == "" or (isinstance(code, str) and CODE_RE.fullmatch(code)):
         return code
     return None
+
+
+def _landing(where: str) -> bytes:
+    """A page that moves on to `where` by itself; the link is for a browser that ignores the
+    refresh. `where` is built here from a checked code, and escaped all the same."""
+    where = html.escape(where, quote=True)
+    return (
+        "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+        f"<meta http-equiv=refresh content='0;url={where}'>"
+        f"<title>GrowBot</title><p><a href='{where}'>Open GrowBot</a></p>"
+    ).encode()
 
 
 def _creature(code: str) -> str:
@@ -1180,10 +1192,15 @@ class GrowBot:
         code = robot
         # The session carries the robot the ticket named, so the installed app's /start
         # reopens the same way and the relay lets this phone join that robot alone.
+        # A page, not a 302: the PWA's link may be a cross-site navigation (when the PWA is reached by its public name), and a browser withholds
+        # a SameSite=Strict cookie for the rest of a cross-site redirect chain, so a 302 landed
+        # on the creature signed out. This page's own refresh starts on this site, and the
+        # cookie stays Strict, so another site's link still opens nothing signed in.
         return Response(
-            302,
-            b"",
-            headers=[("Set-Cookie", self._session_cookie(code)), ("Location", _creature(code))],
+            200,
+            _landing(_creature(code)),
+            "text/html; charset=utf-8",
+            headers=[("Set-Cookie", self._session_cookie(code)), ("Cache-Control", "no-store")],
         )
 
     # -- static -----------------------------------------------------------------

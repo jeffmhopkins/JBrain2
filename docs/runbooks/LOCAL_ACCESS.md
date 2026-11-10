@@ -119,6 +119,14 @@ one-time step per device.
 > (CLAUDE.md non-negotiable #10): `GET /api/lan/root.crt` (`backend/src/jbrain/api/lan_ca.py`,
 > owner-only) closed that gap in GrowBot wave G2.
 
+## Chrome on Android says ERR_TOO_MANY_RETRIES
+
+Newer Android asks before an app may reach the home network, and Chrome without that
+permission fails every LAN address (even `http://<box-ip>`) with this misleading error, while
+panels and robots reach the box fine. Settings → Apps → Chrome → Permissions → **Nearby
+devices** (or **Local network**) → Allow. JBrain's GrowBot sheets and Settings → Devices say
+so, since a page on the box cannot load to say it.
+
 ## Notes
 
 - **No new exposure.** The LAN site reuses the already-published `443` port; it
