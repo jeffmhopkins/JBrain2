@@ -9,9 +9,10 @@ self.addEventListener("activate", function (event) { event.waitUntil(self.client
 
 var OFFLINE =
   '<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width">' +
-  "<title>GrowBot</title>" +
+  '<title>GrowBot</title><meta http-equiv="refresh" content="15;url=/start">' +
   '<body style="background:#0b0b1a;color:#e6edf3;font:18px system-ui;padding:24px">' +
-  "<p>GrowBot can't reach the box. Check this phone is on the house Wi-Fi.</p>" +
+  "<p>GrowBot can't reach the box. Check this phone is on the house Wi-Fi; it tries again" +
+  " by itself every 15 seconds.</p>" +
   '<p><a href="/start" style="color:#7fd89a">Try again</a></p>';
 
 self.addEventListener("fetch", function (event) {

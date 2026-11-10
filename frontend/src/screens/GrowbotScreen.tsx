@@ -95,6 +95,30 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     [],
   );
 
+  const [signOutArmed, setSignOutArmed] = useState(false);
+  const signOutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (signOutTimer.current) clearTimeout(signOutTimer.current);
+    },
+    [],
+  );
+  const signOutPhones = useCallback(async () => {
+    if (signOutTimer.current) clearTimeout(signOutTimer.current);
+    if (!signOutArmed) {
+      setSignOutArmed(true);
+      signOutTimer.current = setTimeout(() => setSignOutArmed(false), 4_000);
+      return;
+    }
+    setSignOutArmed(false);
+    try {
+      await api.growbotSignOutPhones();
+      say("Every phone is signed out of GrowBot. Open it again from here.");
+    } catch (e) {
+      say(`Couldn't sign the phones out — ${message(e)}`);
+    }
+  }, [signOutArmed, say]);
+
   const loadStatus = useCallback(async () => {
     try {
       setStatus(await api.growbotStatus());
@@ -335,6 +359,17 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           <p className="gb-hint dim">
             The first time you open GrowBot on this phone, it explains the box's certificate.
           </p>
+        )}
+        {status !== null && (
+          // A phone stays signed in for 30 days so the robot's installed app keeps running;
+          // this is how a lost one is cut off. Armed, since every phone has to reopen after.
+          <button
+            type="button"
+            className={signOutArmed ? "gb-btn block danger armed" : "gb-btn block danger"}
+            onClick={signOutPhones}
+          >
+            {signOutArmed ? "Tap again to sign every phone out" : "Sign out every phone"}
+          </button>
         )}
       </main>
       <div className="gb-foot">

@@ -311,3 +311,23 @@ describe("GrowbotScreen without a robot", () => {
     expect(tab.opener).toBeNull();
   });
 });
+
+describe("GrowbotScreen signing every phone out", () => {
+  afterEach(() => {
+    localStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("is armed: the first tap asks again, the second signs every phone out", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    const calls = serve({ service: "up", connected: 0, robots: [] }, (path) =>
+      path === "/api/growbot/sessions/reset" ? new Response(null, { status: 204 }) : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out every phone" }));
+    expect(calls.some((c) => c.path === "/api/growbot/sessions/reset")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Tap again to sign every phone out" }));
+    expect(await screen.findByText(/Every phone is signed out of GrowBot/)).toBeTruthy();
+    expect(calls.filter((c) => c.path === "/api/growbot/sessions/reset")).toHaveLength(1);
+  });
+});

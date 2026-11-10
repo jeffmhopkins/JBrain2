@@ -6,9 +6,10 @@ Three routers over one repo (`jbrain.growbot.repo`):
 - `router` — the owner (`OwnerDep`): `POST /growbot/ticket` mints a one-time, 120 s ticket and
   the `:8444` link that spends it; `POST`/`GET`/`DELETE /growbot/robots` mint or rotate a
   robot's device key (shown once), list the robots (with whether each is on the relay now),
-  and forget one. Flashing, revoking and the status card are `api/growbot_flash.py` (G2).
+  and forget one; `POST /growbot/sessions/reset` signs every phone out. Flashing, revoking and
+  the status card are `api/growbot_flash.py` (G2).
 - `debug_router` — a debug token (`DebugDep`, mounted only with debug access on): the same
-  four, because G1 has no GUI and the owner runs the box with no terminal (CLAUDE.md #10).
+  five, because the owner runs the box with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`, mounted under `/internal`, which
   Caddy never routes): redeem a ticket, verify a chip's key.
 
@@ -217,6 +218,34 @@ async def list_robots(request: Request, owner: OwnerDep) -> list[RobotOut]:
 @router.delete("/robots/{code}", status_code=204)
 async def delete_robot(request: Request, owner: OwnerDep, code: Code) -> Response:
     return await _delete_robot(request, _owner_ctx(owner), code)
+
+
+# The sidecar keys every `gb_session` from this file too (growbot/server/serve.py `Sessions`),
+# so re-minting it signs every phone out at once: the owner's way to end a lost phone's session
+# without a terminal (CLAUDE.md #10).
+SESSION_EPOCH = "growbot-session"
+
+
+def _sign_out_phones(request: Request) -> Response:
+    try:
+        cast(InternalSecrets, request.app.state.growbot_secrets).rotate(SESSION_EPOCH)
+    except OSError as exc:
+        log.error("growbot.sign_out_failed", error=repr(exc))
+        raise HTTPException(status_code=503, detail="could not sign the phones out") from exc
+    log.info("growbot.phones_signed_out")
+    return Response(status_code=204)
+
+
+@router.post("/sessions/reset", status_code=204)
+async def sign_out_phones(request: Request, owner: OwnerDep) -> Response:
+    """End every phone's GrowBot session; each opens again from the PWA with a new ticket."""
+    return _sign_out_phones(request)
+
+
+@debug_router.post("/sessions/reset", status_code=204)
+async def debug_sign_out_phones(request: Request, _p: DebugDep) -> Response:
+    request.state.debug_detail = "growbot sign out phones"
+    return _sign_out_phones(request)
 
 
 @debug_router.post("/ticket")

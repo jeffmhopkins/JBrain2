@@ -288,3 +288,46 @@ def test_a_rotated_key_revokes_the_old_one(tmp_path: Path, repo: FakeRepo) -> No
     assert (
         client.post(verify, json={"code": "gb-a1", "key": new}, headers=headers).status_code == 401
     )
+
+
+def test_signing_the_phones_out_rotates_the_session_epoch(tmp_path: Path, repo: FakeRepo) -> None:
+    app, _ = _app(tmp_path, repo)
+    client = TestClient(app)
+    epoch = tmp_path / "growbot-session.token"
+    assert not epoch.exists()
+    assert client.post("/api/growbot/sessions/reset").status_code == 204
+    first = epoch.read_bytes()
+    assert len(first) == 64 and (epoch.stat().st_mode & 0o777) == 0o600
+    assert client.post("/api/debug/growbot/sessions/reset").status_code == 204
+    second = epoch.read_bytes()
+    assert second != first
+    # The sidecar's bearer is untouched: only the cookie key moves.
+    assert (tmp_path / "growbot.token").read_bytes() == app.state.growbot_secrets.read("growbot")
+    assert list(tmp_path.glob(".*.tmp")) == []
+
+
+def test_signing_out_needs_the_owner_or_a_debug_token(tmp_path: Path, repo: FakeRepo) -> None:
+    app, _ = _app(tmp_path, repo)
+
+    def refuse() -> PrincipalInfo:
+        raise HTTPException(status_code=403, detail="no")
+
+    app.dependency_overrides[owner_only] = refuse
+    app.dependency_overrides[current_debug_principal] = refuse
+    client = TestClient(app)
+    assert client.post("/api/growbot/sessions/reset").status_code == 403
+    assert client.post("/api/debug/growbot/sessions/reset").status_code == 403
+    assert not (tmp_path / "growbot-session.token").exists()
+
+
+def test_a_sign_out_that_cannot_write_says_so(
+    tmp_path: Path, repo: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, _ = _app(tmp_path, repo)
+
+    def broken(name: str) -> None:
+        raise OSError("read-only")
+
+    monkeypatch.setattr(app.state.growbot_secrets, "rotate", broken)
+    r = TestClient(app).post("/api/growbot/sessions/reset")
+    assert r.status_code == 503

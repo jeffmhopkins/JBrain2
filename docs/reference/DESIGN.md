@@ -3273,6 +3273,9 @@ flashes one once. The tile's second line says who is connected (or that `growbot
   Below the robots, *Open GrowBot without a robot* (secondary) opens the creature with no legs:
   it opens unpaired on the phone and offers to pair, so it can be tried before any board is flashed
   (owner, 2026-11-10).
+  Last on the screen, *Sign out every phone* (danger, armed: *Tap again to sign every phone out*)
+  ends every phone's GrowBot session, since a phone otherwise stays signed in for 30 days so the
+  robot's installed app keeps running; the toast says to open GrowBot again from here.
 - **jpanel → Flash** recognises a Pico on the port and hands over: *That's a GrowBot. Robots are
   added on the GrowBot screen* → *Add it on GrowBot*. There is one door.
 - **Ops → Services** lists `growbot` with *N of M robots connected now*; its open body lists the

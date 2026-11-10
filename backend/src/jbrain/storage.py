@@ -245,13 +245,19 @@ class InternalSecrets(Protocol):
         """The token, or None while it does not exist (yet) or cannot be read."""
         ...
 
+    def rotate(self, name: str) -> None:
+        """Replace `name`'s token with a fresh one (or mint it), atomically."""
+        ...
+
 
 class FsInternalSecrets:
     def __init__(self, root: str | Path):
         self._root = Path(root)
-        # A token never changes while this process lives (only this api writes them, and
-        # never rewrites one), so the first successful read is cached. A miss is NOT
-        # cached: the file may appear after start-up and must then be honoured.
+        # A token changes only through this process's own rotate(), which refreshes the
+        # cache, so the first successful read is cached. A miss is NOT cached: the file may
+        # appear after start-up and must then be honoured. Only a token the api never reads
+        # back across workers is rotated (`growbot-session`, the sidecar's sign-out epoch),
+        # so another worker's stale cache cannot matter.
         self._cache: dict[str, bytes] = {}
 
     def _path(self, name: str) -> Path:
@@ -284,6 +290,25 @@ class FsInternalSecrets:
             if fd >= 0:
                 os.close(fd)
             tmp.unlink(missing_ok=True)
+
+    def rotate(self, name: str) -> None:
+        target = self._path(name)
+        token = secrets.token_hex(32).encode()
+        tmp = self._root / f".{name}.{secrets.token_hex(8)}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        try:
+            os.fchmod(fd, 0o600)
+            os.write(fd, token)
+            os.fsync(fd)
+            os.close(fd)
+            fd = -1
+            # A rename replaces the old token whole: a reader sees the old one or the new.
+            os.replace(tmp, target)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+            tmp.unlink(missing_ok=True)
+        self._cache[name] = token
 
     def read(self, name: str) -> bytes | None:
         cached = self._cache.get(name)
