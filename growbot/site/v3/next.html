@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><script src="/growbot-box.js"></script><link rel="manifest" href="/manifest.webmanifest">
+<!doctype html><html lang="en"><head><script src="/growbot-box.js"></script><script src="/growbot-face.js"></script><link rel="manifest" href="/manifest.webmanifest">
 <meta charset="utf-8"/>
 <script>/* 0924 JS_ERR (logging audit #6): this page had no global error handler and most of its catch blocks are empty, so a crash in the face/walk/motion loops left no trace. FIRST script, so it also sees errors thrown while the page loads. It only QUEUES {k:"err"|"rej", m: message capped at 120 chars, src: the script's file name (never its query string), line, col}, at most 5 per distinct message and 30 per load. A rejection that is not an Error logs its TYPE only, never its value. The main script drains the queue into logEv("js_err") (which redacts every string) and then logs directly through window.__jsErrSink. Never throws. */
 (function(){ var q=[], per={}, tot=0; window.__jsErrQ=q;
@@ -3807,7 +3807,7 @@ function drawDream(t){
   disc(cxg,cyg,2,"#9b8cff",1); R(cxg-1,cyg-1,1,1,"#fff",1); R(cxg+1,cyg-1,1,1,"#fff",1); R(cxg-1,cyg-1,1,1,"#1a1030",0.9); R(cxg+1,cyg-1,1,1,"#1a1030",0.9);
   cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false; cx.drawImage(px,0,0,PW,PH,0,0,W,H);
 }
-function drawFace(t){ scheduleFace();
+function drawFace(t){ scheduleFace(); var _gbF=window.gbFace&&window.gbFace.on()?window.gbFace:null;
   if(!running||!cv) return;
   if(dreamScene){ if(Date.now()>speakingUntil&&!dreaming){ dreamScene=false; } else { drawDream(t); return; } }   // storybook holds while the dream thinks OR the wake line still speaks, then hands back to the face
   var tgt=EMO[emotion]||EMO.curious;
@@ -3849,18 +3849,18 @@ function drawFace(t){ scheduleFace();
   var _lt=touchBuf.length?touchBuf[touchBuf.length-1]:null, _lAge=_lt?Date.now()-_lt.t:1e9;      // GAZE: pupils glance at the last touch…
   var _gd=(_lt&&_lAge<1600)?(1-_lAge/1600):0;                                                    // …for ~1.6s, decaying to 0
   var gx2=_gd?Math.max(-3,Math.min(3,Math.round((_lt.x-0.5)*2*3*_gd))):0, gy2=_gd?Math.max(-2,Math.min(2,Math.round((_lt.y-0.5)*2*2*_gd))):0;   // ≤3px x / ≤2px y — stays inside the 12px eye, like the orbit
-  for(side=-1;side<=1;side+=2){ var ex=Math.round(PW/2+side*gap-eyeW/2)+gx, _cyE=cyE+gy;
+  if(!_gbF) for(side=-1;side<=1;side+=2){ var ex=Math.round(PW/2+side*gap-eyeW/2)+gx, _cyE=cyE+gy;
     if(openF<0.12){ pg.fillRect(ex,_cyE-1,eyeW,3); }
     else if(!_think&&!_looking&&_smileR>0.62&&P.eye<0.8){ pg.fillRect(ex,_cyE,eyeW,3); pg.fillRect(ex+2,_cyE-3,eyeW-4,3); }   // while thinking or looking, keep the pupil visible
     else { var eh=Math.max(4,Math.round(15*Math.min(1.3,openF)));
       pg.fillRect(ex,_cyE-Math.round(eh/2),eyeW,eh);
       pg.fillStyle="hsl("+hue+",40%,6%)"; pg.fillRect(ex+Math.round(eyeW/2)-1+(_looking?Math.round(Math.sin(t/600)*2):_think?Math.round(Math.cos(_oa)*3):gx2),_cyE-1+(_looking?0:_think?Math.round(Math.sin(_oa)*2):gy2),3,3); pg.fillStyle=col; } }   // looking: a small horizontal search inside the squint; otherwise the existing thought orbit or touch glance
-  if(dreaming){ pg.fillStyle=col; pg.fillRect(PW/2+22,cyE+8,3,3); pg.fillRect(PW/2+28,cyE+1,4,4); pg.fillRect(PW/2+35,cyE-6,5,5); }
+  if(dreaming&&!_gbF){ pg.fillStyle=col; pg.fillRect(PW/2+22,cyE+8,3,3); pg.fillRect(PW/2+28,cyE+1,4,4); pg.fillRect(PW/2+35,cyE-6,5,5); }
   for(var si=0;si<sparks.length;si++){ var sp=sparks[si]; sp.x+=sp.vx; sp.y+=sp.vy; sp.vy+=0.035; sp.life-=0.032;
     if(sp.life>0){ pg.fillStyle="hsl("+sp.hue+",90%,"+Math.round(45+sp.life*42)+"%)"; var z=sp.life>0.55?2:1; pg.fillRect(Math.round(sp.x),Math.round(sp.y),z,z); } }
   if(sparks.length) sparks=sparks.filter(function(s){ return s.life>0&&s.y<PH+4; });
   if(dreaming) { pg.fillStyle="rgba(96,64,176,.30)"; pg.fillRect(0,0,PW,PH); }   /* [0726 item 4] violet sleep veil over the whole frame: the 0710 hue-265 sky write (dream():_skyHue=265) lands on a 6%-lightness fill and was unreadable; this dims + washes so the dream visibly reads as sleep. zzz pixels + eyes stay visible through it; #dreamCap carries the words. */
-  cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false; cx.drawImage(px,0,0,PW,PH,0,0,W,H); }
+  cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false; cx.drawImage(px,0,0,PW,PH,0,0,W,H); if(_gbF) _gbF.draw(cx,W,H,{t:t,emotion:emotion,eye:P.eye,smile:_smileR,energy:moodCur.e,blink:t<blinkUntil,paused:paused,dreaming:dreaming,think:_think,orbit:_oa,looking:_looking,gx:gx2/3,gy:gy2/2,touchT:_lt?_lt.t:0,shake:shakeCur,talking:Date.now()<speakingUntil,glow:col}); }
 var _msCtx=null, _voiceToasted=false;                                                    // meSpeak's private-ctx handle + once-per-return "tap to wake my voice" latch
 function _speakCtx(){ try{ if(!_msCtx&&typeof meSpeak!=="undefined"&&meSpeak.getAudioAnalyser){ var a=meSpeak.getAudioAnalyser(); _msCtx=a&&a.context||null; } }catch(e){} return _msCtx; }   // the analyser is the ONLY exposed handle to meSpeak's internal AudioContext — unlockAudio() throws arg-less and is once-latched, useless after boot
 /* ---- 0818 FIREFOX ANDROID: TOTAL SILENCE (a tester via an outside agent, mechanism localized in their report and
