@@ -1,6 +1,6 @@
 # The jerv prompt cache
 
-> **Status:** Living · **Last verified:** 2026-10-31
+> **Status:** Living · **Last verified:** 2026-11-10
 
 How the interactive agent's ~30k-token prefix is kept ready, what it costs when it is not,
 and — the part that did not exist until 2026-09-18 — how to tell which of those is happening.
@@ -74,7 +74,7 @@ Saves are not gated. The state read and Ops show `awaiting_probe | passed | fail
 
 ## On Flash-Next: one prefix per role, and conversation files (F4)
 
-Flash-Next serves ten role-pinned slots over one shared KV pool
+Flash-Next serves eleven role-pinned slots over one shared KV pool
 (`../plans/FLASH_NEXT_ENGINE_PLAN.md` §4a), so the store works per **role**:
 
 - jerv's prime is saved from a chat slot and restored into the chat slots (the chat pair,

@@ -180,7 +180,7 @@ _FLASH_NEXT_RUNTIME_OVERHEAD_GB = 0.0
 #
 #   88.1 on disk - 28.4 = 59.7 weights + 0.47 vision = 60.2 fixed (the fit's)
 #   + 14.0 KV for the 512k pool (3.5 x 4)             = 74.2 device (the fit's 74.2)
-#   + 8.8 host-only checkpoints (8 per slot x 10 x 0.11) = 83.0 footprint (eviction and meter)
+#   + 9.7 host-only checkpoints (8 per slot x 11 x 0.11) = 83.9 footprint (eviction and meter)
 #
 # A load is admitted on the device figure alone — see `_lazy_checkpoints` — so with the 6 GiB
 # floor it needs ~80 GiB free.
@@ -1245,9 +1245,9 @@ CATALOG: tuple[LocalModel, ...] = (
         note="125B MoE (~6B active) + a 51B n-gram engram table, text + vision — a hybrid "
         "reasoner meant to replace the gpt-oss-120b + Qwen3.8-27B pair on its own engine "
         "(FLASH_NEXT_ENGINE_PLAN). Served from the separate Flash-Next container as one shared "
-        "512k-token pool across ten role-pinned slots (two of them jerv's chat pair); never "
+        "512k-token pool across eleven role-pinned slots (two of them jerv's chat pair); never "
         "co-resident with the standard gateway. ~88 GiB on disk; booked at the measured ~74 GiB "
-        "on the GPU plus up to ~9 GiB of host-side prompt checkpoints (~83 GiB in all), and a "
+        "on the GPU plus up to ~10 GiB of host-side prompt checkpoints (~84 GiB in all), and a "
         "load needs ~80 GiB free.",
         supports_reasoning=True,
         reasoning_format="deepseek",
@@ -1738,6 +1738,22 @@ def jcode_models(
         and m.id in installed
         and m.supports_tools
         and engines.parse(m.engine) == engine
+    )
+
+
+def growbot_models(
+    local_llm_enabled: bool,
+    local_models: Sequence[str],
+    engine: engines.Engine = engines.STANDARD,
+) -> tuple[LocalModel, ...]:
+    """Installed local models of `engine` — the set the GrowBot creature may think on, and the
+    allow-list of its proxy (api.growbot_llm). A chat with no tools, so unlike `jcode_models`
+    no tool support is required; `supports_vision` says which can see the camera."""
+    installed = set(local_models)
+    return tuple(
+        m
+        for m in CATALOG
+        if local_llm_enabled and m.id in installed and engines.parse(m.engine) == engine
     )
 
 

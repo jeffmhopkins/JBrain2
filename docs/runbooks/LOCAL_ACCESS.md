@@ -1,6 +1,6 @@
 # Local-network access (sign in when the internet is down)
 
-> **Status:** Living · **Last verified:** 2026-10-12
+> **Status:** Living · **Last verified:** 2026-11-10
 
 The Cloudflare Tunnel (`docs/runbooks/CLOUDFLARE_TUNNEL.md`) is how you reach JBrain from
 *outside* your house. But it depends on the internet: a power blip that takes the
@@ -114,7 +114,13 @@ one-time step per device.
 ## Notes
 
 - **No new exposure.** The LAN site reuses the already-published `443` port; it
-  adds no port-forwarding and nothing reachable from the internet. mDNS
+  adds no port-forwarding and nothing reachable from the internet.
+- **The GrowBot site on `:8444`.** The same address also gets
+  `https://jbrain.local:8444`, the desk robot's creature app (`growbot/README.md`), on its own
+  port because a different port is a different origin and the app's paths collide with the
+  PWA's. The proxy publishes `8444` on the box for the LAN (forward it nowhere). Same internal
+  CA, so the same certificate warning and the same one-time root install apply. Blanking
+  `JBRAIN_LAN_ADDR` drops it with the LAN site. `8443`, the owner site, is never published. mDNS
   (UDP 5353) is link-local — it does not leave your LAN.
 - **Works alongside any access mode.** Tunnel mode (HTTP public site on :80) and
   direct mode (Let's Encrypt on :443) both coexist with the LAN HTTPS site;

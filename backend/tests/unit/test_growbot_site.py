@@ -1,0 +1,189 @@
+"""The committed GrowBot site (growbot/site/, built by growbot/patches/apply.py).
+
+The box serves growbot/site/ straight from the bind mount, so these hold the plan's promises
+on the bytes that ship (docs/plans/GROWBOT_PLAN.md §2, §2a): every speech path goes through
+the box, nothing points the page at a third-party origin, the CSP hashes match the inline
+code they allow, the vendored assets are the pinned ones, and the firmware dials the box.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import re
+import sys
+from pathlib import Path
+
+import pytest
+
+_GROWBOT = Path(__file__).resolve().parents[3] / "growbot"
+_SITE = _GROWBOT / "site"
+_FIRMWARE = _GROWBOT / "firmware"
+
+
+def _load_apply():
+    path = _GROWBOT / "patches" / "apply.py"
+    spec = importlib.util.spec_from_file_location("growbot_apply", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["growbot_apply"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+apply = _load_apply()
+
+_PAGES = sorted(_SITE.rglob("*.html"))
+# Upstream's own code, which the vendored bundles are not: those carry their projects' default
+# CDN strings for code paths the app never takes, and the CSP refuses them regardless.
+_PIN = json.loads((_GROWBOT / "patches" / "upstream.json").read_text())
+_VENDORED = {e["path"] for e in _PIN["vendor"]}
+_CODE = [
+    p
+    for p in sorted(_SITE.rglob("*"))
+    if p.suffix in {".html", ".js", ".mjs"} and p.relative_to(_SITE).as_posix() not in _VENDORED
+]
+
+
+def test_site_has_pages_and_the_creature() -> None:
+    assert (_SITE / "v3" / "next.html").is_file()
+    assert _PAGES
+
+
+@pytest.mark.parametrize("page", _PAGES, ids=lambda p: p.relative_to(_SITE).as_posix())
+def test_every_page_loads_the_box_voice_first(page: Path) -> None:
+    first = re.search(r"<script[^>]*>", page.read_text(encoding="utf-8"))
+    assert first is not None
+    assert first.group(0) == '<script src="/growbot-box.js">'
+
+
+def test_the_box_voice_replaces_speech_synthesis_and_posts_to_the_box() -> None:
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert 'Object.defineProperty(window, "speechSynthesis"' in shim
+    assert 'fetch("/api/fish-tts"' in shim
+    assert re.search(r"https?://", shim) is None
+
+
+def test_mespeak_is_not_shipped_and_kokoro_is_the_only_engine() -> None:
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "/v2/mespeak.js" not in creature
+    assert not (_SITE / "v2" / "mespeak.js").exists()
+    assert 'var vtEngine="fish"' in creature
+    assert '<option value="robot">' not in creature
+    assert '<option value="device">' not in creature
+    assert re.search(r'vtEngine=(?!=)[^;]*"(robot|device)"', creature) is None
+
+
+@pytest.mark.parametrize("path", _CODE, ids=lambda p: p.relative_to(_SITE).as_posix())
+def test_no_third_party_origin_in_code(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    for origin in (
+        "growbot-relay.growbot.workers.dev",
+        "fonts.googleapis.com",
+        "fonts.gstatic.com",
+        "cdn.jsdelivr.net",
+        "storage.googleapis.com",
+        "/feedback-widget.js",
+    ):
+        assert origin not in text, origin
+
+
+def test_relay_dials_the_page_origin() -> None:
+    relay = (_SITE / "relay-transport.js").read_text(encoding="utf-8")
+    assert "RELAY_DEFAULT = (location.protocol === 'https:' ? 'wss://' : 'ws://')" in relay
+
+
+def test_csp_hashes_match_the_inline_code_shipped() -> None:
+    expected: set[str] = set()
+    handlers = False
+    for page in _PAGES:
+        page_hashes, page_handlers = apply.csp_hashes(page.read_text(encoding="utf-8"))
+        expected |= page_hashes
+        handlers = handlers or page_handlers
+    csp = json.loads((_SITE / "csp.json").read_text())
+    assert set(csp["script_hashes"]) == expected
+    assert csp["unsafe_hashes"] is handlers
+
+
+@pytest.mark.parametrize("entry", _PIN["vendor"], ids=lambda e: e["path"])
+def test_vendored_assets_are_the_pinned_bytes(entry: dict[str, str]) -> None:
+    data = (_SITE / entry["path"]).read_bytes()
+    assert hashlib.sha256(data).hexdigest() == entry["sha256"]
+    assert entry["url"].startswith("https://")
+
+
+def test_firmware_dials_the_box_with_its_key() -> None:
+    chip = (_FIRMWARE / "relay_chip.py").read_text(encoding="utf-8")
+    assert 'HOST = getattr(_box, "GROWBOT_HOST", None)' in chip
+    assert "socket.getaddrinfo(HOST, PORT)" in chip
+    assert "s = _wrap(raw)" in chip
+    assert "ctx.verify_mode = ssl.CERT_REQUIRED" in chip
+    assert 'raise RuntimeError("secrets.py has no GROWBOT_HOST' in chip
+    assert '"key": ROBOT_KEY' in chip
+    assert "% (PATH, SNI, key)" in chip
+    compile(chip, "relay_chip.py", "exec")
+
+
+def test_csp_hashes_cover_tags_handlers_and_innerhtml_handlers() -> None:
+    page = (
+        '<p onclick="a(&quot;x&quot;)">t</p>'
+        '<script src="/x.js" onerror="e()"></script>'
+        "<script>h('<b onclick=\"f(\\'y\\')\">');</script>"
+    )
+    hashes, handlers = apply.csp_hashes(page)
+    assert handlers is True
+    assert apply._sha(b'a("x")') in hashes
+    assert apply._sha(b"e()") in hashes
+    assert apply._sha(b"f('y')") in hashes
+    assert apply._sha(b"h('<b onclick=\"f(\\'y\\')\">');") in hashes
+    assert len(hashes) == 4
+
+
+def test_a_patch_that_no_longer_matches_fails_loudly(tmp_path: Path) -> None:
+    (tmp_path / "a.js").write_text("one\n")
+    with pytest.raises(apply.PatchError, match="expected 1"):
+        apply._patch(tmp_path, [("a.js", "two", "three", 1)])
+    apply._patch(tmp_path, [("a.js", "one", "uno", 1)])
+    assert (tmp_path / "a.js").read_text() == "uno\n"
+
+
+def test_a_vendored_asset_with_the_wrong_hash_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "x.bin").write_bytes(b"tampered")
+    entry = {"path": "x.bin", "url": "https://example.invalid/x", "sha256": "0" * 64}
+    with pytest.raises(apply.PatchError, match="sha256"):
+        apply._fetch(entry, tmp_path)
+
+
+# A runtime load of an absolute URL: fetch, import, a socket, a worker, or a src/href that the
+# browser follows on its own. A link a person taps is not one of these.
+_RUNTIME_LOAD = re.compile(
+    r"""(?:fetch|import|WebSocket|EventSource|Worker|SharedWorker|importScripts)\s*\(\s*["'`]https?://"""
+    r"""|<(?:script|img|audio|video|source|iframe|link)\b[^>]*\s(?:src|href)=["']https?://""",
+    re.I,
+)
+
+
+@pytest.mark.parametrize("path", _CODE, ids=lambda p: p.relative_to(_SITE).as_posix())
+def test_no_runtime_load_of_any_absolute_url(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert _RUNTIME_LOAD.search(text) is None
+
+
+def test_handler_shapes_the_build_cannot_hash_are_refused() -> None:
+    assert apply._unsupported_handlers("el.setAttribute('onclick', 'x()')")
+    assert apply._unsupported_handlers('h("<b onclick=\\"x()\\">")')
+    assert apply._unsupported_handlers('<b onclick="x()">') == []
+
+
+def test_a_failed_build_leaves_the_committed_tree_untouched(tmp_path: Path) -> None:
+    upstream = tmp_path / "upstream"
+    (upstream / "app").mkdir(parents=True)
+    (upstream / "app" / "relay-transport.js").write_text("changed upstream\n")
+    out = tmp_path / "out"
+    (out / "site").mkdir(parents=True)
+    (out / "site" / "kept.txt").write_text("committed\n")
+    with pytest.raises(apply.PatchError):
+        apply.build(upstream, out, None)
+    assert (out / "site" / "kept.txt").read_text() == "committed\n"
+    assert sorted(p.name for p in out.iterdir()) == ["site"]

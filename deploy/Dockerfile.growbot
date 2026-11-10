@@ -1,0 +1,10 @@
+# The `growbot` sidecar (growbot/server/serve.py): the GrowBot creature app, its /api shim and
+# the robot relay, behind Caddy's LAN site on :8444 (docs/plans/GROWBOT_PLAN.md §2).
+#
+# Stdlib-only Python, like the wall: HTTP/1.1 and the WebSocket server are implemented in
+# serve.py, so there is nothing to install. `growbot/` is BIND-MOUNTED read-only at /app and
+# run via the compose `command`, so Ops -> Update serves a new page or server with no rebuild;
+# only a base bump rebuilds.
+FROM python:3.12-slim
+
+# No app COPY and no packages: serve.py and the built site/ are bind-mounted at /app.

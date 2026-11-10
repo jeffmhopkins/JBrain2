@@ -38,6 +38,10 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
+      # The GrowBot site (proxy-lan-conf.sh): its own origin for an app whose root-absolute
+      # paths collide with the PWA's. Only rendered while JBRAIN_LAN_ADDR is set. 8443, the
+      # owner site, stays unpublished.
+      - "8444:8444"
     environment:
       # Direct mode: the bare domain (Caddy fetches Let's Encrypt). Tunnel mode:
       # http://<domain> (plain HTTP behind Cloudflare). Defaults to JBRAIN_DOMAIN
@@ -271,6 +275,10 @@ services:
       # and the wall and nothing else: that screen hands out the code that enrolls an owner
       # phone (docs/plans/OWNER_TUNNEL_PLAN.md §3.5).
       - enroll_secrets:/run/jbrain-enroll
+      # The GrowBot sidecar's token alone (`growbot.token`), mounted by the api and the
+      # `growbot` service and nothing else: that sidecar serves vendored upstream code on a
+      # LAN port, so it must not hold every caller's token (docs/plans/GROWBOT_PLAN.md §2).
+      - growbot_secrets:/run/jbrain-growbot
       # The owner tunnel's keys (docs/plans/OWNER_TUNNEL_PLAN.md §3.1), written by the
       # `owner-keys ensure` one-shot each update. `owner_keys` holds the CA private keys and
       # is mounted nowhere else; `owner_site` is what the proxy will read.
@@ -291,7 +299,7 @@ services:
     # fenced network the headless browser sits on (BROWSER_AGENT_PLAN.md §2): the api drives
     # it over MCP, and `test_browser_compose.py` asserts nothing else but the egress proxy
     # joins it.
-    networks: [edge, internal, jcode_fenced, jlaunch, render, radio, sandbox, panel, browser, fetchers]
+    networks: [edge, internal, jcode_fenced, jlaunch, render, radio, sandbox, panel, browser, fetchers, growbot_lane]
     # `host.docker.internal` -> the host, for the host-networked Minecraft sidecar.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -450,6 +458,36 @@ services:
       # it shows the one-time QR, so it must never be published to the LAN.
       - "127.0.0.1:8802:8802"
     networks: [internal]
+
+  # The GrowBot desk robot's brain (growbot/, docs/plans/GROWBOT_PLAN.md): the creature's web
+  # app, its /api shim (the api's model lane, tts-stt's Kokoro and whisper) and the robot
+  # relay. Default-on, since a profile would need a `.env` edit (CLAUDE.md #10). Like the wall,
+  # stdlib-only and bind-mounted read-only, so Ops -> Update ships a new page with no rebuild.
+  # No published port: it is reached only through Caddy's LAN site on :8444, which strips
+  # every cookie but its own (proxy-lan-conf.sh). `edge` for Caddy, `internal` for api and
+  # tts-stt.
+  growbot:
+    logging: *logbound
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.growbot
+    restart: unless-stopped
+    command: ["python3", "/app/server/serve.py"]
+    environment:
+      GROWBOT_PORT: "8810"
+      GROWBOT_SITE: /app/site
+      GROWBOT_API_URL: http://api:8000
+      GROWBOT_TTS_URL: http://tts-stt:8801
+      GROWBOT_STT_URL: http://tts-stt:8080/v1
+      GROWBOT_TOKEN_FILE: /run/jbrain-growbot/growbot.token
+    volumes:
+      - ./src/growbot:/app:ro
+      # Its own volume, not `internal_secrets`: it holds growbot.token alone, read per request
+      # so it works whichever of api and growbot starts first.
+      - growbot_secrets:/run/jbrain-growbot:ro
+    # Not `internal`: it serves vendored upstream code on a LAN port, so it gets a route to
+    # the api and the voice and nothing else (no db, supervisor, or model gateway).
+    networks: [edge, growbot_lane]
 
   # OPT-IN local model gateway: llama-swap fronting llama.cpp (Vulkan) so several
   # GGUF models share one OpenAI-compatible endpoint, loaded/swapped on demand.
@@ -658,7 +696,7 @@ services:
     volumes:
       - ./whisper-models:/models:ro
       - ./src/deploy/tts-stt:/tts:ro
-    networks: [internal]
+    networks: [internal, growbot_lane]
 
   # OPT-IN code mode (docs/archive/JCODE_PLAN.md): a sandboxed coding-session
   # service running xAI's Grok Build (`grok`) against an ON-BOX coder model, fronted
@@ -1408,6 +1446,10 @@ networks:
   # one way to anything is the egress proxy's deny list. New, not a flag flip on `internal`.
   fetchers:
     internal: true
+  # EGRESS-FREE by declaration: only `growbot`, `api` and `tts-stt` join it, so the GrowBot
+  # sidecar reaches the two services it calls and has no route to anything else on the box.
+  growbot_lane:
+    internal: true
   # The egress proxy's internet side. Only `egress` joins it, so nothing else gains a route
   # out through it and the proxy itself has no route to `internal`.
   browser_out:
@@ -1418,6 +1460,8 @@ volumes:
   # fresh ones into an empty volume on its next start.
   internal_secrets:
   enroll_secrets:
+  # growbot.token alone (api writes, growbot reads), split out like enroll_secrets.
+  growbot_secrets:
   # The house's DNS: AdGuard's config (blocklists and rules the owner added) and its week
   # of query log and stats.
   adguard_conf:

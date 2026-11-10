@@ -651,7 +651,7 @@ const LLM_SETTINGS: LlmSettings = {
       size_gb: 88.1,
       disk_gb: 88.1,
       download_gb: null,
-      note: "125B MoE (~6B active) + a 51B n-gram engram table — served from its own engine with one shared KV pool across ten role-pinned slots.",
+      note: "125B MoE (~6B active) + a 51B n-gram engram table — served from its own engine with one shared KV pool across eleven role-pinned slots.",
       context_window: 262144,
       max_context_window: 262144,
       context_window_override: null,
