@@ -167,3 +167,272 @@
     navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
   });
 })();
+
+/* A persona's soul lives on the box (plan §2c, wave G4b). The creature keeps its whole soul in
+   one localStorage key, pb2_soul (soul.js), read once as the page boots. So before any page code
+   runs, this pulls the box's copy into that key, and moves the page onto the robot the persona
+   wears (or off any robot); while it runs, every write of the key is pushed back against the
+   version it came from, and a poll notices an owner's edit, a hand-over or a deletion.
+   gb_box_soul, shared by the phone's tabs, is {persona, version, dirty}: a write not yet on the
+   box survives a closed page or a box that did not answer, and is sent later, only ever into
+   the persona it came from (the box refuses a push that names another).
+   A G2 session (no persona) gets 204 and the creature keeps its soul on the phone, as before;
+   gb_phone_soul keeps that creature while the phone wears a persona, and gives it back. */
+(function () {
+  "use strict";
+  if (location.pathname !== "/v3/next.html") return;
+  var KEY = "pb2_soul", META = "gb_box_soul", OWN = "gb_phone_soul", PATH = "/api/box/persona";
+  var POLL_MS = 10000, PUSH_AFTER_MS = 1500, IDLE_MS = 20000;
+  var store;
+  try { store = window.localStorage; store.getItem(KEY); } catch (e) { return; }
+  var realSet = Storage.prototype.setItem;
+
+  // Read fresh every time: another tab of this phone may have pushed since.
+  function meta() {
+    try {
+      var m = JSON.parse(store.getItem(META) || "null");
+      return m && typeof m === "object" ? m : {};
+    } catch (e) { return {}; }
+  }
+  function setMeta(m) { try { realSet.call(store, META, JSON.stringify(m)); } catch (e) {} }
+  function put(key, value) { try { realSet.call(store, key, value); return true; } catch (e) { return false; } }
+
+  // Synchronous on purpose: pb2_soul must hold the box's soul before soul.js reads it.
+  function sync(method, path, body) {
+    var r = new XMLHttpRequest();
+    try {
+      r.open(method, path, false);
+      if (body) r.setRequestHeader("content-type", "application/json");
+      r.send(body || null);
+    } catch (e) { return { status: 0, json: null }; }
+    var json = null;
+    try { json = JSON.parse(r.responseText); } catch (e) {}
+    return { status: r.status, json: json };
+  }
+
+  function localSoul() {
+    try { return JSON.parse(store.getItem(KEY) || "null"); } catch (e) { return null; }
+  }
+
+  function stopWith(title, text) {
+    try { window.stop(); } catch (e) {}
+    document.documentElement.innerHTML =
+      '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+      "<title>GrowBot</title><style>" +
+      "body{margin:0;background:#0b0b1a;color:#e6edf3;font:17px/1.5 system-ui,sans-serif}" +
+      "main{max-width:480px;margin:0 auto;padding:48px 16px;display:grid;gap:16px}" +
+      "h1{font-size:1.4rem;margin:0}p{margin:0;color:#b8c4cf}" +
+      "a{display:block;text-align:center;padding:12px 16px;border-radius:10px;border:1px solid #7fd89a;" +
+      "color:#7fd89a;font-weight:600;text-decoration:none}</style></head>" +
+      "<body><main><h1></h1><p></p><a href=\"/start\">Try again</a></main></body>";
+    document.querySelector("h1").textContent = title;
+    document.querySelector("p").textContent = text;
+  }
+
+  function away(status) {
+    if (status === 404) {
+      stopWith("This creature isn't on the box any more",
+        "It was deleted. Open another one from JBrain on your main phone: GrowBot, then Open.");
+    } else {
+      stopWith("This creature is open on another phone",
+        "It lives on one phone at a time. To bring it back here, open it from JBrain on your " +
+        "main phone: GrowBot, then Open.");
+    }
+  }
+
+  // Only the robot is compared, so the page's own query (and how it spells it) never loops.
+  function onRobot(wearing) {
+    var q = new URLSearchParams(location.search);
+    return (q.get("id") || "").toLowerCase() === wearing.toLowerCase() && q.get("mode") === "legs";
+  }
+  function moveTo(wearing) {
+    var q = new URLSearchParams(location.search);
+    if (wearing) q.set("id", wearing); else q.delete("id");
+    q.set("mode", "legs");
+    location.replace(location.pathname + "?" + q.toString() + location.hash);
+  }
+
+  function isAway(status, json) {
+    return status === 404 || (status === 409 && json && json.error === "moved");
+  }
+  // The box will never take this write (not its persona's, too big, not a soul): let it go.
+  function refused(status, json) {
+    return status === 413 || status === 400 ||
+      (status === 409 && json && (json.error === "newer" || json.error === "other"));
+  }
+
+  var state = sync("GET", PATH + "/state");
+  if (state.status === 204) {
+    // A G2 session: the phone's own creature comes back if a persona had the key (or one
+    // was set aside and the key since dropped).
+    var own = null;
+    try { own = store.getItem(OWN); } catch (e) {}
+    if (own || meta().persona) {
+      try { if (own) realSet.call(store, KEY, own); else store.removeItem(KEY); store.removeItem(OWN); } catch (e) {}
+      setMeta({});
+    }
+    return;
+  }
+  if (isAway(state.status, state.json)) { away(state.status); return; }
+  var persona = state.status === 200 && state.json ? state.json.persona : "";
+  var m = meta();
+
+  // 1. A write the box never got. Kept (and the page runs on it) until the box takes it or
+  //    says it never will; dropped when it belongs to a persona this phone no longer holds.
+  var keep = false;
+  if (m.dirty && persona && m.persona === persona) {
+    var pending = localSoul();
+    if (pending) {
+      var sent = sync("POST", PATH, JSON.stringify({ persona: m.persona, base: m.version, soul: pending }));
+      if (isAway(sent.status, sent.json)) { away(sent.status); return; }
+      if (sent.status === 200 && sent.json) setMeta({ persona: persona, version: sent.json.version, dirty: false });
+      else keep = !refused(sent.status, sent.json);
+    }
+  } else if (m.dirty && !persona) {
+    keep = true;   // the box did not answer: nothing is known yet, so nothing is thrown away
+  }
+
+  // 2. The box's soul, which every write this page makes starts from.
+  var wearing = persona ? state.json.wearing || "" : null;
+  if (!keep) {
+    var pulled = sync("GET", PATH);
+    if (isAway(pulled.status, pulled.json)) { away(pulled.status); return; }
+    if (pulled.status === 200 && pulled.json && pulled.json.soul) {
+      if (!meta().persona) {
+        // The phone's own creature (a G2 session's, or none) is set aside, not lost, and
+        // never replaced by whatever ran while the box was out of reach.
+        var mine = null, kept = null;
+        try { mine = store.getItem(KEY); kept = store.getItem(OWN); } catch (e) {}
+        if (mine && !kept) put(OWN, mine);
+      }
+      if (!put(KEY, JSON.stringify(pulled.json.soul))) return;
+      setMeta({ persona: pulled.json.persona, version: pulled.json.version, dirty: false });
+      wearing = pulled.json.wearing || "";
+    } else if (!meta().persona) {
+      // Nothing from the box and nothing of a persona here: the creature runs as it is.
+      return;
+    }
+  }
+
+  // 3. On the robot the persona wears, or on none: the relay lets only the rider drive.
+  if (wearing !== null) {
+    if (!wearing) { try { store.removeItem("gb_walk_id"); } catch (e) {} }
+    if (!onRobot(wearing)) { moveTo(wearing); return; }
+  }
+
+  // 4. Every write of the soul goes to the box, a moment after the last one, as the persona
+  //    this tab loaded: a tab still open on a persona the phone has since swapped never
+  //    pushes into the new one, whatever the shared meta now says.
+  var loaded = meta().persona;
+  var gen = 0, timer = 0, inflight = false, lastInput = Date.now(), held = false;
+  Storage.prototype.setItem = function (key) {
+    var out = realSet.apply(this, arguments);
+    if (this === store && key === KEY && !held) {
+      gen++;
+      var now = meta();
+      now.dirty = true;
+      setMeta(now);
+      clearTimeout(timer);
+      timer = setTimeout(push, PUSH_AFTER_MS);
+    }
+    return out;
+  };
+
+  function reloadWhenIdle() {
+    if (document.hidden || Date.now() - lastInput > IDLE_MS) location.reload();
+    else setTimeout(reloadWhenIdle, 5000);
+  }
+
+  function push() {
+    if (held) return;
+    if (inflight) { timer = setTimeout(push, PUSH_AFTER_MS); return; }
+    var soul = localSoul(), at = meta();
+    if (!soul || !loaded) return;
+    if (at.persona !== loaded) { held = true; location.reload(); return; }
+    var mine = gen;
+    inflight = true;
+    fetch(PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ persona: loaded, base: at.version, soul: soul }),
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
+    }).then(function (r) {
+      inflight = false;
+      if (r.status === 200 && r.json && typeof r.json.version === "number") {
+        var now = meta();
+        now.version = r.json.version;
+        if (mine === gen) now.dirty = false;
+        setMeta(now);
+        if (mine !== gen) timer = setTimeout(push, PUSH_AFTER_MS);
+      } else if (r.status === 409 && r.json && r.json.error === "newer") {
+        // The owner changed it from JBrain: their edit wins, and the page restarts on it.
+        held = true;
+        var after = meta();
+        after.dirty = false;
+        setMeta(after);
+        reloadWhenIdle();
+      } else if (r.status === 409 && r.json && r.json.error === "other") {
+        // A persona this phone no longer holds: its soul is on the box, not this phone's to
+        // keep or to set aside as the phone's own.
+        held = true;
+        setMeta({});
+        try { store.removeItem(KEY); } catch (e) {}
+        location.reload();
+      } else if (isAway(r.status, r.json)) {
+        held = true;
+        location.reload();
+      } else if (r.status !== 413 && r.status !== 400) {
+        // A box that did not answer: try again (a soul the box refuses waits for the next write).
+        timer = setTimeout(push, POLL_MS);
+      }
+    }).catch(function () {
+      inflight = false;
+      timer = setTimeout(push, POLL_MS);
+    });
+  }
+  if (meta().dirty) timer = setTimeout(push, PUSH_AFTER_MS);
+
+  // 5. An owner's edit, a hand-over or a deletion, noticed within a poll.
+  function poll() {
+    fetch(PATH + "/state").then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
+    }).then(function (r) {
+      if (isAway(r.status, r.json)) { held = true; location.reload(); return; }
+      if (r.status !== 200 || !r.json) return;
+      if (!onRobot(r.json.wearing || "")) { held = true; location.reload(); return; }
+      var now = meta();
+      if (r.json.version > (now.version || 0) && !now.dirty && !inflight) { held = true; reloadWhenIdle(); }
+    }).catch(function () {});
+  }
+  setInterval(function () { if (!document.hidden) poll(); }, POLL_MS);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) poll();
+    else if (meta().dirty && !inflight) push();
+  });
+  ["pointerdown", "keydown", "touchstart"].forEach(function (type) {
+    window.addEventListener(type, function () { lastInput = Date.now(); }, { capture: true, passive: true });
+  });
+})();
+
+/* Pairing is JBrain's (plan §2c): the relay refuses a code typed into the creature, so its own
+   pairing box (a prompt, behind Pair and Reconnect) says where pairing is done instead. */
+(function () {
+  "use strict";
+  var realPrompt = window.prompt;
+  window.prompt = function (message) {
+    if (/pairing code/i.test(String(message))) {
+      var note = document.createElement("div");
+      note.textContent = "Robots are paired from JBrain, on its GrowBot screen.";
+      note.setAttribute("role", "status");
+      note.style.cssText =
+        "position:fixed;left:16px;right:16px;bottom:24px;z-index:2147483647;padding:12px 16px;" +
+        "border-radius:10px;background:#151a2b;color:#e6edf3;border:1px solid #7fd89a;" +
+        "font:16px/1.4 system-ui,sans-serif;text-align:center";
+      document.body.appendChild(note);
+      setTimeout(function () { note.remove(); }, 4000);
+      return null;
+    }
+    return realPrompt.apply(window, arguments);
+  };
+})();
