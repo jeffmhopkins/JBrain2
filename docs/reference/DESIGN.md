@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-11-01
+> **Status:** Living · **Last verified:** 2026-11-10
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -713,12 +713,12 @@ checkpoint sidecar Flash-Next's restore gate relies on).
 Sheet**; binding mock `docs/mocks/kv-pool/c-slot-sheet.html`, rivals A "summary that
 expands to a table" and B "stacked bar of caps" kept beside it with the round record in
 `docs/mocks/kv-pool/README.md`; behaviour `docs/plans/FLASH_NEXT_ENGINE_PLAN.md` F3b).
-Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 512k tokens) across **ten
+Flash-Next serves **one shared KV pool** (`kv_pool.n_ctx`, 512k tokens) across **eleven
 role-pinned slots**, each with a per-slot cap. Its window and slot count are the engine's,
 and the server refuses changes to them (409), so the per-model selects were a lie for it.
 
 - **Pool models only** (`kv_pool` non-null): the *context window* and *slots* selects give
-  way to one line — *KV pool · **512k** shared · 10 slots*, a strip of **ten slot ticks**,
+  way to one line — *KV pool · **512k** shared · 11 slots*, a strip of **one tick per slot**,
   and **View slots →**. Standard rows keep their selects; *keep loaded* and *image detail*
   are unchanged on both.
 - **The Sheet** (the shared `Sheet`, "Modal system") is read-only and says so: a lock and

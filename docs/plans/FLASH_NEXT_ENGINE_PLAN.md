@@ -1,6 +1,6 @@
 # Flash-Next engine — a switchable second local-LLM stack (Qwen3.8-Flash-Next)
 
-> **Status:** In progress · **Last verified:** 2026-10-10 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
+> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** F1✅ F2◻️ F3a✅ F3b◻️ F4🟡 F5◻️
 
 Run **Qwen3.8-Flash-Next** (text + image; 125B MoE with ~6B active, plus a 51B n-gram
 "engram" table) on the Strix Halo box as the **only** local LLM, in its own container,
@@ -199,7 +199,7 @@ every other range is dropped; §3a).
   context; our one-slot rule for speculation is our own (`llama_swap_config.py`), and the
   evidence on multi-slot MTP conflicts (#27836 reported cross-slot contamination and a net
   loss on Vulkan; a fork reported 40→47 tok/s). A later wave can measure it.
-- **Slots:** a catalog `kv_pool` (10 slots since 2026-10-06, 512k cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
+- **Slots:** a catalog `kv_pool` (10 slots since 2026-10-06, 11 since 2026-11-10 when GrowBot's slot was appended — `../plans/GROWBOT_PLAN.md` G1; 512k cells) with `default_slots` equal to its slot count, threaded through `render`, `footprint_gb`,
   `residency._slots` and the served shape. The settings cap `PARALLEL_SLOTS_MAX = 2`
   (`api/llm_settings.py`) becomes per-model.
 
