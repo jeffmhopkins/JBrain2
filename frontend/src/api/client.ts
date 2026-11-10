@@ -3968,6 +3968,89 @@ export interface GrowbotTicket {
   expires_at: string;
 }
 
+// ===== GrowBot personas (docs/plans/GROWBOT_PLAN.md §2c, wave G4) =====
+
+/** A creature's soul on the box. `phone` holds it now (null: not open); `wearing` is the robot
+ *  code it drives, or null. */
+export interface GrowbotPersona {
+  id: string;
+  name: string;
+  version: number;
+  made_from: string;
+  phone: string | null;
+  last_phone: string | null;
+  opened_at: string | null;
+  created_at: string;
+  updated_at: string;
+  checkpoints: number;
+  wearing: string | null;
+}
+
+export interface GrowbotCheckpoint {
+  id: string;
+  name: string;
+  auto: boolean;
+  why: string;
+  created_at: string;
+}
+
+/** An upstream soul_format 3 document. Only what the screen reads is typed; the rest is the
+ *  creature's own and passes through untouched. */
+export interface GrowbotSoul {
+  soul_format?: number;
+  meta?: { name?: string; description?: string; based_on?: string; kind?: string };
+  persona?: { constitution?: string };
+  dream?: { system_prompt?: string };
+  expression?: Record<string, unknown>;
+  harness?: Record<string, unknown>;
+  body?: Record<string, unknown>;
+  identity?: string;
+  identityCore?: string;
+  scratch?: { state?: string; mood?: unknown; rules?: unknown[] };
+  goals?: { wants?: unknown[]; selfName?: string };
+  log?: { t?: number; txt?: string }[];
+  [key: string]: unknown;
+}
+
+export interface GrowbotPersonaDetail extends GrowbotPersona {
+  soul: GrowbotSoul;
+  checkpoint_list: GrowbotCheckpoint[];
+}
+
+export interface GrowbotPhone {
+  id: string;
+  label: string;
+  created_at: string;
+  last_seen_at: string;
+}
+
+export interface GrowbotRider {
+  code: string;
+  persona: string | null;
+  since: string;
+}
+
+export interface GrowbotOverview {
+  personas: GrowbotPersona[];
+  phones: GrowbotPhone[];
+  body: GrowbotRider[];
+}
+
+/** A write's answer: the persona as it now is, and the automatic checkpoint made before the
+ *  write (the toast's Undo restores it). */
+export interface GrowbotWritten {
+  persona: GrowbotPersonaDetail;
+  checkpoint: GrowbotCheckpoint | null;
+}
+
+export type GrowbotRegion = "persona" | "expression" | "meta" | "dream" | "harness" | "body";
+
+/** What a ticket opens: a persona (the phone opens as it) and/or a robot (it wears that body). */
+export interface GrowbotTicketFor {
+  code?: string;
+  persona?: string;
+}
+
 export interface EndpointFirmware {
   version: string;
   url: string;
@@ -8028,9 +8111,111 @@ export const api = {
     await request("/api/growbot/sessions/reset", { method: "POST" });
   },
 
-  /** An empty `code` opens the creature with no robot: it runs on the phone, legs idle. */
-  async growbotTicket(code: string): Promise<GrowbotTicket> {
-    const response = await request("/api/growbot/ticket", jsonInit("POST", code ? { code } : {}));
+  /** A robot `code` (empty: none) or a persona, with or without a robot to wear. */
+  async growbotTicket(what: string | GrowbotTicketFor): Promise<GrowbotTicket> {
+    const body = typeof what === "string" ? (what ? { code: what } : {}) : what;
+    const response = await request("/api/growbot/ticket", jsonInit("POST", body));
     return (await response.json()) as GrowbotTicket;
+  },
+
+  async growbotPersonas(): Promise<GrowbotOverview> {
+    const response = await request("/api/growbot/personas");
+    return (await response.json()) as GrowbotOverview;
+  },
+
+  /** `seed` is a checkpoint whose personality it starts from; none is a fresh creature. */
+  async newGrowbotPersona(name: string, seed?: string): Promise<GrowbotPersonaDetail> {
+    const response = await request(
+      "/api/growbot/personas",
+      jsonInit("POST", seed ? { name, seed } : { name }),
+    );
+    return (await response.json()) as GrowbotPersonaDetail;
+  },
+
+  async growbotPersona(id: string): Promise<GrowbotPersonaDetail> {
+    const response = await request(`/api/growbot/personas/${encodeURIComponent(id)}`);
+    return (await response.json()) as GrowbotPersonaDetail;
+  },
+
+  async renameGrowbotPersona(id: string, name: string): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { name }),
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  async editGrowbotRegion(
+    id: string,
+    region: GrowbotRegion,
+    value: unknown,
+  ): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}/regions/${region}`,
+      jsonInit("PUT", { value }),
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  async duplicateGrowbotPersona(id: string): Promise<GrowbotPersonaDetail> {
+    const response = await request(`/api/growbot/personas/${encodeURIComponent(id)}/duplicate`, {
+      method: "POST",
+    });
+    return (await response.json()) as GrowbotPersonaDetail;
+  },
+
+  async resetGrowbotPersona(id: string): Promise<GrowbotWritten> {
+    const response = await request(`/api/growbot/personas/${encodeURIComponent(id)}/reset`, {
+      method: "POST",
+    });
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  async deleteGrowbotPersona(id: string): Promise<void> {
+    await request(`/api/growbot/personas/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  /** The soul file, with the name the box gave it for the download. */
+  async exportGrowbotPersona(id: string): Promise<{ blob: Blob; filename: string }> {
+    const response = await request(`/api/growbot/personas/${encodeURIComponent(id)}/export`);
+    const named = /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "");
+    return { blob: await response.blob(), filename: named?.[1] ?? "persona-soul.json" };
+  },
+
+  /** As a new persona (`name`), or over persona `over`, which is checkpointed first. */
+  async importGrowbotPersona(
+    soul: unknown,
+    into: { name?: string; over?: string },
+  ): Promise<GrowbotWritten> {
+    const response = await request(
+      "/api/growbot/personas/import",
+      jsonInit("POST", { soul, ...into }),
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  async saveGrowbotCheckpoint(id: string, name: string): Promise<GrowbotCheckpoint> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}/checkpoints`,
+      jsonInit("POST", { name }),
+    );
+    return (await response.json()) as GrowbotCheckpoint;
+  },
+
+  async restoreGrowbotCheckpoint(id: string, cid: string): Promise<GrowbotWritten> {
+    const response = await request(
+      `/api/growbot/personas/${encodeURIComponent(id)}/checkpoints/${encodeURIComponent(cid)}/restore`,
+      { method: "POST" },
+    );
+    return (await response.json()) as GrowbotWritten;
+  },
+
+  /** Who wears robot `code` (null: nobody); answers with the whole overview. */
+  async setGrowbotRider(code: string, persona: string | null): Promise<GrowbotOverview> {
+    const response = await request(
+      `/api/growbot/body/${encodeURIComponent(code)}`,
+      jsonInit("PUT", { persona }),
+    );
+    return (await response.json()) as GrowbotOverview;
   },
 };

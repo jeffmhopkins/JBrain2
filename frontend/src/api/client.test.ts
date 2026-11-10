@@ -252,6 +252,54 @@ describe("api GrowBot", () => {
     ]);
   });
 
+  it("reaches the persona routes with their methods and bodies", async () => {
+    const fetchMock = stub({ persona: {}, checkpoint: null });
+    const id = "00000000-0000-4000-8000-000000000001";
+    await api.growbotPersonas();
+    await api.newGrowbotPersona("Wren", "cp-1");
+    await api.renameGrowbotPersona(id, "Sprouty");
+    await api.editGrowbotRegion(id, "expression", { face: "ostrich" });
+    await api.saveGrowbotCheckpoint(id, "Picnic");
+    await api.restoreGrowbotCheckpoint(id, "cp-1");
+    await api.importGrowbotPersona({ soul_format: 3 }, { over: id });
+    await api.setGrowbotRider("gb-3fa91c", null);
+    await api.growbotTicket({ persona: id, code: "gb-3fa91c" });
+    const calls = fetchMock.mock.calls.map((c) => [String(c[0]), c[1]?.method, c[1]?.body]);
+    expect(calls).toEqual([
+      ["/api/growbot/personas", undefined, undefined],
+      ["/api/growbot/personas", "POST", JSON.stringify({ name: "Wren", seed: "cp-1" })],
+      [`/api/growbot/personas/${id}`, "PATCH", JSON.stringify({ name: "Sprouty" })],
+      [
+        `/api/growbot/personas/${id}/regions/expression`,
+        "PUT",
+        JSON.stringify({ value: { face: "ostrich" } }),
+      ],
+      [`/api/growbot/personas/${id}/checkpoints`, "POST", JSON.stringify({ name: "Picnic" })],
+      [`/api/growbot/personas/${id}/checkpoints/cp-1/restore`, "POST", undefined],
+      [
+        "/api/growbot/personas/import",
+        "POST",
+        JSON.stringify({ soul: { soul_format: 3 }, over: id }),
+      ],
+      ["/api/growbot/body/gb-3fa91c", "PUT", JSON.stringify({ persona: null })],
+      ["/api/growbot/ticket", "POST", JSON.stringify({ persona: id, code: "gb-3fa91c" })],
+    ]);
+  });
+
+  it("names an exported soul file after the box's download name", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("{}", {
+            headers: { "Content-Disposition": 'attachment; filename="sprout-soul.json"' },
+          }),
+      ),
+    );
+    const out = await api.exportGrowbotPersona("00000000-0000-4000-8000-000000000001");
+    expect(out.filename).toBe("sprout-soul.json");
+  });
+
   it("surfaces the box's refusal sentence as the error", async () => {
     stub({ detail: "The box has no readable certificate — it won't flash a robot." }, 409);
     await expect(

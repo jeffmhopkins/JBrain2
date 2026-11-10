@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import {
+  type GrowbotOverview,
   type GrowbotStatus,
   type MinecraftStatus,
   type MinecraftVersion,
@@ -120,7 +121,7 @@ const TILES: Tile[] = [
   // message from a four-year-old. Distinct from "Pet" (the phone remote for the wall).
   { title: "jpanel", icon: <ChatIcon size={24} />, target: "jpanel" },
   // The desk robot, beside the panels: opened every day, flashed once, so it is its own door
-  // and its second line says who is connected (docs/mocks/growbot-flash/b-growbot-screen.html).
+  // and its second line says who wears the body (DESIGN.md "GrowBot — the desk robot's screen").
   { title: "GrowBot", icon: <SproutIcon size={24} />, target: "growbot" },
   // Notices on the house's TVs, beside jpanel: the same family of thing, a different door,
   // because what you reach for is "put this on the TV" (docs/mocks/jpanel-cast).
@@ -307,7 +308,10 @@ export function Launcher({
     version: MinecraftVersion | null;
   }>({ status: null, version: null });
   // The GrowBot tile's second line. Unknown (no line) until read, and on any failure.
-  const [growbot, setGrowbot] = useState<GrowbotStatus | null>(null);
+  const [growbot, setGrowbot] = useState<{
+    status: GrowbotStatus;
+    overview: GrowbotOverview | null;
+  } | null>(null);
   // Config gate for the Image tile. Hydrated synchronously from the last-known
   // device-local value so the tile set is stable from the first paint (no N→N+1
   // count jump on open); null only on a device that has never resolved it, where
@@ -451,10 +455,9 @@ export function Launcher({
           if (!stale) setMc({ status: null, version: null });
         });
     const refreshGrowbot = () =>
-      api
-        .growbotStatus()
-        .then((out) => {
-          if (!stale) setGrowbot(out);
+      Promise.all([api.growbotStatus(), api.growbotPersonas().catch(() => null)])
+        .then(([status, overview]) => {
+          if (!stale) setGrowbot({ status, overview });
         })
         .catch(() => {
           if (!stale) setGrowbot(null);
@@ -509,7 +512,7 @@ export function Launcher({
   if (!open && !closing) return null;
 
   const mcTile = tileOf(mc.status, mc.version);
-  const gbTile = growbot ? tileLine(growbot) : null;
+  const gbTile = growbot ? tileLine(growbot.status, growbot.overview) : null;
 
   // Configuration gates (not owner choices): Image and Math only exist where enabled.
   const gated = (target: LauncherTarget) =>

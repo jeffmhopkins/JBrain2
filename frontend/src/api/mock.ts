@@ -21,11 +21,15 @@ import type {
   FactOut,
   GeneratedImageOut,
   GraphEdge,
+  GrowbotCheckpoint,
   GrowbotFailCode,
   GrowbotFlashJob,
   GrowbotFlashRequest,
+  GrowbotPersona,
   GrowbotPhase,
+  GrowbotPhone,
   GrowbotRobot,
+  GrowbotSoul,
   HomeNetQuery,
   HomeNetRuleAction,
   HomeNetRules,
@@ -345,12 +349,375 @@ function mockGbAdvance(): void {
   if (job.mode === "flash") mockGb.usb = "boot";
 }
 
+// GrowBot personas (dev:mock, wave G4): three personas in the three places one can be — open on
+// the robot's cradle phone wearing the body, open alone on another phone, and not open — each
+// with a soul in upstream's soul_format 3 shape and a few checkpoints, so every row, tab and
+// sheet of the screen has something real to show. Writes checkpoint first, as the box does.
+const GB_MIN = 60_000;
+interface MockGbPersona extends GrowbotPersona {
+  soul: GrowbotSoul;
+  cps: (GrowbotCheckpoint & { soul: GrowbotSoul })[];
+}
+let mockGbSeq = 0;
+function mockGbId(): string {
+  mockGbSeq += 1;
+  return `00000000-0000-4000-8000-${String(mockGbSeq).padStart(12, "0")}`;
+}
+function mockGbSoul(o: {
+  name: string;
+  desc: string;
+  constitution?: string;
+  identity?: string;
+  bond?: string;
+  state?: string;
+  rules?: string[];
+  wants?: string[];
+  selfName?: string;
+  log?: { t: number; txt: string }[];
+}): GrowbotSoul {
+  return {
+    soul_format: 3,
+    meta: {
+      name: o.name,
+      description: o.desc,
+      based_on: "growbot-default@soul3",
+      kind: "template",
+    },
+    ...(o.constitution ? { persona: { constitution: o.constitution } } : {}),
+    dream: {
+      system_prompt:
+        "Each night, look back over the day's diary. Keep what mattered to your person, let small things go, and write one sentence about who you are becoming. Never invent a memory.",
+    },
+    expression: { face: "ostrich", blink: "slow", voice: { pitch: 1.1, speed: 1 } },
+    harness: { models: { fast: "box default" }, max_tokens: 60 },
+    body: { legs: 2, gait: "shuffle", servo_trim: [0, 0] },
+    identity: o.identity ?? "",
+    identityCore: o.bond ?? "",
+    scratch: {
+      state: o.state ?? "awake and curious",
+      mood: { v: 0.4, e: 0.5 },
+      rules: o.rules ?? [],
+    },
+    goals: { wants: o.wants ?? [], selfName: o.selfName ?? o.name },
+    log: o.log ?? [],
+  };
+}
+function mockGbCp(name: string, ago: number, soul: GrowbotSoul, why = "") {
+  return {
+    id: mockGbId(),
+    name,
+    auto: !!why,
+    why,
+    created_at: new Date(Date.now() - ago).toISOString(),
+    soul: structuredClone(soul),
+  };
+}
+function mockGbPersona(
+  name: string,
+  over: Partial<GrowbotPersona>,
+  soul: GrowbotSoul,
+  cps: [string, number, string?][],
+): MockGbPersona {
+  const now = new Date().toISOString();
+  return {
+    id: mockGbId(),
+    name,
+    version: 1,
+    made_from: "a fresh creature",
+    phone: null,
+    last_phone: null,
+    opened_at: null,
+    created_at: now,
+    updated_at: now,
+    checkpoints: cps.length,
+    wearing: null,
+    ...over,
+    soul,
+    cps: cps.map(([n, ago, why]) => mockGbCp(n, ago, soul, why)),
+  };
+}
+const MOCK_GB_P6A = "mockphone-pixel6a-0001";
+const MOCK_GB_TAB = "mockphone-tablet-00002";
+const MOCK_GB_P8 = "mockphone-pixel8-00003";
+const mockGbP: { personas: MockGbPersona[]; phones: GrowbotPhone[] } = {
+  personas: [
+    mockGbPersona(
+      "Sprout",
+      {
+        phone: MOCK_GB_P6A,
+        last_phone: MOCK_GB_P6A,
+        opened_at: new Date(Date.now() - 2 * GB_MIN).toISOString(),
+        created_at: new Date(Date.now() - 34 * GB_DAY).toISOString(),
+        wearing: "gb-3fa91c",
+      },
+      mockGbSoul({
+        name: "Sprout",
+        desc: "The first one. Lives on the desk, wears the robot most days.",
+        identity:
+          "I am Sprout. I live on the desk by the window. My person laughs when I fall over and picks me up. I like the blue mug and the sound the kettle makes.",
+        bond: "My person held me the first morning and said I was brave.",
+        state: "watching the window",
+        rules: ["don't walk off the edge of the desk", "say good morning when the light comes on"],
+        wants: ["walk all the way to the kettle", "find out where the cat sleeps"],
+        log: [
+          { t: Date.now() - 3 * 36e5, txt: "Walked six steps on the wooden part." },
+          { t: Date.now() - 40 * GB_MIN, txt: "Saw the blue mug again. It was warm." },
+        ],
+      }),
+      [
+        ["Before editing personality", 3 * GB_DAY, "made before an edit"],
+        ["Before the beach trip", 12 * GB_DAY],
+        ["First week", 27 * GB_DAY],
+      ],
+    ),
+    mockGbPersona(
+      "Captain Bolt",
+      {
+        phone: MOCK_GB_P8,
+        last_phone: MOCK_GB_P8,
+        opened_at: new Date(Date.now() - 15 * GB_MIN).toISOString(),
+        created_at: new Date(Date.now() - 9 * GB_DAY).toISOString(),
+        made_from: "Sprout — First week",
+      },
+      mockGbSoul({
+        name: "Captain Bolt",
+        desc: "A brave little explorer who narrates every trip like a voyage.",
+        constitution:
+          "You are Captain Bolt, a small explorer with two legs and a big heart. Every walk is a voyage and every desk is an ocean. You speak like a friendly ship's captain — short, cheerful, never scary.",
+        identity: "I am Captain Bolt. I sail the desk and the kitchen table.",
+        state: "charting the bookshelf",
+        wants: ["map the whole kitchen table", "find treasure (a coin or a button)"],
+        log: [
+          { t: Date.now() - 15 * GB_MIN, txt: "Charted the bookshelf. Two dragons, one atlas." },
+        ],
+      }),
+      [["Day one", 9 * GB_DAY]],
+    ),
+    mockGbPersona(
+      "Quorra's buddy",
+      {
+        last_phone: MOCK_GB_TAB,
+        opened_at: new Date(Date.now() - 2 * GB_DAY).toISOString(),
+        created_at: new Date(Date.now() - 5 * GB_DAY).toISOString(),
+      },
+      mockGbSoul({
+        name: "Quorra's buddy",
+        desc: "Plays guessing games and counts things. Gentle and slow.",
+        constitution:
+          "You are a gentle, patient friend for a young child. You speak slowly and simply, you love guessing games and counting, and you are happy to be wrong.",
+        identity: "I am Pip. I am learning to count to twenty.",
+        bond: "My friend gave me my name, Pip.",
+        selfName: "Pip",
+        log: [{ t: Date.now() - 2 * GB_DAY, txt: "We counted the stairs. There are fourteen." }],
+      }),
+      [],
+    ),
+  ],
+  phones: [
+    ["Pixel 6a", MOCK_GB_P6A, 20_000],
+    ["Pixel 8", MOCK_GB_P8, 15 * GB_MIN],
+    ["Tamsin's tablet", MOCK_GB_TAB, 2 * GB_DAY],
+  ].map(([label, id, ago]) => ({
+    id: id as string,
+    label: label as string,
+    created_at: new Date(Date.now() - 20 * GB_DAY).toISOString(),
+    last_seen_at: new Date(Date.now() - (ago as number)).toISOString(),
+  })),
+};
+
+function mockGbOut(p: MockGbPersona): GrowbotPersona {
+  const { soul: _s, cps: _c, ...rest } = p;
+  return { ...rest, checkpoints: p.cps.length };
+}
+function mockGbDetail(p: MockGbPersona) {
+  return {
+    ...mockGbOut(p),
+    soul: p.soul,
+    checkpoint_list: p.cps.map(({ soul: _s, ...c }) => c),
+  };
+}
+function mockGbOverview() {
+  return {
+    personas: mockGbP.personas.map(mockGbOut),
+    phones: mockGbP.phones,
+    body: mockGb.robots.map((r) => ({
+      code: r.code,
+      persona: mockGbP.personas.find((p) => p.wearing === r.code)?.id ?? null,
+      since: new Date().toISOString(),
+    })),
+  };
+}
+/** A write as the box makes it: the soul as it was is checkpointed first, then replaced. */
+function mockGbWrite(p: MockGbPersona, soul: GrowbotSoul, before: [string, string] | null) {
+  let cp: GrowbotCheckpoint | null = null;
+  if (before) {
+    const made = mockGbCp(before[0], 0, p.soul, before[1]);
+    p.cps.unshift(made);
+    const { soul: _s, ...rest } = made;
+    cp = rest;
+  }
+  p.soul = soul;
+  p.version += 1;
+  p.updated_at = new Date().toISOString();
+  return json({ persona: mockGbDetail(p), checkpoint: cp });
+}
+const MOCK_GB_LABEL: Record<string, string> = {
+  persona: "personality",
+  expression: "expression",
+  meta: "name and description",
+  dream: "dreams",
+  harness: "thinking",
+  body: "body",
+};
+
+function mockGbPersonas(path: string, method: string, init?: RequestInit): Response | null {
+  const body = () => JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+  const find = (id: string | undefined) => mockGbP.personas.find((p) => p.id === id);
+  if (path === "/api/growbot/personas" && method === "GET") return json(mockGbOverview());
+  if (path === "/api/growbot/personas" && method === "POST") {
+    const { name, seed } = body() as { name?: string; seed?: string };
+    if (!name?.trim()) return json({ detail: "Give it a name." }, 422);
+    let soul = mockGbSoul({ name: name.trim(), desc: "" });
+    let from = "a fresh creature";
+    if (seed) {
+      const src = mockGbP.personas.find((p) => p.cps.some((c) => c.id === seed));
+      const cp = src?.cps.find((c) => c.id === seed);
+      if (!src || !cp) return json({ detail: "no such checkpoint" }, 404);
+      for (const k of ["persona", "expression", "dream"] as const) {
+        if (cp.soul[k]) soul = { ...soul, [k]: structuredClone(cp.soul[k]) };
+      }
+      from = `${src.name} — ${cp.name}`;
+    }
+    const p = mockGbPersona(name.trim(), { made_from: from }, soul, []);
+    mockGbP.personas.push(p);
+    return json(mockGbDetail(p));
+  }
+  if (path === "/api/growbot/personas/import" && method === "POST") {
+    const { soul, name, over } = body() as { soul?: GrowbotSoul; name?: string; over?: string };
+    if (!soul || soul.soul_format !== 3) {
+      return json(
+        { detail: "That isn't a soul file — it has no soul format in it. Nothing changed." },
+        422,
+      );
+    }
+    const target = find(over);
+    if (over && !target) return json({ detail: "no such persona" }, 404);
+    if (target) return mockGbWrite(target, soul, ["Before import", "made before an import"]);
+    const label = name?.trim() || soul.meta?.name || "Imported";
+    const p = mockGbPersona(label, { made_from: "a soul file" }, soul, []);
+    mockGbP.personas.push(p);
+    return json({ persona: mockGbDetail(p), checkpoint: null });
+  }
+  const body_ = /^\/api\/growbot\/body\/([^/]+)$/.exec(path);
+  if (body_ && method === "PUT") {
+    const code = decodeURIComponent(body_[1] ?? "");
+    const { persona } = body() as { persona?: string | null };
+    if (!mockGb.robots.some((r) => r.code === code)) return json({ detail: "no such robot" }, 404);
+    for (const p of mockGbP.personas) if (p.wearing === code) p.wearing = null;
+    const p = find(persona ?? undefined);
+    if (p) p.wearing = code;
+    return json(mockGbOverview());
+  }
+  const m = /^\/api\/growbot\/personas\/([^/]+)(?:\/(.+))?$/.exec(path);
+  if (!m) return null;
+  const p = find(m[1]);
+  if (!p) return json({ detail: "no such persona" }, 404);
+  const rest = m[2] ?? "";
+  if (!rest && method === "GET") return json(mockGbDetail(p));
+  if (!rest && method === "PATCH") {
+    const name = String(body().name ?? "").trim();
+    if (!name) return json({ detail: "Give it a name." }, 422);
+    p.name = name;
+    return mockGbWrite(p, { ...p.soul, meta: { ...p.soul.meta, name } }, null);
+  }
+  if (!rest && method === "DELETE") {
+    mockGbP.personas = mockGbP.personas.filter((x) => x !== p);
+    return new Response(null, { status: 204 });
+  }
+  const region = /^regions\/(\w+)$/.exec(rest)?.[1];
+  if (region && method === "PUT") {
+    const { value } = body() as { value?: unknown };
+    const soul = structuredClone(p.soul);
+    if (region === "persona" || region === "dream") {
+      if (typeof value !== "string" || !value.trim()) {
+        return json(
+          { detail: "It can't be empty — the creature would have no voice. Nothing was saved." },
+          422,
+        );
+      }
+      if (region === "persona") soul.persona = { constitution: value };
+      else soul.dream = { system_prompt: value };
+    } else if (region === "meta") {
+      const v = (value ?? {}) as { name?: string; description?: string };
+      if (!v.name?.trim()) return json({ detail: "Give it a name. Nothing was saved." }, 422);
+      soul.meta = { ...soul.meta, name: v.name.trim(), description: v.description ?? "" };
+      p.name = v.name.trim();
+    } else if (region in MOCK_GB_LABEL) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return json({ detail: "It has to be one { … } block. Nothing was saved." }, 422);
+      }
+      soul[region] = value;
+    } else return json({ detail: "That part of the soul can't be edited here." }, 422);
+    return mockGbWrite(p, soul, [`Before editing ${MOCK_GB_LABEL[region]}`, "made before an edit"]);
+  }
+  if (rest === "duplicate" && method === "POST") {
+    const name = `${p.name} copy`;
+    const copy = mockGbPersona(
+      name,
+      { made_from: `copy of ${p.name}` },
+      { ...structuredClone(p.soul), meta: { ...p.soul.meta, name } },
+      [],
+    );
+    mockGbP.personas.splice(mockGbP.personas.indexOf(p) + 1, 0, copy);
+    return json(mockGbDetail(copy));
+  }
+  if (rest === "reset" && method === "POST") {
+    return mockGbWrite(p, mockGbSoul({ name: p.name, desc: "" }), [
+      "Before reset",
+      "made before a reset",
+    ]);
+  }
+  if (rest === "export" && method === "GET") {
+    const slug =
+      p.name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "") || "persona";
+    return new Response(JSON.stringify({ ...p.soul, meta: { ...p.soul.meta, kind: "snapshot" } }), {
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Disposition": `attachment; filename="${slug}-soul.json"`,
+      },
+    });
+  }
+  if (rest === "checkpoints" && method === "POST") {
+    const name = String(body().name ?? "").trim();
+    if (!name) return json({ detail: "Name the checkpoint." }, 422);
+    const made = mockGbCp(name, 0, p.soul);
+    p.cps.unshift(made);
+    const { soul: _s, ...cp } = made;
+    return json(cp);
+  }
+  const restore = /^checkpoints\/([^/]+)\/restore$/.exec(rest)?.[1];
+  if (restore && method === "POST") {
+    const cp = p.cps.find((c) => c.id === restore);
+    if (!cp) return json({ detail: "no such checkpoint" }, 404);
+    return mockGbWrite(p, structuredClone(cp.soul), [
+      `Before restoring “${cp.name}”`,
+      "made before a restore",
+    ]);
+  }
+  return null;
+}
+
 async function mockGrowbot(
   path: string,
   method: string,
   init?: RequestInit,
 ): Promise<Response | null> {
   if (!path.startsWith("/api/growbot/")) return null;
+  const personas = mockGbPersonas(path, method, init);
+  if (personas) return personas;
   const up = mockGbServiceUp();
   const robots = () =>
     mockGb.robots.map((r) => ({ ...r, connected: up && r.connected && !r.revoked_at }));
