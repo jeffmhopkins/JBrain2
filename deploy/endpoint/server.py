@@ -134,7 +134,8 @@ class Handler(BaseHTTPRequestHandler):
         return body
 
     def _stream(self, lines: Iterator[str]) -> None:
-        """Chunked plain text, ending `FAILED: <code>: <message>` on any failure."""
+        """Chunked plain text: `@ <mark>` for pico's marks, `| <line>` for everything else
+        (the robot's console among it), ending `@ FAILED: <code>: <message>` on a failure."""
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -142,12 +143,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             for line in lines:
-                self.wfile.write(f"{line}\n".encode())
+                tag = "@" if isinstance(line, pico.Mark) else "|"
+                self.wfile.write(f"{tag} {line}\n".encode())
                 self.wfile.flush()
         except pico.PicoError as exc:
-            self.wfile.write(f"FAILED: {exc}\n".encode())
+            self.wfile.write(f"@ FAILED: {exc}\n".encode())
         except Exception as exc:  # noqa: BLE001 - the stream must carry the reason, not drop
-            self.wfile.write(f"FAILED: internal: {type(exc).__name__}: {exc}\n".encode())
+            self.wfile.write(f"@ FAILED: internal: {type(exc).__name__}: {exc}\n".encode())
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler's interface
         if self.path.startswith("/pico/"):

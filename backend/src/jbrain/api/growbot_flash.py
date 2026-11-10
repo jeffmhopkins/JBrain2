@@ -35,7 +35,7 @@ import asyncio
 import base64
 import hashlib
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -86,6 +86,8 @@ FailCode = Literal[
     "copy_failed",
     "wifi_failed",
     "box_unreached",
+    "clock_unset",
+    "needs_reflash",
     "timeout",
     "internal",
 ]
@@ -111,6 +113,14 @@ RECOVERY: dict[str, str] = {
     "box_unreached": (
         "It joined Wi-Fi but never reached the box. Check the box's address, and that the robot"
         " and the box are on the same network."
+    ),
+    "clock_unset": (
+        "It joined Wi-Fi but could not set its clock, so it cannot check the box's certificate."
+        " Run Ops -> Update so the box answers the robot's time request, then try again."
+    ),
+    "needs_reflash": (
+        "This robot was set up without the box's certificate, so a new key alone would leave"
+        " it unverified. Reflash it instead (Add a robot, then pick this one)."
     ),
     "timeout": "The robot went quiet. Unplug it, plug it back in and try again.",
     "internal": "Something went wrong on the box. Try again; the log says what.",
@@ -189,6 +199,9 @@ class _Failed(Exception):
 class FlashState:
     job: Job | None = None
     tasks: set[asyncio.Task[None]] = field(default_factory=set)
+    # The start being planned, held from before _plan's first await until its job exists,
+    # so two starts racing through the checks cannot both pass "nothing is running".
+    planning: object | None = None
 
 
 def _state(request: Request) -> FlashState:
@@ -387,6 +400,11 @@ def _usb(found: dict[str, Any]) -> list[UsbOut]:
     return usb
 
 
+# The sidecar's line tags (deploy/endpoint/server.py `_stream`).
+MARK = "@ "
+TEXT = "| "
+
+
 async def _lines(base: str, path: str, payload: dict[str, Any]) -> AsyncIterator[str]:
     """A sidecar stream's lines. A refusal before the stream (a 4xx) is an internal fault:
     every input was validated here first."""
@@ -411,8 +429,15 @@ async def _drive(
     payload: dict[str, Any],
     on_line: Callable[[str], None] | None = None,
 ) -> str:
-    """Run one sidecar stream into the job's log; returns its final `OK…` line."""
-    async for line in _lines(base, path, payload):
+    """Run one sidecar stream into the job's log; returns its final `OK…` line.
+
+    Only `@ ` lines are the sidecar's own marks; `| ` lines (the robot's console among them)
+    are logged and never acted on, so a robot printing `OK` cannot end a phase."""
+    async for raw in _lines(base, path, payload):
+        if not raw.startswith(MARK):
+            job.say(raw[len(TEXT) :] if raw.startswith(TEXT) else raw)
+            continue
+        line = raw[len(MARK) :]
         if line.startswith("FAILED: "):
             code, _, detail = line[len("FAILED: ") :].partition(": ")
             job.say(line)
@@ -477,6 +502,10 @@ def _remember(row: Any, keep: list[tuple[str, str]]) -> dict[str, Any]:
         dict(n) for n in base.get("networks") or [] if isinstance(n, dict) and n.get("ssid")
     ]
     for ssid, password in keep:
+        if base.get("ssid") == ssid:
+            # The panels' pair is the same network: a stale password there would flash panels
+            # with the old one.
+            base["password"] = password
         for n in networks:
             if n["ssid"] == ssid:
                 n["password"] = password
@@ -549,6 +578,10 @@ class _Plan:
     uf2: bytes
     files: list[tuple[str, bytes]]
     existing: dict[str, RobotInfo]
+    # Closes a code's relay socket (growbot.drop_robot), and the code whose key this job
+    # minted: a job that fails after minting leaves no socket on the replaced key.
+    drop: Callable[[str], Awaitable[object]] | None = None
+    minted: str | None = None
 
 
 def _unprocessable(detail: str) -> HTTPException:
@@ -559,21 +592,32 @@ def _conflict(detail: str) -> HTTPException:
     return HTTPException(status_code=409, detail=detail)
 
 
-async def _plan(request: Request, settings: Settings, ctx: SessionContext, body: FlashIn) -> _Plan:
-    """Every refusal that can be made before a board is touched, in the contract's order."""
+async def _plan(
+    request: Request, settings: Settings, ctx: SessionContext, body: FlashIn, token: object
+) -> _Plan:
+    """Every refusal that can be made before a board is touched, in the contract's order.
+    Reserves the flasher for `token` before its first await; `_start` releases it."""
     flash = body.mode == "flash"
     base = endpoint_api._sidecar(settings)
     uf2, files = _firmware(settings) if flash else (b"", [])
-    job = _state(request).job
-    if job is not None and job.state == "running":
+    state = _state(request)
+    if state.planning is not None or (state.job is not None and state.job.state == "running"):
         raise _conflict("A robot is being flashed right now. Wait for it to finish.")
+    state.planning = token
     sni = growbot._lan_host(settings)
     ca = endpoint_api._lan_ca()
+    unreadable = (
+        "The box's LAN certificate cannot be read, and a robot without it would dial the"
+        " box unverified. Run Ops -> Update to restart the proxy, then try again."
+    )
     if flash and not ca:
-        raise _conflict(
-            "The box's LAN certificate cannot be read, and a robot without it would dial the"
-            " box unverified. Run Ops -> Update to restart the proxy, then try again."
-        )
+        raise _conflict(unreadable)
+    if flash:
+        # Checked now, not at render time: by then a key has been minted for nothing.
+        try:
+            provision.ca_base64(ca)
+        except provision.ProvisionError:
+            raise _conflict(unreadable) from None
     box_host = await _adguard_host(request, settings)
     if box_host is None and body.box_host:
         box_host = provision.pick_box_host([body.box_host.strip()])
@@ -663,7 +707,13 @@ async def _plan(request: Request, settings: Settings, ctx: SessionContext, body:
 async def _start(
     request: Request, settings: Settings, ctx: SessionContext, body: FlashIn
 ) -> JobStartOut:
-    plan = await _plan(request, settings, ctx, body)
+    token = object()
+    state = _state(request)
+    try:
+        plan = await _plan(request, settings, ctx, body, token)
+    finally:
+        if state.planning is token:
+            state.planning = None
     existing = plan.existing.get(plan.target)
     job = Job(
         id=uuid.uuid4().hex,
@@ -674,7 +724,7 @@ async def _start(
         port=plan.tty,
     )
     job.secrets = [p for _, p in plan.networks]
-    state = _state(request)
+    plan.drop = lambda code: growbot.drop_robot(request, code)
     state.job = job
     repo = growbot._repo(request)
     task = asyncio.create_task(_run(job, plan, repo, ctx))
@@ -696,12 +746,25 @@ async def _run(job: Job, plan: _Plan, repo: GrowbotRepo, ctx: SessionContext) ->
         job.say("OK: the robot is paired and on the box.")
     except _Failed as exc:
         _fail(job, exc.code, exc.detail)
+        await _drop_minted(plan)
     except Exception as exc:  # noqa: BLE001 - a job must end in a state, never hang running
         log.exception("growbot.flash_crashed", job=job.id)
         _fail(job, "internal", type(exc).__name__)
+        await _drop_minted(plan)
     finally:
         job.finished_at = datetime.now(UTC)
         job.secrets = []
+
+
+async def _drop_minted(plan: _Plan) -> None:
+    """A robot still on the relay under the key this job replaced is dropped, so it reconnects
+    and is refused rather than staying paired on a key nothing holds."""
+    if plan.minted is None or plan.drop is None:
+        return
+    try:
+        await plan.drop(plan.minted)
+    except Exception:  # noqa: BLE001 - best effort; the replaced key is refused at next hello
+        log.warning("growbot.drop_after_fail_failed", code=plan.minted)
 
 
 def _fail(job: Job, code: str, detail: str) -> None:
@@ -745,6 +808,7 @@ async def _mint(job: Job, plan: _Plan, repo: GrowbotRepo, ctx: SessionContext, c
     if plan.target == "new" and known is not None:
         job.say(f"{code} is already paired as {known.name or code}; this reflashes it.")
     key = await repo.put_robot(ctx, code, plan.name)
+    plan.minted = code
     job.secrets.append(key)
     return key
 

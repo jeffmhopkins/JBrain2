@@ -1925,7 +1925,20 @@ async def flash_panel(
         # Written BEFORE the flash, deliberately: a flash that fails half way still leaves
         # the owner able to retry from the debug console without their phone, which is the
         # situation this exists for.
-        await _store(request).upsert(ctx, WIFI_KEY, {"ssid": body.ssid, "password": body.password})
+        # Merged, not replaced: the row also holds the GrowBot flasher's `networks` list.
+        store = _store(request)
+        row = await store.get(ctx, WIFI_KEY)
+        merged: dict[str, Any] = dict(row) if isinstance(row, dict) else {}
+        merged["ssid"], merged["password"] = body.ssid, body.password
+        nets = merged.get("networks")
+        if isinstance(nets, list):
+            merged["networks"] = [
+                {**n, "password": body.password}
+                if isinstance(n, dict) and n.get("ssid") == body.ssid
+                else n
+                for n in nets
+            ]
+        await store.upsert(ctx, WIFI_KEY, merged)
 
     payload = await build_flash(
         request,

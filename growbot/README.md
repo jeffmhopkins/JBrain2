@@ -28,7 +28,13 @@ out (every phone browser the creature supports has SIMD), and so is meSpeak.
 page and the feedback widget), applies exact replacements that each must match a stated number
 of times, adds `growbot-box.js`, writes the CSP hashes, and patches the firmware to dial the box
 with its key, pinning the box CA when `secrets.py` carries one (`GROWBOT_CA`, DER as a
-base64 string, since `wifi_store`'s restricted parser reads no bytes literal). It also
+base64 string, since `wifi_store`'s restricted parser reads no bytes literal). A verified
+dial first sets the clock, because mbedTLS checks the certificate's dates against an RTC that
+boots in the past and the box's leaf certificates live hours: SNTP from `serve.py` on
+`GROWBOT_NTP_PORT` (UDP 8123, published on the LAN), three tries feeding the watchdog, then
+the Wi-Fi gateway's NTP; a clock still before 2026 refuses to dial and prints
+`handshake: FAIL clock`, which the flasher reports as `clock_unset`. rp2's `time` epoch is
+1970 (most ports' is 2000), so the patch reads it from `time.gmtime(0)`. It also
 vendors MicroPython (`upstream.json` `micropython`: `RPI_PICO2_W-20260406-v1.28.0.uf2`,
 MIT, pinned by SHA-256 like every asset) into `firmware/` and writes `firmware/SHA256SUMS`
 over the UF2 and the five files a flash copies. It builds in a staging
