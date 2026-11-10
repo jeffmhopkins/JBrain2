@@ -1513,3 +1513,85 @@ def test_codes_are_held_to_the_apis_shape(gb: types.ModuleType) -> None:
     assert gb.CODE_RE.fullmatch("gb-abc123")
     for code in ("bench-rig", "gb-", "gb-a_b", "x" * 40):
         assert not gb.CODE_RE.fullmatch(code)
+
+
+# --- the api's /internal routes ------------------------------------------------------------
+
+
+def _internal(
+    run: _Running, method: str, path: str, body: bytes | None = None, token: str | None = _TOKEN
+) -> tuple[int, Any]:
+    headers = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["Authorization"] = token if token.startswith("Basic") else f"Bearer {token}"
+    resp = run.request(method, path, body, headers, cookie=False)
+    raw = resp.read()
+    return resp.status, json.loads(raw) if raw else None
+
+
+def test_the_api_lists_the_robots_on_the_relay(run: _Running) -> None:
+    assert _internal(run, "GET", "/internal/robots") == (200, {"robots": []})
+    phone = _phone(run)
+    assert phone.message() == {"t": "status", "awake": 0}
+    # A phone alone is no robot.
+    assert _internal(run, "GET", "/internal/robots") == (200, {"robots": []})
+    chip = _chip(run)
+    assert phone.message() == {"t": "status", "awake": 1}
+    status, body = _internal(run, "GET", "/internal/robots")
+    assert status == 200 and [r["code"] for r in body["robots"]] == ["gb-abc123"]
+    assert time.strptime(body["robots"][0]["since"], "%Y-%m-%dT%H:%M:%SZ")
+    chip.shut()
+    phone.shut()
+
+
+def test_the_creature_page_on_the_side_channel_is_no_robot(run: _Running) -> None:
+    page = _phone(run, "/d/gb-abc123-agent")
+    page.text({"t": "hello"})
+    time.sleep(0.2)
+    assert _internal(run, "GET", "/internal/robots") == (200, {"robots": []})
+    page.shut()
+
+
+def test_dropping_a_robot_closes_its_socket(run: _Running) -> None:
+    phone = _phone(run)
+    assert phone.message() == {"t": "status", "awake": 0}
+    chip = _chip(run)
+    assert phone.message() == {"t": "status", "awake": 1}
+    phone.message()  # its hello
+    body = json.dumps({"code": "gb-abc123"}).encode()
+    assert _internal(run, "POST", "/internal/robots/drop", body) == (200, {"dropped": True})
+    assert chip.close_code() == 1008
+    assert phone.message() == {"t": "status", "awake": 0}
+    assert _internal(run, "POST", "/internal/robots/drop", body) == (200, {"dropped": False})
+    assert _internal(run, "POST", "/internal/robots/drop", b'{"code":"../x"}')[0] == 400
+    assert _internal(run, "POST", "/internal/robots/drop", b"[]")[0] == 400
+    phone.shut()
+
+
+@pytest.mark.parametrize("token", [None, "", "wrong", _TOKEN + "x", "Basic " + _TOKEN])
+def test_the_internal_routes_need_the_growbot_token(run: _Running, token: str | None) -> None:
+    for method, path, body in (
+        ("GET", "/internal/robots", None),
+        ("POST", "/internal/robots/drop", b'{"code":"gb-abc123"}'),
+    ):
+        status, _ = _internal(run, method, path, body, token=token)
+        assert status == 401
+
+
+def test_a_session_cookie_is_no_way_into_the_internal_routes(run: _Running) -> None:
+    assert run.request("GET", "/internal/robots").status == 401
+
+
+def test_no_token_on_disk_believes_no_caller(run: _Running) -> None:
+    run.app.config.token_file.unlink()
+    assert _internal(run, "GET", "/internal/robots")[0] == 401
+
+
+def test_an_unknown_internal_route_is_404(run: _Running) -> None:
+    assert _internal(run, "GET", "/internal/nope")[0] == 404
+    assert _internal(run, "POST", "/internal/robots")[0] == 404
+
+
+def test_handle_checks_the_bearer_too(run: _Running, gb: types.ModuleType) -> None:
+    req = gb.Request("GET", "/internal/robots", "/internal/robots", {}, "HTTP/1.1", [])
+    assert run.app.internal(req).status == 401

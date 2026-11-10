@@ -68,5 +68,11 @@
       "url": "https://raw.githubusercontent.com/google-ai-edge/mediapipe/v0.10.18/LICENSE",
       "sha256": "8707eef0533987efc5b155d64761eeb6e20793f50b9bd1a68dad1cf4719d0ed8"
     }
-  ]
+  ],
+  "micropython": {
+    "path": "RPI_PICO2_W-20260406-v1.28.0.uf2",
+    "license": "MIT (MicroPython v1.28.0 for the Raspberry Pi Pico 2 W)",
+    "url": "https://micropython.org/resources/firmware/RPI_PICO2_W-20260406-v1.28.0.uf2",
+    "sha256": "686f0d0bd427ca68d149016808f95765df7921c5845d22ff8ebaec287300fce4"
+  }
 }

@@ -265,6 +265,10 @@ services:
       # `./src` whole: the api has no business reading the rest of the source tree. This
       # file is copied in by `update-inner.sh`, so the mount arrives with Ops -> Update.
       - ./src/firmware-c6:/firmware-c6:ro
+      # The GrowBot's flash set (growbot/firmware/: the pinned MicroPython UF2, the patched
+      # robot firmware and their SHA256SUMS), the same way: the endpoint sidecar never
+      # fetches, so the api hands it these bytes (docs/plans/GROWBOT_PLAN.md §3).
+      - ./src/growbot/firmware:/growbot-firmware:ro
       # The /internal callers' tokens (api/internal_auth.py). The api is the only writer:
       # it mints `wall.token` and `mqtt.token` here on start-up, and the wall and mosquitto
       # mount this read-only — so the secret ships with the code that checks it, with no
@@ -1334,7 +1338,12 @@ services:
   # plugs a panel in, so a static `devices:` entry would fail at container start on a box
   # with nothing attached. A /dev mount plus cgroup rules for the tty character majors
   # admits a hotplugged tty without granting `privileged`: 166 is USB CDC-ACM (the
-  # panel's native USB) and 188 is USB serial (a CP210x/CH340 bridge board).
+  # panel's native USB, and MicroPython on the GrowBot's Pico) and 188 is USB serial (a
+  # CP210x/CH340 bridge board). 189 is raw USB (/dev/bus/usb), for picotool to write a
+  # Pico in its ROM bootloader, which has no tty. That rule opens EVERY USB device node to
+  # this container, which is why it stays on the `internal: true` panel network, runs no
+  # code it was not built with, and hands picotool only the bus/address of a device sysfs
+  # says is an RP2350 bootloader (deploy/endpoint/pico.py).
   endpoint:
     logging: *logbound
     image: jbrain2-endpoint:local
@@ -1350,6 +1359,7 @@ services:
     device_cgroup_rules:
       - "c 166:* rmw"
       - "c 188:* rmw"
+      - "c 189:* rmw"
     networks: [panel]
 
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth

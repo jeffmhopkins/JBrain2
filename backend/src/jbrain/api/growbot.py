@@ -5,7 +5,8 @@ Three routers over one repo (`jbrain.growbot.repo`):
 
 - `router` — the owner (`OwnerDep`): `POST /growbot/ticket` mints a one-time, 120 s ticket and
   the `:8444` link that spends it; `POST`/`GET`/`DELETE /growbot/robots` mint or rotate a
-  robot's device key (shown once), list the robots, and forget one.
+  robot's device key (shown once), list the robots (with whether each is on the relay now),
+  and forget one. Flashing, revoking and the status card are `api/growbot_flash.py` (G2).
 - `debug_router` — a debug token (`DebugDep`, mounted only with debug access on): the same
   four, because G1 has no GUI and the owner runs the box with no terminal (CLAUDE.md #10).
 - `internal_router` — the GrowBot sidecar (`growbot.token`, mounted under `/internal`, which
@@ -21,6 +22,8 @@ from datetime import datetime
 from typing import Annotated, cast
 from urllib.parse import quote, urlsplit
 
+import httpx
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from pydantic import BaseModel, Field
 
@@ -28,7 +31,10 @@ from jbrain.api.deps import DebugDep, OwnerDep, SettingsDep
 from jbrain.api.internal_auth import require_growbot
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
-from jbrain.growbot.repo import CODE_RE, GrowbotRepo
+from jbrain.growbot.repo import CODE_RE, GrowbotRepo, RobotInfo
+from jbrain.storage import InternalSecrets
+
+log = structlog.get_logger()
 
 router = APIRouter(prefix="/growbot", tags=["growbot"])
 debug_router = APIRouter(prefix="/debug/growbot")
@@ -75,8 +81,77 @@ class RobotKeyOut(BaseModel):
 
 class RobotOut(BaseModel):
     code: str
+    name: str = ""
     created_at: datetime
     rotated_at: datetime | None
+    revoked_at: datetime | None = None
+    last_seen_at: datetime | None = None
+    # On the relay right now, as the growbot sidecar reports it (False when it is down).
+    connected: bool = False
+
+
+def robot_out(info: RobotInfo, connected: set[str]) -> RobotOut:
+    return RobotOut(
+        code=info.code,
+        name=info.name,
+        created_at=info.created_at,
+        rotated_at=info.rotated_at,
+        revoked_at=info.revoked_at,
+        last_seen_at=info.last_seen_at,
+        connected=info.code in connected,
+    )
+
+
+# The growbot sidecar's /internal routes (growbot/server/serve.py), with growbot.token as the
+# bearer. Tests swap in an httpx.MockTransport; None is the real network.
+SIDECAR_TIMEOUT_S = 5.0
+_transport: httpx.AsyncBaseTransport | None = None
+
+
+async def _sidecar(
+    request: Request, method: str, path: str, body: dict[str, str] | None = None
+) -> httpx.Response | None:
+    base = str(getattr(request.app.state.settings, "growbot_url", "") or "").rstrip("/")
+    secrets = cast(InternalSecrets, request.app.state.growbot_secrets)
+    token = secrets.read("growbot")
+    if not base or not token:
+        return None
+    try:
+        async with httpx.AsyncClient(
+            timeout=SIDECAR_TIMEOUT_S, transport=_transport, trust_env=False
+        ) as client:
+            return await client.request(
+                method,
+                base + path,
+                json=body,
+                headers={"Authorization": f"Bearer {token.decode()}"},
+            )
+    except httpx.HTTPError:
+        return None
+
+
+async def relay_robots(request: Request) -> set[str] | None:
+    """The codes on the relay now, or None when the growbot sidecar is down or refuses."""
+    resp = await _sidecar(request, "GET", "/internal/robots")
+    if resp is None or resp.status_code != 200:
+        return None
+    try:
+        rows = resp.json().get("robots")
+    except (ValueError, AttributeError):
+        return None
+    if not isinstance(rows, list):
+        return None
+    return {str(r["code"]) for r in rows if isinstance(r, dict) and isinstance(r.get("code"), str)}
+
+
+async def drop_robot(request: Request, code: str) -> bool:
+    """Close `code`'s relay socket. Best effort: its key is already gone, so a robot the
+    sidecar could not drop now is refused at its next hello."""
+    resp = await _sidecar(request, "POST", "/internal/robots/drop", {"code": code})
+    ok = resp is not None and resp.status_code == 200
+    if not ok:
+        log.warning("growbot.drop_failed", code=code)
+    return ok
 
 
 def _lan_host(settings: Settings) -> str:
@@ -106,7 +181,8 @@ async def _put_robot(request: Request, ctx: SessionContext, body: RobotIn) -> Ro
 
 async def _list_robots(request: Request, ctx: SessionContext) -> list[RobotOut]:
     robots = await _repo(request).list_robots(ctx)
-    return [RobotOut(code=r.code, created_at=r.created_at, rotated_at=r.rotated_at) for r in robots]
+    connected = await relay_robots(request) if robots else set()
+    return [robot_out(r, connected or set()) for r in robots]
 
 
 async def _delete_robot(request: Request, ctx: SessionContext, code: str) -> Response:

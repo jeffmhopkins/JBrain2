@@ -1,4 +1,4 @@
-"""Migration 0254 against real Postgres: GrowBot's robots and tickets are owner-only.
+"""Migrations 0254 and 0255 against real Postgres: GrowBot's robots and tickets are owner-only.
 
 The mandatory RLS isolation test for both new tables (CLAUDE.md rule 3), plus the repo's
 security rules where only the database can prove them: a ticket redeems exactly once, even
@@ -190,3 +190,66 @@ async def test_the_schema_refuses_a_malformed_code_or_hash(maker: async_sessionm
             await session.execute(
                 text("INSERT INTO app.growbot_robots (code, key_hash) VALUES ('gb-x', 'plain')")
             )
+
+
+# --- migration 0255: name, revoke, last seen ---------------------------------------------
+
+
+async def test_a_revoked_robot_never_verifies_until_it_is_reflashed(
+    maker: async_sessionmaker,
+) -> None:
+    repo = SqlGrowbotRepo(maker)
+    key = await repo.put_robot(OWNER, "gb-a1", "Quorra")
+    revoked = await repo.revoke_robot(OWNER, "gb-a1")
+    assert revoked is not None and revoked.revoked_at is not None and revoked.name == "Quorra"
+    async with scoped_session(maker, OWNER) as session:
+        stored = (
+            await session.execute(text("SELECT key_hash FROM app.growbot_robots"))
+        ).scalar_one()
+    assert stored is None
+    for attempt in (key, "", hash_token("")):
+        assert not await repo.verify_robot(SYSTEM_OWNER, "gb-a1", attempt)
+    # Revoking again keeps the first revoke time; an unknown robot is None.
+    again = await repo.revoke_robot(OWNER, "gb-a1")
+    assert again is not None and again.revoked_at == revoked.revoked_at
+    assert await repo.revoke_robot(OWNER, "gb-zz") is None
+
+    # A reflash with no name keeps the robot's name and clears the revoke.
+    fresh = await repo.put_robot(OWNER, "gb-a1")
+    (info,) = await repo.list_robots(OWNER)
+    assert info.revoked_at is None and info.name == "Quorra" and info.rotated_at is not None
+    assert await repo.verify_robot(SYSTEM_OWNER, "gb-a1", fresh)
+    await repo.put_robot(OWNER, "gb-a1", "Tamsin")
+    assert (await repo.list_robots(OWNER))[0].name == "Tamsin"
+
+
+async def test_a_verified_hello_stamps_last_seen(maker: async_sessionmaker) -> None:
+    repo = SqlGrowbotRepo(maker)
+    key = await repo.put_robot(OWNER, "gb-a1", "Quorra")
+    assert (await repo.list_robots(OWNER))[0].last_seen_at is None
+    assert not await repo.verify_robot(SYSTEM_OWNER, "gb-a1", "wrong")
+    assert (await repo.list_robots(OWNER))[0].last_seen_at is None
+    assert await repo.verify_robot(SYSTEM_OWNER, "gb-a1", key)
+    seen = (await repo.list_robots(OWNER))[0].last_seen_at
+    assert seen is not None and seen.tzinfo is not None
+    # A context that cannot see the robot stamps nothing.
+    assert not await repo.verify_robot(UNSCOPED, "gb-a1", key)
+    assert (await repo.list_robots(OWNER))[0].last_seen_at == seen
+
+
+@pytest.mark.parametrize("ctx", NON_OWNERS)
+async def test_a_non_owner_cannot_revoke(maker: async_sessionmaker, ctx: SessionContext) -> None:
+    repo = SqlGrowbotRepo(maker)
+    key = await repo.put_robot(OWNER, "gb-a1", "Quorra")
+    assert await repo.revoke_robot(ctx, "gb-a1") is None
+    assert await repo.verify_robot(SYSTEM_OWNER, "gb-a1", key)
+
+
+async def test_the_schema_holds_a_name_to_40_characters(maker: async_sessionmaker) -> None:
+    repo = SqlGrowbotRepo(maker)
+    await repo.put_robot(OWNER, "gb-a1", "x" * 40)
+    with pytest.raises(DBAPIError):
+        await repo.put_robot(OWNER, "gb-b2", "x" * 41)
+    with pytest.raises(DBAPIError):
+        async with scoped_session(maker, OWNER) as session:
+            await session.execute(text("UPDATE app.growbot_robots SET key_hash = 'plain'"))

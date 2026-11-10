@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2◻️ G3◻️ G4◻️ G5◻️
+> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ G3◻️ G4◻️ G5◻️
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -271,6 +271,18 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
 - **G2 — the PWA flashes the robot.** GUI gate first (three mocks, `PROCESS.md`), covering the
   Endpoints board, pairing code, the open-GrowBot entry and the Ops listing. Then Pico 2 W as an
   endpoint board: `picotool` + `mpremote`, the generated `secrets.py`, device key mint/revoke.
+  ✅ Built: flashing lives on the PWA's GrowBot screen (`api/growbot_flash.py`, one in-process
+  job with load / copy / join phases), and the Endpoints board points a Pico there. The endpoint
+  sidecar's `pico.py` drives `picotool` 2.1.1 (Debian trixie's package) and `mpremote` 1.28.0,
+  with `c 189:* rmw` for raw USB; picotool is handed only the bus/address of a sysfs-verified
+  2e8a:000f. The UF2 is vendored by `apply.py` into `growbot/firmware/` with `SHA256SUMS`, and
+  the api reads it off a read-only mount. The key is minted only after the board has said which
+  robot it is; a robot is paired once the relay stamps its `last_seen_at` (migration 0255 adds
+  `name`, `revoked_at`, `last_seen_at`, and a NULL `key_hash` for a revoke). Measured, not
+  guessed: the box's LAN IPv4 comes from AdGuard's `dns_addresses` (else the owner types it); the
+  CA is written as base64 DER because `wifi_store` reads no bytes literal; a reset comes before
+  every copy because a running robot's 8 s hardware watchdog would cut a copy off. The box's
+  root is now a PWA download (`GET /api/lan/root.crt`), closing §6's first question.
 - **G3 — settings from the PWA.** GUI gate first (the PWA GrowBot card). The
   `growbot_settings` table, its RLS and isolation test, the owner routes, the app's pickup and
   report route, and the apply hook with idle reload (§2b).

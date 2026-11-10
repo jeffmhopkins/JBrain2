@@ -37,6 +37,16 @@ EXCLUDED = {
     "tester/face-original.html",
 }
 
+# What PWA flashing writes to a robot (the api's growbot/provision.py FILE_MAP), hashed into
+# firmware/SHA256SUMS with the MicroPython UF2 so the api refuses a half-updated checkout.
+FLASHED_FILES = (
+    "relay_chip.py",
+    "act_engine.py",
+    "PicoRobotics.py",
+    "wifi_store.py",
+    "wifi_recovery.py",
+)
+
 FIRMWARE_FILES = (
     "relay_chip.py",
     "act_engine.py",
@@ -63,9 +73,11 @@ if not HOST:
 PORT = getattr(_box, "GROWBOT_PORT", 8444)
 SNI = getattr(_box, "GROWBOT_SNI", "jbrain.local")
 ROBOT_KEY = getattr(_box, "GROWBOT_KEY", "")
-# The box's root CA (DER bytes). With it the robot refuses an impostor before sending its key;
-# without it (a hand-edited secrets.py) it connects unverified, as upstream always did.
-BOX_CA = getattr(_box, "GROWBOT_CA", None)
+# The box's root CA, DER as a base64 string: wifi_store's restricted parser reads secrets.py
+# and accepts no b"..." literal. With it the robot refuses an impostor before sending its
+# key; without it (a hand-edited secrets.py) it connects unverified, as upstream always did.
+_ca = getattr(_box, "GROWBOT_CA", None)
+BOX_CA = binascii.a2b_base64(_ca) if _ca else None
 
 
 def _wrap(raw):
@@ -83,7 +95,7 @@ SECRETS_EXAMPLE_TAIL = """
 # GROWBOT_PORT = 8444
 # GROWBOT_SNI = "jbrain.local"
 # GROWBOT_KEY = "the key the box showed when it registered this robot"
-# GROWBOT_CA = b"..."   # the box's root certificate, DER bytes
+# GROWBOT_CA = "MIIB..."   # the box's root certificate: DER, base64, one line
 """
 
 VOICE_PICKER_OLD = (
@@ -372,6 +384,15 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
     _patch(firmware, FIRMWARE_PATCHES)
     with (firmware / "secrets.example.py").open("a", encoding="utf-8") as f:
         f.write(SECRETS_EXAMPLE_TAIL)
+    # MicroPython itself, pinned like every vendored asset: the endpoint sidecar never
+    # fetches, so the box loads exactly these bytes onto a blank Pico.
+    uf2 = pin["micropython"]
+    (firmware / uf2["path"]).write_bytes(_fetch(uf2, cache))
+    sums = [
+        f"{hashlib.sha256((firmware / name).read_bytes()).hexdigest()}  {name}\n"
+        for name in (uf2["path"], *FLASHED_FILES)
+    ]
+    (firmware / "SHA256SUMS").write_text("".join(sums))
 
 
 def build(upstream: Path, out: Path, cache: Path | None) -> None:

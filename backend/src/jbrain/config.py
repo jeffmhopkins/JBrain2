@@ -348,6 +348,12 @@ class Settings(BaseSettings):
     # The same, for the second board (`firmware-c6/`, the ESP32-C6 panel). One setting
     # per board rather than a parent mount: see `jbrain.api.endpoint.BOARDS`.
     firmware_c6_dir: str = "/firmware-c6"
+    # The GrowBot's flash set (`growbot/firmware/`: the pinned MicroPython UF2, the patched
+    # robot firmware and SHA256SUMS), mounted read-only off the checkout like the panels'.
+    growbot_firmware_dir: str = "/growbot-firmware"
+    # The GrowBot sidecar, for its bearer-checked `/internal/robots` (who is on the relay)
+    # and `/internal/robots/drop` (close a revoked robot). Reached on `growbot_lane`.
+    growbot_url: str = "http://growbot:8810"
     # The box's own LAN address (`https://jbrain.local`), already set on the host as
     # JBRAIN_LAN_ADDR for Caddy's local HTTPS site — declared here so the api can read the
     # same value. A room endpoint sits on this LAN, so this is the address it should be

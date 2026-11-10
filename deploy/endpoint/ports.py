@@ -26,6 +26,15 @@ from dataclasses import asdict, dataclass
 ESPRESSIF_VID = "303a"
 USB_SERIAL_JTAG_PID = "1001"
 
+# Raspberry Pi's vendor id: the GrowBot's Pico 2 W. 0005 is MicroPython's own CDC-ACM port;
+# 000f is the RP2350's ROM bootloader, a raw USB device with no tty (so it is found under
+# /sys/bus/usb/devices, not /dev). 0003 is the RP2040's bootloader, listed so an owner who
+# plugs in the wrong Pico is told so rather than shown nothing.
+PICO_VID = "2e8a"
+PICO_MICROPYTHON_PID = "0005"
+RP2350_BOOT_PID = "000f"
+RP2040_BOOT_PID = "0003"
+
 # The usual USB-UART bridges. Not panels, but worth naming in the picker so an owner
 # looking at three ports can tell which is the Arduino they forgot about.
 KNOWN_BRIDGES = {
@@ -46,6 +55,9 @@ class Port:
     # guessing wrong here would flash something that is not a panel.
     is_espressif: bool
     label: str
+    # A Raspberry Pi device. Every Pico route refuses a port without it, so mpremote is never
+    # pointed at a panel or a bridge.
+    is_pico: bool = False
 
 
 def _read(path: str) -> str:
@@ -56,6 +68,28 @@ def _read(path: str) -> str:
         return ""
 
 
+def _usb_node(sysfs: str, name: str) -> str | None:
+    node = os.path.join(sysfs, "class", "tty", name, "device")
+    for _ in range(6):
+        if _read(os.path.join(node, "idVendor")):
+            return node
+        parent = os.path.join(node, "..")
+        if not os.path.isdir(parent):
+            break
+        node = parent
+    return None
+
+
+def usb_serial(device: str, sysfs: str = "/sys") -> str:
+    """The USB serial string of the device behind a tty (`/dev/ttyACM0`), or "".
+
+    MicroPython on a Pico reports the chip's unique id here, which is how a board is found
+    again after a reset hands it a different ttyACM number.
+    """
+    node = _usb_node(sysfs, os.path.basename(device))
+    return _read(os.path.join(node, "serial")) if node else ""
+
+
 def _usb_attrs(sysfs: str, name: str) -> tuple[str, str, str, str]:
     """Walk up from the tty to the USB device that owns it.
 
@@ -64,21 +98,15 @@ def _usb_attrs(sysfs: str, name: str) -> tuple[str, str, str, str]:
     across the kernel's occasional reshuffles of that tree, and the loop is bounded so a
     symlink cycle cannot hang the port list.
     """
-    node = os.path.join(sysfs, "class", "tty", name, "device")
-    for _ in range(6):
-        vid = _read(os.path.join(node, "idVendor"))
-        if vid:
-            return (
-                vid.lower(),
-                _read(os.path.join(node, "idProduct")).lower(),
-                _read(os.path.join(node, "product")),
-                _read(os.path.join(node, "manufacturer")),
-            )
-        parent = os.path.join(node, "..")
-        if not os.path.isdir(parent):
-            break
-        node = parent
-    return ("", "", "", "")
+    node = _usb_node(sysfs, name)
+    if node is None:
+        return ("", "", "", "")
+    return (
+        _read(os.path.join(node, "idVendor")).lower(),
+        _read(os.path.join(node, "idProduct")).lower(),
+        _read(os.path.join(node, "product")),
+        _read(os.path.join(node, "manufacturer")),
+    )
 
 
 def _label(vid: str, pid: str, product: str, manufacturer: str) -> str:
@@ -86,6 +114,10 @@ def _label(vid: str, pid: str, product: str, manufacturer: str) -> str:
         if pid == USB_SERIAL_JTAG_PID:
             return "Espressif USB-Serial/JTAG (ESP32-S3 or ESP32-C6)"
         return f"Espressif device {pid or '????'}"
+    if vid == PICO_VID:
+        if pid == PICO_MICROPYTHON_PID:
+            return "Raspberry Pi Pico running MicroPython"
+        return f"Raspberry Pi device {pid or '????'}"
     bridge = KNOWN_BRIDGES.get(vid)
     if bridge:
         return f"{bridge} serial adapter"
@@ -122,6 +154,7 @@ def scan(sysfs: str = "/sys", dev: str = "/dev") -> list[Port]:
                 manufacturer=manufacturer,
                 is_espressif=vid == ESPRESSIF_VID,
                 label=_label(vid, pid, product, manufacturer),
+                is_pico=vid == PICO_VID,
             )
         )
     # Espressif first so the panel is the default pick when several ports exist;
@@ -132,3 +165,49 @@ def scan(sysfs: str = "/sys", dev: str = "/dev") -> list[Port]:
 
 def as_json(ports: list[Port]) -> list[dict[str, object]]:
     return [asdict(p) for p in ports]
+
+
+def _int(text: str) -> int | None:
+    return int(text) if text.isdigit() else None
+
+
+def scan_boot(sysfs: str = "/sys") -> list[dict[str, object]]:
+    """Raspberry Pi bootloaders on USB: what picotool can write to.
+
+    A blank RP2350 is one of these from the moment it is plugged in, so the first flash needs
+    no button. Only USB *device* nodes are read (`1-2`, never the interface `1-2:1.0`), and
+    the bus and address come from the kernel's own `busnum`/`devnum`, which are the only
+    values picotool is ever handed.
+    """
+    root = os.path.join(sysfs, "bus", "usb", "devices")
+    try:
+        names = sorted(n for n in os.listdir(root) if ":" not in n)
+    except OSError:
+        return []
+    found: list[dict[str, object]] = []
+    for name in names:
+        node = os.path.join(root, name)
+        if _read(os.path.join(node, "idVendor")).lower() != PICO_VID:
+            continue
+        pid = _read(os.path.join(node, "idProduct")).lower()
+        if pid not in (RP2350_BOOT_PID, RP2040_BOOT_PID):
+            continue
+        bus = _int(_read(os.path.join(node, "busnum")))
+        address = _int(_read(os.path.join(node, "devnum")))
+        if bus is None or address is None:
+            continue
+        label = (
+            "RP2350 bootloader (a Pico 2 W ready for MicroPython)"
+            if pid == RP2350_BOOT_PID
+            else "RP2040 bootloader (not supported: GrowBot needs a Pico 2 W)"
+        )
+        found.append(
+            {
+                "bus": bus,
+                "address": address,
+                "pid": pid,
+                "serial": _read(os.path.join(node, "serial")),
+                "label": label,
+            }
+        )
+    return found
