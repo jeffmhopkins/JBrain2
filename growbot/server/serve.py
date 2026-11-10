@@ -284,7 +284,7 @@ def _b64url(data: bytes) -> str:
 class Sessions:
     """`gb_session` = `<expiry>.<nonce>.<robot>.<hmac>`: nothing to store or leak.
 
-    `<robot>` is the robot code the PWA's ticket named, or empty. It is the only robot this
+    `<robot>` is the robot code the api says the ticket was minted for, or empty. It is the only robot this
     phone's relay sockets may join: pairing is JBrain's (owner, 2026-11-10), so a code typed
     into the creature's own pairing box opens nothing.
 
@@ -363,6 +363,18 @@ class Sessions:
         t = time.time() if now is None else now
         renew_before = t + SESSION_TTL_S - SESSION_RENEW_S
         return self.valid(value, t) and int(value.split(".")[0]) < renew_before
+
+
+def _redeemed_robot(up: Upstream) -> str | None:
+    """The robot code a redeemed ticket was minted for ('' for none), or None if the api's
+    answer does not name one in the right shape."""
+    try:
+        code = json.loads(up.body).get("code")
+    except (ValueError, AttributeError):
+        return None
+    if code == "" or (isinstance(code, str) and CODE_RE.fullmatch(code)):
+        return code
+    return None
 
 
 def _creature(code: str) -> str:
@@ -1117,9 +1129,13 @@ class GrowBot:
             {"ticket": ticket},
             pool=self._gate,
         )
-        if not self._ok(up):
+        robot = _redeemed_robot(up) if self._ok(up) else None
+        if robot is None:
             self.ticket_backoff.fail(client)
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
+        # The ticket names the robot, not the link: `id` is the phone's to edit, so it is
+        # only checked for shape above and never trusted.
+        code = robot
         # The session carries the robot the ticket named, so the installed app's /start
         # reopens the same way and the relay lets this phone join that robot alone.
         return Response(

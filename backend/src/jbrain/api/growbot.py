@@ -169,10 +169,13 @@ async def _ticket(
     request: Request, settings: Settings, ctx: SessionContext, body: TicketIn | None
 ) -> TicketOut:
     host = _lan_host(settings)
-    minted = await _repo(request).mint_ticket(ctx)
+    code = body.code if body is not None and body.code else ""
+    # The ticket itself names the robot: the sidecar signs the code redeem answers into the
+    # phone's session, so editing `id` on the link reaches no other robot.
+    minted = await _repo(request).mint_ticket(ctx, code)
     url = f"https://{host}:{GROWBOT_PORT}/open?ticket={quote(minted.ticket, safe='')}"
-    if body is not None and body.code:
-        url += f"&id={quote(body.code, safe='')}"
+    if code:
+        url += f"&id={quote(code, safe='')}"
     return TicketOut(ticket=minted.ticket, url=url, expires_at=minted.expires_at)
 
 
@@ -290,6 +293,12 @@ class OkOut(BaseModel):
     ok: bool
 
 
+class RedeemedOut(BaseModel):
+    ok: bool
+    # The robot the ticket was minted for, '' for none: the only robot the phone may join.
+    code: str
+
+
 def _refused() -> HTTPException:
     return HTTPException(status_code=401, detail="unauthorized")
 
@@ -299,13 +308,15 @@ _MAX_SECRET = 256
 
 
 @internal_router.post("/ticket/redeem")
-async def redeem_ticket(request: Request, body: RedeemIn) -> OkOut:
-    """Spend a phone's ticket: 200 the first time within its 120 s, 401 ever after."""
+async def redeem_ticket(request: Request, body: RedeemIn) -> RedeemedOut:
+    """Spend a phone's ticket: 200 with its robot the first time within its 120 s, 401 ever
+    after."""
     if len(body.ticket) > _MAX_SECRET:
         raise _refused()
-    if not await _repo(request).redeem_ticket(_SYSTEM_OWNER, body.ticket):
+    code = await _repo(request).redeem_ticket(_SYSTEM_OWNER, body.ticket)
+    if code is None:
         raise _refused()
-    return OkOut(ok=True)
+    return RedeemedOut(ok=True, code=code)
 
 
 @internal_router.post("/robot/verify")

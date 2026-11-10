@@ -63,8 +63,8 @@ _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
 
 
 class _YesGrowbotRepo:
-    async def redeem_ticket(self, ctx: object, ticket: str) -> bool:
-        return True
+    async def redeem_ticket(self, ctx: object, ticket: str) -> str | None:
+        return ""
 
     async def verify_robot(self, ctx: object, code: str, key: str) -> bool:
         return True

@@ -104,7 +104,8 @@ until G4 moves the creature onto the box.
 - **Opening it.** The owner mints a one-time ticket through the api (`POST /api/growbot/ticket`;
   until G2 adds the PWA entry, through the owner debug API's copy). `GET /open?ticket=…[&id=<code>]` redeems it and sets `gb_session` (HttpOnly, Secure,
   SameSite=Strict, 30 days, renewed at most daily by any page load or call), then redirects to
-  the creature. The cookie carries the robot code the ticket named under its HMAC, and the relay
+  the creature. The cookie carries, under its HMAC, the robot code the api says the ticket was minted for (the
+  PWA names it at mint, migration 0256; the link's `id` is never trusted), and the relay
   lets that phone join that robot alone: pairing is JBrain's, and a code typed into the
   creature's own pairing box is refused (`403 pair from JBrain`). The key is derived from
   `growbot.token` and `growbot-session.token`: nothing is stored, a restart keeps phones signed

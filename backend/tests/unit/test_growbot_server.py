@@ -101,8 +101,12 @@ class _Fake(BaseHTTPRequestHandler):
         self._record(body)
         authed = self.headers.get("Authorization") == f"Bearer {_TOKEN}"
         if self.path == "/internal/growbot/ticket/redeem":
-            ok = authed and json.loads(body) == {"ticket": "good-ticket"}
-            self._reply(200 if ok else 401, json.dumps({"ok": ok}).encode())
+            # The api answers with the robot the ticket was minted for.
+            minted = {"good-ticket": "gb-abc123", "bare-ticket": "", "odd-ticket": "../x"}
+            ticket = json.loads(body).get("ticket")
+            ok = authed and ticket in minted
+            reply = {"ok": ok, "code": minted.get(ticket, "")} if ok else {"ok": False}
+            self._reply(200 if ok else 401, json.dumps(reply).encode())
         elif self.path == "/internal/growbot/robot/verify":
             ok = authed and json.loads(body) == {"code": "gb-abc123", "key": "right-key"}
             self._reply(200 if ok else 401, json.dumps({"ok": ok}).encode())
@@ -389,8 +393,20 @@ def test_a_failed_read_keeps_the_last_key(gb: types.ModuleType, tmp_path: Path) 
     assert sessions.valid(value)
 
 
+def test_the_ticket_not_the_link_names_the_robot(run: _Running) -> None:
+    for query in ("ticket=good-ticket&id=gb-other1", "ticket=good-ticket"):
+        resp = run.request("GET", "/open?" + query, cookie=False)
+        resp.read()
+        assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
+        cookie = (resp.getheader("Set-Cookie") or "").split(";")[0]
+        assert run.app.sessions.robot(cookie.partition("=")[2]) == "gb-abc123"
+    odd = run.request("GET", "/open?ticket=odd-ticket", cookie=False)
+    odd.read()
+    assert odd.status == 401 and odd.getheader("Set-Cookie") is None
+
+
 def test_a_robotless_session_can_join_no_robot(run: _Running) -> None:
-    resp = run.request("GET", "/open?ticket=good-ticket", cookie=False)
+    resp = run.request("GET", "/open?ticket=bare-ticket&id=gb-abc123", cookie=False)
     resp.read()
     cookie = (resp.getheader("Set-Cookie") or "").split(";")[0]
     assert run.app.sessions.robot(cookie.partition("=")[2]) == ""
@@ -1659,7 +1675,7 @@ def test_failed_hellos_do_not_lock_out_the_owners_link(
 
 
 def test_open_without_a_robot_opens_the_creature_unpaired(run: _Running) -> None:
-    resp = run.request("GET", "/open?ticket=good-ticket", cookie=False)
+    resp = run.request("GET", "/open?ticket=bare-ticket", cookie=False)
     assert resp.status == 302
     assert resp.getheader("Location") == "/v3/next.html?mode=legs"
     assert resp.getheader("Set-Cookie")
