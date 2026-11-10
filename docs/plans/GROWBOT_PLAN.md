@@ -153,8 +153,9 @@ through the … growbot phone app."* Upstream keeps every setting in the phone's
 change made on one phone is invisible everywhere else.
 
 - **The pattern is `panel_settings.py`'s** (the desk panel's settings from the PWA: asked for
-  here, taken by the device, reported back): a `growbot_settings` table, one row per robot,
-  holding what the phone app last reported and the queue of what the owner asked for, under RLS
+  here, taken by the device, reported back): a `growbot_settings` table, one row for the house's
+  robot (there is one body; personas carry only the soul, §2c, so voice, model and walk settings
+  stay with the robot and apply to every persona), holding what the phone app last reported and the queue of what the owner asked for, under RLS
   with its isolation test (rule 3).
 - **The PWA** gets a GrowBot card (Settings, beside the panels) showing the settings as the app
   last reported them. A change made there is queued and reads "Waiting for GrowBot" until the
@@ -207,25 +208,30 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   Visual memories are camera-derived images of people, so their blobs go through the storage
   abstraction (rule 2) under their own namespace. It is not a new firewall domain (the domain
   set in `agent/contracts.py` stays as it is); instead the profile tables are owner-principal-only
-  under RLS, the `growbot.token` route reads and writes only the robot's active profile under its
-  own RLS context, and profiles are never readable by share or member sessions, agent tools, RAG
+  under RLS, a phone reads and writes only the persona it was opened as (the `gb_session` from
+  that persona's ticket names it, under its own RLS context), the robot's `growbot.token` route
+  reads only which persona it wears, and profiles are never readable by share or member sessions, agent tools, RAG
   or wiki ingest. Each of those has an isolation test.
 - **Imports are untrusted.** An imported soul passes upstream's `sanitizeSoulCfg` and a size cap;
   visual-memory blobs are type- and size-checked.
-- **Sync.** The phone app is a cache of the active profile. The patched-in loader pulls it at
-  load (so any phone opened from the PWA becomes that creature) and pushes changes back as the
+- **Sync.** The phone app is a cache of the persona it was opened as. The patched-in loader pulls
+  it at load (so any phone opened from the PWA becomes that persona) and pushes changes back as the
   soul is written (the fast loop and dreams both write through `saveSoul`), debounced, with a
-  version so a stale phone cannot overwrite a newer soul. One phone runs a given profile at a
-  time: opening it on a second phone hands the creature over, and the first phone shows that it
-  has moved. What a profile carries: `pb2_soul` and the visual memories (upstream namespaces those
+  version so a stale phone cannot overwrite a newer soul. Two things move separately. A persona
+  runs on one phone at a time: opening it on a second phone hands the persona over, and the first
+  phone shows that it has moved. The body has one rider at a time: *Connect to body* on a phone
+  takes the robot from whichever phone held it, and that phone's persona carries on alone on the
+  phone, showing that the body has gone. The box keeps the body's rider (which persona, which
+  phone) and the routes that set it, each with its auth test. What a profile carries: `pb2_soul` and the visual memories (upstream namespaces those
   by `vmNs()`: `pb2_sid`, else `gb_vm_ns`; the loader pins it to the profile id). What it does not: upstream's per-device keys kept
   outside the soul on purpose (`pb_device`, `pb_or_*`) stay with the phone, and on the box
   `/api/device` answers them for any phone.
-- **The PWA** lists the profiles on the GrowBot card, each with *Open* (on the phone alone; the
+- **The PWA** lists the profiles on the GrowBot screen (the launcher tile), each with *Open* (on the phone alone; the
   creature's *Connect to body* joins the robot). It can add one, duplicate, rename,
   reset to a fresh creature (upstream's own seed), export and import a soul file, and delete
-  (confirmed, since it erases memories). Switching persona on an open phone lands at the creature's next idle
-  moment, like the settings that need a reload (§2b).
+  (confirmed, since it erases memories). To change persona on a phone, open another one. The G4
+  GUI gate rewrites DESIGN.md's GrowBot screen for this (a persona list with *Open* on each, in
+  place of today's per-robot *Open GrowBot* and *Open GrowBot without a robot*).
 
 **Data.** Until G4, the box stores nothing but the settings row (§2b) and the robot's device key (§3). Camera frames and transcripts pass
 through to the model and STT and are not kept. The creature's memory (G4, §2c) and the diary (G5) go
@@ -309,9 +315,10 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
 - **G3 — settings from the PWA.** GUI gate first (the PWA GrowBot card). The
   `growbot_settings` table, its RLS and isolation test, the owner routes, the app's pickup and
   report route, and the apply hook with idle reload (§2b).
-- **G4 — the creature on the box, and profiles.** GUI gate first (the profile list on the
-  GrowBot card). The profile tables and blob storage, RLS and isolation tests, the
-  pull/push/hand-over routes and their auth tests, the loader's sync patch, and PWA switch,
+- **G4 — the creature on the box, and profiles.** GUI gate first (the persona list on the
+  GrowBot screen, and *Connect to body* in the creature). The profile tables and blob storage, RLS
+  and isolation tests, the pull/push/hand-over routes and the body-rider route with their auth
+  tests, the loader's sync patch and its *Connect to body* control, and PWA add, per-persona Open,
   duplicate, rename, reset, export/import and delete (§2c).
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
