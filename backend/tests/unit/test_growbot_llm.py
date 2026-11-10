@@ -49,7 +49,13 @@ class _Residency:
 class _Gateway:
     """Records what the proxy sent; answers with `chunks`, or fails with `error`."""
 
-    def __init__(self, chunks: tuple[bytes, ...] = (b"ok",), error: Exception | None = None):
+    def __init__(
+        self,
+        chunks: tuple[bytes, ...] = (b"ok",),
+        error: Exception | None = None,
+        status: int = 200,
+    ):
+        self.status = status
         self.sent: list[dict[str, Any]] = []
         self.base_url = ""
         self.closed = 0
@@ -64,6 +70,8 @@ class _Gateway:
         gateway = self
 
         class _Stream:
+            status_code = gateway.status
+
             async def __aenter__(self) -> _Stream:
                 if gateway._error is not None:
                     raise gateway._error
@@ -135,15 +143,15 @@ def test_every_route_needs_the_growbot_token(tmp_path: Path, headers: dict[str, 
     assert res.calls == [] and gw.sent == []
 
 
-def test_models_are_the_installed_ones_with_their_vision(tmp_path: Path) -> None:
+def test_models_list_the_one_creature_model_vision_first(tmp_path: Path) -> None:
     app, auth, _ = _app(tmp_path)
     data = TestClient(app).get(_MODELS, headers=auth).json()["data"]
-    assert {m["id"]: m["vision"] for m in data} == {
-        _VL: True,
-        "gpt-oss-120b": False,
-        "qwen3.8-27b": True,
-    }
-    assert all(m["object"] == "model" and m["label"] for m in data)
+    assert [(m["id"], m["vision"]) for m in data] == [(_VL, True)]
+    assert data[0]["object"] == "model" and data[0]["label"]
+    (tmp_path / "blind").mkdir()
+    blind, auth, _ = _app(tmp_path / "blind", models=("gpt-oss-120b",))
+    data = TestClient(blind).get(_MODELS, headers=auth).json()["data"]
+    assert [(m["id"], m["vision"]) for m in data] == [("gpt-oss-120b", False)]
 
 
 def test_models_follow_the_serving_engine_and_hosting(tmp_path: Path) -> None:
@@ -186,13 +194,72 @@ def test_a_catalog_id_names_its_served_model(tmp_path: Path) -> None:
     assert gw.sent[0]["json"]["model"] == _VL
 
 
-def test_an_unknown_or_uninstalled_model_never_drives_an_eviction(tmp_path: Path) -> None:
+def test_the_page_never_chooses_what_loads(tmp_path: Path) -> None:
+    # Upstream's lanes name cloud models, other installed models, or nothing: every one runs
+    # on the creature's model, so no turn can make the box swap.
     res = _Residency()
     app, auth, gw = _app(tmp_path, residency=res)
     client = TestClient(app)
-    for name in ("google/gemini-2.5-flash", "llama-3.3-70b", ""):
-        r = client.post(_COMPLETIONS, json=_chat(name), headers=auth)
-        assert r.status_code == 400 and r.json()["error"]["code"] == "model_not_found"
+    for name in ("google/gemini-2.5-flash", "gpt-oss-120b", "qwen3.8-27b", "llama-3.3-70b", ""):
+        assert client.post(_COMPLETIONS, json=_chat(name), headers=auth).status_code == 200
+    assert res.calls == [_VL] * 5
+    assert {s["json"]["model"] for s in gw.sent} == {_VL}
+
+
+def test_no_installed_model_is_refused_before_admission(tmp_path: Path) -> None:
+    res = _Residency()
+    app, auth, gw = _app(tmp_path, residency=res, enabled=False)
+    r = TestClient(app).post(_COMPLETIONS, json=_chat(), headers=auth)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "model_not_found"
+    assert res.calls == [] and gw.sent == []
+
+
+def test_only_chat_fields_reach_the_engine(tmp_path: Path) -> None:
+    app, auth, gw = _app(tmp_path)
+    extra = {
+        "grammar": "root ::= x",
+        "json_schema": {},
+        "n_probs": 50,
+        "logit_bias": {"1": 5},
+        "cache_prompt": False,
+        "samplers": ["x"],
+        "tools": [],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.4,
+        "stop": ["\n"],
+    }
+    assert TestClient(app).post(_COMPLETIONS, json=_chat(**extra), headers=auth).status_code == 200
+    sent = gw.sent[0]["json"]
+    assert set(sent) == {"model", "messages", "temperature", "stop", "max_tokens"}
+
+
+@pytest.mark.parametrize(
+    ("budget", "expected"),
+    [
+        ({"max_tokens": 10_000_000}, growbot_llm.DEFAULT_MAX_TOKENS),
+        ({"max_completion_tokens": 10_000_000}, growbot_llm.DEFAULT_MAX_TOKENS),
+        ({"max_tokens": 40, "max_completion_tokens": 900}, 40),
+        ({"max_tokens": 0}, growbot_llm.DEFAULT_MAX_TOKENS),
+        ({"max_tokens": True}, growbot_llm.DEFAULT_MAX_TOKENS),
+        ({"max_tokens": "50"}, growbot_llm.DEFAULT_MAX_TOKENS),
+    ],
+)
+def test_the_output_budget_is_capped_on_an_engine_with_no_pool(
+    tmp_path: Path, budget: dict[str, object], expected: int
+) -> None:
+    app, auth, gw = _app(tmp_path)
+    assert TestClient(app).post(_COMPLETIONS, json=_chat(**budget), headers=auth).status_code == 200
+    sent = gw.sent[0]["json"]
+    assert sent["max_tokens"] == expected and "max_completion_tokens" not in sent
+
+
+def test_an_oversized_inline_image_is_refused(tmp_path: Path) -> None:
+    res = _Residency()
+    app, auth, gw = _app(tmp_path, residency=res)
+    url = "data:image/jpeg;base64," + "A" * growbot_llm.MAX_IMAGE_CHARS
+    body = _chat(content=[{"type": "image_url", "image_url": {"url": url}}])
+    r = TestClient(app).post(_COMPLETIONS, json=body, headers=auth)
+    assert r.status_code == 400 and r.json()["error"]["code"] == "invalid_content"
     assert res.calls == [] and gw.sent == []
 
 
@@ -255,7 +322,7 @@ def test_a_remote_image_in_an_earlier_turn_is_refused_too(tmp_path: Path) -> Non
 
 def test_an_image_for_a_blind_model_is_refused(tmp_path: Path) -> None:
     res = _Residency()
-    app, auth, gw = _app(tmp_path, residency=res)
+    app, auth, gw = _app(tmp_path, models=("gpt-oss-120b",), residency=res)
     body = _chat("gpt-oss-120b", content=[{"type": "text", "text": "what is this"}, _IMAGE])
     r = TestClient(app).post(_COMPLETIONS, json=body, headers=auth)
     assert r.status_code == 400 and r.json()["error"]["code"] == "vision_not_supported"
@@ -411,7 +478,9 @@ def test_bad_bodies_and_no_engine(tmp_path: Path) -> None:
 def test_the_box_sets_the_reasoning_level(
     tmp_path: Path, model: str, extra: dict[str, Any], expected: dict[str, Any]
 ) -> None:
-    app, auth, gw = _app(tmp_path)
+    installed = local_catalog.get_by_served(model)
+    assert installed is not None
+    app, auth, gw = _app(tmp_path, models=(installed.id,))
     assert (
         TestClient(app).post(_COMPLETIONS, json=_chat(model, **extra), headers=auth).status_code
         == 200
@@ -433,3 +502,45 @@ def test_a_turn_too_long_for_the_slot_it_was_admitted_to_is_an_openai_error(
     r = TestClient(app).post(_COMPLETIONS, json=body, headers=auth)
     assert _error(r, True)["code"] == "context_length_exceeded"
     assert res.calls == [_VL] and gw.sent == []
+
+
+class _Lock:
+    def __init__(self) -> None:
+        self.entered = 0
+
+    async def __aenter__(self) -> None:
+        self.entered += 1
+
+    async def __aexit__(self, *_a: object) -> None:
+        return None
+
+
+@pytest.mark.parametrize("pooled", [False, True])
+def test_a_turn_that_may_swap_takes_the_box_wide_swap_lock(tmp_path: Path, pooled: bool) -> None:
+    models, active = ((_FLASH,), "flash-next") if pooled else (("qwen3-vl-30b",), None)
+    app, auth, _ = _app(tmp_path, models=models, active=active)
+    swap, own = _Lock(), _Lock()
+    app.state.jcode_llm_swap_lock = swap
+    app.state.growbot_llm_lock = own
+    assert TestClient(app).post(_COMPLETIONS, json=_chat(), headers=auth).status_code == 200
+    # Standard swaps under jcode's lock; a pooled engine serves one model and keeps its own.
+    assert (swap.entered, own.entered) == ((0, 1) if pooled else (1, 0))
+
+
+def test_the_level_is_judged_on_the_admitted_model(tmp_path: Path) -> None:
+    # The creature's model has no reasoning; admission switched the engine to a model that does.
+    app, auth, gw = _app(tmp_path, residency=_Residency("qwen3.8-27b"))
+    assert TestClient(app).post(_COMPLETIONS, json=_chat(), headers=auth).status_code == 200
+    sent = gw.sent[0]["json"]
+    assert sent["model"] == "qwen3.8-27b"
+    assert sent["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_a_gateway_error_status_is_an_openai_error(tmp_path: Path, stream: bool) -> None:
+    gw = _Gateway(chunks=(b"<html>boom</html>",), status=500)
+    app, auth, _ = _app(tmp_path, gateway=gw)
+    r = TestClient(app).post(_COMPLETIONS, json=_chat(stream=stream), headers=auth)
+    assert r.status_code == 200
+    assert "boom" not in r.text
+    assert _error(r, stream)["code"] == "gateway_error"

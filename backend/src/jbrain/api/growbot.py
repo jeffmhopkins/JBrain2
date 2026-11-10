@@ -53,7 +53,8 @@ def _owner_ctx(owner: OwnerDep) -> SessionContext:
 
 
 class TicketIn(BaseModel):
-    # The robot the phone should drive; the link opens the creature on it.
+    # The robot the phone should drive; the link opens the creature on it. Not bound to the
+    # ticket: a redeemed session may drive any of the owner's robots, all of which are theirs.
     code: str | None = Field(default=None, pattern=_CODE)
 
 
@@ -164,8 +165,9 @@ async def debug_delete_robot(request: Request, _p: DebugDep, code: Code) -> Resp
     return await _delete_robot(request, _DEBUG_OWNER, code)
 
 
-# Lenient bodies: anything short of a right answer is a 401, never a 422 the sidecar would
-# have to tell apart from a refusal.
+# Lenient bodies: any JSON object short of a right answer is a 401, never a 422 the sidecar
+# would have to tell apart from a refusal. (Only a body that is not JSON at all is FastAPI's
+# 422, and the sidecar never sends one.)
 class RedeemIn(BaseModel):
     ticket: str = ""
 

@@ -5,8 +5,16 @@ here, so the stock app's think lane (text, and camera frames as `image_url` part
 box and nothing leaves the house. The `jcode_llm.py` shape, not its routes or token: residency
 makes room for the model before the gateway would load it on demand (the sidecar never talks
 to llama-swap itself), the request is held to the GrowBot slot's cap on a pooled engine and
-pinned there, and a per-box lock serializes the creature's turns so two phones never each
-evict the other's model.
+pinned there.
+
+The box, not the page, picks the model. Upstream's app names a different model per lane (fast,
+active, dream) and runs on a LAN phone, so honouring its names would let vendored page code
+cold-swap the box many times a minute. Every turn runs on one creature model (the first
+installed vision model of the serving engine, else its first model), and `/models` lists only
+that one, so the sidecar's lanes all agree. Where a turn could swap (an engine with no slot
+pool) it takes jcode's swap lock, the box-wide one-model-at-a-time rule; on a pooled engine
+nothing swaps, so its own lock keeps a robot's one-line reply from queueing behind a long
+coding turn.
 
 Authenticated by `growbot.token` (api/internal_auth.py) and mounted under `/internal`, which
 Caddy never routes. Unlike jcode, the box picks the reasoning level: the creature answers in
@@ -52,8 +60,30 @@ router = APIRouter(prefix="/growbot/llm/v1", dependencies=[Depends(require_growb
 # A cold swap to the creature's model adds tens of seconds before the first token.
 _TIMEOUT = httpx.Timeout(600.0)
 # Upstream's measured turn is ~10-25 reply tokens; this leaves a long answer room without
-# booking a coder's budget against the pool.
+# booking a coder's budget against the pool. Also the ceiling: on an engine with no pool
+# nothing else would bound what the page asks for.
 DEFAULT_MAX_TOKENS: Final = 1024
+_BUDGET_KEYS: Final = ("max_tokens", "max_completion_tokens")
+# The fields an OpenAI chat turn needs. Everything else llama-server would honour (grammars,
+# `n_probs`, `logit_bias`, `cache_prompt`, sampler chains, tools) costs the box work the
+# creature never asks for, or defeats the pinned prefix, so it is dropped.
+_FIELDS: Final = frozenset(
+    {
+        "model",
+        "messages",
+        "stream",
+        "stream_options",
+        "max_tokens",
+        "max_completion_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "reasoning_effort",
+        "reasoning",
+    }
+)
+# A camera frame is tens of KiB; this bounds one inline image's base64 text.
+MAX_IMAGE_CHARS: Final = 4 * 1024 * 1024
 # The levels a client may ask for; anything else, or none, runs with thinking off.
 _LEVELS: Final = frozenset({"none", "low", "medium", "high"})
 _DEFAULT_LEVEL: Final = "none"
@@ -80,6 +110,8 @@ def _unsafe_part(messages: list[Any]) -> str | None:
             url = image.get("url") if isinstance(image, dict) else image
             if not isinstance(url, str) or not _INLINE_IMAGE.match(url):
                 return "images must be inline data:image/...;base64, URLs"
+            if len(url) > MAX_IMAGE_CHARS:
+                return "image is too large"
     return None
 
 
@@ -88,31 +120,16 @@ async def _engine(request: Request) -> engines.Engine:
     return await active.get() if active is not None else engines.DEFAULT_ENGINE
 
 
-async def _models(request: Request) -> tuple[local_catalog.LocalModel, ...]:
+async def _creature(request: Request) -> local_catalog.LocalModel | None:
+    """The one model every creature turn runs on, or None when the engine has none installed.
+    Whatever the page names is ignored, so no request can choose what loads on the box."""
     settings = request.app.state.settings
-    return local_catalog.growbot_models(
+    models = local_catalog.growbot_models(
         getattr(settings, "local_llm_enabled", False),
         getattr(settings, "local_models", []),
         await _engine(request),
     )
-
-
-async def _served(
-    request: Request, requested: str, models: tuple[local_catalog.LocalModel, ...]
-) -> str | None:
-    """The served name a request runs on: its own when installed on the active engine, a
-    catalog id's served name, or the active engine's sole model (Flash-Next serves every local
-    call). None for anything else — an unknown name must never drive an eviction."""
-    by_name = {m.served_model: m.served_model for m in models} | {
-        m.id: m.served_model for m in models
-    }
-    if requested in by_name:
-        return by_name[requested]
-    known = local_catalog.get_by_served(requested) or local_catalog.get(requested)
-    if known is None:
-        return None
-    mapped = local_catalog.remap_for_engine(known.served_model, await _engine(request))
-    return mapped if mapped in by_name.values() else None
+    return next((m for m in models if m.supports_vision), models[0] if models else None)
 
 
 def _client_level(payload: dict[str, Any]) -> str:
@@ -125,10 +142,10 @@ def _client_level(payload: dict[str, Any]) -> str:
     return asked if isinstance(asked, str) and asked in _LEVELS else _DEFAULT_LEVEL
 
 
-def _apply_level(payload: dict[str, Any], served: str) -> None:
-    """Put the level on the wire the way the adapter encodes it, after clearing every field the
-    client may have set: OpenRouter's `reasoning` object means nothing to llama-server."""
-    level = _client_level(payload)
+def _apply_level(payload: dict[str, Any], level: str, served: str) -> None:
+    """Put the level on the wire the way the adapter encodes it for the model actually sent,
+    after clearing the client's own fields: OpenRouter's `reasoning` object means nothing to
+    llama-server."""
     for key in ("reasoning_effort", "reasoning", "chat_template_kwargs"):
         payload.pop(key, None)
     model = local_catalog.get_by_served(served)
@@ -149,7 +166,8 @@ def _server_error(message: str, code: str) -> dict[str, Any]:
 
 @router.get("/models")
 async def list_models(request: Request) -> Response:
-    """The installed models of the serving engine, each with whether it can see images."""
+    """The creature's model (one, or none), with whether it can see images."""
+    model = await _creature(request)
     data = [
         {
             "id": m.served_model,
@@ -159,7 +177,7 @@ async def list_models(request: Request) -> Response:
             "label": m.label,
             "vision": m.supports_vision,
         }
-        for m in await _models(request)
+        for m in ((model,) if model is not None else ())
     ]
     return Response(
         content=json.dumps({"object": "list", "data": data}), media_type="application/json"
@@ -180,21 +198,25 @@ async def chat_completions(request: Request) -> Response:
     if not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
         raise HTTPException(status_code=400, detail="body must be a chat completion request")
 
-    models = await _models(request)
-    requested = str(payload.get("model") or "")
-    served = await _served(request, requested, models)
-    if served is None:
-        return _openai_error(400, f"unknown or unavailable model: {requested!r}", "model_not_found")
+    creature = await _creature(request)
+    if creature is None:
+        return _openai_error(400, "no on-box model is installed", "model_not_found")
+    served = creature.served_model
     unsafe = _unsafe_part(payload["messages"])
     if unsafe is not None:
         return _openai_error(400, unsafe, "invalid_content")
+    payload = {k: v for k, v in payload.items() if k in _FIELDS}
     _chars, images = prompt_chars(payload)
     if images and not local_catalog.supports_vision(served):
         return _openai_error(400, f"{served} cannot see images", "vision_not_supported")
     payload["model"] = served
-    _apply_level(payload, served)
-    if "max_tokens" not in payload and "max_completion_tokens" not in payload:
-        payload["max_tokens"] = DEFAULT_MAX_TOKENS
+    level = _client_level(payload)
+    for key in ("reasoning_effort", "reasoning"):
+        payload.pop(key, None)
+    budgets = [b for b in (payload.get(k) for k in _BUDGET_KEYS) if type(b) is int]
+    for key in _BUDGET_KEYS:
+        payload.pop(key, None)
+    payload["max_tokens"] = min([DEFAULT_MAX_TOKENS, *(b for b in budgets if b > 0)])
     # Before the lock: a request too long for its slot must not wait a turn to be refused.
     try:
         prompt_tokens = fit_openai_request(served, payload, GROWBOT_ROLE)
@@ -204,7 +226,10 @@ async def chat_completions(request: Request) -> Response:
     state = request.app.state
     residency = getattr(state, "residency", None)
     pool_guard = getattr(state, "kv_pool_guard", None)
-    lock = getattr(state, "growbot_llm_lock", None)
+    # A pooled engine serves one model, so nothing swaps; anywhere else this turn may load a
+    # model, and the box loads one at a time under jcode's swap lock.
+    pooled = local_catalog.pool_of(served) is not None
+    lock = getattr(state, "growbot_llm_lock" if pooled else "jcode_llm_swap_lock", None)
     factory = getattr(state, "growbot_llm_client_factory", None) or httpx.AsyncClient
     client = factory(base_url=gateway_url.rstrip("/"), timeout=_TIMEOUT)
     stream = bool(payload.get("stream"))
@@ -236,10 +261,20 @@ async def chat_completions(request: Request) -> Response:
                         payload["model"] = admitted
                         prompt_tokens = fit_openai_request(admitted, payload, GROWBOT_ROLE)
                 model = str(payload["model"])
+                # Judged on the model actually sent, after admission, as jcode's proxy does.
+                _apply_level(payload, level, model)
                 async with (
                     pinned_request(pool_guard, model, payload, prompt_tokens, GROWBOT_ROLE),
                     client.stream("POST", "/chat/completions", json=payload) as upstream,
                 ):
+                    status = getattr(upstream, "status_code", 200)
+                    if status >= 400:
+                        # The 200 is already out; say it in the body, which the sidecar and
+                        # the app read as a failed turn rather than as the creature's words.
+                        log.warning("growbot-llm gateway answered %s model=%s", status, model)
+                        body = _server_error("the on-box model refused the turn", "gateway_error")
+                        yield error_bytes(body, stream=stream)
+                        return
                     async for chunk in upstream.aiter_raw():
                         yield chunk
         except SlotCapError as exc:

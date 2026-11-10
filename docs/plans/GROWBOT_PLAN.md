@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** Scheduled · **Last verified:** 2026-11-10 · **Waves:** G1◻️ G2◻️ G3◻️ G4◻️ G5◻️
+> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2◻️ G3◻️ G4◻️ G5◻️
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -265,7 +265,9 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
   `api/growbot_llm.py`, the ticket mint, the `CALLERS` entry. Tests: shim and relay by path,
   the api router and its auth (security paths at 100%), the Caddy site via the existing
   real-Caddy tests, the headless no-egress test. Proven with the stock body firmware hand-edited
-  to the box.
+  to the box. ✅ Built: until G3's per-lane settings the box picks one creature model (the
+  serving engine's first installed vision model, else its first) and ignores the name the page
+  sends, so no lane can cold-swap the box; a turn that may swap takes jcode's swap lock.
 - **G2 — the PWA flashes the robot.** GUI gate first (three mocks, `PROCESS.md`), covering the
   Endpoints board, pairing code, the open-GrowBot entry and the Ops listing. Then Pico 2 W as an
   endpoint board: `picotool` + `mpremote`, the generated `secrets.py`, device key mint/revoke.
