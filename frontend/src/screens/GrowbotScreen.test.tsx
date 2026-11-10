@@ -54,7 +54,7 @@ function job(over: Partial<GrowbotFlashJob> = {}): GrowbotFlashJob {
   };
 }
 
-type Route = (path: string, init?: RequestInit) => Response | null;
+type Route = (path: string, init?: RequestInit) => Response | Promise<Response> | null;
 
 function serve(status: GrowbotStatus, extra?: Route, flash: GrowbotFlashJob | null = null) {
   const calls: { path: string; method: string; body?: unknown }[] = [];
@@ -355,5 +355,31 @@ describe("GrowbotScreen setting up another phone", () => {
     expect(tickets()[0]?.body).toEqual({ code: "gb-3fa91c" });
     fireEvent.click(screen.getByRole("radio", { name: /No robot/ }));
     await waitFor(() => expect(tickets().at(-1)?.body).toEqual({}));
+  });
+
+  it("never shows a ticket for a robot picked before the current one", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    let releaseFirst: (r: Response) => void = () => {};
+    serve({ service: "up", connected: 1, robots: [robot()] }, (path, init) => {
+      if (path !== "/api/growbot/ticket") return null;
+      const body = JSON.parse(String(init?.body ?? "{}")) as { code?: string };
+      if (body.code) {
+        return new Promise<Response>((done) => {
+          releaseFirst = done;
+        });
+      }
+      return json({ ticket: "solo", url: "https://jbrain.local:8444/open?ticket=solo" });
+    });
+    const { container } = render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Set up another phone" }));
+    fireEvent.click(await screen.findByRole("radio", { name: /No robot/ }));
+    await screen.findByRole("region", { name: "Code 2" });
+    const shown = () => container.innerHTML;
+    const before = shown();
+    await act(async () => {
+      releaseFirst(json({ ticket: "late", url: "https://jbrain.local:8444/open?ticket=late" }));
+      await Promise.resolve();
+    });
+    expect(shown()).toBe(before);
   });
 });

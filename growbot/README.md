@@ -123,7 +123,7 @@ page, so getting it back is one scan.
   in, and *Sign out every phone* (the GrowBot screen, or the debug API's
   `POST /growbot/sessions/reset`) re-mints the second file, which signs every phone out at once. Every other route answers 401 without it, decided from
   the request head: without a session nothing but a body-less `/open`, `/start` or one of the
-  installed app's four files is read, and the 401 closes the connection, so an anonymous client never
+  installed app's own files (`PUBLIC_PATHS`: manifest, worker, icons, setup page, voice shim) is read, and the 401 closes the connection, so an anonymous client never
   costs the process an upload. Requests that act must also come from this origin, since the PWA
   on `:443` is the same *site* and SameSite alone would let its requests carry the cookie: a
   non-GET `/api` call with a foreign `Origin` is 403 (one with no `Origin` is allowed, as a

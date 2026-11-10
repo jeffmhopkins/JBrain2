@@ -205,6 +205,7 @@ def site(tmp_path: Path) -> Path:
         "sw.js",
         "setup.html",
         "setup.js",
+        "growbot-box.js",
         "icons/growbot-192.png",
         "icons/growbot-512.png",
     ):
@@ -479,6 +480,10 @@ def test_no_root_from_the_api_is_a_404_not_junk(run: _Running) -> None:
         resp = run.request("GET", "/box-root.crt", cookie=False)
         resp.read()
         assert resp.status == 404
+        again = run.request("GET", "/box-root.crt", cookie=False)
+        again.read()
+        # The failure is remembered too, so a flood of LAN requests is not a flood of api calls.
+        assert len([s for s in _Fake.seen if s["path"] == "/internal/growbot/lan-root"]) == 1
     finally:
         _Fake.root_cert = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
 
@@ -498,6 +503,7 @@ def test_start_takes_no_other_method(run: _Running) -> None:
         "/setup.js",
         "/icons/growbot-192.png",
         "/icons/growbot-512.png",
+        "/growbot-box.js",
     ],
 )
 def test_the_installed_apps_files_need_no_session(run: _Running, path: str) -> None:

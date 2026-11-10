@@ -79,10 +79,16 @@ PUBLIC_PATHS = frozenset(
         # box's certificate and scans the second QR (a ticket) shown on JBrain's GrowBot screen.
         "/setup.html",
         "/setup.js",
+        # The page's first script on every page, setup.html too; it holds no secret and is what
+        # registers the service worker, so a phone can install the app from the setup page.
+        "/growbot-box.js",
     )
 )
 ROOT_CERT_PATH = "/box-root.crt"
 ROOT_CERT_CACHE_S = 300.0
+# A failed read is remembered too, briefly: the route needs no session, so without it every
+# LAN request on a box with no certificate would take an api call from the pool /open uses.
+ROOT_CERT_RETRY_S = 15.0
 SESSIONLESS = PUBLIC_PATHS | {"/open", "/start", ROOT_CERT_PATH}
 
 MAX_HEAD = 16 * 1024
@@ -957,8 +963,12 @@ class GrowBot:
         """The box's LAN root, from the api. Public by nature (it is what a phone installs to
         trust the box) and served only here, on the LAN-only site, to phones signed in to
         nothing. A failed read keeps the last good copy."""
-        if time.monotonic() - self._root_cert_at < ROOT_CERT_CACHE_S:
+        now = time.monotonic()
+        if now - self._root_cert_at < ROOT_CERT_CACHE_S:
             return self._root_cert
+        # Claimed before the call, so requests arriving while it is in flight are served the
+        # current copy instead of each asking the api.
+        self._root_cert_at = now - ROOT_CERT_CACHE_S + ROOT_CERT_RETRY_S
         up = http_call(self.config.api_url + "/internal/growbot/lan-root", headers=self._auth())
         if up.status == 200 and b"BEGIN CERTIFICATE" in up.body and len(up.body) < 64 * 1024:
             self._root_cert, self._root_cert_at = up.body, time.monotonic()

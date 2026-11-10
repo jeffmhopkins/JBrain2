@@ -3,7 +3,7 @@
  *  a scanner); the second, scanned from inside that page, is a one-time ticket that opens the
  *  creature there on the robot picked here. Pairing stays JBrain's: the ticket names the robot. */
 import { QRCodeSVG } from "qrcode.react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { type GrowbotRobot, api } from "../api/client";
 import { Sheet } from "./Sheet";
 
@@ -29,25 +29,35 @@ export function GrowbotPhoneSheet({ robots, onClose }: Props) {
   const live = robots.filter((r) => !r.revoked_at);
   const [target, setTarget] = useState<string>(live[0]?.code ?? NO_ROBOT);
   const [ticket, setTicket] = useState("");
+  const [setup, setSetup] = useState("");
   const [error, setError] = useState("");
 
-  const mint = useCallback(async (code: string) => {
-    setError("");
-    try {
-      setTicket((await api.growbotTicket(code)).url);
-    } catch (e) {
-      setTicket("");
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
-
   useEffect(() => {
-    void mint(target);
-    const id = setInterval(() => void mint(target), REFRESH_MS);
-    return () => clearInterval(id);
-  }, [target, mint]);
-
-  const setup = ticket ? setupUrl(ticket) : "";
+    // A reply for the robot picked before this one must not land after its own: code 2 would
+    // then open the phone on a robot the sheet no longer names.
+    let current = true;
+    const mint = async () => {
+      setError("");
+      try {
+        const url = (await api.growbotTicket(target)).url;
+        if (!current) return;
+        setTicket(url);
+        // Code 1 names only the box, so it stays up when a later ticket fails to load.
+        setSetup(setupUrl(url));
+      } catch (e) {
+        if (!current) return;
+        setTicket("");
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    setTicket("");
+    void mint();
+    const id = setInterval(() => void mint(), REFRESH_MS);
+    return () => {
+      current = false;
+      clearInterval(id);
+    };
+  }, [target]);
 
   return (
     <Sheet title="Set up another phone" onClose={onClose}>
