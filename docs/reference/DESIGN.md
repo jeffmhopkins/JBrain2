@@ -3250,6 +3250,32 @@ does **not** gate sends; the parent turn stays the single gated turn, and the
 in-chat accordion reads the parent turn's `subagent_*` events while the tree reads
 child session rows — see the build plan's "Execution model").
 
+## GrowBot — the desk robot's screen (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-flash/b-growbot-screen.html`, variant B; rivals A "another board on Endpoints" and C "launcher tile plus Ops row" retained in `docs/mocks/growbot-flash/README.md`; plan `docs/plans/GROWBOT_PLAN.md` §3, wave G2)
+
+GrowBot has its own launcher tile and screen, because the owner opens a robot every day and
+flashes one once. The tile's second line says who is connected (or that `growbot` is down).
+
+- **Robots first.** One card per robot: its name, its state in words beside the dot
+  (connected · 20 s ago / not connected · last seen 3 h ago / key revoked), **Open GrowBot** as
+  the card's full-width primary button, then the pairing code and the key's age, then *New
+  key* and *Revoke key* (rose at rest, a second tap within 3 s, disarming on its own). A
+  revoked robot's primary button becomes *Reflash <name>*.
+- **Add a robot** is the screen's pinned foot button and opens a four-step sheet, one primary
+  action per step: *Plug it into the box* (what is on the box's USB, new robot or *Reflash
+  <name>*, its name) → *Wi-Fi it should join* (the box's remembered networks as a checklist,
+  tried in order, *Add another network*) → *Flashing* (three named rows: Load MicroPython ·
+  Copy its firmware and Wi-Fi · Join Wi-Fi and reach the box, the log behind *Show the log*
+  until something fails) → *<name> is paired* (the code, *Open GrowBot*). Closing the sheet
+  mid-flash leaves *Flashing — tap to watch* in the foot. Each failure says what happened and
+  the recovery, never "see the log".
+- **Open GrowBot** mints a one-time link and opens `https://jbrain.local:8444` in a new tab. The
+  first open on a phone shows the certificate note once, with *Download the box's certificate*.
+- **jpanel → Flash** recognises a Pico on the port and hands over: *That's a GrowBot. Robots are
+  added on the GrowBot screen* → *Add it on GrowBot*. There is one door.
+- **Ops → Services** lists `growbot` with *N of M robots connected now*; its open body lists the
+  robots with their last-seen time and links to the GrowBot screen. Down, it says that no robot
+  can connect until it is back.
+
 ## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/plans/ROOM_ENDPOINT_PLAN.md`)
 
 The pet on a **368×448 AMOLED room endpoint** (physically **29.0 × 35.3 mm**, 322 ppi), for a

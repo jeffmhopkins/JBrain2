@@ -1,6 +1,6 @@
 # GrowBot → flashing, pairing and opening a robot
 
-Kind: Living (mock set) · Status: **Open — awaiting the owner's pick** · Last verified: 2026-11-10
+Kind: Living (mock set) · Status: **B chosen** (owner, 2026-11-10) · Last verified: 2026-11-10
 
 The GUI gate for wave **G2** of [`../../plans/GROWBOT_PLAN.md`](../../plans/GROWBOT_PLAN.md)
 (§3 "Flashing", §4 G2). Three directions for the same four jobs:
@@ -78,6 +78,11 @@ not preferences. They land whichever direction is chosen.
 | **A** `a-endpoints-board` | **Another board.** GrowBot joins the Room endpoints stepper the owner already knows (steps 1–3 unchanged in shape), success adds a step 4 *Paired* with the code and *Open GrowBot*, and a **Robots** tab beside Flash holds the robots afterwards, the way jpanel's Panels tab holds the panels. Ops reads only and points to the Robots tab. | Least invention. But the everyday tap (*Open GrowBot*) lives two levels down on a screen named for panels, and the stepper carries both panel and robot steps. When G3 settings and G4 profiles arrive, they have no natural home here. |
 | **B** `b-growbot-screen` | **Its own screen.** A GrowBot launcher tile (it says who is connected) opens a screen where the robots come first and *Open GrowBot* is the biggest button on each. *Add a robot* runs the flash as a guided sheet, one step and one button at a time (plug in → Wi-Fi → flashing → paired), and the log is behind *Show the log* until something fails. jpanel's Flash tab recognises a Pico and sends it here, so there is one door. | A new screen and launcher tile. A four-step sheet stretches `DESIGN.md`'s "longer flows are full screens"; it stays one primary action per step, and the sheet can be closed mid-flash and reopened from *Flashing — tap to watch*. If the rule is read strictly, the same four steps become a full screen with no other change. |
 | **C** `c-inline-cards` | **Where you already look.** No new screen. The launcher gets one wide live GrowBot tile with an *Open* per robot, the one-tap everyday path. Everything else expands in place inside the `growbot` row on Ops → Services: each robot (code, key, Open, new key, revoke) and *Add a robot*, a compact inline flash. | Fewest screens and taps to open. But it puts a worked, several-minute form back into the scanned dashboard, which `EndpointsScreen.tsx`'s header records as the mistake that gave the flasher its own screen. A wide live tile is also a new device in the launcher grid, and Ops ends up holding things that are not service operations. |
+
+## Chosen: B
+
+The owner picked **B** on 2026-11-10. `b-growbot-screen.html` is the binding spec for G2; A and C
+are kept as the record of what was weighed.
 
 ## Recommendation: B
 
