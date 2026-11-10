@@ -325,13 +325,13 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           </section>
         )}
         {status !== null && (
-          // The creature runs on the phone alone (face, voice, camera); only its legs need a
+          // The creature opens unpaired on the phone (face, voice, camera); only its legs need a
           // robot, so it can be tried before any board is flashed.
           <button type="button" className="gb-btn block" onClick={() => openRobot("")}>
             Open GrowBot without a robot
           </button>
         )}
-        {robots.length > 0 && !certNoted() && (
+        {status !== null && !certNoted() && (
           <p className="gb-hint dim">
             The first time you open GrowBot on this phone, it explains the box's certificate.
           </p>
