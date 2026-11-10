@@ -211,3 +211,51 @@ describe("errorDetail", () => {
     await expect(api.sendJpanelMessage("panel-quorra", "x")).rejects.toThrow("Request failed: 422");
   });
 });
+
+describe("api GrowBot", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function stub(body: unknown, status = 200) {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("reads the status, the setup and the job from their routes", async () => {
+    const fetchMock = stub({ job: null });
+    expect(await api.growbotFlashJob()).toBeNull();
+    await api.growbotStatus();
+    await api.growbotFlashSetup();
+    expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual([
+      "/api/growbot/flash",
+      "/api/growbot/status",
+      "/api/growbot/flash/setup",
+    ]);
+  });
+
+  it("starts a flash, revokes and tickets with POSTs carrying their bodies", async () => {
+    const fetchMock = stub({ job: "job-1" }, 202);
+    await api.startGrowbotFlash({ mode: "rekey", target: "gb-3fa91c" });
+    await api.revokeGrowbotRobot("gb-3fa91c");
+    await api.growbotTicket("gb-3fa91c");
+    const calls = fetchMock.mock.calls.map((c) => [String(c[0]), c[1]?.method, c[1]?.body]);
+    expect(calls).toEqual([
+      ["/api/growbot/flash", "POST", JSON.stringify({ mode: "rekey", target: "gb-3fa91c" })],
+      ["/api/growbot/robots/gb-3fa91c/revoke", "POST", undefined],
+      ["/api/growbot/ticket", "POST", JSON.stringify({ code: "gb-3fa91c" })],
+    ]);
+  });
+
+  it("surfaces the box's refusal sentence as the error", async () => {
+    stub({ detail: "The box has no readable certificate — it won't flash a robot." }, 409);
+    await expect(
+      api.startGrowbotFlash({ mode: "flash", target: "new", name: "Pip", networks: [] }),
+    ).rejects.toThrow("The box has no readable certificate — it won't flash a robot.");
+  });
+});

@@ -546,6 +546,68 @@ describe("OpsScreen", () => {
     expect(screen.queryByRole("button", { name: /^Other/ })).toBeNull();
   });
 
+  it("lists growbot under Devices with who is connected, and links to its screen", async () => {
+    const robots = [
+      {
+        code: "gb-3fa91c",
+        name: "Quorra",
+        created_at: "2026-11-01T00:00:00Z",
+        rotated_at: null,
+        revoked_at: null,
+        last_seen_at: new Date().toISOString(),
+        connected: true,
+      },
+      {
+        code: "gb-91d0e4",
+        name: "Tamsin",
+        created_at: "2026-11-01T00:00:00Z",
+        rotated_at: null,
+        revoked_at: null,
+        last_seen_at: new Date(Date.now() - 3 * 36e5).toISOString(),
+        connected: false,
+      },
+    ];
+    serve((path) =>
+      path === "/api/ops/status"
+        ? json({ containers: [container("endpoint"), container("growbot")] })
+        : path === "/api/growbot/status"
+          ? json({ service: "up", connected: 1, robots })
+          : null,
+    );
+    const onOpenGrowbot = vi.fn();
+    render(<OpsScreen onOpenGrowbot={onOpenGrowbot} />);
+    await openTile("Services");
+    const head = await screen.findByRole("button", { name: /^Devices/ });
+    fireEvent.click(head);
+    const card = head.closest("section") as HTMLElement;
+    expect(within(card).getByText(/panel and robot flasher/)).toBeInTheDocument();
+    expect(within(card).getByText(/desk robots/)).toBeInTheDocument();
+    expect(await within(card).findByText("1 of 2 robots connected now")).toBeInTheDocument();
+
+    fireEvent.click(within(card).getByText("growbot"));
+    const list = within(card).getByRole("list", { name: "Robots" });
+    expect(within(list).getByText("Quorra")).toBeInTheDocument();
+    expect(within(list).getByText("not connected · last seen 3 h ago")).toBeInTheDocument();
+    fireEvent.click(within(card).getByRole("button", { name: "Open the GrowBot screen" }));
+    expect(onOpenGrowbot).toHaveBeenCalled();
+  });
+
+  it("says a down growbot cuts every robot off", async () => {
+    serve((path) =>
+      path === "/api/ops/status"
+        ? json({ containers: [container("growbot", "exited")] })
+        : path === "/api/growbot/status"
+          ? json({ service: "down", connected: 0, robots: [] })
+          : null,
+    );
+    render(<OpsScreen />);
+    await openTile("Services");
+    fireEvent.click(await screen.findByRole("button", { name: /^Devices/ }));
+    expect(
+      await screen.findByText("Down — no robot can connect until it is back."),
+    ).toBeInTheDocument();
+  });
+
   it("shows a service switched off on purpose as grey 'off', never as down", async () => {
     // comfyui and jcode are opt-in; local-llm is the engine the owner did not choose.
     setEngineState(

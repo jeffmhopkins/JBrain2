@@ -328,3 +328,45 @@ describe("EndpointsScreen", () => {
     });
   });
 });
+
+// There is one door for robots: a Pico on the Flash tab is handed to the GrowBot screen.
+describe("EndpointsScreen and a GrowBot", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("hands a blank Pico in its USB loader over to GrowBot", async () => {
+    fetchMock.mockImplementation(async (input) =>
+      String(input) === "/api/endpoint/ports"
+        ? json({ ports: [], flasher: true, pico_boot: true })
+        : new Response(null, { status: 404 }),
+    );
+    const onOpenGrowbot = vi.fn();
+    render(<EndpointsScreen onOpenGrowbot={onOpenGrowbot} />);
+    expect(await screen.findByText(/That's a GrowBot/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Add it on GrowBot" }));
+    expect(onOpenGrowbot).toHaveBeenCalled();
+  });
+
+  it("badges a Pico running MicroPython and never preselects it as a panel", async () => {
+    fetchMock.mockImplementation(
+      mock([{ device: "/dev/ttyACM1", label: "MicroPython", is_espressif: false, is_pico: true }]),
+    );
+    const { container } = render(<EndpointsScreen onOpenGrowbot={vi.fn()} />);
+    expect(await screen.findByText("Pico 2 W")).toBeTruthy();
+    expect(screen.getByText(/That's a GrowBot/)).toBeTruthy();
+    expect(portRadios(container).every((r) => !r.checked)).toBe(true);
+  });
+
+  it("says nothing about GrowBot when only a panel is plugged in", async () => {
+    fetchMock.mockImplementation(mock([PANEL]));
+    render(<EndpointsScreen onOpenGrowbot={vi.fn()} />);
+    await screen.findByRole("radio", { name: /ttyACM0/ });
+    expect(screen.queryByText(/That's a GrowBot/)).toBeNull();
+  });
+});
