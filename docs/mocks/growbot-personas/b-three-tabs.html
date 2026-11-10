@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot personas — B — three tabs</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.prow { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; border-top: 1px solid var(--border); min-height: 64px; }
+.prow:first-child { border-top: 0; }
+.prow .main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; background: none; border: 0; text-align: left;
+  padding: 0; cursor: pointer; min-height: 48px; }
+.prow .main .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.prow .main .t1 { font-size: var(--fs-body); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rider-pick .choice .av { width: 32px; height: 32px; font-size: var(--fs-secondary); }
+.ph-row { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--border); min-height: 64px; }
+.ph-row:first-child { border-top: 0; }
+.ph-row .tx { flex: 1; min-width: 0; }
+.ph-row .t1 { font-size: var(--fs-body); font-weight: 500; }
+.ph-row .t2 { font-size: var(--fs-micro); color: var(--text-2); margin-top: 2px; }
+.ph-ic { flex: none; width: 28px; height: 40px; border: 1.5px solid var(--text-3); border-radius: 6px; }
+.ph-ic.tab { width: 36px; height: 30px; }
+.big-choice { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 10px 14px; text-align: left;
+  border: 1px solid var(--border); border-radius: var(--r-input); background: var(--surface); cursor: pointer; margin-bottom: 8px; }
+.big-choice .tx { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.big-choice .t1 { font-size: var(--fs-body); font-weight: 500; }
+.big-choice .t2 { font-size: var(--fs-micro); color: var(--text-2); }
+.big-choice.wear { border-color: var(--violet); background: var(--violet-tint); }
+.big-choice:disabled { cursor: default; color: var(--text-3); background: var(--surface-2); border-color: var(--border); }
+.big-choice .k { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--steel); }
+.big-choice.wear .k { background: var(--violet); }
+.big-choice .k.other { background: transparent; border: 1.5px solid var(--text-3); }
+.seg.inner { margin: 12px 16px 0; }
+.seg.inner button { font-size: var(--fs-secondary); }
+</style>
+</head>
+<body>
+<!-- B: three tabs, one per job the owner named — Personas, Body, Phones. Each persona row has an
+     Open button that raises one launch sheet (this phone alone · this phone wearing Fish · another
+     phone), so every launch says where the body goes before it happens. The Body tab can also
+     pick who wears Fish, from the body's side. A persona's page has its own tabs: Soul,
+     Memories, Checkpoints, Manage. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const S0 = () => G.S;
+  const B = { tab: "personas", ptab: "soul" };
+
+  function tabs() {
+    const S = S0();
+    const t = (id, l, n) => `<button class="${B.tab === id ? "on" : ""}" data-act="tab" data-arg="${id}" aria-pressed="${B.tab === id}">${l}${n != null ? `<span class="n">${n}</span>` : ""}</button>`;
+    return `<div class="seg" role="tablist">${t("personas", "Personas", S.personas.length)}${t("body", "Body")}${t("phones", "Phones")}</div>`;
+  }
+
+  function personasTab() {
+    const S = S0();
+    const rows = S.personas.map((p) => `<div class="prow">
+        <button class="main" data-act="page" data-arg="${p.id}" aria-label="${G.esc(p.name)} — soul, memories and checkpoints">${G.avatar(p)}
+          <span class="tx"><span class="t1">${G.esc(p.name)}</span>${G.whereHTML(p)}</span></button>
+        <button class="btn primary slim" data-act="launchsheet" data-arg="${p.id}">Open</button></div>`).join("");
+    return `<div class="list">${rows || `<div class="li static"><span class="tx"><span class="t1">No personas</span><span class="t2">Make one below.</span></span></div>`}</div>
+      <p class="hint dim">Tap a persona for its soul, memories and checkpoints. Open asks where it goes.</p>`;
+  }
+
+  function bodyTab() {
+    const S = S0(), b = S.body;
+    const pick = G.keyOk() ? `<fieldset class="choices rider-pick" style="margin:0"><legend>Who wears ${b.name}</legend>
+        <label class="choice${!S.rider ? " sel" : ""}"><input type="radio" name="rider" data-act="ride" data-arg=""${!S.rider ? " checked" : ""}><span class="tx">Nobody<em>${b.name} stands still.</em></span></label>
+        ${S.personas.map((p) => `<label class="choice${S.rider === p.id ? " sel" : ""}"><input type="radio" name="rider" data-act="ride" data-arg="${p.id}"${S.rider === p.id ? " checked" : ""}>${G.avatar(p)}
+          <span class="tx">${G.esc(p.name)}<em>${p.phone ? G.on(p.phone) : "not open — opens on this phone"}</em></span></label>`).join("")}
+      </fieldset><p class="hint dim" style="margin-top:8px">The one it leaves carries on alone on its phone.</p>` : "";
+    return `<section class="card" aria-label="${b.name}">
+        <div class="row"><h2 style="flex:1">${b.name}</h2>${G.bodyStateHTML()}</div>
+        <p class="hint" style="margin-top:6px">${G.riderLine()}</p>${G.bodyFactsHTML()}${G.bodyActsHTML()}</section>
+      ${pick ? `<section class="card">${pick}</section>` : ""}
+      <button class="btn block" data-act="add-robot">Add a robot</button>`;
+  }
+
+  function phonesTab() {
+    const S = S0();
+    const rows = S.phones.map((f) => {
+      const p = G.onPhone(f.id), wearing = p && S.rider === p.id;
+      return `<div class="ph-row"><span class="ph-ic${f.id === "tab" ? " tab" : ""}" aria-hidden="true"></span><div class="tx"><div class="t1">${G.esc(f.name)}</div>
+        <div class="t2">${p ? `${G.esc(p.name)}${wearing ? ` · wearing ${S.body.name}` : " · alone"}` : "nothing open"}${f.sub ? ` · ${G.esc(f.sub)}` : ""}</div></div>
+        ${wearing ? `<span class="tag violet">${S.body.name}</span>` : ""}</div>`;
+    }).join("");
+    return `<div class="list">${rows}</div>
+      <p class="hint dim">A phone holds one persona at a time, and a persona is open on one phone at a time — opening it elsewhere hands it over.</p>
+      <button class="btn primary block" data-act="launch" data-arg="${S.personas[0] ? S.personas[0].id : ""}:other"${S.personas.length ? "" : " disabled"}>Set up another phone</button>
+      ${G.helpHTML(true)}${G.signOutHTML()}`;
+  }
+
+  function main() {
+    const S = S0();
+    const body = B.tab === "personas" ? personasTab() : B.tab === "body" ? bodyTab() : phonesTab();
+    const foot = B.tab === "personas" ? `<div class="foot"><button class="btn primary" data-act="new-persona">New persona</button><button class="btn" data-act="import" style="flex:0 0 auto">Import</button></div>` : "";
+    return `<div class="pg${G.anim("page", "main")}${S.dir === "back" ? " back" : ""}">
+      <div class="topbar"><button class="back" data-act="launcher">Back</button><span class="ttl">GrowBot</span></div>${G.bannerHTML()}${tabs()}
+      <div class="body" data-scroll="main-${B.tab}">${body}<div class="pad-end"></div></div>${foot}</div>`;
+  }
+
+  function page(p) {
+    const S = S0();
+    const t = (id, l) => `<button class="${B.ptab === id ? "on" : ""}" data-act="ptab" data-arg="${id}" aria-pressed="${B.ptab === id}">${l}</button>`;
+    let body = "";
+    if (B.ptab === "soul") {
+      body = `<div class="sec-h">Personality and settings<span class="r">tap to edit</span></div>
+        <div class="list">${G.REGIONS.map((r) => `<button class="li" data-act="edit" data-arg="${p.id}|${r.id}"><span class="tx"><span class="t1">${r.label}</span><span class="t2">${G.esc(G.clip(G.regionText(p, r), 80))}</span></span><span class="chev">›</span></button>`).join("")}</div>
+        ${G.floorHTML()}
+        <div class="sec-h">What it remembers<span class="r">read-only</span></div>
+        <section class="card">${G.MEMORY.map((m) => `<div class="region"><div class="rh"><h3>${m.label}</h3><span class="up">${m.up}</span></div>${G.memoryHTML(p, m.id)}</div>`).join("")}</section>
+        ${G.writesItself(p)}`;
+    } else if (B.ptab === "vm") body = `<section class="card">${G.vmHTML(p)}</section>`;
+    else if (B.ptab === "cps") body = `<section class="card">${G.cpListHTML(p)}</section>`;
+    else body = `<section class="card">${G.manageHTML(p)}<p class="hint dim" style="margin-top:10px">Made ${G.day(p.made)} from ${G.esc(p.from)}.</p></section>`;
+    return `<div class="pg${G.anim("page", "p:" + p.id)}">
+      <div class="topbar"><button class="back" data-act="back">Back</button><span class="ttl">${G.esc(p.name)}<span class="sub">${G.esc(G.where(p).text)}</span></span></div>${G.bannerHTML()}
+      <div class="seg inner" role="tablist">${t("soul", "Soul")}${t("vm", "Memories")}${t("cps", "Checkpoints")}${t("manage", "Manage")}</div>
+      <div class="body" data-scroll="page-${B.ptab}">${body}<div class="pad-end"></div></div>
+      <div class="foot"><button class="btn primary" data-act="launchsheet" data-arg="${p.id}">Open ${G.esc(p.name)}…</button></div></div>`;
+  }
+
+  function launchSheet() {
+    const S = S0(), sh = S.sheet, p = G.P(sh.pid), b = S.body, wearing = S.rider === p.id, other = G.rider();
+    const here = G.onPhone("me");
+    const repl = here && here !== p ? ` ${G.esc(here.name)} closes here — it's kept on the box.` : "";
+    const fromPh = p.phone && p.phone !== "me" ? ` It moves from ${G.phName(p.phone)}.` : "";
+    const bodyEm = !G.keyOk() ? `${b.name}'s key is revoked — reflash it first.`
+      : wearing && p.phone === "me" ? `Already wearing ${b.name} here.`
+      : `${other && other !== p ? `${G.esc(other.name)} lets go and carries on alone ${G.on(other.phone)}.` : `It takes ${b.name}'s legs.`}${b.online ? "" : ` ${b.name} is off — its legs move once it's on.`}`;
+    return G.sheetShell("launch" + p.id, `Open ${p.name}`,
+      `<button class="big-choice" data-act="launch" data-arg="${p.id}:here"><span class="k"></span><span class="tx"><span class="t1">On this phone, alone</span><span class="t2">No legs.${fromPh}${repl}${wearing ? ` ${b.name} stays where it is.` : ""}</span></span></button>
+       <button class="big-choice wear" data-act="launch" data-arg="${p.id}:body"${G.keyOk() && !(wearing && p.phone === "me") ? "" : " disabled"}><span class="k"></span><span class="tx"><span class="t1">On this phone, wearing ${b.name}</span><span class="t2">${bodyEm}${fromPh}${repl}</span></span></button>
+       <button class="big-choice" data-act="launch" data-arg="${p.id}:other"><span class="k other"></span><span class="tx"><span class="t1">On another phone…</span><span class="t2">Two codes to scan, alone or wearing ${b.name}.</span></span></button>`, "");
+  }
+
+  G.onAdded = (p) => { const S = S0(); S.page = { pid: p.id }; B.ptab = "soul"; G.render(); };
+  G.onDeleted = () => { const S = S0(); S.page = null; S.dir = "back"; G.render(); };
+  G.onReset = () => { B.tab = "personas"; B.ptab = "soul"; };
+
+  G.mount({
+    variant: "b",
+    render: () => {
+      const S = S0(), p = S.page && G.P(S.page.pid);
+      if (S.page && !p) S.page = null;
+      const sheet = S.sheet && S.sheet.kind === "launch" ? launchSheet() : G.sharedSheet();
+      document.getElementById("phone").innerHTML = (p ? page(p) : main()) + sheet + G.dialogHTML() + G.toastHTML();
+    },
+    actions: {
+      tab: (t) => { B.tab = t; G.render(); },
+      ptab: (t) => { B.ptab = t; G.render(); },
+      page: (pid) => { const S = S0(); S.page = { pid }; S.dir = ""; B.ptab = "soul"; G.render(); G.scrollTop("page-soul"); },
+      back: () => { const S = S0(); S.page = null; S.dir = "back"; G.render(); },
+      launcher: () => G.toast("That goes back to the launcher, which isn't part of this mock."),
+      launchsheet: (pid) => { S0().sheet = { kind: "launch", pid }; G.render(); },
+      // Choosing the rider from the body's side: a persona open on a phone takes the legs there;
+      // one that isn't open opens on this phone wearing Fish.
+      ride: (pid) => {
+        const S = S0();
+        if (!pid) { G.letGo(); return; }
+        const p = G.P(pid);
+        if (S.rider === pid) return;
+        if (!p.phone) { G.launch(pid, "body"); return; }
+        const old = G.rider();
+        S.rider = pid;
+        G.banner(`${p.name} is wearing ${S.body.name} ${G.on(p.phone)}.${old ? ` ${old.name} let go and carries on alone ${G.on(old.phone)}.` : ""}${S.body.online ? "" : ` ${S.body.name} is off — its legs move once it's on.`}`, "violet");
+      },
+    },
+  });
+})();
+</script>
+</body>
+</html>

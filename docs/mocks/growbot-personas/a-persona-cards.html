@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot personas — A — persona cards</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.pcard .acts { margin-top: 12px; }
+.pcard .files { flex: none; min-height: 44px; min-width: 44px; border: 1px solid var(--border); background: var(--surface-2);
+  border-radius: var(--r-input); color: var(--text-2); font-size: var(--fs-secondary); padding: 0 12px; cursor: pointer; }
+.pcard .from { font-size: var(--fs-micro); color: var(--text-3); margin-top: 2px; }
+.bodycard h2 { flex: 1; }
+.keys summary { list-style: none; min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: var(--fs-secondary); color: var(--text-2); margin-top: 4px; }
+.keys summary::-webkit-details-marker { display: none; }
+.keys summary::after { content: "›"; margin-left: 8px; color: var(--text-3); transition: transform 150ms ease-out; }
+.keys[open] summary::after { transform: rotate(90deg); }
+.jump { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); overflow-x: auto; flex: none; background: var(--bg); }
+.jump button { flex: none; min-height: 36px; padding: 0 12px; border-radius: var(--r-pill); border: 1px solid var(--border);
+  background: var(--surface); color: var(--text-2); font-size: var(--fs-secondary); cursor: pointer; }
+.jump button:focus-visible { outline-offset: 0; }
+.mem summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.mem summary::-webkit-details-marker { display: none; }
+.mem summary .pv { margin: 0; flex: 1; min-width: 0; -webkit-line-clamp: 1; }
+.mem summary::after { content: "›"; color: var(--text-3); transition: transform 150ms ease-out; }
+.mem[open] summary::after { transform: rotate(90deg); }
+.mem .lbl { flex: none; width: 76px; font-size: var(--fs-secondary); color: var(--text); }
+.mem .inner { padding: 0 0 10px 84px; }
+.mem { border-top: 1px solid var(--border); }
+.mem:first-of-type { border-top: 0; }
+</style>
+</head>
+<body>
+<!-- A: persona cards. Today's screen, turned round: the one body is a compact card at the top and
+     every persona is a card with its two everyday buttons on it (Open on this phone · Connect to
+     body), so both common paths are one tap. Everything about one persona — its soul, edits,
+     visual memories, checkpoints and the manage actions — is one pushed page behind "Files",
+     with jump chips and the two launch buttons pinned in the foot. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const S0 = () => G.S;
+
+  function bodyCard() {
+    const S = S0(), b = S.body, r = G.rider();
+    return `<section class="card bodycard" aria-label="The body, ${b.name}">
+      <div class="row"><h2>${b.name}</h2>${G.bodyStateHTML()}</div>
+      <p class="hint" style="margin-top:6px">${G.riderLine()}</p>
+      ${r ? `<button class="linkbtn" data-act="let-go">Let go of ${b.name} — ${G.esc(r.name)} carries on alone</button>` : ""}
+      ${b.key === "revoked" ? G.bodyActsHTML() : `<details class="keys" id="keys"><summary>Pairing code and key</summary>${G.bodyFactsHTML()}${G.bodyActsHTML()}
+        <button class="linkbtn" data-act="add-robot" style="margin-top:4px">Add a robot</button></details>`}</section>`;
+  }
+
+  function launchBtns(p, block) {
+    const S = S0(), wearing = S.rider === p.id, here = p.phone === "me";
+    const openL = here ? "Open again" : "Open on this phone";
+    const bodyBtn = !G.keyOk()
+      ? `<button class="btn" disabled>${S.body.name} can't connect</button>`
+      : wearing && here ? `<button class="btn body-on" disabled>Wearing ${S.body.name}</button>`
+      : `<button class="btn body-on" data-act="launch" data-arg="${p.id}:body">${wearing ? `Bring ${S.body.name} here` : "Connect to body"}</button>`;
+    return `<div class="acts two"${block ? ' style="margin-top:0"' : ""}><button class="btn primary" data-act="launch" data-arg="${p.id}:here">${openL}</button>${bodyBtn}</div>`;
+  }
+
+  function card(p) {
+    const S = S0();
+    return `<section class="card pcard${p.phone === "me" ? " here" : ""}" aria-label="${G.esc(p.name)}">
+      <div class="row">${G.avatar(p)}<div class="grow"><h3>${G.esc(p.name)}</h3>${G.whereHTML(p)}</div>
+        <button class="files" data-act="page" data-arg="${p.id}" aria-label="${G.esc(p.name)}'s files and backups">Files ›</button></div>
+      ${launchBtns(p)}
+      <button class="linkbtn" data-act="launch" data-arg="${p.id}:other">Open on another phone</button></section>`;
+  }
+
+  function main() {
+    const S = S0();
+    return `<div class="pg${G.anim("page", "main")}${S.dir === "back" ? " back" : ""}">
+      <div class="topbar"><button class="back" data-act="launcher">Back</button><span class="ttl">GrowBot</span></div>${G.bannerHTML()}
+      <div class="body" data-scroll="main">
+        <div class="sec-h">Body</div>${bodyCard()}
+        <div class="sec-h">Personas<span class="r">${S.personas.length}</span></div>
+        ${S.personas.map(card).join("") || `<section class="card"><h3>No personas</h3><p class="hint" style="margin-top:6px">Make one below — it can live on a phone alone before it ever wears ${S.body.name}.</p></section>`}
+        ${G.helpHTML()}
+        ${G.signOutHTML()}
+        <div class="pad-end"></div>
+      </div>
+      <div class="foot"><button class="btn primary" data-act="new-persona">New persona</button><button class="btn" data-act="import" style="flex:0 0 auto">Import</button></div></div>`;
+  }
+
+  function page(p) {
+    const S = S0();
+    const regions = G.REGIONS.map((r) => `<div class="region"><div class="rh"><h3>${r.label}</h3><button class="btn slim" data-act="edit" data-arg="${p.id}|${r.id}">Edit</button></div>
+        <p class="pv${r.type === "json" ? " mono" : ""}">${G.esc(G.regionText(p, r))}</p>${r.floor ? G.floorHTML() : ""}</div>`).join("");
+    const mem = G.MEMORY.map((m) => `<details class="mem"><summary><span class="lbl">${m.label}</span><span class="pv">${G.esc(G.memoryPreview(p, m.id))}</span></summary><div class="inner region">${G.memoryHTML(p, m.id)}</div></details>`).join("");
+    return `<div class="pg${G.anim("page", "p:" + p.id)}">
+      <div class="topbar"><button class="back" data-act="back">Back</button><span class="ttl">${G.esc(p.name)}<span class="sub">${G.esc(G.where(p).text)}</span></span></div>${G.bannerHTML()}
+      <nav class="jump" aria-label="Sections">${[["soul", "Soul"], ["mem", "Visual memories"], ["cps", "Checkpoints"], ["manage", "Manage"]].map(([id, l]) => `<button data-act="jump" data-arg="${id}">${l}</button>`).join("")}</nav>
+      <div class="body" data-scroll="page">
+        <div class="sec-h" id="s-soul">Personality and settings<span class="r">you can edit these</span></div>
+        <section class="card">${regions}</section>
+        <div class="sec-h">What it remembers<span class="r">it writes these</span></div>
+        <section class="card tight">${mem}<div style="margin-top:8px">${G.writesItself(p)}</div></section>
+        <div class="sec-h" id="s-mem">Visual memories<span class="r">${p.vms.length}</span></div>
+        <section class="card">${G.vmHTML(p)}</section>
+        <div class="sec-h" id="s-cps">Checkpoints<span class="r">${p.cps.length}</span></div>
+        <section class="card">${G.cpListHTML(p)}</section>
+        <div class="sec-h" id="s-manage">Manage</div>
+        <section class="card">${G.manageHTML(p)}<p class="hint dim" style="margin-top:10px">Made ${G.day(p.made)} from ${G.esc(p.from)}.</p>
+          <button class="linkbtn" data-act="launch" data-arg="${p.id}:other">Open on another phone</button></section>
+        <div class="pad-end"></div>
+      </div>
+      <div class="foot" style="display:block">${launchBtns(p, true)}</div></div>`;
+  }
+
+  G.onAdded = (p) => { S0().page = { pid: p.id }; G.scrollTop("page"); G.render(); };
+  G.onDeleted = () => { S0().page = null; S0().dir = "back"; G.render(); };
+  G.onReset = () => {};
+
+  G.mount({
+    variant: "a",
+    render: () => {
+      const S = S0(), p = S.page && G.P(S.page.pid);
+      if (S.page && !p) S.page = null;
+      document.getElementById("phone").innerHTML = (p ? page(p) : main()) + G.sharedSheet() + G.dialogHTML() + G.toastHTML();
+    },
+    actions: {
+      page: (pid) => { const S = S0(); S.page = { pid }; S.dir = ""; G.render(); G.scrollTop("page"); },
+      back: () => { const S = S0(); S.page = null; S.dir = "back"; G.render(); },
+      launcher: () => G.toast("That goes back to the launcher, which isn't part of this mock."),
+      jump: (id) => { const el = document.getElementById("s-" + id); const sc = document.querySelector('[data-scroll="page"]');
+        if (el && sc) sc.scrollTo({ top: el.offsetTop - sc.offsetTop - 8, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }); },
+    },
+  });
+})();
+</script>
+</body>
+</html>

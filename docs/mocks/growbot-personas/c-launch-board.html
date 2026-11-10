@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot personas — C — launch board</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+.lb h3 { font-size: var(--fs-secondary); color: var(--text-2); font-weight: 400; margin: 0 0 8px; }
+.lb .grp + .grp { margin-top: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { min-height: 44px; padding: 0 14px 0 6px; border-radius: var(--r-pill); border: 1px solid var(--border); background: var(--surface-2);
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: var(--fs-secondary); max-width: 100%;
+  transition: background 120ms ease-out, border-color 120ms ease-out; }
+.chip .av { width: 32px; height: 32px; font-size: var(--fs-secondary); }
+.chip.sel { border-color: var(--accent); background: var(--accent-tint); color: var(--text); }
+.chip .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip.add { padding: 0 14px; color: var(--text-2); border-style: dashed; }
+.seg.mini { margin: 0; }
+.seg.mini button { font-size: var(--fs-secondary); }
+.seg.mini button.on.body { background: var(--violet-tint); }
+.seg.mini button:disabled { color: var(--text-3); cursor: default; }
+.sentence { margin-top: 14px; padding: 12px; border-radius: var(--r-input); background: var(--surface-2); font-size: var(--fs-secondary);
+  line-height: 1.5; color: var(--text); }
+.sentence .then { display: block; color: var(--text-2); margin-top: 4px; }
+.board .li .tag { flex: none; }
+.board .li .ph-ic { flex: none; width: 20px; height: 30px; border: 1.5px solid var(--text-3); border-radius: 5px; }
+.board .li .fish-ic { flex: none; width: 30px; height: 22px; border: 1.5px solid var(--violet); border-radius: 10px 10px 6px 6px; position: relative; }
+.board .li .fish-ic::after { content: ""; position: absolute; left: 6px; right: 6px; bottom: -7px; height: 6px; border-left: 1.5px solid var(--violet); border-right: 1.5px solid var(--violet); }
+/* The workshop's files and history */
+.file .ic { flex: none; width: 28px; text-align: center; font-family: var(--font-mono); font-size: var(--fs-micro); color: var(--text-3); }
+.file .nm { font-family: var(--font-mono); font-size: var(--fs-secondary); }
+.view { white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--fs-secondary); line-height: 1.55; color: var(--text); }
+.view.mono { font-family: var(--font-mono); font-size: var(--fs-micro); }
+.tl { position: relative; padding-left: 22px; }
+.tl::before { content: ""; position: absolute; left: 6px; top: 8px; bottom: 8px; width: 2px; background: var(--border); }
+.tl .ev { position: relative; padding: 2px 0 14px; }
+.tl .ev::before { content: ""; position: absolute; left: -21px; top: 6px; width: 12px; height: 12px; border-radius: 50%; background: var(--surface);
+  border: 2px solid var(--text-3); }
+.tl .ev.now::before { border-color: var(--accent); background: var(--accent-tint); }
+.tl .ev.auto::before { width: 8px; height: 8px; left: -19px; top: 8px; }
+.tl .ev.fresh { animation: flash-in 900ms ease-out; border-radius: 8px; }
+.tl .t1 { font-size: var(--fs-body); font-weight: 500; overflow-wrap: anywhere; }
+.tl .t2 { font-size: var(--fs-micro); color: var(--text-2); margin-top: 2px; }
+.tl .acts { margin-top: 8px; }
+.topbar .more { min-width: 44px; min-height: 44px; border: 1px solid var(--border); background: var(--surface-2); border-radius: var(--r-input); cursor: pointer; }
+</style>
+</head>
+<body>
+<!-- C: a launch board. The screen opens on one composer — who · where · with the body — that
+     reads back, in a sentence, what will happen to the body and to the phone it leaves, and the
+     big button in the foot does it. Below it, "Who's where" shows Fish and every phone at once.
+     A persona opens a workshop that treats the soul as files (what you can edit, what it writes
+     itself, its visual memories) beside a History timeline of its checkpoints. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const S0 = () => G.S;
+  const C = { who: null, where: "here", body: null, ws: "files", file: null, editing: false };
+
+  // The composer starts on whatever this phone holds (else the persona used last), with the body
+  // on if that persona is wearing it — so "open again" and "connect" are one tap from arriving.
+  function pickDefaults() {
+    const S = S0();
+    if (!C.who || !G.P(C.who)) { const h = G.onPhone("me"); C.who = (h || [...S.personas].sort((a, b) => b.lastOpen - a.lastOpen)[0] || {}).id || null; }
+    if (C.body === null) C.body = S.rider === C.who;
+    if (!G.keyOk()) C.body = false;
+  }
+
+  function sentence() {
+    const S = S0(), p = G.P(C.who), b = S.body;
+    if (!p) return "";
+    const then = [];
+    const dest = C.where === "here" ? "me" : null;
+    if (C.where === "here") {
+      const occ = G.onPhone("me");
+      if (occ && occ !== p) then.push(`${occ.name} closes on this phone — it's kept on the box.`);
+    }
+    if (p.phone && p.phone !== dest) then.push(`It moves from ${G.phName(p.phone)}${C.where === "other" ? " once the other phone scans" : ""}.`);
+    const other = G.rider();
+    if (C.body) { if (other && other !== p) then.push(`${other.name} lets go of ${b.name} and carries on alone ${G.on(other.phone)}.`); if (!b.online) then.push(`${b.name} is off — its legs move once it's on.`); }
+    else if (S.rider === p.id && p.phone !== dest) then.push(`${b.name} stays where it is.`);
+    else if (S.rider === p.id && p.phone === dest) then.push(`It lets go of ${b.name}.`);
+    const where = C.where === "here" ? "on this phone" : "on another phone, with two codes to scan";
+    return `<div class="sentence" aria-live="polite">Opens <strong>${G.esc(p.name)}</strong> ${where}, ${C.body ? `wearing <strong>${b.name}</strong>` : "alone"}.${then.length ? `<span class="then">${then.map(G.esc).join(" ")}</span>` : ""}</div>`;
+  }
+
+  function composer() {
+    const S = S0(), b = S.body;
+    const chips = S.personas.map((p) => `<button class="chip${C.who === p.id ? " sel" : ""}" data-act="who" data-arg="${p.id}" aria-pressed="${C.who === p.id}">${G.avatar(p)}<span class="nm">${G.esc(p.name)}</span></button>`).join("");
+    return `<section class="card lb" aria-label="Launch">
+      <div class="grp"><h3>Who</h3><div class="chips">${chips}<button class="chip add" data-act="new-persona">New…</button></div></div>
+      <div class="grp"><h3>Where</h3><div class="seg mini"><button class="${C.where === "here" ? "on" : ""}" data-act="where" data-arg="here" aria-pressed="${C.where === "here"}">This phone</button><button class="${C.where === "other" ? "on" : ""}" data-act="where" data-arg="other" aria-pressed="${C.where === "other"}">Another phone</button></div></div>
+      <div class="grp"><h3>Body</h3><div class="seg mini"><button class="${!C.body ? "on" : ""}" data-act="bodyon" data-arg="0" aria-pressed="${!C.body}">Alone</button><button class="${C.body ? "on body" : ""}" data-act="bodyon" data-arg="1" aria-pressed="${C.body}"${G.keyOk() ? "" : " disabled"}>Wearing ${b.name}</button></div></div>
+      ${S.personas.length ? sentence() : `<p class="hint dim" style="margin-top:12px">No personas yet — make one with New…</p>`}</section>`;
+  }
+
+  function board() {
+    const S = S0(), b = S.body, r = G.rider();
+    const phones = S.phones.map((f) => {
+      const p = G.onPhone(f.id), wearing = p && S.rider === p.id;
+      return `<button class="li" ${p ? `data-act="ws" data-arg="${p.id}"` : `data-act="phone-empty" data-arg="${f.id}"`}><span class="ph-ic" aria-hidden="true"></span><span class="tx"><span class="t1">${G.esc(f.name)}</span>
+        <span class="t2">${p ? `${G.esc(p.name)}${wearing ? "" : " · alone"}` : "nothing open"}</span></span>${wearing ? `<span class="tag violet">wearing ${b.name}</span>` : ""}<span class="chev">›</span></button>`;
+    }).join("");
+    return `<div class="list board">
+      <button class="li" data-act="fish"><span class="fish-ic" aria-hidden="true"></span><span class="tx"><span class="t1">${b.name}, the body</span><span class="t2">${G.bodyStateHTML()} · ${r ? `worn by ${G.esc(r.name)}` : "nobody wearing it"}</span></span><span class="chev">›</span></button>
+      ${phones}</div>`;
+  }
+
+  function personas() {
+    const S = S0();
+    return `<div class="list">${S.personas.map((p) => `<button class="li" data-act="ws" data-arg="${p.id}">${G.avatar(p)}<span class="tx"><span class="t1">${G.esc(p.name)}</span><span class="t2">${p.cps.length} checkpoint${p.cps.length === 1 ? "" : "s"} · ${p.vms.length} visual memor${p.vms.length === 1 ? "y" : "ies"}</span></span><span class="chev">›</span></button>`).join("")}</div>
+      <div class="acts two" style="margin-top:0"><button class="btn" data-act="new-persona">New persona</button><button class="btn" data-act="import">Import a soul file</button></div>`;
+  }
+
+  function main() {
+    const S = S0();
+    pickDefaults();
+    const p = G.P(C.who);
+    const go = !p ? `<button class="btn primary block" data-act="new-persona">New persona</button>`
+      : `<button class="btn ${C.body ? "body-on" : "primary"} block" data-act="go">${C.where === "other" ? `Show the codes for ${G.esc(p.name)}` : `Open ${G.esc(p.name)}${C.body ? ` wearing ${S.body.name}` : ""}`}</button>`;
+    return `<div class="pg${G.anim("page", "main")}${S.dir === "back" ? " back" : ""}">
+      <div class="topbar"><button class="back" data-act="launcher">Back</button><span class="ttl">GrowBot</span></div>${G.bannerHTML()}
+      <div class="body" data-scroll="main">${composer()}
+        <div class="sec-h">Who's where</div>${board()}
+        <div class="sec-h">Personas — files and backups</div>${personas()}
+        ${G.helpHTML()}${G.signOutHTML()}<div class="pad-end"></div></div>
+      <div class="foot" style="display:block">${go}</div></div>`;
+  }
+
+  // ---- the workshop ----
+  const FILES = { persona: "personality.md", expression: "expression.json", meta: "about.json", dream: "dreams.md", harness: "thinking.json", body: "body.json" };
+  const MFILES = { identity: "who-i-am.txt", bond: "bond-line.txt", scratch: "right-now.json", goals: "wants.json", log: "diary.log" };
+
+  function workshop(p) {
+    const S = S0();
+    const t = (id, l) => `<button class="${C.ws === id ? "on" : ""}" data-act="wstab" data-arg="${id}" aria-pressed="${C.ws === id}">${l}</button>`;
+    let body;
+    if (C.ws === "files") {
+      body = `<div class="sec-h">You can edit</div>
+        <div class="list">${G.REGIONS.map((r) => `<button class="li file" data-act="file" data-arg="r:${r.id}"><span class="ic">edit</span><span class="tx"><span class="nm">${FILES[r.id]}</span><span class="t2">${r.label} — ${G.esc(r.what)}</span></span><span class="chev">›</span></button>`).join("")}</div>
+        <div class="sec-h">${G.esc(p.soul.goals.selfName)} writes these</div>
+        <div class="list">${G.MEMORY.map((m) => `<button class="li file" data-act="file" data-arg="m:${m.id}"><span class="ic">read</span><span class="tx"><span class="nm">${MFILES[m.id]}</span><span class="t2">${G.esc(G.clip(G.memoryPreview(p, m.id), 70))}</span></span><span class="chev">›</span></button>`).join("")}
+          <button class="li file" data-act="file" data-arg="vm"><span class="ic">dir</span><span class="tx"><span class="nm">visual-memories/</span><span class="t2">${p.vms.length} saved view${p.vms.length === 1 ? "" : "s"} of people and things</span></span><span class="chev">›</span></button></div>
+        ${G.floorHTML()}`;
+    } else {
+      const fresh = S.freshCp;
+      body = `<div class="inline-save"><input id="cp-name-${p.id}" data-draft="cpname:${p.id}" data-live placeholder="Name this moment, e.g. Before the trip" value="${G.esc(S.draft["cpname:" + p.id] || "")}" aria-label="Checkpoint name">
+          <button class="btn primary" data-act="cp-save" data-arg="${p.id}"${(S.draft["cpname:" + p.id] || "").trim() ? "" : " disabled"}>Save</button></div>
+        <p class="hint dim">A checkpoint is a copy of the whole soul and its visual memories. One is made on its own before every edit, restore and reset.</p>
+        <div class="tl" style="margin-top:6px"><div class="ev now"><div class="t1">Now</div><div class="t2">${G.esc(G.where(p).text)} · ${p.soul.log.length} diary lines</div></div>
+        ${p.cps.map((c) => `<div class="ev${c.auto ? " auto" : ""}${fresh === c.id && G.anim("cp", c.id) ? " fresh" : ""}"><div class="t1">${G.esc(c.name)}</div><div class="t2">${G.when(c.t)}${c.auto ? " · automatic" : ""}</div>
+          <div class="acts"><button class="btn slim" data-act="cp-restore" data-arg="${p.id}|${c.id}">Restore</button><button class="btn slim" data-act="cp-seed" data-arg="${p.id}/${c.id}">New persona from it</button></div></div>`).join("")}
+        <div class="ev"><div class="t1">Made</div><div class="t2">${G.day(p.made)} · from ${G.esc(p.from)}</div></div></div>`;
+    }
+    return `<div class="pg${G.anim("page", "ws:" + p.id)}${S.dir === "back" ? " back" : ""}">
+      <div class="topbar"><button class="back" data-act="home">Back</button><span class="ttl">${G.esc(p.name)}<span class="sub">${G.esc(G.where(p).text)}</span></span>
+        <button class="more" data-act="manage" aria-label="Manage ${G.esc(p.name)}">⋯</button></div>${G.bannerHTML()}
+      <div class="seg" role="tablist">${t("files", "Files")}${t("history", `History`)}</div>
+      <div class="body" data-scroll="ws-${C.ws}">${body}<div class="pad-end"></div></div>
+      <div class="foot"><button class="btn primary" data-act="ws-launch" data-arg="here">Open here</button><button class="btn body-on" data-act="ws-launch" data-arg="body"${G.keyOk() ? "" : " disabled"}>Wear ${S.body.name}</button></div></div>`;
+  }
+
+  function filePage(p) {
+    const S = S0(), [k, id] = C.file.split(":");
+    let title, body, foot;
+    if (C.file === "vm") {
+      title = "visual-memories/"; body = G.vmHTML(p); foot = "";
+    } else if (k === "m") {
+      const m = G.MEMORY.find((x) => x.id === id);
+      title = MFILES[id];
+      body = `<section class="card region">${G.memoryHTML(p, id)}</section><p class="hint dim" style="margin-top:12px">${G.esc(p.soul.goals.selfName)} writes this itself${id === "bond" ? ", once, and never changes it" : ""}. To take it back, restore a checkpoint in History.</p>`;
+      foot = `<button class="btn" data-act="wstab-from-file" data-arg="history">Go to History</button>`;
+    } else {
+      const r = G.region(id);
+      title = FILES[id];
+      if (C.editing) {
+        body = G.editorHTML(p.id, id);
+        foot = `<button class="btn" data-act="file-cancel" style="flex:0 0 auto">Cancel</button><button class="btn primary" data-act="file-save">Save</button>`;
+      } else {
+        body = `<p class="hint">${G.esc(r.what)}</p><section class="card" style="margin-top:10px"><div class="view${r.type === "json" ? " mono" : ""}">${G.esc(G.regionText(p, r))}</div></section>${r.robot ? `<p class="msg info" style="margin-top:10px">${r.robot}</p>` : ""}${r.floor ? G.floorHTML() : ""}`;
+        foot = `<button class="btn primary" data-act="file-edit">Edit</button>`;
+      }
+    }
+    return `<div class="pg${G.anim("page", "f:" + C.file + (C.editing ? ":e" : ""))}">
+      <div class="topbar"><button class="back" data-act="file-back">Back</button><span class="ttl mono">${G.esc(title)}<span class="sub">${G.esc(p.name)}</span></span></div>${G.bannerHTML()}
+      <div class="body" data-scroll="file">${body}<div class="pad-end"></div></div>${foot ? `<div class="foot">${foot}</div>` : ""}</div>`;
+  }
+
+  function fishSheet() {
+    const S = S0(), b = S.body, r = G.rider();
+    return G.sheetShell("fish", `${b.name}, the body`,
+      `<div class="row">${G.bodyStateHTML()}</div><p class="hint" style="margin-top:8px">${G.riderLine()}</p>
+       ${r ? `<button class="linkbtn" data-act="let-go">Let go of ${b.name} — ${G.esc(r.name)} carries on alone</button>` : ""}
+       ${G.bodyFactsHTML()}${G.bodyActsHTML()}
+       <p class="hint dim" style="margin-top:12px">To change who wears ${b.name}, pick them in Launch and choose Wearing ${b.name}.</p>`,
+      `<button class="btn block" data-act="add-robot">Add a robot</button>`);
+  }
+
+  function manageSheet() {
+    const p = G.P(S0().sheet.pid);
+    return G.sheetShell("manage" + p.id, `Manage ${p.name}`, `${G.manageHTML(p)}<button class="linkbtn" data-act="launch" data-arg="${p.id}:other" style="margin-top:8px">Open on another phone</button>`, "");
+  }
+
+  const S = () => G.S;
+  G.onAdded = (p) => { C.who = p.id; C.body = false; S().page = { pid: p.id }; C.ws = "files"; C.file = null; G.render(); };
+  G.onDeleted = () => { S().page = null; C.file = null; S().dir = "back"; G.render(); };
+  G.onReset = () => { Object.assign(C, { who: null, where: "here", body: null, ws: "files", file: null, editing: false }); };
+
+  G.mount({
+    variant: "c",
+    render: () => {
+      const st = S(), p = st.page && G.P(st.page.pid);
+      if (st.page && !p) { st.page = null; C.file = null; }
+      const scr = p ? (C.file ? filePage(p) : workshop(p)) : main();
+      const sheet = st.sheet && st.sheet.kind === "fish" ? fishSheet() : st.sheet && st.sheet.kind === "manage" ? manageSheet() : G.sharedSheet();
+      document.getElementById("phone").innerHTML = scr + sheet + G.dialogHTML() + G.toastHTML();
+    },
+    actions: {
+      launcher: () => G.toast("That goes back to the launcher, which isn't part of this mock."),
+      who: (id) => { C.who = id; C.body = S().rider === id; G.render(); },
+      where: (w) => { C.where = w; G.render(); },
+      bodyon: (v) => { C.body = v === "1"; G.render(); },
+      go: () => { const m = C.where === "other" ? (C.body ? "other-body" : "other") : C.body ? "body" : "here"; G.launch(C.who, m); },
+      fish: () => { S().sheet = { kind: "fish" }; G.render(); },
+      "phone-empty": (ph) => {
+        if (ph === "me") { C.where = "here"; G.toast("Nothing open on this phone — pick who in Launch, then Open."); }
+        else { C.where = "other"; G.toast(`Nothing open on ${G.phName(ph)} — pick who in Launch, then Show the codes.`); }
+        G.scrollTop("main");
+      },
+      ws: (pid) => { const st = S(); st.page = { pid }; st.dir = ""; C.ws = "files"; C.file = null; C.editing = false; G.render(); G.scrollTop("ws-files"); },
+      home: () => { const st = S(); st.page = null; st.dir = "back"; G.render(); },
+      wstab: (t) => { C.ws = t; G.render(); },
+      "wstab-from-file": (t) => { C.file = null; C.ws = t; S().dir = "back"; G.render(); },
+      file: (f) => { C.file = f; C.editing = false; S().dir = ""; G.render(); G.scrollTop("file"); },
+      "file-back": () => { if (C.editing) { C.editing = false; } else C.file = null; S().dir = "back"; G.render(); },
+      "file-edit": () => { const p = G.P(S().page.pid); G.startEdit(p.id, C.file.split(":")[1]); C.editing = true; G.render(); setTimeout(() => { const el = document.getElementById("ed-text") || document.getElementById("ed-name"); if (el) el.focus({ preventScroll: true }); }, 0); },
+      "file-cancel": () => { C.editing = false; S().dir = "back"; G.render(); },
+      "file-save": () => { const p = G.P(S().page.pid); if (G.saveEdit(p.id, C.file.split(":")[1])) { C.editing = false; S().dir = "back"; G.render(); } },
+      "ws-launch": (m) => { const p = G.P(S().page.pid); G.launch(p.id, m); },
+      manage: () => { S().sheet = { kind: "manage", pid: S().page.pid }; G.render(); },
+    },
+  });
+})();
+</script>
+</body>
+</html>
