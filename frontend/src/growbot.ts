@@ -1,8 +1,19 @@
-// The words GrowBot's surfaces share — the screen, the Add a robot sheet, the launcher tile and
-// the Ops row — so a robot reads the same wherever the owner meets it (binding mock
-// docs/mocks/growbot-flash/b-growbot-screen.html, copy from its shared.js).
+// The words GrowBot's surfaces share — the screen, its sheets, the launcher tile and the Ops
+// row — so a robot or a persona reads the same wherever the owner meets it (binding mocks
+// docs/mocks/growbot-flash/b-growbot-screen.html and docs/mocks/growbot-personas/b-three-tabs.html,
+// copy from their shared.js).
 
-import type { GrowbotFailCode, GrowbotFlashJob, GrowbotRobot, GrowbotStatus } from "./api/client";
+import type {
+  GrowbotFailCode,
+  GrowbotFlashJob,
+  GrowbotOverview,
+  GrowbotPersona,
+  GrowbotPhone,
+  GrowbotRegion,
+  GrowbotRobot,
+  GrowbotSoul,
+  GrowbotStatus,
+} from "./api/client";
 
 export type GrowbotLevel = "ok" | "warn" | "bad";
 
@@ -11,7 +22,8 @@ export function ago(iso: string, now = Date.now()): string {
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} days ago`;
+  const d = Math.round(s / 86400);
+  return d === 1 ? "yesterday" : `${d} days ago`;
 }
 
 export function day(iso: string): string {
@@ -39,12 +51,33 @@ export function keyMadeAt(r: GrowbotRobot): string {
   return r.rotated_at ?? r.created_at;
 }
 
-/** The launcher tile's second line: who is connected, or that nobody can be. */
-export function tileLine(s: GrowbotStatus): { level: GrowbotLevel | null; word: string } | null {
+/** The launcher tile's second line: who wears the body, or that growbot is down. Without the
+ *  personas (a box before G4) it falls back to who is connected. */
+export function tileLine(
+  s: GrowbotStatus,
+  ov?: GrowbotOverview | null,
+): { level: GrowbotLevel | null; word: string } | null {
   // Read on every launcher open, from a box that may predate GrowBot: anything that isn't the
   // status shape leaves the tile without a line rather than taking the launcher down.
   if (!s || !Array.isArray(s.robots)) return null;
   if (s.service === "down") return { level: "bad", word: "growbot is down" };
+  const live = s.robots.filter((r) => !r.revoked_at);
+  if (ov && Array.isArray(ov.personas) && Array.isArray(ov.body) && live.length > 0) {
+    const worn = live.flatMap((r) => {
+      const p = riderOf(ov, r.code);
+      return p ? [{ r, p }] : [];
+    });
+    if (worn.length === 0) {
+      return {
+        level: null,
+        word: `nobody is wearing ${live.length === 1 ? robotLabel(live[0]) : "a robot"}`,
+      };
+    }
+    return {
+      level: worn.some(({ r }) => r.connected) ? "ok" : null,
+      word: worn.map(({ r, p }) => `${p.name} is wearing ${robotLabel(r)}`).join(", "),
+    };
+  }
   const on = s.robots.filter((r) => r.connected && !r.revoked_at);
   if (on.length === 0) return { level: null, word: "no robot connected" };
   return { level: "ok", word: `${on.map((r) => r.name || r.code).join(", ")} connected` };
@@ -113,6 +146,10 @@ export const FAIL_COPY: Record<GrowbotFailCode, { title: string; body: string }>
   },
 };
 
+function robotLabel(r: GrowbotRobot | undefined): string {
+  return r ? r.name || r.code : "the robot";
+}
+
 /** Shown once per phone: the box's certificate note before the first Open GrowBot. */
 export const CERT_NOTED_KEY = "jb.growbot.certNoted";
 
@@ -133,3 +170,337 @@ export function noteCert(): void {
 }
 
 export const CERT_URL = "/api/lan/root.crt";
+
+// ===== Personas (wave G4: DESIGN.md "GrowBot — the desk robot's screen") =====
+
+/** A robot's state for the Body tab, in the persona mock's words. */
+export function bodyState(
+  r: GrowbotRobot,
+  serviceUp: boolean,
+  now = Date.now(),
+): { level: GrowbotLevel; text: string } {
+  if (r.revoked_at) return { level: "bad", text: "key revoked — can't connect" };
+  if (!serviceUp) return { level: "bad", text: "can't connect — growbot is down" };
+  const seen = r.last_seen_at ? ago(r.last_seen_at, now) : null;
+  if (r.connected) return { level: "ok", text: seen ? `on · seen ${seen}` : "on" };
+  return { level: "warn", text: seen ? `off · last seen ${seen}` : "off · never seen" };
+}
+
+/** What the screen needs to name a place: which phone is this one (learned, see
+ *  `learnThisPhone`), every phone's label, and the robots. */
+export interface Places {
+  thisPhone: string | null;
+  phones: GrowbotPhone[];
+  robots: GrowbotRobot[];
+}
+
+export function phoneName(id: string | null, pl: Places, cap = false): string {
+  if (id && id === pl.thisPhone) return cap ? "This phone" : "this phone";
+  return pl.phones.find((f) => f.id === id)?.label || (cap ? "A phone" : "a phone");
+}
+
+export function onPhone(id: string | null, pl: Places): string {
+  return id && id === pl.thisPhone ? "on this phone" : `on ${phoneName(id, pl)}`;
+}
+
+export function robotName(code: string | null, pl: Places): string {
+  const r = pl.robots.find((x) => x.code === code);
+  return r ? r.name || r.code : code || "the robot";
+}
+
+/** Who wears robot `code`: the body list is the box's word, a persona's `wearing` its echo. */
+export function riderOf(ov: GrowbotOverview, code: string): GrowbotPersona | null {
+  const row = ov.body.find((b) => b.code === code);
+  const pid = row ? row.persona : (ov.personas.find((p) => p.wearing === code)?.id ?? null);
+  return pid ? (ov.personas.find((p) => p.id === pid) ?? null) : null;
+}
+
+/** Who wears robot `code`, from the personas alone (a sheet that has no overview to hand). */
+export function riderOfPersonas(personas: GrowbotPersona[], code: string): GrowbotPersona | null {
+  return personas.find((p) => p.wearing === code) ?? null;
+}
+
+export type WhereLevel = "violet" | "steel" | "ok" | "";
+
+/** Where a persona is, in words beside its dot; colour is never the only signal. */
+export function where(
+  p: GrowbotPersona,
+  pl: Places,
+  now = Date.now(),
+): { level: WhereLevel; text: string } {
+  if (!p.phone) {
+    if (!p.last_phone) return { level: "", text: "not open yet" };
+    const when = p.opened_at ? ` ${ago(p.opened_at, now)}` : "";
+    return { level: "", text: `not open · last ${onPhone(p.last_phone, pl)}${when}` };
+  }
+  if (p.wearing) {
+    return {
+      level: "violet",
+      text: `${onPhone(p.phone, pl)} · wearing ${robotName(p.wearing, pl)}`,
+    };
+  }
+  return {
+    level: p.phone === pl.thisPhone ? "steel" : "ok",
+    text: `alone ${onPhone(p.phone, pl)}`,
+  };
+}
+
+export function initial(name: string): string {
+  return (
+    name
+      .replace(/^[^\p{L}\p{N}]*/u, "")
+      .charAt(0)
+      .toUpperCase() || "?"
+  );
+}
+
+/** What moved between two overviews, as the banner says it; null when nothing moved. The same
+ *  words serve a move made here and one made on another phone, so both read alike. */
+export function handover(prev: GrowbotOverview, next: GrowbotOverview, pl: Places): string | null {
+  const before = new Map(prev.personas.map((p) => [p.id, p]));
+  const out: string[] = [];
+  const told = new Set<string>();
+  const offNote = (code: string) => {
+    const r = pl.robots.find((x) => x.code === code);
+    return r && !r.connected && !r.revoked_at
+      ? ` ${robotName(code, pl)} is off right now — its legs move once it's switched on and reaches the box.`
+      : "";
+  };
+  const riderBefore = (code: string) => riderOf(prev, code)?.id ?? null;
+
+  for (const p of next.personas) {
+    const was = before.get(p.id);
+    if (!was || !p.phone || was.phone === p.phone) continue;
+    told.add(p.id);
+    const wore = p.wearing && riderBefore(p.wearing) !== p.id ? p.wearing : null;
+    const wearing = p.wearing ? robotName(p.wearing, pl) : "";
+    const lead =
+      p.phone === pl.thisPhone
+        ? p.wearing
+          ? `${p.name} is wearing ${wearing} on this phone.`
+          : `Opened ${p.name} on this phone, alone.`
+        : `${p.name} was opened on ${phoneName(p.phone, pl)}${p.wearing ? `, wearing ${wearing}` : ""}.`;
+    const ev = [lead];
+    for (const q of prev.personas) {
+      const later = next.personas.find((x) => x.id === q.id);
+      if (q.id === p.id || q.phone !== p.phone || !later || later.phone) continue;
+      told.add(q.id);
+      ev.push(
+        `${q.name} closed ${onPhone(p.phone, pl)} to make room — it's kept on the box, with everything it remembers.`,
+      );
+    }
+    if (was.phone) {
+      ev.push(`It moved from ${phoneName(was.phone, pl)}, which now shows that it has moved.`);
+    }
+    // Opened here and nothing else moved: the launch's own toast already said so.
+    if (p.phone === pl.thisPhone && ev.length === 1 && !wore) continue;
+    out.push(ev.join(" ") + (wore ? offNote(wore) : ""));
+  }
+
+  for (const r of pl.robots) {
+    const from = riderBefore(r.code);
+    const to = riderOf(next, r.code);
+    if (from === (to?.id ?? null)) continue;
+    // A rider that is gone was deleted, and the delete said what it did to the body.
+    if (from && !to && !next.personas.some((x) => x.id === from)) continue;
+    const name = robotName(r.code, pl);
+    const ev: string[] = [];
+    if (to && !told.has(to.id)) {
+      ev.push(`${to.name} is wearing ${name}${to.phone ? ` ${onPhone(to.phone, pl)}` : ""}.`);
+    }
+    const old = from ? next.personas.find((x) => x.id === from) : null;
+    if (old?.phone) {
+      ev.push(`${old.name} let go of ${name} and carries on alone ${onPhone(old.phone, pl)}.`);
+    } else if (old && !told.has(old.id)) {
+      ev.push(`${old.name} let go of ${name}.`);
+    }
+    if (!to) ev.push(`${name} stands still until a persona connects.`);
+    if (to && !told.has(to.id)) ev.push(offNote(r.code).trim());
+    const said = ev.filter(Boolean).join(" ");
+    if (said) out.push(said);
+  }
+  return out.length ? out.join(" ") : null;
+}
+
+// "This phone": the creature runs on another origin, so the PWA never sees its phone id. It
+// is learned instead — a launch here is remembered, and the next overview that shows that
+// persona opened at or after the launch names the phone it opened on as this one.
+export const THIS_PHONE_KEY = "growbot.thisPhone";
+export const LAUNCHED_KEY = "growbot.launchedHere";
+// The box's clock and this phone's can disagree by a little. A ticket lives 120 s, so a
+// launch older than that (and the skew) never landed and is forgotten.
+const SKEW_MS = 30_000;
+const LAUNCH_TTL_MS = 120_000 + 2 * SKEW_MS;
+
+function readStore(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function writeStore(key: string, value: string | null): void {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    // A private window remembers nothing: phones are then named by their label.
+  }
+}
+
+export function storedThisPhone(): string | null {
+  return readStore(THIS_PHONE_KEY);
+}
+
+export function noteLaunchHere(persona: string, now = Date.now()): void {
+  writeStore(LAUNCHED_KEY, JSON.stringify({ persona, at: now }));
+}
+
+/** Forget a launch here that won't land here: its mint failed, its tab was blocked, or a
+ *  code for that persona went to another phone (which would be learned as this one). */
+export function forgetLaunchHere(persona?: string): void {
+  const raw = readStore(LAUNCHED_KEY);
+  if (!raw) return;
+  if (persona) {
+    try {
+      if ((JSON.parse(raw) as { persona?: unknown }).persona !== persona) return;
+    } catch {
+      // Unreadable: dropped.
+    }
+  }
+  writeStore(LAUNCHED_KEY, null);
+}
+
+/** This phone's id, learned from `ov` when a launch here has since landed. */
+export function learnThisPhone(ov: GrowbotOverview, now = Date.now()): string | null {
+  const known = storedThisPhone();
+  const raw = readStore(LAUNCHED_KEY);
+  if (!raw) return known;
+  let at = 0;
+  let persona = "";
+  try {
+    const got = JSON.parse(raw) as { persona?: unknown; at?: unknown };
+    persona = typeof got.persona === "string" ? got.persona : "";
+    at = typeof got.at === "number" ? got.at : 0;
+  } catch {
+    // An unreadable note is dropped below.
+  }
+  if (!persona || now - at > LAUNCH_TTL_MS) {
+    writeStore(LAUNCHED_KEY, null);
+    return known;
+  }
+  const p = ov.personas.find((x) => x.id === persona);
+  if (!p?.phone || !p.opened_at || Date.parse(p.opened_at) < at - SKEW_MS) return known;
+  writeStore(THIS_PHONE_KEY, p.phone);
+  writeStore(LAUNCHED_KEY, null);
+  return p.phone;
+}
+
+// ---- the soul, in upstream's soul_format 3 regions ----
+
+export const SAFETY_NOTE =
+  "Child-safety rules are always added after the personality. They can't be edited here, in a soul file or in the creature.";
+
+export interface RegionInfo {
+  id: GrowbotRegion;
+  label: string;
+  what: string;
+  kind: "text" | "json" | "meta";
+  /** Who wins while it wears the body (plan §2b keeps models and legs with the robot). */
+  robot?: (robot: string) => string;
+  floor?: boolean;
+}
+
+export const REGIONS: RegionInfo[] = [
+  {
+    id: "persona",
+    label: "Personality",
+    what: "How it talks and what it cares about.",
+    kind: "text",
+    floor: true,
+  },
+  {
+    id: "expression",
+    label: "Expression",
+    what: "Its face, sounds and little moves.",
+    kind: "json",
+  },
+  {
+    id: "meta",
+    label: "Name and description",
+    what: "What a soul file says about it.",
+    kind: "meta",
+  },
+  {
+    id: "dream",
+    label: "Dreams",
+    what: "How it looks back over each day and rewrites its own memory at night.",
+    kind: "text",
+  },
+  {
+    id: "harness",
+    label: "Thinking",
+    what: "Which model it asks for and how long it waits.",
+    kind: "json",
+    robot: (b) => `While it wears ${b}, the robot's own settings win over these.`,
+  },
+  {
+    id: "body",
+    label: "Body",
+    what: "How it thinks its legs move.",
+    kind: "json",
+    robot: (b) => `While it wears ${b}, the robot's own settings win over these.`,
+  },
+];
+
+function str(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+/** A region as its editor holds it: the text, `name — description`, or pretty JSON. */
+export function regionText(soul: GrowbotSoul, r: RegionInfo): string {
+  if (r.id === "persona") return str(soul.persona?.constitution);
+  if (r.id === "dream") return str(soul.dream?.system_prompt);
+  if (r.id === "meta") {
+    const d = str(soul.meta?.description);
+    return d ? `${str(soul.meta?.name)} — ${d}` : str(soul.meta?.name);
+  }
+  const v = soul[r.id];
+  return v && typeof v === "object" ? JSON.stringify(v, null, 2) : "";
+}
+
+export function clip(s: string, n: number): string {
+  const one = s.replace(/\s+/g, " ").trim();
+  return one.length > n ? `${one.slice(0, n - 1).trimEnd()}…` : one;
+}
+
+/** The creature's own memories, read-only here: it writes them itself. */
+export const MEMORY = [
+  { id: "identity", label: "Who it is", up: "identity" },
+  { id: "bond", label: "Bond line", up: "identityCore" },
+  { id: "scratch", label: "Right now", up: "scratch" },
+  { id: "goals", label: "Wants", up: "goals" },
+  { id: "log", label: "Diary", up: "log" },
+] as const;
+
+/** The name the creature calls itself, which is its own (upstream's `goals.selfName`). */
+export function selfName(soul: GrowbotSoul, fallback: string): string {
+  return str(soul.goals?.selfName) || fallback;
+}
+
+/** A want or a rule may be a sentence or a small object; either way, its words. */
+export function words(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return str(o.text) || str(o.txt) || str(o.want) || str(o.rule) || "";
+  }
+  return "";
+}
+
+/** dd Mon, HH:MM — a checkpoint's date. */
+export function when(iso: string): string {
+  const d = new Date(iso);
+  return `${day(iso)}, ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+}

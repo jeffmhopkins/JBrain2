@@ -11,8 +11,11 @@ import type {
   GrowbotFlashJob,
   GrowbotFlashRequest,
   GrowbotFlashSetup,
+  GrowbotOverview,
+  GrowbotPersona,
   GrowbotRobot,
   GrowbotStatus,
+  GrowbotWritten,
   JpanelMessage,
   JpanelMessages,
   LlmUsage,
@@ -830,6 +833,36 @@ describe("mock GrowBot", () => {
     const robot = (await res.json()) as GrowbotRobot;
     expect(robot.revoked_at).not.toBeNull();
     expect(robot.connected).toBe(false);
+  });
+
+  it("serves personas in each place one can be, and checkpoints every write first", async () => {
+    const ov = (await (await call("/api/growbot/personas")).json()) as GrowbotOverview;
+    expect(ov.personas.map((p) => p.name)).toEqual(["Sprout", "Captain Bolt", "Quorra's buddy"]);
+    expect(ov.personas.map((p) => !!p.phone)).toEqual([true, true, false]);
+    expect(ov.phones.map((f) => f.label)).toContain("Tamsin's tablet");
+    const sprout = ov.personas[0] as GrowbotPersona;
+    expect(ov.body.find((b) => b.code === sprout.wearing)?.persona).toBe(sprout.id);
+
+    const bad = await call(
+      `/api/growbot/personas/${sprout.id}/regions/persona`,
+      jsonInit("PUT", { value: " " }),
+    );
+    expect(((await bad.json()) as { detail: string }).detail).toMatch(/Nothing was saved/);
+    const ok = (await (
+      await call(
+        `/api/growbot/personas/${sprout.id}/regions/persona`,
+        jsonInit("PUT", { value: "You are brave." }),
+      )
+    ).json()) as GrowbotWritten;
+    expect(ok.checkpoint?.name).toBe("Before editing personality");
+    expect(ok.persona.soul.persona?.constitution).toBe("You are brave.");
+
+    const bolt = ov.personas[1] as GrowbotPersona;
+    const rode = (await (
+      await call("/api/growbot/body/gb-3fa91c", jsonInit("PUT", { persona: bolt.id }))
+    ).json()) as GrowbotOverview;
+    expect(rode.body.find((b) => b.code === "gb-3fa91c")?.persona).toBe(bolt.id);
+    expect(rode.personas.find((p) => p.id === sprout.id)?.wearing).toBeNull();
   });
 
   it("refuses a flash it could not run, with a sentence", async () => {

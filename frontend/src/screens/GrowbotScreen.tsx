@@ -1,34 +1,84 @@
-// GrowBot — the desk robot's screen (DESIGN.md "GrowBot — the desk robot's screen"; binding mock
-// docs/mocks/growbot-flash/b-growbot-screen.html). The owner opens a robot every day and flashes
-// one once, so the robots come first with Open GrowBot as each card's biggest button, and
-// flashing is a guided sheet behind the pinned foot.
+// GrowBot — the desk robot's screen (DESIGN.md "GrowBot — the desk robot's screen"; binding
+// mock docs/mocks/growbot-personas/b-three-tabs.html, the owner's pick "B, three tabs"). One
+// body, several personas: a persona is a creature's soul, and it lives on a phone alone or
+// wears the body. Three tabs, one per job — Personas, Body, Phones — and a page per persona.
+// Every move says what happened: a move is a violet banner until OK, an outcome a toast.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   type GrowbotFlashJob,
   type GrowbotFlashRequest,
+  type GrowbotOverview,
+  type GrowbotPersona,
   type GrowbotRobot,
   type GrowbotStatus,
+  type GrowbotTicketFor,
   api,
 } from "../api/client";
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
+import { GrowbotPersonaPage } from "../components/GrowbotPersonaPage";
+import {
+  GrowbotAvatar,
+  GrowbotImportSheet,
+  GrowbotLaunchSheet,
+  GrowbotNewPersonaSheet,
+  GrowbotTabs,
+  GrowbotWhere,
+  NEARBY,
+  type Say,
+} from "../components/GrowbotPersonaSheets";
 import { GrowbotPhoneSheet } from "../components/GrowbotPhoneSheet";
 import { Sheet } from "../components/Sheet";
-import { CERT_URL, certNoted, day, keyMadeAt, noteCert, robotState } from "../growbot";
+import { useArm } from "../components/growbotArm";
+import {
+  CERT_URL,
+  type Places,
+  ago,
+  bodyState,
+  certNoted,
+  day,
+  forgetLaunchHere,
+  handover,
+  keyMadeAt,
+  learnThisPhone,
+  noteCert,
+  noteLaunchHere,
+  onPhone,
+  phoneName,
+  riderOf,
+  robotName,
+  storedThisPhone,
+} from "../growbot";
 import { useForeground } from "../visibility";
 import "./growbot.css";
 
 const STATUS_POLL_MS = 15_000;
 const JOB_POLL_MS = 1_000;
-const ARM_MS = 3_000;
+// A launch opens the creature in another tab; one look a little later catches the hand-over
+// on a screen that never went to the background (a desk browser, split screen).
+const AFTER_LAUNCH_MS = 8_000;
+
+type Tab = "personas" | "body" | "phones";
 
 type SheetState =
   | { kind: "add"; target: string }
   | { kind: "rekey"; code: string }
-  | { kind: "cert"; code: string }
-  | { kind: "phone" }
+  | { kind: "cert"; pid: string; code: string | null }
+  | { kind: "launch"; pid: string }
+  | { kind: "other"; pid: string | null; code: string | null }
+  | { kind: "new"; seed: string | null }
+  | { kind: "import"; over: string | null }
   | null;
+
+interface Toast {
+  text: string;
+  href?: string;
+  undo?: () => void;
+  label?: string;
+  onTap?: () => void;
+  k: number;
+}
 
 interface GrowbotScreenProps {
   /** jpanel's Flash tab handed a Pico over: open straight on Add a robot. */
@@ -40,95 +90,100 @@ function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Arm-then-confirm, as on the panels: the first tap arms for 3 s and the button disarms on
- *  its own, so a stray tap never revokes anything. */
-function useArm() {
-  const [armed, setArmed] = useState<Record<string, number>>({});
-  const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  useEffect(() => {
-    const t = timers.current;
-    return () => {
-      for (const id of t.values()) clearTimeout(id);
-    };
-  }, []);
-  const isArmed = (key: string) => (armed[key] ?? 0) > Date.now();
-  const arm = (key: string): boolean => {
-    const prev = timers.current.get(key);
-    if (prev) clearTimeout(prev);
-    timers.current.delete(key);
-    if (isArmed(key)) {
-      setArmed(({ [key]: _, ...rest }) => rest);
-      return true;
-    }
-    setArmed((a) => ({ ...a, [key]: Date.now() + ARM_MS }));
-    timers.current.set(
-      key,
-      setTimeout(() => {
-        timers.current.delete(key);
-        setArmed(({ [key]: _, ...rest }) => rest);
-      }, ARM_MS),
-    );
-    return false;
-  };
-  return { isArmed, arm };
-}
-
 export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps = {}) {
   const [status, setStatus] = useState<GrowbotStatus | null>(null);
+  const [overview, setOverview] = useState<GrowbotOverview | null>(null);
+  const [thisPhone, setThisPhone] = useState<string | null>(storedThisPhone);
   const [error, setError] = useState("");
   const [job, setJob] = useState<GrowbotFlashJob | null>(null);
   const [sheet, setSheet] = useState<SheetState>(null);
-  const [toast, setToast] = useState<{ text: string; href?: string } | null>(null);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const [banner, setBanner] = useState<{ text: string; k: number } | null>(null);
+  const [tab, setTab] = useState<Tab>("personas");
+  const [page, setPage] = useState<string | null>(null);
   const [rekeyError, setRekeyError] = useState("");
   const [rekeyLogOpen, setRekeyLogOpen] = useState(false);
   const { isArmed, arm } = useArm();
   const foreground = useForeground();
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const say = useCallback((text: string, href?: string) => {
-    setToast(href ? { text, href } : { text });
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), href ? 10_000 : 4_000);
-  }, []);
+  const seq = useRef(0);
+  const prev = useRef<GrowbotOverview | null>(null);
+  const robotsRef = useRef<GrowbotRobot[]>([]);
+  const mounted = useRef(true);
   useEffect(
     () => () => {
+      mounted.current = false;
       if (toastTimer.current) clearTimeout(toastTimer.current);
     },
     [],
   );
 
-  const [signOutArmed, setSignOutArmed] = useState(false);
-  const signOutTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (signOutTimer.current) clearTimeout(signOutTimer.current);
-    },
-    [],
-  );
-  const signOutPhones = useCallback(async () => {
-    if (signOutTimer.current) clearTimeout(signOutTimer.current);
-    if (!signOutArmed) {
-      setSignOutArmed(true);
-      signOutTimer.current = setTimeout(() => setSignOutArmed(false), 4_000);
-      return;
-    }
-    setSignOutArmed(false);
-    try {
-      await api.growbotSignOutPhones();
-      say("Every phone is signed out of GrowBot. Open it again from here.");
-    } catch (e) {
-      say(`Couldn't sign the phones out — ${message(e)}`);
-    }
-  }, [signOutArmed, say]);
-
-  const loadStatus = useCallback(async () => {
-    try {
-      setStatus(await api.growbotStatus());
-      setError("");
-    } catch (e) {
-      setError(message(e));
-    }
+  const say: Say = useCallback((text, opts = {}) => {
+    setToast({ text, ...opts, k: ++seq.current });
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(
+      () => setToast(null),
+      opts.href ? 10_000 : opts.undo ? 7_000 : 4_200,
+    );
   }, []);
+
+  const tell = useCallback((text: string) => {
+    setBanner({ text, k: ++seq.current });
+    setToast(null);
+  }, []);
+
+  // Overviews are numbered as they are asked for, and only one newer than the last taken is
+  // taken: a poll that set out before a rider change and lands after it would otherwise
+  // undo the change on screen and say so in a banner.
+  const asked = useRef(0);
+  const taken = useRef(0);
+
+  /** Take a new overview, learning this phone first so the banner can say "this phone", then
+   *  saying what moved since the last one — whether this screen moved it or another phone.
+   *  `quiet`: this screen made the move and has already said what it did. */
+  const take = useCallback(
+    (next: GrowbotOverview, at: number, quiet = false): string | null => {
+      if (at < taken.current) return null;
+      taken.current = at;
+      const here = learnThisPhone(next);
+      setThisPhone(here);
+      const last = prev.current;
+      prev.current = next;
+      setOverview(next);
+      if (!last || quiet) return null;
+      const said = handover(last, next, {
+        thisPhone: here,
+        phones: next.phones,
+        robots: robotsRef.current,
+      });
+      if (said) tell(said);
+      return said;
+    },
+    [tell],
+  );
+
+  const loadStatus = useCallback(
+    async (quiet = false) => {
+      const at = ++asked.current;
+      try {
+        const [s, ov] = await Promise.all([
+          api.growbotStatus(),
+          // A box before G4 has no personas; the robots still show.
+          api
+            .growbotPersonas()
+            .catch(() => null),
+        ]);
+        if (!mounted.current) return;
+        robotsRef.current = s.robots;
+        setStatus(s);
+        if (ov) take(ov, at, quiet);
+        setError("");
+      } catch (e) {
+        if (mounted.current) setError(message(e));
+      }
+    },
+    [take],
+  );
 
   const loadJob = useCallback(async () => {
     try {
@@ -164,9 +219,33 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
 
   useEffect(() => {
     if (!openAdd) return;
+    setPage(null);
+    setTab("body");
     setSheet({ kind: "add", target: "new" });
     onOpenAddConsumed?.();
   }, [openAdd, onOpenAddConsumed]);
+
+  // Each tab keeps its own scroll.
+  const bodyRef = useRef<HTMLElement>(null);
+  const scrolls = useRef<Record<string, number>>({});
+  const shownTab = useRef<Tab>(tab);
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el || shownTab.current === tab) return;
+    shownTab.current = tab;
+    el.scrollTop = scrolls.current[tab] ?? 0;
+  }, [tab]);
+  function pickTab(t: Tab) {
+    if (bodyRef.current) scrolls.current[tab] = bodyRef.current.scrollTop;
+    setTab(t);
+  }
+
+  const robots = status?.robots ?? [];
+  const up = status?.service !== "down";
+  const personas = overview?.personas ?? [];
+  const phones = overview?.phones ?? [];
+  const pl: Places = { thisPhone, phones, robots };
+  const persona = (id: string | null) => personas.find((p) => p.id === id) ?? null;
 
   async function startFlash(body: GrowbotFlashRequest): Promise<GrowbotFlashJob | null> {
     const out = await api.startGrowbotFlash(body);
@@ -179,47 +258,94 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
 
   /** Mint a one-time link and open it in a new tab. The tab is opened FIRST, inside the tap,
    *  because a window opened after an await is a popup the phone blocks. */
-  function launch(code: string) {
+  function openTicket(what: GrowbotTicketFor & { persona: string }, done: string) {
     let tab: Window | null = null;
     try {
       tab = window.open("", "_blank");
     } catch {
       tab = null;
     }
-    const robot = status?.robots.find((r) => r.code === code);
     api
-      .growbotTicket(code)
+      .growbotTicket(what)
       .then(({ url }) => {
         if (tab && !tab.closed) {
           // `noopener` would cost the handle the tab is steered with, so the link is cut by
           // hand: the vendored page on :8444 must not be able to navigate the PWA.
           tab.opener = null;
           tab.location.href = url;
-          const away = robot && !robot.connected;
-          say(
-            away
-              ? `Opened GrowBot. ${robot.name || code} isn't connected right now — its legs move once it is on and reaches the box.`
-              : code
-                ? "Opened GrowBot in a new tab. The link works once and is spent."
-                : "Opened GrowBot without a robot: it runs on this phone, and its legs wait for one.",
-          );
+          say(done);
         } else {
-          say("The phone blocked the new tab — tap here to open GrowBot.", url);
+          // Not opened here (yet): only a tap on the link makes it this phone's launch.
+          forgetLaunchHere(what.persona);
+          say("The phone blocked the new tab — tap here to open GrowBot.", {
+            href: url,
+            onTap: () => noteLaunchHere(what.persona),
+          });
         }
+        setTimeout(() => {
+          if (mounted.current) void loadStatus();
+        }, AFTER_LAUNCH_MS);
       })
       .catch((e) => {
+        forgetLaunchHere(what.persona);
         tab?.close();
         say(`GrowBot didn't open — ${message(e)}`);
       });
   }
 
-  function openRobot(code: string) {
+  /** Open persona `pid` on this phone, alone (`code` null) or wearing robot `code`. */
+  function launchHere(pid: string, code: string | null) {
+    const p = persona(pid);
+    if (!p) return;
+    if (code && robots.find((r) => r.code === code)?.revoked_at) {
+      say(`${robotName(code, pl)}'s key is revoked — reflash it before a persona can wear it.`);
+      return;
+    }
     if (!certNoted()) {
-      setSheet({ kind: "cert", code });
+      setSheet({ kind: "cert", pid, code });
       return;
     }
     setSheet(null);
-    launch(code);
+    go(p, code);
+  }
+
+  function go(p: GrowbotPersona, code: string | null) {
+    noteLaunchHere(p.id);
+    const here = !!p.phone && p.phone === thisPhone;
+    let done: string;
+    if (code) {
+      const b = robotName(code, pl);
+      const off = robots.find((r) => r.code === code && !r.connected)
+        ? ` ${b} is off right now — its legs move once it's switched on and reaches the box.`
+        : "";
+      done =
+        here && p.wearing === code
+          ? `${p.name} is already wearing ${b} on this phone. Opened it again.`
+          : `Opened ${p.name} wearing ${b} in a new tab.${off}`;
+    } else {
+      done = here
+        ? `Opened ${p.name} again in a new tab.`
+        : `Opened ${p.name} on this phone, alone — no body.`;
+    }
+    openTicket(code ? { persona: p.id, code } : { persona: p.id }, done);
+  }
+
+  /** Who wears robot `code`, picked from the body's side. */
+  async function ride(code: string, pid: string | null) {
+    const current = overview ? riderOf(overview, code) : null;
+    if ((current?.id ?? null) === pid) return;
+    const p = persona(pid);
+    if (p && !p.phone) {
+      launchHere(p.id, code);
+      return;
+    }
+    const at = ++asked.current;
+    try {
+      const said = take(await api.setGrowbotRider(code, pid), at);
+      if (!said) say(`Nothing moved — ${robotName(code, pl)} was already that way.`);
+    } catch (e) {
+      say(`${robotName(code, pl)} didn't change hands — ${message(e)}`);
+    }
   }
 
   async function rekey(r: GrowbotRobot) {
@@ -236,25 +362,34 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
 
   async function revoke(r: GrowbotRobot) {
     if (!arm(`rev:${r.code}`)) return;
+    const rider = overview ? riderOf(overview, r.code) : null;
     try {
       const out = await api.revokeGrowbotRobot(r.code);
       setStatus((s) =>
         s ? { ...s, robots: s.robots.map((x) => (x.code === out.code ? out : x)) } : s,
       );
+      robotsRef.current = robotsRef.current.map((x) => (x.code === out.code ? out : x));
       say(
-        `${r.name || r.code}'s key is revoked. It disconnects now and can't come back until it is reflashed.`,
+        `${r.name || r.code}'s key is revoked. It disconnects now and can't come back until it is reflashed.${
+          rider?.phone ? ` ${rider.name} carries on alone ${onPhone(rider.phone, pl)}.` : ""
+        }`,
       );
     } catch (e) {
       say(`The key wasn't revoked — ${message(e)}`);
     }
   }
 
-  const up = status?.service !== "down";
-  const robots = status?.robots ?? [];
-  const sheetRobot =
-    sheet && (sheet.kind === "rekey" || sheet.kind === "cert")
-      ? robots.find((r) => r.code === sheet.code)
-      : undefined;
+  async function signOutPhones() {
+    if (!arm("signout")) return;
+    try {
+      await api.growbotSignOutPhones();
+      say(
+        "Every phone is signed out of GrowBot. Each persona is kept on the box — open one again from here.",
+      );
+    } catch (e) {
+      say(`Couldn't sign the phones out — ${message(e)}`);
+    }
+  }
 
   function watch() {
     if (!job) return;
@@ -262,153 +397,484 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
     else setSheet({ kind: "add", target: "new" });
   }
 
-  return (
+  /** A persona made, duplicated or imported opens on its own page. */
+  function opened(id: string) {
+    setSheet(null);
+    openPage(id);
+    void loadStatus(true);
+  }
+
+  // Focus follows the page: its heading on the way in (the page focuses it), and the row it
+  // was opened from on the way out, so a keyboard or screen reader never lands on <body>.
+  const backTo = useRef<string | null>(null);
+  function openPage(id: string) {
+    backTo.current = id;
+    setPage(id);
+  }
+  function leavePage() {
+    setPage(null);
+  }
+  useEffect(() => {
+    if (page !== null || !backTo.current) return;
+    const id = backTo.current;
+    backTo.current = null;
+    const row = document.querySelector<HTMLElement>(`[data-persona-row="${id}"]`);
+    (row ?? document.querySelector<HTMLElement>(`#gb-tab-${tab}`))?.focus();
+  }, [page, tab]);
+
+  // A persona deleted elsewhere (another screen, the debug console) closes its page and says
+  // so; this screen's own delete has already cleared the page and said what it did.
+  // Only one this screen has seen counts: a persona just made isn't in the overview yet.
+  const seen = useRef<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!page || !overview) return;
+    const p = overview.personas.find((x) => x.id === page);
+    if (p) {
+      seen.current = { id: p.id, name: p.name };
+      return;
+    }
+    if (seen.current?.id !== page) return;
+    setPage(null);
+    say(`${seen.current.name} was deleted, so its page closed.`);
+  }, [page, overview, say]);
+
+  const sheetRobot =
+    sheet?.kind === "rekey" ? robots.find((r) => r.code === sheet.code) : undefined;
+  const revoked = robots.filter((r) => r.revoked_at);
+  const pagePersona = persona(page);
+
+  const banners = (
     <>
       {status?.service === "down" && (
         <output className="gb-banner">
           growbot is down — no robot can connect. Ops → Services has its log and Restart.
         </output>
       )}
-      <main className="screen-body gb-screen">
-        {error && (
-          <p className="gb-msg bad" role="alert">
-            {error}
-          </p>
+      {revoked.map((r) => (
+        <output key={r.code} className="gb-banner">
+          {r.name || r.code}'s key is revoked — no persona can wear it until it's reflashed over
+          USB.
+        </output>
+      ))}
+      {banner && (
+        <output key={banner.k} className="gb-banner violet">
+          <span className="gb-bt">{banner.text}</span>
+          <button type="button" className="gb-bx" onClick={() => setBanner(null)}>
+            OK
+          </button>
+        </output>
+      )}
+    </>
+  );
+
+  function personasTab() {
+    return (
+      <>
+        {overview === null && status !== null && (
+          <p className="gb-msg info">This box hasn't got personas yet — run Ops → Update.</p>
         )}
-        {status === null && !error && <p className="gb-hint dim">Loading robots…</p>}
-        {robots.map((r) => {
-          const s = robotState(r, up);
-          const name = r.name || r.code;
-          const revoked = !!r.revoked_at;
-          return (
-            <section key={r.code} className="gb-card" aria-label={name}>
-              <div className="gb-card-head">
-                <h3>{name}</h3>
-                <span className="gb-state">
-                  <span className={`gb-dot ${s.level}`} aria-hidden="true" />
-                  <span className={`gb-${s.level}-t`}>{s.text}</span>
+        {overview !== null && (
+          <div className="gb-list">
+            {personas.length === 0 && (
+              <div className="gb-li static">
+                <span className="gb-tx">
+                  <span className="gb-t1">No personas</span>
+                  <span className="gb-t2">Make one below.</span>
                 </span>
               </div>
-              {revoked ? (
-                <>
-                  <p className="gb-msg bad">
-                    <strong>Key revoked.</strong> It can't reach the box until it is reflashed over
-                    USB, which gives it a new key.
-                  </p>
-                  <button
-                    type="button"
-                    className="gb-btn primary block"
-                    onClick={() => setSheet({ kind: "add", target: r.code })}
-                  >
-                    Reflash {name}
-                  </button>
-                </>
-              ) : (
+            )}
+            {personas.map((p) => (
+              <div key={p.id} className="gb-prow">
                 <button
                   type="button"
-                  className="gb-btn primary block"
-                  onClick={() => openRobot(r.code)}
+                  className="gb-prow-main"
+                  data-persona-row={p.id}
+                  aria-label={`${p.name} — soul, memories and checkpoints`}
+                  onClick={() => openPage(p.id)}
                 >
-                  Open GrowBot
+                  <GrowbotAvatar p={p} pl={pl} />
+                  <span className="gb-tx">
+                    <span className="gb-t1">{p.name}</span>
+                    <GrowbotWhere p={p} pl={pl} />
+                  </span>
                 </button>
-              )}
-              <dl className="gb-facts">
-                <dt>Pairing code</dt>
-                <dd className="gb-mono">{r.code}</dd>
-                <dt>Device key</dt>
-                <dd>
-                  {revoked ? (
-                    <span className="gb-bad-t">revoked</span>
-                  ) : (
-                    `made ${day(keyMadeAt(r))}, only on this robot`
-                  )}
-                </dd>
-              </dl>
-              {!revoked && (
-                <div className="gb-acts">
-                  <button
-                    type="button"
-                    className={`gb-btn${isArmed(`rot:${r.code}`) ? " armed" : ""}`}
-                    onClick={() => void rekey(r)}
-                    disabled={running}
-                  >
-                    {isArmed(`rot:${r.code}`) ? "Tap again for a new key" : "New key"}
-                  </button>
-                  <button
-                    type="button"
-                    className={`gb-btn danger${isArmed(`rev:${r.code}`) ? " armed" : ""}`}
-                    onClick={() => void revoke(r)}
-                  >
-                    {isArmed(`rev:${r.code}`) ? "Tap again to revoke" : "Revoke key"}
-                  </button>
-                </div>
-              )}
-            </section>
-          );
-        })}
-        {status !== null && robots.length === 0 && (
+                <button
+                  type="button"
+                  className="gb-btn primary"
+                  aria-label={`Open ${p.name}`}
+                  onClick={() => setSheet({ kind: "launch", pid: p.id })}
+                >
+                  Open
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="gb-hint dim">
+          Tap a persona for its soul, memories and checkpoints. Open asks where it goes.
+        </p>
+      </>
+    );
+  }
+
+  function bodyCard(r: GrowbotRobot) {
+    const s = bodyState(r, up);
+    const name = r.name || r.code;
+    const isRevoked = !!r.revoked_at;
+    const rider = overview ? riderOf(overview, r.code) : null;
+    return (
+      <section key={r.code} className="gb-card" aria-label={name}>
+        <div className="gb-card-head">
+          <h3>{name}</h3>
+          <span className="gb-state">
+            <span className={`gb-dot ${s.level}`} aria-hidden="true" />
+            <span className={`gb-${s.level}-t`}>{s.text}</span>
+          </span>
+        </div>
+        {overview && (
+          <p className="gb-hint">
+            {rider ? (
+              <>
+                <strong>{rider.name}</strong> is wearing it
+                {rider.phone ? `, ${onPhone(rider.phone, pl)}` : ""}.
+              </>
+            ) : (
+              `Nobody is wearing ${name} — it stands still until a persona connects.`
+            )}
+          </p>
+        )}
+        <dl className="gb-facts">
+          <dt>Pairing code</dt>
+          <dd className="gb-mono">{r.code}</dd>
+          <dt>Device key</dt>
+          <dd>
+            {isRevoked ? (
+              <span className="gb-bad-t">revoked</span>
+            ) : (
+              `made ${day(keyMadeAt(r))}, only on ${name}`
+            )}
+          </dd>
+        </dl>
+        {isRevoked ? (
+          <div className="gb-acts">
+            <button
+              type="button"
+              className="gb-btn primary block"
+              onClick={() => setSheet({ kind: "add", target: r.code })}
+            >
+              Reflash {name}
+            </button>
+          </div>
+        ) : (
+          <div className="gb-acts two">
+            <button
+              type="button"
+              className={`gb-btn${isArmed(`rot:${r.code}`) ? " armed" : ""}`}
+              onClick={() => void rekey(r)}
+              disabled={running}
+            >
+              {isArmed(`rot:${r.code}`) ? "Tap again for a new key" : "New key"}
+            </button>
+            <button
+              type="button"
+              className={`gb-btn danger${isArmed(`rev:${r.code}`) ? " armed" : ""}`}
+              onClick={() => void revoke(r)}
+            >
+              {isArmed(`rev:${r.code}`) ? "Tap again to revoke" : "Revoke key"}
+            </button>
+          </div>
+        )}
+      </section>
+    );
+  }
+
+  function riderPick(r: GrowbotRobot) {
+    if (r.revoked_at || !overview) return null;
+    const name = r.name || r.code;
+    const rider = riderOf(overview, r.code)?.id ?? null;
+    return (
+      <section key={`ride-${r.code}`} className="gb-card">
+        <fieldset className="gb-choices gb-rider-pick">
+          <legend>Who wears {name}</legend>
+          <label className={`gb-choice${rider === null ? " sel" : ""}`}>
+            <input
+              type="radio"
+              name={`gb-ride-${r.code}`}
+              checked={rider === null}
+              onChange={() => void ride(r.code, null)}
+            />
+            <span className="gb-tx">
+              Nobody
+              <em>{name} stands still.</em>
+            </span>
+          </label>
+          {personas.map((p) => (
+            <label key={p.id} className={`gb-choice${rider === p.id ? " sel" : ""}`}>
+              <input
+                type="radio"
+                name={`gb-ride-${r.code}`}
+                checked={rider === p.id}
+                onChange={() => void ride(r.code, p.id)}
+              />
+              <GrowbotAvatar p={p} pl={pl} small />
+              <span className="gb-tx">
+                {p.name}
+                <em>{p.phone ? onPhone(p.phone, pl) : "not open — opens on this phone"}</em>
+              </span>
+            </label>
+          ))}
+        </fieldset>
+        <p className="gb-hint dim">The one it leaves carries on alone on its phone.</p>
+      </section>
+    );
+  }
+
+  function bodyTab() {
+    if (status === null) return null;
+    const flashing = running && (
+      <button type="button" className="gb-btn primary block" onClick={watch}>
+        Flashing — tap to watch
+      </button>
+    );
+    if (robots.length === 0) {
+      return (
+        <>
           <section className="gb-card">
             <h3>No robots yet</h3>
             <p className="gb-hint">Plug the robot's Pico into the box's USB, then add it.</p>
           </section>
-        )}
-        {status !== null && (
-          // The creature opens unpaired on the phone (face, voice, camera); only its legs need a
-          // robot, so it can be tried before any board is flashed.
-          <button type="button" className="gb-btn block" onClick={() => openRobot("")}>
-            Open GrowBot without a robot
-          </button>
-        )}
-        {status !== null && (
-          // The robot's phone is signed in to nothing: it gets the box's setup page and a
-          // one-time ticket as two codes to scan, and pairing stays here.
+          {flashing || (
+            <button
+              type="button"
+              className="gb-btn primary block"
+              onClick={() => setSheet({ kind: "add", target: "new" })}
+            >
+              Add a robot
+            </button>
+          )}
+        </>
+      );
+    }
+    return (
+      <>
+        {robots.map((r) => (
+          <div key={r.code} className="gb-stack">
+            {bodyCard(r)}
+            {riderPick(r)}
+          </div>
+        ))}
+        {flashing || (
           <button
             type="button"
             className="gb-btn block"
-            onClick={() => setSheet({ kind: "phone" })}
-          >
-            Set up another phone
-          </button>
-        )}
-        {status !== null && !certNoted() && (
-          <p className="gb-hint dim">
-            The first time you open GrowBot on this phone, it explains the box's certificate.
-          </p>
-        )}
-        {status !== null && (
-          // The first-time sheet shows once per phone; a phone that skipped the install, or a
-          // second phone, still needs the file, and this is the only way off the box to get it.
-          <a className="gb-btn block" href={CERT_URL} download="jbrain-box-root.crt">
-            Download the box's certificate
-          </a>
-        )}
-        {status !== null && (
-          // A phone stays signed in for 30 days so the robot's installed app keeps running;
-          // this is how a lost one is cut off. Armed, since every phone has to reopen after.
-          <button
-            type="button"
-            className={signOutArmed ? "gb-btn block danger armed" : "gb-btn block danger"}
-            onClick={signOutPhones}
-          >
-            {signOutArmed ? "Tap again to sign every phone out" : "Sign out every phone"}
-          </button>
-        )}
-      </main>
-      <div className="gb-foot">
-        {running ? (
-          <button type="button" className="gb-btn primary block" onClick={watch}>
-            Flashing — tap to watch
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="gb-btn primary block"
             onClick={() => setSheet({ kind: "add", target: "new" })}
           >
             Add a robot
           </button>
         )}
-      </div>
+      </>
+    );
+  }
+
+  function phonesTab() {
+    return (
+      <>
+        <div className="gb-list">
+          {phones.length === 0 && (
+            <div className="gb-li static">
+              <span className="gb-tx">
+                <span className="gb-t1">No phone has opened GrowBot yet</span>
+                <span className="gb-t2">Open a persona and its phone shows here.</span>
+              </span>
+            </div>
+          )}
+          {phones.map((f) => {
+            const p = personas.find((x) => x.phone === f.id);
+            const worn = p?.wearing ? robotName(p.wearing, pl) : null;
+            return (
+              <div key={f.id} className="gb-ph-row">
+                <span className="gb-ph-ic" aria-hidden="true" />
+                <div className="gb-tx">
+                  <span className="gb-t1">{phoneName(f.id, pl, true)}</span>
+                  <span className="gb-t2">
+                    {p ? `${p.name} · ${worn ? `wearing ${worn}` : "alone"}` : "nothing open"}
+                    {` · seen ${ago(f.last_seen_at)}`}
+                  </span>
+                </div>
+                {worn && <span className="gb-tag violet">{worn}</span>}
+              </div>
+            );
+          })}
+        </div>
+        <p className="gb-hint dim">
+          A phone holds one persona at a time, and a persona is open on one phone at a time —
+          opening it elsewhere hands it over.
+        </p>
+        <button
+          type="button"
+          className="gb-btn primary block"
+          disabled={personas.length === 0}
+          onClick={() => setSheet({ kind: "other", pid: null, code: null })}
+        >
+          Set up another phone
+        </button>
+        {personas.length === 0 && overview && (
+          <p className="gb-hint dim">Make a persona first: another phone opens as one.</p>
+        )}
+        <details className="gb-help" open>
+          <summary>A phone won't open GrowBot?</summary>
+          <div className="gb-help-b">
+            <p className="gb-hint dim">{NEARBY}</p>
+            <p className="gb-hint dim">
+              A warning page instead of the creature means the phone doesn't trust the box yet.
+              Install the box's certificate once and it's gone, for every page on the box.
+            </p>
+            {/* The first-time sheet shows once per phone; a phone that skipped the install, or
+                a second phone, still needs the file, and this is the only way off the box. */}
+            <a className="gb-btn block" href={CERT_URL} download="jbrain-box-root.crt">
+              Download the box's certificate
+            </a>
+          </div>
+        </details>
+        {/* A phone stays signed in for 30 days so the robot's installed app keeps running;
+            this is how a lost one is cut off. Armed, since every phone has to reopen after. */}
+        <button
+          type="button"
+          className={`gb-btn block danger${isArmed("signout") ? " armed" : ""}`}
+          onClick={() => void signOutPhones()}
+        >
+          {isArmed("signout") ? "Tap again to sign every phone out" : "Sign out every phone"}
+        </button>
+      </>
+    );
+  }
+
+  const launchFor = sheet?.kind === "launch" ? persona(sheet.pid) : null;
+  const certFor = sheet?.kind === "cert" ? persona(sheet.pid) : null;
+
+  return (
+    <>
+      {banners}
+      {pagePersona ? (
+        <GrowbotPersonaPage
+          key={pagePersona.id}
+          persona={pagePersona}
+          pl={pl}
+          say={say}
+          onBack={leavePage}
+          onOpen={() => setSheet({ kind: "launch", pid: pagePersona.id })}
+          onChanged={() => void loadStatus(true)}
+          onGone={() => {
+            backTo.current = null;
+            setPage(null);
+            void loadStatus(true);
+          }}
+          onDuplicated={opened}
+          onSeed={(cid) => setSheet({ kind: "new", seed: cid })}
+          onImport={() => setSheet({ kind: "import", over: pagePersona.id })}
+        />
+      ) : (
+        <>
+          <GrowbotTabs
+            base="gb"
+            label="GrowBot"
+            value={tab}
+            onPick={pickTab}
+            tabs={[
+              {
+                id: "personas",
+                label: "Personas",
+                ...(overview ? { count: personas.length } : {}),
+              },
+              { id: "body", label: "Body" },
+              { id: "phones", label: "Phones" },
+            ]}
+          />
+          <main
+            className="screen-body gb-screen"
+            ref={bodyRef}
+            id="gb-panel"
+            role="tabpanel"
+            aria-labelledby={`gb-tab-${tab}`}
+          >
+            {error && (
+              <p className="gb-msg bad" role="alert">
+                {error}
+              </p>
+            )}
+            {status === null && !error && <p className="gb-hint dim">Loading GrowBot…</p>}
+            {status !== null && tab === "personas" && personasTab()}
+            {tab === "body" && bodyTab()}
+            {status !== null && tab === "phones" && phonesTab()}
+          </main>
+          {tab === "personas" && overview && (
+            <div className="gb-foot">
+              <button
+                type="button"
+                className="gb-btn primary"
+                onClick={() => setSheet({ kind: "new", seed: null })}
+              >
+                New persona
+              </button>
+              <button
+                type="button"
+                className="gb-btn"
+                onClick={() => setSheet({ kind: "import", over: null })}
+              >
+                Import
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {sheet?.kind === "launch" && launchFor && (
+        <GrowbotLaunchSheet
+          p={launchFor}
+          personas={personas}
+          pl={pl}
+          up={up}
+          onHere={(code) => launchHere(launchFor.id, code)}
+          onOther={() => setSheet({ kind: "other", pid: launchFor.id, code: null })}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
+      {sheet?.kind === "other" && (
+        <GrowbotPhoneSheet
+          personas={personas}
+          pl={pl}
+          initialPersona={
+            sheet.pid ?? personas.find((p) => thisPhone && p.phone === thisPhone)?.id ?? null
+          }
+          say={say}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
+      {sheet?.kind === "new" && (
+        <GrowbotNewPersonaSheet
+          personas={personas}
+          initialSeed={sheet.seed}
+          say={say}
+          onMade={opened}
+          onImport={() => setSheet({ kind: "import", over: null })}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
+      {sheet?.kind === "import" && (
+        <GrowbotImportSheet
+          over={persona(sheet.over)}
+          say={say}
+          onMade={opened}
+          onOver={() => {
+            setSheet(null);
+            void loadStatus(true);
+          }}
+          onClose={() => setSheet(null)}
+        />
+      )}
 
       {sheet?.kind === "add" && (
         <GrowbotAddSheet
@@ -416,7 +882,15 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           initialTarget={sheet.target}
           job={job}
           onStart={startFlash}
-          onOpen={openRobot}
+          onOpen={(code) => {
+            // A paired robot is worn from the Body tab, where every persona says where it is.
+            setSheet(null);
+            backTo.current = null;
+            setPage(null);
+            pickTab("body");
+            void loadStatus();
+            say(`Pick who wears ${robotName(code, pl)} under Who wears ${robotName(code, pl)}.`);
+          }}
           onClose={() => setSheet(null)}
         />
       )}
@@ -465,11 +939,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
         </Sheet>
       )}
 
-      {sheet?.kind === "phone" && status && (
-        <GrowbotPhoneSheet robots={status.robots} onClose={() => setSheet(null)} />
-      )}
-
-      {sheet?.kind === "cert" && (
+      {sheet?.kind === "cert" && certFor && (
         <Sheet title="First time on this phone" onClose={() => setSheet(null)}>
           <p className="gb-hint">
             GrowBot opens on the box's own address,{" "}
@@ -485,11 +955,7 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             Certificate Trust Settings. On Android, Settings → Security → Install a certificate → CA
             certificate.
           </p>
-          <p className="gb-hint dim">
-            Newer Android also asks before Chrome may reach the home network: Settings → Apps →
-            Chrome → Permissions → Nearby devices (or Local network) → Allow. Without it Chrome says
-            ERR_TOO_MANY_RETRIES.
-          </p>
+          <p className="gb-hint dim">{NEARBY}</p>
           <div className="gb-sheet-foot">
             <a className="gb-btn block" href={CERT_URL} download="jbrain-box-root.crt">
               Download the box's certificate
@@ -501,23 +967,39 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
                 noteCert();
                 const code = sheet.code;
                 setSheet(null);
-                launch(code);
+                go(certFor, code);
               }}
             >
-              Open GrowBot
+              {sheet.code
+                ? `Open ${certFor.name} wearing ${robotName(sheet.code, pl)}`
+                : `Open ${certFor.name}`}
             </button>
           </div>
         </Sheet>
       )}
 
       {toast && (
-        <output className="gb-toast">
+        // Over an open sheet the toast moves to the top, so it never covers the sheet's buttons.
+        <output key={toast.k} className={`gb-toast${sheet ? " top" : ""}`}>
           {toast.href ? (
-            <a href={toast.href} target="_blank" rel="noreferrer">
+            <a href={toast.href} target="_blank" rel="noreferrer" onClick={toast.onTap}>
               {toast.text}
             </a>
           ) : (
-            toast.text
+            <span className="gb-tt">{toast.text}</span>
+          )}
+          {toast.undo && (
+            <button
+              type="button"
+              className="gb-ta"
+              onClick={() => {
+                const undo = toast.undo;
+                setToast(null);
+                undo?.();
+              }}
+            >
+              {toast.label ?? "Undo"}
+            </button>
           )}
         </output>
       )}

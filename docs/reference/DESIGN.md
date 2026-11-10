@@ -3258,8 +3258,9 @@ GrowBot has its own launcher tile and screen, because the owner opens a persona 
 flashes a robot once. The tile's second line says who is wearing the body (or that `growbot` is
 down). There is one body and several personas (owner, 2026-11-10): a persona is a creature's
 soul, and it can live on a phone alone or wear the body.
-Being built in wave G4: until it lands, the screen is G2's (one card per robot with *Open
-GrowBot*, then *Open GrowBot without a robot*).
+Built in wave G4c: the three tabs, the launch sheet, *Who wears*, the hand-over banners, *On
+another phone* and a persona's page with *Soul*, *Checkpoints* and *Manage*. *Memories* arrives
+with G4d.
 
 - **Three tabs, one per job** (a segmented control under the top bar): **Personas** (with its
   count), **Body**, **Phones**. Each tab keeps its own scroll.

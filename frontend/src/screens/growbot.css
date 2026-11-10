@@ -1,7 +1,9 @@
-/* GrowBot — the desk robot's screen and its Add a robot sheet (GrowbotScreen.tsx,
-   GrowbotAddSheet.tsx; binding mock docs/mocks/growbot-flash/b-growbot-screen.html). A robot's
-   state is always a word beside its dot. 44px floors are bare px: they never ride
-   --font-scale. */
+/* GrowBot — the desk robot's screen, its persona page and its sheets (GrowbotScreen.tsx,
+   GrowbotPersonaPage.tsx, GrowbotPersonaSheets.tsx, GrowbotAddSheet.tsx; binding mocks
+   docs/mocks/growbot-personas/b-three-tabs.html and docs/mocks/growbot-flash/b-growbot-screen.html).
+   A state is always a word beside its dot. Violet is the body everywhere (ring, wearing choice,
+   tag, hand-over banner), so it never reads as the steel primary. 44px floors are bare px:
+   they never ride --font-scale. */
 
 .gb-screen {
   display: flex;
@@ -18,9 +20,19 @@
 }
 .gb-foot {
   flex: none;
+  display: flex;
+  gap: 8px;
   padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--border);
   background: var(--bg);
+}
+.gb-foot .gb-btn {
+  flex: 1;
+  min-height: 48px;
+  font-size: var(--fs-note);
+}
+.gb-foot .gb-btn:not(.primary) {
+  flex: 0 0 auto;
 }
 
 .gb-card {
@@ -466,4 +478,569 @@
   padding: 12px;
   background: #ffffff;
   border-radius: 12px;
+}
+
+/* ===== G4: personas, body, phones ===== */
+
+/* The three tabs (and a persona's own): a segmented control under the app's top bar. */
+.gb-seg {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  margin: 8px 16px 0;
+  padding: 4px;
+  background: var(--surface-2);
+  border-radius: var(--r-seg);
+}
+.gb-seg button {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-2);
+  font-size: var(--fs-note);
+  font-weight: 500;
+  transition: background 150ms ease-out, color 150ms ease-out;
+}
+.gb-seg button.on {
+  background: var(--accent-tint);
+  color: var(--text);
+}
+.gb-seg.inner button {
+  font-size: var(--fs-secondary);
+}
+.gb-page-name:focus {
+  outline: none;
+}
+.gb-page-name:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: 2px;
+}
+.gb-n {
+  margin-left: 4px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.gb-screen > * {
+  flex-shrink: 0;
+}
+.gb-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Rows: the whole row is the target, at least 56px. */
+.gb-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.gb-li,
+.gb-prow,
+.gb-ph-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 56px;
+  padding: 10px 14px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  text-align: left;
+}
+.gb-prow,
+.gb-ph-row {
+  min-height: 64px;
+}
+.gb-li:first-child,
+.gb-prow:first-child,
+.gb-ph-row:first-child {
+  border-top: 0;
+}
+.gb-prow-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+}
+.gb-t1 {
+  font-size: var(--fs-body);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gb-t2 {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.gb-chev {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-title);
+}
+.gb-dot.violet {
+  background: var(--violet);
+}
+.gb-dot.steel {
+  background: var(--steel);
+}
+
+/* A persona: its initial in a disc; a violet ring while it wears the body, steel while open
+   on this phone. */
+.gb-av {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-pill);
+  display: grid;
+  place-items: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  font-size: var(--fs-body);
+  font-weight: 500;
+  color: var(--text);
+  box-sizing: border-box;
+}
+.gb-av.sm {
+  width: 32px;
+  height: 32px;
+  font-size: var(--fs-secondary);
+}
+.gb-av.here {
+  border: 2px solid var(--steel);
+}
+.gb-av.wearing {
+  border: 2px solid var(--violet);
+  background: var(--violet-tint);
+}
+
+.gb-tag.violet {
+  background: var(--violet-tint);
+  color: var(--violet-text);
+}
+.gb-tag.dim {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.gb-acts.two {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.gb-acts.two .gb-btn {
+  width: 100%;
+}
+.gb-acts.col {
+  flex-direction: column;
+}
+.gb-acts.first {
+  margin-top: 0;
+}
+.gb-gap {
+  margin-top: 10px;
+}
+.gb-choice.wear.sel {
+  border-color: var(--violet);
+  background: var(--violet-tint);
+}
+.gb-choice.off {
+  cursor: default;
+  color: var(--text-3);
+}
+.gb-rider-pick {
+  margin: 0;
+}
+.gb-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.gb-linkbtn.inline {
+  min-height: 0;
+  padding: 0;
+  font-size: inherit;
+}
+.gb-file {
+  display: none;
+}
+
+/* The launch sheet's three choices: each says what it does to the body before the tap. */
+.gb-big {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 64px;
+  margin-bottom: 8px;
+  padding: 10px 14px;
+  box-sizing: border-box;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  transition: background 120ms ease-out, border-color 120ms ease-out, transform 120ms ease-out;
+}
+.gb-big:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.gb-big .gb-tx {
+  gap: 2px;
+}
+.gb-big .gb-t1 {
+  white-space: normal;
+}
+.gb-big.wear {
+  border-color: var(--violet);
+  background: var(--violet-tint);
+}
+.gb-big:disabled {
+  color: var(--text-3);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+.gb-k {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+}
+.gb-big.wear .gb-k {
+  background: var(--violet);
+}
+.gb-big:disabled .gb-k {
+  background: var(--text-3);
+}
+.gb-k.other {
+  background: transparent;
+  border: 1.5px solid var(--text-3);
+}
+
+/* A phone, drawn as its outline. */
+.gb-ph-ic {
+  flex: none;
+  width: 28px;
+  height: 40px;
+  border: 1.5px solid var(--text-3);
+  border-radius: 6px;
+  box-sizing: border-box;
+}
+
+details.gb-help {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+}
+details.gb-help summary {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  list-style: none;
+  cursor: pointer;
+}
+details.gb-help summary::-webkit-details-marker {
+  display: none;
+}
+details.gb-help summary::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--text-3);
+  transition: transform 150ms ease-out;
+}
+details.gb-help[open] summary::after {
+  transform: rotate(90deg);
+}
+.gb-help-b {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 0 14px 14px;
+}
+.gb-help-b .gb-hint {
+  margin: 0;
+}
+
+/* The hand-over banner: violet, and it stays until OK — honest status, never a modal. */
+.gb-banner.violet {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px 10px 16px;
+  background: var(--violet-tint);
+  color: var(--text);
+  border-bottom: 1px solid var(--violet);
+  line-height: 1.45;
+  animation: gb-drop 180ms ease-out;
+}
+.gb-bt {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+}
+.gb-bx {
+  flex: none;
+  min-width: 48px;
+  min-height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--fs-micro);
+}
+
+/* A persona's page slides in from the right. */
+.gb-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: gb-push 170ms ease-out;
+}
+.gb-page-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 0;
+}
+.gb-page-ttl {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gb-page-name {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gb-page-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.gb-sec-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 -4px;
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-3);
+}
+.gb-sec-h .r {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.gb-floor {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border-radius: var(--r-input);
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.gb-lk {
+  flex: none;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+.gb-region {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
+.gb-region:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.gb-region:last-child {
+  padding-bottom: 0;
+}
+.gb-rh {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+.gb-rh h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-body);
+  font-weight: 500;
+}
+.gb-up {
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.gb-pv {
+  margin: 4px 0 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.gb-pv.dim,
+.gb-dim-t {
+  color: var(--text-3);
+}
+.gb-region ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.gb-inline-save {
+  display: flex;
+  gap: 8px;
+}
+.gb-inline-save input {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.gb-cp {
+  border-top: 1px solid var(--border);
+  padding: 12px 14px;
+}
+.gb-cp:first-child {
+  border-top: 0;
+}
+.gb-cp-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gb-cp-head .gb-t1 {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.gb-cp .gb-acts {
+  margin-top: 8px;
+}
+.gb-field textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  min-height: 140px;
+  padding: 10px 12px;
+  line-height: 1.45;
+  resize: vertical;
+  font-size: max(16px, var(--fs-body));
+}
+.gb-field textarea.code {
+  min-height: 180px;
+  font-family: var(--font-mono);
+  font-size: max(14px, var(--fs-secondary));
+}
+.gb-err {
+  display: block;
+  margin-top: 6px;
+  color: var(--danger-text);
+  font-size: var(--fs-micro);
+}
+
+/* A toast with an Undo, and the toast that moves to the top over a sheet. */
+.gb-toast {
+  animation: gb-rise 160ms ease-out;
+}
+.gb-toast:has(.gb-ta) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.gb-tt {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.4;
+}
+.gb-ta {
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-tint);
+  color: var(--text);
+  font-size: var(--fs-secondary);
+}
+.gb-toast.top {
+  top: calc(12px + env(safe-area-inset-top));
+  bottom: auto;
+  /* Above the sheet's scrim (80). */
+  z-index: 90;
+  animation-name: gb-drop;
+}
+
+@keyframes gb-drop {
+  from {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes gb-rise {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@keyframes gb-push {
+  from {
+    transform: translateX(16px);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gb-page,
+  .gb-banner.violet,
+  .gb-toast,
+  .gb-big,
+  .gb-seg button,
+  details.gb-help summary::after {
+    animation: none;
+    transition: none;
+  }
 }

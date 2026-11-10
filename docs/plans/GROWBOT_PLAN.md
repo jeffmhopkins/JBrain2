@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4🔶 (G4a✅ G4b✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4🔶 (G4a✅ G4b✅ G4c✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -387,9 +387,11 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
     (pull before the page loads, push as the soul is written, an owner's edit and a hand-over
     noticed within a poll, the *it has moved* and *it was deleted* pages, and the creature's own
     pairing box answering that pairing is JBrain's). See `growbot/README.md` "Personas".
-  - **G4c — the screen.** The Personas, Body and Phones tabs, the launch sheet, *Who wears
+  - **G4c — the screen** ✅. The Personas, Body and Phones tabs, the launch sheet, *Who wears
     Fish*, the hand-over banners, *On another phone* with a persona and the body, and the
-    persona page with its tabs (soul and editor, checkpoints, manage).
+    persona page with its tabs (soul and editor, checkpoints, manage). "This phone" is learned
+    from a launch here that lands (the creature's phone id is another origin's), and the
+    launcher tile says who wears the body. The page's *Memories* tab waits for G4d.
   - **G4d — visual memories.** Their blobs through the storage abstraction under their own
     namespace, synced like the soul, the grid with delete, and kept in checkpoints.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in

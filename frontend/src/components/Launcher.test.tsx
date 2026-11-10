@@ -677,13 +677,17 @@ describe("Launcher GrowBot tile", () => {
     vi.unstubAllGlobals();
   });
 
-  function serveGrowbot(body: unknown) {
+  function serveGrowbot(body: unknown, personas?: unknown) {
+    const ok = (b: unknown) =>
+      new Response(JSON.stringify(b), { headers: { "Content-Type": "application/json" } });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) =>
         String(input) === "/api/growbot/status"
-          ? new Response(JSON.stringify(body), { headers: { "Content-Type": "application/json" } })
-          : new Response(null, { status: 404 }),
+          ? ok(body)
+          : String(input) === "/api/growbot/personas" && personas
+            ? ok(personas)
+            : new Response(null, { status: 404 }),
       ),
     );
   }
@@ -709,6 +713,23 @@ describe("Launcher GrowBot tile", () => {
     await waitFor(() => expect(tile).toHaveTextContent("Quorra connected"));
     fireEvent.click(tile);
     expect(onNavigate).toHaveBeenCalledWith("growbot");
+  });
+
+  it("says who wears the body, or that nobody does", async () => {
+    const status = { service: "up", connected: 1, robots: [robot("Fish", true)] };
+    serveGrowbot(status, {
+      personas: [{ id: "p1", name: "Sprout", wearing: "gb-fish" }],
+      phones: [],
+      body: [{ code: "gb-fish", persona: "p1", since: "2026-11-01T00:00:00Z" }],
+    });
+    const { unmount } = render(<Launcher open onClose={() => {}} onNavigate={vi.fn()} />);
+    const tile = screen.getByRole("button", { name: /GrowBot/ });
+    await waitFor(() => expect(tile).toHaveTextContent("Sprout is wearing Fish"));
+    unmount();
+    serveGrowbot(status, { personas: [], phones: [], body: [] });
+    render(<Launcher open onClose={() => {}} onNavigate={vi.fn()} />);
+    const idle = screen.getByRole("button", { name: /GrowBot/ });
+    await waitFor(() => expect(idle).toHaveTextContent("nobody is wearing Fish"));
   });
 
   it("says when no robot is connected", async () => {
