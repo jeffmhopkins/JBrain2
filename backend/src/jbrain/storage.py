@@ -170,7 +170,10 @@ class FsBlobStore:
     def free_bytes(self) -> int:
         # The root may not exist yet on a box that has stored nothing; the volume it will
         # be created on is the one whose free space the answer is about.
-        probe = self._root if self._root.exists() else self._root.parent
+        # A namespace's root sits one more level down, so walk up to whatever exists.
+        probe = self._root
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
         try:
             return shutil.disk_usage(probe).free
         except OSError:

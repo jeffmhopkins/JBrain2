@@ -230,6 +230,8 @@
   }
 
   function away(status) {
+    // The faces it saved leave this phone with it.
+    window.__gbBoxSoul = { away: true };
     if (status === 404) {
       stopWith("This creature isn't on the box any more",
         "It was deleted. Open another one from JBrain on your main phone: GrowBot, then Open.");
@@ -420,8 +422,9 @@
 })();
 
 /* A persona's visual memories live on the box too (plan §2c, wave G4d). Upstream keeps them in
-   IndexedDB (v3/visual-memory.js), under vmNs(); apply.py makes vmNs() read gb_box_vm_ns first,
-   pinned here to the persona, so each persona's saved views are its own on a shared phone.
+   IndexedDB (v3/visual-memory.js), under vmNs(); apply.py makes vmNs() read this tab's
+   __gbBoxVmNs first, pinned here to the persona, so each persona's saved views are its own on
+   a shared phone.
    - At load, before the creature opens the store (apply.py makes vmOpen wait on
      gbBoxMemReady), the box's records are merged in: the phone and the box are compared record
      by record against `known`, what both agreed on last, so each side's own changes win and an
@@ -432,27 +435,28 @@
      changed them, and the page reloads when idle to take the box's.
    - `dirty` marks writes not yet on the box. Only then is a record the phone lacks one it
      forgot; otherwise the phone's store lost it, and the box's copy comes back.
-   gb_box_vm/<persona> is {known: {id: fingerprint}, version, dirty}. */
+   gb_box_vm/<persona> is {known: {id: fingerprint}, version, dirty (a count), missing (records
+   the merge could not fetch), reloadedFor}. */
 (function () {
   "use strict";
   if (location.pathname !== "/v3/next.html") return;
-  var NS_KEY = "gb_box_vm_ns", PREFIX = "gb_box_vm/", PATH = "/api/box/memories";
-  var READY_MS = 8000, SEND_AFTER_MS = 2000, RETRY_MS = 15000, IDLE_MS = 20000;
+  var PREFIX = "gb_box_vm/", PATH = "/api/box/memories";
+  var READY_MS = 8000, SEND_AFTER_MS = 2000, RETRY_MS = 15000, RETRY_MAX_MS = 300000;
+  var IDLE_MS = 20000;
   var store;
-  try { store = window.localStorage; store.getItem(NS_KEY); } catch (e) { return; }
-  var soul = window.__gbBoxSoul || {};
-  if (soul.g2) { try { store.removeItem(NS_KEY); } catch (e) {} return; }
-  var persona = soul.persona;
-  if (!persona || !window.indexedDB || !window.Promise) return;
-  var NS = "gb-" + persona, KEY = PREFIX + persona;
-  try { store.setItem(NS_KEY, NS); } catch (e) { return; }
+  try { store = window.localStorage; store.getItem(PREFIX); } catch (e) { return; }
+  if (!window.indexedDB || !window.Promise) return;
+  var soul = window.__gbBoxSoul || {}, persona = soul.persona;
+  var leaving = !!(soul.g2 || soul.away);
+  if (!persona && !leaving) return;
+  var NS = "gb-" + (persona || ""), KEY = PREFIX + (persona || "");
 
   function mine() {
     try {
       var m = JSON.parse(store.getItem(KEY) || "null");
       if (m && typeof m === "object" && m.known && typeof m.known === "object") return m;
     } catch (e) {}
-    return { known: {}, version: -1, dirty: false };
+    return { known: {}, version: -1, dirty: 0, missing: {} };
   }
   function save(m) { try { store.setItem(KEY, JSON.stringify(m)); } catch (e) {} }
   // What the phone and the box compare: the creature's fields and its views' times. The
@@ -506,6 +510,32 @@
       q.onerror = q.onblocked = function () { res(null); };
     });
   }
+  // A persona's records, but for `keep`'s, leave the phone: the box has them.
+  function purge(d, keep) {
+    var tx = d.transaction(["refs", "meta", "runs"], "readwrite");
+    ["refs", "meta", "runs"].forEach(function (name) {
+      var q = tx.objectStore(name).index("ns").openKeyCursor();
+      q.onsuccess = function () {
+        var c = q.result;
+        if (!c) return;
+        if (typeof c.key === "string" && c.key.indexOf("gb-") === 0 && c.key !== keep) tx.objectStore(name).delete(c.primaryKey);
+        c.continue();
+      };
+    });
+    return finished(tx).then(function () {
+      Object.keys(store).forEach(function (k) {
+        if (k.indexOf(PREFIX) === 0 && k !== PREFIX + keep.slice(3)) { try { store.removeItem(k); } catch (e) {} }
+      });
+    });
+  }
+  if (leaving) {
+    // Moved to another phone, deleted, or a G2 session: no persona's faces stay here.
+    open().then(function (d) { if (d) return purge(d, ""); }).catch(function () {});
+    return;
+  }
+  // Per tab, never shared: a tab still open on the persona this phone held before keeps
+  // that persona's namespace, so it cannot save a face into the new one.
+  window.__gbBoxVmNs = NS;
   function local(d) {
     return done(d.transaction("meta", "readonly").objectStore("meta").index("ns").getAll(NS)).then(function (rows) {
       var out = {};
@@ -536,8 +566,24 @@
     return { meta: meta, ref: ref };
   }
 
-  // 1. The merge, before the creature reads its store.
-  var late = false;
+  // 1. The merge, before the creature reads its store. Each record lands, and is known, as
+  //    soon as its pictures are in, so a slow box never costs a load all of its work.
+  var late = false, merging = true;
+  function put(d, r) {
+    var tx = d.transaction(["refs", "meta"], "readwrite");
+    tx.objectStore("refs").put(r.ref);
+    tx.objectStore("meta").put(r.meta);
+    return finished(tx).then(function () {
+      var now = mine();
+      now.known[r.meta.id] = fp(r.meta);
+      delete (now.missing || {})[r.meta.id];
+      save(now);
+      if (late) {
+        // The creature has read its store already: it reads it again.
+        try { window._vmLoaded = false; window._vmStoreEpoch = (window._vmStoreEpoch || 0) + 1; } catch (e) {}
+      }
+    });
+  }
   function merge() {
     return Promise.all([open(), boxList()]).then(function (got) {
       var d = got[0], box = got[1];
@@ -548,6 +594,7 @@
           var b = box.rows[id], l = here[id];
           if (l) {
             if (fp(l) !== fp(b) && fp(b) !== known[id]) take.push(b);
+            else if (fp(l) === fp(b)) known[id] = fp(b);
           } else if (known[id] === undefined || !m.dirty) {
             take.push(b);
           }
@@ -555,46 +602,36 @@
         Object.keys(here).forEach(function (id) {
           if (!box.rows[id] && known[id] !== undefined) drop.push(id);
         });
-        // Pictures first: a transaction would not survive waiting on the network.
-        var fetched = [];
-        return take.reduce(function (p, b) {
-          return p.then(function () {
-            var views = Array.isArray(b.views) ? b.views : [];
-            return Promise.all(views.map(function (v, i) {
-              return picture(b.id, i).then(function (j) { return { j: j, t: v.t }; });
-            })).then(function (vs) { if (vs.length) fetched.push(rows(b, vs)); }, function () {});
-          });
-        }, Promise.resolve()).then(function () {
-          if (late) return;
-          var tx = d.transaction(["refs", "meta", "runs"], "readwrite");
-          fetched.forEach(function (r) { tx.objectStore("refs").put(r.ref); tx.objectStore("meta").put(r.meta); });
-          drop.forEach(function (id) { tx.objectStore("refs").delete(NS + "/" + id); tx.objectStore("meta").delete(NS + "/" + id); });
+        var tx = d.transaction(["refs", "meta"], "readwrite");
+        drop.forEach(function (id) { tx.objectStore("refs").delete(NS + "/" + id); tx.objectStore("meta").delete(NS + "/" + id); });
+        return finished(tx).then(function () {
+          drop.forEach(function (id) { delete known[id]; });
+          m.version = box.version;
+          save(m);
           // Another persona's faces are on the box, not this phone's to keep.
-          ["refs", "meta", "runs"].forEach(function (name) {
-            var q = tx.objectStore(name).index("ns").openKeyCursor();
-            q.onsuccess = function () {
-              var c = q.result;
-              if (!c) return;
-              if (typeof c.key === "string" && c.key.indexOf("gb-") === 0 && c.key !== NS) tx.objectStore(name).delete(c.primaryKey);
-              c.continue();
-            };
-          });
-          return finished(tx).then(function () {
-            var now = mine();
-            fetched.forEach(function (r) { now.known[r.meta.id] = fp(r.meta); });
-            drop.forEach(function (id) { delete now.known[id]; });
-            Object.keys(box.rows).forEach(function (id) {
-              if (here[id] && fp(here[id]) === fp(box.rows[id])) now.known[id] = fp(box.rows[id]);
+          return purge(d, NS);
+        }).then(function () {
+          // Pictures one record at a time: a transaction would not survive the network.
+          return take.reduce(function (p, b) {
+            return p.then(function () {
+              var views = Array.isArray(b.views) ? b.views : [];
+              return Promise.all(views.map(function (v, i) {
+                return picture(b.id, i).then(function (j) { return { j: j, t: v.t }; });
+              })).then(function (vs) {
+                if (vs.length) return put(d, rows(b, vs));
+              }).catch(function () {
+                // Not to be had now (a picture the box lacks, a busy box): not a reason to
+                // reload, and tried again at the next load.
+                var now = mine();
+                now.missing = now.missing || {};
+                now.missing[b.id] = fp(b);
+                save(now);
+              });
             });
-            now.version = box.version;
-            save(now);
-            Object.keys(store).forEach(function (k) {
-              if (k.indexOf(PREFIX) === 0 && k !== KEY) { try { store.removeItem(k); } catch (e) {} }
-            });
-          });
+          }, Promise.resolve());
         });
       });
-    }).catch(function () {});
+    }).catch(function () {}).then(function () { merging = false; });
   }
   var merged = merge();
   window.gbBoxMemReady = Promise.race([
@@ -603,7 +640,8 @@
   ]);
 
   // 2. The creature's own writes, sent a moment after the last one.
-  var timer = 0, gen = 0, busy = false, again = false, refused = {}, stopped = false, lastInput = Date.now();
+  var timer = 0, busy = false, again = false, refused = {}, stopped = false, lastInput = Date.now();
+  var retry = RETRY_MS;
   function reloadWhenIdle() {
     stopped = true;
     if (document.hidden || Date.now() - lastInput > IDLE_MS) location.reload();
@@ -618,12 +656,13 @@
     if (stopped) return;
     if (busy) { again = true; return; }
     busy = true; again = false;
-    var failed = false, at = gen;
+    var failed = false, at = mine().dirty;
     Promise.all([open(), boxList()]).then(function (got) {
       var d = got[0], box = got[1];
       if (!d) return;
       return local(d).then(function (here) {
-        var m = mine(), known = m.known, puts = [], forgets = [], theirs = false;
+        var m = mine(), known = m.known, missing = m.missing || {}, puts = [], forgets = [];
+        var theirs = false;
         Object.keys(here).forEach(function (id) {
           var l = here[id], b = box.rows[id];
           if (refused[id] === fp(l)) return;
@@ -634,8 +673,14 @@
         Object.keys(box.rows).forEach(function (id) {
           if (here[id]) return;
           if (known[id] !== undefined && m.dirty) forgets.push(id);
-          else theirs = true;
+          // A record the merge is still fetching, or could not, is no reason to reload.
+          else if (!merging && missing[id] !== fp(box.rows[id])) theirs = true;
         });
+        m.version = box.version;
+        // One reload per change of the box's: whatever it brought that this load could not
+        // take waits for the next one, never a loop.
+        if (theirs && m.reloadedFor === box.version) theirs = false;
+        else if (theirs) m.reloadedFor = box.version;
         save(m);
         return puts.reduce(function (p, id) {
           return p.then(function () {
@@ -669,20 +714,26 @@
       });
     }).catch(function () { failed = true; }).then(function () {
       busy = false;
-      // A write made while this ran is not on the box yet.
-      if (!failed && !again && at === gen) { var now = mine(); now.dirty = false; save(now); }
+      // A write made while this ran, in this tab or another, is not on the box yet.
+      if (!failed && !again) { var now = mine(); if (now.dirty === at) { now.dirty = 0; save(now); } }
+      if (!failed) retry = RETRY_MS;
       if (again) send();
-      else if (failed && !stopped) { clearTimeout(timer); timer = setTimeout(send, RETRY_MS); }
+      else if (failed && !stopped) {
+        clearTimeout(timer);
+        timer = setTimeout(send, retry);
+        retry = Math.min(retry * 2, RETRY_MAX_MS);
+      }
     });
   }
   window.gbBoxMemChanged = function () {
-    gen++;
+    // A count, shared by this phone's tabs: a send clears it only if nothing wrote since.
     var m = mine();
-    if (!m.dirty) { m.dirty = true; save(m); }
+    m.dirty = (+m.dirty || 0) + 1;
+    save(m);
     clearTimeout(timer);
     timer = setTimeout(send, SEND_AFTER_MS);
   };
-  merged.then(function () { if (!late) send(); });
+  merged.then(send);
   window.addEventListener("gb-box-state", function (ev) {
     var got = ev.detail && ev.detail.memories;
     if (typeof got === "number" && got !== mine().version && !busy) send();

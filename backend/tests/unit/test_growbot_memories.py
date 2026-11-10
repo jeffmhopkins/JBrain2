@@ -53,6 +53,8 @@ def test_a_record_is_kept_exactly_as_the_creature_wrote_it() -> None:
         {"name": None},
         {"name": "n" * 61},
         {"desc": "d" * 201},
+        {"desc": "half an emoji \ud83c"},
+        {"name": "nul\x00"},
         {"confirmed": ""},
         {"t": float("nan")},
         {"t": "now"},
@@ -86,3 +88,9 @@ async def test_a_namespace_is_its_own_store(tmp_path: Path) -> None:
     for bad in ("", "../up", "Growbot", "a/b", "9lives"):
         with pytest.raises(ValueError):
             main.namespace(bad)
+
+
+def test_a_new_namespace_reports_the_volume_it_will_live_on(tmp_path: Path) -> None:
+    faces = FsBlobStore(tmp_path / "blobs").namespace("growbot-memories")
+    # Neither it nor the store above it exists yet: still a real answer, never "no room".
+    assert faces.free_bytes() > 0

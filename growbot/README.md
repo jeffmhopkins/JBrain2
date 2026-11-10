@@ -248,8 +248,8 @@ paired from JBrain.
 
 The saved views upstream keeps in IndexedDB (`v3/visual-memory.js`) live on the box with the
 persona (the api's `growbot_memories`, pictures in the blob store's `growbot-memories`
-namespace). apply.py makes three small changes to that file: `vmNs()` reads `gb_box_vm_ns`
-first, `vmOpen()` waits on `window.gbBoxMemReady`, and every read-write transaction calls
+namespace). apply.py makes three small changes to that file: `vmNs()` reads the tab's
+`window.__gbBoxVmNs` first, `vmOpen()` waits on `window.gbBoxMemReady`, and every read-write transaction calls
 `window.gbBoxMemChanged()`.
 
 | Route | Answer |
@@ -260,12 +260,16 @@ first, `vmOpen()` waits on `window.gbBoxMemReady`, and every read-write transact
 | `POST /api/box/memories/forget` | `{persona, ids}` to `/memories/forget`. |
 
 They answer like the soul's routes (204 for a G2 session, 409 `other` for another persona's
-write, the api's 400/404/409/413, else 503). `growbot-box.js` pins `gb_box_vm_ns` to
-`gb-<persona>` (a G2 session drops it), merges the box's records in before the creature opens
-its store, and sends the creature's writes 2 s after the last. Each side's change wins against
+write, the api's 400/404/409/413, else 503). `growbot-box.js` pins the tab's namespace to
+`gb-<persona>` (never shared through localStorage, so a tab left on the persona the phone held
+before cannot save into the new one), merges the box's records in before the creature opens
+its store (each record lands as soon as its pictures are in; one it cannot fetch waits for the
+next load and never causes a reload), and sends the creature's writes 2 s after the last,
+backing off to 5 minutes while the box will not answer. Each side's change wins against
 `known` (what both last agreed on, in `gb_box_vm/<persona>`); a record the phone lacks is
-forgotten on the box only when the phone has unsent writes (`dirty`), otherwise the box's copy
-comes back. An owner's change (the poll's `memories` moved) reloads the page when idle. Other
+forgotten on the box only when the phone has unsent writes (`dirty`, a count shared by its
+tabs), otherwise the box's copy comes back. An owner's change (the poll's `memories` moved)
+reloads the page when idle, at most once per box version. Other
 personas' records leave the phone at load.
 
 The body has one rider. A phone's relay socket asks the api's `/internal/growbot/body/<code>`

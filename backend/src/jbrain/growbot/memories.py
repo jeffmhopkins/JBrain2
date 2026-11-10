@@ -48,7 +48,14 @@ def _number(value: Any) -> bool:
 
 
 def _text(value: Any, cap: int) -> bool:
-    return isinstance(value, str) and len(value) <= cap
+    # A lone surrogate (upstream's slice can cut an emoji in half) or a NUL cannot be stored
+    # as jsonb: refused, so the phone stops sending it, instead of failing on every retry.
+    return (
+        isinstance(value, str)
+        and len(value) <= cap
+        and "\x00" not in value
+        and not any("\ud800" <= c <= "\udfff" for c in value)
+    )
 
 
 def from_phone(raw: Any) -> Saved:

@@ -383,8 +383,7 @@ VISUAL_MEMORY_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "v3/visual-memory.js",
         'function vmNs(){ try{ return localStorage.getItem("pb2_sid")||',
-        'function vmNs(){ try{ return localStorage.getItem("gb_box_vm_ns")||'
-        'localStorage.getItem("pb2_sid")||',
+        'function vmNs(){ try{ return window.__gbBoxVmNs||localStorage.getItem("pb2_sid")||',
         1,
     ),
     # The store opens only after the box's records are merged in.

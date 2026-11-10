@@ -19,6 +19,7 @@ does, under one lock that a phone's write holds from its first blob to its commi
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -39,6 +40,9 @@ CHECKPOINT_NAME_MAX = 80
 AUTO_KEEP = 20
 PHONE_LABEL_MAX = 40
 _SYSTEM_OWNER = SessionContext(principal_kind="owner")
+# Below this much free space the box keeps no new picture.
+FREE_FLOOR_BYTES = 1 << 30
+_DIGEST_RE = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -185,7 +189,7 @@ _PERSONA = (
 )
 _CHECKPOINT = (
     "id::text AS id, persona_id::text AS persona_id, name, auto, why, created_at,"
-    " jsonb_array_length(memories) AS memories"
+    " coalesce(jsonb_array_length(memories), 0) AS memories"
 )
 # A persona's memories as a checkpoint keeps them.
 _SNAPSHOT = (
@@ -335,7 +339,10 @@ class SqlPersonaRepo:
         self, session: AsyncSession, pid: str, name: str, auto: bool, why: str, freed: set[str]
     ) -> Checkpoint | None:
         """A checkpoint of the soul and memories as they are; the pictures of any automatic
-        checkpoint it prunes go into `freed`, for a sweep once this commits."""
+        checkpoint it prunes go into `freed`, for a sweep once this commits. The caller holds
+        the persona's row, and the blob lock is taken here: until this commits, the snapshot
+        is the only thing naming a picture a racing forget lets go of."""
+        await _lock_blobs(session)
         row = (
             await session.execute(
                 text(
@@ -371,26 +378,26 @@ class SqlPersonaRepo:
             return
         async with scoped_session(self._maker, _SYSTEM_OWNER) as session:
             await _lock_blobs(session)
-            for sha in sorted(freed):
-                named = (
-                    await session.execute(
-                        text(
-                            "SELECT EXISTS (SELECT 1 FROM app.growbot_memories"
-                            "  WHERE views @>"
-                            "  jsonb_build_array(jsonb_build_object('sha', CAST(:s AS text))))"
-                            " OR EXISTS (SELECT 1 FROM app.growbot_checkpoints WHERE memories @>"
-                            "  jsonb_build_array(jsonb_build_object('views',"
-                            "  jsonb_build_array(jsonb_build_object('sha', CAST(:s AS text))))))"
-                        ),
-                        {"s": sha},
-                    )
-                ).scalar_one()
-                if not named:
-                    try:
-                        await self._blobs.delete(sha)
-                    except ValueError:
-                        # Not a digest: never one this repo wrote, so not one to unlink.
-                        continue
+            # One set-based pass, so a big forget holds the lock every write waits on briefly.
+            loose = (
+                await session.execute(
+                    text(
+                        "SELECT s FROM unnest(CAST(:shas AS text[])) AS s WHERE NOT EXISTS ("
+                        "  SELECT 1 FROM app.growbot_memories m"
+                        "  WHERE m.views @> jsonb_build_array(jsonb_build_object('sha', s)))"
+                        " AND NOT EXISTS (SELECT 1 FROM app.growbot_checkpoints c"
+                        "  WHERE c.memories @> jsonb_build_array(jsonb_build_object('views',"
+                        "  jsonb_build_array(jsonb_build_object('sha', s)))))"
+                    ),
+                    {"shas": sorted(freed)},
+                )
+            ).scalars()
+            for sha in loose:
+                try:
+                    await self._blobs.delete(sha)
+                except ValueError:
+                    # Not a digest: never one this repo wrote, so not one to unlink.
+                    continue
 
     async def _bump_memories(self, session: AsyncSession, pid: str) -> int:
         return int(
@@ -551,6 +558,12 @@ class SqlPersonaRepo:
             return None
         freed: set[str] = set()
         async with scoped_session(self._maker, ctx) as session:
+            # The row before the blob lock, the order a phone's keep takes them in.
+            held = await session.execute(
+                text("SELECT 1 FROM app.growbot_personas WHERE id = :p FOR UPDATE"), {"p": key}
+            )
+            if held.first() is None:
+                return None
             cp = await self._checkpoint_now(session, key, name, auto, why, freed)
         await self._sweep(freed)
         return cp
@@ -811,8 +824,12 @@ class SqlPersonaRepo:
         ).scalar_one_or_none()
         if not isinstance(views, list) or not 0 <= i < len(views) or self._blobs is None:
             return None
+        sha = views[i].get("sha") if isinstance(views[i], dict) else None
+        # Only ever a digest this repo wrote; checked anyway, since a path is built from it.
+        if not isinstance(sha, str) or not _DIGEST_RE.fullmatch(sha):
+            return None
         try:
-            return await self._blobs.get(str(views[i]["sha"]))
+            return await self._blobs.get(sha)
         except (FileNotFoundError, KeyError, TypeError):
             return None
 
@@ -912,6 +929,9 @@ class SqlPersonaRepo:
                 ).scalar_one()
                 if count >= MAX_MEMORIES:
                     return "full"
+            # A phone left saving faces must never be what fills the box's disk.
+            if self._blobs.free_bytes() < FREE_FLOOR_BYTES:
+                return "full"
             await _lock_blobs(session)
             views = [{"sha": await self._blobs.put(data), "t": t} for data, t in saved.views]
             if had is not None:

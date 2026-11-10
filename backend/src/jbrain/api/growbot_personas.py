@@ -757,7 +757,7 @@ async def phone_forget(request: Request, body: ForgetIn) -> MemoriesVersionOut:
     ids = body.ids
     if (
         not isinstance(ids, list)
-        or len(ids) > memories.MAX_MEMORIES * 2
+        or len(ids) > memories.MAX_MEMORIES
         or not all(isinstance(i, str) and memories.ID_RE.fullmatch(i) for i in ids)
     ):
         raise HTTPException(status_code=400, detail="not visual memory ids")

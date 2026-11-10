@@ -293,17 +293,22 @@ def test_visual_memories_follow_the_persona() -> None:
     """G4d (plan §2c): each persona's saved views are its own namespace, merged in from the box
     before the creature opens its store, and every write the creature makes to it is sent."""
     vm = (_SITE / "v3" / "visual-memory.js").read_text(encoding="utf-8")
-    assert 'function vmNs(){ try{ return localStorage.getItem("gb_box_vm_ns")||' in vm
+    assert "function vmNs(){ try{ return window.__gbBoxVmNs||" in vm
     assert "w.then(vmOpenNow,vmOpenNow)" in vm and "function vmOpenNow(){" in vm
     assert 'if(mode==="readwrite"&&typeof window.gbBoxMemChanged==="function")' in vm
     page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "/v3/visual-memory.js?v=1005-mem-box" in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
-    mem = shim[shim.index('var NS_KEY = "gb_box_vm_ns"') :]
+    mem = shim[shim.index('var PREFIX = "gb_box_vm/"') :]
     assert 'PATH = "/api/box/memories"' in mem
     assert "window.gbBoxMemReady = Promise.race(" in mem and "window.gbBoxMemChanged = " in mem
-    # A G2 session's creature keeps the phone's own namespace.
-    assert "if (soul.g2) { try { store.removeItem(NS_KEY); }" in mem
+    # Pinned per tab, never through shared storage; a G2 session (no persona) pins nothing.
+    assert "window.__gbBoxVmNs = NS;" in mem and "gb_box_vm_ns" not in shim
+    # Moved, deleted or a G2 session: every persona's faces leave the phone.
+    assert "var leaving = !!(soul.g2 || soul.away);" in mem and 'purge(d, "")' in mem
+    assert "window.__gbBoxSoul = { away: true };" in shim
+    # A record the merge could not fetch never reloads the page, nor does one version twice.
+    assert "missing[id] !== fp(box.rows[id])" in mem and "m.reloadedFor === box.version" in mem
     # Writes name the persona this tab runs as, for the sidecar to check.
     assert mem.count("{ persona: persona, ") == 2
     # Only a phone with unsent writes forgets on the box what it lacks.

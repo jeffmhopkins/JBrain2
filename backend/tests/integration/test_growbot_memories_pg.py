@@ -212,6 +212,11 @@ async def test_a_persona_keeps_at_most_max_memories(
     # A full persona can still rename or re-view one it has.
     assert await repo.phone_keep(SYSTEM_OWNER, sprout, PHONE_A, _saved("r2", CUP, name="mug")) == 3
     assert not await blobs.exists(_sha(SIDE))
+    # Nor any new picture once the disk runs low.
+    monkeypatch.setattr(personas, "MAX_MEMORIES", 50)
+    monkeypatch.setattr(blobs, "free_bytes", lambda: personas.FREE_FLOOR_BYTES - 1)
+    assert await repo.phone_keep(SYSTEM_OWNER, sprout, PHONE_A, _saved("r4", SIDE)) == "full"
+    assert not await blobs.exists(_sha(SIDE))
 
 
 # -- checkpoints, restore, reset, duplicate, delete ------------------------------------------
@@ -472,3 +477,43 @@ async def test_routes_sync_list_view_forget_and_checkpoint(
     over = c.post("/api/growbot/personas/import", json={"soul": soul_file, "over": pid}).json()
     assert over["persona"]["memories"] == 0 and over["checkpoint"]["memories"] == 2
     assert memories.MAX_VIEWS == 3
+
+
+async def test_a_checkpoint_from_before_memories_keeps_them_on_restore(
+    maker: async_sessionmaker, blobs: FsBlobStore
+) -> None:
+    repo, sprout, _ = await _world(maker, blobs)
+    cp = await repo.save_checkpoint(OWNER, sprout, "Before G4d")
+    assert cp is not None
+    # As every checkpoint made before migration 0258 is: it never captured them.
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.growbot_checkpoints SET memories = NULL WHERE id = :c"), {"c": cp.id}
+        )
+    listed = await repo.list_checkpoints(OWNER, sprout)
+    assert [c.memories for c in listed] == [0]
+    done = await repo.write_soul(
+        OWNER,
+        sprout,
+        souls.fresh("Sprout"),
+        before=("Before restoring", "x"),
+        memories=("from", cp.id),
+    )
+    assert done is not None and done != "stale" and done[0].memories == 1
+    got = await repo.memories(OWNER, sprout)
+    assert got is not None and [m.id for m in got] == ["r1"]
+
+
+async def test_checkpoints_racing_forgets_never_name_a_swept_picture(
+    maker: async_sessionmaker, blobs: FsBlobStore
+) -> None:
+    repo, sprout, _ = await _world(maker, blobs)
+    for _ in range(5):
+        cp, _gone = await asyncio.gather(
+            repo.save_checkpoint(OWNER, sprout, "race"),
+            repo.phone_forget(SYSTEM_OWNER, sprout, PHONE_A, ["r1"]),
+        )
+        assert cp is not None
+        if cp.memories:
+            assert await blobs.exists(_sha(FACE))
+        await repo.phone_keep(SYSTEM_OWNER, sprout, PHONE_A, _saved("r1", FACE))

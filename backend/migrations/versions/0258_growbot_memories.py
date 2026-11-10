@@ -13,8 +13,10 @@ never the attachment store, so nothing else on the box can address a face.
 - `growbot_personas.memories_version` — bumped by every change to its memories, so the phone
   holding it notices one made from the PWA (a delete, a restore) within a poll.
 - `growbot_checkpoints.memories` — the memories as they were, the same `[{id, meta, views}]`
-  shape. A checkpoint shares its pictures' digests with the persona instead of copying them, so
-  a blob goes only once no row of either table names it.
+  shape. NULL for a checkpoint made before this migration: it never captured them, so
+  restoring it keeps the memories the persona has instead of clearing them. A checkpoint
+  shares its pictures' digests with the persona instead of copying them, so a blob goes only
+  once no row of either table names it.
 
 Owner-only under RLS like 0257's: the sidecar's calls run under the system owner context after
 `growbot.token` is checked; no share, member, device or capability session can read them, and
@@ -52,8 +54,8 @@ def upgrade() -> None:
         "ALTER TABLE app.growbot_personas ADD COLUMN memories_version integer NOT NULL DEFAULT 0"
     )
     op.execute(
-        "ALTER TABLE app.growbot_checkpoints ADD COLUMN memories jsonb NOT NULL DEFAULT '[]'"
-        " CHECK (jsonb_typeof(memories) = 'array')"
+        "ALTER TABLE app.growbot_checkpoints ADD COLUMN memories jsonb"
+        " CHECK (memories IS NULL OR jsonb_typeof(memories) = 'array')"
     )
     op.execute("ALTER TABLE app.growbot_memories ENABLE ROW LEVEL SECURITY")
     op.execute("ALTER TABLE app.growbot_memories FORCE ROW LEVEL SECURITY")
