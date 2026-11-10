@@ -115,9 +115,11 @@ def test_vendored_assets_are_the_pinned_bytes(entry: dict[str, str]) -> None:
 
 def test_firmware_dials_the_box_with_its_key() -> None:
     chip = (_FIRMWARE / "relay_chip.py").read_text(encoding="utf-8")
-    assert 'HOST = getattr(_box, "GROWBOT_HOST", HOST)' in chip
+    assert 'HOST = getattr(_box, "GROWBOT_HOST", None)' in chip
     assert "socket.getaddrinfo(HOST, PORT)" in chip
-    assert "ssl.wrap_socket(raw, server_hostname=SNI)" in chip
+    assert "s = _wrap(raw)" in chip
+    assert "ctx.verify_mode = ssl.CERT_REQUIRED" in chip
+    assert 'raise RuntimeError("secrets.py has no GROWBOT_HOST' in chip
     assert '"key": ROBOT_KEY' in chip
     assert "% (PATH, SNI, key)" in chip
     compile(chip, "relay_chip.py", "exec")
@@ -151,3 +153,37 @@ def test_a_vendored_asset_with_the_wrong_hash_is_refused(tmp_path: Path) -> None
     entry = {"path": "x.bin", "url": "https://example.invalid/x", "sha256": "0" * 64}
     with pytest.raises(apply.PatchError, match="sha256"):
         apply._fetch(entry, tmp_path)
+
+
+# A runtime load of an absolute URL: fetch, import, a socket, a worker, or a src/href that the
+# browser follows on its own. A link a person taps is not one of these.
+_RUNTIME_LOAD = re.compile(
+    r"""(?:fetch|import|WebSocket|EventSource|Worker|SharedWorker|importScripts)\s*\(\s*["'`]https?://"""
+    r"""|<(?:script|img|audio|video|source|iframe|link)\b[^>]*\s(?:src|href)=["']https?://""",
+    re.I,
+)
+
+
+@pytest.mark.parametrize("path", _CODE, ids=lambda p: p.relative_to(_SITE).as_posix())
+def test_no_runtime_load_of_any_absolute_url(path: Path) -> None:
+    text = path.read_text(encoding="utf-8")
+    assert _RUNTIME_LOAD.search(text) is None
+
+
+def test_handler_shapes_the_build_cannot_hash_are_refused() -> None:
+    assert apply._unsupported_handlers("el.setAttribute('onclick', 'x()')")
+    assert apply._unsupported_handlers('h("<b onclick=\\"x()\\">")')
+    assert apply._unsupported_handlers('<b onclick="x()">') == []
+
+
+def test_a_failed_build_leaves_the_committed_tree_untouched(tmp_path: Path) -> None:
+    upstream = tmp_path / "upstream"
+    (upstream / "app").mkdir(parents=True)
+    (upstream / "app" / "relay-transport.js").write_text("changed upstream\n")
+    out = tmp_path / "out"
+    (out / "site").mkdir(parents=True)
+    (out / "site" / "kept.txt").write_text("committed\n")
+    with pytest.raises(apply.PatchError):
+        apply.build(upstream, out, None)
+    assert (out / "site" / "kept.txt").read_text() == "committed\n"
+    assert sorted(p.name for p in out.iterdir()) == ["site"]

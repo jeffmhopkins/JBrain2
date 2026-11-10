@@ -51,10 +51,25 @@ try:
     import secrets as _box
 except ImportError:
     _box = None
-HOST = getattr(_box, "GROWBOT_HOST", HOST)
+HOST = getattr(_box, "GROWBOT_HOST", None)
+if not HOST:
+    # Dialing upstream's hostname on the box's port would fail forever and quietly; say why.
+    raise RuntimeError("secrets.py has no GROWBOT_HOST: reflash this robot from JBrain")
 PORT = getattr(_box, "GROWBOT_PORT", 8444)
 SNI = getattr(_box, "GROWBOT_SNI", "jbrain.local")
 ROBOT_KEY = getattr(_box, "GROWBOT_KEY", "")
+# The box's root CA (DER bytes). With it the robot refuses an impostor before sending its key;
+# without it (a hand-edited secrets.py) it connects unverified, as upstream always did.
+BOX_CA = getattr(_box, "GROWBOT_CA", None)
+
+
+def _wrap(raw):
+    if not BOX_CA:
+        return ssl.wrap_socket(raw, server_hostname=SNI)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.load_verify_locations(cadata=BOX_CA)
+    return ctx.wrap_socket(raw, server_hostname=SNI)
 
 print("\n========================================")
 print("  PAIRING CODE:  " + DEVID)
@@ -236,7 +251,7 @@ def ws_open():
     try:
         raw.connect(ai)
         feed()
-        s = ssl.wrap_socket(raw, server_hostname=SNI)
+        s = _wrap(raw)
     except Exception:
         raw.close()
         raise

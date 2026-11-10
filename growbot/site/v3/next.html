@@ -1206,7 +1206,7 @@ function speakable(s){                                 // FIXES the "m m m" bug:
    their creature in the v2 VOICE tab survives graduation (same origin). "robot" default = behavior unchanged;
    picker also lives in the 🧠 brain panel below. ===== */
 var vtEngine="fish", vtUri=null, vtFish={key:"box",voice:"",model:"kokoro"};   // "fish" = the user's OWN fish.audio account through /api/fish-tts (BYO key, their spend)
-try{ var _vt=JSON.parse(localStorage.getItem("pb2_voicetest")||"null"); if(_vt){ vtEngine="fish"; vtUri=_vt.uri||null; if(_vt.fish){ vtFish.key=String(_vt.fish.key||"box"); vtFish.voice=String(_vt.fish.voice||""); vtFish.model=String(_vt.fish.model||"s2.1-pro-free"); } } }catch(e){}
+try{ var _vt=JSON.parse(localStorage.getItem("pb2_voicetest")||"null"); if(_vt){ vtEngine="fish"; vtUri=_vt.uri||null; if(_vt.fish){ vtFish.key=String(_vt.fish.key||"box"); vtFish.voice=String(_vt.fish.voice||""); vtFish.model="kokoro"; } } }catch(e){}
 function vtSave(){ try{ localStorage.setItem("pb2_voicetest",JSON.stringify({engine:vtEngine,uri:vtUri,fish:vtFish})); }catch(e){} }
 function vtVoiceObj(){ try{ if(!window.speechSynthesis||!vtUri) return null; var vs=window.speechSynthesis.getVoices()||[]; for(var i=0;i<vs.length;i++) if(vs[i].voiceURI===vtUri||vs[i].name===vtUri) return vs[i]; }catch(e){} return null; }
 /* ---- SPEECH LANGUAGE (0818, tester field, Pixel 9: "can't pronounce Polish characters. The stress
@@ -1449,7 +1449,7 @@ function _fishSpeedBase(emo){
 
 function fishFail(){
   fishFails++;
-  if(fishFails>=3){ fishDead=true; fishToast('fish voice unavailable (check key or credits), using the default growbot voice'); }
+  if(fishFails>=3){ fishDead=true; fishToast('the box voice is unavailable right now'); }
 }
 
 function fishFetch(t,emo){
@@ -1459,7 +1459,7 @@ function fishFetch(t,emo){
     body:JSON.stringify({text:t,voice:vtFish.voice||'',model:vtFish.model||'s2.1-pro-free',speed:fishSpeed(emo)})
   }).then(function(r){
     if(r.status===200){ fishFails=0; return r.blob(); }
-    if(r.status===401 || r.status===402){ fishDead=true; fishToast('fish voice unavailable (check key or credits), using the default growbot voice'); }
+    if(r.status===401 || r.status===402){ fishDead=true; fishToast('the box voice is unavailable right now'); }
     else fishFail();
     throw r.status;
   }).then(function(blob){ return URL.createObjectURL(blob); }).catch(function(err){
@@ -6531,7 +6531,7 @@ function ensureBrainPanel(){ if(_brainPanel) return;
     if(!vtUri){ var _eff=vtVoiceFor(vtLang()); if(_eff) vsel.value=_eff.voiceURI; }   /* K3 F4: this used to ASSIGN vtUri from the first option — which made an auto-pick look deliberate. The dropdown only SHOWS the effective voice; vtUri stays empty until a person picks a preferred timbre. A matching language voice may supersede an incompatible timbre. */
     }catch(e){} }
   function bvSync(){ try{ if(ve) ve.value=vtEngine; if(vsel) vsel.style.display=(vtEngine==="device")?"block":"none";
-    var fr=$("bvFishRow"); if(fr) fr.style.display=(vtEngine==="fish")?"block":"none";
+    var fr=$("bvFishRow"); if(fr) fr.style.display="none";
     if($("bvFishKey")) $("bvFishKey").value=vtFish.key; if($("bvFishVoice")) $("bvFishVoice").value=vtFish.voice; if($("bvFishModel")) $("bvFishModel").value=vtFish.model; }catch(e){} }
   if(ve) ve.addEventListener("change",function(){ vtEngine="fish"; vtSave(); bvPop(); bvSync(); if(vtEngine==="fish") fishPrime(); });   // the pick itself is the iOS unlock gesture
   if(vsel) vsel.addEventListener("change",function(){ vtUri=this.value; vtSave(); });

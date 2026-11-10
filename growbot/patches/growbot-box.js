@@ -9,7 +9,41 @@
 
   var queue = [];
   var current = null;
-  var audio = null;
+  var abort = null;
+  var watchdog = 0;
+  // One element for every line: iOS lets an element play without a gesture only once that
+  // same element has played inside one, so a fresh Audio() per line would be refused.
+  var el = null;
+  var unlocked = false;
+
+  function element() {
+    if (!el) {
+      el = new Audio();
+      el.preload = "auto";
+    }
+    return el;
+  }
+
+  function silentWav() {
+    var rate = 8000, samples = 800, buf = new ArrayBuffer(44 + samples * 2), v = new DataView(buf);
+    function str(o, s) { for (var i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); }
+    str(0, "RIFF"); v.setUint32(4, 36 + samples * 2, true); str(8, "WAVEfmt ");
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true);
+    v.setUint16(34, 16, true); str(36, "data"); v.setUint32(40, samples * 2, true);
+    return new Blob([buf], { type: "audio/wav" });
+  }
+
+  function unlock() {
+    if (unlocked || current) return;
+    unlocked = true;
+    var a = element(), url = URL.createObjectURL(silentWav());
+    a.src = url;
+    a.play().catch(function () { unlocked = false; }).then(function () { URL.revokeObjectURL(url); });
+  }
+  ["pointerdown", "touchend", "keydown"].forEach(function (type) {
+    window.addEventListener(type, unlock, { capture: true, passive: true });
+  });
 
   function emit(utterance, type) {
     // A real SpeechSynthesisUtterance is an EventTarget, and dispatching also runs its on<type>
@@ -22,33 +56,54 @@
     }
   }
 
-  function stopAudio() {
-    if (!audio) return;
-    try {
-      audio.pause();
-      if (audio.src) URL.revokeObjectURL(audio.src);
-    } catch (e) {}
-    audio = null;
+  function settle() {
+    synth.speaking = !!current;
+    synth.pending = queue.length > 0;
   }
 
-  function finish(type) {
-    var u = current;
+  function release() {
+    clearTimeout(watchdog);
+    watchdog = 0;
+    if (abort) {
+      try { abort.abort(); } catch (e) {}
+      abort = null;
+    }
+    if (el) {
+      try {
+        el.pause();
+        if (el.src && el.src.indexOf("blob:") === 0) URL.revokeObjectURL(el.src);
+        el.onended = el.onerror = el.onloadedmetadata = null;
+      } catch (e) {}
+    }
+  }
+
+  function finish(u, type) {
+    if (current !== u) return;
     current = null;
-    stopAudio();
-    synth.speaking = false;
-    if (u) emit(u, type);
+    release();
+    settle();
+    emit(u, type);
     pump();
   }
 
   function pump() {
-    if (current || !queue.length) return;
-    current = queue.shift();
-    synth.speaking = true;
-    var u = current;
+    if (current || !queue.length) return settle();
+    var u = (current = queue.shift());
+    settle();
+    var text = String(u.text || "").trim();
+    if (!text) {
+      // The page primes speech with a blank line; nothing to say, and nothing to send.
+      setTimeout(function () { finish(u, "end"); }, 0);
+      return;
+    }
+    abort = typeof AbortController === "function" ? new AbortController() : null;
+    // A box that never answers must not stall every line queued behind this one.
+    watchdog = setTimeout(function () { finish(u, "error"); }, 15000 + text.length * 60);
     fetch("/api/fish-tts", {
       method: "POST",
       headers: { "content-type": "application/json", "x-fish-key": "box" },
-      body: JSON.stringify({ text: String(u.text || ""), voice: "", model: "kokoro", speed: u.rate || 1 }),
+      body: JSON.stringify({ text: text, voice: "", model: "kokoro", speed: u.rate || 1 }),
+      signal: abort ? abort.signal : undefined,
     })
       .then(function (r) {
         if (r.status !== 200) throw r.status;
@@ -56,15 +111,20 @@
       })
       .then(function (blob) {
         if (current !== u) return;
-        audio = new Audio(URL.createObjectURL(blob));
-        audio.onended = function () { if (current === u) finish("end"); };
-        audio.onerror = function () { if (current === u) finish("error"); };
+        var a = element();
+        a.onended = function () { finish(u, "end"); };
+        a.onerror = function () { finish(u, "error"); };
+        a.onloadedmetadata = function () {
+          if (current !== u || !isFinite(a.duration)) return;
+          clearTimeout(watchdog);
+          watchdog = setTimeout(function () { finish(u, "error"); }, a.duration * 1000 + 2000);
+        };
+        a.src = URL.createObjectURL(blob);
+        a.volume = typeof u.volume === "number" ? Math.max(0, Math.min(1, u.volume)) : 1;
         emit(u, "start");
-        return audio.play();
+        return a.play();
       })
-      .catch(function () {
-        if (current === u) finish("error");
-      });
+      .catch(function () { finish(u, "error"); });
   }
 
   var synth = {
@@ -75,13 +135,14 @@
     getVoices: function () { return []; },
     speak: function (utterance) {
       queue.push(utterance);
-      synth.pending = queue.length > 0;
       pump();
     },
     cancel: function () {
+      var dropped = queue;
       queue = [];
-      synth.pending = false;
-      if (current) finish("end");
+      if (current) finish(current, "end");
+      settle();
+      dropped.length = 0;
     },
     pause: function () {},
     resume: function () {},

@@ -17,7 +17,9 @@ import html
 import json
 import re
 import shutil
+import subprocess
 import sys
+import tempfile
 import urllib.request
 from pathlib import Path
 
@@ -25,8 +27,9 @@ HERE = Path(__file__).resolve().parent
 GROWBOT = HERE.parent
 
 # Upstream files we do not serve: the Custom-agent tab points the page at arbitrary endpoints
-# (the CSP would block it anyway), face-original is a superseded copy, the feedback widget
-# posts to upstream's inbox, and meSpeak is the in-page voice the box replaces with Kokoro.
+# (the CSP would block it anyway), face-original is a superseded copy, and the feedback widget
+# posts to upstream's inbox. meSpeak, the in-page voice Kokoro replaces, is not in the repo at
+# all (growbot.dev serves it), so dropping its script tag is the whole of removing it.
 EXCLUDED = {
     "README.md",
     "feedback-widget.js",
@@ -53,10 +56,25 @@ try:
     import secrets as _box
 except ImportError:
     _box = None
-HOST = getattr(_box, "GROWBOT_HOST", HOST)
+HOST = getattr(_box, "GROWBOT_HOST", None)
+if not HOST:
+    # Dialing upstream's hostname on the box's port would fail forever and quietly; say why.
+    raise RuntimeError("secrets.py has no GROWBOT_HOST: reflash this robot from JBrain")
 PORT = getattr(_box, "GROWBOT_PORT", 8444)
 SNI = getattr(_box, "GROWBOT_SNI", "jbrain.local")
 ROBOT_KEY = getattr(_box, "GROWBOT_KEY", "")
+# The box's root CA (DER bytes). With it the robot refuses an impostor before sending its key;
+# without it (a hand-edited secrets.py) it connects unverified, as upstream always did.
+BOX_CA = getattr(_box, "GROWBOT_CA", None)
+
+
+def _wrap(raw):
+    if not BOX_CA:
+        return ssl.wrap_socket(raw, server_hostname=SNI)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.load_verify_locations(cadata=BOX_CA)
+    return ctx.wrap_socket(raw, server_hostname=SNI)
 """
 
 SECRETS_EXAMPLE_TAIL = """
@@ -65,6 +83,7 @@ SECRETS_EXAMPLE_TAIL = """
 # GROWBOT_PORT = 8444
 # GROWBOT_SNI = "jbrain.local"
 # GROWBOT_KEY = "the key the box showed when it registered this robot"
+# GROWBOT_CA = b"..."   # the box's root certificate, DER bytes
 """
 
 VOICE_PICKER_OLD = (
@@ -171,6 +190,32 @@ PATCHES: list[tuple[str, str, str, int]] = [
         "blaze_face_short_range/float16/1/blaze_face_short_range.tflite'",
         "modelAssetPath:'/vendor/mediapipe/models/blaze_face_short_range-float16-1.tflite'",
         1,
+    ),  # Speech (§2a), the cloud-voice settings: no key, no fish model, and an honest toast.
+    (
+        "v3/next.html",
+        'vtFish.model=String(_vt.fish.model||"s2.1-pro-free");',
+        'vtFish.model="kokoro";',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'fr.style.display=(vtEngine==="fish")?"block":"none"',
+        'fr.style.display="none"',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "fishToast('fish voice unavailable (check key or credits),"
+        " using the default growbot voice')",
+        "fishToast('the box voice is unavailable right now')",
+        2,
+    ),
+    # The Custom-agent tab is not served, so its button goes too.
+    (
+        "tester/index.html",
+        '<button class="big exp" id=pkcustom>',
+        '<button class="big exp" id=pkcustom hidden>',
+        1,
     ),
 ]
 
@@ -185,7 +230,7 @@ FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",
         "ssl.wrap_socket(raw, server_hostname=HOST)  # SNI required by Cloudflare",
-        "ssl.wrap_socket(raw, server_hostname=SNI)",
+        "_wrap(raw)",
         1,
     ),
     ("relay_chip.py", "% (PATH, HOST, key)", "% (PATH, SNI, key)", 1),
@@ -264,16 +309,36 @@ def _fetch(entry: dict[str, str], cache: Path | None) -> bytes:
     return data
 
 
-def build(upstream: Path, out: Path, cache: Path | None) -> None:
-    pin = json.loads((HERE / "upstream.json").read_text())
-    app = upstream / "app"
-    if not app.is_dir():
-        raise PatchError(f"{upstream} has no app/ (expected a GrowBot checkout)")
+def _pinned_commit(upstream: Path, commit: str) -> None:
+    head = upstream / ".git" / "HEAD"
+    if not head.exists():
+        return
+    found = subprocess.run(
+        ["git", "-C", str(upstream), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.strip()
+    if found != commit:
+        raise PatchError(f"{upstream} is at {found or 'unknown'}, the pin is {commit}")
 
-    site = out / "site"
-    if site.exists():
-        shutil.rmtree(site)
-    for src in sorted(p for p in app.rglob("*") if p.is_file()):
+
+def _unsupported_handlers(markup: str) -> list[str]:
+    """Inline-handler shapes csp_hashes cannot hash: they would be silently CSP-blocked."""
+    found = []
+    if re.search(r"setAttribute\(\s*[\"']on[a-z]+", markup, re.I):
+        found.append("setAttribute('on…')")
+    if re.search(r'\son[a-z]+=\\"', markup, re.I):
+        found.append('on…=\\" inside a double-quoted string')
+    return found
+
+
+def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
+    app = upstream / "app"
+    site = stage / "site"
+    for src in sorted(app.rglob("*")):
+        if src.is_symlink() or not src.is_file():
+            continue
         rel = src.relative_to(app).as_posix()
         if rel in EXCLUDED:
             continue
@@ -290,15 +355,17 @@ def build(upstream: Path, out: Path, cache: Path | None) -> None:
     hashes: set[str] = set()
     handlers = False
     for page in sorted(site.rglob("*.html")):
-        page_hashes, page_handlers = csp_hashes(page.read_text(encoding="utf-8"))
+        markup = page.read_text(encoding="utf-8")
+        bad = _unsupported_handlers(markup)
+        if bad:
+            raise PatchError(f"{page.relative_to(site)}: unhashable inline handler {bad}")
+        page_hashes, page_handlers = csp_hashes(markup)
         hashes |= page_hashes
         handlers = handlers or page_handlers
     csp = {"script_hashes": sorted(hashes), "unsafe_hashes": handlers}
     (site / "csp.json").write_text(json.dumps(csp, indent=1) + "\n")
 
-    firmware = out / "firmware"
-    if firmware.exists():
-        shutil.rmtree(firmware)
+    firmware = stage / "firmware"
     firmware.mkdir(parents=True)
     for name in FIRMWARE_FILES:
         shutil.copyfile(upstream / "firmware" / name, firmware / name)
@@ -306,6 +373,21 @@ def build(upstream: Path, out: Path, cache: Path | None) -> None:
     with (firmware / "secrets.example.py").open("a", encoding="utf-8") as f:
         f.write(SECRETS_EXAMPLE_TAIL)
 
+
+def build(upstream: Path, out: Path, cache: Path | None) -> None:
+    pin = json.loads((HERE / "upstream.json").read_text())
+    if not (upstream / "app").is_dir():
+        raise PatchError(f"{upstream} has no app/ (expected a GrowBot checkout)")
+    _pinned_commit(upstream, pin["commit"])
+    # Build beside the committed tree and swap only on success, so a patch that fails leaves
+    # what is committed untouched.
+    with tempfile.TemporaryDirectory(dir=out) as tmp:
+        stage = Path(tmp)
+        _stage(upstream, stage, pin, cache)
+        for name in ("site", "firmware"):
+            if (out / name).exists():
+                shutil.rmtree(out / name)
+            (stage / name).rename(out / name)
     shutil.copyfile(upstream / "LICENSE", out / "LICENSE")
     (out / "UPSTREAM").write_text(f"{pin['repo']} {pin['commit']}\n")
 

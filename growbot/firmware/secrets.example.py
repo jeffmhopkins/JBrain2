@@ -25,3 +25,4 @@ WIFI_PASSWORD = "your-wifi-password"
 # GROWBOT_PORT = 8444
 # GROWBOT_SNI = "jbrain.local"
 # GROWBOT_KEY = "the key the box showed when it registered this robot"
+# GROWBOT_CA = b"..."   # the box's root certificate, DER bytes
