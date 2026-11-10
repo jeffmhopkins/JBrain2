@@ -1192,7 +1192,7 @@ class GrowBot:
         code = robot
         # The session carries the robot the ticket named, so the installed app's /start
         # reopens the same way and the relay lets this phone join that robot alone.
-        # A page, not a 302: the PWA's link is a cross-site navigation, and a browser withholds
+        # A page, not a 302: the PWA's link may be a cross-site navigation (when the PWA is reached by its public name), and a browser withholds
         # a SameSite=Strict cookie for the rest of a cross-site redirect chain, so a 302 landed
         # on the creature signed out. This page's own refresh starts on this site, and the
         # cookie stays Strict, so another site's link still opens nothing signed in.

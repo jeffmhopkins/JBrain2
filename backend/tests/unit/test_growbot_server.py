@@ -343,6 +343,9 @@ def test_open_exchanges_a_ticket_for_a_session(run: _Running, gb: types.ModuleTy
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
     assert _landing(resp) == "/v3/next.html?id=gb-abc123&mode=legs"
     assert resp.getheader("Location") is None
+    # The spent ticket sits in this page's URL: never cached, never sent on as a Referer.
+    assert resp.getheader("Cache-Control") == "no-store"
+    assert resp.getheader("Referrer-Policy") == "no-referrer"
     (session,) = resp.headers.get_all("Set-Cookie") or []
     name_value, *attrs = [a.strip() for a in session.split(";")]
     assert set(attrs) == {"HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=2592000"}
