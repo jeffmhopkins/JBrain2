@@ -271,6 +271,10 @@ services:
       # and the wall and nothing else: that screen hands out the code that enrolls an owner
       # phone (docs/plans/OWNER_TUNNEL_PLAN.md §3.5).
       - enroll_secrets:/run/jbrain-enroll
+      # The GrowBot sidecar's token alone (`growbot.token`), mounted by the api and the
+      # `growbot` service and nothing else: that sidecar serves vendored upstream code on a
+      # LAN port, so it must not hold every caller's token (docs/plans/GROWBOT_PLAN.md §2).
+      - growbot_secrets:/run/jbrain-growbot
       # The owner tunnel's keys (docs/plans/OWNER_TUNNEL_PLAN.md §3.1), written by the
       # `owner-keys ensure` one-shot each update. `owner_keys` holds the CA private keys and
       # is mounted nowhere else; `owner_site` is what the proxy will read.
@@ -1418,6 +1422,7 @@ volumes:
   # fresh ones into an empty volume on its next start.
   internal_secrets:
   enroll_secrets:
+  growbot_secrets:
   # The house's DNS: AdGuard's config (blocklists and rules the owner added) and its week
   # of query log and stats.
   adguard_conf:

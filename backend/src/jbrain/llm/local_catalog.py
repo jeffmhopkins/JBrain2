@@ -1741,6 +1741,22 @@ def jcode_models(
     )
 
 
+def growbot_models(
+    local_llm_enabled: bool,
+    local_models: Sequence[str],
+    engine: engines.Engine = engines.STANDARD,
+) -> tuple[LocalModel, ...]:
+    """Installed local models of `engine` — the set the GrowBot creature may think on, and the
+    allow-list of its proxy (api.growbot_llm). A chat with no tools, so unlike `jcode_models`
+    no tool support is required; `supports_vision` says which can see the camera."""
+    installed = set(local_models)
+    return tuple(
+        m
+        for m in CATALOG
+        if local_llm_enabled and m.id in installed and engines.parse(m.engine) == engine
+    )
+
+
 def _manifest(ids: Sequence[str]) -> str:
     """JSON download manifest for the setup script (one object per model)."""
     models = selected(ids) if ids else CATALOG
