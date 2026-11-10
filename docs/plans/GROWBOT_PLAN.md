@@ -181,7 +181,8 @@ localStorage key, `pb2_soul`**: the memory surfaces (identity, the append-once b
 scratch, log), long-arc goals, and the swappable config regions (persona, dream, harness, body,
 meta, expression). Visual memory (saved views of people, objects, handwriting) is in
 **IndexedDB** (`v3/visual-memory.js`). Upstream already treats a soul as a portable document
-(its soul gallery downloads one, `/api/transfer` moves one), and `prompts.js` appends its
+(the MIND tab downloads `growbot-soul-snapshot.json`, and its soul gallery serves souls;
+`/api/transfer` moves only device credits, not memories), and `prompts.js` appends its
 child-safety floor after any loaded persona, so swapping a soul never removes the rails.
 
 - **A profile is a soul.** The box stores profiles: each a `pb2_soul` document plus its visual
@@ -189,14 +190,22 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   a fresh creature, a saved copy before an experiment) and switch which one a robot runs.
 - **Storage.** Through the api into Postgres under RLS with its isolation test (rule 3).
   Visual memories are camera-derived images of people, so their blobs go through the storage
-  abstraction (rule 2), and the whole profile sits behind the same firewall treatment as the
-  repo's other sensitive domains.
+  abstraction (rule 2) under their own namespace. It is not a new firewall domain (the domain
+  set in `agent/contracts.py` stays as it is); instead the profile tables are owner-principal-only
+  under RLS, the `growbot.token` route reads and writes only the robot's active profile under its
+  own RLS context, and profiles are never readable by share or member sessions, agent tools, RAG
+  or wiki ingest. Each of those has an isolation test.
+- **Imports are untrusted.** An imported soul passes upstream's `sanitizeSoulCfg` and a size cap;
+  visual-memory blobs are type- and size-checked.
 - **Sync.** The phone app is a cache of the active profile. The patched-in loader pulls it at
   load (so any phone opened from the PWA becomes that creature) and pushes changes back as the
   soul is written (the fast loop and dreams both write through `saveSoul`), debounced, with a
   version so a stale phone cannot overwrite a newer soul. One phone runs a given profile at a
   time: opening it on a second phone hands the creature over, and the first phone shows that it
-  has moved.
+  has moved. What a profile carries: `pb2_soul` and the visual memories (upstream namespaces those
+  by `gb_vm_ns`, which becomes the profile id). What it does not: upstream's per-device keys kept
+  outside the soul on purpose (`pb_device`, `pb_or_*`) stay with the phone, and on the box
+  `/api/device` answers them for any phone.
 - **The PWA** lists the profiles on the GrowBot card: switch the active one, duplicate, rename,
   reset to a fresh creature (upstream's own seed), export and import a soul file, and delete
   (confirmed, since it erases memories). A switch lands on the phone at the creature's next idle
