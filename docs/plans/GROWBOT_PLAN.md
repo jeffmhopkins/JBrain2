@@ -54,12 +54,14 @@ Everything GrowBot lives under one top-level directory, `growbot/`:
 
 ```
 growbot/
-  upstream/        pristine copy of britcruise9/GrowBot app/ + firmware/ at a pinned commit, LICENSE
-  patches/         the reviewed diffs we apply (relay URL, inline scripts moved to files, no analytics)
-  vendor/          the third-party assets, pinned by SHA-256
-  firmware/        relay_chip.py et al. as flashed: box address + device key from a generated secrets.py
+  patches/         upstream.json (the pinned upstream commit + every vendored asset's URL and
+                   SHA-256), apply.py (exact, counted replacements that fail loudly), growbot-box.js
+  site/            the served app, BUILT by apply.py and committed: upstream app/ patched, plus
+                   the vendored assets at their upstream URL paths and csp.json
+  firmware/        upstream's MicroPython, patched to dial the box with its key (also built)
   server/          serve.py: static app + /api shim + relay
-  sync.sh          re-snapshot upstream at a new commit and re-apply patches/ (fails loudly on a conflict)
+  sync.sh          fetch upstream at the pin and re-run apply.py; a sync is its own PR
+  LICENSE, UPSTREAM  upstream's licence and the pin, carried with the copy
   README.md        the sidecar's Living doc (what it is, env, security)
 ```
 
@@ -69,8 +71,8 @@ in `deploy/docker-compose.yml`, its `Dockerfile.growbot`, a Caddy site in
 `internal_auth.py`, the board entry in the endpoint flasher, the Ops listing in
 `OpsScreen.tsx`, the CI path filter, and this plan.
 
-**The `growbot` service** follows `wall`: a `python:3.12-slim` image (plus one pip-installed
-websocket library, added to `scripts/dev-setup.sh` per rule 8), `growbot/` bind-mounted
+**The `growbot` service** follows `wall`: a bare `python:3.12-slim` image with a stdlib-only
+server (HTTP/1.1 and RFC 6455 written in-house, no new dependency), `growbot/` bind-mounted
 read-only, so Ops → Update ships page changes with no rebuild. Default-on (no compose profile),
 since a profile would need a `.env` edit (rule 10). It joins `edge` (so Caddy can reach it) and
 `internal` (for `api` and `tts-stt`), and publishes no port of its own.
@@ -99,13 +101,17 @@ needs no new mDNS alias, which would otherwise only be installed by a host updat
 
 **No egress, enforced twice.**
 - Browser: every response carries a CSP of `default-src 'self'; script-src 'self'
-  'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src
-  'self' blob:; worker-src 'self' blob:; connect-src 'self'; font-src 'self'`. `patches/`
-  moves next.html's inline scripts and `on*=` handlers into files so `script-src` needs no
-  `'unsafe-inline'`; `'wasm-unsafe-eval'` is for ONNX Runtime and MediaPipe. With that header
-  the page cannot reach a non-box host even if a patch misses a URL. A CI test loads the
-  patched app in headless Chromium and fails on any request to a host other than the box, and
-  on any CSP violation report.
+  'wasm-unsafe-eval' <hashes> 'unsafe-hashes'; style-src 'self' 'unsafe-inline'; img-src 'self'
+  data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self' blob:;
+  font-src 'self' data:; form-action 'self'; object-src 'none'; base-uri 'self';
+  frame-ancestors 'self'`. Rather than rewriting upstream's inline code, `apply.py` hashes every
+  inline script and inline handler into `site/csp.json`, so `script-src` never needs
+  `'unsafe-inline'`, and the build refuses a handler shape it cannot hash.
+  `'wasm-unsafe-eval'` is for ONNX Runtime and MediaPipe; `blob:` in `connect-src` is for the
+  page's own iOS audio path. With that header the page cannot reach a non-box host even if a
+  patch misses a URL. CI has no browser, so CI scans the built site for any runtime load of an
+  absolute URL or a third-party origin; the wave's own verification loads it in real Chromium
+  and checks for zero off-box requests and zero CSP violations.
 - Server: the shim never calls out. It talks to `api` and `tts-stt` by compose name only.
 
 **The `/api` shim** (`growbot/server/serve.py`):
@@ -117,7 +123,7 @@ needs no new mDNS alias, which would otherwise only be installed by a host updat
 | `/api/llm?target=*-audio` | `tts-stt` whisper `/v1/audio/transcriptions`, its `verbose_json` normalised to the Groq shape upstream reads (`segments[].no_speech_prob`, `avg_logprob`), since whisper.cpp builds differ |
 | `/api/fish-tts` | `tts-stt` Kokoro `/tts` (WAV). This is the creature's only voice (§2a) |
 | `/api/device`, `/api/redeem`, `/api/transfer` | one owned device, no metering |
-| `/api/journal`, `/api/episodes`, `/api/gallery`, `/api/ev`, `/api/hit`, `/api/feedback` | 204, stored nowhere (the analytics and feedback scripts are also patched out). These are upstream's server-side telemetry; the creature's memory stays on the phone |
+| `/api/journal`, `/api/episodes`, `/api/gallery`, `/api/ev`, `/api/hit`, `/api/feedback` | 204, stored nowhere (a `DELETE` of journal or episodes answers `{"ok":true}`, which the app's erase flow reads). The feedback widget is not served; `analytics.js` is, because the page calls it unguarded, but it only posts to `/api/ev`, which goes nowhere. The creature's memory stays on the phone until G4 |
 
 ### 2a. Speech is the box's, every word
 

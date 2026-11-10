@@ -16,6 +16,25 @@ Here all of it runs on the box: this directory holds the app, the server that se
 | `site/` | The web root it serves (built from upstream + patches; committed, so the box needs no build). |
 | `site/csp.json` | Hashes of the inline scripts the patched app still carries, read once at start for the CSP. |
 
+## Upstream and patches
+
+`site/` and `firmware/` are built, never hand-edited. `patches/upstream.json` pins the
+britcruise9/GrowBot commit and every third-party asset (ONNX Runtime Web, Silero VAD,
+MediaPipe tasks-vision and its BlazeFace model) by canonical URL and SHA-256; each matched the
+copy growbot.dev serves byte for byte when pinned. MediaPipe's non-SIMD wasm fallback is left
+out (every phone browser the creature supports has SIMD), and so is meSpeak.
+`patches/apply.py` copies upstream's `app/` (minus the Custom-agent tab, the superseded face
+page and the feedback widget), applies exact replacements that each must match a stated number
+of times, adds `growbot-box.js`, writes the CSP hashes, and patches the firmware to dial the box
+with its key, pinning the box CA when `secrets.py` carries one. It builds in a staging
+directory, so a patch that stops matching fails with its name and leaves the committed tree
+alone.
+
+To move to a new upstream: change the pin in `upstream.json`, run `./sync.sh`, and review the
+diff in its own PR. `backend/tests/unit/test_growbot_site.py` holds the promises on the built
+bytes. Upstream's licence (PolyForm Noncommercial 1.0.0) is `LICENSE`; the vendored projects'
+licence texts ship beside their files. The GrowBot name and logo are upstream's trademarks.
+
 ## How it runs
 
 The compose service `growbot` (`deploy/docker-compose.yml`, `deploy/Dockerfile.growbot`) is a
