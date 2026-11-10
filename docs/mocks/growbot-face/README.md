@@ -1,6 +1,6 @@
 # GrowBot → the creature's default face
 
-Kind: Living (mock set) · Status: **Open**, three variants, awaiting the owner's pick · Last verified: 2026-11-10
+Kind: Living (mock set) · Status: **A chosen** (owner, 2026-11-10) · Last verified: 2026-11-10
 
 The owner is not a fan of the face GrowBot draws today (`growbot/site/v3/next.html:drawFace`:
 two 12 px rectangle eyes on a 96 x 160 pixel canvas, upscaled, over the mood sky) and asked for
@@ -31,3 +31,12 @@ not design.
   broken.
 - **Speech moves something.** Today's face has no mouth, so nothing on it says *I am the one
   talking*. A's beak, B's mouth and C's voice line all move only while it speaks.
+
+## Chosen: A, the ostrich
+
+The owner picked A on 2026-11-10. Two rounds of feedback before that changed the necks: the
+ostrich's long ringed neck with nothing under it read as too long and a solid neck lost the
+panels' look, so it is now a short ringed neck on the bird's body; the robot gained a ringed
+neck. The owner also asked that colours still change, which is the `coat` verb
+(`docs/reference/DESIGN.md` "GrowBot — the creature's face"). B and C stay here as the rivals,
+and stay reachable in the app with `?face=robot|lantern`.
