@@ -3282,6 +3282,26 @@ flashes one once. The tile's second line says who is connected (or that `growbot
   robots with their last-seen time and links to the GrowBot screen. Down, it says that no robot
   can connect until it is back.
 
+## GrowBot — the creature's face (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-face/a-ostrich.html`, variant A; rivals B "the panels' robot" and C "lantern eyes" retained in `docs/mocks/growbot-face/README.md`; built in `growbot/patches/growbot-face.js`)
+
+The creature on a GrowBot's phone is the panels' ostrich, so a GrowBot and a JPanel in the same
+room are visibly the same family.
+
+- **Head, ringed neck, body.** The panels' ostrich head at its own proportions, a short neck of
+  rings (the owner: a long ringed neck with no body under it, and a solid neck, both read wrong),
+  and the round body with its wing and tail plumes cropped by the bottom of the screen. The face
+  fills the top 62% of the screen; the caption, text box and button bar own the rest.
+- **The panels' eyes.** The same white eye, pupil, catchlight and lids, with GrowBot's seven
+  emotions mapped onto the panels' lid geometry, so one emotion looks the same on both.
+- **The beak talks.** The lower three beak segments drop while it speaks; the crest perks when
+  alert or happy and droops when tired or sleepy.
+- **Upstream's sky stays.** The pixel sky, its mood hue, the stars, the sparks and the dream
+  veil are upstream's, unchanged; only the 12 px rectangle eyes give way.
+- **It recolours itself when asked** (the reply's `coat` verb, beside `sky`), keeps the colour
+  across a reload, and goes back to steel on *default*.
+- `?face=robot|lantern` shows a rival; `?face=pixel`, or a throw in the new face, shows
+  upstream's own face.
+
 ## Room endpoint — the robot pet's body (settled 2026-09-13; binding mock: `docs/mocks/room-endpoint/pet-face.html`, round record `docs/mocks/room-endpoint/README.md`, plan `docs/plans/ROOM_ENDPOINT_PLAN.md`)
 
 The pet on a **368×448 AMOLED room endpoint** (physically **29.0 × 35.3 mm**, 322 ppi), for a

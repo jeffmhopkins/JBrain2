@@ -145,6 +145,14 @@ The owner's ask (2026-11-10): *"make sure we're using our tts stt containers for
 - A test scans every served file and asserts there is no reachable `speechSynthesis.speak` or
   meSpeak call, and that every speak goes to `/api/fish-tts`.
 
+### 2a′. The face is the panels' ostrich
+
+The owner (2026-11-10) did not like upstream's face and chose the panels' ostrich from three
+mocks (`docs/mocks/growbot-face/`; binding spec in `docs/reference/DESIGN.md` "GrowBot — the
+creature's face"). `patches/growbot-face.js` draws it at full resolution over upstream's pixel
+sky from the same state upstream drew its own eyes from, so the brain still sets only
+`emotion`; the one new brain verb is `coat`, which recolours it.
+
 ### 2b. Settings live on the box, and the PWA owns them
 
 The owner's ask (2026-11-10): *"make sure the pwa can change the growbot settings, not just

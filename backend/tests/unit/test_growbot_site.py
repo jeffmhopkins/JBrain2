@@ -65,6 +65,37 @@ def test_the_box_voice_replaces_speech_synthesis_and_posts_to_the_box() -> None:
     assert re.search(r"https?://", shim) is None
 
 
+def test_the_creature_loads_the_face_right_after_the_box_voice() -> None:
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    tags = re.findall(r"<script[^>]*>", creature)
+    assert tags[:2] == ['<script src="/growbot-box.js">', '<script src="/growbot-face.js">']
+    assert (_SITE / "growbot-face.js").read_bytes() == (
+        _GROWBOT / "patches" / "growbot-face.js"
+    ).read_bytes()
+
+
+def test_the_pixel_eyes_give_way_only_while_the_new_face_is_on() -> None:
+    """Upstream's eyes are skipped, not deleted: ?face=pixel or a throw brings them back."""
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "var _gbF=window.gbFace&&window.gbFace.on()?window.gbFace:null;" in creature
+    assert "if(!_gbF) for(side=-1;side<=1;side+=2)" in creature
+    assert "if(dreaming&&!_gbF){" in creature
+    assert "if(_gbF) _gbF.draw(cx,W,H,{" in creature
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert re.search(r'var DEFAULT = "(ostrich|robot|lantern)";', face)
+    assert 'face !== "pixel" && !broken' in face
+    assert "broken = true;" in face
+
+
+def test_the_creature_can_recolour_itself_like_the_sky() -> None:
+    prompts = (_SITE / "v3" / "prompts.js").read_text(encoding="utf-8")
+    assert prompts.index('\'"coat":"OMIT usually') < prompts.index('\'"sky":"OMIT usually')
+    creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert "window.gbFace.setColour(o.coat,_hueOf(o.coat))" in creature
+    face = (_SITE / "growbot-face.js").read_text(encoding="utf-8")
+    assert "localStorage.gb_face_color" in face
+
+
 def test_mespeak_is_not_shipped_and_kokoro_is_the_only_engine() -> None:
     creature = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
     assert "/v2/mespeak.js" not in creature

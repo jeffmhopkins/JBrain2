@@ -307,6 +307,67 @@ PATCHES: list[tuple[str, str, str, int]] = [
         '<button class="big exp" id=pkcustom hidden>',
         1,
     ),
+    # The face (docs/mocks/growbot-face/): growbot-face.js draws the creature at full
+    # resolution over upstream's pixel sky, from the state upstream drew its own eyes from.
+    # Upstream's 12 px eyes and dream dots are skipped only while that face is on, so
+    # ?face=pixel, or a throw in the new face, gives back exactly upstream's.
+    (
+        "v3/next.html",
+        '<head><script src="/growbot-box.js"></script>',
+        '<head><script src="/growbot-box.js"></script><script src="/growbot-face.js"></script>',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "function drawFace(t){ scheduleFace();",
+        "function drawFace(t){ scheduleFace();"
+        " var _gbF=window.gbFace&&window.gbFace.on()?window.gbFace:null;",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  for(side=-1;side<=1;side+=2){ var ex=Math.round(PW/2+side*gap-eyeW/2)+gx,",
+        "  if(!_gbF) for(side=-1;side<=1;side+=2){ var ex=Math.round(PW/2+side*gap-eyeW/2)+gx,",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  if(dreaming){ pg.fillStyle=col; pg.fillRect(PW/2+22,cyE+8,3,3);",
+        "  if(dreaming&&!_gbF){ pg.fillStyle=col; pg.fillRect(PW/2+22,cyE+8,3,3);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        "  cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false;"
+        " cx.drawImage(px,0,0,PW,PH,0,0,W,H); }",
+        "  cx.clearRect(0,0,W,H); cx.imageSmoothingEnabled=false;"
+        " cx.drawImage(px,0,0,PW,PH,0,0,W,H);"
+        " if(_gbF) _gbF.draw(cx,W,H,{t:t,emotion:emotion,eye:P.eye,smile:_smileR,"
+        "energy:moodCur.e,blink:t<blinkUntil,paused:paused,dreaming:dreaming,think:_think,"
+        "orbit:_oa,looking:_looking,gx:gx2/3,gy:gy2/2,touchT:_lt?_lt.t:0,shake:shakeCur,"
+        "talking:Date.now()<speakingUntil,glow:col}); }",
+        1,
+    ),
+    # Recolouring, as on the panels: a `coat` verb beside `sky`, read with upstream's own
+    # colour words (_hueOf), and logged like the sky so the diary shows when it changed.
+    (
+        "v3/prompts.js",
+        "    '\"sky\":\"OMIT usually",
+        "    '\"coat\":\"OMIT usually — a color word or hue number 0-360 to recolor YOURSELF"
+        " (your head, crest and neck, the color people mean when they ask you to turn blue or"
+        " be gold); it stays until asked again, and the word default goes back to your own"
+        " steel blue\",' +\n"
+        "    '\"sky\":\"OMIT usually",
+        1,
+    ),
+    (
+        "v3/next.html",
+        '      if(typeof o.sky!=="undefined") setSky(o.sky);',
+        '      if(typeof o.sky!=="undefined") setSky(o.sky);'
+        ' if(typeof o.coat!=="undefined"&&window.gbFace&&window.gbFace.setColour(o.coat,'
+        '_hueOf(o.coat))) logEv("coat",{c:window.gbFace.colour()});',
+        1,
+    ),
 ]
 
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
@@ -439,6 +500,7 @@ def _stage(upstream: Path, stage: Path, pin: dict, cache: Path | None) -> None:
         shutil.copyfile(src, dest)
     _patch(site, PATCHES)
     shutil.copyfile(HERE / "growbot-box.js", site / "growbot-box.js")
+    shutil.copyfile(HERE / "growbot-face.js", site / "growbot-face.js")
     # The installed app (Android): served without a session, since Chrome fetches the
     # manifest and its icons with no cookie.
     (site / "icons").mkdir(exist_ok=True)
