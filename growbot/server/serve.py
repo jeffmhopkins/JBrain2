@@ -124,9 +124,18 @@ BACKOFF_LIMIT = 8
 BACKOFF_WINDOW_S = 300.0
 MAX_PEERS_PER_CHANNEL = 8
 MODELS_CACHE_S = 30.0
+# How often a phone on the relay is asked again whether its persona still wears the body.
+RIDER_RECHECK_S = 10.0
+SOUL_WORKERS = 2
+# A soul the phone pushes: the api's 1 MB soul cap, plus room for the JSON around it.
+MAX_SOUL_BODY = 1_100_000
+SOUL_PATH = "/api/box/persona"
 
 # Upstream's pairing codes are `gb-` + 6 hex; the api holds robots to this same shape.
 CODE_RE = re.compile(r"gb-[A-Za-z0-9]{1,32}")
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+# The api's growbot_phones id: what secrets.token_urlsafe(24) makes, within the table's CHECK.
+PHONE_RE = re.compile(r"[A-Za-z0-9_-]{16,43}")
 HASH_RE = re.compile(r"sha(256|384|512)-[A-Za-z0-9+/]+={0,2}")
 KOKORO_VOICE_RE = re.compile(r"kokoro-[a-z0-9_]{1,40}")
 LANG_RE = re.compile(r"[a-z]{2,3}")
@@ -299,12 +308,26 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
 
 
-class Sessions:
-    """`gb_session` = `<expiry>.<nonce>.<robot>.<hmac>`: nothing to store or leak.
+@dataclass(frozen=True)
+class Claims:
+    """What a valid `gb_session` says. `robot` is the robot code the api says the ticket was
+    minted for, or empty. `persona` and `phone` are set by a G4 ticket (plan §2c): the persona
+    this phone opened, whose soul lives on the box, and the phone's own id, which the api uses
+    to tell which phone holds a persona and which one drives a body. Both empty for G2's (a
+    phone that once held a persona keeps its id under a G2 ticket, with no persona)."""
 
-    `<robot>` is the robot code the api says the ticket was minted for, or empty. It is the only robot this
-    phone's relay sockets may join: pairing is JBrain's (owner, 2026-11-10), so a code typed
-    into the creature's own pairing box opens nothing.
+    robot: str
+    persona: str = ""
+    phone: str = ""
+
+
+class Sessions:
+    """`gb_session` = `<expiry>.<nonce>.<robot>.<persona>.<phone>.<hmac>`: nothing to store or
+    leak. The four-part `<expiry>.<nonce>.<robot>.<hmac>` of a G2 ticket is still read.
+
+    For a G2 session `<robot>` is the only robot this phone's relay sockets may join: pairing
+    is JBrain's (owner, 2026-11-10), so a code typed into the creature's own pairing box opens
+    nothing. A persona session joins the robot its persona wears now (the relay asks the api).
 
     The key is derived from `growbot.token` when there is one, so sessions outlive a restart
     and die with a re-minted token; without it, a key made at start (a restart signs out)."""
@@ -357,24 +380,41 @@ class Sessions:
     def _sign(self, body: str) -> str:
         return _b64url(hmac.new(self._key(), body.encode(), hashlib.sha256).digest())
 
-    def mint(self, now: float | None = None, robot: str = "") -> str:
+    def mint(
+        self, now: float | None = None, robot: str = "", persona: str = "", phone: str = ""
+    ) -> str:
         expiry = int(time.time() if now is None else now) + SESSION_TTL_S
         if robot and not CODE_RE.fullmatch(robot):
             raise ValueError("robot code")
+        if (persona and not (phone and UUID_RE.fullmatch(persona))) or (
+            phone and not PHONE_RE.fullmatch(phone)
+        ):
+            raise ValueError("persona or phone")
         body = f"{expiry}.{secrets.token_urlsafe(12)}.{robot}"
+        if phone:
+            body += f".{persona}.{phone}"
         return f"{body}.{self._sign(body)}"
 
-    def valid(self, value: str, now: float | None = None) -> bool:
+    def claims(self, value: str, now: float | None = None) -> Claims | None:
+        """What a valid session says, or None if it is not one."""
         parts = value.split(".")
-        if len(parts) != 4 or not parts[0].isdigit() or len(parts[0]) > 12:
-            return False
-        if not hmac.compare_digest(self._sign(".".join(parts[:3])), parts[3]):
-            return False
-        return int(parts[0]) > (time.time() if now is None else now)
+        if len(parts) not in (4, 6) or not parts[0].isdigit() or len(parts[0]) > 12:
+            return None
+        if not hmac.compare_digest(self._sign(".".join(parts[:-1])), parts[-1]):
+            return None
+        if int(parts[0]) <= (time.time() if now is None else now):
+            return None
+        if len(parts) == 6:
+            return Claims(parts[2], parts[3], parts[4])
+        return Claims(parts[2])
+
+    def valid(self, value: str, now: float | None = None) -> bool:
+        return self.claims(value, now) is not None
 
     def robot(self, value: str, now: float | None = None) -> str | None:
         """The robot a valid session was opened for ("" for none), or None if not valid."""
-        return value.split(".")[2] if self.valid(value, now) else None
+        got = self.claims(value, now)
+        return got.robot if got else None
 
     def due(self, value: str, now: float | None = None) -> bool:
         """A valid session more than a day old, which the next page load renews."""
@@ -383,16 +423,39 @@ class Sessions:
         return self.valid(value, t) and int(value.split(".")[0]) < renew_before
 
 
-def _redeemed_robot(up: Upstream) -> str | None:
-    """The robot code a redeemed ticket was minted for ('' for none), or None if the api's
-    answer does not name one in the right shape."""
+def _redeemed(up: Upstream) -> Claims | None:
+    """What a redeemed ticket opens: its robot ('' for none) and, for a persona's ticket, the
+    persona and the phone that now holds it. None if the api's answer is not that shape."""
     try:
-        code = json.loads(up.body).get("code")
+        got = json.loads(up.body)
+        code, persona, phone = got.get("code"), got.get("persona", ""), got.get("phone", "")
     except (ValueError, AttributeError):
         return None
-    if code == "" or (isinstance(code, str) and CODE_RE.fullmatch(code)):
-        return code
+    if not (code == "" or (isinstance(code, str) and CODE_RE.fullmatch(code))):
+        return None
+    if persona == "" and phone == "":
+        return Claims(code)
+    if (
+        isinstance(persona, str)
+        and isinstance(phone, str)
+        and UUID_RE.fullmatch(persona)
+        and PHONE_RE.fullmatch(phone)
+    ):
+        return Claims(code, persona, phone)
     return None
+
+
+def phone_label(user_agent: str) -> str:
+    """What the Phones tab calls a phone it has never seen, from its User-Agent: the kind of
+    phone, never the string itself (the owner renames it there)."""
+    for needle, label in (
+        ("iPhone", "iPhone"),
+        ("iPad", "iPad"),
+        ("Android", "Android phone"),
+    ):
+        if needle in user_agent:
+            return label
+    return "Phone"
 
 
 def _landing(where: str) -> bytes:
@@ -560,6 +623,12 @@ async def read_head(reader: asyncio.StreamReader) -> Request:
     )
 
 
+def body_limit(req: Request) -> int:
+    # A pushed soul is capped near the api's own cap, so an oversized one is refused before
+    # its upload instead of after 16 MiB of it.
+    return MAX_SOUL_BODY if req.path == SOUL_PATH else MAX_BODY
+
+
 def body_framing(req: Request) -> int | None:
     """The body's declared size: 0 for none, None for chunked. Raises before a byte of body
     is read, so a refused request never costs its upload."""
@@ -576,7 +645,7 @@ def body_framing(req: Request) -> int | None:
     value = next(iter(lengths))
     if not LENGTH_RE.fullmatch(value):
         raise HttpError(400)
-    if int(value) > MAX_BODY:
+    if int(value) > body_limit(req):
         raise HttpError(413)
     return int(value)
 
@@ -600,7 +669,7 @@ async def read_body(
         if not CHUNK_RE.fullmatch(size_text):
             raise HttpError(400)
         size = int(size_text, 16)
-        if len(body) + size > MAX_BODY:
+        if len(body) + size > body_limit(req):
             raise HttpError(413)
         if size == 0:
             break
@@ -894,6 +963,8 @@ class GrowBot:
         self._pool: Executor = ThreadPoolExecutor(API_WORKERS, "growbot-api")
         self._streams: Executor = ThreadPoolExecutor(STREAM_WORKERS, "growbot-stream")
         self._gate: Executor = ThreadPoolExecutor(GATE_WORKERS, "growbot-gate")
+        # The phones' soul sync and rider rechecks, apart from the doors and the brain calls.
+        self._soul_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-soul")
         self._proxy_addrs: set[str] = set()
         self._proxy_at = -math.inf
         self._models: list[dict[str, Any]] = []
@@ -1032,11 +1103,15 @@ class GrowBot:
         ]
 
     def _authed(self, req: Request) -> bool:
-        return self._robot(req) is not None
+        return self._claims(req) is not None
+
+    def _claims(self, req: Request) -> Claims | None:
+        value = cookie_value(req.headers, SESSION_COOKIE)
+        return self.sessions.claims(value) if value else None
 
     def _robot(self, req: Request) -> str | None:
-        value = cookie_value(req.headers, SESSION_COOKIE)
-        return self.sessions.robot(value) if value else None
+        got = self._claims(req)
+        return got.robot if got else None
 
     def _internal_ok(self, req: Request) -> bool:
         """The api's bearer: `growbot.token`, compared in constant time, re-read per call so
@@ -1087,9 +1162,10 @@ class GrowBot:
         origin = req.header("origin")
         return not origin or origin == f"https://{req.header('host')}"
 
-    def _session_cookie(self, robot: str) -> str:
+    def _session_cookie(self, got: Claims) -> str:
+        value = self.sessions.mint(robot=got.robot, persona=got.persona, phone=got.phone)
         return (
-            f"{SESSION_COOKIE}={self.sessions.mint(robot=robot)}; HttpOnly; Secure; "
+            f"{SESSION_COOKIE}={value}; HttpOnly; Secure; "
             f"SameSite=Strict; Path=/; Max-Age={SESSION_TTL_S}"
         )
 
@@ -1113,18 +1189,20 @@ class GrowBot:
         """The installed app's start page: back into the creature, on the robot it last had."""
         if req.method not in ("GET", "HEAD"):
             return Response(405, b"method not allowed", headers=[("Allow", "GET, HEAD")])
-        code = self._robot(req)
-        if code is None:
+        got = self._claims(req)
+        if got is None:
             # A lapsed installed app scans a fresh code from JBrain's GrowBot screen.
             return Response(
                 302, b"", headers=[("Location", "/setup.html"), ("Cache-Control", "no-store")]
             )
+        # A persona's page asks the box which robot it wears as it loads (growbot-box.js), and
+        # moves to that one, so the robot named at open is only where it starts.
         return Response(
             302,
             b"",
             headers=[
-                ("Set-Cookie", self._session_cookie(code)),
-                ("Location", _creature(code)),
+                ("Set-Cookie", self._session_cookie(got)),
+                ("Location", _creature(got.robot)),
                 ("Cache-Control", "no-store"),
             ],
         )
@@ -1154,7 +1232,8 @@ class GrowBot:
             resp = await self.static(req)
         # The robot's phone may keep one page open for weeks; its own calls renew it.
         if self.sessions.due(cookie_value(req.headers, SESSION_COOKIE)):
-            resp.headers.append(("Set-Cookie", self._session_cookie(self._robot(req) or "")))
+            renewed = self._session_cookie(self._claims(req) or Claims(""))
+            resp.headers.append(("Set-Cookie", renewed))
         return resp
 
     async def open(self, req: Request) -> Response:
@@ -1177,19 +1256,29 @@ class GrowBot:
             client = f"cross-site:{client}"
         if self.ticket_backoff.blocked(client):
             return Response(429, b"too many tries", headers=[("Retry-After", "300")])
+        # The phone id this browser already has, so it stays the same phone across tickets (a
+        # persona ticket spent here closes the persona it held). Only a valid session's.
+        held = self._claims(req)
         up = await self._call(
             self._api_post,
             "/internal/growbot/ticket/redeem",
-            {"ticket": ticket},
+            {
+                "ticket": ticket,
+                "phone": held.phone if held else "",
+                "label": phone_label(req.header("user-agent")),
+            },
             pool=self._gate,
         )
-        robot = _redeemed_robot(up) if self._ok(up) else None
-        if robot is None:
+        got = _redeemed(up) if self._ok(up) else None
+        if got is None:
             self.ticket_backoff.fail(client)
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
+        if held and held.phone and not got.phone:
+            # A G2 ticket on a phone that held a persona: it keeps its id for the next one.
+            got = Claims(got.robot, "", held.phone)
         # The ticket names the robot, not the link: `id` is the phone's to edit, so it is
         # only checked for shape above and never trusted.
-        code = robot
+        code = got.robot
         # The session carries the robot the ticket named, so the installed app's /start
         # reopens the same way and the relay lets this phone join that robot alone.
         # A page, not a 302: the PWA's link may be a cross-site navigation (when the PWA is reached by its public name), and a browser withholds
@@ -1200,7 +1289,7 @@ class GrowBot:
             200,
             _landing(_creature(code)),
             "text/html; charset=utf-8",
-            headers=[("Set-Cookie", self._session_cookie(code)), ("Cache-Control", "no-store")],
+            headers=[("Set-Cookie", self._session_cookie(got)), ("Cache-Control", "no-store")],
         )
 
     # -- static -----------------------------------------------------------------
@@ -1251,6 +1340,8 @@ class GrowBot:
 
     async def api(self, req: Request) -> Response:
         name = req.path[len("/api/") :]
+        if req.path in (SOUL_PATH, SOUL_PATH + "/state"):
+            return await self.soul_route(req)
         if name in ("journal", "episodes") and req.method == "DELETE":
             # The app's erase flow reads a JSON answer; there is nothing here to erase.
             return json_response(200, {"ok": True})
@@ -1283,6 +1374,47 @@ class GrowBot:
         if name == "fish-tts":
             return await self.tts(req)
         return json_response(404, {"error": "not found"})
+
+    async def soul_route(self, req: Request) -> Response:
+        """The persona's soul, which lives on the box (plan §2c): `GET` pulls it, `POST
+        {base, soul}` pushes the creature's write against the version it pulled, and `GET
+        …/state` is the cheap poll (version, and the robot it wears). 204 for a G2 session,
+        whose creature keeps its soul on the phone. 409 `moved`, 409 `newer`, 404 `gone`, 413
+        and 400 are the api's; anything else the api says is a 503 the page retries."""
+        claims = self._claims(req)
+        if claims is None or not claims.persona:
+            return Response(204, headers=[("Cache-Control", "no-store")])
+        who = {"persona": claims.persona, "phone": claims.phone}
+        state = req.path.endswith("/state")
+        if req.method == "GET":
+            path = "/internal/growbot/soul/state" if state else "/internal/growbot/soul/pull"
+            payload: dict[str, Any] = who
+        elif req.method == "POST" and not state:
+            msg = _parse(req.body)
+            base = msg.get("base") if msg else None
+            if msg is None or isinstance(base, bool) or not isinstance(base, int):
+                return json_response(400, {"error": "a soul and the version it came from"})
+            path = "/internal/growbot/soul/push"
+            payload = {**who, "base": base, "soul": msg.get("soul")}
+        else:
+            return json_response(405, {"error": "method not allowed"})
+        up = await self._call(self._api_post, path, payload, pool=self._soul_pool)
+        headers = [("Cache-Control", "no-store")]
+        if up.status == 200:
+            got = _parse(up.body)
+            if got is None:
+                return json_response(503, {"error": "the box is busy"}, headers)
+            # The page keeps which persona its unsent writes belong to, so a phone that was
+            # given another persona never pushes the old one's soul into the new one.
+            return json_response(200, {**got, "persona": claims.persona}, headers)
+        if up.status in (400, 404, 409, 413):
+            try:
+                detail = json.loads(up.body).get("detail")
+            except (ValueError, AttributeError):
+                detail = None
+            why = detail if isinstance(detail, str) else "refused"
+            return json_response(up.status, {"error": why[:200]}, headers)
+        return json_response(503, {"error": "the box is busy"}, headers)
 
     def device(self) -> dict[str, object]:
         """One owned device with nothing metered: upstream's credit and adoption UI reads these."""
@@ -1457,14 +1589,15 @@ class GrowBot:
         code = seg[: -len("-agent")] if agent else seg
         if not CODE_RE.fullmatch(code):
             return Response(404, b"not found")
-        paired = self._robot(req)
-        authed = paired is not None
+        claims = self._claims(req)
+        authed = claims is not None
         if agent and not authed:
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         if authed and req.header("origin") != f"https://{req.header('host')}":
             return Response(403, b"cross-origin")
-        # Pairing is JBrain's: a phone joins only the robot its ticket named.
-        if authed and paired != code:
+        # Pairing is JBrain's: a G2 phone joins only the robot its ticket named (a persona's
+        # phone is asked about below, once the request is a well-formed upgrade).
+        if claims is not None and not claims.persona and claims.robot != code:
             return Response(403, b"pair from JBrain")
         # The chip's MicroPython client sends no Origin and every browser does, so a cookieless
         # socket with one is a web page squatting the robots' budget or burning their tries.
@@ -1500,6 +1633,14 @@ class GrowBot:
                 return Response(
                     429, b"too many tries", headers=[("Retry-After", "300")]
                 )
+            if claims is not None:
+                # The body has one rider (plan §2c): only the phone of the persona that wears it
+                # may drive it, and a G2 phone only while no persona does.
+                may = await self._call(self.may_drive, claims, code, pool=self._gate)
+                if may is None:
+                    return Response(503, b"busy")
+                if not may:
+                    return Response(403, b"not wearing this robot")
             head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
             head += "Connection: Upgrade\r\n"
             head += f"Sec-WebSocket-Accept: {ws_accept(key)}\r\n"
@@ -1513,8 +1654,8 @@ class GrowBot:
             # is left empty.
             if agent:
                 await self._agent_socket(ws, name)
-            elif authed:
-                await self._phone(ws, self._channel(name))
+            elif claims is not None:
+                await self._phone(ws, self._channel(name), claims)
             else:
                 await self._chip(ws, code, client, slot)
         except WsClosed:
@@ -1546,20 +1687,60 @@ class GrowBot:
             return None
         return _parse(data) if kind == 0x1 else None
 
-    async def _phone(self, ws: WebSocket, chan: Channel) -> None:
+    async def _phone(self, ws: WebSocket, chan: Channel, claims: Claims) -> None:
         if len(chan.peers) >= MAX_PEERS_PER_CHANNEL:
             ws.close(1013, "too many phones")
             return
         chan.peers.add(ws)
         ws.send_json(chan.status())
+        watch = asyncio.create_task(self._rider_watch(ws, claims, chan.name))
         try:
             while True:
                 kind, data = await ws.recv()
                 if kind == 0x1 and chan.body is not None:
                     chan.body.send_text(data.decode())
         finally:
+            watch.cancel()
             chan.peers.discard(ws)
             self._drop_empty(chan)
+
+    async def _rider_watch(self, ws: WebSocket, claims: Claims, code: str) -> None:
+        """A hand-over or a Who-wears pick moves the body to another phone while this one is
+        still on it: the phone that no longer rides is closed. A lookup that fails keeps it
+        on (an api blip must not stop a walking robot); only a definite no closes it."""
+        while not ws.closed:
+            await asyncio.sleep(RIDER_RECHECK_S)
+            if await self._call(self.may_drive, claims, code, pool=self._soul_pool) is False:
+                ws.close(1008, "not wearing this robot")
+                return
+
+    def rider(self, code: str) -> tuple[str, str] | None:
+        """Who wears robot `code`, from the api: (persona, phone), both "" for nobody. None
+        when the api cannot say."""
+        up = http_call(
+            self.config.api_url + "/internal/growbot/body/" + urllib.parse.quote(code),
+            headers=self._auth(),
+        )
+        if up.status != 200:
+            return None
+        try:
+            got = json.loads(up.body)
+            persona, phone = got.get("persona") or "", got.get("phone") or ""
+        except (ValueError, AttributeError):
+            return None
+        if not (isinstance(persona, str) and isinstance(phone, str)):
+            return None
+        return persona, phone
+
+    def may_drive(self, claims: Claims, code: str) -> bool | None:
+        """May this session's phone drive robot `code` now? None when the api cannot say."""
+        rider = self.rider(code)
+        if rider is None:
+            return None
+        persona, phone = rider
+        if claims.persona:
+            return persona == claims.persona and phone == claims.phone
+        return claims.robot == code and not persona
 
     async def _chip(self, ws: WebSocket, code: str, client: str, slot: _Slot) -> None:
         try:

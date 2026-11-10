@@ -36,6 +36,13 @@ _SERVE = _ROOT / "growbot" / "server" / "serve.py"
 _DEPLOY = _ROOT / "deploy"
 _TOKEN = "growbot-token-" + "b2" * 16
 _HASH = "sha256-" + base64.b64encode(b"x" * 32).decode()
+_PERSONA = "0b7c2f4e-1a2b-4c3d-8e9f-0a1b2c3d4e5f"
+_PHONE = "phone-" + "a" * 20
+_NEW_PHONE = "phone-" + "n" * 20
+
+
+def authed_get(handler: BaseHTTPRequestHandler) -> bool:
+    return handler.headers.get("Authorization") == f"Bearer {_TOKEN}"
 
 
 @pytest.fixture
@@ -61,6 +68,11 @@ class _Fake(BaseHTTPRequestHandler):
     root_cert: bytes = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
     tts_status = 200
     llm_status = 200
+    # Who wears each robot: code -> (persona, phone). Nobody, unless a test says so.
+    riders: dict[str, tuple[str, str]] = {}
+    body_status = 200
+    # The soul routes' answer: (status, body) per path, or the default below.
+    soul: dict[str, tuple[int, dict[str, Any]]] = {}
 
     def log_message(self, format: str, *args: object) -> None:  # noqa: A002
         return None
@@ -96,6 +108,12 @@ class _Fake(BaseHTTPRequestHandler):
                 self._reply(401, b"{}")
                 return
             self._reply(200, json.dumps({"data": _Fake.models}).encode())
+        elif path.startswith("/internal/growbot/body/"):
+            if not authed_get(self) or _Fake.body_status != 200:
+                self._reply(_Fake.body_status if authed_get(self) else 401, b"{}")
+                return
+            persona, phone = _Fake.riders.get(path.rsplit("/", 1)[1], (None, None))
+            self._reply(200, json.dumps({"persona": persona, "phone": phone}).encode())
         elif path == "/tts":
             if _Fake.tts_status != 200:
                 self._reply(_Fake.tts_status, b"down", "text/plain")
@@ -111,10 +129,33 @@ class _Fake(BaseHTTPRequestHandler):
         if self.path == "/internal/growbot/ticket/redeem":
             # The api answers with the robot the ticket was minted for.
             minted = {"good-ticket": "gb-abc123", "bare-ticket": "", "odd-ticket": "../x"}
-            ticket = json.loads(body).get("ticket")
+            sent = json.loads(body)
+            ticket = sent.get("ticket")
+            if authed and ticket in ("persona-ticket", "persona-bodiless", "persona-odd"):
+                # The api keeps the phone id it was given, or makes one.
+                phone = sent.get("phone") or _NEW_PHONE
+                reply = {
+                    "ok": True,
+                    "code": "gb-abc123" if ticket == "persona-ticket" else "",
+                    "persona": "not-a-uuid" if ticket == "persona-odd" else _PERSONA,
+                    "phone": phone,
+                }
+                self._reply(200, json.dumps(reply).encode())
+                return
             ok = authed and ticket in minted
             reply = {"ok": ok, "code": minted.get(ticket, "")} if ok else {"ok": False}
             self._reply(200 if ok else 401, json.dumps(reply).encode())
+        elif self.path.startswith("/internal/growbot/soul/"):
+            if not authed:
+                self._reply(401, b"{}")
+                return
+            default = (200, {"version": 3, "soul": {"soul_format": 3}, "wearing": "gb-abc123"})
+            if self.path.endswith("/push"):
+                default = (200, {"version": 4})
+            elif self.path.endswith("/state"):
+                default = (200, {"version": 3, "wearing": "gb-abc123"})
+            status, reply = _Fake.soul.get(self.path, default)
+            self._reply(status, json.dumps(reply).encode())
         elif self.path == "/internal/growbot/robot/verify":
             ok = authed and json.loads(body) == {"code": "gb-abc123", "key": "right-key"}
             self._reply(200 if ok else 401, json.dumps({"ok": ok}).encode())
@@ -224,6 +265,9 @@ def fake() -> Iterator[str]:
     _Fake.stt_reply = b"{}"
     _Fake.tts_status = 200
     _Fake.llm_status = 200
+    _Fake.riders = {}
+    _Fake.body_status = 200
+    _Fake.soul = {}
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Fake)
     threading.Thread(target=server.serve_forever, args=(0.02,), daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -1997,3 +2041,235 @@ def test_the_firmware_clock_logic_runs(monkeypatch: pytest.MonkeyPatch) -> None:
         env["_need_clock"]()  # type: ignore[operator]
     env["BOX_CA"] = None
     env["_need_clock"]()  # type: ignore[operator] - unverified dials need no clock
+
+
+# --- personas (wave G4b) -----------------------------------------------------------------
+
+
+def _cookie_of(resp: http.client.HTTPResponse) -> str:
+    return (resp.getheader("Set-Cookie") or "").split(";")[0]
+
+
+def _persona_cookie(run: _Running, robot: str = "gb-abc123", phone: str = _PHONE) -> str:
+    return f"gb_session={run.app.sessions.mint(robot=robot, persona=_PERSONA, phone=phone)}"
+
+
+def test_a_persona_session_carries_its_persona_and_phone(gb: types.ModuleType) -> None:
+    sessions = gb.Sessions(key=b"k" * 32)
+    value = sessions.mint(now=1000, robot="gb-abc123", persona=_PERSONA, phone=_PHONE)
+    assert sessions.claims(value, now=1000) == gb.Claims("gb-abc123", _PERSONA, _PHONE)
+    assert sessions.robot(value, now=1000) == "gb-abc123"
+    expiry, nonce, robot, persona, phone, sig = value.split(".")
+    other = "1" + persona[1:]
+    assert sessions.claims(f"{expiry}.{nonce}.{robot}.{other}.{phone}.{sig}", now=1000) is None
+    assert sessions.claims(f"{expiry}.{nonce}.{robot}.{persona}.{sig}", now=1000) is None
+    # G2's four-part sessions still open the creature, with no persona.
+    old = sessions.mint(now=1000, robot="gb-abc123")
+    assert sessions.claims(old, now=1000) == gb.Claims("gb-abc123")
+    # A phone may keep its id with no persona; a persona never comes without its phone.
+    kept = sessions.mint(now=1000, persona="", phone=_PHONE)
+    assert sessions.claims(kept, now=1000) == gb.Claims("", "", _PHONE)
+    for persona, phone in ((_PERSONA, ""), ("not-a-uuid", _PHONE), ("", "short"), ("", "a.b" * 9)):
+        with pytest.raises(ValueError):
+            sessions.mint(persona=persona, phone=phone)
+
+
+def test_a_persona_ticket_opens_it_on_this_phone(run: _Running) -> None:
+    resp = run.request(
+        "GET",
+        "/open?ticket=persona-ticket",
+        headers={"User-Agent": "Mozilla/5.0 (Linux; Android 14; Pixel 6a)"},
+        cookie=False,
+    )
+    assert _landing(resp) == "/v3/next.html?id=gb-abc123&mode=legs"
+    got = run.app.sessions.claims(_cookie_of(resp).partition("=")[2])
+    assert (got.robot, got.persona, got.phone) == ("gb-abc123", _PERSONA, _NEW_PHONE)
+    redeem = [s for s in _Fake.seen if s["path"] == "/internal/growbot/ticket/redeem"][-1]
+    # A phone with no session yet sends no id; the label is a kind of phone, never the UA.
+    assert json.loads(redeem["body"]) == {
+        "ticket": "persona-ticket",
+        "phone": "",
+        "label": "Android phone",
+    }
+
+
+def test_a_phone_stays_the_same_phone_across_tickets(run: _Running) -> None:
+    held = _persona_cookie(run)
+    resp = run.request(
+        "GET", "/open?ticket=persona-bodiless", headers={"Cookie": held}, cookie=False
+    )
+    assert _landing(resp) == "/v3/next.html?mode=legs"
+    redeem = [s for s in _Fake.seen if s["path"] == "/internal/growbot/ticket/redeem"][-1]
+    assert json.loads(redeem["body"])["phone"] == _PHONE
+    assert run.app.sessions.claims(_cookie_of(resp).partition("=")[2]).phone == _PHONE
+    # A G2 ticket on it keeps the id (for the next persona) and opens no persona.
+    g2 = run.request("GET", "/open?ticket=good-ticket", headers={"Cookie": held}, cookie=False)
+    g2.read()
+    got = run.app.sessions.claims(_cookie_of(g2).partition("=")[2])
+    assert (got.robot, got.persona, got.phone) == ("gb-abc123", "", _PHONE)
+
+
+def test_a_persona_answer_in_the_wrong_shape_opens_nothing(run: _Running) -> None:
+    resp = run.request("GET", "/open?ticket=persona-odd", cookie=False)
+    resp.read()
+    assert resp.status == 401 and resp.getheader("Set-Cookie") is None
+
+
+@pytest.mark.parametrize(
+    ("agent", "label"),
+    [
+        ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)", "iPhone"),
+        ("Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X)", "iPad"),
+        ("curl/8", "Phone"),
+        ("", "Phone"),
+    ],
+)
+def test_a_new_phone_is_named_by_its_kind(gb: types.ModuleType, agent: str, label: str) -> None:
+    assert gb.phone_label(agent) == label
+
+
+def test_start_keeps_the_persona(run: _Running) -> None:
+    resp = run.request("GET", "/start", headers={"Cookie": _persona_cookie(run)}, cookie=False)
+    resp.read()
+    assert resp.status == 302
+    got = run.app.sessions.claims(_cookie_of(resp).partition("=")[2])
+    assert (got.persona, got.phone) == (_PERSONA, _PHONE)
+
+
+def _soul_call(
+    run: _Running, method: str, path: str, body: object = None, cookie: str | None = None
+) -> tuple[int, Any]:
+    raw = None if body is None else json.dumps(body).encode()
+    headers = {"Cookie": cookie or _persona_cookie(run), "Content-Type": "application/json"}
+    resp = run.request(method, path, raw, headers, cookie=False)
+    data = resp.read()
+    return resp.status, (json.loads(data) if data else None)
+
+
+def test_the_soul_routes_reach_the_api_as_this_phone(run: _Running) -> None:
+    status, got = _soul_call(run, "GET", "/api/box/persona")
+    assert status == 200
+    assert got == {
+        "version": 3,
+        "soul": {"soul_format": 3},
+        "wearing": "gb-abc123",
+        "persona": _PERSONA,
+    }
+    pull = [s for s in _Fake.seen if s["path"] == "/internal/growbot/soul/pull"][-1]
+    assert pull["auth"] == f"Bearer {_TOKEN}"
+    assert json.loads(pull["body"]) == {"persona": _PERSONA, "phone": _PHONE}
+    assert _soul_call(run, "GET", "/api/box/persona/state")[1] == {
+        "version": 3,
+        "wearing": "gb-abc123",
+        "persona": _PERSONA,
+    }
+    soul = {"soul_format": 3, "identity": "I am Sprout."}
+    assert _soul_call(run, "POST", "/api/box/persona", {"base": 3, "soul": soul}) == (
+        200,
+        {"version": 4, "persona": _PERSONA},
+    )
+    push = [s for s in _Fake.seen if s["path"] == "/internal/growbot/soul/push"][-1]
+    assert json.loads(push["body"]) == {
+        "persona": _PERSONA,
+        "phone": _PHONE,
+        "base": 3,
+        "soul": soul,
+    }
+
+
+def test_a_g2_session_has_no_soul_on_the_box(run: _Running) -> None:
+    for path in ("/api/box/persona", "/api/box/persona/state"):
+        assert _soul_call(run, "GET", path, cookie=run.cookie) == (204, None)
+    assert not [s for s in _Fake.seen if s["path"].startswith("/internal/growbot/soul/")]
+
+
+@pytest.mark.parametrize(
+    ("status", "detail"),
+    [(409, "moved"), (409, "newer"), (404, "gone"), (413, "at most 1 MB"), (400, "not a soul")],
+)
+def test_the_apis_refusals_reach_the_page(run: _Running, status: int, detail: str) -> None:
+    _Fake.soul = {"/internal/growbot/soul/push": (status, {"detail": detail})}
+    got = _soul_call(run, "POST", "/api/box/persona", {"base": 1, "soul": {}})
+    assert got == (status, {"error": detail})
+
+
+def test_an_api_that_cannot_answer_is_a_retry(run: _Running) -> None:
+    for status in (401, 500):
+        _Fake.soul = {"/internal/growbot/soul/pull": (status, {"detail": "x"})}
+        assert _soul_call(run, "GET", "/api/box/persona")[0] == 503
+    _Fake.soul = {"/internal/growbot/soul/pull": (200, ["not", "an", "object"])}  # type: ignore[dict-item]
+    assert _soul_call(run, "GET", "/api/box/persona")[0] == 503
+
+
+@pytest.mark.parametrize("body", [{"soul": {}}, {"base": "3", "soul": {}}, {"base": True}, []])
+def test_a_push_names_the_version_it_came_from(run: _Running, body: object) -> None:
+    assert _soul_call(run, "POST", "/api/box/persona", body)[0] == 400
+    assert not [s for s in _Fake.seen if s["path"] == "/internal/growbot/soul/push"]
+
+
+def test_the_soul_routes_take_only_their_methods(run: _Running) -> None:
+    assert _soul_call(run, "POST", "/api/box/persona/state", {"base": 1})[0] == 405
+    assert _soul_call(run, "DELETE", "/api/box/persona")[0] == 405
+
+
+def test_a_soul_from_another_origin_is_refused(run: _Running) -> None:
+    headers = {"Cookie": _persona_cookie(run), "Origin": "https://jbrain.local"}
+    resp = run.request("POST", "/api/box/persona", b'{"base":1,"soul":{}}', headers, cookie=False)
+    resp.read()
+    assert resp.status == 403
+
+
+def test_an_oversized_soul_is_refused_before_its_upload(
+    run: _Running, gb: types.ModuleType
+) -> None:
+    head = (
+        f"POST /api/box/persona HTTP/1.1\r\nHost: {run.host}\r\nCookie: {_persona_cookie(run)}\r\n"
+        f"Content-Length: {gb.MAX_SOUL_BODY + 1}\r\nExpect: 100-continue\r\n\r\n"
+    )
+    out = _raw(run, head.encode())
+    assert out.startswith(b"HTTP/1.1 413"), out[:80]
+    # Every other route keeps the 16 MiB cap.
+    assert gb.body_limit(gb.Request("POST", "/api/llm", "/api/llm", {}, "HTTP/1.1", [])) == (
+        gb.MAX_BODY
+    )
+
+
+def test_only_the_rider_drives_the_body(run: _Running) -> None:
+    mine = _persona_cookie(run)
+    # Nobody rides: a persona phone may not drive it, a G2 phone may.
+    assert _Ws(run, "/d/gb-abc123", cookie=mine).status == 403
+    g2 = _phone(run)
+    g2.shut()
+    # This persona rides from this phone: it may, whatever robot its ticket named, and a G2
+    # phone may not.
+    _Fake.riders = {"gb-abc123": (_PERSONA, _PHONE)}
+    assert _Ws(run, "/d/gb-abc123", cookie=_persona_cookie(run, robot="")).status == 101
+    assert _Ws(run, "/d/gb-abc123", cookie=True).status == 403
+    # The same persona on another phone (it moved) may not.
+    assert _Ws(run, "/d/gb-abc123", cookie=_persona_cookie(run, phone=_NEW_PHONE)).status == 403
+    body = [s for s in _Fake.seen if s["path"] == "/internal/growbot/body/gb-abc123"][-1]
+    assert body["auth"] == f"Bearer {_TOKEN}"
+
+
+def test_a_relay_that_cannot_ask_the_api_says_busy(run: _Running) -> None:
+    _Fake.body_status = 500
+    assert _Ws(run, "/d/gb-abc123", cookie=_persona_cookie(run)).status == 503
+
+
+def test_a_phone_that_stops_riding_is_dropped(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "RIDER_RECHECK_S", 0.1)
+    _Fake.riders = {"gb-abc123": (_PERSONA, _PHONE)}
+    phone = _Ws(run, "/d/gb-abc123", cookie=_persona_cookie(run))
+    assert phone.status == 101 and phone.message() == {"t": "status", "awake": 0}
+    # An api blip keeps it on.
+    _Fake.body_status = 500
+    time.sleep(0.4)
+    _Fake.body_status = 200
+    chip = _chip(run)
+    assert phone.message() == {"t": "status", "awake": 1}
+    # A hand-over to another phone closes it.
+    _Fake.riders = {"gb-abc123": (_PERSONA, _NEW_PHONE)}
+    assert phone.close_code() == 1008
+    chip.shut()

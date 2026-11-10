@@ -257,3 +257,27 @@ def test_the_setup_page_follows_only_this_boxs_ticket_link() -> None:
     assert "url.origin !== location.origin" in scanner
     assert 'url.pathname !== "/open"' in scanner
     assert "location.replace(link)" in scanner
+
+
+def test_the_creature_page_starts_on_the_boxs_soul() -> None:
+    """G4b (plan §2c): a persona's soul is pulled into pb2_soul before soul.js reads it (the
+    loader is the creature's first script, and the pull is synchronous), only on the creature
+    page, and every write of the key goes back to the box."""
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert shim == (_GROWBOT / "patches" / "growbot-box.js").read_text(encoding="utf-8")
+    sync = shim[shim.index('if (location.pathname !== "/v3/next.html") return;') :]
+    assert "r.open(method, path, false);" in sync
+    assert 'var KEY = "pb2_soul"' in sync and 'PATH = "/api/box/persona"' in sync
+    assert "Storage.prototype.setItem = function" in sync
+    # The pull lands before the hook, so the box's own copy is never pushed back as a write.
+    assert sync.index("realSet.call(store, KEY") < sync.index("Storage.prototype.setItem =")
+    # An unsent write goes only into the persona it came from.
+    assert "meta.persona === state.json.persona" in sync
+
+
+def test_the_creatures_own_pairing_box_opens_nothing() -> None:
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.prompt = function (message)" in shim
+    assert "/pairing code/i.test(String(message))" in shim
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert 'window.prompt("Pairing code shown for your robot:"' in page

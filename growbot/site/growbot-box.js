@@ -167,3 +167,216 @@
     navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(function () {});
   });
 })();
+
+/* A persona's soul lives on the box (plan §2c, wave G4b). The creature keeps its whole soul in
+   one localStorage key, pb2_soul (soul.js), read once as the page boots. So before any page code
+   runs, this pulls the box's copy into that key, and moves the page onto the robot the persona
+   wears (or off any robot); while it runs, every write of the key is pushed back against the
+   version it came from, and a poll notices an owner's edit, a hand-over or a deletion.
+   A G2 session (no persona) gets 204 and the creature keeps its soul on the phone, as before.
+   gb_box_soul remembers {persona, version, dirty}: a write not yet on the box survives a closed
+   page and is sent on the next load, before the pull, and only into the persona it came from. */
+(function () {
+  "use strict";
+  if (location.pathname !== "/v3/next.html") return;
+  var KEY = "pb2_soul", META = "gb_box_soul", PATH = "/api/box/persona";
+  var POLL_MS = 10000, PUSH_AFTER_MS = 1500, IDLE_MS = 20000;
+  var store;
+  try { store = window.localStorage; store.getItem(KEY); } catch (e) { return; }
+
+  function readMeta() {
+    try {
+      var m = JSON.parse(store.getItem(META) || "null");
+      return m && typeof m === "object" ? m : {};
+    } catch (e) { return {}; }
+  }
+  var meta = readMeta();
+  function saveMeta() { try { realSet.call(store, META, JSON.stringify(meta)); } catch (e) {} }
+  var realSet = Storage.prototype.setItem;
+
+  // Synchronous on purpose: pb2_soul must hold the box's soul before soul.js reads it.
+  function sync(method, path, body) {
+    var r = new XMLHttpRequest();
+    try {
+      r.open(method, path, false);
+      if (body) r.setRequestHeader("content-type", "application/json");
+      r.send(body || null);
+    } catch (e) { return { status: 0, json: null }; }
+    var json = null;
+    try { json = JSON.parse(r.responseText); } catch (e) {}
+    return { status: r.status, json: json };
+  }
+
+  function localSoul() {
+    try { return JSON.parse(store.getItem(KEY) || "null"); } catch (e) { return null; }
+  }
+
+  function stopWith(title, text) {
+    try { window.stop(); } catch (e) {}
+    document.documentElement.innerHTML =
+      '<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+      "<title>GrowBot</title><style>" +
+      "body{margin:0;background:#0b0b1a;color:#e6edf3;font:17px/1.5 system-ui,sans-serif}" +
+      "main{max-width:480px;margin:0 auto;padding:48px 16px;display:grid;gap:16px}" +
+      "h1{font-size:1.4rem;margin:0}p{margin:0;color:#b8c4cf}" +
+      "a{display:block;text-align:center;padding:12px 16px;border-radius:10px;border:1px solid #7fd89a;" +
+      "color:#7fd89a;font-weight:600;text-decoration:none}</style></head>" +
+      "<body><main><h1></h1><p></p><a href=\"/start\">Try again</a></main></body>";
+    document.querySelector("h1").textContent = title;
+    document.querySelector("p").textContent = text;
+  }
+
+  function away(status) {
+    if (status === 404) {
+      stopWith("This creature isn't on the box any more",
+        "It was deleted. Open another one from JBrain on your main phone: GrowBot, then Open.");
+    } else {
+      stopWith("This creature is open on another phone",
+        "It lives on one phone at a time. To bring it back here, open it from JBrain on your " +
+        "main phone: GrowBot, then Open.");
+    }
+  }
+
+  // Only the robot is compared, so the page's own query (and how it spells it) never loops.
+  function onRobot(wearing) {
+    var q = new URLSearchParams(location.search);
+    return (q.get("id") || "").toLowerCase() === wearing && q.get("mode") === "legs";
+  }
+  function moveTo(wearing) {
+    var q = new URLSearchParams(location.search);
+    if (wearing) q.set("id", wearing); else q.delete("id");
+    q.set("mode", "legs");
+    location.replace(location.pathname + "?" + q.toString() + location.hash);
+  }
+
+  function isAway(status, json) {
+    return status === 404 || (status === 409 && json && json.error === "moved");
+  }
+
+  // 1. Any write the last page left unsent, into the persona it belongs to.
+  var state = sync("GET", PATH + "/state");
+  if (state.status === 204) return;
+  if (isAway(state.status, state.json)) { away(state.status); return; }
+  if (state.status === 200 && state.json && meta.dirty && meta.persona === state.json.persona) {
+    var pending = localSoul();
+    if (pending) {
+      var sent = sync("POST", PATH, JSON.stringify({ base: meta.version, soul: pending }));
+      if (isAway(sent.status, sent.json)) { away(sent.status); return; }
+    }
+  }
+  // 2. The box's soul, which every write this page makes starts from.
+  var pulled = sync("GET", PATH);
+  if (isAway(pulled.status, pulled.json)) { away(pulled.status); return; }
+  if (pulled.status !== 200 || !pulled.json || !pulled.json.soul) {
+    // The box did not answer: the creature runs on what this phone last had, and the next
+    // load tries again. Its writes are kept as unsent.
+    if (!meta.persona) return;
+  } else {
+    try { realSet.call(store, KEY, JSON.stringify(pulled.json.soul)); } catch (e) { return; }
+    meta = { persona: pulled.json.persona, version: pulled.json.version, dirty: false };
+    saveMeta();
+    // 3. On the robot the persona wears, or on none: the relay lets only the rider drive.
+    var wearing = pulled.json.wearing || "";
+    if (!wearing) { try { store.removeItem("gb_walk_id"); } catch (e) {} }
+    if (!onRobot(wearing)) { moveTo(wearing); return; }
+  }
+
+  // 4. Every write of the soul goes to the box, a moment after the last one.
+  var gen = 0, timer = 0, inflight = false, lastInput = Date.now(), held = false;
+  Storage.prototype.setItem = function (key, value) {
+    var out = realSet.apply(this, arguments);
+    if (this === store && key === KEY && !held) {
+      gen++;
+      meta.dirty = true;
+      saveMeta();
+      clearTimeout(timer);
+      timer = setTimeout(push, PUSH_AFTER_MS);
+    }
+    return out;
+  };
+
+  function reloadWhenIdle() {
+    if (document.hidden || Date.now() - lastInput > IDLE_MS) location.reload();
+    else setTimeout(reloadWhenIdle, 5000);
+  }
+
+  function push() {
+    if (inflight) { timer = setTimeout(push, PUSH_AFTER_MS); return; }
+    var soul = localSoul();
+    if (!soul) return;
+    var mine = gen;
+    inflight = true;
+    fetch(PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ base: meta.version, soul: soul }),
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
+    }).then(function (r) {
+      inflight = false;
+      if (r.status === 200 && r.json && typeof r.json.version === "number") {
+        meta.version = r.json.version;
+        if (mine === gen) meta.dirty = false;
+        saveMeta();
+        if (mine !== gen) timer = setTimeout(push, PUSH_AFTER_MS);
+      } else if (r.status === 409 && r.json && r.json.error === "newer") {
+        // The owner changed it from JBrain: their edit wins, and the page restarts on it.
+        held = true;
+        meta.dirty = false;
+        saveMeta();
+        reloadWhenIdle();
+      } else if (isAway(r.status, r.json)) {
+        held = true;
+        location.reload();
+      } else if (r.status !== 413 && r.status !== 400) {
+        // A box that did not answer: try again (a soul the box refuses waits for the next write).
+        timer = setTimeout(push, POLL_MS);
+      }
+    }).catch(function () {
+      inflight = false;
+      timer = setTimeout(push, POLL_MS);
+    });
+  }
+
+  // 5. An owner's edit, a hand-over or a deletion, noticed within a poll.
+  function poll() {
+    fetch(PATH + "/state").then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
+    }).then(function (r) {
+      if (isAway(r.status, r.json)) { held = true; location.reload(); return; }
+      if (r.status !== 200 || !r.json) return;
+      if (!onRobot(r.json.wearing || "")) { held = true; location.reload(); return; }
+      if (r.json.version > meta.version && !meta.dirty && !inflight) { held = true; reloadWhenIdle(); }
+    }).catch(function () {});
+  }
+  setInterval(function () { if (!document.hidden) poll(); }, POLL_MS);
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) poll();
+    else if (meta.dirty && !inflight) push();
+  });
+  ["pointerdown", "keydown", "touchstart"].forEach(function (type) {
+    window.addEventListener(type, function () { lastInput = Date.now(); }, { capture: true, passive: true });
+  });
+})();
+
+/* Pairing is JBrain's (plan §2c): the relay refuses a code typed into the creature, so its own
+   pairing box (a prompt, behind Pair and Reconnect) says where pairing is done instead. */
+(function () {
+  "use strict";
+  var realPrompt = window.prompt;
+  window.prompt = function (message) {
+    if (/pairing code/i.test(String(message))) {
+      var note = document.createElement("div");
+      note.textContent = "Robots are paired from JBrain, on its GrowBot screen.";
+      note.setAttribute("role", "status");
+      note.style.cssText =
+        "position:fixed;left:16px;right:16px;bottom:24px;z-index:2147483647;padding:12px 16px;" +
+        "border-radius:10px;background:#151a2b;color:#e6edf3;border:1px solid #7fd89a;" +
+        "font:16px/1.4 system-ui,sans-serif;text-align:center";
+      document.body.appendChild(note);
+      setTimeout(function () { note.remove(); }, 4000);
+      return null;
+    }
+    return realPrompt.apply(window, arguments);
+  };
+})();

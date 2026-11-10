@@ -1,6 +1,6 @@
 # GrowBot on the box — a LAN-only brain for the desk robot
 
-> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4◻️ G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
+> **Status:** In progress · **Last verified:** 2026-11-10 · **Waves:** G1✅ G2✅ (built; first real flash pending) G3◻️ G4🔶 (G4a✅ G4b✅) G5◻️ · personas stand apart from the robot body (owner, 2026-11-10)
 
 The owner's ask (2026-11-10): *"I want to run it similar to my local jpanel and jwall … I
 want everything in this repo under a sub dir"*, after *"I don't want to send data beyond my
@@ -374,17 +374,19 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
 - **G4 — the creature on the box, and profiles.** GUI gate passed (owner, 2026-11-10: mock B, three tabs,
   `docs/mocks/growbot-personas/b-three-tabs.html`; binding spec
   in `docs/reference/DESIGN.md` "GrowBot — the desk robot's screen"). Built in four PRs:
-  - **G4a — personas on the box.** The persona and checkpoint tables under owner-only RLS with
+  - **G4a — personas on the box** ✅ (#1815). The persona and checkpoint tables under owner-only RLS with
     their isolation tests; the owner and debug routes (list, add from a seed, rename,
     duplicate, edit a config region, export, import, reset, delete, checkpoint save, list and
     restore); the sidecar's `growbot.token` routes that pull and push the soul of the persona a
     phone was opened as, with the version and holder checks; tickets that name a persona and
     whether it wears the body, and the body's rider, settable from the PWA's Body tab for a
     persona already open on another phone (B's *Who wears Fish*), with its own auth test.
-  - **G4b — the phone follows the box.** The `gb_session` carries the persona and the holder;
-    the shim's soul routes; the loader patch (pull before the page loads, push as the soul is
-    written, the *it has moved* and *the body has gone* pages, hiding the creature's own pairing
-    box).
+  - **G4b — the phone follows the box** ✅. The `gb_session` carries the persona and the
+    phone's id; the shim's soul routes; the relay lets only the rider's phone drive a body (a G2
+    phone only while no persona rides it) and drops one that stops riding; the loader patch
+    (pull before the page loads, push as the soul is written, an owner's edit and a hand-over
+    noticed within a poll, the *it has moved* and *it was deleted* pages, and the creature's own
+    pairing box answering that pairing is JBrain's). See `growbot/README.md` "Personas".
   - **G4c — the screen.** The Personas, Body and Phones tabs, the launch sheet, *Who wears
     Fish*, the hand-over banners, *On another phone* with a persona and the body, and the
     persona page with its tabs (soul and editor, checkpoints, manage).
