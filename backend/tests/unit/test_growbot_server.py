@@ -1740,13 +1740,20 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
         )
         assert resp.status == 403
         resp.read()
-    # Cross-site navigations spend their own bucket only.
+    # A cross-site navigation spends nothing: it comes back same-site (with the Strict
+    # cookie) marked `hop`, and those tries spend their own bucket only.
     cross = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site"}
+    redeems = len([s for s in _Fake.seen if s["path"].endswith("/ticket/redeem")])
+    resp = run.request("GET", "/open?ticket=bad&id=gb-abc123", headers=cross, cookie=False)
+    assert _landing(resp) == "/open?ticket=bad&hop=1&id=gb-abc123"
+    assert resp.getheader("Set-Cookie") is None
+    assert len([s for s in _Fake.seen if s["path"].endswith("/ticket/redeem")]) == redeems
+    hop = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-origin"}
     for _ in range(2):
-        resp = run.request("GET", "/open?ticket=bad&id=gb-abc123", headers=cross, cookie=False)
+        resp = run.request("GET", "/open?ticket=bad&hop=1", headers=hop, cookie=False)
         assert resp.status == 401
         resp.read()
-    resp = run.request("GET", "/open?ticket=bad&id=gb-abc123", headers=cross, cookie=False)
+    resp = run.request("GET", "/open?ticket=bad&hop=1", headers=hop, cookie=False)
     assert resp.status == 429
     resp.read()
     same = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-site"}
@@ -2164,7 +2171,9 @@ def test_the_soul_routes_reach_the_api_as_this_phone(run: _Running) -> None:
         "persona": _PERSONA,
     }
     soul = {"soul_format": 3, "identity": "I am Sprout."}
-    assert _soul_call(run, "POST", "/api/box/persona", {"base": 3, "soul": soul}) == (
+    assert _soul_call(
+        run, "POST", "/api/box/persona", {"persona": _PERSONA, "base": 3, "soul": soul}
+    ) == (
         200,
         {"version": 4, "persona": _PERSONA},
     )
@@ -2189,8 +2198,27 @@ def test_a_g2_session_has_no_soul_on_the_box(run: _Running) -> None:
 )
 def test_the_apis_refusals_reach_the_page(run: _Running, status: int, detail: str) -> None:
     _Fake.soul = {"/internal/growbot/soul/push": (status, {"detail": detail})}
-    got = _soul_call(run, "POST", "/api/box/persona", {"base": 1, "soul": {}})
+    got = _soul_call(run, "POST", "/api/box/persona", {"persona": _PERSONA, "base": 1, "soul": {}})
     assert got == (status, {"error": detail})
+
+
+def test_a_push_names_the_persona_it_came_from(run: _Running) -> None:
+    for named in ("", "1" + _PERSONA[1:], None):
+        body = {"persona": named, "base": 1, "soul": {}}
+        assert _soul_call(run, "POST", "/api/box/persona", body) == (409, {"error": "other"})
+    assert not [s for s in _Fake.seen if s["path"] == "/internal/growbot/soul/push"]
+
+
+def test_a_cross_site_open_keeps_the_phone(run: _Running) -> None:
+    """The PWA reached by its public name: the first request carries no Strict cookie, so it
+    only bounces; the hop back carries it, and the phone keeps its id."""
+    cross = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site"}
+    resp = run.request("GET", "/open?ticket=persona-bodiless", headers=cross, cookie=False)
+    again = _landing(resp)
+    hop = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-origin"}
+    resp = run.request("GET", again, headers={**hop, "Cookie": _persona_cookie(run)}, cookie=False)
+    assert _landing(resp) == "/v3/next.html?mode=legs"
+    assert run.app.sessions.claims(_cookie_of(resp).partition("=")[2]).phone == _PHONE
 
 
 def test_an_api_that_cannot_answer_is_a_retry(run: _Running) -> None:
@@ -2273,3 +2301,25 @@ def test_a_phone_that_stops_riding_is_dropped(
     _Fake.riders = {"gb-abc123": (_PERSONA, _NEW_PHONE)}
     assert phone.close_code() == 1008
     chip.shut()
+
+
+def test_the_side_channel_also_leaves_with_the_rider(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "RIDER_RECHECK_S", 0.1)
+    _Fake.riders = {"gb-abc123": (_PERSONA, _PHONE)}
+    agent = _Ws(run, "/d/gb-abc123-agent", cookie=_persona_cookie(run))
+    assert agent.status == 101
+    agent.text({"t": "attach"})
+    assert agent.message() == {"t": "status", "awake": 0}
+    _Fake.riders = {"gb-abc123": (_PERSONA, _NEW_PHONE)}
+    assert agent.close_code() == 1008
+
+
+def test_a_session_trying_robots_it_does_not_ride_is_slowed(
+    run: _Running, gb: types.ModuleType
+) -> None:
+    cookie = _persona_cookie(run)
+    for _ in range(gb.BACKOFF_LIMIT):
+        assert _Ws(run, "/d/gb-abc123", cookie=cookie).status == 403
+    assert _Ws(run, "/d/gb-abc123", cookie=cookie).status == 429

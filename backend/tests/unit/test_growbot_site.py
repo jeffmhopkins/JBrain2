@@ -270,9 +270,15 @@ def test_the_creature_page_starts_on_the_boxs_soul() -> None:
     assert 'var KEY = "pb2_soul"' in sync and 'PATH = "/api/box/persona"' in sync
     assert "Storage.prototype.setItem = function" in sync
     # The pull lands before the hook, so the box's own copy is never pushed back as a write.
-    assert sync.index("realSet.call(store, KEY") < sync.index("Storage.prototype.setItem =")
-    # An unsent write goes only into the persona it came from.
-    assert "meta.persona === state.json.persona" in sync
+    assert sync.index("put(KEY, JSON.stringify(pulled.json.soul))") < sync.index(
+        "Storage.prototype.setItem ="
+    )
+    # An unsent write goes only into the persona it came from: the page checks, and every push
+    # names it for the box to check too.
+    assert "m.persona === persona" in sync
+    assert sync.count("JSON.stringify({ persona: ") == 2
+    # The phone's own (G2) creature is set aside while a persona has the key.
+    assert 'OWN = "gb_phone_soul"' in sync and "put(OWN, mine)" in sync
 
 
 def test_the_creatures_own_pairing_box_opens_nothing() -> None:

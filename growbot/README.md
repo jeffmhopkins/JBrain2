@@ -213,16 +213,20 @@ becomes `<expiry>.<nonce>.<robot>.<persona>.<phone>.<hmac>` (G2's four-part form
 and opens the creature with its soul on the phone, as before). The phone id is the api's
 `growbot_phones` id: `/open` sends the one this browser's session already has, so a phone stays
 the same phone across tickets, with a kind-of-phone label from its User-Agent (never the string).
+A cross-site `/open` (the PWA reached by its public name) arrives without the Strict cookie, so it
+spends nothing and only bounces: its page refreshes to the same link plus `hop=1`, which comes
+back same-site with the cookie and counts its tries in the cross-site bucket.
 
 | Route | Answer |
 | --- | --- |
 | `GET /api/box/persona` | The api's `/internal/growbot/soul/pull` for this session's persona and phone: `{version, soul, wearing, persona}`. |
 | `GET /api/box/persona/state` | `/soul/state`, the poll: `{version, wearing, persona}`. |
-| `POST /api/box/persona` | `{base, soul}` to `/soul/push`: `{version}`. The body is capped at 1.1 MB before it is read. |
+| `POST /api/box/persona` | `{persona, base, soul}` to `/soul/push`: `{version}`. A `persona` that is not the session's is 409 `other` (a write from the persona the phone held before). The body is capped at 1.1 MB before it is read. |
 
 All three answer 204 for a G2 session; 409 `moved` (another phone holds it), 409 `newer` (the
 owner changed it), 404 `gone`, 413 and 400 are the api's; anything else is a 503 the page
-retries. They run on their own two threads, apart from the doors and the brain.
+retries. They run on their own two threads, and the relay's rider checks on two more, apart
+from the doors and the brain.
 
 `growbot-box.js` does the rest on `/v3/next.html`, before any page code: a synchronous pull
 writes `pb2_soul` (the one key soul.js keeps the whole creature in), and the page moves to
@@ -230,7 +234,9 @@ writes `pb2_soul` (the one key soul.js keeps the whole creature in), and the pag
 wears none. Every write of `pb2_soul` is pushed 1.5 s after the last, against the version it came
 from, and when the page is hidden; `gb_box_soul` keeps `{persona, version, dirty}`, so a write
 the box never got is sent on the next load, before the pull, and only into the persona it came
-from. A poll every 10 s notices an owner's edit (the page restarts on it once nobody has
+from; a box that does not answer keeps it (the page runs on it) until the box takes it or says
+it never will. While a persona has the key, the phone's own creature (a G2 session's) waits in
+`gb_phone_soul` and comes back when a G2 session opens. A poll every 10 s notices an owner's edit (the page restarts on it once nobody has
 touched it for 20 s; a write racing it is refused as `newer` and the owner's wins), a hand-over
 (the page moves on or off the robot) and a move or deletion, which stop the page and say so.
 The creature's own pairing box (a `prompt` behind Pair and Reconnect) answers that robots are
@@ -239,7 +245,8 @@ paired from JBrain.
 The body has one rider. A phone's relay socket asks the api's `/internal/growbot/body/<code>`
 who wears that robot: a persona session joins only if its persona wears it from this phone, a
 G2 session only its ticket's robot while no persona wears it, and an api that cannot say is a
-503 the transport retries. Every 10 s each phone is asked again, and one that no longer rides
+503 the transport retries; a session refused eight times in five minutes gets 429. Every 10 s
+each phone's socket, and its agent side channel, is asked again, and one that no longer rides
 (a hand-over, a *Who wears* pick) is closed with 1008; a failed lookup keeps it on, so an api
 blip never stops a walking robot.
 

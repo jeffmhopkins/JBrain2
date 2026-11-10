@@ -173,26 +173,29 @@
    runs, this pulls the box's copy into that key, and moves the page onto the robot the persona
    wears (or off any robot); while it runs, every write of the key is pushed back against the
    version it came from, and a poll notices an owner's edit, a hand-over or a deletion.
-   A G2 session (no persona) gets 204 and the creature keeps its soul on the phone, as before.
-   gb_box_soul remembers {persona, version, dirty}: a write not yet on the box survives a closed
-   page and is sent on the next load, before the pull, and only into the persona it came from. */
+   gb_box_soul, shared by the phone's tabs, is {persona, version, dirty}: a write not yet on the
+   box survives a closed page or a box that did not answer, and is sent later, only ever into
+   the persona it came from (the box refuses a push that names another).
+   A G2 session (no persona) gets 204 and the creature keeps its soul on the phone, as before;
+   gb_phone_soul keeps that creature while the phone wears a persona, and gives it back. */
 (function () {
   "use strict";
   if (location.pathname !== "/v3/next.html") return;
-  var KEY = "pb2_soul", META = "gb_box_soul", PATH = "/api/box/persona";
+  var KEY = "pb2_soul", META = "gb_box_soul", OWN = "gb_phone_soul", PATH = "/api/box/persona";
   var POLL_MS = 10000, PUSH_AFTER_MS = 1500, IDLE_MS = 20000;
   var store;
   try { store = window.localStorage; store.getItem(KEY); } catch (e) { return; }
+  var realSet = Storage.prototype.setItem;
 
-  function readMeta() {
+  // Read fresh every time: another tab of this phone may have pushed since.
+  function meta() {
     try {
       var m = JSON.parse(store.getItem(META) || "null");
       return m && typeof m === "object" ? m : {};
     } catch (e) { return {}; }
   }
-  var meta = readMeta();
-  function saveMeta() { try { realSet.call(store, META, JSON.stringify(meta)); } catch (e) {} }
-  var realSet = Storage.prototype.setItem;
+  function setMeta(m) { try { realSet.call(store, META, JSON.stringify(m)); } catch (e) {} }
+  function put(key, value) { try { realSet.call(store, key, value); return true; } catch (e) { return false; } }
 
   // Synchronous on purpose: pb2_soul must hold the box's soul before soul.js reads it.
   function sync(method, path, body) {
@@ -240,7 +243,7 @@
   // Only the robot is compared, so the page's own query (and how it spells it) never loops.
   function onRobot(wearing) {
     var q = new URLSearchParams(location.search);
-    return (q.get("id") || "").toLowerCase() === wearing && q.get("mode") === "legs";
+    return (q.get("id") || "").toLowerCase() === wearing.toLowerCase() && q.get("mode") === "legs";
   }
   function moveTo(wearing) {
     var q = new URLSearchParams(location.search);
@@ -252,43 +255,78 @@
   function isAway(status, json) {
     return status === 404 || (status === 409 && json && json.error === "moved");
   }
+  // The box will never take this write (not its persona's, too big, not a soul): let it go.
+  function refused(status, json) {
+    return status === 413 || status === 400 || (status === 409 && json && json.error === "newer");
+  }
 
-  // 1. Any write the last page left unsent, into the persona it belongs to.
   var state = sync("GET", PATH + "/state");
-  if (state.status === 204) return;
+  if (state.status === 204) {
+    // A G2 session: the phone's own creature comes back if a persona had the key.
+    var m0 = meta();
+    if (m0.persona) {
+      var own = null;
+      try { own = store.getItem(OWN); } catch (e) {}
+      try { if (own) realSet.call(store, KEY, own); else store.removeItem(KEY); store.removeItem(OWN); } catch (e) {}
+      setMeta({});
+    }
+    return;
+  }
   if (isAway(state.status, state.json)) { away(state.status); return; }
-  if (state.status === 200 && state.json && meta.dirty && meta.persona === state.json.persona) {
+  var persona = state.status === 200 && state.json ? state.json.persona : "";
+  var m = meta();
+
+  // 1. A write the box never got. Kept (and the page runs on it) until the box takes it or
+  //    says it never will; dropped when it belongs to a persona this phone no longer holds.
+  var keep = false;
+  if (m.dirty && persona && m.persona === persona) {
     var pending = localSoul();
     if (pending) {
-      var sent = sync("POST", PATH, JSON.stringify({ base: meta.version, soul: pending }));
+      var sent = sync("POST", PATH, JSON.stringify({ persona: m.persona, base: m.version, soul: pending }));
       if (isAway(sent.status, sent.json)) { away(sent.status); return; }
+      if (sent.status === 200 && sent.json) setMeta({ persona: persona, version: sent.json.version, dirty: false });
+      else keep = !refused(sent.status, sent.json);
+    }
+  } else if (m.dirty && !persona) {
+    keep = true;   // the box did not answer: nothing is known yet, so nothing is thrown away
+  }
+
+  // 2. The box's soul, which every write this page makes starts from.
+  var wearing = persona ? state.json.wearing || "" : null;
+  if (!keep) {
+    var pulled = sync("GET", PATH);
+    if (isAway(pulled.status, pulled.json)) { away(pulled.status); return; }
+    if (pulled.status === 200 && pulled.json && pulled.json.soul) {
+      if (!meta().persona) {
+        // The phone's own creature (a G2 session's, or none) is set aside, not lost.
+        var mine = null;
+        try { mine = store.getItem(KEY); } catch (e) {}
+        if (mine) put(OWN, mine);
+      }
+      if (!put(KEY, JSON.stringify(pulled.json.soul))) return;
+      setMeta({ persona: pulled.json.persona, version: pulled.json.version, dirty: false });
+      wearing = pulled.json.wearing || "";
+    } else if (!meta().persona) {
+      // Nothing from the box and nothing of a persona here: the creature runs as it is.
+      return;
     }
   }
-  // 2. The box's soul, which every write this page makes starts from.
-  var pulled = sync("GET", PATH);
-  if (isAway(pulled.status, pulled.json)) { away(pulled.status); return; }
-  if (pulled.status !== 200 || !pulled.json || !pulled.json.soul) {
-    // The box did not answer: the creature runs on what this phone last had, and the next
-    // load tries again. Its writes are kept as unsent.
-    if (!meta.persona) return;
-  } else {
-    try { realSet.call(store, KEY, JSON.stringify(pulled.json.soul)); } catch (e) { return; }
-    meta = { persona: pulled.json.persona, version: pulled.json.version, dirty: false };
-    saveMeta();
-    // 3. On the robot the persona wears, or on none: the relay lets only the rider drive.
-    var wearing = pulled.json.wearing || "";
+
+  // 3. On the robot the persona wears, or on none: the relay lets only the rider drive.
+  if (wearing !== null) {
     if (!wearing) { try { store.removeItem("gb_walk_id"); } catch (e) {} }
     if (!onRobot(wearing)) { moveTo(wearing); return; }
   }
 
   // 4. Every write of the soul goes to the box, a moment after the last one.
   var gen = 0, timer = 0, inflight = false, lastInput = Date.now(), held = false;
-  Storage.prototype.setItem = function (key, value) {
+  Storage.prototype.setItem = function (key) {
     var out = realSet.apply(this, arguments);
     if (this === store && key === KEY && !held) {
       gen++;
-      meta.dirty = true;
-      saveMeta();
+      var now = meta();
+      now.dirty = true;
+      setMeta(now);
       clearTimeout(timer);
       timer = setTimeout(push, PUSH_AFTER_MS);
     }
@@ -301,30 +339,40 @@
   }
 
   function push() {
+    if (held) return;
     if (inflight) { timer = setTimeout(push, PUSH_AFTER_MS); return; }
-    var soul = localSoul();
-    if (!soul) return;
+    var soul = localSoul(), at = meta();
+    if (!soul || !at.persona) return;
     var mine = gen;
     inflight = true;
     fetch(PATH, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ base: meta.version, soul: soul }),
+      body: JSON.stringify({ persona: at.persona, base: at.version, soul: soul }),
     }).then(function (r) {
       return r.json().catch(function () { return null; }).then(function (j) { return { status: r.status, json: j }; });
     }).then(function (r) {
       inflight = false;
       if (r.status === 200 && r.json && typeof r.json.version === "number") {
-        meta.version = r.json.version;
-        if (mine === gen) meta.dirty = false;
-        saveMeta();
+        var now = meta();
+        now.version = r.json.version;
+        if (mine === gen) now.dirty = false;
+        setMeta(now);
         if (mine !== gen) timer = setTimeout(push, PUSH_AFTER_MS);
       } else if (r.status === 409 && r.json && r.json.error === "newer") {
         // The owner changed it from JBrain: their edit wins, and the page restarts on it.
         held = true;
-        meta.dirty = false;
-        saveMeta();
+        var after = meta();
+        after.dirty = false;
+        setMeta(after);
         reloadWhenIdle();
+      } else if (r.status === 409 && r.json && r.json.error === "other") {
+        // A persona this phone no longer holds: its soul is on the box, not this phone's to
+        // keep or to set aside as the phone's own.
+        held = true;
+        setMeta({});
+        try { store.removeItem(KEY); } catch (e) {}
+        location.reload();
       } else if (isAway(r.status, r.json)) {
         held = true;
         location.reload();
@@ -337,6 +385,7 @@
       timer = setTimeout(push, POLL_MS);
     });
   }
+  if (meta().dirty) timer = setTimeout(push, PUSH_AFTER_MS);
 
   // 5. An owner's edit, a hand-over or a deletion, noticed within a poll.
   function poll() {
@@ -346,13 +395,14 @@
       if (isAway(r.status, r.json)) { held = true; location.reload(); return; }
       if (r.status !== 200 || !r.json) return;
       if (!onRobot(r.json.wearing || "")) { held = true; location.reload(); return; }
-      if (r.json.version > meta.version && !meta.dirty && !inflight) { held = true; reloadWhenIdle(); }
+      var now = meta();
+      if (r.json.version > (now.version || 0) && !now.dirty && !inflight) { held = true; reloadWhenIdle(); }
     }).catch(function () {});
   }
   setInterval(function () { if (!document.hidden) poll(); }, POLL_MS);
   document.addEventListener("visibilitychange", function () {
     if (!document.hidden) poll();
-    else if (meta.dirty && !inflight) push();
+    else if (meta().dirty && !inflight) push();
   });
   ["pointerdown", "keydown", "touchstart"].forEach(function (type) {
     window.addEventListener(type, function () { lastInput = Date.now(); }, { capture: true, passive: true });

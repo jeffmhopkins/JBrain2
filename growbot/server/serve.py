@@ -43,6 +43,7 @@ import functools
 import hashlib
 import hmac
 import html
+import http.client
 import ipaddress
 import json
 import math
@@ -528,7 +529,8 @@ def http_call(
         return Upstream(
             exc.code, body, exc.headers.get("Content-Type", "") if exc.headers else ""
         )
-    except (OSError, ValueError):
+    except (OSError, ValueError, http.client.HTTPException):
+        # HTTPException: a truncated or garbled answer (IncompleteRead, BadStatusLine).
         return Upstream(503, b"", "")
 
 
@@ -963,8 +965,11 @@ class GrowBot:
         self._pool: Executor = ThreadPoolExecutor(API_WORKERS, "growbot-api")
         self._streams: Executor = ThreadPoolExecutor(STREAM_WORKERS, "growbot-stream")
         self._gate: Executor = ThreadPoolExecutor(GATE_WORKERS, "growbot-gate")
-        # The phones' soul sync and rider rechecks, apart from the doors and the brain calls.
+        # The phones' soul sync, and the rider checks of relay sockets, each apart from the
+        # doors and the brain calls, so a slow api queues neither tickets nor a page's pull.
         self._soul_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-soul")
+        self._rider_pool: Executor = ThreadPoolExecutor(SOUL_WORKERS, "growbot-rider")
+        self.rider_backoff = Backoff()
         self._proxy_addrs: set[str] = set()
         self._proxy_at = -math.inf
         self._models: list[dict[str, Any]] = []
@@ -1251,8 +1256,22 @@ class GrowBot:
         dest = req.header("sec-fetch-dest")
         if dest and dest != "document":
             return Response(403, b"open from the PWA", headers=[("Cache-Control", "no-store")])
-        client = await self.client_ip(req)
         if req.header("sec-fetch-site") == "cross-site":
+            # The session cookie is SameSite=Strict, so a cross-site navigation (the PWA reached
+            # by its public name) arrives without it, and the phone would lose its id. Nothing is
+            # spent here: this page's own refresh comes back same-site, with the cookie, marked
+            # `hop` so its tries still count in the cross-site bucket.
+            again = {"ticket": ticket, "hop": "1", **({"id": code} if code else {})}
+            return Response(
+                200,
+                _landing("/open?" + urllib.parse.urlencode(again)),
+                "text/html; charset=utf-8",
+                headers=[("Cache-Control", "no-store")],
+            )
+        client = await self.client_ip(req)
+        if req.arg("hop"):
+            # Only a cross-site start sends `hop`; a page that adds it to a same-site link
+            # just moves its own tries into that bucket.
             client = f"cross-site:{client}"
         if self.ticket_backoff.blocked(client):
             return Response(429, b"too many tries", headers=[("Retry-After", "300")])
@@ -1394,6 +1413,10 @@ class GrowBot:
             base = msg.get("base") if msg else None
             if msg is None or isinstance(base, bool) or not isinstance(base, int):
                 return json_response(400, {"error": "a soul and the version it came from"})
+            if msg.get("persona") != claims.persona:
+                # The page names the persona its write came from; a phone given another
+                # persona since never pushes the old one's soul into the new one.
+                return json_response(409, {"error": "other"})
             path = "/internal/growbot/soul/push"
             payload = {**who, "base": base, "soul": msg.get("soul")}
         else:
@@ -1626,20 +1649,27 @@ class GrowBot:
         slot = _Slot(self, unauth=not authed)
         ws: WebSocket | None = None
         keepalive: asyncio.Task[None] | None = None
+        watch: asyncio.Task[None] | None = None
         name = seg if agent else code
         try:
-            client = "" if authed else await self.client_ip(req)
+            client = await self.client_ip(req)
             if not authed and self.hello_backoff.blocked(client):
                 return Response(
                     429, b"too many tries", headers=[("Retry-After", "300")]
                 )
             if claims is not None:
                 # The body has one rider (plan §2c): only the phone of the persona that wears it
-                # may drive it, and a G2 phone only while no persona does.
-                may = await self._call(self.may_drive, claims, code, pool=self._gate)
+                # may drive it, and a G2 phone only while no persona does. Refusals are counted,
+                # so a session trying codes cannot keep the api busy answering.
+                if self.rider_backoff.blocked(client):
+                    return Response(
+                        429, b"too many tries", headers=[("Retry-After", "300")]
+                    )
+                may = await self._call(self.may_drive, claims, code, pool=self._rider_pool)
                 if may is None:
                     return Response(503, b"busy")
                 if not may:
+                    self.rider_backoff.fail(client)
                     return Response(403, b"not wearing this robot")
             head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
             head += "Connection: Upgrade\r\n"
@@ -1649,13 +1679,17 @@ class GrowBot:
             await writer.drain()
             ws = WebSocket(reader, writer)
             keepalive = asyncio.create_task(self._keepalive(ws))
+            if claims is not None:
+                # Both a phone's socket and its agent side channel drive the body, so both
+                # leave it when this phone stops riding.
+                watch = asyncio.create_task(self._rider_watch(ws, claims, code))
             # A channel is only made once its socket is admitted (a phone, an authed
             # side-channel socket, a verified robot), and every way out drops it again if it
             # is left empty.
             if agent:
                 await self._agent_socket(ws, name)
             elif claims is not None:
-                await self._phone(ws, self._channel(name), claims)
+                await self._phone(ws, self._channel(name))
             else:
                 await self._chip(ws, code, client, slot)
         except WsClosed:
@@ -1663,6 +1697,8 @@ class GrowBot:
         finally:
             if keepalive is not None:
                 keepalive.cancel()
+            if watch is not None:
+                watch.cancel()
             slot.release()
             if ws is not None and not ws.closed:
                 ws.close(1000)
@@ -1687,20 +1723,18 @@ class GrowBot:
             return None
         return _parse(data) if kind == 0x1 else None
 
-    async def _phone(self, ws: WebSocket, chan: Channel, claims: Claims) -> None:
+    async def _phone(self, ws: WebSocket, chan: Channel) -> None:
         if len(chan.peers) >= MAX_PEERS_PER_CHANNEL:
             ws.close(1013, "too many phones")
             return
         chan.peers.add(ws)
         ws.send_json(chan.status())
-        watch = asyncio.create_task(self._rider_watch(ws, claims, chan.name))
         try:
             while True:
                 kind, data = await ws.recv()
                 if kind == 0x1 and chan.body is not None:
                     chan.body.send_text(data.decode())
         finally:
-            watch.cancel()
             chan.peers.discard(ws)
             self._drop_empty(chan)
 
@@ -1710,7 +1744,11 @@ class GrowBot:
         on (an api blip must not stop a walking robot); only a definite no closes it."""
         while not ws.closed:
             await asyncio.sleep(RIDER_RECHECK_S)
-            if await self._call(self.may_drive, claims, code, pool=self._soul_pool) is False:
+            try:
+                may = await self._call(self.may_drive, claims, code, pool=self._rider_pool)
+            except Exception:  # noqa: BLE001 — the watch must outlive any one failed lookup
+                continue
+            if may is False:
                 ws.close(1008, "not wearing this robot")
                 return
 
@@ -1720,6 +1758,7 @@ class GrowBot:
         up = http_call(
             self.config.api_url + "/internal/growbot/body/" + urllib.parse.quote(code),
             headers=self._auth(),
+            timeout=5.0,
         )
         if up.status != 200:
             return None
