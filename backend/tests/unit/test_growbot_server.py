@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import http.client
 import importlib.util
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -329,11 +331,18 @@ def test_without_a_session_everything_is_refused(run: _Running, path: str) -> No
         assert b"Open GrowBot from JBrain" in resp.read()
 
 
+def _landing(resp: Any) -> str:
+    """Where /open's page moves the phone on to (its meta refresh), after checking it is one."""
+    assert resp.status == 200
+    m = re.search(rb"http-equiv=refresh content='0;url=([^']+)'", resp.read())
+    assert m is not None
+    return html.unescape(m.group(1).decode())
+
+
 def test_open_exchanges_a_ticket_for_a_session(run: _Running, gb: types.ModuleType) -> None:
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
-    resp.read()
-    assert resp.status == 302
-    assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
+    assert _landing(resp) == "/v3/next.html?id=gb-abc123&mode=legs"
+    assert resp.getheader("Location") is None
     (session,) = resp.headers.get_all("Set-Cookie") or []
     name_value, *attrs = [a.strip() for a in session.split(";")]
     assert set(attrs) == {"HttpOnly", "Secure", "SameSite=Strict", "Path=/", "Max-Age=2592000"}
@@ -410,8 +419,7 @@ def test_a_failed_read_keeps_the_last_key(gb: types.ModuleType, tmp_path: Path) 
 def test_the_ticket_not_the_link_names_the_robot(run: _Running) -> None:
     for query in ("ticket=good-ticket&id=gb-other1", "ticket=good-ticket"):
         resp = run.request("GET", "/open?" + query, cookie=False)
-        resp.read()
-        assert resp.getheader("Location") == "/v3/next.html?id=gb-abc123&mode=legs"
+        assert _landing(resp) == "/v3/next.html?id=gb-abc123&mode=legs"
         cookie = (resp.getheader("Set-Cookie") or "").split(";")[0]
         assert run.app.sessions.robot(cookie.partition("=")[2]) == "gb-abc123"
     odd = run.request("GET", "/open?ticket=odd-ticket", cookie=False)
@@ -596,7 +604,7 @@ def test_behind_the_proxy_each_client_backs_off_alone(
         headers={"X-Real-IP": "10.0.0.2"},
         cookie=False,
     )
-    assert other.status == 302
+    assert other.status == 200
 
 
 def test_a_failed_proxy_lookup_keeps_the_last_good_address(
@@ -883,7 +891,7 @@ def test_the_doors_are_not_queued_behind_brain_calls(run: _Running, gb: types.Mo
     try:
         start = time.monotonic()
         resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
-        assert resp.status == 302
+        assert resp.status == 200
         resp.read()
         phone = _phone(run)
         phone.message()
@@ -1696,7 +1704,7 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
     resp.read()
     same = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-site"}
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", headers=same, cookie=False)
-    assert resp.status == 302
+    assert resp.status == 200
     resp.read()
 
 
@@ -1716,16 +1724,14 @@ def test_failed_hellos_do_not_lock_out_the_owners_link(
         chip.text({"t": "hello", "id": "gb-abc123", "key": "guess"})
         assert chip.close_code() == 1008
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
-    assert resp.status == 302
+    assert resp.status == 200
     resp.read()
 
 
 def test_open_without_a_robot_opens_the_creature_unpaired(run: _Running) -> None:
     resp = run.request("GET", "/open?ticket=bare-ticket", cookie=False)
-    assert resp.status == 302
-    assert resp.getheader("Location") == "/v3/next.html?mode=legs"
     assert resp.getheader("Set-Cookie")
-    resp.read()
+    assert _landing(resp) == "/v3/next.html?mode=legs"
 
 
 def test_codes_are_held_to_the_apis_shape(gb: types.ModuleType) -> None:

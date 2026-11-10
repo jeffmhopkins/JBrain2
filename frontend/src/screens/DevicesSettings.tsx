@@ -372,7 +372,8 @@ export function DevicesSettings() {
           Install it once on a phone and the box's own address (jbrain.local and GrowBot) opens with
           no warning. On Android, Settings → search "CA certificate" → Install a certificate → CA
           certificate. On iPhone, Settings → Profile Downloaded → Install, then General → About →
-          Certificate Trust Settings.
+          Certificate Trust Settings. Newer Android also needs Chrome → Permissions → Nearby devices
+          (or Local network) → Allow, or Chrome says ERR_TOO_MANY_RETRIES.
         </p>
         {/* A same-origin link: the api refuses it opened from another site (mail, chat) as
             cross-site, so this is the dependable way to the file. */}

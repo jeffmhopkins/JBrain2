@@ -359,6 +359,8 @@ describe("GrowbotScreen setting up another phone", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Set up another phone" }));
     const one = await screen.findByRole("region", { name: "Code 1" });
     expect(within(one).getByText(/camera app/)).toBeTruthy();
+    // Android Chrome refuses the home network without this, and the box can't say so itself.
+    expect(screen.getByText(/Nearby devices/)).toBeTruthy();
     expect(screen.getByRole("region", { name: "Code 2" })).toBeTruthy();
     const tickets = () => calls.filter((c) => c.path === "/api/growbot/ticket");
     expect(tickets()[0]?.body).toEqual({ code: "gb-3fa91c" });

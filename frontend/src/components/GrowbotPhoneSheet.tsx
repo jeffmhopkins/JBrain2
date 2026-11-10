@@ -64,6 +64,11 @@ export function GrowbotPhoneSheet({ robots, onClose }: Props) {
       <p className="gb-hint">
         For the robot's phone, which isn't signed in to JBrain. It needs both codes, in order.
       </p>
+      <p className="gb-hint dim">
+        On Android, first allow Chrome to reach the home network: Settings → Apps → Chrome →
+        Permissions → Nearby devices (or Local network) → Allow. Without it Chrome says
+        ERR_TOO_MANY_RETRIES.
+      </p>
       <fieldset className="gb-choices">
         <legend>It opens as</legend>
         {live.map((r) => (

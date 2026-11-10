@@ -485,6 +485,11 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             Certificate Trust Settings. On Android, Settings → Security → Install a certificate → CA
             certificate.
           </p>
+          <p className="gb-hint dim">
+            Newer Android also asks before Chrome may reach the home network: Settings → Apps →
+            Chrome → Permissions → Nearby devices (or Local network) → Allow. Without it Chrome says
+            ERR_TOO_MANY_RETRIES.
+          </p>
           <div className="gb-sheet-foot">
             <a className="gb-btn block" href={CERT_URL} download="jbrain-box-root.crt">
               Download the box's certificate
