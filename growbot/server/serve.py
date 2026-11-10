@@ -24,22 +24,27 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import collections
 import contextlib
+import functools
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import mimetypes
 import os
 import re
 import secrets
+import socket
 import sys
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
+from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -65,6 +70,16 @@ WS_PING_EVERY_S = 20.0
 WS_DEAD_AFTER_S = 45.0
 ALIVE_EVERY_S = 30.0
 MAX_SOCKETS = 256
+MAX_CONNECTIONS = 512
+# Cookieless sockets are robots until their hello says otherwise; a few is every robot a house
+# has, and the budget is what keeps an anonymous LAN client from holding the rest.
+MAX_UNAUTH_SOCKETS = 16
+# The api, tts-stt and whisper calls run here, apart from the default pool that reads static
+# files, so a slow model or a stalled api never stops the page from loading.
+API_WORKERS = 8
+# Failed /open tickets and robot hellos per client before it waits out the window.
+BACKOFF_LIMIT = 8
+BACKOFF_WINDOW_S = 300.0
 MAX_PEERS_PER_CHANNEL = 8
 MODELS_CACHE_S = 30.0
 
@@ -73,7 +88,11 @@ CODE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 HASH_RE = re.compile(r"sha(256|384|512)-[A-Za-z0-9+/]+={0,2}")
 KOKORO_VOICE_RE = re.compile(r"kokoro-[a-z0-9_]{1,40}")
 LANG_RE = re.compile(r"[a-z]{2,3}")
+# A camera frame is inline; any other image URL would have the model's engine fetch it.
+IMAGE_URL_RE = re.compile(r"data:image/[a-z0-9.+-]{1,20};base64,[A-Za-z0-9+/=\s]*")
 TOKEN_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+LENGTH_RE = re.compile(r"[0-9]{1,10}")
+CHUNK_RE = re.compile(rb"[0-9A-Fa-f]{1,8}")
 
 # A vision-capable lineup makes visual memory work (plan §2 "Models"); the first installed one
 # of these wins, then any vision model, then anything installed.
@@ -138,6 +157,7 @@ STATUS_TEXT = {
     411: "Length Required",
     413: "Content Too Large",
     426: "Upgrade Required",
+    429: "Too Many Requests",
     431: "Request Header Fields Too Large",
     500: "Internal Server Error",
     501: "Not Implemented",
@@ -165,6 +185,8 @@ class Config:
     stt_url: str
     token_file: Path
     default_model: str = "qwen3-vl-30b"
+    # The one peer whose X-Real-IP is believed (Caddy sets it from the client it saw).
+    trusted_proxy: str = "proxy"
 
     @classmethod
     def from_env(cls) -> Config:
@@ -178,6 +200,7 @@ class Config:
                 env("GROWBOT_TOKEN_FILE", "/run/jbrain-growbot/growbot.token")
             ),
             default_model=env("GROWBOT_DEFAULT_MODEL", "qwen3-vl-30b"),
+            trusted_proxy=env("GROWBOT_TRUSTED_PROXY", "proxy"),
         )
 
 
@@ -211,6 +234,8 @@ def build_csp(site: Path) -> str:
             "font-src 'self' data:",
             "frame-ancestors 'self'",
             "base-uri 'self'",
+            "form-action 'self'",
+            "object-src 'none'",
         )
     )
 
@@ -325,6 +350,7 @@ class Request:
     version: str
     headers: list[tuple[str, str]]
     body: bytes = b""
+    peer: str = ""
 
     def header(self, name: str) -> str:
         for key, value in self.headers:
@@ -397,40 +423,47 @@ async def read_head(reader: asyncio.StreamReader) -> Request:
     )
 
 
+def body_framing(req: Request) -> int | None:
+    """The body's declared size: 0 for none, None for chunked. Raises before a byte of body
+    is read, so a refused request never costs its upload."""
+    lengths = {v for k, v in req.headers if k == "content-length"}
+    chunked = [v for k, v in req.headers if k == "transfer-encoding"]
+    if (chunked and lengths) or len(lengths) > 1:
+        raise HttpError(400)
+    if chunked:
+        if len(chunked) != 1 or chunked[0].lower() != "chunked":
+            raise HttpError(501)
+        return None
+    if not lengths:
+        return 0
+    value = next(iter(lengths))
+    if not LENGTH_RE.fullmatch(value):
+        raise HttpError(400)
+    if int(value) > MAX_BODY:
+        raise HttpError(413)
+    return int(value)
+
+
 async def read_body(
     req: Request, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
 ) -> None:
-    lengths = {v for k, v in req.headers if k == "content-length"}
-    chunked = [v for k, v in req.headers if k == "transfer-encoding"]
-    if chunked and lengths:
-        raise HttpError(400)
-    if len(lengths) > 1:
-        raise HttpError(400)
-    if not chunked and not lengths:
+    size = body_framing(req)
+    if size == 0:
         return
     if req.header("expect").lower() == "100-continue":
         writer.write(b"HTTP/1.1 100 Continue\r\n\r\n")
         await writer.drain()
-    if lengths:
-        value = next(iter(lengths))
-        if not value.isdigit():
-            raise HttpError(400)
-        size = int(value)
-        if size > MAX_BODY:
-            raise HttpError(413)
+    if size is not None:
         req.body = await reader.readexactly(size)
         return
-    if len(chunked) != 1 or chunked[0].lower() != "chunked":
-        raise HttpError(501)
     body = bytearray()
     while True:
         line = await reader.readuntil(b"\r\n")
         size_text = line[:-2].split(b";", 1)[0].strip()
-        try:
-            size = int(size_text, 16)
-        except ValueError:
-            raise HttpError(400) from None
-        if size < 0 or len(body) + size > MAX_BODY:
+        if not CHUNK_RE.fullmatch(size_text):
+            raise HttpError(400)
+        size = int(size_text, 16)
+        if len(body) + size > MAX_BODY:
             raise HttpError(413)
         if size == 0:
             break
@@ -496,6 +529,7 @@ class WebSocket:
         self.closed = False
         self._close_sent = False
         self.last_rx = time.monotonic()
+        self.last_data = self.last_rx
 
     def _write(self, data: bytes) -> None:
         if self.closed:
@@ -573,10 +607,15 @@ class WebSocket:
                         code = int.from_bytes(payload[:2], "big")
                         if (
                             code < 1000
-                            or code in (1004, 1005, 1006, 1015)
-                            or 1012 < code < 3000
+                            or code in (1004, 1005, 1006)
+                            or 1014 < code < 3000
+                            or code > 4999
                         ):
                             raise self._fail(1002)
+                        try:
+                            payload[2:].decode("utf-8")
+                        except UnicodeDecodeError:
+                            raise self._fail(1007) from None
                     self.close(code)
                     raise WsClosed(code)
                 if opcode == 0x9:
@@ -603,6 +642,7 @@ class WebSocket:
                             data.decode("utf-8")
                         except UnicodeDecodeError:
                             raise self._fail(1007) from None
+                    self.last_data = time.monotonic()
                     return kind, data
         except (asyncio.IncompleteReadError, ConnectionError, OSError):
             self.abort()
@@ -643,6 +683,35 @@ def _without_key(hello: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in hello.items() if k != "key"}
 
 
+class Backoff:
+    """Failures per client over a sliding window; at the limit the client waits it out."""
+
+    MAX_KEYS = 4096
+
+    def __init__(self) -> None:
+        self._fails: dict[str, collections.deque[float]] = {}
+
+    def _recent(self, key: str, now: float) -> collections.deque[float]:
+        fails = self._fails.get(key)
+        if fails is None:
+            if len(self._fails) >= self.MAX_KEYS:
+                self._fails.pop(next(iter(self._fails)))
+            fails = self._fails[key] = collections.deque()
+        while fails and now - fails[0] > BACKOFF_WINDOW_S:
+            fails.popleft()
+        return fails
+
+    def blocked(self, key: str, now: float | None = None) -> bool:
+        return (
+            len(self._recent(key, time.monotonic() if now is None else now))
+            >= BACKOFF_LIMIT
+        )
+
+    def fail(self, key: str, now: float | None = None) -> None:
+        now = time.monotonic() if now is None else now
+        self._recent(key, now).append(now)
+
+
 # ── the app ───────────────────────────────────────────────────────────────────
 
 
@@ -653,11 +722,41 @@ class GrowBot:
         self.csp = build_csp(config.site)
         self.channels: dict[str, Channel] = {}
         self.sockets = 0
+        self.unauth_sockets = 0
+        self.connections = 0
+        self.backoff = Backoff()
+        self._pool: Executor = ThreadPoolExecutor(API_WORKERS, "growbot-api")
+        self._proxy_addrs: set[str] = set()
+        self._proxy_at = -math.inf
         self._models: list[dict[str, Any]] = []
         self._models_at = -math.inf
         self.did = hashlib.sha256(b"growbot-on-the-box").hexdigest()[:16]
 
     # -- outbound ---------------------------------------------------------------
+
+    async def _call(self, fn: Callable[..., Any], *args: Any) -> Any:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._pool, functools.partial(fn, *args))
+
+    async def client_ip(self, req: Request) -> str:
+        """The client a request is for: Caddy's X-Real-IP when it came from Caddy, else the
+        peer itself (anything else on the network could otherwise name any address)."""
+        if time.monotonic() - self._proxy_at > 60.0:
+            self._proxy_at = time.monotonic()
+            try:
+                infos = await asyncio.to_thread(
+                    socket.getaddrinfo, self.config.trusted_proxy, None
+                )
+                self._proxy_addrs = {str(i[4][0]) for i in infos}
+            except OSError:
+                self._proxy_addrs = set()
+        if req.peer in self._proxy_addrs:
+            real = req.header("x-real-ip")
+            try:
+                return str(ipaddress.ip_address(real))
+            except ValueError:
+                pass
+        return req.peer
 
     def _auth(self) -> dict[str, str]:
         try:
@@ -774,10 +873,14 @@ class GrowBot:
             or not CODE_RE.fullmatch(code)
         ):
             return Response(400, b"bad link", headers=[("Cache-Control", "no-store")])
-        up = await asyncio.to_thread(
+        client = await self.client_ip(req)
+        if self.backoff.blocked(client):
+            return Response(429, b"too many tries", headers=[("Retry-After", "300")])
+        up = await self._call(
             self._api_post, "/internal/growbot/ticket/redeem", {"ticket": ticket}
         )
         if not self._ok(up):
+            self.backoff.fail(client)
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         cookie = (
             f"{SESSION_COOKIE}={self.sessions.mint()}; HttpOnly; Secure; SameSite=Strict; "
@@ -834,6 +937,11 @@ class GrowBot:
 
     async def api(self, req: Request) -> Response:
         name = req.path[len("/api/") :]
+        if name in ("journal", "episodes") and req.method == "DELETE":
+            # The app's erase flow reads a JSON answer; there is nothing here to erase.
+            return json_response(200, {"ok": True})
+        if name == "gallery" and req.arg("download"):
+            return json_response(404, {"error": "no gallery on the box"})
         if name in ("journal", "episodes", "gallery", "ev", "hit", "feedback"):
             # Upstream's server-side telemetry and cloud stores: answered, kept nowhere.
             return Response(204)
@@ -877,7 +985,7 @@ class GrowBot:
         }
 
     async def config_route(self) -> Response:
-        models = await asyncio.to_thread(self.models)
+        models = await self._call(self.models)
         pick = self.default_model(models)
         return json_response(
             200,
@@ -892,7 +1000,7 @@ class GrowBot:
         )
 
     async def models_route(self) -> Response:
-        models = await asyncio.to_thread(self.models)
+        models = await self._call(self.models)
         rows = [
             {
                 "id": m["id"],
@@ -918,6 +1026,7 @@ class GrowBot:
         if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
             return None
         out = {k: body[k] for k in LLM_FIELDS if k in body}
+        out["messages"] = [_inline_images_only(m) for m in body["messages"]]
         # Upstream falls back to cloud slugs (its default, the free-lane pin, a ?model= trial);
         # on the box anything not installed is the box's default.
         names = {m["id"] for m in models}
@@ -931,13 +1040,15 @@ class GrowBot:
         return json.dumps(out).encode()
 
     async def llm(self, req: Request, *, stream: bool) -> Response:
-        models = await asyncio.to_thread(self.models)
+        models = await self._call(self.models)
         body = self.llm_body(req.body, stream, models)
         if body is None:
             return json_response(400, {"error": {"message": "bad chat body"}})
         url = self.config.api_url + "/internal/growbot/llm/v1/chat/completions"
         headers = {"Content-Type": "application/json", **self._auth()}
-        return await stream_upstream(url, body, headers, sse=stream)
+        return await stream_upstream(
+            url, body, headers, sse=stream, executor=self._pool
+        )
 
     async def stt(self, req: Request) -> Response:
         parts = parse_multipart(req.body, req.header("content-type"))
@@ -960,7 +1071,7 @@ class GrowBot:
             ):
                 fields["temperature"] = value
         body, ctype = build_multipart(fields, audio)
-        up = await asyncio.to_thread(
+        up = await self._call(
             http_call,
             self.config.stt_url + "/audio/transcriptions",
             body,
@@ -997,7 +1108,7 @@ class GrowBot:
             ):
                 params[key] = f"{max(lo, min(hi, float(value))):.3f}"
         url = self.config.tts_url + "/tts?" + urllib.parse.urlencode(params)
-        up = await asyncio.to_thread(http_call, url, None, None, "GET", 60.0)
+        up = await self._call(http_call, url, None, None, "GET", 60.0)
         if up.status != 200 or not up.body:
             # Never 401/402: upstream latches the voice dead for the session on those.
             return json_response(503, {"error": "tts unavailable"})
@@ -1048,8 +1159,13 @@ class GrowBot:
                 raise ValueError
         except ValueError:
             return Response(400, b"bad websocket key")
-        if self.sockets >= MAX_SOCKETS:
+        if self.sockets >= MAX_SOCKETS or (
+            not authed and self.unauth_sockets >= MAX_UNAUTH_SOCKETS
+        ):
             return Response(503, b"busy")
+        client = "" if authed else await self.client_ip(req)
+        if not authed and self.backoff.blocked(client):
+            return Response(429, b"too many tries", headers=[("Retry-After", "300")])
         head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
         head += f"Sec-WebSocket-Accept: {ws_accept(key)}\r\n"
         head += "".join(f"{k}: {v}\r\n" for k, v in self._base_headers()) + "\r\n"
@@ -1058,13 +1174,16 @@ class GrowBot:
         ws = WebSocket(reader, writer)
         self.sockets += 1
         keepalive = asyncio.create_task(self._keepalive(ws))
+        # A channel is only made once its socket is admitted (a phone, an authed side-channel
+        # socket, a verified robot), and every way out drops it again if it is left empty.
+        name = seg if agent else code
         try:
             if agent:
-                await self._agent_socket(ws, self._channel(seg))
+                await self._agent_socket(ws, name)
             elif authed:
-                await self._phone(ws, self._channel(code))
+                await self._phone(ws, self._channel(name))
             else:
-                await self._chip(ws, self._channel(code), code)
+                await self._chip(ws, code, client)
         except WsClosed:
             pass
         finally:
@@ -1072,6 +1191,9 @@ class GrowBot:
             self.sockets -= 1
             if not ws.closed:
                 ws.close(1000)
+            chan = self.channels.get(name)
+            if chan is not None:
+                self._drop_empty(chan)
         return None
 
     async def _keepalive(self, ws: WebSocket) -> None:
@@ -1105,26 +1227,36 @@ class GrowBot:
             chan.peers.discard(ws)
             self._drop_empty(chan)
 
-    async def _chip(self, ws: WebSocket, chan: Channel, code: str) -> None:
-        hello = await self._first(ws)
-        key = hello.get("key") if hello else None
-        if (
-            not hello
-            or hello.get("t") != "hello"
-            or hello.get("id") != code
-            or not isinstance(key, str)
-            or not 0 < len(key) <= 256
-        ):
-            ws.close(1008, "hello with a key")
-            return
-        up = await asyncio.to_thread(
-            self._api_post, "/internal/growbot/robot/verify", {"code": code, "key": key}
-        )
-        if not self._ok(up):
-            ws.close(1008, "unknown robot")
-            return
+    async def _chip(self, ws: WebSocket, code: str, client: str) -> None:
+        self.unauth_sockets += 1
+        try:
+            hello = await self._first(ws)
+            key = hello.get("key") if hello else None
+            if (
+                not hello
+                or hello.get("t") != "hello"
+                or hello.get("id") != code
+                or not isinstance(key, str)
+                or not 0 < len(key) <= 256
+            ):
+                self.backoff.fail(client)
+                ws.close(1008, "hello with a key")
+                return
+            up = await self._call(
+                self._api_post,
+                "/internal/growbot/robot/verify",
+                {"code": code, "key": key},
+            )
+            if not self._ok(up):
+                self.backoff.fail(client)
+                ws.close(1008, "unknown robot")
+                return
+        finally:
+            # A verified robot leaves the anonymous budget; it is bounded by MAX_SOCKETS.
+            self.unauth_sockets -= 1
         caps = hello.get("caps")
         hb = isinstance(caps, list) and "hb" in caps
+        chan = self._channel(code)
         await self._attach_body(ws, chan, hb, chip=True, hello=_without_key(hello))
 
     async def _attach_body(
@@ -1169,18 +1301,19 @@ class GrowBot:
         while chan.body is ws and not ws.closed:
             await asyncio.sleep(ALIVE_EVERY_S)
             if chan.body is ws:
-                quiet = int((time.monotonic() - ws.last_rx) * 1000)
+                quiet = int((time.monotonic() - ws.last_data) * 1000)
                 chan.to_peers(
                     json.dumps({"t": "alive", "quiet_ms": quiet}, separators=(",", ":"))
                 )
 
-    async def _agent_socket(self, ws: WebSocket, chan: Channel) -> None:
+    async def _agent_socket(self, ws: WebSocket, name: str) -> None:
         """The side channel: the creature page says `hello` and is its body; agents attach as
         peers. Both are behind the session cookie; frames are bridged both ways."""
         first = await self._first(ws)
         if first is None:
             ws.close(1008, "say hello or attach")
             return
+        chan = self._channel(name)
         if first.get("t") == "hello":
             await self._attach_body(ws, chan, False, chip=False)
             return
@@ -1255,10 +1388,17 @@ class GrowBot:
     async def connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        self.connections += 1
         try:
+            if self.connections > MAX_CONNECTIONS:
+                await self.write(writer, None, Response(503, b"busy"), False)
+                return
+            peername = writer.get_extra_info("peername")
+            peer = str(peername[0]) if isinstance(peername, tuple) else ""
             while True:
                 try:
                     req = await asyncio.wait_for(read_head(reader), IDLE_TIMEOUT_S)
+                    req.peer = peer
                     keep = req.version == "HTTP/1.1" and "close" not in req.tokens(
                         "connection"
                     )
@@ -1266,6 +1406,16 @@ class GrowBot:
                         refused = await self.relay(req, reader, writer)
                         if refused is not None:
                             await self.write(writer, req, refused, False)
+                        return
+                    # Without a session only /open, which has no body, is answered; nothing
+                    # else costs this process an upload.
+                    if not self._authed(req) and (
+                        req.path != "/open" or body_framing(req) != 0
+                    ):
+                        page = Response(
+                            401, UNAUTHORISED_PAGE, "text/html; charset=utf-8"
+                        )
+                        await self.write(writer, req, page, False)
                         return
                     await asyncio.wait_for(
                         read_body(req, reader, writer), BODY_TIMEOUT_S
@@ -1294,6 +1444,7 @@ class GrowBot:
         except (ConnectionError, OSError):
             return
         finally:
+            self.connections -= 1
             with contextlib.suppress(OSError, RuntimeError):
                 writer.close()
 
@@ -1313,7 +1464,12 @@ async def _file_chunks(
 
 
 async def stream_upstream(
-    url: str, body: bytes, headers: dict[str, str], *, sse: bool
+    url: str,
+    body: bytes,
+    headers: dict[str, str],
+    *,
+    sse: bool,
+    executor: Executor | None = None,
 ) -> Response:
     """POST to the api and answer with what it says. With `sse`, a 200 event stream is relayed
     as it arrives (the creature speaks each sentence the moment it lands); anything else is
@@ -1366,7 +1522,10 @@ async def stream_upstream(
                 pass
         put(("end", None))
 
-    threading.Thread(target=work, daemon=True).start()
+    if executor is None:
+        threading.Thread(target=work, daemon=True).start()
+    else:
+        executor.submit(work)
     _, (status, ctype) = await queue.get()
     streaming = sse and status == 200 and ctype.startswith("text/event-stream")
 
@@ -1398,6 +1557,22 @@ async def stream_upstream(
             503, {"error": {"message": "the box's brain is unreachable"}}
         )
     return Response(status, data, ctype or "application/json")
+
+
+def _inline_images_only(message: object) -> object:
+    """Drop every image part whose URL is not an inline data: image, so a message can never
+    have the engine fetch a URL (the box's own services included)."""
+    if not isinstance(message, dict) or not isinstance(message.get("content"), list):
+        return message
+    parts = []
+    for part in message["content"]:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            ref = part.get("image_url")
+            url = ref.get("url") if isinstance(ref, dict) else ref
+            if not isinstance(url, str) or not IMAGE_URL_RE.fullmatch(url):
+                continue
+        parts.append(part)
+    return {**message, "content": parts}
 
 
 # ── multipart (the speech clip) ───────────────────────────────────────────────

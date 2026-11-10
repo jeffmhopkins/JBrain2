@@ -216,6 +216,7 @@ def run(gb: types.ModuleType, site: Path, fake: str, tmp_path: Path) -> Iterator
         tts_url=fake,
         stt_url=fake + "/v1",
         token_file=token,
+        trusted_proxy="127.0.0.2",
     )
     running = _Running(gb.GrowBot(config))
     yield running
@@ -245,6 +246,7 @@ def test_the_csp_takes_the_sites_hashes_and_never_unsafe_inline(
     assert script == f"script-src 'self' 'wasm-unsafe-eval' '{_HASH}' 'unsafe-hashes'"
     assert "connect-src 'self' blob:" in csp and "default-src 'self'" in csp
     assert "font-src 'self' data:" in csp
+    assert "form-action 'self'" in csp and "object-src 'none'" in csp
     assert "style-src 'self' 'unsafe-inline'" in csp
     (site / "csp.json").write_text(
         json.dumps({"script_hashes": ["'unsafe-inline'", "sha256-ok="], "unsafe_hashes": "yes"})
@@ -333,6 +335,65 @@ def test_open_with_the_api_down_is_refused(run: _Running) -> None:
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
     resp.read()
     assert resp.status == 401
+
+
+def test_failed_tickets_back_off_per_client(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
+    for _ in range(2):
+        resp = run.request("GET", "/open?ticket=bad&id=gb-abc123", cookie=False)
+        assert resp.status == 401
+        resp.read()
+    resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert resp.status == 429 and resp.getheader("Set-Cookie") is None
+    resp.read()
+    # X-Real-IP names the client only when the peer is the proxy: here it is not, so a forged
+    # header does not dodge the wait.
+    forged = {"X-Real-IP": "10.9.9.9"}
+    assert (
+        run.request(
+            "GET", "/open?ticket=good-ticket&id=gb-abc123", headers=forged, cookie=False
+        ).status
+        == 429
+    )
+
+
+def test_behind_the_proxy_each_client_backs_off_alone(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
+    run.app.config.trusted_proxy = "127.0.0.1"
+    for _ in range(2):
+        resp = run.request(
+            "GET", "/open?ticket=bad&id=gb-abc123", headers={"X-Real-IP": "10.0.0.1"}, cookie=False
+        )
+        resp.read()
+    blocked = run.request(
+        "GET",
+        "/open?ticket=good-ticket&id=gb-abc123",
+        headers={"X-Real-IP": "10.0.0.1"},
+        cookie=False,
+    )
+    assert blocked.status == 429
+    blocked.read()
+    other = run.request(
+        "GET",
+        "/open?ticket=good-ticket&id=gb-abc123",
+        headers={"X-Real-IP": "10.0.0.2"},
+        cookie=False,
+    )
+    assert other.status == 302
+
+
+def test_backoff_window(gb: types.ModuleType) -> None:
+    backoff = gb.Backoff()
+    for t in range(gb.BACKOFF_LIMIT):
+        assert not backoff.blocked("a", now=float(t))
+        backoff.fail("a", now=float(t))
+    assert backoff.blocked("a", now=10.0)
+    assert not backoff.blocked("b", now=10.0)
+    assert not backoff.blocked("a", now=gb.BACKOFF_LIMIT + gb.BACKOFF_WINDOW_S)
 
 
 # --- static -----------------------------------------------------------------------------
@@ -444,6 +505,25 @@ def test_telemetry_routes_answer_empty(run: _Running, name: str) -> None:
     assert run.request("GET", f"/api/{name}?type=policy").status == 204
 
 
+@pytest.mark.parametrize("name", ["journal", "episodes"])
+def test_erasing_a_cloud_store_answers_ok(run: _Running, name: str) -> None:
+    # The app's erase flow parses the answer as JSON; there is nothing here to erase.
+    resp = run.request("DELETE", f"/api/{name}?sid=abc", headers={"Origin": run.origin})
+    assert resp.status == 200 and json.loads(resp.read()) == {"ok": True}
+
+
+def test_a_gallery_download_is_not_found(run: _Running) -> None:
+    resp = run.request("GET", "/api/gallery?type=soul&id=x&download=1")
+    assert resp.status == 404
+    resp.read()
+
+
+def test_an_authed_post_without_an_origin_is_allowed(run: _Running) -> None:
+    # Deliberate: a same-origin fetch may omit Origin, and a cross-origin one never can, so
+    # only a present, foreign Origin is refused.
+    assert run.request("POST", "/api/ev", b"{}").status == 204
+
+
 @pytest.mark.parametrize("name", ["redeem", "transfer"])
 def test_credit_routes_are_not_on_the_box(run: _Running, name: str) -> None:
     resp = run.request("POST", f"/api/{name}", b"{}")
@@ -522,6 +602,31 @@ def test_llm_errors_pass_through_and_a_refused_token_is_not_a_401(run: _Running)
     resp = run.request("POST", "/api/llm?target=openrouter", _chat("qwen3-vl-30b"))
     assert resp.status == 503
     resp.read()
+
+
+def test_llm_passes_only_inline_images(run: _Running) -> None:
+    frame = "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+    content = [
+        {"type": "text", "text": "what is this"},
+        {"type": "image_url", "image_url": {"url": frame}},
+        {"type": "image_url", "image_url": {"url": "http://api:8000/internal/x"}},
+        {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+        {"type": "image_url", "image_url": "file:///etc/passwd"},
+        {"type": "image_url", "image_url": {"url": "data:text/html;base64,PGI+"}},
+        {"type": "image_url", "image_url": {"url": frame + "\nhttp://x"}},
+        {"type": "image_url"},
+    ]
+    body = json.dumps(
+        {"model": "qwen3-vl-30b", "messages": [{"role": "user", "content": content}, "odd"]}
+    ).encode()
+    assert run.request("POST", "/api/llm?target=openrouter", body).status == 200
+    call = [s for s in _Fake.seen if s["path"].endswith("/chat/completions")][-1]
+    sent = json.loads(call["body"])["messages"]
+    assert sent[0]["content"] == [
+        {"type": "text", "text": "what is this"},
+        {"type": "image_url", "image_url": {"url": frame}},
+    ]
+    assert sent[1] == "odd"
 
 
 def test_llm_refuses_a_body_that_is_not_a_chat(run: _Running) -> None:
@@ -695,15 +800,79 @@ def test_a_chunked_request_body_is_read(run: _Running) -> None:
         (b"GET / HTTP/2.0\r\n\r\n", 400),
         (b"GET http://evil/ HTTP/1.1\r\n\r\n", 400),
         (b"GET / HTTP/1.1\r\nX: " + b"a" * 20000 + b"\r\n\r\n", 431),
-        (b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999999\r\n\r\n", 413),
+        (b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 9999999999\r\n\r\n", 413),
+        (b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 99999999999\r\n\r\n", 400),
         (b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: -1\r\n\r\n", 400),
+        (b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: +5\r\n\r\n", 400),
+        (
+            b"POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length:  5 \r\n\r\nabcde",
+            405,
+        ),
         (b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n", 400),
+        (b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n0x5\r\n", 400),
+        (b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n-5\r\n", 400),
+        (
+            b"POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n123456789\r\n",
+            400,
+        ),
     ],
 )
 def test_malformed_requests_are_refused(run: _Running, request_bytes: bytes, status: int) -> None:
-    out = _raw(run, request_bytes)
+    authed = request_bytes.replace(
+        b"Host: x\r\n", b"Host: x\r\nCookie: " + run.cookie.encode() + b"\r\n", 1
+    )
+    out = _raw(run, authed)
     assert out.startswith(f"HTTP/1.1 {status}".encode()), out[:80]
     assert b"Content-Security-Policy" in out
+
+
+def test_an_oversized_body_is_refused_before_100_continue(run: _Running) -> None:
+    out = _raw(
+        run,
+        f"POST /api/ev HTTP/1.1\r\nHost: x\r\nCookie: {run.cookie}\r\n"
+        "Expect: 100-continue\r\nContent-Length: 999999999\r\n\r\n".encode(),
+    )
+    assert out.startswith(b"HTTP/1.1 413"), out[:80]
+    assert b"100 Continue" not in out
+
+
+@pytest.mark.parametrize(
+    "head",
+    [
+        "POST /api/llm?target=openrouter HTTP/1.1\r\nHost: x\r\nContent-Length: 1000000\r\n",
+        "POST /api/ev HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n",
+        "POST /api/ev HTTP/1.1\r\nHost: x\r\nCookie: gb_session=1.2.3\r\nContent-Length: 9\r\n",
+        "GET /open?ticket=good-ticket&id=gb-abc123 HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n",
+    ],
+)
+def test_without_a_session_no_body_is_read(run: _Running, head: str) -> None:
+    # Only the head is sent: the answer must come without waiting for (or reading) the body.
+    raw = socket.create_connection(("127.0.0.1", run.port), timeout=3)
+    with raw:
+        raw.sendall((head + "\r\n").encode())
+        out = b""
+        while chunk := raw.recv(65536):
+            out += chunk
+    assert out.startswith(b"HTTP/1.1 401"), out[:80]
+    assert b"Connection: close" in out
+    assert not any(c["path"].startswith("/internal/growbot/ticket") for c in _Fake.seen)
+
+
+def test_the_connection_cap(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "MAX_CONNECTIONS", 1)
+    held = socket.create_connection(("127.0.0.1", run.port), timeout=3)
+    try:
+        deadline = time.monotonic() + 3
+        while run.app.connections < 1:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        extra = socket.create_connection(("127.0.0.1", run.port), timeout=3)
+        with extra:
+            assert extra.recv(64).startswith(b"HTTP/1.1 503")
+    finally:
+        held.close()
 
 
 def test_keep_alive_serves_several_requests_on_one_connection(run: _Running) -> None:
@@ -913,6 +1082,101 @@ def test_a_chip_without_a_good_key_is_dropped(run: _Running, hello: dict[str, An
     phone.shut()
 
 
+def test_rejected_and_departed_sockets_leave_no_channel(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "FIRST_FRAME_TIMEOUT_S", 0.3)
+    for code in ("gb-random1", "gb-random2"):
+        chip = _Ws(run, f"/d/{code}", cookie=False)
+        chip.text({"t": "hello", "id": code, "key": "wrong"})
+        assert chip.close_code() == 1008
+    silent = _Ws(run, "/d/gb-random3", cookie=False)
+    assert silent.close_code() == 1008
+    agent = _phone(run, "/d/gb-random4-agent")
+    agent.send(0x2, b"x")
+    assert agent.close_code() == 1008
+    phone = _phone(run, "/d/gb-random5")
+    phone.message()
+    phone.send(0x8, b"\x03\xe8")
+    assert phone.close_code() == 1000
+    chip = _chip(run)
+    chip.shut()
+    deadline = time.monotonic() + 3
+    while run.app.channels or run.app.unauth_sockets or run.app.sockets:
+        assert time.monotonic() < deadline, (run.app.channels, run.app.unauth_sockets)
+        time.sleep(0.02)
+
+
+def test_cookieless_sockets_have_their_own_small_budget(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "MAX_UNAUTH_SOCKETS", 2)
+    pending = [_Ws(run, "/d/gb-abc123", cookie=False) for _ in range(2)]
+    assert all(p.status == 101 for p in pending)
+    assert _Ws(run, "/d/gb-abc123", cookie=False).status == 503
+    # Phones are not counted against it.
+    phone = _phone(run)
+    phone.message()
+    # A robot that proves itself leaves the anonymous budget.
+    pending[0].text({"t": "hello", "id": "gb-abc123", "key": "right-key"})
+    assert phone.message() == {"t": "status", "awake": 1}
+    assert _Ws(run, "/d/gb-abc123", cookie=False).status == 101
+    for p in pending:
+        p.shut()
+    phone.shut()
+
+
+def test_failed_hellos_back_off(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
+    for _ in range(2):
+        chip = _Ws(run, "/d/gb-abc123", cookie=False)
+        chip.text({"t": "hello", "id": "gb-abc123", "key": "guess"})
+        assert chip.close_code() == 1008
+    verifies = len([s for s in _Fake.seen if s["path"].endswith("/robot/verify")])
+    assert _Ws(run, "/d/gb-abc123", cookie=False).status == 429
+    assert len([s for s in _Fake.seen if s["path"].endswith("/robot/verify")]) == verifies
+    # A phone with a session is not the guesser.
+    assert _phone(run).status == 101
+
+
+def test_an_authed_socket_without_an_origin_is_refused(run: _Running) -> None:
+    raw = socket.create_connection(("127.0.0.1", run.port), timeout=3)
+    key = base64.b64encode(b"k" * 16).decode()
+    raw.sendall(
+        f"GET /d/gb-abc123 HTTP/1.1\r\nHost: {run.host}\r\nCookie: {run.cookie}\r\n"
+        f"Upgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+        "Sec-WebSocket-Version: 13\r\n\r\n".encode()
+    )
+    assert raw.recv(64).startswith(b"HTTP/1.1 403")
+    raw.close()
+
+
+def test_quiet_ms_counts_the_chips_frames_not_its_pongs(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "ALIVE_EVERY_S", 0.1)
+    phone = _phone(run)
+    phone.message()
+    chip = _chip(run)
+    deadline = time.monotonic() + 3
+    while True:
+        chip.send(0xA, b"")  # the link is alive, but the chip says nothing
+        msg = phone.message()
+        if msg.get("t") == "alive" and msg["quiet_ms"] >= 400:
+            break
+        assert time.monotonic() < deadline, msg
+        time.sleep(0.05)
+    chip.send(0x1, b'{"t":"hb"}')
+    assert chip.message() == {"t": "hb_ack"}
+    while (msg := phone.message()).get("t") != "alive":
+        pass
+    assert msg["quiet_ms"] < 400
+    chip.shut()
+    phone.shut()
+
+
 def test_a_silent_chip_is_dropped(
     run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1025,6 +1289,12 @@ def test_fragmented_messages_and_control_frames_between_them(run: _Running) -> N
         ([(0x8, b"\x03", True, True)], 1002),  # one-byte close payload
         ([(0x8, (999).to_bytes(2, "big"), True, True)], 1002),  # invalid close code
         ([(0x8, (1001).to_bytes(2, "big"), True, True)], 1001),  # echoed close
+        ([(0x8, (1012).to_bytes(2, "big"), True, True)], 1012),
+        ([(0x8, (1014).to_bytes(2, "big"), True, True)], 1014),
+        ([(0x8, (4000).to_bytes(2, "big") + b"bye", True, True)], 4000),
+        ([(0x8, (1015).to_bytes(2, "big"), True, True)], 1002),
+        ([(0x8, (5000).to_bytes(2, "big"), True, True)], 1002),
+        ([(0x8, (1000).to_bytes(2, "big") + b"\xff", True, True)], 1007),  # reason not UTF-8
         ([(0x8, b"", True, True)], 1000),
     ],
 )

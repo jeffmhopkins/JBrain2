@@ -37,6 +37,7 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
 | `GROWBOT_STT_URL` | `http://tts-stt:8080/v1` | whisper `/audio/transcriptions`. |
 | `GROWBOT_TOKEN_FILE` | `/run/jbrain-growbot/growbot.token` | Bearer for the api's `/internal/growbot/*`; re-read per call. |
 | `GROWBOT_DEFAULT_MODEL` | `qwen3-vl-30b` | Lineup fallback while the api lists no models. |
+| `GROWBOT_TRUSTED_PROXY` | `proxy` | The one peer whose `X-Real-IP` is believed (Caddy's compose name, re-resolved every minute). |
 
 ## Security
 
@@ -44,25 +45,37 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
   the api. `GET /open?ticket=…&id=<code>` redeems it and sets `gb_session` (HttpOnly, Secure,
   SameSite=Strict, 12 h), then redirects to the creature. The cookie is an HMAC under a key made
   at process start: nothing is stored, and a restart signs every phone out. Every other route
-  answers 401 without it. Requests that act (`POST`, the phone side of the relay) must also come
-  from this origin, since the PWA on `:443` is the same *site* and SameSite alone would let its
-  requests carry the cookie.
+  answers 401 without it, decided from the request head: without a session nothing but a
+  body-less `/open` is read, and the 401 closes the connection, so an anonymous client never
+  costs the process an upload. Requests that act must also come from this origin, since the PWA
+  on `:443` is the same *site* and SameSite alone would let its requests carry the cookie: a
+  non-GET `/api` call with a foreign `Origin` is 403 (one with no `Origin` is allowed, as a
+  same-origin fetch may omit it and a cross-origin one cannot), and the phone side of the relay
+  must send this origin's `Origin` or is 403.
 - **The owner's session never arrives.** Browsers send cookies regardless of port, so the PWA's
   `__Host-jbrain_session` would reach `:8444`. Caddy rebuilds the `Cookie` header to hold
   `gb_session` alone, or drops it, and never routes `/internal*`.
 - **No egress.** Every response carries a CSP of `'self'` for every fetch directive (`blob:` and
   `data:` where the app needs them, `'wasm-unsafe-eval'` for ONNX Runtime and MediaPipe, and
-  the inline-script hashes from `site/csp.json`, never `'unsafe-inline'` for scripts), plus
-  `nosniff`, `no-referrer` and a Permissions-Policy granting camera and microphone to this
-  origin. The server calls only the three URLs above, with environment proxies and redirects
-  disabled.
+  the inline-script hashes from `site/csp.json`, never `'unsafe-inline'` for scripts), with
+  `frame-ancestors 'self'`, `base-uri 'self'`, `form-action 'self'` and `object-src 'none'`,
+  plus `nosniff`, `no-referrer` and a Permissions-Policy granting camera, microphone and the
+  motion sensors to this origin. The server calls only the three URLs above, with environment
+  proxies and redirects disabled. A chat body keeps only inline `data:image/…;base64,` images,
+  so no message can have the model's engine fetch a URL.
 - **The robot.** The relay's chip side has no browser and no cookie: its first frame must be a
   `hello` whose `key` the api verifies for that pairing code, or the socket is closed (1008). The
   key is stripped from the hello before phones see it and is never logged.
-- **Limits.** 16 KiB of request head, 16 MiB of body, 256 KiB per WebSocket message, 256
-  sockets, 8 phones (or agents) per code. Static paths are percent-decoded once; dot segments,
-  dotfiles, backslashes, NULs and anything resolving outside the root are 404, and there is no
-  directory listing.
+- **Limits.** 16 KiB of request head, 16 MiB of body (`Content-Length` up to 10 digits, chunk
+  sizes up to 8 hex digits, checked before any `100 Continue`), 512 connections, 256 KiB per
+  WebSocket message, 256 sockets, 8 phones (or agents) per code. Cookieless sockets (robots
+  until their hello is verified) have their own budget of 16, and a verified robot leaves it.
+  Failed `/open` tickets and failed robot hellos are counted per client (Caddy's `X-Real-IP`,
+  believed only from the proxy): 8 in 5 minutes and that client gets 429 until the window
+  passes. The api, Kokoro and whisper calls run on their own pool of 8 threads, so a slow model
+  never stalls static serving. A pairing code's channel exists only while an admitted socket
+  is on it. Static paths are percent-decoded once; dot segments, dotfiles, backslashes, NULs
+  and anything resolving outside the root are 404, and there is no directory listing.
 
 ## The `/api` shim
 
@@ -77,7 +90,9 @@ What the upstream app calls, and what answers on the box:
 | `/api/fish-tts` | Kokoro `GET /tts` with the text, a `kokoro-*` voice (else Kokoro's default), speed and pitch; WAV back. 503 when down, never 401/402, which upstream latches as a dead voice. |
 | `/api/device` | One owned device, nothing metered. |
 | `/api/redeem`, `/api/transfer` | 410: no credits on the box. |
-| `/api/journal`, `episodes`, `gallery`, `ev`, `hit`, `feedback` | 204, stored nowhere. |
+| `DELETE /api/journal`, `DELETE /api/episodes` | 200 `{"ok":true}` (the app's erase flow reads JSON); nothing is stored to erase. |
+| `/api/gallery?…&download=1` | 404: no soul or policy gallery on the box. |
+| `/api/journal`, `episodes`, `gallery`, `ev`, `hit`, `feedback` | otherwise 204, stored nowhere. |
 
 ## The relay
 
@@ -86,7 +101,7 @@ What the upstream app calls, and what answers on the box:
 without must be the chip (above). Phone frames go to the chip, chip frames go to that code's
 phones. The relay sends phones `{"t":"status","awake":0|1}` when they attach and when the chip
 comes or goes, and `{"t":"alive","quiet_ms":N}` every 30 s while a heartbeating chip is attached
-(`quiet_ms` is the time since its last frame). It answers the chip's `{"t":"hb"}` with
+(`quiet_ms` is the time since its last message, heartbeats included and pongs not). It answers the chip's `{"t":"hb"}` with
 `{"t":"hb_ack"}`, pings every socket every 20 s, and drops any socket silent for 45 s (a robot
 that loses power never closes its socket). A second chip on a code replaces the first.
 
