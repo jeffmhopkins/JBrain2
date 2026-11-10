@@ -81,15 +81,18 @@ than mounting the shared `internal_secrets` volume that holds every caller's tok
 
 **Its own origin over the box's TLS, with no new name.** The app uses root-absolute paths
 (`/api/…`, `/v3/…`), which collide with the PWA's, and the phone grants camera and mic only to
-a secure page. So `proxy-lan-conf.sh` writes a second site, `https://jbrain.local:8443`, with
-the same `tls internal` CA, and the `proxy` service publishes 8443. A different port is a
-different origin, so it never shares the authed app's cookie; and reusing `jbrain.local`
+a secure page. So `proxy-lan-conf.sh` writes a second site, `https://jbrain.local:8444`, with
+the same `tls internal` CA, and the `proxy` service publishes 8444 (8443 is the unpublished owner mTLS site and stays so). A different port is a
+different origin for script and storage, but browsers do not scope cookies by port, so the
+owner's `__Host-` session cookie would still be sent there: the Caddy site strips the incoming
+`Cookie` header down to growbot's own, distinctly named cookie, so the api session never
+reaches vendored code. Reusing `jbrain.local`
 needs no new mDNS alias, which would otherwise only be installed by a host update
 (`update-inner.sh` runs `lan-setup.sh` only under `HOST_UPDATE`) — a terminal dependency.
 
 **Access.** The LAN is not the boundary: anyone on it could otherwise drive the servos.
 - Phone: the owner opens GrowBot from the PWA, which mints a short-lived ticket through the
-  api; `growbot` exchanges it for its own session cookie on the `:8443` origin. No ticket, no
+  api; `growbot` exchanges it for its own session cookie on the `:8444` origin. No ticket, no
   page, no relay.
 - Robot: the chip side of the relay presents the device key minted at flash time (§3); the
   relay checks it against the api. Reflashing revokes the old key.
@@ -121,7 +124,7 @@ through to the model and STT and are not kept. If the diary comes onto the box (
 through the api into Postgres under RLS with an isolation test (rule 3), and is treated as
 sensitive: it names people the camera saw.
 
-**The relay** is the same process, at `wss://jbrain.local:8443/d/<code>` and
+**The relay** is the same process, at `wss://jbrain.local:8444/d/<code>` and
 `/d/<code>-agent`, reimplementing the envelopes above plus the key check.
 
 **Models.** The default lineup names a vision-capable catalog model so visual memory works:
@@ -142,7 +145,7 @@ so the first flash needs no BOOTSEL press.
    reboot.
 2. Over the board's USB serial (`/dev/ttyACM*`, cgroup 166, already allowed), `mpremote cp`
    the firmware set with a generated `secrets.py`: the box's Wi-Fi list, the box's LAN IP and
-   port 8443 to dial, `jbrain.local` as the TLS server name (so SNI matches the Caddy site;
+   port 8444 to dial, `jbrain.local` as the TLS server name (so SNI matches the Caddy site;
    MicroPython has no mDNS resolver), and a fresh device key. A changed box IP means a
    re-provision over USB, so the box's DHCP lease should be reserved.
 3. Read `PAIRING CODE: gb-…` from the console and show it in the PWA with the link that opens
@@ -160,7 +163,7 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
 
 - **G1 — the box serves the creature.** No new GUI: the upstream app as it is. `growbot/` with
   `upstream/` + `patches/` + `vendor/` + `sync.sh`; `serve.py` (static, CSP, shim, relay with
-  key check, ticket exchange); the compose service, the `:8443` Caddy site, `growbot_secrets`,
+  key check, ticket exchange); the compose service, the `:8444` Caddy site (and a test that 8443 stays unpublished), `growbot_secrets`,
   `api/growbot_llm.py`, the ticket mint, the `CALLERS` entry. Tests: shim and relay by path,
   the api router and its auth (security paths at 100%), the Caddy site via the existing
   real-Caddy tests, the headless no-egress test. Proven with the stock body firmware hand-edited
