@@ -449,3 +449,21 @@
   font-size: var(--fs-micro);
   color: var(--text-3);
 }
+
+/* Set up another phone: each code on its own white card, so a camera finds it in dark mode. */
+.gb-qr {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 12px 0;
+}
+.gb-qr h3 {
+  margin: 0;
+  font-size: 1rem;
+  justify-self: start;
+}
+.gb-qr svg {
+  padding: 12px;
+  background: #ffffff;
+  border-radius: 12px;
+}

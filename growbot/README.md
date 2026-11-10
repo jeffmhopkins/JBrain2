@@ -93,11 +93,22 @@ Chrome on Android offers *Install app* for the creature: `v3/next.html` links
 page when the phone is off the Wi-Fi. These four files are the only ones served without a
 session, because Chrome fetches the manifest and icons with no cookie. `/start` sends a
 signed-in phone back into the creature on its session's robot, and a phone whose session
-has lapsed to a page pointing at JBrain, whose GrowBot screen mints the next ticket. Chrome
+has lapsed to `/setup.html`. Chrome
 installs only from a site it trusts, so the phone needs the box's root certificate installed
 (the GrowBot screen's *Download the box's certificate*), not a warning clicked through. On an
 iPhone a home-screen app keeps its own storage apart from Safari's, so it starts a fresh creature
 until G4 moves the creature onto the box.
+
+## Setting up the robot's phone
+
+That phone is signed in to nothing, so JBrain's GrowBot screen shows two codes under *Set up
+another phone*. The first, scanned with the camera app, opens `/setup.html` on this site: a
+*Download the box's certificate* button (`/box-root.crt`, the public half of Caddy's internal
+CA, read from the api's `/internal/growbot/lan-root` and served only here on the LAN) and a
+scanner (`setup.js`, Chrome's built-in `BarcodeDetector`). The second is a one-time ticket for
+the robot chosen there (or none); the scanner follows only this origin's `/open?ticket=` link,
+so a code from anywhere else opens nothing. A lapsed installed app's `/start` lands on the same
+page, so getting it back is one scan.
 
 ## Security
 
@@ -112,7 +123,7 @@ until G4 moves the creature onto the box.
   in, and *Sign out every phone* (the GrowBot screen, or the debug API's
   `POST /growbot/sessions/reset`) re-mints the second file, which signs every phone out at once. Every other route answers 401 without it, decided from
   the request head: without a session nothing but a body-less `/open`, `/start` or one of the
-  installed app's four files is read, and the 401 closes the connection, so an anonymous client never
+  installed app's own files (`PUBLIC_PATHS`: manifest, worker, icons, setup page, voice shim) is read, and the 401 closes the connection, so an anonymous client never
   costs the process an upload. Requests that act must also come from this origin, since the PWA
   on `:443` is the same *site* and SameSite alone would let its requests carry the cookie: a
   non-GET `/api` call with a foreign `Origin` is 403 (one with no `Origin` is allowed, as a

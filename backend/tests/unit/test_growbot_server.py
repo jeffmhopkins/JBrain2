@@ -56,6 +56,7 @@ class _Fake(BaseHTTPRequestHandler):
     seen: list[dict[str, Any]] = []
     models: list[dict[str, Any]] = []
     stt_reply: bytes = b""
+    root_cert: bytes = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
     tts_status = 200
     llm_status = 200
 
@@ -83,7 +84,12 @@ class _Fake(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         self._record(b"")
         path, _, query = self.path.partition("?")
-        if path == "/internal/growbot/llm/v1/models":
+        if path == "/internal/growbot/lan-root":
+            if self.headers.get("Authorization") != f"Bearer {_TOKEN}":
+                self._reply(401, b"{}")
+                return
+            self._reply(200, _Fake.root_cert, "application/x-pem-file")
+        elif path == "/internal/growbot/llm/v1/models":
             if self.headers.get("Authorization") != f"Bearer {_TOKEN}":
                 self._reply(401, b"{}")
                 return
@@ -194,7 +200,15 @@ def site(tmp_path: Path) -> Path:
     (root / ".hidden").write_text("dotfile")
     (root / "csp.json").write_text(json.dumps({"script_hashes": [_HASH], "unsafe_hashes": True}))
     (root / "icons").mkdir()
-    for name in ("manifest.webmanifest", "sw.js", "icons/growbot-192.png", "icons/growbot-512.png"):
+    for name in (
+        "manifest.webmanifest",
+        "sw.js",
+        "setup.html",
+        "setup.js",
+        "growbot-box.js",
+        "icons/growbot-192.png",
+        "icons/growbot-512.png",
+    ):
         (root / name).write_bytes(b"app file")
     (root / "icons" / "other.png").write_bytes(b"not public")
     (tmp_path / "secret.txt").write_text("outside the root")
@@ -436,18 +450,42 @@ def test_start_reopens_the_creature_on_its_robot(run: _Running) -> None:
     assert bare.getheader("Location") == "/v3/next.html?mode=legs"
 
 
-@pytest.mark.parametrize("host", [None, "jbrain.local:8444", "evil'><script>:8444"])
-def test_start_without_a_session_points_back_to_jbrain(run: _Running, host: str | None) -> None:
-    headers = {"Host": host} if host else {}
-    resp = run.request("GET", "/start", headers=headers, cookie=False)
-    body = resp.read()
-    assert resp.status == 401
+def test_start_without_a_session_goes_to_the_setup_page(run: _Running) -> None:
+    resp = run.request("GET", "/start", cookie=False)
+    resp.read()
+    assert resp.status == 302 and resp.getheader("Location") == "/setup.html"
     assert resp.getheader("Set-Cookie") is None
-    assert b"Open GrowBot from JBrain" in body
-    if host == "jbrain.local:8444":
-        assert b"<a href='https://jbrain.local/'>" in body
-    if host and "<" in host:
-        assert b"<script>" not in body and b"<a " not in body
+
+
+def test_the_box_root_is_served_to_a_phone_signed_in_to_nothing(run: _Running) -> None:
+    resp = run.request("GET", "/box-root.crt", cookie=False)
+    body = resp.read()
+    assert resp.status == 200 and body == _Fake.root_cert
+    assert resp.getheader("Content-Type") == "application/x-x509-ca-cert"
+    assert resp.getheader("Content-Disposition") == 'attachment; filename="jbrain-box-root.crt"'
+    asked = [s for s in _Fake.seen if s["path"] == "/internal/growbot/lan-root"]
+    assert asked and asked[-1]["auth"] == f"Bearer {_TOKEN}"
+    again = run.request("GET", "/box-root.crt", cookie=False)
+    again.read()
+    # Cached: the api is asked once per few minutes, not per phone.
+    assert len([s for s in _Fake.seen if s["path"] == "/internal/growbot/lan-root"]) == 1
+    post = run.request("POST", "/box-root.crt", b"", cookie=False)
+    post.read()
+    assert post.status in (401, 405)
+
+
+def test_no_root_from_the_api_is_a_404_not_junk(run: _Running) -> None:
+    _Fake.root_cert = b"<html>not a cert</html>"
+    try:
+        resp = run.request("GET", "/box-root.crt", cookie=False)
+        resp.read()
+        assert resp.status == 404
+        again = run.request("GET", "/box-root.crt", cookie=False)
+        again.read()
+        # The failure is remembered too, so a flood of LAN requests is not a flood of api calls.
+        assert len([s for s in _Fake.seen if s["path"] == "/internal/growbot/lan-root"]) == 1
+    finally:
+        _Fake.root_cert = b"-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
 
 
 def test_start_takes_no_other_method(run: _Running) -> None:
@@ -458,7 +496,15 @@ def test_start_takes_no_other_method(run: _Running) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    ["/manifest.webmanifest", "/sw.js", "/icons/growbot-192.png", "/icons/growbot-512.png"],
+    [
+        "/manifest.webmanifest",
+        "/sw.js",
+        "/setup.html",
+        "/setup.js",
+        "/icons/growbot-192.png",
+        "/icons/growbot-512.png",
+        "/growbot-box.js",
+    ],
 )
 def test_the_installed_apps_files_need_no_session(run: _Running, path: str) -> None:
     resp = run.request("GET", path, cookie=False)

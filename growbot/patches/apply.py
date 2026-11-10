@@ -47,7 +47,14 @@ FLASHED_FILES = (
     "wifi_recovery.py",
 )
 
-PWA_FILES = ("manifest.webmanifest", "sw.js", "growbot-192.png", "growbot-512.png")
+PWA_FILES = (
+    "manifest.webmanifest",
+    "sw.js",
+    "setup.html",
+    "setup.js",
+    "growbot-192.png",
+    "growbot-512.png",
+)
 
 FIRMWARE_FILES = (
     "relay_chip.py",

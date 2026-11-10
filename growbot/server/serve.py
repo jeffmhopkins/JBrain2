@@ -12,9 +12,11 @@ Security, in order of the request:
   `growbot.token`, so a restart keeps phones signed in and a re-minted token signs them all out
   (nothing is stored). It lasts 30 days and is renewed as the creature loads, so the installed
   app on the robot's phone stays open; `/start` (the manifest's start page) sends a phone whose
-  session has lapsed back to JBrain for a fresh ticket.
-- The installed app's manifest, its icons and its service worker are the only files served
-  without a session: Chrome fetches the manifest and icons with no cookie.
+  session has lapsed to `/setup.html`, which scans a fresh ticket off JBrain's GrowBot screen.
+- The installed app's manifest, its icons and its service worker, the setup page and the box's
+  root certificate (`/box-root.crt`, public by nature) are the only things served without a
+  session: Chrome fetches the manifest and icons with no cookie, and the setup page is how a
+  phone signed in to nothing gets the certificate and its first ticket.
 - Every other route needs that cookie, except the robot's side of the relay, which has no
   browser: it proves itself with the device key in its `hello`, checked against the api.
 - `/internal/robots` (which robots are on the relay) and `/internal/robots/drop` (close a
@@ -68,11 +70,26 @@ SESSION_TTL_S = 30 * 86400
 # Renewed at most once a day, so a page that reloads often is not a cookie per load.
 SESSION_RENEW_S = 86400
 PUBLIC_PATHS = frozenset(
-    ("/manifest.webmanifest", "/sw.js", "/icons/growbot-192.png", "/icons/growbot-512.png")
+    (
+        "/manifest.webmanifest",
+        "/sw.js",
+        "/icons/growbot-192.png",
+        "/icons/growbot-512.png",
+        # The setup page a phone signed in to nothing opens from the first QR: it fetches the
+        # box's certificate and scans the second QR (a ticket) shown on JBrain's GrowBot screen.
+        "/setup.html",
+        "/setup.js",
+        # The page's first script on every page, setup.html too; it holds no secret and is what
+        # registers the service worker, so a phone can install the app from the setup page.
+        "/growbot-box.js",
+    )
 )
-SESSIONLESS = PUBLIC_PATHS | {"/open", "/start"}
-# A host header is the client's own word; only a plain name goes into the link back to JBrain.
-HOST_RE = re.compile(r"[A-Za-z0-9.-]{1,253}")
+ROOT_CERT_PATH = "/box-root.crt"
+ROOT_CERT_CACHE_S = 300.0
+# A failed read is remembered too, briefly: the route needs no session, so without it every
+# LAN request on a box with no certificate would take an api call from the pool /open uses.
+ROOT_CERT_RETRY_S = 15.0
+SESSIONLESS = PUBLIC_PATHS | {"/open", "/start", ROOT_CERT_PATH}
 
 MAX_HEAD = 16 * 1024
 MAX_HEADERS = 100
@@ -868,6 +885,8 @@ class GrowBot:
         self._proxy_addrs: set[str] = set()
         self._proxy_at = -math.inf
         self._models: list[dict[str, Any]] = []
+        self._root_cert = b""
+        self._root_cert_at = -math.inf
         self._models_at = -math.inf
         self.did = hashlib.sha256(b"growbot-on-the-box").hexdigest()[:16]
 
@@ -939,6 +958,21 @@ class GrowBot:
             return json.loads(up.body).get("ok") is True
         except (ValueError, AttributeError):
             return False
+
+    def root_cert(self) -> bytes:
+        """The box's LAN root, from the api. Public by nature (it is what a phone installs to
+        trust the box) and served only here, on the LAN-only site, to phones signed in to
+        nothing. A failed read keeps the last good copy."""
+        now = time.monotonic()
+        if now - self._root_cert_at < ROOT_CERT_CACHE_S:
+            return self._root_cert
+        # Claimed before the call, so requests arriving while it is in flight are served the
+        # current copy instead of each asking the api.
+        self._root_cert_at = now - ROOT_CERT_CACHE_S + ROOT_CERT_RETRY_S
+        up = http_call(self.config.api_url + "/internal/growbot/lan-root", headers=self._auth())
+        if up.status == 200 and b"BEGIN CERTIFICATE" in up.body and len(up.body) < 64 * 1024:
+            self._root_cert, self._root_cert_at = up.body, time.monotonic()
+        return self._root_cert
 
     def models(self) -> list[dict[str, Any]]:
         """The box's installed models, as the api lists them. A failed read keeps the last good
@@ -1047,17 +1081,20 @@ class GrowBot:
             f"SameSite=Strict; Path=/; Max-Age={SESSION_TTL_S}"
         )
 
-    def _back_to_jbrain(self, req: Request) -> Response:
-        """A lapsed installed app: JBrain's GrowBot screen mints the next ticket."""
-        host = req.header("host").rsplit(":", 1)[0]
-        link = b""
-        if HOST_RE.fullmatch(host):
-            link = f"<p><a href='https://{host}/'>Open JBrain</a>, then GrowBot.</p>".encode()
+    async def root_cert_route(self, req: Request) -> Response:
+        if req.method not in ("GET", "HEAD"):
+            return Response(405, b"method not allowed", headers=[("Allow", "GET, HEAD")])
+        pem = await self._call(self.root_cert, pool=self._gate)
+        if not pem:
+            return Response(404, b"no certificate on this box")
         return Response(
-            401,
-            UNAUTHORISED_PAGE + link,
-            "text/html; charset=utf-8",
-            headers=[("Cache-Control", "no-store")],
+            200,
+            pem,
+            "application/x-x509-ca-cert",
+            headers=[
+                ("Content-Disposition", 'attachment; filename="jbrain-box-root.crt"'),
+                ("Cache-Control", "no-store"),
+            ],
         )
 
     def start_page(self, req: Request) -> Response:
@@ -1066,7 +1103,10 @@ class GrowBot:
             return Response(405, b"method not allowed", headers=[("Allow", "GET, HEAD")])
         code = self._robot(req)
         if code is None:
-            return self._back_to_jbrain(req)
+            # A lapsed installed app scans a fresh code from JBrain's GrowBot screen.
+            return Response(
+                302, b"", headers=[("Location", "/setup.html"), ("Cache-Control", "no-store")]
+            )
         return Response(
             302,
             b"",
@@ -1082,6 +1122,8 @@ class GrowBot:
             return await self.open(req)
         if req.path == "/start":
             return self.start_page(req)
+        if req.path == ROOT_CERT_PATH:
+            return await self.root_cert_route(req)
         if req.path.startswith("/internal/"):
             return self.internal(req)
         if req.path in PUBLIC_PATHS and req.method in ("GET", "HEAD"):

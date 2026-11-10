@@ -13,6 +13,7 @@ import {
 } from "../api/client";
 import { GrowbotAddSheet } from "../components/GrowbotAddSheet";
 import { GrowbotFail, GrowbotLog, GrowbotPhases } from "../components/GrowbotJob";
+import { GrowbotPhoneSheet } from "../components/GrowbotPhoneSheet";
 import { Sheet } from "../components/Sheet";
 import { CERT_URL, certNoted, day, keyMadeAt, noteCert, robotState } from "../growbot";
 import { useForeground } from "../visibility";
@@ -26,6 +27,7 @@ type SheetState =
   | { kind: "add"; target: string }
   | { kind: "rekey"; code: string }
   | { kind: "cert"; code: string }
+  | { kind: "phone" }
   | null;
 
 interface GrowbotScreenProps {
@@ -250,7 +252,9 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
   const up = status?.service !== "down";
   const robots = status?.robots ?? [];
   const sheetRobot =
-    sheet && sheet.kind !== "add" ? robots.find((r) => r.code === sheet.code) : undefined;
+    sheet && (sheet.kind === "rekey" || sheet.kind === "cert")
+      ? robots.find((r) => r.code === sheet.code)
+      : undefined;
 
   function watch() {
     if (!job) return;
@@ -355,6 +359,17 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             Open GrowBot without a robot
           </button>
         )}
+        {status !== null && (
+          // The robot's phone is signed in to nothing: it gets the box's setup page and a
+          // one-time ticket as two codes to scan, and pairing stays here.
+          <button
+            type="button"
+            className="gb-btn block"
+            onClick={() => setSheet({ kind: "phone" })}
+          >
+            Set up another phone
+          </button>
+        )}
         {status !== null && !certNoted() && (
           <p className="gb-hint dim">
             The first time you open GrowBot on this phone, it explains the box's certificate.
@@ -441,6 +456,10 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             )}
           </div>
         </Sheet>
+      )}
+
+      {sheet?.kind === "phone" && status && (
+        <GrowbotPhoneSheet robots={status.robots} onClose={() => setSheet(null)} />
       )}
 
       {sheet?.kind === "cert" && (

@@ -341,3 +341,23 @@ def test_a_sign_out_that_cannot_write_says_so(
     monkeypatch.setattr(app.state.growbot_secrets, "rotate", broken)
     r = TestClient(app).post("/api/growbot/sessions/reset")
     assert r.status_code == 503
+
+
+def test_the_sidecar_reads_the_lan_root_with_its_token(
+    tmp_path: Path, repo: FakeRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import endpoint
+
+    app, headers = _app(tmp_path, repo)
+    client = TestClient(app)
+    pem = "-----BEGIN CERTIFICATE-----\nAAA\n-----END CERTIFICATE-----\n"
+    monkeypatch.setattr(endpoint, "_lan_ca", lambda: pem)
+    assert client.get("/internal/growbot/lan-root").status_code == 401
+    assert (
+        client.get("/internal/growbot/lan-root", headers={"Authorization": "Bearer x"}).status_code
+        == 401
+    )
+    r = client.get("/internal/growbot/lan-root", headers=headers)
+    assert r.status_code == 200 and r.text == pem
+    monkeypatch.setattr(endpoint, "_lan_ca", lambda: "")
+    assert client.get("/internal/growbot/lan-root", headers=headers).status_code == 404
