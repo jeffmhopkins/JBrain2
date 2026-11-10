@@ -61,38 +61,46 @@
     c.arcTo(x, y, x + w, y, r);
     c.closePath();
   }
-  /* The neck is one tapered shape along a gentle curve, not a stack of rings: drawn as
-     segments at phone size it read as a spine. A shadow down one side gives it a round body,
-     and the head's shadow on it seats the head instead of balancing it on top. */
-  function neckPath(c, x0, y0, x1, y1, bend, w0, w1, from, to) {
-    var n = 24, i, t, x, y, dx, dy, l, w, pts = [];
-    var mx = (x0 + x1) / 2 + bend, my = (y0 + y1) / 2;
-    for (i = 0; i <= n; i++) {
-      t = i / n;
-      x = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * mx + t * t * x1;
-      y = (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * my + t * t * y1;
-      dx = 2 * (1 - t) * (mx - x0) + 2 * t * (x1 - mx);
-      dy = 2 * (1 - t) * (my - y0) + 2 * t * (y1 - my);
-      l = Math.sqrt(dx * dx + dy * dy) || 1;
-      w = (w0 + (w1 - w0) * t) / 2;
-      pts.push([x, y, -dy / l * w, dx / l * w]);
+  /* Necks are a stack of rings, the panels' own neck, standing on a body: a ringed neck
+     with nothing under it read as too long, and a solid one lost the panels' look. */
+  function rings(c, col, x0, y0, x1, y1, w0, w1, n, h) {
+    c.fillStyle = col;
+    for (var i = 0; i < n; i++) {
+      var t = n > 1 ? i / (n - 1) : 0, w = w0 + (w1 - w0) * t;
+      rr(c, x0 + (x1 - x0) * t - w / 2, y0 + (y1 - y0) * t - h / 2, w, h, h / 2);
+      c.fill();
     }
-    c.beginPath();
-    for (i = 0; i <= n; i++) c.lineTo(pts[i][0] + pts[i][2] * from, pts[i][1] + pts[i][3] * from);
-    for (i = n; i >= 0; i--) c.lineTo(pts[i][0] + pts[i][2] * to, pts[i][1] + pts[i][3] * to);
-    c.closePath();
   }
-  function neck(c, hex, x0, y0, x1, y1, bend, s) {
-    c.fillStyle = shade(hex, 0.8);
-    neckPath(c, x0, y0, x1, y1, bend, 44 * s, 28 * s, -1, 1);
+  /* The ostrich's body, cropped by the bottom of the screen: the round body, the tail plumes
+     behind it, and the wing with its scalloped line-work (face.c draw_wing). */
+  function birdBody(c, hex, d) {
+    var s = 1.9, x = LW / 2, y = 590, sway = Math.sin(d.t / 1300) * 3, i;
+    var TAIL = [[98, 70], [116, 80], [134, 66]];
+    for (i = 0; i < 3; i++) {
+      c.save();
+      c.translate(x - 56 * s, y + 40 * s);
+      c.rotate((TAIL[i][0] + sway) * Math.PI / 180);
+      c.fillStyle = hex;
+      rr(c, -8 * s, 0, 16 * s, TAIL[i][1] * s, 8 * s);
+      c.fill();
+      c.beginPath(); c.arc(0, TAIL[i][1] * s, 10 * s, 0, Math.PI * 2); c.fill();
+      c.restore();
+    }
+    c.fillStyle = shade(hex, 0.86);
+    rr(c, x - 72 * s, y, 144 * s, 112 * s, 54 * s);
     c.fill();
-    c.fillStyle = shade(hex, 0.66);
-    neckPath(c, x0, y0, x1, y1, bend, 44 * s, 28 * s, 0.35, 1);
+    var wx = x + 2 * s, wy = y + 12 * s, ww = 74 * s, wh = 66 * s;
+    c.fillStyle = shade(hex, 0.64);
+    rr(c, wx, wy, ww, wh, 30 * s);
     c.fill();
-    c.fillStyle = "rgba(0,0,0,.28)";
-    c.beginPath();
-    c.ellipse(x1, y1 - 4 * s, 20 * s, 9 * s, 0, 0, Math.PI * 2);
-    c.fill();
+    c.strokeStyle = hex;
+    c.lineWidth = 3 * s;
+    c.lineCap = "round";
+    for (var r = 20; r <= 48; r += 14) {
+      c.beginPath();
+      c.arc(wx + 2 * s, wy + 8 * s, r * s, Math.PI * 0.06, Math.PI * 0.44);
+      c.stroke();
+    }
   }
 
   function disc(c, x, y, r) { c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill(); }
@@ -163,7 +171,8 @@
     var hex = BODY, s = 2.2;
     var head = shade(hex, 0.94), beak = shade(hex, 0.52), dark = shade(hex, 0.22);
     var cx = LW / 2 + d.gaze.x * 8, hy = 250 + d.bob + d.gaze.y * 6, i;
-    neck(c, hex, LW / 2, LH + 20, cx, hy + 40 * s, Math.sin(d.t / 1700) * 10 - d.gaze.x * 10, s);
+    birdBody(c, hex, d);
+    rings(c, shade(hex, 0.76), LW / 2, 598, cx, hy + 42 * s, 50 * s * 0.95, 34 * s * 0.95, 7, 22);
     c.save();
     c.translate(cx, hy);
     c.rotate(d.tilt * Math.PI / 180);
@@ -224,6 +233,7 @@
     c.fillStyle = shade(hex, 0.7);
     rr(c, LW / 2 - 34 * s, 530, 68 * s, 40, 12);
     c.fill();
+    rings(c, shade(hex, 0.7), LW / 2, 532, cx, hy + 88 * s + 10, 44 * s, 38 * s, 4, 18);
     c.save();
     c.translate(cx, hy);
     c.rotate(d.tilt * Math.PI / 180);

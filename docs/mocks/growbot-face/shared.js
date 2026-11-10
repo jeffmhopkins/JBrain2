@@ -144,13 +144,13 @@
       notes: [
         "Same eyes, lids and catchlight as the panel, so an emotion looks the same on a GrowBot and on a JPanel in the same room.",
         "The beak is the mouth: the lower three segments drop while it talks, the way the panel's do.",
-        "The crest perks when it is alert or happy and droops when it is tired. The neck is one smooth tapered shape that sways gently.",
+        "The crest perks when it is alert or happy and droops when it is tired. The neck is the panels' stack of rings, short, standing on the bird's body with its wing and tail.",
         "Body colour is the panel palette, so a kid can make GrowBot match their panel. The mood still lives in the sky behind it.",
       ],
     },
     robot: {
       title: "B · The panels' robot",
-      lede: "The JPanel robot head at full phone size, with its antenna and a crop of the chest plate at the bottom.",
+      lede: "The JPanel robot head at full phone size, with its antenna, a ringed neck, and a crop of the chest plate at the bottom.",
       notes: [
         "Same eyes and lids as the panel. The mouth is the panel's smile, which opens out of the smile line while it talks.",
         "The antenna bulb lights in the mood colour while a think is in flight, and the chest light pulses while the ear is open.",
