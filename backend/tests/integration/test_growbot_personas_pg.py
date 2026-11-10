@@ -240,6 +240,31 @@ async def test_an_open_racing_a_who_wears_pick_never_errors(maker: async_session
         assert rider.persona_id in (sprout, bolt)
 
 
+async def test_an_open_racing_the_held_personas_push_never_errors(
+    maker: async_sessionmaker,
+) -> None:
+    repo, sprout, bolt = await _world(maker)
+    for n in range(5):
+        pulled = await repo.pull(SYSTEM_OWNER, sprout, PHONE_A)
+        assert isinstance(pulled, Pulled)
+        opened, _ = await asyncio.gather(
+            repo.open_on_phone(SYSTEM_OWNER, bolt, PHONE_A, "", ""),
+            repo.push(SYSTEM_OWNER, sprout, PHONE_A, pulled.version, {"soul_format": 3, "n": n}),
+        )
+        assert opened
+        assert await repo.open_on_phone(SYSTEM_OWNER, sprout, PHONE_A, "", "")
+
+
+async def test_a_pick_racing_a_delete_never_errors(maker: async_sessionmaker) -> None:
+    repo, sprout, bolt = await _world(maker)
+    await SqlGrowbotRepo(maker).put_robot(OWNER, "gb-wren", "Wren")
+    picked, _ = await asyncio.gather(
+        repo.set_rider(OWNER, "gb-wren", sprout), repo.delete(OWNER, sprout)
+    )
+    assert isinstance(picked, bool)
+    assert [p.id for p in await repo.list_personas(OWNER)] == [bolt]
+
+
 async def test_an_open_refused_after_it_began_writing_rolls_back(
     maker: async_sessionmaker, monkeypatch: pytest.MonkeyPatch
 ) -> None:

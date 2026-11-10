@@ -384,7 +384,10 @@ class SqlPersonaRepo:
         if pid is not None:
             found = (
                 await session.execute(
-                    text("SELECT 1 FROM app.growbot_personas WHERE id = :p"), {"p": pid}
+                    # FOR KEY SHARE: a delete of this persona racing the pick waits here
+                    # instead of locking its body first.
+                    text("SELECT 1 FROM app.growbot_personas WHERE id = :p FOR KEY SHARE"),
+                    {"p": pid},
                 )
             ).first()
             if found is None:
@@ -435,12 +438,18 @@ class SqlPersonaRepo:
         # lock: an open touches two personas (and a body), and two phones swapping personas,
         # or an open racing a Who-wears pick, would otherwise lock them in opposite orders.
         await _lock_bodies(session)
-        held = (
+        # Both personas this open moves (the one it opens and the one the phone held) are
+        # locked before the phone's row, the order a push takes them in.
+        rows = (
             await session.execute(
-                text("SELECT phone_id FROM app.growbot_personas WHERE id = :p FOR UPDATE"),
-                {"p": pid},
+                text(
+                    "SELECT id::text AS id, phone_id FROM app.growbot_personas"
+                    " WHERE id = :p OR phone_id = :ph ORDER BY id FOR UPDATE"
+                ),
+                {"p": pid, "ph": phone_id},
             )
-        ).first()
+        ).all()
+        held = next((r for r in rows if r.id == pid), None)
         if held is None:
             return False
         if code and not await _robot_held(session, code):
