@@ -165,6 +165,9 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
       .growbotTicket(code)
       .then(({ url }) => {
         if (tab && !tab.closed) {
+          // `noopener` would cost the handle the tab is steered with, so the link is cut by
+          // hand: the vendored page on :8444 must not be able to navigate the PWA.
+          tab.opener = null;
           tab.location.href = url;
           const away = robot && !robot.connected;
           say(

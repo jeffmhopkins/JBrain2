@@ -148,7 +148,7 @@ describe("GrowbotScreen", () => {
   });
 
   it("explains the certificate the first time, then opens the tab inside the tap", async () => {
-    const tab = { closed: false, location: { href: "" }, close: vi.fn() };
+    const tab = { closed: false, opener: {} as unknown, location: { href: "" }, close: vi.fn() };
     const open = vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
     const calls = serve({ service: "up", connected: 1, robots: [robot()] }, (path) =>
       path === "/api/growbot/ticket"
@@ -169,6 +169,8 @@ describe("GrowbotScreen", () => {
     await waitFor(() =>
       expect(tab.location.href).toBe("https://jbrain.local:8444/open?ticket=t&id=gb-3fa91c"),
     );
+    // The vendored page on :8444 gets no handle back to the PWA.
+    expect(tab.opener).toBeNull();
     expect(calls.find((c) => c.path === "/api/growbot/ticket")?.body).toEqual({
       code: "gb-3fa91c",
     });
