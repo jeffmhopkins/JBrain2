@@ -3252,39 +3252,106 @@ does **not** gate sends; the parent turn stays the single gated turn, and the
 in-chat accordion reads the parent turn's `subagent_*` events while the tree reads
 child session rows — see the build plan's "Execution model").
 
-## GrowBot — the desk robot's screen (owner, 2026-11-10 — binding mock: `docs/mocks/growbot-flash/b-growbot-screen.html`, variant B; rivals A "another board on Endpoints" and C "launcher tile plus Ops row" retained in `docs/mocks/growbot-flash/README.md`; plan `docs/plans/GROWBOT_PLAN.md` §3, wave G2)
+## GrowBot — the desk robot's screen (owner, 2026-11-10 — binding mocks: `docs/mocks/growbot-flash/b-growbot-screen.html` (G2, variant B) for the flash sheet, and `docs/mocks/growbot-personas/b-three-tabs.html` (G4, variant B, "three tabs") for the body, personas and phones; rivals retained in each mock set's README; plan `docs/plans/GROWBOT_PLAN.md` §2c, §3, waves G2 and G4)
 
-GrowBot has its own launcher tile and screen, because the owner opens a robot every day and
-flashes one once. The tile's second line says who is connected (or that `growbot` is down).
+GrowBot has its own launcher tile and screen, because the owner opens a persona every day and
+flashes a robot once. The tile's second line says who is wearing the body (or that `growbot` is
+down). There is one body and several personas (owner, 2026-11-10): a persona is a creature's
+soul, and it can live on a phone alone or wear the body.
+Being built in wave G4: until it lands, the screen is G2's (one card per robot with *Open
+GrowBot*, then *Open GrowBot without a robot*).
 
-- **Robots first.** One card per robot: its name, its state in words beside the dot
-  (connected · 20 s ago / not connected · last seen 3 h ago / key revoked), **Open GrowBot** as
-  the card's full-width primary button, then the pairing code and the key's age, then *New
-  key* and *Revoke key* (rose at rest, a second tap within 3 s, disarming on its own). A
-  revoked robot's primary button becomes *Reflash <name>*.
-- **Add a robot** is the screen's pinned foot button and opens a four-step sheet, one primary
-  action per step: *Plug it into the box* (what is on the box's USB, new robot or *Reflash
-  <name>*, its name) → *Wi-Fi it should join* (the box's remembered networks as a checklist,
-  tried in order, *Add another network*) → *Flashing* (three named rows: Load MicroPython ·
-  Copy its firmware and Wi-Fi · Join Wi-Fi and reach the box, the log behind *Show the log*
-  until something fails) → *<name> is paired* (the code, *Open GrowBot*). Closing the sheet
-  mid-flash leaves *Flashing — tap to watch* in the foot. Each failure says what happened and
-  the recovery, never "see the log".
-- **Open GrowBot** mints a one-time link and opens `https://jbrain.local:8444` in a new tab. The
-  first open on a phone shows the certificate note once, with *Download the box's certificate*.
-  Below the robots, *Open GrowBot without a robot* (secondary) opens the creature with no legs:
-  it opens unpaired on the phone and offers to pair, so it can be tried before any board is flashed
-  (owner, 2026-11-10).
-  *Set up another phone* (secondary, under *Open GrowBot without a robot*) opens a sheet for the
-  robot's phone, which is signed in to nothing: *It opens as* (each live robot, or *No robot*),
-  then two codes on white cards, *1. Scan with the phone's camera app* (the box's setup page:
-  certificate and scanner) and *2. Scan from the setup page's Scan the code* (a one-time ticket,
-  re-minted every 100 s). Pairing stays on this screen (owner, 2026-11-10).
-  *Download the box's certificate* (secondary) stays on the screen after that, since the note
-  shows once per phone and a phone that skipped the install still needs the file.
-  Last on the screen, *Sign out every phone* (danger, armed: *Tap again to sign every phone out*)
-  ends every phone's GrowBot session, since a phone otherwise stays signed in for 30 days so the
-  robot's installed app keeps running; the toast says to open GrowBot again from here.
+- **Three tabs, one per job** (a segmented control under the top bar): **Personas** (with its
+  count), **Body**, **Phones**. Each tab keeps its own scroll.
+- **Personas.** One row per persona: an initial in a disc (a violet ring while it wears the
+  body, a steel ring while it is open on this phone), its name, and where it is in words beside
+  its dot (*on this phone · wearing Fish*, *alone on Pixel 6a*, *not open · last on this phone 2
+  days ago*). Tapping the row opens the persona's page; the row's **Open** button (steel
+  primary) raises the launch sheet. Under the list: *Tap a persona for its soul, memories and
+  checkpoints. Open asks where it goes.* The tab's foot is *New persona* (primary) and
+  *Import*. *New persona* is a sheet: *Its name*, then *Start from* (*A fresh creature*, or the
+  personality of any checkpoint, *Sprout — Before the beach trip: its personality from 29 Oct.
+  Memories start fresh.*), then *Make <name>*.
+- **The launch sheet** (*Open <name>*) has three big choices, each saying what happens to the
+  body and to the phone it leaves before the tap: **On this phone, alone** (*No legs. It moves
+  from Pixel 6a. Sprout closes here — it's kept on the box.*), **On this phone, wearing Fish**
+  (violet; *Captain Bolt lets go and carries on alone on Pixel 6a.*, or *It takes Fish's legs.*,
+  plus *Fish is off — its legs move once it's on.*; disabled with the reason when the key is
+  revoked or it already wears Fish here) and **On another phone…** (*Two codes to scan, alone or
+  wearing Fish.*).
+- **Body.** The robot's card: its name, its state in words beside the dot (on · seen 20 s ago /
+  off · last seen 3 h ago / key revoked — can't connect), who wears it (*Sprout is wearing it,
+  on Pixel 6a.* or *Nobody is wearing Fish — it stands still until a persona connects.*), the
+  pairing code and the key's age, then *New key* and *Revoke key* (rose at rest, a second tap
+  within 3 s, disarming on its own); a revoked body shows *Reflash <name>* instead, and a rose
+  banner says no persona can wear it until it is reflashed. Under it, **Who wears Fish** as a
+  radio list: *Nobody* (*Fish stands still.*), then every persona with where it is. Picking a
+  persona open on a phone hands it the legs there; picking one that is not open opens it on
+  this phone wearing Fish (through the first-time note when it applies). *The one it leaves
+  carries on alone on its phone.* Last, *Add a robot* (secondary). With no robot yet, the tab is
+  *Add a robot*.
+- **Phones.** One row per phone that has opened GrowBot (a phone outline, its name, what it
+  holds: *Captain Bolt · wearing Fish*, *Sprout · alone*, *nothing open*), with a violet *Fish*
+  tag on the one wearing the body. *A phone holds one persona at a time, and a persona is open on
+  one phone at a time — opening it elsewhere hands it over.* Then *Set up another phone*
+  (primary), *A phone won't open GrowBot?* (open on this tab: the Android *Nearby devices* hint,
+  the certificate note and *Download the box's certificate*), and *Sign out every phone*
+  (danger, armed: *Tap again to sign every phone out*), after which each persona stays on the
+  box.
+- **Violet is the body** everywhere (the ring, the wearing choice, the tag, the hand-over
+  banner), so it never reads as the steel primary. Colour is never the only signal.
+- **Every move says what happened.** A launch or rider change that moves anything shows a
+  violet banner that stays until *OK* (*Captain Bolt is wearing Fish on this phone. Sprout let
+  go of Fish and carries on alone on Pixel 6a.*); one that moves nothing is a toast. When
+  another phone takes a persona or the body, this screen shows the same banner.
+- **The first open on a phone** shows the certificate note once (*First time on this phone*,
+  with *Download the box's certificate* and the Nearby devices hint) before it opens.
+- **On another phone** (from the launch sheet or *Set up another phone*) is a sheet for a phone
+  signed in to nothing, like the robot's cradle phone: *It opens as* (a chip per persona),
+  *With the body?* (*Alone on that phone* / *Wearing Fish*, each saying who lets go), a warning
+  when that persona is open elsewhere, then two codes on white cards, *1. Scan with the phone's
+  camera app* (the box's setup page) and *2. Scan from the setup page's Scan the code* (a
+  one-time ticket naming the persona and, optionally, the body, re-minted every 100 s). *Copy
+  code 2 as a link instead* copies the same one-time, two-minute link: that is "launch a
+  persona from a link" (owner, 2026-11-10); there is no standing link.
+- **A persona's page** (tapping its row) has its name with where it is under it, its own tabs
+  (*Soul* · *Memories* · *Checkpoints* · *Manage*), and *Open <name>…* in the foot, which raises
+  the launch sheet.
+  - *Soul*: *Personality and settings — tap to edit* as rows (Personality, Expression, Name and
+    description, Dreams, Thinking, Body, each with a one-line preview and ›). A row opens the
+    editor sheet (a text box, or monospace for the JSON regions) with *Save*. Every save makes
+    an automatic checkpoint first (*Before editing personality*), and its toast has *Undo*. A
+    bad save is refused in place and says *Nothing was saved* (*That isn't valid — check the
+    brackets and quotes.*, *It can't be empty — the creature would have no voice.*). A locked
+    note under the rows and in the personality editor: *Child-safety rules are always added
+    after the personality. They can't be edited here, in a soul file or in the creature.*
+    Thinking and Body say *While it wears Fish, the robot's own settings win over these.* A
+    persona open on a phone reloads with the edit the next time it is idle, and the editor says
+    so. Then *What it remembers — read-only*: Who it is, Bond line, Right now, Wants, Diary,
+    with *<self name> writes these itself … To take one back, restore a checkpoint.*
+  - *Memories*: a grid of saved views with their label and date, each with *Delete* (armed).
+    They name people, so they never leave the box.
+  - *Checkpoints*: *Name it* plus *Save*, then the list, newest first (name, date, *automatic*
+    and why for the ones made before an edit, restore, reset or import), each with *Restore* (a
+    centre confirm that names the date and says the current state is saved first; its toast has
+    *Undo*) and *New persona from it*.
+  - *Manage*: *Rename* (the list's name; the creature still calls itself by its own name until
+    told otherwise), *Duplicate* (memories and visual memories, no checkpoints), *Export soul
+    file* (its memories but not its visual memories, which stay on the box), *Import over it*
+    (the file is checked first: too big or not a soul says so with *Nothing changed*; a
+    checkpoint is saved before it lands), *Reset to a fresh creature* (armed, saves *Before
+    reset* first, toast with *Undo*) and *Delete <name>* (danger, armed: *Tap again — erases its
+    memories and 3 checkpoints*).
+- **Add a robot** opens the G2 four-step sheet, one primary action per step: *Plug it into the
+  box* (what is on the box's USB, new robot or *Reflash <name>*, its name) → *Wi-Fi it should
+  join* (the box's remembered networks as a checklist, tried in order, *Add another network*) →
+  *Flashing* (three named rows: Load MicroPython · Copy its firmware and Wi-Fi · Join Wi-Fi and
+  reach the box, the log behind *Show the log* until something fails) → *<name> is paired*.
+  Closing the sheet mid-flash leaves *Flashing — tap to watch* on the Body tab. Each failure
+  says what happened and the recovery, never "see the log".
+- **Motion.** Sheets slide up, the restore confirm scales in, the persona page slides in from
+  the right, banners drop in and toasts rise, 160–200 ms ease-out, each only when it first
+  appears, all off under `prefers-reduced-motion`.
 - **jpanel → Flash** recognises a Pico on the port and hands over: *That's a GrowBot. Robots are
   added on the GrowBot screen* → *Add it on GrowBot*. There is one door.
 - **Ops → Services** lists `growbot` with *N of M robots connected now*; its open body lists the

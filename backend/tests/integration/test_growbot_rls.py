@@ -22,7 +22,7 @@ from jbrain.db.session import (
     jshare_context,
     scoped_session,
 )
-from jbrain.growbot.repo import SqlGrowbotRepo
+from jbrain.growbot.repo import Redeemed, SqlGrowbotRepo
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, UNSCOPED, database_url  # noqa: F401
 
@@ -92,7 +92,7 @@ async def test_a_non_owner_cannot_write_either_table(
         )
         assert changed.rowcount == 0  # type: ignore[attr-defined]
     assert [r.code for r in await repo.list_robots(OWNER)] == ["gb-a1"]
-    assert await repo.redeem_ticket(SYSTEM_OWNER, ticket) == ""
+    assert await repo.redeem_ticket(SYSTEM_OWNER, ticket) == Redeemed("")
 
 
 async def test_a_ticket_redeems_once_and_is_stored_hashed(maker: async_sessionmaker) -> None:
@@ -105,14 +105,14 @@ async def test_a_ticket_redeems_once_and_is_stored_hashed(maker: async_sessionma
     assert stored == hash_token(minted.ticket) and minted.ticket not in stored
     assert await repo.redeem_ticket(SYSTEM_OWNER, "") is None
     assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket + "x") is None
-    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) == ""
+    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) == Redeemed("")
     assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) is None
 
 
 async def test_a_ticket_carries_the_robot_it_was_minted_for(maker: async_sessionmaker) -> None:
     repo = SqlGrowbotRepo(maker)
     minted = await repo.mint_ticket(OWNER, "gb-a1b2c3")
-    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) == "gb-a1b2c3"
+    assert await repo.redeem_ticket(SYSTEM_OWNER, minted.ticket) == Redeemed("gb-a1b2c3")
     with pytest.raises(ValueError):
         await repo.mint_ticket(OWNER, "../x")
     async with scoped_session(maker, OWNER) as session:

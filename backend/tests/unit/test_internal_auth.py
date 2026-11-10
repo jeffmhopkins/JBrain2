@@ -20,6 +20,8 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from jbrain.config import Settings
+from jbrain.growbot.personas import Pulled
+from jbrain.growbot.repo import Redeemed
 from jbrain.main import create_app
 from jbrain.storage import FsInternalSecrets
 from tests.internal_callers import (
@@ -52,20 +54,45 @@ ENROLL_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
 ]
 # The GrowBot sidecar (GROWBOT_PLAN.md §2): its own token, in its own volume. Past the gate
 # the repo is a stand-in that says yes, and with hosting off every model name is unknown.
+_PID = "00000000-0000-4000-8000-000000000001"
+_PHONE = "phone-0123456789abcdef"
+
+
+class _YesPersonaRepo:
+    async def pull(self, ctx: object, pid: str, phone: str) -> Pulled | None:
+        return Pulled(1, {"soul_format": 3}, None)
+
+    async def push(self, ctx: object, pid: str, phone: str, base: int, soul: object) -> int:
+        return base + 1
+
+    async def riders(self, ctx: object) -> list[object]:
+        return []
+
+
 GROWBOT_ROUTES: list[tuple[str, str, dict[str, object] | None, int]] = [
     ("POST", "/internal/growbot/ticket/redeem", {"ticket": "t"}, 200),
     ("POST", "/internal/growbot/robot/verify", {"code": "gb-x", "key": "k"}, 200),
     ("GET", "/internal/growbot/lan-root", None, 404),
     ("GET", "/internal/growbot/llm/v1/models", None, 200),
     ("POST", "/internal/growbot/llm/v1/chat/completions", {"model": "x", "messages": []}, 400),
+    ("POST", "/internal/growbot/soul/pull", {"persona": _PID, "phone": _PHONE}, 200),
+    (
+        "POST",
+        "/internal/growbot/soul/push",
+        {"persona": _PID, "phone": _PHONE, "base": 1, "soul": {"soul_format": 3}},
+        200,
+    ),
+    ("GET", "/internal/growbot/body/gb-x", None, 200),
 ]
+# Routes with a path parameter, as app.routes names them.
+_TEMPLATES = {"/internal/growbot/body/gb-x": "/internal/growbot/body/{code}"}
 # Keeps its own HMAC bearer (api/llm_internal.py, tested in test_llm_internal.py).
 _OWN_BEARER = {"/internal/llm/regen-gateway-config"}
 
 
 class _YesGrowbotRepo:
-    async def redeem_ticket(self, ctx: object, ticket: str) -> str | None:
-        return ""
+    async def redeem_ticket(self, ctx: object, ticket: str) -> Redeemed | None:
+        return Redeemed("")
 
     async def verify_robot(self, ctx: object, code: str, key: str) -> bool:
         return True
@@ -79,6 +106,7 @@ def app_client(tmp_path: Path) -> Iterator[tuple[FastAPI, TestClient]]:
     with TestClient(app) as c:
         app.state.auth_repo = FakeAuthRepo()
         app.state.growbot_repo = _YesGrowbotRepo()
+        app.state.growbot_personas = _YesPersonaRepo()
         yield app, c
 
 
@@ -97,7 +125,7 @@ def test_every_internal_route_refuses_a_request_without_a_token(
         for m in r.methods
     ]
     routes = WALL_ROUTES + MQTT_ROUTES + ENROLL_ROUTES + GROWBOT_ROUTES
-    gated = {p for _, p, _, _ in routes} | {"/internal/pet"} | _OWN_BEARER
+    gated = {_TEMPLATES.get(p, p) for _, p, _, _ in routes} | {"/internal/pet"} | _OWN_BEARER
     # A new /internal route fails here until it is given a caller.
     assert {p for _, p in internal} == gated
     for method, path in internal:

@@ -24,7 +24,7 @@ from jbrain.api.deps import current_debug_principal, owner_only
 from jbrain.auth.keys import hash_token
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
-from jbrain.growbot.repo import TICKET_TTL, MintedTicket, RobotInfo
+from jbrain.growbot.repo import TICKET_TTL, MintedTicket, Redeemed, RobotInfo
 from jbrain.storage import FsInternalSecrets
 
 OWNER = PrincipalInfo(id="00000000-0000-0000-0000-000000000001", kind="owner", label="owner")
@@ -34,24 +34,26 @@ DEBUG = PrincipalInfo(id="cap1", kind="capability_token", label="token")
 @dataclass
 class FakeRepo:
     now: datetime = field(default_factory=lambda: datetime(2026, 11, 10, tzinfo=UTC))
-    tickets: dict[str, tuple[datetime, bool, str]] = field(default_factory=dict)
+    tickets: dict[str, tuple[datetime, bool, str, str | None]] = field(default_factory=dict)
     robots: dict[str, tuple[str, datetime, datetime | None]] = field(default_factory=dict)
     contexts: list[SessionContext] = field(default_factory=list)
 
-    async def mint_ticket(self, ctx: SessionContext, code: str = "") -> MintedTicket:
+    async def mint_ticket(
+        self, ctx: SessionContext, code: str = "", persona_id: str | None = None
+    ) -> MintedTicket:
         self.contexts.append(ctx)
         ticket = f"t{len(self.tickets)}-secret"
-        self.tickets[hash_token(ticket)] = (self.now + TICKET_TTL, False, code)
+        self.tickets[hash_token(ticket)] = (self.now + TICKET_TTL, False, code, persona_id)
         return MintedTicket(ticket=ticket, expires_at=self.now + TICKET_TTL)
 
-    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> str | None:
+    async def redeem_ticket(self, ctx: SessionContext, ticket: str) -> Redeemed | None:
         self.contexts.append(ctx)
         h = hash_token(ticket)
         entry = self.tickets.get(h)
         if entry is None or entry[1] or entry[0] <= self.now:
             return None
-        self.tickets[h] = (entry[0], True, entry[2])
-        return entry[2]
+        self.tickets[h] = (entry[0], True, entry[2], entry[3])
+        return Redeemed(entry[2], entry[3])
 
     async def put_robot(self, ctx: SessionContext, code: str) -> str:
         self.contexts.append(ctx)
@@ -234,7 +236,8 @@ def test_a_ticket_opens_once(tmp_path: Path, repo: FakeRepo) -> None:
     ticket = client.post("/api/growbot/ticket").json()["ticket"]
     redeem = "/internal/growbot/ticket/redeem"
     first = client.post(redeem, json={"ticket": ticket}, headers=headers)
-    assert first.status_code == 200 and first.json() == {"ok": True, "code": ""}
+    assert first.status_code == 200
+    assert first.json() == {"ok": True, "code": "", "persona": "", "phone": ""}
     assert client.post(redeem, json={"ticket": ticket}, headers=headers).status_code == 401
     assert repo.contexts[-1] == SessionContext(principal_kind="owner")
 
@@ -246,7 +249,7 @@ def test_a_ticket_names_its_robot_and_redeem_answers_with_it(
     client = TestClient(app)
     ticket = client.post("/api/growbot/ticket", json={"code": "gb-a1b2c3"}).json()["ticket"]
     first = client.post("/internal/growbot/ticket/redeem", json={"ticket": ticket}, headers=headers)
-    assert first.json() == {"ok": True, "code": "gb-a1b2c3"}
+    assert first.json() == {"ok": True, "code": "gb-a1b2c3", "persona": "", "phone": ""}
 
 
 def test_an_expired_or_unknown_ticket_is_refused(tmp_path: Path, repo: FakeRepo) -> None:

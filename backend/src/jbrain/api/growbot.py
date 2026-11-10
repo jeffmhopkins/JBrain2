@@ -19,6 +19,8 @@ the token has been checked, and the tables are owner-only.
 
 from __future__ import annotations
 
+import re
+import secrets
 from datetime import datetime
 from typing import Annotated, cast
 from urllib.parse import quote, urlsplit
@@ -33,6 +35,7 @@ from jbrain.api.deps import DebugDep, OwnerDep, SettingsDep
 from jbrain.api.internal_auth import require_growbot
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
+from jbrain.growbot.personas import PersonaRepo
 from jbrain.growbot.repo import CODE_RE, GrowbotRepo, RobotInfo
 from jbrain.storage import InternalSecrets
 
@@ -56,6 +59,15 @@ def _repo(request: Request) -> GrowbotRepo:
     return cast(GrowbotRepo, request.app.state.growbot_repo)
 
 
+def _personas(request: Request) -> PersonaRepo:
+    return cast(PersonaRepo, request.app.state.growbot_personas)
+
+
+_UUID = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+# The phone id the sidecar keeps in a browser's gb_session (migration 0257's CHECK).
+PHONE_RE = re.compile(r"^[A-Za-z0-9_-]{16,43}$")
+
+
 def _owner_ctx(owner: OwnerDep) -> SessionContext:
     return SessionContext(principal_id=owner.id, principal_kind="owner")
 
@@ -64,6 +76,8 @@ class TicketIn(BaseModel):
     # The robot the phone should drive. Bound to the ticket: redeem answers with it and the
     # sidecar lets that phone join this robot alone (pairing is JBrain's, owner 2026-11-10).
     code: str | None = Field(default=None, pattern=_CODE)
+    # The persona the phone opens as (G4). None: the phone's own soul, as before G4.
+    persona: str | None = Field(default=None, pattern=_UUID)
 
 
 class TicketOut(BaseModel):
@@ -171,9 +185,12 @@ async def _ticket(
 ) -> TicketOut:
     host = _lan_host(settings)
     code = body.code if body is not None and body.code else ""
-    # The ticket itself names the robot: the sidecar signs the code redeem answers into the
-    # phone's session, so editing `id` on the link reaches no other robot.
-    minted = await _repo(request).mint_ticket(ctx, code)
+    persona = body.persona.lower() if body is not None and body.persona else None
+    if persona is not None and await _personas(request).get_persona(ctx, persona) is None:
+        raise HTTPException(status_code=404, detail="no such persona")
+    # The ticket itself names the robot and the persona: the sidecar signs what redeem answers
+    # into the phone's session, so editing `id` on the link reaches no other robot.
+    minted = await _repo(request).mint_ticket(ctx, code, persona)
     url = f"https://{host}:{GROWBOT_PORT}/open?ticket={quote(minted.ticket, safe='')}"
     if code:
         url += f"&id={quote(code, safe='')}"
@@ -283,6 +300,10 @@ async def debug_delete_robot(request: Request, _p: DebugDep, code: Code) -> Resp
 # 422, and the sidecar never sends one.)
 class RedeemIn(BaseModel):
     ticket: str = ""
+    # The phone id from the browser's gb_session, if it has one, so a phone stays the same
+    # phone across tickets; and what the Phones tab should call a phone it has never seen.
+    phone: str = ""
+    label: str = ""
 
 
 class VerifyIn(BaseModel):
@@ -298,6 +319,9 @@ class RedeemedOut(BaseModel):
     ok: bool
     # The robot the ticket was minted for, '' for none: the only robot the phone may join.
     code: str
+    # The persona it opens as and the phone that now holds it ('' for both on a G2 ticket).
+    persona: str = ""
+    phone: str = ""
 
 
 def _refused() -> HTTPException:
@@ -310,14 +334,27 @@ _MAX_SECRET = 256
 
 @internal_router.post("/ticket/redeem")
 async def redeem_ticket(request: Request, body: RedeemIn) -> RedeemedOut:
-    """Spend a phone's ticket: 200 with its robot the first time within its 120 s, 401 ever
-    after."""
+    """Spend a phone's ticket: 200 with its robot (and persona) the first time within its
+    120 s, 401 ever after. A persona's ticket hands the persona to this phone (and the robot,
+    when it names one) before it answers."""
     if len(body.ticket) > _MAX_SECRET:
         raise _refused()
-    code = await _repo(request).redeem_ticket(_SYSTEM_OWNER, body.ticket)
-    if code is None:
+    redeemed = await _repo(request).redeem_ticket(_SYSTEM_OWNER, body.ticket)
+    if redeemed is None:
         raise _refused()
-    return RedeemedOut(ok=True, code=code)
+    if redeemed.persona_id is None:
+        return RedeemedOut(ok=True, code=redeemed.code)
+    # A phone id that is not ours in shape is a new phone, never an error: the browser's old
+    # cookie may be from before G4.
+    phone = body.phone if PHONE_RE.fullmatch(body.phone) else secrets.token_urlsafe(24)
+    label = " ".join(body.label.split())[:40]
+    opened = await _personas(request).open_on_phone(
+        _SYSTEM_OWNER, redeemed.persona_id, phone, label, redeemed.code
+    )
+    if not opened:
+        # Deleted (or its robot forgotten) since the ticket was minted.
+        raise _refused()
+    return RedeemedOut(ok=True, code=redeemed.code, persona=redeemed.persona_id, phone=phone)
 
 
 @internal_router.get("/lan-root")

@@ -232,8 +232,11 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
 - **Checkpoints and seeds (owner, 2026-11-10): *"from the jbrain pwa review all the saved
   files, the soul file etc. And memories. And then if I want I can create a set point and I can
   use that as a restore point. And then we can make different personas that we can flash not
-  just the default."*** The PWA shows each persona's soul (its memory surfaces, goals and
-  config regions, read-only, since the creature writes them) and its visual memories. A
+  just the default."*** The PWA shows each persona's soul and its visual memories. The memory surfaces and goals are
+  read-only, since the creature writes them; the config regions (persona, expression, meta,
+  dream, harness, body) are editable (owner, 2026-11-10: *"a way to edit personas files and
+  make backups"*), each save checkpointed first and passed through the same
+  `sanitizeSoulCfg` and size cap as an import. A
   *checkpoint* is a named, dated copy of a persona's soul and visual memories, kept on the box;
   *Restore* puts one back as the persona (after a confirm, and after saving the current state as
   a checkpoint first, so a restore is itself undoable). A *seed* is a persona's starting
@@ -255,6 +258,24 @@ child-safety floor after any loaded persona, so swapping a soul never removes th
   by `vmNs()`: `pb2_sid`, else `gb_vm_ns`; the loader pins it to the profile id). What it does not: upstream's per-device keys kept
   outside the soul on purpose (`pb_device`, `pb_or_*`) stay with the phone, and on the box
   `/api/device` answers them for any phone.
+- **Settled at the G4 gate (owner picked mock B, three tabs, 2026-11-10;
+  `docs/mocks/growbot-personas/README.md` "What the owner's ask changes in the plan").**
+  - A PWA edit (or restore, reset, import) is a newer soul: it bumps the box's version, so the
+    open phone's next push is refused and the phone reloads the box's copy when idle, never
+    overwriting it with its cache.
+  - The body's rider can be set from the PWA (B's *Who wears Fish*): for a persona open on
+    another phone, the box moves the rider and that phone takes the legs at its next check,
+    without anyone touching it. Only the owner's session can do this; a phone's own session
+    can take the body only by being opened wearing it.
+  - The soul's `harness` and `body` regions apply while the persona is alone; while it wears
+    the body, the robot's own settings (§2b) win.
+  - "Launch a persona from a link" is the one-time, two-minute code 2 as a link (*Copy code 2
+    as a link instead*). No standing per-persona link: it would be a credential. The installed
+    app's `/start` reopens the persona and body its session was opened as.
+  - A phone holds one persona (upstream's single `pb2_soul`): opening another there closes the
+    first, which stays on the box.
+  - Delete takes the persona's checkpoints with it, and the armed tap says how many.
+  - Export is the soul alone; visual memories (faces) stay on the box. A checkpoint keeps them.
 - **The PWA** lists the profiles on the GrowBot screen (the launcher tile), each with *Open* (on the phone alone) and
   *Connect to body*. It can add one, duplicate, rename,
   reset to a fresh creature (upstream's own seed), export and import a soul file, and delete
@@ -350,13 +371,25 @@ is a security-reviewed change. The sidecar stays on the `internal: true` `panel`
 - **G3 — settings from the PWA.** GUI gate first (the PWA GrowBot card). The
   `growbot_settings` table, its RLS and isolation test, the owner routes, the app's pickup and
   report route, and the apply hook with idle reload (§2b).
-- **G4 — the creature on the box, and profiles.** GUI gate first (the persona list on the
-  GrowBot screen, with *Connect to body* on it; three mocks awaiting the owner's pick in
-  `docs/mocks/growbot-personas/`). The profile tables and blob storage, RLS
-  and isolation tests, the pull/push/hand-over routes and the body-rider route with their auth
-  tests, the loader's sync patch (and hiding the creature's own pairing box), checkpoints (save, list, restore) and seeds, the soul and
-  memory viewer, and PWA add (from a seed), per-persona Open, *Connect to body*,
-  duplicate, rename, reset, export/import and delete (§2c).
+- **G4 — the creature on the box, and profiles.** GUI gate passed (owner, 2026-11-10: mock B, three tabs,
+  `docs/mocks/growbot-personas/b-three-tabs.html`; binding spec
+  in `docs/reference/DESIGN.md` "GrowBot — the desk robot's screen"). Built in four PRs:
+  - **G4a — personas on the box.** The persona and checkpoint tables under owner-only RLS with
+    their isolation tests; the owner and debug routes (list, add from a seed, rename,
+    duplicate, edit a config region, export, import, reset, delete, checkpoint save, list and
+    restore); the sidecar's `growbot.token` routes that pull and push the soul of the persona a
+    phone was opened as, with the version and holder checks; tickets that name a persona and
+    whether it wears the body, and the body's rider, settable from the PWA's Body tab for a
+    persona already open on another phone (B's *Who wears Fish*), with its own auth test.
+  - **G4b — the phone follows the box.** The `gb_session` carries the persona and the holder;
+    the shim's soul routes; the loader patch (pull before the page loads, push as the soul is
+    written, the *it has moved* and *the body has gone* pages, hiding the creature's own pairing
+    box).
+  - **G4c — the screen.** The Personas, Body and Phones tabs, the launch sheet, *Who wears
+    Fish*, the hand-over banners, *On another phone* with a persona and the body, and the
+    persona page with its tabs (soul and editor, checkpoints, manage).
+  - **G4d — visual memories.** Their blobs through the storage abstraction under their own
+    namespace, synced like the soul, the grid with delete, and kept in checkpoints.
 - **G5 — the diary.** GUI gate first. The diary via the api into Postgres under RLS, readable in
   the PWA; optionally offered to JBrain as a note, owner-confirmed, never automatic.
 

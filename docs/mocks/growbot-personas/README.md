@@ -1,6 +1,6 @@
 # GrowBot → bodies, personas, launching, files and backups
 
-Kind: Living (mock set) · Status: **awaiting the owner's pick** · Last verified: 2026-11-10
+Kind: Living (mock set) · Status: **picked — B, three tabs (owner, 2026-11-10, after first picking A)**; binding spec in `docs/reference/DESIGN.md` "GrowBot — the desk robot's screen" · Last verified: 2026-11-10
 
 The GUI gate for wave **G4** of [`../../plans/GROWBOT_PLAN.md`](../../plans/GROWBOT_PLAN.md)
 (§2c "The creature lives on the box, as profiles", §4 G4). It builds on the G2 pick,
@@ -131,7 +131,7 @@ These land whichever direction is picked.
 | **B** `b-three-tabs` | **Three tabs, one per job the owner named:** **Personas** (rows with one **Open** button), **Body** (Fish, its keys, and **Who wears Fish** as a radio list, so the body's rider can be picked from the body's side, even for a persona already open on another phone), **Phones** (each phone and what it holds, *Set up another phone*, the hints open). *Open* raises one launch sheet with three big choices, each saying what happens to the body and to the phone it leaves. A persona's page has its own tabs: Soul · Memories · Checkpoints · Manage. | The clearest map of bodies vs personas vs phones, and the launch sheet explains every move before it happens. But the common paths cost **two taps** (Open → choice). Choosing a rider from the Body tab needs a new api ability: telling the box that a persona already open on another phone now rides Fish, without that phone doing anything (see below). Tabs inside a tabbed screen are one more level to learn. |
 | **C** `c-launch-board` | **A launch board.** The screen opens on one composer: **Who** (persona chips, starting on what this phone holds) · **Where** (This phone / Another phone) · **Body** (Alone / Wearing Fish). It reads back what will happen in a sentence (*Opens Captain Bolt on this phone, wearing Fish. Sprout lets go of Fish and carries on alone on Pixel 6a.*), and one big foot button does it. Below it, **Who's where** shows Fish and each phone at once. A persona opens a **workshop** that shows the soul as files (*personality.md*, *expression.json* … you can edit; *who-i-am.txt*, *bond-line.txt*, *diary.log* … it writes; *visual-memories/*). Each file is a full page with *Edit* in the foot. Beside the files is a **History** timeline of its checkpoints, from *Now* down to *Made*. | Says the consequence before every launch, and matches the owner's own words, *"edit personas files and make backups"*. Reopening this phone's persona is one tap, and connecting it is two (*Wearing Fish*, then Open). But it is the most invented: the files are the mock's names for regions of one JSON document, not real files, and a composer is a new pattern in the app. Manage hides behind *⋯*. |
 
-## Recommendation: A, with C's sentence
+## Recommendation: A, with C's sentence (the owner picked B)
 
 A is the only direction where both everyday paths, *open my persona here* and *put it in the
 body*, are one tap from arriving. The owner does those daily and edits a soul rarely. A also
