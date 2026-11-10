@@ -166,7 +166,7 @@ change made on one phone is invisible everywhere else.
   `patches/` adds a small apply hook that sets both the localStorage key and the live variable
   for each setting it can change in place (voice, speed, pitch, effort, low-power, duty budget).
   For the rest (the model lineup, leg calibration) the app reloads itself the next time the
-  creature is idle, which is safe because its memory is in localStorage. The card says which
+  creature is idle, which is safe because its memory is in localStorage and IndexedDB. The card says which
   kind each setting is.
 - The model list the PWA offers is the box's catalog filtered to installed models, with
   vision-capable ones marked.
