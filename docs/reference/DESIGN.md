@@ -3270,6 +3270,9 @@ flashes one once. The tile's second line says who is connected (or that `growbot
   the recovery, never "see the log".
 - **Open GrowBot** mints a one-time link and opens `https://jbrain.local:8444` in a new tab. The
   first open on a phone shows the certificate note once, with *Download the box's certificate*.
+  Below the robots, *Open GrowBot without a robot* (secondary) opens the creature with no legs:
+  it opens unpaired on the phone and offers to pair, so it can be tried before any board is flashed
+  (owner, 2026-11-10).
 - **jpanel → Flash** recognises a Pico on the port and hands over: *That's a GrowBot. Robots are
   added on the GrowBot screen* → *Add it on GrowBot*. There is one door.
 - **Ops → Services** lists `growbot` with *N of M robots connected now*; its open body lists the

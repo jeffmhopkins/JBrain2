@@ -173,7 +173,9 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
           say(
             away
               ? `Opened GrowBot. ${robot.name || code} isn't connected right now — its legs move once it is on and reaches the box.`
-              : "Opened GrowBot in a new tab. The link works once and is spent.",
+              : code
+                ? "Opened GrowBot in a new tab. The link works once and is spent."
+                : "Opened GrowBot without a robot: it runs on this phone, and its legs wait for one.",
           );
         } else {
           say("The phone blocked the new tab — tap here to open GrowBot.", url);
@@ -322,7 +324,14 @@ export function GrowbotScreen({ openAdd, onOpenAddConsumed }: GrowbotScreenProps
             <p className="gb-hint">Plug the robot's Pico into the box's USB, then add it.</p>
           </section>
         )}
-        {robots.length > 0 && !certNoted() && (
+        {status !== null && (
+          // The creature opens unpaired on the phone (face, voice, camera); only its legs need a
+          // robot, so it can be tried before any board is flashed.
+          <button type="button" className="gb-btn block" onClick={() => openRobot("")}>
+            Open GrowBot without a robot
+          </button>
+        )}
+        {status !== null && !certNoted() && (
           <p className="gb-hint dim">
             The first time you open GrowBot on this phone, it explains the box's certificate.
           </p>

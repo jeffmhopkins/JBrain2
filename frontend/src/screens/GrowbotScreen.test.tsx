@@ -287,3 +287,27 @@ describe("GrowbotScreen", () => {
     expect(within(sheet).getByText("Load MicroPython")).toBeInTheDocument();
   });
 });
+
+describe("GrowbotScreen without a robot", () => {
+  afterEach(() => {
+    localStorage.clear();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("opens the creature with no robot, asking the box for a ticket without a code", async () => {
+    localStorage.setItem(CERT_NOTED_KEY, "1");
+    const tab = { closed: false, opener: {} as unknown, location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    const calls = serve({ service: "up", connected: 0, robots: [] }, (path) =>
+      path === "/api/growbot/ticket"
+        ? json({ ticket: "t", url: "https://jbrain.local:8444/open?ticket=t" })
+        : null,
+    );
+    render(<GrowbotScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: "Open GrowBot without a robot" }));
+    await waitFor(() => expect(tab.location.href).toContain("https://jbrain.local:8444/open"));
+    expect(calls.find((c) => c.path === "/api/growbot/ticket")?.body).toEqual({});
+    expect(tab.opener).toBeNull();
+  });
+});

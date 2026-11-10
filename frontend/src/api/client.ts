@@ -8023,8 +8023,9 @@ export const api = {
     return (await response.json()) as GrowbotRobot;
   },
 
+  /** An empty `code` opens the creature with no robot: it runs on the phone, legs idle. */
   async growbotTicket(code: string): Promise<GrowbotTicket> {
-    const response = await request("/api/growbot/ticket", jsonInit("POST", { code }));
+    const response = await request("/api/growbot/ticket", jsonInit("POST", code ? { code } : {}));
     return (await response.json()) as GrowbotTicket;
   },
 };

@@ -375,7 +375,7 @@ async function mockGrowbot(
     const { code } = JSON.parse(String(init?.body ?? "{}")) as { code?: string };
     return json({
       ticket: "mock-ticket",
-      url: `https://jbrain.local:8444/open?ticket=mock-ticket&id=${encodeURIComponent(code ?? "")}`,
+      url: `https://jbrain.local:8444/open?ticket=mock-ticket${code ? `&id=${encodeURIComponent(code)}` : ""}`,
       expires_at: new Date(Date.now() + 120_000).toISOString(),
     });
   }
