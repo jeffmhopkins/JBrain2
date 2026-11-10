@@ -248,7 +248,12 @@ def test_the_output_budget_is_capped_on_an_engine_with_no_pool(
     tmp_path: Path, budget: dict[str, object], expected: int
 ) -> None:
     app, auth, gw = _app(tmp_path)
-    assert TestClient(app).post(_COMPLETIONS, json=_chat(**budget), headers=auth).status_code == 200
+    assert (
+        TestClient(app)
+        .post(_COMPLETIONS, json=_chat(_VL, "hi", **budget), headers=auth)
+        .status_code
+        == 200
+    )
     sent = gw.sent[0]["json"]
     assert sent["max_tokens"] == expected and "max_completion_tokens" not in sent
 

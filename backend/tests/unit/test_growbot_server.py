@@ -1447,3 +1447,52 @@ def test_the_compose_service_runs_the_bind_mounted_server() -> None:
     dockerfile = (_DEPLOY / "Dockerfile.growbot").read_text()
     assert "FROM python:3.12-slim" in dockerfile
     assert "pip" not in dockerfile.split("FROM", 1)[1]
+
+
+def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
+    # An <img> or fetch from any page: refused before the api, never counted.
+    for _ in range(4):
+        resp = run.request(
+            "GET",
+            "/open?ticket=bad&id=gb-abc123",
+            headers={"Sec-Fetch-Dest": "image", "Sec-Fetch-Site": "cross-site"},
+            cookie=False,
+        )
+        assert resp.status == 403
+        resp.read()
+    # Cross-site navigations spend their own bucket only.
+    cross = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "cross-site"}
+    for _ in range(2):
+        resp = run.request("GET", "/open?ticket=bad&id=gb-abc123", headers=cross, cookie=False)
+        assert resp.status == 401
+        resp.read()
+    resp = run.request("GET", "/open?ticket=bad&id=gb-abc123", headers=cross, cookie=False)
+    assert resp.status == 429
+    resp.read()
+    same = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-site"}
+    resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", headers=same, cookie=False)
+    assert resp.status == 302
+    resp.read()
+
+
+def test_a_cookieless_socket_from_a_browser_is_refused(run: _Running) -> None:
+    verifies = len([s for s in _Fake.seen if s["path"].endswith("/robot/verify")])
+    assert _Ws(run, "/d/gb-abc123", cookie=False, origin="https://evil.example").status == 403
+    assert _Ws(run, "/d/gb-abc123", cookie=False, origin=run.origin).status == 403
+    assert len([s for s in _Fake.seen if s["path"].endswith("/robot/verify")]) == verifies
+
+
+def test_failed_hellos_do_not_lock_out_the_owners_link(
+    run: _Running, gb: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
+    for _ in range(2):
+        chip = _Ws(run, "/d/gb-abc123", cookie=False)
+        chip.text({"t": "hello", "id": "gb-abc123", "key": "guess"})
+        assert chip.close_code() == 1008
+    resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", cookie=False)
+    assert resp.status == 302
+    resp.read()

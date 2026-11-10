@@ -751,7 +751,9 @@ class GrowBot:
         self.sockets = 0
         self.unauth_sockets = 0
         self.connections = 0
-        self.backoff = Backoff()
+        # Apart, so a flood of one kind (say, hello-less sockets) never locks out the other.
+        self.ticket_backoff = Backoff()
+        self.hello_backoff = Backoff()
         self._pool: Executor = ThreadPoolExecutor(API_WORKERS, "growbot-api")
         self._streams: Executor = ThreadPoolExecutor(STREAM_WORKERS, "growbot-stream")
         self._gate: Executor = ThreadPoolExecutor(GATE_WORKERS, "growbot-gate")
@@ -908,8 +910,17 @@ class GrowBot:
             or not CODE_RE.fullmatch(code)
         ):
             return Response(400, b"bad link", headers=[("Cache-Control", "no-store")])
+        # The PWA's link is a top-level navigation. Any other load (an <img>, a fetch) is some
+        # page spending the owner's tries for them, so it is refused uncounted. A cross-site
+        # navigation still opens (the PWA may be reached by another name), but counts in its
+        # own bucket, so a page the owner visits cannot lock out the PWA's own link.
+        dest = req.header("sec-fetch-dest")
+        if dest and dest != "document":
+            return Response(403, b"open from the PWA", headers=[("Cache-Control", "no-store")])
         client = await self.client_ip(req)
-        if self.backoff.blocked(client):
+        if req.header("sec-fetch-site") == "cross-site":
+            client = f"cross-site:{client}"
+        if self.ticket_backoff.blocked(client):
             return Response(429, b"too many tries", headers=[("Retry-After", "300")])
         up = await self._call(
             self._api_post,
@@ -918,7 +929,7 @@ class GrowBot:
             pool=self._gate,
         )
         if not self._ok(up):
-            self.backoff.fail(client)
+            self.ticket_backoff.fail(client)
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         cookie = (
             f"{SESSION_COOKIE}={self.sessions.mint()}; HttpOnly; Secure; SameSite=Strict; "
@@ -1186,6 +1197,10 @@ class GrowBot:
             return Response(401, UNAUTHORISED_PAGE, "text/html; charset=utf-8")
         if authed and req.header("origin") != f"https://{req.header('host')}":
             return Response(403, b"cross-origin")
+        # The chip's MicroPython client sends no Origin and every browser does, so a cookieless
+        # socket with one is a web page squatting the robots' budget or burning their tries.
+        if not authed and req.header("origin"):
+            return Response(403, b"cross-origin")
         if req.method != "GET" or "websocket" not in req.tokens("upgrade"):
             return Response(426, b"websocket only", headers=[("Upgrade", "websocket")])
         if "upgrade" not in req.tokens("connection"):
@@ -1212,7 +1227,7 @@ class GrowBot:
         name = seg if agent else code
         try:
             client = "" if authed else await self.client_ip(req)
-            if not authed and self.backoff.blocked(client):
+            if not authed and self.hello_backoff.blocked(client):
                 return Response(
                     429, b"too many tries", headers=[("Retry-After", "300")]
                 )
@@ -1288,7 +1303,7 @@ class GrowBot:
                 or not isinstance(key, str)
                 or not 0 < len(key) <= 256
             ):
-                self.backoff.fail(client)
+                self.hello_backoff.fail(client)
                 ws.close(1008, "hello with a key")
                 return
             up = await self._call(
@@ -1298,7 +1313,7 @@ class GrowBot:
                 pool=self._gate,
             )
             if not self._ok(up):
-                self.backoff.fail(client)
+                self.hello_backoff.fail(client)
                 ws.close(1008, "unknown robot")
                 return
         finally:

@@ -85,14 +85,22 @@ origin because upstream's root-absolute paths (`/api/…`, `/v3/…`) collide wi
   message can have the model's engine fetch anything.
 - **The robot.** The relay's chip side has no browser and no cookie: its first frame must be a
   `hello` whose `key` the api verifies for that pairing code, or the socket is closed (1008). The
-  key is stripped from the hello before phones see it and is never logged.
+  key is stripped from the hello before phones see it and is never logged. A robot flashed
+  without `BOX_CA` in `secrets.py` dials TLS unverified, so anyone who can impersonate the box on
+  the LAN could take its key and pose as that robot (never anything more); G2's PWA flashing
+  always writes the CA.
 - **Limits.** 16 KiB of request head, 16 MiB of body (`Content-Length` up to 10 digits, chunk
   sizes up to 8 hex digits, checked before any `100 Continue`), 512 connections, 256 KiB per
   WebSocket message, 256 sockets, 8 phones (or agents) per code. Cookieless sockets (robots
   until their hello is verified) have their own budget of 16, and a verified robot leaves it.
   Failed `/open` tickets and failed robot hellos are counted per client (Caddy's `X-Real-IP`,
   believed only from the proxy, whose last good address is kept if a lookup fails): 8 in 5
-  minutes and that client gets 429 until the window passes. Socket slots are taken at the
+  minutes and that client gets 429 until the window passes. Tickets and hellos keep separate
+  counts, and so do cross-site `/open` navigations, so a page the owner visits cannot lock out
+  the PWA's own link; an `/open` that is not a top-level navigation (`Sec-Fetch-Dest` other than
+  `document`) is 403 and never counted, and a cookieless socket that sends an `Origin` (a
+  browser, never the chip) is 403. The counts are only per client while Docker hands Caddy the
+  real source address; behind a userland proxy every client shares one count. Socket slots are taken at the
   admission check, so a burst cannot overshoot them. Outbound calls run on pools apart from
   static serving: 8 threads for brain, Kokoro and whisper calls, 2 for the model list, and 2
   for ticket redeem and robot verify, so slow brain calls never queue the doors. A pairing code's channel exists only while an admitted socket
