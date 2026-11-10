@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot flash — B — its own screen</title>
+<link rel="stylesheet" href="shared.css">
+<style>
+/* A launcher tile grid, after the card launcher's three columns. */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tile { min-height: 96px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card);
+  padding: 12px; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; text-align: left; cursor: pointer; }
+.tile .tn { font-size: var(--fs-body); font-weight: 500; }
+.tile .ts { font-size: var(--fs-micro); color: var(--text-3); }
+.tile.dim .tn { color: var(--text-2); }
+.robot h3 { font-size: var(--fs-title); flex: 1; }
+.foot { flex: none; padding: 12px 16px calc(16px + env(safe-area-inset-bottom)); border-top: 1px solid var(--border); background: var(--bg); }
+.banner { flex: none; background: var(--rose-tint); color: var(--danger-text); font-size: var(--fs-secondary); padding: 10px 16px; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 0; font-size: var(--fs-secondary); }
+.facts dt { color: var(--text-3); } .facts dd { margin: 0; color: var(--text-2); }
+</style>
+</head>
+<body>
+<!-- B: GrowBot is a thing the owner uses, so it gets its own door in the launcher. The robots
+     come first and "Open GrowBot" is the biggest button on each; flashing is something you do
+     once per robot, so it is a guided sheet behind "Add a robot", one step and one button at a
+     time. The Endpoints flasher points here instead of carrying a second copy. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const S0 = () => G.S;
+  const B = { step: 1, logOpen: false };
+
+  function launcher() {
+    const S = S0();
+    const on = S.robots.filter((r) => r.online && r.key === "active" && S.svc === "up");
+    const gbLine = S.svc === "down" ? `<span class="bad-t">growbot is down</span>`
+      : on.length ? `${on.map((r) => G.esc(r.name)).join(", ")} connected` : "no robot connected";
+    const t = (n, s, act, arg) => `<button class="tile${act ? "" : " dim"}"${act ? ` data-act="${act}" data-arg="${arg}"` : ""}><span class="tn">${n}</span><span class="ts">${s}</span></button>`;
+    return `<div class="topbar"><span class="ttl">JBrain<span class="steel-t">.</span></span><button class="back" aria-label="Close launcher">&times;</button></div>
+      <div class="body"><div class="grid">
+        ${t("Brain", "chat", "", "")}${t("Tasks", "3 today", "", "")}${t("Lists", "", "", "")}
+        ${t("jpanel", "panels", "screen", "ep")}${t("GrowBot", gbLine, "screen", "gb")}${t("Ops", "all up", "screen", "ops")}
+        ${t("Radio", "", "", "")}${t("Minecraft", "2 online", "", "")}${t("Settings", "", "", "")}
+      </div><p class="hint dim">GrowBot's tile says who is connected, so you can see it from here.</p></div>`;
+  }
+
+  function growbot() {
+    const S = S0(), F = S.flash;
+    const banner = S.svc === "down" ? `<div class="banner" role="status">growbot is down — no robot can connect. Ops → Services has its log and Restart.</div>` : "";
+    const note = !S.trusted && !S.certNoted
+      ? `<p class="hint dim">The first time you open GrowBot on this phone, it explains the box's certificate.</p>` : "";
+    const cards = S.robots.map((r) => `<section class="card robot" aria-label="${G.esc(r.name)}">
+        <div style="display:flex;align-items:center;gap:10px"><h3>${G.esc(r.name)}</h3>${G.stateHTML(r)}</div>
+        <div style="height:12px"></div>
+        ${r.key === "revoked"
+          ? `<p class="msg bad">${G.keyLine(r)}</p><button class="btn primary block" data-act="add-for" data-arg="${r.id}">Reflash ${G.esc(r.name)}</button>`
+          : `<button class="btn primary block" data-act="open" data-arg="${r.id}">Open GrowBot</button>`}
+        <dl class="facts"><dt>Pairing code</dt><dd class="mono">${r.code}</dd><dt>Device key</dt><dd>${r.key === "revoked" ? `<span class="bad-t">revoked</span>` : `made ${G.day(r.minted)}, only on this robot`}</dd></dl>
+        ${r.key === "revoked" ? "" : `<div class="acts">${G.keyActs(r)}</div>`}</section>`).join("");
+    const empty = S.robots.length ? "" : `<section class="card"><h3>No robots yet</h3><p class="hint" style="margin-top:6px">Plug the robot's Pico into the box's USB, then add it.</p></section>`;
+    const footBtn = F.state === "running" && !F.rotate
+      ? `<button class="btn primary block" data-act="wizard">Flashing — tap to watch</button>`
+      : `<button class="btn primary block" data-act="add-for" data-arg="new">Add a robot</button>`;
+    return `<div class="topbar"><button class="back" data-act="screen" data-arg="launch">Back</button><span class="ttl">GrowBot</span></div>${banner}
+      <div class="body" data-scroll="gb">${cards}${empty}${note}</div><div class="foot">${footBtn}</div>`;
+  }
+
+  function wizard() {
+    const S = S0(), F = S.flash, f = S.form;
+    const r = F.robotId ? G.robot(F.robotId) : null;
+    const prog = `Step ${B.step} of 4`;
+    if (B.step === 1) {
+      const ok = S.usb !== "none" && (f.target !== "new" || f.name.trim());
+      return G.sheetShell("Plug it into the box",
+        `<p class="hint">The robot's Pico goes into the <strong>box's</strong> USB, with a data cable. A new one needs no button press.</p>${G.usbHTML(false)}${G.targetHTML()}${G.reinstallHTML()}`,
+        `<button class="btn primary block" data-act="wiz" data-arg="2"${ok ? "" : " disabled"}>Next</button>${ok ? "" : `<p class="hint dim" style="margin:0">${G.whyNot()}</p>`}`, prog);
+    }
+    if (B.step === 2) {
+      return G.sheetShell("Wi-Fi it should join", G.networksHTML(),
+        `<button class="btn primary block" data-act="wiz-flash"${G.flashReady() ? "" : " disabled"}>Flash GrowBot</button>
+         <button class="btn block" data-act="wiz" data-arg="1">Back</button>`, prog);
+    }
+    if (B.step === 3) {
+      const logOpen = B.logOpen || F.state === "fail";
+      return G.sheetShell(F.state === "fail" ? "It didn't finish" : "Flashing",
+        `<p class="hint">${F.state === "running" ? "Keep it plugged in. This takes about a minute." : ""}</p>${G.phasesHTML()}${G.failHTML()}
+         <button class="linkbtn" data-act="logtoggle">${logOpen ? "Hide the log" : "Show the log"}</button>${logOpen ? G.logHTML() : ""}`,
+        F.state === "running" ? `<button class="btn block" disabled>Flashing…</button>`
+          : `<button class="btn primary block" data-act="wiz-flash">Try again</button><button class="btn block" data-act="wiz" data-arg="2">Back to Wi-Fi</button>`, prog);
+    }
+    return G.sheetShell(`${r.name} is paired`,
+      `<p class="msg ok">Done — ${G.esc(r.name)} joined Wi-Fi and reached the box.</p>${G.pairHTML(r)}<p class="hint">${G.keyLine(r)}</p>`,
+      `<button class="btn primary block" data-act="open" data-arg="${r.id}">Open GrowBot</button><button class="btn block" data-act="sheet-close">Done</button>`, prog);
+  }
+
+  function endpoints() {
+    const S = S0();
+    return `<div class="topbar"><button class="back" data-act="screen" data-arg="launch">Back</button><span class="ttl">jpanel</span></div>
+      <div class="seg"><button>Messages</button><button>Panels</button><button class="on">Flash</button></div>
+      <div class="body"><section class="card"><h2><span class="step-n">1</span>Plug a panel into the box</h2>
+        <p class="hint">Use a data cable, not a charge-only one.</p>${G.usbHTML(true)}
+        <fieldset class="choices"><legend>Which board is it</legend>
+          <label class="choice off"><input type="radio" disabled><span class="tx">Desk panel (ESP32-S3)<em>Not what's plugged in — that port is a Pico.</em></span></label>
+          <label class="choice off"><input type="radio" disabled><span class="tx">Display panel (ESP32-C6)<em>Not what's plugged in — that port is a Pico.</em></span></label>
+        </fieldset>
+        ${S.usb !== "none" ? `<p class="msg info">That's a GrowBot. Robots are added on the GrowBot screen, where they're opened and managed afterwards.</p>
+          <button class="btn primary block" data-act="ep-to-gb">Add it on GrowBot</button>` : ""}</section>
+        <section class="card"><h2><span class="step-n">2</span>Wi-Fi for this panel</h2><p class="hint dim">Unchanged for panels.</p></section></div>`;
+  }
+
+  function growbotBody() {
+    return `${G.connectedHTML()}<div class="acts" style="margin-top:0"><button class="btn primary" data-act="screen" data-arg="gb">Open the GrowBot screen</button>
+      <button class="btn" data-act="restart">Restart</button><button class="btn">Show log</button></div>`;
+  }
+
+  G.onFlashEnd = (F) => { if (!F.rotate && F.state === "ok" && S0().sheet && S0().sheet.kind === "add") { B.step = 4; G.render(); } };
+
+  G.mount({
+    screens: [["launch", "Launcher"], ["gb", "GrowBot"], ["ep", "jpanel → Flash"], ["ops", "Ops"]],
+    render: () => {
+      const S = S0();
+      const scr = S.screen === "launch" ? launcher() : S.screen === "gb" ? growbot() : S.screen === "ep" ? endpoints() : G.opsHTML({ growbotBody, growbotGroup: "Apps" });
+      const sheet = S.sheet && S.sheet.kind === "add" ? wizard() : G.sharedSheet();
+      document.getElementById("phone").innerHTML = scr + sheet + G.toastHTML();
+    },
+    actions: {
+      "add-for": (t) => {
+        const S = S0();
+        S.form.target = t;
+        S.flash = { state: "idle", phases: {}, log: [], fail: null };
+        B.step = 1; B.logOpen = false;
+        S.sheet = { kind: "add" };
+        G.render();
+      },
+      wizard: () => { S0().sheet = { kind: "add" }; G.render(); },
+      wiz: (n) => { B.step = +n; G.render(); },
+      "wiz-flash": () => { B.step = 3; G.startFlash({}); },
+      logtoggle: () => { B.logOpen = !B.logOpen; G.render(); },
+      "ep-to-gb": () => { const S = S0(); S.screen = "gb"; G.actions["add-for"]("new"); },
+    },
+  });
+  G.S.open["svc-growbot"] = true;
+  G.render();
+})();
+</script>
+</body>
+</html>

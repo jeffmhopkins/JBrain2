@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GrowBot flash — A — another board</title>
+<link rel="stylesheet" href="shared.css">
+</head>
+<body>
+<!-- A: GrowBot is one more board on the Room endpoints flasher the owner already knows. The
+     numbered steps stay; a Robots tab beside Flash holds the robots afterwards, the way the
+     Panels tab holds the panels. Ops only reads. -->
+<div class="mockbar" id="mockbar"></div>
+<div class="phone" id="phone"></div>
+<script src="shared.js"></script>
+<script>
+(function () {
+  const S0 = () => G.S;
+  const A = { tab: "flash", board: "" };
+  const BOARDS = [
+    ["s3", "Desk panel (ESP32-S3)", "Firmware 0.3.04 on the box."],
+    ["c6", "Display panel (ESP32-C6)", "Firmware 0.3.04 on the box."],
+    ["growbot", "GrowBot (Raspberry Pi Pico 2 W)", "MicroPython 1.28.0 and the robot firmware on the box."],
+  ];
+
+  function step(n, title, body) {
+    return `<section class="card"><h2><span class="step-n">${n}</span>${title}</h2>${body}</section>`;
+  }
+
+  function boardHTML() {
+    const S = S0(), pico = S.usb !== "none";
+    // A Pico is the one board the port CAN name, so the choice follows it.
+    if (pico) A.board = "growbot";
+    return `<fieldset class="choices"><legend>Which board is it</legend>${BOARDS.map(([id, l, em]) => {
+      const off = pico && id !== "growbot";
+      return `<label class="choice${A.board === id ? " sel" : ""}${off ? " off" : ""}"><input type="radio" name="board" data-act="board" data-arg="${id}"${A.board === id ? " checked" : ""}${off ? " disabled" : ""}>
+        <span class="tx">${l}<em>${off ? "Not what's plugged in — that port is a Pico." : em}</em></span></label>`;
+    }).join("")}</fieldset>
+    ${pico ? `<p class="hint dim">Picked from the port: only a GrowBot shows up as a Pico.</p>` : ""}`;
+  }
+
+  function flashTab() {
+    const S = S0(), F = S.flash, gb = A.board === "growbot";
+    const r = F.state === "ok" && !F.rotate ? G.robot(F.robotId) : null;
+    const s1 = step(1, "Plug it into the box", `<p class="hint">Use a data cable, not a charge-only one. A new Pico needs no button press — it shows up ready to load.</p>
+      <button class="btn block" data-act="rescan">Rescan USB</button><div style="height:12px"></div>${G.usbHTML(true)}${boardHTML()}`);
+    if (!gb) {
+      return s1 + step(2, "Wi-Fi", `<p class="hint dim">${A.board ? "The panel steps are unchanged — this mock covers GrowBot." : "Pick which board it is in step 1."}</p>`);
+    }
+    const s2 = step(2, "Which robot, and its Wi-Fi", G.targetHTML() + G.networksHTML());
+    const btn = F.state === "running" ? "Flashing…" : F.state === "fail" ? "Flash again" : "Flash GrowBot";
+    const why = G.whyNot();
+    const s3 = step(3, "Flash", `<p class="hint">Everything it needs is already on the box — nothing to fetch. MicroPython goes on first, then the robot's own files with its Wi-Fi and a new device key.</p>
+      ${G.reinstallHTML()}
+      ${r ? `<button class="btn block" data-act="flash-again">Flash another robot</button>` : `<button class="btn primary block" data-act="flash"${G.flashReady() ? "" : " disabled"}>${btn}</button>`}
+      ${why && !r && F.state !== "running" ? `<p class="hint dim" style="margin-top:8px">${why}</p>` : ""}
+      ${F.state !== "idle" && !F.rotate ? G.phasesHTML() + G.failHTML() + G.logHTML() : ""}`);
+    const s4 = r ? step(4, "Paired", `<p class="msg ok">Done — ${G.esc(r.name)} joined Wi-Fi and reached the box.</p>${G.pairHTML(r)}
+      <button class="btn primary block" data-act="open" data-arg="${r.id}">Open GrowBot</button>
+      <p class="hint" style="margin-top:10px">${G.keyLine(r)}</p>
+      <p class="hint dim">${G.esc(r.name)} is on the <strong>Robots</strong> tab, where it can be opened again, given a new key, or revoked.</p>`) : "";
+    return s1 + s2 + s3 + s4;
+  }
+
+  function robotsTab() {
+    const S = S0();
+    const note = !S.trusted && !S.certNoted
+      ? `<section class="card"><h3>First time opening GrowBot on this phone?</h3>
+          <p class="hint" style="margin-top:6px">GrowBot runs on the box at <span class="mono">jbrain.local:8444</span>. Until this phone trusts the box's certificate it shows a warning first, and the camera and microphone may not start.</p>
+          <div class="acts"><button class="btn" data-act="cert-download">Download the box's certificate</button></div></section>` : "";
+    const cards = S.robots.map((r) => `<section class="card" aria-label="${G.esc(r.name)}">
+        <div style="display:flex;align-items:center;gap:10px"><h3 style="flex:1;font-size:var(--fs-title)">${G.esc(r.name)}</h3>${G.stateHTML(r)}</div>
+        <p class="meta"><span class="mono">${r.code}</span> · ${G.keyLine(r)}</p>
+        <div class="acts">${r.key === "revoked"
+          ? `<button class="btn primary" data-act="reflash" data-arg="${r.id}">Reflash on the Flash tab</button>`
+          : `<button class="btn primary" data-act="open" data-arg="${r.id}">Open GrowBot</button>${G.keyActs(r)}`}</div></section>`).join("");
+    const empty = S.robots.length ? "" : `<p class="hint">No robots yet — flash one from the Flash tab.</p>`;
+    return note + cards + empty + `<button class="btn block" data-act="add">Add a robot</button>`;
+  }
+
+  function endpoints() {
+    const S = S0();
+    return `<div class="topbar"><button class="back">Back</button><span class="ttl">Room endpoints</span></div>
+      <div class="seg"><button class="${A.tab === "flash" ? "on" : ""}" data-act="tab" data-arg="flash">Flash</button>
+        <button class="${A.tab === "robots" ? "on" : ""}" data-act="tab" data-arg="robots">Robots<span class="n">${S.robots.length}</span></button></div>
+      <div class="body" data-scroll="ep-${A.tab}">${A.tab === "flash" ? flashTab() : robotsTab()}</div>`;
+  }
+
+  function growbotBody() {
+    return `${G.connectedHTML()}<p class="hint">Open a robot, give it a new key or revoke it on <strong>Room endpoints</strong>, Robots tab.</p>
+      <div class="acts" style="margin-top:0"><button class="btn primary" data-act="to-robots">Go to Robots</button><button class="btn" data-act="restart">Restart</button><button class="btn">Show log</button></div>`;
+  }
+
+  G.mount({
+    screens: [["ep", "Room endpoints"], ["ops", "Ops"]],
+    render: () => {
+      const S = S0();
+      document.getElementById("phone").innerHTML =
+        (S.screen === "ep" ? endpoints() : G.opsHTML({ growbotBody })) + G.sharedSheet() + G.toastHTML();
+    },
+    actions: {
+      tab: (t) => { A.tab = t; G.render(); },
+      board: (b) => { A.board = b; G.render(); },
+      add: () => { A.tab = "flash"; S0().form.target = "new"; G.render(); },
+      reflash: (id) => { A.tab = "flash"; S0().form.target = id; S0().flash = { state: "idle", phases: {}, log: [], fail: null }; G.render(); },
+      "to-robots": () => { S0().screen = "ep"; A.tab = "robots"; G.render(); },
+    },
+  });
+  G.S.open["svc-growbot"] = true;
+  G.render();
+})();
+</script>
+</body>
+</html>
