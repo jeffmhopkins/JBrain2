@@ -17,6 +17,40 @@
     return `rgb(${r},${g},${b})`;
   }
 
+  /* The neck is one tapered shape along a gentle curve, not a stack of rings: drawn as
+     segments at phone size it read as a spine. A shadow down one side gives it a round body,
+     and the head's shadow on it seats the head instead of balancing it on top. */
+  function neckPath(c, x0, y0, x1, y1, bend, w0, w1, from, to) {
+    var n = 24, i, t, x, y, dx, dy, l, w, pts = [];
+    var mx = (x0 + x1) / 2 + bend, my = (y0 + y1) / 2;
+    for (i = 0; i <= n; i++) {
+      t = i / n;
+      x = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * mx + t * t * x1;
+      y = (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * my + t * t * y1;
+      dx = 2 * (1 - t) * (mx - x0) + 2 * t * (x1 - mx);
+      dy = 2 * (1 - t) * (my - y0) + 2 * t * (y1 - my);
+      l = Math.sqrt(dx * dx + dy * dy) || 1;
+      w = (w0 + (w1 - w0) * t) / 2;
+      pts.push([x, y, -dy / l * w, dx / l * w]);
+    }
+    c.beginPath();
+    for (i = 0; i <= n; i++) c.lineTo(pts[i][0] + pts[i][2] * from, pts[i][1] + pts[i][3] * from);
+    for (i = n; i >= 0; i--) c.lineTo(pts[i][0] + pts[i][2] * to, pts[i][1] + pts[i][3] * to);
+    c.closePath();
+  }
+  function neck(c, hex, x0, y0, x1, y1, bend, s) {
+    c.fillStyle = shade(hex, 0.8);
+    neckPath(c, x0, y0, x1, y1, bend, 44 * s, 28 * s, -1, 1);
+    c.fill();
+    c.fillStyle = shade(hex, 0.66);
+    neckPath(c, x0, y0, x1, y1, bend, 44 * s, 28 * s, 0.35, 1);
+    c.fill();
+    c.fillStyle = "rgba(0,0,0,.28)";
+    c.beginPath();
+    c.ellipse(x1, y1 - 4 * s, 20 * s, 9 * s, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+
   function rr(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.roundRect(x, y, w, h, Math.max(0, Math.min(r, w / 2, h / 2)));
@@ -123,23 +157,12 @@
     const s = 2.2;
     const col = hex;
     const head = shade(hex, 0.94);
-    const neck = shade(hex, 0.76);
     const beak = shade(hex, 0.52);
     const dark = shade(hex, 0.22);
     const cx = LW / 2 + d.gaze.x * 8;
     const hy = 250 + d.bob + d.gaze.y * 6;
 
-    ctx.save();
-    for (let i = 0; i < 13; i++) {
-      const t = i / 12;
-      const w = (50 - 16 * t) * s * 0.95;
-      const y = LH + 10 - i * 31 + d.bob * t;
-      const x = LW / 2 + (cx - LW / 2) * t;
-      ctx.fillStyle = neck;
-      rr(ctx, x - w / 2, y, w, 22, 11);
-      ctx.fill();
-    }
-    ctx.restore();
+    neck(ctx, hex, LW / 2, LH + 20, cx, hy + 40 * s, Math.sin(d.t / 1700) * 10 - d.gaze.x * 10, s);
 
     ctx.save();
     ctx.translate(cx, hy);

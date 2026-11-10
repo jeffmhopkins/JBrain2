@@ -61,6 +61,40 @@
     c.arcTo(x, y, x + w, y, r);
     c.closePath();
   }
+  /* The neck is one tapered shape along a gentle curve, not a stack of rings: drawn as
+     segments at phone size it read as a spine. A shadow down one side gives it a round body,
+     and the head's shadow on it seats the head instead of balancing it on top. */
+  function neckPath(c, x0, y0, x1, y1, bend, w0, w1, from, to) {
+    var n = 24, i, t, x, y, dx, dy, l, w, pts = [];
+    var mx = (x0 + x1) / 2 + bend, my = (y0 + y1) / 2;
+    for (i = 0; i <= n; i++) {
+      t = i / n;
+      x = (1 - t) * (1 - t) * x0 + 2 * (1 - t) * t * mx + t * t * x1;
+      y = (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * my + t * t * y1;
+      dx = 2 * (1 - t) * (mx - x0) + 2 * t * (x1 - mx);
+      dy = 2 * (1 - t) * (my - y0) + 2 * t * (y1 - my);
+      l = Math.sqrt(dx * dx + dy * dy) || 1;
+      w = (w0 + (w1 - w0) * t) / 2;
+      pts.push([x, y, -dy / l * w, dx / l * w]);
+    }
+    c.beginPath();
+    for (i = 0; i <= n; i++) c.lineTo(pts[i][0] + pts[i][2] * from, pts[i][1] + pts[i][3] * from);
+    for (i = n; i >= 0; i--) c.lineTo(pts[i][0] + pts[i][2] * to, pts[i][1] + pts[i][3] * to);
+    c.closePath();
+  }
+  function neck(c, hex, x0, y0, x1, y1, bend, s) {
+    c.fillStyle = shade(hex, 0.8);
+    neckPath(c, x0, y0, x1, y1, bend, 44 * s, 28 * s, -1, 1);
+    c.fill();
+    c.fillStyle = shade(hex, 0.66);
+    neckPath(c, x0, y0, x1, y1, bend, 44 * s, 28 * s, 0.35, 1);
+    c.fill();
+    c.fillStyle = "rgba(0,0,0,.28)";
+    c.beginPath();
+    c.ellipse(x1, y1 - 4 * s, 20 * s, 9 * s, 0, 0, Math.PI * 2);
+    c.fill();
+  }
+
   function disc(c, x, y, r) { c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.fill(); }
 
   function zees(c, d, x, y) {
@@ -127,14 +161,9 @@
      its own proportions, cropped to head and neck because a GrowBot has real legs. */
   function ostrich(c, d) {
     var hex = BODY, s = 2.2;
-    var head = shade(hex, 0.94), neck = shade(hex, 0.76), beak = shade(hex, 0.52), dark = shade(hex, 0.22);
+    var head = shade(hex, 0.94), beak = shade(hex, 0.52), dark = shade(hex, 0.22);
     var cx = LW / 2 + d.gaze.x * 8, hy = 250 + d.bob + d.gaze.y * 6, i;
-    c.fillStyle = neck;
-    for (i = 0; i < 13; i++) {
-      var t = i / 12, w = (50 - 16 * t) * s * 0.95;
-      rr(c, LW / 2 + (cx - LW / 2) * t - w / 2, LH + 10 - i * 31 + d.bob * t, w, 22, 11);
-      c.fill();
-    }
+    neck(c, hex, LW / 2, LH + 20, cx, hy + 40 * s, Math.sin(d.t / 1700) * 10 - d.gaze.x * 10, s);
     c.save();
     c.translate(cx, hy);
     c.rotate(d.tilt * Math.PI / 180);

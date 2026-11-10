@@ -144,7 +144,7 @@
       notes: [
         "Same eyes, lids and catchlight as the panel, so an emotion looks the same on a GrowBot and on a JPanel in the same room.",
         "The beak is the mouth: the lower three segments drop while it talks, the way the panel's do.",
-        "The crest perks when it is alert or happy and droops when it is tired. The neck sways with the bob.",
+        "The crest perks when it is alert or happy and droops when it is tired. The neck is one smooth tapered shape that sways gently.",
         "Body colour is the panel palette, so a kid can make GrowBot match their panel. The mood still lives in the sky behind it.",
       ],
     },
