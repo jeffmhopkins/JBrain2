@@ -786,3 +786,66 @@
     return realPrompt.apply(window, arguments);
   };
 })();
+
+/* Why the box failed the creature, in words. Upstream's lines were written for cloud services
+   (its "my ears are down", "brain error: empty stream", a bare abort message), so a local model
+   that was slow, not running, or refused the turn all read the same. The page's own failure
+   lines ask these for the box's reason (apply.py ERROR_PATCHES). */
+(function () {
+  "use strict";
+  var real = window.fetch;
+  if (typeof real !== "function") return;
+  var ears = { why: "", t0: 0 };
+  var EARS = /^\/api\/llm\?target=(groq|deepinfra)-audio(&|$)/;
+
+  function secs(ms) { return Math.max(1, Math.round(ms / 1000)); }
+  function aborted(e) {
+    return !!e && (e.name === "AbortError" || /abort/i.test(String(e.message || "")));
+  }
+  function unreachable(e) {
+    return !!e && e.name === "TypeError" && /fetch|load failed|network/i.test(String(e.message || ""));
+  }
+
+  window.fetch = function (input, init) {
+    var url = typeof input === "string" ? input : (input && input.url) || "";
+    if (!EARS.test(url)) return real.apply(this, arguments);
+    var t0 = Date.now();
+    ears = { why: "", t0: t0 };
+    return real.apply(this, arguments).then(function (r) {
+      if (r.ok) return r;
+      // Read before the page sees the response: its catch speaks the moment it throws.
+      return r.clone().json().then(function (j) {
+        var said = j && (typeof j.error === "string" ? j.error : j.error && j.error.message);
+        ears.why = typeof said === "string" && said ? said : "the box's speech model answered HTTP " + r.status;
+        return r;
+      }, function () {
+        ears.why = "the box's speech model answered HTTP " + r.status;
+        return r;
+      });
+    }, function (e) {
+      ears.why = aborted(e)
+        ? "the box's speech model took over " + secs(Date.now() - t0) + " s, so I stopped waiting"
+        : "I couldn't reach the box";
+      throw e;
+    });
+  };
+
+  window.gbBoxEars = function (e) {
+    var why = ears.why;
+    if (!why && aborted(e)) {
+      why = "the box's speech model took over " + secs(Date.now() - ears.t0) + " s, so I stopped waiting";
+    }
+    return "my ears are down: " + (why || "the box's speech model failed") + ". try again, or type.";
+  };
+
+  window.gbBoxBrainWhy = function (e) {
+    var m = String((e && e.message) || e || "");
+    // Every spoken turn waits 90 s (apply.py ERROR_PATCHES raises the 30 s fuse).
+    if (aborted(e)) return "the box's model didn't answer within 90 s, so I stopped waiting";
+    if (unreachable(e)) return "I couldn't reach the box";
+    if (m === "empty stream") return "the box's model answered with nothing";
+    var http = /^HTTP (\d+)\s*(.*)$/.exec(m);
+    if (http) return "the box answered HTTP " + http[1] + (http[2] ? " (" + http[2] + ")" : "");
+    return m;
+  };
+})();

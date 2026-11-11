@@ -183,13 +183,20 @@ What the upstream app calls, and what answers on the box:
 | `/api/config` | `{fast, active, dream, fallback}`: one installed model, vision-capable first. |
 | `/api/models` | `{simple, all}`: the box's installed models from the api, all free to run. |
 | `/api/llm?target=openrouter`, `/api/llm-stream?target=openrouter` | The api's `/internal/growbot/llm/v1/chat/completions`, body reduced to the engine fields; an unknown model becomes the default. The stream is passed through as SSE as it arrives. |
-| `/api/llm?target=groq-audio\|deepinfra-audio` | whisper, rebuilt as `model=whisper`, `response_format=verbose_json`, and normalised so `text` and every segment's `no_speech_prob` and `avg_logprob` exist (a missing probability reads as speech). 503 when whisper is down, never 429. |
+| `/api/llm?target=groq-audio\|deepinfra-audio` | whisper, rebuilt as `model=whisper`, `response_format=verbose_json`, and normalised so `text` and every segment's `no_speech_prob` and `avg_logprob` exist (a missing probability reads as speech). 503 when whisper is down, never 429, with `error` saying which: not running, over 60 s, or the HTTP status it answered. |
 | `/api/fish-tts` | Kokoro `GET /tts` with the text, a `kokoro-*` voice (else Kokoro's default), speed and pitch; WAV back. 503 when down, never 401/402, which upstream latches as a dead voice. |
 | `/api/device` | One owned device, nothing metered. |
 | `/api/redeem`, `/api/transfer` | 410: no credits on the box. |
 | `DELETE /api/journal`, `DELETE /api/episodes` | 200 `{"ok":true}` (the app's erase flow reads JSON); nothing is stored to erase. |
 | `/api/gallery?…&download=1` | 404: no soul or policy gallery on the box. |
 | `/api/journal`, `episodes`, `gallery`, `ev`, `hit`, `feedback` | otherwise 204, stored nowhere. |
+
+When the box fails the creature, it says why. `growbot-box.js` keeps the reason a speech call
+failed (the sidecar's `error`, or how long the page waited before it gave up), and the page's
+"my ears are down" and "brain error" lines read it (`gbBoxEars`, `gbBoxBrainWhy`), with the box
+model's own words from an error frame in the stream. A clip the creature's checks drop names the
+check ("…didn't catch that: the speech model heard no words"). A spoken turn waits 90 s instead
+of upstream's 30: the box reads a creature's ~8k-token prompt at a few hundred tokens a second.
 
 ## The relay
 

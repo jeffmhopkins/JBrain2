@@ -414,6 +414,94 @@ VISUAL_MEMORY_PATCHES: list[tuple[str, str, str, int]] = [
 ]
 PATCHES += VISUAL_MEMORY_PATCHES
 
+# Say why the box failed the creature (growbot-box.js gbBoxEars / gbBoxBrainWhy). Upstream's
+# failure lines name its cloud services, or show a bare abort message; a heard clip the checks
+# drop says which check dropped it.
+_DC = "\u2026didn't catch that"
+_HEARD_DROPS = {
+    "list": "the speech model only heard a stock phrase, which it says for silence",
+    "credits": "the speech model only heard subtitle credits, which it says for noise",
+    "loop": "the speech model heard the same words looping, a garbled clip",
+    "endcard": "the speech model only heard a video end-card, which it says for noise",
+    "bracket": "the speech model only heard background sound",
+    "empty": "the speech model heard no words",
+}
+ERROR_PATCHES: list[tuple[str, str, str, int]] = [
+    *[
+        (
+            "v3/next.html",
+            f'_heardDrop("{why}",meta); toast("{_DC}")',
+            f'_heardDrop("{why}",meta); toast("{_DC}: {line}")',
+            1,
+        )
+        for why, line in _HEARD_DROPS.items()
+    ],
+    (
+        "v3/next.html",
+        f'if(hotSamp<Math.round(0.120*_pcmRate)){{ toast("{_DC}");',
+        f'if(hotSamp<Math.round(0.120*_pcmRate)){{ toast("{_DC}: no voice in the clip, too quiet'
+        ' or too far away");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        f'else toast("{_DC}"); }} }};',
+        f'else toast("{_DC}: the recording came out empty"); }} }};',
+        1,
+    ),
+    (
+        "v3/next.html",
+        f'toast("{_DC} — try again")',
+        f'toast("{_DC}: the speech model answered like a chatbot, not a transcript. try again")',
+        1,
+    ),
+    (
+        "v3/next.html",
+        "toast(\"didn't catch that, say it once more\")",
+        "toast(\"didn't catch that: the clip was too short. say it once more\")",
+        2,
+    ),
+    (
+        "v3/next.html",
+        'toast("my ears are down on my end. try again in a moment, or type.")',
+        'toast(window.gbBoxEars?window.gbBoxEars(e):"my ears are down on my end. try again in a'
+        ' moment, or type.")',
+        2,
+    ),
+    # The box's model said why in the stream (an OpenAI error frame); keep its words.
+    ("v3/next.html", "streamFailed=false;", 'streamFailed=false,streamErr="";', 1),
+    (
+        "v3/next.html",
+        "if(j&&j.error){streamFailed=true;",
+        "if(j&&j.error){streamFailed=true;"
+        "streamErr=String(j.error.message||j.error).slice(0,160);",
+        1,
+    ),
+    (
+        "v3/next.html",
+        'if(!full) throw new Error("empty stream");',
+        'if(!full) throw new Error(streamErr?"the box said: "+streamErr:"empty stream");',
+        1,
+    ),
+    (
+        "v3/next.html",
+        'setErr("brain error: "+e.message+" — tap or talk to retry")',
+        'setErr("brain error: "+(window.gbBoxBrainWhy?window.gbBoxBrainWhy(e):e.message)'
+        '+" — tap or talk to retry")',
+        1,
+    ),
+    # Upstream's 30 s fuse is a cloud model's. The box reads a creature's ~8k-token prompt at
+    # a few hundred tokens a second, so a turn can take 20 s before its first word; 90 s still
+    # ends inside the page's own 100 s flight watchdog (FLIGHT_MAX_MS).
+    (
+        "v3/next.html",
+        "_decisionTokens,30000",
+        "_decisionTokens,90000",
+        3,
+    ),
+]
+PATCHES += ERROR_PATCHES
+
 FIRMWARE_PATCHES: list[tuple[str, str, str, int]] = [
     (
         "relay_chip.py",

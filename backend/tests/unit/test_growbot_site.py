@@ -315,3 +315,18 @@ def test_visual_memories_follow_the_persona() -> None:
     assert mem.count("{ persona: persona, ") == 2
     # Only a phone with unsent writes forgets on the box what it lacks.
     assert "known[id] !== undefined && m.dirty" in mem
+
+
+def test_the_creature_says_why_the_box_failed_it() -> None:
+    """A slow, stopped or refusing local model reads as itself, not as upstream's cloud lines
+    or a bare abort message, and a dropped clip says which check dropped it."""
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.gbBoxEars = function (e)" in shim
+    assert "window.gbBoxBrainWhy = function (e)" in shim
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    assert page.count("window.gbBoxEars?window.gbBoxEars(e)") == 2
+    assert "window.gbBoxBrainWhy?window.gbBoxBrainWhy(e):e.message" in page
+    assert 'new Error(streamErr?"the box said: "+streamErr:"empty stream")' in page
+    assert "_decisionTokens,30000" not in page and page.count("_decisionTokens,90000") == 3
+    assert 'toast("\u2026didn\'t catch that")' not in page
+    assert "the speech model heard no words" in page
