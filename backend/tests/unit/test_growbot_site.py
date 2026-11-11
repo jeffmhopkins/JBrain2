@@ -397,3 +397,35 @@ def test_the_system_prompt_holds_only_what_stays_put() -> None:
     assert '<script src="/v3/prompts.js?v=1008-motion-box"' in page
     shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
     assert "window.gbBoxLive = function (msgs, live)" in shim
+
+
+def test_the_brain_panel_keeps_only_what_a_box_creature_uses() -> None:
+    """The box picks the model and holds the soul, and there are no credits or keys: those
+    rows hide behind the shim's flag, and the page without it keeps upstream's panel."""
+    page = (_SITE / "v3" / "next.html").read_text(encoding="utf-8")
+    for row in (
+        'h+=wRow("dial","brain","","the brain dial"',
+        'h+=wRow("soul","soul","#9A86FF","soul"',
+        'h+=wRow("byok","brain","#FFB24D","your own key"',
+        'h+=hatch("mind");',
+        'h+=\'<button type="button" id="gbkAdvTog"',
+    ):
+        assert page.count("if(!window.__gbBox)" + row) == 1, row
+    assert 'function brainLogsSection(){ if(window.__gbBox) return "";' in page
+    assert 'function moveMeRow(){ if(window.__gbBox) return "";' in page
+    assert "if(W.adv&&!window.__gbBox){" in page
+    assert page.count('data-gb-cloud="1"') == 1
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert "window.__gbBox = true;" in shim
+    assert "[data-gb-cloud]{display:none!important}" in shim
+
+
+def test_the_text_is_phone_sized_even_in_desktop_site_mode() -> None:
+    """The spoken line and the brain panel are raised to phone sizes, and a phone that lays the
+    page out ~980px wide (desktop site) has its controls zoomed back, never the face's canvas."""
+    shim = (_SITE / "growbot-box.js").read_text(encoding="utf-8")
+    assert '"#say{font-size:" + 15 * k + "px!important' in shim
+    assert '"#gbkBBody{zoom:1.2}"' in shim
+    assert '"body>*:not(#wrap){zoom:"' in shim
+    assert "return k > 1.25 ? Math.min(k, 3) : 1;" in shim
+    assert 'window.addEventListener("resize", paint);' in shim

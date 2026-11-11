@@ -877,3 +877,41 @@
     return true;
   };
 })();
+
+// Readable on a phone. Upstream sets the spoken line at 11px and the brain panel at 11-12.5px,
+// sized for its own pixel font, so the type here is raised to phone sizes. And a phone in
+// "desktop site" mode (Safari's Request Desktop Website, Chrome's Desktop site) ignores the
+// viewport tag and lays the page out ~980px wide, shrinking everything by ~2.3x: that layout is
+// scaled back to the screen, the controls by zoom and the spoken line by its size. The face's
+// canvas is left alone, since it sizes itself to the window and a zoom would only blow it up.
+(function () {
+  // The page is run by the box: apply.py hides upstream's cloud-only settings behind this.
+  window.__gbBox = true;
+  var style = document.createElement("style");
+  function scale() {
+    var portrait = window.innerHeight >= window.innerWidth;
+    var screenW = portrait
+      ? Math.min(screen.width, screen.height)
+      : Math.max(screen.width, screen.height);
+    var touch = (navigator.maxTouchPoints || 0) > 0;
+    var k = touch && screenW > 0 ? window.innerWidth / screenW : 1;
+    return k > 1.25 ? Math.min(k, 3) : 1;
+  }
+  function paint() {
+    var k = scale();
+    style.textContent =
+      "#say{font-size:" + 15 * k + "px!important;line-height:1.6!important}" +
+      "#err{font-size:" + 14 * k + "px!important}" +
+      // The control bar grows with its zoom; the spoken line sits above it, not under it.
+      (k > 1 ? "#say{margin-bottom:" + Math.round(36 + 210 * (k - 1)) + "px!important}" : "") +
+      "#gbkBBody{zoom:1.2}" +
+      // The credits tab (apply.py SCRUB_PATCHES): a box creature has no credits.
+      "[data-gb-cloud]{display:none!important}" +
+      "div:has(>[data-gb-cloud]){grid-template-columns:repeat(2,1fr)!important}" +
+      (k > 1 ? "body>*:not(#wrap){zoom:" + k.toFixed(3) + "}" : "");
+  }
+  window.gbBoxScale = scale;
+  paint();
+  (document.head || document.documentElement).appendChild(style);
+  window.addEventListener("resize", paint);
+})();
