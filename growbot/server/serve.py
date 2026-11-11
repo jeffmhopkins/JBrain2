@@ -512,8 +512,8 @@ class Upstream:
     status: int
     body: bytes
     ctype: str
-    # For a 503 the call made itself: "timeout" or "down" (refused, reset, unresolvable), so
-    # the creature can say which instead of one line for every failure.
+    # For a 503 the call made itself: "timeout", "broken" (a cut or garbled answer) or "down"
+    # (refused, reset, unresolvable), so the creature can say which, not one line for all.
     why: str = ""
 
 
