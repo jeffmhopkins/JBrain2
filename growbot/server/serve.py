@@ -102,6 +102,8 @@ MAX_WS_MESSAGE = 256 * 1024
 IDLE_TIMEOUT_S = 75.0
 BODY_TIMEOUT_S = 60.0
 UPSTREAM_TIMEOUT_S = 120.0
+# A clip is seconds long; a speech model that takes this long is stuck, not working.
+STT_TIMEOUT_S = 60.0
 FIRST_FRAME_TIMEOUT_S = 10.0
 WS_PING_EVERY_S = 20.0
 # Upstream's relay drops a chip 45 s after its last heartbeat (relay_chip.py, "0923 RELAY
@@ -510,6 +512,9 @@ class Upstream:
     status: int
     body: bytes
     ctype: str
+    # For a 503 the call made itself: "timeout", "broken" (a cut or garbled answer) or "down"
+    # (refused, reset, unresolvable), so the creature can say which, not one line for all.
+    why: str = ""
 
 
 def http_call(
@@ -534,9 +539,14 @@ def http_call(
         return Upstream(
             exc.code, body, exc.headers.get("Content-Type", "") if exc.headers else ""
         )
-    except (OSError, ValueError, http.client.HTTPException):
+    except (OSError, ValueError, http.client.HTTPException) as exc:
         # HTTPException: a truncated or garbled answer (IncompleteRead, BadStatusLine).
-        return Upstream(503, b"", "")
+        reason = getattr(exc, "reason", exc)
+        if isinstance(reason, TimeoutError) or "timed out" in str(reason):
+            return Upstream(503, b"", "", "timeout")
+        if isinstance(exc, (ValueError, http.client.HTTPException)):
+            return Upstream(503, b"", "", "broken")
+        return Upstream(503, b"", "", "down")
 
 
 # ── HTTP plumbing ─────────────────────────────────────────────────────────────
@@ -1627,12 +1637,12 @@ class GrowBot:
             body,
             {"Content-Type": ctype},
             "POST",
-            60.0,
+            STT_TIMEOUT_S,
             pool=self._streams,
         )
         if up.status != 200:
             # Not 429: upstream reads that as a spent daily allowance and stops listening.
-            return json_response(503, {"error": "stt unavailable"})
+            return json_response(503, {"error": _stt_failure(up)})
         return json_response(200, normalise_transcript(up.body))
 
     async def tts(self, req: Request) -> Response:
@@ -2204,6 +2214,17 @@ async def stream_upstream(
             503, {"error": {"message": "the box's brain is unreachable"}}
         )
     return Response(status, data, ctype or "application/json")
+
+
+def _stt_failure(up: Upstream) -> str:
+    """What the creature says when the box's speech model failed it."""
+    if up.why == "timeout":
+        return f"the box's speech model took over {STT_TIMEOUT_S:.0f} s"
+    if up.why == "down":
+        return "the box's speech service isn't running"
+    if up.why == "broken":
+        return "the box's speech model sent a broken answer"
+    return f"the box's speech model failed (HTTP {up.status})"
 
 
 def _inline_images_only(message: object) -> object:

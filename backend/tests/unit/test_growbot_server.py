@@ -1026,7 +1026,27 @@ def test_stt_without_audio_or_with_whisper_down(run: _Running) -> None:
     body, ctype = _multipart({}, b"audio")
     resp = run.request("POST", "/api/llm?target=groq-audio", body, {"Content-Type": ctype})
     assert resp.status == 503  # never 429, which upstream reads as a spent allowance
-    resp.read()
+    # The creature says why its ears are down, not one line for every failure.
+    assert json.loads(resp.read()) == {"error": "the box's speech service isn't running"}
+
+
+def test_stt_failures_say_which(gb: types.ModuleType) -> None:
+    why = gb._stt_failure
+    assert why(gb.Upstream(503, b"", "", "timeout")) == "the box's speech model took over 60 s"
+    assert why(gb.Upstream(500, b"", "")) == "the box's speech model failed (HTTP 500)"
+    assert why(gb.Upstream(503, b"", "", "broken")) == "the box's speech model sent a broken answer"
+
+
+def test_a_slow_call_is_told_from_a_dead_one(gb: types.ModuleType) -> None:
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    try:
+        url = f"http://127.0.0.1:{listener.getsockname()[1]}/v1/audio/transcriptions"
+        assert gb.http_call(url, b"x", None, "POST", 0.2).why == "timeout"
+    finally:
+        listener.close()
+    assert gb.http_call("http://127.0.0.1:9/x", None, None, "GET", 1.0).why == "down"
 
 
 def test_stt_normalisation_fills_what_upstream_reads(gb: types.ModuleType) -> None:
