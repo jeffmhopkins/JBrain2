@@ -1744,11 +1744,15 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
 ) -> None:
     monkeypatch.setattr(gb, "BACKOFF_LIMIT", 2)
     # An <img> or fetch from any page: refused before the api, never counted.
-    for _ in range(4):
+    for dest, mode in [("image", "no-cors"), ("empty", "cors")] * 2:
         resp = run.request(
             "GET",
             "/open?ticket=bad&id=gb-abc123",
-            headers={"Sec-Fetch-Dest": "image", "Sec-Fetch-Site": "cross-site"},
+            headers={
+                "Sec-Fetch-Dest": dest,
+                "Sec-Fetch-Mode": mode,
+                "Sec-Fetch-Site": "cross-site",
+            },
             cookie=False,
         )
         assert resp.status == 403
@@ -1772,6 +1776,16 @@ def test_open_only_counts_a_navigation_and_keeps_cross_site_apart(
     same = {"Sec-Fetch-Dest": "document", "Sec-Fetch-Site": "same-site"}
     resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", headers=same, cookie=False)
     assert resp.status == 200
+    resp.read()
+    # The installed app's service worker passes the PWA's link on with dest `empty`; it is
+    # still a navigation, so it opens.
+    worker = {
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
+    }
+    resp = run.request("GET", "/open?ticket=good-ticket&id=gb-abc123", headers=worker, cookie=False)
+    assert resp.status == 200 and resp.getheader("Set-Cookie")
     resp.read()
 
 

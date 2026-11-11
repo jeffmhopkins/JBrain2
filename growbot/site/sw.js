@@ -18,6 +18,8 @@ var OFFLINE =
 self.addEventListener("fetch", function (event) {
   // Only page loads: the app's own calls and the relay's socket fail the way the page expects.
   if (event.request.mode !== "navigate") return;
+  // A ticket is spent once, and passing it on would mark it a fetch, not the PWA's link.
+  if (new URL(event.request.url).pathname === "/open") return;
   event.respondWith(
     fetch(event.request).catch(function () {
       return new Response(OFFLINE, { headers: { "Content-Type": "text/html; charset=utf-8" } });
